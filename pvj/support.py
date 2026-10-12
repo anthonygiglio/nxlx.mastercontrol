@@ -77,6 +77,9 @@ REMOTE_DENY = {
     # make the change and take it back; someone at the studio confirms it. (Added by D84: found while trying to
     # lock the owner out.)
     ("POST", "/api/network/confirm"): "a network change is confirmed from the studio: only that shows the studio still reaches the box",
+    # the NDI discovery server (D85): a program listening on the network is opened by the Owner in the room. Its
+    # switch is here; its own routes are under a prefix below.
+    ("POST", "/api/modules/ndi-discovery"): "a program that listens on the network is switched by the owner in the room (D85)",
     # a reset removes every paired device, the owner's too (see boxcare.py)
     ("POST", "/api/system/factory-reset"): "a reset removes every device, the owner's too",
 }
@@ -85,8 +88,16 @@ REMOTE_DENY_PREFIX_WHY = {
     "/api/access": "join codes, links and the choice of what a controller's code pairs are ways in",
     "/api/https": "the box's key and certificate, and the switch that could shut the owner's devices out (D79)",
     "/api/recovery": "the owner's ways back in (D81)",
+    "/api/ndi/discovery": "the NDI discovery server's own settings: a listener on the network is the owner's, in the room (D85)",
 }
 REMOTE_DENY_PREFIX = tuple(REMOTE_DENY_PREFIX_WHY)
+# Modules no support session switches ON, whatever its role, by the route or by a settings file (D84 meeting D85):
+# module id -> why. Switching one of them off takes something away and is allowed, except where the whole switch
+# is refused above (ndi-discovery).
+REMOTE_NO_MODULE_ON = {
+    "inputs-ndi": "the NDI input makes the box listen to senders on the network and run NDI's library, and stays on after the session",
+    "ndi-discovery": "a program that listens on the network is switched by the owner in the room (D85)",
+}
 REMOTE_OPEN = {("GET", "/api/hello"), ("POST", "/api/support/login")}
 # Opened to a remote session of the Owner's role by D84 (each was in REMOTE_DENY before): route -> the bound that
 # keeps it inside the principle. Not read by the guard (not being refused is what opens them); it is the record
@@ -351,13 +362,13 @@ class SupportManager:
         if not again:
             self.log("pvj-web: remote support %s: %s%s" % (device.get("id"), text, "" if detail is None else " (%s)" % clean(detail)[:80]))
 
-    def refused(self, device, what):
+    def refused(self, device, what, detail=None):
         """A support login (or a request through the tunnel with no login at all) was refused something no session may
         do: a major line. `what` names the request or the rule, never what was sent."""
         if not (isinstance(device, dict) and device.get("remote")):
             device = {"id": "support (not signed in)", "remote": True}
             what = "%s, not signed in" % what
-        self.note(device, "was refused %s" % what)
+        self.note(device, "was refused %s" % what, detail=detail)
 
     def used(self, device, method, path):
         """Every other request of a support login that changed something (Api.handle and the server's own uploads

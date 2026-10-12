@@ -66,6 +66,12 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid 
 #padrefused { margin: 8px 0 0; }
 .pad.shader span.t { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; max-width: 100%; }
 #padshaders { min-width: 0; max-width: 100%; }
+#padndi { min-width: 0; max-width: 100%; }
+.padpick .t.s { font-size: 12px; opacity: .8; white-space: normal; overflow-wrap: anywhere; }
+#padndinote { overflow-wrap: anywhere; }
+.pad.na { opacity: .5; border-style: dotted; }
+.pad.busy { opacity: .7; }
+#padkind .segbtn { min-width: 0; padding-left: 6px; padding-right: 6px; }
 .padpick { min-width: 0; width: 100%; box-sizing: border-box; overflow: hidden; }
 .padpick .t { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; max-width: 100%; }
 /* Why the box dips instead of the chosen transition, under the picker (D71): its words wrap at any width. */
@@ -207,6 +213,9 @@ button.linkish { background: none; border: 0; padding: 4px 0; color: inherit; fo
 
 /* System: an index of rows in groups, and one page per row */
 .hint { font-size: 13px; line-height: 1.4; color: var(--mu); margin: 0; overflow-wrap: anywhere; }
+/* a link in a hint (the NDI page's links to ndi.video) takes the hint's own colour, so it passes wherever the hint does */
+.hint a { color: inherit; text-decoration: underline; }
+#ndiruntime > div + div { margin-top: 6px; }
 .navgroup { padding: 4px 12px; gap: 0; }
 .syspage .grid2 { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
 @container ws (min-width: 900px) { .syspage .grid2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
@@ -690,6 +699,7 @@ main.ws:focus, .deskcol:focus { outline: none; }
 .tp:not(.open) .tpspeed { display: none; }
 .tpspeed label { display: flex; flex-direction: column; font-size: 13px; line-height: 1.25; white-space: nowrap; }
 .tpspeed input { flex: 1 1 0; min-width: 0; margin: 0; height: 44px; }
+.tpspeed.held input { opacity: .55; }                      /* a live source plays at 1.00x: the Mix speed waits for the next clip (D62) */
 /* (a 320 px phone: "Blackout" needs 69 px in the widest of the faces this look is drawn in, and gets 75) */
 @container app (max-width: 379px) { .tp { padding-left: 4px; padding-right: 4px; gap: 4px; } .tp .tpb { font-size: 13px; } }      /* (13 px: room to spare in a wider face than the one it was measured in) */
 @container app (min-width: 600px) {

@@ -84,6 +84,22 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(data["theme"]["name"], "light")
         self.assertEqual(self.read(self.path + ".bak-v2")["schema"], 2)
 
+    def test_the_ndi_input_needs_no_schema_change(self):
+        """The NDI section is one key an older release ignores and this one reads with defaults (ndi.saved_addresses):
+        a schema 14 file without it loads here and is left at 14, so it still loads on a release that has no NDI."""
+        code = dict(settings.default_controller_code())
+        with open(self.path, "w") as f:
+            json.dump({"schema": 14, "controller_code": code, "streams": []}, f)
+        data = settings.Settings(self.path).load()
+        self.assertEqual(data["schema"], 14)
+        self.assertNotIn("ndi", data)                                              # nothing is written for it until someone uses it
+        self.assertEqual(data["controller_code"], code)
+        self.assertFalse(os.path.exists(self.path + ".bak-v14"))                    # no migration ran
+        self.assertEqual(settings.migrate({"schema": 14}), [])
+        self.assertEqual(settings.SCHEMA, 14)
+        self.assertEqual(max(settings.MIGRATIONS), 13)
+        self.assertEqual(settings.default_settings()["ndi"], {"addresses": []})
+
     def test_real_migration_from_schema_3_adds_empty_streams(self):
         with open(self.path, "w") as f:
             json.dump({"schema": 3, "schedule": {"enabled": True, "entries": []}}, f)

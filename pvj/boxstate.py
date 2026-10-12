@@ -15,7 +15,7 @@ def snapshot(api, now, fresh=False, holder=None, every=PLAYER_EVERY):
     """The picture, from memory, plus ONE status call to the player at most every `every` seconds. `holder` keeps
     what the player said last between calls (`_player_seen`, and `_player_raw`: the player's own answer). A part that
     cannot be read keeps its quiet default."""
-    snap = {"pads": [], "pad_shaders": [], "pad_presets": [], "shader_on": False, "playing": None, "running": False, "paused": False, "playlist": False, "blackout": False, "fade": None,
+    snap = {"pads": [], "pad_shaders": [], "pad_presets": [], "pad_ndi": [], "ndi": None, "shader_on": False, "playing": None, "running": False, "paused": False, "playlist": False, "blackout": False, "fade": None,
             "vibes": False, "vibes_ready": False, "sets": {}, "set": None, "shader": None, "presets": [], "preset": None,
             "scenes": [], "applying": None, "effect": None, "effect_ready": False}
     try:
@@ -24,6 +24,7 @@ def snapshot(api, now, fresh=False, holder=None, every=PLAYER_EVERY):
                                for b in api.settings.data["pads"]["banks"]]
         snap["pad_presets"] = [[("" if p.get("file") else str(p.get("preset") or "")) for p in b["pads"]]
                                for b in api.settings.data["pads"]["banks"]]
+        snap["pad_ndi"] = [[(api.pad_ndi(p) or "") for p in b["pads"]] for b in api.settings.data["pads"]["banks"]]
     except Exception:
         pass
     if fresh or holder._player_seen is None or now - holder._player_seen[0] >= every:
@@ -40,6 +41,15 @@ def snapshot(api, now, fresh=False, holder=None, every=PLAYER_EVERY):
         holder._player_seen = (now, seen)
         holder._player_raw = raw
     snap.update(holder._player_seen[1])
+    try:
+        # The NDI source on the screen, by its id, for the pad that holds it (D62): from what the player said last
+        # and what the panel noted when it loaded the pipe; nobody is asked.
+        ndi = getattr(api, "ndi", None)
+        cur = ndi.current if ndi is not None else None
+        if cur and (getattr(holder, "_player_raw", None) or {}).get("path") == ndi.fifo:
+            snap["ndi"] = cur.get("id")
+    except Exception:
+        pass
     try:
         snap["blackout"] = bool(api.mix.get("blackout"))
         snap["fade"] = getattr(getattr(api, "fader", None), "label", None)

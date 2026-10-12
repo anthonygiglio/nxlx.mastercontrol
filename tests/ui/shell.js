@@ -773,9 +773,9 @@ async function stripText(pg, post, get) {
 const PLAY = ['play/pads', 'play/library', 'play/shaders'];
 const SHAPE = ['shape/effect', 'shape/picture', 'shape/sound', 'shape/mapping'];
 const MENUS = {
-  owner: PLAY.concat(SHAPE, ['room/scenes', 'room/walls', 'room/guests'], ['index', 'health', 'projectors', 'room', 'schedule', 'access', 'autostart', 'streams', 'sync', 'midi', 'dmx', 'osc',
+  owner: PLAY.concat(SHAPE, ['room/scenes', 'room/walls', 'room/guests'], ['index', 'health', 'projectors', 'room', 'schedule', 'access', 'autostart', 'streams', 'ndi', 'ndisc', 'sync', 'midi', 'dmx', 'osc',
     'network', 'updates', 'support', 'https', 'backup', 'look', 'about'].map((x) => 'setup/' + x)),
-  presenter: PLAY.concat(SHAPE, ['room/scenes', 'room/walls', 'room/guests'], ['index', 'health', 'projectors', 'room', 'schedule', 'access', 'autostart', 'streams', 'sync', 'midi', 'about'].map((x) => 'setup/' + x)),
+  presenter: PLAY.concat(SHAPE, ['room/scenes', 'room/walls', 'room/guests'], ['index', 'health', 'projectors', 'room', 'schedule', 'access', 'autostart', 'streams', 'ndi', 'sync', 'midi', 'about'].map((x) => 'setup/' + x)),
   guest: PLAY.concat(SHAPE, ['room/scenes', 'room/walls'], ['index', 'health', 'about'].map((x) => 'setup/' + x)),
 };
 // pages: { owner, presenter, guest }, each a page that has just been loaded. post(url, body): as the owner.
@@ -920,7 +920,7 @@ const MOVED = {
 const IN_PLACE = { owner: ['#fxprev', '#fxon', '#fxnext', 'button: Crossfade', '#logoutbtn', '#fade', 'button: End the Operator (runs the room) code'].concat(LAYOUT_NOW), presenter: ['#fxprev', '#fxon', '#fxnext', 'button: Crossfade', '#fade'], guest: ['button: Crossfade', '#fade'] };
 // Controls the Pi build added since the list was made (D71 the wipes and slides, D77 the PIN row, D78 the OSC locks, D79 the Secure
 // connection page, D75 the controllers' new presses and the mapping mode switch, D81 the Recovery card): each must be found, and on the screen named here. What shows only while something plays, in
-// the pad editor's sheet (Clip or Shader, D73) or after the box gave up a transition (the reason and Try again, D71)
+// the pad editor's sheet (Clip, Shader or NDI source: D73, D62) or after the box gave up a transition (the reason and Try again, D71)
 // is held by the steps of panel.test.js, not by the list, which is taken with nothing playing.
 const TRANSITIONS = {};
 ['Wipe from left', 'Wipe from right', 'Wipe from top', 'Wipe from bottom', 'Slide off left', 'Slide off right', 'Slide off up', 'Slide off down'].forEach((n) => { TRANSITIONS['button: ' + n] = 'play/pads'; });
@@ -936,11 +936,15 @@ const ADDED = {
     'button: Pad #.#: Back # s': 'MIDI controller', 'button: Pad #.#: Forward # s': 'MIDI controller', '#mapremote': 'Mapping',
     // D80: the lock, what a controller's join code pairs, a scene's mark "Not for guests"
     '#makerecovery': 'People and codes', '#recovery-usb': 'People and codes',      // D81 the Recovery card, an Owner's only (Cancel is there only once a set exists)
-    '#guestlock': 'People and codes', '#ctlcode-join': 'People and codes', '#roomsnoguests': 'Setup index > Room' }, TRANSITIONS),      // (the key's Show and New are there only while the key lock is on)
+    '#guestlock': 'People and codes', '#ctlcode-join': 'People and codes', '#roomsnoguests': 'Setup index > Room',
+    // D62 (2026-10-11): the NDI input's page under Setup > Show tools; its sound switch and address form are the Owner's
+    '#nav-ndi': 'setup/index', '#ndisound': 'NDI® input', '#ndiaddress': 'NDI® input', '#ndiaddradd': 'NDI® input',
+    '#ndigroupopen': 'NDI® input', '#ndidiscopen': 'NDI® input', '#nav-ndisc': 'setup/index' }, TRANSITIONS),      // the groups and the discovery servers (2026-10-11), the Owner's      // (the key's Show and New are there only while the key lock is on)
   // D80, an Operator: the lock on guest controls and a guest link; the rows of Setup that are his now, the room's
   // set-up with a scene's mark, the mapping's own controls, a clip to upload
   presenter: Object.assign({ '#guestlock': 'People and codes', '#makeguestlink': 'People and codes', '#nav-schedule': 'setup/index', '#nav-autostart': 'setup/index',
-    '#nav-midi': 'setup/index', '#roomsnoguests': 'Setup index > Room', '#mapedit': 'shape/mapping', '#uploadbtn': 'play/' }, TRANSITIONS),
+    '#nav-midi': 'setup/index', '#roomsnoguests': 'Setup index > Room', '#mapedit': 'shape/mapping', '#uploadbtn': 'play/',
+    '#nav-ndi': 'setup/index' }, TRANSITIONS),      // D62: an Operator sees the NDI page and chooses a source; the switch and the addresses are the Owner's
   // D80, a Guest while guest controls are open (the default): his card on Room > Scenes. Stop and Blackout are the
   // strip's own buttons, which were in the list before, disabled
   guest: Object.assign({ '#gvibes': 'room/scenes', '#gshow': 'room/scenes', '#gprojon': 'room/scenes', '#gprojoff': 'room/scenes' }, TRANSITIONS),

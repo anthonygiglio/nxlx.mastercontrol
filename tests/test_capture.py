@@ -247,6 +247,18 @@ class CaptureApiTest(ServerBase):
         self.post("/api/play", {"file": "a.mp4"})
         self.assertEqual(self.events[-1], ("stop",))
 
+    def test_the_capture_input_is_played_at_speed_one_and_the_mix_speed_comes_back_with_the_next_clip(self):
+        """A live source cannot be played faster than it comes (found with NDI on the Pi 4, 2026-10-08; the capture
+        input had the same fault unnoticed). The real play, not a look at the source text."""
+        self.post("/api/control", {"action": "speed", "value": 1.86})
+        self.player.calls.clear()
+        self.assertEqual(self.post("/api/play", {"capture": {"device": "video0", "mode": "720p30"}})[0], 200)
+        self.assertEqual([c[1] for c in self.player.calls if c[0] == "speed"], [1])
+        self.assertIs(self.api._speed_held, True)
+        self.post("/api/play", {"file": "a.mp4"})
+        self.assertEqual([c[1] for c in self.player.calls if c[0] == "speed"], [1, 1.86])
+        self.assertIs(self.api._speed_held, False)
+
     def test_restart_player_and_test_pattern_off_also_stop_the_helper(self):
         self.post("/api/play", {"capture": {"device": "video0", "mode": "720p30"}})
         self.post("/api/player/restart", {})

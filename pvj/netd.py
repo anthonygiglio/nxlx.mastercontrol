@@ -472,11 +472,21 @@ def exchange(path, message, timeout):
     failed write is not the end: what the helper sent is read first, and the write's error counts unless that is a
     whole refusal."""
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.settimeout(timeout)
+    # One deadline for the whole exchange. A timeout per call on the socket is not that: a helper that sends one byte
+    # at a time resets it with each byte, and held a caller for 65536 times as long (found by the NDI review).
+    deadline = time.monotonic() + timeout
+
+    def wait():
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise socket.timeout("the helper did not answer in time")
+        s.settimeout(left)
     try:
+        wait()
         s.connect(path)
         unsent = None
         try:
+            wait()
             s.sendall(json.dumps(message).encode() + b"\n")
         except socket.timeout:
             raise
@@ -484,6 +494,7 @@ def exchange(path, message, timeout):
             unsent = e
         data = b""
         while not data.endswith(b"\n") and len(data) < 65536:
+            wait()
             chunk = s.recv(65536)
             if not chunk:
                 break

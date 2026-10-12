@@ -698,7 +698,13 @@ def light_state(action, snap, bank=0, layer=None):
             except (IndexError, KeyError, TypeError):
                 held = ""
             if not held:
-                return "off"
+                try:
+                    source = snap["pad_ndi"][b][action["index"]]    # a pad that holds an NDI source (D62)
+                except (IndexError, KeyError, TypeError):
+                    source = ""
+                if not source:
+                    return "off"
+                return "active" if snap.get("ndi") == source else "on"
             # the one on now: its shader is on the screen, started with this pad's preset (a pad without one
             # starts the preset called default, or none), and not by Vibes, whose shader is nobody's pad
             try:

@@ -48,7 +48,7 @@ import subprocess
 import time
 from urllib.parse import unquote
 
-from . import dmx as dmx_mod, midi as midi_mod, osc as osc_mod, projector as projector_mod, streams as streams_mod
+from . import dmx as dmx_mod, midi as midi_mod, ndi as ndi_mod, osc as osc_mod, projector as projector_mod, streams as streams_mod
 from . import mapper as mapper_mod, scheduler as scheduler_mod, sync as sync_mod, themes as themes_mod
 from . import autostart as autostart_mod, room as room_mod, shaderlive as shaderlive_mod, shaders as shaders_mod
 from . import transitions as transitions_mod
@@ -57,12 +57,12 @@ from .settings import SettingsError, default_control, default_settings, migrate
 
 FORMAT = "nxlx.mastercontrol settings"
 FORMAT_VERSION = 1
-KNOWN_SCHEMA = 14                    # the section checks below know the settings as of this schema (14 changed none of them)
+KNOWN_SCHEMA = 14                    # the section checks below know the settings as of this schema (14 changed none of them; "ndi" and "recovery" came without a schema change)
 MAX_IMPORT = 1024 * 1024             # bytes: a full mapper with every saved mapping is well under this
 MAX_NUMBER_DIGITS = 40
 MAX_DEPTH = 24
 # never exported, never imported. "controller_code" (D61) is a way to hand out access, so a file cannot switch it on
-NEVER = ("auth", "devices", "support", "support_log", "controller_code", "guest_controls")
+NEVER = ("auth", "devices", "support", "support_log", "controller_code", "guest_controls", "ndi_discovery")      # ndi_discovery (D85): which network a listener is on belongs to this box
 ENVELOPE = ("format", "format_version", "exported", "version", "box", "passwords_included", "settings", "themes")
 KEEP_IMPORT_BACKUPS = 3
 KEEP_SESSION_BACKUPS = 3          # copies of the settings from before a support session's first import, one per session
@@ -210,6 +210,14 @@ def check_pads(v, care):
                     if not shaderlive_mod.name_ok(pad["preset"]):
                         raise ValueError("a pad's preset must be a name of 1 to 40 characters")
                     item["preset"] = pad["preset"]
+            elif pad.get("ndi") not in (None, ""):
+                # A pad that holds an NDI source (D62): the id alone, checked as an id and not looked up. Whether it
+                # is allowed on this box is asked when the pad is pressed (the file's `ndi` section says which are).
+                if item["file"] != "":
+                    raise ValueError("a pad holds a clip or an NDI source, not both")
+                if not isinstance(pad["ndi"], str) or not ndi_mod._ID.fullmatch(pad["ndi"]):
+                    raise ValueError("a pad's NDI source is not a source id")
+                item = {"label": item["label"], "file": "", "ndi": pad["ndi"]}
             clean.append(item)
         name = _text(bank.get("name", ""), 40, "a bank name")
         if not name:
@@ -471,6 +479,11 @@ def check_room(v, care):
     return room_mod.validate(_obj(v))
 
 
+def check_ndi(v, care):
+    """The addresses the NDI input also asks for sources, by its own rules (private IPv4 literals, a bounded list)."""
+    return ndi_mod.validate_saved(v)
+
+
 def check_recovery(v, care):
     """The stick switch only (D81). The code hashes belong to one box: never in a file, never taken from one."""
     on = _obj(v).get("usb", True)
@@ -484,7 +497,7 @@ SECTIONS = (("pads", check_pads), ("modules", check_modules), ("theme", check_th
             ("schedule", check_schedule), ("streams", check_streams), ("control", check_control),
             ("autostart", check_autostart), ("audio", check_audio), ("overlay", check_overlay),
             ("projectors", check_projectors), ("mapper", check_mapper), ("sync", check_sync), ("shaders", check_shaders),
-            ("room", check_room), ("recovery", check_recovery))
+            ("room", check_room), ("recovery", check_recovery), ("ndi", check_ndi))
 # D84. An import through a support session of the Owner's role takes every section but these, which are set by
 # routes no support session may use (support.REMOTE_DENY_PREFIX): the file's part is dropped, the box's own stays.
 # REMOTE_SETS says, for every section, the route that sets it at the panel: a test holds each one that is not in
@@ -493,10 +506,10 @@ REMOTE_KEPT = ("recovery",)
 REMOTE_SETS = {"pads": "/api/pads", "modules": "/api/modules/*", "theme": "/api/theme", "mix": "/api/mix", "osc": "/api/osc",
                "schedule": "/api/schedule", "streams": "/api/streams", "control": "/api/midi", "autostart": "/api/autostart",
                "audio": "/api/audio", "overlay": "/api/overlay", "projectors": "/api/projectors", "mapper": "/api/mapper",
-               "sync": "/api/sync", "shaders": "/api/shaders", "room": "/api/room", "recovery": "/api/recovery/usb"}
+               "sync": "/api/sync", "shaders": "/api/shaders", "room": "/api/room", "recovery": "/api/recovery/usb", "ndi": "/api/ndi"}
 CHECK_ERRORS = (ValueError, KeyError, TypeError, AttributeError, osc_mod.OscError, streams_mod.StreamError,
                 scheduler_mod.ScheduleError, dmx_mod.DmxError, midi_mod.MidiError, autostart_mod.AutostartError,
-                projector_mod.ProjectorError, themes_mod.ThemeError, room_mod.RoomError)
+                projector_mod.ProjectorError, themes_mod.ThemeError, room_mod.RoomError, ndi_mod.NdiError)
 
 
 def _printable(v):
@@ -902,6 +915,40 @@ class BoxCare:
         that show an access code (none added or changed, and the standard layouts stay as switched here). Changed
         in `clean`; returns what was left as the box has it."""
         kept, current, api = [], self.settings.data, self.api
+        from . import support as support_mod
+        if "modules" in clean:              # a file switches on no module that a session may not switch on (off is allowed)
+            wants = clean["modules"].get("enabled") or {}
+            have = (current.get("modules") or {}).get("enabled") or {}
+            for mid in sorted(support_mod.REMOTE_NO_MODULE_ON):
+                if wants.get(mid) and not have.get(mid):
+                    wants[mid] = False
+                    kept.append("modules.%s" % mid)
+                    notes.append("%s: not switched on by a file through remote support; left off" % mid)
+        if "ndi" in clean:
+            # NDI (D85): no address to ask for sources and no discovery server that is not on one of the box's own
+            # networks now (the tunnel never counts), unless the box has it already; and the switch that points the
+            # input at this box's own discovery server, whose routes no session may use, is not set by a file.
+            mine = current.get("ndi") or {}
+            own = [i.network for i in api.osc.local_nets()] if getattr(api, "osc", None) is not None else []
+
+            def local(text):
+                try:
+                    addr = ipaddress.IPv4Address(str(text).partition(":")[0])
+                except ValueError:
+                    return False
+                return any(addr in net for net in own)
+            for part in ("addresses", "discovery"):
+                had = list(mine.get(part) or [])
+                if any(a not in had and not local(a) for a in clean["ndi"].get(part, [])):
+                    clean["ndi"][part] = had
+                    kept.append("ndi.%s" % part)
+                    notes.append("NDI: an address that is not on one of this box's own networks is not added through remote support; %s left as this box has them" % part)
+            if clean["ndi"].get("own_discovery") and not mine.get("own_discovery"):
+                clean["ndi"].pop("own_discovery")
+                if "own_discovery" in mine:
+                    clean["ndi"]["own_discovery"] = mine["own_discovery"]
+                kept.append("ndi.own_discovery")
+                notes.append("NDI: using this box's own discovery server is not switched on by a file through remote support")
         if "osc" in clean:
             mine = list((current.get("osc") or {}).get("allow") or [])
             if api.remote_allow_refused(clean["osc"].get("allow", []), mine):

@@ -149,7 +149,7 @@ class Player:
     _effect, _effect_pid, effect_serial, effect_ended, effect_8bit, clears = None, None, 0, "", False, 0
     cleared_by, _seen_pid, _new_expected = "", None, False
     _pid_lock = locks.make("player.pid")
-    _pipe, _pipe_pid = False, None      # a live input's pipe is what was loaded last, and the mpv it was loaded into
+    _pipe, _pipe_pid, _pipe_path = False, None, None      # a live input's pipe is what was loaded last, the mpv it was loaded into, and which pipe
 
     def __init__(self, mpv_bin="mpv", extra_args=None, rundir=None):
         self.mpv_bin = mpv_bin
@@ -205,6 +205,11 @@ class Player:
         ended it): its screen began empty, which is a clearing for whatever was asked for before (see `clears`).
         Every play and every status asks for the pid, so it is noticed by whoever comes first."""
         with self._pid_lock:                # status polls come from several threads, unlocked: one restart is counted once
+            if self._seen_pid is None or pid != self._seen_pid:
+                if self._own_start:         # a player this side has just started: fresh, with nothing to widen (and
+                    self._own_start = False     # maybe still making its window: not a moment to wait on six answers)
+                else:
+                    self._widen_due = True  # a player this Player has not spoken to yet: see _widen
             if self._seen_pid is not None and pid != self._seen_pid:
                 if self._new_expected:
                     # The panel itself ended the old one (quit), which was counted then. A wish made since is for
@@ -216,7 +221,27 @@ class Player:
                     self.clears += 1
                     self.cleared_by = "restart"
             self._seen_pid = pid
+        if self._widen_due and not self._pipe_loading:
+            self._widen()
         return pid
+
+    _widen_due, _pipe_loading, _own_start = False, False, False
+
+    def _widen(self):
+        """The narrowing for the NDI stream with sound (MKV_ONLY) is a property of the whole mpv, taken back from an
+        in-memory list (_pipe_globals). A panel that restarted while such a source was on the screen has no list, and
+        mpv would keep refusing every decoder but raw video ("Failed to initialize a decoder" for every clip) until
+        the player restarted (the review of 2026-10-11, M1). So at this Player's first word with a player, and again
+        whenever the player is another process, the defaults are sent for every MKV_ONLY key, whatever this side
+        remembers; not in the middle of a pipe load, which narrows on purpose (the load's own words come last)."""
+        try:
+            for k in self.MKV_ONLY:
+                self.ipc.request("set_property", k, self.PIPE_DEFAULTS[k])
+        except PlayerError:
+            return                          # the player is not answering: tried again at the next word with it
+        self._widen_due = False
+        if getattr(self, "_pipe_globals", None):
+            self._pipe_globals = [k for k in self._pipe_globals if k not in self.MKV_ONLY] or None
 
     def mpv_command(self, audio_device=None, windowed=False):
         args = [self.mpv_bin, "--idle=yes", "--input-ipc-server=" + self.socket_path,
@@ -260,6 +285,7 @@ class Player:
             raise PlayerError("mpv not found; install it (sudo apt install mpv)")
         self._proc = proc
         self.ipc.patient_until = time.monotonic() + START_GRACE     # a player that is coming up is given time to answer
+        self._own_start = True                                      # its first pid is a fresh process's: nothing to widen (_note_pid)
         with open(self.pid_path, "w") as f:
             f.write(str(proc.pid))
         deadline = time.monotonic() + 10
@@ -316,31 +342,93 @@ class Player:
         self.ipc.request("set_property", "loop-file", "inf" if (looping and single) else "no")
         self.ipc.request("set_property", "loop-playlist", "inf" if (looping and not single) else "no")
 
+    # What a live input set for the whole player is taken back to: mpv's own defaults (this player starts mpv with
+    # none of these on its command line).
+    PIPE_DEFAULTS = {"demuxer": "", "cache": "auto", "demuxer-readahead-secs": 1, "demuxer-max-bytes": "150MiB",
+                     "vd": "", "ad": "", "sid": "auto", "ordered-chapters": "yes", "cover-art-auto": "exact", "embeddedfonts": "yes"}
+
     def _undo_pipe_globals(self):
-        """Take back the options a live input set for the whole player on an old mpv."""
+        """Take back the options a live input set for the whole player. One that could not be taken back is kept
+        on the list and tried again before the next thing is loaded."""
         if getattr(self, "_pipe_globals", None):
+            left = []
             for k in self._pipe_globals:
                 try:
-                    self.ipc.request("set_property", k, {"demuxer": "", "cache": "auto", "demuxer-readahead-secs": 1,
-                                                         "demuxer-max-bytes": "150MiB"}.get(k, 0 if "rawvideo-w" in k or "rawvideo-h" in k else ""))
+                    self.ipc.request("set_property", k, self.PIPE_DEFAULTS.get(k, 0 if "rawvideo-w" in k or "rawvideo-h" in k else ""))
                 except PlayerError:
-                    pass
-            self._pipe_globals = None
+                    left.append(k)
+            self._pipe_globals = left or None
 
-    def play_pipe(self, path, width, height, fps):
-        """Play raw YUYV frames from a pipe (a live input read by a separate helper; see pvj/capture.py)."""
+    PIPE_FORMATS = ("yuyv422", "uyvy422", "matroska")
+
+    # The NDI helper's stream with sound is Matroska, read by mpv's own Matroska reader. The helper is the part
+    # that could be taken over (it runs a closed library on bytes from the network), and a Matroska stream can name
+    # any codec, subtitles, fonts and other files. So for that one load the player is narrowed to what the stream
+    # may hold, and everything else in it is left undecoded:
+    #   vd / ad: a list of decoders that ends in "-" has no fallback (common/codecs.c, mp_select_decoders, the
+    #     same at v0.35.0, v0.37.0 and v0.40.0: a decoder is taken only if it is on the list AND is for the track's
+    #     codec, and "-" stops the rest from being added). mpv's reader calls "V_UNCOMPRESSED" the codec
+    #     "rawvideo" and "A_PCM/FLOAT/IEEE" with 32 bits "pcm_f32le" (demux/demux_mkv.c, demux/codec_tags.c). A track
+    #     of any other codec gets "Failed to initialize a decoder" and is not played.
+    #   sid=no: no subtitle track is chosen, so no subtitle decoder and no font of the stream is ever used
+    #     (embeddedfonts=no says the second half again).
+    #   ordered-chapters=no: chapters that name other files ("segment linking") are not followed.
+    #   cover-art-auto=no: a stream that says it has no picture does not make mpv look for a picture file beside
+    #     the pipe, in a folder the helper can write to.
+    # Already off for everything this player plays (mpv_command): sub-auto, audio-file-auto, access-references.
+    # They are set as properties, on every mpv, before the load (a property that mpv refuses refuses the load),
+    # and taken back before the next thing is loaded (_undo_pipe_globals), as the pipe's options are on mpv 0.35.
+    MKV_ONLY = {"vd": "rawvideo,-", "ad": "pcm_f32le,-", "sid": "no", "ordered-chapters": "no", "cover-art-auto": "no",
+                "embeddedfonts": "no"}
+
+    @staticmethod
+    def pipe_queue(width, height, fps):
+        """How much the player may hold of the helper's stream with sound, as mpv writes it ("124MiB").
+
+        mpv's limit (demuxer-max-bytes) is one total for the picture's and the sound's packets together, and when
+        it is reached while one of them has nothing waiting, mpv says "Too many packets in the demuxer packet
+        queues" and plays on as if that one had ended (demux/demux.c, the same at v0.35.0, v0.37.0 and v0.40.0):
+        the sound would cut out. The sound in the pipe trails the picture by a block's length (ndi.MAX_AUDIO_BLOCK,
+        a quarter of a second at most), and the player keeps some sound ahead for its device (0.2 s by default),
+        and the picture is uncompressed (2 bytes a pixel). So: one second of picture, never under the 32 MiB bare
+        frames get, never over 256 MiB."""
+        need = 2 * int(width) * int(height) * float(fps)
+        return "%dMiB" % max(32, min(256, int(need / (1024 * 1024)) + 1))
+
+    def play_pipe(self, path, width, height, fps, fmt="yuyv422"):
+        """Play raw frames from a pipe (a live input read by a separate helper): YUYV from a capture device
+        (pvj/capture.py), UYVY from the NDI helper (pvj/ndi.py), whose rate may be a fraction such as 59.94; or,
+        with fmt "matroska", the NDI helper's stream of frames and sound (the size and rate are then the stream's)."""
+        if fmt not in self.PIPE_FORMATS:
+            raise PlayerError("unknown pipe format")
         with self._lock:
             self._end_source()
             self._pipe = False
-            self._play_pipe(path, width, height, fps)       # raises if the pipe was not loaded: then it is not what plays
-            self._pipe, self._pipe_pid = True, self.ipc.request("get_property", "pid")
+            self._play_pipe(path, width, height, fps, fmt)       # raises if the pipe was not loaded: then it is not what plays
+            self._pipe, self._pipe_pid, self._pipe_path = True, self.ipc.request("get_property", "pid"), path
 
-    def _play_pipe(self, path, width, height, fps):
+    def _play_pipe(self, path, width, height, fps, fmt="yuyv422"):
         if not self.is_running():
             raise PlayerError("player service is not running (systemctl start pvj-player)")
+        self._undo_pipe_globals()
         opts = {"demuxer": "rawvideo", "demuxer-rawvideo-w": int(width), "demuxer-rawvideo-h": int(height),
-                "demuxer-rawvideo-mp-format": "yuyv422", "demuxer-rawvideo-fps": int(fps), "cache": "no",
+                "demuxer-rawvideo-mp-format": fmt, "demuxer-rawvideo-fps": int(fps) if fps == int(fps) else round(float(fps), 3), "cache": "no",
                 "demuxer-readahead-secs": 0, "demuxer-max-bytes": "32MiB"}
+        if fmt == "matroska":
+            # The NDI helper's stream with sound (pvj/ndi.py): Matroska that says its own size, rate and times, read
+            # by mpv's own reader, named so that mpv does not spend time guessing. Sound goes the way every clip's
+            # does: this player's device, volume and mute.
+            opts = {"demuxer": "mkv", "cache": "no", "demuxer-readahead-secs": 0, "demuxer-max-bytes": self.pipe_queue(width, height, fps)}
+            self._pipe_globals = []
+            self._pipe_loading = True              # a status poll that meets a new player now must not widen under this load
+            try:
+                for k, v in self.MKV_ONLY.items():
+                    self._pipe_globals.append(k)
+                    self.ipc.request("set_property", k, v)
+            except PlayerError:
+                self._undo_pipe_globals()          # not narrowed: not loaded
+                self._pipe_loading = False
+                raise
         self.ipc.request("set_property", "keep-open", "no")
         self.ipc.request("set_property", "loop-file", "no")
         self.ipc.request("set_property", "loop-playlist", "no")
@@ -348,10 +436,11 @@ class Player:
             self.ipc.request("loadfile", path, "replace", -1, ",".join("%s=%s" % kv for kv in opts.items()))
         except PlayerError:
             # mpv 0.35 (Raspberry Pi OS Bookworm): set them for the player instead, and undo them on the next play
+            self._pipe_globals = (getattr(self, "_pipe_globals", None) or []) + list(opts)
             for k, v in opts.items():
                 self.ipc.request("set_property", k, v)
-            self._pipe_globals = list(opts)
             self.ipc.request("loadfile", path, "replace")
+        self._pipe_loading = False
         self.ipc.request("set_property", "pause", False)
 
     def shuffle(self):
@@ -414,6 +503,12 @@ class Player:
             if not same:
                 self._pipe = False
             return self._pipe
+
+    def pipe_is(self, path):
+        """pipe_playing, and the pipe that plays is `path`: the capture input and the NDI input each have a pipe of
+        their own, and the one's helper must not be left alone because the other's pipe is what plays."""
+        with self._lock:
+            return bool(self.pipe_playing) and self._pipe_path == path
 
     def quit(self):
         """End the mpv process (the service's unit starts a new one). What was loaded goes with it."""

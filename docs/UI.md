@@ -122,6 +122,8 @@ This box: versions, storage, the screen outputs (their modes under Advanced), th
 
 The schedule above has an entry of each kind: projectors on, play a clip, a legacy start script, blackout and projectors off.
 
+NDI input (see [NDI.md](../pvj/NDI.md)), a Setup page beside Streams under Show tools since 2026-10-11 (D62): the senders found on the network with a Play button each (the Operator's), a Sound switch and the addresses the box also asks (the Owner's). On a box that was not set up for NDI the page says so and names the one command; the runtime is never part of the box. While an NDI source, the capture input or a stream plays, the strip's Speed reads "1.00x · live" (the bar shows the Mix speed, kept for the next clip).
+
 Projectors (see [PROJECTORS.md](../pvj/PROJECTORS.md)): one row per projector with one power button that follows its state (Turn on, Warming up..., Turn off, Cooling down...), the input list, and More (blank the picture, mute the sound, name the inputs, check, edit, remove); All on and All off for two or more. The one with a password says so; the password itself is never shown.
 
 ![Projectors card with two projectors](images/ui/projectors.png)

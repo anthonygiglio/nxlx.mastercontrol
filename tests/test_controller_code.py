@@ -695,11 +695,14 @@ class DisplayTest(unittest.TestCase):
 
 class SettingsTest(BoxBase):
     def test_the_migration_adds_it_switched_off_whatever_the_file_said(self):
-        self.assertEqual(settings_mod.SCHEMA, 14)
+        self.assertIn("controller", settings_mod.MIGRATIONS[13].__doc__)        # it is step 13 to 14; later steps (15: the NDI input) follow it
         for before in ({}, {"controller_code": {"enabled": True, "owner": True}}):
             data = dict(before, schema=13)
-            settings_mod.migrate(data)
+            settings_mod.migrate(data, current=14)
             self.assertEqual((data["schema"], data["controller_code"]), (14, {"enabled": False, "owner": False}))
+            data = dict(before, schema=13)
+            settings_mod.migrate(data)                                          # and all the way to today's schema, still off
+            self.assertEqual((data["schema"], data["controller_code"]), (settings_mod.SCHEMA, {"enabled": False, "owner": False}))
         self.assertEqual(settings_mod.default_settings()["controller_code"], {"enabled": False, "owner": False})
 
     def test_a_settings_file_never_carries_it(self):

@@ -42,7 +42,11 @@ REFUSED = {
     ("POST", "/api/system/poweroff"), ("POST", "/api/system/factory-reset"),
     # the confirm of a network change: only someone at the studio can show that the studio still reaches the box
     ("POST", "/api/network/confirm"),
+    # the NDI discovery server on this box (D85): a listener on the network is the owner's, in the room
+    ("GET", "/api/ndi/discovery"), ("POST", "/api/ndi/discovery"),
 }
+# and one module's switch, which the table of routes holds only as /api/modules/*
+REFUSED_MODULES = {("POST", "/api/modules/ndi-discovery")}
 # OPENED by D84 to a support session of the Owner's role: route -> a body the real handler takes.
 OPENED = {
     ("POST", "/api/system/settings/import"): None,          # answered by the server itself: asked through boxcare below
@@ -100,7 +104,7 @@ class TwoListsTest(Base):
     def test_the_refused_list_is_exactly_what_the_guard_refuses_and_every_entry_says_why(self):
         by_guard = {k for k in ROWS if k in sp.REMOTE_DENY or k[1].startswith(sp.REMOTE_DENY_PREFIX)}
         self.assertEqual(sorted(by_guard ^ REFUSED), [], "a route is refused by support.py and not listed here, or the other way round")
-        self.assertEqual(sorted(set(sp.REMOTE_DENY) - set(ROWS)), [], "a refused route that does not exist")
+        self.assertEqual(set(sp.REMOTE_DENY) - set(ROWS), REFUSED_MODULES, "a refused route that does not exist")
         for table in (sp.REMOTE_DENY, sp.REMOTE_DENY_PREFIX_WHY, sp.REMOTE_OWNER_OPENED):
             for key, why in table.items():
                 self.assertTrue(isinstance(why, str) and len(why) > 20, key)
@@ -271,6 +275,99 @@ class EveryChangeTest(Base):
         self.assertEqual([l for l in self.lines[n:] if "remote support support-" in l], [])
         self.h("POST", "/api/pin/show", {}, dev, TUNNEL)            # a refusal is a line of its own kind (the security review)
         self.assertEqual([l for l in self.lines[n:] if "remote support support-" in l], ["pvj-web: remote support support-1: was refused POST /api/pin/show"])
+
+
+class NdiTest(Base):
+    """NDI met D84 in a merge (D85): what a support session may do with it."""
+
+    def test_the_ndi_routes_for_a_session_of_each_role(self):
+        """The discovery server's own routes and its module switch: never, whatever the role. The input's routes follow
+        Streams: a session of the Owner's role as the Owner, below it as before."""
+        self.assertEqual(ROWS[("GET", "/api/ndi/discovery")][VIEW:FULL + 1], (403, 403, 403))
+        self.assertEqual(ROWS[("POST", "/api/ndi/discovery")][VIEW:FULL + 1], (403, 403, 403))
+        self.assertEqual(ROWS[("POST", "/api/ndi")][VIEW:FULL + 1], ROWS[("POST", "/api/streams")][VIEW:FULL + 1])
+        self.assertEqual(ROWS[("GET", "/api/ndi")][FULL], 200)
+        for role in ("view", "live", "full"):
+            dev = self.session(role)
+            for method, path, body in (("GET", "/api/ndi/discovery", {}), ("POST", "/api/ndi/discovery", {"on": True}),
+                                       ("POST", "/api/modules/ndi-discovery", {"enabled": True}), ("POST", "/api/modules/ndi-discovery", {"enabled": False})):
+                self.assertEqual(self.remote(method, path, body, dev)[0], 403, (role, path))
+        self.assertIn("was refused POST /api/modules/ndi-discovery", self.did())
+
+    def test_a_session_switches_the_ndi_input_off_and_never_on(self):
+        """Decided: switching the NDI input on makes the box listen to senders on the network and run NDI's library,
+        which stays after the session; switching it off takes something away and is allowed."""
+        calls = []
+        self.api.registry.set_enabled = lambda mid, on: calls.append((mid, on))
+        dev = self.session("full")
+        st, out = self.remote("POST", "/api/modules/inputs-ndi", {"enabled": True}, dev)
+        self.assertEqual(st, 403, out)
+        self.assertIn("remote support", out["error"])
+        self.assertEqual(calls, [])
+        self.assertIn("was refused switching on a module", self.did())
+        self.assertEqual([d["some"] for d in self.settings.data["support_log"][0]["major"] if "module" in d["what"]], [["inputs-ndi"]])
+        self.assertEqual(self.remote("POST", "/api/modules/inputs-ndi", {"enabled": False}, dev)[0], 200)
+        self.assertEqual(self.remote("POST", "/api/modules/streams", {"enabled": True}, dev)[0], 200, "another module is his as before")
+        self.assertEqual(self.h("POST", "/api/modules/inputs-ndi", {"enabled": True}, self.full_dev)[0], 200, "at the studio the Owner switches it on")
+        self.assertEqual(calls, [("inputs-ndi", False), ("streams", True), ("inputs-ndi", True)])
+        with self.assertRaises(ApiError) as e:              # and the handler itself, whatever the gate
+            self.api.set_module("inputs-ndi", {"enabled": True}, dev, TUNNEL)
+        self.assertEqual(e.exception.status, 403)
+
+    def test_a_file_switches_neither_ndi_module_on_for_a_session(self):
+        dev = self.session("full")
+        file = self.export()
+        clean = {"modules": {"enabled": {"inputs-ndi": True, "ndi-discovery": True, "shaders": True}}}
+        with self.settings.lock:
+            self.settings.data["modules"]["enabled"].update({"inputs-ndi": False, "ndi-discovery": False, "shaders": False})
+        notes = []
+        kept = self.care._remote_parts(clean, notes)
+        self.assertEqual(clean["modules"]["enabled"], {"inputs-ndi": False, "ndi-discovery": False, "shaders": True})
+        self.assertEqual(sorted(k for k in kept if k.startswith("modules")), ["modules.inputs-ndi", "modules.ndi-discovery"])
+        # one that is on here stays on, and a file may switch it off
+        with self.settings.lock:
+            self.settings.data["modules"]["enabled"]["inputs-ndi"] = True
+        for wants in (True, False):
+            clean = {"modules": {"enabled": {"inputs-ndi": wants}}}
+            self.assertEqual(self.care._remote_parts(clean, []), [])
+            self.assertIs(clean["modules"]["enabled"]["inputs-ndi"], wants)
+        # through the whole import, and for the owner in the room it stays as it is
+        with self.settings.lock:
+            self.settings.data["modules"]["enabled"]["inputs-ndi"] = False
+        file["settings"]["modules"]["enabled"]["inputs-ndi"] = True
+        for who, client, on in ((dev, TUNNEL, False), (self.full_dev, LAN, None)):
+            seen = []
+            real = self.care._remote_parts
+            self.care._remote_parts = lambda clean, notes: seen.append(1) or real(clean, notes)
+            try:
+                self.care.import_settings(json.dumps(file).encode(), "import", who, client)
+            finally:
+                self.care._remote_parts = real
+            self.assertEqual(len(seen), 1 if who is dev else 0)
+            if on is False:
+                self.assertFalse(self.settings.data["modules"]["enabled"].get("inputs-ndi", False))
+
+    def test_a_file_adds_no_ndi_address_or_discovery_server_off_the_boxes_own_networks(self):
+        self.api._ip_json = lambda: [{"ifname": "eth0", "addr_info": [{"family": "inet", "local": "192.168.1.5", "prefixlen": 24}]},
+                                     {"ifname": "wg-pvj", "addr_info": [{"family": "inet", "local": "10.77.0.5", "prefixlen": 24}]}]
+        with self.settings.lock:
+            self.settings.data["ndi"] = {"addresses": ["10.9.9.9"], "discovery": ["10.9.9.8:5959"]}
+        for part, bad, ok in (("addresses", ["10.9.9.9", "10.77.0.9"], ["10.9.9.9", "192.168.1.40"]),
+                              ("addresses", ["172.16.3.3"], []),
+                              ("discovery", ["10.9.9.8:5959", "10.77.0.9:5959"], ["10.9.9.8:5959", "192.168.1.41", "192.168.1.42:5960"]),
+                              ("discovery", ["192.168.2.5"], ["10.9.9.8:5959"])):
+            clean = {"ndi": {"addresses": ["10.9.9.9"], "discovery": ["10.9.9.8:5959"]}}
+            clean["ndi"][part] = list(bad)
+            kept = self.care._remote_parts(clean, [])
+            self.assertEqual(kept, ["ndi." + part], bad)
+            self.assertEqual(clean["ndi"][part], self.settings.data["ndi"][part], "the box's own list stays")
+            clean["ndi"][part] = list(ok)
+            self.assertEqual(self.care._remote_parts(clean, []), [], ok)
+            self.assertEqual(clean["ndi"][part], ok)
+        clean = {"ndi": {"addresses": [], "own_discovery": True}}
+        self.assertEqual(self.care._remote_parts(clean, []), ["ndi.own_discovery"], "nor point the input at a discovery server on this box that he cannot switch")
+        self.assertNotIn("own_discovery", clean["ndi"])
+        self.assertEqual(boxcare.REMOTE_SETS["ndi"], "/api/ndi")
 
 
 class SecondReviewTest(Base):
