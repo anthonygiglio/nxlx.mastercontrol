@@ -1168,6 +1168,18 @@ class Receiver:
             while self._peaks and now - self._peaks[0][0] > 1.0:
                 self._peaks.popleft()
             if self._apts is None:
+                # The stream's first block of sound began before the stream did (a block comes when its last
+                # sample exists). Its time cannot be below 0, so the part of it from before the stream is cut off:
+                # written whole at 0 it was up to a block's length early against the picture (a quarter of a
+                # second with the longest blocks), until the count was put right a block later.
+                early = self._t0 + n / float(rate) - now
+                if here == 0.0 and early > 0:
+                    k = min(n, int(round(early * rate)))
+                    if k >= n:                     # all of it is from before the stream: the next begins at 0
+                        self.audio_counts["dropped"] += 1
+                        self._apts = 0.0
+                        return
+                    data, n = data[4 * planes * k:], n - k
                 self._apts = here
             lead = self._apts - here
             if lead < -AUDIO_WINDOW:
@@ -1325,12 +1337,36 @@ class Receiver:
             if mkv and not self._write(fd, mkv_header(self.format[0], self.format[1], self.format[2],
                                                       (self.audio["rate"], self.audio["played"]))):
                 return
+            shown_at = -1.0
+            kept, kept_at = None, 0.0              # with sound: the picture written last, until another follows it
+            if mkv:
+                # The stream's time 0 is the moment its first picture has gone THROUGH the pipe, not the moment the
+                # pipe was opened. A player may open the pipe and read nothing for seconds (it is still setting up
+                # its screen or its sound device; the pipe holds a quarter of one 1080p picture). Counting from the
+                # opening, the first picture had the time 0 and everything after it the seconds the player took:
+                # a stream that begins with a hole between its first picture and its first sound, which a player
+                # that lines sound up with the picture waits out, late by that much for as long as the source is
+                # shown. Sound from before this moment is not kept (as sound from before the pipe never was).
+                with self._cond:
+                    while self._pending is None and not self._stop.is_set():
+                        self._cond.wait(0.25)
+                    buf, self._pending = self._pending, None
+                if buf is None:
+                    return
+                ok = self._write_frame(fd, buf, 0.0)
+                with self._cond:
+                    if ok:
+                        self.counts["shown"] += 1
+                        # again at once (see below, where every other picture is kept)
+                        kept, kept_at, shown_at = buf, self._clock() - STILL_AGAIN_SECONDS, 0.0
+                    else:
+                        self._free.append(buf)
+                if not ok:
+                    return
             with self._cond:
                 self._t0 = self._clock()
                 if self.state == "ready":
                     self.state = "playing"
-            shown_at = -1.0
-            kept, kept_at = None, 0.0              # with sound: the picture written last, until another follows it
             while not self._stop.is_set():
                 blocks, buf, at, fill, again = (), None, 0.0, None, False
                 with self._cond:

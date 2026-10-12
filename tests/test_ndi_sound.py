@@ -441,6 +441,7 @@ class ReceiverSoundTest(Base):
             self.lib.sounds.put(bad)
         self.assertTrue(wait(lambda: r.status()["audio"]["counts"]["refused"] == 4))
         self.assertIn("could not be read", r.status()["audio"]["problem"])
+        self.now[0] += 0.01                                                              # a block that lies after the stream's beginning
         nan = sound(480, planes=[[float("nan")] * 480, [0.5] * 480])
         self.lib.sounds.put(nan)
         self.assertTrue(wait(lambda: r.status()["audio"]["counts"]["silenced"] == 1))
@@ -600,6 +601,95 @@ class ReceiverSoundTest(Base):
         self.now[0] += 3.0
         time.sleep(0.4)
         self.assertEqual(bytes(self.got), bytes([1]) * 2048)
+
+    # ---- picture and sound in step: what the SENDER made at one moment has one time in the stream ---------------
+    def sender(self, n, seconds, jitter=(), w=64, h=16, begin=0.0, stalled=0.0):
+        """Play a sender into the helper by the test's clock: picture k is made at k/30 s and comes at once; block j
+        of sound holds the samples from j*n/48000 on and comes when its last sample exists (plus `jitter`, in turn).
+        Each says in its content when the sender made it: the picture's bytes are k, the sound's samples are j.
+        With `stalled`, the reader takes nothing for that long after it opened the pipe.
+        Returns [(picture's time in the stream minus the sender's)], [(the same for each block of sound)]."""
+        length = n / 48000.0
+        r = self.receiver()
+        r.start()
+        base = self.now[0]
+        self.lib.frames.put(frame(w, h, fill=255))                   # the picture from before the pipe: not one of the counted
+        self.lib.sounds.put(sound(n, planes=[[0.0] * n] * 2))
+        self.assertTrue(r.first.wait(3))
+        self.assertEqual(r.decide(), "matroska")
+        if stalled:
+            self.stall.set()
+        self.read()
+        if not stalled:
+            self.assertTrue(wait(lambda: r.status()["state"] == "playing"))
+        events = sorted([(k / 30.0, 0, k) for k in range(1, int(seconds * 30))] +
+                        [((j + 1) * length + (jitter[j % len(jitter)] if jitter else 0.0), 1, j) for j in range(int(seconds / length))])
+        for t, kind, i in events:
+            if t < begin:
+                continue
+            if stalled and t >= stalled and self.stall.is_set():
+                self.stall.clear()
+                self.assertTrue(wait(lambda: r.status()["state"] == "playing"))
+            self.now[0] = base + t
+            if kind == 0:
+                self.lib.frames.put(frame(w, h, fill=1 + i % 250))
+                wait(lambda: self.lib.frames.qsize() == 0 and (r._pending is None or self.stall.is_set()), 2)
+            else:
+                self.lib.sounds.put(sound(n, planes=[[i / 1000.0] * n] * 2))
+                wait(lambda: self.lib.sounds.qsize() == 0, 2)
+            time.sleep(0.004)
+        self.assertTrue(wait(lambda: r._pending is None and not r._queue, 5))
+        time.sleep(0.1)
+        got = self.stream(whole=True)
+        # The stream's first picture is whatever was newest when the player began to read: it has the time 0 by
+        # definition and is older than that (it is shown until the next one comes). It is not one of the counted.
+        pictures, sounds, seen = [], [], {next(data[0] for track, _, data in got if track == 1)}
+        for track, when, data in got:
+            if track == 1 and data[0] != 255 and data[0] not in seen:                    # a picture written again is the same picture
+                seen.add(data[0])
+                k = next(i for t, kind, i in events if kind == 0 and 1 + i % 250 == data[0] and abs(i / 30.0 - when) < 4.0 + stalled)
+                pictures.append((when - k / 30.0, when, k))
+            elif track == 2:
+                j = int(round(floats(data)[0] * 1000.0 / ndi.AUDIO_GAIN))
+                if any(floats(data)[:1]) or j:
+                    cut = n - len(data) // 8                         # samples taken off its front: it begins that much later
+                    sounds.append((when - j * length - cut / 48000.0, when, j))
+        return pictures, sounds, got
+
+    def in_step(self, pictures, sounds, bound):
+        """Every picture and every block of sound stands as far from the sender's time as the others, within `bound`."""
+        self.assertGreater(len(pictures), 20)
+        self.assertGreater(len(sounds), 5)
+        middle = sorted(x[0] for x in sounds)[len(sounds) // 2]
+        worst_picture = max(pictures, key=lambda x: abs(x[0] - middle))
+        worst_sound = max(sounds, key=lambda x: abs(x[0] - middle))
+        self.assertLessEqual(abs(worst_picture[0] - middle), bound, ("picture", worst_picture, middle))
+        self.assertLessEqual(abs(worst_sound[0] - middle), bound + ndi.AUDIO_SYNC, ("sound", worst_sound, middle))
+
+    def test_what_the_sender_made_at_one_moment_has_one_time_in_the_stream_whatever_the_blocks_length(self):
+        """Proof of the stream itself, which mpv's own `avsync` cannot give: that number says how well mpv keeps to
+        the times in the stream, not whether the helper gave picture and sound of one moment the same time."""
+        for n in (1024, 1600, 4800, 12000):
+            with self.subTest(samples=n):
+                pictures, sounds, _ = self.sender(n, 3.0)
+                self.in_step(pictures, sounds, 0.002)
+            self.r.close()
+            self.setUp()
+
+    def test_sound_that_comes_unevenly_stays_in_step_with_the_picture(self):
+        pictures, sounds, _ = self.sender(1600, 4.0, jitter=(0.0, 0.012, -0.008, 0.02, 0.003, -0.012))
+        self.in_step(pictures, sounds, 0.025)                        # as far as the unevenness itself, never more and more
+
+    def test_a_player_that_reads_nothing_for_seconds_after_opening_the_pipe_gets_a_stream_that_begins_whole(self):
+        """The stream's clock began when the pipe was opened: a player that then read nothing for 4.7 seconds was
+        given a first picture at time 0, and the next picture and the first sound seconds after it."""
+        pictures, sounds, got = self.sender(4800, 6.5, w=640, h=360, stalled=4.7)
+        first_picture = next(when for track, when, _ in got if track == 1)
+        first_sound = next(when for track, when, _ in got if track == 2)
+        self.assertEqual(first_picture, 0.0)
+        self.assertLess(first_sound, 0.3, "the first sound is stamped seconds after the first picture")
+        self.assertLess(min(when for _, when, _ in pictures), 0.3, "the first new picture is stamped seconds after the first")
+        self.in_step(pictures, sounds, 0.002)
 
     def test_a_still_picture_with_sound_is_one_frame_and_the_sound_goes_on(self):
         """What Test Patterns is: one picture, then only its tone."""
