@@ -37,6 +37,7 @@ box with no added themes has no such part, and is the file earlier versions wrot
 """
 
 import contextlib
+import hashlib
 import copy
 import ipaddress
 import json
@@ -64,6 +65,7 @@ MAX_DEPTH = 24
 NEVER = ("auth", "devices", "support", "support_log", "controller_code", "guest_controls")
 ENVELOPE = ("format", "format_version", "exported", "version", "box", "passwords_included", "settings", "themes")
 KEEP_IMPORT_BACKUPS = 3
+KEEP_SESSION_BACKUPS = 3          # copies of the settings from before a support session's first import, one per session
 LOG_UNITS = ("pvj-web.service", "pvj-player.service", "pvj-sysd.service", "pvj-netd.service", "pvj-supportd.service")
 LOG_LINES, LOG_LINE_MAX = 300, 400
 CONFIRM_IMPORT, CONFIRM_RESET = "import", "factory-reset"
@@ -805,12 +807,29 @@ class BoxCare:
                 return False
             full = less
 
-    def _backup(self):
-        """The settings as they are now, beside the file, for whoever wants them back (mode 0600; the last few)."""
-        path = "%s.before-import-%d" % (self.settings.path, int(self._now()))
+    def _backup(self, session=None):
+        """The settings as they are now, beside the file, for whoever wants them back (mode 0600; the last few).
+
+        `session`: the id of the support session whose login is importing (D84, the security review: three imports
+        by a helper pushed the owner's own copies out). A session's copies are kept apart and never remove one of
+        the owner's: the first import of a session keeps the settings as they were before that session touched
+        them (`.before-support-session-<id>-<time>`, one per session, the last KEEP_SESSION_BACKUPS sessions, so
+        only a new session, which someone at the studio starts, can push one out), and its later imports turn over
+        among themselves (`.before-support-import-<time>`, the last KEEP_IMPORT_BACKUPS)."""
+        now = int(self._now())
+        if session is None:
+            suffix, name, keep = ".before-import-", ".before-import-%d" % now, KEEP_IMPORT_BACKUPS
+        elif not any((".before-support-session-%s-" % session) in p for p in self._siblings(".before-support-session-")):
+            suffix, name, keep = ".before-support-session-", ".before-support-session-%s-%d" % (session, now), KEEP_SESSION_BACKUPS
+        else:
+            suffix, name, keep = ".before-support-import-", ".before-support-import-%d" % now, KEEP_IMPORT_BACKUPS
+        path = self.settings.path + name
         self.settings._write(path, self.settings.data)
-        for old in self._siblings(".before-import-")[:-KEEP_IMPORT_BACKUPS]:
-            self._unlink(old)
+        old = self._siblings(suffix)
+        if session is not None and suffix == ".before-support-session-":
+            old = sorted(old, key=lambda p: (int(p.rsplit("-", 1)[-1]) if p.rsplit("-", 1)[-1].isdigit() else 0, p))    # by time, not by id
+        for gone in old[:-keep]:
+            self._unlink(gone)
         return os.path.basename(path)
 
     def _siblings(self, suffix):
@@ -871,8 +890,10 @@ class BoxCare:
         with self._busy("an import"):
             out = self._import(raw, device, remote)
         if remote:
-            self.api.support.note(device, "imported a settings file%s; taken: %s" % (
-                "; left as the box has it: %s" % ", ".join(out["kept_for_support"]) if out["kept_for_support"] else "", ", ".join(out["imported"])))
+            # which file it was (its sha256: not a secret) and what it changed, so the owner can tell afterwards
+            self.api.support.note(device, "imported a settings file, sha256 %s; changed: %s%s" % (
+                hashlib.sha256(raw if isinstance(raw, bytes) else str(raw).encode()).hexdigest(), ", ".join(out["changed"]) or "nothing",
+                "; left as the box has it: %s" % ", ".join(out["kept_for_support"]) if out["kept_for_support"] else ""))
         return out
 
     def _remote_parts(self, clean, notes):
@@ -934,8 +955,9 @@ class BoxCare:
                 self._osc_layers(new, current)
             if "recovery" in clean:              # the file's switch beside the box's own codes and events (D81)
                 new["recovery"] = dict(current.get("recovery") or {}, usb=clean["recovery"]["usb"])
+            changed = sorted(k for k in clean if new.get(k) != current.get(k))
             try:
-                backup = self._backup()
+                backup = self._backup(self.api.support.session["id"] if remote and self.api.support.session else None)
             except OSError as e:
                 raise ApiError(500, "could not keep a copy of the present settings, so nothing was changed: %s" % (e.strerror or e))
             previous = copy.deepcopy(current)
@@ -956,7 +978,8 @@ class BoxCare:
         problems += self._apply()
         print("pvj-web: settings imported by %s" % device["name"], flush=True)
         return {"imported": sorted(clean), "notes": notes, "problems": problems, "backup": backup,
-                "passwords_kept": kept, "passwords_in_file": passwords, "themes": themes, "kept_for_support": kept_for_support}
+                "passwords_kept": kept, "passwords_in_file": passwords, "themes": themes, "kept_for_support": kept_for_support,
+                "changed": changed}
 
     # ---- diagnostics -------------------------------------------------------------------------------------------
     def _secrets(self, data):
@@ -1160,7 +1183,7 @@ class BoxCare:
                 api.on_pin(pin)
             with self.settings.lock:                      # the automatic backup would still hold the old devices
                 self.settings._write(self.settings.path + ".bak", self.settings.data)
-            for suffix in (".before-import-", ".bak-v", ".rolled-back-"):
+            for suffix in (".before-import-", ".before-support-session-", ".before-support-import-", ".bak-v", ".rolled-back-"):
                 for path in self._siblings(suffix):
                     if not self._unlink(path):
                         problems.append("could not remove %s" % os.path.basename(path))
