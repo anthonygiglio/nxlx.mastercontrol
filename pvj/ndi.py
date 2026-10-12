@@ -105,6 +105,7 @@ AUDIO_LOST = "lost"                       # what recv_audio answers while the co
 MIN_TURN = 0.1                            # a call into the library that came back with nothing sooner than this is waited out
 AUDIO_SILENT_DB = -70.0                   # a second whose loudest sample is under this is "silent" on the page
 CONTAINERS = ("raw", "matroska")          # what the pipe carries: bare frames (no sound), or frames and sound with times
+PIPE_HELD = "the player still holds the NDI pipe from the picture before"
 PLAYER_LEFT = "the player stopped reading the input"      # something else was played: an end, not a fault
 SOURCES_CACHE = 1.0
 PRIVATE_NETS = tuple(ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"))
@@ -1568,9 +1569,9 @@ class Service:
         source at a time, so a reader that comes after the pipe was seen empty is the one for this source. And a
         pipe nobody holds holds no bytes: nothing of the source before is left in it for the new reader.
 
-        Each look is also a wake (the old reader is given the end again). Bounded: a player that will not let go
-        (paused on the old source, say) does not stop the next source for ever; the writer is then let through as
-        it was before this was written, and the log says so. Returns whether the pipe was seen without a reader."""
+        Each look is also a wake (the old reader is given the end again). Bounded: if the pipe is not seen
+        without a reader in time, the open is refused with the reason (PIPE_HELD) and nothing is written.
+        Returns whether the pipe was seen without a reader."""
         end = time.monotonic() + self._pipe_clear
         while not self._pipe_free():
             if time.monotonic() >= end or r._stop.wait(0.02):
@@ -1650,8 +1651,15 @@ class Service:
                 self._close_receiver()
                 return {"ok": False, "error": st["message"] or "%s sent no picture in %d seconds" % (match[0]["name"], self._first_frame)}
             self.log("pvj-ndi: %s is %d x %d at %s" % ((match[0]["name"],) + r.format))
-            if not self._clear_pipe(r) and r.state not in ENDED:
-                self.log("pvj-ndi: the player still held the pipe %.1f seconds after the source before; writing all the same" % self._pipe_clear)
+            if not self._clear_pipe(r):
+                # Never a new writer while a reader of the source before may be there. The panel, which owns the
+                # player, has it let go before it asks (Player.release_pipe) and asks again (Input.tick).
+                over = r.status()
+                self._close_receiver()
+                if over["state"] in ENDED and over["message"]:      # it ended by itself while the pipe was looked at
+                    return {"ok": False, "error": over["message"]}
+                self.log("pvj-ndi: the player still held the pipe %.1f seconds after the source before; %s is not written" % (self._pipe_clear, match[0]["name"]))
+                return {"ok": False, "error": PIPE_HELD}
             r.go()
             return {"ok": True, "playing": st}
 
@@ -2027,7 +2035,8 @@ class Input:
         cur = self.current
         playing = _playing(st.get("playing")) if cur else None
         ended = dict(self.ended) if self.ended and not cur else None
-        if cur and (playing is None or (playing["id"] == cur["id"] and playing["state"] in ("refused", "stopped"))):
+        if cur and (playing is None or (playing["id"] == cur["id"] and (playing["state"] in ("refused", "stopped")
+                                                                        or (playing["state"] == "changed" and self._retry_said)))):
             # Wanted and not on the screen (the helper is away or started again, the sender is not found, the
             # player lost the pipe): the watch is bringing it back, and the page says why it is not there. Never
             # nothing playing and no reason.
@@ -2123,9 +2132,8 @@ class Input:
         `loaded` (the panel's own record: whether the NDI pipe is what it loaded into the player last) settles
         what "the player stopped reading" means. If the panel loaded something else since, the player went on and
         the source is over, quietly. If the pipe is still what the panel loaded, nothing took the screen: the
-        writer lost a reader that was not the one meant for it (the pipe is one pipe for every source, and a
-        player that would not let go of the source before in time is let through, Service._clear_pipe), and the
-        screen is black with the player waiting on a pipe nobody writes. Then the source is shown again, as after
+        player lost the pipe by itself (it gave up on the stream, or a reader came and went that no load of the
+        panel's accounts for), and the screen is black with the player waiting on a pipe nobody writes. Then the source is shown again, as after
         a change of size. The helper's word alone never decides this; without `loaded` it is as it always was."""
         cur = self.current
         if not cur or self._clock() < self._retry_at:

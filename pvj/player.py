@@ -521,10 +521,22 @@ class Player:
         the panel's own confirmation; the helper has a second one, which needs no word of mpv's: it sees the pipe
         without a reader before it lets the next writer through (ndi.Service._clear_pipe). What the panel loaded
         last stays what it was: this is the beginning of loading that pipe again, not something else taking the
-        screen. Returns True when mpv said it is idle, False when it did not in time (or is down, and holds
-        nothing), None when the pipe is not what was loaded last and nothing was done."""
+        screen.
+
+        Whether mpv holds the pipe is asked of mpv too (its `path`), not only of what this side remembers having
+        loaded: a panel that started again remembers nothing while its mpv still reads the pipe.
+
+        Returns True when mpv said it is idle (or is down, and so holds nothing), False when it did not say so in
+        time (the caller must not go on to a new writer then), None when mpv does not have the pipe and nothing
+        was done."""
         with self._lock:
-            if not (self._pipe and self._pipe_path == path):
+            held = bool(self._pipe and self._pipe_path == path)
+            if not held:
+                try:
+                    held = self.ipc.request("get_property", "path") == path
+                except PlayerError:
+                    held = False                # idle (no path to give) or down: either way it has no pipe
+            if not held:
                 return None
             try:
                 self.ipc.request("stop")
@@ -536,7 +548,7 @@ class Player:
                         return False
                     time.sleep(0.02)
             except PlayerError:
-                return False                # a player that is down holds no pipe
+                return True                 # a player that went down holds no pipe
 
     RELEASE_SECONDS = 1.5
 

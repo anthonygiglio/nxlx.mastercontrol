@@ -3080,6 +3080,7 @@ class Api:
             return {"playing": "ndi", "name": row["name"], "pending": True}
         return go()
 
+    NDI_HELD = "the player did not let go of the NDI picture before; not starting another over it"
     NDI_OVERTAKEN = "something else was played while the source was connecting"
 
     def play_ndi(self, body, again=None):
@@ -3112,12 +3113,11 @@ class Api:
             # new source's writer through only once it has seen the pipe without a reader (Service._clear_pipe),
             # and the player does not reliably let go by itself. The picture of the source before is over either
             # way: the helper closes it as the first thing it does for the new one.
+            # If the player does not confirm that it let go, the helper is not asked at all: no new writer while
+            # an old reader may be there. The press is answered with the reason; the watch tries again.
             release = getattr(self.player, "release_pipe", None)
-            if release is not None:
-                try:
-                    release(self.ndi.fifo)
-                except PlayerError:
-                    pass
+            if release is not None and release(self.ndi.fifo) is False:
+                raise ApiError(409, self.NDI_HELD)
             try:
                 p = self.ndi.open(sid)
             except ndi_mod.NdiError as e:
