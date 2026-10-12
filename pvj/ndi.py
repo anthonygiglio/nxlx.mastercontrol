@@ -1343,8 +1343,19 @@ class Receiver:
                     break
                 if buf is None:
                     continue
+                first = shown_at < 0
                 shown_at = max(shown_at + 0.001, at - self._t0)        # where it arrived; never before the one before it
                 ok = self._write_frame(fd, buf, shown_at)
+                if ok and mkv and first:
+                    # The stream's first picture is written twice, the second a millisecond after the first. A
+                    # source of one still picture and sound (NDI's Test Patterns) otherwise gives the player one
+                    # picture block and then only sound, and mpv does not play that: 0.40 does not finish opening
+                    # the stream (demux_mkv.c, probe_if_image: it reads on for a second picture block with another
+                    # time, up to 10000 blocks, all kept), and 0.37 opens it and stands at time 0 with no sound
+                    # (seen on the Pi and on CI's runner, 2026-10-12). Bare frames are not doubled: the Pi drew a
+                    # still source's one frame without it. Not counted as shown: it is the same picture.
+                    shown_at += 0.001
+                    ok = self._write_frame(fd, buf, shown_at)
                 with self._cond:
                     self._free.append(buf)
                     if ok:

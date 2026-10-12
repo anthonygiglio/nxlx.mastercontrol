@@ -317,13 +317,19 @@ class Base(unittest.TestCase):
         self.assertTrue(wait(lambda: r.status()["state"] == "playing"))
         return r
 
-    def stream(self):
+    def stream(self, whole=False):
         # The reader runs in its own thread: on a slow machine a whole Segment may not have arrived yet when this is
         # asked (CI, 2026-10-11: "NoneType is not iterable" from `blocks`), so it is asked again for up to 3 s.
+        # The stream's first picture is written twice (for the player: see the test of it below). Every other test
+        # here counts the pictures of the SOURCE, so the copy is left out unless `whole` is asked for.
         end = time.monotonic() + 3
         while True:
             try:
-                return blocks(bytes(self.got))
+                got = blocks(bytes(self.got))
+                video = [n for n, b in enumerate(got) if b[0] == 1]
+                if not whole and len(video) >= 2 and got[video[1]][2] == got[video[0]][2] and abs(got[video[1]][1] - got[video[0]][1] - 0.001) < 1e-6:
+                    del got[video[1]]
+                return got
             except (TypeError, ValueError):
                 if time.monotonic() > end:
                     raise
@@ -529,6 +535,30 @@ class ReceiverSoundTest(Base):
         self.assertTrue(wait(lambda: r.status()["audio"]["counts"]["written"] == 1))       # the first real block since the pipe was taken
         audio = [b for b in self.stream() if b[0] == 2]
         self.assertGreaterEqual(audio[-1][1] + 1e-6, audio[-2][1] + len(audio[-2][2]) / 8 / 48000.0)
+
+    def test_the_streams_first_picture_is_there_twice_so_that_a_player_can_begin(self):
+        """mpv does not play a Matroska stream of one picture block and then only sound (Test Patterns with sound on,
+        2026-10-12): 0.40 never finishes opening it (it reads on for a second picture block with another time), and
+        CI's 0.37 stands at time 0 without sound. So the first picture is written again, a millisecond later."""
+        r = self.start_with_sound()
+        self.assertTrue(wait(lambda: len([b for b in self.stream(whole=True) if b[0] == 1]) == 2))
+        for k in range(1, 6):                                                            # then only sound
+            self.now[0] += 0.1
+            self.lib.sounds.put(sound(4800))
+            self.assertTrue(wait(lambda: r.status()["audio"]["counts"]["written"] == k), k)
+        got = self.stream(whole=True)
+        video = [b for b in got if b[0] == 1]
+        self.assertEqual(len(video), 2)                                                  # twice, and never a third time
+        self.assertEqual(video[0][2], video[1][2])
+        self.assertAlmostEqual(video[1][1] - video[0][1], 0.001, places=6)               # another time: that is what the player looks for
+        self.assertEqual([b[0] for b in got[:2]], [1, 1], "the copy must come before any sound")
+        self.assertEqual(r.status()["counts"]["shown"], 1)                               # one picture of the source
+        self.now[0] += 0.033
+        self.lib.frames.put(frame(64, 16, fill=5))                                       # a source that moves is not doubled again
+        self.assertTrue(wait(lambda: len([b for b in self.stream(whole=True) if b[0] == 1]) == 3))
+        last = [b for b in self.stream(whole=True) if b[0] == 1][-1]
+        self.assertEqual(last[2], bytes([5]) * 2048)
+        self.assertGreater(last[1], video[1][1])
 
     def test_a_still_picture_with_sound_is_one_frame_and_the_sound_goes_on(self):
         """What Test Patterns is: one picture, then only its tone."""
