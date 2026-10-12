@@ -996,7 +996,12 @@ class DiagnosticsTest(Base):
                    d["auth"]["pin_hash"], d["auth"]["pin_salt"]] + joins + [x["token_hash"] for x in d["devices"]]
         secrets += list(self.api.support.session["tokens"])
         for secret in secrets:
-            self.assertNotIn(secret, text, secret)
+            if secret.isdigit():
+                # a PIN is four digits, and the file holds long numbers (the time it was made, the disk's bytes) that
+                # can hold the same four by chance: a PIN is in the file only where it stands as a number of its own
+                self.assertIsNone(re.search(r"(?<![0-9])%s(?![0-9])" % re.escape(secret), text), secret)
+            else:
+                self.assertNotIn(secret, text, secret)
         for word in ("token_hash", "pin_hash", "pin_salt", "server_key", '"password"'):
             self.assertNotIn(word, text)
         # and it is still worth reading

@@ -159,7 +159,10 @@ class WholeGroup(unittest.TestCase):
             try:
                 return os.waitpid(pid, os.WNOHANG) != (0, 0)
             except ChildProcessError:
-                return open("/proc/%d/stat" % pid).read().split()[2] == "Z" if os.path.exists("/proc/%d/stat" % pid) else False
+                try:                                         # not our child: gone, or a zombie waiting for its parent
+                    return open("/proc/%d/stat" % pid).read().split()[2] == "Z"
+                except (FileNotFoundError, ProcessLookupError):
+                    return True                              # it went between the two looks
         self.assertTrue(wait(gone, 5), "what the program started is still running")
 
 
