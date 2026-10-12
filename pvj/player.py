@@ -344,7 +344,7 @@ class Player:
 
     # What a live input set for the whole player is taken back to: mpv's own defaults (this player starts mpv with
     # none of these on its command line).
-    PIPE_DEFAULTS = {"demuxer": "", "cache": "auto", "cache-pause": "yes", "demuxer-readahead-secs": 1, "demuxer-max-bytes": "150MiB",
+    PIPE_DEFAULTS = {"demuxer": "", "cache": "auto", "cache-pause": "yes", "initial-audio-sync": "yes", "demuxer-readahead-secs": 1, "demuxer-max-bytes": "150MiB",
                      "vd": "", "ad": "", "sid": "auto", "ordered-chapters": "yes", "cover-art-auto": "exact", "embeddedfonts": "yes"}
 
     def _undo_pipe_globals(self):
@@ -424,7 +424,13 @@ class Player:
             # "for buffering" until a picture came: no sound meanwhile, and afterwards the sound it had kept, as
             # late as the picture stood still, for good (player/playloop.c, handle_update_cache; seen with mpv 0.40
             # on the Pi, 2026-10-12: "Enter buffering", then 12 seconds late after 12 seconds of still).
-            opts = {"demuxer": "mkv", "cache": "no", "cache-pause": "no", "demuxer-readahead-secs": 0,
+            # initial-audio-sync=no: mpv does not begin the sound before the picture has reached the time of the
+            # first sound ("delaying audio start 0.011000 vs. 0.000000"). A picture that stands never reaches it:
+            # on the box (2026-10-12, Test Patterns) the sound device was opened and never given a sample, for
+            # as long as the source was shown; the first sound was 11 ms after the picture, and 4.7 s after it
+            # when sound was switched on under the source (player/audio.c, audio_start_ao). The times in the
+            # stream still decide where each picture goes against the sound; only the wait at the start is gone.
+            opts = {"demuxer": "mkv", "cache": "no", "cache-pause": "no", "initial-audio-sync": "no", "demuxer-readahead-secs": 0,
                     "demuxer-max-bytes": self.pipe_queue(width, height, fps)}
             self._pipe_globals = []
             self._pipe_loading = True              # a status poll that meets a new player now must not widen under this load

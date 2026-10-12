@@ -1198,7 +1198,7 @@ class PlayerSoundTest(unittest.TestCase):
         p.play_pipe("/run/pvj-ndi/ndi.fifo", 1920, 1080, 29.97, "matroska")
         load = [a for a in sent if a[0] == "loadfile"][0]
         self.assertEqual(load, ("loadfile", "/run/pvj-ndi/ndi.fifo", "replace", -1,
-                                "demuxer=mkv,cache=no,cache-pause=no,demuxer-readahead-secs=0,demuxer-max-bytes=" + Player.pipe_queue(1920, 1080, 29.97)))
+                                "demuxer=mkv,cache=no,cache-pause=no,initial-audio-sync=no,demuxer-readahead-secs=0,demuxer-max-bytes=" + Player.pipe_queue(1920, 1080, 29.97)))
         self.assertNotIn("rawvideo", load[4])
         for word in ("aid", "mute", "volume", "audio-device", "af="):                     # sound is left to what the player already does
             self.assertNotIn(word, load[4])
@@ -1263,7 +1263,7 @@ class PlayerSoundTest(unittest.TestCase):
     def test_on_an_old_mpv_the_pipes_options_and_the_narrowing_are_both_taken_back(self):
         p, sent = self.player(refuse=("old",))
         p.play_pipe("/run/pvj-ndi/ndi.fifo", 64, 16, 30, "matroska")
-        self.assertEqual(set(p._pipe_globals), set(Player.MKV_ONLY) | {"demuxer", "cache", "cache-pause", "demuxer-readahead-secs", "demuxer-max-bytes"})
+        self.assertEqual(set(p._pipe_globals), set(Player.MKV_ONLY) | {"demuxer", "cache", "cache-pause", "initial-audio-sync", "demuxer-readahead-secs", "demuxer-max-bytes"})
         self.assertEqual([a for a in sent if a[0] == "loadfile"][-1], ("loadfile", "/run/pvj-ndi/ndi.fifo", "replace"))   # then pause off, then the pid the pipe was loaded into (pipe_is)
 
     def test_the_players_queue_is_sized_from_the_picture_and_the_longest_block_of_sound(self):
@@ -1416,7 +1416,7 @@ class RealMpvTest(Base):
         self.assertEqual(r.decide(), "matroska")
         # the same the player gives: the four for the pipe, and the narrowing to the two decoders the stream may need
         # (MKV_ONLY). mpv refuses an option it does not know or cannot read, so this run also shows it takes them.
-        opts = ["--%s=%s" % kv for kv in (("demuxer", "mkv"), ("cache", "no"), ("cache-pause", "no"), ("demuxer-readahead-secs", "0"),
+        opts = ["--%s=%s" % kv for kv in (("demuxer", "mkv"), ("cache", "no"), ("cache-pause", "no"), ("initial-audio-sync", "no"), ("demuxer-readahead-secs", "0"),
                                            ("demuxer-max-bytes", Player.pipe_queue(w, h, 30)))] + mkv_only()
         cmd = [MPV, "--no-config", "--no-terminal", "--idle=no", "--framedrop=no", "--untimed", "--log-file=" + log, "--msg-level=all=v",
                "--vo=image", "--vo-image-format=png", "--vo-image-outdir=" + out, "--ao=pcm", "--ao-pcm-file=" + wav] + opts + [self.fifo]
@@ -1537,7 +1537,7 @@ class RealMpvTest(Base):
         self.assertTrue(r.first.wait(3))
         self.assertEqual(r.decide(), "matroska")
         cmd = [MPV, "--no-config", "--no-terminal", "--idle=no", "--log-file=" + log, "--msg-level=all=v", "--vo=null", "--ao=null",
-               "--demuxer=mkv", "--cache=no", "--cache-pause=no", "--demuxer-readahead-secs=0", "--demuxer-max-bytes=" + limit] + mkv_only() + [self.fifo]
+               "--demuxer=mkv", "--cache=no", "--cache-pause=no", "--initial-audio-sync=no", "--demuxer-readahead-secs=0", "--demuxer-max-bytes=" + limit] + mkv_only() + [self.fifo]
         mpv = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.addCleanup(lambda: mpv.poll() is None and mpv.kill())
         try:

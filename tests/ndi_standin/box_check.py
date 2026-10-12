@@ -229,6 +229,12 @@ def not_playing(a, b, size=(WIDTH, HEIGHT), audio=None, moving=True, clock=True)
         return "mpv still has a sound track; the stream without sound has not been loaded"
     if clock and not number(b["time-pos"]) and not number(b["audio-pts"]):
         return "mpv has no clock (time-pos %r, audio-pts %r)" % (b["time-pos"], b["audio-pts"])
+    if audio is True and moving and not (number(a["audio-pts"]) and number(b["audio-pts"]) and b["audio-pts"] > a["audio-pts"] + 0.2):
+        # Where sound must be there, it is the SOUND's clock that must go on, whatever the picture's does. On the
+        # Pi (2026-10-12) a still picture with sound had two tracks, sound parameters, a sound device and
+        # core-idle false, and not one sample was played: audio-pts was unavailable, or a number that stood.
+        return ("mpv's sound does not play: its clock does not move (audio-pts %r -> %r, time-pos %r -> %r, core-idle %r)"
+                % (a["audio-pts"], b["audio-pts"], a["time-pos"], b["time-pos"], b["core-idle"]))
     if moving and not any(number(a[k]) and number(b[k]) and b[k] > a[k] + 0.2 for k in ("time-pos", "audio-pts")):
         return ("mpv's clock does not move (time-pos %r -> %r, audio-pts %r -> %r, core-idle %r)"
                 % (a["time-pos"], b["time-pos"], a["audio-pts"], b["audio-pts"], b["core-idle"]))

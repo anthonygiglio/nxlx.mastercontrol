@@ -1544,6 +1544,8 @@ Cost and what is not known: a second closed program on the box; an idle Python s
 
 A source whose picture stands while its sound goes on (one test picture and a tone; a paused video) is played like this: the Matroska stream is loaded with mpv's `cache-pause=no`, and the helper writes a picture that no other has followed for half a second once more (the stream's first picture at once, a millisecond after itself).
 
+Added the same day, after the box's own player opened its sound device and played nothing: the load also has `initial-audio-sync=no`. mpv does not begin the sound until the picture has reached the first sound's time, and a picture that stands never does.
+
 Why both. mpv takes a picture track that has run dry for a slow network and pauses everything until a picture comes: no sound for as long as the picture stands, and afterwards everything as late as it stood, for good. That is a player's rule, and it is the player's option that ends it. The second picture is for two other things: mpv 0.38 and later do not finish opening a stream until its picture track has two blocks with different times, and every mpv shows a picture only once it has the one after it.
 
 Rejected: writing the still again and again at a slow rate and leaving the pause on (measured: it plays, but about as late as the gap between the repeats, and it costs 4 MB a time for as long as the picture stands); a rule in the panel that waits for mpv's clock to move (while a picture stands, mpv's `time-pos` stands by design).
