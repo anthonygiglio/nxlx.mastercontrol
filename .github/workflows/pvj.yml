@@ -38,8 +38,8 @@ jobs:
         run: git fetch --depth=1 origin b7864886e53e850f6df057c6e12ad144fd077935
       - name: Fetch the release before OSC's safer defaults (the rollback test of D83 runs master's receiver on a file written here, and this code on a file master wrote)
         run: git fetch --depth=1 origin 106d77ffaa9f5ee213ae1fd4eecb15d5804a3cc5
-      - name: Fetch master (the rollback tests of D62 and D85 run master's own code on a settings file written here)
-        run: git fetch --depth=1 origin +master:refs/remotes/origin/master
+      - name: Fetch the release before NDI (the rollback tests of D62 and D85 run that release's code on a settings file written here)
+        run: git fetch --depth=1 origin f36f8f0d040a35a6ecc72fb8a1001273b7f7ba0d
       - name: Install mpv
         timeout-minutes: 10   # usually half a minute; see the note at the top of this file
         run: tools/ci-apt.sh mpv
