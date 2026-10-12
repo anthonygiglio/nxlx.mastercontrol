@@ -6,7 +6,7 @@ OSC 1.0 over UDP, for TouchOSC, Resolume, QLab, Max, Chataigne, Companion and an
 
 - **Off until you switch it on**, and it only listens while on.
 - **Only private networks may send**: loopback, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, link-local `169.254.0.0/16` (a direct Ethernet cable between laptop and box) and their IPv6 equivalents. Add your show network under "Also accept from these networks". Ranges wider than a /8 are refused. UDP source addresses can be forged, so this keeps the internet out; it does not stop a hostile device on your own network, so keep the show network private. This is the outer wall, and it always applies.
-- **Three more locks, each off until you switch it on** ("Who may send", below): a list of single devices, a rule that the sender is a paired device, and a key in the address. They narrow who may send inside the outer wall. None of them is encryption.
+- **Three more locks** ("Who may send", below): a list of single devices, a rule that the sender is a paired device, and a key in the address. They narrow who may send inside the outer wall. None of them is encryption. On a box where OSC was never on, the paired-device rule comes on with the first switch-on (D83); a box that updates keeps what it has. With OSC on and all three off, the panel says "OSC is open".
 - **Nothing dangerous is reachable.** `/shutdown`, `/reboot`, `/rebootall`, `/shutdownall`, factory reset, password changes and updates do not exist over OSC. They need a paired full-access device in the panel.
 - **Nothing is ever sent unless the Owner switched "Send state back" on and named the device it goes to** (D82, "State sent back" below). It is off on every box until then, and a box that updates sends nothing. Even with it on, the box never answers a stranger: no packet decides where anything is sent, a refused or malformed packet is answered with nothing, and there are no error replies. So the receiver cannot be used to bounce traffic at someone else.
 - Each sender is limited to 200 messages a second (burst 400); packets are parsed strictly and bounded in size, arguments, and bundle depth. Log lines about bad or refused packets appear at most once every 10 seconds.
@@ -14,7 +14,19 @@ OSC 1.0 over UDP, for TouchOSC, Resolume, QLab, Max, Chataigne, Companion and an
 
 ## Who may send: three locks
 
-On **Setup > OSC**, under "Who may send", for a full-access device. **What changes when you update: nothing until you switch one on.** Each lock is off on a box that updates, and the receiver behaves exactly as before. They can be on together; a packet must then pass every one that is on, and the old names without `/pvj` (`/stopall`, `/startmaster05` and so on) follow the same rules.
+On **Setup > OSC**, under "Who may send", for a full-access device. **What changes when you update: nothing.** A box where OSC is on, or ever was set up, keeps its locks exactly as they are, and the receiver behaves as before. **On a box where OSC was never on, the first switch-on brings one lock with it** (D83): "A sender must be a paired device". OSC has no login: with it on and every lock off, anyone on the network can play, stop, black out and move the picture, and the panel's roles and the guest lock do not apply to OSC. So a new box starts with that lock, and the page says beside the switch what it asks of you: open the panel on the tablet and pair it once (as an Owner device, or choose "Owner and operator devices"), and open it again if the tablet's address changes. Switch it off if you would rather use another lock. **While OSC is on with all three locks off**, the OSC page, its row in Setup and the health page say "OSC is open: anyone on this network can control the box. Switch on a lock." (an Operator reads it on the health page; the locks themselves are the Owner's).
+
+**The three locks in short, and for a live night.**
+
+| Lock | Stops | Does not stop |
+| --- | --- | --- |
+| Only these devices may send | Every device whose address is not in the list: a guest's phone, a stray laptop | Someone on the same network who forges a listed address |
+| A sender must be a paired device | Every address from which no paired Owner (or Operator) device opened the panel lately | Someone on the same network who forges that address; another device behind the same address |
+| A key in the address | Anyone who does not know the key, forged address or not | Anyone who can listen on the same Wi-Fi: the key travels in the clear in every message and can be read and used again |
+
+None of this is encryption. For a live night: **paired devices plus a key**, so a sender must come from the tablet's address and know the secret. On a shared venue network that is still not enough against someone who listens: there, the box and the tablet belong on a network of their own (the box's own hotspot, or a small router you bring).
+
+Each lock is one switch. They can be on together; a packet must then pass every one that is on, and the old names without `/pvj` (`/stopall`, `/startmaster05` and so on) follow the same rules.
 
 **What "secure" means here, and what it does not.** OSC is plain UDP. It cannot be encrypted by this box, anyone who can listen on the network can read every message, and a device on the same network can send a packet that claims to come from another device's address. So these locks do three honest things: far fewer devices may send, a sender must know a secret, and you can see who sent. They keep out devices that are merely on the network (a guest's phone, a laptop with a stray OSC program, a neighbour's lighting desk). They do not keep out someone on the network who captures traffic and forges packets on purpose. What such a person could do is limited to what OSC can do at all: play, stop, mix, scenes. Shutdown, reset, updates and passwords are not reachable over OSC.
 
@@ -38,6 +50,8 @@ On **Setup > OSC**, under "Who may send", for a full-access device. **What chang
 **What you can see.** "Senders in the last ten minutes" (the address, how many messages, the last OSC address, let in or refused and why) and "Last messages" (the last 50). Both are kept in memory only, are bounded (64 senders, 50 messages), and only a full-access device gets them; an operator or a guest gets neither the lists nor the key. Of a refused packet only the sender's address, a count and the reason are kept: never its OSC address or its arguments, and never the key it tried. A flood of refused packets from many forged addresses can push the older lines out of "Last messages"; the tablet that works stays in the senders list.
 
 **The existing limits stay**: the outer wall, 200 messages a second per sender, the packet size and parsing limits, no answer to a refused packet. Switching a lock, allowing a device or making a new key does not close the port, so nothing sent in that moment is lost; changing the port does reopen it.
+
+**An older release and the first switch-on (D83).** Whether OSC "was ever on" is one more setting under `osc`, `ever_on`, written once when this version first starts on a box (true when OSC is on, or when anything about it was ever set: the port, an extra network, a lock, a key; false only for an untouched box) and true from the first switch-on; `paired_default` marks a lock the box put on. No schema change. Tried with the code of master before this change: it ignores both, keeps them through a save of its own OSC page, and holds the paired lock (that lock is its own), so going back does not open the box. One box cannot be told from a new one: OSC was on before this version, was switched off, and nothing else was ever changed. Its next switch-on brings the lock, with the note beside the switch. A settings file never carries the mark, an import never lowers it, and a file that has OSC on comes with its own locks as they are. A factory reset makes the box new again.
 
 **An older release and these settings.** No settings schema change: the locks are extra settings under `osc` (`only_on`, `only`, `paired_on`, `paired_roles`, `paired_hours`, `key_on`), and the key is kept apart, in a section of its own (`osc_secret`) that no release exports or imports. Tried with the code of master before this change: it loads a settings file that has all of this, keeps it when its own OSC page saves and when a new PIN is made, and its export does not hold the key. But it does not enforce the locks: after going back to an older release every lock is silently off, although the file still says on, and its import drops the lock settings. Switch OSC off before going back if the locks matter. A key that a test build of this change kept under `osc` is moved to its own section the first time the receiver is set up.
 
@@ -67,7 +81,7 @@ Off until the Owner switches it on (D82, 2026-10-11). With it on, the box tells 
 
 **When.** The box looks at its state 5 times a second and sends what changed since the last look, each address once with its newest value. `/pvj/state/alive` goes out every 2 seconds, changed or not. Everything goes out again every 30 seconds, and at once when a listed device asks: send `/pvj/state` (any argument or none; with the key lock on, `/k/<key>/pvj/state`) from the device itself. The request must pass every lock, and its sender's address must be in the list; from any other address it does nothing and is answered with nothing.
 
-**Types.** Every number is a float32 (`f`) and every name a string (`s`), one argument per message: what a TouchOSC control binds directly. Several messages travel together as one OSC bundle (a full state is 92 messages in 3 packets; as single messages it would be 92 packets and break the cap). **Whether TouchOSC takes bundles is to be confirmed on the tablet**; it has not been tried. On and off are `1.0` and `0.0`. Each address has the tail and the range of its control address, so `/pvj/opacity` (0 to 100) is `/pvj/state/opacity` (0 to 100).
+**Types.** Every number is a float32 (`f`) and every name a string (`s`), one argument per message: what a TouchOSC control binds directly. Several messages travel together as one OSC bundle (a full state is 132 messages in 5 packets, about 5,000 bytes, and is out within half a second; as single messages it would be 132 packets and break the cap). **Whether TouchOSC takes bundles is to be confirmed on the tablet**; it has not been tried. On and off are `1.0` and `0.0`. Each address has the tail and the range of its control address, so `/pvj/opacity` (0 to 100) is `/pvj/state/opacity` (0 to 100).
 
 | Address | Argument | What it says |
 | --- | --- | --- |
@@ -99,10 +113,15 @@ Off until the Owner switches it on (D82, 2026-10-11). With it on, the box tells 
 | `/pvj/state/shader/hue` | f -180 to 180 | Degrees |
 | `/pvj/state/shader/brightness` | f 0 to 2 | 1 leaves it alone |
 | `/pvj/state/shader/control/<n>` | f 0 to 1 | The n-th input (1 to 8) of the shader on screen, spread as `/pvj/shader/control/<n>` takes it; 0 for one that is not there |
+| `/pvj/state/shader/control/<n>/name` | s | What the panel calls that control: the shader file's LABEL for the input, or its NAME when it has none; at most 40 characters; empty for one that is not there. For the label beside a knob |
+| `/pvj/state/shader/control/<n>/kind` | s | What that control is: `float` (a number over a range: a fader or a knob), `bool` (a switch), `choice` (a list of named values, by position), `int` (a whole number over a range), `event` (a button that fires once; its value is always 0); empty for one that is not there, so a layout can dim it |
 | `/pvj/state/shader/preset/<n>` | f 0/1 | The n-th preset (1 to 8) is the one on now |
 | `/pvj/state/effect` | s | The effect that is on; empty when none |
 | `/pvj/state/effect/on` | f 0/1 | An effect is on |
 | `/pvj/state/effect/amount` | f 0 to 100 | Percent, as `/pvj/effect/amount` |
+| `/pvj/state/effect/control/<n>` | f 0 to 1 | The n-th input (1 to 8) of the effect that is on, spread as `/pvj/effect/control/<n>` takes it; 0 for one that is not there |
+| `/pvj/state/effect/control/<n>/name` | s | What the panel calls that control, as for a shader. An effect file's own input called "amount" is sent as "Amount (the filter's own)", as the panel says it, because `/pvj/effect/amount` is another thing |
+| `/pvj/state/effect/control/<n>/kind` | s | As for a shader |
 | `/pvj/state/vibes` | f 0/1 | Vibes runs |
 | `/pvj/state/vibes/set` | s | The name of its set |
 | `/pvj/state/vibes/dwell` | f 15 to 3600 | Seconds each shader stays |
@@ -112,7 +131,9 @@ Off until the Owner switches it on (D82, 2026-10-11). With it on, the box tells 
 | `/pvj/state/pad/number` | f | That pad's number (1 to 12); 0 when no pad does |
 | `/pvj/state/pad/<bank>/<pad>` | f 0/1 | That pad is the one playing: the light of the button that sends `/pvj/pad/<bank>/<pad>` |
 
-The pad lights, the fade and Blackout come from the same picture of the box the MIDI controllers' lights are worked out from (`pvj/boxstate.py`), so a pad lit on a controller is lit in the layout. Not sent: the inputs of an effect, the Room's scenes and projectors, the overlay's file.
+The pad lights, the fade and Blackout come from the same picture of the box the MIDI controllers' lights are worked out from (`pvj/boxstate.py`), so a pad lit on a controller is lit in the layout. Not sent: the Room's scenes and projectors, the overlay's file.
+
+**The eight controls and their names.** The count is the one `/pvj/shader/control/<n>` and a MIDI controller's knobs use: the file's numbers, switches, choices and events, in the file's order, the first eight. A colour and a point (x and y) have no knob, so they have no place among the eight and no name is sent for them; a number whose MIN is its MAX cannot move and is left out too. The names and kinds are sent when the shader or the effect changes and with every full state, not at every look, so a knob that moves sends its value alone. Like a clip's name, a control's name is read by anyone on the network.
 
 ## Setting up TouchOSC to listen
 

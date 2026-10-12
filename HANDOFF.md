@@ -304,6 +304,14 @@ Three locks on System > OSC, each off by default so an updated box behaves as be
 - **Rules to keep:** never refuse a sender by its address alone for something it sent (the address can be forged; the review of #118 removed such a limit); the key lives in `settings["osc_secret"]`, not under `osc`, and is never in `GET /api/osc`, an export, a log line or the lists; a refused packet leaves only its sender, a count and the reason; the settings keys are optional and read through `osc.layers` (no schema change); an older release keeps the keys but does not enforce them.
 - **Open:** a real TouchOSC and a real box (rows O1 to O12 in `tools/DEVICE-TESTING.md`); the receiver is IPv4 only, so an IPv6 address in the list matches nothing and a device that reached the panel over IPv6 does not count (the page says so). PR #115 (`midi-layouts`) adds OSC addresses through `pvj/actions.py` and a few lines at the top of `translate`: the two branches meet in `pvj/osc.py` and `pvj/OSC.md`.
 
+## OSC: safer defaults and the control names (D83, pull request #124, a draft)
+
+- **The first switch-on brings the paired-device lock.** `osc.EVER_ON` (`ever_on` under `osc`) is written once by `OscManager._note_ever_on` and is true from the first switch-on; `osc.never_on` decides; `Api._set_osc` puts `paired_on` on and marks it `paired_default`. A box where OSC is on or was ever set up keeps its settings exactly (`osc.used_before`). No schema change; shown against master's code in `tests/test_osc_defaults.py`.
+- **"OSC is open"** (`osc.is_open`, `osc.OPEN_TEXT`): `open` in `GET /api/osc`, `osc_open` in `GET /api/health` for an Owner and an Operator, never a Guest. In the panel: `oscCard` (`#oscopen`), `SYS_STATE.osc` and `SYS_STATE.health`, `healthCard` (`#healthosc`), the note `#oscpaireddefault` in `oscWho`, and `oscStep` for the message at the switch.
+- **The names**: `/pvj/state/shader/control/<n>/name` and `/kind`, `/pvj/state/effect/control/<n>`, `/name`, `/kind` from `oscfeedback._controls`, which reads `engine.nth_control` so the count is the knobs' own. One cache of parsed inputs per engine (`_PARSED`).
+- **Rules to keep:** an update never switches a lock on for a box where OSC is on; an import never lowers `ever_on` and never adds a lock to a file that has OSC on; an export never carries `ever_on` or `paired_default`; a new state address goes into the table in `pvj/OSC.md`; a name is cleaned by `_text` and held to `MAX_NAME`.
+- **Open:** nothing here met a box or a tablet (rows D1 to D7 in `tools/DEVICE-TESTING.md`).
+
 ## OSC: state sent back (D82, pull request #123, a draft)
 
 The box can tell TouchOSC what is really playing. Off by default; the Owner's switch and list of at most 4 targets on Setup > OSC ("Send state back"); `pvj/OSC.md` has the rule, the table of `/pvj/state/...` addresses and the TouchOSC set-up.

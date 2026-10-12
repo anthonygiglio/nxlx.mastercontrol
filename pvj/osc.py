@@ -298,6 +298,45 @@ def validate_layers(v, extra=()):
     return out
 
 
+# D83. OSC has no login, so the first time it is switched on, on a box where it never was on, the lock "A sender
+# must be a paired device" comes on with it. Whether it "never was on" is a key of its own under "osc", EVER_ON,
+# written once when this code first sets the receiver up (OscManager._note_ever_on) and true from the first
+# switch-on. No schema change: a release before this one ignores both keys and keeps them through a save of its
+# OSC page (it copies the section), and it enforces the lock itself (D78), so going back fails closed.
+EVER_ON = "ever_on"
+PAIRED_DEFAULT = "paired_default"      # the paired lock is on because the box put it on, not the owner: said on the page
+LAYER_KEYS = ("only_on", "only", "paired_on", "paired_roles", "paired_hours", "key_on", "feedback_on", "feedback")
+OPEN_TEXT = "OSC is open: anyone on this network can control the box. Switch on a lock."
+
+
+def used_before(data):
+    """True when the settings show OSC is on or was ever set up: it is on, the mark says so, or anything about it is
+    not as a new box has it (the port, an extra network, any lock or state setting, a key). Only an untouched section
+    is "never". A box where OSC was on and was switched off again with nothing else ever changed, before this code
+    first ran, cannot be told from a new one: its next switch-on brings the lock, and the page says so."""
+    cfg = data.get("osc")
+    if not isinstance(cfg, dict):
+        return False
+    if cfg.get("enabled") or cfg.get(EVER_ON) is True:
+        return True
+    return bool(cfg.get("port", 9876) != 9876 or cfg.get("allow") or any(k in cfg for k in LAYER_KEYS) or "key" in cfg
+                or stored_key(data))
+
+
+def never_on(data):
+    """True only for a box where OSC is off and never was on (see used_before)."""
+    cfg = data.get("osc")
+    if not isinstance(cfg, dict) or cfg.get("enabled"):
+        return False
+    return cfg[EVER_ON] is False if EVER_ON in cfg else not used_before(data)
+
+
+def is_open(cfg):
+    """OSC listens and none of the three locks is on: anyone on the network can control the box."""
+    rules = layers(cfg)
+    return bool(cfg.get("enabled")) and not (rules["only_on"] or rules["paired_on"] or rules["key_on"])
+
+
 def stored_key(data):
     """The key in a settings dict: its own section, or (a file written before the key moved there) under "osc"."""
     for section in (KEY_SECTION, "osc"):
@@ -923,10 +962,34 @@ class OscManager:
                 self.settings.data[KEY_SECTION] = {"key": old}
             self.settings.save()
 
+    def _note_ever_on(self):
+        """Once, the first time this code sets the receiver up on a box: write down whether OSC is on or was ever set
+        up (D83). After that the mark only ever goes to true. A box that updates with OSC on is "was on": nothing of
+        its settings changes, so a working tablet is never locked out by an update.
+
+        A save that fails (a full or read-only disk) must never stop the receiver, which the review of #124 found it
+        did: the mark then lives in memory for this run, it is said once, and the save is tried again whenever the
+        receiver is set up next (any change of the page, the next start)."""
+        with self.settings.lock:
+            cfg = self.settings.data["osc"]
+            unsaved = getattr(self, "_mark_unsaved", False)
+            if not unsaved:
+                if cfg.get(EVER_ON) is True or (EVER_ON in cfg and not cfg.get("enabled")):
+                    return
+                cfg[EVER_ON] = used_before(self.settings.data)
+            try:
+                self.settings.save()
+                self._mark_unsaved = False
+            except OSError as e:
+                if not unsaved:
+                    self._mark_unsaved = True
+                    self.log("osc: whether OSC was ever on could not be saved (%s); the receiver starts all the same" % (e.strerror or e))
+
     def apply(self):
         """Make reality match settings["osc"]. Raises OscError if the port cannot be opened."""
         with self.lock:
             self._move_key()
+            self._note_ever_on()
             cfg = self.settings.data["osc"]
             if self.server and self.server.listening and cfg["enabled"] and self.server.port == cfg["port"]:
                 # Same port: who may send changes in place. The socket stays open, so no message is lost while the
@@ -975,7 +1038,10 @@ class OscManager:
         out = {"enabled": cfg["enabled"], "port": cfg["port"], "allow": list(cfg["allow"]),
                "listening": bool(self.server and self.server.listening), "error": self.error,
                "received": self.server.stats["received"] if self.server else 0,
-               "only_on": rules["only_on"], "paired_on": rules["paired_on"], "key_on": rules["key_on"]}
+               "only_on": rules["only_on"], "paired_on": rules["paired_on"], "key_on": rules["key_on"],
+               # D83: on with every lock off. The words are the box's, so every place says the same.
+               "open": is_open(cfg), "open_text": OPEN_TEXT,
+               "paired_default": bool(rules["paired_on"] and cfg.get(PAIRED_DEFAULT) is True)}
         if full:
             counting = self._paired(rules["paired_roles"], rules["paired_hours"])
             # The receiver listens on IPv4 only: a device that opened the panel over IPv6 is paired, and can never

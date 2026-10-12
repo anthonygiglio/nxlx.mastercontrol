@@ -426,6 +426,20 @@ What cannot be made on purpose: a pair the GPU refuses. If the Effects card ever
 | O11 | On an operator's and a guest's device, open System | No OSC page with lists or a key | Nothing |
 | O12 | Write down how the tablet's address looked in O1 and whether it changed during the test (a new address from the router) | | |
 
+### OSC: the first switch-on, the open warning and the control names (D83)
+
+**Never run on a box, with a real TouchOSC or a real tablet.**
+
+| # | Do | See |
+| --- | --- | --- |
+| D1 | On a box where OSC is on with every lock off (as before the update), update and open Setup | The tablet still works with nothing changed. The OSC row says "Open: anyone on this network can control the box", the OSC page and the health page say "OSC is open..." |
+| D2 | On an Operator's device, open Setup > Health | The same warning, ending "The owner can switch on a lock"; no OSC page |
+| D3 | Switch any one lock on | The warning goes from all three places within a few seconds |
+| D4 | After a factory reset (or on a new box), switch OSC on | A message says the paired-device lock came on; the note beside "A sender must be a paired device" says the tablet must pair once. A control on an unpaired tablet does nothing ("Refused: no paired device at this address") |
+| D5 | Open the panel on the tablet, pair it as an Owner device, press the control | It works |
+| D6 | With "Send state back" on and a shader with named inputs on the screen: bind eight labels to `/pvj/state/shader/control/1/name` to `8/name` | The labels read as the knobs do on the Shaders page; they change when the shader changes; empty for a knob that is not there. **Write down whether TouchOSC shows a string sent in a bundle in a label** |
+| D7 | The same for an effect (`/pvj/state/effect/control/<n>/name`) and bind a fader to `/pvj/state/effect/control/1` | The names of the effect's controls; the fader follows the panel's control |
+
 ### OSC: state sent back (D82)
 
 **Never run on a box, with a real TouchOSC or a real tablet.** Before: OSC is on, a tablet with TouchOSC sends to the box (O1 works), the tablet has a fixed address, and TouchOSC's connection has a receive port (9000 here). In the layout a few controls have a receiving message: a pad on `/pvj/state/pad/1/1`, the Blackout button on `/pvj/state/blackout`, the fade button on `/pvj/state/fade/on`, the opacity fader on `/pvj/state/opacity`, a label on `/pvj/state/clip/name`, a light on `/pvj/state/alive`.

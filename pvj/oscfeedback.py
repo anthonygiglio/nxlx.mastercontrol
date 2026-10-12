@@ -278,36 +278,67 @@ def fade_word(label, at):
     return "idle"
 
 
-_PARSED = {}        # (shader id, digest) -> its parsed inputs: the file is read once per shader, not at every look
+MAX_NAME = 40                   # characters of a control's name in a packet: a knob's label, not a sentence
+_PARSED = {"shader": {}, "effect": {}}      # per engine: (id, digest) -> its parsed inputs. The file is read once per
+                                            # shader or effect, not at every look; one never puts the other out
+
+
+def _parsed_of(which, engine, on):
+    key = (on["id"], on.get("digest"))
+    cache = _PARSED[which]
+    parsed = cache.get(key)
+    if parsed is None:
+        parsed = engine._parsed(engine._path(on["id"])[0])[0]
+        cache.clear()
+        cache[key] = parsed
+    return parsed
+
+
+def control_kind(i):
+    """What a layout needs to know to draw the control: float (a fader), bool (a switch), choice (a list of named
+    values), int (a whole number over a range), event (a button that fires once)."""
+    if i["type"] == "long":
+        return "choice" if "values" in i else "int"
+    return i["type"]
+
+
+def _controls(which, engine, on):
+    """The eight controls of the shader on screen (or the effect that is on): ([value 0 to 1], [name], [kind]), in
+    the count /pvj/shader/control/<n> and a controller's knobs use (engine.nth_control). A switch is 0 or 1, a
+    choice its place in the list, an event 0. The name is the one the panel shows beside the control: the file's
+    LABEL, or its NAME when it has none. A slot with no control is 0 and two empty strings."""
+    values, names, kinds = [0.0] * SLOTS, [""] * SLOTS, [""] * SLOTS
+    try:
+        parsed = _parsed_of(which, engine, on)
+        now = engine.current_values(parsed, on)
+    except Exception:
+        return values, names, kinds
+    for n in range(1, SLOTS + 1):
+        try:
+            i = engine.nth_control(parsed, n)
+            if i is None:
+                continue
+            name = _text(i.get("label") or i["name"])
+            if which == "effect" and name.lower() == "amount":
+                name = "Amount (the filter's own)"       # as the panel says it: /pvj/effect/amount is the other one
+            names[n - 1], kinds[n - 1] = name[:MAX_NAME], control_kind(i)
+            if i["type"] == "event":
+                continue
+            v = now.get(i["name"], i.get("default"))
+            if i["type"] == "bool":
+                values[n - 1] = 1.0 if v else 0.0
+            elif "values" in i:
+                values[n - 1] = _num(i["values"].index(v) / max(1, len(i["values"]) - 1)) if v in i["values"] else 0.0
+            elif i["max"] > i["min"]:
+                values[n - 1] = min(1.0, max(0.0, _num((float(v) - i["min"]) / (i["max"] - i["min"]))))
+        except Exception:
+            continue
+    return values, names, kinds
 
 
 def _shader_controls(api, on):
-    """The eight controls of the shader on screen as 0 to 1, as /pvj/shader/control/<n> takes them. A switch is 0 or
-    1, a choice its place in the list. 0 for a control that is not there."""
-    out = [0.0] * SLOTS
-    try:
-        engine = api.shaders
-        key = (on["id"], on.get("digest"))
-        parsed = _PARSED.get(key)
-        if parsed is None:
-            parsed = engine._parsed(engine._path(on["id"])[0])[0]
-            _PARSED.clear()
-            _PARSED[key] = parsed
-        values = engine.current_values(parsed, on)
-        for n in range(1, SLOTS + 1):
-            i = engine.nth_control(parsed, n)
-            if i is None or i["type"] == "event":
-                continue
-            v = values.get(i["name"], i.get("default"))
-            if i["type"] == "bool":
-                out[n - 1] = 1.0 if v else 0.0
-            elif "values" in i:
-                out[n - 1] = _num(i["values"].index(v) / max(1, len(i["values"]) - 1)) if v in i["values"] else 0.0
-            elif i["max"] > i["min"]:
-                out[n - 1] = min(1.0, max(0.0, _num((float(v) - i["min"]) / (i["max"] - i["min"]))))
-    except Exception:
-        pass
-    return out
+    """The eight values alone (kept for its callers)."""
+    return _controls("shader", api.shaders, on)[0]
 
 
 def build(api, snap, raw):
@@ -371,14 +402,25 @@ def build(api, snap, raw):
     add("shader/speed", controls.get("speed", 1.0) if on else 1.0)
     add("shader/hue", controls.get("hue", 0.0) if on else 0.0)
     add("shader/brightness", controls.get("brightness", 1.0) if on else 1.0)
-    for n, v in enumerate(_shader_controls(api, on) if on else [0.0] * SLOTS, 1):
-        add("shader/control/%d" % n, v)
+    none = ([0.0] * SLOTS, [""] * SLOTS, [""] * SLOTS)
+    values, names, kinds = safe(lambda: _controls("shader", api.shaders, on), none) if on else none
+    for n in range(1, SLOTS + 1):
+        add("shader/control/%d" % n, values[n - 1])
+    for n in range(1, SLOTS + 1):       # what each knob is called and what it is: they change only with the shader
+        add("shader/control/%d/name" % n, names[n - 1])
+        add("shader/control/%d/kind" % n, kinds[n - 1])
     for n in range(1, SLOTS + 1):
         flag("shader/preset/%d" % n, safe(lambda: midi.light_state({"action": "shader_preset_%d" % n}, snap) == "active", False))
     effect = safe(lambda: api.effects._seen(), None) if snap.get("effect") else None
     add("effect", _stem(snap.get("effect")) if snap.get("effect") else "")
     flag("effect/on", snap.get("effect"))
     add("effect/amount", _num(((effect or {}).get("controls") or {}).get("amount", 1.0)) * 100 if effect else 0)
+    values, names, kinds = safe(lambda: _controls("effect", api.effects, effect), none) if effect else none
+    for n in range(1, SLOTS + 1):
+        add("effect/control/%d" % n, values[n - 1])
+    for n in range(1, SLOTS + 1):
+        add("effect/control/%d/name" % n, names[n - 1])
+        add("effect/control/%d/kind" % n, kinds[n - 1])
     flag("vibes", snap.get("vibes"))
     sets = {v: k for k, v in (snap.get("sets") or {}).items()}
     add("vibes/set", sets.get(snap.get("set"), "") if snap.get("vibes_ready") else "")
@@ -544,6 +586,10 @@ class Feedback:
             self._note("state", "could not read the box's state: %r" % (e,))
             return 0
         before = self.stats["datagrams"]
+        # The cap for all targets together is spent in the order they are served, so the one that goes first changes
+        # with every look: under a load that fills the cap, no target is always the one left without.
+        self._turn = (getattr(self, "_turn", -1) + 1) % len(live)
+        live = live[self._turn:] + live[:self._turn]
         for t, st in live:
             if t["address"] in wanted and (st["asked"] is None or now - st["asked"] >= REQUEST_EVERY):
                 st["asked"], st["sent"], st["full"] = now, {}, now
@@ -552,7 +598,12 @@ class Feedback:
             if now - st["full"] >= FULL_EVERY:
                 st["sent"], st["full"] = {}, now
             messages = [(ALIVE, 1.0)] if st["beat"] is None or now - st["beat"] >= HEARTBEAT else []
-            messages += [m for m in state if st["sent"].get(m[0]) != m[1]]
+            # What this target was never sent goes before what it has an older value of: with many values changing
+            # at every look, the changes would otherwise take the whole budget and a full state would never complete
+            # (the review of #124). A changing value is lossy by design: the newest leaves when there is room.
+            sent = st["sent"]
+            messages += [m for m in state if m[0] not in sent]
+            messages += [m for m in state if m[0] in sent and sent[m[0]] != m[1]]
             bad = []
             packed = pack(messages, bad)
             for address, value in bad:          # left out, and not tried again until it changes; the rest leave

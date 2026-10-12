@@ -36,16 +36,19 @@ jobs:
         run: git fetch --depth=1 origin b62f203a5c45fc0c20386a8ab476ad3d7b511736
       - name: Fetch the release before OSC state feedback (the rollback test of D82 runs its receiver on a file written here)
         run: git fetch --depth=1 origin b7864886e53e850f6df057c6e12ad144fd077935
+      - name: Fetch the release before OSC's safer defaults (the rollback test of D83 runs master's receiver on a file written here, and this code on a file master wrote)
+        run: git fetch --depth=1 origin 106d77ffaa9f5ee213ae1fd4eecb15d5804a3cc5
       - name: Fetch master (the rollback tests of D62 and D85 run master's own code on a settings file written here)
         run: git fetch --depth=1 origin +master:refs/remotes/origin/master
       - name: Install mpv
         timeout-minutes: 10   # usually half a minute; see the note at the top of this file
         run: tools/ci-apt.sh mpv
       - name: Unit tests (real mpv, headless)
-        # Master took about seventeen minutes on 2026-10-11 (2345 tests in 1027 s); the NDI input's tests (real pipes,
-        # measured waits) took it past twenty. After thirty, SIGABRT: faulthandler prints every thread's stack and the
-        # step fails (the job's own limit above is 45).
-        run: timeout -s ABRT 1800 python -X faulthandler -m unittest discover -s tests -t . -v
+        # About eighteen minutes on master by 2026-10-11 (2,400 tests); with the NDI input's tests (real pipes, measured
+        # waits) it is past twenty, so the limit here is thirty. After that, SIGABRT: faulthandler prints every thread's
+        # stack and the step fails (the job's own limit above is 45). The 25 slowest tests are printed at the end,
+        # so what makes the suite long is seen (on Python 3.12 only: 3.9's unittest has no --durations).
+        run: timeout -s ABRT 1800 python -X faulthandler -m unittest discover -s tests -t . -v ${{ matrix.python == '3.12' && '--durations 25' || '' }}
       - name: Shaders on a real mpv with a software GPU (xvfb, Mesa; a skip here is a failure)
         run: |
           tools/ci-apt.sh xvfb xauth libegl1 libgles2 libgl1-mesa-dri
