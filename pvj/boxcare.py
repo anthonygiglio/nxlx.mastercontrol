@@ -32,11 +32,12 @@ whole under "themes", beside the settings, and an import checks each one with th
 through the panel (pvj/themes.py) and keeps it, so the look a settings file names is there to be used. A file from a
 box with no added themes has no such part, and is the file earlier versions wrote. A factory reset removes them.
 
-Import and factory reset are refused through the remote-support tunnel: an import can switch on OSC, DMX or MIDI
+(Before D84 an import was refused through the remote-support tunnel; a reset still is.) An import can switch on OSC, DMX or MIDI
 (new ways to control the box) and a reset removes every paired device.
 """
 
 import contextlib
+import hashlib
 import copy
 import ipaddress
 import json
@@ -64,6 +65,7 @@ MAX_DEPTH = 24
 NEVER = ("auth", "devices", "support", "support_log", "controller_code", "guest_controls", "ndi_discovery")      # ndi_discovery (D85): which network a listener is on belongs to this box
 ENVELOPE = ("format", "format_version", "exported", "version", "box", "passwords_included", "settings", "themes")
 KEEP_IMPORT_BACKUPS = 3
+KEEP_SESSION_BACKUPS = 3          # copies of the settings from before a support session's first import, one per session
 LOG_UNITS = ("pvj-web.service", "pvj-player.service", "pvj-sysd.service", "pvj-netd.service", "pvj-supportd.service")
 LOG_LINES, LOG_LINE_MAX = 300, 400
 CONFIRM_IMPORT, CONFIRM_RESET = "import", "factory-reset"
@@ -496,6 +498,15 @@ SECTIONS = (("pads", check_pads), ("modules", check_modules), ("theme", check_th
             ("autostart", check_autostart), ("audio", check_audio), ("overlay", check_overlay),
             ("projectors", check_projectors), ("mapper", check_mapper), ("sync", check_sync), ("shaders", check_shaders),
             ("room", check_room), ("recovery", check_recovery), ("ndi", check_ndi))
+# D84. An import through a support session of the Owner's role takes every section but these, which are set by
+# routes no support session may use (support.REMOTE_DENY_PREFIX): the file's part is dropped, the box's own stays.
+# REMOTE_SETS says, for every section, the route that sets it at the panel: a test holds each one that is not in
+# REMOTE_KEPT to be a route a support session of the Owner's role may use, so a new section needs a row and a thought.
+REMOTE_KEPT = ("recovery",)
+REMOTE_SETS = {"pads": "/api/pads", "modules": "/api/modules/*", "theme": "/api/theme", "mix": "/api/mix", "osc": "/api/osc",
+               "schedule": "/api/schedule", "streams": "/api/streams", "control": "/api/midi", "autostart": "/api/autostart",
+               "audio": "/api/audio", "overlay": "/api/overlay", "projectors": "/api/projectors", "mapper": "/api/mapper",
+               "sync": "/api/sync", "shaders": "/api/shaders", "room": "/api/room", "recovery": "/api/recovery/usb", "ndi": "/api/ndi"}
 CHECK_ERRORS = (ValueError, KeyError, TypeError, AttributeError, osc_mod.OscError, streams_mod.StreamError,
                 scheduler_mod.ScheduleError, dmx_mod.DmxError, midi_mod.MidiError, autostart_mod.AutostartError,
                 projector_mod.ProjectorError, themes_mod.ThemeError, room_mod.RoomError, ndi_mod.NdiError)
@@ -640,9 +651,9 @@ class BoxCare:
             out["osc"].pop("key", None)          # the key has its own section, never exported (D78); this is for a file not yet moved
             for key in (osc_mod.EVER_ON, osc_mod.PAIRED_DEFAULT):
                 out["osc"].pop(key, None)        # this box's own history (D83), not a setting
-            if (isinstance(device, dict) and device.get("remote")) or self.api.support.is_remote(client):
-                for key in FEEDBACK_KEYS:        # a support session never reads where the box sends its state (D82); an
-                    out["osc"].pop(key, None)    # import of such a file leaves the box's own (_osc_layers)
+            # (D82 took the feedback switch and its targets out of an export asked for by a support session. Since D84
+            # a session that reaches this route has the Owner's role and reads and changes them on their own route, so
+            # the export holds them for it as for the Owner. A diagnostics file still never does: it leaves the box.)
         if "recovery" in out:
             out["recovery"] = {"usb": self.api.auth.usb_enabled()}      # the switch only: the code hashes stay on the box (D81)
         out["projectors"] = [dict({"id": p["id"], "name": p["name"], "host": p["host"], "port": p["port"],
@@ -809,12 +820,29 @@ class BoxCare:
                 return False
             full = less
 
-    def _backup(self):
-        """The settings as they are now, beside the file, for whoever wants them back (mode 0600; the last few)."""
-        path = "%s.before-import-%d" % (self.settings.path, int(self._now()))
+    def _backup(self, session=None):
+        """The settings as they are now, beside the file, for whoever wants them back (mode 0600; the last few).
+
+        `session`: the id of the support session whose login is importing (D84, the security review: three imports
+        by a helper pushed the owner's own copies out). A session's copies are kept apart and never remove one of
+        the owner's: the first import of a session keeps the settings as they were before that session touched
+        them (`.before-support-session-<id>-<time>`, one per session, the last KEEP_SESSION_BACKUPS sessions, so
+        only a new session, which someone at the studio starts, can push one out), and its later imports turn over
+        among themselves (`.before-support-import-<time>`, the last KEEP_IMPORT_BACKUPS)."""
+        now = int(self._now())
+        if session is None:
+            suffix, name, keep = ".before-import-", ".before-import-%d" % now, KEEP_IMPORT_BACKUPS
+        elif not any((".before-support-session-%s-" % session) in p for p in self._siblings(".before-support-session-")):
+            suffix, name, keep = ".before-support-session-", ".before-support-session-%s-%d" % (session, now), KEEP_SESSION_BACKUPS
+        else:
+            suffix, name, keep = ".before-support-import-", ".before-support-import-%d" % now, KEEP_IMPORT_BACKUPS
+        path = self.settings.path + name
         self.settings._write(path, self.settings.data)
-        for old in self._siblings(".before-import-")[:-KEEP_IMPORT_BACKUPS]:
-            self._unlink(old)
+        old = self._siblings(suffix)
+        if session is not None and suffix == ".before-support-session-":
+            old = sorted(old, key=lambda p: (int(p.rsplit("-", 1)[-1]) if p.rsplit("-", 1)[-1].isdigit() else 0, p))    # by time, not by id
+        for gone in old[:-keep]:
+            self._unlink(gone)
         return os.path.basename(path)
 
     def _siblings(self, suffix):
@@ -869,14 +897,93 @@ class BoxCare:
     def import_settings(self, raw, confirm, device, client):
         """Check an exported file and make it the box's settings. The PIN, devices and remote support stay as they
         are. Nothing is changed unless the whole file passes."""
-        self._local(client, "an import")
+        remote = self.api._remote_owner(device, client, "an import")       # D84: a support session of the Owner's role
         if confirm != CONFIRM_IMPORT:
             raise bad("send confirm=%s" % CONFIRM_IMPORT)
         with self._busy("an import"):
-            return self._import(raw, device)
+            out = self._import(raw, device, remote)
+        if remote:
+            # which file it was (its sha256: not a secret) and what it changed, so the owner can tell afterwards
+            self.api.support.note(device, "imported a settings file, sha256 %s; changed: %s%s" % (
+                hashlib.sha256(raw if isinstance(raw, bytes) else str(raw).encode()).hexdigest(), ", ".join(out["changed"]) or "nothing",
+                "; left as the box has it: %s" % ", ".join(out["kept_for_support"]) if out["kept_for_support"] else ""), always=True)
+        return out
 
-    def _import(self, raw, device):
+    def _remote_parts(self, clean, notes):
+        """Two parts of sections a helper's file may otherwise bring, held to what the routes hold him to (D84):
+        the networks OSC accepts from (none added from outside, Api.remote_allow_refused) and the MIDI controls
+        that show an access code (none added or changed, and the standard layouts stay as switched here). Changed
+        in `clean`; returns what was left as the box has it."""
+        kept, current, api = [], self.settings.data, self.api
+        from . import support as support_mod
+        if "modules" in clean:              # a file switches on no module that a session may not switch on (off is allowed)
+            wants = clean["modules"].get("enabled") or {}
+            have = (current.get("modules") or {}).get("enabled") or {}
+            for mid in sorted(support_mod.REMOTE_NO_MODULE_ON):
+                if wants.get(mid) and not have.get(mid):
+                    wants[mid] = False
+                    kept.append("modules.%s" % mid)
+                    notes.append("%s: not switched on by a file through remote support; left off" % mid)
+        if "ndi" in clean:
+            # NDI (D85): no address to ask for sources and no discovery server that is not on one of the box's own
+            # networks now (the tunnel never counts), unless the box has it already; and the switch that points the
+            # input at this box's own discovery server, whose routes no session may use, is not set by a file.
+            mine = current.get("ndi") or {}
+            own = [i.network for i in api.osc.local_nets()] if getattr(api, "osc", None) is not None else []
+
+            def local(text):
+                try:
+                    addr = ipaddress.IPv4Address(str(text).partition(":")[0])
+                except ValueError:
+                    return False
+                return any(addr in net for net in own)
+            for part in ("addresses", "discovery"):
+                had = list(mine.get(part) or [])
+                if any(a not in had and not local(a) for a in clean["ndi"].get(part, [])):
+                    clean["ndi"][part] = had
+                    kept.append("ndi.%s" % part)
+                    notes.append("NDI: an address that is not on one of this box's own networks is not added through remote support; %s left as this box has them" % part)
+            if clean["ndi"].get("own_discovery") and not mine.get("own_discovery"):
+                clean["ndi"].pop("own_discovery")
+                if "own_discovery" in mine:
+                    clean["ndi"]["own_discovery"] = mine["own_discovery"]
+                kept.append("ndi.own_discovery")
+                notes.append("NDI: using this box's own discovery server is not switched on by a file through remote support")
+        if "osc" in clean:
+            mine = list((current.get("osc") or {}).get("allow") or [])
+            if api.remote_allow_refused(clean["osc"].get("allow", []), mine):
+                clean["osc"]["allow"] = mine
+                kept.append("osc.allow")
+                notes.append("OSC: a network from outside is not added through remote support; the networks OSC accepts from are left as this box has them")
+        if "control" in clean:
+            midi, have = clean["control"]["midi"], (current.get("control") or {}).get("midi") or {}
+            old = list(have.get("map") or [])
+            new = [e for e in midi.get("map", []) if not api._owner_action(e.get("action")) or e in old]
+            if len(new) != len(midi.get("map", [])):
+                midi["map"] = new
+                kept.append("control.midi.map (access code controls)")
+                notes.append("MIDI: a control that shows an access code is not added or changed through remote support; left out")
+            if midi.get("controllers") != have.get("controllers"):
+                if "controllers" in have:
+                    midi["controllers"] = copy.deepcopy(have["controllers"])
+                else:
+                    midi.pop("controllers", None)
+                kept.append("control.midi.controllers")
+                notes.append("MIDI: which standard layouts are on is left as this box has it through remote support (a layout can hold a control that shows an access code)")
+        return kept
+
+    def _import(self, raw, device, remote=False):
         clean, notes, passwords = self.check_file(raw)
+        kept_for_support = []
+        if remote:
+            # What stays refused to every support session cannot come in by a file either: those sections of the
+            # file are dropped, and the box's own stay. (The PIN, devices, codes, remote support itself and the
+            # secure connection are no part of any settings file: check_file refuses a file that names them.)
+            for name in REMOTE_KEPT:
+                if clean.pop(name, None) is not None:
+                    kept_for_support.append(name)
+                    notes.append("%s: not taken from a file through remote support; left as this box has it" % name)
+            kept_for_support += self._remote_parts(clean, notes)
         incoming = dict(self.incoming_themes)
         with self.settings.lock:
             current = self.settings.data
@@ -895,8 +1002,9 @@ class BoxCare:
                 self._osc_layers(new, current)
             if "recovery" in clean:              # the file's switch beside the box's own codes and events (D81)
                 new["recovery"] = dict(current.get("recovery") or {}, usb=clean["recovery"]["usb"])
+            changed = sorted(k for k in clean if new.get(k) != current.get(k))
             try:
-                backup = self._backup()
+                backup = self._backup(self.api.support.session["id"] if remote and self.api.support.session else None)
             except OSError as e:
                 raise ApiError(500, "could not keep a copy of the present settings, so nothing was changed: %s" % (e.strerror or e))
             previous = copy.deepcopy(current)
@@ -917,7 +1025,8 @@ class BoxCare:
         problems += self._apply()
         print("pvj-web: settings imported by %s" % device["name"], flush=True)
         return {"imported": sorted(clean), "notes": notes, "problems": problems, "backup": backup,
-                "passwords_kept": kept, "passwords_in_file": passwords, "themes": themes}
+                "passwords_kept": kept, "passwords_in_file": passwords, "themes": themes, "kept_for_support": kept_for_support,
+                "changed": changed}
 
     # ---- diagnostics -------------------------------------------------------------------------------------------
     def _secrets(self, data):
@@ -1121,7 +1230,7 @@ class BoxCare:
                 api.on_pin(pin)
             with self.settings.lock:                      # the automatic backup would still hold the old devices
                 self.settings._write(self.settings.path + ".bak", self.settings.data)
-            for suffix in (".before-import-", ".bak-v", ".rolled-back-"):
+            for suffix in (".before-import-", ".before-support-session-", ".before-support-import-", ".bak-v", ".rolled-back-"):
                 for path in self._siblings(suffix):
                     if not self._unlink(path):
                         problems.append("could not remove %s" % os.path.basename(path))

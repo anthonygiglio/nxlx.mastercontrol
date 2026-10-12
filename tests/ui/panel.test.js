@@ -1862,6 +1862,11 @@ function startServer(env) {          // env: more for the harness's environment 
     assert.strictEqual((await get('/api/support')).config.allowed, true, 'the page switch allowed remote support');
     await page.waitForSelector('#supportstart');
     assert(await page.isVisible('label[for="supportminutes"]') && await page.isVisible('label[for="supportrole"]'), 'how long and what support may do have labels');
+    // D84: before a session is started the page says in two short lists what a helper can and cannot do
+    assert(await page.isVisible('#supportcan') && await page.isVisible('#supportcannot'), 'the two lists are there before Start');
+    assert(/remove a guest's or an operator's device/.test(await page.textContent('#supportcan')) && /make a new key afterwards/.test(await page.textContent('#supportcan')), 'what support can do, with the word about the OSC key');
+    assert(/pair a device/.test(await page.textContent('#supportcannot')) && /remove an owner's device/.test(await page.textContent('#supportcannot')) && /switch the box off/.test(await page.textContent('#supportcannot')), 'what support can never do');
+    assert.strictEqual(await page.locator('#supportoldkey').count(), 0, 'no word about the OSC key when no session saw it');
     assert(await page.isVisible('#support-address'), 'Advanced stays open through a redraw');
     await page.waitForSelector('#supportwhy');                       // no helper in the test harness: said plainly
     await page.fill('#support-address', '10.99.0.40');

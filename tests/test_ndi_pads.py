@@ -446,7 +446,10 @@ class Order(PadBase):
         self.assertTrue(wait(lambda: self.api.ndi.current is None), "the Stop came later: it stands")
 
 
-MASTER = "origin/master"
+# The release before NDI, by its commit (master at f36f8f0, just before #94 was merged). It was "origin/master" while
+# the NDI branch was open; once that branch was master, the rollback tests of D62 and D85 read their own code as the
+# "older release" and failed on master itself (2026-10-11). An older release is named by a commit, never by a branch.
+MASTER = "f36f8f0d040a35a6ecc72fb8a1001273b7f7ba0d"
 
 
 class Rollback(PadBase):

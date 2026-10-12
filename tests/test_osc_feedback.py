@@ -232,10 +232,14 @@ class OwnerOnlyTest(Base):
                 st, out = self.api.handle("POST", "/api/osc/feedback", body, who, LAN)
                 self.assertIn(st, (401, 403), (who, out))
         self.assertEqual(self.api.osc_feedback.__func__(self.api, {"on": True}, self.owner, LAN)["on"], True)
-        with self.assertRaises(Exception) as e:
-            self.api.osc_feedback({"on": False}, remote, TUNNEL)
-        self.assertEqual(e.exception.status, 403)
-        self.assertIn(("POST", "/api/osc/feedback"), support.REMOTE_DENY)
+        # D84: a support session of the Owner's role may, through the tunnel of an open session (tests/test_support_reach.py);
+        # a login with no session behind it, or one below the Owner's role, is refused by the handler itself
+        for who in (remote, dict(remote, role="live")):
+            with self.assertRaises(Exception) as e:
+                self.api.osc_feedback({"on": False}, who, TUNNEL)
+            self.assertEqual(e.exception.status, 403)
+        self.assertNotIn(("POST", "/api/osc/feedback"), support.REMOTE_DENY)
+        self.assertIn(("POST", "/api/osc/feedback"), support.REMOTE_OWNER_OPENED)
         self.assertNotIn(("POST", "/api/osc/feedback"), policy.LEGACY_LIVE)
         self.assertNotIn(("POST", "/api/osc/feedback"), policy.GUEST)
         self.assertEqual(fb.stored(self.settings.data["osc"]), (True, []), "nothing but the owner's own call changed it")
@@ -244,30 +248,28 @@ class OwnerOnlyTest(Base):
         self.post({"add": T1})
         _t, operator = self.device("live", "192.168.1.31", "op")
         _t, guest = self.device("view", "192.168.1.32", "guest")
-        for who in (operator, guest, dict(self.owner, remote=True), osc.OSC_DEVICE):
-            out = self.api.get_osc({}, who, LAN)            # the handler itself: a support session of the Owner's role too
+        for who in (operator, guest, dict(self.owner, remote=True, role="live"), osc.OSC_DEVICE):
+            out = self.api.get_osc({}, who, LAN)            # the handler itself
             self.assertIn("enabled", out)
             self.assertNotIn("feedback", out, who)
             self.assertNotIn(TABLET, json.dumps(out))
-        out = self.api.set_osc({"port": self.settings.data["osc"]["port"]}, dict(self.owner, remote=True), TUNNEL)
-        self.assertIn("senders", out)
-        self.assertNotIn(TABLET, json.dumps(out), "the answer to a save of the page through support names no target")
+        # D84: a support session of the Owner's role reads the targets, as it may change them
+        out = self.api.get_osc({}, dict(self.owner, remote=True), TUNNEL)
+        self.assertEqual(out["feedback"]["targets"][0]["address"], TABLET)
         st, out = self.api.handle("GET", "/api/osc", {}, self.owner, LAN)
         self.assertEqual(out["feedback"]["targets"][0]["address"], TABLET)
 
-    def test_a_support_session_reads_the_targets_in_no_export_and_nobody_in_a_diagnostics_file(self):
-        """The review of #123: the settings export and the diagnostics file carried the osc section whole."""
+    def test_nobody_reads_the_targets_in_a_diagnostics_file(self):
+        """The review of #123: the settings export and the diagnostics file carried the osc section whole. Since D84
+        a support session that reaches the export has the Owner's role and reads the targets on their own route, so
+        its export holds them; the diagnostics file, which leaves the box, still never does."""
         self.post({"add": dict(T1, name="Desk-Name-Sentinel")})
         self.post({"on": True})
         care, remote = self.api.boxcare, dict(self.owner, remote=True)
         mine = care.export({}, self.owner, LAN)["file"]["settings"]["osc"]
         self.assertEqual((mine["feedback_on"], mine["feedback"][0]["address"]), (True, TABLET), "the Owner's own export holds them, as settings")
         self.api.support.is_remote = lambda client: client == TUNNEL
-        for device, client in ((remote, LAN), (self.owner, TUNNEL), (remote, TUNNEL)):
-            got = care.export({}, device, client)
-            self.assertIn("enabled", got["file"]["settings"]["osc"])
-            for word in (TABLET, "Desk-Name-Sentinel", "feedback"):
-                self.assertNotIn(word, json.dumps(got), (word, client))
+        self.assertEqual(care.export({}, remote, TUNNEL)["file"]["settings"]["osc"]["feedback"][0]["address"], TABLET)
         for device, client in ((self.owner, LAN), (remote, TUNNEL)):
             got = care.diagnostics({}, device, client)["file"]
             self.assertIn("enabled", got["settings"]["osc"])

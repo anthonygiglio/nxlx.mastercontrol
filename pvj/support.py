@@ -15,11 +15,15 @@ How it works for the people involved:
 * Every connected device shows a banner with the time left and a Stop button. The session ends by itself at the
   deadline (the helper enforces it), on Stop, on a restart or a reboot; support's logins end with it. They are never
   saved as devices.
-* Over the tunnel support cannot: change these settings, start, extend or restart a session, pair or invite devices,
-  make guest or presenter codes, change, read or unlock the PIN, import settings, reset the box to factory
-  settings, export settings with their passwords, or power the box off (a reboot is allowed; it ends the session).
+* Over the tunnel support cannot, whatever its role (D84: nothing that outlives the session or locks the owner out):
+  change these settings, start or extend a session, pair or invite devices, make codes or links, change, read or
+  unlock the PIN, touch recovery or the secure connection, remove an Owner's device, reset the box to factory
+  settings, export settings with their passwords, or power the box off (a restart is allowed; it ends the session).
+* With the Owner's role support can do the rest, including what was the studio's alone before D84: import a
+  settings file (without the parts above), add and remove a theme, show and renew the OSC key, change where the
+  box sends its state, lock and open guest controls, and remove a Guest's or an Operator's device.
 
-All of this is logged (the journal, and the last sessions in the panel).
+All of this is logged (the journal, and the last sessions in the panel with what support changed).
 """
 
 import hashlib
@@ -44,28 +48,86 @@ FAILS, FAIL_WINDOW, LOCKOUT = 5, 600, 300
 HANDSHAKE_FRESH = 180            # seconds: the support server answered recently = connected
 DEFAULTS_FILE = "/etc/pvj/support.json"
 
-# Never over the tunnel, whatever the role.
+# D84. The principle: a helper in a remote session with the Owner's role may do anything that ends when the session
+# ends, and nothing that outlives it or locks the owner out. (A remote Owner session can already upload a software
+# update signed by a key this box trusts: pvj-update checks the signature against /etc/pvj/allowed_signers, and no
+# route changes the signers. So what is refused below is not about limiting a trusted helper in the
+# moment; it is about a way in that would still be there after Stop, and about the owner's own way in.)
+#
+# Never over the tunnel, whatever the role: route -> why. A route that is not here and not under a prefix below is
+# answered to a remote session by its role like any other (a session below Owner is held to policy.LEGACY_LIVE, D80).
 REMOTE_DENY = {
-    ("POST", "/api/support/config"), ("POST", "/api/support/start"), ("POST", "/api/support/extend"),
-    ("POST", "/api/pair"), ("POST", "/api/session"), ("POST", "/api/devices/invite"), ("POST", "/api/devices/revoke"),
-    ("POST", "/api/pin/rotate"), ("POST", "/api/pin/unlock"), ("POST", "/api/pin/show"), ("POST", "/api/system/poweroff"), ("GET", "/api/qr.svg"),
-    # an import can switch on OSC, DMX or MIDI (new ways in); a reset removes every device (see boxcare.py)
-    ("POST", "/api/system/settings/import"), ("POST", "/api/system/factory-reset"),
-    # a theme is a file kept on the box: added and removed by someone at the studio (applying a look is not refused)
-    ("POST", "/api/theme/add"), ("POST", "/api/theme/remove"),
-    # the OSC key is a secret of the studio's own network (D78); the rest of the OSC page stays readable for support
-    ("POST", "/api/osc/key"),
-    # where the box sends its state over OSC (D82): a new way out of the box is opened by the Owner in the room
-    ("POST", "/api/osc/feedback"),
+    # the session's own settings, start and length: a helper does not lengthen or widen his own access
+    ("POST", "/api/support/config"): "a helper does not change where the box dials out to, or whether it may",
+    ("POST", "/api/support/start"): "a session is started by someone at the studio",
+    ("POST", "/api/support/extend"): "a helper does not lengthen his own session",
+    # pairing and sessions: a device paired through the tunnel would still be paired after Stop
+    ("POST", "/api/pair"): "a device paired now would stay paired after the session",
+    ("POST", "/api/session"): "a panel session of a paired device is not made through the tunnel",
+    ("POST", "/api/devices/invite"): "an invitation is a way in that outlives the session",
+    # the PIN pairs an Owner: showing it, changing it or lifting its lockout is a way in, or a way to shut the owner out
+    ("POST", "/api/pin/rotate"): "a new PIN would shut out whoever knows the old one, and be known to the helper",
+    ("POST", "/api/pin/unlock"): "lifting the guessing lockout is done at the studio",
+    ("POST", "/api/pin/show"): "the PIN pairs an Owner's device",
+    ("GET", "/api/qr.svg"): "the QR code carries a way to pair",
+    # nobody remote can switch the box back on (a restart is allowed: it ends the session and the box comes back)
+    ("POST", "/api/system/poweroff"): "nobody remote can switch the box back on",
+    # a network change stays pending until someone confirms it, and goes back by itself otherwise (netcfg.py): the
+    # confirm is the proof that the studio still reaches the box, which a helper in the tunnel cannot give. He may
+    # make the change and take it back; someone at the studio confirms it. (Added by D84: found while trying to
+    # lock the owner out.)
+    ("POST", "/api/network/confirm"): "a network change is confirmed from the studio: only that shows the studio still reaches the box",
     # the NDI discovery server (D85): a program listening on the network is opened by the Owner in the room. Its
-    # switch is here; its own routes are in REMOTE_DENY_PREFIX below.
-    ("POST", "/api/modules/ndi-discovery"),
-    # the lock on guest controls (D80): who may play with the room is decided in the room, by an Operator or an Owner
-    # who stands in it; a support session, of whatever role, neither opens the room to guests nor shuts them out
-    ("POST", "/api/guests"),
+    # switch is here; its own routes are under a prefix below.
+    ("POST", "/api/modules/ndi-discovery"): "a program that listens on the network is switched by the owner in the room (D85)",
+    # a reset removes every paired device, the owner's too (see boxcare.py)
+    ("POST", "/api/system/factory-reset"): "a reset removes every device, the owner's too",
 }
-REMOTE_DENY_PREFIX = ("/api/access", "/api/https", "/api/recovery", "/api/ndi/discovery")   # /api/https: the box's key, certificate and the owner-only switch (D79); /api/recovery: the ways back in (D81)
+# Everything under these, whatever the role: path prefix -> why.
+REMOTE_DENY_PREFIX_WHY = {
+    "/api/access": "join codes, links and the choice of what a controller's code pairs are ways in",
+    "/api/https": "the box's key and certificate, and the switch that could shut the owner's devices out (D79)",
+    "/api/recovery": "the owner's ways back in (D81)",
+    "/api/ndi/discovery": "the NDI discovery server's own settings: a listener on the network is the owner's, in the room (D85)",
+}
+REMOTE_DENY_PREFIX = tuple(REMOTE_DENY_PREFIX_WHY)
+# Modules no support session switches ON, whatever its role, by the route or by a settings file (D84 meeting D85):
+# module id -> why. Switching one of them off takes something away and is allowed, except where the whole switch
+# is refused above (ndi-discovery).
+REMOTE_NO_MODULE_ON = {
+    "inputs-ndi": "the NDI input makes the box listen to senders on the network and run NDI's library, and stays on after the session",
+    "ndi-discovery": "a program that listens on the network is switched by the owner in the room (D85)",
+}
 REMOTE_OPEN = {("GET", "/api/hello"), ("POST", "/api/support/login")}
+# Opened to a remote session of the Owner's role by D84 (each was in REMOTE_DENY before): route -> the bound that
+# keeps it inside the principle. Not read by the guard (not being refused is what opens them); it is the record
+# the tests hold the handlers to, and every one of them writes what was done into the session's log (Support.note).
+REMOTE_OWNER_OPENED = {
+    ("POST", "/api/system/settings/import"): "what a file may not carry for a helper is left as the box has it (boxcare.REMOTE_KEPT)",
+    ("POST", "/api/theme/add"): "a theme is checked data, never code",
+    ("POST", "/api/theme/remove"): "only a theme that was added; the box's own look comes back",
+    ("POST", "/api/osc/key"): "the helper then knows the key: the owner is told to make a new one after the session",
+    ("POST", "/api/osc/feedback"): "a target is still only a device on the box's own network, never the tunnel",
+    ("POST", "/api/guests"): "the lock on guest controls: a switch the owner or an Operator sets back",
+    ("POST", "/api/devices/revoke"): "a Guest's or an Operator's device only: never an Owner's",
+}
+# What a session did, kept with its entry in the support log (SupportManager.note): the major lines, the routine
+# lines (one per route, so a few hundred covers every route there is), and the characters of one line.
+MAJOR_KEEP, DID_KEEP, DID_TEXT = 200, 200, 400
+ALWAYS_KEEP, SOME_KEEP = 100, 5     # the lines that are never displaced; the details kept beside a counted line
+# POSTs of a support login that change nothing on the box, so they are no line in what a session did
+NOT_A_CHANGE = {("POST", "/api/support/login"), ("POST", "/api/support/stop"), ("POST", "/api/logout"), ("POST", "/api/media/info"),
+                ("POST", "/api/system/settings/export"), ("POST", "/api/theme/export")}
+
+
+def upload_line(update, result):
+    """The log line for an update a support login uploaded: its file name and its sha256, so the owner can tell
+    afterwards which bundle it was. Neither is a secret. (`update` is kept for the callers; a clip is a routine
+    line with its name as a detail.)"""
+    name = "".join(c for c in str(result.get("name", "")) if c.isprintable())[:80]
+    if update:
+        return "uploaded a software update: %s, sha256 %s" % (name, result.get("sha256", "?"))
+    return "uploaded a clip: %s" % name
 
 
 class SupportApiError(Exception):
@@ -235,6 +297,102 @@ class SupportManager:
         return self._key
 
     # -- sessions ---------------------------------------------------------------------------------------------
+    def note(self, device, text, key=False, major=True, always=False, detail=None):
+        """What a support login just did, into its session's entry of the support log and the journal: the owner reads
+        it on the Remote support page. Never a secret: the caller says what was done, not the value.
+
+        Three lists, so that NO sequence of actions keeps what matters most out of the owner's sight (the security
+        review of #125 and its re-check: one list let sixty routine lines push an update off it, and two let 110
+        themes do the same).
+        * `always=True`: a software update, a settings file, a device removed. A list nothing else writes to. Each
+          is rare and heavy; past ALWAYS_KEEP the first half and the newest half stay and `always_dropped` counts
+          those between.
+        * major (the default): what the other opened routes changed and everything the session was REFUSED. The
+          text is fixed by the code; what a request chooses (a theme's id) goes into `detail`, of which the first
+          SOME_KEEP are kept beside the count. So the number of distinct lines is bounded by the code, not by the
+          helper; MAJOR_KEEP is far above it, and `major_more` would still say so if it were ever reached.
+        * `major=False`: routine use, one line per route with a count.
+
+        The same line again is a count, kept in memory until the next save: a fader dragged through the tunnel, or
+        a refused request sent a thousand times, writes neither the settings file nor the journal each time.
+        `key`: the login saw or made the OSC key, so the page says to make a new one."""
+        if not (isinstance(device, dict) and device.get("remote")):
+            return
+        clean = lambda v: "".join(c for c in str(v) if c.isprintable())[:DID_TEXT]
+        text = clean(text)
+        which, keep, more = ("always", ALWAYS_KEEP, "always_dropped") if always else (("major", MAJOR_KEEP, "major_more") if major else ("did", DID_KEEP, "did_more"))
+        with self.lock:
+            s = self.session
+            if not s:
+                return
+            again = False
+            with self.settings.lock:
+                for entry in self.settings.data.get("support_log", []):
+                    if entry.get("id") != s["id"]:
+                        continue
+                    lines = [dict(d) for d in entry.get(which, [])]
+                    same = next((d for d in lines if d.get("what") == text), None)
+                    if same is not None:
+                        same["n"] = int(same.get("n", 1)) + 1
+                        same["last"] = int(self._now())
+                        again = not (key and not entry.get("osc_key"))
+                        if detail is not None and len(same.get("some", [])) < SOME_KEEP and clean(detail)[:80] not in same.get("some", []):
+                            same["some"] = list(same.get("some", [])) + [clean(detail)[:80]]
+                    else:
+                        line = {"at": int(self._now()), "what": text}
+                        if detail is not None:
+                            line["some"], line["n"] = [clean(detail)[:80]], 1
+                        if len(lines) < keep:
+                            lines.append(line)
+                        elif always:                    # the first half and the newest half stay; those between are counted
+                            del lines[keep // 2]
+                            lines.append(line)
+                            entry[more] = int(entry.get(more, 0)) + 1
+                        else:
+                            entry[more] = int(entry.get(more, 0)) + 1
+                            again = entry[more] > 1     # said once in the journal that the list is full, then counted
+                    entry[which] = lines
+                    if key:
+                        entry["osc_key"] = True
+                if not again:
+                    try:
+                        self.settings.save()
+                    except OSError:
+                        pass
+        if not again:
+            self.log("pvj-web: remote support %s: %s%s" % (device.get("id"), text, "" if detail is None else " (%s)" % clean(detail)[:80]))
+
+    def refused(self, device, what, detail=None):
+        """A support login (or a request through the tunnel with no login at all) was refused something no session may
+        do: a major line. `what` names the request or the rule, never what was sent."""
+        if not (isinstance(device, dict) and device.get("remote")):
+            device = {"id": "support (not signed in)", "remote": True}
+            what = "%s, not signed in" % what
+        self.note(device, "was refused %s" % what, detail=detail)
+
+    def used(self, device, method, path):
+        """Every other request of a support login that changed something (Api.handle and the server's own uploads
+        call this after a POST that went well): the route, never its body. The routes D84 opened say more, in their
+        own words, and are not said twice."""
+        if not (isinstance(device, dict) and device.get("remote")) or method != "POST":
+            return
+        if (method, path) in NOT_A_CHANGE or (method, path) in REMOTE_OWNER_OPENED:
+            return
+        self.note(device, "used %s" % path, major=False)
+
+    def key_renewed(self):
+        """A new OSC key was made at the studio: no past session knows the key any more, so the page stops saying so."""
+        with self.settings.lock:
+            changed = False
+            for entry in self.settings.data.get("support_log", []):
+                if entry.pop("osc_key", None):
+                    changed = True
+            if changed:
+                try:
+                    self.settings.save()
+                except OSError:
+                    pass
+
     def _log(self, entry):
         with self.settings.lock:
             log = list(self.settings.data.get("support_log", []))

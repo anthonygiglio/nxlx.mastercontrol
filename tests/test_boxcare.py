@@ -62,6 +62,18 @@ class Base(SupportBase):
         with open(self.settings.path, "rb") as f:
             return f.read()
 
+    @staticmethod
+    def without_major(data):
+        """Settings with the `major` list taken out of each entry of the support log and nothing else: what a support
+        session is refused is written there (D84), and everything else in the log must stay as it was."""
+        data = copy.deepcopy(data)
+        for entry in data.get("support_log", []):
+            entry.pop("major", None)
+        return data
+
+    def but_the_log(self):
+        return self.without_major(json.loads(self.on_disk()))
+
     def remote_login(self):
         """A support login (full role) through the tunnel."""
         self.assertEqual(self.h("POST", "/api/support/config", dict(CFG, allowed=True), self.full_dev)[0], 200)
@@ -795,18 +807,27 @@ class ImportTest(Base):
         self.assertEqual(self.h("POST", "/api/system/settings/import", {}, self.full_dev)[0], 400)      # not as an ordinary request
         self.assertEqual(self.on_disk(), before)
 
-    def test_no_import_through_the_support_tunnel(self):
+    def test_an_import_through_the_support_tunnel_needs_the_owners_role(self):
+        """D84 (before it: never through the tunnel). tests/test_support_reach.py has what a file may carry for a helper."""
         file = self.export()
-        dev, code = self.remote_login()
+        self.ready()
+        code = self.start(role="live")[1]["code"]
+        low = self.api.support.authenticate(self.h("POST", "/api/support/login", {"code": code}, client=TUNNEL)[1]["token"])
         before = self.on_disk()
-        self.assertEqual(self.h("POST", "/api/system/settings/import", {}, dev, TUNNEL)[0], 403)
-        with self.assertRaises(ApiError) as c:                   # and the function itself refuses, whatever the route table says
-            self.care.import_settings(json.dumps(file).encode(), "import", dev, TUNNEL)
+        with self.assertRaises(ApiError) as c:                   # the function itself refuses, whatever the route table says
+            self.care.import_settings(json.dumps(file).encode(), "import", low, TUNNEL)
         self.assertEqual(c.exception.status, 403)
+        with self.assertRaises(ApiError) as c:                   # and a studio device's token through the tunnel is no login
+            self.care.import_settings(json.dumps(file).encode(), "import", self.full_dev, TUNNEL)
+        self.assertEqual(c.exception.status, 403)
+        self.assertEqual(self.on_disk(), before)
+        self.h("POST", "/api/support/stop", device=self.full_dev)
+        dev, code = self.remote_login()
         self.api.support.is_remote = lambda client: True         # over HTTP, pretending 127.0.0.1 is in the tunnel
         token = self.call("POST", "/api/support/login", {"code": code})[1]["token"]
-        self.assertEqual(self.send(file, token=token)[0], 403)
-        self.assertEqual(self.on_disk(), before)
+        st, out = self.send(file, token=token)
+        self.assertEqual(st, 200, out)
+        self.assertEqual(out["kept_for_support"], [n for n in ("recovery",) if n in file["settings"]])
 
     def test_not_while_an_update_runs(self):
         result = os.path.join(tempfile.mkdtemp(), "result.json")
@@ -975,7 +996,12 @@ class DiagnosticsTest(Base):
                    d["auth"]["pin_hash"], d["auth"]["pin_salt"]] + joins + [x["token_hash"] for x in d["devices"]]
         secrets += list(self.api.support.session["tokens"])
         for secret in secrets:
-            self.assertNotIn(secret, text, secret)
+            if secret.isdigit():
+                # a PIN is four digits, and the file holds long numbers (the time it was made, the disk's bytes) that
+                # can hold the same four by chance: a PIN is in the file only where it stands as a number of its own
+                self.assertIsNone(re.search(r"(?<![0-9])%s(?![0-9])" % re.escape(secret), text), secret)
+            else:
+                self.assertNotIn(secret, text, secret)
         for word in ("token_hash", "pin_hash", "pin_salt", "server_key", '"password"'):
             self.assertNotIn(word, text)
         # and it is still worth reading
@@ -1118,9 +1144,10 @@ class FactoryResetTest(Base):
     def test_every_refusal_changes_nothing(self):
         self.h("POST", "/api/access/code", {"role": "view"}, self.full_dev)
         dev, _ = self.remote_login()
-        before = self.on_disk()
+        before = self.but_the_log()
         media = sorted(os.listdir(self.media))
-        state = lambda: (copy.deepcopy(self.settings.data), self.auth.current_pin, [j["code"] for j in self.auth.list_joins()],
+        # (the support log without its `major` lists: a refusal through the tunnel is written there, D84)
+        state = lambda: (self.without_major(self.settings.data), self.auth.current_pin, [j["code"] for j in self.auth.list_joins()],
                          copy.deepcopy(self.api.support.session), sorted(os.listdir(self.tmp)), list(self.player.calls), self.api._care_busy)
         was = state()
         self.assertEqual(len(was[2]), 1)
@@ -1147,22 +1174,24 @@ class FactoryResetTest(Base):
         self.assertEqual(self.call("POST", "/api/system/factory-reset", ok, token="nobody")[0], 401)
         self.assertEqual(self.call("POST", "/api/system/factory-reset", raw=b"confirm=factory-reset&media=delete", token=self.full,
                                    headers={"Content-Type": "application/x-www-form-urlencoded"})[0], 415)
-        self.assertEqual(self.on_disk(), before)
+        self.assertEqual(self.but_the_log(), before)
         self.assertEqual(sorted(os.listdir(self.media)), media)
         self.assertEqual(state(), was)             # devices, PIN, join code, support session, files, playback: all as they were
         self.assertEqual(self.call("GET", "/api/status", token=self.full)[0], 200)
 
     def test_refused_through_the_support_tunnel(self):
         dev, _ = self.remote_login()
-        before = self.on_disk()
+        before = self.but_the_log()
         st, out = self.reset(dev, TUNNEL, confirm="factory-reset", media="keep")
         self.assertEqual(st, 403)
         self.assertEqual(self.reset(self.full_dev, TUNNEL, confirm="factory-reset", media="keep")[0], 403)    # a studio token there
         with self.assertRaises(ApiError) as c:                  # and the function itself refuses
             self.care.factory_reset({"confirm": "factory-reset", "media": "keep"}, dev, TUNNEL)
         self.assertEqual(c.exception.status, 403)
-        self.assertEqual(self.on_disk(), before)
+        self.assertEqual(self.but_the_log(), before)
         self.assertTrue(self.api.support.session)
+        refused = [d for d in self.settings.data["support_log"][0]["major"] if d["what"].startswith("was refused POST /api/system/factory-reset")]
+        self.assertEqual(len(refused), 2, "said in the session's log: by the login, and by the request that carried no support login")
 
     def test_refused_while_something_is_being_written(self):
         ok = {"confirm": "factory-reset", "media": "delete"}

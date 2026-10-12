@@ -522,7 +522,7 @@ class ApiTest(CareBase):
         self.assertEqual(self.h("POST", "/api/osc/key", {"new": "yes"}, self.full_dev)[0], 400)
         self.assertEqual(self.h("GET", "/api/osc/key", device=self.full_dev)[0], 405)       # never a GET: no cache, no log line
         dev, _ = self.remote_login()
-        self.assertEqual(self.h("POST", "/api/osc/key", {}, dev, TUNNEL)[0], 403)            # not through remote support
+        self.assertEqual(self.h("POST", "/api/osc/key", {}, dev, TUNNEL)[0], 200)            # D84: a support session of the Owner's role may, and it is logged
 
     def test_showing_the_key_is_limited_and_leaves_a_journal_line_without_it(self):
         from pvj import auth as auth_mod
