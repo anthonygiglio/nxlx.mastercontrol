@@ -4,6 +4,17 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-12, the NDI pipe on the Pi, and the two discovery areas (`ndi-pipe-cleanup`)
+
+The owner tried NDI on the test Pi for the first time (a group, the box's own discovery server, Test Patterns from his Mac) and got "FIRESPRAY-31.LOCAL (Test Patterns) stopped: The input pipe was replaced; not writing to it". He asked whether he had made an error in one of the "two areas to control the box's discovery server".
+
+- **The deploy that was not journalled:** the Pi has run master e03e274 (everything through #125) since 05:06 UTC on 2026-10-12; the entry below names 87c4f6a.
+- **Read on the Pi (nothing changed there):** his settings were consistent (the server module on and listening on 192.168.0.169:5959, the input set to ask the box's own server, the group NXLX.Leyline, the source found five times at 1920 x 1080). The pipe is root's (uid 0) and the helper is uid 996.
+- **The cause:** the helper's look at the pipe before writing took only a pipe it owned; since M3 (2026-10-11) the pipe is root's. No source could reach the screen on any set-up box. Fixed (`pipe_to_write`: a pipe of root's or the helper's own), with a test that fails on master's code and a step in the real-install test as the helper's account. A lesson is in LESSONS.md.
+- **An independent review (Fable):** the fix is right and weakens nothing; nothing else found that stops a picture. Open and only a deploy can tell: whether the player draws Test Patterns' one still picture when sound is on (Matroska). Noted, not changed: a helper restart under a playing source is a black screen of up to about three seconds; since M3 the pipe keeps one inode, so a new writer could in a small window meet the old reader (a guess, Low).
+- **The two areas:** running a server (Setup, NDI discovery server) and asking one (NDI input) are two halves. Each page now names its half, shows the state of the other and whether the two fit, and carries the switch; the list is headed "Discovery servers this box asks". Not seen in a browser on the Mac (no Playwright there); CI's browser test draws it.
+- **Not done:** no deploy (the standing word ended at the wind-down), so nobody has yet seen an NDI picture from the Pi since M3. With local announcements still on, finding a sender does not show that the discovery server was used.
+
 ## 2026-10-11, winding down on the Mac: what merged, what the Pi runs, the move
 
 The owner asked to wind everything down, back it up and prepare the move to his HP. No builder was running by then.

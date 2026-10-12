@@ -356,6 +356,12 @@ runuser -u pvj-web -- touch /run/pvj-ndi-config/probe || fail "the panel's accou
 rm -f /run/pvj-ndi-config/probe
 refused pvj-ndi touch /run/pvj-ndi-config/x
 refused pvj-ndi rm /run/pvj-ndi-pipe/ndi.fifo
+# The helper's own look at the pipe before it writes, as its account and on root's pipe (found on a Pi, 2026-10-12:
+# it took only a pipe of its own, so on a box every source ended "the input pipe was replaced").
+runuser -u pvj-ndi -- python3 -B -c 'import os, sys; sys.path.insert(0, "/opt/pvj/current"); from pvj import ndi
+fd = os.open("/run/pvj-ndi-pipe/ndi.fifo", os.O_RDWR | os.O_NONBLOCK)
+sys.exit(0 if ndi.pipe_to_write(os.fstat(fd)) and os.fstat(fd).st_uid != os.getuid() else 1)' \
+	|| fail "the helper's account would not write root's pipe"
 ndi_page
 grep -q '"helper": true' "$OUT" || fail "after an update over an older set-up the panel cannot reach the helper"
 

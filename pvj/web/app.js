@@ -3115,8 +3115,9 @@
   function ndiscCards() {
     var NAMES = { wired: 'The wired network', wifi: 'The Wi-Fi', all: 'All the box\'s networks' };
     var state = h('div', { class: 'list sp', id: 'ndiscbody' }, h('div', { class: 'hint', text: 'Looking...' }));
-    var setBody = h('div', { class: 'list sp', id: 'ndiscsetbody' });
-    var card = h('div', { class: 'card', id: 'ndisccard' }, h('h2', { text: 'Discovery server' }), state);
+    var setBody = h('div', { class: 'list sp', id: 'ndiscsetbody' }), ownBody = h('div', { class: 'list sp', id: 'ndiscownbody' });
+    var card = h('div', { class: 'card', id: 'ndisccard' }, h('h2', { text: 'The discovery server this box runs' }),
+      h('div', { class: 'hint', id: 'ndiscwhat', text: 'This runs a discovery server on this box, for senders and receivers to register with. That is one half. The other half is whether this box\'s own NDI input asks it: shown below.' }), state, ownBody);
     var setCard = h('div', { class: 'card', id: 'ndiscsetcard' }, h('h2', { text: 'Where it listens' }), setBody);
     var noteCard = h('div', { class: 'card', id: 'ndiscnotecard' }, h('h2', { text: 'What this is' }), h('div', { class: 'hint', id: 'ndiscnote', text: NDISC_NOTE }),
       h('div', { class: 'hint', id: 'ndiscmark' }, NDI_MARK + ' About NDI: ', ndiLink('https://ndi.video/', 'ndi.video'), '.'));
@@ -3159,6 +3160,23 @@
           h('div', { class: 'hint', text: 'In NDI Access Manager on a computer: Advanced, Discovery Servers. A sender given a discovery server stops announcing itself on the local network.' })));
       }
     }
+    // The other half (NDI input, "Use this box's own discovery server"): said here with the same switch, and whether
+    // the two fit. The switch is NDI input's (POST /api/ndi), so it is here only while NDI input is on.
+    function drawOwn(d) {
+      var runs = d.module && d.state === 'running' && !!d.listening;
+      ownBody.textContent = '';
+      if (!moduleOn('inputs-ndi')) { ownBody.appendChild(h('div', { class: 'hint', id: 'ndiscownline', role: 'status', text: 'NDI input is switched off on this box, so this box itself asks no discovery server. Other machines can still use this one.' })); return; }
+      ownBody.appendChild(toggle('ndiscown', 'This box\'s own NDI input asks this server', !!d.own, function (v, sw) {
+        api('POST', '/api/ndi', { action: 'own_discovery', on: v }).then(function (r) {
+          if (!r.ok) { sw.setAttribute('aria-checked', v ? 'false' : 'true'); return say(ndiSentence(r.data.error || 'could not change it'), true); }
+          say(v ? 'This box now also asks its own discovery server, while that is switched on.' : 'This box no longer asks its own discovery server.'); refresh();
+        });
+      }, 'The same switch as "Use this box\'s own discovery server" on NDI input.'));
+      ownBody.appendChild(h('div', { class: 'hint' + (d.own !== runs ? ' warn' : ''), id: 'ndiscownline', role: 'status', text: d.own && runs ? 'This box\'s NDI input asks this server. The two fit.'
+        : d.own ? 'This box\'s NDI input is set to ask this server, but the server is not running now, so there is nothing to ask.'
+          : runs ? 'This box\'s NDI input does not ask this server. Senders that registered with it are found by this box only if they also announce themselves on the local network, and a sender given a discovery server stops doing that.'
+            : 'This box\'s NDI input does not ask this server, and the server is not running. The two fit.' }));
+    }
     function drawSet(d) {
       setBody.textContent = '';
       ndiscForm = ndiscForm || { network: d.network, port: String(d.port) };
@@ -3180,12 +3198,12 @@
         var n = /^[0-9]{1,5}$/.test(ndiscForm.port.trim()) ? parseInt(ndiscForm.port.trim(), 10) : -1;
         api('POST', '/api/ndi/discovery', { network: ndiscForm.network, port: n }).then(function (r) {
           if (!r.ok) return sayAt(err, ndiSentence(r.data.error || 'could not save it'), true);
-          ndiscForm = null; drawSet(r.data); drawState(r.data); say('Saved. The server starts again where you set it.');
+          ndiscForm = null; drawSet(r.data); drawState(r.data); drawOwn(r.data); say('Saved. The server starts again where you set it.');
         });
       } })));
       setBody.appendChild(err);
     }
-    var first = true, drawn = '';
+    var first = true, drawn = '', halved = '';
     function refresh() {
       clearTimeout(ndiscTimer);
       api('GET', '/api/ndi/discovery').then(function (r) {
@@ -3194,6 +3212,8 @@
         if (!r.ok) { if (first) { state.textContent = ''; state.appendChild(h('div', { class: 'hint', id: 'ndiscmsg', text: ndiSentence(r.data.error || 'not available') })); } return; }
         var now = JSON.stringify([r.data.setup, r.data.supervisor, r.data.installed, r.data.state, r.data.message, r.data.last, r.data.listening, r.data.tell, r.data.bind, r.data.restarts, Math.floor(r.data.seconds / 60)]);
         if (now !== drawn) { drawn = now; drawState(r.data); }
+        var half = JSON.stringify([r.data.own, r.data.module, r.data.state, !!r.data.listening, moduleOn('inputs-ndi')]);      // the switch is drawn again only when it changed (D59)
+        if (half !== halved) { halved = half; drawOwn(r.data); }
         if (first) { ndiscForm = null; drawSet(r.data); }
         first = false;
       });
@@ -3333,11 +3353,31 @@
     // Which senders this box looks for (D62, 2026-10-11): NDI's own groups and discovery servers, the Owner's to set.
     // They decide what the box LOOKS for; they are not a password, and the page says so beside them.
     var scopeNow = h('div', { class: 'hint', id: 'ndiscopenow', role: 'status' });
+    // The other half of "Use this box's own discovery server": the state of the server this box runs (the page NDI
+    // discovery server, D85), and whether the two fit. ownSrv is that page's answer: undefined until asked, null when
+    // this device may not ask (remote support), and then only on or off is known.
+    var ownNow = h('div', { class: 'list sp', id: 'ndiownstate' }), ownSrv, ownDrawn = '';
+    function drawOwnState(d) {
+      if (!mod('ndi-discovery') || !full || ownSrv === undefined) return;
+      var ds = ownSrv, own = !!d.own_discovery, on = ds ? !!ds.module : moduleOn('ndi-discovery');
+      var at = ds && on && ds.state === 'running' && ds.listening ? ds.tell || ds.listening.address + ':' + ds.listening.port : '';      // the address to give a sender (never 0.0.0.0 for "all the box's networks")
+      var key = JSON.stringify([own, on, at, ds && ds.setup, ds && SYS_STATE.ndisc(ds).text]);
+      if (key === ownDrawn) return;          // drawn again only when it changed: it can hold a button (D59)
+      ownDrawn = key;
+      var miss = ' Senders that registered with it are found by this box only if they also announce themselves on the local network, and a sender given a discovery server stops doing that. Switch this on to ask it.';
+      var text = ds && ds.setup === false ? (own ? 'This is on, but no discovery server is set up on this box, so it does nothing.' : 'This box runs no discovery server (none is set up), and this switch is off. The two fit.')
+        : !on ? (own ? 'This is on, but this box\'s own discovery server is switched off, so there is nothing to ask.' : 'This box\'s own discovery server is switched off, and this box\'s input does not ask it. The two fit.')
+          : ds && !at ? 'This box\'s own discovery server is switched on but not running now (' + SYS_STATE.ndisc(ds).text + ').' + (own ? ' This box\'s input asks it as soon as it runs.' : ' This box\'s input does not ask it.')
+            : 'This box\'s own discovery server is ' + (at ? 'running at ' + at : 'switched on (whether it is running is not known from this device)') + (own ? ', and this box\'s input asks it. The two fit.' : ', but this box\'s input does not ask it.' + miss);
+      ownNow.textContent = '';
+      ownNow.appendChild(h('div', { class: 'hint' + (/The two fit\.$/.test(text) ? '' : ' warn'), id: 'ndiownline', role: 'status', text: text }));
+      if (own && !on && ds && ds.setup !== false) ownNow.appendChild(offNotice('ndiownoff', 'ndisc', 'NDI discovery server', function () { ownDrawn = ''; refresh(); }));
+    }
     var groupBody = h('div', { class: 'list sp', id: 'ndigroupbody' }), discBody = h('div', { class: 'list sp', id: 'ndidiscbody' });
     var scopeCard = h('div', { class: 'card', id: 'ndiscopecard' }, h('h2', { text: 'Which senders this box looks for' }), scopeNow,
       h('div', { class: 'field', text: 'Groups to look in' }), groupBody,
-      h('div', { class: 'field', text: 'Discovery servers' }), discBody, h('div', { class: 'list sp', id: 'ndiownbody' }),
-      h('div', { class: 'hint', id: 'ndiscopenote', text: 'Groups and a discovery server decide what this box looks for, and keep the list short and the network in order. They are not a password and they encrypt nothing: a sender that puts itself in the same group, or registers with the same discovery server, is found. For a venue: a group of your own, a discovery server on a machine that is always on, or fixed addresses below. This box also goes on listening for senders that announce themselves on the local network: NDI documents no setting that stops that.' }));
+      h('div', { class: 'field', text: 'Discovery servers this box asks' }), discBody, h('div', { class: 'list sp', id: 'ndiownbody' }), ownNow,
+      h('div', { class: 'hint', id: 'ndiscopenote', text: 'Groups and a discovery server decide what this box looks for, and keep the list short and the network in order. They are not a password and they encrypt nothing: a sender that puts itself in the same group, or registers with the same discovery server, is found. For a venue: a group of your own, a discovery server on a machine that is always on, or fixed addresses below. This box also goes on listening for senders that announce themselves on the local network: NDI documents no setting that stops that. So a sender can be found with no discovery server at all, and finding one does not prove that a discovery server is in use.' }));
     function scopeWords(d) {
       var g = d.groups_now && d.groups_now.length ? 'Looking in ' + (d.groups_now.length === 1 ? 'the group ' : 'the groups ') + d.groups_now.join(', ') : 'Looking in NDI\'s default group (Public)';
       var s = d.discovery_now && d.discovery_now.length ? 'asking the discovery ' + (d.discovery_now.length === 1 ? 'server ' : 'servers ') + d.discovery_now.join(', ') + ' and listening on the local network' : 'listening on the local network';
@@ -3387,7 +3427,8 @@
             if (!r.ok) { sw.setAttribute('aria-checked', v ? 'false' : 'true'); return say(ndiSentence(r.data.error || 'could not change it'), true); }
             drawScope(r.data); say(v ? 'This box now also asks its own discovery server, while that is switched on.' : 'This box no longer asks its own discovery server.');
           });
-        }, moduleOn('ndi-discovery') ? 'The box\'s own input then finds the senders that registered with the server this box runs.' : 'The box\'s discovery server is switched off (Setup, NDI discovery server), so this does nothing until it is on.'));
+        }, 'The box\'s own input then finds the senders that registered with the server this box runs. This switch asks that server; it does not start it.'));
+        drawOwnState(d);
       }
       drawScopeList(d, { body: groupBody, items: d.groups || [], max: d.max_groups, cls: 'ndigroup-entry', key: 'ndigroup', field: 'group', id: 'ndigroup', what: 'a group',
         label: 'Group', placeholder: 'Leyline', maxlength: 64, add: 'add_group', remove: 'remove_group', removed: 'The box stops looking in it.',
@@ -3436,10 +3477,17 @@
         soundLine.textContent = soundWords(r.data);
         if (first) { drawAddresses(r.data); drawSound(r.data); }
         // the groups, the servers and the allowed sources: drawn again only when they changed, and never under an open form
-        var scope = JSON.stringify([r.data.groups, r.data.groups_now, r.data.discovery, r.data.discovery_now, r.data.allowed, r.data.sources.map(function (x) { return x.id; }), r.data.helper, r.data.runtime.loaded]);
+        var scope = JSON.stringify([r.data.groups, r.data.groups_now, r.data.discovery, r.data.discovery_now, r.data.own_discovery, r.data.allowed, r.data.sources.map(function (x) { return x.id; }), r.data.helper, r.data.runtime.loaded]);
         if (first || (scope !== scoped && !addOpen.ndigroup && !addOpen.ndidisc && !moreOpen)) { scoped = scope; drawScope(r.data); drawAllowed(r.data); }      // always at first: a More left open on another page must not leave these cards empty (seen in CI's walk of the controls)
         else if (scopeNow.textContent !== scopeWords(r.data)) scopeNow.textContent = scopeWords(r.data);
         first = false;
+        // the server this box runs, for the line under "Use this box's own discovery server": its own page's answer
+        if (!full || !mod('ndi-discovery')) return;
+        if (S.device && S.device.remote) { ownSrv = null; return drawOwnState(r.data); }
+        api('GET', '/api/ndi/discovery').then(function (q) {
+          if (!document.getElementById('ndicard')) return;
+          ownSrv = q.ok ? q.data : null; drawOwnState(r.data);
+        });
       });
     }
     refresh();
