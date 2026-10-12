@@ -2702,17 +2702,66 @@ class PlayerLetsGoTest(NdiApiTest):
         self.lib.frames.put(frame(64, 16))
         self.assertEqual(self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)[0], 200)
         opened = len(self.lib.opened)
-        self.player.release_pipe = lambda path: False
+        asked = []
+        self.player.release_pipe = lambda path: asked.append(self.service.receiver is not None) or False
         st, body, _ = self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)
         self.assertEqual((st, body["error"]), (409, self.api.NDI_HELD))
-        self.assertEqual(len(self.lib.opened), opened)               # the helper was not even asked
-        self.lib.frames.put(frame(128, 16))                          # and when it is the watch that asks (a change of size)
+        self.assertEqual(len(self.lib.opened), opened)               # no new source was opened over it
+        # The player is not left wedged with the old writer feeding it (the review, and the Pi's stuck Test
+        # Patterns): the helper was told to close before the player was asked the second time.
+        self.assertEqual(asked, [True, False])
+        self.assertIsNone(self.service.receiver)
+        page = self.call("GET", "/api/ndi", token=self.full)[1]
+        self.assertEqual((self.api.ndi.current, page["playing"], page["ended"]),
+                         (None, None, {"name": "RESOLUME (Output)", "message": self.api.NDI_HELD}))
+        # and the next press is as any other once the player has let go
+        self.player.release_pipe = lambda path: True
+        self.lib.frames.put(frame(64, 16))
+        self.assertEqual(self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)[0], 200)
+
+    def test_a_player_that_lets_go_only_once_the_writer_has_ended_is_played_to_again_in_the_same_press(self):
+        """A player stuck on the stream (opening it, or reading on) ignores the first `stop`, and lets go when the
+        stream ends: the press closes the helper's source and goes on."""
+        self.enable()
+        self.lib.frames.put(frame(64, 16))
+        self.assertEqual(self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)[0], 200)
+        self.player.release_pipe = lambda path: self.service.receiver is None
+        opened = len(self.lib.opened)                                # the new source's picture, once it is opened
+        threading.Thread(target=lambda: wait(lambda: len(self.lib.opened) > opened, 5) and self.lib.frames.put(frame(64, 16)), daemon=True).start()
+        st, body, _ = self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)
+        self.assertEqual((st, body.get("playing")), (200, "ndi"), body)
+        self.assertEqual(self.api.ndi.current["id"], self.rid)
+
+    def test_when_the_watch_asked_a_player_that_will_not_let_go_keeps_the_source_wanted(self):
+        self.enable()
+        self.lib.frames.put(frame(64, 16))
+        self.assertEqual(self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)[0], 200)
+        self.player.release_pipe = lambda path: False
+        self.lib.frames.put(frame(128, 16))                          # a change of size: the watch asks
         self.assertTrue(wait(lambda: self.service.receiver.state == "changed"))
         self.api.ndi._retry_at = 0.0
         self.assertTrue(self.api.ndi_tick())
         self.assertEqual(self.api.ndi.current["id"], self.rid)       # still wanted, tried again later
         page = self.call("GET", "/api/ndi", token=self.full)[1]
         self.assertEqual((page["playing"], page["ended"]["message"]), (None, self.api.NDI_HELD + "; trying again"))
+        self.player.release_pipe = lambda path: True
+        self.api.ndi._retry_at = 0.0
+        self.lib.frames.put(frame(128, 16))
+        self.assertTrue(self.api.ndi_tick())
+        self.assertTrue(wait(lambda: (self.call("GET", "/api/ndi", token=self.full)[1]["playing"] or {}).get("width") == 128))
+
+    def test_a_press_on_a_source_that_is_gone_from_the_network_does_not_black_what_plays(self):
+        self.enable()
+        self.lib.frames.put(frame(64, 16))
+        self.assertEqual(self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)[0], 200)
+        released = []
+        self.player.release_pipe = lambda path: released.append(path) or True
+        gone = ndi.source_id("GONE (Out)", "192.168.0.99")
+        st, body, _ = self.call("POST", "/api/play", {"ndi": gone}, token=self.full)
+        self.assertEqual((st, body["error"]), (409, self.api.NDI_GONE))
+        self.assertEqual(released, [])                               # the player was not told to let go
+        self.assertEqual(self.api.ndi.current["id"], self.rid)
+        self.assertEqual(self.service.receiver.status()["id"], self.rid)       # and the helper still has what plays
 
 
 if __name__ == "__main__":

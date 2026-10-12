@@ -3080,6 +3080,7 @@ class Api:
             return {"playing": "ndi", "name": row["name"], "pending": True}
         return go()
 
+    NDI_GONE = "that source is not on the network now"
     NDI_HELD = "the player did not let go of the NDI picture before; not starting another over it"
     NDI_OVERTAKEN = "something else was played while the source was connecting"
 
@@ -3113,11 +3114,28 @@ class Api:
             # new source's writer through only once it has seen the pipe without a reader (Service._clear_pipe),
             # and the player does not reliably let go by itself. The picture of the source before is over either
             # way: the helper closes it as the first thing it does for the new one.
-            # If the player does not confirm that it let go, the helper is not asked at all: no new writer while
-            # an old reader may be there. The press is answered with the reason; the watch tries again.
+            # A source that is not on the network now is refused BEFORE the player lets go: what plays stays on
+            # the screen (the helper would refuse it too, but only after the screen had gone black for it). One
+            # short question; when the helper cannot say what is there, it is left to `open` to say why.
+            rows, why = self.ndi.find()
+            # (A press only. What the watch asks for is not on the screen as it is, and the list it would be
+            # judged by may be a second old: the helper's own answer is the one to go by there.)
+            if again is None and not why and isinstance(sid, str) and sid not in [r["id"] for r in rows]:
+                raise ApiError(409, self.NDI_GONE)
+            # If the player does not confirm that it let go, no new writer is started over a reader that may still
+            # be there. But the player is not left as it is either: the helper is told to close what it has (that
+            # ends the old writer, and the end of the stream is what ends a player stuck opening or reading it),
+            # and the player is asked once more. Only if it still holds the pipe is the press refused, with the
+            # reason on the page; a source the watch asked for stays wanted and is tried again.
             release = getattr(self.player, "release_pipe", None)
             if release is not None and release(self.ndi.fifo) is False:
-                raise ApiError(409, self.NDI_HELD)
+                self.ndi.client_close()
+                if release(self.ndi.fifo) is False:
+                    had = self.ndi.current
+                    if again is None and had:
+                        # by hand, not ndi.stop: that would cancel the ticket of a press that came meanwhile
+                        self.ndi.current, self.ndi.ended = None, {"name": had["name"], "message": self.NDI_HELD}
+                    raise ApiError(409, self.NDI_HELD)
             try:
                 p = self.ndi.open(sid)
             except ndi_mod.NdiError as e:
