@@ -1066,6 +1066,21 @@ function startServer(env) {          // env: more for the harness's environment 
       assert(/NDI documents no setting that stops that/.test(await page.textContent('#ndiscopenote')), 'and that the box goes on listening on the local network');
       assert.strictEqual(await page.textContent('#ndigroupempty'), "No group set: the box looks in NDI's default group, Public.");
       assert.strictEqual(await page.textContent('#ndidiscoveryempty'), 'No discovery server set.');
+      // The two halves (2026-10-12): the list is named as what this box ASKS, and under "Use this box's own discovery
+      // server" stands the state of the server this box runs and whether the two fit.
+      assert((await page.$$eval('#ndiscopecard .field', (els) => els.map((e) => e.textContent))).includes('Discovery servers this box asks'), 'the list says whose servers these are');
+      assert(/finding one does not prove that a discovery server is in use/.test(await page.textContent('#ndiscopenote')), 'a sender found on the local network proves nothing about a server');
+      await page.waitForSelector('#ndiownline');
+      assert.strictEqual(await page.textContent('#ndiownline'), "This box runs no discovery server (none is set up), and this switch is off. The two fit.");
+      assert(!(await page.$eval('#ndiownline', (e) => e.classList.contains('warn'))), 'a pair that fits is not a warning');
+      await page.click('#ndiown');
+      await page.waitForFunction(() => document.getElementById('ndiownline').textContent === 'This is on, but no discovery server is set up on this box, so it does nothing.');
+      assert(await page.$eval('#ndiownline', (e) => e.classList.contains('warn')), 'a pair that does not fit is a warning');
+      assert.strictEqual((await get('/api/ndi')).own_discovery, true, 'the switch is saved');
+      assert(!(await page.$('#ndiownoff')), 'no button to switch on a server that is not set up');
+      await page.click('#ndiown');
+      await page.waitForFunction(() => /The two fit\.$/.test(document.getElementById('ndiownline').textContent));
+      assert.strictEqual((await get('/api/ndi')).own_discovery, false, 'and off again, as it is on a new box');
       await page.click('#ndigroupopen');
       await page.fill('#ndigroup', 'a,b');
       await page.click('#ndigroupadd');
@@ -1115,7 +1130,15 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.waitForSelector('#ndiscnotsetup');
       assert(/is not set up on this box, so nothing listens/.test(await page.textContent('#ndiscnotsetup')), 'a box without the set-up says so');
       assert.strictEqual(await page.textContent('#ndisccommand'), 'sudo pvj-ndi-runtime server install "/path/to/NDI SDK for Linux"', 'the one command is named');
+      // The two halves (2026-10-12): the page says it RUNS a server, and whether this box's own input asks it. NDI
+      // input is off here, so the line says that and there is no switch.
+      assert.strictEqual(await page.textContent('#ndisccard h2'), 'The discovery server this box runs');
+      assert(/That is one half\. The other half is whether this box's own NDI input asks it/.test(await page.textContent('#ndiscwhat')), 'the page names both halves');
+      await page.waitForSelector('#ndiscownline');
+      assert.strictEqual(await page.textContent('#ndiscownline'), 'NDI input is switched off on this box, so this box itself asks no discovery server. Other machines can still use this one.');
+      assert(!(await page.$('#ndiscown')), 'no switch for an input that is off');
       const ds = await get('/api/ndi/discovery');
+      assert.strictEqual(ds.own, false, 'and the answer says this box does not ask its own server');
       assert.deepStrictEqual([ds.setup, ds.supervisor, ds.listening, ds.network, ds.port, ds.module], [false, false, null, 'wired', 5959, true]);
       assert(/not a password: anything that can reach it can register with it/.test(await page.textContent('#ndiscnote')), 'what a discovery server is not');
       assert(/never part of nxlx\.mastercontrol and the box never downloads it/.test(await page.textContent('#ndiscnote')), 'and where the program comes from');
