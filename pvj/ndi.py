@@ -39,6 +39,7 @@ import stat
 import struct
 import sys
 import tempfile
+import termios
 import threading
 import time
 import unicodedata
@@ -1316,6 +1317,24 @@ class Receiver:
                 return False
         return True
 
+    def _read_out(self, fd):
+        """Wait until the player has taken everything that was written (the pipe holds nothing unread), or False
+        when stopped. "Written" is not "read": a pipe holds up to a megabyte on a box, more than a whole picture
+        of a small source, so the first picture of such a source was "through" while the player had not read a
+        byte of it, and the stream's clock began seconds before the player did (CI's runners, 2026-10-12: a first
+        sound at 3.5 s; a 1080p picture is four pipes long and never showed it). Where the system does not say
+        how much is unread (macOS answers 0 for the writing end) this does not wait, as before."""
+        unread = array.array("i", [0])
+        while not self._stop.is_set():
+            try:
+                fcntl.ioctl(fd, termios.FIONREAD, unread)
+            except OSError:
+                return True
+            if unread[0] <= 0:
+                return True
+            self._stop.wait(0.005)
+        return False
+
     def _write_frame(self, fd, buf, seconds):
         """One whole picture. In the container its few bytes of heading go first and the frame follows from the
         buffer it is in: a frame is never copied to be joined to its heading."""
@@ -1363,7 +1382,7 @@ class Receiver:
                     buf, self._pending = self._pending, None
                 if buf is None:
                     return
-                ok = self._write_frame(fd, buf, 0.0)
+                ok = self._write_frame(fd, buf, 0.0) and self._read_out(fd)
                 with self._cond:
                     if ok:
                         self.counts["shown"] += 1

@@ -514,7 +514,19 @@ class ReceiverSoundTest(Base):
         self.now[0] += 5.0                                                               # then nothing for five seconds
         self.lib.sounds.put(sound(4800))
         self.assertTrue(wait(lambda: r.status()["audio"]["counts"]["received"] == 9))
-        self.assertTrue(wait(lambda: any(round(b[1], 1) == 4.9 for b in self.stream() if b[0] == 2)))      # at the clock, one block's length back
+        # At the clock again, not where the count stood (0.5): the block that came at 5.0 began at 4.9. Two orders
+        # are both right and the test's clock cannot choose between them: the block is placed first (silence up
+        # to 4.9, the block at 4.9), or the writer looks first, sees five seconds without sound and writes its
+        # silence up to a block's length and a tenth before the clock (4.8), and the block follows it there.
+        # (On a loaded runner the second happened and this asked for 4.9 alone.)
+        def last():
+            real = [b for b in self.stream() if b[0] == 2 and any(b[2])]
+            return round(real[-1][1], 3) if real else None
+        self.assertTrue(wait(lambda: last() is not None and last() > 4.0), last())
+        self.assertIn(last(), (4.8, 4.9))
+        audio = [b for b in self.stream() if b[0] == 2]
+        for a, b in zip(audio, audio[1:]):
+            self.assertGreaterEqual(b[1] + 1e-6, a[1] + len(a[2]) / 8 / 48000.0)         # and never over sound already written
 
     def test_while_sound_is_missing_silence_is_written_so_the_player_does_not_wait_for_it(self):
         r = self.start_with_sound()
