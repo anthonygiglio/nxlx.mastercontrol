@@ -79,6 +79,10 @@ class Base(CareBase):
         """The major lines of the running (or last) session: what the owner must be able to read whatever else was done."""
         return [d["what"] for d in self.settings.data["support_log"][0].get("major", [])]
 
+    def kept(self):
+        """The lines nothing can displace: an update, a settings file, a device removed."""
+        return [d["what"] for d in self.settings.data["support_log"][0].get("always", [])]
+
     def routine(self):
         return [d["what"] for d in self.settings.data["support_log"][0].get("did", [])]
 
@@ -180,22 +184,24 @@ class LogTest(Base):
         self.assertEqual(self.remote("POST", "/api/devices/revoke", {"id": self.view_dev["id"]}, dev)[0], 200)
         self.care.import_settings(json.dumps(self.export()).encode(), "import", dev, TUNNEL)
         did = self.did()
-        for n, part in enumerate(("added the theme helper", "removed the theme helper", "made a new OSC key and knows it", "was shown the OSC key",
-                                  "OSC state sent back: added a target", "locked guest controls", "removed the guest device " + self.view_dev["id"],
-                                  "imported a settings file, sha256 ")):
-            self.assertIn(part, did[n], did)
-        self.assertEqual(len(did), 8)
+        self.assertEqual(did, ["added a theme", "removed a theme", "made a new OSC key and knows it", "was shown the OSC key",
+                               "changed where the box sends its state over OSC", "locked guest controls"])
         entry = self.settings.data["support_log"][0]
+        self.assertEqual([d.get("some") for d in entry["major"]], [["helper"], ["helper"], None, None, ["added a target; 1 target(s), off"], None])
+        kept = self.kept()
+        self.assertEqual(len(kept), 2)
+        self.assertIn("removed the guest device " + self.view_dev["id"], kept[0])
+        self.assertIn("imported a settings file, sha256 ", kept[1])
         self.assertIs(entry["osc_key"], True, "the page tells the owner to make a new key")
         text = json.dumps(self.settings.data["support_log"]) + "\n".join(self.lines)
         for secret in (key["key"], self.api.osc.key(), "192.168.1.77"):
             self.assertNotIn(secret, text, "what was done, never the value")
         self.assertEqual(len([x for x in self.lines if "remote support support-1: " in x]), 8, "and each is a line in the journal")
-        self.assertEqual([d.get("n", 1) for d in entry["major"]], [1] * 8)
+        self.assertEqual([d.get("n", 1) for d in entry["major"] + entry["always"]], [1] * 8)
         self.assertNotIn("did", entry, "said once each: an opened route is not also counted as a route that was used")
         # the owner reads it on the Remote support page, and a support login does not
         seen = self.h("GET", "/api/support", device=self.full_dev)[1]["log"][0]
-        self.assertEqual([d["what"] for d in seen["major"]], did)
+        self.assertEqual(([d["what"] for d in seen["major"]], [d["what"] for d in seen["always"]]), (did, kept))
         self.assertNotIn("log", self.remote("GET", "/api/support", {}, dev)[1])
 
     def test_the_log_of_one_session_is_bounded_and_cannot_be_flushed(self):
@@ -206,18 +212,17 @@ class LogTest(Base):
         for n in range(90):
             self.assertEqual(self.remote("POST", "/api/guests", {"locked": n % 2 == 0}, dev)[0], 200)
         entry = self.settings.data["support_log"][0]
-        self.assertEqual([d.get("n", 1) for d in entry["major"]], [1, 45, 45])
+        self.assertEqual(([d.get("n", 1) for d in entry["always"]], [d.get("n", 1) for d in entry["major"]]), ([1], [45, 45]))
         self.assertEqual(len([x for x in self.lines if "remote support support-1: " in x]), 3, "a repeat is counted, not written again")
         with open(self.settings.path) as f:
             saved = json.load(f)["support_log"][0]["major"]
         self.assertEqual([d["what"] for d in saved], self.did(), "every line is on the disk at once; a repeat's count goes with the next save")
-        self.assertIn("imported a settings file", self.did()[0])
+        self.assertIn("imported a settings file", self.kept()[0])
         for n in range(sp.DID_KEEP + 15):
             self.api.support.note(dev, "thing %d" % n, major=False)
         entry = self.settings.data["support_log"][0]
         self.assertEqual((len(entry["did"]), entry["did_more"]), (sp.DID_KEEP, 15))
-        self.assertEqual(len(self.did()), 3, "routine lines never touch the major ones")
-        self.assertIn("imported a settings file", self.did()[0], "the first line is still the first")
+        self.assertEqual((len(self.did()), len(self.kept())), (2, 1), "routine lines never touch the others")
         self.api.support.note(dev, "x" * 500 + "\n\x00")
         self.assertLessEqual(max(len(w) for w in self.did()), sp.DID_TEXT)
         before = self.did()
@@ -277,11 +282,11 @@ class SecondReviewTest(Base):
         dev = self.session("full")
         for n in range(300):
             self.api.support.used(dev, "POST", "/api/route%d" % n)
-        self.api.support.note(dev, "uploaded a software update x")
+        self.api.support.note(dev, "uploaded a software update x", always=True)
         self.care.import_settings(json.dumps(self.export()).encode(), "import", dev, TUNNEL)
         self.assertEqual(self.remote("POST", "/api/guests", {"locked": True}, dev)[0], 200)
-        major = self.did()
-        self.assertEqual(len(major), 3, major)
+        major = self.kept()
+        self.assertEqual((len(major), self.did()), (2, ["locked guest controls"]))
         self.assertIn("uploaded a software update", major[0])
         self.assertIn("imported a settings file", major[1])
         entry = self.settings.data["support_log"][0]
@@ -289,12 +294,68 @@ class SecondReviewTest(Base):
         self.assertEqual(len(entry["did"]) + entry.get("did_more", 0), 300, "the routine ones fold into counts and are still counted")
         # generous, and when even that fills it is said in a place nothing can push out
         for n in range(sp.MAJOR_KEEP + 30):
-            self.api.support.note(dev, "removed the guest device %08d" % n)
+            self.api.support.note(dev, "a line of the middle kind %08d" % n)
         entry = self.settings.data["support_log"][0]
-        self.assertEqual((len(entry["major"]), entry["major_more"]), (sp.MAJOR_KEEP, 33))
-        self.assertIn("uploaded a software update", entry["major"][0]["what"], "the first lines stay")
+        self.assertEqual((len(entry["major"]), entry["major_more"]), (sp.MAJOR_KEEP, 31))
+        self.assertEqual(entry["major"][0]["what"], "locked guest controls", "the first lines stay")
+        self.assertEqual(len(self.kept()), 2, "and the list above it is untouched")
         seen = self.h("GET", "/api/support", device=self.full_dev)[1]["log"][0]
-        self.assertEqual((len(seen["major"]), seen["major_more"]), (sp.MAJOR_KEEP, 33))
+        self.assertEqual((len(seen["major"]), seen["major_more"], len(seen["always"])), (sp.MAJOR_KEEP, 31, 2))
+
+    def test_no_sequence_keeps_an_update_an_import_or_a_revoke_out_of_sight(self):
+        """The re-check of 181e614: 110 theme add and remove cycles with distinct ids filled the major list, and the
+        update after them was a count. Those three kinds have a list nothing else writes to, and a theme added or
+        removed is one line per action with a count and a few of the ids."""
+        dev = self.session("full")
+        for n in range(110):
+            self.assertEqual(self.remote("POST", "/api/theme/add", {"file": json.dumps(mine(id="t%d" % n))}, dev)[0], 200)
+            self.assertEqual(self.remote("POST", "/api/theme/remove", {"id": "t%d" % n}, dev)[0], 200)
+        self.api.support.note(dev, sp.upload_line(True, {"name": "pvj-9.9.9.tar.gz", "sha256": "ab" * 32}), always=True)
+        self.care.import_settings(json.dumps(self.export()).encode(), "import", dev, TUNNEL)
+        self.assertEqual(self.remote("POST", "/api/devices/revoke", {"id": self.view_dev["id"]}, dev)[0], 200)
+        entry = self.settings.data["support_log"][0]
+        kept = [d["what"] for d in entry["always"]]
+        self.assertEqual(len(kept), 3, kept)
+        self.assertIn("uploaded a software update: pvj-9.9.9.tar.gz", kept[0])
+        self.assertIn("imported a settings file, sha256 ", kept[1])
+        self.assertIn("removed the guest device " + self.view_dev["id"], kept[2])
+        themes = [d for d in entry["major"] if "theme" in d["what"]]
+        self.assertEqual([(d["what"], d["n"], len(d["some"])) for d in themes], [("added a theme", 110, sp.SOME_KEEP), ("removed a theme", 110, sp.SOME_KEEP)])
+        self.assertEqual(themes[0]["some"][0], "t0")
+        self.assertNotIn("major_more", entry)
+        seen = self.h("GET", "/api/support", device=self.full_dev)[1]["log"][0]      # what the panel is given
+        self.assertEqual([d["what"] for d in seen["always"]], kept)
+        # even this list has an end: past it the first and the last stay, and the number dropped is said
+        for n in range(sp.ALWAYS_KEEP + 40):
+            self.api.support.note(dev, "imported a settings file, sha256 %064d" % n, always=True)
+        entry = self.settings.data["support_log"][0]
+        kept = [d["what"] for d in entry["always"]]
+        self.assertEqual((len(kept), entry["always_dropped"]), (sp.ALWAYS_KEEP, 43))
+        self.assertIn("uploaded a software update", kept[0])
+        self.assertTrue(kept[-1].endswith("%064d" % (sp.ALWAYS_KEEP + 39)), "the last one is there too")
+        self.assertTrue(kept[sp.ALWAYS_KEEP // 2 - 1].endswith("%064d" % (sp.ALWAYS_KEEP // 2 - 4)), "the first half is the first ones")
+
+    def test_every_caller_of_a_major_line_folds_or_is_never_capped(self):
+        """Read from the source: a call that writes a major line either passes always=True, or its text has no part
+        that a request chooses (what varies goes into `detail`, which is counted and kept only for a few)."""
+        import inspect
+        import re as re_mod
+        from pvj import api as api_mod, boxcare as boxcare_mod, server as server_mod
+        calls = []
+        for mod in (api_mod, boxcare_mod, server_mod):
+            src = inspect.getsource(mod)
+            calls += [(mod.__name__, c) for c in re_mod.findall(r"support\.(?:note|refused)\((?:[^()]|\([^()]*\))*\)", src)]
+        self.assertGreaterEqual(len(calls), 10)
+        for where, call in calls:
+            if "always=True" in call or "major=False" in call or "major=update" in call:
+                continue
+            first = call.split(",", 1)[1].split("detail=")[0]
+            self.assertNotIn("%", first.replace("%s %s\" % (method, path)", ""), "%s: a major line with a part a request chooses: %s" % (where, call))
+        # the routes a refusal can name are those of the route table: a path nobody answers is a 404 and no line
+        dev = self.session("full")
+        for n in range(50):
+            self.assertEqual(self.h("POST", "/api/access/nothing%d" % n, {}, dev, TUNNEL)[0], 404)
+        self.assertEqual(self.did(), [])
 
     def test_m2_what_a_session_was_refused_is_in_its_log(self):
         dev = self.session("full")
@@ -370,7 +431,7 @@ class SecondReviewTest(Base):
         out = self.care.import_settings(raw, "import", dev, TUNNEL)
         self.assertIn("osc", out["changed"])
         self.assertNotIn("pads", out["changed"], "only what the file really changed")
-        line = self.did()[-1]
+        line = self.kept()[-1]
         self.assertIn("sha256 " + hashlib.sha256(raw).hexdigest(), line)
         self.assertIn("changed: " + ", ".join(out["changed"]), line)
         data = b"not a real bundle" * 100
@@ -447,7 +508,7 @@ class ImportTest(Base):
         self.assertTrue(any("recovery" in n and "remote support" in n for n in out["notes"]))
         self.assertTrue(self.auth.usb_enabled(), "the stick way is still as the owner set it")
         self.assertEqual(self.settings.data["osc"]["port"], 9911, "the rest of the file came")
-        self.assertTrue(self.did()[-1].endswith("; left as the box has it: recovery"), self.did()[-1])
+        self.assertTrue(self.kept()[-1].endswith("; left as the box has it: recovery"), self.kept()[-1])
         # the same file from the owner at the studio switches it, as before
         st, out = self.send(file)
         self.assertEqual((st, out["kept_for_support"]), (200, []))
@@ -523,7 +584,7 @@ class RevokeTest(Base):
         self.assertEqual(ids(), sorted(d["id"] for d in (self.full_dev, second, self.live_dev, self.view_dev)))
         for target, word in ((self.view_dev, "guest"), (self.live_dev, "operator")):
             self.assertEqual(self.remote("POST", "/api/devices/revoke", {"id": target["id"]}, dev)[0], 200)
-            self.assertIn("removed the %s device %s" % (word, target["id"]), self.did()[-1])
+            self.assertIn("removed the %s device %s" % (word, target["id"]), self.kept()[-1])
         self.assertEqual(ids(), sorted(d["id"] for d in (self.full_dev, second)), "both owners are still paired")
         self.assertTrue(self.api.support.authenticate is not None and self.api.support.session["tokens"], "and both support logins")
         # at the studio the Owner removes an Owner as before
@@ -681,7 +742,7 @@ class AttackTest(Base):
         out = self.care.import_settings(json.dumps(file).encode(), "import", dev, TUNNEL)
         self.assertIn("osc.allow", out["kept_for_support"])
         self.assertEqual((self.settings.data["osc"]["allow"], self.settings.data["osc"]["port"]), (["192.168.7.0/24"], 9922))
-        self.assertIn("osc.allow", self.did()[-1])
+        self.assertIn("osc.allow", self.kept()[-1])
         file["settings"]["osc"]["allow"] = []
         out = self.care.import_settings(json.dumps(file).encode(), "import", dev, TUNNEL)
         self.assertNotIn("osc.allow", out["kept_for_support"])

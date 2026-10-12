@@ -893,7 +893,7 @@ class BoxCare:
             # which file it was (its sha256: not a secret) and what it changed, so the owner can tell afterwards
             self.api.support.note(device, "imported a settings file, sha256 %s; changed: %s%s" % (
                 hashlib.sha256(raw if isinstance(raw, bytes) else str(raw).encode()).hexdigest(), ", ".join(out["changed"]) or "nothing",
-                "; left as the box has it: %s" % ", ".join(out["kept_for_support"]) if out["kept_for_support"] else ""))
+                "; left as the box has it: %s" % ", ".join(out["kept_for_support"]) if out["kept_for_support"] else ""), always=True)
         return out
 
     def _remote_parts(self, clean, notes):

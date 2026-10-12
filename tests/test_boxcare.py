@@ -62,11 +62,17 @@ class Base(SupportBase):
         with open(self.settings.path, "rb") as f:
             return f.read()
 
-    def but_the_log(self):
-        """The settings on the disk without the support log: what a support session is refused is written there (D84)."""
-        data = json.loads(self.on_disk())
-        data.pop("support_log", None)
+    @staticmethod
+    def without_major(data):
+        """Settings with the `major` list taken out of each entry of the support log and nothing else: what a support
+        session is refused is written there (D84), and everything else in the log must stay as it was."""
+        data = copy.deepcopy(data)
+        for entry in data.get("support_log", []):
+            entry.pop("major", None)
         return data
+
+    def but_the_log(self):
+        return self.without_major(json.loads(self.on_disk()))
 
     def remote_login(self):
         """A support login (full role) through the tunnel."""
@@ -1130,8 +1136,8 @@ class FactoryResetTest(Base):
         dev, _ = self.remote_login()
         before = self.but_the_log()
         media = sorted(os.listdir(self.media))
-        # (the settings without the support log: a refusal through the tunnel is written into the session's log, D84)
-        state = lambda: ({k: copy.deepcopy(v) for k, v in self.settings.data.items() if k != "support_log"}, self.auth.current_pin, [j["code"] for j in self.auth.list_joins()],
+        # (the support log without its `major` lists: a refusal through the tunnel is written there, D84)
+        state = lambda: (self.without_major(self.settings.data), self.auth.current_pin, [j["code"] for j in self.auth.list_joins()],
                          copy.deepcopy(self.api.support.session), sorted(os.listdir(self.tmp)), list(self.player.calls), self.api._care_busy)
         was = state()
         self.assertEqual(len(was[2]), 1)

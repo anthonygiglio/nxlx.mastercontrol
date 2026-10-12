@@ -1904,7 +1904,7 @@ class Api:
             except ThemeError as e:
                 raise ApiError(getattr(e, "status", 500), str(e))
         print("pvj-web: theme %s %s by %s" % (theme["id"], "replaced" if replaced else "added", device["name"]), flush=True)
-        self.support.note(device, "%s the theme %s" % ("replaced" if replaced else "added", theme["id"]))
+        self.support.note(device, "replaced a theme" if replaced else "added a theme", detail=theme["id"])
         return {"added": theme["id"], "name": theme["name"], "replaced": replaced, "warnings": themes_mod.warnings(theme),
                 "available": self._looks(), "skipped": [dict(k) for k in self.theme_store.skipped]}
 
@@ -1936,7 +1936,7 @@ class Api:
                 except OSError as e:
                     print("pvj-web: theme %s removed; the settings could not be saved: %s" % (tid, e.strerror or e), flush=True)
         print("pvj-web: theme %s removed by %s" % (tid, device["name"]), flush=True)
-        self.support.note(device, "removed the theme %s" % tid)
+        self.support.note(device, "removed a theme", detail=tid)
         return {"removed": tid, "theme": self.settings.data["theme"], "available": self._looks(),
                 "skipped": [dict(k) for k in self.theme_store.skipped]}
 
@@ -2077,7 +2077,7 @@ class Api:
         if not self.auth.revoke(did):
             raise ApiError(404, "no such device")
         if remote:
-            self.support.note(device, "removed the %s device %s (%s)" % (policy.NAMES[target["role"]].lower(), did, target.get("name", "")))
+            self.support.note(device, "removed the %s device %s (%s)" % (policy.NAMES[target["role"]].lower(), did, target.get("name", "")), always=True)
         return {"ok": True}
 
     def unlock_pairing(self, body, device, client):
@@ -2325,7 +2325,7 @@ class Api:
         self.log("pvj-web: OSC state feedback %s by device %s (%s) from %s; %d target(s), %s"
                  % (", ".join(said), device["id"], device["name"], client, len(targets), "on" if on else "off"))
         if remote:
-            self.support.note(device, "OSC state sent back: %s; %d target(s), %s" % (", ".join(said), len(targets), "on" if on else "off"))
+            self.support.note(device, "changed where the box sends its state over OSC", detail="%s; %d target(s), %s" % (", ".join(said), len(targets), "on" if on else "off"))
         return out
 
     def _set_osc(self, body):
@@ -3565,7 +3565,7 @@ class Api:
             raise ApiError(500, "could not save: %s" % (e.strerror or e))
         self.log("pvj-web: guest controls %s by device %s (%s, from %s)"
                  % ("locked" if locked else "opened", device.get("id"), device.get("role"), client))
-        self.support.note(device, "%s guest controls" % ("locked" if locked else "opened"))
+        self.support.note(device, "locked guest controls" if locked else "opened guest controls")
         return {"guest_controls": out}
 
     def handle(self, method, path, body, device, client):

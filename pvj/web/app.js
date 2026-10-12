@@ -338,7 +338,7 @@
       var last = (d.log || [])[0];
       if ((d.log || []).some(function (e) { return e.ended && e.osc_key; })) body.appendChild(h('div', { class: 'hint warn', id: 'supportoldkey', role: 'status',
         text: 'In an earlier session support was shown the OSC key, or made a new one, so support knows it. Make a new key now: Setup > OSC, "A key in the address", Make a new key. Then put the new key into your TouchOSC layout.' }));
-      var lastN = last ? (last.major || []).length + (last.major_more || 0) : 0, lastNo = last ? (last.major || []).filter(function (x) { return /^was refused /.test(x.what); }).length : 0;
+      var lastN = last ? (last.always || []).length + (last.always_dropped || 0) + (last.major || []).length + (last.major_more || 0) : 0, lastNo = last ? (last.major || []).filter(function (x) { return /^was refused /.test(x.what); }).length : 0;
       if (last && last.ended && !d.active && (lastN || (last.did || []).length)) body.appendChild(h('div', { class: 'state', id: 'supportlastdid',
         text: 'The last session is over. What support did in it is listed under Advanced, Recent sessions: ' + plural(lastN - lastNo, 'change') + ' worth reading' +
           (lastNo ? ', ' + plural(lastNo, 'thing') + ' support tried and was refused' : '') + ', and routine use.' }));
@@ -408,7 +408,13 @@
           // D84: what support did in that session, in the box's own words. First the lines that matter whatever else
           // was done (what the opened routes changed, an update or a settings file, a device removed, and everything
           // support was refused); then routine use, one line per kind of request with a count.
-          function line(x) { return h('li', { text: new Date(x.at * 1000).toLocaleTimeString() + ' \u00b7 support ' + x.what + (x.n > 1 ? ' (' + x.n + ' times)' : '') }); }
+          function line(x) {
+            var some = x.some && x.some.length ? ': ' + x.some.join(', ') + (x.n > x.some.length ? ' and ' + plural(x.n - x.some.length, 'other') : '') : '';
+            return h('li', { text: new Date(x.at * 1000).toLocaleTimeString() + ' \u00b7 support ' + x.what + some + (x.n > 1 ? ' (' + x.n + ' times)' : '') });
+          }
+          // first of all, and never pushed out by anything else: an update, a settings file, a device removed
+          if (e.always && e.always.length) inner.appendChild(h('ul', { class: 'hint supportdid supportalways' }, e.always.map(line)
+            .concat(e.always_dropped ? [h('li', { class: 'warn', text: 'There were ' + plural(e.always_dropped, 'more line') + ' of this kind between the first and the last shown here. The box\'s journal has them.' })] : [])));
           if (e.major && e.major.length) inner.appendChild(h('ul', { class: 'hint supportdid supportmajor' }, e.major.map(line)
             .concat(e.major_more ? [h('li', { class: 'warn', text: 'This list is full: ' + plural(e.major_more, 'more line') + ' of this kind are not shown. The box\'s journal has them.' })] : [])));
           if (e.did && e.did.length) inner.appendChild(h('ul', { class: 'hint supportdid' }, e.did.map(line)
