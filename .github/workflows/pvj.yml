@@ -183,6 +183,16 @@ jobs:
               bad=1
             fi
           done
+          # One sync case too, for the record and without a verdict: first sound late by a fifth of a second gave
+          # avsync 0.206 for 1.8 seconds on the helper as it was before 7d59ead; what master's does is printed here.
+          t=test_31_sync_first_sound_late_by_a_fifth_of_a_second
+          if su ci -c "cd /tmp/stuck && PVJ_NDI_MPV_TEST=1 PVJ_NDI_FINDINGS_FATAL=yes python3 -m unittest tests.test_ndi_mpv.NdiOnARealMpv.$t" > /tmp/stuck/out.txt 2>&1; then
+            echo "FOR THE RECORD: $t PASSES on the code from before the mending (this sync case does not tell the two apart):"
+          else
+            echo "FOR THE RECORD: $t FAILS on the code from before the mending:"
+            grep -E "AssertionError: on mpv" /tmp/stuck/out.txt | cut -c1-900
+          fi
+          grep -E "^SYNC " /tmp/stuck/out.txt | cut -c1-400 || true
           exit "$bad"
       - name: The whole suite on this mpv, for information (it may fail for reasons of the container; its result does not decide the job until a run was read)
         # First run 2026-10-12 (Python 3.13, mpv 0.40, no rollback commits fetched): it did not finish. After 35 minutes

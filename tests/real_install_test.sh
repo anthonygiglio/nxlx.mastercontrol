@@ -608,6 +608,10 @@ holds_the_pipe "$HELPER_PID" || ndi_fail "the new helper's process has not got r
 step "sound on: the same road with the picture and the sound together (Matroska)"
 box sound on || ndi_fail "sound could not be switched on"
 box play "$NDI_SOUND" matroska || ndi_fail "sound on: the stand-in's picture and sound did not get to the player"
+# Sound against picture by mpv's own account, for the record: the numbers are printed, and a breach is printed and
+# not judged here, because the bounds were measured on the Pi's mpv (0.40; the job ndi-mpv judges them) and this
+# runner's is another. It fails only if the source does not play.
+box case syncinfo "$NDI_SOUND" || ndi_fail "sound on: the source did not play while its sound against its picture was looked at"
 
 # ---- the hand-overs: every way a source comes to the player after another, judged by mpv's own word ----------------
 # Why (2026-10-12, measured on the owner's Pi through mpv's control socket): the helper's counts are not proof that
