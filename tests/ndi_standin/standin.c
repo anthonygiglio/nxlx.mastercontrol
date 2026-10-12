@@ -6,23 +6,28 @@
  * receives nothing on any network. It exists so that the whole road from the helper to the player can be run on a
  * machine that has no copy of NDI's library (tests/real_install_test.sh, tests/test_ndi_standin.py).
  *
- * What it gives: one "finder" that always reports the three sources below, and a "receiver" that makes up frames
- * by the clock. Which of the three behaviours a receiver has is decided by the NAME of the source it is opened
- * with, because the helper's environment is fixed by its unit and nothing else reaches it:
+ * What it gives: one "finder" that always reports the six sources below, and a "receiver" that makes up frames
+ * by the clock. Which behaviour a receiver has is decided by the NAME of the source it is opened with, because the
+ * helper's environment is fixed by its unit and nothing else reaches it:
  *
  *   "PVJ-STANDIN (moving)"                  a picture that changes, 30 times a second, and never any sound
  *   "PVJ-STANDIN (moving with sound)"       the same picture, and sound
  *   "PVJ-STANDIN (one still then sound)"    ONE picture, then no picture ever again, and sound that goes on
+ *   "PVJ-STANDIN (at once A)"               the moving picture, from the moment the receiver is made (see below)
+ *   "PVJ-STANDIN (at once B)"               the same, under another name
+ *   "PVJ-STANDIN (changes size)"            the moving picture at 320 x 180 for four seconds, then at 256 x 144 for
+ *                                           good: every receiver made for it after the first, in the same process,
+ *                                           sends 256 x 144 from its start (a sender that changed stays changed)
  *
  * The picture is 320 x 180, progressive, "UYVY" (two bytes a pixel), with lines padded by 16 bytes, so the helper's
  * copying of padded lines is used. Byte b of line y of picture n is (b + 3 * y + 5 * n) & 255; the padding is 0xEE.
  * The sound is 48000 samples a second, two channels, 32-bit floats, one plane a channel, 1600 samples a block
  * (a thirtieth of a second): a square wave at a tenth of full scale, 500 Hz on the left and 250 Hz on the right.
  *
- * Nothing comes in the first second after a receiver is made, as a connection to a real sender takes a moment. It
- * also keeps the tests away from something they are not about: a helper that has its first picture at once can
- * open the pipe while the player still holds it open from the source before (see pvj/NDI.md, "What the tests
- * prove"), and what happens then is a question of its own.
+ * Nothing comes in the first second after a receiver is made, as a connection to a real sender takes a moment;
+ * except from the two "at once" sources, which are there for the hand-over from one source to the next: a helper
+ * that has its first picture at once can open the pipe while the player still holds it open from the source
+ * before (see pvj/NDI.md, "What the tests prove").
  *
  * Build:  cc -shared -fPIC -pthread -O2 -o libndi.so.6 standin.c
  */
@@ -92,8 +97,10 @@ typedef struct {
 /* ---- what is sent */
 #define WIDTH 320
 #define HEIGHT 180
+#define SMALL_WIDTH 256 /* what "changes size" changes to */
+#define SMALL_HEIGHT 144
+#define CHANGE_AFTER 120 /* pictures: four seconds */
 #define PAD 16
-#define STRIDE (2 * WIDTH + PAD)
 #define RATE 48000
 #define CHANNELS 2
 #define SAMPLES 1600
@@ -112,19 +119,26 @@ enum { MODE_MOVING, MODE_SOUND, MODE_STILL };
 
 typedef struct {
 	int mode;
-	int64_t began;      /* the clock when the first picture is due: CONNECT_NS after the receiver was made */
+	int64_t began;      /* the clock when the first picture is due: CONNECT_NS after the receiver was made, or at once */
 	int64_t next_video; /* the number of the next picture */
 	int64_t next_audio; /* the number of the next block of sound */
 	int still_sent;
+	int changes;        /* "changes size": the picture number from which it is the small size; -1 for never */
 	pthread_mutex_t lock; /* the picture's caller and the sound's caller are two threads */
 } standin_recv;
 
-static const standin_source SOURCES[3] = {
+#define SOURCE_COUNT 6
+static const standin_source SOURCES[SOURCE_COUNT] = {
 	{"PVJ-STANDIN (moving)", "10.255.255.1:5961"},
 	{"PVJ-STANDIN (moving with sound)", "10.255.255.1:5962"},
 	{"PVJ-STANDIN (one still then sound)", "10.255.255.1:5963"},
+	{"PVJ-STANDIN (at once A)", "10.255.255.1:5964"},
+	{"PVJ-STANDIN (at once B)", "10.255.255.1:5965"},
+	{"PVJ-STANDIN (changes size)", "10.255.255.1:5966"},
 };
 static int finder_token;
+static pthread_mutex_t changed_lock = PTHREAD_MUTEX_INITIALIZER;
+static int changed_before; /* a receiver for "changes size" was made in this process already */
 
 static int64_t now_ns(void)
 {
@@ -143,29 +157,31 @@ static void sleep_ns(int64_t ns)
 	nanosleep(&ts, NULL);
 }
 
-static int fill_video(standin_video *v, int64_t n, int64_t now)
+static int fill_video(standin_video *v, int64_t n, int64_t now, int small)
 {
-	uint8_t *data = malloc((size_t)STRIDE * HEIGHT);
+	const int width = small ? SMALL_WIDTH : WIDTH, height = small ? SMALL_HEIGHT : HEIGHT;
+	const int stride = 2 * width + PAD;
+	uint8_t *data = malloc((size_t)stride * height);
 	int y, b;
 	if (data == NULL)
 		return KIND_NONE;
-	for (y = 0; y < HEIGHT; y++) {
-		uint8_t *line = data + (size_t)y * STRIDE;
-		for (b = 0; b < 2 * WIDTH; b++)
+	for (y = 0; y < height; y++) {
+		uint8_t *line = data + (size_t)y * stride;
+		for (b = 0; b < 2 * width; b++)
 			line[b] = (uint8_t)((b + 3 * y + 5 * n) & 255);
-		memset(line + 2 * WIDTH, 0xEE, PAD);
+		memset(line + 2 * width, 0xEE, PAD);
 	}
 	memset(v, 0, sizeof *v);
-	v->xres = WIDTH;
-	v->yres = HEIGHT;
+	v->xres = width;
+	v->yres = height;
 	v->fourcc = FOURCC_PICTURE;
 	v->fps_n = 30;
 	v->fps_d = 1;
-	v->aspect = (float)WIDTH / (float)HEIGHT;
+	v->aspect = (float)width / (float)height;
 	v->format = PROGRESSIVE;
 	v->timecode = now / 100;
 	v->data = data;
-	v->stride = STRIDE;
+	v->stride = stride;
 	v->metadata = NULL;
 	v->timestamp = now / 100;
 	return KIND_VIDEO;
@@ -205,6 +221,7 @@ static int capture(standin_recv *r, standin_video *video, standin_audio *audio, 
 	deadline = now_ns() + (int64_t)timeout_ms * 1000000;
 	for (;;) {
 		int64_t now = now_ns(), wake = deadline, n = -1, k = -1;
+		int small = 0;
 		pthread_mutex_lock(&r->lock);
 		if (video != NULL) {
 			if (r->mode == MODE_STILL) {
@@ -237,9 +254,10 @@ static int capture(standin_recv *r, standin_video *video, standin_audio *audio, 
 			else if (due < wake)
 				wake = due;
 		}
+		small = r->changes >= 0 && n >= r->changes;
 		pthread_mutex_unlock(&r->lock);
 		if (n >= 0)
-			return fill_video(video, n, now);
+			return fill_video(video, n, now, small);
 		if (k >= 0)
 			return fill_audio(audio, k, now);
 		if (now >= deadline)
@@ -278,7 +296,7 @@ const standin_source *NDIlib_find_get_current_sources(void *finder, uint32_t *co
 		return NULL;
 	}
 	if (count != NULL)
-		*count = 3;
+		*count = SOURCE_COUNT;
 	return SOURCES;
 }
 
@@ -298,7 +316,14 @@ void *NDIlib_recv_create_v3(const standin_recv_create *settings)
 		r->mode = MODE_SOUND;
 	else
 		r->mode = MODE_MOVING;
-	r->began = now_ns() + CONNECT_NS;
+	r->began = now_ns() + (strstr(name, "at once") != NULL ? 0 : CONNECT_NS);
+	r->changes = -1;
+	if (strstr(name, "changes size") != NULL) {
+		pthread_mutex_lock(&changed_lock);
+		r->changes = changed_before ? 0 : CHANGE_AFTER;
+		changed_before = 1;
+		pthread_mutex_unlock(&changed_lock);
+	}
 	pthread_mutex_init(&r->lock, NULL);
 	return r;
 }
