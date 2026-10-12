@@ -149,6 +149,7 @@ class Player:
     _effect, _effect_pid, effect_serial, effect_ended, effect_8bit, clears = None, None, 0, "", False, 0
     cleared_by, _seen_pid, _new_expected = "", None, False
     _pid_lock = locks.make("player.pid")
+    _pipe_gone = None                                      # the pipe that was on the screen when mpv became another process
     _pipe, _pipe_pid, _pipe_path = False, None, None      # a live input's pipe is what was loaded last, the mpv it was loaded into, and which pipe
 
     def __init__(self, mpv_bin="mpv", extra_args=None, rundir=None):
@@ -303,7 +304,7 @@ class Player:
         picture, so it must never stay over a clip."""
         with self._lock:
             self._end_source()
-            self._pipe = False
+            self._pipe, self._pipe_gone = False, None
             return self._play(paths, loop, audio_device, windowed, spawn, ending, image_seconds)
 
     def _play(self, paths, loop=True, audio_device=None, windowed=False, spawn=True, ending=None, image_seconds=None):
@@ -403,7 +404,7 @@ class Player:
             raise PlayerError("unknown pipe format")
         with self._lock:
             self._end_source()
-            self._pipe = False
+            self._pipe, self._pipe_gone = False, None
             self._play_pipe(path, width, height, fps, fmt)       # raises if the pipe was not loaded: then it is not what plays
             self._pipe, self._pipe_pid, self._pipe_path = True, self.ipc.request("get_property", "pid"), path
             self._pipe_since = time.monotonic()
@@ -514,8 +515,16 @@ class Player:
             except PlayerError:
                 return True         # no answer is no news: one lost question must not make the pipe "not playing" for good
             if not same:
-                self._pipe = False
+                self._pipe, self._pipe_gone = False, self._pipe_path       # lost to a new mpv, not to another load
             return self._pipe
+
+    def pipe_restarted(self, path):
+        """Whether `path` was the pipe on the screen when mpv became another process (it fell and its service
+        started a new one, or the panel ended it), and nothing has been loaded or cleared since. The new mpv is
+        idle and black; whoever feeds that pipe may load it again. Over as soon as anything is loaded."""
+        with self._lock:
+            self.pipe_playing                      # the look that notices a new process
+            return self._pipe_gone is not None and self._pipe_gone == path
 
     def pipe_is(self, path):
         """pipe_playing, and the pipe that plays is `path`: the capture input and the NDI input each have a pipe of
@@ -576,7 +585,7 @@ class Player:
                 self.ipc.request("stop")
                 while time.monotonic() < end:          # looked at before each question: one that is slow is the last
                     if self.ipc.request("get_property", "idle-active") is True:
-                        self._pipe = False             # mpv is idle: no pipe plays, whatever is loaded next
+                        self._pipe, self._pipe_gone = False, None      # mpv is idle: no pipe plays, whatever is loaded next
                         return True
                     time.sleep(0.02)
                 return False
@@ -586,7 +595,7 @@ class Player:
                 # one error Ipc.request gives these words) holds nothing. Not is_running(): that asks over the
                 # same socket and would take a player that is silent for one that is gone.
                 if str(e) == self.NOT_RUNNING:
-                    self._pipe = False
+                    self._pipe, self._pipe_gone = False, None
                     return True
                 return False
 
@@ -596,7 +605,8 @@ class Player:
     def quit(self):
         """End the mpv process (the service's unit starts a new one). What was loaded goes with it."""
         with self._lock:
-            self._pipe = False
+            # the panel ends mpv itself: for a live input that was on the screen it is a restart like any other
+            self._pipe_gone, self._pipe = (self._pipe_path if self._pipe else None), False
             if self._source is not None or self._carrier is not None:      # as _check_source does when it notices by itself
                 self._source = self._carrier = None
             self.source_epoch += 1          # the screen has changed hands: a rotation's next change is not for this one
@@ -664,7 +674,7 @@ class Player:
         playing, seen on the Pi after the test pattern); every play sets them again. An effect comes off with the
         picture it was over; `why` is what its record then says (see effect_ended)."""
         with self._lock:
-            self._pipe = False
+            self._pipe, self._pipe_gone = False, None
             self.clears += 1
             self.cleared_by = why
             try:
@@ -941,7 +951,7 @@ class Player:
         with self._lock:
             if epoch is not None and epoch != self.source_epoch:
                 return None
-            self._pipe = False
+            self._pipe, self._pipe_gone = False, None
             if not self.is_running():
                 if not spawn:
                     raise PlayerError("player service is not running (systemctl start pvj-player)")

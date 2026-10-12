@@ -2228,7 +2228,7 @@ class Input:
             self.client_close()
         return bool(had)
 
-    def tick(self, replay, loaded=None, stuck=None):
+    def tick(self, replay, loaded=None, stuck=None, restarted=None):
         """Called about once a second. When the helper says the source changed size or rate, or the helper came
         back after a fall, show the source again (`replay(id)`), at most once every RETRY_SECONDS.
 
@@ -2238,6 +2238,10 @@ class Input:
         player lost the pipe by itself (it gave up on the stream, or a reader came and went that no load of the
         panel's accounts for), and the screen is black with the player waiting on a pipe nobody writes. Then the source is shown again, as after
         a change of size. The helper's word alone never decides this; without `loaded` it is as it always was.
+
+        `restarted` (the panel's record again: the pipe was on the screen when the player became another process,
+        and nothing was loaded since) is the same loss by another road: the new player is idle and black, and the
+        source is shown again. It is true only until that load.
 
         `stuck` (the player's own word: True when it has the pipe loaded and has not opened it some seconds after
         the load, False when it has opened it, None when it cannot say) settles the opposite case: the helper
@@ -2254,7 +2258,7 @@ class Input:
             self.sync()
         p = _playing(st.get("playing"))
         lost = bool(p is not None and p["id"] == cur["id"] and p["state"] == "stopped" and p["message"] == PLAYER_LEFT
-                    and loaded is not None and loaded())
+                    and ((loaded is not None and loaded()) or (restarted is not None and restarted())))
         if lost:
             self._retry_said = self._retry_said or PLAYER_LEFT       # for the page, until it is on the screen again
         elif p is not None and p["id"] == cur["id"] and p["state"] in ("refused", "stopped"):

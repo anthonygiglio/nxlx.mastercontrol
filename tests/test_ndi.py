@@ -2475,6 +2475,105 @@ class LostPlayerTest(NdiApiTest):
         self.assertEqual(self.service.receiver.status()["state"], "playing")
         self.assertFalse(self.api.ndi_tick())                        # not again within the pause
 
+    def test_a_source_whose_player_became_another_process_is_shown_again(self):
+        """mpv fell (or was ended) under the source and its service started a new one: the new one is idle and
+        black, the panel's record no longer says that the pipe plays, and the source was ended with "the player
+        stopped reading the input". Low 5 of the reviews."""
+        self.player.pipe_is = lambda path: False
+        self.player.pipe_restarted = lambda path: path == self.service.fifo
+        self.lose_the_player()
+        loads = len([c for c in self.player.calls if c[0] == "play_pipe"])
+        threading.Timer(0.1, lambda: [self.lib.frames.put(frame(128, 16, fill=0xB2)) for _ in range(3)]).start()
+        self.assertTrue(self.api.ndi_tick())
+        self.assertEqual(self.api.ndi.current, {"id": self.rid, "name": "RESOLUME (Output)"})
+        self.assertEqual(len([c for c in self.player.calls if c[0] == "play_pipe"]), loads + 1)
+
+    def test_the_player_says_which_pipe_was_lost_to_a_new_process_until_anything_is_loaded(self):
+        from pvj.player import Player
+        pid = [41]
+
+        class Ipc:
+            def request(self, *a):
+                return pid[0]
+        p = Player.__new__(Player)
+        p.ipc, p._lock = Ipc(), threading.RLock()
+        p._pipe, p._pipe_pid, p._pipe_path = True, 41, "/run/pvj-ndi-pipe/ndi.fifo"
+        self.assertFalse(p.pipe_restarted("/run/pvj-ndi-pipe/ndi.fifo"))        # the same mpv: nothing was lost
+        pid[0] = 77                                                             # another process
+        self.assertFalse(p.pipe_restarted("/run/pvj-capture/capture.fifo"))     # not this pipe
+        self.assertTrue(p.pipe_restarted("/run/pvj-ndi-pipe/ndi.fifo"))
+        self.assertFalse(p.pipe_is("/run/pvj-ndi-pipe/ndi.fifo"))               # and it does not play
+        self.assertTrue(p.pipe_restarted("/run/pvj-ndi-pipe/ndi.fifo"))         # until something is loaded
+        p._pipe, p._pipe_gone = False, None                                     # what every load and clear does
+        self.assertFalse(p.pipe_restarted("/run/pvj-ndi-pipe/ndi.fifo"))
+
+    def test_a_first_press_whose_pipe_is_not_what_it_should_be_keeps_its_reason_for_the_page(self):
+        """Low 8: with nothing playing before, the refusal left "ended" empty: black, and no reason on the page."""
+        self.enable()
+        self.api.ndi._pipe_owner = lambda: 54321
+        self.lib.frames.put(frame(64, 16))
+        st, body, _ = self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)
+        self.assertEqual(st, 409)
+        page = self.call("GET", "/api/ndi", token=self.full)[1]
+        self.assertEqual((page["playing"], page["ended"]), (None, {"name": "RESOLUME (Output)", "message": body["error"]}))
+        self.assertIn("not what it should be", body["error"])
+
+    def test_a_load_that_comes_after_the_writer_gave_up_waiting_finds_the_end_and_the_page_says_why(self):
+        """The writer waits PIPE_OPEN_SECONDS for the player to open the pipe. A player that opens it later than
+        that must not sit on a pipe nobody writes with the page saying nothing."""
+        self.service._receiver = lambda *a, **kw: ndi.Receiver(*a, pipe_wait=0.3, **kw)
+        self.enable()
+        self.lib.frames.put(frame(64, 16))
+        self.assertEqual(self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)[0], 200)      # the panel's part went well
+        self.assertTrue(wait(lambda: self.service.receiver.status()["message"] == "the player did not open the input", 5))
+        late = OldPlayer(self.service.fifo, stays=False)             # the player's load, too late
+        self.players.append(late)
+        late.wake = True
+        self.assertTrue(late.opened.wait(3))
+        self.assertTrue(late.gone.wait(3), "a late reader was left waiting on a pipe nobody writes")
+        self.assertEqual(bytes(late.got), b"")
+        self.api.ndi._retry_at = 0.0
+        self.assertFalse(self.api.ndi_tick())                        # no retry cures a player that does not open the pipe
+        page = self.call("GET", "/api/ndi", token=self.full)[1]
+        self.assertEqual((self.api.ndi.current, page["playing"], page["ended"]),
+                         (None, None, {"name": "RESOLUME (Output)", "message": "the player did not open the input"}))
+
+    def test_two_presses_at_once_end_with_one_source_at_the_helper_the_player_and_the_page(self):
+        self.enable()
+        mad = ndi.source_id("MAD (Out)", "192.168.0.21")
+        stop = threading.Event()
+
+        def feed():                                                  # every source that is opened gets its pictures
+            seen = 0
+            while not stop.is_set():
+                if len(self.lib.opened) > seen:
+                    seen = len(self.lib.opened)
+                    for _ in range(3):
+                        self.lib.frames.put(frame(64, 16, fill=seen))
+                time.sleep(0.01)
+        threading.Thread(target=feed, daemon=True).start()
+        self.addCleanup(stop.set)
+        answers = {}
+
+        def press(sid):
+            answers[sid] = self.call("POST", "/api/play", {"ndi": sid}, token=self.full)
+        threads = [threading.Thread(target=press, args=(sid,)) for sid in (self.rid, mad)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(30)
+        self.assertEqual(sorted(answers), sorted([self.rid, mad]))
+        codes = sorted(a[0] for a in answers.values())
+        self.assertIn(codes, ([200, 200], [200, 409]), answers)
+        cur = self.api.ndi.current
+        self.assertIn(cur["id"], [sid for sid, a in answers.items() if a[0] == 200])
+        self.assertEqual(self.service.receiver.status()["id"], cur["id"])                 # the helper has the same one, and only one
+        self.assertEqual(len(self.lib.opened) - self.lib.closed, 1)
+        loads = [c for c in self.player.calls if c[0] == "play_pipe"]
+        self.assertEqual(len(loads), codes.count(200))                                    # one load for each press that was answered "playing"
+        page = self.call("GET", "/api/ndi", token=self.full)[1]
+        self.assertEqual(page["playing"]["id"], cur["id"])
+
     def test_when_something_else_took_the_player_it_is_over_and_the_page_keeps_why(self):
         self.player.pipe_is = lambda path: False                     # the player is another process, or was loaded past the panel
         self.lose_the_player()

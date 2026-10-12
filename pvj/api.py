@@ -3176,7 +3176,10 @@ class Api:
             finally:
                 self._ndi_loading.on = False
             if failed[0] is not None:
-                self.ndi.stop(reason=failed[0].message)      # the page keeps why, also when it was the watch that asked
+                # the page keeps why, also when it was the watch that asked, and also for a first press (nothing
+                # was "current" yet for stop to name)
+                if not self.ndi.stop(reason=failed[0].message):
+                    self.ndi.ended = {"name": p["name"], "message": failed[0].message}
                 self.ndi.client_close()
                 raise failed[0]
             if not loaded:
@@ -3194,7 +3197,9 @@ class Api:
         if self.ndi is None or not self.ndi.current or not self.registry.enabled("inputs-ndi"):
             return False
         cur = self.ndi.current
+        gone = getattr(self.player, "pipe_restarted", None)
         return self.ndi.tick(lambda sid: self.play_ndi({"ndi": sid}, again=cur), loaded=lambda: self._pipe_plays(self.ndi.fifo),
+                             restarted=(lambda: gone(self.ndi.fifo)) if gone is not None else None,
                              stuck=lambda: self._ndi_stuck(None))
 
     def _ndi_stuck(self, unknown=False):
