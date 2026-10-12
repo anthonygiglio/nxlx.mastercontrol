@@ -2024,6 +2024,16 @@ class Input:
                 pass
         rt = st.get("runtime") if isinstance(st.get("runtime"), dict) else {}
         sources = self._rows(st)
+        cur = self.current
+        playing = _playing(st.get("playing")) if cur else None
+        ended = dict(self.ended) if self.ended and not cur else None
+        if cur and (playing is None or (playing["id"] == cur["id"] and playing["state"] in ("refused", "stopped"))):
+            # Wanted and not on the screen (the helper is away or started again, the sender is not found, the
+            # player lost the pipe): the watch is bringing it back, and the page says why it is not there. Never
+            # nothing playing and no reason.
+            why = self._retry_said or (playing or {}).get("message") or ("the NDI helper (pvj-ndi) is not running" if not helper
+                                                                         else "the NDI helper has no source open")
+            playing, ended = None, {"name": cur["name"], "message": "%s; trying again" % why}
         return {"setup": self.setup, "helper": helper, "notice": "; ".join(notice), "sound": sound, "headroom_db": AUDIO_HEADROOM_DB,
                 "runtime": {"present": rt.get("present") is True, "loaded": rt.get("loaded") is True,
                             "version": _text(rt.get("version"), 80), "problem": _text(rt.get("problem"))},
@@ -2039,8 +2049,7 @@ class Input:
                 # what the helper says it looks in now (checked again): the page shows it beside what was asked for
                 "groups_now": [g for g in (st.get("groups") if isinstance(st.get("groups"), list) else [])[:MAX_GROUPS]
                                if isinstance(g, str) and _GROUP.fullmatch(g)],
-                "playing": _playing(st.get("playing")) if self.current else None,
-                "ended": dict(self.ended) if self.ended and not self.current else None}
+                "playing": playing, "ended": ended}
 
     def open(self, sid):
         """Ask the helper for a source's first frame. Returns {"id", "name", "width", "height", "fps", "container",
@@ -2130,13 +2139,15 @@ class Input:
         lost = bool(p is not None and p["id"] == cur["id"] and p["state"] == "stopped" and p["message"] == PLAYER_LEFT
                     and loaded is not None and loaded())
         if lost:
-            pass                                   # shown again below
+            self._retry_said = self._retry_said or PLAYER_LEFT       # for the page, until it is on the screen again
         elif p is not None and p["id"] == cur["id"] and p["state"] in ("refused", "stopped"):
             # It ended for a reason no retry cures (a format this input does not show), or the player went on to
             # something else without a word to us. Either way it is no longer what plays; the reason stays for the page.
             if self.current is cur:
                 self.current = None
-                self.ended = None if p["message"] in ("", PLAYER_LEFT) else {"name": cur["name"], "message": p["message"]}
+                # The reason is always kept for the page, also when the player went on to something else that
+                # the panel did not load itself: a source that is gone from the screen is never gone without a word.
+                self.ended = {"name": cur["name"], "message": p["message"] or "the source stopped"}
             self._retry_wait, self._retry_said = self.RETRY_SECONDS, ""
             return False
         elif p is not None and (p["id"] != cur["id"] or p["state"] != "changed"):

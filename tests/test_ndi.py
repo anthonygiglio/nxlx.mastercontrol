@@ -2404,11 +2404,26 @@ class LostPlayerTest(NdiApiTest):
         self.assertEqual(self.service.receiver.status()["state"], "playing")
         self.assertFalse(self.api.ndi_tick())                        # not again within the pause
 
-    def test_when_the_panel_loaded_something_else_since_it_is_over_quietly_as_before(self):
-        self.player.pipe_is = lambda path: False
+    def test_when_something_else_took_the_player_it_is_over_and_the_page_keeps_why(self):
+        self.player.pipe_is = lambda path: False                     # the player is another process, or was loaded past the panel
         self.lose_the_player()
         self.assertFalse(self.api.ndi_tick())
-        self.assertEqual((self.api.ndi.current, self.api.ndi.ended), (None, None))
+        self.assertEqual((self.api.ndi.current, self.api.ndi.ended), (None, {"name": "MAD (Out)", "message": ndi.PLAYER_LEFT}))
+        page = self.call("GET", "/api/ndi", token=self.full)[1]
+        self.assertEqual((page["playing"], page["ended"]["message"]), (None, ndi.PLAYER_LEFT))      # never nothing and no reason
+
+    def test_a_reload_that_the_panel_itself_refuses_keeps_its_reason_for_the_page(self):
+        self.enable()
+        self.lib.frames.put(frame(64, 16))
+        self.assertEqual(self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)[0], 200)
+        self.lib.frames.put(frame(128, 16))
+        self.assertTrue(wait(lambda: self.service.receiver.state == "changed"))
+        self.api.ndi._pipe_owner = lambda: 54321                     # the pipe is not what it should be when the watch loads it again
+        threading.Timer(0.1, self.lib.frames.put, [frame(128, 16)]).start()
+        self.assertTrue(self.api.ndi_tick())
+        page = self.call("GET", "/api/ndi", token=self.full)[1]
+        self.assertIsNone(page["playing"])
+        self.assertEqual(page["ended"], {"name": "RESOLUME (Output)", "message": "the NDI helper's pipe is not what it should be; not loading it"})
 
     def test_a_player_that_loses_the_pipe_every_time_is_loaded_less_and_less_often(self):
         d = tempfile.mkdtemp()
@@ -2476,10 +2491,14 @@ class HelperRestartTest(NdiApiTest):
             self.assertTrue(old.gone.wait(3), "the player was not given the end when the helper went")
             self.assertFalse(self.api.ndi_tick())                    # no helper: nothing to ask, nothing forgotten
             self.assertEqual(self.api.ndi.current["id"], self.rid)
+            page = self.call("GET", "/api/ndi", token=self.full)[1]  # and the page says why the screen is black
+            self.assertEqual((page["playing"], page["ended"]), (None, {"name": "RESOLUME (Output)", "message": "the NDI helper (pvj-ndi) is not running; trying again"}))
             self.assertIsNone(self.lit(False))                       # black: the pad is not lit while nothing of it is on the screen
             self.back(sources=False)
             self.assertTrue(self.api.ndi_tick())                     # the new helper is told the settings; the sender is not found yet
             self.assertEqual((self.service.on, self.api.ndi.current["id"]), (True, self.rid))
+            page = self.call("GET", "/api/ndi", token=self.full)[1]
+            self.assertEqual((page["playing"], page["ended"]["message"]), (None, "that source is not on the network now; trying again"))
             self.lib.raw = [(b"RESOLUME (Output)", b"192.168.0.20:5961")]
             self.assertFalse(self.api.ndi_tick())                    # not before the pause is over
             self.api.ndi._retry_at = 0.0
@@ -2489,6 +2508,8 @@ class HelperRestartTest(NdiApiTest):
             self.assertEqual(len([c for c in self.player.calls if c[0] == "play_pipe"]), loads + 1)
             self.assertEqual(self.api.ndi.current, {"id": self.rid, "name": "RESOLUME (Output)"})
             self.assertEqual(self.lit(True), self.rid)
+            page = self.call("GET", "/api/ndi", token=self.full)[1]
+            self.assertEqual((page["playing"]["id"], page["ended"]), (self.rid, None))
         new = self.reader()
         self.lib.frames.put(frame(64, 16, fill=9))
         self.assertTrue(wait(lambda: len(new.got) >= 64 * 16 * 2))
@@ -2629,29 +2650,37 @@ class PlayerLetsGoTest(NdiApiTest):
         self.assertTrue(wait(lambda: len(new.got) >= 128 * 16 * 2))
         self.assertEqual(set(new.got), {2})
 
-    def test_the_player_is_told_to_let_go_only_of_the_pipe_it_was_given_last(self):
+    def test_the_player_is_told_to_let_go_only_of_the_pipe_it_was_given_last_and_asked_until_it_is_idle(self):
         from pvj.player import Player, PlayerError
-        sent = []
+        sent, idle = [], [False, False, True]
 
         class Ipc:
+            down = False
+
             def request(self, *a):
                 sent.append(a)
                 if self.down:
                     raise PlayerError("down")
+                if a == ("get_property", "idle-active"):
+                    return idle.pop(0) if len(idle) > 1 else idle[0]
                 return 41
-            down = False
         p = Player.__new__(Player)
         p.ipc, p._lock = Ipc(), threading.RLock()
-        self.assertFalse(p.release_pipe("/run/pvj-ndi-pipe/ndi.fifo"))        # nothing was loaded
+        self.assertIsNone(p.release_pipe("/run/pvj-ndi-pipe/ndi.fifo"))         # nothing was loaded
         p._pipe, p._pipe_pid, p._pipe_path = True, 41, "/run/pvj-capture/capture.fifo"
-        self.assertFalse(p.release_pipe("/run/pvj-ndi-pipe/ndi.fifo"))        # the capture input's pipe plays: not ours to end
+        self.assertIsNone(p.release_pipe("/run/pvj-ndi-pipe/ndi.fifo"))         # the capture input's pipe plays: not ours to end
         self.assertEqual(sent, [])
         p._pipe_path = "/run/pvj-ndi-pipe/ndi.fifo"
-        self.assertTrue(p.release_pipe("/run/pvj-ndi-pipe/ndi.fifo"))
-        self.assertEqual(sent, [("stop",)])
-        self.assertTrue(p.pipe_is("/run/pvj-ndi-pipe/ndi.fifo"))             # still what the panel loaded last (the watch goes by it)
+        self.assertIs(p.release_pipe("/run/pvj-ndi-pipe/ndi.fifo"), True)
+        self.assertEqual(sent, [("stop",)] + [("get_property", "idle-active")] * 3)       # asked until mpv itself says it holds nothing
+        self.assertTrue(p.pipe_is("/run/pvj-ndi-pipe/ndi.fifo"))                # still what the panel loaded last (the watch goes by it)
+        idle[:] = [False]
+        p.RELEASE_SECONDS = 0.2
+        began = time.monotonic()
+        self.assertIs(p.release_pipe("/run/pvj-ndi-pipe/ndi.fifo"), False)      # a player that does not let go: said, and bounded
+        self.assertLess(time.monotonic() - began, 1.0)
         p.ipc.down = True
-        self.assertFalse(p.release_pipe("/run/pvj-ndi-pipe/ndi.fifo"))
+        self.assertIs(p.release_pipe("/run/pvj-ndi-pipe/ndi.fifo"), False)
 
 
 if __name__ == "__main__":

@@ -3152,7 +3152,7 @@ class Api:
             finally:
                 self._ndi_loading.on = False
             if failed[0] is not None:
-                self.ndi.stop()
+                self.ndi.stop(reason=failed[0].message)      # the page keeps why, also when it was the watch that asked
                 self.ndi.client_close()
                 raise failed[0]
             if not loaded:
