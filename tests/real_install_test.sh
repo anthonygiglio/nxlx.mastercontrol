@@ -6,6 +6,10 @@
 # that was cut short, and the things the service accounts must not be able to do.
 # Then the NDI input, which is opt-in per box (D62): that those plain installs left nothing of it, what root's
 # opt-in changes, that a later install keeps it, and that opting out takes it off. Without NDI's library.
+# Then an NDI picture all the way, on this layout: a STAND-IN for NDI's library (tests/ndi_standin, our own code,
+# built here) is placed by the real command, loaded by the real helper in its sandbox, written through root's pipe
+# and read by the real player, asked for through the panel's API. NDI's own library is never here; see pvj/NDI.md,
+# "What the tests prove".
 #
 # It creates accounts, installs to /opt/pvj, writes units and starts services. Run it ONLY on a machine that is
 # thrown away afterwards (the CI runner). It refuses without the variable below. It is not a test of a Raspberry
@@ -225,9 +229,10 @@ services_and_their_files
 # fetched), so what is checked is root's part: that a plain install leaves nothing of NDI, what the opt-in changes
 # under a real systemd (the group must exist before the panel and the player start with it), that a later plain
 # install keeps and refreshes it, and that opting out takes it off again. Not a test that NDI works.
-# What is NOT run here, and cannot be: the real command succeeding ("pvj-ndi-runtime install <the NDI SDK>"). It
-# needs NDI's library, which only a person with the SDK has. Here the command is run only with a file it refuses,
-# and the setup it would go on to is called directly (ndi_setup enable). The whole command is device step N2.
+# What is NOT run here, and cannot be: the real command with NDI's library ("pvj-ndi-runtime install <the NDI SDK>"),
+# which only a person with the SDK has. In these steps the command is run only with a file it refuses, and the setup
+# it would go on to is called directly (ndi_setup enable). Further down the whole command does run, with a stand-in
+# for the library ("an NDI picture all the way"). With NDI's own file it is device step N2.
 NDI_WEB_DROPIN=/etc/systemd/system/pvj-web.service.d/50-pvj-ndi.conf
 NDI_PLAYER_DROPIN=/etc/systemd/system/pvj-player.service.d/50-pvj-ndi.conf
 ndi_setup() {      # ndi_setup enable|disable: root's code as `pvj-ndi-runtime install|remove` runs it, without a library
@@ -486,6 +491,146 @@ wait_for 40 systemctl is-active --quiet pvj-web.service || fail "the panel did n
 nothing_of_ndi
 services_and_their_files
 
+# ---- an NDI picture all the way, on the box layout, with a stand-in for NDI's library ------------------------------
+# Why (2026-10-12, found on the owner's Pi): since the pipe became root's, the helper refused to write it, and no NDI
+# picture reached the screen of any box. Every test was green, because every test ran the helper where it makes a
+# pipe of its own. So here the whole road is taken as a box has it: the real accounts, the real units and the
+# helper's sandbox, root's pipe from the tmpfiles lines, the real pvj-ndi service, the panel's API, the real mpv.
+# The one thing that is not real is the library: tests/ndi_standin/standin.c, written from what pvj/ndi.py calls,
+# which makes up three sources and touches no network. So this never shows that NDI's own library works, finds a
+# sender or gets through the sandbox's network rules.
+# And this machine has no screen: the player is started with mpv's null video and sound outputs (a drop-in of this
+# test's, in /run, gone at the end), because without any output mpv plays nothing and lets go of the pipe. What is
+# shown is that the player reads and decodes the pipe, not that a picture is on a display.
+NDI_BUILD="$(mktemp -d)"
+NDI_STANDIN="$NDI_BUILD/libndi.so.6"
+NDI_LIB=/opt/pvj-ndi/libndi.so.6
+NDI_PIPE=/run/pvj-ndi-pipe/ndi.fifo
+NDI_PLAYER_CI=/run/systemd/system/pvj-player.service.d/90-ci-no-screen.conf
+MPV_LOG=/tmp/pvj-ci-mpv.log
+NDI_MOVING="PVJ-STANDIN (moving)"
+NDI_SOUND="PVJ-STANDIN (moving with sound)"
+NDI_STILL="PVJ-STANDIN (one still then sound)"
+box() {            # the questions to the panel and the player (tests/ndi_standin/box_check.py); the token stays off the command line
+	PVJ_TOKEN="$TOKEN" python3 -B "$SRC/tests/ndi_standin/box_check.py" "$@"
+}
+ndi_get() {        # GET /api/ndi into $OUT
+	local code
+	code="$(curl -sS -m 20 -o "$OUT" -w '%{http_code}' -H "Authorization: Bearer $TOKEN" http://127.0.0.1/api/ndi)"
+	[ "$code" = 200 ]
+}
+ndi_loaded() { ndi_get && grep -q '"loaded": true' "$OUT"; }
+ndi_fail() {       # everything one run needs to say what went wrong, then fail
+	echo "--- what the panel and the player say" >&2
+	box dump >&2 || true
+	echo "--- the pipe, the helper's folder, the library" >&2
+	ls -lan /run/pvj-ndi-pipe /run/pvj-ndi /opt/pvj-ndi >&2 || true
+	echo "--- the helper's journal" >&2
+	journalctl -b --no-pager -u pvj-ndi -n 60 >&2 || true
+	echo "--- the panel's journal" >&2
+	journalctl -b --no-pager -u pvj-web -n 40 >&2 || true
+	echo "--- the player's command line and the end of its own log" >&2
+	tr '\0' ' ' < "/proc/$(systemctl show -p MainPID --value pvj-player.service)/cmdline" >&2 || true
+	echo >&2
+	tail -n 60 "$MPV_LOG" >&2 || true
+	fail "$@"
+}
+holds_the_pipe() { # holds_the_pipe PID: that process has root's pipe open
+	find "/proc/$1/fd" -lname "$NDI_PIPE" 2>/dev/null | grep -q .
+}
+
+step "an NDI picture all the way: the stand-in for NDI's library is built here and placed by the real command"
+command -v cc >/dev/null || fail "no C compiler (cc) on this machine: the stand-in for NDI's library cannot be built"
+cc -shared -fPIC -pthread -O2 -Wall -Wextra -o "$NDI_STANDIN" "$SRC/tests/ndi_standin/standin.c" || fail "the stand-in for NDI's library did not build"
+# The player without a screen (see above): the unit's own command, with mpv's null outputs and a log added.
+PLAYER_EXEC="$(sed -n 's/^ExecStart=\(.*\) serve$/\1/p' /etc/systemd/system/pvj-player.service)"
+[ -n "$PLAYER_EXEC" ] || fail "the player's unit has no 'ExecStart=... serve' line to add the null outputs to"
+install -d -m 0755 "$(dirname "$NDI_PLAYER_CI")"
+printf '%s\n' "# Written by tests/real_install_test.sh for its NDI step and removed by it: this machine has no screen." \
+	"[Service]" "ExecStart=" \
+	"ExecStart=$PLAYER_EXEC --mpv-arg=--vo=null --mpv-arg=--ao=null --mpv-arg=--log-file=$MPV_LOG serve" > "$NDI_PLAYER_CI"
+systemctl daemon-reload
+# The real command, whole: its checks of the file (a plain file of this processor, not too large; nothing in them
+# knows NDI's file from any other library), the copy to root's folder, the account, the units, the pipe, the restarts.
+if ! /usr/local/bin/pvj-ndi-runtime install "$NDI_STANDIN" 2>&1 | tee "$OUT"; then ndi_fail "the real command did not set NDI up with the stand-in"; fi
+grep -q "^installed $NDI_LIB\$" "$OUT" || fail "the command did not say where it placed the library"
+grep -q "^sha256 $(sha256sum "$NDI_STANDIN" | cut -d' ' -f1) " "$OUT" || fail "the sha256 the command printed is not the stand-in's"
+grep -q "the helper pvj-ndi is installed and was running" "$OUT" || fail "the command did not say that the helper stayed up"
+is /opt/pvj-ndi "root:root 755 directory"
+is "$NDI_LIB" "root:root 644 regular file"
+cmp "$NDI_STANDIN" "$NDI_LIB" || fail "what was placed is not what was given"
+is /run/pvj-ndi-pipe "root:pvj-ndi 750 directory"
+is "$NDI_PIPE" "root:pvj-ndi 660 fifo"
+wait_for 40 systemctl is-active --quiet pvj-ndi.service || ndi_fail "pvj-ndi is not active after the real command"
+wait_for 40 test -S /run/pvj-ndi/ndi.sock || ndi_fail "pvj-ndi made no socket after the real command"
+wait_for 40 systemctl is-active --quiet pvj-web.service || ndi_fail "the panel did not come back after the real command"
+wait_for 40 player_socket_is_open || ndi_fail "the player does not stay up with mpv's null outputs; this step needs a player"
+PLAYER_PID="$(systemctl show -p MainPID --value pvj-player.service)"
+tr '\0' ' ' < "/proc/$PLAYER_PID/cmdline" | grep -q -- '--vo=null' || ndi_fail "the player was not started with the null output: this test's drop-in was not used"
+in_group "$PLAYER_PID" "$NDI_GID" || ndi_fail "the running player is not in the group pvj-ndi"
+ndi_page
+grep -q '"setup": true' "$OUT" || ndi_fail "the panel does not see that the box is set up for NDI"
+grep -q '"helper": true' "$OUT" || ndi_fail "the panel cannot reach the helper"
+wait_for 30 ndi_loaded || ndi_fail "with the module on, the helper did not load the library that the real command placed"
+cat "$OUT"
+echo
+grep -q 'PVJ STAND-IN' "$OUT" || ndi_fail "the library the helper says it loaded is not the stand-in"
+HELPER_PID="$(systemctl show -p MainPID --value pvj-ndi.service)"
+[ "$(ps -o user= -p "$HELPER_PID" | tr -d ' ')" = pvj-ndi ] || ndi_fail "the helper's process does not run as pvj-ndi"
+grep -q " $NDI_LIB\$" "/proc/$HELPER_PID/maps" || ndi_fail "the helper's process has not got $NDI_LIB loaded"
+
+step "sound off: the helper's account writes root's pipe, the player reads it, the panel says 'playing' and counts the pictures"
+# With the check as it was until 2026-10-12 (a pipe is written only if the helper owns it) this is where the run
+# ends: 'PVJ-STANDIN (moving)' did not play: it stopped with "the input pipe was replaced; not writing to it".
+box play "$NDI_MOVING" raw || ndi_fail "sound off: the stand-in's picture did not get from the helper through root's pipe to the player"
+holds_the_pipe "$HELPER_PID" || ndi_fail "the helper's process has not got root's pipe open"
+holds_the_pipe "$PLAYER_PID" || ndi_fail "the player's process has not got root's pipe open"
+is "$NDI_PIPE" "root:pvj-ndi 660 fifo"
+
+step "the helper is restarted under the playing source: the panel brings the source back by itself"
+systemctl restart pvj-ndi.service
+[ "$(systemctl show -p MainPID --value pvj-ndi.service)" != "$HELPER_PID" ] || ndi_fail "after a restart the helper is the same process"
+box back "$NDI_MOVING" 20 || ndi_fail "the source did not come back by itself after the helper's restart"
+HELPER_PID="$(systemctl show -p MainPID --value pvj-ndi.service)"
+holds_the_pipe "$HELPER_PID" || ndi_fail "the new helper's process has not got root's pipe open"
+[ "$(systemctl show -p MainPID --value pvj-player.service)" = "$PLAYER_PID" ] || ndi_fail "the player was restarted with the helper; it must only load the pipe again"
+
+step "sound on: the same road with the picture and the sound together (Matroska)"
+box sound on || ndi_fail "sound could not be switched on"
+box play "$NDI_SOUND" matroska || ndi_fail "sound on: the stand-in's picture and sound did not get to the player"
+
+step "one still picture and then only sound (what NDI's Test Patterns sends): REPORTED, not judged, read the lines below"
+# An open question of the review of 2026-10-12: does the player keep the picture when a source sends one frame and
+# then only sound? Nobody had seen it. This prints what the helper and mpv say each second for ten seconds and one
+# line that begins STILL-REPORT. The run fails here only if no report came or the pipe was "replaced"; whether the
+# report says KEPT or FINDING is for a person to read, and is repeated in the last line of this run. With the null
+# output it is mpv's state that is seen, never a screen.
+if ! box still "$NDI_STILL" | tee "$OUT"; then ndi_fail "one still then sound: the source could not be started, or the pipe was refused"; fi
+grep -q '^STILL-REPORT: ' "$OUT" || ndi_fail "one still then sound: no report was printed"
+if grep -q '^STILL-REPORT: KEPT' "$OUT"; then STILL_SAID="mpv stayed in playback with the picture's track"; else STILL_SAID="A FINDING, mpv did NOT keep it as expected: read that step"; fi
+echo "--- what the player's own log says about its queues and about ends, if anything"
+grep -i -E 'too many packets|end of file|eof|underrun' "$MPV_LOG" | tail -n 20 || true
+
+step "the stand-in is taken off by the real command, and this test's drop-in with it: nothing of NDI is left"
+box sound off || ndi_fail "sound could not be switched off again"
+NDI_OFF="$(curl -sS -m 20 -o "$OUT" -w '%{http_code}' -H 'Content-Type: application/json' -H 'X-PVJ-Request: 1' -H "Authorization: Bearer $TOKEN" -d '{"enabled": false}' http://127.0.0.1/api/modules/inputs-ndi)"
+[ "$NDI_OFF" = 200 ] || ndi_fail "the NDI module could not be switched off: HTTP $NDI_OFF, $(head -c 300 "$OUT")"
+rm -f "$NDI_PLAYER_CI"
+rmdir "$(dirname "$NDI_PLAYER_CI")"
+systemctl daemon-reload
+# it restarts the panel and the player: the player as its unit says again
+if ! /usr/local/bin/pvj-ndi-runtime remove 2>&1 | tee "$OUT"; then fail "the real command could not take NDI off again"; fi
+grep -q "^removed NDI's library ($NDI_LIB)\$" "$OUT" || fail "the command did not say that it removed the library"
+if [ -e /opt/pvj-ndi ] || [ -L /opt/pvj-ndi ]; then fail "after 'remove' there is still /opt/pvj-ndi"; fi
+rm -rf "$NDI_BUILD"
+sleep 2
+wait_for 40 panel_answers || fail "the panel does not answer after 'pvj-ndi-runtime remove'"
+nothing_of_ndi
+services_and_their_files
+if [ "$PLAYER_SEEN" = 1 ] && tr '\0' ' ' < "/proc/$(systemctl show -p MainPID --value pvj-player.service)/cmdline" | grep -q -- '--vo=null'; then
+	fail "the player still runs with this test's null output"
+fi
+
 step "final listing"
 listing
 
@@ -504,3 +649,4 @@ grep -q "pvj-ndi on a box that was set up for NDI" "$OUT" || fail "the uninstall
 
 echo
 echo "PASS (player folder checked: $PLAYER_SEEN). This ran on $(systemctl --version | head -n 1), not on a Raspberry Pi."
+echo "NDI: a picture of the stand-in for NDI's library went the whole road (never NDI's own library, never a screen). One still then only sound: $STILL_SAID."

@@ -55,6 +55,29 @@ class Reader(threading.Thread):
             os.close(fd)
 
 
+class OneSetOfNames(unittest.TestCase):
+    """The three sources are named in the stand-in and asked for by name in the real-install test. No compiler needed."""
+
+    def test_the_real_install_test_asks_for_the_sources_the_stand_in_reports_and_for_each_road(self):
+        with open(SOURCE) as f:
+            c = f.read()
+        with open(os.path.join(REPO, "tests", "real_install_test.sh")) as f:
+            sh = f.read()
+        for name in (MOVING, SOUND, STILL):
+            self.assertIn('{"%s", "10.255.255.1:' % name, c)
+            self.assertIn('="%s"\n' % name, sh)
+        for want in ('pvj-ndi-runtime install "$NDI_STANDIN"', 'box play "$NDI_MOVING" raw', "systemctl restart pvj-ndi.service\n",
+                     'box back "$NDI_MOVING" 20', 'box play "$NDI_SOUND" matroska', 'box still "$NDI_STILL"', "pvj-ndi-runtime remove"):
+            self.assertIn(want, sh[sh.index('step "an NDI picture all the way'):], want)
+
+    def test_the_stand_in_has_no_line_of_ndis_headers_and_says_so(self):
+        with open(SOURCE) as f:
+            c = f.read()
+        self.assertIn("It is NOT NDI and holds nothing of NDI's", c)
+        self.assertNotIn("#include <Processing.NDI", c)
+        self.assertNotIn("NDIlib_source_t", c)       # the structures have names of our own; only the entry points' names are NDI's
+
+
 @unittest.skipUnless(CC, "no C compiler here: the stand-in for NDI's library cannot be built")
 class StandIn(unittest.TestCase):
     @classmethod
