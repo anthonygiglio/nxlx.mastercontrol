@@ -62,6 +62,12 @@ class Base(SupportBase):
         with open(self.settings.path, "rb") as f:
             return f.read()
 
+    def but_the_log(self):
+        """The settings on the disk without the support log: what a support session is refused is written there (D84)."""
+        data = json.loads(self.on_disk())
+        data.pop("support_log", None)
+        return data
+
     def remote_login(self):
         """A support login (full role) through the tunnel."""
         self.assertEqual(self.h("POST", "/api/support/config", dict(CFG, allowed=True), self.full_dev)[0], 200)
@@ -1122,9 +1128,10 @@ class FactoryResetTest(Base):
     def test_every_refusal_changes_nothing(self):
         self.h("POST", "/api/access/code", {"role": "view"}, self.full_dev)
         dev, _ = self.remote_login()
-        before = self.on_disk()
+        before = self.but_the_log()
         media = sorted(os.listdir(self.media))
-        state = lambda: (copy.deepcopy(self.settings.data), self.auth.current_pin, [j["code"] for j in self.auth.list_joins()],
+        # (the settings without the support log: a refusal through the tunnel is written into the session's log, D84)
+        state = lambda: ({k: copy.deepcopy(v) for k, v in self.settings.data.items() if k != "support_log"}, self.auth.current_pin, [j["code"] for j in self.auth.list_joins()],
                          copy.deepcopy(self.api.support.session), sorted(os.listdir(self.tmp)), list(self.player.calls), self.api._care_busy)
         was = state()
         self.assertEqual(len(was[2]), 1)
@@ -1151,22 +1158,24 @@ class FactoryResetTest(Base):
         self.assertEqual(self.call("POST", "/api/system/factory-reset", ok, token="nobody")[0], 401)
         self.assertEqual(self.call("POST", "/api/system/factory-reset", raw=b"confirm=factory-reset&media=delete", token=self.full,
                                    headers={"Content-Type": "application/x-www-form-urlencoded"})[0], 415)
-        self.assertEqual(self.on_disk(), before)
+        self.assertEqual(self.but_the_log(), before)
         self.assertEqual(sorted(os.listdir(self.media)), media)
         self.assertEqual(state(), was)             # devices, PIN, join code, support session, files, playback: all as they were
         self.assertEqual(self.call("GET", "/api/status", token=self.full)[0], 200)
 
     def test_refused_through_the_support_tunnel(self):
         dev, _ = self.remote_login()
-        before = self.on_disk()
+        before = self.but_the_log()
         st, out = self.reset(dev, TUNNEL, confirm="factory-reset", media="keep")
         self.assertEqual(st, 403)
         self.assertEqual(self.reset(self.full_dev, TUNNEL, confirm="factory-reset", media="keep")[0], 403)    # a studio token there
         with self.assertRaises(ApiError) as c:                  # and the function itself refuses
             self.care.factory_reset({"confirm": "factory-reset", "media": "keep"}, dev, TUNNEL)
         self.assertEqual(c.exception.status, 403)
-        self.assertEqual(self.on_disk(), before)
+        self.assertEqual(self.but_the_log(), before)
         self.assertTrue(self.api.support.session)
+        refused = [d for d in self.settings.data["support_log"][0]["major"] if d["what"].startswith("was refused POST /api/system/factory-reset")]
+        self.assertEqual(len(refused), 2, "said in the session's log: by the login, and by the request that carried no support login")
 
     def test_refused_while_something_is_being_written(self):
         ok = {"confirm": "factory-reset", "media": "delete"}

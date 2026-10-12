@@ -76,6 +76,10 @@ class Base(CareBase):
         return dev
 
     def did(self):
+        """The major lines of the running (or last) session: what the owner must be able to read whatever else was done."""
+        return [d["what"] for d in self.settings.data["support_log"][0].get("major", [])]
+
+    def routine(self):
         return [d["what"] for d in self.settings.data["support_log"][0].get("did", [])]
 
     def remote(self, method, path, body, dev):
@@ -124,7 +128,9 @@ class TwoListsTest(Base):
                 with self.assertRaises(sp.SupportApiError):
                     self.api.support.guard(method, path, dev, TUNNEL)
             self.assertTrue(self.api.support.session, "and none of that ended the session")
-        self.assertEqual(self.did(), [], "nothing was changed, so nothing is in the log")
+            # nothing was changed, and every one of them is in the session's log as refused (the security review, M2)
+            self.assertEqual(sorted(self.did()), sorted("was refused %s %s" % k for k in REFUSED - {("GET", "/api/qr.svg"), ("POST", "/api/pair"), ("POST", "/api/session")}), role)
+            self.assertEqual(self.routine(), [])
 
     def test_every_opened_route_is_answered_by_its_real_handler_to_the_owners_role_only(self):
         self.api._ip_json = lambda: [{"ifname": "eth0", "addr_info": [{"family": "inet", "local": "192.168.1.5", "prefixlen": 24}]}]
@@ -176,7 +182,7 @@ class LogTest(Base):
         did = self.did()
         for n, part in enumerate(("added the theme helper", "removed the theme helper", "made a new OSC key and knows it", "was shown the OSC key",
                                   "OSC state sent back: added a target", "locked guest controls", "removed the guest device " + self.view_dev["id"],
-                                  "imported a settings file; taken: ")):
+                                  "imported a settings file, sha256 ")):
             self.assertIn(part, did[n], did)
         self.assertEqual(len(did), 8)
         entry = self.settings.data["support_log"][0]
@@ -185,10 +191,11 @@ class LogTest(Base):
         for secret in (key["key"], self.api.osc.key(), "192.168.1.77"):
             self.assertNotIn(secret, text, "what was done, never the value")
         self.assertEqual(len([x for x in self.lines if "remote support support-1: " in x]), 8, "and each is a line in the journal")
-        self.assertEqual([d.get("n", 1) for d in entry["did"]], [1] * 8, "said once each: an opened route is not also counted as a route that was used")
+        self.assertEqual([d.get("n", 1) for d in entry["major"]], [1] * 8)
+        self.assertNotIn("did", entry, "said once each: an opened route is not also counted as a route that was used")
         # the owner reads it on the Remote support page, and a support login does not
         seen = self.h("GET", "/api/support", device=self.full_dev)[1]["log"][0]
-        self.assertEqual([d["what"] for d in seen["did"]], did)
+        self.assertEqual([d["what"] for d in seen["major"]], did)
         self.assertNotIn("log", self.remote("GET", "/api/support", {}, dev)[1])
 
     def test_the_log_of_one_session_is_bounded_and_cannot_be_flushed(self):
@@ -199,18 +206,19 @@ class LogTest(Base):
         for n in range(90):
             self.assertEqual(self.remote("POST", "/api/guests", {"locked": n % 2 == 0}, dev)[0], 200)
         entry = self.settings.data["support_log"][0]
-        self.assertEqual([d.get("n", 1) for d in entry["did"]], [1, 45, 45])
+        self.assertEqual([d.get("n", 1) for d in entry["major"]], [1, 45, 45])
         self.assertEqual(len([x for x in self.lines if "remote support support-1: " in x]), 3, "a repeat is counted, not written again")
-        saved = json.load(open(self.settings.path))["support_log"][0]["did"]
+        with open(self.settings.path) as f:
+            saved = json.load(f)["support_log"][0]["major"]
         self.assertEqual([d["what"] for d in saved], self.did(), "every line is on the disk at once; a repeat's count goes with the next save")
         self.assertIn("imported a settings file", self.did()[0])
         for n in range(sp.DID_KEEP + 15):
-            self.api.support.note(dev, "thing %d" % n)
+            self.api.support.note(dev, "thing %d" % n, major=False)
         entry = self.settings.data["support_log"][0]
-        self.assertEqual((len(entry["did"]), entry["did_more"]), (sp.DID_KEEP, 18))
+        self.assertEqual((len(entry["did"]), entry["did_more"]), (sp.DID_KEEP, 15))
+        self.assertEqual(len(self.did()), 3, "routine lines never touch the major ones")
         self.assertIn("imported a settings file", self.did()[0], "the first line is still the first")
         self.api.support.note(dev, "x" * 500 + "\n\x00")
-        self.assertEqual(self.settings.data["support_log"][0]["did_more"], 19)
         self.assertLessEqual(max(len(w) for w in self.did()), sp.DID_TEXT)
         before = self.did()
         self.assertEqual(self.h("POST", "/api/guests", {"locked": False}, self.full_dev)[0], 200)       # the owner, at the studio
@@ -254,9 +262,169 @@ class EveryChangeTest(Base):
         # a GET, a refused request and a studio device leave nothing
         n = len(self.lines)
         self.h("GET", "/api/status", {}, dev, TUNNEL)
-        self.h("POST", "/api/pin/show", {}, dev, TUNNEL)
         self.h("POST", "/api/osc", {}, self.full_dev, LAN)
         self.assertEqual([l for l in self.lines[n:] if "remote support support-" in l], [])
+        self.h("POST", "/api/pin/show", {}, dev, TUNNEL)            # a refusal is a line of its own kind (the security review)
+        self.assertEqual([l for l in self.lines[n:] if "remote support support-" in l], ["pvj-web: remote support support-1: was refused POST /api/pin/show"])
+
+
+class SecondReviewTest(Base):
+    """The critical security review of #125 at 0c06cec."""
+
+    def test_m1_the_telling_lines_are_never_capped_or_pushed_out(self):
+        """A remote Owner has some sixty POST routes that each wrote a distinct line into a list of forty: 45 calls,
+        then an update or an import, and the update was a count. The telling lines have a list of their own now."""
+        dev = self.session("full")
+        for n in range(300):
+            self.api.support.used(dev, "POST", "/api/route%d" % n)
+        self.api.support.note(dev, "uploaded a software update x")
+        self.care.import_settings(json.dumps(self.export()).encode(), "import", dev, TUNNEL)
+        self.assertEqual(self.remote("POST", "/api/guests", {"locked": True}, dev)[0], 200)
+        major = self.did()
+        self.assertEqual(len(major), 3, major)
+        self.assertIn("uploaded a software update", major[0])
+        self.assertIn("imported a settings file", major[1])
+        entry = self.settings.data["support_log"][0]
+        self.assertLessEqual(len(entry["did"]), sp.DID_KEEP)
+        self.assertEqual(len(entry["did"]) + entry.get("did_more", 0), 300, "the routine ones fold into counts and are still counted")
+        # generous, and when even that fills it is said in a place nothing can push out
+        for n in range(sp.MAJOR_KEEP + 30):
+            self.api.support.note(dev, "removed the guest device %08d" % n)
+        entry = self.settings.data["support_log"][0]
+        self.assertEqual((len(entry["major"]), entry["major_more"]), (sp.MAJOR_KEEP, 33))
+        self.assertIn("uploaded a software update", entry["major"][0]["what"], "the first lines stay")
+        seen = self.h("GET", "/api/support", device=self.full_dev)[1]["log"][0]
+        self.assertEqual((len(seen["major"]), seen["major_more"]), (sp.MAJOR_KEEP, 33))
+
+    def test_m2_what_a_session_was_refused_is_in_its_log(self):
+        dev = self.session("full")
+        for method, path in (("POST", "/api/pair"), ("POST", "/api/pin/show"), ("POST", "/api/access/code"), ("GET", "/api/recovery"),
+                             ("POST", "/api/https/owner-only"), ("POST", "/api/system/factory-reset"), ("POST", "/api/support/extend")):
+            st = self.remote(method, path, {"pin": "0000", "name": "me", "minutes": 240}, dev)[0]
+            self.assertEqual(st, 403, path)
+            self.assertEqual(self.did()[-1], "was refused %s %s" % (method, path))
+        n = len(self.did())
+        for _ in range(50):
+            self.remote("POST", "/api/pair", {"pin": "0000"}, dev)
+        entry = self.settings.data["support_log"][0]
+        self.assertEqual(len(entry["major"]), n, "the same refusal again is a count")
+        self.assertEqual(entry["major"][0]["n"], 51)
+        self.assertEqual(len([x for x in self.lines if "was refused POST /api/pair" in x]), 1, "and one line in the journal, not fifty")
+        # the two rules added by decision, and an owner's device
+        with mock.patch.object(self.api.osc, "apply", lambda: None):
+            self.assertEqual(self.remote("POST", "/api/osc", {"allow": ["203.0.113.9/32"]}, dev)[0], 403)
+        self.assertIn("was refused adding a network OSC accepts from", self.did()[-1])
+        self.assertNotIn("203.0.113.9", json.dumps(self.settings.data["support_log"]))
+        self.assertEqual(self.remote("POST", "/api/devices/revoke", {"id": self.full_dev["id"]}, dev)[0], 403)
+        self.assertIn("was refused removing an owner's device", self.did()[-1])
+        # a request through the tunnel that carries no login is refused and said too
+        self.assertEqual(self.h("POST", "/api/pair", {"pin": "0000", "name": "x"}, None, TUNNEL)[0], 403)
+        self.assertIn("was refused POST /api/pair", self.did()[-1])
+        self.assertIn("not signed in", self.settings.data["support_log"][0]["major"][-1]["what"])
+        # a studio device's refusals, and a plain 403 by role, are no lines
+        n = len(self.did())
+        self.h("POST", "/api/osc", {}, self.live_dev, LAN)
+        self.remote("GET", "/api/status", {}, dev)
+        self.assertEqual(len(self.did()), n)
+
+    def test_m2_a_code_control_refused_is_in_the_log(self):
+        from pvj import midi
+        hub = midi.MidiHub(self.api, self.settings, log=lambda *_: None, open_fn=lambda p: (_ for _ in ()).throw(OSError()),
+                           lister=lambda: [], scan_interval=0.05)
+        self.api.midi = hub
+        self.addCleanup(hub.stop)
+        self.assertEqual(self.h("POST", "/api/modules/control-midi", {"enabled": True}, self.full_dev)[0], 200)
+        dev = self.session("full")
+        st, out = self.remote("POST", "/api/midi/map", {"add": {"kind": "note", "number": 41, "source": "*", "action": "code_owner"}}, dev)
+        self.assertEqual(st, 403, out)
+        self.assertIn("was refused setting a MIDI control that shows an access code", self.did()[-1])
+
+    def test_l1_every_opened_handler_refuses_a_login_whose_session_is_over(self):
+        """Driven directly, past the gate and the token check: each of the seven asks for itself."""
+        dev = self.session("full")
+        self.h("POST", "/api/support/stop", device=self.full_dev)
+        routes = self.api.routes()
+        bodies = dict(OPENED)
+        bodies[("POST", "/api/devices/revoke")] = {"id": self.view_dev["id"]}
+        asked = []
+        for key in sorted(sp.REMOTE_OWNER_OPENED):
+            for client in (TUNNEL, LAN):
+                with self.assertRaises(ApiError, msg=key) as e:
+                    if key == ("POST", "/api/system/settings/import"):
+                        self.care.import_settings(json.dumps(self.export()).encode(), "import", dev, client)
+                    else:
+                        routes[key][1](bodies[key], dev, client)
+                self.assertEqual(e.exception.status, 403, key)
+            asked.append(key)
+        self.assertEqual(len(asked), 7)
+        self.assertFalse(self.api.guests.locked())
+        self.assertIn(self.view_dev["id"], [d["id"] for d in self.auth.list_devices()])
+
+    def test_l2_an_update_and_an_import_are_named_by_what_they_were(self):
+        import hashlib
+        dev = self.session("full")
+        raw = json.dumps(self.export()).encode()
+        file = json.loads(raw)
+        file["settings"]["osc"]["port"] = 9933
+        raw = json.dumps(file).encode()
+        out = self.care.import_settings(raw, "import", dev, TUNNEL)
+        self.assertIn("osc", out["changed"])
+        self.assertNotIn("pads", out["changed"], "only what the file really changed")
+        line = self.did()[-1]
+        self.assertIn("sha256 " + hashlib.sha256(raw).hexdigest(), line)
+        self.assertIn("changed: " + ", ".join(out["changed"]), line)
+        data = b"not a real bundle" * 100
+        parts = [data]
+        got = self.api.update_upload("pvj-9.9.9.tar.gz", len(data), lambda n: parts.pop() if parts else b"")
+        self.assertEqual(got["sha256"], hashlib.sha256(data).hexdigest())
+        self.assertEqual(sp.upload_line(True, got), "uploaded a software update: pvj-9.9.9.tar.gz, sha256 " + got["sha256"])
+        self.assertEqual(sp.upload_line(False, {"name": "a.mp4", "size": 3}), "uploaded a clip: a.mp4")
+
+    def test_a_backup_from_before_the_session_that_no_session_can_push_out(self):
+        """Three imports by a helper pushed the owner's own copies out (the last three were kept). A session's imports
+        have their own copies now, the first of them is the settings as they were before the session touched them,
+        and the owner's own copies are never removed by a session."""
+        folder = os.path.dirname(self.settings.path)
+        names = lambda part: sorted(n for n in os.listdir(folder) if part in n)
+        tick = [1790000000]
+
+        def now():                      # every copy at its own second, as the file names are by the second
+            tick[0] += 2
+            return tick[0]
+        self.care._now = now
+        for _ in range(3):
+            self.clock.t += 2
+            st, out = self.send(self.export())
+            self.assertEqual(st, 200, out)
+        own = names(".before-import-")
+        self.assertEqual(len(own), 3)
+        self.settings.data["osc"]["port"] = 9944                 # the state the owner had when he asked for help
+        self.settings.save()
+        dev = self.session("full")
+        sid = self.api.support.session["id"]
+        file = self.export()
+        for n in range(6):
+            self.clock.t += 2
+            file["settings"]["osc"]["port"] = 9100 + n
+            self.care.import_settings(json.dumps(file).encode(), "import", dev, TUNNEL)
+        self.assertEqual(names(".before-import-"), own, "the owner's own copies are all still there")
+        first = names(".before-support-session-")
+        self.assertEqual(len(first), 1)
+        self.assertIn(sid, first[0])
+        with open(os.path.join(folder, first[0])) as f:
+            self.assertEqual(json.load(f)["osc"]["port"], 9944, "the settings as they were before the session's first import")
+        self.assertEqual(len(names(".before-support-import-")), boxcare.KEEP_IMPORT_BACKUPS, "his later copies turn over among themselves")
+        # one such copy per session, the last few sessions kept: only a new session the owner starts makes another
+        for _ in range(boxcare.KEEP_SESSION_BACKUPS + 1):
+            self.clock.t += 2
+            dev = self.session("full")
+            self.care.import_settings(json.dumps(file).encode(), "import", dev, TUNNEL)
+        self.assertEqual(len(names(".before-support-session-")), boxcare.KEEP_SESSION_BACKUPS)
+        self.assertEqual(names(".before-import-"), own)
+        # a factory reset takes them all, as it takes the others
+        st, out = self.h("POST", "/api/system/factory-reset", {"confirm": "factory-reset", "media": "keep"}, self.full_dev)
+        self.assertEqual(st, 200, out)
+        self.assertEqual(names(".before-"), [])
 
 
 class ImportTest(Base):
@@ -279,7 +447,7 @@ class ImportTest(Base):
         self.assertTrue(any("recovery" in n and "remote support" in n for n in out["notes"]))
         self.assertTrue(self.auth.usb_enabled(), "the stick way is still as the owner set it")
         self.assertEqual(self.settings.data["osc"]["port"], 9911, "the rest of the file came")
-        self.assertIn("left as the box has it: recovery; taken: ", self.did()[-1])
+        self.assertTrue(self.did()[-1].endswith("; left as the box has it: recovery"), self.did()[-1])
         # the same file from the owner at the studio switches it, as before
         st, out = self.send(file)
         self.assertEqual((st, out["kept_for_support"]), (200, []))
@@ -350,7 +518,7 @@ class RevokeTest(Base):
             self.assertEqual(self.remote("POST", "/api/devices/revoke", {"id": name}, dev)[0], 404, name)
         for bad in (None, 7, ["x"], {"id": self.full_dev["id"]}):
             self.assertEqual(self.remote("POST", "/api/devices/revoke", {"id": bad}, dev)[0], 404)
-        self.assertEqual(self.did(), [])
+        self.assertEqual(self.did(), ["was refused removing an owner's device"], "the two tries at an owner are one line with a count")
         ids = lambda: sorted(d["id"] for d in self.auth.list_devices())
         self.assertEqual(ids(), sorted(d["id"] for d in (self.full_dev, second, self.live_dev, self.view_dev)))
         for target, word in ((self.view_dev, "guest"), (self.live_dev, "operator")):
