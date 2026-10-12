@@ -2140,5 +2140,194 @@ class BracketsInNamesTest(unittest.TestCase):
                 c.request({"cmd": "status"})
 
 
+class OldPlayer:
+    """A reader of the pipe that behaves as a player may: it reads (or, `reads` False, has stopped reading with
+    bytes still in the pipe), and at the end of the stream it goes at once (`stays` False) or holds its end of the
+    pipe open until leave() (a player with frames left to show, or one that has not yet acted on the end). What it
+    read before the first end and what it read after it are kept apart: the second is what a later source wrote
+    into this reader's stream."""
+
+    def __init__(self, fifo, stays=True, reads=True):
+        self.fifo, self.stays, self.reads = fifo, stays, reads
+        self.got, self.late, self.ended, self.opened, self.gone = bytearray(), bytearray(), threading.Event(), threading.Event(), threading.Event()
+        self._leave = threading.Event()
+        self.thread = threading.Thread(target=self.run, daemon=True)
+        self.thread.start()
+
+    def run(self):
+        fd = os.open(self.fifo, os.O_RDONLY | os.O_NONBLOCK)      # as mpv opens it: without waiting for a writer
+        self.opened.set()
+        try:
+            while not self._leave.is_set():
+                if not self.reads:
+                    time.sleep(0.005)
+                    continue
+                try:
+                    chunk = os.read(fd, 65536)
+                except BlockingIOError:                           # a writer is there and has written nothing yet
+                    time.sleep(0.002)
+                    continue
+                if chunk:
+                    (self.late if self.ended.is_set() else self.got).extend(chunk)
+                elif self.got or self.ended.is_set() or self.wake:
+                    self.ended.set()
+                    if not self.stays:
+                        return
+                    time.sleep(0.002)
+                else:
+                    time.sleep(0.002)                             # no writer yet: a player waits here
+        finally:
+            os.close(fd)
+            self.gone.set()
+
+    wake = False                                                  # True: a reader that takes "no writer" as the end even before a first byte
+
+    def leave(self):
+        self._leave.set()
+        self.thread.join(3)
+
+
+class PipeReuseTest(unittest.TestCase):
+    """Since the review of 2026-10-11 (M3) the pipe is one pipe for every source: root's, made once, never unlinked.
+    Until then every source had a pipe of its own, and that alone kept the reader of the last source and the writer
+    of the next apart. These tests hold the order that now has to be made: the pipe is seen without a reader, then
+    the helper answers, then the panel loads, then the writer opens."""
+
+    A, B = (64, 16, 0xA1), (128, 16, 0xB2)
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        self.lib = FakeLib([(b"A (Out)", b"192.168.0.20:5961"), (b"B (Out)", b"192.168.0.21:5961")])
+        self.said = []
+        self.s = self.service()
+        self.ida, self.idb = ndi.source_id("A (Out)", "192.168.0.20"), ndi.source_id("B (Out)", "192.168.0.21")
+        self.players = []
+        self.addCleanup(lambda: [p.leave() for p in self.players])
+
+    def service(self, **kw):
+        s = ndi.Service(self.dir, "x", loader=lambda path: self.lib, problem=lambda path: None, log=self.said.append, first_frame=2.0, **kw)
+        self.addCleanup(s.close)
+        s.handle({"cmd": "configure", "on": True, "addresses": []})
+        return s
+
+    def player(self, **kw):
+        p = OldPlayer(self.s.fifo, **kw)
+        self.players.append(p)
+        self.assertTrue(p.opened.wait(3))
+        return p
+
+    def open(self, sid, shape, frames=2):
+        """Open `sid`; its frames come once the helper has connected to it, as a sender's do."""
+        n = len(self.lib.opened)
+
+        def send():
+            if wait(lambda: len(self.lib.opened) == n + 1, 5):
+                for _ in range(frames):
+                    self.lib.frames.put(frame(shape[0], shape[1], fill=shape[2]))
+                    time.sleep(0.03)
+        threading.Thread(target=send, daemon=True).start()
+        began = time.monotonic()
+        reply = self.s.handle({"cmd": "open", "id": sid})
+        self.assertTrue(reply["ok"], reply)
+        return time.monotonic() - began
+
+    def size(self, shape):
+        return shape[0] * shape[1] * 2
+
+    def play_a(self, **kw):
+        took = self.open(self.ida, self.A)
+        old = self.player(**kw)                                      # the panel loads the pipe after the answer
+        return old, took
+
+    def test_the_next_source_is_not_written_into_the_stream_of_the_player_still_on_the_one_before(self):
+        old, took = self.play_a()
+        self.assertLess(took, 1.0, "an open with nobody on the pipe waited for something")
+        self.assertTrue(wait(lambda: len(old.got) >= self.size(self.A)))
+        threading.Timer(0.4, old.leave).start()                      # the player lets go of A's stream a moment after its end
+        self.open(self.idb, self.B, frames=3)
+        self.assertTrue(old.gone.is_set(), "the helper answered while the player of the source before still held the pipe")
+        self.assertEqual(bytes(old.late), b"", "the next source's frames went into the stream of the one before")
+        self.assertEqual(self.s.receiver.status()["state"], "ready")
+        new = self.player()                                          # the panel's load for B
+        self.assertTrue(wait(lambda: len(new.got) >= self.size(self.B)))
+        self.assertEqual(self.s.receiver.status()["state"], "playing")
+        self.assertEqual(set(new.got), {self.B[2]})                  # B's picture from its first byte
+        self.assertFalse([m for m in self.said if "still held" in m], self.said)
+
+    def test_what_the_last_source_left_in_the_pipe_is_not_the_start_of_the_next(self):
+        """The mirror: a player that has stopped reading with a part of A's frame still in the pipe. Raw frames have
+        no heading, so bytes of A at the start of B's stream would shift every frame of B for good."""
+        big = (1920, 1080, 0xA1)                                     # 4 MB: more than any pipe holds
+        self.open(self.ida, big)
+        old = self.player(reads=False)
+        self.assertTrue(wait(lambda: self.s.receiver.status()["state"] == "playing"))
+        time.sleep(0.2)                                              # A's writer is now in the middle of a frame, the pipe full
+        threading.Timer(0.3, old.leave).start()
+        self.open(self.idb, self.B, frames=3)
+        self.assertTrue(old.gone.is_set())
+        new = self.player()
+        self.assertTrue(wait(lambda: len(new.got) >= self.size(self.B)))
+        time.sleep(0.2)
+        self.assertEqual(set(new.got), {self.B[2]}, "bytes of the source before were read as the start of this one")
+        self.assertEqual(len(new.got) % self.size(self.B), 0)
+        self.assertEqual(self.s.receiver.status()["state"], "playing")
+
+    def test_a_player_that_opens_late_for_the_load_before_is_given_the_end_and_gets_none_of_the_next_source(self):
+        """A pad pressed twice: the player may open the pipe for the first press's load when the helper is already
+        on the second. That reader has the first load's size; it must be gone before the second's writer opens."""
+        self.open(self.ida, self.A)                                  # answered; its player has not opened the pipe yet
+        late = []
+
+        def send():
+            if wait(lambda: len(self.lib.opened) == 2, 5):
+                late.append(self.player(stays=False))                # now it does, after the helper went on to B
+                late[0].wake = True
+                for _ in range(3):
+                    self.lib.frames.put(frame(self.B[0], self.B[1], fill=self.B[2]))
+                    time.sleep(0.03)
+        threading.Thread(target=send, daemon=True).start()
+        self.assertTrue(self.s.handle({"cmd": "open", "id": self.idb})["ok"])
+        self.assertTrue(late and late[0].gone.is_set(), "the helper answered with the late reader of the load before on the pipe")
+        self.assertEqual(bytes(late[0].got + late[0].late), b"")
+        new = self.player()
+        self.assertTrue(wait(lambda: len(new.got) >= self.size(self.B)))
+        self.assertEqual(set(new.got), {self.B[2]})
+
+    def test_a_player_that_will_not_let_go_does_not_stop_the_next_source_for_ever(self):
+        self.s.close()
+        self.s = self.service(pipe_clear=0.3)
+        old, _ = self.play_a()
+        self.assertTrue(wait(lambda: len(old.got) >= self.size(self.A)))
+        took = self.open(self.idb, self.B)
+        self.assertGreaterEqual(took, 0.3)
+        self.assertLess(took, 1.5)
+        self.assertEqual(len([m for m in self.said if "still held the pipe" in m]), 1, self.said)
+        self.assertTrue(wait(lambda: self.s.receiver.status()["state"] == "playing"))      # as it was before: written all the same
+
+    def test_the_writer_waits_for_the_word_and_a_close_meanwhile_ends_it(self):
+        fifo = os.path.join(self.dir, "own.fifo")
+        os.mkfifo(fifo, 0o640)
+        r = ndi.Receiver(self.lib, ndi.clean_sources(self.lib.raw)[0][0], fifo, log=lambda *_: None)
+        r.hold()
+        r.start()
+        self.lib.frames.put(frame(64, 16))
+        self.assertTrue(r.first.wait(3))
+        fd = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+        self.addCleanup(os.close, fd)
+        time.sleep(0.2)
+        self.assertEqual(r.status()["state"], "ready")               # a reader is there; the writer has not opened
+        r.go()
+        self.assertTrue(wait(lambda: r.status()["state"] == "playing"))
+        r.close()
+        held = ndi.Receiver(self.lib, ndi.clean_sources(self.lib.raw)[0][0], fifo, log=lambda *_: None)
+        held.hold()
+        held.start()
+        began = time.monotonic()
+        held.close()
+        self.assertLess(time.monotonic() - began, 2.0)
+        self.assertFalse([t for t in threading.enumerate() if t.name.startswith("ndi-")])
+
+
 if __name__ == "__main__":
     unittest.main()

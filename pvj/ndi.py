@@ -63,6 +63,10 @@ FOURCC_UYVA = 0x41565955                  # "UYVA": a UYVY plane and then an alp
 PROGRESSIVE, INTERLACED = 1, (0, 2, 3)      # the frame format values: 0 two fields in one frame, 2 and 3 single fields
 FIRST_FRAME_SECONDS = 6.0
 PIPE_OPEN_SECONDS = 10.0
+# How long an open waits for the player to let go of the pipe after the source before (Service._clear_pipe). The pipe
+# is one pipe for every source (root's, never unlinked), so the reader of the last source and the reader of the next
+# are told apart only by the pipe having been without a reader in between.
+PIPE_CLEAR_SECONDS = 2.0
 QUIET_SECONDS = 2.0                       # no frame for this long: "still" (or "waiting", if the connection dropped)
 # ---- sound (D62, 2026-10-08). Every figure of a block of sound is the sender's and is held to these.
 AUDIO_FLTP = 0x70544C46                   # "FLTp": 32-bit floats, one plane a channel; the only form the library hands out
@@ -950,6 +954,8 @@ class Receiver:
         self.counts = {"received": 0, "shown": 0, "dropped": 0}
         self.first = threading.Event()             # a first good frame, or the end
         self._stop = threading.Event()
+        self._go = threading.Event()               # the writer may open the pipe (hold and go; the Service's open)
+        self._go.set()
         self._cond = threading.Condition()
         self._pending, self._free = None, []
         self._last = clock()
@@ -988,6 +994,15 @@ class Receiver:
         self._users = len(self._threads) - 1       # every thread but the writer, which never touches the library
         for t in self._threads:
             t.start()
+
+    def hold(self):
+        """Before start: the writer does not open the pipe until go(). The pipe is the same pipe for every source,
+        so whoever reads it now may be the player still on the source before; the Service says when it has seen
+        the pipe without a reader (Service._clear_pipe), and only a reader that comes after that is this source's."""
+        self._go.clear()
+
+    def go(self):
+        self._go.set()
 
     def decide(self):
         """Called once after the first picture: wait a moment for sound, then fix what the pipe carries. Returns it."""
@@ -1219,8 +1234,11 @@ class Receiver:
         """The pipe, opened for writing once the player reads it; None when stopped or nobody came."""
         deadline = None
         while not self._stop.is_set():
-            if self.format is None or self.container is None:
-                self.first.wait(0.05 if self.format is not None else 0.25)
+            if self.format is None:
+                self.first.wait(0.25)
+                continue
+            if self.container is None or not self._go.is_set():
+                self._stop.wait(0.02)              # not first.wait, which is over by now and would not wait at all
                 continue
             deadline = deadline or self._clock() + self._pipe_wait
             try:
@@ -1396,9 +1414,9 @@ class Service:
     the panel has said the module is on (configure), and it knows no settings but what the panel sends."""
 
     def __init__(self, rundir, lib_path, loader=load_library, problem=runtime_problem, log=print, clock=time.monotonic,
-                 first_frame=FIRST_FRAME_SECONDS, receiver=Receiver, fifo=None):
+                 first_frame=FIRST_FRAME_SECONDS, receiver=Receiver, fifo=None, pipe_clear=PIPE_CLEAR_SECONDS):
         self.rundir, self.lib_path, self._loader, self._problem, self.log, self._clock = rundir, lib_path, loader, problem, log, clock
-        self._first_frame, self._receiver = first_frame, receiver
+        self._first_frame, self._receiver, self._pipe_clear = first_frame, receiver, pipe_clear
         self.on_unload = None                      # called when the module is switched off with the library loaded (main: exit)
         # On a box the pipe is root's, made once in root's folder (paths.NDI_PIPE_DIR, pvj/ndisetup.py): this helper
         # opens and writes it and can neither unlink nor replace it. Where nobody made one (tests, a desk) it makes
@@ -1522,11 +1540,41 @@ class Service:
         """The pipe is let go of, never unlinked: on a box it is root's (the review of 2026-10-11, M3), and a pipe
         holds nothing once every writer has closed. A reader still waiting on it (an old player blocked in opening
         it, a player waiting for a first byte) is woken: a writer that opens and closes gives it the end."""
+        self._pipe_free()
+
+    def _pipe_free(self):
+        """Whether nobody reads the pipe at this moment: opening it for writing without waiting is refused (ENXIO)
+        exactly then. Where somebody does read it, the open and close are the wake of _remove_pipe: that reader is
+        given the end. Nothing is ever written here. Anything else that goes wrong is not a reader's doing and is
+        left for the writer to say."""
         try:
-            wake = os.open(self.fifo, os.O_WRONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
-            os.close(wake)
+            fd = os.open(self.fifo, os.O_WRONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
         except OSError:
-            pass
+            return True
+        os.close(fd)
+        return False
+
+    def _clear_pipe(self, r):
+        """Before a new source's writer may open the pipe: wait until the pipe has been seen without a reader.
+
+        The pipe is one pipe for every source (root's, made once, never unlinked: M3). The player that read the
+        source before may still hold it for a moment after that source's writer closed: it has frames left to
+        show, or has not yet acted on the end. A writer that opened then would put this source's first frames into
+        the old stream (which has the old size), lose that reader a moment later ("the player stopped reading")
+        and leave the player's new load waiting for a writer that has gone. When every source had a pipe of its
+        own this could not happen; now the order has to be made: no reader, then the answer to the panel, then the
+        panel's load, then the writer. The panel loads the pipe only after this open has answered and plays one
+        source at a time, so a reader that comes after the pipe was seen empty is the one for this source. And a
+        pipe nobody holds holds no bytes: nothing of the source before is left in it for the new reader.
+
+        Each look is also a wake (the old reader is given the end again). Bounded: a player that will not let go
+        (paused on the old source, say) does not stop the next source for ever; the writer is then let through as
+        it was before this was written, and the log says so. Returns whether the pipe was seen without a reader."""
+        end = time.monotonic() + self._pipe_clear
+        while not self._pipe_free():
+            if time.monotonic() >= end or r._stop.wait(0.02):
+                return False
+        return True
 
     def status(self):
         with self._recv_lock:
@@ -1584,6 +1632,7 @@ class Service:
                     self.log("pvj-ndi: could not make the pipe %s: %s" % (self.fifo, e))
                     return {"ok": False, "error": "the NDI helper could not make its pipe (%s)" % (e.strerror or "error")}
             r = self._receiver(self.lib, match[0], self.fifo, log=self.log, sound=self.sound)
+            r.hold()                               # the writer waits until the pipe was seen without a reader (below)
             try:
                 r.start()
             except NdiError as e:
@@ -1600,6 +1649,9 @@ class Service:
                 self._close_receiver()
                 return {"ok": False, "error": st["message"] or "%s sent no picture in %d seconds" % (match[0]["name"], self._first_frame)}
             self.log("pvj-ndi: %s is %d x %d at %s" % ((match[0]["name"],) + r.format))
+            if not self._clear_pipe(r) and r.state not in ENDED:
+                self.log("pvj-ndi: the player still held the pipe %.1f seconds after the source before; writing all the same" % self._pipe_clear)
+            r.go()
             return {"ok": True, "playing": st}
 
     def close(self):
