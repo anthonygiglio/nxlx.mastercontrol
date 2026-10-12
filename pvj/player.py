@@ -344,7 +344,7 @@ class Player:
 
     # What a live input set for the whole player is taken back to: mpv's own defaults (this player starts mpv with
     # none of these on its command line).
-    PIPE_DEFAULTS = {"demuxer": "", "cache": "auto", "demuxer-readahead-secs": 1, "demuxer-max-bytes": "150MiB",
+    PIPE_DEFAULTS = {"demuxer": "", "cache": "auto", "cache-pause": "yes", "demuxer-readahead-secs": 1, "demuxer-max-bytes": "150MiB",
                      "vd": "", "ad": "", "sid": "auto", "ordered-chapters": "yes", "cover-art-auto": "exact", "embeddedfonts": "yes"}
 
     def _undo_pipe_globals(self):
@@ -418,7 +418,13 @@ class Player:
             # The NDI helper's stream with sound (pvj/ndi.py): Matroska that says its own size, rate and times, read
             # by mpv's own reader, named so that mpv does not spend time guessing. Sound goes the way every clip's
             # does: this player's device, volume and mute.
-            opts = {"demuxer": "mkv", "cache": "no", "demuxer-readahead-secs": 0, "demuxer-max-bytes": self.pipe_queue(width, height, fps)}
+            # cache-pause=no: a live source's picture may stand still while its sound goes on (one test picture and
+            # a tone; a paused video). mpv would take the missing pictures for a slow network and pause EVERYTHING
+            # "for buffering" until a picture came: no sound meanwhile, and afterwards the sound it had kept, as
+            # late as the picture stood still, for good (player/playloop.c, handle_update_cache; seen with mpv 0.40
+            # on the Pi, 2026-10-12: "Enter buffering", then 12 seconds late after 12 seconds of still).
+            opts = {"demuxer": "mkv", "cache": "no", "cache-pause": "no", "demuxer-readahead-secs": 0,
+                    "demuxer-max-bytes": self.pipe_queue(width, height, fps)}
             self._pipe_globals = []
             self._pipe_loading = True              # a status poll that meets a new player now must not widen under this load
             try:

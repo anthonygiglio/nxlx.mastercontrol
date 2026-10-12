@@ -67,6 +67,12 @@ PIPE_OPEN_SECONDS = 10.0
 # is one pipe for every source (root's, never unlinked), so the reader of the last source and the reader of the next
 # are told apart only by the pipe having been without a reader in between.
 PIPE_CLEAR_SECONDS = 2.0
+# With sound (Matroska), a picture that no other has followed for this long is written once more, so that the player
+# has a picture AFTER it: mpv shows a picture only when it has the next one (it wants to know how long each lasts),
+# and mpv 0.38 and later do not finish OPENING a stream until its picture track has had two blocks with different
+# times (demux_mkv.c, probe_if_image). Once for each picture that stands, never again and again: 4 MB for a 1080p
+# source each time it goes still. (The stream's first picture is written again at once: see Receiver._writer.) Measured on the Pi with mpv 0.40 on 2026-10-12 (NDI.md).
+STILL_AGAIN_SECONDS = 0.5
 QUIET_SECONDS = 2.0                       # no frame for this long: "still" (or "waiting", if the connection dropped)
 # ---- sound (D62, 2026-10-08). Every figure of a block of sound is the sender's and is held to these.
 AUDIO_FLTP = 0x70544C46                   # "FLTp": 32-bit floats, one plane a channel; the only form the library hands out
@@ -1055,7 +1061,8 @@ class Receiver:
                 try:
                     fmt, stride = check_frame(f)
                     if self.format is None:
-                        self._free = [bytearray(2 * fmt[0] * fmt[1]) for _ in range(3)]
+                        # one being filled, one waiting, one being written, one kept to be written once more
+                        self._free = [bytearray(2 * fmt[0] * fmt[1]) for _ in range(4)]
                         spare = self._free.pop()
                         self.format = fmt
                     elif fmt != self.format:
@@ -1322,11 +1329,15 @@ class Receiver:
                 if self.state == "ready":
                     self.state = "playing"
             shown_at = -1.0
+            kept, kept_at = None, 0.0              # with sound: the picture written last, until another follows it
             while not self._stop.is_set():
-                blocks, buf, at, fill = (), None, 0.0, None
+                blocks, buf, at, fill, again = (), None, 0.0, None, False
                 with self._cond:
                     while self._pending is None and not self._queue and not self._stop.is_set():
-                        self._cond.wait(0.25)
+                        if kept is not None and self._clock() - kept_at >= STILL_AGAIN_SECONDS:
+                            again = True
+                            break
+                        self._cond.wait(0.05 if kept is not None else 0.25)
                     if self._queue:
                         blocks, self._queued = tuple(self._queue), 0.0
                         self._queue.clear()
@@ -1334,7 +1345,7 @@ class Receiver:
                         buf, self._pending, at = self._pending, None, self._at
                     if mkv and (buf is not None or blocks):
                         fill = self._fill(self._clock() - self._t0)
-                if buf is None and not blocks:
+                if buf is None and not blocks and not again:
                     break
                 if mkv and not self._write_sound(fd, blocks, fill):
                     if buf is not None:
@@ -1342,22 +1353,33 @@ class Receiver:
                             self._free.append(buf)
                     break
                 if buf is None:
+                    if again or (kept is not None and self._clock() - kept_at >= STILL_AGAIN_SECONDS):
+                        # The picture that stands, once more, at the time it is now (STILL_AGAIN_SECONDS says why).
+                        # Not counted as shown: it is the same picture.
+                        shown_at = max(shown_at + 0.001, self._clock() - self._t0)
+                        ok = self._write_frame(fd, kept, shown_at)
+                        with self._cond:
+                            self._free.append(kept)
+                        kept = None
+                        if not ok:
+                            break
                     continue
+                # Where it arrived; never before the one before it, and never before the stream's own beginning (the
+                # first picture always arrived before the pipe was taken: its time is 0, and the next differs).
                 first = shown_at < 0
-                shown_at = max(shown_at + 0.001, at - self._t0)        # where it arrived; never before the one before it
+                shown_at = max(shown_at + 0.001, at - self._t0, 0.0)
                 ok = self._write_frame(fd, buf, shown_at)
-                if ok and mkv and first:
-                    # The stream's first picture is written twice, the second a millisecond after the first. A
-                    # source of one still picture and sound (NDI's Test Patterns) otherwise gives the player one
-                    # picture block and then only sound, and mpv does not play that: 0.40 does not finish opening
-                    # the stream (demux_mkv.c, probe_if_image: it reads on for a second picture block with another
-                    # time, up to 10000 blocks, all kept), and 0.37 opens it and stands at time 0 with no sound
-                    # (seen on the Pi and on CI's runner, 2026-10-12). Bare frames are not doubled: the Pi drew a
-                    # still source's one frame without it. Not counted as shown: it is the same picture.
-                    shown_at += 0.001
-                    ok = self._write_frame(fd, buf, shown_at)
                 with self._cond:
-                    self._free.append(buf)
+                    if kept is not None:
+                        self._free.append(kept)
+                    kept = None
+                    if ok and mkv:
+                        # The stream's first picture is written again at once, not after half a second: until
+                        # its track has a second block mpv 0.40 is still opening the stream, and what it is given
+                        # meanwhile it plays that much late for as long as the source is shown.
+                        kept, kept_at = buf, self._clock() - (STILL_AGAIN_SECONDS if first else 0.0)
+                    else:
+                        self._free.append(buf)
                     if ok:
                         self.counts["shown"] += 1
         except Exception as e:
