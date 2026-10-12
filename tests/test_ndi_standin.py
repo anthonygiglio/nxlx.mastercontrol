@@ -28,7 +28,8 @@ AT_ONCE_A, AT_ONCE_B, CHANGES = "PVJ-STANDIN (at once A)", "PVJ-STANDIN (at once
 BIG_SOUND, BIG_CHANGES_SOUND = "PVJ-STANDIN (big moving with sound)", "PVJ-STANDIN (big changes size with sound)"
 BIG = (BIG_SOUND, "PVJ-STANDIN (big one still then sound)", "PVJ-STANDIN (big at once A)", "PVJ-STANDIN (big at once B)",
        "PVJ-STANDIN (big at once A with sound)", "PVJ-STANDIN (big at once B with sound)", "PVJ-STANDIN (big changes size)", BIG_CHANGES_SOUND)
-ALL = (MOVING, SOUND, STILL, AT_ONCE_A, AT_ONCE_B, CHANGES) + BIG
+THEN_STILL = "PVJ-STANDIN (moving then still with sound)"
+ALL = (MOVING, SOUND, STILL, AT_ONCE_A, AT_ONCE_B, CHANGES, THEN_STILL) + BIG
 
 
 def picture(n):
@@ -70,7 +71,7 @@ class OneSetOfNames(unittest.TestCase):
             sh = f.read()
         for name in ALL:
             self.assertIn('{"%s", "10.255.255.1:' % name, c)
-            if name not in (AT_ONCE_A, AT_ONCE_B):         # the small "at once" pair is the unit test's only
+            if name not in (AT_ONCE_A, AT_ONCE_B, THEN_STILL):     # these are for the unit test and tests/test_ndi_mpv.py
                 self.assertIn('="%s"\n' % name, sh)
         for want in ('pvj-ndi-runtime install "$NDI_STANDIN"', 'box play "$NDI_MOVING" raw', "systemctl restart pvj-ndi.service\n",
                      'box back "$NDI_MOVING" 20', 'box play "$NDI_SOUND" matroska', 'case still "$NDI_STILL"', 'case twice "$NDI_STILL"',
@@ -180,13 +181,9 @@ class StandIn(unittest.TestCase):
         self.assertIsNone(ndi.runtime_problem(self.path, owner_uids=(os.getuid(),)))
 
     def test_the_chain_in_the_boxs_questions_names_only_sources_the_stand_in_has(self):
-        sys.path.insert(0, os.path.join(REPO, "tests", "ndi_standin"))
-        try:
-            import box_check
-        finally:
-            sys.path.pop(0)
-        self.assertLessEqual(set(box_check.CHAIN), set(ALL))
-        self.assertEqual((box_check.size_of(BIG_SOUND), box_check.size_of(BIG_SOUND, True)), ((1280, 720), (1264, 704)))
+        from tests.ndi_standin import mpvword
+        self.assertLessEqual(set(mpvword.CHAIN), set(ALL))
+        self.assertEqual((mpvword.size_of(BIG_SOUND), mpvword.size_of(BIG_SOUND, True)), ((1280, 720), (1264, 704)))
 
     def test_a_big_source_with_sound_is_1280_by_720_in_matroska_and_changes_to_1264_by_704(self):
         out, reader = self.play(BIG_CHANGES_SOUND, True, 0)
@@ -271,6 +268,18 @@ class StandIn(unittest.TestCase):
         got = bytes(reader.data)
         n = (got[0] * 205) & 255
         self.assertEqual(got, bytes((b + 3 * y + 5 * n) & 255 for y in range(144) for b in range(512)))
+
+    def test_the_source_that_goes_still_stops_its_picture_after_five_seconds_and_its_sound_goes_on(self):
+        out, reader = self.play(THEN_STILL, True, 0)
+        self.assertEqual(out["playing"]["container"], "matroska")
+        time.sleep(6.3)
+        first = self.playing()
+        time.sleep(1.0)
+        p = self.playing()
+        self.assertEqual(p["counts"]["shown"], first["counts"]["shown"], "no picture after the fifth second")
+        self.assertGreater(first["counts"]["shown"], 100)
+        self.assertGreaterEqual(p["audio"]["counts"]["written"] - first["audio"]["counts"]["written"], 15)
+        self.assertEqual(p["message"], "")
 
     def test_one_still_then_only_sound_one_picture_is_written_and_the_sound_goes_on(self):
         out, reader = self.play(STILL, True, 0)

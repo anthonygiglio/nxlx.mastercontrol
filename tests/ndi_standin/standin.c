@@ -16,6 +16,7 @@
  *   "changes size"   four seconds at the first size, then a smaller one for good: every receiver made for that
  *                    source after the first, in the same process, is small from its start (a sender that changed
  *                    stays changed)
+ *   "then still"     five seconds of the moving picture, then no picture ever again; its sound goes on
  *   "big"            1280 x 720 (changing to 1264 x 704) in place of 320 x 180 (changing to 256 x 144). A big
  *                    picture is 1.8 MB, more than a pipe holds (1 MiB for an account without privileges), so the
  *                    helper's writer is in the middle of a picture most of the time, as it is with a real sender
@@ -107,6 +108,7 @@ typedef struct {
 #define BIG_LESS_WIDTH 1264
 #define BIG_LESS_HEIGHT 704
 #define CHANGE_AFTER 120 /* pictures: four seconds */
+#define STOP_AFTER 150   /* pictures: five seconds */
 #define PAD 16
 #define SOURCE_COUNT_MAX 32
 #define RATE 48000
@@ -133,6 +135,7 @@ typedef struct {
 	int still_sent;
 	int changes;        /* "changes size": the picture number from which it is the smaller size; -1 for never */
 	int big;
+	int64_t stops;      /* "then still": the number of the first picture that is never sent; -1 for never */
 	pthread_mutex_t lock; /* the picture's caller and the sound's caller are two threads */
 } standin_recv;
 
@@ -151,6 +154,7 @@ static const standin_source SOURCES[] = {
 	{"PVJ-STANDIN (big at once B with sound)", "10.255.255.1:5972"},
 	{"PVJ-STANDIN (big changes size)", "10.255.255.1:5973"},
 	{"PVJ-STANDIN (big changes size with sound)", "10.255.255.1:5974"},
+	{"PVJ-STANDIN (moving then still with sound)", "10.255.255.1:5975"},
 };
 #define SOURCE_COUNT ((uint32_t)(sizeof SOURCES / sizeof SOURCES[0]))
 static int finder_token;
@@ -249,7 +253,7 @@ static int capture(standin_recv *r, standin_video *video, standin_audio *audio, 
 				} else if (!r->still_sent && r->began < wake) {
 					wake = r->began;
 				}
-			} else {
+			} else if (r->stops < 0 || r->next_video < r->stops) {
 				int64_t due = r->began + TICK(r->next_video);
 				if (now >= due) {
 					n = (now - r->began) * 3 / 100000000; /* the picture of this moment: a late caller skips */
@@ -337,6 +341,7 @@ void *NDIlib_recv_create_v3(const standin_recv_create *settings)
 	r->began = now_ns() + (strstr(name, "at once") != NULL ? 0 : CONNECT_NS);
 	r->changes = -1;
 	r->big = strstr(name, "big") != NULL;
+	r->stops = strstr(name, "then still") != NULL ? STOP_AFTER : -1;
 	if (strstr(name, "changes size") != NULL) {
 		uint32_t i, which = 0;
 		for (i = 0; i < SOURCE_COUNT && i < SOURCE_COUNT_MAX; i++)
