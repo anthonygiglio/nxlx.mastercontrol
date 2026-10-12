@@ -36,12 +36,17 @@ jobs:
         run: git fetch --depth=1 origin b62f203a5c45fc0c20386a8ab476ad3d7b511736
       - name: Fetch the release before OSC state feedback (the rollback test of D82 runs its receiver on a file written here)
         run: git fetch --depth=1 origin b7864886e53e850f6df057c6e12ad144fd077935
+      - name: Fetch the release before OSC's safer defaults (the rollback test of D83 runs master's receiver on a file written here, and this code on a file master wrote)
+        run: git fetch --depth=1 origin 106d77ffaa9f5ee213ae1fd4eecb15d5804a3cc5
       - name: Install mpv
         timeout-minutes: 10   # usually half a minute; see the note at the top of this file
         run: tools/ci-apt.sh mpv
       - name: Unit tests (real mpv, headless)
-        # About nine minutes. After twenty, SIGABRT: faulthandler prints every thread's stack and the step fails.
-        run: timeout -s ABRT 1200 python -X faulthandler -m unittest discover -s tests -t . -v
+        # About eighteen minutes by 2026-10-11 (2,400 tests; it was nine when the limit was set at twenty, and a run
+        # on 2026-10-11 was cut off at twenty with the last tests still to come). After twenty-five, SIGABRT:
+        # faulthandler prints every thread's stack and the step fails. The 25 slowest tests are printed at the end,
+        # so what makes the suite long is seen (on Python 3.12 only: 3.9's unittest has no --durations).
+        run: timeout -s ABRT 1500 python -X faulthandler -m unittest discover -s tests -t . -v ${{ matrix.python == '3.12' && '--durations 25' || '' }}
       - name: Shaders on a real mpv with a software GPU (xvfb, Mesa; a skip here is a failure)
         run: |
           tools/ci-apt.sh xvfb xauth libegl1 libgles2 libgl1-mesa-dri

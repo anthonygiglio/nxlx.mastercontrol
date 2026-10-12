@@ -527,6 +527,23 @@ function startServer(env) {          // env: more for the harness's environment 
     await switchOn('OSC');
     await page.waitForFunction(() => /^Listening on UDP port \d+\. Nothing received yet\.$/.test(document.getElementById('oscline').textContent));
     assert.strictEqual((await get('/api/osc')).enabled, true, 'the page switch turned OSC on');
+    // D83: the first switch-on of OSC on a box brings the paired-device lock, and what it asks is said beside its switch
+    await page.waitForSelector('#oscpaireddefault');
+    assert(/pair it once/.test(await page.textContent('#oscpaireddefault')) && /address changes/.test(await page.textContent('#oscpaireddefault')), 'what the lock asks of the owner is said');
+    assert.deepStrictEqual(await get('/api/osc').then((d) => [d.paired_on, d.paired_default, d.open]), [true, true, false], 'the first switch-on brought the paired lock');
+    assert.strictEqual(await page.locator('#oscopen').count(), 0, 'no warning while a lock is on');
+    await page.click('#oscpaired');                           // the owner's own choice: off. Now OSC is open, and three places say so
+    await page.waitForSelector('#oscopen');
+    assert(/^OSC is open: anyone on this network can control the box\. Switch on a lock\./.test(await page.textContent('#oscopen')), 'the plain warning on the OSC page');
+    assert.strictEqual(await page.locator('#oscpaireddefault').count(), 0, 'the note is for a lock the box put on, not one the owner switched');
+    await sysIndex();
+    await chip('OSC', 'Check');
+    await page.waitForSelector(`${rowOf('OSC')} .navstate:has-text("Open: anyone on this network can control the box")`);
+    await sys('Health');
+    await page.waitForSelector('#healthosc:has-text("OSC is open: anyone on this network can control the box")', { timeout: 15000 });
+    await sysIndex();
+    await sys('OSC');
+    await page.waitForSelector('#oscopen');
     // Fields have labels; Save changes waits for a change; the extra networks are under Advanced
     assert.strictEqual(await page.textContent('label[for="oscport"]'), 'UDP port');
     assert(await page.isDisabled('#oscsave') && !(await page.isVisible('#oscallow')), 'nothing to save yet, and the networks are folded');
@@ -670,8 +687,16 @@ function startServer(env) {          // env: more for the harness's environment 
     assert.strictEqual(await page.locator('#osckeybox, #osconlylist, #oscpairednow').count(), 0, 'all three locks are off again');
     await onPage('OSC');
     await sysIndex();
-    await chip('OSC', 'Ready');
+    await chip('OSC', 'Check');                              // D83: on with every lock off is said on its row
+    assert.strictEqual(await post('/api/osc', { paired_on: true }), 200);
     await sys('OSC');
+    await page.waitForSelector('#oscpairednow');
+    assert.strictEqual(await page.locator('#oscopen, #oscpaireddefault').count(), 0, 'a lock the owner switched on: no warning, and no note about a default');
+    await sysIndex();
+    await chip('OSC', 'Ready');
+    assert.strictEqual(await post('/api/osc', { paired_on: false }), 200);
+    await sys('OSC');
+    await page.waitForSelector('#oscopen');
     await switchOff('OSC');
     assert.strictEqual((await get('/api/osc')).enabled, false, 'the page switch turned OSC off');
     await onPage('OSC');
