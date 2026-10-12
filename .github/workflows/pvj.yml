@@ -156,16 +156,44 @@ jobs:
           chown -R ci: .
       - name: NDI against this mpv (the stand-in library, the real helper code, the real Api, the real Player; findings are printed, see the test's top)
         timeout-minutes: 20
-        run: su ci -c "PVJ_NDI_MPV_TEST=1 PVJ_NDI_MPV_WANT=0.40. python3 -X faulthandler -m unittest -v tests.test_ndi_mpv"
+        # PVJ_NDI_FINDINGS_FATAL=yes since the mending (2026-10-12): the cases that failed on master's pvj fail the job
+        # here too. Without it they are printed as FINDING and skipped.
+        run: su ci -c "PVJ_NDI_MPV_TEST=1 PVJ_NDI_MPV_WANT=0.40. PVJ_NDI_FINDINGS_FATAL=yes python3 -X faulthandler -m unittest -v tests.test_ndi_mpv"
+      - name: The still-with-sound cases on the pvj code that was stuck on the Pi (master at 5f62763) must FAIL there, or they judge nothing
+        # The same tests and the same stand-in, with the pvj folder of the commit before the hand-over of the pipe and
+        # the player's options for a standing picture were mended. A case that passes on that code would have been
+        # green while the Pi was stuck. A failure only counts when it is the judge's own (STUCK, SILENT LOSS or NOT
+        # BACK in what the test printed), not when the old code and the new tests do not fit together.
+        timeout-minutes: 15
+        run: |
+          su ci -c "git fetch --depth=1 origin 5f6276307febe1ca1da9b4942de6734224f49133"
+          su ci -c "rm -rf /tmp/stuck && mkdir /tmp/stuck && cp -a tests /tmp/stuck/ && git archive 5f6276307febe1ca1da9b4942de6734224f49133 pvj | tar -x -C /tmp/stuck"
+          bad=0
+          for t in test_13_one_still_picture_then_only_sound_for_thirty_five_seconds test_15_one_still_picture_then_sound_after_a_short_gap test_16_one_still_picture_then_sound_after_a_long_gap; do
+            if su ci -c "cd /tmp/stuck && PVJ_NDI_MPV_TEST=1 PVJ_NDI_FINDINGS_FATAL=yes python3 -m unittest tests.test_ndi_mpv.NdiOnARealMpv.$t" > /tmp/stuck/out.txt 2>&1; then
+              echo "::error::$t PASSES on the code that was stuck on the Pi: it does not judge what the Pi showed"
+              tail -n 40 /tmp/stuck/out.txt
+              bad=1
+            elif grep -q -E "AssertionError: on mpv.*(STUCK|SILENT LOSS|NOT BACK)" /tmp/stuck/out.txt; then
+              echo "AS IT MUST: $t fails on the code that was stuck on the Pi:"
+              grep -E "AssertionError: on mpv" /tmp/stuck/out.txt | cut -c1-700
+            else
+              echo "::error::$t failed on the old code for another reason than the judge's (the old code and these tests do not fit?)"
+              tail -n 60 /tmp/stuck/out.txt
+              bad=1
+            fi
+          done
+          exit "$bad"
       - name: The whole suite on this mpv, for information (it may fail for reasons of the container; its result does not decide the job until a run was read)
-        # First run 2026-10-12: nobody has seen yet what the suite does in a container (no rollback commits fetched,
-        # Python 3.13, mpv 0.40). So it is shown and timed, and does not turn the job red; make it count once it is read.
+        # First run 2026-10-12 (Python 3.13, mpv 0.40, no rollback commits fetched): it did not finish. After 35 minutes
+        # it stood in a test server's shutdown, with 2,751 tests passed, 6 errors and 2 failures whose names were not
+        # printed. So it runs with -v now, to name them; it still does not decide the job.
         continue-on-error: true
         timeout-minutes: 40
         run: |
           start="$(date +%s)"
           code=0
-          su ci -c "timeout -s ABRT 2100 python3 -X faulthandler -m unittest discover -s tests -t ." || code=$?
+          su ci -c "timeout -s ABRT 2100 python3 -X faulthandler -m unittest discover -s tests -t . -v" || code=$?
           echo "THE WHOLE SUITE ON $(mpv --version | head -n 1): exit $code after $(( $(date +%s) - start )) seconds"
           exit "$code"
 
