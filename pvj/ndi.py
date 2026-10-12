@@ -1231,8 +1231,7 @@ class Receiver:
                     return None
                 self._stop.wait(0.05)
                 continue
-            st = os.fstat(fd)
-            if not stat.S_ISFIFO(st.st_mode) or st.st_uid != os.getuid():
+            if not pipe_to_write(os.fstat(fd)):
                 os.close(fd)
                 self._end("stopped", "the input pipe was replaced; not writing to it")
                 return None
@@ -1675,6 +1674,14 @@ def pipe_owner():
     """Who owns the pipe on a box: root, which makes it once (the tmpfiles lines pvj-ndi-runtime writes). The helper
     writes it by its group and is not its owner (Input.check_pipe)."""
     return 0
+
+
+def pipe_to_write(st):
+    """Whether what the helper opened is the pipe it may write: a pipe, and root's (a box: root makes it once and the
+    helper writes it by its group) or the helper's own (a desk and the tests, where it makes one itself). Until
+    2026-10-12 only the helper's own passed, so on a box every source ended with "the input pipe was replaced" from
+    the day the pipe became root's (the review of 2026-10-11, M3). Nobody but root can make a pipe that is root's."""
+    return stat.S_ISFIFO(st.st_mode) and st.st_uid in (pipe_owner(), os.getuid())
 
 
 def helper_uid():

@@ -14,6 +14,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 from pvj import ndi, paths
 from tests.test_server import ServerBase
@@ -404,6 +405,40 @@ class ReceiverTest(unittest.TestCase):
         self.lib.frames.put(frame(64, 16))
         self.assertTrue(wait(lambda: r.status()["state"] == "stopped"))
         self.assertIn("did not open", r.status()["message"])
+
+    def test_roots_pipe_is_written_by_a_helper_that_is_not_root(self):
+        """Found on the owner's Pi, 2026-10-12: on a box the pipe is root's (0660 root:pvj-ndi) and the helper runs
+        as pvj-ndi, and the helper took only a pipe of its own, so every source ended "the input pipe was replaced"."""
+        real = os.fstat
+
+        class Owned:                                                     # the same pipe, said to be somebody's
+            def __init__(self, st, uid):
+                self.st_mode, self.st_uid = st.st_mode, uid
+        helper = 996 if os.getuid() != 996 else 997
+        for owner, taken in ((0, True), (helper, True), (helper + 1, False)):
+            with mock.patch.object(ndi.os, "getuid", lambda: helper), \
+                    mock.patch.object(ndi.os, "fstat", lambda fd, owner=owner: Owned(real(fd), owner)):
+                r = ndi.Receiver(self.lib, self.source, self.fifo, log=lambda *_: None, pipe_wait=5)
+                r.start()
+                self.lib.frames.put(frame(64, 16))
+                self.got = bytearray()
+                self.read()
+                if taken:
+                    self.assertTrue(wait(lambda: len(self.got) == 2048), "a pipe owned by %d was not written" % owner)
+                else:
+                    self.assertTrue(wait(lambda: r.status()["state"] == "stopped"))
+                    self.assertIn("pipe was replaced", r.status()["message"])
+                r.close()
+                self.reader.join(2)
+
+    def test_what_the_helper_may_write_is_a_pipe_of_roots_or_its_own(self):
+        st = os.stat(self.fifo)
+        self.assertTrue(ndi.pipe_to_write(st))
+        plain = os.path.join(self.dir, "plain")
+        open(plain, "wb").close()
+        self.assertFalse(ndi.pipe_to_write(os.stat(plain)))
+        with mock.patch.object(ndi.os, "getuid", lambda: st.st_uid + 1):
+            self.assertEqual(ndi.pipe_to_write(st), st.st_uid == 0)      # somebody else's: only root's passes
 
     def test_a_pipe_swapped_for_a_file_is_not_written(self):
         os.unlink(self.fifo)
