@@ -3167,9 +3167,13 @@ class Api:
                 self._ndi_loading.on = True      # this load must not cancel its own ticket (_player_call)
                 return True
 
+            # The owner's delay of the sound against the picture (D87), for the stream with sound only, and only
+            # when one is set: the player sets it for this load and takes it back with the load's other options.
+            delay = self.ndi.sound_delay() if with_sound else 0
+            more = (delay / 1000.0,) if delay else ()
             try:
                 loaded = self._as_newest("another play", self.player.play_pipe, self.ndi.fifo, p["width"], p["height"], p["fps"],
-                                         "matroska" if with_sound else "uyvy422", ready=ready) is not OVERTAKEN
+                                         "matroska" if with_sound else "uyvy422", *more, ready=ready) is not OVERTAKEN
             except ApiError as e:
                 failed[0] = e
                 loaded = False
@@ -3272,6 +3276,15 @@ class Api:
                 self.settings.save()
             self.ndi._wanted()
             self.ndi.sync()
+            # Heard at once under a source that plays with sound: the player moves the sound of the stream it has.
+            # Where it does not (bare frames, a clip, no player), the number waits for the next NDI load.
+            move = getattr(self.player, "pipe_audio_delay", None)
+            if move is not None and self.ndi.current:
+                try:
+                    with self._player_lock():
+                        move(self.ndi.fifo, ms / 1000.0)
+                except PlayerError:
+                    pass
             return self.ndi.status()
         if action == "own_discovery":
             # "Use this box's own discovery server" (D85): this box's input asks the server this box runs, at whatever

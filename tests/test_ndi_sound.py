@@ -1350,7 +1350,7 @@ class PlayerSoundTest(unittest.TestCase):
         self.assertEqual([a for a in sent2 if a[0] == "set_property"], [], "sent again for the same player")
         pid[0] = 101                                                                   # the player is another process
         new.is_running()
-        self.assertEqual({a[1] for a in sent2 if a[0] == "set_property"}, set(Player.MKV_ONLY))
+        self.assertEqual({a[1] for a in sent2 if a[0] == "set_property"}, set(Player.MKV_ONLY) | {"audio-delay"})
         # a player this side has just started is a fresh process: nothing to widen, and nothing to wait for while it
         # makes its window (_spawn marks it; tests/test_player.py DeafAtTheStartTest counts on the start staying quiet)
         del sent2[:]
@@ -1388,7 +1388,7 @@ class PlayerSoundTest(unittest.TestCase):
         before = [a[1:] for a in sent[:load] if a[0] == "set_property"]
         for k, v in only.items():
             self.assertIn((k, v), before, k)                                             # every one of them BEFORE the load
-        self.assertEqual(set(p._pipe_globals), set(only))
+        self.assertEqual(set(p._pipe_globals), set(only) | {"audio-delay"})          # and the sound's delay of that load (D87)
         # bare frames are loaded as before: nothing of this is set for them
         p2, sent2 = self.player()
         p2.play_pipe("/run/pvj-ndi/ndi.fifo", 64, 16, 30, "uyvy422")
@@ -1436,8 +1436,97 @@ class PlayerSoundTest(unittest.TestCase):
     def test_on_an_old_mpv_the_pipes_options_and_the_narrowing_are_both_taken_back(self):
         p, sent = self.player(refuse=("old",))
         p.play_pipe("/run/pvj-ndi/ndi.fifo", 64, 16, 30, "matroska")
-        self.assertEqual(set(p._pipe_globals), set(Player.MKV_ONLY) | {"demuxer", "cache", "cache-pause", "initial-audio-sync", "demuxer-readahead-secs", "demuxer-max-bytes"})
+        self.assertEqual(set(p._pipe_globals), set(Player.MKV_ONLY) | {"audio-delay", "demuxer", "cache", "cache-pause", "initial-audio-sync", "demuxer-readahead-secs", "demuxer-max-bytes"})
         self.assertEqual([a for a in sent if a[0] == "loadfile"][-1], ("loadfile", "/run/pvj-ndi/ndi.fifo", "replace"))   # then pause off, then the pid the pipe was loaded into (pipe_is)
+
+    def delays(self, sent):
+        return [a[2] for a in sent if a[:2] == ("set_property", "audio-delay")]
+
+    def test_the_sounds_delay_is_set_for_the_ndi_stream_and_taken_back_on_every_road_the_narrowing_is(self):
+        """D87. Two senders share no clock, so the owner moves the sound by ear. It is mpv's audio-delay, which is
+        the whole player's: a clip after the NDI source must never play with it."""
+        fifo = "/run/pvj-ndi-pipe/ndi.fifo"
+        p, sent = self.player()
+        p.play_pipe(fifo, 64, 16, 30, "matroska", 0.12)
+        load = [i for i, a in enumerate(sent) if a[0] == "loadfile"][0]
+        self.assertEqual(self.delays(sent[:load]), [0.12])                                # before the load, as the narrowing is
+        self.assertIn("audio-delay", p._pipe_globals)
+        # road 1: the next thing is another pipe (bare frames: no sound, no delay)
+        del sent[:]
+        p.play_pipe("/run/pvj/capture.fifo", 1280, 720, 30)
+        load = [i for i, a in enumerate(sent) if a[0] == "loadfile"][0]
+        self.assertEqual(self.delays(sent[:load]), [0])
+        self.assertEqual(self.delays(sent[load:]), [])
+        self.assertIsNone(p._pipe_globals)
+        self.assertEqual(Player.PIPE_DEFAULTS["audio-delay"], 0)
+        # road 2: the next thing is a clip, a stream or a shader's own load: the same undo, before the load
+        for road in (Player._play,):
+            self.assertIn("self._undo_pipe_globals()", inspect.getsource(road))
+        # road 3: the NDI source again with another delay, and with none: each load says its own
+        p.play_pipe(fifo, 64, 16, 30, "matroska", -0.04)
+        p.play_pipe(fifo, 64, 16, 30, "matroska")
+        self.assertEqual(self.delays(sent)[-3:], [-0.04, 0, 0.0])                         # set, taken back, and set to none
+        # road 4: one that could not be taken back is kept and tried again
+        p.play_pipe(fifo, 64, 16, 30, "matroska", 0.3)
+        real = p.ipc.request
+
+        def flaky(*a):
+            if a[:2] == ("set_property", "audio-delay"):
+                raise PlayerError("mpv: timed out")
+            return real(*a)
+        p.ipc.request = flaky
+        p._undo_pipe_globals()
+        self.assertEqual(p._pipe_globals, ["audio-delay"])
+        p.ipc.request = real
+        del sent[:]
+        p._undo_pipe_globals()
+        self.assertEqual(sent, [("set_property", "audio-delay", 0)])
+        # road 5: an mpv that will not take it is not given the stream, and what was set is taken back
+        p, sent = self.player(refuse=("audio-delay",))
+        with self.assertRaises(PlayerError):
+            p.play_pipe(fifo, 64, 16, 30, "matroska", 0.1)
+        self.assertFalse([a for a in sent if a[0] == "loadfile"])
+        self.assertIn(("set_property", "vd", ""), sent)
+        # road 6: mpv 0.35, where the load's options are the whole player's too
+        p, sent = self.player(refuse=("old",))
+        p.play_pipe(fifo, 64, 16, 30, "matroska", 0.2)
+        self.assertEqual(self.delays(sent), [0.2])
+        del sent[:]
+        p._undo_pipe_globals()
+        self.assertEqual(self.delays(sent), [0])
+        # road 7: a panel that started again under a player it did not set (the same road as the narrowing's)
+        pid = [100]
+        old, _ = self.player_with_pid(pid)
+        old.play_pipe(fifo, 64, 16, 30, "matroska", 0.2)
+        new, sent2 = self.player_with_pid(pid)
+        new.is_running()
+        self.assertEqual(self.delays(sent2), [0])
+
+    def test_the_delay_is_held_to_its_bounds_and_bare_frames_get_none(self):
+        self.assertEqual([Player.pipe_delay(v) for v in (0.12, -0.04, 9, -9, 0.1234567, True, "0.2", None, float("nan"))],
+                         [0.12, -0.04, 0.5, -0.25, 0.123, 0.0, 0.0, 0.0, 0.0])
+        self.assertEqual(Player.PIPE_DELAY_SECONDS, tuple(ms / 1000.0 for ms in ndi.SOUND_DELAY_MS))
+        p, sent = self.player()
+        p.play_pipe("/run/pvj-ndi-pipe/ndi.fifo", 64, 16, 30, "uyvy422", 0.3)             # sound off, or a source without sound
+        self.assertEqual(self.delays(sent), [])
+        self.assertFalse(p._pipe_globals)
+
+    def test_a_change_of_the_delay_is_heard_at_once_only_under_the_ndi_stream_with_sound(self):
+        fifo = "/run/pvj-ndi-pipe/ndi.fifo"
+        p, sent = self.player()
+        self.assertIs(p.pipe_audio_delay(fifo, 0.1), False)                               # nothing plays
+        p.play_pipe(fifo, 64, 16, 30, "uyvy422")
+        self.assertIs(p.pipe_audio_delay(fifo, 0.1), False)                               # bare frames
+        p.play_pipe("/run/pvj/capture.fifo", 64, 16, 30)
+        self.assertIs(p.pipe_audio_delay(fifo, 0.1), False)                               # another pipe
+        self.assertEqual(self.delays(sent), [])
+        p.play_pipe(fifo, 64, 16, 30, "matroska", 0.1)
+        self.assertIs(p.pipe_audio_delay(fifo, 0.25), True)
+        self.assertIs(p.pipe_audio_delay(fifo, 7), True)
+        self.assertEqual(self.delays(sent), [0.1, 0.25, 0.5])
+        del sent[:]
+        p._undo_pipe_globals()                                                            # and it is taken back like the load's
+        self.assertEqual(self.delays(sent), [0])
 
     def test_the_players_queue_is_sized_from_the_picture_and_the_longest_block_of_sound(self):
         """M4. mpv's limit is one total for picture and sound; the sound trails the picture by a block's length."""
@@ -2155,6 +2244,31 @@ class ApiSoundFromTest(ServerBase):
         st, body, _ = self.call("POST", "/api/play", {"ndi": PID}, token=self.full)
         self.assertEqual((st, body["sound"]), (200, False), body)
         self.assertEqual([c for c in self.player.calls if c[0] == "play_pipe"][-1][5], "uyvy422")
+
+    def test_the_delay_goes_to_the_player_with_the_stream_with_sound_and_never_with_bare_frames(self):
+        self.assertEqual(self.post({"action": "sound_from", "id": VID})[0], 200)
+        self.pump()
+        loads = lambda: [c for c in self.player.calls if c[0] == "play_pipe"]             # noqa: E731
+        self.lib.frames.put(frame(64, 16))
+        self.assertEqual(self.call("POST", "/api/play", {"ndi": PID}, token=self.full)[0], 200)
+        self.assertEqual(loads()[-1], ("play_pipe", self.service.fifo, 64, 16, 29.97, "matroska"))     # no delay set: as it always was
+        moved = []
+        self.player.pipe_audio_delay = lambda path, seconds: moved.append((path, seconds)) or True
+        self.assertEqual(self.post({"action": "sound_delay", "ms": 120})[0], 200)
+        self.assertEqual(moved, [(self.service.fifo, 0.12)])                             # heard at once under the source that plays
+        self.assertEqual(self.call("POST", "/api/control", {"action": "stop"}, token=self.full)[0], 200)
+        self.lib.frames.put(frame(64, 16))
+        self.assertEqual(self.call("POST", "/api/play", {"ndi": PID}, token=self.full)[0], 200)
+        self.assertEqual(loads()[-1], ("play_pipe", self.service.fifo, 64, 16, 29.97, "matroska", 0.12))
+        self.assertEqual(self.call("POST", "/api/control", {"action": "stop"}, token=self.full)[0], 200)
+        self.assertEqual(self.post({"action": "sound", "on": False})[0], 200)            # sound off: bare frames, and no delay goes with them
+        self.lib.frames.put(frame(64, 16))
+        self.assertEqual(self.call("POST", "/api/play", {"ndi": PID}, token=self.full)[0], 200)
+        self.assertEqual(loads()[-1], ("play_pipe", self.service.fifo, 64, 16, 29.97, "uyvy422"))
+        self.assertEqual(self.call("POST", "/api/control", {"action": "stop"}, token=self.full)[0], 200)
+        del moved[:]
+        self.assertEqual(self.post({"action": "sound_delay", "ms": 60})[0], 200)         # nothing of NDI plays: the player is not touched
+        self.assertEqual(moved, [])
 
     def test_a_settings_file_carries_both_keys_and_one_whose_sound_source_is_not_allowed_is_refused(self):
         from pvj import boxcare
