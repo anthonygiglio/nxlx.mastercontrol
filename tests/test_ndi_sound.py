@@ -1974,7 +1974,8 @@ class SoundFromServiceTest(unittest.TestCase):
         self.assertIs(rows[VID].get("sound_only"), True)
         self.assertNotIn("sound_only", rows[PID])
         reply = self.s.handle({"cmd": "open", "id": PID})                                # nothing at all: the old words
-        self.assertEqual(reply, {"ok": False, "error": "SCAN (Converter) sent no picture in 0 seconds"})
+        self.assertEqual(reply, {"ok": False, "error": "SCAN (Converter) sent no picture in 0 seconds, and no sound either (a sender of sound alone "
+                                                       "sends nothing while nothing plays into it)"})
         self.assertNotIn("sound_only", {r["id"]: r for r in self.status(2)["sources"]}[PID])
         for bad in (sound(480, rate=22050), sound(24000)):                              # sound the box would not play is not "sound"
             self.lib.own.put(bad)
@@ -1989,6 +1990,18 @@ class SoundFromServiceTest(unittest.TestCase):
         self.lib.frames.put(frame(64, 16))
         self.assertTrue(self.s.handle({"cmd": "open", "id": VID})["ok"])
         self.assertNotIn("sound_only", {r["id"]: r for r in self.status(2)["sources"]}[VID])
+        # With one sound source for the box, the sound that the picture's receiver knows of is the SOUND SOURCE's.
+        # A picture sender whose first picture is late must not be called "sound only" for it.
+        self.conf()
+        self.pump()
+        self.lib.frames.put(frame(64, 16))
+        self.assertTrue(self.s.handle({"cmd": "open", "id": PID})["ok"])                 # a picture under the feed: the feed has had sound now
+        self.assertTrue(wait(lambda: self.s.feed is not None and self.s.feed.format is not None))
+        reply = self.s.handle({"cmd": "open", "id": PID})                                # the next clip: no picture in time
+        self.assertEqual((reply["ok"], reply.get("sound_only")), (False, None), reply)
+        self.assertIn("sent no picture", reply["error"])
+        rows = {r["id"]: r for r in self.status(2)["sources"]}
+        self.assertNotIn("sound_only", rows[PID])
         # the panel passes the label on only as a plain true
         rows = ndi.Input._rows({"sources": [dict(VOICE_ROW, sound_only=True), dict(PICTURE_ROW, sound_only="yes")]})
         self.assertEqual(rows, [dict(VOICE_ROW, sound_only=True), PICTURE_ROW])
