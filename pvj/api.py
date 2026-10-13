@@ -3225,8 +3225,54 @@ class Api:
         from . import ndi as ndi_mod
         self._need_ndi()
         action = body.get("action")
-        if action not in ("add_address", "remove_address", "sound", "forget", "add_group", "remove_group", "add_discovery", "remove_discovery", "own_discovery"):
-            raise bad("action must be add_address, remove_address, sound, forget, add_group, remove_group, add_discovery, remove_discovery or own_discovery")
+        if action not in ("add_address", "remove_address", "sound", "sound_from", "sound_delay", "forget", "add_group", "remove_group",
+                          "add_discovery", "remove_discovery", "own_discovery"):
+            raise bad("action must be add_address, remove_address, sound, sound_from, sound_delay, forget, add_group, remove_group, "
+                      "add_discovery, remove_discovery or own_discovery")
+        if action == "sound_from":
+            # Where the sound of an NDI picture comes from (D87): {"id": "<id>"} is one sound source for the whole
+            # box, played under every NDI picture; {"id": ""} is each picture's own sound. Either way sound is
+            # switched on: choosing where it comes from is choosing to have it ("sound" with on false is "no
+            # sound", and keeps the choice). The id is one the helper lists NOW, and it joins the allowed list as
+            # a pad's source does: never a name, never an address.
+            sid = body.get("id")
+            if not isinstance(sid, str) or (sid and not re.fullmatch(r"[0-9a-f]{12}", sid)):
+                raise bad("a sound source is chosen from the list, by its id; an empty id means each picture's own sound")
+            seen = None
+            if sid:
+                rows, why = self.ndi.find()             # outside the settings' lock: it asks the helper
+                seen = [r for r in rows if r["id"] == sid]
+                if not seen:
+                    raise ApiError(404, why or "that NDI source is not on the network now: the sound source is chosen from the list")
+                if seen[0].get("twins"):
+                    raise ApiError(409, "two senders announce '%s' from %s: the box cannot tell them apart, so it cannot take its sound from one"
+                                   % (seen[0]["name"], ndi_mod.host_of(seen[0]["from"])))
+            with self.settings.lock:
+                rows = ndi_mod.saved_sources(self.settings.data.get("ndi"))
+                if sid and sid not in [r["id"] for r in rows]:
+                    if len(rows) >= ndi_mod.MAX_ALLOWED:
+                        raise bad("at most %d NDI sources can be kept; remove one under 'Sources that pads may hold' first" % ndi_mod.MAX_ALLOWED)
+                    rows = rows + [{"id": sid, "name": seen[0]["name"], "from": seen[0]["from"]}]
+                self._ndi_write(sources=rows, sound=True, sound_from=sid)
+                self.settings.save()
+            self.log("pvj-web: NDI sound comes from %s, by device %s (from %s)"
+                     % ("'%s' at %s" % (seen[0]["name"], seen[0]["from"]) if sid else "each picture's own source", (device or {}).get("id"), client))
+            self.ndi._wanted()
+            self.ndi.sync()
+            return self.ndi.status()
+        if action == "sound_delay":
+            # How far the sound is moved against the picture, by ear: two senders share no clock. It is the
+            # player's setting for the NDI load (audio-delay); the helper's stream is not changed by it.
+            ms = body.get("ms")
+            low, high = ndi_mod.SOUND_DELAY_MS
+            if isinstance(ms, bool) or not isinstance(ms, int) or not low <= ms <= high:
+                raise bad("ms must be a whole number from %d to %d" % (low, high))
+            with self.settings.lock:
+                self._ndi_write(sound_delay_ms=ms)
+                self.settings.save()
+            self.ndi._wanted()
+            self.ndi.sync()
+            return self.ndi.status()
         if action == "own_discovery":
             # "Use this box's own discovery server" (D85): this box's input asks the server this box runs, at whatever
             # address that server has now. Kept as a switch, not as an address, so it follows the server.
@@ -3307,6 +3353,9 @@ class Api:
                 left = [r for r in rows if r["id"] != body.get("id")]
                 if len(left) == len(rows):
                     raise ApiError(404, "no such allowed source")
+                if body.get("id") == ndi_mod.saved_sound_from(self.settings.data.get("ndi")):
+                    name = [r["name"] for r in rows if r["id"] == body.get("id")][0]
+                    raise ApiError(409, "'%s' is where this box's NDI sound comes from; choose another sound source first, then remove it" % name)
                 self._ndi_write(sources=left)
                 self.settings.save()
             self.ndi._wanted()
@@ -3335,8 +3384,9 @@ class Api:
 
     def _ndi_write(self, **changes):
         """Write the `ndi` section again with `changes`, keeping every other part of it that can be used: the
-        addresses, the choice about sound if one was made, the allowed sources. The caller holds the settings'
-        lock and saves. (Each writer used to write the keys it knew, which would have dropped the others.)"""
+        addresses, the choice about sound if one was made, the allowed sources, the one sound source (for as long
+        as it is an allowed source) and the sound's delay. The caller holds the settings' lock and saves. (Each
+        writer used to write the keys it knew, which would have dropped the others.)"""
         from . import ndi as ndi_mod
         before = self.settings.data.get("ndi")
         new = {"addresses": ndi_mod.saved_addresses(before)[0]}
@@ -3359,6 +3409,16 @@ class Api:
                 new.pop(key, None)
         if not new.get("sources"):
             new.pop("sources", None)
+        sound_from = changes["sound_from"] if "sound_from" in changes else ndi_mod.saved_sound_from(before)
+        if sound_from and sound_from in [r["id"] for r in new.get("sources", [])]:
+            new["sound_from"] = sound_from
+        else:
+            new.pop("sound_from", None)
+        delay = changes["sound_delay_ms"] if "sound_delay_ms" in changes else ndi_mod.saved_sound_delay(before)
+        if delay:
+            new["sound_delay_ms"] = delay
+        else:
+            new.pop("sound_delay_ms", None)
         self.settings.data["ndi"] = new
 
     # ---- the NDI discovery server on this box (pvj/ndiscovery.py, D85): the Owner's, and never through remote support ----

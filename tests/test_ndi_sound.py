@@ -1998,6 +1998,182 @@ class SoundFromPanelTest(unittest.TestCase):
         self.assertEqual(self.told(), [])
 
 
+class ApiSoundFromTest(ServerBase):
+    def setUp(self):
+        super().setUp()
+        self.full = self.call("POST", "/api/pair", {"pin": self.pin, "name": "t"})[1]["token"]
+        self.lib = FeedLib()
+        self.ndidir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.ndidir, True)
+        self.service = ndi.Service(self.ndidir, "x", loader=lambda path: self.lib, log=lambda *_: None, first_frame=0.5, problem=lambda path: None)
+        self.addCleanup(self.service.close)
+        self.client = FakeClient(self.service)
+        reg, st = self.api.registry, self.settings
+        self.api.ndi = ndi.Input(self.client, self.service.fifo, ndi.Wanted(lambda: reg.enabled("inputs-ndi"), lambda: st.data, log=lambda *_: None),
+                                 log=lambda *_: None)
+        self.assertEqual(self.call("POST", "/api/modules/inputs-ndi", {"enabled": True}, token=self.full)[0], 200)
+
+    def post(self, body, token=None):
+        st, out, _ = self.call("POST", "/api/ndi", body, token=token or self.full)
+        return st, out
+
+    def test_the_owner_chooses_a_listed_source_and_it_is_allowed_saved_and_sent_to_the_helper(self):
+        st, body = self.post({"action": "sound_from", "id": VID})
+        self.assertEqual(st, 200, body)
+        self.assertEqual(self.settings.data["ndi"], {"addresses": [], "sound": True, "sources": [VOICE_ROW], "sound_from": VID})
+        self.assertEqual((body["sound"], body["sound_from"], body["sound_source"]), (True, VID, dict(VOICE_ROW, state="ready", arriving=False)))
+        self.assertEqual((self.service.sound, self.service.sound_from), (True, VID))
+        self.assertEqual(self.post({"action": "sound_from", "id": VID})[0], 200)         # again: not allowed twice
+        self.assertEqual(self.settings.data["ndi"]["sources"], [VOICE_ROW])
+        # "no sound" keeps the choice; the old switch back on plays that source again
+        self.assertEqual(self.post({"action": "sound", "on": False})[1]["sound_source"]["state"], "off")
+        self.assertEqual(self.settings.data["ndi"], {"addresses": [], "sound": False, "sources": [VOICE_ROW], "sound_from": VID})
+        self.assertEqual(self.post({"action": "sound", "on": True})[1]["sound_from"], VID)
+        # each picture's own sound: the id goes, sound stays on, the source stays allowed
+        st, body = self.post({"action": "sound_from", "id": ""})
+        self.assertEqual((st, body["sound"], body["sound_from"], body["sound_source"]), (200, True, "", None))
+        self.assertEqual(self.settings.data["ndi"], {"addresses": [], "sound": True, "sources": [VOICE_ROW]})
+        self.assertEqual(self.service.sound_from, "")
+
+    def test_only_an_id_on_the_list_now_and_only_the_owner(self):
+        for bad in ({"action": "sound_from"}, {"action": "sound_from", "id": "VLC (Audio)"}, {"action": "sound_from", "id": "192.168.0.20:5962"},
+                    {"action": "sound_from", "id": 5}, {"action": "sound_from", "id": VID.upper()}, {"action": "sound_from", "name": "VLC (Audio)"}):
+            self.assertEqual(self.post(bad)[0], 400, bad)
+        st, body = self.post({"action": "sound_from", "id": "0123456789ab"})
+        self.assertEqual(st, 404)
+        self.assertIn("not on the network now", body["error"])
+        self.lib.raw.remove(VOICE)                                                       # allowed before, away now: still not taken
+        self.settings.data["ndi"] = {"addresses": [], "sources": [VOICE_ROW]}
+        self.service._sources_at = None
+        self.assertEqual(self.post({"action": "sound_from", "id": VID})[0], 404)
+        self.lib.raw.extend([VOICE, (VOICE[0], b"192.168.0.20:5999")])                  # two senders under the id
+        self.service._sources_at = None
+        st, body = self.post({"action": "sound_from", "id": VID})
+        self.assertEqual(st, 409)
+        self.assertIn("cannot tell them apart", body["error"])
+        self.assertNotIn("sound_from", self.settings.data["ndi"])
+        live = self.call("POST", "/api/devices/invite", {"name": "g", "role": "live"}, token=self.full)[1]["token"]
+        for body in ({"action": "sound_from", "id": PID}, {"action": "sound_from", "id": ""}, {"action": "sound_delay", "ms": 10}):
+            self.assertEqual(self.post(body, token=live)[0], 403, body)
+        self.assertEqual(self.api.routes()[("POST", "/api/ndi")][0], "full")
+
+    def test_the_list_of_allowed_sources_is_bounded_for_the_sound_source_too(self):
+        rows = []
+        for n in range(ndi.MAX_ALLOWED):
+            name = "CAM %d" % n
+            rows.append({"id": ndi.source_id(name, "192.168.0.30"), "name": name, "from": "192.168.0.30:%d" % (6000 + n)})
+        self.settings.data["ndi"] = {"addresses": [], "sources": rows}
+        st, body = self.post({"action": "sound_from", "id": VID})
+        self.assertEqual(st, 400)
+        self.assertIn("at most %d" % ndi.MAX_ALLOWED, body["error"])
+
+    def test_the_delay_is_a_whole_number_within_its_bounds(self):
+        for bad in (501, -251, True, 1.5, "10", None):
+            self.assertEqual(self.post({"action": "sound_delay", "ms": bad})[0], 400, bad)
+        self.assertEqual(self.post({"action": "sound_delay"})[0], 400)
+        st, body = self.post({"action": "sound_delay", "ms": -250})
+        self.assertEqual((st, body["sound_delay_ms"], self.settings.data["ndi"]), (200, -250, {"addresses": [], "sound_delay_ms": -250}))
+        self.assertEqual(self.post({"action": "sound_delay", "ms": 500})[1]["sound_delay_ms"], 500)
+        self.assertEqual(self.post({"action": "sound_delay", "ms": 0})[1]["sound_delay_ms"], 0)
+        self.assertEqual(self.settings.data["ndi"], {"addresses": []})                   # nothing is kept for "no delay"
+
+    def test_every_other_writer_of_the_section_keeps_both_keys(self):
+        self.assertEqual(self.post({"action": "sound_from", "id": VID})[0], 200)
+        self.assertEqual(self.post({"action": "sound_delay", "ms": 120})[0], 200)
+        keys = lambda: (self.settings.data["ndi"].get("sound_from"), self.settings.data["ndi"].get("sound_delay_ms"))      # noqa: E731
+        for body in ({"action": "add_address", "address": "192.168.1.20"}, {"action": "add_group", "group": "Leyline"},
+                     {"action": "add_discovery", "server": "192.168.1.5"}, {"action": "own_discovery", "on": True},
+                     {"action": "sound", "on": False}, {"action": "sound", "on": True}, {"action": "remove_address", "address": "192.168.1.20"},
+                     {"action": "remove_group", "group": "Leyline"}, {"action": "remove_discovery", "server": "192.168.1.5"}):
+            self.assertEqual(self.post(body)[0], 200, body)
+            self.assertEqual(keys(), (VID, 120), body)
+        st, _, _ = self.call("POST", "/api/pads", {"bank": 0, "index": 0, "ndi": PID}, token=self.full)       # a pad allows another source
+        self.assertEqual(st, 200)
+        self.assertEqual([r["id"] for r in self.settings.data["ndi"]["sources"]], [VID, PID])
+        self.assertEqual(keys(), (VID, 120))
+        self.assertEqual(self.post({"action": "forget", "id": PID})[0], 200)             # and forgetting that other one
+        self.assertEqual(keys(), (VID, 120))
+        self.assertEqual(self.api._ndi_write(), None)
+        self.assertEqual(keys(), (VID, 120))
+        # a hand-edited file whose id has no allowed source behind it: the id is not written again
+        self.settings.data["ndi"]["sound_from"] = PID
+        self.api._ndi_write()
+        self.assertNotIn("sound_from", self.settings.data["ndi"])
+
+    def test_the_sound_source_cannot_be_forgotten_while_it_is_the_sound_source(self):
+        self.assertEqual(self.post({"action": "sound_from", "id": VID})[0], 200)
+        st, body = self.post({"action": "forget", "id": VID})
+        self.assertEqual(st, 409)
+        self.assertEqual(body["error"], "'VLC (Audio)' is where this box's NDI sound comes from; choose another sound source first, then remove it")
+        self.assertEqual(self.settings.data["ndi"]["sources"], [VOICE_ROW])
+        self.assertEqual(self.post({"action": "sound", "on": False})[0], 200)            # also while sound is off: the choice is kept
+        self.assertEqual(self.post({"action": "forget", "id": VID})[0], 409)
+        self.assertEqual(self.post({"action": "sound_from", "id": ""})[0], 200)
+        self.assertEqual(self.post({"action": "forget", "id": VID})[0], 200)
+        self.assertNotIn("sources", self.settings.data["ndi"])
+
+    def pump(self):
+        stop = threading.Event()
+
+        def run():
+            while not stop.wait(0.02):
+                if self.lib.sounds.qsize() < 3:
+                    self.lib.sounds.put(sound(480))
+        threading.Thread(target=run, daemon=True).start()
+        self.addCleanup(stop.set)
+
+    def test_a_picture_is_played_with_the_sound_sources_sound_and_as_bare_frames_when_sound_is_off(self):
+        self.assertEqual(self.post({"action": "sound_from", "id": VID})[0], 200)
+        self.pump()
+        self.lib.frames.put(frame(64, 16))
+        st, body, _ = self.call("POST", "/api/play", {"ndi": PID}, token=self.full)
+        self.assertEqual((st, body["sound"]), (200, True), body)
+        self.assertIn(("play_pipe", self.service.fifo, 64, 16, 29.97, "matroska"), self.player.calls)
+        self.assertEqual(self.lib.opens, [(VOICE, True), (PICTURE, False)])
+        self.assertEqual(self.lib.asked, {("recv", 1)})
+        # sound off: bare frames, whatever the helper says and whatever sound source is kept
+        self.assertEqual(self.post({"action": "sound", "on": False})[0], 200)
+        self.assertEqual(self.settings.data["ndi"]["sound_from"], VID)
+        self.lib.frames.put(frame(64, 16))
+        st, body, _ = self.call("POST", "/api/play", {"ndi": PID}, token=self.full)
+        self.assertEqual((st, body["sound"]), (200, False), body)
+        self.assertEqual([c for c in self.player.calls if c[0] == "play_pipe"][-1][5], "uyvy422")
+        self.assertEqual(len(self.lib.sound_opens()), 1)                                 # none was opened for it
+        lying = dict(self.service.handle({"cmd": "status"}), playing=None)
+        answer = {"ok": True, "playing": {"id": PID, "name": "SCAN (Converter)", "state": "ready", "message": "", "width": 64, "height": 16, "fps": 30.0,
+                                          "counts": {}, "container": "matroska",
+                                          "audio": {"rate": 48000, "channels": 2, "played": 2, "arriving": True, "level_db": -20.0,
+                                                    "silent": False, "problem": "", "counts": {}}}}
+        self.client.request = lambda message, timeout=None: answer if message["cmd"] == "open" else lying
+        st, body, _ = self.call("POST", "/api/play", {"ndi": PID}, token=self.full)
+        self.assertEqual((st, body["sound"]), (200, False), body)
+        self.assertEqual([c for c in self.player.calls if c[0] == "play_pipe"][-1][5], "uyvy422")
+
+    def test_a_settings_file_carries_both_keys_and_one_whose_sound_source_is_not_allowed_is_refused(self):
+        from pvj import boxcare
+        good = {"addresses": [], "sound": True, "sources": [VOICE_ROW], "sound_from": VID, "sound_delay_ms": 120}
+        self.assertEqual(boxcare.check_ndi(good, None), good)
+        for bad in (dict(good, sound_from=PID), dict(good, sources=[]), dict(good, sound_delay_ms=9000), dict(good, sound_from="VLC (Audio)")):
+            with self.assertRaises(ndi.NdiError, msg=bad):
+                boxcare.check_ndi(bad, None)
+
+    def test_through_the_support_tunnel_the_new_actions_are_what_the_other_ndi_settings_are(self):
+        """The owner's answer of 2026-10-08 (the same as Streams) is pinned for the whole route by
+        tests/test_ndi_setup.py, TunnelSameAsStreamsTest. The two new actions are branches of that one handler,
+        which still has no rule of its own for the tunnel, and the route is not on either of support's lists."""
+        from pvj import support as sp
+        from pvj.api import Api
+        source = inspect.getsource(Api.set_ndi)
+        self.assertIn('action == "sound_from"', source)
+        self.assertIn('action == "sound_delay"', source)
+        for words in ("is_remote", "need_local", "remote"):
+            self.assertEqual(words in inspect.getsource(Api.set_streams), words in source, words)
+        for route in (("POST", "/api/streams"), ("POST", "/api/ndi")):
+            self.assertNotIn(route, sp.REMOTE_DENY)
+            self.assertFalse(route[1].startswith(sp.REMOTE_DENY_PREFIX))
+        self.assertEqual(self.api.routes()[("POST", "/api/streams")][0], self.api.routes()[("POST", "/api/ndi")][0])
+
+
 def png_pixel(path, x, y):
     """(r, g, b) of one pixel of an 8-bit RGB or RGBA PNG that is not interlaced, with nothing but zlib."""
     with open(path, "rb") as f:
