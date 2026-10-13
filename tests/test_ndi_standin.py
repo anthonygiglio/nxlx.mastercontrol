@@ -472,12 +472,15 @@ class SoundFromAnotherSender(Built):
         self.assertEqual((self.made(SOUND_ONLY, 10, open_now=True), self.made(SOUND_ONLY, 10)), (0, 1))
         self.assertEqual(self.made("no such source", 10), 0)
 
-    def test_played_by_itself_the_sound_only_source_is_refused_because_it_sends_no_picture(self):
+    def test_played_by_itself_the_sound_only_source_is_refused_in_words_and_marked_sound_only(self):
+        sid = ndi.source_id(SOUND_ONLY, HOST)
         st = self.on(True, **self.from_source(SOUND_ONLY))
+        self.assertNotIn("sound_only", [s for s in st["sources"] if s["id"] == sid][0])       # not known before it was pressed
         self.s._first_frame = 2.0                  # the helper's own wait for a first picture, shortened for this test
-        out = self.s.handle({"cmd": "open", "id": ndi.source_id(SOUND_ONLY, HOST)})
-        self.assertEqual(out, {"ok": False, "error": "%s sent no picture in 2 seconds" % SOUND_ONLY})
-        self.assertTrue(st["ok"])
+        out = self.s.handle({"cmd": "open", "id": sid})
+        self.assertEqual(out, {"ok": False, "sound_only": True,
+                               "error": "%s sends sound and no picture; choose it under 'Where sound comes from' on the NDI page" % SOUND_ONLY})
+        self.assertIs([s for s in self.status()["sources"] if s["id"] == sid][0].get("sound_only"), True)
         # it was asked for as a picture is (it is the picture here), never on a second connection for its sound
         self.assertEqual((self.made(SOUND_ONLY, 100), self.made(SOUND_ONLY, 10)), (1, 0))
 

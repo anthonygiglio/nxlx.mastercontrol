@@ -798,10 +798,10 @@ def case_sound_offset_unseen(rig, picture, voice):
 
 def case_sound_delay(rig, picture, voice, ms=-OFFSET_MS):
     """(e), second half: the Owner sets ndi.sound_delay_ms to take the known offset out, and mpv's audio-delay IS that
-    number, in seconds, while the NDI picture is loaded, and 0 again once a clip that is not NDI plays. The sign is
-    mpv's: a positive audio-delay makes the sound later, so sound that is OFFSET_MS late is put right with
-    -OFFSET_MS. (If the product means the other sign, this case says so with both numbers, and one of the two is
-    changed with the owner's word.) Only the property is judged: nothing here hears whether flash and click meet."""
+    number, in seconds, while the NDI picture is loaded; a change while it plays is mpv's at once; and it is 0 again
+    once a clip that is not NDI plays. The sign is mpv's and the product's (NDI.md, "The delay": positive is sound
+    later), so sound that is OFFSET_MS late is put right with -OFFSET_MS. Only the property is judged: nothing here
+    hears whether flash and click meet."""
     what = "ndi.sound_delay_ms %d under %r with the sound of %r" % (ms, picture, voice)
     rig.sound_from(voice)
     code, out = rig.post_ndi({"action": "sound_delay", "ms": ms})
@@ -812,12 +812,21 @@ def case_sound_delay(rig, picture, voice, ms=-OFFSET_MS):
     during = ask(rig.socket, "audio-delay", "audio-pts", "time-pos", "avsync")
     rig.say("DELAY %s: with the NDI picture loaded mpv says audio-delay %r (audio-pts %r, time-pos %r, avsync %r)"
             % (what, during["audio-delay"], during["audio-pts"], during["time-pos"], during["avsync"]))
+    other = 120                            # changed while it plays: the other side of 0
+    code, out = rig.post_ndi({"action": "sound_delay", "ms": other})
+    if code != 200 or not isinstance(out, dict) or out.get("sound_delay_ms") != other:
+        raise Failed("POST /api/ndi (sound_delay %d) under the playing source answered HTTP %s: %s" % (other, code, str(out)[:300]))
+    time.sleep(0.5)
+    moved = ask(rig.socket, "audio-delay", "path")
+    rig.say("DELAY %s: after it was changed to %d while the source played mpv says audio-delay %r (its path %r)" % (what, other, moved["audio-delay"], moved["path"]))
     clip = rig.next_clip()
     after = ask(rig.socket, "audio-delay", "path")
     rig.say("DELAY %s: with the clip %r loaded mpv says audio-delay %r" % (what, clip, after["audio-delay"]))
     bad = []
     if not number(during["audio-delay"]) or abs(during["audio-delay"] - ms / 1000.0) > DELAY_EXACT:
         bad.append("with the NDI picture loaded mpv's audio-delay is %r; ndi.sound_delay_ms %d is %.3f" % (during["audio-delay"], ms, ms / 1000.0))
+    if moved["path"] != rig.pipe or not number(moved["audio-delay"]) or abs(moved["audio-delay"] - other / 1000.0) > DELAY_EXACT:
+        bad.append("after the delay was changed to %d under the playing source mpv's audio-delay is %r (its path %r)" % (other, moved["audio-delay"], moved["path"]))
     if not number(after["audio-delay"]) or abs(after["audio-delay"]) > DELAY_EXACT:
         bad.append("with the next clip loaded (%r) mpv's audio-delay is %r; it must be 0 again" % (after["path"], after["audio-delay"]))
     if bad:
@@ -826,21 +835,25 @@ def case_sound_delay(rig, picture, voice, ms=-OFFSET_MS):
 
 def case_sound_only_play(rig, voice):
     """(f) The sound-only source chosen with Play, as a picture is: refused, in words that name it and say that it
-    sent no picture; nothing of it is loaded into mpv and the page does not say it plays. Then, for the record and
-    not judged: the same press while a picture plays with that source's sound, and what became of the picture."""
+    sends sound and no picture; nothing of it is loaded into mpv, the page does not say it plays, and from then on
+    its row in the page's list says "sound_only"."""
     what = "Play on the sound-only source %r" % voice
     sid = rig.sound_from(voice)
     began = time.monotonic()
     code, out = rig.post_play(sid)
     words = str(out.get("error") if isinstance(out, dict) and out.get("error") else out)
     rig.say("POST /api/play answered HTTP %s after %.1f seconds: %s" % (code, time.monotonic() - began, words[:300]))
-    if code != 409 or voice not in words or "no picture" not in words:
-        raise Failed("%s was not refused in words that name it and say it sent no picture: HTTP %s, %s" % (what, code, words[:300]))
+    if code != 409 or voice not in words or "sends sound and no picture" not in words:
+        raise Failed("%s was not refused in words that name it and say it sends sound and no picture: HTTP %s, %s" % (what, code, words[:300]))
     time.sleep(1.5)
-    m, p = rig.look(), rig.page().get("playing")
+    st = rig.page()
+    m, p = rig.look(), st.get("playing")
     if m["path"] == rig.pipe or p:
         raise Failed("STUCK, %s was refused and yet: mpv's path is %r (the pipe is %s), the page says playing=%s"
                      % (what, m["path"], rig.pipe, json.dumps(p, sort_keys=True)))
+    row = [s for s in st.get("sources", []) if isinstance(s, dict) and s.get("id") == sid]
+    if not row or row[0].get("sound_only") is not True:
+        raise Failed("%s was refused, and its row in the page's list does not say sound_only: %s" % (what, json.dumps(row, sort_keys=True)))
     rig.say("REFUSED %s: \"%s\"; mpv has not got the pipe" % (what, words[:200]))
 
 

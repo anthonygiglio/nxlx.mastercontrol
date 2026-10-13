@@ -25,11 +25,8 @@ with PVJ_NDI_FINDINGS_FATAL=yes it fails like any other, and CI's job sets that 
 prints a line beginning FINDING and is counted as skipped, with the reason. CI's job also runs the still cases on
 the pvj code from before the mending, where they must fail.
 
-A third kind, since sound from another sender (D87): a case for a part of the product that is NOT BUILT YET is asked
-with `not_built`. It is the same FINDING, printed and counted as skipped with its reason, and it has a switch of its
-own, PVJ_NDI_NOT_BUILT_FATAL=yes, because CI's job runs with PVJ_NDI_FINDINGS_FATAL=yes and would be red for a part
-nobody has written. Whoever builds the part sets it to yes in the job in the same change, and then folds the case
-into `must`. The list of them is in pvj/NDI.md ("Sound from another sender: what the tests show")."""
+Sound from another sender (D87, cases 40 to 46) is asked with `must`: every part those cases ask about is built, so
+none of them is under the switch. One case more (47) is `for_the_record`: never fatal, it prints what it saw."""
 import os
 import shutil
 import subprocess
@@ -48,7 +45,6 @@ from tests.test_support import LAN
 
 ASKED = os.environ.get("PVJ_NDI_MPV_TEST") == "1"
 FATAL = os.environ.get("PVJ_NDI_FINDINGS_FATAL", "no") == "yes"
-NOT_BUILT_FATAL = os.environ.get("PVJ_NDI_NOT_BUILT_FATAL", "no") == "yes"      # the cases asked with `not_built`
 WANT = os.environ.get("PVJ_NDI_MPV_WANT", "")      # the start of the version this run is for, such as "0.40."
 MPV = shutil.which("mpv")
 
@@ -239,23 +235,26 @@ class NdiOnARealMpv(ServerBase):
 
     def known(self, words, case, *args, **kw):
         """A case that is known to fail today: a FINDING until the fault is mended, then fatal by the one switch."""
-        self.finding(FATAL, "PVJ_NDI_FINDINGS_FATAL", "", words, case, *args, **kw)
-
-    def not_built(self, words, case, *args, **kw):
-        """A case for a part of the product that is not built yet: the same FINDING, by a switch of its own (see
-        the top of this file for why)."""
-        self.finding(NOT_BUILT_FATAL, "PVJ_NDI_NOT_BUILT_FATAL", "NOT BUILT YET, ", words, case, *args, **kw)
-
-    def finding(self, fatal, switch, kind, words, case, *args, **kw):
         try:
             case(self.rig, *args, **kw)
         except mpvword.Failed as e:
             self.told()
-            if fatal:
+            if FATAL:
                 self.fail("on %s: %s" % (self.version, e))
-            say("FINDING, %s(%s): %s. %s" % (kind, self.version, words, e) if kind else "FINDING (%s): %s. %s" % (self.version, words, e))
-            self.skipTest("FINDING, %snot fatal while %s is not 'yes': %s: %s" % (kind, switch, words, str(e)[:400]))
-        say("GOOD, and it was a known finding (%s): %s%s. If this is the mended code, make findings fatal (%s)." % (self.version, kind, words, switch))
+            say("FINDING (%s): %s. %s" % (self.version, words, e))
+            self.skipTest("FINDING, not fatal while PVJ_NDI_FINDINGS_FATAL is not 'yes': %s: %s" % (words, str(e)[:400]))
+        say("GOOD, and it was a known finding (%s): %s. If this is the mended code, make findings fatal." % (self.version, words))
+
+    def for_the_record(self, words, case, *args, **kw):
+        """A case nobody asked this job to judge: never fatal, under no switch. What it saw is printed, and when it
+        did not hold it is a FINDING and counted as skipped with the reason."""
+        try:
+            case(self.rig, *args, **kw)
+        except mpvword.Failed as e:
+            self.told()
+            say("FINDING, FOR THE RECORD (%s): %s. %s" % (self.version, words, e))
+            self.skipTest("FINDING, for the record and never fatal: %s: %s" % (words, str(e)[:400]))
+        say("GOOD, for the record (%s): %s." % (self.version, words))
 
     # ---- the mpv this run is for
     def test_00_the_mpv_is_the_one_this_run_is_for(self):
@@ -375,10 +374,9 @@ class NdiOnARealMpv(ServerBase):
         self.must(mpvword.case_sound_offset_unseen, FLASHES, SOUND_ONLY_CLICKS)
 
     def test_45_the_sound_delay_is_mpvs_audio_delay_for_the_ndi_load_and_is_taken_back_on_the_next_clip(self):
-        # NOT BUILT YET when this was written (2026-10-12): ndi.sound_delay_ms is stored, checked and sent to the
-        # helper, and nothing sets mpv's audio-delay (pvj/NDI.md, "The delay").
-        self.not_built("ndi.sound_delay_ms is applied as mpv's audio-delay for the NDI load and taken back on the next clip",
-                       mpvword.case_sound_delay, FLASHES, SOUND_ONLY_CLICKS)
+        # Built on 2026-10-12 (24c2b19) and until this job tested only against the player's fake: this is its first
+        # meeting with a real mpv.
+        self.must(mpvword.case_sound_delay, FLASHES, SOUND_ONLY_CLICKS)
 
     def test_46_play_on_the_sound_only_source_is_refused_in_plain_words(self):
         self.must(mpvword.case_sound_only_play, SOUND_ONLY)
@@ -386,8 +384,8 @@ class NdiOnARealMpv(ServerBase):
     def test_47_play_on_the_sound_only_source_while_a_picture_plays_with_its_sound(self):
         # For the record: not one of the cases this job was asked to judge, and never fatal. What it prints says
         # what became of the picture that played before the refused press.
-        self.finding(False, "(no switch: for the record)", "FOR THE RECORD, ", "after a refused Play on the sound-only source, the picture before it plays or has a reason",
-                     mpvword.case_sound_only_play_under_a_picture, MOVING, SOUND_ONLY)
+        self.for_the_record("after a refused Play on the sound-only source, the picture before it plays or has a reason",
+                            mpvword.case_sound_only_play_under_a_picture, MOVING, SOUND_ONLY)
 
 
 if __name__ == "__main__":
