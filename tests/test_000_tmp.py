@@ -14,10 +14,13 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
 
+import tests
+from pvj import shaderlive
 from tests import tmpguard
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -474,6 +477,65 @@ class Rule(unittest.TestCase):
                      ['d = tempfile.mkdtemp(dir="/tmp")', 'unittest.addModuleCleanup(shutil.rmtree, d, True)']):
             self.assertEqual(lines(fine), [], fine)
         self.assertEqual(unremoved('import tempfile\nd = tempfile.mkdtemp(dir="/tmp")\n'), [2])    # a helper script
+
+
+class Watchers(unittest.TestCase):
+    """No test leaves a worker of pvj's that looks again and again (tests/__init__.py, WATCHERS): the check is made
+    after every test, so it is the test that left the thread that fails, not the one it disturbed."""
+
+    def test_what_the_check_sees(self):
+        go = threading.Event()
+        made = []
+
+        class Inner(unittest.TestCase):
+            def test_leaves_one(self):
+                made.append(threading.Thread(target=go.wait, name=tests.WATCHERS[0], daemon=True))
+                made[0].start()
+
+            def test_leaves_none(self):
+                other = threading.Thread(target=go.wait, name="somebody-else", daemon=True)
+                other.start()
+                made.append(other)
+
+        try:
+            for name, failures in (("test_leaves_one", 1), ("test_leaves_none", 0)):     # blamed once, on who did it
+                result = unittest.TestResult()
+                Inner(name).run(result)
+                self.assertEqual((len(result.failures), result.errors), (failures, []), name)
+                if failures:
+                    self.assertIn("left running after the test: " + tests.WATCHERS[0], result.failures[0][1])
+        finally:
+            go.set()
+            for t in made:
+                t.join(5)
+        self.assertEqual(tests.left_watchers(), [])
+
+    def test_the_shaders_worker_has_the_name_and_ends_when_it_is_stopped(self):
+        class Engine:
+            looks = 0
+
+            def log(self, *_):
+                pass
+
+            def adjust(self, job):
+                Engine.looks += 1
+                changer.keep()                                  # as the effects do: every look asks for the next one
+                return False
+
+        changer = shaderlive.Changer(Engine(), refresh=0.01)
+        self.addCleanup(changer.stop)
+        changer.keep(0)
+        end = time.monotonic() + 5
+        while Engine.looks < 3 and time.monotonic() < end:
+            time.sleep(0.01)
+        self.assertGreaterEqual(Engine.looks, 3)
+        self.assertIn(changer._thread.name, tests.WATCHERS)
+        self.assertTrue(changer.stop())
+        self.assertFalse([t for t in threading.enumerate() if t.name in tests.WATCHERS])
+        seen = Engine.looks
+        changer.keep(0)                                         # whatever is asked after it, no thread comes back
+        time.sleep(0.05)
+        self.assertEqual((Engine.looks, changer._thread), (seen, None))
 
 
 if __name__ == "__main__":
