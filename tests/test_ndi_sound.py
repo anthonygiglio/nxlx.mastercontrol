@@ -1967,7 +1967,7 @@ class SoundFromServiceTest(unittest.TestCase):
         block = sound(480)
         self.lib.own.put(block)
         reply = self.s.handle({"cmd": "open", "id": VID})
-        self.assertEqual(reply, {"ok": False, "sound_only": True, "error": "VLC (Audio) sends sound and no picture; choose it under Sound"})
+        self.assertEqual(reply, {"ok": False, "sound_only": True, "error": "VLC (Audio) sends sound and no picture; choose it under 'Where sound comes from' on the NDI page"})
         self.assertEqual(block.token, [])
         self.assertEqual(self.lib.freed_sound, 1)
         rows = {r["id"]: r for r in self.status(2)["sources"]}

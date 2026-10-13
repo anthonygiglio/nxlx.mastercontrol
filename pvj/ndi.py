@@ -2117,7 +2117,7 @@ class Service:
                 if only:
                     if len(self.sound_only) < MAX_SOURCES * 4:
                         self.sound_only.add(sid)
-                    return {"ok": False, "sound_only": True, "error": "%s sends sound and no picture; choose it under Sound" % match[0]["name"]}
+                    return {"ok": False, "sound_only": True, "error": "%s sends sound and no picture; choose it under 'Where sound comes from' on the NDI page" % match[0]["name"]}
                 return {"ok": False, "error": st["message"] or "%s sent no picture in %d seconds" % (match[0]["name"], self._first_frame)}
             self.sound_only.discard(sid)           # it has a picture after all
             self.log("pvj-ndi: %s is %d x %d at %s" % ((match[0]["name"],) + r.format))
