@@ -1865,11 +1865,12 @@ class SoundFeedTest(FeedBase):
     def test_a_sound_source_that_keeps_changing_its_sound_cannot_take_the_picture_off_the_screen_in_a_loop(self):
         """The review of #132, M4. Every change of rate or channels in the SOUND source ended the picture as
         "changed", and the panel opened it again each time: a second sender could blink the picture at will. A
-        first change still ends the stream once (the new track needs it). Changes that come before the source has
-        been calm are answered by holding its sound back, 3 s, then 6, 12 ... 60, and the picture plays on."""
+        first change still ends the stream once (the new track needs it). After an ending the next is let through
+        no sooner than a pause later, 3 s, then 6, 12 ... 60, and the picture plays on without the sound meanwhile."""
         other = lambda: sound(441, rate=44100)                                           # noqa: E731
         feed = self.feed()
         r = self.play_with(feed)
+        t0 = self.now[0]
         self.lib.sounds.put(other())                                                     # the first change: handed on
         self.assertTrue(wait(lambda: r.state == "changed"))
         self.assertFalse(feed.status()["restless"])
@@ -1879,10 +1880,11 @@ class SoundFeedTest(FeedBase):
         back = sound(480)
         self.lib.sounds.put(back)                                                        # and back again a second later: held
         self.assertTrue(wait(lambda: feed.status()["restless"]))
+        self.assertAlmostEqual(feed.pace.quiet_until - t0, 3.0, places=3)                # until 3 s after the ending before
         self.assertEqual(back.token, [])                                                 # given back unread
         self.assertIsNone(feed.known())
-        self.assertIn("keeps changing its sound; pictures play without it for 3 seconds", " ".join(self.logged))
-        for k in range(4):                                                               # 2.8 seconds of it: the picture plays on, silence is written
+        self.assertIn("keeps changing its sound; pictures play without it for 2 seconds", " ".join(self.logged))
+        for k in range(2):                                                               # the picture plays on, silence is written
             self.now[0] += 0.7
             self.lib.sounds.put(sound(480))
             self.lib.frames.put(frame(64, 16, fill=2 + k))
@@ -1890,15 +1892,15 @@ class SoundFeedTest(FeedBase):
         self.assertEqual(r.state, "playing")
         self.assertGreaterEqual(r.status()["audio"]["counts"]["filled"], 1)
         self.assertTrue(feed.status()["restless"])
-        self.now[0] += 0.5                                                               # the pause is over: its sound, as it is now, ends the stream ONCE
+        self.now[0] += 0.7                                                               # the pause is over: its sound, as it is now, ends the stream ONCE
+        t1 = self.now[0]
         self.lib.sounds.put(sound(480))
         self.assertTrue(wait(lambda: r.state == "changed"))
         self.assertFalse(feed.status()["restless"])
         r = self.again(feed, sound(480))
-        t = self.now[0]
         self.lib.sounds.put(other())                                                     # it changes again: the pause is twice as long
         self.assertTrue(wait(lambda: feed.status()["restless"]))
-        self.assertAlmostEqual(feed.pace.quiet_until - t, 6.0, places=3)
+        self.assertAlmostEqual(feed.pace.quiet_until - t1, 6.0, places=3)
         self.now[0] += 5.0
         self.lib.sounds.put(sound(480))
         self.lib.sounds.put(other())                                                     # and again while it is held: never handed
@@ -1906,30 +1908,62 @@ class SoundFeedTest(FeedBase):
         time.sleep(0.2)
         self.assertEqual(r.state, "playing")
         self.now[0] += 1.5                                                               # the pause is over: one ending, and the next pause is 12 s
+        t2 = self.now[0]
         self.lib.sounds.put(other())
         self.assertTrue(wait(lambda: r.state == "changed"))
         r = self.again(feed, other())
-        t = self.now[0]
         self.lib.sounds.put(sound(480))
         self.assertTrue(wait(lambda: feed.status()["restless"]))
-        self.assertAlmostEqual(feed.pace.quiet_until - t, 12.0, places=3)
+        self.assertAlmostEqual(feed.pace.quiet_until - t2, 12.0, places=3)
         self.assertEqual(r.state, "playing")
-        waits, w = [], ndi.FEED_QUIET_SECONDS
-        while w < ndi.FEED_QUIET_MAX:
-            waits.append(w)
-            w *= 2
-        self.assertEqual(waits + [ndi.FEED_QUIET_MAX], [3.0, 6.0, 12.0, 24.0, 48.0, 60.0])   # the pauses of Input.tick
-        self.assertEqual((ndi.Input.RETRY_SECONDS, ndi.Input.RETRY_MAX), (ndi.FEED_QUIET_SECONDS, ndi.FEED_QUIET_MAX))
-        # calm for long enough, a change is a first one again
-        self.now[0] += 300
-        self.lib.sounds.put(other())                                                     # (what the pause still owed: the stream has 44100 already, nothing ends)
-        self.lib.frames.put(frame(64, 16, fill=9))
-        self.assertTrue(wait(lambda: r.status()["audio"]["counts"]["written"] >= 1))
-        self.assertEqual(r.state, "playing")
+        self.assertEqual((ndi.Input.RETRY_SECONDS, ndi.Input.RETRY_MAX), (ndi.FEED_QUIET_SECONDS, ndi.FEED_QUIET_MAX))   # the pauses of Input.tick
+        # THE HONEST RIG: its sound changes form now and then. It waits the pause and has its sound back; and after
+        # ten minutes without an ending the pauses begin at the shortest again.
+        self.now[0] += 300                                                               # five minutes later: let through at once
         self.lib.sounds.put(sound(480))
         self.assertTrue(wait(lambda: r.state == "changed"))
-        self.assertEqual((feed.status()["restless"], feed.pace.wait), (False, ndi.FEED_QUIET_SECONDS))
+        r = self.again(feed, sound(480))
+        self.assertEqual(r.audio["rate"], 48000)
+        self.assertFalse(feed.status()["restless"])
+        self.assertEqual(feed.pace.gap, 24.0)                                            # (counted on: the pause after it is longer, not shorter)
+        self.now[0] += ndi.FEED_RESET_SECONDS + 1
+        self.lib.sounds.put(other())
+        self.assertTrue(wait(lambda: r.state == "changed"))
+        self.assertEqual((feed.status()["restless"], feed.pace.gap), (False, ndi.FEED_QUIET_SECONDS))
         self.assertEqual(len(self.lib.sound_opens()), 1)
+
+    def test_a_greedy_sound_source_gets_one_ending_a_minute_in_the_long_run_whatever_it_does(self):
+        """The re-check of #132: with a "calm" of half a minute a sender could end the stream at 0, 3 and 9 seconds,
+        rest until 39 and begin again: three re-opens in 39 seconds for ever. The pause now grows with every
+        ending and goes back only after ten minutes without one. Asked of the pace itself, a tenth of a second at
+        a time, for an hour, for a sender that takes every ending it can and for ones that rest between bursts."""
+        def run(wants, seconds=3600.0):
+            pace, ends, t = ndi.SoundPace(), [], 0.0
+            while t < seconds:
+                if wants(t, ends) and pace.may_end(t)[0]:
+                    ends.append(round(t, 1))
+                t = round(t + 0.1, 1)
+            return ends
+        greedy = run(lambda t, ends: True)
+        self.assertEqual(greedy[:7], [0.0, 3.0, 9.0, 21.0, 45.0, 93.0, 153.0])           # 3, 6, 12, 24, 48 and then a minute
+        self.assertEqual({round(b - a, 1) for a, b in zip(greedy[5:], greedy[6:])}, {60.0})
+        self.assertLessEqual(len(greedy), 5 + 60)
+        for rest in (10, 30, 39, 61, 120, 300, 599):                                     # three endings, a rest, and again
+            def bursts(t, ends, rest=rest):
+                return len(ends) % 3 != 0 or not ends or t - ends[-1] >= rest
+            ends = run(bursts)
+            late = [b - a for a, b in zip(ends[5:], ends[6:])]
+            self.assertTrue(all(g >= 60.0 - 0.01 for g in late), (rest, ends[:12]))
+            self.assertLessEqual(len(ends), 5 + 60, rest)
+            for start in range(0, 3540, 60):                                             # once the pause has grown (five endings): never two in a minute
+                if len(ends) > 5 and start >= ends[4]:
+                    self.assertLessEqual(len([e for e in ends if start <= e < start + 60]), 1, (rest, start))
+            self.assertLessEqual(len([e for e in ends if e < 120.0]), 6, (rest, ends[:8]))   # and the first two minutes hold six at the most
+        # only ten minutes without any ending bring the short pause back
+        calm = run(lambda t, ends: not ends or t - ends[-1] >= ndi.FEED_RESET_SECONDS + 1, seconds=2000.0)
+        self.assertEqual(calm, [0.0, 601.0, 1202.0, 1803.0])
+        pace = ndi.SoundPace()
+        self.assertEqual([pace.may_end(t)[0] for t in (0.0, 601.0, 602.0, 604.0)], [True, True, False, True])
 
     def test_a_feed_whose_thread_cannot_be_started_gives_its_connection_back_and_close_waits_for_nobody(self):
         """A Low of the review: under the unit's bound on tasks a thread may not start. close() then joined a thread

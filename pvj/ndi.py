@@ -116,12 +116,13 @@ SOUND_STATES = ("playing", "ready", "away", "twins", "restless")      # the one 
 # The sound source's sound can END a picture's stream as "changed": when it changes form (rate, channels: the new
 # track needs a new stream), and when it starts under a picture that was opened without it. Once. If it would end a
 # stream again before it has been calm for a while, its sound is not handed to any picture for a pause that doubles
-# each time, 3 s, 6, 12 ... to a minute (the pauses of Input.tick); the picture plays on WITHOUT it meanwhile, and
-# when the pause is over it may end a stream once more. Another sender must never be able to take the picture off
+# with every ending, 3 s, 6, 12 ... to a minute (the pauses of Input.tick), and goes back to 3 s only after ten
+# minutes without one (SoundPace); the picture plays on WITHOUT it meanwhile, and when the pause is over it may end a
+# stream once more. Another sender must never be able to take the picture off
 # the screen in a loop (#132, M4). The count is kept by the Service for the source (SoundPace), not by a connection:
 # it outlives every close and re-open of the sound's connection (twins that come and go, an idle close, a fault).
 FEED_QUIET_SECONDS, FEED_QUIET_MAX = 3.0, 60.0
-FEED_CALM_SECONDS = 30.0                  # no change for this long (and twice the last pause): the next change is a first one again
+FEED_RESET_SECONDS = 600.0                # no ending of a stream by the sound source for this long: its pauses begin at 3 s again
 FEED_IDLE_SECONDS = 30.0                  # a sound connection that no picture has used for this long is given back
 FEED_RETRY_SECONDS = 2.0                  # between looks for a sound source that was not on the network
 SOUND_ONLY_SECONDS = 600.0                # how long a sender stays labelled "sound only" after a press that got sound and no picture
@@ -1668,11 +1669,19 @@ class Receiver:
 class SoundPace:
     """How often the box's sound source may end a picture's stream (see FEED_QUIET_SECONDS). One for a source, kept
     by the Service across every connection to it. Asked by the feed's thread before it hands a block that would
-    end the stream of the picture on the screen; `clock` values are the feed's."""
+    end the stream of the picture on the screen; `clock` values are the feed's.
+
+    One rule for every ending: after one, the next is let through no sooner than a pause later, and the pause
+    doubles with every ending, 3 s, 6, 12, 24, 48, then 60 for good. So a sender that takes every ending it can
+    gets them at 0, 3, 9, 21, 45 and 93 seconds and then one a minute; resting between them buys it nothing,
+    since the pause goes back to 3 seconds only after FEED_RESET_SECONDS without any ending at all. (The first
+    form of this let a sender have three endings, rest half a minute and begin again: three in 39 seconds, for
+    ever.) A sender whose sound honestly changes now and then waits the pause, at most a minute, and has its sound
+    back."""
 
     def __init__(self):
         self.lock = threading.Lock()
-        self.quiet_until, self.calm_until, self.wait, self.owed = 0.0, 0.0, FEED_QUIET_SECONDS, False
+        self.quiet_until, self.last_end, self.gap, self.wait = 0.0, None, 0.0, FEED_QUIET_SECONDS
 
     def quiet(self, now):
         with self.lock:
@@ -1680,23 +1689,19 @@ class SoundPace:
 
     def may_end(self, now):
         """This block would end the picture's stream: may it? (True, 0): yes, and it is counted. (False, seconds):
-        no, the source's sound is held back from now for that long (a pause that has just begun). (False, 0): no,
-        a pause is running."""
+        no, the source's sound is held back from now for that long (said once, when the hold begins). (False, 0):
+        no, it is being held back."""
         with self.lock:
             if now < self.quiet_until:
                 return False, 0
-            if self.owed or now >= self.calm_until:
-                # the first after a calm stretch, or the one ending that a pause is followed by
-                if now >= self.calm_until:
-                    self.wait = FEED_QUIET_SECONDS         # calm for long enough: the pauses begin at the shortest again
-                self.owed = False
-                self.calm_until = now + max(FEED_CALM_SECONDS, 2 * self.wait)
-                return True, 0
-            began = self.wait
-            self.quiet_until, self.owed = now + began, True
-            self.wait = min(began * 2, FEED_QUIET_MAX)
-            self.calm_until = self.quiet_until + max(FEED_CALM_SECONDS, 2 * self.wait)
-            return False, began
+            if self.last_end is not None and now - self.last_end < FEED_RESET_SECONDS and now < self.last_end + self.gap:
+                self.quiet_until = self.last_end + self.gap
+                return False, self.quiet_until - now
+            if self.last_end is None or now - self.last_end >= FEED_RESET_SECONDS:
+                self.wait = FEED_QUIET_SECONDS             # no ending for a long time: the pauses begin at the shortest again
+            self.last_end, self.gap = now, self.wait
+            self.wait = min(self.wait * 2, FEED_QUIET_MAX)
+            return True, 0
 
 
 class SoundFeed:
@@ -1814,11 +1819,12 @@ class SoundFeed:
                         # Would this block END the stream of the picture on the screen (another form than the stream
                         # has, or sound under a picture opened without it)? Then the source's pace is asked first.
                         if r is not None and r.would_end(form):
-                            go, began = self.pace.may_end(now)
+                            go, held_for = self.pace.may_end(now)
                             if not go:
                                 r = None
-                                if began:
-                                    self.log("pvj-ndi: the sound source %s keeps changing its sound; pictures play without it for %d seconds" % (self.source["name"], began))
+                                if held_for:
+                                    self.log("pvj-ndi: the sound source %s keeps changing its sound; pictures play without it for %d seconds"
+                                             % (self.source["name"], int(math.ceil(held_for))))
                     except NdiError:
                         pass
                     if self.pace.quiet(now):
