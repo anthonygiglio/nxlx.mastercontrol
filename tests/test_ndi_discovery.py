@@ -270,7 +270,8 @@ class UnitFile(unittest.TestCase):
 
     def test_it_is_sandboxed_at_least_as_tightly_as_the_ndi_helper(self):
         loosened = {"ReadWritePaths", "RuntimeDirectory", "User", "Group", "Environment", "ExecStart", "Description", "After", "Wants",
-                    "ConditionPathExists", "InaccessiblePaths", "MemoryMax", "CPUQuota", "RestrictAddressFamilies", "IPAddressAllow"}
+                    "ConditionPathExists", "InaccessiblePaths", "MemoryMax", "CPUQuota", "RestrictAddressFamilies", "IPAddressAllow",
+                    "TasksMax"}             # the helper's went to 96 for a second connection (D87); this unit keeps 64, checked below
         for line in self.helper:
             if "=" in line and line.split("=", 1)[0] not in loosened:
                 self.assertIn(line, self.lines, "the NDI helper has this line and the discovery server does not")
@@ -278,6 +279,7 @@ class UnitFile(unittest.TestCase):
         self.assertEqual(self.keys["IPAddressDeny"], ["any"])
         self.assertEqual(self.keys["IPAddressAllow"], ["link-local 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"])     # no multicast, no internet, no localhost
         self.assertEqual(self.keys["MemoryMax"], ["128M"])
+        self.assertEqual(self.keys["TasksMax"], ["64"])                                       # fewer than the helper's 96
         hidden = self.keys["InaccessiblePaths"][0].split()
         for path in ("-/var/lib/pvj", "-/etc/pvj", "-/run/pvj", "-/run/pvj-ndi", "-/run/pvj-ndi-pipe", "-/run/pvj-ndi-config", "-/run/pvj-sysd",
                      "-/run/pvj-supportd", "-/opt/pvj-ndi", "-/etc/ndi", "-/usr/local/etc/ndi", "-/media", "-/mnt"):
