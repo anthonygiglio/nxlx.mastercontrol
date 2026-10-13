@@ -1054,7 +1054,7 @@ function startServer(env) {          // env: more for the harness's environment 
     assert.deepStrictEqual(await page.$$eval('#ndisoundmode .hint', (hs) => hs.map((x) => [x.id, parseFloat(getComputedStyle(x).fontSize) >= 13])),
       [['ndisoundnonehint', true], ['ndisoundownhint', true], ['ndisoundonehint', true]], 'what each choice means, in the page\'s own hint type and never smaller');
     assert(/No sound: NDI pictures are shown without sound/.test(await page.textContent('#ndisoundline')), 'the line says so');
-    assert(/has not been heard on a box yet/.test(await page.textContent('#ndisoundbody')), 'and why');
+    assert(/it was measured and not listened to.*within 40 ms.*Nobody has yet confirmed by ear/.test(await page.textContent('#ndisoundbody')), 'and exactly what is known of it: what was measured, and what nobody has heard');
     assert.strictEqual(await page.locator('#ndisounddelay').count(), 0, 'no delay to set while there is no sound');
     await page.click('#ndisoundown');
     await page.waitForFunction(() => /No source is on the screen/.test(document.getElementById('ndisoundline').textContent));
@@ -1141,6 +1141,10 @@ function startServer(env) {          // env: more for the harness's environment 
       world.source.arriving = false;
       Object.assign(world.playing.audio, { arriving: false, level_db: null, silent: true });
       await page.waitForFunction((want) => document.getElementById('ndisoundline').textContent === want, VOX.name + ' is connected and silent: it sends no sound now, so silence is played until it does.');
+      // it keeps changing the form of its sound: held back, the picture plays on, and the page says why
+      world.source = Object.assign({ state: 'restless', arriving: true }, ROW);
+      await page.waitForFunction((want) => document.getElementById('ndisoundline').textContent === want,
+        VOX.name + ' keeps changing its sound; pictures play without it for now. The box takes its sound again by itself once it has stopped changing.');
       // away
       world.source = Object.assign({ state: 'away', arriving: false }, ROW);
       await page.waitForFunction((want) => document.getElementById('ndisoundline').textContent === want, VOX.name + ' is not on the network now; pictures play without sound.');

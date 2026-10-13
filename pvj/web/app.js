@@ -1627,7 +1627,7 @@
         blurb: 'Save the addresses of network video streams (SRT, RTSP, RTMP) and play them like clips.',
         body: function () { return [streamsCard(full)]; } },
       { id: 'ndi', group: 'show', name: 'NDI\u00ae input', role: 'op', module: 'inputs-ndi', url: '/api/ndi',
-        blurb: 'Show the picture of an NDI sender on the network (Resolume, MadMapper, OBS and others) like a clip. Beta: the picture has run once on a Pi 4. Sound from NDI is new and has not been heard on a box yet: it is off until you switch it on.',
+        blurb: 'Show the picture of an NDI sender on the network (Resolume, MadMapper, OBS and others) like a clip. Beta: the picture has run once on a Pi 4. Sound from NDI is new and off until you choose it: measured on the test box, not yet confirmed by ear.',
         confirmOff: function (ask) { ndiWasOn = !!((S.status && S.status.player) || {}).ndi; ask(ndiWasOn ? 'The NDI picture comes off the screen now.' : null); },
         offSaid: function () { return ndiWasOn ? 'Switched off. The NDI picture came off the screen because the input was switched off.' : null; },
         body: function () { return ndiCards(full); } },
@@ -3286,7 +3286,7 @@
       soundKey = soundKeyOf(d);
       soundBody.textContent = '';
       var mode = soundMode(d), ss = d.sound_source;
-      var hint = 'Sound from NDI is new and has not been heard on a box yet, so it is off until you choose it. It is played through the box\'s own sound output, with its volume and mute. NDI\'s reference level comes out ' +
+      var hint = 'Sound from NDI is new, so it is off until you choose it. On the test box it was measured and not listened to: with a picture from one sender and sound from another, the samples left the box\'s sound device at the right rate and the player\'s clocks for picture and sound stayed within 40 ms of each other. Nobody has yet confirmed by ear that sound and picture are in step. It is played through the box\'s own sound output, with its volume and mute. NDI\'s reference level comes out ' +
         d.headroom_db + ' dB below full scale, so a sender at that level sounds quieter than a clip.';
       var names = { none: 'No sound', own: 'The source on the screen', one: 'One sound source for every NDI picture' };
       if (!full) {

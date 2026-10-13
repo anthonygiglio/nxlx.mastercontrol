@@ -1890,7 +1890,8 @@ class Service:
         try:
             checked = validate_saved({"addresses": addresses, "groups": message.get("groups", []), "discovery": message.get("discovery", [])})
             addresses, groups, discovery = checked["addresses"], checked["groups"], checked["discovery"]
-            # The ids of the sources pads hold, so that they are kept in the list while they are there. Ids only:
+            # The ids of the sources pads hold, so that they are kept in the list while they are there. Ids only
+            # (the one exception is the sound source's own row, below):
             # the helper learns no name and no address it did not find by itself.
             allowed = message.get("allowed", [])
             if (not isinstance(allowed, list) or len(allowed) > MAX_ALLOWED or len(set(map(str, allowed))) != len(allowed)
