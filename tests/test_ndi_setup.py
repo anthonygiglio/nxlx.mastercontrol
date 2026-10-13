@@ -1188,6 +1188,30 @@ class TunnelSameAsStreamsTest(SupportBase):
         # a support session below full keeps what it had (GET /api/streams) and gains nothing new (GET /api/ndi): D80
         self.assertEqual((self.h("GET", "/api/streams", None, low, TUNNEL)[0], self.h("GET", "/api/ndi", None, low, TUNNEL)[0]), (200, 403))
 
+    def test_where_the_sound_comes_from_and_its_delay_go_through_the_tunnel_as_the_other_ndi_settings_do(self):
+        """D87's two actions, asked through the route itself (a Low of the review of #132: the first test of this read
+        the handler's source text). A support session with the Owner's role sets them as it sets an address; a
+        studio device's own login does not work through the tunnel; a lower role is refused."""
+        reg, st = self.api.registry, self.settings
+        self.api.ndi = ndi.Input(Untouchable(), os.path.join(self.tmp, "ndi.fifo"),
+                                 ndi.Wanted(lambda: reg.enabled("inputs-ndi"), lambda: st.data, log=lambda *_: None), log=lambda *_: None, setup=False)
+        self.assertEqual(self.h("POST", "/api/modules/inputs-ndi", {"enabled": True}, self.full_dev)[0], 200)
+        self.ready()
+        code = self.start()[1]["code"]
+        dev = self.api.support.authenticate(self.h("POST", "/api/support/login", {"code": code}, client=TUNNEL)[1]["token"])
+        self.assertEqual((dev["role"], dev["remote"]), ("full", True))
+        delay, own, address = {"action": "sound_delay", "ms": 120}, {"action": "sound_from", "id": ""}, {"action": "add_address", "address": "192.168.1.20"}
+        got = [self.h("POST", "/api/ndi", body, dev, TUNNEL) for body in (address, delay, own)]
+        self.assertEqual([g[0] for g in got], [200, 200, 200])
+        self.assertEqual(self.settings.data["ndi"], {"addresses": ["192.168.1.20"], "sound": True, "sound_delay_ms": 120})
+        self.assertEqual((got[2][1]["sound"], got[2][1]["sound_from"], got[2][1]["sound_delay_ms"]), (True, "", 120))
+        # a sound source is chosen from the list of what is there, through the tunnel as in the room: here there is no helper
+        self.assertEqual(self.h("POST", "/api/ndi", {"action": "sound_from", "id": "0123456789ab"}, dev, TUNNEL)[0], 404)
+        for body in (address, delay, own):
+            self.assertEqual(self.h("POST", "/api/ndi", body, self.full_dev, TUNNEL)[0], 403, body)       # a studio login through the tunnel
+            self.assertEqual(self.h("POST", "/api/ndi", body, dict(dev, role="live"), TUNNEL)[0], 403, body)   # a lower role
+        self.assertEqual(self.h("POST", "/api/ndi", {"action": "sound_delay", "ms": 0}, self.full_dev)[0], 200)   # and in the room, as ever
+
 
 if __name__ == "__main__":
     unittest.main()

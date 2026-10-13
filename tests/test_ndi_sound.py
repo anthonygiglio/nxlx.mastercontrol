@@ -1137,9 +1137,51 @@ class ServiceSoundTest(unittest.TestCase):
         reply = self.s.handle({"cmd": "open", "id": self.rid})
         self.assertEqual(reply, {"ok": False, "error": "the source changed to 128 x 16 at 29.97 frames a second"})
         self.assertEqual(len(self.lib.opened), 3)
-        # the longest the helper may take over it stays inside what the panel waits for the answer (Input.open): no
-        # new try after first-frame + OPEN_AGAIN, a late try waits half a second at least, then sound, then the pipe
-        self.assertLess(ndi.FIRST_FRAME_SECONDS + ndi.OPEN_AGAIN_SECONDS + 0.5 + ndi.AUDIO_WAIT + ndi.PIPE_CLEAR_SECONDS, ndi.FIRST_FRAME_SECONDS + 8)
+        # The budget, said outright (a Low of the review of #132): the whole open is over before the panel stops
+        # waiting, the first try fits it by itself, and a later try is started only if its least still fits.
+        self.assertLess(ndi.OPEN_BUDGET_EXTRA, ndi.OPEN_WAIT_EXTRA)
+        self.assertLessEqual(ndi.AUDIO_WAIT + ndi.PIPE_CLEAR_SECONDS, ndi.OPEN_BUDGET_EXTRA)       # the first try alone
+        self.assertIn("timeout=FIRST_FRAME_SECONDS + OPEN_WAIT_EXTRA", inspect.getsource(ndi.Input.open))
+        # measured: a source whose every try changes at the last moment of a long wait for sound
+        slow = ndi.Service(self.dir, "x", loader=lambda path: self.lib, log=lambda *_: None, first_frame=3.0, problem=lambda path: None,
+                           pipe_clear=0.3)
+        self.addCleanup(slow.close)
+        slow.handle({"cmd": "configure", "on": True, "addresses": [], "sound": True})
+        waits, real = [], slow._open_once
+
+        def once(sid, row, wait):
+            waits.append(wait)
+            began = time.monotonic()
+            self.lib.frames.put(frame(64, 16))
+            reply = real(sid, row, wait)
+            time.sleep(max(0.0, 4.0 - (time.monotonic() - began)))                      # a try that took 4 seconds
+            return {"ok": False, "error": "the source changed to 128 x 16 at 29.97 frames a second", "again": True}
+        slow._open_once = once
+        began = time.monotonic()
+        reply = slow.handle({"cmd": "open", "id": self.rid})
+        took = time.monotonic() - began
+        self.assertEqual(reply, {"ok": False, "error": "the source changed to 128 x 16 at 29.97 frames a second"})
+        self.assertEqual(slow.open_budget(), 3.0 + ndi.OPEN_BUDGET_EXTRA)
+        self.assertEqual((len(waits), waits[:2]), (3, [3.0, 3.0]), waits)
+        self.assertTrue(ndi.TRY_LEAST <= waits[2] <= 10.0 - 8.0 - ndi.AUDIO_WAIT - 0.3 + 0.01, waits)      # the third waits only for what is left: 1.2 s
+        self.assertLess(took, 8.0 + waits[2] + ndi.AUDIO_WAIT + 0.3 + 3.0)
+        slow._open_once = real
+        slow.close()
+        # and one whose tries are so slow that a third no longer fits is not given one
+        late = ndi.Service(self.dir, "x", loader=lambda path: self.lib, log=lambda *_: None, first_frame=0.4, problem=lambda path: None, pipe_clear=0.3)
+        self.addCleanup(late.close)
+        late.handle({"cmd": "configure", "on": True, "addresses": [], "sound": True})
+        tries = []
+
+        def long_try(sid, row, wait):
+            tries.append(wait)
+            time.sleep(3.4)
+            return {"ok": False, "error": "the source changed to 128 x 16 at 29.97 frames a second", "again": True}
+        late._open_once = long_try
+        began = time.monotonic()
+        late.handle({"cmd": "open", "id": self.rid})
+        self.assertEqual(len(tries), 2)                                                  # 6.8 s gone of 7.4: the least of a third (0.5 + 0.5 + 0.3) does not fit
+        self.assertLess(time.monotonic() - began, late.open_budget())
         # an end that no new try cures is answered at once, as before
         del self.lib.opened[:]
         self.lib.frames.put(frame(64, 16, fields=0))
@@ -2625,21 +2667,6 @@ class ApiSoundFromTest(ServerBase):
             with self.assertRaises(ndi.NdiError, msg=bad):
                 boxcare.check_ndi(bad, None)
 
-    def test_through_the_support_tunnel_the_new_actions_are_what_the_other_ndi_settings_are(self):
-        """The owner's answer of 2026-10-08 (the same as Streams) is pinned for the whole route by
-        tests/test_ndi_setup.py, TunnelSameAsStreamsTest. The two new actions are branches of that one handler,
-        which still has no rule of its own for the tunnel, and the route is not on either of support's lists."""
-        from pvj import support as sp
-        from pvj.api import Api
-        source = inspect.getsource(Api.set_ndi)
-        self.assertIn('action == "sound_from"', source)
-        self.assertIn('action == "sound_delay"', source)
-        for words in ("is_remote", "need_local", "remote"):
-            self.assertEqual(words in inspect.getsource(Api.set_streams), words in source, words)
-        for route in (("POST", "/api/streams"), ("POST", "/api/ndi")):
-            self.assertNotIn(route, sp.REMOTE_DENY)
-            self.assertFalse(route[1].startswith(sp.REMOTE_DENY_PREFIX))
-        self.assertEqual(self.api.routes()[("POST", "/api/streams")][0], self.api.routes()[("POST", "/api/ndi")][0])
 
 
 def png_pixel(path, x, y):

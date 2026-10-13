@@ -123,7 +123,13 @@ FEED_IDLE_SECONDS = 30.0                  # a sound connection that no picture h
 FEED_RETRY_SECONDS = 2.0                  # between looks for a sound source that was not on the network
 SOUND_ONLY_SECONDS = 600.0                # how long a sender stays labelled "sound only" after a press that got sound and no picture
 OPEN_TRIES = 3                            # a source that changes size while it is being opened is opened again: this many tries in all
-OPEN_AGAIN_SECONDS = 4.0                  # and no new try later than this after the time a first picture may take (the panel waits 8 more)
+# The whole of an open, every try in it, is over this long after the time a first picture may take: 13 seconds on a
+# box, one less than the panel waits for the answer (Input.open: OPEN_WAIT_EXTRA). A later try is started only if what
+# it needs at the least still fits (TRY_LEAST for its first picture, the wait for sound, the look at the pipe), and
+# waits for its first picture no longer than what is left after those.
+OPEN_BUDGET_EXTRA = 7.0
+OPEN_WAIT_EXTRA = 8.0
+TRY_LEAST = 0.5
 CONTAINERS = ("raw", "matroska")          # what the pipe carries: bare frames (no sound), or frames and sound with times
 PLAYER_STUCK = "the player did not open the NDI picture, also not when it was given it again"
 PIPE_HELD = "the player still holds the NDI pipe from the picture before"
@@ -2190,20 +2196,26 @@ class Service:
             # A sender may change size while it is being opened (a screen capture whose window moves to the next
             # clip: on the Pi, 2026-10-12, a first press was answered "the source changed to 1540 x 866 at 30.0
             # frames a second"). That is not a failure of the press: the source is opened again, here, with the
-            # new size, at most twice more and only while the press's own time lasts (the panel waits
-            # FIRST_FRAME_SECONDS + 8 for this answer). A source that keeps changing gets the plain reason.
+            # new size, at most twice more and only inside the open's own budget (open_budget), which ends
+            # before the panel stops waiting for this answer. A source that keeps changing gets the plain reason.
             began, reply = time.monotonic(), None
+            after = AUDIO_WAIT + self._pipe_clear          # what a try still does once its first picture is there
             for attempt in range(OPEN_TRIES):
-                left = self._first_frame + OPEN_AGAIN_SECONDS - (time.monotonic() - began)
-                reply = self._open_once(sid, match[0], self._first_frame if attempt == 0 else max(0.5, min(self._first_frame, left)))
+                left = self.open_budget() - (time.monotonic() - began) - after
+                reply = self._open_once(sid, match[0], self._first_frame if attempt == 0 else min(self._first_frame, left))
                 again = reply.pop("again", False)
-                if not again or attempt == OPEN_TRIES - 1 or time.monotonic() - began >= self._first_frame + OPEN_AGAIN_SECONDS:
+                if not again or attempt == OPEN_TRIES - 1 or self.open_budget() - (time.monotonic() - began) - after < TRY_LEAST:
                     break
                 self.log("pvj-ndi: %s changed while it was being opened (%s); opening it again" % (match[0]["name"], reply.get("error")))
                 with self._find_lock:
                     self._sources_at = None
                 match = [s for s in self.sources() if s["id"] == sid] or match
             return reply
+
+    def open_budget(self):
+        """The longest an open may take, every try in it: the first try alone fits whatever happens (a first
+        picture, the wait for sound, the look at the pipe), and later tries only inside this."""
+        return self._first_frame + OPEN_BUDGET_EXTRA
 
     def _open_once(self, sid, row, wait):
         """One try of open, with self.lock held: connect, wait `wait` seconds for a first picture, fix the pipe's
@@ -2714,7 +2726,7 @@ class Input:
             raise NdiError("no such source")
         if not self.setup:
             raise NdiError(NOT_SET_UP)
-        reply = self.client.request({"cmd": "open", "id": sid}, timeout=FIRST_FRAME_SECONDS + 8)
+        reply = self.client.request({"cmd": "open", "id": sid}, timeout=FIRST_FRAME_SECONDS + OPEN_WAIT_EXTRA)
         if reply.get("ok") is not True:
             raise NdiError(_text(reply.get("error")) or "the source could not be opened")
         p = _playing(reply.get("playing"))
