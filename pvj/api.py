@@ -3179,7 +3179,10 @@ class Api:
 
             # The owner's delay of the sound against the picture (D87), for the stream with sound only, and only
             # when one is set: the player sets it for this load and takes it back with the load's other options.
-            delay = self.ndi.sound_delay() if with_sound else 0
+            # It belongs to the two-sender mode alone (the review of #132, M3): a picture that plays its own
+            # sender's sound has one clock for both and is never moved; the number is kept for when one sound
+            # source is chosen again.
+            delay = self.ndi.sound_delay() if (with_sound and self.ndi.sound_from()) else 0
             more = (delay / 1000.0,) if delay else ()
             try:
                 loaded = self._as_newest("another play", self.player.play_pipe, self.ndi.fifo, p["width"], p["height"], p["fps"],
@@ -3289,7 +3292,7 @@ class Api:
             # Heard at once under a source that plays with sound: the player moves the sound of the stream it has.
             # Where it does not (bare frames, a clip, no player), the number waits for the next NDI load.
             move = getattr(self.player, "pipe_audio_delay", None)
-            if move is not None and self.ndi.current:
+            if move is not None and self.ndi.current and self.ndi.sound_wanted() and self.ndi.sound_from():
                 try:
                     with self._player_lock():
                         move(self.ndi.fifo, ms / 1000.0)

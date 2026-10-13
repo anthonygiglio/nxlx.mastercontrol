@@ -1061,16 +1061,11 @@ function startServer(env) {          // env: more for the harness's environment 
     let snd = await get('/api/ndi');
     assert.deepStrictEqual([snd.sound, snd.sound_from, snd.sound_source], [true, '', null], 'each picture\'s own sound: the old switch, on');
     assert.strictEqual(await page.getAttribute('#ndisoundown', 'aria-checked'), 'true');
-    // the delay: there while sound is on, with the sentence that says why, saved when the slider is let go
-    await page.waitForSelector('#ndisounddelay');
-    assert.strictEqual(await page.textContent('#ndisounddelayhint'), 'Picture and sound come from two senders and may be out of step; set the delay by ear.');
-    assert.deepStrictEqual(await page.$eval('#ndisounddelay', (el) => [el.min, el.max, el.value]), ['-250', '500', '0']);
-    assert.strictEqual(await page.textContent('#ndisounddelayval'), 'not moved');
-    await page.$eval('#ndisounddelay', (el) => { el.value = '120'; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); });
-    assert.strictEqual(await page.textContent('#ndisounddelayval'), '120 ms later');
-    await page.waitForFunction(() => fetch('/api/ndi').then((r) => r.json()).then((d) => d.sound_delay_ms === 120));
-    await page.waitForFunction(() => /now comes 120 ms later/.test(document.getElementById('msg').textContent));
+    // the delay belongs to "one sound source" alone: a picture with its own sender's sound is never moved, so no slider here
+    assert.strictEqual(await page.locator('#ndisounddelay').count(), 0, 'no delay to set for a picture that plays its own sound');
     assert.strictEqual(await post('/api/ndi', { action: 'sound_delay', ms: 9000 }), 400, 'held to its bounds by the box, not by the slider');
+    assert.strictEqual(await post('/api/ndi', { action: 'sound_delay', ms: 120 }), 200);
+    assert.strictEqual((await get('/api/ndi')).sound_delay_ms, 120, 'the number is kept, whatever the mode');
     assert.strictEqual(await post('/api/ndi', { action: 'sound_delay', ms: 0 }), 200);
     // one sound source: nothing is saved until a sender is chosen, and with no sender on the network the picker says so
     await page.click('#ndisoundone');
@@ -1091,19 +1086,20 @@ function startServer(env) {          // env: more for the harness's environment 
       const CAM = { id: 'aaaaaaaaaaaa', name: 'STAGE-LAPTOP (Scan Converter)', from: '192.168.1.30:5961' };
       const VOX = { id: 'bbbbbbbbbbbb', name: 'STAGE-LAPTOP (macOS AV Output)', from: '192.168.1.30:5962', sound_only: true };
       const ROW = { id: VOX.id, name: VOX.name, from: VOX.from };
-      const world = { sound: false, sound_from: '', source: null, playing: null, sent: [] };
+      const world = { sound: false, sound_from: '', source: null, playing: null, sent: [], delay: 0 };
       await page.route('**/api/ndi', async (route) => {
         const answer = async () => {
           // the box's own answer (through the page's own session), with senders and a sound source put into it
           const response = route.request().method() === 'GET' ? await route.fetch() : await page.request.get(base + '/api/ndi');
           const body = await response.json();
           return Object.assign(body, { setup: true, helper: true, runtime: { present: true, loaded: true, version: 'fake', problem: '' }, sources: [CAM, VOX],
-            allowed: world.sound_from ? [ROW] : [], sound: world.sound, sound_from: world.sound_from, sound_source: world.source, playing: world.playing, ended: null });
+            allowed: world.sound_from ? [ROW] : [], sound: world.sound, sound_from: world.sound_from, sound_source: world.source, playing: world.playing, ended: null, sound_delay_ms: world.delay });
         };
         if (route.request().method() === 'POST') {
           const sent = route.request().postDataJSON();
           world.sent.push(sent);
           if (sent.action === 'sound_from') Object.assign(world, { sound: true, sound_from: sent.id, source: sent.id ? Object.assign({ state: 'ready', arriving: false }, ROW) : null });
+          if (sent.action === 'sound_delay') world.delay = sent.ms;
           if (sent.action === 'sound') Object.assign(world, { sound: sent.on, source: world.sound_from ? Object.assign({ state: sent.on ? 'ready' : 'off', arriving: false }, ROW) : null });
         }
         await route.fulfill({ status: 200, json: await answer() });
@@ -1121,6 +1117,15 @@ function startServer(env) {          // env: more for the harness's environment 
       assert.strictEqual(await page.textContent('#ndisoundline'), 'Sound comes from ' + VOX.name + ' at ' + VOX.from + '. It is on the network; the box connects to it when an NDI picture plays.');
       assert.strictEqual(await page.locator('.ndi-soundonly .ndiusesound').count(), 0, 'it is the sound source now: nothing more to choose on its row');
       assert(/The sound of every NDI picture comes from this sender/.test(await page.textContent('.ndi-soundonly .lnote')));
+      // the delay: only now, with one sound source chosen; the sentence that says why; saved when the slider is let go
+      await page.waitForSelector('#ndisounddelay');
+      assert.strictEqual(await page.textContent('#ndisounddelayhint'), 'Picture and sound come from two senders and may be out of step; set the delay by ear.');
+      assert.deepStrictEqual(await page.$eval('#ndisounddelay', (el) => [el.min, el.max, el.value]), ['-250', '500', '0']);
+      assert.strictEqual(await page.textContent('#ndisounddelayval'), 'not moved');
+      await page.$eval('#ndisounddelay', (el) => { el.value = '120'; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); });
+      assert.strictEqual(await page.textContent('#ndisounddelayval'), '120 ms later');
+      await page.waitForFunction(() => /now comes 120 ms later/.test(document.getElementById('msg').textContent));
+      assert.deepStrictEqual(world.sent[world.sent.length - 1], { action: 'sound_delay', ms: 120 });
       // a picture plays; the sound sender is connected and sends nothing (nothing plays into it)
       world.source = Object.assign({ state: 'playing', arriving: false }, ROW);
       world.playing = { id: CAM.id, name: CAM.name, state: 'playing', message: '', width: 1540, height: 866, fps: 30, counts: { received: 9, shown: 9, dropped: 0 }, container: 'raw',

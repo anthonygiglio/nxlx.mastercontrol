@@ -3325,7 +3325,9 @@
         });
         soundBody.appendChild(labelled('The sound source', pick, 'One of the senders on the network now. Its sound is played under every NDI picture, whichever sender the picture comes from. It joins "Sources that pads may hold" on this page, where it can be removed once another is chosen here.'));
       }
-      if (d.sound) {
+      // The delay belongs to this mode alone: picture and sound of ONE sender have one clock and are never moved. The
+      // number is kept by the box while another mode is chosen.
+      if (d.sound && d.sound_from && shown === 'one') {
         var range = d.sound_delay_range || [-250, 500], val = h('span', { class: 'k', id: 'ndisounddelayval', text: delayWords(d.sound_delay_ms || 0) });
         var bar = h('input', { id: 'ndisounddelay', type: 'range', min: range[0], max: range[1], step: 10, value: d.sound_delay_ms || 0 });
         bar.addEventListener('input', function () { val.textContent = delayWords(+bar.value); });
@@ -3339,7 +3341,7 @@
         });
         soundBody.appendChild(h('div', { class: 'fieldwrap', id: 'ndisounddelaywrap' }, h('label', { class: 'field', for: 'ndisounddelay' }, 'Sound against picture: ', val), bar,
           h('div', { class: 'hint', id: 'ndisounddelayhint', text: 'Picture and sound come from two senders and may be out of step; set the delay by ear.' }),
-          h('div', { class: 'hint', text: 'To the right the sound comes later, to the left earlier. A change is heard at once under an NDI picture that plays with sound; a clip is never moved by it.' })));
+          h('div', { class: 'hint', text: 'To the right the sound comes later, to the left earlier. A change is heard at once under an NDI picture that plays with this sound. It applies only while one sound source is chosen for every NDI picture: a picture that plays its own sender\'s sound is never moved, and neither is a clip.' })));
       }
       soundBody.appendChild(h('div', { class: 'hint', id: 'ndisoundhint', text: hint }));
     }

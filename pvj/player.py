@@ -384,9 +384,14 @@ class Player:
                 "embeddedfonts": "no"}
     # The sound of the NDI stream may be moved against its picture (ndi.sound_delay_ms, D87: picture and sound can
     # come from two senders, which share no clock; the owner sets it by ear). It is mpv's audio-delay, for that one
-    # load: set as a property before the load on every mpv, exactly as the narrowing is, and taken back on every
-    # road the narrowing is taken back on (before the next thing is loaded; tried again if it could not be; and by
-    # a panel that started again under a player it did not set). A clip never plays with it.
+    # load. Where mpv takes options with the load (0.38 and later) it goes WITH the load, as the pipe's other
+    # options do: it is that file's alone, so the clip that is still playing while the load is on its way is not
+    # shifted, and mpv takes it back itself when the file ends (the review of #132). On the older road (mpv 0.35,
+    # no options with the load) it is a property of the whole player set a moment before the load, like the
+    # pipe's other options there: the outgoing clip's sound is shifted for that moment, and it is taken back
+    # before the next thing is loaded. Changed while the source plays (pipe_audio_delay) it is a property on
+    # every mpv and is put on the list of what is taken back. A panel that started again under a player it did
+    # not set takes it back too (_widen). A clip never plays with it.
     PIPE_DELAY = "audio-delay"
     PIPE_DELAY_SECONDS = (-0.25, 0.5)
     PIPE_WHOLE = tuple(MKV_ONLY) + (PIPE_DELAY,)
@@ -403,10 +408,14 @@ class Player:
         it was set: only while `path` is the pipe that was loaded last, and it was loaded as the stream with sound.
         The delay is then on the list of what is taken back, as at the load."""
         with self._lock:
-            if not (self._pipe and self._pipe_path == path and self.PIPE_DELAY in (getattr(self, "_pipe_globals", None) or [])):
+            if not (self._pipe and self._pipe_path == path and self._pipe_sound):
                 return False
+            if self.PIPE_DELAY not in (getattr(self, "_pipe_globals", None) or []):
+                self._pipe_globals = (getattr(self, "_pipe_globals", None) or []) + [self.PIPE_DELAY]      # taken back before the next load, whatever mpv does itself
             self.ipc.request("set_property", self.PIPE_DELAY, self.pipe_delay(seconds))
             return True
+
+    _pipe_sound = False                     # the pipe that was loaded last is the NDI stream with sound
 
     @staticmethod
     def pipe_queue(width, height, fps):
@@ -434,6 +443,7 @@ class Player:
             self._pipe, self._pipe_gone = False, None
             self._play_pipe(path, width, height, fps, fmt, audio_delay)       # raises if the pipe was not loaded: then it is not what plays
             self._pipe, self._pipe_pid, self._pipe_path = True, self.ipc.request("get_property", "pid"), path
+            self._pipe_sound = fmt == "matroska"
             self._pipe_since = time.monotonic()
 
     def _play_pipe(self, path, width, height, fps, fmt="yuyv422", audio_delay=0.0):
@@ -459,11 +469,11 @@ class Player:
             # when sound was switched on under the source (player/audio.c, audio_start_ao). The times in the
             # stream still decide where each picture goes against the sound; only the wait at the start is gone.
             opts = {"demuxer": "mkv", "cache": "no", "cache-pause": "no", "initial-audio-sync": "no", "demuxer-readahead-secs": 0,
-                    "demuxer-max-bytes": self.pipe_queue(width, height, fps)}
+                    "demuxer-max-bytes": self.pipe_queue(width, height, fps), self.PIPE_DELAY: self.pipe_delay(audio_delay)}
             self._pipe_globals = []
             self._pipe_loading = True              # a status poll that meets a new player now must not widen under this load
             try:
-                for k, v in list(self.MKV_ONLY.items()) + [(self.PIPE_DELAY, self.pipe_delay(audio_delay))]:
+                for k, v in self.MKV_ONLY.items():
                     self._pipe_globals.append(k)
                     self.ipc.request("set_property", k, v)
             except PlayerError:
