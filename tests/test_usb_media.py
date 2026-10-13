@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import shutil
 import os
+import time
 import unittest
 from unittest import mock
 
@@ -32,6 +33,27 @@ class UsbMediaTest(ServerBase):
 
     def play(self, **body):
         return self.call("POST", "/api/play", body, token=self.token)
+
+    def scans_at(self, now, gets=1):
+        """How many directory scans `gets` requests for the media list cost when the panel's clock stands at `now`.
+        The cache's age is taken from time.monotonic in pvj.api; the clock is held there, so the machine's speed plays no part."""
+        from pvj import api as api_mod
+
+        class Held:
+            monotonic = staticmethod(lambda: now)
+
+            def __getattr__(self, name):
+                return getattr(time, name)
+        real = os.scandir
+        calls = []
+
+        def counting(path):
+            calls.append(path)
+            return real(path)
+        with mock.patch.object(api_mod, "time", Held()), mock.patch("pvj.api.os.scandir", counting):
+            for _ in range(gets):
+                self.assertEqual(self.call("GET", "/api/media", token=self.token)[0], 200)
+        return len(calls)
 
     def test_lists_only_real_media_at_the_top_of_real_drives(self):
         st, body, _ = self.call("GET", "/api/media", token=self.token)
@@ -98,16 +120,19 @@ class UsbMediaTest(ServerBase):
             other = [d for d in self.call("GET", "/api/media", token=self.token)[1]["usb"] if d["drive"] == "OTHER"][0]
             self.assertLessEqual(len(other["files"]), 25)
             self.assertTrue(other["truncated"])
-        real = os.scandir
-        calls = []
+        self.assertEqual(self.scans_at(self.api._usb_cache[0] + api_mod.USB_CACHE_SECONDS - 0.001, gets=5), 0)   # served from the cache
 
-        def counting(path):
-            calls.append(path)
-            return real(path)
-        with mock.patch("pvj.api.os.scandir", counting):
-            for _ in range(5):
-                self.call("GET", "/api/media", token=self.token)
-        self.assertEqual(len(calls), 0)                                      # served from the cache within a couple of seconds
+    def test_after_the_caches_lifetime_the_drives_are_scanned_again_once(self):
+        from pvj import api as api_mod
+        self.call("GET", "/api/media", token=self.token)
+        filled = self.api._usb_cache[0]
+        open(os.path.join(self.usb, "OTHER", "new.mp4"), "wb").write(b"x")
+        self.assertEqual(self.scans_at(filled + api_mod.USB_CACHE_SECONDS - 0.001), 0)
+        self.assertEqual(self.api._usb_cache[1][1]["files"], [])              # still the old list
+        late = filled + api_mod.USB_CACHE_SECONDS + 0.001
+        self.assertEqual(self.scans_at(late, gets=5), 2)                     # one scan of each of the two drives, then the cache again
+        self.assertEqual(self.api._usb_cache[0], late)
+        self.assertEqual([f["name"] for f in self.api._usb_cache[1][1]["files"]], ["new.mp4"])
 
     def test_a_preset_queues_at_most_a_bounded_number_of_files(self):
         from pvj import api as api_mod
