@@ -1456,6 +1456,548 @@ class PlayerSoundTest(unittest.TestCase):
         self.assertLessEqual(ndi.MAX_AUDIO_BLOCK, 0.25)
 
 
+# ---- one sound source for the whole box (D87, 2026-10-12) -----------------------------------------------------------
+PICTURE, VOICE = (b"SCAN (Converter)", b"192.168.0.20:5961"), (b"VLC (Audio)", b"192.168.0.20:5962")
+PID, VID = ndi.source_id("SCAN (Converter)", "192.168.0.20"), ndi.source_id("VLC (Audio)", "192.168.0.20")
+VOICE_ROW = {"id": VID, "name": "VLC (Audio)", "from": "192.168.0.20:5962"}
+PICTURE_ROW = {"id": PID, "name": "SCAN (Converter)", "from": "192.168.0.20:5961"}
+# The release before the one sound source (master at 6e0145b, #129). An older release is named by a commit.
+BEFORE_SOUND_FROM = "6e0145b"
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+class FeedLib(SoundLib):
+    """The fake library with two senders and a record of every connection: what it was opened with (audio only or
+    not), which were asked for sound, which were closed. Sound for a connection that was opened for sound alone
+    comes from `sounds`; sound of a picture's own connection from `own`; a sound-only connection never has a picture."""
+
+    def __init__(self, sources=(PICTURE, VOICE)):
+        super().__init__(sources)
+        self.opens, self.kinds, self.asked, self.closed_handles = [], {}, set(), []
+        self.own, self.down = queue.Queue(), False
+
+    def recv_open(self, raw, audio_only=False):
+        handle = ("recv", len(self.opens) + 1)
+        self.opens.append((raw, audio_only))
+        self.kinds[handle] = audio_only
+        return handle
+
+    def recv_capture(self, handle, timeout_ms):
+        if self.kinds[handle]:
+            time.sleep(0.05)
+            return None
+        return super().recv_capture(handle, timeout_ms)
+
+    def recv_audio(self, handle, timeout_ms):
+        self.asked.add(handle)
+        if self.hold is not None:
+            return super().recv_audio(handle, timeout_ms)
+        if self.kinds[handle] and self.down:
+            return ndi.AUDIO_LOST
+        try:
+            return (self.sounds if self.kinds[handle] else self.own).get(timeout=0.1)
+        except queue.Empty:
+            return None
+
+    def recv_close(self, handle):
+        self.closed_handles.append(handle)
+        self.closed += 1
+
+    def sound_opens(self):
+        return [raw for raw, audio_only in self.opens if audio_only]
+
+
+class LibraryAskTest(unittest.TestCase):
+    def test_the_sound_source_is_asked_for_its_sound_alone_and_a_picture_for_everything_as_before(self):
+        spec, _keep = ndi.CtypesLibrary.recv_spec(PICTURE)
+        self.assertEqual((spec.bandwidth, spec.color, spec.fields), (100, 100, True))
+        spec, _keep = ndi.CtypesLibrary.recv_spec(VOICE, audio_only=True)
+        self.assertEqual((spec.bandwidth, spec.color, spec.fields), (ndi.BANDWIDTH_AUDIO_ONLY, 100, True))
+        self.assertEqual(ndi.BANDWIDTH_AUDIO_ONLY, 10)          # NDIlib_recv_bandwidth_audio_only, read from the owner's SDK 6.3.2
+        self.assertEqual(ctypes.string_at(spec.source.name), VOICE[0])
+
+
+class FeedBase(Base):
+    def setUp(self):
+        super().setUp()
+        self.lib = FeedLib()
+        rows = {r["id"]: r for r in ndi.clean_sources(self.lib.raw)[0]}
+        self.source, self.voice, self.logged = rows[PID], rows[VID], []
+
+    def feed(self, **kw):
+        f = ndi.SoundFeed(self.lib, self.voice, log=self.logged.append, clock=lambda: self.now[0], **kw)
+        self.addCleanup(f.close)
+        f.start()
+        return f
+
+    def play_with(self, feed, block=None):
+        r = self.receiver(feed=feed)
+        r.start()
+        self.lib.frames.put(frame(64, 16, fill=1))
+        self.lib.sounds.put(block or sound(480))
+        self.assertTrue(r.first.wait(3))
+        self.assertTrue(wait(lambda: r.audio is not None))
+        self.assertEqual(r.decide(), "matroska")
+        self.read()
+        self.assertTrue(wait(lambda: r.status()["state"] == "playing"))
+        return r
+
+
+class SoundFeedTest(FeedBase):
+    def test_another_senders_sound_goes_into_the_pictures_stream_and_the_picture_is_never_asked_for_sound(self):
+        feed = self.feed()
+        self.lib.own.put(sound(480, value=0.9))                                          # the picture's own sound: never taken
+        r = self.play_with(feed)
+        self.assertEqual(sorted(t.name for t in r._threads), ["ndi-capture", "ndi-writer"])      # no sound thread of its own
+        self.assertEqual(self.lib.opens, [(VOICE, True), (PICTURE, False)])
+        for _ in range(4):
+            self.now[0] += 0.01
+            self.lib.sounds.put(sound(480))
+        self.assertTrue(wait(lambda: r.status()["audio"]["counts"]["written"] >= 3))
+        self.assertEqual(self.lib.asked, {("recv", 1)})                                  # only the sound connection
+        self.assertEqual(self.lib.own.qsize(), 1)
+        got = self.stream()
+        self.assertEqual(find(ebml_tree(bytes(self.got)), 0x18538067, 0x1654AE6B)[1][0], 0xAE)       # the same writer: a picture track and a sound track
+        audio = [b for b in got if b[0] == 2]
+        self.assertEqual(audio[0][1], 0.0)                                               # the sound track begins at 0, as with a picture's own sound
+        for a, b in zip(audio, audio[1:]):
+            self.assertAlmostEqual(b[1], a[1] + len(a[2]) / 8 / 48000.0, places=5)       # one block after the other, by count
+        self.assertAlmostEqual(max(floats(audio[-1][2])), 0.5 * ndi.AUDIO_GAIN, places=6)
+        st = r.status()["audio"]
+        self.assertEqual((st["rate"], st["channels"], st["played"], st["arriving"]), (48000, 2, 2, True))
+
+    def test_every_block_of_the_sound_source_is_held_to_the_same_bounds_before_any_of_it_is_read(self):
+        feed = self.feed()
+        r = self.play_with(feed)
+        for bad in (sound(480, rate=22050), sound(480, fourcc=0x20203631), sound(480, stride=100), sound(24000), sound(480, channels=0)):
+            self.lib.sounds.put(bad)
+            self.assertTrue(wait(lambda: not self.lib.sounds.qsize() and self.lib.freed_sound >= 2))
+            time.sleep(0.05)
+            self.assertEqual(bad.token, [], "not a byte of it was read")
+        self.assertEqual(r.status()["audio"]["counts"]["refused"], 5)
+        self.assertEqual(r.state, "playing")
+        six = sound(480, channels=6)                                                     # a change of channels is a new stream, as ever
+        self.lib.sounds.put(six)
+        self.assertTrue(wait(lambda: r.state == "changed"))
+        self.assertEqual(six.token, [])
+
+    def test_with_nobody_attached_a_block_is_given_back_unread(self):
+        self.feed()
+        a = sound(480)
+        self.lib.sounds.put(a)
+        self.assertTrue(wait(lambda: self.lib.freed_sound == 1))
+        self.assertEqual(a.token, [])
+
+    def test_when_the_sound_source_drops_silence_is_written_and_the_picture_goes_on(self):
+        feed = self.feed()
+        r = self.play_with(feed)
+        self.assertTrue(wait(lambda: len(self.stream()) >= 1))
+        self.lib.down = True
+        for k in range(1, 4):
+            self.now[0] += 0.7
+            self.lib.frames.put(frame(64, 16, fill=1 + k))
+            self.assertTrue(wait(lambda: len([b for b in self.stream() if b[0] == 1]) == 1 + k))
+        self.assertTrue(wait(lambda: feed.lost))
+        st = r.status()
+        self.assertEqual(st["state"], "playing")
+        self.assertGreaterEqual(st["audio"]["counts"]["filled"], 2)
+        self.assertFalse(st["audio"]["arriving"])
+        audio = [b for b in self.stream() if b[0] == 2]
+        self.assertGreater(max(b[1] + len(b[2]) / 8 / 48000.0 for b in audio), 1.9)
+        for a, b in zip(audio, audio[1:]):
+            self.assertGreaterEqual(b[1] + 1e-6, a[1] + len(a[2]) / 8 / 48000.0)         # the sound's times never step back or leave a hole
+        self.assertIn("dropped; waiting for it", " ".join(self.logged))
+        written = st["audio"]["counts"]["written"]
+        self.lib.down = False                                                            # and it is back: real sound after the silence
+        self.lib.sounds.put(sound(480))
+        self.now[0] += 0.033
+        self.lib.frames.put(frame(64, 16, fill=9))
+        self.assertTrue(wait(lambda: r.status()["audio"]["counts"]["written"] == written + 1))
+        self.assertFalse(feed.lost)
+        self.assertEqual(self.lib.closed_handles, [])
+
+    def test_a_change_of_rate_ends_the_picture_as_changed_and_the_sound_connection_stays_for_the_next(self):
+        feed = self.feed()
+        r = self.play_with(feed)
+        self.lib.sounds.put(sound(441, rate=44100))
+        self.assertTrue(wait(lambda: r.status()["state"] == "changed"))
+        self.assertIn("2 channels at 44100 samples a second", r.status()["message"])
+        r.close()
+        self.assertTrue(feed.alive())
+        self.assertEqual(self.lib.closed_handles, [("recv", 2)])                         # the picture's, and only it
+        self.stall.clear()
+        self.reader.join(3)
+        del self.got[:]
+        r2 = self.play_with(feed, block=sound(441, rate=44100))
+        self.assertEqual((r2.audio["rate"], len(self.lib.sound_opens())), (44100, 1))
+        self.assertIn(struct.pack(">d", 44100.0), bytes(self.got[:400]))
+
+    def test_a_picture_opened_while_the_sound_source_is_quiet_has_its_sound_track_from_the_start(self):
+        """The owner's rig: the picture sender changes size at every clip (so the picture is opened again), and the
+        player that sends the sound sends none between two clips. The sound connection remembers what its sound
+        was, so the new stream has a sound track at once, silence as time passes, and the sound when it comes:
+        the picture is not opened a second time for it."""
+        feed = self.feed()
+        r = self.play_with(feed)
+        r.close()
+        self.stall.clear()
+        self.reader.join(3)
+        del self.got[:]
+        self.assertEqual(feed.format, {"rate": 48000, "channels": 2, "played": 2})
+        r2 = self.receiver(feed=feed, audio_wait=30)                                     # not a block of sound from here on
+        r2.start()
+        self.lib.frames.put(frame(64, 16, fill=1))
+        self.assertTrue(r2.first.wait(3))
+        began = time.monotonic()
+        self.assertEqual(r2.decide(), "matroska")
+        self.assertLess(time.monotonic() - began, 1.0)                                   # and no wait for it
+        self.read()
+        self.assertTrue(wait(lambda: r2.status()["state"] == "playing"))
+        for k in range(1, 4):
+            self.now[0] += 0.7
+            self.lib.frames.put(frame(64, 16, fill=1 + k))
+            self.assertTrue(wait(lambda: len([b for b in self.stream() if b[0] == 1]) == 1 + k))
+        audio = [b for b in self.stream() if b[0] == 2]
+        self.assertTrue(audio and all(b[2] == bytes(len(b[2])) for b in audio))          # silence, as time passes
+        self.assertEqual(audio[0][1], 0.0)
+        self.assertFalse(r2.status()["audio"]["arriving"])
+        self.lib.sounds.put(sound(480))                                                  # the next clip's sound
+        self.now[0] += 0.033
+        self.lib.frames.put(frame(64, 16, fill=9))
+        self.assertTrue(wait(lambda: r2.status()["audio"]["counts"]["written"] == 1))
+        self.assertEqual(r2.state, "playing")                                            # not "changed"
+        audio = [b for b in self.stream() if b[0] == 2]
+        for a, b in zip(audio, audio[1:]):
+            self.assertGreaterEqual(b[1] + 1e-6, a[1] + len(a[2]) / 8 / 48000.0)
+        self.lib.sounds.put(sound(441, rate=44100))                                      # and sound in another form is a new stream, as ever
+        self.assertTrue(wait(lambda: r2.state == "changed"))
+        self.assertEqual(feed.format["rate"], 44100)
+
+    def test_what_the_sound_source_had_last_is_put_right_by_a_block_that_comes_before_the_pipe_is_decided(self):
+        """The remembered form is a guess until a block of this stream shows it. A block in another form that comes
+        while the picture is still connecting must not end it (the press would be refused for a change nobody saw)."""
+        feed = self.feed()
+        feed.format = {"rate": 44100, "channels": 2, "played": 2}
+        r = self.receiver(feed=feed)
+        r.start()
+        self.assertEqual(r.audio["rate"], 44100)
+        self.lib.sounds.put(sound(480, channels=1))
+        self.assertTrue(wait(lambda: r.audio == {"rate": 48000, "channels": 1, "played": 1}))
+        self.lib.frames.put(frame(64, 16, fill=1))
+        self.assertTrue(r.first.wait(3))
+        self.assertEqual((r.decide(), r.state), ("matroska", "ready"))
+        self.read()
+        self.assertTrue(wait(lambda: r.status()["state"] == "playing"))
+        self.assertIn(struct.pack(">d", 48000.0), bytes(self.got[:400]))
+
+    def test_close_leaves_the_connection_open_under_a_thread_that_will_not_come_out(self):
+        self.lib.hold = threading.Event()
+        feed = self.feed(join_wait=0.3)
+        self.assertTrue(self.lib.inside.wait(3))
+        feed.close()
+        self.assertEqual(self.lib.closed_handles, [])
+        self.assertIn("left open, not freed under it", " ".join(self.logged))
+        self.lib.hold.set()
+        self.assertTrue(wait(lambda: self.lib.closed_handles == [("recv", 1)]))
+        feed.close()
+        self.assertEqual(self.lib.closed_handles, [("recv", 1)])                         # once
+
+    def test_a_sound_connection_that_no_picture_uses_is_given_back_by_itself(self):
+        feed = self.feed()
+        r = self.play_with(feed)
+        self.now[0] += ndi.FEED_IDLE_SECONDS + 5
+        time.sleep(0.4)
+        self.assertTrue(feed.alive())                                                    # in use: it stays, however long
+        r.close()
+        time.sleep(0.4)                                                                  # a turn of the feed's thread: from here on nobody uses it
+        self.now[0] += ndi.FEED_IDLE_SECONDS - 5
+        time.sleep(0.4)
+        self.assertTrue(feed.alive())
+        self.now[0] += 10
+        self.assertTrue(wait(lambda: not feed.alive() and ("recv", 1) in self.lib.closed_handles))
+        self.assertIn("given back", " ".join(self.logged))
+
+
+class SoundFromServiceTest(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        self.lib, self.now, self.logged = FeedLib(), [1000.0], []
+        self.s = ndi.Service(self.dir, "x", loader=lambda path: self.lib, log=self.logged.append, first_frame=0.5,
+                             problem=lambda path: None, clock=lambda: self.now[0])
+        self.addCleanup(self.s.close)
+
+    def conf(self, **kw):
+        return self.s.handle(dict({"cmd": "configure", "on": True, "addresses": [], "sound": True, "sound_from": VID, "allowed": [PID, VID]}, **kw))
+
+    def pump(self, make=lambda: sound(480)):
+        """Sound from the sound sender, for as long as the test runs."""
+        stop = threading.Event()
+
+        def run():
+            while not stop.wait(0.02):
+                if self.lib.sounds.qsize() < 3:
+                    self.lib.sounds.put(make())
+        threading.Thread(target=run, daemon=True).start()
+        self.addCleanup(stop.set)
+
+    def status(self, later=0.0):
+        self.now[0] += later
+        return self.s.handle({"cmd": "status"})
+
+    def test_the_sound_connection_stays_while_the_picture_changes_size_and_is_opened_again(self):
+        st = self.conf()
+        self.assertEqual((st["ok"], st["sound_from"], st["sound_source"]), (True, VID, {"id": VID, "state": "ready", "arriving": False}))
+        self.assertEqual(self.lib.opens, [])                                             # nothing is connected to before a picture is asked for
+        self.pump()
+        self.lib.frames.put(frame(64, 16))
+        reply = self.s.handle({"cmd": "open", "id": PID})
+        self.assertEqual((reply["ok"], reply["playing"]["container"], reply["playing"]["audio"]["rate"]), (True, "matroska", 48000))
+        self.assertEqual(self.lib.opens, [(VOICE, True), (PICTURE, False)])              # the sound first, so that it has the picture's time to connect
+        r = self.s.receiver
+        self.assertEqual(sorted(t.name for t in r._threads), ["ndi-capture", "ndi-writer"])
+        self.assertTrue(wait(lambda: self.status()["sound_source"] == {"id": VID, "state": "playing", "arriving": True}))
+        self.lib.frames.put(frame(128, 16))                                              # the next clip is another size
+        self.assertTrue(wait(lambda: r.state == "changed"))
+        self.status()
+        self.lib.frames.put(frame(128, 16))
+        reply = self.s.handle({"cmd": "open", "id": PID})
+        self.assertEqual((reply["ok"], reply["playing"]["container"], reply["playing"]["width"]), (True, "matroska", 128))
+        self.assertEqual(self.lib.opens, [(VOICE, True), (PICTURE, False), (PICTURE, False)])        # ONE open of the sound source
+        self.assertEqual(self.lib.closed_handles, [("recv", 2)])                         # and no close of it: the old picture's only
+        self.assertEqual(self.lib.asked, {("recv", 1)})                                  # no picture connection was ever asked for sound
+        self.assertTrue(self.s.handle({"cmd": "close"})["ok"])                           # nothing of NDI on the screen: both are given back
+        self.assertEqual(sorted(self.lib.closed_handles), [("recv", 1), ("recv", 2), ("recv", 3)])
+        self.assertEqual(self.status()["sound_source"]["state"], "ready")
+
+    def test_a_sound_source_that_is_away_gives_bare_frames_and_its_first_sound_ends_the_picture_as_changed(self):
+        self.lib.raw.remove(VOICE)
+        self.assertEqual(self.conf()["sound_source"], {"id": VID, "state": "away", "arriving": False})
+        self.lib.frames.put(frame(64, 16))
+        began = time.monotonic()
+        reply = self.s.handle({"cmd": "open", "id": PID})
+        self.assertEqual((reply["ok"], reply["playing"]["container"]), (True, "raw"))
+        self.assertLess(time.monotonic() - began, ndi.AUDIO_WAIT)                       # and no wait for sound that cannot come
+        r = self.s.receiver
+        self.assertEqual((self.lib.opens, self.lib.asked), ([(PICTURE, False)], set()))
+        self.assertEqual(sorted(t.name for t in r._threads), ["ndi-capture", "ndi-writer"])
+        self.assertEqual(self.status(5)["sound_source"]["state"], "away")
+        self.assertEqual(self.lib.opens, [(PICTURE, False)])
+        self.lib.raw.append(VOICE)                                                       # the sender is started
+        self.pump()
+        self.assertEqual(self.status(2.1)["sound_source"]["state"], "playing")           # found at the next look, and connected to
+        self.assertTrue(wait(lambda: r.state == "changed"))
+        self.assertEqual(r.message, "the sound source started to send sound")
+        self.assertEqual(self.lib.opens, [(PICTURE, False), (VOICE, True)])
+        self.status()                                                                    # the ended picture is let go of (its threads are out)
+        self.lib.frames.put(frame(64, 16))                                               # the panel opens it again, now with the sound
+        reply = self.s.handle({"cmd": "open", "id": PID})
+        self.assertEqual((reply["ok"], reply["playing"]["container"]), (True, "matroska"))
+        self.assertEqual(len(self.lib.sound_opens()), 1)
+        self.assertEqual(self.lib.asked, {("recv", 2)})
+
+    def test_it_is_looked_for_again_no_more_often_than_every_two_seconds(self):
+        self.lib.raw.remove(VOICE)
+        self.conf()
+        self.lib.frames.put(frame(64, 16))
+        self.assertTrue(self.s.handle({"cmd": "open", "id": PID})["ok"])
+        looked = []
+        want = self.s._want_feed
+        self.s._want_feed = lambda: (looked.append(self.now[0]), want())[1]
+        for _ in range(10):
+            self.status(0.5)
+        self.assertIn(len(looked), (2, 3), looked)
+
+    def test_two_senders_under_the_sound_sources_id_are_not_played(self):
+        self.lib.raw.append((VOICE[0], b"192.168.0.20:5999"))
+        self.assertEqual(self.conf()["sound_source"], {"id": VID, "state": "twins", "arriving": False})
+        self.pump()
+        self.lib.frames.put(frame(64, 16))
+        reply = self.s.handle({"cmd": "open", "id": PID})
+        self.assertEqual((reply["ok"], reply["playing"]["container"]), (True, "raw"))
+        self.status(5)
+        self.assertEqual((self.lib.sound_opens(), self.lib.asked), ([], set()))          # the box does not pick one
+
+    def test_with_sound_off_no_sound_source_is_connected_to_and_the_pipe_carries_bare_frames(self):
+        self.assertIsNone(self.conf(sound=False)["sound_source"])
+        self.pump()
+        self.lib.frames.put(frame(64, 16))
+        reply = self.s.handle({"cmd": "open", "id": PID})
+        self.assertEqual((reply["ok"], reply["playing"]["container"]), (True, "raw"))
+        self.assertNotIn("audio", reply["playing"])
+        self.status(5)
+        self.assertEqual((self.lib.opens, self.lib.asked), ([(PICTURE, False)], set()))
+
+    def test_a_picture_that_is_the_sound_source_plays_its_own_sound_on_its_one_connection(self):
+        self.conf(sound_from=PID)
+        self.lib.frames.put(frame(64, 16))
+        self.lib.own.put(sound(480))
+        reply = self.s.handle({"cmd": "open", "id": PID})
+        self.assertEqual((reply["ok"], reply["playing"]["container"]), (True, "matroska"))
+        self.assertEqual(self.lib.opens, [(PICTURE, False)])
+        self.assertIn("ndi-audio", [t.name for t in self.s.receiver._threads])
+        self.assertEqual(self.status()["sound_source"]["state"], "playing")
+
+    def test_what_the_panel_may_say_and_what_a_change_does_to_a_picture_that_plays(self):
+        for bad in ({"sound_from": "FIRESPRAY (VLC)"}, {"sound_from": "192.168.0.20"}, {"sound_from": 7}, {"sound_from": None},
+                    {"sound_from": "0123456789ab"},                                      # an id, and not one of the allowed
+                    {"sound_delay_ms": 501}, {"sound_delay_ms": -251}, {"sound_delay_ms": True}, {"sound_delay_ms": 1.5}):
+            self.assertIs(self.conf(**bad)["ok"], False, bad)
+        self.assertEqual(self.s.sound_from, "")                                          # nothing of a refused message is kept
+        st = self.conf(sound_delay_ms=120)
+        self.assertEqual((st["sound_from"], st["sound_delay_ms"]), (VID, 120))           # the delay is said back and used by nothing here
+        self.assertNotIn("sound_delay_ms", inspect.getsource(ndi.Receiver) + inspect.getsource(ndi.SoundFeed))
+        st = self.s.handle({"cmd": "configure", "on": True, "addresses": []})            # a message without the words: no sound source
+        self.assertEqual((st["sound_from"], st["sound_delay_ms"], st["sound_source"]), ("", 0, None))
+        self.conf()
+        self.pump()
+        self.lib.frames.put(frame(64, 16))
+        self.assertTrue(self.s.handle({"cmd": "open", "id": PID})["ok"])
+        r = self.s.receiver
+        self.conf()                                                                      # said again: nothing happens
+        self.conf(sound_delay_ms=40)                                                     # the delay is the player's: the picture plays on
+        self.assertNotIn(r.state, ndi.ENDED)
+        self.assertEqual(self.lib.closed_handles, [])
+        self.conf(sound_from="")                                                         # back to each picture's own sound
+        self.assertEqual((r.state, r.message), ("changed", "where the sound comes from was changed"))
+        self.assertIn(("recv", 1), self.lib.closed_handles)                              # the sound connection is given back
+        self.assertIsNone(self.s.feed)
+
+    def test_switching_the_input_off_gives_the_sound_connection_back(self):
+        self.conf()
+        self.pump()
+        self.lib.frames.put(frame(64, 16))
+        self.assertTrue(self.s.handle({"cmd": "open", "id": PID})["ok"])
+        self.conf(on=False)
+        self.assertEqual(sorted(self.lib.closed_handles), [("recv", 1), ("recv", 2)])
+        self.assertIsNone(self.s.feed)
+
+
+class SoundFromSettingsTest(unittest.TestCase):
+    def test_the_stored_section_takes_the_two_keys_and_holds_the_id_to_the_allowed_list(self):
+        good = {"addresses": [], "sound": True, "sources": [VOICE_ROW], "sound_from": VID, "sound_delay_ms": -40}
+        self.assertEqual(ndi.validate_saved(good), good)
+        self.assertEqual(ndi.validate_saved({"addresses": [], "sound_delay_ms": 0}), {"addresses": [], "sound_delay_ms": 0})
+        self.assertEqual(ndi.validate_saved({"addresses": [], "sound_from": ""}), {"addresses": []})
+        for bad in ({"sound_from": VID},                                                 # an id with no allowed source behind it
+                    {"sound_from": PID, "sources": [VOICE_ROW]}, {"sound_from": "VLC (Audio)", "sources": [VOICE_ROW]},
+                    {"sound_from": "192.168.0.20:5962", "sources": [VOICE_ROW]}, {"sound_from": 5}, {"sound_from": None},
+                    {"sound_delay_ms": 501}, {"sound_delay_ms": -251}, {"sound_delay_ms": True}, {"sound_delay_ms": "10"}, {"sound_delay_ms": 0.5}):
+            with self.assertRaises(ndi.NdiError, msg=bad):
+                ndi.validate_saved(dict({"addresses": []}, **bad))
+
+    def test_what_is_read_from_a_file_a_person_may_have_edited(self):
+        self.assertEqual(ndi.saved_sound_from({"sources": [VOICE_ROW], "sound_from": VID}), VID)
+        for section in (None, [], {}, {"sound_from": VID}, {"sources": [VOICE_ROW], "sound_from": PID}, {"sources": [VOICE_ROW], "sound_from": [VID]},
+                        {"sources": "x", "sound_from": VID}):
+            self.assertEqual(ndi.saved_sound_from(section), "", section)
+        self.assertEqual([ndi.saved_sound_delay({"sound_delay_ms": v}) for v in (120, -250, 500, 501, -251, True, "10", 1.5, None)],
+                         [120, -250, 500, 0, 0, 0, 0, 0, 0])
+        self.assertEqual(ndi.saved_sound_delay(None), 0)
+        data = {"ndi": {"addresses": [], "sources": [VOICE_ROW], "sound_from": VID, "sound_delay_ms": 80}}
+        w = ndi.Wanted(lambda: True, lambda: data, log=lambda *_: None)
+        w()
+        self.assertEqual((w.sound_from, w.sound_delay_ms), (VID, 80))
+        data["ndi"] = "broken"
+        w()
+        self.assertEqual((w.sound_from, w.sound_delay_ms), ("", 0))
+
+    def test_the_release_before_loads_the_file_and_keeps_both_keys_through_a_save(self):
+        """No new schema. The release before this one (named by its commit) reads the file, plays as it did, and
+        its save keeps the two keys it does not know. One edge is pinned here because NDI.md says it: that
+        release does not import a settings export that carries the keys. (The other, read from its code and not
+        run: its own writers of the section drop them, so the sound source is chosen again after going back.)"""
+        from pvj.settings import Settings
+        try:
+            subprocess.run(["git", "-C", REPO, "rev-parse", "--verify", "-q", BEFORE_SOUND_FROM + "^{commit}"], check=True, capture_output=True)
+        except (OSError, subprocess.CalledProcessError):
+            self.skipTest("no %s here to read the older release from" % BEFORE_SOUND_FROM)
+        old = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, old, True)
+        tar = subprocess.run(["git", "-C", REPO, "archive", BEFORE_SOUND_FROM, "pvj"], check=True, capture_output=True).stdout
+        subprocess.run(["tar", "-x", "-C", old], input=tar, check=True)
+        now = Settings(os.path.join(old, "settings.json"))
+        now.load()
+        section = {"addresses": [], "sound": True, "sources": [VOICE_ROW], "sound_from": VID, "sound_delay_ms": 120}
+        now.data["ndi"] = dict(section)
+        now.save()
+        script = r"""
+import json, sys
+from pvj.settings import Settings
+from pvj import boxcare, ndi
+assert not hasattr(ndi, "SoundFeed"), "this is the older release"
+s = Settings(sys.argv[1])
+s.load()
+out = {"schema": s.data["schema"], "sound": ndi.saved_sound(s.data["ndi"]), "sources": ndi.saved_sources(s.data["ndi"])}
+try:
+    boxcare.check_ndi(s.data["ndi"], None)
+    out["imports"] = True
+except ndi.NdiError:
+    out["imports"] = False
+s.data["mix"] = {"transition": "dip", "duration": 2.0}
+s.save()
+print(json.dumps(out))
+"""
+        import json
+        import sys
+        run = subprocess.run([sys.executable, "-c", script, now.path], cwd=old, capture_output=True, text=True, env=dict(os.environ, PYTHONPATH=old))
+        self.assertEqual(run.returncode, 0, run.stderr)
+        out = json.loads(run.stdout.strip().splitlines()[-1])
+        self.assertEqual((out["schema"], out["sound"], out["sources"]), (now.data["schema"], True, [VOICE_ROW]))
+        self.assertIs(out["imports"], False)
+        with open(now.path) as f:
+            self.assertEqual(json.load(f)["ndi"], section)
+
+
+class SoundFromPanelTest(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        self.lib = FeedLib()
+        self.s = ndi.Service(self.dir, "x", loader=lambda path: self.lib, log=lambda *_: None, first_frame=0.3, problem=lambda path: None)
+        self.addCleanup(self.s.close)
+        self.data = {"ndi": {"addresses": [], "sound": True, "sources": [PICTURE_ROW, VOICE_ROW], "sound_from": VID, "sound_delay_ms": 120}}
+        self.client = FakeClient(self.s)
+        self.i = ndi.Input(self.client, self.s.fifo, ndi.Wanted(lambda: True, lambda: self.data, log=lambda *_: None), log=lambda *_: None)
+
+    def told(self):
+        return [(m.get("sound"), m.get("sound_from"), m.get("sound_delay_ms")) for m in self.client.sent if m["cmd"] == "configure"]
+
+    def test_the_helper_is_told_the_sound_source_and_told_again_when_it_changes(self):
+        st = self.i.status()
+        self.assertEqual(self.told(), [(True, VID, 120)])
+        self.assertEqual((self.s.sound_from, self.s.sound_delay_ms), (VID, 120))
+        self.assertEqual((st["sound"], st["sound_from"], st["sound_delay_ms"], st["sound_delay_range"]), (True, VID, 120, [-250, 500]))
+        self.assertEqual(st["sound_source"], dict(VOICE_ROW, state="ready", arriving=False))
+        self.i.status()
+        self.assertEqual(len(self.told()), 1)                                            # not again while nothing changed
+        self.data["ndi"]["sound_delay_ms"] = 60
+        self.i.status()
+        self.data["ndi"].pop("sound_from")
+        st = self.i.status()
+        self.assertEqual(self.told()[1:], [(True, VID, 60), (True, "", 60)])
+        self.assertEqual((st["sound_from"], st["sound_source"], self.s.sound_from), ("", None, ""))
+        self.data["ndi"].update(sound=False, sound_from=VID)                             # the choice is kept while sound is off
+        st = self.i.status()
+        self.assertEqual((st["sound"], st["sound_source"]["state"]), (False, "off"))
+        self.assertIsNone(self.s.handle({"cmd": "status"})["sound_source"])
+
+    def test_a_helper_from_before_is_not_told_again_and_again_and_a_lying_one_is_not_believed(self):
+        base = {"ok": True, "configured": True, "on": True, "addresses": [], "sound": True, "groups": [], "allowed": [PID, VID],
+                "runtime": {"present": True, "loaded": True, "version": "x", "problem": ""}, "sources": [VOICE_ROW], "playing": None}
+        self.client.answer = dict(base)                                                  # it says nothing of a sound source
+        st = self.i.status()
+        self.assertEqual(self.told(), [])
+        self.assertEqual(st["sound_source"], dict(VOICE_ROW, state="away", arriving=False))
+        for lie in ({"id": PID, "state": "playing", "arriving": True}, {"id": VID, "state": "<b>loud</b>", "arriving": True},
+                    {"id": VID, "state": "playing", "arriving": "yes", "name": "EVIL", "from": "8.8.8.8:1"}, "playing", [VID]):
+            self.client.answer = dict(base, sound_from=VID, sound_delay_ms=120, sound_source=lie)
+            st = self.i.status()["sound_source"]
+            self.assertEqual((st["id"], st["name"], st["from"], st["arriving"]), (VID, "VLC (Audio)", "192.168.0.20:5962", False), lie)
+            self.assertIn(st["state"], ("away", "playing"), lie)
+        self.assertEqual(self.told(), [])
+
+
 def png_pixel(path, x, y):
     """(r, g, b) of one pixel of an 8-bit RGB or RGBA PNG that is not interlaced, with nothing but zlib."""
     with open(path, "rb") as f:
