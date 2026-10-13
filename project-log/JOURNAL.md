@@ -4,6 +4,18 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-13, winding down for the move: what merged in the night, what the Pi runs, what nobody has heard
+
+The owner went to bed with "keep up the good work. tidy up where we can", and in the morning asked for the move kit to be refreshed and everything wound down.
+
+- **Merged in the night, each on 30 green checks:** #132 (sound from a second NDI sender, D87; three independent reads on the default model, two High findings fixed and re-checked), #133 (the USB cache test counted every folder scan in the process, and a thread left by other tests was scanning too), #134 (that thread: the effects' worker had no stop; `Changer.stop()`, the tests' fixture stops it, and a guard fails any test that leaves it behind).
+- **The test Pi:** master cbfe16f since about 06:35 UTC, by the usual checks (hashes, seven services, self-test 0, settings unchanged, https answering). Nothing after #132 changes what a box does.
+- **The secure connection** was set up by the owner himself the evening before (root made, request signed, certificate uploaded, owner-only switched on) and checked from the Mac against his root: the first run of D79 on hardware. A test device paired over plain http was refused, as it should be.
+- **Tidied:** the worktrees and branches of everything merged (41 worktrees, the merged remote branches of these two days), 14 GB of old review copies in a session's scratch folder (the Mac's disk had 610 MB free), the test stream publisher and MediaMTX stopped, the session's temporary Owner device removed from the Pi.
+- **Fable** ran out of usage credits during the review of #132; that review and its two re-checks ran on the default model.
+- **HANDOFF.md** has a new section "State on 2026-10-13".
+- **Open:** the owner's check of NDI by eye and ear; see that section's "Queued".
+
 ## 2026-10-12, one sound source for the whole box (`ndi-sound-from`, D87; not pushed, never on a box)
 
 The owner sends his picture with NDI Scan Converter and VLC's sound through a separate NDI sender that has no picture, and asked that the NDI page account for networked sound. Step 1 of the design: one source named as where the sound comes from, played under every NDI picture.
