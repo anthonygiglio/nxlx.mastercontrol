@@ -36,7 +36,9 @@ class UsbMediaTest(ServerBase):
 
     def scans_at(self, now, gets=1):
         """How many directory scans `gets` requests for the media list cost when the panel's clock stands at `now`.
-        The cache's age is taken from time.monotonic in pvj.api; the clock is held there, so the machine's speed plays no part."""
+        The cache's age is taken from time.monotonic in pvj.api; the clock is held there, so the machine's speed plays no part.
+        Only scans of this test's own drives count: os.scandir is one function for the whole process, and a thread left
+        by an earlier test (the shaders' "shader-changes" thread globs /sys now and then, and glob scans) is not the cache."""
         from pvj import api as api_mod
 
         class Held:
@@ -46,13 +48,16 @@ class UsbMediaTest(ServerBase):
                 return getattr(time, name)
         real = os.scandir
         calls = []
+        mine = os.path.join(self.api.usb_root, "")
 
         def counting(path):
-            calls.append(path)
+            if os.fspath(path).startswith(mine):
+                calls.append(path)
             return real(path)
         with mock.patch.object(api_mod, "time", Held()), mock.patch("pvj.api.os.scandir", counting):
             for _ in range(gets):
                 self.assertEqual(self.call("GET", "/api/media", token=self.token)[0], 200)
+            os.scandir(self.tmp).close()                                     # somebody else's scan, as a stray thread would make
         return len(calls)
 
     def test_lists_only_real_media_at_the_top_of_real_drives(self):
