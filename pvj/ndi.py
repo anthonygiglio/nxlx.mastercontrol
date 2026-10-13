@@ -1079,8 +1079,11 @@ class Receiver:
         thread of this receiver takes sound (sound is off, or it comes from the box's sound source), the
         connection is asked once, here, for one block: only its figures are looked at (check_audio), not a byte
         of it is read, and it is given back. The library allows this beside the picture's thread."""
-        if self.audio is not None:
-            return True
+        if not self.outside and self.audio is not None:
+            return True                            # this receiver's own sound thread saw a block
+        # With the box's sound source, `audio` says what THAT sender sends (or sent last), not this one: only this
+        # connection's own answer counts, or the picture sender of a rig with a sound source would be called
+        # "sound only" whenever its first picture was late.
         if not getattr(self.lib, "has_audio", False) or (self.sound and not self.outside):
             return False                           # no calls for sound; or the sound's own thread would have seen it
         with self._handle_lock:
@@ -2118,7 +2121,10 @@ class Service:
                     if len(self.sound_only) < MAX_SOURCES * 4:
                         self.sound_only.add(sid)
                     return {"ok": False, "sound_only": True, "error": "%s sends sound and no picture; choose it under 'Where sound comes from' on the NDI page" % match[0]["name"]}
-                return {"ok": False, "error": st["message"] or "%s sent no picture in %d seconds" % (match[0]["name"], self._first_frame)}
+                # Neither a picture nor sound in time. Said so that a sound sender that is quiet does not look
+                # broken: such a sender sends nothing at all while nothing plays into it (seen on the owner's).
+                return {"ok": False, "error": st["message"] or ("%s sent no picture in %d seconds, and no sound either (a sender of sound alone sends nothing while nothing plays into it)"
+                                                                % (match[0]["name"], self._first_frame))}
             self.sound_only.discard(sid)           # it has a picture after all
             self.log("pvj-ndi: %s is %d x %d at %s" % ((match[0]["name"],) + r.format))
             try:
