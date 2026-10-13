@@ -3308,8 +3308,11 @@
       soundBody.appendChild(h('div', { class: 'list', id: 'ndisoundmode', role: 'radiogroup', 'aria-label': 'Where sound comes from' },
         [['none', 'Pictures only.'], ['own', 'Each NDI picture plays the sound its own sender sends with it.'],
           ['one', 'For sound that comes from another sender than the picture: a player that sends its sound through NDI by itself, with the picture from a screen capture.']].map(function (c) {
-          return h('button', { class: 'btn padpick soundchoice' + (shown === c[0] ? ' on' : ''), id: 'ndisound' + c[0], role: 'radio', 'aria-checked': shown === c[0] ? 'true' : 'false',
-            onclick: function () { if (shown !== c[0] || soundPick) choose[c[0]](); } }, h('span', { class: 't', text: names[c[0]] }), h('span', { class: 't s', text: c[1] }));
+          // the name on the button, what it means under it in the page's own hint type (never smaller: the Signal rule)
+          return h('div', { class: 'fieldwrap soundchoicewrap' },
+            h('button', { class: 'btn soundchoice' + (shown === c[0] ? ' on' : ''), id: 'ndisound' + c[0], role: 'radio', 'aria-checked': shown === c[0] ? 'true' : 'false',
+              'aria-describedby': 'ndisound' + c[0] + 'hint', text: names[c[0]], onclick: function () { if (shown !== c[0] || soundPick) choose[c[0]](); } }),
+            h('div', { class: 'hint', id: 'ndisound' + c[0] + 'hint', text: c[1] }));
         })));
       if (shown === 'one') {
         var listed = (d.sources || []).filter(function (x) { return !x.twins; }), here = listed.some(function (x) { return x.id === d.sound_from; });

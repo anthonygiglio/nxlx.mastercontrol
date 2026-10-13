@@ -1048,9 +1048,11 @@ function startServer(env) {          // env: more for the harness's environment 
     // WRITTEN AND SYNTAX-CHECKED ONLY when it was committed (no Playwright on the dev Mac).
     await page.waitForSelector('#ndisoundnone');
     assert.strictEqual(await page.textContent('#ndisoundcard h2'), 'Where sound comes from');
-    assert.deepStrictEqual(await page.$$eval('#ndisoundmode [role=radio]', (bs) => bs.map((b) => [b.querySelector('.t').textContent, b.getAttribute('aria-checked')])),
+    assert.deepStrictEqual(await page.$$eval('#ndisoundmode [role=radio]', (bs) => bs.map((b) => [b.textContent, b.getAttribute('aria-checked')])),
       [['No sound', 'true'], ['The source on the screen', 'false'], ['One sound source for every NDI picture', 'false']], 'no sound until someone chooses it (never heard on a box)');
     assert.strictEqual((await get('/api/ndi')).sound, false);
+    assert.deepStrictEqual(await page.$$eval('#ndisoundmode .hint', (hs) => hs.map((x) => [x.id, parseFloat(getComputedStyle(x).fontSize) >= 13])),
+      [['ndisoundnonehint', true], ['ndisoundownhint', true], ['ndisoundonehint', true]], 'what each choice means, in the page\'s own hint type and never smaller');
     assert(/No sound: NDI pictures are shown without sound/.test(await page.textContent('#ndisoundline')), 'the line says so');
     assert(/has not been heard on a box yet/.test(await page.textContent('#ndisoundbody')), 'and why');
     assert.strictEqual(await page.locator('#ndisounddelay').count(), 0, 'no delay to set while there is no sound');
