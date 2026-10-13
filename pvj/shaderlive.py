@@ -569,6 +569,7 @@ class Changer:
         self._release = None                        # when a pressed event is to be let go
         self._refresh = None                        # when the shader on screen is due for a new anchor
         self._thread = None
+        self._stopped = False                       # stop() was called: the worker has ended and none is started again
         self.working = None                         # the whole shader the worker is putting on at this moment (a "show" job), or None
         self.applied = 0                            # how many times the GPU was given a new text (for tests and curiosity)
 
@@ -655,8 +656,24 @@ class Changer:
             self._refresh = self._clock() + (self.refresh if after is None else after)
             self._wake()
 
+    def stop(self, timeout=5.0):
+        """End the worker's thread and wait for it (up to `timeout` seconds; True if it is gone). What waits is
+        forgotten and no thread is started after this, whatever is asked: a look that was running when this was
+        called may ask for the next one (keep), and that must not bring the worker back. The panel never calls
+        this, its worker lives as long as it does; it is for whoever makes an engine and throws it away, which is
+        the tests (an effect left on is looked at every second for as long as the process lives)."""
+        with self._cond:
+            self._stopped = True
+            self._show = self._steps = self._adjust = self._release = self._refresh = None
+            worker = self._thread
+            self._cond.notify_all()
+        if worker is not None and worker is not threading.current_thread():
+            worker.join(timeout)
+            return not worker.is_alive()
+        return True
+
     def _wake(self):
-        if self._use_thread and self._thread is None:
+        if self._use_thread and self._thread is None and not self._stopped:
             self._thread = threading.Thread(target=self._loop, name="shader-changes", daemon=True)
             self._thread.start()
         self._cond.notify_all()
@@ -730,6 +747,9 @@ class Changer:
         idle = 0.0
         while True:
             with self._cond:
+                if self._stopped:
+                    self._thread = None
+                    return
                 job, wait = self._take()
                 if job is None:
                     if wait is None:

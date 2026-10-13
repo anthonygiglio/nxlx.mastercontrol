@@ -6,6 +6,7 @@
 import atexit
 import os
 import sys
+import threading
 import unittest
 
 from . import lockrank, tmpguard
@@ -18,6 +19,19 @@ from . import lockrank, tmpguard
 # start). Every tests/test_*.py imports this package, so this holds however a module is started, also by
 # `discover -s tests -p test_x.py` (tests/test_lockrank.py looks at both).
 _left = []
+# The workers of pvj's that look at something again and again must be ended by the test that started them: one that
+# is left goes on looking in the middle of the tests that come after (the effects' worker, "shader-changes", looks
+# at the picture once a second for as long as an effect is on, and every look scans a folder: 34 scans in another
+# test's count). Only these names are looked for, after every test, cleanups included; other threads are not policed.
+WATCHERS = ("shader-changes",)
+_blamed = set()                         # a thread is one test's fault: the tests after it are not failed for it too
+
+
+def left_watchers():
+    """The watchers that are alive now and that no test has been blamed for yet."""
+    found = [t for t in threading.enumerate() if t.name in WATCHERS and t.is_alive() and t not in _blamed]
+    _blamed.update(found)
+    return found
 
 
 def _at_end():
@@ -45,6 +59,13 @@ def _run_and_look(self, result=None):
     finally:
         lockrank.during = "no test (the last one was %s)" % self.id()
     _left.extend(lockrank.take())
+    stray = left_watchers()
+    if stray and result is not None:
+        try:
+            raise AssertionError("left running after the test: %s (end it in a cleanup, see shaderlive.Changer.stop "
+                                 "and tests/test_server.py's stop_workers)" % ", ".join(sorted(t.name for t in stray)))
+        except AssertionError:
+            result.addFailure(self, sys.exc_info())
     if _left and result is not None:
         seen = list(_left)
         del _left[:]
