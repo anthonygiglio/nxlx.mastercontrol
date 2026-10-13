@@ -11,6 +11,10 @@ device asks, and of the player over its control socket, as root. Nothing here re
                                                                case still NAME | twice NAME | follow A B | sound NAME
                                                                     | soundon NAME | size NAME | restart NAME
                                                                     | stuck NAME | chain | gostill NAME
+                                                                    | soundfrom PICTURE SOUND SECONDS
+                                                                    | soundfromsize PICTURE SOUND
+                                                                    | soundfromstops PICTURE SOUND
+                                                                    | soundonlyplay SOUND | soundonlyunder PICTURE SOUND
                                                                dump
 
 Exit 0: everything asked held. Exit 1: something did not; the reason is the line that begins "REASON:", and what
@@ -80,6 +84,9 @@ class HttpRig(mpvword.Rig):
 
     def post_sound(self, on):
         return http("POST", "/api/ndi", {"action": "sound", "on": on})
+
+    def post_ndi(self, body):
+        return http("POST", "/api/ndi", body)
 
     def player_status(self):
         code, st = http("GET", "/api/status", timeout=20)
