@@ -529,9 +529,10 @@ class Watchers(unittest.TestCase):
         while Engine.looks < 3 and time.monotonic() < end:
             time.sleep(0.01)
         self.assertGreaterEqual(Engine.looks, 3)
-        self.assertIn(changer._thread.name, tests.WATCHERS)
+        worker = changer._thread
+        self.assertIn(worker.name, tests.WATCHERS)
         self.assertTrue(changer.stop())
-        self.assertFalse([t for t in threading.enumerate() if t.name in tests.WATCHERS])
+        self.assertFalse(worker.is_alive())
         seen = Engine.looks
         changer.keep(0)                                         # whatever is asked after it, no thread comes back
         time.sleep(0.05)

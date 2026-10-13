@@ -69,10 +69,11 @@ class FakePlayer:
 def stop_workers(api, *engines):
     """End the workers of the shaders and the effects (shaderlive.Changer): the engines the Api was made with and
     the ones it has now, which a test may have put in their place. An effect that a test leaves on is looked at
-    once a second by its worker for as long as the process lives, in the middle of the tests that come after."""
+    once a second by its worker for as long as the process lives, in the middle of the tests that come after.
+    The wait is long: with a real player, already stopped by then, the worker may be in a request that has to time out."""
     for engine in engines + (getattr(api, "shaders", None), getattr(api, "effects", None)):
         changer = getattr(engine, "changer", None)
-        if changer is not None and not changer.stop():
+        if changer is not None and not changer.stop(15.0):
             raise AssertionError("a worker of the shaders or the effects did not end")
 
 
