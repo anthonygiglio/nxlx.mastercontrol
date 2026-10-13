@@ -1073,6 +1073,33 @@ class Receiver:
                     self._audio_seen.set()
             feed.attach(self)
 
+    def heard(self, wait_ms=400):
+        """Whether this source sends sound: asked when it sent no picture in time, so that the page can say "it has
+        sound and no picture" in place of "it sent no picture". True when a block of sound was seen. Where no
+        thread of this receiver takes sound (sound is off, or it comes from the box's sound source), the
+        connection is asked once, here, for one block: only its figures are looked at (check_audio), not a byte
+        of it is read, and it is given back. The library allows this beside the picture's thread."""
+        if self.audio is not None:
+            return True
+        if not getattr(self.lib, "has_audio", False) or (self.sound and not self.outside):
+            return False                           # no calls for sound; or the sound's own thread would have seen it
+        with self._handle_lock:
+            if self._handle is None:
+                return False
+            try:
+                a = self.lib.recv_audio(self._handle, wait_ms)
+                if a is None or a is AUDIO_LOST:
+                    return False
+                try:
+                    check_audio(a)
+                    return True
+                except NdiError:
+                    return False
+                finally:
+                    self.lib.recv_free_audio(self._handle, a)
+            except Exception:
+                return False
+
     def hold(self):
         """Before start: the writer does not open the pipe until go(). The pipe is the same pipe for every source,
         so whoever reads it now may be the player still on the source before; the Service says when it has seen
@@ -1769,6 +1796,10 @@ class Service:
         # Receiver's, so it stays while a picture is closed and opened again. Set and closed under self.lock.
         self.sound_from, self.sound_delay_ms = "", 0       # the delay is the panel's (the player's audio-delay): kept and said back, used by nothing here
         self.feed, self._feed_at = None, 0.0
+        # Ids of sources that were asked for a picture, sent none in time and had sound: the page labels them
+        # "sound only" and offers them as the sound source instead of Play. Kept while this helper runs, and
+        # dropped the moment such a source does send a picture.
+        self.sound_only = set()
         self._finder, self._sources, self._sources_at, self._cut = None, [], None, False
         self.receiver = None
 
@@ -1897,7 +1928,7 @@ class Service:
         self.feed = feed
         return feed
 
-    def _sound_source(self, sources, r):
+    def _sound_source(self, sources, r):       # (the page's side re-checks every word of it: Input._sound_source)
         """What the page is told of the box's sound source: {"id", "state", "arriving"}, or None when none is
         chosen or sound is off. "playing": connected, under a picture (or it is the picture, with its own sound);
         "ready": on the network, connected to when a picture plays; "away": not on the network now, or its
@@ -2017,7 +2048,8 @@ class Service:
                 "sound_from": self.sound_from, "sound_delay_ms": self.sound_delay_ms, "sound_source": self._sound_source(sources, r),
                 "groups": list(self.groups), "discovery": list(self.discovery or []), "allowed": list(self.allowed),
                 "runtime": self.runtime(),
-                "sources": [dict({"id": s["id"], "name": s["name"], "from": s["from"]}, **({"twins": True} if s.get("twins") else {}))
+                "sources": [dict({"id": s["id"], "name": s["name"], "from": s["from"]}, **dict({"twins": True} if s.get("twins") else {},
+                                                                                              **({"sound_only": True} if s["id"] in self.sound_only else {})))
                             for s in sources], "cut": self._cut,
                 "playing": r.status() if r is not None else None}
 
@@ -2080,8 +2112,14 @@ class Service:
                 r.decide()                         # a moment for sound to show itself; then the pipe's form is fixed
             st = r.status()
             if st["state"] in ENDED or not r.format:
+                only = not r.format and st["state"] not in ENDED and r.heard()
                 self._close_receiver()
+                if only:
+                    if len(self.sound_only) < MAX_SOURCES * 4:
+                        self.sound_only.add(sid)
+                    return {"ok": False, "sound_only": True, "error": "%s sends sound and no picture; choose it under Sound" % match[0]["name"]}
                 return {"ok": False, "error": st["message"] or "%s sent no picture in %d seconds" % (match[0]["name"], self._first_frame)}
+            self.sound_only.discard(sid)           # it has a picture after all
             self.log("pvj-ndi: %s is %d x %d at %s" % ((match[0]["name"],) + r.format))
             try:
                 clear = self._clear_pipe(r)
@@ -2383,6 +2421,8 @@ class Input:
                     row = {"id": s["id"], "name": name, "from": where}
                     if s.get("twins") is True:
                         row["twins"] = True
+                    if s.get("sound_only") is True:    # it was asked for a picture and had only sound: the page's label
+                        row["sound_only"] = True
                     at[s["id"]] = row
                     sources.append(row)
         return sources
