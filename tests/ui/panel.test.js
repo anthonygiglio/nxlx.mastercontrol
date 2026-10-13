@@ -1043,19 +1043,129 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.click('#confirmyes');
     await page.waitForFunction(() => document.querySelectorAll('.ndiaddr-entry').length === 0);
     assert.strictEqual(await post('/api/play', { ndi: 'RESOLUME (Output)' }), 409, 'a name is never played, only an id');
-    // Sound: one switch on the same page, on unless the owner says no; the line beside it says what is arriving.
+    // Where sound comes from (D87): three choices (no sound, the source on the screen, one sound source for every
+    // NDI picture), a line that says what is arriving, and the delay of the sound against the picture.
     // WRITTEN AND SYNTAX-CHECKED ONLY when it was committed (no Playwright on the dev Mac).
-    await page.waitForSelector('#ndisound');
-    assert.strictEqual(await page.getAttribute('#ndisound', 'aria-checked'), 'false', 'sound is off until someone switches it on (never heard on a box)');
+    await page.waitForSelector('#ndisoundnone');
+    assert.strictEqual(await page.textContent('#ndisoundcard h2'), 'Where sound comes from');
+    assert.deepStrictEqual(await page.$$eval('#ndisoundmode [role=radio]', (bs) => bs.map((b) => [b.textContent, b.getAttribute('aria-checked')])),
+      [['No sound', 'true'], ['The source on the screen', 'false'], ['One sound source for every NDI picture', 'false']], 'no sound until someone chooses it (never heard on a box)');
     assert.strictEqual((await get('/api/ndi')).sound, false);
-    assert(/Sound is off: sources are shown without their sound/.test(await page.textContent('#ndisoundline')), 'the line says so');
-    assert(/has not been heard on a box yet/.test(await page.textContent('#ndisoundbody')), 'and why');
-    await page.click('#ndisound');
+    assert.deepStrictEqual(await page.$$eval('#ndisoundmode .hint', (hs) => hs.map((x) => [x.id, parseFloat(getComputedStyle(x).fontSize) >= 13])),
+      [['ndisoundnonehint', true], ['ndisoundownhint', true], ['ndisoundonehint', true]], 'what each choice means, in the page\'s own hint type and never smaller');
+    assert(/No sound: NDI pictures are shown without sound/.test(await page.textContent('#ndisoundline')), 'the line says so');
+    assert(/it was measured and not listened to.*within 40 ms.*Nobody has yet confirmed by ear/.test(await page.textContent('#ndisoundbody')), 'and exactly what is known of it: what was measured, and what nobody has heard');
+    assert.strictEqual(await page.locator('#ndisounddelay').count(), 0, 'no delay to set while there is no sound');
+    await page.click('#ndisoundown');
     await page.waitForFunction(() => /No source is on the screen/.test(document.getElementById('ndisoundline').textContent));
-    assert.strictEqual((await get('/api/ndi')).sound, true, 'the switch is saved');
-    await page.click('#ndisound');
-    await page.waitForFunction(() => /Sound is off: sources are shown without their sound/.test(document.getElementById('ndisoundline').textContent));
+    let snd = await get('/api/ndi');
+    assert.deepStrictEqual([snd.sound, snd.sound_from, snd.sound_source], [true, '', null], 'each picture\'s own sound: the old switch, on');
+    assert.strictEqual(await page.getAttribute('#ndisoundown', 'aria-checked'), 'true');
+    // the delay belongs to "one sound source" alone: a picture with its own sender's sound is never moved, so no slider here
+    assert.strictEqual(await page.locator('#ndisounddelay').count(), 0, 'no delay to set for a picture that plays its own sound');
+    assert.strictEqual(await post('/api/ndi', { action: 'sound_delay', ms: 9000 }), 400, 'held to its bounds by the box, not by the slider');
+    assert.strictEqual(await post('/api/ndi', { action: 'sound_delay', ms: 120 }), 200);
+    assert.strictEqual((await get('/api/ndi')).sound_delay_ms, 120, 'the number is kept, whatever the mode');
+    assert.strictEqual(await post('/api/ndi', { action: 'sound_delay', ms: 0 }), 200);
+    // one sound source: nothing is saved until a sender is chosen, and with no sender on the network the picker says so
+    await page.click('#ndisoundone');
+    await page.waitForSelector('#ndisoundpick');
+    assert.strictEqual(await page.$eval('#ndisoundpick', (el) => el.options[el.selectedIndex].textContent), 'No sender is on the network now');
+    assert.strictEqual(await page.getAttribute('#ndisoundone', 'aria-checked'), 'true');
+    assert.strictEqual((await get('/api/ndi')).sound_from, '', 'opening the picker saves nothing');
+    assert.strictEqual(await post('/api/ndi', { action: 'sound_from', id: 'VLC (NDI Audio)' }), 400, 'a name is never a sound source, only an id');
+    // (asked beside the page, not from it: a 404 answered to the page's own fetch is a console error, and the page
+    // itself must never ask for what is not there; the check at the end holds it to that)
+    assert.strictEqual((await page.request.post(base + '/api/ndi', { data: { action: 'sound_from', id: '0123456789ab' }, headers: { 'X-PVJ-Request': '1' } })).status(), 404,
+      'and only an id that is on the network now');
+    await page.click('#ndisoundnone');
+    await page.waitForFunction(() => /No sound: NDI pictures are shown without sound/.test(document.getElementById('ndisoundline').textContent));
     assert.strictEqual((await get('/api/ndi')).sound, false, 'and off again, as it is on a new box');
+    assert.strictEqual(await page.locator('#ndisoundpick, #ndisounddelay').count(), 0);
+    // With senders (the box's answer is given: the harness has no helper). One has sound and no picture: it is
+    // labelled, it has "Use for sound" where the others have Play, and choosing it says that sound was switched on.
+    // Then it is connected and sends nothing, and the page says that in so many words.
+    {
+      const CAM = { id: 'aaaaaaaaaaaa', name: 'STAGE-LAPTOP (Scan Converter)', from: '192.168.1.30:5961' };
+      const VOX = { id: 'bbbbbbbbbbbb', name: 'STAGE-LAPTOP (macOS AV Output)', from: '192.168.1.30:5962', sound_only: true };
+      const ROW = { id: VOX.id, name: VOX.name, from: VOX.from };
+      const world = { sound: false, sound_from: '', source: null, playing: null, sent: [], delay: 0 };
+      await page.route('**/api/ndi', async (route) => {
+        const answer = async () => {
+          // the box's own answer (through the page's own session), with senders and a sound source put into it
+          const response = route.request().method() === 'GET' ? await route.fetch() : await page.request.get(base + '/api/ndi');
+          const body = await response.json();
+          return Object.assign(body, { setup: true, helper: true, runtime: { present: true, loaded: true, version: 'fake', problem: '' }, sources: [CAM, VOX],
+            allowed: world.sound_from ? [ROW] : [], sound: world.sound, sound_from: world.sound_from, sound_source: world.source, playing: world.playing, ended: null, sound_delay_ms: world.delay });
+        };
+        if (route.request().method() === 'POST') {
+          const sent = route.request().postDataJSON();
+          world.sent.push(sent);
+          if (sent.action === 'sound_from') Object.assign(world, { sound: true, sound_from: sent.id, source: sent.id ? Object.assign({ state: 'ready', arriving: false }, ROW) : null });
+          if (sent.action === 'sound_delay') world.delay = sent.ms;
+          if (sent.action === 'sound') Object.assign(world, { sound: sent.on, source: world.sound_from ? Object.assign({ state: sent.on ? 'ready' : 'off', arriving: false }, ROW) : null });
+        }
+        await route.fulfill({ status: 200, json: await answer() });
+      });
+      await page.waitForSelector('.ndi-entry.ndi-soundonly');
+      const rows = await page.$$eval('.ndi-entry', (rs) => rs.map((r) => [r.getAttribute('data-id'), (r.querySelector('.ndionly') || {}).textContent || '', Array.from(r.querySelectorAll('.lacts button')).map((b) => b.textContent)]));
+      assert.deepStrictEqual(rows, [[CAM.id, '', ['Play']], [VOX.id, 'sound only', ['Use for sound', 'Play']]], 'a sender that sent sound and no picture is labelled, offered for sound first, and Play stays: the label never locks');
+      assert(/sent sound and no picture\..*If it does have a picture and was only slow, Play shows it\./.test(await page.textContent('.ndi-soundonly .lnote')), 'and the row says why, and what Play is for');
+      await page.click('.ndi-soundonly .ndiusesound');
+      await page.waitForFunction(() => /Sound was off: choosing a sound source switched it on\./.test(document.getElementById('msg').textContent));
+      assert.deepStrictEqual(world.sent, [{ action: 'sound_from', id: VOX.id }], 'the box is given the id, never a name or an address');
+      assert.strictEqual(await page.textContent('#msg'), 'Sound for every NDI picture now comes from ' + VOX.name + '. Sound was off: choosing a sound source switched it on.');
+      await page.waitForFunction(() => document.getElementById('ndisoundone').getAttribute('aria-checked') === 'true');
+      assert.strictEqual(await page.$eval('#ndisoundpick', (el) => el.options[el.selectedIndex].textContent), VOX.name + ' (' + VOX.from + ') · sound only');
+      assert.strictEqual(await page.textContent('#ndisoundline'), 'Sound comes from ' + VOX.name + ' at ' + VOX.from + '. It is on the network; the box connects to it when an NDI picture plays.');
+      assert.strictEqual(await page.locator('.ndi-soundonly .ndiusesound').count(), 0, 'it is the sound source now: nothing more to choose on its row');
+      assert(/The sound of every NDI picture comes from this sender/.test(await page.textContent('.ndi-soundonly .lnote')));
+      // the delay: only now, with one sound source chosen; the sentence that says why; saved when the slider is let go
+      await page.waitForSelector('#ndisounddelay');
+      assert.strictEqual(await page.textContent('#ndisounddelayhint'), 'Picture and sound come from two senders and may be out of step; set the delay by ear.');
+      assert.deepStrictEqual(await page.$eval('#ndisounddelay', (el) => [el.min, el.max, el.value]), ['-250', '500', '0']);
+      assert.strictEqual(await page.textContent('#ndisounddelayval'), 'not moved');
+      await page.$eval('#ndisounddelay', (el) => { el.value = '120'; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); });
+      assert.strictEqual(await page.textContent('#ndisounddelayval'), '120 ms later');
+      await page.waitForFunction(() => /now comes 120 ms later/.test(document.getElementById('msg').textContent));
+      assert.deepStrictEqual(world.sent[world.sent.length - 1], { action: 'sound_delay', ms: 120 });
+      // a picture plays; the sound sender is connected and sends nothing (nothing plays into it)
+      world.source = Object.assign({ state: 'playing', arriving: false }, ROW);
+      world.playing = { id: CAM.id, name: CAM.name, state: 'playing', message: '', width: 1540, height: 866, fps: 30, counts: { received: 9, shown: 9, dropped: 0 }, container: 'raw',
+        audio: { rate: 0, channels: 0, played: 0, arriving: false, level_db: null, silent: true, problem: '', counts: {} } };
+      const SILENT = VOX.name + ' is connected and silent: it sends no sound now. The picture plays without sound; when its sound starts, the picture is loaded again with it.';
+      await page.waitForFunction((want) => document.getElementById('ndisoundline').textContent === want, SILENT);
+      // its sound starts: the level and the shape, with where it comes from
+      world.source.arriving = true;
+      Object.assign(world.playing, { container: 'matroska', audio: { rate: 48000, channels: 6, played: 2, arriving: true, level_db: -31.5, silent: false, problem: '', counts: { received: 90, written: 90, dropped: 0 } } });
+      await page.waitForFunction((want) => document.getElementById('ndisoundline').textContent === want,
+        'Sound from ' + VOX.name + ' at ' + VOX.from + ': arriving, loudest at -31.5 dB (0 is as loud as it goes) · 6 channels (the first 2 are played) at 48000 samples a second · dropped 0');
+      // and it stops again under a stream that has a sound track: silence is played, and the page says so
+      world.source.arriving = false;
+      Object.assign(world.playing.audio, { arriving: false, level_db: null, silent: true });
+      await page.waitForFunction((want) => document.getElementById('ndisoundline').textContent === want, VOX.name + ' is connected and silent: it sends no sound now, so silence is played until it does.');
+      // it keeps changing the form of its sound: held back, the picture plays on, and the page says why
+      world.source = Object.assign({ state: 'restless', arriving: true }, ROW);
+      await page.waitForFunction((want) => document.getElementById('ndisoundline').textContent === want,
+        VOX.name + ' keeps changing its sound; pictures play without it for now. The box takes its sound again by itself once it has stopped changing.');
+      // away
+      world.source = Object.assign({ state: 'away', arriving: false }, ROW);
+      await page.waitForFunction((want) => document.getElementById('ndisoundline').textContent === want, VOX.name + ' is not on the network now; pictures play without sound.');
+      const before = page.viewportSize();
+      await page.setViewportSize({ width: 320, height: before.height });
+      const soundOut = await page.$$eval('#ndisoundcard *, #ndicard *', (els) => els.filter((e) => { const card = e.closest('.card').getBoundingClientRect(), r = e.getBoundingClientRect();
+        return r.width && (r.right > card.right + 1 || r.left < card.left - 1); }).map((e) => e.textContent.slice(0, 40)));
+      assert.deepStrictEqual(soundOut, [], 'text sticks out of the sound card or the list at 320 px: ' + JSON.stringify(soundOut));
+      await fitsPhone('NDI input with a sound source');
+      await page.setViewportSize(before);
+      // "No sound" keeps the choice and says so
+      world.playing = null;
+      await page.click('#ndisoundnone');
+      await page.waitForFunction((want) => document.getElementById('ndisoundline').textContent === want, 'No sound: NDI pictures are shown without sound. ' + VOX.name + ' is kept as the sound source for when sound is on again.');
+      assert.deepStrictEqual(world.sent[world.sent.length - 1], { action: 'sound', on: false });
+      await page.unroute('**/api/ndi');
+      await page.waitForFunction(() => document.querySelectorAll('.ndi-entry').length === 0);
+    }
     // Which senders this box looks for (D62, 2026-10-11): groups and discovery servers, the Owner's, with the honest
     // words beside them. WRITTEN AND SYNTAX-CHECKED ONLY when it was committed (no Playwright on the dev Mac).
     {

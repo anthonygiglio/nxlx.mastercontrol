@@ -801,9 +801,11 @@ class NdiUnitTest(unittest.TestCase):
                 self.assertNotRegex(n, r"(?i)libndi|Processing\.NDI|\.so(\.[0-9]+)*$", os.path.join(root, n))
 
     def test_what_it_can_write_and_use_is_bounded(self):
-        # Review finding 10. None of these figures has been tried on a device.
+        # Review finding 10. Memory and processor have not been tried on a device. Tasks were measured by hand on
+        # a Pi 4 (2026-10-12, D87): 35 with one connection, 46 to 47 with the sound source's beside it, and about
+        # five threads of the helper's own; 64 left too little room, so the bound is 96 (the owner's go).
         n = self.ndi
-        self.assertEqual((n["MemoryMax"], n["TasksMax"], n["CPUQuota"]), (["512M"], ["64"], ["300%"]))
+        self.assertEqual((n["MemoryMax"], n["TasksMax"], n["CPUQuota"]), (["512M"], ["96"], ["300%"]))
         self.assertNotIn("PrivateTmp", n)                  # its folders are on the card and have no bound
         self.assertEqual(words(n, "TemporaryFileSystem"), ["/tmp:rw,nosuid,nodev,size=8M,mode=1777", "/var/tmp:rw,nosuid,nodev,size=8M,mode=1777"])
         env = dict(w.split("=", 1) for w in words(n, "Environment"))

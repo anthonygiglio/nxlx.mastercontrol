@@ -23,7 +23,11 @@ Two kinds of case, as in the real-install test. A case that passed on master's p
 always fatal. A case that failed there (the faults the Pi showed) is asked with `known` and is under the one switch:
 with PVJ_NDI_FINDINGS_FATAL=yes it fails like any other, and CI's job sets that since the mending; without it, it
 prints a line beginning FINDING and is counted as skipped, with the reason. CI's job also runs the still cases on
-the pvj code from before the mending, where they must fail."""
+the pvj code from before the mending, where they must fail.
+
+Sound from another sender (D87, cases 40 to 47) is asked with `must`: every part those cases ask about is built, so
+none of them is under the switch. (47, a press on the box's sound source under a playing picture, was for the record
+until that press was refused before anything is touched.)"""
 import os
 import shutil
 import subprocess
@@ -51,6 +55,11 @@ STILL_SHORT_GAP, STILL_LONG_GAP = "PVJ-STANDIN (one still then sound after a sho
 THEN_STILL_GAP = "PVJ-STANDIN (moving then still with sound after a short gap)"
 BIG_SOUND, BIG_CHANGES_SOUND = "PVJ-STANDIN (big moving with sound)", "PVJ-STANDIN (big changes size with sound)"
 BIG_A_SOUND, BIG_B_SOUND = "PVJ-STANDIN (big at once A with sound)", "PVJ-STANDIN (big at once B with sound)"
+BIG_CHANGES = "PVJ-STANDIN (big changes size)"
+SOUND_ONLY, SOUND_ONLY_STOPS = "PVJ-STANDIN (sound only)", "PVJ-STANDIN (sound only stops after 12 s)"
+SOUND_ONLY_APPEARS = "PVJ-STANDIN (sound only appears 5 s after the first picture)"
+FLASHES, SOUND_ONLY_CLICKS = "PVJ-STANDIN (flashes)", "PVJ-STANDIN (sound only clicks 200 ms late)"
+STANDIN_AT = {SOUND_ONLY_APPEARS: "10.255.255.1:5985"}      # where the stand-in says a source is that its finder does not report yet
 SHOWN = ("path", "idle-active", "core-idle", "pause", "eof-reached", "time-pos", "audio-pts", "track-list/count", "track-list", "video-params",
          "audio-params", "demuxer-cache-state", "paused-for-cache", "seeking", "current-demuxer", "file-format", "mpv-version")
 
@@ -91,6 +100,53 @@ class ApiRig(mpvword.Rig):
         code, out = self.t.h("GET", "/api/status")
         return code, (out.get("player") if isinstance(out, dict) else None)
 
+    def post_ndi(self, body):
+        return self.t.h("POST", "/api/ndi", body)
+
+    def receivers(self, name, bandwidth):
+        # the stand-in's own count, read from the very file this test's helper loaded (the same process)
+        return ndi_standin.receivers(self.t.standin, name, bandwidth)
+
+    def choose_absent(self, name):
+        # Written into the settings as the panel's own choice writes them (ndi.sound_from and its row among the
+        # allowed sources), then told to the helper as after any change. The route cannot be used: it takes a sound
+        # source from the list of what is on the network now, and this one is not there yet.
+        sid, st = ndi.source_id(name, ndi.host_of(STANDIN_AT[name])), self.t.settings
+        with st.lock:
+            section = dict(st.data.get("ndi") or {})
+            section.setdefault("addresses", [])
+            rows = [r for r in section.get("sources", []) if r.get("id") != sid] + [{"id": sid, "name": name, "from": STANDIN_AT[name]}]
+            section.update(sources=rows, sound=True, sound_from=sid)
+            st.data["ndi"] = ndi.validate_saved(section)
+            st.save()
+        self.t.api.ndi._wanted()
+        self.t.api.ndi.sync()
+        if self.page().get("sound_from") != sid:
+            raise mpvword.Failed("the settings were written with %r as the sound source and the page does not say so: %s"
+                                 % (name, str(self.page().get("sound_from"))))
+        self.say("the sound of every NDI picture comes from %r, which is not on the network now (written into the settings)" % name)
+        return sid
+
+    def next_clip(self):
+        # A clip of this test's own in the media folder, in the form mpv is known to read here: the helper's own
+        # Matroska writer, five seconds of a 16 x 16 picture. Played by the panel as any clip is.
+        name = "next-clip.mkv"
+        with open(os.path.join(self.t.media, name), "wb") as f:
+            f.write(ndi.mkv_header(16, 16, 30.0))
+            for n in range(150):
+                f.write(ndi.mkv_block_head(1, n / 30.0, 512) + bytes(512))
+        code, out = self.t.h("POST", "/api/play", {"file": name})
+        if code != 200:
+            raise mpvword.Failed("POST /api/play for the clip %r answered HTTP %s: %s" % (name, code, str(out)[:300]))
+
+        def has_it():
+            m = mpvword.ask(self.socket, "path", "time-pos")
+            return m["path"] if isinstance(m["path"], str) and m["path"].endswith(name) and mpvword.number(m["time-pos"]) else None
+        path = mpvword.wait(has_it, 10, every=0.2)
+        if not path:
+            raise mpvword.Failed("mpv did not play the clip %r within 10 seconds: %s" % (name, mpvword.ask(self.socket, "path", "time-pos", "idle-active")))
+        return path
+
 
 @unittest.skipUnless(ASKED, "asked for with PVJ_NDI_MPV_TEST=1 only (CI's job ndi-mpv, on the Pi's mpv): it takes minutes and its answer belongs to one mpv")
 class NdiOnARealMpv(ServerBase):
@@ -127,6 +183,7 @@ class NdiOnARealMpv(ServerBase):
         self.addCleanup(shutil.rmtree, self.ndidir, True)
         lib = os.path.join(self.ndidir, "lib-" + ndi.LIB_NAME)
         shutil.copy(self.lib, lib)
+        self.standin = lib                 # the file the helper loads: the stand-in's count of receivers is read from this one
         self.helper_said = []
         self.service = ndi.Service(self.ndidir, lib, loader=ndi.CtypesLibrary, problem=lambda p: None, log=self.helper_said.append)
         self.addCleanup(self.service.close)
@@ -188,6 +245,17 @@ class NdiOnARealMpv(ServerBase):
             say("FINDING (%s): %s. %s" % (self.version, words, e))
             self.skipTest("FINDING, not fatal while PVJ_NDI_FINDINGS_FATAL is not 'yes': %s: %s" % (words, str(e)[:400]))
         say("GOOD, and it was a known finding (%s): %s. If this is the mended code, make findings fatal." % (self.version, words))
+
+    def for_the_record(self, words, case, *args, **kw):
+        """A case nobody asked this job to judge: never fatal, under no switch. What it saw is printed, and when it
+        did not hold it is a FINDING and counted as skipped with the reason."""
+        try:
+            case(self.rig, *args, **kw)
+        except mpvword.Failed as e:
+            self.told()
+            say("FINDING, FOR THE RECORD (%s): %s. %s" % (self.version, words, e))
+            self.skipTest("FINDING, for the record and never fatal: %s: %s" % (words, str(e)[:400]))
+        say("GOOD, for the record (%s): %s." % (self.version, words))
 
     # ---- the mpv this run is for
     def test_00_the_mpv_is_the_one_this_run_is_for(self):
@@ -288,6 +356,35 @@ class NdiOnARealMpv(ServerBase):
         # Two of its links failed on mpv 0.40 with master's pvj (2026-10-12): the still one was the Pi's own picture
         # of the fault (the pipe as mpv's path, track-list/count 0), and the source after it was lost without a word.
         self.known("the chain of hand-overs with nothing cleaned between them", mpvword.case_chain)
+
+    # ---- sound from another sender (D87): the picture of one source, the sound of another. What each case shows and
+    # what none of them can is in pvj/NDI.md ("Sound from another sender: what the tests show").
+    def test_40_the_picture_of_one_source_with_the_sound_of_a_sound_only_source(self):
+        self.must(mpvword.case_sound_from, MOVING, SOUND_ONLY, seconds=30)
+
+    def test_41_the_picture_changes_size_and_the_sound_connection_is_opened_once(self):
+        self.must(mpvword.case_sound_from_resized, BIG_CHANGES, SOUND_ONLY)
+
+    def test_42_the_sound_source_is_away_at_the_press_and_comes_five_seconds_later(self):
+        self.must(mpvword.case_sound_from_late, MOVING, SOUND_ONLY_APPEARS)
+
+    def test_43_the_sound_source_stops_and_the_picture_goes_on(self):
+        self.must(mpvword.case_sound_from_stops, MOVING, SOUND_ONLY_STOPS)
+
+    def test_44_sound_that_is_200_ms_late_by_the_stand_in_is_in_sync_by_mpvs_own_word(self):
+        self.must(mpvword.case_sound_offset_unseen, FLASHES, SOUND_ONLY_CLICKS)
+
+    def test_45_the_sound_delay_is_mpvs_audio_delay_for_the_ndi_load_and_is_taken_back_on_the_next_clip(self):
+        # Built on 2026-10-12 (24c2b19) and until this job tested only against the player's fake: this is its first
+        # meeting with a real mpv.
+        self.must(mpvword.case_sound_delay, FLASHES, SOUND_ONLY_CLICKS)
+
+    def test_46_play_on_the_sound_only_source_is_refused_in_plain_words(self):
+        self.must(mpvword.case_sound_only_play, SOUND_ONLY)
+
+    def test_47_play_on_the_sound_only_source_while_a_picture_plays_with_its_sound(self):
+        # Judged since the press is refused before anything is touched (510d9ae): the picture and its sound play on.
+        self.must(mpvword.case_sound_only_play_under_a_picture, MOVING, SOUND_ONLY)
 
 
 if __name__ == "__main__":

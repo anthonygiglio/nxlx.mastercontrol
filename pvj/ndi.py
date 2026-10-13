@@ -111,6 +111,29 @@ AUDIO_SYNC_SECONDS = 1.0                  # how long the count must have been se
 AUDIO_LOST = "lost"                       # what recv_audio answers while the connection is down
 MIN_TURN = 0.1                            # a call into the library that came back with nothing sooner than this is waited out
 AUDIO_SILENT_DB = -70.0                   # a second whose loudest sample is under this is "silent" on the page
+SOUND_DELAY_MS = (-250, 500)              # ndi.sound_delay_ms: how far the panel may move the sound against the picture (the player's audio-delay)
+SOUND_STATES = ("playing", "ready", "away", "twins", "restless")      # the one sound source, as the helper says it (Service._sound_source)
+# The sound source's sound can END a picture's stream as "changed": when it changes form (rate, channels: the new
+# track needs a new stream), and when it starts under a picture that was opened without it. Once. If it would end a
+# stream again before it has been calm for a while, its sound is not handed to any picture for a pause that doubles
+# with every ending, 3 s, 6, 12 ... to a minute (the pauses of Input.tick), and goes back to 3 s only after ten
+# minutes without one (SoundPace); the picture plays on WITHOUT it meanwhile, and when the pause is over it may end a
+# stream once more. Another sender must never be able to take the picture off
+# the screen in a loop (#132, M4). The count is kept by the Service for the source (SoundPace), not by a connection:
+# it outlives every close and re-open of the sound's connection (twins that come and go, an idle close, a fault).
+FEED_QUIET_SECONDS, FEED_QUIET_MAX = 3.0, 60.0
+FEED_RESET_SECONDS = 600.0                # no ending of a stream by the sound source for this long: its pauses begin at 3 s again
+FEED_IDLE_SECONDS = 30.0                  # a sound connection that no picture has used for this long is given back
+FEED_RETRY_SECONDS = 2.0                  # between looks for a sound source that was not on the network
+SOUND_ONLY_SECONDS = 600.0                # how long a sender stays labelled "sound only" after a press that got sound and no picture
+OPEN_TRIES = 3                            # a source that changes size while it is being opened is opened again: this many tries in all
+# The whole of an open, every try in it, is over this long after the time a first picture may take: 13 seconds on a
+# box, one less than the panel waits for the answer (Input.open: OPEN_WAIT_EXTRA). A later try is started only if what
+# it needs at the least still fits (TRY_LEAST for its first picture, the wait for sound, the look at the pipe), and
+# waits for its first picture no longer than what is left after those.
+OPEN_BUDGET_EXTRA = 7.0
+OPEN_WAIT_EXTRA = 8.0
+TRY_LEAST = 0.5
 CONTAINERS = ("raw", "matroska")          # what the pipe carries: bare frames (no sound), or frames and sound with times
 PLAYER_STUCK = "the player did not open the NDI picture, also not when it was given it again"
 PIPE_HELD = "the player still holds the NDI pipe from the picture before"
@@ -351,9 +374,12 @@ def saved_sources(section):
 def validate_saved(cfg):
     """The stored part of the settings (a user-editable file, and a settings import): {"addresses": [...]}; since
     sound, "sound": true or false; since pads hold sources, "sources": the allowed ones; since groups, "groups",
-    "mdns" and "discovery". Each of the later keys is left out of what is returned when it was left out."""
-    if not isinstance(cfg, dict) or set(cfg) - {"addresses", "sound", "sources", "groups", "mdns", "discovery", "own_discovery"}:
-        raise NdiError("ndi must be an object with addresses, sound, sources, groups, mdns and discovery")
+    "mdns" and "discovery"; since one sound source for the box (D87), "sound_from" (the id of one of the allowed
+    sources in the same section) and "sound_delay_ms". Each of the later keys is left out of what is returned
+    when it was left out."""
+    if not isinstance(cfg, dict) or set(cfg) - {"addresses", "sound", "sources", "groups", "mdns", "discovery", "own_discovery",
+                                                "sound_from", "sound_delay_ms"}:
+        raise NdiError("ndi must be an object with addresses, sound, sources, groups, mdns, discovery, sound_from and sound_delay_ms")
     if "sound" in cfg and not isinstance(cfg["sound"], bool):
         raise NdiError("ndi.sound must be true or false")
     items = cfg.get("addresses", [])
@@ -392,6 +418,19 @@ def validate_saved(cfg):
         if not isinstance(cfg["own_discovery"], bool):
             raise NdiError("ndi.own_discovery must be true or false")
         out["own_discovery"] = cfg["own_discovery"]
+    if "sound_from" in cfg:
+        # The one sound source: an id that the allowed list of this same section holds, as a pad's source is.
+        # Never a name or an address, and never an id with nothing behind it.
+        sid = cfg["sound_from"]
+        if not isinstance(sid, str) or (sid and sid not in [r["id"] for r in out.get("sources", [])]):
+            raise NdiError("ndi.sound_from must be the id of one of the allowed NDI sources")
+        if sid:
+            out["sound_from"] = sid
+    if "sound_delay_ms" in cfg:
+        ms = cfg["sound_delay_ms"]
+        if isinstance(ms, bool) or not isinstance(ms, int) or not SOUND_DELAY_MS[0] <= ms <= SOUND_DELAY_MS[1]:
+            raise NdiError("ndi.sound_delay_ms must be a whole number from %d to %d" % SOUND_DELAY_MS)
+        out["sound_delay_ms"] = ms
     if "mdns" in cfg:
         # Kept for a later release only: NDI documents no setting that stops a finder using mDNS (NDI.md), so
         # nothing reads this yet. A file that carries it still loads.
@@ -410,6 +449,20 @@ def saved_sound(section):
     or false is the default."""
     value = section.get("sound") if isinstance(section, dict) else None
     return value if isinstance(value, bool) else SOUND_DEFAULT
+
+
+def saved_sound_from(section):
+    """The id of the box's one sound source from a stored `ndi` section a person may have edited, or "": only an
+    id that the section's own allowed list holds counts."""
+    sid = section.get("sound_from") if isinstance(section, dict) else None
+    return sid if isinstance(sid, str) and _ID.fullmatch(sid) and sid in [r["id"] for r in saved_sources(section)] else ""
+
+
+def saved_sound_delay(section):
+    """How far the sound is moved against the picture, in milliseconds, from a stored section: anything but a whole
+    number within SOUND_DELAY_MS is 0."""
+    ms = section.get("sound_delay_ms") if isinstance(section, dict) else None
+    return ms if isinstance(ms, int) and not isinstance(ms, bool) and SOUND_DELAY_MS[0] <= ms <= SOUND_DELAY_MS[1] else 0
 
 
 def saved_addresses(section):
@@ -443,6 +496,7 @@ class Wanted:
         self.groups = []                           # the NDI groups to look in, read with the rest (none: NDI's default)
         self.discovery = []                        # the NDI Discovery Servers to ask, read with the rest
         self.own_discovery = False                 # also the server this box runs, at its address of the moment (D85)
+        self.sound_from, self.sound_delay_ms = "", 0       # the box's one sound source and the delay of its sound (D87)
 
     def __call__(self):
         try:
@@ -454,10 +508,11 @@ class Wanted:
             self.groups = saved_groups(section)
             self.discovery = saved_discovery(section)
             self.own_discovery = isinstance(section, dict) and section.get("own_discovery") is True
+            self.sound_from, self.sound_delay_ms = saved_sound_from(section), saved_sound_delay(section)
             on = bool(self._enabled())
         except Exception as e:
             on, addresses, problem = False, [], "the NDI settings could not be read (%s)" % type(e).__name__
-            self.sound = SOUND_DEFAULT
+            self.sound, self.sound_from, self.sound_delay_ms = SOUND_DEFAULT, "", 0
         if problem != self.problem:
             self.problem = problem
             if problem:
@@ -687,6 +742,10 @@ class _Perf(ctypes.Structure):
 
 
 COLOR_FASTEST, BANDWIDTH_HIGHEST = 100, 100
+# A connection that is asked for a sender's sound and nothing else (NDIlib_recv_bandwidth_audio_only): what the one
+# sound source of the box is opened with (SoundFeed). The number was read from the owner's copy of the SDK (6.3.2,
+# 2026-10-12; nothing of it is in this repository) and tried against a real sender on the test Pi (NDI.md).
+BANDWIDTH_AUDIO_ONLY = 10
 ALLOW_FIELDS = True                       # what "fastest" implies whatever is asked; said outright, and pinned by a test
 FRAME_VIDEO, FRAME_AUDIO, FRAME_ERROR = 1, 2, 4
 TIMESTAMP_UNDEFINED = 2 ** 63 - 1           # what the library writes where it has no time for a frame
@@ -838,20 +897,23 @@ class CtypesLibrary:
     def find_close(self, handle):
         self.lib.NDIlib_find_destroy(handle)
 
-    def recv_open(self, raw):
-        """`raw` is the (name, address) pair the library itself gave for a source that passed clean_sources."""
-        spec, keep = self.recv_spec(raw)
+    def recv_open(self, raw, audio_only=False):
+        """`raw` is the (name, address) pair the library itself gave for a source that passed clean_sources. With
+        `audio_only` the library is asked for the source's sound and no picture (the box's one sound source)."""
+        spec, keep = self.recv_spec(raw, audio_only)
         handle = self.lib.NDIlib_recv_create_v3(ctypes.byref(spec))
         if not handle:
             raise NdiError("the NDI runtime could not open the source")
         return (handle, keep)
 
     @staticmethod
-    def recv_spec(raw):
+    def recv_spec(raw, audio_only=False):
         """(what the library is asked for when a source is opened, the strings it points at). No library needed,
-        so a test can read it: the fastest format, full bandwidth, fields allowed."""
+        so a test can read it: the fastest format, full bandwidth, fields allowed; or, with `audio_only`, the same
+        with the bandwidth that asks for sound alone."""
         keep = [ctypes.create_string_buffer(raw[0]), ctypes.create_string_buffer(raw[1]), ctypes.create_string_buffer(b"nxlx.mastercontrol")]
-        spec = _RecvCreate(_Source(ctypes.addressof(keep[0]), ctypes.addressof(keep[1])), COLOR_FASTEST, BANDWIDTH_HIGHEST, ALLOW_FIELDS,
+        spec = _RecvCreate(_Source(ctypes.addressof(keep[0]), ctypes.addressof(keep[1])), COLOR_FASTEST,
+                           BANDWIDTH_AUDIO_ONLY if audio_only else BANDWIDTH_HIGHEST, ALLOW_FIELDS,
                            ctypes.cast(keep[2], ctypes.c_char_p))
         return spec, keep
 
@@ -936,10 +998,16 @@ class Receiver:
     falls behind (a gap) the count starts again at the clock, and when it runs ahead a block is dropped."""
 
     def __init__(self, lib, source, fifo, log=print, clock=time.monotonic, pipe_wait=PIPE_OPEN_SECONDS, join_wait=3.0,
-                 sound=False, audio_wait=AUDIO_WAIT):
+                 sound=False, audio_wait=AUDIO_WAIT, feed=None, outside=False):
         self.lib, self.source, self.fifo, self.log, self._clock, self._pipe_wait = lib, source, fifo, log, clock, pipe_wait
         self._join_wait = join_wait
         self.sound = bool(sound) and bool(getattr(lib, "has_audio", False))
+        # The sound is another sender's (the box's one sound source, a SoundFeed): this connection is then never
+        # asked for sound and no thread of this receiver takes any; the feed's thread calls take_audio. `outside`
+        # without a feed: the sound source is not on the network now. The picture plays as bare frames, and when
+        # the feed is there (use_feed) its first block ends this receiver as "changed", as late sound always did.
+        self.feed, self.outside = feed, bool(outside or feed is not None)
+        self._taken_on_trust = False               # the sound's form is what the feed had last, and no block of this stream has shown it yet
         self._audio_wait = audio_wait
         # "raw" or "matroska". Without sound it is bare frames from the start. With sound it is decided once, after
         # the first picture (decide), and the writer waits for that.
@@ -998,11 +1066,61 @@ class Receiver:
         self._handle = self.lib.recv_open(self.source["raw"])
         self._threads = [threading.Thread(target=self._capture, name="ndi-capture", daemon=True),
                          threading.Thread(target=self._writer, name="ndi-writer", daemon=True)]
-        if self.sound:
+        if self.sound and not self.outside:
             self._threads.append(threading.Thread(target=self._capture_audio, name="ndi-audio", daemon=True))
         self._users = len(self._threads) - 1       # every thread but the writer, which never touches the library
         for t in self._threads:
             t.start()
+        if self.feed is not None:
+            self.use_feed(self.feed)
+
+    def use_feed(self, feed):
+        """From now on `feed` (a SoundFeed) hands this receiver the sound. Only for a receiver made with `outside`.
+
+        A feed that has had sound before says what that sound was (its rate and channels, from its last good
+        block), and a receiver whose pipe is not decided yet takes that as its own: the stream then has a sound
+        track from the start, with silence written as time passes, also when the sound source is quiet at this
+        moment (a player that sends no sound between two clips, under a picture sender that changes size at
+        every clip). Without this, each such picture would begin as bare frames and be opened a second time
+        when the sound came. If the sound then comes in another form, it is "changed", as ever."""
+        if self.sound and self.outside:
+            self.feed = feed
+            known = feed.known()
+            with self._cond:
+                if known and self.audio is None and self.container is None:
+                    self.audio, self._taken_on_trust = dict(known), True
+                    self._audio_seen.set()
+            feed.attach(self)
+
+    def heard(self, wait_ms=400):
+        """Whether this source sends sound: asked when it sent no picture in time, so that the page can say "it has
+        sound and no picture" in place of "it sent no picture". True when a block of sound was seen. Where no
+        thread of this receiver takes sound (sound is off, or it comes from the box's sound source), the
+        connection is asked once, here, for one block: only its figures are looked at (check_audio), not a byte
+        of it is read, and it is given back. The library allows this beside the picture's thread."""
+        if not self.outside and self.audio is not None:
+            return True                            # this receiver's own sound thread saw a block
+        # With the box's sound source, `audio` says what THAT sender sends (or sent last), not this one: only this
+        # connection's own answer counts, or the picture sender of a rig with a sound source would be called
+        # "sound only" whenever its first picture was late.
+        if not getattr(self.lib, "has_audio", False) or (self.sound and not self.outside):
+            return False                           # no calls for sound; or the sound's own thread would have seen it
+        with self._handle_lock:
+            if self._handle is None:
+                return False
+            try:
+                a = self.lib.recv_audio(self._handle, wait_ms)
+                if a is None or a is AUDIO_LOST:
+                    return False
+                try:
+                    check_audio(a)
+                    return True
+                except NdiError:
+                    return False
+                finally:
+                    self.lib.recv_free_audio(self._handle, a)
+            except Exception:
+                return False
 
     def hold(self):
         """Before start: the writer does not open the pipe until go(). The pipe is the same pipe for every source,
@@ -1015,7 +1133,8 @@ class Receiver:
 
     def decide(self):
         """Called once after the first picture: wait a moment for sound, then fix what the pipe carries. Returns it."""
-        if self.sound and self.format is not None and not self._stop.is_set():
+        if (self.sound and self.format is not None and not self._stop.is_set()
+                and not (self.outside and (self.feed is None or self.feed.status()["restless"]))):
             self._audio_seen.wait(self._audio_wait)
         with self._cond:
             if self.container is None:
@@ -1104,30 +1223,51 @@ class Receiver:
                 if a is None:
                     self._wait_out(began)
                     continue
-                # Whether the block is wanted is decided first, and only a wanted block is converted; both before
-                # it is given back, and the conversion with no lock held.
-                where = data = None
                 try:
-                    try:
-                        checked = check_audio(a)
-                        where = self._meet(checked)
-                        if where:
-                            data, peak, silenced = audio_block(a, checked)
-                    except NdiError as e:
-                        with self._cond:
-                            self.audio_counts["refused"] += 1
-                            self._audio_problem = str(e)
-                        continue
+                    on = self.take_audio(a)
                 finally:
                     self.lib.recv_free_audio(self._handle, a)
-                if where is None:
+                if not on:
                     return                         # the stream ended here: the sound started late, or changed
-                if where:
-                    self._place(checked, where, data, peak, silenced)
         except Exception as e:
             self._end("stopped", "the NDI input stopped: %s" % str(e)[-160:])
         finally:
             self._leave()
+
+    def would_end(self, form):
+        """Whether a block of sound in this form would end this receiver's stream as "changed": the pipe's form is
+        fixed, and it carries no sound or sound in another form. Asked by the box's sound source before it hands
+        the block over (SoundPace), with nothing of the block read."""
+        with self._cond:
+            if self._stop.is_set() or self.container is None:
+                return False
+            return self.audio is None or (form["rate"], form["channels"]) != (self.audio["rate"], self.audio["channels"])
+
+    def take_audio(self, a):
+        """One block of sound as the library handed it up, from this receiver's own connection or from the box's
+        sound source (SoundFeed, on its thread). The caller gives the block back to the library afterwards, never
+        before: it is read here. Returns False when the block ended the stream (sound that starts late or changes
+        is a new stream) or the receiver is over, and nothing more is wanted.
+
+        Whether the block is wanted is decided first, and only a wanted block is converted, with no lock held.
+        A block that cannot be read is counted and left out; it never ends the picture."""
+        if self._stop.is_set():
+            return False
+        try:
+            checked = check_audio(a)
+            where = self._meet(checked)
+            if where:
+                data, peak, silenced = audio_block(a, checked)
+        except NdiError as e:
+            with self._cond:
+                self.audio_counts["refused"] += 1
+                self._audio_problem = str(e)
+            return True
+        if where is None:
+            return False
+        if where:
+            self._place(checked, where, data, peak, silenced)
+        return True
 
     def _meet(self, checked):
         """A checked block of sound, before anything of it is read. None: it ended the stream (sound that starts
@@ -1137,13 +1277,18 @@ class Receiver:
         with self._cond:
             if self.audio is None:
                 if self.container is not None:     # the pipe already carries bare frames: start again, with sound
-                    self._end("changed", "the source started to send sound")
+                    self._end("changed", "the sound source started to send sound" if self.outside else "the source started to send sound")
                     return None
                 self.audio = {"rate": rate, "channels": channels, "played": planes}
                 self._audio_seen.set()
             elif (rate, channels) != (self.audio["rate"], self.audio["channels"]):
-                self._end("changed", "the source's sound changed to %d channels at %d samples a second" % (channels, rate))
-                return None
+                if self._taken_on_trust and self.container is None:
+                    # The form was only what the sound source had last, and nothing is decided or written yet:
+                    # this block says what it is now. (Once the pipe's form is fixed, a change is a new stream.)
+                    self.audio = {"rate": rate, "channels": channels, "played": planes}
+                else:
+                    self._end("changed", "the source's sound changed to %d channels at %d samples a second" % (channels, rate))
+                    return None
             self._audio_problem = ""
             if self.state != "playing" or self._t0 is None or self.container != "matroska":
                 return False                       # sound from before the screen took the pipe is not kept
@@ -1503,6 +1648,8 @@ class Receiver:
         open (and said in the log) rather than freed under the library's feet. The helper is restarted by systemd
         if that ever matters."""
         self._end("stopped", "")
+        if self.feed is not None:
+            self.feed.detach(self)                 # the box's sound source goes on, for the picture that comes next
         for t in self._threads:
             t.join(timeout=self._join_wait)
         # A thread that did not come out stays on the list, and the connection is given back by the count of threads
@@ -1518,15 +1665,212 @@ class Receiver:
             self.log("pvj-ndi: the NDI runtime did not come back from %s; its connection is left open, not freed under it" % self.source["name"])
 
 
+# ---- the box's one sound source ----------------------------------------------------------------------------------
+class SoundPace:
+    """How often the box's sound source may end a picture's stream (see FEED_QUIET_SECONDS). One for a source, kept
+    by the Service across every connection to it. Asked by the feed's thread before it hands a block that would
+    end the stream of the picture on the screen; `clock` values are the feed's.
+
+    One rule for every ending: after one, the next is let through no sooner than a pause later, and the pause
+    doubles with every ending, 3 s, 6, 12, 24, 48, then 60 for good. So a sender that takes every ending it can
+    gets them at 0, 3, 9, 21, 45 and 93 seconds and then one a minute; resting between them buys it nothing,
+    since the pause goes back to 3 seconds only after FEED_RESET_SECONDS without any ending at all. (The first
+    form of this let a sender have three endings, rest half a minute and begin again: three in 39 seconds, for
+    ever.) A sender whose sound honestly changes now and then waits the pause, at most a minute, and has its sound
+    back."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.quiet_until, self.last_end, self.gap, self.wait = 0.0, None, 0.0, FEED_QUIET_SECONDS
+
+    def quiet(self, now):
+        with self.lock:
+            return now < self.quiet_until
+
+    def may_end(self, now):
+        """This block would end the picture's stream: may it? (True, 0): yes, and it is counted. (False, seconds):
+        no, the source's sound is held back from now for that long (said once, when the hold begins). (False, 0):
+        no, it is being held back."""
+        with self.lock:
+            if now < self.quiet_until:
+                return False, 0
+            if self.last_end is not None and now - self.last_end < FEED_RESET_SECONDS and now < self.last_end + self.gap:
+                self.quiet_until = self.last_end + self.gap
+                return False, self.quiet_until - now
+            if self.last_end is None or now - self.last_end >= FEED_RESET_SECONDS:
+                self.wait = FEED_QUIET_SECONDS             # no ending for a long time: the pauses begin at the shortest again
+            self.last_end, self.gap = now, self.wait
+            self.wait = min(self.wait * 2, FEED_QUIET_MAX)
+            return True, 0
+
+
+class SoundFeed:
+    """One connection to one sender, asked for its sound alone, and one thread that takes that sound from the
+    library and hands each block to whichever Receiver is attached now (Receiver.take_audio). It belongs to the
+    Service and not to a Receiver: a picture that changes size is closed and opened again, and the sound's
+    connection stays as it is meanwhile.
+
+    The sender is one more peer that may be hostile: every block goes through check_audio in take_audio before a
+    byte of it is read, exactly as a picture's own sound does, and with no receiver attached a block is given
+    back unread. What the player is given is the same stream the same writer makes.
+
+    A feed that no picture has used for FEED_IDLE_SECONDS ends by itself and gives its connection back: nothing
+    stays connected to the network under a screen that shows no NDI picture."""
+
+    def __init__(self, lib, source, log=print, clock=time.monotonic, join_wait=3.0, idle=FEED_IDLE_SECONDS, pace=None):
+        self.lib, self.source, self.log, self._clock, self._join_wait, self._idle = lib, source, log, clock, join_wait, idle
+        self.pace = pace if pace is not None else SoundPace()      # the Service's, for this source; one of its own without
+        self._lock = threading.Lock()              # who is attached, and the connection's handle
+        self._receiver = None
+        self._handle, self._thread = None, None
+        self._stop = threading.Event()
+        self.lost = False                          # the library says the connection is down
+        self._last = None                          # the clock at the last block of sound
+        self.format = None                         # {"rate", "channels", "played"} of the last block that passed check_audio
+        self._said_stuck = False
+
+    def start(self):
+        self._handle = self.lib.recv_open(self.source["raw"], audio_only=True)
+        thread = threading.Thread(target=self._run, name="ndi-sound-feed", daemon=True)
+        try:
+            thread.start()
+        except RuntimeError as e:
+            # The system gave no thread (the unit's bound on tasks): nothing is inside the library with the
+            # connection, so it is given back here, and close() has no thread to wait for.
+            self._stop.set()
+            self._release()
+            raise NdiError("the sound source's thread could not be started (%s)" % str(e)[-120:])
+        self._thread = thread
+
+    def known(self):
+        """The form of this source's sound as a new picture may take it on trust, or None: not while its sound is
+        held back for changing form again and again (what it is then is not known)."""
+        return None if self.pace.quiet(self._clock()) else self.format
+
+    def attach(self, receiver):
+        with self._lock:
+            self._receiver = receiver
+
+    def detach(self, receiver):
+        with self._lock:
+            if self._receiver is receiver:
+                self._receiver = None
+
+    def alive(self):
+        t = self._thread
+        return t is not None and t.is_alive() and not self._stop.is_set()
+
+    def status(self):
+        with self._lock:
+            last = self._last
+        now = self._clock()
+        return {"id": self.source["id"], "lost": self.lost, "arriving": last is not None and now - last <= 1.0, "restless": self.pace.quiet(now)}
+
+    def _release(self):
+        with self._lock:
+            handle, self._handle = self._handle, None
+        if handle is not None:
+            try:
+                self.lib.recv_close(handle)
+            except Exception as e:
+                self.log("pvj-ndi: closing the sound source: %s" % e)
+
+    def _run(self):
+        name, alone = self.source["name"], None
+        try:
+            while not self._stop.is_set():
+                began = time.monotonic()
+                with self._lock:
+                    r = self._receiver
+                if r is None or r._stop.is_set():
+                    now = self._clock()
+                    alone = now if alone is None else alone
+                    if now - alone > self._idle:
+                        self.log("pvj-ndi: no picture has used the sound of %s for %d seconds; its connection is given back" % (name, self._idle))
+                        return
+                else:
+                    alone = None
+                a = self.lib.recv_audio(self._handle, 250)
+                if a is AUDIO_LOST:
+                    if not self.lost:
+                        self.lost = True
+                        self.log("pvj-ndi: the connection to the sound source %s dropped; waiting for it" % name)
+                    self._stop.wait(0.25)          # the library says "down" again at once for as long as it is
+                    continue
+                if a is None:
+                    left = MIN_TURN - (time.monotonic() - began)
+                    if left > 0:
+                        self._stop.wait(left)
+                    continue
+                if self.lost:
+                    self.lost = False
+                    self.log("pvj-ndi: the sound source %s is back" % name)
+                try:
+                    # The receiver is taken under the lock and called without it: a picture that is being closed
+                    # never waits for a block of sound, and a block handed to a receiver that has just ended is
+                    # left out by the receiver itself.
+                    now = self._clock()
+                    with self._lock:
+                        r, self._last = self._receiver, now
+                    try:                           # numbers only; nothing of the block is read for it
+                        said = check_audio(a)
+                        form = {"rate": said[0], "channels": said[1], "played": said[2]}
+                        self.format = form
+                        # Would this block END the stream of the picture on the screen (another form than the stream
+                        # has, or sound under a picture opened without it)? Then the source's pace is asked first.
+                        if r is not None and r.would_end(form):
+                            go, held_for = self.pace.may_end(now)
+                            if not go:
+                                r = None
+                                if held_for:
+                                    self.log("pvj-ndi: the sound source %s keeps changing its sound; pictures play without it for %d seconds"
+                                             % (self.source["name"], int(math.ceil(held_for))))
+                    except NdiError:
+                        pass
+                    if self.pace.quiet(now):
+                        r = None                   # held back: the block is given back unread, and the picture plays on without it
+                    if r is not None:
+                        try:
+                            on = r.take_audio(a)
+                        except Exception as e:     # a fault there ends that picture's stream, never this connection
+                            on = False
+                            r._end("stopped", "the NDI input stopped: %s" % str(e)[-160:])
+                        if not on:
+                            self.detach(r)         # it ended (as "changed", or closed): the next receiver attaches itself
+                finally:
+                    self.lib.recv_free_audio(self._handle, a)
+        except Exception as e:
+            self.log("pvj-ndi: the sound source %s stopped: %s" % (name, str(e)[-160:]))
+        finally:
+            self._stop.set()
+            self._release()
+
+    def close(self):
+        """Stop the thread and give the connection back. As with a Receiver, the connection is never given back
+        while the thread may still be inside the library with it: the thread gives it back itself on its way out,
+        and if it will not come out the connection is left open and that is said in the log."""
+        self._stop.set()
+        t = self._thread
+        if t is not None and t is not threading.current_thread():
+            t.join(timeout=self._join_wait)
+            if t.is_alive():
+                if not self._said_stuck:
+                    self._said_stuck = True
+                    self.log("pvj-ndi: the NDI runtime did not come back from the sound source %s; its connection is left open, not freed under it"
+                             % self.source["name"])
+                return
+        self._release()
+
+
 # ---- the daemon ------------------------------------------------------------------------------------------------------
 class Service:
     """What pvj-ndi answers, one JSON line each: status, configure, open, close. It does nothing on the network until
     the panel has said the module is on (configure), and it knows no settings but what the panel sends."""
 
     def __init__(self, rundir, lib_path, loader=load_library, problem=runtime_problem, log=print, clock=time.monotonic,
-                 first_frame=FIRST_FRAME_SECONDS, receiver=Receiver, fifo=None, pipe_clear=PIPE_CLEAR_SECONDS):
+                 first_frame=FIRST_FRAME_SECONDS, receiver=Receiver, fifo=None, pipe_clear=PIPE_CLEAR_SECONDS, feed=SoundFeed):
         self.rundir, self.lib_path, self._loader, self._problem, self.log, self._clock = rundir, lib_path, loader, problem, log, clock
-        self._first_frame, self._receiver, self._pipe_clear = first_frame, receiver, pipe_clear
+        self._first_frame, self._receiver, self._pipe_clear, self._feed_class = first_frame, receiver, pipe_clear, feed
         self.on_unload = None                      # called when the module is switched off with the library loaded (main: exit)
         # On a box the pipe is root's, made once in root's folder (paths.NDI_PIPE_DIR, pvj/ndisetup.py): this helper
         # opens and writes it and can neither unlink nor replace it. Where nobody made one (tests, a desk) it makes
@@ -1545,6 +1889,19 @@ class Service:
         self.config_dir = os.environ.get("NDI_CONFIG_DIR") or ""
         self.discovery = None
         self.sound = True                          # play a source's sound with its picture (the panel says; D62)
+        # The box's one sound source (D87): the id of an allowed source whose sound is played under every NDI
+        # picture, or "" for each picture's own sound. Its connection (a SoundFeed) is this Service's, not a
+        # Receiver's, so it stays while a picture is closed and opened again. Set and closed under self.lock.
+        self.sound_from, self.sound_delay_ms = "", 0       # the delay is the panel's (the player's audio-delay): kept and said back, used by nothing here
+        self.feed, self._feed_at = None, 0.0
+        self.sound_row = None                      # {"id", "name", "from"} of the sound source as the owner allowed it (M1)
+        self._pace = ("", None)                    # (the sound source's id, its SoundPace): kept across connections to it
+        # Sources that were asked for a picture, sent none in time and had sound: {id: the clock then}. The page
+        # labels them "sound only" and offers them as the sound source. The label is ADVICE, never a lock (the
+        # review of #132, H1): nothing refuses a press for it, since a picture sender that was only slow once
+        # (starting up, a weak link, a sleeping display) looks the same. It goes when the source sends a picture,
+        # when the sender leaves the list, and by itself after SOUND_ONLY_SECONDS.
+        self.sound_only = {}
         self._finder, self._sources, self._sources_at, self._cut = None, [], None, False
         self.receiver = None
 
@@ -1571,20 +1928,38 @@ class Service:
         on, addresses, sound = message.get("on"), message.get("addresses"), message.get("sound", False)
         if not isinstance(on, bool) or not isinstance(sound, bool):
             return {"ok": False, "error": "on and sound must be true or false"}
+        sound_from, delay = message.get("sound_from", ""), message.get("sound_delay_ms", 0)
+        if not isinstance(sound_from, str) or (sound_from and not _ID.fullmatch(sound_from)):
+            return {"ok": False, "error": "the sound source is an id, or nothing"}
+        if isinstance(delay, bool) or not isinstance(delay, int) or not SOUND_DELAY_MS[0] <= delay <= SOUND_DELAY_MS[1]:
+            return {"ok": False, "error": "the sound delay is a whole number of milliseconds from %d to %d" % SOUND_DELAY_MS}
         try:
             checked = validate_saved({"addresses": addresses, "groups": message.get("groups", []), "discovery": message.get("discovery", [])})
             addresses, groups, discovery = checked["addresses"], checked["groups"], checked["discovery"]
-            # The ids of the sources pads hold, so that they are kept in the list while they are there. Ids only:
+            # The ids of the sources pads hold, so that they are kept in the list while they are there. Ids only
+            # (the one exception is the sound source's own row, below):
             # the helper learns no name and no address it did not find by itself.
             allowed = message.get("allowed", [])
             if (not isinstance(allowed, list) or len(allowed) > MAX_ALLOWED or len(set(map(str, allowed))) != len(allowed)
                     or not all(isinstance(a, str) and _ID.fullmatch(a) for a in allowed)):
                 raise NdiError("bad list of allowed NDI sources")
+            if sound_from and sound_from not in allowed:       # as a pad's source: an id the owner's list holds, never any other
+                raise NdiError("the sound source is not one of the allowed NDI sources")
+            # And, for this one source, the name and the machine the owner allowed (the review of #132, M1). An id
+            # is 48 bits of a hash: the sender that answers to it is played only if it has that name at that
+            # machine, as a pad's source is (Api._ndi_pad_check). This is the one name the helper is ever told;
+            # it still opens nothing but a row its own finder gave it.
+            sound_row = None
+            if sound_from:
+                sound_row = clean_allowed(message.get("sound_row"))
+                if sound_row["id"] != sound_from:
+                    raise NdiError("the sound source's name and address are not that id's")
         except NdiError as e:
             return {"ok": False, "error": str(e)}
         with self.lock:
             if not on:
                 self._close_receiver()
+                self._close_feed()
                 self._close_finder()
                 # "Off" means no NDI code running. A library cannot be unloaded from a process, so the process ends
                 # (after this answer has gone) and systemd starts a new one, which loads nothing until told "on".
@@ -1600,6 +1975,7 @@ class Service:
                 # Where the file does not say what is asked (a box whose NDI set-up was not refreshed), nothing is
                 # restarted and the status says which servers are really in force.
                 self._close_receiver()
+                self._close_feed()
                 self._close_finder()
                 self.log("pvj-ndi: the discovery servers changed; starting again to read them")
                 self.on_unload()
@@ -1613,16 +1989,104 @@ class Service:
                         self._finder = self.lib.find_open(",".join(addresses), ",".join(groups))
                 except NdiError as e:
                     self.lib_error = str(e)
-            if on and sound != self.sound:         # a source that is open goes on in its old form until it is opened again
+            if on and (sound != self.sound or sound_from != self.sound_from):
+                # a source that is open goes on in its old form until it is opened again
                 with self._recv_lock:
                     r = self.receiver
                 if r is not None and r.state not in ENDED:
-                    r._end("changed", "sound was switched %s" % ("on" if sound else "off"))
+                    r._end("changed", "sound was switched %s" % ("on" if sound else "off") if sound != self.sound
+                           else "where the sound comes from was changed")
             if allowed != self.allowed:
                 with self._find_lock:
                     self.allowed, self._sources_at = list(allowed), None      # the list is read again with them in front
             self.configured, self.on, self.addresses, self.sound, self.groups = True, on, addresses, sound, groups
+            self.sound_from, self.sound_delay_ms, self.sound_row = sound_from, delay, sound_row
+            if self.feed is not None and not (on and sound and self.feed.source["id"] == sound_from):
+                self._close_feed()                 # no longer the sound that is wanted
         return self.status()
+
+    def _sound_only_now(self, sources):
+        """The ids that are labelled "sound only" now: the label of a sender that left the list, and one older than
+        SOUND_ONLY_SECONDS, is dropped here."""
+        now, here = self._clock(), set(s["id"] for s in sources)
+        with self._find_lock:
+            for sid in [k for k, since in self.sound_only.items() if k not in here or now - since > SOUND_ONLY_SECONDS]:
+                del self.sound_only[sid]
+            return set(self.sound_only)
+
+    def _outside(self, sid):
+        """Whether the picture `sid` is to be played with another sender's sound: sound is on, one sound source is
+        chosen for the box, and it is not this picture itself (which then plays its own sound on its own
+        connection: never two connections to one sender)."""
+        return bool(self.sound and self.sound_from and self.sound_from != sid and getattr(self.lib, "has_audio", False))
+
+    def _close_feed(self):
+        feed, self.feed = self.feed, None
+        if feed is not None:
+            feed.close()
+
+    def _want_feed(self):
+        """The connection to the box's sound source, opened if it is not open and the source is on the network now;
+        None when it is away, or when two senders answer to its id (the box does not pick one). Called with
+        self.lock held."""
+        feed = self.feed
+        row, state = self._sound_row_now(self.sources())
+        if feed is not None and (not feed.alive() or feed.source["id"] != self.sound_from or state in ("twins", "other")):
+            self._close_feed()
+            feed = None
+        if feed is not None:
+            return feed
+        if row is None:
+            return None
+        if self._pace[0] != self.sound_from:       # the pace is the SOURCE's: it outlives every connection to it
+            self._pace = (self.sound_from, SoundPace())
+        feed = self._feed_class(self.lib, row, log=self.log, clock=self._clock, pace=self._pace[1])
+        try:
+            feed.start()
+        except Exception as e:
+            self.log("pvj-ndi: the sound source %s could not be opened: %s" % (row["name"], str(e)[-160:]))
+            feed.close()
+            return None
+        self.log("pvj-ndi: sound comes from %s" % row["name"])
+        self.feed = feed
+        return feed
+
+    def _sound_row_now(self, sources):
+        """(the live row that IS the box's sound source, or None; "ok", "away", "twins" or "other"). It is that
+        source only when one sender answers to the id and it has the name, at the machine, that the owner allowed:
+        "twins" when two do (the box does not pick one), "other" when the id is answered by another name or from
+        another machine (never played: as a pad refuses it), "away" when nothing answers."""
+        rows = [s for s in sources if s["id"] == self.sound_from]
+        if not rows:
+            return None, "away"
+        if len(rows) > 1 or rows[0].get("twins"):
+            return None, "twins"
+        want = self.sound_row
+        if want is None or rows[0]["name"] != want["name"] or host_of(rows[0]["from"]) != host_of(want["from"]):
+            return None, "other"
+        return rows[0], "ok"
+
+    def _sound_source(self, sources, r):       # (the page's side re-checks every word of it: Input._sound_source)
+        """What the page is told of the box's sound source: {"id", "state", "arriving"}, or None when none is
+        chosen or sound is off. "playing": connected, under a picture (or it is the picture, with its own sound);
+        "ready": on the network, connected to when a picture plays; "away": not on the network now, or its
+        connection is down; "twins": two senders answer to the id, and neither is played."""
+        if not (self.sound and self.sound_from):
+            return None
+        row, fits = self._sound_row_now(sources)
+        feed, out = self.feed, {"id": self.sound_from, "state": "away", "arriving": False}
+        if fits == "twins":
+            out["state"] = "twins"
+        elif fits == "other":
+            pass                                   # another sender answers to the id: as good as away, and never played
+        elif feed is not None and feed.alive() and feed.source["id"] == self.sound_from:
+            said = feed.status()
+            out.update(state="away" if said["lost"] else "restless" if said.get("restless") else "playing", arriving=said["arriving"])
+        elif r is not None and r.state not in ENDED and r.source["id"] == self.sound_from:
+            out["state"] = "playing"
+        elif row:
+            out["state"] = "ready"
+        return out
 
     def sources(self):
         with self._find_lock:
@@ -1704,11 +2168,42 @@ class Service:
                     self._remove_pipe()
             finally:
                 self.lock.release()
+        sources = self.sources()
+        feed = self.feed
+        if feed is not None and self._sound_row_now(sources)[1] in ("twins", "other") and self.lock.acquire(blocking=False):
+            # Looked at again at every status, not only when the feed is opened (the review of #132, M2): a second
+            # sender that starts to answer to the sound source's id while it plays, or another name behind the id,
+            # ends the sound's connection. Silence is written and the picture goes on; the page's "it plays
+            # neither" is then true. When one sender is left, the look below opens it again.
+            try:
+                if self.feed is feed:
+                    self.log("pvj-ndi: the sound source is not one sender of the name the owner allowed any more; its connection is given back")
+                    self._close_feed()
+            finally:
+                self.lock.release()
+            feed = self.feed
+        if (r is not None and r.state not in ENDED and getattr(r, "outside", False) and self._outside(r.source["id"])
+                and (feed is None or not feed.alive()) and self._clock() >= self._feed_at and self.lock.acquire(blocking=False)):
+            # The sound source was away when this picture was opened (it plays as bare frames), or its connection
+            # ended. Looked for again here, not more often than FEED_RETRY_SECONDS and never waiting for anybody;
+            # its first block of sound then ends the picture as "changed" and the panel opens it again, with sound.
+            try:
+                self._feed_at = self._clock() + FEED_RETRY_SECONDS
+                with self._recv_lock:
+                    mine = self.receiver is r
+                feed = self._want_feed() if mine else None
+                if feed is not None:
+                    r.use_feed(feed)
+            finally:
+                self.lock.release()
+        labelled = self._sound_only_now(sources)
         return {"ok": True, "configured": self.configured, "on": self.on, "addresses": list(self.addresses), "sound": self.sound,
+                "sound_from": self.sound_from, "sound_delay_ms": self.sound_delay_ms, "sound_source": self._sound_source(sources, r),
                 "groups": list(self.groups), "discovery": list(self.discovery or []), "allowed": list(self.allowed),
                 "runtime": self.runtime(),
-                "sources": [dict({"id": s["id"], "name": s["name"], "from": s["from"]}, **({"twins": True} if s.get("twins") else {}))
-                            for s in self.sources()], "cut": self._cut,
+                "sources": [dict({"id": s["id"], "name": s["name"], "from": s["from"]}, **dict({"twins": True} if s.get("twins") else {},
+                                                                                              **({"sound_only": True} if s["id"] in labelled else {})))
+                            for s in sources], "cut": self._cut,
                 "playing": r.status() if r is not None else None}
 
     def _close_receiver(self):
@@ -1747,44 +2242,94 @@ class Service:
                 except OSError as e:
                     self.log("pvj-ndi: could not make the pipe %s: %s" % (self.fifo, e))
                     return {"ok": False, "error": "the NDI helper could not make its pipe (%s)" % (e.strerror or "error")}
-            r = self._receiver(self.lib, match[0], self.fifo, log=self.log, sound=self.sound)
-            r.hold()                               # the writer waits until the pipe was seen without a reader (below)
-            try:
-                r.start()
-            except NdiError as e:
-                r.close()
-                self._remove_pipe()
-                return {"ok": False, "error": str(e)}
-            with self._recv_lock:
-                self.receiver = r
-            r.first.wait(self._first_frame)
-            if r.format:
-                r.decide()                         # a moment for sound to show itself; then the pipe's form is fixed
-            st = r.status()
-            if st["state"] in ENDED or not r.format:
-                self._close_receiver()
-                return {"ok": False, "error": st["message"] or "%s sent no picture in %d seconds" % (match[0]["name"], self._first_frame)}
-            self.log("pvj-ndi: %s is %d x %d at %s" % ((match[0]["name"],) + r.format))
-            try:
-                clear = self._clear_pipe(r)
-            except OSError as e:
-                self._close_receiver()
-                return {"ok": False, "error": "the NDI pipe cannot be written to: %s" % (e.strerror or "an error")}
-            if not clear:
-                # Never a new writer while a reader of the source before may be there. The panel, which owns the
-                # player, has it let go before it asks (Player.release_pipe) and asks again (Input.tick).
-                over = r.status()
-                self._close_receiver()
-                if over["state"] in ENDED and over["message"]:      # it ended by itself while the pipe was looked at
-                    return {"ok": False, "error": over["message"]}
-                self.log("pvj-ndi: the player still held the pipe %.1f seconds after the source before; %s is not written" % (self._pipe_clear, match[0]["name"]))
-                return {"ok": False, "error": PIPE_HELD}
-            r.go()
-            return {"ok": True, "playing": st}
+            # A sender may change size while it is being opened (a screen capture whose window moves to the next
+            # clip: on the Pi, 2026-10-12, a first press was answered "the source changed to 1540 x 866 at 30.0
+            # frames a second"). That is not a failure of the press: the source is opened again, here, with the
+            # new size, at most twice more and only inside the open's own budget (open_budget), which ends
+            # before the panel stops waiting for this answer. A source that keeps changing gets the plain reason.
+            began, reply = time.monotonic(), None
+            after = AUDIO_WAIT + self._pipe_clear          # what a try still does once its first picture is there
+            for attempt in range(OPEN_TRIES):
+                left = self.open_budget() - (time.monotonic() - began) - after
+                reply = self._open_once(sid, match[0], self._first_frame if attempt == 0 else min(self._first_frame, left))
+                again = reply.pop("again", False)
+                if not again or attempt == OPEN_TRIES - 1 or self.open_budget() - (time.monotonic() - began) - after < TRY_LEAST:
+                    break
+                self.log("pvj-ndi: %s changed while it was being opened (%s); opening it again" % (match[0]["name"], reply.get("error")))
+                with self._find_lock:
+                    self._sources_at = None
+                match = [s for s in self.sources() if s["id"] == sid] or match
+            return reply
+
+    def open_budget(self):
+        """The longest an open may take, every try in it: the first try alone fits whatever happens (a first
+        picture, the wait for sound, the look at the pipe), and later tries only inside this."""
+        return self._first_frame + OPEN_BUDGET_EXTRA
+
+    def _open_once(self, sid, row, wait):
+        """One try of open, with self.lock held: connect, wait `wait` seconds for a first picture, fix the pipe's
+        form, see the pipe without a reader, let the writer go. The answer has "again": True when the source
+        ended as "changed" before it was handed over (the caller opens it again)."""
+        # With one sound source for the box, its connection is seen to first (so it has the time the picture
+        # takes to connect) and is kept from the picture before; without, or when this picture IS that
+        # source, there is none.
+        more = {}
+        if self._outside(sid):
+            more = {"feed": self._want_feed(), "outside": True}
+        else:
+            self._close_feed()
+        r = self._receiver(self.lib, row, self.fifo, log=self.log, sound=self.sound, **more)
+        r.hold()                               # the writer waits until the pipe was seen without a reader (below)
+        try:
+            r.start()
+        except NdiError as e:
+            r.close()
+            self._remove_pipe()
+            return {"ok": False, "error": str(e)}
+        with self._recv_lock:
+            self.receiver = r
+        r.first.wait(wait)
+        if r.format:
+            r.decide()                         # a moment for sound to show itself; then the pipe's form is fixed
+        st = r.status()
+        if st["state"] in ENDED or not r.format:
+            only = not r.format and st["state"] not in ENDED and r.heard()
+            self._close_receiver()
+            if only:
+                with self._find_lock:
+                    if len(self.sound_only) < MAX_SOURCES:
+                        self.sound_only[sid] = self._clock()
+                return {"ok": False, "sound_only": True, "error": "%s sends sound and no picture; to hear it under NDI pictures, choose it under 'Where sound comes from' on the NDI page" % row["name"]}
+            # Neither a picture nor sound in time. Said so that a sound sender that is quiet does not look
+            # broken: such a sender sends nothing at all while nothing plays into it (seen on the owner's).
+            if st["state"] == "changed":
+                return {"ok": False, "error": st["message"], "again": True}
+            return {"ok": False, "error": st["message"] or ("%s sent no picture in %d seconds, and no sound either (a sender of sound alone sends nothing while nothing plays into it)"
+                                                            % (row["name"], self._first_frame))}
+        with self._find_lock:
+            self.sound_only.pop(sid, None)         # it has a picture after all
+        self.log("pvj-ndi: %s is %d x %d at %s" % ((row["name"],) + r.format))
+        try:
+            clear = self._clear_pipe(r)
+        except OSError as e:
+            self._close_receiver()
+            return {"ok": False, "error": "the NDI pipe cannot be written to: %s" % (e.strerror or "an error")}
+        if not clear:
+            # Never a new writer while a reader of the source before may be there. The panel, which owns the
+            # player, has it let go before it asks (Player.release_pipe) and asks again (Input.tick).
+            over = r.status()
+            self._close_receiver()
+            if over["state"] in ENDED and over["message"]:      # it ended by itself while the pipe was looked at
+                return dict({"ok": False, "error": over["message"]}, **({"again": True} if over["state"] == "changed" else {}))
+            self.log("pvj-ndi: the player still held the pipe %.1f seconds after the source before; %s is not written" % (self._pipe_clear, row["name"]))
+            return {"ok": False, "error": PIPE_HELD}
+        r.go()
+        return {"ok": True, "playing": st}
 
     def close(self):
         with self.lock:
             self._close_receiver()
+            self._close_feed()
         return {"ok": True}
 
     def handle(self, message):
@@ -2020,6 +2565,16 @@ class Input:
         v = getattr(self._wanted, "sound", SOUND_DEFAULT)
         return v if isinstance(v, bool) else SOUND_DEFAULT
 
+    def sound_from(self):
+        """The id of the box's one sound source as it is saved (an allowed source), or "" for each picture's own."""
+        v = getattr(self._wanted, "sound_from", "")
+        return v if isinstance(v, str) and _ID.fullmatch(v) else ""
+
+    def sound_delay(self):
+        """The saved delay of the sound against the picture in milliseconds (the player's audio-delay for the NDI load)."""
+        v = getattr(self._wanted, "sound_delay_ms", 0)
+        return v if isinstance(v, int) and not isinstance(v, bool) and SOUND_DELAY_MS[0] <= v <= SOUND_DELAY_MS[1] else 0
+
     def sync(self):
         """Tell the helper whether the module is on, which addresses to ask, and whether sound is wanted. Returns its
         status, or {"ok": False}."""
@@ -2027,7 +2582,10 @@ class Input:
             return {"ok": False}
         try:
             on, addresses = self._wanted()
+            sound_row = [r for r in self._allowed() if r.get("id") == self.sound_from()] if self.sound_from() else []
             reply = self.client.request({"cmd": "configure", "on": on, "addresses": addresses, "sound": self.sound_wanted(),
+                                         "sound_from": self.sound_from() if sound_row else "", "sound_delay_ms": self.sound_delay(),
+                                         "sound_row": sound_row[0] if sound_row else None,
                                          "groups": self._groups(), "discovery": self.write_config(),
                                          "allowed": [r["id"] for r in self._allowed()]}, timeout=10)
         except Exception as e:             # never out of here: this runs while the panel starts
@@ -2053,6 +2611,8 @@ class Input:
                     row = {"id": s["id"], "name": name, "from": where}
                     if s.get("twins") is True:
                         row["twins"] = True
+                    if s.get("sound_only") is True:    # it was asked for a picture and had only sound: the page's label
+                        row["sound_only"] = True
                     at[s["id"]] = row
                     sources.append(row)
         return sources
@@ -2140,6 +2700,9 @@ class Input:
         sound = self.sound_wanted()
         if st.get("ok") and (st.get("configured") is not True or st.get("on") is not on or st.get("addresses") != list(addresses)
                              or ("sound" in st and st.get("sound") is not sound) or st.get("groups", []) != self._groups()
+                             # a helper from before D87 says neither, and is not told again and again for it
+                             or ("sound_from" in st and st.get("sound_from") != self.sound_from())
+                             or ("sound_delay_ms" in st and st.get("sound_delay_ms") != self.sound_delay())
                              or st.get("allowed", []) != [r["id"] for r in self._allowed()]):
             st = self.sync()
         helper = st.get("ok") is True or st.get("answered") is True
@@ -2166,6 +2729,8 @@ class Input:
                                                                          else "the NDI helper has no source open")
             playing, ended = None, {"name": cur["name"], "message": "%s; trying again" % why}
         return {"setup": self.setup, "helper": helper, "notice": "; ".join(notice), "sound": sound, "headroom_db": AUDIO_HEADROOM_DB,
+                "sound_from": self.sound_from(), "sound_source": self._sound_source(st, sound),
+                "sound_delay_ms": self.sound_delay(), "sound_delay_range": list(SOUND_DELAY_MS),
                 "runtime": {"present": rt.get("present") is True, "loaded": rt.get("loaded") is True,
                             "version": _text(rt.get("version"), 80), "problem": _text(rt.get("problem"))},
                 "install": {"command": SETUP_COMMAND, "folder": LIB_DIR,
@@ -2182,6 +2747,27 @@ class Input:
                                if isinstance(g, str) and _GROUP.fullmatch(g)],
                 "playing": playing, "ended": ended}
 
+    def _sound_source(self, st, sound):
+        """The box's one sound source for the page, or None when none is chosen: its name and address from the
+        owner's own allowed list (never from the helper), and of the helper's word only a state from the known
+        list and whether sound arrives, and only when it speaks of this id. "chosen" without "sound": the choice
+        is kept while sound is switched off."""
+        sid = self.sound_from()
+        row = [r for r in self._allowed() if r.get("id") == sid] if sid else []
+        if not row:
+            return None
+        said = st.get("sound_source") if isinstance(st.get("sound_source"), dict) else {}
+        mine = sound and said.get("id") == sid and said.get("state") in SOUND_STATES
+        # The name shown is the owner's own, so what answers to the id on the network must BE that name at that
+        # machine before anything is said to play (the review of #132, M1; as a pad's source is compared). Another
+        # sender behind the id is "not on the network now", whatever the helper says of it.
+        live = [r for r in self._rows(st) if r["id"] == sid]
+        if mine and said["state"] in ("playing", "ready", "restless") and not (
+                len(live) == 1 and not live[0].get("twins") and live[0]["name"] == row[0]["name"] and host_of(live[0]["from"]) == host_of(row[0]["from"])):
+            mine, said = True, {"state": "twins" if live and (len(live) > 1 or live[0].get("twins")) else "away"}
+        return {"id": sid, "name": row[0]["name"], "from": row[0]["from"], "state": said["state"] if mine else ("away" if sound else "off"),
+                "arriving": bool(mine and said.get("arriving") is True)}
+
     def open(self, sid):
         """Ask the helper for a source's first frame. Returns {"id", "name", "width", "height", "fps", "container",
         "audio"} or NdiError. "container" says what the pipe will carry: "raw" frames, or "matroska" with sound."""
@@ -2189,7 +2775,7 @@ class Input:
             raise NdiError("no such source")
         if not self.setup:
             raise NdiError(NOT_SET_UP)
-        reply = self.client.request({"cmd": "open", "id": sid}, timeout=FIRST_FRAME_SECONDS + 8)
+        reply = self.client.request({"cmd": "open", "id": sid}, timeout=FIRST_FRAME_SECONDS + OPEN_WAIT_EXTRA)
         if reply.get("ok") is not True:
             raise NdiError(_text(reply.get("error")) or "the source could not be opened")
         p = _playing(reply.get("playing"))

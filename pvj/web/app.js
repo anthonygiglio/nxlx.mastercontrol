@@ -1627,7 +1627,7 @@
         blurb: 'Save the addresses of network video streams (SRT, RTSP, RTMP) and play them like clips.',
         body: function () { return [streamsCard(full)]; } },
       { id: 'ndi', group: 'show', name: 'NDI\u00ae input', role: 'op', module: 'inputs-ndi', url: '/api/ndi',
-        blurb: 'Show the picture of an NDI sender on the network (Resolume, MadMapper, OBS and others) like a clip. Beta: the picture has run once on a Pi 4. Sound from NDI is new and has not been heard on a box yet: it is off until you switch it on.',
+        blurb: 'Show the picture of an NDI sender on the network (Resolume, MadMapper, OBS and others) like a clip. Beta: the picture has run once on a Pi 4. Sound from NDI is new and off until you choose it: measured on the test box, not yet confirmed by ear.',
         confirmOff: function (ask) { ndiWasOn = !!((S.status && S.status.player) || {}).ndi; ask(ndiWasOn ? 'The NDI picture comes off the screen now.' : null); },
         offSaid: function () { return ndiWasOn ? 'Switched off. The NDI picture came off the screen because the input was switched off.' : null; },
         body: function () { return ndiCards(full); } },
@@ -3230,34 +3230,121 @@
     var srcCard = h('div', { class: 'card', id: 'ndicard' }, h('h2', { text: 'Sources on the network' }), srcBody,
       h('div', { class: 'hint', id: 'ndimark' }, NDI_MARK + ' About NDI: ', ndiLink('https://ndi.video/', 'ndi.video'),
         '. Its free tools for a computer: ', ndiLink('https://ndi.video/tools/', 'ndi.video/tools'), '.'));
-    // Sound: one switch, and a line that says what is arriving (never drawn again as a whole: only its words change).
+    // Where sound comes from (D87): three choices of two settings. No sound; the sound each picture's own sender
+    // sends; or ONE sound source for every NDI picture (a sender that has sound and no picture, such as a player
+    // that sends its sound through NDI by itself). Under them a line that says what is arriving (only its words
+    // change), and the delay of the sound against the picture, set by ear.
     var soundBody = h('div', { class: 'list sp', id: 'ndisoundbody' });
     var soundLine = h('div', { class: 'hint', id: 'ndisoundline', role: 'status', text: '' });
-    var soundCard = h('div', { class: 'card', id: 'ndisoundcard' }, h('h2', { text: 'Sound' }), soundBody, soundLine);
+    var soundCard = h('div', { class: 'card', id: 'ndisoundcard' }, h('h2', { text: 'Where sound comes from' }), soundBody, soundLine);
+    var soundPick = false, soundKey = '';           // soundPick: the picker is open before any source was chosen
+    function soundMode(d) { return !d.sound ? 'none' : d.sound_from ? 'one' : 'own'; }
+    function soundShape(a) {
+      var c = a.counts || {};
+      return [a.channels + (a.channels === 1 ? ' channel' : ' channels') + (a.channels > a.played ? ' (the first ' + a.played + ' are played)' : '') + ' at ' + a.rate + ' samples a second',
+        'dropped ' + (c.dropped || 0) + (c.refused ? ', could not be read ' + c.refused : '') + (c.silenced ? ', played as silence ' + c.silenced : '')].join(' · ') +
+        (a.problem ? ' · ' + ndiSentence(a.problem) : '');
+    }
     function soundWords(d) {
-      if (!d.sound) return 'Sound is off: sources are shown without their sound.';
-      var p = d.playing, a = p && p.audio;
+      var ss = d.sound_source, p = d.playing, a = p && p.audio;
+      if (!d.sound) return 'No sound: NDI pictures are shown without sound.' + (ss ? ' ' + ss.name + ' is kept as the sound source for when sound is on again.' : '');
+      if (ss && !(p && p.id === ss.id)) {
+        // one sound source for every picture, and it is not the picture on the screen itself
+        var who = ss.name + ' at ' + ss.from;
+        if (ss.state === 'away') return ss.name + ' is not on the network now; pictures play without sound.';
+        if (ss.state === 'restless') return ss.name + ' keeps changing its sound; pictures play without it for now. The box takes its sound again by itself once it has stopped changing.';
+        if (ss.state === 'twins') return 'Two senders announce ' + ss.name + ' from one address. The box cannot tell them apart, so it plays neither; pictures play without sound.';
+        if (!p) return 'Sound comes from ' + who + '. It is on the network; the box connects to it when an NDI picture plays.';
+        if (ss.state !== 'playing') return 'Sound comes from ' + who + '. The box is connecting to it.';
+        if (!ss.arriving && !(a && a.arriving)) return ss.name + ' is connected and silent: it sends no sound now' + (a && a.rate ? ', so silence is played until it does.' : '. The picture plays without sound; when its sound starts, the picture is loaded again with it.');
+        if (!a || !a.rate) return 'Sound from ' + who + ' is arriving; the picture is being loaded again with it.';
+        if (a.silent) return ss.name + ' is connected and silent: sound is arriving from ' + ss.from + ' and there is nothing to hear in it. ' + soundShape(a);
+        return 'Sound from ' + who + ': arriving, loudest at ' + a.level_db + ' dB (0 is as loud as it goes) · ' + soundShape(a);
+      }
       if (!p) return 'No source is on the screen.';
       if (!a || !a.rate) return 'This source sends no sound' + (a && a.problem ? ' that the box can play (' + a.problem + ')' : '') + '.';
-      var c = a.counts || {};
       var what = !a.arriving ? 'No sound has arrived in the last second' : a.silent ? 'Sound is arriving, and it is silent'
         : 'Sound is arriving, loudest at ' + a.level_db + ' dB (0 is as loud as it goes)';
-      var shape = a.channels + (a.channels === 1 ? ' channel' : ' channels') + (a.channels > a.played ? ' (the first ' + a.played + ' are played)' : '') + ' at ' + a.rate + ' samples a second';
-      var lost = 'dropped ' + (c.dropped || 0) + (c.refused ? ', could not be read ' + c.refused : '') + (c.silenced ? ', played as silence ' + c.silenced : '');
-      return [what, shape, lost].join(' \u00b7 ') + (a.problem ? ' \u00b7 ' + ndiSentence(a.problem) : '');
+      return what + ' · ' + soundShape(a);
+    }
+    function delayWords(ms) { return ms > 0 ? ms + ' ms later' : ms < 0 ? (-ms) + ' ms earlier' : 'not moved'; }
+    function soundSaid(data) { drawn = ''; soundKey = ''; drawSound(data); drawSources(data); drawAllowed(data); soundLine.textContent = soundWords(data); }
+    // One road for "this sender is where the sound comes from": the picker here, and "Use for sound" on a sender's row.
+    function useForSound(src, d) {
+      var wasOff = !d.sound;
+      api('POST', '/api/ndi', { action: 'sound_from', id: src.id }).then(function (r) {
+        if (!r.ok) return say(ndiSentence(r.data.error || 'could not change it'), true);
+        soundPick = false;
+        say('Sound for every NDI picture now comes from ' + src.name + '.' + (wasOff ? ' Sound was off: choosing a sound source switched it on.' : ''));
+        soundSaid(r.data);
+      });
+    }
+    function soundKeyOf(d) {
+      return JSON.stringify([d.sound, d.sound_from, d.sound_delay_ms, soundPick, (d.sources || []).map(function (x) { return [x.id, !!x.twins, !!x.sound_only]; })]);
     }
     function drawSound(d) {
+      soundKey = soundKeyOf(d);
       soundBody.textContent = '';
-      var hint = 'Sound from NDI is new and has not been heard on a box yet, so it is off until you switch it on. On: the sound a source sends is played with its picture through the box\'s own sound output, with its volume and mute. NDI\'s reference level comes out ' +
-        d.headroom_db + ' dB below full scale, so a sender at that level sounds quieter than a clip. Off: picture only.';
-      if (!full) { soundBody.appendChild(h('div', { class: 'hint', id: 'ndisoundstate', text: (d.sound ? 'Sound is on. ' : 'Sound is off. ') + hint })); return; }
-      soundBody.appendChild(toggle('ndisound', 'Play a source\'s sound', d.sound, function (v, sw) {
-        api('POST', '/api/ndi', { action: 'sound', on: v }).then(function (r) {
-          if (!r.ok) { sw.setAttribute('aria-checked', v ? 'false' : 'true'); return say(ndiSentence(r.data.error || 'could not change it'), true); }
-          say(v ? 'Sound is on.' : 'Sound is off.');
-          soundLine.textContent = soundWords(r.data);
+      var mode = soundMode(d), ss = d.sound_source;
+      var hint = 'Sound from NDI is new, so it is off until you choose it. On the test box it was measured and not listened to: with a picture from one sender and sound from another, the samples left the box\'s sound device at the right rate and the player\'s clocks for picture and sound stayed within 40 ms of each other. Nobody has yet confirmed by ear that sound and picture are in step. It is played through the box\'s own sound output, with its volume and mute. NDI\'s reference level comes out ' +
+        d.headroom_db + ' dB below full scale, so a sender at that level sounds quieter than a clip.';
+      var names = { none: 'No sound', own: 'The source on the screen', one: 'One sound source for every NDI picture' };
+      if (!full) {
+        soundBody.appendChild(h('div', { class: 'hint', id: 'ndisoundstate', text: 'Chosen by the owner: ' + names[mode] + (mode === 'one' && ss ? ' (' + ss.name + ')' : '') + '. ' + hint }));
+        return;
+      }
+      var post = function (body, words) {
+        api('POST', '/api/ndi', body).then(function (r) {
+          if (!r.ok) { drawSound(d); return say(ndiSentence(r.data.error || 'could not change it'), true); }
+          soundPick = false; say(words); soundSaid(r.data);
         });
-      }, hint));
+      };
+      var choose = { none: function () { post({ action: 'sound', on: false }, 'Sound is off.' + (d.sound_from && ss ? ' ' + ss.name + ' is kept as the sound source.' : '')); },
+        own: function () { post({ action: 'sound_from', id: '' }, 'Each NDI picture now plays its own sender\'s sound.'); },
+        one: function () {
+          if (d.sound_from && ss) return post({ action: 'sound', on: true }, 'Sound for every NDI picture comes from ' + ss.name + ' again.');
+          soundPick = true; drawSound(d);              // nothing is saved until a source is chosen below
+        } };
+      var shown = soundPick ? 'one' : mode;
+      soundBody.appendChild(h('div', { class: 'list', id: 'ndisoundmode', role: 'radiogroup', 'aria-label': 'Where sound comes from' },
+        [['none', 'Pictures only.'], ['own', 'Each NDI picture plays the sound its own sender sends with it.'],
+          ['one', 'For sound that comes from another sender than the picture: a player that sends its sound through NDI by itself, with the picture from a screen capture.']].map(function (c) {
+          // the name on the button, what it means under it in the page's own hint type (never smaller: the Signal rule)
+          return h('div', { class: 'fieldwrap soundchoicewrap' },
+            h('button', { class: 'btn soundchoice' + (shown === c[0] ? ' on' : ''), id: 'ndisound' + c[0], role: 'radio', 'aria-checked': shown === c[0] ? 'true' : 'false',
+              'aria-describedby': 'ndisound' + c[0] + 'hint', text: names[c[0]], onclick: function () { if (shown !== c[0] || soundPick) choose[c[0]](); } }),
+            h('div', { class: 'hint', id: 'ndisound' + c[0] + 'hint', text: c[1] }));
+        })));
+      if (shown === 'one') {
+        var listed = (d.sources || []).filter(function (x) { return !x.twins; }), here = listed.some(function (x) { return x.id === d.sound_from; });
+        var pick = h('select', { class: 'text-input', id: 'ndisoundpick', 'aria-label': 'The sound source' },
+          (ss && !here ? [h('option', { value: '', selected: true, disabled: true, text: ss.name + ' (not on the network now)' })] : !d.sound_from ? [h('option', { value: '', selected: true, disabled: true, text: listed.length ? 'Choose a sender...' : 'No sender is on the network now' })] : [])
+            .concat(listed.map(function (x) { return h('option', { value: x.id, selected: x.id === d.sound_from, text: x.name + ' (' + x.from + ')' + (x.sound_only ? ' · sound only' : '') }); })));
+        pick.addEventListener('change', function () {
+          var src = listed.filter(function (x) { return x.id === pick.value; })[0];
+          if (src && src.id !== d.sound_from) useForSound(src, d);
+        });
+        soundBody.appendChild(labelled('The sound source', pick, 'One of the senders on the network now. Its sound is played under every NDI picture, whichever sender the picture comes from. It joins "Sources that pads may hold" on this page, where it can be removed once another is chosen here.'));
+      }
+      // The delay belongs to this mode alone: picture and sound of ONE sender have one clock and are never moved. The
+      // number is kept by the box while another mode is chosen.
+      if (d.sound && d.sound_from && shown === 'one') {
+        var range = d.sound_delay_range || [-250, 500], val = h('span', { class: 'k', id: 'ndisounddelayval', text: delayWords(d.sound_delay_ms || 0) });
+        var bar = h('input', { id: 'ndisounddelay', type: 'range', min: range[0], max: range[1], step: 10, value: d.sound_delay_ms || 0 });
+        bar.addEventListener('input', function () { val.textContent = delayWords(+bar.value); });
+        bar.addEventListener('change', function () {
+          var ms = +bar.value;
+          api('POST', '/api/ndi', { action: 'sound_delay', ms: ms }).then(function (r) {
+            if (!r.ok) { bar.value = d.sound_delay_ms || 0; val.textContent = delayWords(+bar.value); return say(ndiSentence(r.data.error || 'could not change it'), true); }
+            d.sound_delay_ms = r.data.sound_delay_ms; soundKey = soundKeyOf(r.data);
+            say(ms ? 'The sound of an NDI picture now comes ' + delayWords(ms) + '.' : 'The sound of an NDI picture is not moved.');
+          });
+        });
+        soundBody.appendChild(h('div', { class: 'fieldwrap', id: 'ndisounddelaywrap' }, h('label', { class: 'field', for: 'ndisounddelay' }, 'Sound against picture: ', val), bar,
+          h('div', { class: 'hint', id: 'ndisounddelayhint', text: 'Picture and sound come from two senders and may be out of step; set the delay by ear.' }),
+          h('div', { class: 'hint', text: 'To the right the sound comes later, to the left earlier. A change is heard at once under an NDI picture that plays with this sound. It applies only while one sound source is chosen for every NDI picture: a picture that plays its own sender\'s sound is never moved, and neither is a clip.' })));
+      }
+      soundBody.appendChild(h('div', { class: 'hint', id: 'ndisoundhint', text: hint }));
     }
     var addrCard = h('div', { class: 'card', id: 'ndiaddrcard' }, h('h2', { text: 'Addresses to ask' }),
       h('div', { class: 'hint', text: 'Senders are found by themselves on most networks. Where they are not (some Wi-Fi, a sender on another part of the network), add the sending computer\'s address here.' }), addrBody);
@@ -3304,9 +3391,12 @@
       if (!d.sources.length && !n) srcBody.appendChild(h('div', { class: 'empty', id: 'ndiempty', text: (d.groups_now && d.groups_now.length ? 'No senders found in ' + (d.groups_now.length === 1 ? 'the group ' : 'the groups ') + d.groups_now.join(', ') + ' yet. A sender must be put in that group in its own program to be found. ' : 'No NDI sources found yet. ') + 'Switch on NDI output in the sending program (Resolume, MadMapper, OBS), on the same network as this box. A new sender takes a few seconds to appear. If it never does, add its address below.' }));
       d.sources.forEach(function (s) {
         var mine = playing && playing.id === s.id && playing.state !== 'refused' && playing.state !== 'stopped';
-        srcBody.appendChild(listRow({ cls: 'ndi-entry', data: s.id, name: s.name, sub: s.from, key: 'ndi-' + s.id, redraw: function () { drawSources(d); },
-          state: mine ? playLine(playing) : '',
-          primary: can('live') ? h('button', { class: 'btn on pri', text: ndiBusy === s.id ? 'Connecting...' : 'Play', 'aria-label': 'Play ' + s.name, disabled: !!ndiBusy, onclick: function () {
+        // A sender that was asked for a picture and sent sound and none (D87) is labelled "sound only" and offered as
+        // the sound source first. Play stays beside it: the label is advice, and a picture sender that was only slow
+        // that once is shown by it (the label then goes). The sender the sound comes from says so on its row, and is
+        // not offered as a picture: the box refuses that press and touches nothing.
+        var only = !!s.sound_only, isSound = d.sound_from === s.id;
+        var playBtn = !can('live') ? null : h('button', { class: 'btn' + (only ? ' ndiplayanyway' : ' on pri'), text: ndiBusy === s.id ? 'Connecting...' : 'Play', 'aria-label': 'Play ' + s.name, disabled: !!ndiBusy, onclick: function () {
             if (ndiBusy) return;
             ndiBusy = s.id;                            // one connection at a time, and the button stays off through redraws
             drawSources(d);
@@ -3318,7 +3408,13 @@
               poll(); refresh();
               if (document.getElementById('ndicard')) drawSources(d);
             });
-          } }) : null }));
+          } });
+        var useBtn = only && full ? h('button', { class: 'btn on pri ndiusesound', text: 'Use for sound', 'aria-label': 'Use ' + s.name + ' for sound', onclick: function () { useForSound(s, d); } }) : null;
+        srcBody.appendChild(listRow({ cls: 'ndi-entry' + (only ? ' ndi-soundonly' : ''), data: s.id, name: s.name, sub: s.from, key: 'ndi-' + s.id, redraw: function () { drawSources(d); },
+          state: mine ? playLine(playing) : only ? h('div', { class: 'state ndionly', text: 'sound only' }) : '',
+          note: isSound ? (d.sound ? 'The sound of every NDI picture comes from this sender.' : 'Kept as the sound source; sound is off now.')
+            : only ? 'When it was last asked for a picture, this sender sent sound and no picture. ' + (full ? 'It can be where the sound of every NDI picture comes from.' : 'The owner can choose it under "Where sound comes from".') + ' If it does have a picture and was only slow, Play shows it.' : '',
+          primary: isSound && d.sound ? null : only ? [useBtn, playBtn].filter(Boolean) : playBtn }));
       });
     }
     function drawAddresses(d) {
@@ -3472,10 +3568,14 @@
         }
         // Senders come and go, so the list is asked for every 2 seconds, but it is drawn again only when what it
         // shows changed: a button replaced between a finger going down and coming up loses the tap (D59).
-        var now = JSON.stringify([r.data.setup, r.data.helper, r.data.ended, r.data.cut, r.data.notice, r.data.runtime, r.data.sources, r.data.playing]);
+        var now = JSON.stringify([r.data.setup, r.data.helper, r.data.ended, r.data.cut, r.data.notice, r.data.runtime, r.data.sources, r.data.playing, r.data.sound, r.data.sound_from]);
         if (now !== drawn && !ndiBusy) { drawn = now; drawSources(r.data); }
         soundLine.textContent = soundWords(r.data);
-        if (first) { drawAddresses(r.data); drawSound(r.data); }
+        if (first) drawAddresses(r.data);
+        // the choices, the picker and the delay: drawn again only when what they show changed, and never under a
+        // finger (a select that is open, a slider being moved)
+        var held = document.activeElement, inUse = !!held && soundBody.contains(held) && (held.tagName === 'SELECT' || held.tagName === 'INPUT');
+        if (first || (soundKeyOf(r.data) !== soundKey && !inUse)) drawSound(r.data);
         // the groups, the servers and the allowed sources: drawn again only when they changed, and never under an open form
         var scope = JSON.stringify([r.data.groups, r.data.groups_now, r.data.discovery, r.data.discovery_now, r.data.own_discovery, r.data.allowed, r.data.sources.map(function (x) { return x.id; }), r.data.helper, r.data.runtime.loaded]);
         if (first || (scope !== scoped && !addOpen.ndigroup && !addOpen.ndidisc && !moreOpen)) { scoped = scope; drawScope(r.data); drawAllowed(r.data); }      // always at first: a More left open on another page must not leave these cards empty (seen in CI's walk of the controls)

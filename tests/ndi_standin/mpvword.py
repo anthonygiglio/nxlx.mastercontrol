@@ -60,7 +60,7 @@ def size_of(name, changed=False):
 
 
 def has_sound(name):
-    return "with sound" in name or "one still" in name
+    return "with sound" in name or "one still" in name or "sound only" in name
 
 
 def number(v):
@@ -249,6 +249,7 @@ class Rig:
     """A panel and a player to ask. A subclass says where they are: `socket` (mpv's control socket), `pipe` (the
     path the player is told to read), and the four questions below. The rest is the same wherever it runs."""
     socket = pipe = None
+    sync_judged = True                     # whether this rig's mpv is the one the bounds for sound against picture were measured on
 
     def page(self):
         """GET /api/ndi's answer, a dict (never raises: what went wrong is in the dict)."""
@@ -265,6 +266,58 @@ class Rig:
     def player_status(self):
         """(status, the "player" part of GET /api/status or None)."""
         raise NotImplementedError
+
+    def post_ndi(self, body):
+        """POST /api/ndi with `body` (an action of the Owner's): (status, answer)."""
+        raise NotImplementedError
+
+    def receivers(self, name, bandwidth):
+        """How many receivers the stand-in made for the source `name` with that bandwidth (10: sound alone; 100: a
+        picture's), or None where that cannot be read (the helper is another process: a box)."""
+        return None
+
+    def choose_absent(self, name):
+        """Make `name` the box's sound source although it is not on the network now, as a box has it that chose it
+        on an earlier day; returns its id. Only where the settings can be written (not over HTTP: the panel takes
+        a sound source from the list of what is there)."""
+        raise Failed("this rig cannot choose a sound source that is not on the network")
+
+    def next_clip(self):
+        """Play a clip that is not NDI, by the panel, and wait until mpv has it; returns mpv's path for it."""
+        raise Failed("this rig has no clip to play")
+
+    def sound_from(self, name):
+        """The Owner chooses `name` as where the sound of every NDI picture comes from; returns its id."""
+        sid = self.source(name)
+        code, out = self.post_ndi({"action": "sound_from", "id": sid})
+        if code != 200 or not isinstance(out, dict) or out.get("sound_from") != sid or out.get("sound") is not True:
+            raise Failed("POST /api/ndi (sound_from %r) answered HTTP %s: %s" % (name, code, str(out)[:300]))
+        self.say("the sound of every NDI picture comes from %r" % name)
+        return sid
+
+    def sound_source(self):
+        """What the page says of the box's sound source: a dict, or {} when it says nothing."""
+        got = self.page().get("sound_source")
+        return got if isinstance(got, dict) else {}
+
+    def sound_source_is(self, what, name, state, arriving=None):
+        got = self.sound_source()
+        if got.get("name") != name or got.get("state") != state or (arriving is not None and got.get("arriving") is not arriving):
+            raise Failed("%s: the page's sound source is %s; expected %r in the state %r%s"
+                         % (what, json.dumps(got, sort_keys=True), name, state, "" if arriving is None else " with arriving %s" % arriving))
+
+    def opened(self, what, name, bandwidth, times, or_more=False):
+        """The stand-in's own count of the receivers made for `name`: it must be `times` (with `or_more`: at least
+        that; the panel's watch may open a picture once more than the case needs). Where it cannot be read (a
+        box), that is said and nothing is judged; real_install_test.sh counts the helper's own line there."""
+        n = self.receivers(name, bandwidth)
+        kind = "for sound alone" if bandwidth == 10 else "for a picture"
+        if n is None:
+            self.say("NOT READ here (the helper is another process): how many receivers %s the stand-in made for %r" % (kind, name))
+        elif n != times and not (or_more and n > times):
+            raise Failed("%s: the stand-in made %d receivers %s for %r; expected %d%s" % (what, n, kind, name, times, " or more" if or_more else ""))
+        else:
+            self.say("OPENED %d time%s %s: %r, by the stand-in's own count" % (n, "" if n == 1 else "s", kind, name))
 
     def say(self, line):
         print(line)
@@ -603,7 +656,263 @@ def case_sync_paused(rig, name, still=20.0):
         raise Failed("OUT OF SYNC, %s: %s" % (what, "; ".join(bad)))
 
 
-CASES = {"sync": (case_sync, 1), "syncinfo": (case_syncinfo, 1), "syncresized": (case_sync_resized, 1), "syncpaused": (case_sync_paused, 1),
+# ---- sound from another sender (D87): the picture of one source, the sound of another -----------------------------------
+# What these show and what they cannot is in pvj/NDI.md ("Sound from another sender: what the tests show"). In short:
+# the stand-in's two sources share ONE clock, the process's; two real senders share none. And every number here is
+# mpv's own (its tracks, its audio-pts, its avsync, its audio-delay): nobody hears anything.
+SOUND_AFTER_IT_APPEARS = 12.0          # (c): mpv plays the sound within this long after the sound source is on the network
+APPEARS_AFTER = 5.0                    # the stand-in: "appears 5 s after the first picture" (APPEARS_NS in standin.c)
+STOPS_AFTER = 12.0                     # the stand-in: "stops after 12 s" (STOPS_NS)
+OFFSET_MS = 200                        # the stand-in: "clicks 200 ms late"
+DELAY_EXACT = 0.0005                   # how near mpv's audio-delay must be to the number asked for, in seconds
+
+
+def case_sound_from(rig, picture, voice, seconds=30):
+    """(a) A picture source without sound of its own, and the sound of a source that has sound and no picture: mpv has
+    two tracks, sound against picture is inside the bounds every moving source with sound is held to, and audio-pts
+    goes on at real time for `seconds`."""
+    what = "the picture of %r with the sound of %r" % (picture, voice)
+    rig.sound_from(voice)
+    rig.start(picture, "matroska")
+    rig.sync(what, picture, seconds=15, within=10, judged=rig.sync_judged)
+    rig.watch(what, picture, seconds=int(seconds), late=2, audio=True)
+    rig.sound_source_is(what, voice, "playing", arriving=True)
+    rig.opened(what, voice, 10, 1)
+    rig.opened(what, picture, 10, 0)
+
+
+def case_sound_from_resized(rig, picture, voice):
+    """(b) The picture changes size while it plays (four seconds, then smaller): the panel opens it again, and the
+    sound is back within the time the re-open case without a sound source is given (case_size: judged at the end of
+    15 seconds, the sound's clock at real time from no later than 10 seconds in). The sound's connection is not
+    opened again for it: one receiver for sound alone in the whole case, two (or more) for the picture."""
+    what = "a picture that changes size, %r, with the sound of %r" % (picture, voice)
+    rig.sound_from(voice)
+    rig.start(picture, "matroska")
+    rig.watch(what, picture, seconds=15, size=size_of(picture, True), audio=True)
+    rig.sound_source_is(what, voice, "playing", arriving=True)
+    rig.opened(what, voice, 10, 1)
+    rig.opened(what, picture, 100, 2, or_more=True)
+
+
+def case_sound_from_late(rig, picture, voice):
+    """(c) The sound sender is not on the network at the press and comes APPEARS_AFTER seconds after it. The picture
+    plays at once, as bare frames; then the helper finds the sound source (it looks every 2 seconds), its first block
+    ends the picture as "changed", the panel opens it again with sound. Stated: mpv plays the sound no later than
+    SOUND_AFTER_IT_APPEARS seconds after the source appeared (2 s until the helper looks, 1 s the stand-in's quiet
+    first second, 1 s the panel's watch, about 3 s the hand-over and the re-open, 1 s to see the clock move, and
+    room)."""
+    what = "the sound source %r comes %d seconds after the press of %r" % (voice, APPEARS_AFTER, picture)
+    rig.choose_absent(voice)
+    rig.sound_source_is(what + ", before the press", voice, "away", arriving=False)
+    pressed = time.monotonic()
+    rig.start(picture, "raw")
+    answered = time.monotonic() - pressed
+    if answered > 4.0:
+        raise Failed("%s: the press was answered after %.1f seconds; with the sound source away the picture is not kept waiting for sound"
+                     % (what, answered))
+
+    def plays(audio):
+        a = rig.look()
+        time.sleep(1.0)
+        b = rig.look()
+        return b if not not_playing(a, b, rig.pipe, size=size_of(picture), audio=audio) else None
+    if not wait(lambda: plays(False), 6, every=0.1):
+        raise Failed("STUCK, %s: the picture did not play without sound within 6 seconds of the press: %s" % (what, json.dumps(rig.look(), sort_keys=True)))
+    bare = time.monotonic() - pressed
+    rig.say("PLAYS without sound %.1f seconds after the press (answered in %.1f): %r" % (bare, answered, picture))
+    if bare > APPEARS_AFTER:
+        raise Failed("%s: the picture took %.1f seconds to play, longer than the sound source is away; this case shows nothing" % (what, bare))
+    end = pressed + APPEARS_AFTER + SOUND_AFTER_IT_APPEARS
+    heard = None
+    while heard is None and time.monotonic() < end:
+        if plays(True):
+            heard = time.monotonic() - pressed
+    if heard is None:
+        st = rig.page()
+        raise Failed("NO SOUND, %s: %.0f seconds after the sound source appeared mpv does not play its sound. mpv: %s. The page: playing=%s "
+                     "ended=%s sound_source=%s" % (what, SOUND_AFTER_IT_APPEARS, json.dumps(rig.look(), sort_keys=True), json.dumps(st.get("playing"), sort_keys=True),
+                                                   json.dumps(st.get("ended"), sort_keys=True), json.dumps(st.get("sound_source"), sort_keys=True)))
+    rig.say("SOUND %.1f seconds after the press, %.1f after the sound source appeared (stated: within %.0f): %s"
+            % (heard, heard - APPEARS_AFTER, SOUND_AFTER_IT_APPEARS, what))
+    rig.watch(what + ", from when its sound came", picture, seconds=8, late=1, audio=True)
+    rig.sound_source_is(what, voice, "playing", arriving=True)
+    rig.opened(what, voice, 10, 1)
+
+
+def case_sound_from_stops(rig, picture, voice, seconds=12):
+    """(d) The sound sender stops while the picture plays (the stand-in: STOPS_AFTER seconds after its receiver was
+    made, the connection is said to be down and the finder drops the source). The picture goes on: for `seconds`
+    after the page first says "away", mpv keeps the pipe, time-pos goes on at real time and never stands for a
+    second; and at the end the page still says "away" for the sound source and "playing" for the picture."""
+    what = "the sound source %r stops under the picture %r" % (voice, picture)
+    rig.sound_from(voice)
+    rig.start(picture, "matroska")
+    rig.watch(what + ", before it stops", picture, seconds=4, audio=True)
+    if not wait(lambda: rig.sound_source().get("state") == "away", STOPS_AFTER + 6):
+        raise Failed("%s: %d seconds after it played with sound the page's sound source is %s, not away"
+                     % (what, STOPS_AFTER + 6, json.dumps(rig.sound_source(), sort_keys=True)))
+    rig.say("the page says the sound source is away: %s" % json.dumps(rig.sound_source(), sort_keys=True))
+    looks, began = [], time.monotonic()
+    while time.monotonic() - began < seconds:
+        looks.append((time.monotonic(), ask(rig.socket, "path", "time-pos", "audio-pts", "core-idle", "paused-for-cache")))
+        time.sleep(1.0)
+    bad = []
+    if any(m["path"] != rig.pipe for _, m in looks):
+        bad.append("mpv let go of the pipe (its paths: %s)" % sorted({str(m["path"]) for _, m in looks}))
+    pos = [(when, m["time-pos"]) for when, m in looks]
+    if not all(number(v) for _, v in pos):
+        bad.append("mpv had no time-pos in %d of %d looks" % (len([v for _, v in pos if not number(v)]), len(pos)))
+    else:
+        took, went = pos[-1][0] - pos[0][0], pos[-1][1] - pos[0][1]
+        stood = [round(b[0] - began, 1) for a, b in zip(pos, pos[1:]) if b[1] - a[1] < 0.5 * (b[0] - a[0])]
+        if went < 0.9 * took - 0.5:
+            bad.append("time-pos went on by %.1f in %.1f seconds" % (went, took))
+        if stood:
+            bad.append("time-pos stood, or nearly, in the second before %s" % stood)
+    sound = [m["audio-pts"] for _, m in looks]
+    rig.say("FOR THE RECORD (not judged): while the sound source was away mpv's audio-pts went %r -> %r in %.1f seconds; core-idle %r, paused-for-cache %r"
+            % (sound[0], sound[-1], looks[-1][0] - looks[0][0], looks[-1][1]["core-idle"], looks[-1][1]["paused-for-cache"]))
+    st = rig.page()
+    p = st.get("playing")
+    if not isinstance(p, dict) or p.get("state") != "playing" or p.get("name") != picture:
+        bad.append("the page does not say the picture plays: playing=%s ended=%s" % (json.dumps(p, sort_keys=True), json.dumps(st.get("ended"), sort_keys=True)))
+    if bad:
+        raise Failed("STALLED, %s: %s. mpv's looks: %s" % (what, "; ".join(bad), json.dumps([m for _, m in looks][::3], sort_keys=True)))
+    rig.sound_source_is(what + ", at the end", voice, "away", arriving=False)
+    rig.say("GOES ON %s: time-pos %.1f -> %.1f in %.1f seconds with the sound source away" % (what, pos[0][1], pos[-1][1], pos[-1][0] - pos[0][0]))
+
+
+def case_sound_offset_unseen(rig, picture, voice):
+    """(e), first half, fatal: two senders with a KNOWN offset (the stand-in's picture flashes on each whole second of
+    its clock, its sound-only source clicks OFFSET_MS later; tests/test_ndi_standin.py finds those 0.2 s in the
+    stream). mpv plays it inside the same bounds as any other: its avsync is its own belief about the times in the
+    stream, and the helper gave each block its time as it arrived. So this passing shows that mpv CANNOT see the
+    offset, which is why the delay is set by ear."""
+    what = "sound %d ms late against the picture, by the stand-in (%r under %r)" % (OFFSET_MS, voice, picture)
+    rig.sound_from(voice)
+    rig.start(picture, "matroska")
+    n = rig.sync(what, picture, seconds=12, within=10)
+    rig.say("WHAT AVSYNC CANNOT SHOW: the sound is %d ms late against the picture in this stream, and mpv says worst |avsync| %.3f" % (OFFSET_MS, n["worst_avsync"]))
+    rig.watch(what, picture, seconds=5, late=1, audio=True)
+
+
+def case_sound_delay(rig, picture, voice, ms=-OFFSET_MS):
+    """(e), second half: the Owner sets ndi.sound_delay_ms to take the known offset out, and mpv's audio-delay IS that
+    number, in seconds, while the NDI picture is loaded; a change while it plays is mpv's at once; and it is 0 again
+    once a clip that is not NDI plays. The sign is mpv's and the product's (NDI.md, "The delay": positive is sound
+    later), so sound that is OFFSET_MS late is put right with -OFFSET_MS. Only the property is judged: nothing here
+    hears whether flash and click meet."""
+    what = "ndi.sound_delay_ms %d under %r with the sound of %r" % (ms, picture, voice)
+    rig.sound_from(voice)
+    code, out = rig.post_ndi({"action": "sound_delay", "ms": ms})
+    if code != 200 or not isinstance(out, dict) or out.get("sound_delay_ms") != ms:
+        raise Failed("POST /api/ndi (sound_delay %d) answered HTTP %s: %s" % (ms, code, str(out)[:300]))
+    rig.start(picture, "matroska")
+    rig.started(what, picture, 10)
+    during = ask(rig.socket, "audio-delay", "audio-pts", "time-pos", "avsync")
+    rig.say("DELAY %s: with the NDI picture loaded mpv says audio-delay %r (audio-pts %r, time-pos %r, avsync %r)"
+            % (what, during["audio-delay"], during["audio-pts"], during["time-pos"], during["avsync"]))
+    other = 120                            # changed while it plays: the other side of 0
+    code, out = rig.post_ndi({"action": "sound_delay", "ms": other})
+    if code != 200 or not isinstance(out, dict) or out.get("sound_delay_ms") != other:
+        raise Failed("POST /api/ndi (sound_delay %d) under the playing source answered HTTP %s: %s" % (other, code, str(out)[:300]))
+    time.sleep(0.5)
+    moved = ask(rig.socket, "audio-delay", "path")
+    rig.say("DELAY %s: after it was changed to %d while the source played mpv says audio-delay %r (its path %r)" % (what, other, moved["audio-delay"], moved["path"]))
+    clip = rig.next_clip()
+    after = ask(rig.socket, "audio-delay", "path")
+    rig.say("DELAY %s: with the clip %r loaded mpv says audio-delay %r" % (what, clip, after["audio-delay"]))
+    bad = []
+    if not number(during["audio-delay"]) or abs(during["audio-delay"] - ms / 1000.0) > DELAY_EXACT:
+        bad.append("with the NDI picture loaded mpv's audio-delay is %r; ndi.sound_delay_ms %d is %.3f" % (during["audio-delay"], ms, ms / 1000.0))
+    if moved["path"] != rig.pipe or not number(moved["audio-delay"]) or abs(moved["audio-delay"] - other / 1000.0) > DELAY_EXACT:
+        bad.append("after the delay was changed to %d under the playing source mpv's audio-delay is %r (its path %r)" % (other, moved["audio-delay"], moved["path"]))
+    if not number(after["audio-delay"]) or abs(after["audio-delay"]) > DELAY_EXACT:
+        bad.append("with the next clip loaded (%r) mpv's audio-delay is %r; it must be 0 again" % (after["path"], after["audio-delay"]))
+    if bad:
+        raise Failed("THE DELAY IS NOT THE PLAYER'S, %s: %s" % (what, "; ".join(bad)))
+
+
+SOUND_ONLY_WORDS = "sends sound and no picture"                  # not chosen, and found to carry no picture (the helper's word)
+SOUND_SOURCE_WORDS = "is where this box's NDI sound comes from"   # chosen as the box's sound source (the panel's own refusal)
+NOT_TOUCHED_WORDS = "what plays was not touched"
+
+
+def _refused_play(rig, what, sid, voice, must):
+    """Press Play on `sid`; it must be refused with 409 in words that name `voice` and hold every text of `must`,
+    and nothing of it may be in mpv or said to play. Returns (the words, seconds the answer took)."""
+    began = time.monotonic()
+    code, out = rig.post_play(sid)
+    took = time.monotonic() - began
+    words = str(out.get("error") if isinstance(out, dict) and out.get("error") else out)
+    rig.say("%s: POST /api/play answered HTTP %s after %.1f seconds: %s" % (what, code, took, words[:300]))
+    if code != 409 or voice not in words or [m for m in must if m not in words]:
+        raise Failed("%s was not refused in words that name it and say %s: HTTP %s, %s" % (what, " and ".join(repr(m) for m in must), code, words[:300]))
+    time.sleep(1.5)
+    st = rig.page()
+    m, p = rig.look(), st.get("playing")
+    if m["path"] == rig.pipe or p:
+        raise Failed("STUCK, %s was refused and yet: mpv's path is %r (the pipe is %s), the page says playing=%s"
+                     % (what, m["path"], rig.pipe, json.dumps(p, sort_keys=True)))
+    rig.say("REFUSED %s: \"%s\"; mpv has not got the pipe" % (what, words[:200]))
+    return words, took
+
+
+def case_sound_only_play(rig, voice):
+    """(f) The sound-only source chosen with Play, as a picture is, in each of the two states it can be in. Both are
+    refused, each in its own words, and nothing of the source is loaded into mpv.
+
+    NOT CHOSEN as the box's sound source (each picture plays its own sound): the helper is asked, finds sound and no
+    picture, and the answer names the source, says that it sends sound and no picture and where to choose it; from
+    then on its row in the page's list says "sound_only"; a second press asks it again (the label never locks).
+
+    CHOSEN as the box's sound source: the panel refuses before the player or the helper is touched, in words that
+    name it, say that the box takes its sound from it and that what plays was not touched; it stays the sound source."""
+    sid = rig.source(voice)
+    code, out = rig.post_ndi({"action": "sound_from", "id": ""})
+    if code != 200 or not isinstance(out, dict) or out.get("sound_from") != "" or out.get("sound") is not True:
+        raise Failed("POST /api/ndi (each picture's own sound) answered HTTP %s: %s" % (code, str(out)[:300]))
+    what = "Play on the sound-only source %r, not chosen as the sound source" % voice
+    _refused_play(rig, what, sid, voice, (SOUND_ONLY_WORDS, "Where sound comes from"))
+    row = [s for s in rig.page().get("sources", []) if isinstance(s, dict) and s.get("id") == sid]
+    if not row or row[0].get("sound_only") is not True:
+        raise Failed("%s was refused, and its row in the page's list does not say sound_only: %s" % (what, json.dumps(row, sort_keys=True)))
+    # The label is advice, never a lock (the review of #132, H1): a second press asks the sender again, and since it
+    # still sends no picture it is refused again in the same words.
+    _refused_play(rig, what + ", pressed again", sid, voice, (SOUND_ONLY_WORDS,))
+    what = "Play on the sound-only source %r, chosen as the box's sound source" % voice
+    rig.sound_from(voice)
+    _words, took = _refused_play(rig, what, sid, voice, (SOUND_SOURCE_WORDS, NOT_TOUCHED_WORDS, "choose another sound source"))
+    if took > 3.0:
+        raise Failed("%s was answered after %.1f seconds: it is refused before anything is asked or touched" % (what, took))
+    if rig.page().get("sound_from") != sid:
+        raise Failed("%s was refused, and it is no longer the box's sound source: the page says %r" % (what, rig.page().get("sound_from")))
+
+
+def case_sound_only_play_under_a_picture(rig, picture, voice):
+    """A picture plays with the sound-only source's sound, and Play is pressed on that sound source. The press is
+    refused before the player or the helper is touched (the box's sound source is not shown as a picture), in words
+    that say so; the picture and its sound play on through the ten seconds after it, and the page never gives an end.
+    (Before 510d9ae the panel had the player let go of the pipe first, and the picture went black.)"""
+    what = "Play on the sound-only source %r while %r plays with its sound" % (voice, picture)
+    sid = rig.sound_from(voice)
+    rig.start(picture, "matroska")
+    rig.watch(what + ", before the press", picture, seconds=4, audio=True)
+    code, out = rig.post_play(sid)
+    words = str(out.get("error") if isinstance(out, dict) and out.get("error") else out)
+    rig.say("POST /api/play answered HTTP %s: %s" % (code, words[:300]))
+    if code != 409 or voice not in words or SOUND_SOURCE_WORDS not in words or NOT_TOUCHED_WORDS not in words:
+        raise Failed("%s was not refused in words that name it, say %r and %r: HTTP %s, %s" % (what, SOUND_SOURCE_WORDS, NOT_TOUCHED_WORDS, code, words[:300]))
+    end = rig.watch(what + ", after the refusal", picture, seconds=10, audio=True)
+    if end != "plays":
+        raise Failed("%s was refused, and the picture that played did not play on: %s" % (what, end))
+    rig.say("AFTER THE REFUSED PRESS the picture that played before it plays on")
+
+
+CASES = {"soundfrom": (case_sound_from, 3), "soundfromsize": (case_sound_from_resized, 2), "soundfromstops": (case_sound_from_stops, 2),
+         "soundonlyplay": (case_sound_only_play, 1), "soundonlyunder": (case_sound_only_play_under_a_picture, 2),
+         "sync": (case_sync, 1), "syncinfo": (case_syncinfo, 1), "syncresized": (case_sync_resized, 1), "syncpaused": (case_sync_paused, 1),
          "still": (case_still, 1), "twice": (case_twice, 1), "follow": (case_follow, 2), "sound": (case_sound, 1),
          "soundon": (case_soundon, 1), "size": (case_size, 1), "restart": (case_restart, 1), "stuck": (case_stuck, 1), "chain": (case_chain, 0),
          "gostill": (case_goes_still, 1)}

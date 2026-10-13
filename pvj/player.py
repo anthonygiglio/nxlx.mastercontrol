@@ -236,13 +236,13 @@ class Player:
         whenever the player is another process, the defaults are sent for every MKV_ONLY key, whatever this side
         remembers; not in the middle of a pipe load, which narrows on purpose (the load's own words come last)."""
         try:
-            for k in self.MKV_ONLY:
+            for k in self.PIPE_WHOLE:       # and the sound's delay of that load, which is the whole mpv's too
                 self.ipc.request("set_property", k, self.PIPE_DEFAULTS[k])
         except PlayerError:
             return                          # the player is not answering: tried again at the next word with it
         self._widen_due = False
         if getattr(self, "_pipe_globals", None):
-            self._pipe_globals = [k for k in self._pipe_globals if k not in self.MKV_ONLY] or None
+            self._pipe_globals = [k for k in self._pipe_globals if k not in self.PIPE_WHOLE] or None
 
     def mpv_command(self, audio_device=None, windowed=False):
         args = [self.mpv_bin, "--idle=yes", "--input-ipc-server=" + self.socket_path,
@@ -346,7 +346,8 @@ class Player:
     # What a live input set for the whole player is taken back to: mpv's own defaults (this player starts mpv with
     # none of these on its command line).
     PIPE_DEFAULTS = {"demuxer": "", "cache": "auto", "cache-pause": "yes", "initial-audio-sync": "yes", "demuxer-readahead-secs": 1, "demuxer-max-bytes": "150MiB",
-                     "vd": "", "ad": "", "sid": "auto", "ordered-chapters": "yes", "cover-art-auto": "exact", "embeddedfonts": "yes"}
+                     "vd": "", "ad": "", "sid": "auto", "ordered-chapters": "yes", "cover-art-auto": "exact", "embeddedfonts": "yes",
+                     "audio-delay": 0}
 
     def _undo_pipe_globals(self):
         """Take back the options a live input set for the whole player. One that could not be taken back is kept
@@ -381,6 +382,40 @@ class Player:
     # and taken back before the next thing is loaded (_undo_pipe_globals), as the pipe's options are on mpv 0.35.
     MKV_ONLY = {"vd": "rawvideo,-", "ad": "pcm_f32le,-", "sid": "no", "ordered-chapters": "no", "cover-art-auto": "no",
                 "embeddedfonts": "no"}
+    # The sound of the NDI stream may be moved against its picture (ndi.sound_delay_ms, D87: picture and sound can
+    # come from two senders, which share no clock; the owner sets it by ear). It is mpv's audio-delay, for that one
+    # load. Where mpv takes options with the load (0.38 and later) it goes WITH the load, as the pipe's other
+    # options do: it is that file's alone, so the clip that is still playing while the load is on its way is not
+    # shifted, and mpv takes it back itself when the file ends (the review of #132). On the older road (mpv 0.35,
+    # no options with the load) it is a property of the whole player set a moment before the load, like the
+    # pipe's other options there: the outgoing clip's sound is shifted for that moment, and it is taken back
+    # before the next thing is loaded. Changed while the source plays (pipe_audio_delay) it is a property on
+    # every mpv and is put on the list of what is taken back. A panel that started again under a player it did
+    # not set takes it back too (_widen). A clip never plays with it.
+    PIPE_DELAY = "audio-delay"
+    PIPE_DELAY_SECONDS = (-0.25, 0.5)
+    PIPE_WHOLE = tuple(MKV_ONLY) + (PIPE_DELAY,)
+
+    @classmethod
+    def pipe_delay(cls, seconds):
+        """The delay as mpv is given it: seconds, to the millisecond, held to the bounds; anything else is 0."""
+        if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or seconds != seconds:
+            return 0.0
+        return round(max(cls.PIPE_DELAY_SECONDS[0], min(cls.PIPE_DELAY_SECONDS[1], float(seconds))), 3)
+
+    def pipe_audio_delay(self, path, seconds):
+        """Move the sound of the NDI stream that plays now (the owner changed the delay while listening). True when
+        it was set: only while `path` is the pipe that was loaded last, and it was loaded as the stream with sound.
+        The delay is then on the list of what is taken back, as at the load."""
+        with self._lock:
+            if not (self._pipe and self._pipe_path == path and self._pipe_sound):
+                return False
+            if self.PIPE_DELAY not in (getattr(self, "_pipe_globals", None) or []):
+                self._pipe_globals = (getattr(self, "_pipe_globals", None) or []) + [self.PIPE_DELAY]      # taken back before the next load, whatever mpv does itself
+            self.ipc.request("set_property", self.PIPE_DELAY, self.pipe_delay(seconds))
+            return True
+
+    _pipe_sound = False                     # the pipe that was loaded last is the NDI stream with sound
 
     @staticmethod
     def pipe_queue(width, height, fps):
@@ -396,20 +431,22 @@ class Player:
         need = 2 * int(width) * int(height) * float(fps)
         return "%dMiB" % max(32, min(256, int(need / (1024 * 1024)) + 1))
 
-    def play_pipe(self, path, width, height, fps, fmt="yuyv422"):
+    def play_pipe(self, path, width, height, fps, fmt="yuyv422", audio_delay=0.0):
         """Play raw frames from a pipe (a live input read by a separate helper): YUYV from a capture device
         (pvj/capture.py), UYVY from the NDI helper (pvj/ndi.py), whose rate may be a fraction such as 59.94; or,
-        with fmt "matroska", the NDI helper's stream of frames and sound (the size and rate are then the stream's)."""
+        with fmt "matroska", the NDI helper's stream of frames and sound (the size and rate are then the stream's),
+        whose sound is moved against its picture by `audio_delay` seconds (PIPE_DELAY; bare frames have no sound)."""
         if fmt not in self.PIPE_FORMATS:
             raise PlayerError("unknown pipe format")
         with self._lock:
             self._end_source()
             self._pipe, self._pipe_gone = False, None
-            self._play_pipe(path, width, height, fps, fmt)       # raises if the pipe was not loaded: then it is not what plays
+            self._play_pipe(path, width, height, fps, fmt, audio_delay)       # raises if the pipe was not loaded: then it is not what plays
             self._pipe, self._pipe_pid, self._pipe_path = True, self.ipc.request("get_property", "pid"), path
+            self._pipe_sound = fmt == "matroska"
             self._pipe_since = time.monotonic()
 
-    def _play_pipe(self, path, width, height, fps, fmt="yuyv422"):
+    def _play_pipe(self, path, width, height, fps, fmt="yuyv422", audio_delay=0.0):
         if not self.is_running():
             raise PlayerError("player service is not running (systemctl start pvj-player)")
         self._undo_pipe_globals()
@@ -432,7 +469,7 @@ class Player:
             # when sound was switched on under the source (player/audio.c, audio_start_ao). The times in the
             # stream still decide where each picture goes against the sound; only the wait at the start is gone.
             opts = {"demuxer": "mkv", "cache": "no", "cache-pause": "no", "initial-audio-sync": "no", "demuxer-readahead-secs": 0,
-                    "demuxer-max-bytes": self.pipe_queue(width, height, fps)}
+                    "demuxer-max-bytes": self.pipe_queue(width, height, fps), self.PIPE_DELAY: self.pipe_delay(audio_delay)}
             self._pipe_globals = []
             self._pipe_loading = True              # a status poll that meets a new player now must not widen under this load
             try:

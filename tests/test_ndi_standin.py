@@ -34,8 +34,15 @@ STILL_SHORT_GAP, STILL_LONG_GAP = "PVJ-STANDIN (one still then sound after a sho
 THEN_STILL_GAP = "PVJ-STANDIN (moving then still with sound after a short gap)"
 PAUSES = "PVJ-STANDIN (moving with sound pauses 20 s)"
 LATE = tuple("PVJ-STANDIN (moving with sound late by %s)" % t for t in ("0.2 s", "0.8 s", "5 s"))
-ONLY_HERE = (AT_ONCE_A, AT_ONCE_B, THEN_STILL, STILL_SHORT_GAP, STILL_LONG_GAP, THEN_STILL_GAP, PAUSES) + LATE      # for this file and tests/test_ndi_mpv.py
-ALL = (MOVING, SOUND, STILL, AT_ONCE_A, AT_ONCE_B, CHANGES) + ONLY_HERE[2:] + BIG
+# sound from another sender (D87): a sender with sound and no picture, and the ways it can come and go
+SOUND_ONLY, SOUND_ONLY_STOPS = "PVJ-STANDIN (sound only)", "PVJ-STANDIN (sound only stops after 12 s)"
+SOUND_ONLY_APPEARS = "PVJ-STANDIN (sound only appears 5 s after the first picture)"
+FLASHES, SOUND_ONLY_CLICKS = "PVJ-STANDIN (flashes)", "PVJ-STANDIN (sound only clicks 200 ms late)"
+NOT_ALWAYS_THERE = (SOUND_ONLY_APPEARS,)       # the finder does not report it from the start (standin.c says when)
+ONLY_HERE = ((AT_ONCE_A, AT_ONCE_B, THEN_STILL, STILL_SHORT_GAP, STILL_LONG_GAP, THEN_STILL_GAP, PAUSES) + LATE      # for this file and tests/test_ndi_mpv.py
+             + (SOUND_ONLY_STOPS, SOUND_ONLY_APPEARS, FLASHES, SOUND_ONLY_CLICKS))
+ALL = (MOVING, SOUND, STILL, AT_ONCE_A, AT_ONCE_B, CHANGES, SOUND_ONLY) + ONLY_HERE[2:] + BIG
+HOST = "10.255.255.1"                          # where the stand-in says its sources are
 
 
 def picture(n):
@@ -84,6 +91,8 @@ class OneSetOfNames(unittest.TestCase):
                      'case stuck "$NDI_BIG_STILL"', 'case follow "$NDI_BIG_A" "$NDI_BIG_B"', 'case follow "$NDI_BIG_A_SOUND" "$NDI_BIG_B_SOUND"',
                      'case sound "$NDI_SOUND"', 'case sound "$NDI_BIG_SOUND"', 'case soundon "$NDI_BIG_SOUND"', 'case size "$NDI_BIG_CHANGES"',
                      'case size "$NDI_BIG_CHANGES_SOUND"', 'case size "$NDI_CHANGES"', 'case restart "$NDI_MOVING"', "case chain\n",
+                     'case soundfrom "$NDI_MOVING" "$NDI_SOUND_ONLY" 12', 'case soundfromsize "$NDI_BIG_CHANGES" "$NDI_SOUND_ONLY"',
+                     'case soundonlyplay "$NDI_SOUND_ONLY"', 'sound_connections_of "$HELPER_PID"', "box soundown ",
                      "pvj-ndi-runtime remove"):
             self.assertIn(want, sh[sh.index('step "an NDI picture all the way'):], want)
 
@@ -95,8 +104,9 @@ class OneSetOfNames(unittest.TestCase):
         self.assertNotIn("NDIlib_source_t", c)       # the structures have names of our own; only the entry points' names are NDI's
 
 
-@unittest.skipUnless(CC, "no C compiler here: the stand-in for NDI's library cannot be built")
-class StandIn(unittest.TestCase):
+class Built(unittest.TestCase):
+    """The stand-in built once for a class, and for each test the helper's real Service with it and a pipe."""
+
     @classmethod
     def setUpClass(cls):
         cls.build = tempfile.mkdtemp(prefix="pvj-standin-")
@@ -112,11 +122,16 @@ class StandIn(unittest.TestCase):
     def tearDownClass(cls):
         shutil.rmtree(cls.build, ignore_errors=True)
 
+    def library(self):
+        """The file this test's helper loads: the class's one build (what it remembers passes from test to test)."""
+        return self.path
+
     def setUp(self):
         self.dir = tempfile.mkdtemp(prefix="pvj-standin-run-")
         self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
         self.said = []
-        self.s = ndi.Service(self.dir, self.path, loader=ndi.CtypesLibrary, problem=lambda p: None, log=self.said.append)
+        self.loaded = self.library()
+        self.s = ndi.Service(self.dir, self.loaded, loader=ndi.CtypesLibrary, problem=lambda p: None, log=self.said.append)
         self.addCleanup(self.s.close)
         os.mkfifo(self.s.fifo, 0o600)          # as on a box, the pipe is there before a source is opened
         self.readers = []
@@ -129,15 +144,15 @@ class StandIn(unittest.TestCase):
         for r in self.readers:
             r.join(3)
 
-    def on(self, sound):
-        st = self.s.handle({"cmd": "configure", "on": True, "addresses": [], "sound": sound})
+    def on(self, sound, **more):
+        st = self.s.handle(dict({"cmd": "configure", "on": True, "addresses": [], "sound": sound}, **more))
         self.assertTrue(st["ok"], st)
         self.assertEqual(st["runtime"]["loaded"], True, st)
         return st
 
-    def play(self, name, sound, want):
+    def play(self, name, sound, want, **more):
         """Open the source called `name`, then read the pipe; returns (the helper's answer, the reader)."""
-        st = self.on(sound)
+        st = self.on(sound, **more)
         sid = [s["id"] for s in st["sources"] if s["name"] == name]
         self.assertEqual(len(sid), 1, st["sources"])
         out = self.s.handle({"cmd": "open", "id": sid[0]})
@@ -160,6 +175,9 @@ class StandIn(unittest.TestCase):
             time.sleep(0.02)
         return bool(what())
 
+
+@unittest.skipUnless(CC, "no C compiler here: the stand-in for NDI's library cannot be built")
+class StandIn(Built):
     def test_it_built_without_a_warning(self):
         self.assertEqual(self.warnings.strip(), "")
 
@@ -202,7 +220,10 @@ class StandIn(unittest.TestCase):
 
     def test_the_finder_reports_its_sources_at_a_private_address(self):
         st = self.on(False)
-        self.assertEqual(sorted(s["name"] for s in st["sources"]), sorted(ALL))
+        names = [s["name"] for s in st["sources"]]
+        self.assertEqual(len(names), len(set(names)))
+        self.assertLessEqual(set(names), set(ALL))
+        self.assertEqual(set(ALL) - set(names) - set(NOT_ALWAYS_THERE), set())
         self.assertEqual({ndi.host_of(s["from"]) for s in st["sources"]}, {"10.255.255.1"})
         self.assertFalse(st["cut"])
         self.assertIn("STAND-IN", st["runtime"]["version"])
@@ -372,6 +393,221 @@ class StandIn(unittest.TestCase):
         self.assertGreaterEqual(p["audio"]["counts"]["written"] - before, 15, "about thirty blocks a second")
         self.assertIn(p["state"], ("playing", "still"), p)
         self.assertEqual(p["message"], "")
+
+
+def level(data, tenths):
+    """Whether the stand-in's square wave at `tenths` tenths of full scale is in what the pipe carried (after the
+    helper's headroom): both channels low or both high together, sample by sample."""
+    v = struct.unpack("<f", struct.pack("<f", tenths / 10.0))[0] * ndi.AUDIO_GAIN
+    low, high = struct.pack("<f", -v), struct.pack("<f", v)
+    return low + low in data or high + high in data
+
+
+@unittest.skipUnless(CC, "no C compiler here: the stand-in for NDI's library cannot be built")
+class SoundFromAnotherSender(Built):
+    """One sound source for the whole box (D87), through the helper's real code: the picture from one stand-in source,
+    the sound from another on a connection asked for sound alone. Each test has a copy of the library of its own,
+    because the stand-in counts every receiver that was made in it, and that count is what is read here."""
+
+    def library(self):
+        folder = tempfile.mkdtemp(prefix="pvj-standin-own-", dir=self.dir)
+        self.addCleanup(shutil.rmtree, folder, True)
+        own = os.path.join(folder, ndi.LIB_NAME)
+        shutil.copy(self.path, own)
+        return own
+
+    def made(self, name, bandwidth, open_now=False):
+        from tests import ndi_standin
+        return ndi_standin.receivers(self.loaded, name, bandwidth, open_now)
+
+    def from_source(self, name):
+        """The configure message's part that makes `name` the box's sound source (its id is the helper's own hash)."""
+        sid = ndi.source_id(name, HOST)
+        # with the row the owner allowed: the helper plays the sound of that name at that machine and of no other (M1)
+        return {"sound_from": sid, "allowed": [sid], "sound_row": {"id": sid, "name": name, "from": "%s:5960" % HOST}}
+
+    def status(self):
+        return self.s.handle({"cmd": "status"})
+
+    def test_the_two_bandwidths_are_the_helpers(self):
+        from tests import ndi_standin
+        self.assertEqual((ndi_standin.SOUND_ALONE, ndi_standin.PICTURE), (ndi.BANDWIDTH_AUDIO_ONLY, ndi.BANDWIDTH_HIGHEST))
+        with open(SOURCE) as f:
+            c = f.read()
+        self.assertIn("#define BANDWIDTH_SOUND_ALONE %d " % ndi.BANDWIDTH_AUDIO_ONLY, c)
+        self.assertIn("#define KIND_ERROR %d " % ndi.FRAME_ERROR, c)
+
+    def test_a_receiver_for_sound_alone_gets_no_picture_from_any_source_and_the_sound_only_source_never_sends_one(self):
+        self.on(True)
+        lib = self.s.lib
+        rows = {s["name"]: s for s in self.s.sources()}
+        asked = {"sound alone, a source with sound": lib.recv_open(rows[SOUND]["raw"], audio_only=True),
+                 "sound alone, a source without sound": lib.recv_open(rows[MOVING]["raw"], audio_only=True),
+                 "sound alone, one still then sound": lib.recv_open(rows[STILL]["raw"], audio_only=True),
+                 "a picture's receiver, the sound-only source": lib.recv_open(rows[SOUND_ONLY]["raw"]),
+                 "sound alone, the sound-only source": lib.recv_open(rows[SOUND_ONLY]["raw"], audio_only=True)}
+        pictures, blocks, loudest = dict.fromkeys(asked, 0), dict.fromkeys(asked, 0), dict.fromkeys(asked, 0.0)
+        began = time.monotonic()
+        while time.monotonic() - began < 2.0:
+            for what, handle in asked.items():
+                f = lib.recv_capture(handle, 5)
+                if f is not None and f.kind == "video":
+                    pictures[what] += 1
+                    lib.recv_free(handle, f)
+                a = lib.recv_audio(handle, 5)
+                if a is not None and a is not ndi.AUDIO_LOST:
+                    blocks[what] += 1
+                    loudest[what] = max(loudest[what], abs(struct.unpack("<f", bytes(a.view(0, 4)))[0]))
+                    lib.recv_free_audio(handle, a)
+        self.assertEqual(set(pictures.values()), {0}, pictures)
+        self.assertEqual(blocks["sound alone, a source without sound"], 0, blocks)
+        for what in set(asked) - {"sound alone, a source without sound"}:
+            self.assertGreater(blocks[what], 10, blocks)
+        self.assertAlmostEqual(loudest["sound alone, a source with sound"], 0.1, places=5)
+        self.assertAlmostEqual(loudest["sound alone, the sound-only source"], 0.05, places=5)
+        self.assertAlmostEqual(loudest["a picture's receiver, the sound-only source"], 0.05, places=5)
+        # and each of them is on the stand-in's own record, by its source and by how it was asked for
+        self.assertEqual((self.made(SOUND, 10), self.made(MOVING, 10), self.made(STILL, 10)), (1, 1, 1))
+        self.assertEqual((self.made(SOUND_ONLY, 10), self.made(SOUND_ONLY, 100), self.made(SOUND, 100)), (1, 1, 0))
+        self.assertEqual(self.made(SOUND_ONLY, 10, open_now=True), 1)
+        for handle in asked.values():
+            lib.recv_close(handle)
+        self.assertEqual((self.made(SOUND_ONLY, 10, open_now=True), self.made(SOUND_ONLY, 10)), (0, 1))
+        self.assertEqual(self.made("no such source", 10), 0)
+
+    def test_played_by_itself_the_sound_only_source_is_refused_in_words_and_marked_sound_only(self):
+        sid = ndi.source_id(SOUND_ONLY, HOST)
+        st = self.on(True, **self.from_source(SOUND_ONLY))
+        self.assertNotIn("sound_only", [s for s in st["sources"] if s["id"] == sid][0])       # not known before it was pressed
+        self.s._first_frame = 2.0                  # the helper's own wait for a first picture, shortened for this test
+        out = self.s.handle({"cmd": "open", "id": sid})
+        self.assertEqual(out, {"ok": False, "sound_only": True,
+                               "error": "%s sends sound and no picture; to hear it under NDI pictures, choose it under 'Where sound comes from' on the NDI page" % SOUND_ONLY})
+        self.assertIs([s for s in self.status()["sources"] if s["id"] == sid][0].get("sound_only"), True)
+        # it was asked for as a picture is (it is the picture here), never on a second connection for its sound
+        self.assertEqual((self.made(SOUND_ONLY, 100), self.made(SOUND_ONLY, 10)), (1, 0))
+
+    def test_the_picture_of_one_source_and_the_sound_of_the_sound_only_source_arrive_in_one_matroska_stream(self):
+        from tests.test_ndi_sound import blocks
+        head = ndi.mkv_header(WIDTH, HEIGHT, FPS, (48000, 2))
+        out, reader = self.play(MOVING, True, len(head) + 45 * FRAME, **self.from_source(SOUND_ONLY))
+        self.assertEqual((out["playing"]["name"], out["playing"]["container"]), (MOVING, "matroska"))
+        self.assertEqual((out["playing"]["audio"]["rate"], out["playing"]["audio"]["channels"]), (48000, 2))
+        self.assertTrue(reader.full.wait(8), "forty-five pictures' worth in the time given: %d bytes came" % len(reader.data))
+        data = bytes(reader.data)
+        self.assertEqual(data[:len(head)], head)
+        got = blocks(data)
+        pictures, sounds = [b for t, _, b in got if t == 1], b"".join(b for t, _, b in got if t == 2)
+        self.assertGreater(len(pictures), 20)
+        for one in pictures[:3]:
+            self.assertEqual(one, picture((one[0] * 205) & 255), "a picture in the stream is not one the picture's source made")
+        self.assertGreater(len(sounds), 48000 * 8 // 2, "half a second of sound at the least")
+        self.assertTrue(level(sounds, 0.5), "the sound-only source's sound (a twentieth of full scale) is not in the stream")
+        self.assertFalse(level(sounds, 1.0), "a picture source's sound (a tenth of full scale) is in the stream")
+        st = self.status()
+        self.assertEqual(st["sound_source"], {"id": ndi.source_id(SOUND_ONLY, HOST), "state": "playing", "arriving": True})
+        self.assertEqual((st["playing"]["state"], st["playing"]["audio"]["problem"]), ("playing", ""))
+        # how the stand-in was asked: the picture's source as a picture is, the sound's source for sound alone, once each
+        self.assertEqual((self.made(MOVING, 100), self.made(MOVING, 10)), (1, 0))
+        self.assertEqual((self.made(SOUND_ONLY, 10), self.made(SOUND_ONLY, 100)), (1, 0))
+
+    def test_the_sound_connection_is_opened_once_and_stays_through_a_picture_re_open_at_another_size(self):
+        choice = self.from_source(SOUND_ONLY)
+        out, reader = self.play(CHANGES, True, 0, **choice)
+        self.assertEqual((out["playing"]["width"], out["playing"]["height"], out["playing"]["container"]), (WIDTH, HEIGHT, "matroska"))
+        feed = self.s.feed
+        self.assertTrue(self.wait(lambda: self.playing()["state"] == "changed", 7.0), self.playing())
+        self.assertEqual(self.playing()["message"], "the source changed to 256 x 144 at 30.0 frames a second")
+        self.assertEqual(self.made(SOUND_ONLY, 10, open_now=True), 1, "the sound connection is still open while no picture is")
+        head = ndi.mkv_header(256, 144, FPS, (48000, 2))
+        out, reader = self.play(CHANGES, True, len(head) + 40 * 2 * 256 * 144, **choice)
+        self.assertEqual((out["playing"]["width"], out["playing"]["height"], out["playing"]["container"]), (256, 144, "matroska"))
+        self.assertTrue(reader.full.wait(8), "forty pictures' worth of the new stream: %d bytes came" % len(reader.data))
+        self.assertEqual(bytes(reader.data[:len(head)]), head)
+        self.assertTrue(level(bytes(reader.data), 0.5), "the sound-only source's sound is not in the stream after the re-open")
+        self.assertIs(self.s.feed, feed)
+        self.assertTrue(feed.alive())
+        self.assertEqual((self.made(SOUND_ONLY, 10), self.made(SOUND_ONLY, 10, open_now=True)), (1, 1), "one sound connection in the whole run")
+        self.assertEqual((self.made(CHANGES, 100), self.made(CHANGES, 100, open_now=True)), (2, 1), "the picture was opened twice")
+        self.assertEqual(len([line for line in self.said if "sound comes from" in line]), 1, self.said)
+
+    def test_a_sound_source_that_appears_five_seconds_after_the_press_ends_the_bare_picture_as_changed_and_then_plays(self):
+        choice = self.from_source(SOUND_ONLY_APPEARS)
+        st = self.on(True, **choice)
+        self.assertNotIn(SOUND_ONLY_APPEARS, [s["name"] for s in st["sources"]])
+        self.assertEqual(st["sound_source"], {"id": choice["sound_from"], "state": "away", "arriving": False})
+        began = time.monotonic()
+        out, reader = self.play(MOVING, True, 0, **choice)
+        self.assertEqual(out["playing"]["container"], "raw", "with its sound source away a picture plays as bare frames")
+        seen = {}
+
+        def changed():                             # each look is also the helper's look for the sound source (Service.status)
+            st = self.status()
+            if SOUND_ONLY_APPEARS in [s["name"] for s in st["sources"]]:
+                seen.setdefault("listed", time.monotonic() - began)
+            return st["playing"]["state"] == "changed"
+        self.assertTrue(self.wait(changed, 12.0), self.status())
+        took = time.monotonic() - began
+        self.assertEqual(self.playing()["message"], "the sound source started to send sound")
+        self.assertAlmostEqual(seen["listed"], 5.0, delta=1.3)       # five seconds after the picture's receiver; the helper's list is a second old
+        # then: the helper's next look (every 2 s), the stand-in's quiet first second, the first block
+        self.assertLess(took - seen["listed"], ndi.FEED_RETRY_SECONDS + 2.5, "from there to the first sound")
+        out, reader = self.play(MOVING, True, 0, **choice)
+        self.assertEqual(out["playing"]["container"], "matroska")
+        self.assertEqual(self.status()["sound_source"]["state"], "playing")
+        self.assertEqual((self.made(SOUND_ONLY_APPEARS, 10), self.made(MOVING, 100)), (1, 2))
+
+    def test_a_sound_source_that_stops_is_away_and_the_picture_goes_on(self):
+        choice = self.from_source(SOUND_ONLY_STOPS)
+        out, reader = self.play(MOVING, True, 0, **choice)
+        self.assertEqual(out["playing"]["container"], "matroska")
+        began = time.monotonic()
+        self.assertEqual(self.status()["sound_source"]["state"], "playing")
+        self.assertTrue(self.wait(lambda: self.status()["sound_source"]["state"] == "away", 16.0), self.status())
+        self.assertGreater(time.monotonic() - began, 8.0, "it stops twelve seconds after its receiver was made")
+        first = self.status()
+        time.sleep(2.0)
+        st = self.status()
+        self.assertEqual(st["sound_source"], {"id": choice["sound_from"], "state": "away", "arriving": False})
+        self.assertNotIn(SOUND_ONLY_STOPS, [s["name"] for s in st["sources"]])
+        self.assertEqual((st["playing"]["state"], st["playing"]["message"]), ("playing", ""), st["playing"])
+        self.assertGreaterEqual(st["playing"]["counts"]["shown"] - first["playing"]["counts"]["shown"], 40, "the picture goes on")
+        self.assertGreater(st["playing"]["audio"]["counts"]["filled"], first["playing"]["audio"]["counts"]["filled"],
+                           "silence is written where the sound source's sound was")
+        self.assertEqual(self.made(SOUND_ONLY_STOPS, 10), 1)
+
+    def test_the_known_offset_of_two_senders_is_in_the_stream_as_the_stand_in_made_it(self):
+        # The picture source flashes on each whole second of the stand-in's clock; the sound source clicks 200 ms
+        # after each. The helper gives each its time as it ARRIVES, so the stream must hold the click 0.2 s after
+        # the flash: this is the offset that ndi.sound_delay_ms is there to take out, by ear, on a box.
+        import array
+        from tests.test_ndi_sound import blocks
+        head = ndi.mkv_header(WIDTH, HEIGHT, FPS, (48000, 2))
+        out, reader = self.play(FLASHES, True, len(head) + 170 * FRAME, **self.from_source(SOUND_ONLY_CLICKS))
+        self.assertEqual(out["playing"]["container"], "matroska")
+        self.assertTrue(reader.full.wait(12), "five and a half seconds' worth in the time given: %d bytes came" % len(reader.data))
+        got = blocks(bytes(reader.data))
+        flashes = [when for t, when, b in got if t == 1 and b[:64] == b"\xff" * 64]
+        clicks, quiet = [], True
+        for t, when, b in got:
+            if t != 2:
+                continue
+            samples = array.array("f", b[:len(b) - len(b) % 8])
+            if sys.byteorder != "little":
+                samples.byteswap()
+            loud = [i for i, v in enumerate(samples) if v != 0.0][:1]
+            if loud and quiet:
+                clicks.append(when + (loud[0] // 2) / 48000.0)
+            quiet = not samples or samples[-1] == 0.0
+        self.assertGreaterEqual(len(flashes), 4, flashes)
+        self.assertGreaterEqual(len(clicks), 4, clicks)
+        for a, b in zip(flashes, flashes[1:]):
+            self.assertAlmostEqual(b - a, 1.0, delta=0.05, msg="one flash a second: %r" % flashes)
+        late = [c - max(f for f in flashes if f <= c) for c in clicks if c >= flashes[0]]
+        self.assertGreaterEqual(len(late), 3, (flashes, clicks))
+        for d in late:
+            self.assertAlmostEqual(d, 0.2, delta=0.06, msg="each click 200 ms after its flash: flashes %r, clicks %r" % (flashes, clicks))
+        self.assertTrue(level(b"".join(b for t, _, b in got if t == 2), 0.5))
 
 
 if __name__ == "__main__":
