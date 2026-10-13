@@ -1959,6 +1959,40 @@ class SoundFromServiceTest(unittest.TestCase):
         self.assertIn(("recv", 1), self.lib.closed_handles)                              # the sound connection is given back
         self.assertIsNone(self.s.feed)
 
+    def test_a_sender_with_sound_and_no_picture_is_told_apart_from_one_that_sends_nothing(self):
+        """The owner's sound sender, pressed as if it were a picture. Before: "sent no picture in 6 seconds", for
+        this one as for a sender that is switched off. Sound is off here, as on a new box: the connection is
+        asked for one block, whose figures are looked at and not a byte of it read."""
+        self.conf(sound=False, sound_from="")
+        block = sound(480)
+        self.lib.own.put(block)
+        reply = self.s.handle({"cmd": "open", "id": VID})
+        self.assertEqual(reply, {"ok": False, "sound_only": True, "error": "VLC (Audio) sends sound and no picture; choose it under 'Where sound comes from' on the NDI page"})
+        self.assertEqual(block.token, [])
+        self.assertEqual(self.lib.freed_sound, 1)
+        rows = {r["id"]: r for r in self.status(2)["sources"]}
+        self.assertIs(rows[VID].get("sound_only"), True)
+        self.assertNotIn("sound_only", rows[PID])
+        reply = self.s.handle({"cmd": "open", "id": PID})                                # nothing at all: the old words
+        self.assertEqual(reply, {"ok": False, "error": "SCAN (Converter) sent no picture in 0 seconds"})
+        self.assertNotIn("sound_only", {r["id"]: r for r in self.status(2)["sources"]}[PID])
+        for bad in (sound(480, rate=22050), sound(24000)):                              # sound the box would not play is not "sound"
+            self.lib.own.put(bad)
+            self.assertNotIn("sound_only", self.s.handle({"cmd": "open", "id": PID}))
+            self.assertEqual(bad.token, [])
+        # with each picture's own sound on, the sound's own thread has seen it: the same answer
+        self.conf(sound=True, sound_from="")
+        self.s.sound_only.clear()
+        self.lib.own.put(sound(480))
+        self.assertIs(self.s.handle({"cmd": "open", "id": VID}).get("sound_only"), True)
+        # and the label goes the moment the sender does send a picture
+        self.lib.frames.put(frame(64, 16))
+        self.assertTrue(self.s.handle({"cmd": "open", "id": VID})["ok"])
+        self.assertNotIn("sound_only", {r["id"]: r for r in self.status(2)["sources"]}[VID])
+        # the panel passes the label on only as a plain true
+        rows = ndi.Input._rows({"sources": [dict(VOICE_ROW, sound_only=True), dict(PICTURE_ROW, sound_only="yes")]})
+        self.assertEqual(rows, [dict(VOICE_ROW, sound_only=True), PICTURE_ROW])
+
     def test_switching_the_input_off_gives_the_sound_connection_back(self):
         self.conf()
         self.pump()
