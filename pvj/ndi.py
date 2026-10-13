@@ -2144,7 +2144,7 @@ class Service:
             if only:
                 if len(self.sound_only) < MAX_SOURCES * 4:
                     self.sound_only.add(sid)
-                return {"ok": False, "sound_only": True, "error": "%s sends sound and no picture; choose it under 'Where sound comes from' on the NDI page" % row["name"]}
+                return {"ok": False, "sound_only": True, "error": "%s sends sound and no picture; to hear it under NDI pictures, choose it under 'Where sound comes from' on the NDI page" % row["name"]}
             # Neither a picture nor sound in time. Said so that a sound sender that is quiet does not look
             # broken: such a sender sends nothing at all while nothing plays into it (seen on the owner's).
             if st["state"] == "changed":

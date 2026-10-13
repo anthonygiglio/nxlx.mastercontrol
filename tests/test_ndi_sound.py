@@ -1999,7 +1999,7 @@ class SoundFromServiceTest(unittest.TestCase):
         block = sound(480)
         self.lib.own.put(block)
         reply = self.s.handle({"cmd": "open", "id": VID})
-        self.assertEqual(reply, {"ok": False, "sound_only": True, "error": "VLC (Audio) sends sound and no picture; choose it under 'Where sound comes from' on the NDI page"})
+        self.assertEqual(reply, {"ok": False, "sound_only": True, "error": "VLC (Audio) sends sound and no picture; to hear it under NDI pictures, choose it under 'Where sound comes from' on the NDI page"})
         self.assertEqual(block.token, [])
         self.assertEqual(self.lib.freed_sound, 1)
         rows = {r["id"]: r for r in self.status(2)["sources"]}
@@ -2337,7 +2337,8 @@ class ApiSoundFromTest(ServerBase):
         asked = len([m for m in self.client.sent if m["cmd"] in ("open", "close")])
         st, body, _ = self.call("POST", "/api/play", {"ndi": VID}, token=self.full)
         self.assertEqual(st, 409)
-        self.assertEqual(body["error"], "VLC (Audio) is where this box's NDI sound comes from, so it is not shown as a picture; what plays was not touched")
+        self.assertEqual(body["error"], "VLC (Audio) is where this box's NDI sound comes from, so it is not shown as a picture (to show it, choose another sound source first); "
+                                        "what plays was not touched")
         after = (list(self.lib.opens), list(self.lib.closed_handles), len(self.player.calls), self.service.receiver, self.service.feed, dict(self.api.ndi.current))
         self.assertEqual(after, before)                                                  # the picture, its sound and the player are as they were
         self.assertEqual((released, len([m for m in self.client.sent if m["cmd"] in ("open", "close")])), ([], asked))
@@ -2352,7 +2353,7 @@ class ApiSoundFromTest(ServerBase):
         playing, calls = self.service.receiver, len(self.player.calls)
         del released[:]
         st, body, _ = self.call("POST", "/api/play", {"ndi": VID}, token=self.full)
-        self.assertEqual((st, body["error"]), (409, "VLC (Audio) sends sound and no picture; choose it under 'Where sound comes from' on the NDI page"))
+        self.assertEqual((st, body["error"]), (409, "VLC (Audio) sends sound and no picture; to hear it under NDI pictures, choose it under 'Where sound comes from' on the NDI page"))
         self.assertIs(self.service.receiver, playing)
         self.assertNotIn(playing.state, ndi.ENDED)
         self.assertEqual((released, len(self.player.calls)), ([], calls))

@@ -3137,9 +3137,9 @@ class Api:
                 row = ([r for r in rows if r["id"] == sid] or [None])[0]
                 name = row["name"] if row else "that source"
                 if self.ndi.sound_wanted() and sid == self.ndi.sound_from():
-                    raise ApiError(409, "%s is where this box's NDI sound comes from, so it is not shown as a picture; what plays was not touched" % name)
+                    raise ApiError(409, "%s is where this box's NDI sound comes from, so it is not shown as a picture (to show it, choose another sound source first); what plays was not touched" % name)
                 if row is not None and row.get("sound_only"):
-                    raise ApiError(409, "%s sends sound and no picture; choose it under 'Where sound comes from' on the NDI page" % name)
+                    raise ApiError(409, "%s sends sound and no picture; to hear it under NDI pictures, choose it under 'Where sound comes from' on the NDI page" % name)
             # If the player does not confirm that it let go, no new writer is started over a reader that may still
             # be there. But the player is not left as it is either: the helper is told to close what it has (that
             # ends the old writer, and the end of the stream is what ends a player stuck opening or reading it),

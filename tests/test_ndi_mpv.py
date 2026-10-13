@@ -25,8 +25,9 @@ with PVJ_NDI_FINDINGS_FATAL=yes it fails like any other, and CI's job sets that 
 prints a line beginning FINDING and is counted as skipped, with the reason. CI's job also runs the still cases on
 the pvj code from before the mending, where they must fail.
 
-Sound from another sender (D87, cases 40 to 46) is asked with `must`: every part those cases ask about is built, so
-none of them is under the switch. One case more (47) is `for_the_record`: never fatal, it prints what it saw."""
+Sound from another sender (D87, cases 40 to 47) is asked with `must`: every part those cases ask about is built, so
+none of them is under the switch. (47, a press on the box's sound source under a playing picture, was for the record
+until that press was refused before anything is touched.)"""
 import os
 import shutil
 import subprocess
@@ -382,10 +383,8 @@ class NdiOnARealMpv(ServerBase):
         self.must(mpvword.case_sound_only_play, SOUND_ONLY)
 
     def test_47_play_on_the_sound_only_source_while_a_picture_plays_with_its_sound(self):
-        # For the record: not one of the cases this job was asked to judge, and never fatal. What it prints says
-        # what became of the picture that played before the refused press.
-        self.for_the_record("after a refused Play on the sound-only source, the picture before it plays or has a reason",
-                            mpvword.case_sound_only_play_under_a_picture, MOVING, SOUND_ONLY)
+        # Judged since the press is refused before anything is touched (510d9ae): the picture and its sound play on.
+        self.must(mpvword.case_sound_only_play_under_a_picture, MOVING, SOUND_ONLY)
 
 
 if __name__ == "__main__":

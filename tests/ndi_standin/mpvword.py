@@ -834,44 +834,80 @@ def case_sound_delay(rig, picture, voice, ms=-OFFSET_MS):
         raise Failed("THE DELAY IS NOT THE PLAYER'S, %s: %s" % (what, "; ".join(bad)))
 
 
-def case_sound_only_play(rig, voice):
-    """(f) The sound-only source chosen with Play, as a picture is: refused, in words that name it and say that it
-    sends sound and no picture; nothing of it is loaded into mpv, the page does not say it plays, and from then on
-    its row in the page's list says "sound_only"."""
-    what = "Play on the sound-only source %r" % voice
-    sid = rig.sound_from(voice)
+SOUND_ONLY_WORDS = "sends sound and no picture"                  # not chosen, and found to carry no picture (the helper's word)
+SOUND_SOURCE_WORDS = "is where this box's NDI sound comes from"   # chosen as the box's sound source (the panel's own refusal)
+NOT_TOUCHED_WORDS = "what plays was not touched"
+
+
+def _refused_play(rig, what, sid, voice, must):
+    """Press Play on `sid`; it must be refused with 409 in words that name `voice` and hold every text of `must`,
+    and nothing of it may be in mpv or said to play. Returns (the words, seconds the answer took)."""
     began = time.monotonic()
     code, out = rig.post_play(sid)
+    took = time.monotonic() - began
     words = str(out.get("error") if isinstance(out, dict) and out.get("error") else out)
-    rig.say("POST /api/play answered HTTP %s after %.1f seconds: %s" % (code, time.monotonic() - began, words[:300]))
-    if code != 409 or voice not in words or "sends sound and no picture" not in words:
-        raise Failed("%s was not refused in words that name it and say it sends sound and no picture: HTTP %s, %s" % (what, code, words[:300]))
+    rig.say("%s: POST /api/play answered HTTP %s after %.1f seconds: %s" % (what, code, took, words[:300]))
+    if code != 409 or voice not in words or [m for m in must if m not in words]:
+        raise Failed("%s was not refused in words that name it and say %s: HTTP %s, %s" % (what, " and ".join(repr(m) for m in must), code, words[:300]))
     time.sleep(1.5)
     st = rig.page()
     m, p = rig.look(), st.get("playing")
     if m["path"] == rig.pipe or p:
         raise Failed("STUCK, %s was refused and yet: mpv's path is %r (the pipe is %s), the page says playing=%s"
                      % (what, m["path"], rig.pipe, json.dumps(p, sort_keys=True)))
-    row = [s for s in st.get("sources", []) if isinstance(s, dict) and s.get("id") == sid]
+    rig.say("REFUSED %s: \"%s\"; mpv has not got the pipe" % (what, words[:200]))
+    return words, took
+
+
+def case_sound_only_play(rig, voice):
+    """(f) The sound-only source chosen with Play, as a picture is, in each of the two states it can be in. Both are
+    refused, each in its own words, and nothing of the source is loaded into mpv.
+
+    NOT CHOSEN as the box's sound source (each picture plays its own sound): the helper is asked, finds sound and no
+    picture, and the answer names the source, says that it sends sound and no picture and where to choose it; from
+    then on its row in the page's list says "sound_only", and a second press is refused by the panel at once.
+
+    CHOSEN as the box's sound source: the panel refuses before the player or the helper is touched, in words that
+    name it, say that the box takes its sound from it and that what plays was not touched; it stays the sound source."""
+    sid = rig.source(voice)
+    code, out = rig.post_ndi({"action": "sound_from", "id": ""})
+    if code != 200 or not isinstance(out, dict) or out.get("sound_from") != "" or out.get("sound") is not True:
+        raise Failed("POST /api/ndi (each picture's own sound) answered HTTP %s: %s" % (code, str(out)[:300]))
+    what = "Play on the sound-only source %r, not chosen as the sound source" % voice
+    _refused_play(rig, what, sid, voice, (SOUND_ONLY_WORDS, "Where sound comes from"))
+    row = [s for s in rig.page().get("sources", []) if isinstance(s, dict) and s.get("id") == sid]
     if not row or row[0].get("sound_only") is not True:
         raise Failed("%s was refused, and its row in the page's list does not say sound_only: %s" % (what, json.dumps(row, sort_keys=True)))
-    rig.say("REFUSED %s: \"%s\"; mpv has not got the pipe" % (what, words[:200]))
+    _words, took = _refused_play(rig, what + ", pressed again", sid, voice, (SOUND_ONLY_WORDS,))
+    if took > 3.0:
+        raise Failed("%s, pressed again, was answered after %.1f seconds: a sender known to be sound only is refused at once, without asking it again" % (what, took))
+    what = "Play on the sound-only source %r, chosen as the box's sound source" % voice
+    rig.sound_from(voice)
+    _words, took = _refused_play(rig, what, sid, voice, (SOUND_SOURCE_WORDS, NOT_TOUCHED_WORDS, "choose another sound source"))
+    if took > 3.0:
+        raise Failed("%s was answered after %.1f seconds: it is refused before anything is asked or touched" % (what, took))
+    if rig.page().get("sound_from") != sid:
+        raise Failed("%s was refused, and it is no longer the box's sound source: the page says %r" % (what, rig.page().get("sound_from")))
 
 
 def case_sound_only_play_under_a_picture(rig, picture, voice):
-    """For the record, judged only as every hand-over is: a picture plays with the sound-only source's sound, and Play
-    is pressed on the sound-only source. The press is refused; by the end of ten seconds mpv plays the picture, or
-    the page gives a reason in "ended". (The panel has the player let go of the pipe before the helper answers.)"""
+    """A picture plays with the sound-only source's sound, and Play is pressed on that sound source. The press is
+    refused before the player or the helper is touched (the box's sound source is not shown as a picture), in words
+    that say so; the picture and its sound play on through the ten seconds after it, and the page never gives an end.
+    (Before 510d9ae the panel had the player let go of the pipe first, and the picture went black.)"""
     what = "Play on the sound-only source %r while %r plays with its sound" % (voice, picture)
     sid = rig.sound_from(voice)
     rig.start(picture, "matroska")
     rig.watch(what + ", before the press", picture, seconds=4, audio=True)
     code, out = rig.post_play(sid)
-    rig.say("POST /api/play answered HTTP %s: %s" % (code, str(out)[:300]))
-    if code == 200:
-        raise Failed("%s was not refused: %s" % (what, str(out)[:300]))
+    words = str(out.get("error") if isinstance(out, dict) and out.get("error") else out)
+    rig.say("POST /api/play answered HTTP %s: %s" % (code, words[:300]))
+    if code != 409 or voice not in words or SOUND_SOURCE_WORDS not in words or NOT_TOUCHED_WORDS not in words:
+        raise Failed("%s was not refused in words that name it, say %r and %r: HTTP %s, %s" % (what, SOUND_SOURCE_WORDS, NOT_TOUCHED_WORDS, code, words[:300]))
     end = rig.watch(what + ", after the refusal", picture, seconds=10, audio=True)
-    rig.say("AFTER THE REFUSED PRESS the picture that played before it: %s" % ("plays again" if end == "plays" else "ended, and the page says why"))
+    if end != "plays":
+        raise Failed("%s was refused, and the picture that played did not play on: %s" % (what, end))
+    rig.say("AFTER THE REFUSED PRESS the picture that played before it plays on")
 
 
 CASES = {"soundfrom": (case_sound_from, 3), "soundfromsize": (case_sound_from_resized, 2), "soundfromstops": (case_sound_from_stops, 2),

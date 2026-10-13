@@ -410,7 +410,9 @@ class SoundFromAnotherSender(Built):
     because the stand-in counts every receiver that was made in it, and that count is what is read here."""
 
     def library(self):
-        own = os.path.join(tempfile.mkdtemp(prefix="pvj-standin-own-", dir=self.dir), ndi.LIB_NAME)
+        folder = tempfile.mkdtemp(prefix="pvj-standin-own-", dir=self.dir)
+        self.addCleanup(shutil.rmtree, folder, True)
+        own = os.path.join(folder, ndi.LIB_NAME)
         shutil.copy(self.path, own)
         return own
 
@@ -479,7 +481,7 @@ class SoundFromAnotherSender(Built):
         self.s._first_frame = 2.0                  # the helper's own wait for a first picture, shortened for this test
         out = self.s.handle({"cmd": "open", "id": sid})
         self.assertEqual(out, {"ok": False, "sound_only": True,
-                               "error": "%s sends sound and no picture; choose it under 'Where sound comes from' on the NDI page" % SOUND_ONLY})
+                               "error": "%s sends sound and no picture; to hear it under NDI pictures, choose it under 'Where sound comes from' on the NDI page" % SOUND_ONLY})
         self.assertIs([s for s in self.status()["sources"] if s["id"] == sid][0].get("sound_only"), True)
         # it was asked for as a picture is (it is the picture here), never on a second connection for its sound
         self.assertEqual((self.made(SOUND_ONLY, 100), self.made(SOUND_ONLY, 10)), (1, 0))
