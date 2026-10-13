@@ -249,6 +249,7 @@ class Rig:
     """A panel and a player to ask. A subclass says where they are: `socket` (mpv's control socket), `pipe` (the
     path the player is told to read), and the four questions below. The rest is the same wherever it runs."""
     socket = pipe = None
+    sync_judged = True                     # whether this rig's mpv is the one the bounds for sound against picture were measured on
 
     def page(self):
         """GET /api/ndi's answer, a dict (never raises: what went wrong is in the dict)."""
@@ -672,7 +673,7 @@ def case_sound_from(rig, picture, voice, seconds=30):
     what = "the picture of %r with the sound of %r" % (picture, voice)
     rig.sound_from(voice)
     rig.start(picture, "matroska")
-    rig.sync(what, picture, seconds=15, within=10)
+    rig.sync(what, picture, seconds=15, within=10, judged=rig.sync_judged)
     rig.watch(what, picture, seconds=int(seconds), late=2, audio=True)
     rig.sound_source_is(what, voice, "playing", arriving=True)
     rig.opened(what, voice, 10, 1)

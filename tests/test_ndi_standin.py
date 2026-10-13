@@ -40,8 +40,8 @@ SOUND_ONLY_APPEARS = "PVJ-STANDIN (sound only appears 5 s after the first pictur
 FLASHES, SOUND_ONLY_CLICKS = "PVJ-STANDIN (flashes)", "PVJ-STANDIN (sound only clicks 200 ms late)"
 NOT_ALWAYS_THERE = (SOUND_ONLY_APPEARS,)       # the finder does not report it from the start (standin.c says when)
 ONLY_HERE = ((AT_ONCE_A, AT_ONCE_B, THEN_STILL, STILL_SHORT_GAP, STILL_LONG_GAP, THEN_STILL_GAP, PAUSES) + LATE      # for this file and tests/test_ndi_mpv.py
-             + (SOUND_ONLY, SOUND_ONLY_STOPS, SOUND_ONLY_APPEARS, FLASHES, SOUND_ONLY_CLICKS))
-ALL = (MOVING, SOUND, STILL, AT_ONCE_A, AT_ONCE_B, CHANGES) + ONLY_HERE[2:] + BIG
+             + (SOUND_ONLY_STOPS, SOUND_ONLY_APPEARS, FLASHES, SOUND_ONLY_CLICKS))
+ALL = (MOVING, SOUND, STILL, AT_ONCE_A, AT_ONCE_B, CHANGES, SOUND_ONLY) + ONLY_HERE[2:] + BIG
 HOST = "10.255.255.1"                          # where the stand-in says its sources are
 
 
@@ -91,6 +91,8 @@ class OneSetOfNames(unittest.TestCase):
                      'case stuck "$NDI_BIG_STILL"', 'case follow "$NDI_BIG_A" "$NDI_BIG_B"', 'case follow "$NDI_BIG_A_SOUND" "$NDI_BIG_B_SOUND"',
                      'case sound "$NDI_SOUND"', 'case sound "$NDI_BIG_SOUND"', 'case soundon "$NDI_BIG_SOUND"', 'case size "$NDI_BIG_CHANGES"',
                      'case size "$NDI_BIG_CHANGES_SOUND"', 'case size "$NDI_CHANGES"', 'case restart "$NDI_MOVING"', "case chain\n",
+                     'case soundfrom "$NDI_MOVING" "$NDI_SOUND_ONLY" 12', 'case soundfromsize "$NDI_BIG_CHANGES" "$NDI_SOUND_ONLY"',
+                     'case soundonlyplay "$NDI_SOUND_ONLY"', 'sound_connections_of "$HELPER_PID"', "box soundown ",
                      "pvj-ndi-runtime remove"):
             self.assertIn(want, sh[sh.index('step "an NDI picture all the way'):], want)
 
