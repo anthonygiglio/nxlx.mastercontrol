@@ -1462,7 +1462,7 @@ PID, VID = ndi.source_id("SCAN (Converter)", "192.168.0.20"), ndi.source_id("VLC
 VOICE_ROW = {"id": VID, "name": "VLC (Audio)", "from": "192.168.0.20:5962"}
 PICTURE_ROW = {"id": PID, "name": "SCAN (Converter)", "from": "192.168.0.20:5961"}
 # The release before the one sound source (master at 6e0145b, #129). An older release is named by a commit.
-BEFORE_SOUND_FROM = "6e0145b"
+BEFORE_SOUND_FROM = "6e0145b6ffe8a9df68804f149055d1acca949470"
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -1709,12 +1709,19 @@ class SoundFeedTest(FeedBase):
         time.sleep(0.4)
         self.assertTrue(feed.alive())                                                    # in use: it stays, however long
         r.close()
-        time.sleep(0.4)                                                                  # a turn of the feed's thread: from here on nobody uses it
-        self.now[0] += ndi.FEED_IDLE_SECONDS - 5
-        time.sleep(0.4)
+        # From some turn of its thread on, nobody uses it; which turn is the thread's own business. So the clock is
+        # moved in small steps: it must still be there after less than the limit in all, and gone some steps later.
+        added = 0.0
+        while added < ndi.FEED_IDLE_SECONDS - 1:
+            self.now[0] += 1.0
+            added += 1.0
+            time.sleep(0.01)
         self.assertTrue(feed.alive())
-        self.now[0] += 10
-        self.assertTrue(wait(lambda: not feed.alive() and ("recv", 1) in self.lib.closed_handles))
+
+        def later():
+            self.now[0] += 1.0
+            return not feed.alive() and ("recv", 1) in self.lib.closed_handles
+        self.assertTrue(wait(later))
         self.assertIn("given back", " ".join(self.logged))
 
 
