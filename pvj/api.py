@@ -716,6 +716,10 @@ class Api:
         if self.ndi is not None and path == self.ndi.fifo:
             status["path"], status["ndi"] = None, (self.ndi.current or {}).get("name") or True
             status["ndi_id"] = (self.ndi.current or {}).get("id") or ""      # for the pad that holds it
+            if self._ndi_stuck():
+                # mpv's path alone says "playing" for a load that never opened: nothing is on the screen. The
+                # watch (ndi_tick) shows the source again once, and ends it with the reason if that does not help.
+                status["ndi_opening"] = True
             return status
         for channel, url in getattr(self.player, "TEST_TONES", {}).items():
             if path == url:
@@ -3080,6 +3084,8 @@ class Api:
             return {"playing": "ndi", "name": row["name"], "pending": True}
         return go()
 
+    NDI_GONE = "that source is not on the network now"
+    NDI_HELD = "the player did not let go of the NDI picture before; not starting another over it"
     NDI_OVERTAKEN = "something else was played while the source was connecting"
 
     def play_ndi(self, body, again=None):
@@ -3099,6 +3105,8 @@ class Api:
             if again is not None and self.ndi.current is not again:
                 return {"playing": None}
             ticket = self.ndi.ticket()
+            if again is None:
+                self.ndi._stuck_once = False       # a press is a first time: its one "shown again" is its own
             # The tap: the newest wish from now on, as a clip's tap is (D71, transitions.claim). A clip tapped after
             # this, whose load may come later still (after its dip), is newer than this source: the source then
             # gives way at `ready` and is never loaded over the clip's way down.
@@ -3107,6 +3115,33 @@ class Api:
                 if claim:
                     claim()
                 wish = self.transitions.claim()
+            # The NDI pipe is one pipe for every source. If it is what plays (another source, or this one before a
+            # change of size), the player is told to let go of it BEFORE the helper is asked: the helper lets the
+            # new source's writer through only once it has seen the pipe without a reader (Service._clear_pipe),
+            # and the player does not reliably let go by itself. The picture of the source before is over either
+            # way: the helper closes it as the first thing it does for the new one.
+            # A source that is not on the network now is refused BEFORE the player lets go: what plays stays on
+            # the screen (the helper would refuse it too, but only after the screen had gone black for it). One
+            # short question; when the helper cannot say what is there, it is left to `open` to say why.
+            rows, why = self.ndi.find()
+            # (A press only. What the watch asks for is not on the screen as it is, and the list it would be
+            # judged by may be a second old: the helper's own answer is the one to go by there.)
+            if again is None and not why and isinstance(sid, str) and sid not in [r["id"] for r in rows]:
+                raise ApiError(409, self.NDI_GONE)
+            # If the player does not confirm that it let go, no new writer is started over a reader that may still
+            # be there. But the player is not left as it is either: the helper is told to close what it has (that
+            # ends the old writer, and the end of the stream is what ends a player stuck opening or reading it),
+            # and the player is asked once more. Only if it still holds the pipe is the press refused, with the
+            # reason on the page; a source the watch asked for stays wanted and is tried again.
+            release = getattr(self.player, "release_pipe", None)
+            if release is not None and release(self.ndi.fifo) is False:
+                self.ndi.client_close()
+                if release(self.ndi.fifo) is False:
+                    had = self.ndi.current
+                    if again is None and had:
+                        # by hand, not ndi.stop: that would cancel the ticket of a press that came meanwhile
+                        self.ndi.current, self.ndi.ended = None, {"name": had["name"], "message": self.NDI_HELD}
+                    raise ApiError(409, self.NDI_HELD)
             try:
                 p = self.ndi.open(sid)
             except ndi_mod.NdiError as e:
@@ -3141,7 +3176,10 @@ class Api:
             finally:
                 self._ndi_loading.on = False
             if failed[0] is not None:
-                self.ndi.stop()
+                # the page keeps why, also when it was the watch that asked, and also for a first press (nothing
+                # was "current" yet for stop to name)
+                if not self.ndi.stop(reason=failed[0].message):
+                    self.ndi.ended = {"name": p["name"], "message": failed[0].message}
                 self.ndi.client_close()
                 raise failed[0]
             if not loaded:
@@ -3159,7 +3197,22 @@ class Api:
         if self.ndi is None or not self.ndi.current or not self.registry.enabled("inputs-ndi"):
             return False
         cur = self.ndi.current
-        return self.ndi.tick(lambda sid: self.play_ndi({"ndi": sid}, again=cur))
+        gone = getattr(self.player, "pipe_restarted", None)
+        return self.ndi.tick(lambda sid: self.play_ndi({"ndi": sid}, again=cur), loaded=lambda: self._pipe_plays(self.ndi.fifo),
+                             restarted=(lambda: gone(self.ndi.fifo)) if gone is not None else None,
+                             stuck=lambda: self._ndi_stuck(None))
+
+    def _ndi_stuck(self, unknown=False):
+        """Whether the player has the NDI pipe loaded and has not opened it (Player.pipe_stuck): True, False, or
+        `unknown` when it cannot be said (too early, another player, no answer)."""
+        ask = getattr(self.player, "pipe_stuck", None)
+        if ask is None or self.ndi is None:
+            return unknown
+        try:
+            said = ask(self.ndi.fifo)
+        except PlayerError:
+            return unknown
+        return unknown if said is None else bool(said)
 
     def get_ndi(self, body, device, client):
         self._need_ndi()

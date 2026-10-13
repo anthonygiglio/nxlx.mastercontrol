@@ -39,6 +39,7 @@ import stat
 import struct
 import sys
 import tempfile
+import termios
 import threading
 import time
 import unicodedata
@@ -63,6 +64,16 @@ FOURCC_UYVA = 0x41565955                  # "UYVA": a UYVY plane and then an alp
 PROGRESSIVE, INTERLACED = 1, (0, 2, 3)      # the frame format values: 0 two fields in one frame, 2 and 3 single fields
 FIRST_FRAME_SECONDS = 6.0
 PIPE_OPEN_SECONDS = 10.0
+# How long an open waits for the player to let go of the pipe after the source before (Service._clear_pipe). The pipe
+# is one pipe for every source (root's, never unlinked), so the reader of the last source and the reader of the next
+# are told apart only by the pipe having been without a reader in between.
+PIPE_CLEAR_SECONDS = 2.0
+# With sound (Matroska), a picture that no other has followed for this long is written once more, so that the player
+# has a picture AFTER it: mpv shows a picture only when it has the next one (it wants to know how long each lasts),
+# and mpv 0.38 and later do not finish OPENING a stream until its picture track has had two blocks with different
+# times (demux_mkv.c, probe_if_image). Once for each picture that stands, never again and again: 4 MB for a 1080p
+# source each time it goes still. (The stream's first picture is written again at once: see Receiver._writer.) Measured on the Pi with mpv 0.40 on 2026-10-12 (NDI.md).
+STILL_AGAIN_SECONDS = 0.5
 QUIET_SECONDS = 2.0                       # no frame for this long: "still" (or "waiting", if the connection dropped)
 # ---- sound (D62, 2026-10-08). Every figure of a block of sound is the sender's and is held to these.
 AUDIO_FLTP = 0x70544C46                   # "FLTp": 32-bit floats, one plane a channel; the only form the library hands out
@@ -101,6 +112,8 @@ AUDIO_LOST = "lost"                       # what recv_audio answers while the co
 MIN_TURN = 0.1                            # a call into the library that came back with nothing sooner than this is waited out
 AUDIO_SILENT_DB = -70.0                   # a second whose loudest sample is under this is "silent" on the page
 CONTAINERS = ("raw", "matroska")          # what the pipe carries: bare frames (no sound), or frames and sound with times
+PLAYER_STUCK = "the player did not open the NDI picture, also not when it was given it again"
+PIPE_HELD = "the player still holds the NDI pipe from the picture before"
 PLAYER_LEFT = "the player stopped reading the input"      # something else was played: an end, not a fault
 SOURCES_CACHE = 1.0
 PRIVATE_NETS = tuple(ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"))
@@ -950,6 +963,8 @@ class Receiver:
         self.counts = {"received": 0, "shown": 0, "dropped": 0}
         self.first = threading.Event()             # a first good frame, or the end
         self._stop = threading.Event()
+        self._go = threading.Event()               # the writer may open the pipe (hold and go; the Service's open)
+        self._go.set()
         self._cond = threading.Condition()
         self._pending, self._free = None, []
         self._last = clock()
@@ -988,6 +1003,15 @@ class Receiver:
         self._users = len(self._threads) - 1       # every thread but the writer, which never touches the library
         for t in self._threads:
             t.start()
+
+    def hold(self):
+        """Before start: the writer does not open the pipe until go(). The pipe is the same pipe for every source,
+        so whoever reads it now may be the player still on the source before; the Service says when it has seen
+        the pipe without a reader (Service._clear_pipe), and only a reader that comes after that is this source's."""
+        self._go.clear()
+
+    def go(self):
+        self._go.set()
 
     def decide(self):
         """Called once after the first picture: wait a moment for sound, then fix what the pipe carries. Returns it."""
@@ -1039,7 +1063,8 @@ class Receiver:
                 try:
                     fmt, stride = check_frame(f)
                     if self.format is None:
-                        self._free = [bytearray(2 * fmt[0] * fmt[1]) for _ in range(3)]
+                        # one being filled, one waiting, one being written, one kept to be written once more
+                        self._free = [bytearray(2 * fmt[0] * fmt[1]) for _ in range(4)]
                         spare = self._free.pop()
                         self.format = fmt
                     elif fmt != self.format:
@@ -1144,7 +1169,25 @@ class Receiver:
             while self._peaks and now - self._peaks[0][0] > 1.0:
                 self._peaks.popleft()
             if self._apts is None:
+                # The stream's first block of sound began before the stream did (a block comes when its last
+                # sample exists). Its time cannot be below 0, so the part of it from before the stream is cut off:
+                # written whole at 0 it was up to a block's length early against the picture (a quarter of a
+                # second with the longest blocks), until the count was put right a block later.
+                early = self._t0 + n / float(rate) - now
+                if here == 0.0 and early > 0:
+                    k = min(n, int(round(early * rate)))
+                    if k >= n:                     # all of it is from before the stream: the next begins at 0
+                        self.audio_counts["dropped"] += 1
+                        self._apts = 0.0
+                        return
+                    data, n = data[4 * planes * k:], n - k
                 self._apts = here
+                if here > 0:
+                    # And a first block that begins AFTER the stream did is led up to by silence from the stream's
+                    # beginning (a second of it at most, as after any gap): the sound track then begins where the
+                    # picture's does. A player given a picture at 0 and its first sound at 0.2 begins both at once
+                    # and is 0.2 s out of step, which mpv takes two seconds to put right (measured, NDI.md).
+                    self._silence(min(here, AUDIO_QUEUE_SECONDS), here)
             lead = self._apts - here
             if lead < -AUDIO_WINDOW:
                 # A gap: the sound stopped and is back. Up to a second of silence leads up to it (more is a jump in
@@ -1190,6 +1233,10 @@ class Receiver:
             self._queued += n / float(rate)
         self._apts = until
 
+    def _fill_due(self, upto):
+        """Whether _fill would write silence now. Called with the lock held."""
+        return self.audio is not None and upto - (self._apts or 0.0) > max(AUDIO_WINDOW, 2 * self._block + 0.1)
+
     def _fill(self, upto):
         """The writer's question, asked with the lock held and after the queue was taken: has the sound left a
         stretch open before the picture at `upto`? Then (start, samples) of silence for it, and the count moved past
@@ -1219,8 +1266,11 @@ class Receiver:
         """The pipe, opened for writing once the player reads it; None when stopped or nobody came."""
         deadline = None
         while not self._stop.is_set():
-            if self.format is None or self.container is None:
-                self.first.wait(0.05 if self.format is not None else 0.25)
+            if self.format is None:
+                self.first.wait(0.25)
+                continue
+            if self.container is None or not self._go.is_set():
+                self._stop.wait(0.02)              # not first.wait, which is over by now and would not wait at all
                 continue
             deadline = deadline or self._clock() + self._pipe_wait
             try:
@@ -1267,6 +1317,24 @@ class Receiver:
                 return False
         return True
 
+    def _read_out(self, fd):
+        """Wait until the player has taken everything that was written (the pipe holds nothing unread), or False
+        when stopped. "Written" is not "read": a pipe holds up to a megabyte on a box, more than a whole picture
+        of a small source, so the first picture of such a source was "through" while the player had not read a
+        byte of it, and the stream's clock began seconds before the player did (CI's runners, 2026-10-12: a first
+        sound at 3.5 s; a 1080p picture is four pipes long and never showed it). Where the system does not say
+        how much is unread (macOS answers 0 for the writing end) this does not wait, as before."""
+        unread = array.array("i", [0])
+        while not self._stop.is_set():
+            try:
+                fcntl.ioctl(fd, termios.FIONREAD, unread)
+            except OSError:
+                return True
+            if unread[0] <= 0:
+                return True
+            self._stop.wait(0.005)
+        return False
+
     def _write_frame(self, fd, buf, seconds):
         """One whole picture. In the container its few bytes of heading go first and the frame follows from the
         buffer it is in: a frame is never copied to be joined to its heading."""
@@ -1298,24 +1366,62 @@ class Receiver:
             if mkv and not self._write(fd, mkv_header(self.format[0], self.format[1], self.format[2],
                                                       (self.audio["rate"], self.audio["played"]))):
                 return
+            shown_at = -1.0
+            kept, kept_at = None, 0.0              # with sound: the picture written last, until another follows it
+            if mkv:
+                # The stream's time 0 is the moment its first picture has gone THROUGH the pipe, not the moment the
+                # pipe was opened. A player may open the pipe and read nothing for seconds (it is still setting up
+                # its screen or its sound device; the pipe holds a quarter of one 1080p picture). Counting from the
+                # opening, the first picture had the time 0 and everything after it the seconds the player took:
+                # a stream that begins with a hole between its first picture and its first sound, which a player
+                # that lines sound up with the picture waits out, late by that much for as long as the source is
+                # shown. Sound from before this moment is not kept (as sound from before the pipe never was).
+                with self._cond:
+                    while self._pending is None and not self._stop.is_set():
+                        self._cond.wait(0.25)
+                    buf, self._pending = self._pending, None
+                if buf is None:
+                    return
+                ok = self._write_frame(fd, buf, 0.0) and self._read_out(fd)
+                with self._cond:
+                    if ok:
+                        self.counts["shown"] += 1
+                        # again at once (see below, where every other picture is kept)
+                        kept, kept_at, shown_at = buf, self._clock() - STILL_AGAIN_SECONDS, 0.0
+                    else:
+                        self._free.append(buf)
+                if not ok:
+                    return
             with self._cond:
                 self._t0 = self._clock()
                 if self.state == "ready":
                     self.state = "playing"
-            shown_at = -1.0
             while not self._stop.is_set():
-                blocks, buf, at, fill = (), None, 0.0, None
+                blocks, buf, at, fill, again, quiet = (), None, 0.0, None, False, False
                 with self._cond:
                     while self._pending is None and not self._queue and not self._stop.is_set():
-                        self._cond.wait(0.25)
+                        if kept is not None and self._clock() - kept_at >= STILL_AGAIN_SECONDS:
+                            again = True
+                            break
+                        if mkv and self._fill_due(self._clock() - self._t0):
+                            # Neither a picture nor sound came, and the sound track has fallen behind the clock:
+                            # silence is written for it NOW, not when something next comes. The sound's times in
+                            # the stream then never jump. A stream whose sound went on 6 s after it had stopped
+                            # was given one second of silence and a jump of five: mpv takes a jump of 5 s or more
+                            # in the sound's times for a new beginning and starts both tracks again, and under a
+                            # picture that stands it waits for a picture that never comes ("Reset playback due to
+                            # audio timestamp reset"; core-idle, no sound: CI's mpv 0.40, 2026-10-12).
+                            quiet = True
+                            break
+                        self._cond.wait(0.05 if kept is not None else 0.25)
                     if self._queue:
                         blocks, self._queued = tuple(self._queue), 0.0
                         self._queue.clear()
                     if self._pending is not None:
                         buf, self._pending, at = self._pending, None, self._at
-                    if mkv and (buf is not None or blocks):
+                    if mkv and (buf is not None or blocks or quiet):
                         fill = self._fill(self._clock() - self._t0)
-                if buf is None and not blocks:
+                if buf is None and not blocks and not again and not quiet:
                     break
                 if mkv and not self._write_sound(fd, blocks, fill):
                     if buf is not None:
@@ -1323,11 +1429,33 @@ class Receiver:
                             self._free.append(buf)
                     break
                 if buf is None:
+                    if again or (kept is not None and self._clock() - kept_at >= STILL_AGAIN_SECONDS):
+                        # The picture that stands, once more, at the time it is now (STILL_AGAIN_SECONDS says why).
+                        # Not counted as shown: it is the same picture.
+                        shown_at = max(shown_at + 0.001, self._clock() - self._t0)
+                        ok = self._write_frame(fd, kept, shown_at)
+                        with self._cond:
+                            self._free.append(kept)
+                        kept = None
+                        if not ok:
+                            break
                     continue
-                shown_at = max(shown_at + 0.001, at - self._t0)        # where it arrived; never before the one before it
+                # Where it arrived; never before the one before it, and never before the stream's own beginning (the
+                # first picture always arrived before the pipe was taken: its time is 0, and the next differs).
+                first = shown_at < 0
+                shown_at = max(shown_at + 0.001, at - self._t0, 0.0)
                 ok = self._write_frame(fd, buf, shown_at)
                 with self._cond:
-                    self._free.append(buf)
+                    if kept is not None:
+                        self._free.append(kept)
+                    kept = None
+                    if ok and mkv:
+                        # The stream's first picture is written again at once, not after half a second: until
+                        # its track has a second block mpv 0.40 is still opening the stream, and what it is given
+                        # meanwhile it plays that much late for as long as the source is shown.
+                        kept, kept_at = buf, self._clock() - (STILL_AGAIN_SECONDS if first else 0.0)
+                    else:
+                        self._free.append(buf)
                     if ok:
                         self.counts["shown"] += 1
         except Exception as e:
@@ -1367,8 +1495,8 @@ class Receiver:
 
     def close(self):
         """Stop the threads and give the connection back. Never called from those threads, and never with a lock
-        they need (LESSONS: do not join a thread while holding its lock). The pipe is not this object's to remove:
-        the Service made it and the Service takes it away.
+        they need (LESSONS: do not join a thread while holding its lock). The pipe is nobody's to remove
+        (root's on a box, M3): this object closes its end of it, and the Service wakes a reader left waiting.
 
         The connection is never given back while a thread may still be inside the library with it (the picture's or
         the sound's). The last of them out gives it back itself; if one will not come out, the connection is left
@@ -1396,9 +1524,9 @@ class Service:
     the panel has said the module is on (configure), and it knows no settings but what the panel sends."""
 
     def __init__(self, rundir, lib_path, loader=load_library, problem=runtime_problem, log=print, clock=time.monotonic,
-                 first_frame=FIRST_FRAME_SECONDS, receiver=Receiver, fifo=None):
+                 first_frame=FIRST_FRAME_SECONDS, receiver=Receiver, fifo=None, pipe_clear=PIPE_CLEAR_SECONDS):
         self.rundir, self.lib_path, self._loader, self._problem, self.log, self._clock = rundir, lib_path, loader, problem, log, clock
-        self._first_frame, self._receiver = first_frame, receiver
+        self._first_frame, self._receiver, self._pipe_clear = first_frame, receiver, pipe_clear
         self.on_unload = None                      # called when the module is switched off with the library loaded (main: exit)
         # On a box the pipe is root's, made once in root's folder (paths.NDI_PIPE_DIR, pvj/ndisetup.py): this helper
         # opens and writes it and can neither unlink nor replace it. Where nobody made one (tests, a desk) it makes
@@ -1467,7 +1595,8 @@ class Service:
                     and self.config_dir and config_discovery(self.config_dir) == discovery):
                 # The discovery servers changed, and the file says what the panel asks. The library reads its file
                 # once, when it starts: so this process ends (after this answer) and a new one loads the library
-                # with the new file. A source on the screen ends with it, and somebody starts it again by hand.
+                # with the new file. A source on the screen ends with it (black), and the panel's watch shows it
+                # again once the new process has found the sender (Input.tick; a test holds that it does).
                 # Where the file does not say what is asked (a box whose NDI set-up was not refreshed), nothing is
                 # restarted and the status says which servers are really in force.
                 self._close_receiver()
@@ -1523,10 +1652,45 @@ class Service:
         holds nothing once every writer has closed. A reader still waiting on it (an old player blocked in opening
         it, a player waiting for a first byte) is woken: a writer that opens and closes gives it the end."""
         try:
-            wake = os.open(self.fifo, os.O_WRONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
-            os.close(wake)
+            self._pipe_free()
         except OSError:
-            pass
+            pass                                   # no pipe to wake anybody on
+
+    def _pipe_free(self):
+        """Whether nobody reads the pipe at this moment: opening it for writing without waiting is refused (ENXIO)
+        exactly then. Where somebody does read it, the open and close are the wake of _remove_pipe: that reader is
+        given the end. Nothing is ever written here. Only ENXIO means "no reader": anything else that goes wrong
+        (the pipe is not there, or may not be opened) is raised, and Service.open refuses with it."""
+        try:
+            fd = os.open(self.fifo, os.O_WRONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
+        except OSError as e:
+            if e.errno != errno.ENXIO:
+                raise                              # no pipe, not ours to open: not "no reader"; the caller says it
+            return True
+        os.close(fd)
+        return False
+
+    def _clear_pipe(self, r):
+        """Before a new source's writer may open the pipe: wait until the pipe has been seen without a reader.
+
+        The pipe is one pipe for every source (root's, made once, never unlinked: M3). The player that read the
+        source before may still hold it for a moment after that source's writer closed: it has frames left to
+        show, or has not yet acted on the end. A writer that opened then would put this source's first frames into
+        the old stream (which has the old size), lose that reader a moment later ("the player stopped reading")
+        and leave the player's new load waiting for a writer that has gone. When every source had a pipe of its
+        own this could not happen; now the order has to be made: no reader, then the answer to the panel, then the
+        panel's load, then the writer. The panel loads the pipe only after this open has answered and plays one
+        source at a time, so a reader that comes after the pipe was seen empty is the one for this source. And a
+        pipe nobody holds holds no bytes: nothing of the source before is left in it for the new reader.
+
+        Each look is also a wake (the old reader is given the end again). Bounded: if the pipe is not seen
+        without a reader in time, the open is refused with the reason (PIPE_HELD) and nothing is written.
+        Returns whether the pipe was seen without a reader."""
+        end = time.monotonic() + self._pipe_clear
+        while not self._pipe_free():
+            if time.monotonic() >= end or r._stop.wait(0.02):
+                return False
+        return True
 
     def status(self):
         with self._recv_lock:
@@ -1584,6 +1748,7 @@ class Service:
                     self.log("pvj-ndi: could not make the pipe %s: %s" % (self.fifo, e))
                     return {"ok": False, "error": "the NDI helper could not make its pipe (%s)" % (e.strerror or "error")}
             r = self._receiver(self.lib, match[0], self.fifo, log=self.log, sound=self.sound)
+            r.hold()                               # the writer waits until the pipe was seen without a reader (below)
             try:
                 r.start()
             except NdiError as e:
@@ -1600,6 +1765,21 @@ class Service:
                 self._close_receiver()
                 return {"ok": False, "error": st["message"] or "%s sent no picture in %d seconds" % (match[0]["name"], self._first_frame)}
             self.log("pvj-ndi: %s is %d x %d at %s" % ((match[0]["name"],) + r.format))
+            try:
+                clear = self._clear_pipe(r)
+            except OSError as e:
+                self._close_receiver()
+                return {"ok": False, "error": "the NDI pipe cannot be written to: %s" % (e.strerror or "an error")}
+            if not clear:
+                # Never a new writer while a reader of the source before may be there. The panel, which owns the
+                # player, has it let go before it asks (Player.release_pipe) and asks again (Input.tick).
+                over = r.status()
+                self._close_receiver()
+                if over["state"] in ENDED and over["message"]:      # it ended by itself while the pipe was looked at
+                    return {"ok": False, "error": over["message"]}
+                self.log("pvj-ndi: the player still held the pipe %.1f seconds after the source before; %s is not written" % (self._pipe_clear, match[0]["name"]))
+                return {"ok": False, "error": PIPE_HELD}
+            r.go()
             return {"ok": True, "playing": st}
 
     def close(self):
@@ -1685,7 +1865,8 @@ def pipe_to_write(st):
 
 
 def helper_uid():
-    """The uid of the helper's account, whose pipe the player may be told to read; our own where there is none (a desk)."""
+    """The uid of the helper's account; our own where there is none (a desk). Since M3 (2026-10-11) the pipe is
+    root's and not this account's, and the panel expects root (pipe_owner); nothing in the program asks this now."""
     import pwd
     try:
         return pwd.getpwnam("pvj-ndi").pw_uid
@@ -1792,6 +1973,7 @@ class Input:
     """The panel's handle on the NDI helper: keeps it told of the switch and the saved addresses, opens a source for
     the player, and notices when the helper says the picture changed size."""
 
+    PLAYED_SECONDS = 30.0                  # on the screen this long without a break: a source that plays; the pause is 3 s again
     RETRY_SECONDS, RETRY_MAX = 3.0, 60.0   # between tries to show a source again: 3 s, then twice as long each time, to a minute
 
     def __init__(self, client, fifo, wanted, log=print, clock=time.monotonic, pipe_owner=os.getuid, setup=True, config_dir=None):
@@ -1808,6 +1990,8 @@ class Input:
         self.current = None                # {"id", "name"} while the player reads the pipe
         self.lock = locks.make("ndi", reentrant=True)      # open, load in the player and note, as one step (like the capture input); its place: pvj/locks.py
         self._retry_at, self._retry_wait, self._retry_said = 0.0, self.RETRY_SECONDS, ""
+        self._on_screen_since = None       # the clock at the first look, since the last try, that found the source on the screen
+        self._stuck_once = False           # the source was shown again once because the player had not opened it
         self.ended = None                  # {"name", "message"}: why the last source ended by itself, for the page
         self._ticket = 0
         # The ticket's own lock, a leaf: never held over a call. Whoever decides what the screen shows next does so
@@ -1970,6 +2154,17 @@ class Input:
                 pass
         rt = st.get("runtime") if isinstance(st.get("runtime"), dict) else {}
         sources = self._rows(st)
+        cur = self.current
+        playing = _playing(st.get("playing")) if cur else None
+        ended = dict(self.ended) if self.ended and not cur else None
+        if cur and (playing is None or (playing["id"] == cur["id"] and (playing["state"] in ("refused", "stopped")
+                                                                        or (playing["state"] == "changed" and self._retry_said)))):
+            # Wanted and not on the screen (the helper is away or started again, the sender is not found, the
+            # player lost the pipe): the watch is bringing it back, and the page says why it is not there. Never
+            # nothing playing and no reason.
+            why = self._retry_said or (playing or {}).get("message") or ("the NDI helper (pvj-ndi) is not running" if not helper
+                                                                         else "the NDI helper has no source open")
+            playing, ended = None, {"name": cur["name"], "message": "%s; trying again" % why}
         return {"setup": self.setup, "helper": helper, "notice": "; ".join(notice), "sound": sound, "headroom_db": AUDIO_HEADROOM_DB,
                 "runtime": {"present": rt.get("present") is True, "loaded": rt.get("loaded") is True,
                             "version": _text(rt.get("version"), 80), "problem": _text(rt.get("problem"))},
@@ -1985,8 +2180,7 @@ class Input:
                 # what the helper says it looks in now (checked again): the page shows it beside what was asked for
                 "groups_now": [g for g in (st.get("groups") if isinstance(st.get("groups"), list) else [])[:MAX_GROUPS]
                                if isinstance(g, str) and _GROUP.fullmatch(g)],
-                "playing": _playing(st.get("playing")) if self.current else None,
-                "ended": dict(self.ended) if self.ended and not self.current else None}
+                "playing": playing, "ended": ended}
 
     def open(self, sid):
         """Ask the helper for a source's first frame. Returns {"id", "name", "width", "height", "fps", "container",
@@ -2053,9 +2247,26 @@ class Input:
             self.client_close()
         return bool(had)
 
-    def tick(self, replay):
+    def tick(self, replay, loaded=None, stuck=None, restarted=None):
         """Called about once a second. When the helper says the source changed size or rate, or the helper came
-        back after a fall, show the source again (`replay(id)`), at most once every RETRY_SECONDS."""
+        back after a fall, show the source again (`replay(id)`), at most once every RETRY_SECONDS.
+
+        `loaded` (the panel's own record: whether the NDI pipe is what it loaded into the player last) settles
+        what "the player stopped reading" means. If the panel loaded something else since, the player went on and
+        the source is over, quietly. If the pipe is still what the panel loaded, nothing took the screen: the
+        player lost the pipe by itself (it gave up on the stream, or a reader came and went that no load of the
+        panel's accounts for), and the screen is black with the player waiting on a pipe nobody writes. Then the source is shown again, as after
+        a change of size. The helper's word alone never decides this; without `loaded` it is as it always was.
+
+        `restarted` (the panel's record again: the pipe was on the screen when the player became another process,
+        and nothing was loaded since) is the same loss by another road: the new player is idle and black, and the
+        source is shown again. It is true only until that load.
+
+        `stuck` (the player's own word: True when it has the pipe loaded and has not opened it some seconds after
+        the load, False when it has opened it, None when it cannot say) settles the opposite case: the helper
+        writes and says "playing", and nothing is on the screen. Then the source is shown again, ONCE; if the
+        player has not opened it after that either, the source is ended with the reason (PLAYER_STUCK) and the
+        helper lets go of it, which also gives the player the end of the stream it is stuck on."""
         cur = self.current
         if not cur or self._clock() < self._retry_at:
             return False
@@ -2065,24 +2276,62 @@ class Input:
         if st.get("configured") is not True:       # the helper started again and knows nothing yet
             self.sync()
         p = _playing(st.get("playing"))
-        if p is not None and p["id"] == cur["id"] and p["state"] in ("refused", "stopped"):
+        lost = bool(p is not None and p["id"] == cur["id"] and p["state"] == "stopped" and p["message"] == PLAYER_LEFT
+                    and ((loaded is not None and loaded()) or (restarted is not None and restarted())))
+        if lost:
+            self._retry_said = self._retry_said or PLAYER_LEFT       # for the page, until it is on the screen again
+        elif p is not None and p["id"] == cur["id"] and p["state"] in ("refused", "stopped"):
             # It ended for a reason no retry cures (a format this input does not show), or the player went on to
             # something else without a word to us. Either way it is no longer what plays; the reason stays for the page.
             if self.current is cur:
                 self.current = None
-                self.ended = None if p["message"] in ("", PLAYER_LEFT) else {"name": cur["name"], "message": p["message"]}
+                # The reason is always kept for the page, also when the player went on to something else that
+                # the panel did not load itself: a source that is gone from the screen is never gone without a word.
+                self.ended = {"name": cur["name"], "message": p["message"] or "the source stopped"}
             self._retry_wait, self._retry_said = self.RETRY_SECONDS, ""
             return False
-        if p is not None and (p["id"] != cur["id"] or p["state"] != "changed"):
-            self._retry_wait, self._retry_said = self.RETRY_SECONDS, ""
-            return False                           # on the screen: playing, a still picture, or waiting for the sender
+        elif p is not None and (p["id"] != cur["id"] or p["state"] != "changed"):
+            opened = stuck() if (stuck is not None and p["id"] == cur["id"]) else False
+            if opened is True and self._stuck_once:
+                if self.current is cur:
+                    self.current, self.ended = None, {"name": cur["name"], "message": PLAYER_STUCK}
+                    self.client_close()
+                self._stuck_once, self._retry_wait, self._retry_said = False, self.RETRY_SECONDS, ""
+                self.log("pvj-web: NDI source %s: the player did not open it, twice; ended" % cur["name"])
+                return False
+            if opened is not True:
+                if opened is False:
+                    self._stuck_once = False       # the player has it open: the next time is a first time again
+                # On the screen: playing, a still picture, or waiting for the sender. The pause between tries is
+                # three seconds again only once it has been there for PLAYED_SECONDS without a break. One look
+                # that finds it there is not that: a player that reads the pipe for a second and gives up, again
+                # and again (or a helper that says "playing" and "the player left" in turn), was otherwise stopped,
+                # opened and loaded every three seconds for ever.
+                now = self._clock()
+                if self._on_screen_since is None:
+                    self._on_screen_since = now
+                if now - self._on_screen_since >= self.PLAYED_SECONDS:
+                    self._retry_wait = self.RETRY_SECONDS
+                self._retry_said = ""
+                return False
+            self._stuck_once, self._retry_said = True, PLAYER_STUCK
+            self.log("pvj-web: NDI source %s: the player has not opened it; shown again once" % cur["name"])
         # Try again later and later (a sender switched off for the night must not be asked every 3 seconds for
         # ever), and write the reason down when it changes, not at every try: the journal is kept on the card.
+        waited = self._retry_wait
+        self._on_screen_since = None
         self._retry_at = self._clock() + self._retry_wait
         self._retry_wait = min(self._retry_wait * 2, self.RETRY_MAX)
         try:
             replay(cur["id"])
-            self._retry_at, self._retry_wait, self._retry_said = self._clock() + self.RETRY_SECONDS, self.RETRY_SECONDS, ""
+            if lost:
+                # A player that loses the pipe again and again (it cannot play what is in it) is not loaded every
+                # three seconds for ever: the pause grows as for a source that is gone, and is three seconds again
+                # once the source has been on the screen for PLAYED_SECONDS (above).
+                self._retry_at, self._retry_said = self._clock() + waited, ""
+                self.log("pvj-web: NDI source %s lost the player while its pipe was what plays; shown again" % cur["name"])
+            else:
+                self._retry_at, self._retry_wait, self._retry_said = self._clock() + self.RETRY_SECONDS, self.RETRY_SECONDS, ""
         except Exception as e:                     # the source may be gone for now; a later tick tries again
             said = str(e)[:200]
             if said != self._retry_said:

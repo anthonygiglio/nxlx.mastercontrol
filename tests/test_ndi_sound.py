@@ -317,13 +317,23 @@ class Base(unittest.TestCase):
         self.assertTrue(wait(lambda: r.status()["state"] == "playing"))
         return r
 
-    def stream(self):
+    def stream(self, whole=False):
         # The reader runs in its own thread: on a slow machine a whole Segment may not have arrived yet when this is
         # asked (CI, 2026-10-11: "NoneType is not iterable" from `blocks`), so it is asked again for up to 3 s.
+        # A picture that stands is written once more (ndi.STILL_AGAIN_SECONDS; see the tests of it below). Every
+        # other test here counts the pictures of the SOURCE, so a picture that is the one before it again is left
+        # out unless `whole` is asked for.
         end = time.monotonic() + 3
         while True:
             try:
-                return blocks(bytes(self.got))
+                got, last = [], None
+                for b in blocks(bytes(self.got)):
+                    if b[0] == 1:
+                        if not whole and last is not None and b[2] == last:
+                            continue
+                        last = b[2]
+                    got.append(b)
+                return got
             except (TypeError, ValueError):
                 if time.monotonic() > end:
                     raise
@@ -338,12 +348,15 @@ class ReceiverSoundTest(Base):
             self.now[0] += 0.033
             self.lib.sounds.put(sound(480, value=0.5))                                   # 10 ms of sound
             self.lib.frames.put(frame(64, 16, fill=1 + k))
-            self.assertTrue(wait(lambda: len([b for b in self.stream() if b[0] == 1]) == 1 + k and len([b for b in self.stream() if b[0] == 2]) == k), k)
+            self.assertTrue(wait(lambda: len([b for b in self.stream() if b[0] == 1]) == 1 + k and len([b for b in self.stream() if b[0] == 2]) == 1 + k), k)
         got = self.stream()
         tree = ebml_tree(bytes(self.got))
         self.assertEqual(find(tree, 0x18538067, 0x1654AE6B, 0xAE, 0xE0, 0x2EB524), b"UYVY")
         video = [b for b in got if b[0] == 1]
         audio = [b for b in got if b[0] == 2]
+        # the sound track begins where the picture's does: silence from 0 up to the first block (23 ms)
+        self.assertEqual((round(audio[0][1], 3), audio[0][2]), (0.0, bytes(int(round(0.023 * 48000)) * 8)))
+        audio = audio[1:]
         self.assertEqual([b[2] for b in video], [bytes([n]) * 2048 for n in (1, 2, 3, 4)])      # whole frames, in order, untouched
         self.assertEqual([round(b[1], 3) for b in video], [0.0, 0.033, 0.066, 0.099])           # where each arrived on the helper's clock
         self.assertEqual([len(b[2]) for b in audio], [480 * 2 * 4] * 3)
@@ -431,6 +444,7 @@ class ReceiverSoundTest(Base):
             self.lib.sounds.put(bad)
         self.assertTrue(wait(lambda: r.status()["audio"]["counts"]["refused"] == 4))
         self.assertIn("could not be read", r.status()["audio"]["problem"])
+        self.now[0] += 0.01                                                              # a block that lies after the stream's beginning
         nan = sound(480, planes=[[float("nan")] * 480, [0.5] * 480])
         self.lib.sounds.put(nan)
         self.assertTrue(wait(lambda: r.status()["audio"]["counts"]["silenced"] == 1))
@@ -500,7 +514,19 @@ class ReceiverSoundTest(Base):
         self.now[0] += 5.0                                                               # then nothing for five seconds
         self.lib.sounds.put(sound(4800))
         self.assertTrue(wait(lambda: r.status()["audio"]["counts"]["received"] == 9))
-        self.assertTrue(wait(lambda: any(round(b[1], 1) == 4.9 for b in self.stream() if b[0] == 2)))      # at the clock, one block's length back
+        # At the clock again, not where the count stood (0.5): the block that came at 5.0 began at 4.9. Two orders
+        # are both right and the test's clock cannot choose between them: the block is placed first (silence up
+        # to 4.9, the block at 4.9), or the writer looks first, sees five seconds without sound and writes its
+        # silence up to a block's length and a tenth before the clock (4.8), and the block follows it there.
+        # (On a loaded runner the second happened and this asked for 4.9 alone.)
+        def last():
+            real = [b for b in self.stream() if b[0] == 2 and any(b[2])]
+            return round(real[-1][1], 3) if real else None
+        self.assertTrue(wait(lambda: last() is not None and last() > 4.0), last())
+        self.assertIn(last(), (4.8, 4.9))
+        audio = [b for b in self.stream() if b[0] == 2]
+        for a, b in zip(audio, audio[1:]):
+            self.assertGreaterEqual(b[1] + 1e-6, a[1] + len(a[2]) / 8 / 48000.0)         # and never over sound already written
 
     def test_while_sound_is_missing_silence_is_written_so_the_player_does_not_wait_for_it(self):
         r = self.start_with_sound()
@@ -529,6 +555,224 @@ class ReceiverSoundTest(Base):
         self.assertTrue(wait(lambda: r.status()["audio"]["counts"]["written"] == 1))       # the first real block since the pipe was taken
         audio = [b for b in self.stream() if b[0] == 2]
         self.assertGreaterEqual(audio[-1][1] + 1e-6, audio[-2][1] + len(audio[-2][2]) / 8 / 48000.0)
+
+    def test_a_picture_that_stands_is_written_once_more_so_that_the_player_has_one_after_it(self):
+        """mpv shows a picture only when it has the next one, and mpv 0.40 does not finish opening a stream whose
+        picture track has had one block (Test Patterns with sound on, the Pi, 2026-10-12). So a picture that no other
+        has followed for half a second is written again, once, at the time it is then."""
+        r = self.start_with_sound()
+        # the stream's first picture: again at once (until then mpv 0.40 is still opening the stream)
+        self.assertTrue(wait(lambda: len([b for b in self.stream(whole=True) if b[0] == 1]) == 2))
+        for k in range(1, 21):                                                           # then two seconds of only sound
+            self.now[0] += 0.1
+            self.lib.sounds.put(sound(4800))
+            self.assertTrue(wait(lambda: r.status()["audio"]["counts"]["written"] == k), k)
+        video = [b for b in self.stream(whole=True) if b[0] == 1]
+        self.assertEqual(len(video), 2)                                                  # once more, and never a third time
+        self.assertEqual(video[0][2], video[1][2])
+        self.assertEqual(round(video[0][1], 3), 0.0)
+        self.assertAlmostEqual(video[1][1], 0.001, places=6)                             # ANOTHER time: what mpv's probe looks for
+        self.assertEqual(r.status()["counts"]["shown"], 1)                               # one picture of the source
+        # a picture that moves on is not written again; the last one, when the source stands again, is
+        for k in (5, 6, 7):
+            self.now[0] += 0.033
+            self.lib.frames.put(frame(64, 16, fill=k))
+            self.assertTrue(wait(lambda: self.stream(whole=True)[-1][2] == bytes([k]) * 2048 or [b for b in self.stream(whole=True) if b[0] == 1][-1][2] == bytes([k]) * 2048), k)
+        self.assertEqual([b[2][:1] for b in self.stream(whole=True) if b[0] == 1], [b"\x01", b"\x01", b"\x05", b"\x06", b"\x07"])
+        time.sleep(0.2)
+        self.assertEqual(len([b for b in self.stream(whole=True) if b[0] == 1]), 5)      # not before its time
+        self.now[0] += ndi.STILL_AGAIN_SECONDS
+        self.assertTrue(wait(lambda: len([b for b in self.stream(whole=True) if b[0] == 1]) == 6))
+        video = [b for b in self.stream(whole=True) if b[0] == 1]
+        self.assertEqual((video[-1][2], r.status()["counts"]["shown"]), (bytes([7]) * 2048, 4))
+        self.assertGreater(video[-1][1], video[-2][1])
+        self.assertEqual(len(r._free) + (r._pending is not None), 3)                     # every buffer is back but the one being filled
+
+    def test_the_first_picture_which_came_before_the_pipe_was_taken_and_its_copy_have_different_times(self):
+        """As it is on a box: the first picture arrives, then sound is waited for and the player opens the pipe, so
+        the picture's time is before the stream's beginning. Both it and its copy were written at time 0 (found on
+        the Pi: mpv 0.40 went on waiting for a second picture)."""
+        r = self.receiver()
+        r.start()
+        self.lib.frames.put(frame(64, 16, fill=1))
+        self.lib.sounds.put(sound(480))
+        self.assertTrue(r.first.wait(3))
+        self.now[0] += 0.8                                                               # the picture is that old when the pipe is taken
+        self.assertEqual(r.decide(), "matroska")
+        self.read()
+        self.assertTrue(wait(lambda: r.status()["state"] == "playing"))
+        self.assertTrue(wait(lambda: len([b for b in self.stream(whole=True) if b[0] == 1]) == 2))
+        video = [b for b in self.stream(whole=True) if b[0] == 1]
+        self.assertEqual((video[0][2], round(video[0][1], 6), round(video[1][1], 6)), (video[1][2], 0.0, 0.001))
+
+    def test_bare_frames_are_never_written_again(self):
+        r = self.receiver(audio_wait=0.05)
+        r.start()
+        self.lib.frames.put(frame(64, 16, fill=1))
+        self.assertTrue(r.first.wait(3))
+        self.assertEqual(r.decide(), "raw")
+        self.read()
+        self.assertTrue(wait(lambda: len(self.got) >= 2048))
+        self.now[0] += 3.0
+        time.sleep(0.4)
+        self.assertEqual(bytes(self.got), bytes([1]) * 2048)
+
+    # ---- picture and sound in step: what the SENDER made at one moment has one time in the stream ---------------
+    def sender(self, n, seconds, jitter=(), w=64, h=16, begin=0.0, stalled=0.0):
+        """Play a sender into the helper by the test's clock: picture k is made at k/30 s and comes at once; block j
+        of sound holds the samples from j*n/48000 on and comes when its last sample exists (plus `jitter`, in turn).
+        Each says in its content when the sender made it: the picture's bytes are k, the sound's samples are j.
+        With `stalled`, the reader takes nothing for that long after it opened the pipe.
+        Returns [(picture's time in the stream minus the sender's)], [(the same for each block of sound)]."""
+        length = n / 48000.0
+        r = self.receiver()
+        r.start()
+        base = self.now[0]
+        self.lib.frames.put(frame(w, h, fill=255))                   # the picture from before the pipe: not one of the counted
+        self.lib.sounds.put(sound(n, planes=[[0.0] * n] * 2))
+        self.assertTrue(r.first.wait(3))
+        self.assertEqual(r.decide(), "matroska")
+        if stalled:
+            self.stall.set()
+        self.read()
+        if not stalled:
+            self.assertTrue(wait(lambda: r.status()["state"] == "playing"))
+        events = sorted([(k / 30.0, 0, k) for k in range(1, int(seconds * 30))] +
+                        [((j + 1) * length + (jitter[j % len(jitter)] if jitter else 0.0), 1, j) for j in range(int(seconds / length))])
+        for t, kind, i in events:
+            if t < begin:
+                continue
+            if stalled and t >= stalled and self.stall.is_set():
+                self.stall.clear()
+                self.assertTrue(wait(lambda: r.status()["state"] == "playing"))
+            self.now[0] = base + t
+            if kind == 0:
+                self.lib.frames.put(frame(w, h, fill=1 + i % 250))
+                wait(lambda: self.lib.frames.qsize() == 0 and (r._pending is None or self.stall.is_set()), 2)
+            else:
+                self.lib.sounds.put(sound(n, planes=[[i / 1000.0] * n] * 2))
+                wait(lambda: self.lib.sounds.qsize() == 0, 2)
+            time.sleep(0.004)
+        self.assertTrue(wait(lambda: r._pending is None and not r._queue, 5))
+        time.sleep(0.1)
+        got = self.stream(whole=True)
+        # The stream's first picture is whatever was newest when the player began to read: it has the time 0 by
+        # definition and is older than that (it is shown until the next one comes). It is not one of the counted.
+        pictures, sounds, seen = [], [], {next(data[0] for track, _, data in got if track == 1)}
+        for track, when, data in got:
+            if track == 1 and data[0] != 255 and data[0] not in seen:                    # a picture written again is the same picture
+                seen.add(data[0])
+                k = next(i for t, kind, i in events if kind == 0 and 1 + i % 250 == data[0] and abs(i / 30.0 - when) < 4.0 + stalled)
+                pictures.append((when - k / 30.0, when, k))
+            elif track == 2:
+                j = int(round(floats(data)[0] * 1000.0 / ndi.AUDIO_GAIN))
+                if any(floats(data)[:1]) or j:
+                    cut = n - len(data) // 8                         # samples taken off its front: it begins that much later
+                    sounds.append((when - j * length - cut / 48000.0, when, j))
+        return pictures, sounds, got
+
+    def in_step(self, pictures, sounds, bound):
+        """Every picture and every block of sound stands as far from the sender's time as the others, within `bound`."""
+        self.assertGreater(len(pictures), 20)
+        self.assertGreater(len(sounds), 5)
+        middle = sorted(x[0] for x in sounds)[len(sounds) // 2]
+        worst_picture = max(pictures, key=lambda x: abs(x[0] - middle))
+        worst_sound = max(sounds, key=lambda x: abs(x[0] - middle))
+        self.assertLessEqual(abs(worst_picture[0] - middle), bound, ("picture", worst_picture, middle))
+        self.assertLessEqual(abs(worst_sound[0] - middle), bound + ndi.AUDIO_SYNC, ("sound", worst_sound, middle))
+
+    def test_what_the_sender_made_at_one_moment_has_one_time_in_the_stream_whatever_the_blocks_length(self):
+        """Proof of the stream itself, which mpv's own `avsync` cannot give: that number says how well mpv keeps to
+        the times in the stream, not whether the helper gave picture and sound of one moment the same time."""
+        for n in (1024, 1600, 4800, 12000):
+            with self.subTest(samples=n):
+                pictures, sounds, _ = self.sender(n, 3.0)
+                self.in_step(pictures, sounds, 0.002)
+            self.r.close()
+            self.setUp()
+
+    def test_sound_that_comes_unevenly_stays_in_step_with_the_picture(self):
+        pictures, sounds, _ = self.sender(1600, 4.0, jitter=(0.0, 0.012, -0.008, 0.02, 0.003, -0.012))
+        self.in_step(pictures, sounds, 0.025)                        # as far as the unevenness itself, never more and more
+
+    def test_sound_that_begins_a_little_after_the_picture_is_led_up_to_by_silence_from_the_streams_beginning(self):
+        """mpv 0.40 given a picture at 0 and its first sound at 0.211 began both at once: `avsync` 0.206, over 40 ms
+        for 1.8 seconds (the Pi, 2026-10-12). The sound track begins at 0, with silence."""
+        r = self.start_with_sound()
+        self.assertTrue(wait(lambda: len(self.stream()) >= 1))
+        self.now[0] += 0.311                                                             # the first block: 100 ms that began at 0.211
+        self.lib.sounds.put(sound(4800))
+        self.assertTrue(wait(lambda: r.status()["audio"]["counts"]["written"] == 1))
+        audio = [b for b in self.stream() if b[0] == 2]
+        self.assertEqual([round(b[1], 3) for b in audio], [0.0, 0.211])
+        self.assertEqual(audio[0][2], bytes(int(round(0.211 * 48000)) * 8))              # silence, exactly up to the sound
+        self.assertTrue(any(audio[1][2]))
+        self.assertEqual(r.status()["audio"]["counts"]["received"], 1)                   # the silence is not a block of the sender's
+
+    def test_under_a_picture_that_stands_sound_that_stops_for_seconds_leaves_no_jump_in_the_sounds_times(self):
+        """One picture, a tenth of a second of sound, nothing for six seconds, then sound (CI's stand-in "after a
+        long gap", and what a sender does whose sound is switched on late). The stream had one second of silence
+        and a jump of five; mpv 0.40 starts both tracks again at a jump of 5 s and then waits for a picture."""
+        r = self.start_with_sound()
+        self.assertTrue(wait(lambda: len(self.stream()) >= 1))
+        self.now[0] += 0.1
+        self.lib.sounds.put(sound(4800))
+        self.assertTrue(wait(lambda: r.status()["audio"]["counts"]["written"] == 1))
+        def due():
+            with r._cond:
+                return r._fill_due(self.now[0] - r._t0)
+        for _ in range(24):                                                              # six seconds with nothing from the sender
+            # The writer looks at the clock when it wakes (every quarter second of REAL time), and this clock is
+            # the test's: so it is woken at each step and waited for. Without that, a loaded machine let more
+            # than a second of this clock pass between two looks, and the writer then rightly wrote its one
+            # bounded jump (that is test_a_writer_that_was_away..., below), which is not what is asked here.
+            self.now[0] += 0.25
+            with r._cond:
+                r._cond.notify_all()
+            self.assertTrue(wait(lambda: not due(), 5))
+        for k in range(2, 6):
+            self.now[0] += 0.1
+            self.lib.sounds.put(sound(4800))
+            self.assertTrue(wait(lambda: r.status()["audio"]["counts"]["written"] == k), k)
+        audio = [b for b in self.stream() if b[0] == 2]
+        ends = [b[1] + len(b[2]) / 8 / 48000.0 for b in audio]
+        jumps = [round(b[1] - e, 3) for e, b in zip(ends, audio[1:]) if abs(b[1] - e) > 0.001]
+        self.assertEqual(jumps, [], [round(b[1], 3) for b in audio])                     # each block begins where the one before ended
+        self.assertAlmostEqual(audio[0][1], 0.0, places=3)
+        self.assertGreater(ends[-1], 6.2)
+        self.assertGreater(r.status()["audio"]["counts"]["filled"], 5)                   # as time passed, not in one piece at the end
+        self.assertEqual(len([b for b in self.stream(whole=True) if b[0] == 1]), 2)      # and no picture was written for it
+
+    def test_a_writer_that_was_away_for_seconds_writes_one_second_of_silence_and_one_jump_never_all_of_it(self):
+        """The bound: silence is for a hole of up to a second (AUDIO_QUEUE_SECONDS). A writer that could not look
+        for five seconds does not write five seconds of silence in one piece; the times jump once."""
+        r = self.start_with_sound()
+        self.assertTrue(wait(lambda: len(self.stream()) >= 1))
+        self.now[0] += 0.1
+        self.lib.sounds.put(sound(4800))
+        self.assertTrue(wait(lambda: r.status()["audio"]["counts"]["written"] == 1))
+        self.now[0] += 5.0                                                               # one step: nothing looked meanwhile
+        with r._cond:
+            r._cond.notify_all()
+        self.assertTrue(wait(lambda: r.status()["audio"]["counts"]["filled"] >= 1))
+        time.sleep(0.4)
+        audio = [b for b in self.stream() if b[0] == 2]
+        ends = [b[1] + len(b[2]) / 8 / 48000.0 for b in audio]
+        jumps = [round(b[1] - e, 2) for e, b in zip(ends, audio[1:]) if abs(b[1] - e) > 0.001]
+        self.assertEqual(jumps, [4.0], [round(b[1], 3) for b in audio])
+        self.assertLessEqual(sum(len(b[2]) for b in audio[1:]) / 8 / 48000.0, ndi.AUDIO_QUEUE_SECONDS)
+        self.assertEqual(r.status()["audio"]["counts"]["filled"], 1)                     # and not again and again after it
+
+    def test_a_player_that_reads_nothing_for_seconds_after_opening_the_pipe_gets_a_stream_that_begins_whole(self):
+        """The stream's clock began when the pipe was opened: a player that then read nothing for 4.7 seconds was
+        given a first picture at time 0, and the next picture and the first sound seconds after it."""
+        pictures, sounds, got = self.sender(4800, 6.5, w=640, h=360, stalled=4.7)
+        first_picture = next(when for track, when, _ in got if track == 1)
+        first_sound = next(when for track, when, _ in got if track == 2)
+        self.assertEqual(first_picture, 0.0)
+        self.assertLess(first_sound, 0.3, "the first sound is stamped seconds after the first picture")
+        self.assertLess(min(when for _, when, _ in pictures), 0.3, "the first new picture is stamped seconds after the first")
+        self.in_step(pictures, sounds, 0.002)
 
     def test_a_still_picture_with_sound_is_one_frame_and_the_sound_goes_on(self):
         """What Test Patterns is: one picture, then only its tone."""
@@ -1127,7 +1371,7 @@ class PlayerSoundTest(unittest.TestCase):
         p.play_pipe("/run/pvj-ndi/ndi.fifo", 1920, 1080, 29.97, "matroska")
         load = [a for a in sent if a[0] == "loadfile"][0]
         self.assertEqual(load, ("loadfile", "/run/pvj-ndi/ndi.fifo", "replace", -1,
-                                "demuxer=mkv,cache=no,demuxer-readahead-secs=0,demuxer-max-bytes=" + Player.pipe_queue(1920, 1080, 29.97)))
+                                "demuxer=mkv,cache=no,cache-pause=no,initial-audio-sync=no,demuxer-readahead-secs=0,demuxer-max-bytes=" + Player.pipe_queue(1920, 1080, 29.97)))
         self.assertNotIn("rawvideo", load[4])
         for word in ("aid", "mute", "volume", "audio-device", "af="):                     # sound is left to what the player already does
             self.assertNotIn(word, load[4])
@@ -1192,7 +1436,7 @@ class PlayerSoundTest(unittest.TestCase):
     def test_on_an_old_mpv_the_pipes_options_and_the_narrowing_are_both_taken_back(self):
         p, sent = self.player(refuse=("old",))
         p.play_pipe("/run/pvj-ndi/ndi.fifo", 64, 16, 30, "matroska")
-        self.assertEqual(set(p._pipe_globals), set(Player.MKV_ONLY) | {"demuxer", "cache", "demuxer-readahead-secs", "demuxer-max-bytes"})
+        self.assertEqual(set(p._pipe_globals), set(Player.MKV_ONLY) | {"demuxer", "cache", "cache-pause", "initial-audio-sync", "demuxer-readahead-secs", "demuxer-max-bytes"})
         self.assertEqual([a for a in sent if a[0] == "loadfile"][-1], ("loadfile", "/run/pvj-ndi/ndi.fifo", "replace"))   # then pause off, then the pid the pipe was loaded into (pipe_is)
 
     def test_the_players_queue_is_sized_from_the_picture_and_the_longest_block_of_sound(self):
@@ -1345,7 +1589,7 @@ class RealMpvTest(Base):
         self.assertEqual(r.decide(), "matroska")
         # the same the player gives: the four for the pipe, and the narrowing to the two decoders the stream may need
         # (MKV_ONLY). mpv refuses an option it does not know or cannot read, so this run also shows it takes them.
-        opts = ["--%s=%s" % kv for kv in (("demuxer", "mkv"), ("cache", "no"), ("demuxer-readahead-secs", "0"),
+        opts = ["--%s=%s" % kv for kv in (("demuxer", "mkv"), ("cache", "no"), ("cache-pause", "no"), ("initial-audio-sync", "no"), ("demuxer-readahead-secs", "0"),
                                            ("demuxer-max-bytes", Player.pipe_queue(w, h, 30)))] + mkv_only()
         cmd = [MPV, "--no-config", "--no-terminal", "--idle=no", "--framedrop=no", "--untimed", "--log-file=" + log, "--msg-level=all=v",
                "--vo=image", "--vo-image-format=png", "--vo-image-outdir=" + out, "--ao=pcm", "--ao-pcm-file=" + wav] + opts + [self.fifo]
@@ -1384,7 +1628,7 @@ class RealMpvTest(Base):
             pictures = sorted(os.listdir(out))
             written = st["counts"]["shown"]
             self.assertGreaterEqual(len(pictures), written - 5, tail)                    # a frame or two may be left out where the stream starts or ends
-            self.assertLessEqual(len(pictures), written, tail)
+            self.assertLessEqual(len(pictures), written + 2, tail)                       # and the first picture is in the stream twice, and a picture that stood once more
             self.assertGreater(len(pictures), 20, tail)
             for name in (pictures[0], pictures[len(pictures) // 2], pictures[-1]):
                 red, green, blue = png_pixel(os.path.join(out, name), w // 2, h // 2)
@@ -1466,7 +1710,7 @@ class RealMpvTest(Base):
         self.assertTrue(r.first.wait(3))
         self.assertEqual(r.decide(), "matroska")
         cmd = [MPV, "--no-config", "--no-terminal", "--idle=no", "--log-file=" + log, "--msg-level=all=v", "--vo=null", "--ao=null",
-               "--demuxer=mkv", "--cache=no", "--demuxer-readahead-secs=0", "--demuxer-max-bytes=" + limit] + mkv_only() + [self.fifo]
+               "--demuxer=mkv", "--cache=no", "--cache-pause=no", "--initial-audio-sync=no", "--demuxer-readahead-secs=0", "--demuxer-max-bytes=" + limit] + mkv_only() + [self.fifo]
         mpv = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.addCleanup(lambda: mpv.poll() is None and mpv.kill())
         try:

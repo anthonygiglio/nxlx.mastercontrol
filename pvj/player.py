@@ -135,7 +135,7 @@ class Ipc:
                         return msg.get("data")
             raise PlayerError("no reply from mpv")
         except (ConnectionRefusedError, FileNotFoundError):
-            raise PlayerError("player is not running")
+            raise PlayerError("player is not running")       # these words are Player.NOT_RUNNING
         except OSError as e:
             raise PlayerError("ipc error: %s" % e)
         finally:
@@ -149,6 +149,7 @@ class Player:
     _effect, _effect_pid, effect_serial, effect_ended, effect_8bit, clears = None, None, 0, "", False, 0
     cleared_by, _seen_pid, _new_expected = "", None, False
     _pid_lock = locks.make("player.pid")
+    _pipe_gone = None                                      # the pipe that was on the screen when mpv became another process
     _pipe, _pipe_pid, _pipe_path = False, None, None      # a live input's pipe is what was loaded last, the mpv it was loaded into, and which pipe
 
     def __init__(self, mpv_bin="mpv", extra_args=None, rundir=None):
@@ -303,7 +304,7 @@ class Player:
         picture, so it must never stay over a clip."""
         with self._lock:
             self._end_source()
-            self._pipe = False
+            self._pipe, self._pipe_gone = False, None
             return self._play(paths, loop, audio_device, windowed, spawn, ending, image_seconds)
 
     def _play(self, paths, loop=True, audio_device=None, windowed=False, spawn=True, ending=None, image_seconds=None):
@@ -344,7 +345,7 @@ class Player:
 
     # What a live input set for the whole player is taken back to: mpv's own defaults (this player starts mpv with
     # none of these on its command line).
-    PIPE_DEFAULTS = {"demuxer": "", "cache": "auto", "demuxer-readahead-secs": 1, "demuxer-max-bytes": "150MiB",
+    PIPE_DEFAULTS = {"demuxer": "", "cache": "auto", "cache-pause": "yes", "initial-audio-sync": "yes", "demuxer-readahead-secs": 1, "demuxer-max-bytes": "150MiB",
                      "vd": "", "ad": "", "sid": "auto", "ordered-chapters": "yes", "cover-art-auto": "exact", "embeddedfonts": "yes"}
 
     def _undo_pipe_globals(self):
@@ -403,9 +404,10 @@ class Player:
             raise PlayerError("unknown pipe format")
         with self._lock:
             self._end_source()
-            self._pipe = False
+            self._pipe, self._pipe_gone = False, None
             self._play_pipe(path, width, height, fps, fmt)       # raises if the pipe was not loaded: then it is not what plays
             self._pipe, self._pipe_pid, self._pipe_path = True, self.ipc.request("get_property", "pid"), path
+            self._pipe_since = time.monotonic()
 
     def _play_pipe(self, path, width, height, fps, fmt="yuyv422"):
         if not self.is_running():
@@ -418,7 +420,19 @@ class Player:
             # The NDI helper's stream with sound (pvj/ndi.py): Matroska that says its own size, rate and times, read
             # by mpv's own reader, named so that mpv does not spend time guessing. Sound goes the way every clip's
             # does: this player's device, volume and mute.
-            opts = {"demuxer": "mkv", "cache": "no", "demuxer-readahead-secs": 0, "demuxer-max-bytes": self.pipe_queue(width, height, fps)}
+            # cache-pause=no: a live source's picture may stand still while its sound goes on (one test picture and
+            # a tone; a paused video). mpv would take the missing pictures for a slow network and pause EVERYTHING
+            # "for buffering" until a picture came: no sound meanwhile, and afterwards the sound it had kept, as
+            # late as the picture stood still, for good (player/playloop.c, handle_update_cache; seen with mpv 0.40
+            # on the Pi, 2026-10-12: "Enter buffering", then 12 seconds late after 12 seconds of still).
+            # initial-audio-sync=no: mpv does not begin the sound before the picture has reached the time of the
+            # first sound ("delaying audio start 0.011000 vs. 0.000000"). A picture that stands never reaches it:
+            # on the box (2026-10-12, Test Patterns) the sound device was opened and never given a sample, for
+            # as long as the source was shown; the first sound was 11 ms after the picture, and 4.7 s after it
+            # when sound was switched on under the source (player/audio.c, audio_start_ao). The times in the
+            # stream still decide where each picture goes against the sound; only the wait at the start is gone.
+            opts = {"demuxer": "mkv", "cache": "no", "cache-pause": "no", "initial-audio-sync": "no", "demuxer-readahead-secs": 0,
+                    "demuxer-max-bytes": self.pipe_queue(width, height, fps)}
             self._pipe_globals = []
             self._pipe_loading = True              # a status poll that meets a new player now must not widen under this load
             try:
@@ -501,8 +515,16 @@ class Player:
             except PlayerError:
                 return True         # no answer is no news: one lost question must not make the pipe "not playing" for good
             if not same:
-                self._pipe = False
+                self._pipe, self._pipe_gone = False, self._pipe_path       # lost to a new mpv, not to another load
             return self._pipe
+
+    def pipe_restarted(self, path):
+        """Whether `path` was the pipe on the screen when mpv became another process (it fell and its service
+        started a new one, or the panel ended it), and nothing has been loaded or cleared since. The new mpv is
+        idle and black; whoever feeds that pipe may load it again. Over as soon as anything is loaded."""
+        with self._lock:
+            self.pipe_playing                      # the look that notices a new process
+            return self._pipe_gone is not None and self._pipe_gone == path
 
     def pipe_is(self, path):
         """pipe_playing, and the pipe that plays is `path`: the capture input and the NDI input each have a pipe of
@@ -510,10 +532,81 @@ class Player:
         with self._lock:
             return bool(self.pipe_playing) and self._pipe_path == path
 
+    PIPE_OPENING_SECONDS = 5.0
+
+    def pipe_stuck(self, path):
+        """Whether mpv has `path` loaded and has NOT opened it: no track, PIPE_OPENING_SECONDS after the load. mpv
+        gives the pipe as its `path` from the moment it is told to load it, also while it is still reading the
+        beginning of the stream and nothing is on the screen (on the Pi, 2026-10-12, for minutes: a stream mpv
+        0.40 would not finish opening). `track-list/count` is 0 for exactly that long and 1 or 2 from "Opening
+        done" on (measured there the same day, mpv 0.40 run by hand), for bare frames and for the stream with sound.
+
+        True: stuck. False: mpv has opened it. None: not this pipe, too early to say, or mpv did not answer."""
+        with self._lock:
+            if not (self.pipe_playing and self._pipe_path == path):
+                return None
+            if time.monotonic() - getattr(self, "_pipe_since", 0.0) < self.PIPE_OPENING_SECONDS:
+                return None
+            try:
+                n = self.ipc.request("get_property", "track-list/count")
+            except PlayerError:
+                return None
+            return not (isinstance(n, int) and not isinstance(n, bool) and n >= 1)
+
+    def release_pipe(self, path):
+        """Have mpv let go of `path` if that pipe is what was loaded last: its stream is closed and the player is
+        idle (black). For a live input whose pipe is one pipe for every source (the NDI input's, root's, never
+        unlinked): before the next source is opened the old reader has to be gone, and mpv does not reliably let
+        go by itself at the end of a stream (on the Pi, 2026-10-12, it still read the pipe seconds after the
+        writer had closed, and a load that never got as far as playing sat on it for minutes). `stop` also ends
+        a load that is still opening. mpv answers before it has closed the stream, so mpv is then asked until it
+        says it is idle (`idle-active`: no file is loaded or being opened), for RELEASE_SECONDS at most. That is
+        the panel's own confirmation; the helper has a second one, which needs no word of mpv's: it sees the pipe
+        without a reader before it lets the next writer through (ndi.Service._clear_pipe). Once mpv is idle the panel's record says so too (`pipe_playing` is False): if the open
+        that follows fails, the record must not go on saying that the pipe plays while the screen is black.
+
+        Whether mpv holds the pipe is asked of mpv too (its `path`), not only of what this side remembers having
+        loaded: a panel that started again remembers nothing while its mpv still reads the pipe.
+
+        Returns True when mpv said it is idle (or is not running, and so holds nothing), False when it did not say
+        so in time or did not answer (the caller must not go on to a new writer then), None when mpv does not have the pipe and nothing
+        was done."""
+        with self._lock:
+            held = bool(self._pipe and self._pipe_path == path)
+            if not held:
+                try:
+                    held = self.ipc.request("get_property", "path") == path
+                except PlayerError:
+                    held = False                # idle (no path to give) or down: either way it has no pipe
+            if not held:
+                return None
+            end = time.monotonic() + self.RELEASE_SECONDS
+            try:
+                self.ipc.request("stop")
+                while time.monotonic() < end:          # looked at before each question: one that is slow is the last
+                    if self.ipc.request("get_property", "idle-active") is True:
+                        self._pipe, self._pipe_gone = False, None      # mpv is idle: no pipe plays, whatever is loaded next
+                        return True
+                    time.sleep(0.02)
+                return False
+            except PlayerError as e:
+                # No answer is not "let go": a player that is busy (stuck on the stream) answers late or not at
+                # all and still has the pipe. Only a player that is not there (nothing listens on its socket: the
+                # one error Ipc.request gives these words) holds nothing. Not is_running(): that asks over the
+                # same socket and would take a player that is silent for one that is gone.
+                if str(e) == self.NOT_RUNNING:
+                    self._pipe, self._pipe_gone = False, None
+                    return True
+                return False
+
+    RELEASE_SECONDS = 1.5
+    NOT_RUNNING = "player is not running"
+
     def quit(self):
         """End the mpv process (the service's unit starts a new one). What was loaded goes with it."""
         with self._lock:
-            self._pipe = False
+            # the panel ends mpv itself: for a live input that was on the screen it is a restart like any other
+            self._pipe_gone, self._pipe = (self._pipe_path if self._pipe else None), False
             if self._source is not None or self._carrier is not None:      # as _check_source does when it notices by itself
                 self._source = self._carrier = None
             self.source_epoch += 1          # the screen has changed hands: a rotation's next change is not for this one
@@ -581,7 +674,7 @@ class Player:
         playing, seen on the Pi after the test pattern); every play sets them again. An effect comes off with the
         picture it was over; `why` is what its record then says (see effect_ended)."""
         with self._lock:
-            self._pipe = False
+            self._pipe, self._pipe_gone = False, None
             self.clears += 1
             self.cleared_by = why
             try:
@@ -858,7 +951,7 @@ class Player:
         with self._lock:
             if epoch is not None and epoch != self.source_epoch:
                 return None
-            self._pipe = False
+            self._pipe, self._pipe_gone = False, None
             if not self.is_running():
                 if not spawn:
                     raise PlayerError("player service is not running (systemctl start pvj-player)")
