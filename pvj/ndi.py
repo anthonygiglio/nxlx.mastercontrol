@@ -115,6 +115,8 @@ SOUND_DELAY_MS = (-250, 500)              # ndi.sound_delay_ms: how far the pane
 SOUND_STATES = ("playing", "ready", "away", "twins")      # the one sound source, as the helper says it (Service._sound_source)
 FEED_IDLE_SECONDS = 30.0                  # a sound connection that no picture has used for this long is given back
 FEED_RETRY_SECONDS = 2.0                  # between looks for a sound source that was not on the network
+OPEN_TRIES = 3                            # a source that changes size while it is being opened is opened again: this many tries in all
+OPEN_AGAIN_SECONDS = 4.0                  # and no new try later than this after the time a first picture may take (the panel waits 8 more)
 CONTAINERS = ("raw", "matroska")          # what the pipe carries: bare frames (no sound), or frames and sound with times
 PLAYER_STUCK = "the player did not open the NDI picture, also not when it was given it again"
 PIPE_HELD = "the player still holds the NDI pipe from the picture before"
@@ -2092,57 +2094,81 @@ class Service:
                 except OSError as e:
                     self.log("pvj-ndi: could not make the pipe %s: %s" % (self.fifo, e))
                     return {"ok": False, "error": "the NDI helper could not make its pipe (%s)" % (e.strerror or "error")}
-            # With one sound source for the box, its connection is seen to first (so it has the time the picture
-            # takes to connect) and is kept from the picture before; without, or when this picture IS that
-            # source, there is none.
-            more = {}
-            if self._outside(sid):
-                more = {"feed": self._want_feed(), "outside": True}
-            else:
-                self._close_feed()
-            r = self._receiver(self.lib, match[0], self.fifo, log=self.log, sound=self.sound, **more)
-            r.hold()                               # the writer waits until the pipe was seen without a reader (below)
-            try:
-                r.start()
-            except NdiError as e:
-                r.close()
-                self._remove_pipe()
-                return {"ok": False, "error": str(e)}
-            with self._recv_lock:
-                self.receiver = r
-            r.first.wait(self._first_frame)
-            if r.format:
-                r.decide()                         # a moment for sound to show itself; then the pipe's form is fixed
-            st = r.status()
-            if st["state"] in ENDED or not r.format:
-                only = not r.format and st["state"] not in ENDED and r.heard()
-                self._close_receiver()
-                if only:
-                    if len(self.sound_only) < MAX_SOURCES * 4:
-                        self.sound_only.add(sid)
-                    return {"ok": False, "sound_only": True, "error": "%s sends sound and no picture; choose it under 'Where sound comes from' on the NDI page" % match[0]["name"]}
-                # Neither a picture nor sound in time. Said so that a sound sender that is quiet does not look
-                # broken: such a sender sends nothing at all while nothing plays into it (seen on the owner's).
-                return {"ok": False, "error": st["message"] or ("%s sent no picture in %d seconds, and no sound either (a sender of sound alone sends nothing while nothing plays into it)"
-                                                                % (match[0]["name"], self._first_frame))}
-            self.sound_only.discard(sid)           # it has a picture after all
-            self.log("pvj-ndi: %s is %d x %d at %s" % ((match[0]["name"],) + r.format))
-            try:
-                clear = self._clear_pipe(r)
-            except OSError as e:
-                self._close_receiver()
-                return {"ok": False, "error": "the NDI pipe cannot be written to: %s" % (e.strerror or "an error")}
-            if not clear:
-                # Never a new writer while a reader of the source before may be there. The panel, which owns the
-                # player, has it let go before it asks (Player.release_pipe) and asks again (Input.tick).
-                over = r.status()
-                self._close_receiver()
-                if over["state"] in ENDED and over["message"]:      # it ended by itself while the pipe was looked at
-                    return {"ok": False, "error": over["message"]}
-                self.log("pvj-ndi: the player still held the pipe %.1f seconds after the source before; %s is not written" % (self._pipe_clear, match[0]["name"]))
-                return {"ok": False, "error": PIPE_HELD}
-            r.go()
-            return {"ok": True, "playing": st}
+            # A sender may change size while it is being opened (a screen capture whose window moves to the next
+            # clip: on the Pi, 2026-10-12, a first press was answered "the source changed to 1540 x 866 at 30.0
+            # frames a second"). That is not a failure of the press: the source is opened again, here, with the
+            # new size, at most twice more and only while the press's own time lasts (the panel waits
+            # FIRST_FRAME_SECONDS + 8 for this answer). A source that keeps changing gets the plain reason.
+            began, reply = time.monotonic(), None
+            for attempt in range(OPEN_TRIES):
+                left = self._first_frame + OPEN_AGAIN_SECONDS - (time.monotonic() - began)
+                reply = self._open_once(sid, match[0], self._first_frame if attempt == 0 else max(0.5, min(self._first_frame, left)))
+                again = reply.pop("again", False)
+                if not again or attempt == OPEN_TRIES - 1 or time.monotonic() - began >= self._first_frame + OPEN_AGAIN_SECONDS:
+                    break
+                self.log("pvj-ndi: %s changed while it was being opened (%s); opening it again" % (match[0]["name"], reply.get("error")))
+                with self._find_lock:
+                    self._sources_at = None
+                match = [s for s in self.sources() if s["id"] == sid] or match
+            return reply
+
+    def _open_once(self, sid, row, wait):
+        """One try of open, with self.lock held: connect, wait `wait` seconds for a first picture, fix the pipe's
+        form, see the pipe without a reader, let the writer go. The answer has "again": True when the source
+        ended as "changed" before it was handed over (the caller opens it again)."""
+        # With one sound source for the box, its connection is seen to first (so it has the time the picture
+        # takes to connect) and is kept from the picture before; without, or when this picture IS that
+        # source, there is none.
+        more = {}
+        if self._outside(sid):
+            more = {"feed": self._want_feed(), "outside": True}
+        else:
+            self._close_feed()
+        r = self._receiver(self.lib, row, self.fifo, log=self.log, sound=self.sound, **more)
+        r.hold()                               # the writer waits until the pipe was seen without a reader (below)
+        try:
+            r.start()
+        except NdiError as e:
+            r.close()
+            self._remove_pipe()
+            return {"ok": False, "error": str(e)}
+        with self._recv_lock:
+            self.receiver = r
+        r.first.wait(wait)
+        if r.format:
+            r.decide()                         # a moment for sound to show itself; then the pipe's form is fixed
+        st = r.status()
+        if st["state"] in ENDED or not r.format:
+            only = not r.format and st["state"] not in ENDED and r.heard()
+            self._close_receiver()
+            if only:
+                if len(self.sound_only) < MAX_SOURCES * 4:
+                    self.sound_only.add(sid)
+                return {"ok": False, "sound_only": True, "error": "%s sends sound and no picture; choose it under 'Where sound comes from' on the NDI page" % row["name"]}
+            # Neither a picture nor sound in time. Said so that a sound sender that is quiet does not look
+            # broken: such a sender sends nothing at all while nothing plays into it (seen on the owner's).
+            if st["state"] == "changed":
+                return {"ok": False, "error": st["message"], "again": True}
+            return {"ok": False, "error": st["message"] or ("%s sent no picture in %d seconds, and no sound either (a sender of sound alone sends nothing while nothing plays into it)"
+                                                            % (row["name"], self._first_frame))}
+        self.sound_only.discard(sid)           # it has a picture after all
+        self.log("pvj-ndi: %s is %d x %d at %s" % ((row["name"],) + r.format))
+        try:
+            clear = self._clear_pipe(r)
+        except OSError as e:
+            self._close_receiver()
+            return {"ok": False, "error": "the NDI pipe cannot be written to: %s" % (e.strerror or "an error")}
+        if not clear:
+            # Never a new writer while a reader of the source before may be there. The panel, which owns the
+            # player, has it let go before it asks (Player.release_pipe) and asks again (Input.tick).
+            over = r.status()
+            self._close_receiver()
+            if over["state"] in ENDED and over["message"]:      # it ended by itself while the pipe was looked at
+                return dict({"ok": False, "error": over["message"]}, **({"again": True} if over["state"] == "changed" else {}))
+            self.log("pvj-ndi: the player still held the pipe %.1f seconds after the source before; %s is not written" % (self._pipe_clear, row["name"]))
+            return {"ok": False, "error": PIPE_HELD}
+        r.go()
+        return {"ok": True, "playing": st}
 
     def close(self):
         with self.lock:

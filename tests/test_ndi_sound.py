@@ -1115,6 +1115,38 @@ class ServiceSoundTest(unittest.TestCase):
         self.s.handle({"cmd": "configure", "on": True, "addresses": [], "sound": False})
         self.assertEqual((r.state, r.message), ("changed", "sound was switched off"))
 
+    def test_a_source_that_changes_size_while_it_is_being_opened_is_opened_again_and_answers_with_the_new_size(self):
+        """On the Pi (2026-10-12) a first press on Scan Converter was answered 409, "the source changed to 1540 x 866
+        at 30.0 frames a second": the clip changed while the source was connecting. That is not a failure."""
+        logged = []
+        self.s.log = logged.append
+        self.s.handle({"cmd": "configure", "on": True, "addresses": [], "sound": True})
+        for w in (64, 128, 128):            # the first picture, the change (seen while the helper waits for sound), and the new size again
+            self.lib.frames.put(frame(w, 16))
+        reply = self.s.handle({"cmd": "open", "id": self.rid})
+        self.assertEqual((reply["ok"], reply["playing"]["width"], reply["playing"]["state"]), (True, 128, "ready"), reply)
+        self.assertNotIn("again", reply)
+        self.assertEqual((len(self.lib.opened), self.lib.closed), (2, 1))
+        self.assertIn("changed while it was being opened", " ".join(logged))
+        self.s.close()
+        # a source that keeps changing is tried OPEN_TRIES times and then gets the plain reason
+        self.assertEqual(ndi.OPEN_TRIES, 3)
+        del self.lib.opened[:]
+        for w in (64, 128, 64, 128, 64, 128):
+            self.lib.frames.put(frame(w, 16))
+        reply = self.s.handle({"cmd": "open", "id": self.rid})
+        self.assertEqual(reply, {"ok": False, "error": "the source changed to 128 x 16 at 29.97 frames a second"})
+        self.assertEqual(len(self.lib.opened), 3)
+        # the longest the helper may take over it stays inside what the panel waits for the answer (Input.open): no
+        # new try after first-frame + OPEN_AGAIN, a late try waits half a second at least, then sound, then the pipe
+        self.assertLess(ndi.FIRST_FRAME_SECONDS + ndi.OPEN_AGAIN_SECONDS + 0.5 + ndi.AUDIO_WAIT + ndi.PIPE_CLEAR_SECONDS, ndi.FIRST_FRAME_SECONDS + 8)
+        # an end that no new try cures is answered at once, as before
+        del self.lib.opened[:]
+        self.lib.frames.put(frame(64, 16, fields=0))
+        reply = self.s.handle({"cmd": "open", "id": self.rid})
+        self.assertIn("interlaced", reply["error"])
+        self.assertEqual(len(self.lib.opened), 1)
+
     def test_a_source_without_sound_is_opened_after_a_short_wait_and_no_longer(self):
         self.s.handle({"cmd": "configure", "on": True, "addresses": [], "sound": True})
         self.lib.frames.put(frame(64, 16))
@@ -2291,6 +2323,41 @@ class ApiSoundFromTest(ServerBase):
         st, body, _ = self.call("POST", "/api/play", {"ndi": PID}, token=self.full)
         self.assertEqual((st, body["sound"]), (200, False), body)
         self.assertEqual([c for c in self.player.calls if c[0] == "play_pipe"][-1][5], "uyvy422")
+
+    def test_a_press_on_the_sound_source_or_on_a_sound_only_sender_is_refused_before_anything_is_touched(self):
+        """Read from the code by the test builder (2026-10-12): the press let the player go of the pipe and had the
+        helper close the picture and the sound's connection, and only then found that there was no picture."""
+        self.assertEqual(self.post({"action": "sound_from", "id": VID})[0], 200)
+        self.pump()
+        self.lib.frames.put(frame(64, 16))
+        self.assertEqual(self.call("POST", "/api/play", {"ndi": PID}, token=self.full)[0], 200)
+        released = []
+        self.player.release_pipe = lambda path: released.append(path) or True
+        before = (list(self.lib.opens), list(self.lib.closed_handles), len(self.player.calls), self.service.receiver, self.service.feed, dict(self.api.ndi.current))
+        asked = len([m for m in self.client.sent if m["cmd"] in ("open", "close")])
+        st, body, _ = self.call("POST", "/api/play", {"ndi": VID}, token=self.full)
+        self.assertEqual(st, 409)
+        self.assertEqual(body["error"], "VLC (Audio) is where this box's NDI sound comes from, so it is not shown as a picture; what plays was not touched")
+        after = (list(self.lib.opens), list(self.lib.closed_handles), len(self.player.calls), self.service.receiver, self.service.feed, dict(self.api.ndi.current))
+        self.assertEqual(after, before)                                                  # the picture, its sound and the player are as they were
+        self.assertEqual((released, len([m for m in self.client.sent if m["cmd"] in ("open", "close")])), ([], asked))
+        self.assertNotIn(self.service.receiver.state, ndi.ENDED)
+        self.assertTrue(self.service.feed.alive())
+        # a sender known to have sound and no picture, which is not the sound source: the same
+        self.assertEqual(self.post({"action": "sound_from", "id": ""})[0], 200)
+        self.service.sound_only.add(VID)
+        self.service._sources_at = None
+        self.lib.frames.put(frame(64, 16))
+        self.assertEqual(self.call("POST", "/api/play", {"ndi": PID}, token=self.full)[0], 200)
+        playing, calls = self.service.receiver, len(self.player.calls)
+        del released[:]
+        st, body, _ = self.call("POST", "/api/play", {"ndi": VID}, token=self.full)
+        self.assertEqual((st, body["error"]), (409, "VLC (Audio) sends sound and no picture; choose it under 'Where sound comes from' on the NDI page"))
+        self.assertIs(self.service.receiver, playing)
+        self.assertNotIn(playing.state, ndi.ENDED)
+        self.assertEqual((released, len(self.player.calls)), ([], calls))
+        # with sound off the kept choice refuses nothing (no sound connection is at stake), and a pad's press goes the same road
+        self.assertIn("again is None", inspect.getsource(type(self.api).play_ndi))
 
     def test_the_delay_goes_to_the_player_with_the_stream_with_sound_and_never_with_bare_frames(self):
         self.assertEqual(self.post({"action": "sound_from", "id": VID})[0], 200)

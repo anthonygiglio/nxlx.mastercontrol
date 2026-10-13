@@ -314,6 +314,7 @@ Shows the picture of an NDI sender on the network (Resolume, MadMapper, OBS and 
 - A sender that has sound and no picture cannot be shown. Pressed once, it is labelled **sound only** in the list and has **Use for sound** where the others have Play.
 - The line under the choices says what is happening: where the sound comes from and its address, whether it is arriving and how loud; "X is connected and silent" when the sender is there and sends nothing (nothing is playing into it); "X is not on the network now; pictures play without sound" when it is away. The box looks for it again by itself.
 - **Sound against picture.** Picture and sound come from two senders and may be out of step; set the delay by ear. The slider moves the sound up to a quarter of a second earlier or half a second later. Play something with a clap or a spoken word and move it until they match; a change is heard at once. It applies to NDI pictures only, never to a clip.
+- The sender the sound comes from is not shown as a picture while it is the sound source: its row has no Play, and a pad that holds it says why and leaves what plays alone.
 - The sound source stays on the list "Sources that pads may hold" and cannot be removed there while it is the sound source; choose another first.
 - Not built: a sound source for each pad, NDI sound under a library clip or with no NDI picture at all, and Dante or AES67.
 

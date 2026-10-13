@@ -3392,7 +3392,8 @@
           state: mine ? playLine(playing) : only ? h('div', { class: 'state ndionly', text: 'sound only' }) : '',
           note: isSound ? (d.sound ? 'The sound of every NDI picture comes from this sender.' : 'Kept as the sound source; sound is off now.')
             : only ? 'This sender has sound and no picture, so it cannot be shown. ' + (full ? 'It can be where the sound of every NDI picture comes from.' : 'The owner can choose it under "Where sound comes from".') : '',
-          primary: only ? (full && !(isSound && d.sound) ? h('button', { class: 'btn on pri ndiusesound', text: 'Use for sound', 'aria-label': 'Use ' + s.name + ' for sound', onclick: function () { useForSound(s, d); } }) : null)
+          // (the sender the sound comes from is not offered as a picture either: the box refuses that press and touches nothing)
+          primary: isSound && d.sound ? null : only ? (full ? h('button', { class: 'btn on pri ndiusesound', text: 'Use for sound', 'aria-label': 'Use ' + s.name + ' for sound', onclick: function () { useForSound(s, d); } }) : null)
             : can('live') ? h('button', { class: 'btn on pri', text: ndiBusy === s.id ? 'Connecting...' : 'Play', 'aria-label': 'Play ' + s.name, disabled: !!ndiBusy, onclick: function () {
             if (ndiBusy) return;
             ndiBusy = s.id;                            // one connection at a time, and the button stays off through redraws

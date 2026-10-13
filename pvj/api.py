@@ -3128,6 +3128,18 @@ class Api:
             # judged by may be a second old: the helper's own answer is the one to go by there.)
             if again is None and not why and isinstance(sid, str) and sid not in [r["id"] for r in rows]:
                 raise ApiError(409, self.NDI_GONE)
+            # A press on the sender the box takes its SOUND from, or on one known to have sound and no picture, is
+            # refused here too, before anything is touched: asking the helper for it as a picture would take the
+            # picture that plays off the screen and close the sound's connection, to find out that there is no
+            # picture to show (D87). Both are known to the panel now. The cost, accepted: a sender that has a
+            # picture as well cannot be shown while it is the sound source; choose another sound source first.
+            if again is None and isinstance(sid, str):
+                row = ([r for r in rows if r["id"] == sid] or [None])[0]
+                name = row["name"] if row else "that source"
+                if self.ndi.sound_wanted() and sid == self.ndi.sound_from():
+                    raise ApiError(409, "%s is where this box's NDI sound comes from, so it is not shown as a picture; what plays was not touched" % name)
+                if row is not None and row.get("sound_only"):
+                    raise ApiError(409, "%s sends sound and no picture; choose it under 'Where sound comes from' on the NDI page" % name)
             # If the player does not confirm that it let go, no new writer is started over a reader that may still
             # be there. But the player is not left as it is either: the helper is told to close what it has (that
             # ends the old writer, and the end of the stream is what ends a player stuck opening or reading it),
