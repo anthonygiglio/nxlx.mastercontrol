@@ -521,8 +521,13 @@ NDI_BIG_A_SOUND="PVJ-STANDIN (big at once A with sound)"
 NDI_BIG_B_SOUND="PVJ-STANDIN (big at once B with sound)"
 NDI_BIG_CHANGES="PVJ-STANDIN (big changes size)"
 NDI_BIG_CHANGES_SOUND="PVJ-STANDIN (big changes size with sound)"
+NDI_SOUND_ONLY="PVJ-STANDIN (sound only)"
 box() {            # the questions to the panel and the player (tests/ndi_standin/box_check.py); the token stays off the command line
 	PVJ_TOKEN="$TOKEN" python3 -B "$SRC/tests/ndi_standin/box_check.py" "$@"
+}
+sound_connections_of() {   # sound_connections_of PID: how often that helper process said it opened a connection for the box's sound source
+	journalctl --sync >/dev/null 2>&1 || true
+	journalctl -b --no-pager -o cat _SYSTEMD_UNIT=pvj-ndi.service _PID="$1" | grep -c "pvj-ndi: sound comes from " || true
 }
 ndi_get() {        # GET /api/ndi into $OUT
 	local code
@@ -735,6 +740,31 @@ ndi_must "the helper restarted under a playing source" case restart "$NDI_MOVING
 step "hand-over 7, the chain: eight hand-overs back to back with sound, nothing cleaned between them (what one leaves, the next meets)"
 ndi_clean
 ndi_case "the chain of hand-overs with nothing cleaned between them" case chain
+
+# ---- sound from another sender (D87): the picture of one source, the sound of another, on the installed box ----------
+# The helper under its unit opens a second connection, for sound alone, to the source the Owner chose, and its sound
+# goes into the same stream under whatever picture plays. Three of the cases the job ndi-mpv judges on the Pi's mpv
+# are asked here too, over HTTP as a paired device asks, because here the helper is the unit's own process in its
+# sandbox. All three are fatal. The numbers for sound against picture are printed and not judged (another mpv).
+# The stand-in's own count of its receivers cannot be read from here (it is in the helper's process), so "the
+# sound connection was opened once" is the helper's own line in the journal, counted for that one process.
+step "sound from another sender 1: a moving picture without sound of its own, with the sound of a sound-only source"
+ndi_clean
+ndi_must "a picture with the sound of a sound-only source" case soundfrom "$NDI_MOVING" "$NDI_SOUND_ONLY" 12
+
+step "sound from another sender 2: the picture changes size while it plays (1280 x 720, then 1264 x 704); the sound connection is opened once"
+ndi_clean
+HELPER_PID="$(systemctl show -p MainPID --value pvj-ndi.service)"
+ndi_must "a picture that changed size, with the sound of a sound-only source" case soundfromsize "$NDI_BIG_CHANGES" "$NDI_SOUND_ONLY"
+[ "$(systemctl show -p MainPID --value pvj-ndi.service)" = "$HELPER_PID" ] || ndi_fail "the helper became another process while the picture changed size: its count of sound connections says nothing"
+SOUND_OPENS="$(sound_connections_of "$HELPER_PID")"
+echo "the helper (process $HELPER_PID) said 'sound comes from' $SOUND_OPENS time(s)"
+[ "$SOUND_OPENS" = 1 ] || ndi_fail "the helper opened its sound connection $SOUND_OPENS times while the picture was opened twice; it must be once"
+
+step "sound from another sender 3: Play on the sound-only source itself is refused in words, and nothing of it reaches the player"
+ndi_clean
+ndi_must "Play on the sound-only source is refused in plain words" case soundonlyplay "$NDI_SOUND_ONLY"
+box soundown || ndi_fail "the choice of one sound source could not be taken back"
 
 step "the stand-in is taken off by the real command, and this test's drop-in with it: nothing of NDI is left"
 box sound off || ndi_fail "sound could not be switched off again"

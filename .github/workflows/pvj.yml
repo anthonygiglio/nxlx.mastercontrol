@@ -155,9 +155,11 @@ jobs:
           useradd --create-home ci
           chown -R ci: .
       - name: NDI against this mpv (the stand-in library, the real helper code, the real Api, the real Player; findings are printed, see the test's top)
-        timeout-minutes: 20
+        timeout-minutes: 30
         # PVJ_NDI_FINDINGS_FATAL=yes since the mending (2026-10-12): the cases that failed on master's pvj fail the job
         # here too. Without it they are printed as FINDING and skipped.
+        # Sound from another sender (D87, cases 40 to 46) is in the same run and fatal, every one of them: nothing
+        # of it is under the switch. test_47 is for the record and never fatal.
         run: su ci -c "PVJ_NDI_MPV_TEST=1 PVJ_NDI_MPV_WANT=0.40. PVJ_NDI_FINDINGS_FATAL=yes python3 -X faulthandler -m unittest -v tests.test_ndi_mpv"
       - name: The still-with-sound cases on the pvj code that was stuck on the Pi (master at 5f62763) must FAIL there, or they judge nothing
         # The same tests and the same stand-in, with the pvj folder of the commit before the hand-over of the pipe and

@@ -8,9 +8,14 @@ device asks, and of the player over its control socket, as root. Nothing here re
     PVJ_TOKEN=<a paired device's token> python3 -B box_check.py play NAME raw|matroska
                                                                back NAME SECONDS
                                                                sound on|off
+                                                               soundown   (each picture's own sound again)
                                                                case still NAME | twice NAME | follow A B | sound NAME
                                                                     | soundon NAME | size NAME | restart NAME
                                                                     | stuck NAME | chain | gostill NAME
+                                                                    | soundfrom PICTURE SOUND SECONDS
+                                                                    | soundfromsize PICTURE SOUND
+                                                                    | soundfromstops PICTURE SOUND
+                                                                    | soundonlyplay SOUND | soundonlyunder PICTURE SOUND
                                                                dump
 
 Exit 0: everything asked held. Exit 1: something did not; the reason is the line that begins "REASON:", and what
@@ -71,6 +76,7 @@ def player(*names):
 class HttpRig(mpvword.Rig):
     """The installed box: the panel over HTTP as a paired device, the player's socket as root."""
     socket, pipe = PLAYER, PIPE
+    sync_judged = False                    # the bounds for sound against picture were measured on the Pi's mpv; a box's own is another
 
     def page(self):
         return ndi()
@@ -80,6 +86,9 @@ class HttpRig(mpvword.Rig):
 
     def post_sound(self, on):
         return http("POST", "/api/ndi", {"action": "sound", "on": on})
+
+    def post_ndi(self, body):
+        return http("POST", "/api/ndi", body)
 
     def player_status(self):
         code, st = http("GET", "/api/status", timeout=20)
@@ -248,6 +257,11 @@ def main(argv):
             CASES[argv[1]][0](RIG, *argv[2:])
         elif argv[:1] == ["sound"] and len(argv) == 2 and argv[1] in ("on", "off"):
             sound(argv[1])
+        elif argv == ["soundown"]:
+            code, out = RIG.post_ndi({"action": "sound_from", "id": ""})
+            if code != 200 or not isinstance(out, dict) or out.get("sound_from") != "":
+                raise Failed("POST /api/ndi (sound_from, no id) answered HTTP %s: %s" % (code, str(out)[:300]))
+            print("each NDI picture plays its own sound again")
         elif argv == ["dump"]:
             dump()
         else:
