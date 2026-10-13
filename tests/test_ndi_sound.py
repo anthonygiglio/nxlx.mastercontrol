@@ -1856,7 +1856,10 @@ class SoundFromServiceTest(unittest.TestCase):
         self.addCleanup(self.s.close)
 
     def conf(self, **kw):
-        return self.s.handle(dict({"cmd": "configure", "on": True, "addresses": [], "sound": True, "sound_from": VID, "allowed": [PID, VID]}, **kw))
+        message = dict({"cmd": "configure", "on": True, "addresses": [], "sound": True, "sound_from": VID, "allowed": [PID, VID]}, **kw)
+        rows = {VID: VOICE_ROW, PID: PICTURE_ROW}
+        message.setdefault("sound_row", rows.get(message["sound_from"]) if isinstance(message["sound_from"], str) else None)
+        return self.s.handle(message)
 
     def pump(self, make=lambda: sound(480)):
         """Sound from the sound sender, for as long as the test runs."""
@@ -1945,6 +1948,81 @@ class SoundFromServiceTest(unittest.TestCase):
         self.assertEqual((reply["ok"], reply["playing"]["container"]), (True, "raw"))
         self.status(5)
         self.assertEqual((self.lib.sound_opens(), self.lib.asked), ([], set()))          # the box does not pick one
+
+    def test_twins_that_appear_while_the_sound_plays_end_its_connection_and_the_picture_goes_on(self):
+        """The review of #132, M2: twins were looked at only when the feed was opened, so a second sender that
+        started under the id later was played on while the page said "it plays neither"."""
+        self.conf()
+        self.pump()
+        self.lib.frames.put(frame(64, 16))
+        self.assertEqual(self.s.handle({"cmd": "open", "id": PID})["playing"]["container"], "matroska")
+        r = self.s.receiver
+        twin = (VOICE[0], b"192.168.0.20:5999")
+        self.lib.raw.append(twin)
+        self.assertEqual(self.status(1.1)["sound_source"], {"id": VID, "state": "twins", "arriving": False})
+        self.assertEqual(self.lib.closed_handles, [("recv", 1)])                         # the sound's connection, and only it
+        self.assertIsNone(self.s.feed)
+        self.assertNotIn(r.state, ndi.ENDED)                                             # the picture goes on (silence is written)
+        self.status(5)
+        self.assertEqual(len(self.lib.sound_opens()), 1)                                 # and it is not opened while there are two
+        # through a re-open of the picture (the next clip is another size): still neither
+        self.lib.frames.put(frame(128, 16))
+        self.assertTrue(wait(lambda: r.state == "changed"))
+        self.status()
+        self.lib.frames.put(frame(128, 16))
+        reply = self.s.handle({"cmd": "open", "id": PID})
+        self.assertEqual((reply["ok"], reply["playing"]["container"], len(self.lib.sound_opens())), (True, "raw", 1))
+        r2 = self.s.receiver
+        self.lib.raw.remove(twin)                                                        # one sender is left: it is the sound source again
+        self.assertEqual(self.status(2.1)["sound_source"]["state"], "playing")
+        self.assertEqual(len(self.lib.sound_opens()), 2)
+        self.assertTrue(wait(lambda: r2.state == "changed"))                             # and the picture is opened again with it
+        self.assertEqual(r2.message, "the sound source started to send sound")
+
+    def test_only_the_name_at_the_machine_the_owner_allowed_is_the_sound_source_whatever_answers_to_the_id(self):
+        """The review of #132, M1: the sound road went by the 48-bit id alone, where a pad compares the live row's
+        name and machine with the allowed row. A sender of another name behind the id is never opened, a
+        connection to it is not kept, and the page does not show the owner's name as playing."""
+        for bad in (None, {"id": VID}, dict(VOICE_ROW, name="EVIL (Audio)"), dict(PICTURE_ROW), dict(VOICE_ROW, **{"from": "10.9.9.9:1"}), "VLC (Audio)"):
+            self.assertIs(self.conf(sound_row=bad)["ok"], False, bad)
+        self.conf()
+        self.assertEqual(self.s.sound_row, VOICE_ROW)
+        real = self.s.sources
+        other = [False]
+
+        def sources():                     # the id answered by another name (a collision of the hash, made here by hand)
+            return [dict(s, name="EVIL (Audio)") if (other[0] and s["id"] == VID) else s for s in real()]
+        self.s.sources = sources
+        other[0] = True
+        self.assertEqual(self.status()["sound_source"], {"id": VID, "state": "away", "arriving": False})
+        self.pump()
+        self.lib.frames.put(frame(64, 16))
+        reply = self.s.handle({"cmd": "open", "id": PID})
+        self.assertEqual((reply["ok"], reply["playing"]["container"]), (True, "raw"))
+        self.status(5)
+        self.assertEqual((self.lib.sound_opens(), self.lib.asked), ([], set()))          # never opened
+        other[0] = False
+        self.assertEqual(self.status(2.1)["sound_source"]["state"], "playing")           # the real one is: opened
+        self.assertEqual(len(self.lib.sound_opens()), 1)
+        other[0] = True
+        self.assertEqual(self.status(1.1)["sound_source"]["state"], "away")              # and not KEPT when another answers
+        self.assertIn(("recv", 2), self.lib.closed_handles)
+        self.assertIsNone(self.s.feed)
+        # the panel's side: the owner's name is never shown as playing for another sender, whatever the helper says
+        data = {"ndi": {"addresses": [], "sound": True, "sources": [PICTURE_ROW, VOICE_ROW], "sound_from": VID}}
+        client = FakeClient(self.s)
+        base = {"ok": True, "configured": True, "on": True, "addresses": [], "sound": True, "groups": [], "allowed": [PID, VID], "sound_from": VID,
+                "sound_delay_ms": 0, "runtime": {"present": True, "loaded": True, "version": "x", "problem": ""}, "playing": None}
+        i = ndi.Input(client, self.s.fifo, ndi.Wanted(lambda: True, lambda: data, log=lambda *_: None), log=lambda *_: None)
+        elsewhere = {"id": ndi.source_id("VLC (Audio)", "192.168.0.99"), "name": "VLC (Audio)", "from": "192.168.0.99:5962"}
+        for rows, want in (([VOICE_ROW], "playing"), ([], "away"), ([elsewhere], "away"), ([dict(VOICE_ROW, twins=True)], "twins"), ([VOICE_ROW, VOICE_ROW], "twins")):
+            client.answer = dict(base, sources=rows, sound_source={"id": VID, "state": "playing", "arriving": True})
+            got = i.status()["sound_source"]
+            self.assertEqual((got["name"], got["state"], got["arriving"]), ("VLC (Audio)", want, want == "playing"), rows)
+        client.answer = None
+        i.sync()
+        told = [m for m in client.sent if m["cmd"] == "configure"][-1]
+        self.assertEqual((told["sound_from"], told["sound_row"]), (VID, VOICE_ROW))       # the helper is told the row the owner allowed
 
     def test_with_sound_off_no_sound_source_is_connected_to_and_the_pipe_carries_bare_frames(self):
         self.assertIsNone(self.conf(sound=False)["sound_source"])

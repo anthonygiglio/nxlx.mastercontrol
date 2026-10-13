@@ -423,7 +423,8 @@ class SoundFromAnotherSender(Built):
     def from_source(self, name):
         """The configure message's part that makes `name` the box's sound source (its id is the helper's own hash)."""
         sid = ndi.source_id(name, HOST)
-        return {"sound_from": sid, "allowed": [sid]}
+        # with the row the owner allowed: the helper plays the sound of that name at that machine and of no other (M1)
+        return {"sound_from": sid, "allowed": [sid], "sound_row": {"id": sid, "name": name, "from": "%s:5960" % HOST}}
 
     def status(self):
         return self.s.handle({"cmd": "status"})

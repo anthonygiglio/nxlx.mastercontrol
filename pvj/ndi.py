@@ -1802,6 +1802,7 @@ class Service:
         # Receiver's, so it stays while a picture is closed and opened again. Set and closed under self.lock.
         self.sound_from, self.sound_delay_ms = "", 0       # the delay is the panel's (the player's audio-delay): kept and said back, used by nothing here
         self.feed, self._feed_at = None, 0.0
+        self.sound_row = None                      # {"id", "name", "from"} of the sound source as the owner allowed it (M1)
         # Sources that were asked for a picture, sent none in time and had sound: {id: the clock then}. The page
         # labels them "sound only" and offers them as the sound source. The label is ADVICE, never a lock (the
         # review of #132, H1): nothing refuses a press for it, since a picture sender that was only slow once
@@ -1850,6 +1851,15 @@ class Service:
                 raise NdiError("bad list of allowed NDI sources")
             if sound_from and sound_from not in allowed:       # as a pad's source: an id the owner's list holds, never any other
                 raise NdiError("the sound source is not one of the allowed NDI sources")
+            # And, for this one source, the name and the machine the owner allowed (the review of #132, M1). An id
+            # is 48 bits of a hash: the sender that answers to it is played only if it has that name at that
+            # machine, as a pad's source is (Api._ndi_pad_check). This is the one name the helper is ever told;
+            # it still opens nothing but a row its own finder gave it.
+            sound_row = None
+            if sound_from:
+                sound_row = clean_allowed(message.get("sound_row"))
+                if sound_row["id"] != sound_from:
+                    raise NdiError("the sound source's name and address are not that id's")
         except NdiError as e:
             return {"ok": False, "error": str(e)}
         with self.lock:
@@ -1896,7 +1906,7 @@ class Service:
                 with self._find_lock:
                     self.allowed, self._sources_at = list(allowed), None      # the list is read again with them in front
             self.configured, self.on, self.addresses, self.sound, self.groups = True, on, addresses, sound, groups
-            self.sound_from, self.sound_delay_ms = sound_from, delay
+            self.sound_from, self.sound_delay_ms, self.sound_row = sound_from, delay, sound_row
             if self.feed is not None and not (on and sound and self.feed.source["id"] == sound_from):
                 self._close_feed()                 # no longer the sound that is wanted
         return self.status()
@@ -1926,24 +1936,39 @@ class Service:
         None when it is away, or when two senders answer to its id (the box does not pick one). Called with
         self.lock held."""
         feed = self.feed
-        if feed is not None and (not feed.alive() or feed.source["id"] != self.sound_from):
+        row, state = self._sound_row_now(self.sources())
+        if feed is not None and (not feed.alive() or feed.source["id"] != self.sound_from or state in ("twins", "other")):
             self._close_feed()
             feed = None
         if feed is not None:
             return feed
-        row = [s for s in self.sources() if s["id"] == self.sound_from]
-        if not row or row[0].get("twins"):
+        if row is None:
             return None
-        feed = self._feed_class(self.lib, row[0], log=self.log, clock=self._clock)
+        feed = self._feed_class(self.lib, row, log=self.log, clock=self._clock)
         try:
             feed.start()
         except Exception as e:
-            self.log("pvj-ndi: the sound source %s could not be opened: %s" % (row[0]["name"], str(e)[-160:]))
+            self.log("pvj-ndi: the sound source %s could not be opened: %s" % (row["name"], str(e)[-160:]))
             feed.close()
             return None
-        self.log("pvj-ndi: sound comes from %s" % row[0]["name"])
+        self.log("pvj-ndi: sound comes from %s" % row["name"])
         self.feed = feed
         return feed
+
+    def _sound_row_now(self, sources):
+        """(the live row that IS the box's sound source, or None; "ok", "away", "twins" or "other"). It is that
+        source only when one sender answers to the id and it has the name, at the machine, that the owner allowed:
+        "twins" when two do (the box does not pick one), "other" when the id is answered by another name or from
+        another machine (never played: as a pad refuses it), "away" when nothing answers."""
+        rows = [s for s in sources if s["id"] == self.sound_from]
+        if not rows:
+            return None, "away"
+        if len(rows) > 1 or rows[0].get("twins"):
+            return None, "twins"
+        want = self.sound_row
+        if want is None or rows[0]["name"] != want["name"] or host_of(rows[0]["from"]) != host_of(want["from"]):
+            return None, "other"
+        return rows[0], "ok"
 
     def _sound_source(self, sources, r):       # (the page's side re-checks every word of it: Input._sound_source)
         """What the page is told of the box's sound source: {"id", "state", "arriving"}, or None when none is
@@ -1952,10 +1977,12 @@ class Service:
         connection is down; "twins": two senders answer to the id, and neither is played."""
         if not (self.sound and self.sound_from):
             return None
-        row = [s for s in sources if s["id"] == self.sound_from]
+        row, fits = self._sound_row_now(sources)
         feed, out = self.feed, {"id": self.sound_from, "state": "away", "arriving": False}
-        if row and row[0].get("twins"):
+        if fits == "twins":
             out["state"] = "twins"
+        elif fits == "other":
+            pass                                   # another sender answers to the id: as good as away, and never played
         elif feed is not None and feed.alive() and feed.source["id"] == self.sound_from:
             said = feed.status()
             out.update(state="away" if said["lost"] else "playing", arriving=said["arriving"])
@@ -2047,6 +2074,18 @@ class Service:
                 self.lock.release()
         sources = self.sources()
         feed = self.feed
+        if feed is not None and self._sound_row_now(sources)[1] in ("twins", "other") and self.lock.acquire(blocking=False):
+            # Looked at again at every status, not only when the feed is opened (the review of #132, M2): a second
+            # sender that starts to answer to the sound source's id while it plays, or another name behind the id,
+            # ends the sound's connection. Silence is written and the picture goes on; the page's "it plays
+            # neither" is then true. When one sender is left, the look below opens it again.
+            try:
+                if self.feed is feed:
+                    self.log("pvj-ndi: the sound source is not one sender of the name the owner allowed any more; its connection is given back")
+                    self._close_feed()
+            finally:
+                self.lock.release()
+            feed = self.feed
         if (r is not None and r.state not in ENDED and getattr(r, "outside", False) and self._outside(r.source["id"])
                 and (feed is None or not feed.alive()) and self._clock() >= self._feed_at and self.lock.acquire(blocking=False)):
             # The sound source was away when this picture was opened (it plays as bare frames), or its connection
@@ -2441,8 +2480,10 @@ class Input:
             return {"ok": False}
         try:
             on, addresses = self._wanted()
+            sound_row = [r for r in self._allowed() if r.get("id") == self.sound_from()] if self.sound_from() else []
             reply = self.client.request({"cmd": "configure", "on": on, "addresses": addresses, "sound": self.sound_wanted(),
-                                         "sound_from": self.sound_from(), "sound_delay_ms": self.sound_delay(),
+                                         "sound_from": self.sound_from() if sound_row else "", "sound_delay_ms": self.sound_delay(),
+                                         "sound_row": sound_row[0] if sound_row else None,
                                          "groups": self._groups(), "discovery": self.write_config(),
                                          "allowed": [r["id"] for r in self._allowed()]}, timeout=10)
         except Exception as e:             # never out of here: this runs while the panel starts
@@ -2615,6 +2656,13 @@ class Input:
             return None
         said = st.get("sound_source") if isinstance(st.get("sound_source"), dict) else {}
         mine = sound and said.get("id") == sid and said.get("state") in SOUND_STATES
+        # The name shown is the owner's own, so what answers to the id on the network must BE that name at that
+        # machine before anything is said to play (the review of #132, M1; as a pad's source is compared). Another
+        # sender behind the id is "not on the network now", whatever the helper says of it.
+        live = [r for r in self._rows(st) if r["id"] == sid]
+        if mine and said["state"] in ("playing", "ready") and not (
+                len(live) == 1 and not live[0].get("twins") and live[0]["name"] == row[0]["name"] and host_of(live[0]["from"]) == host_of(row[0]["from"])):
+            mine, said = True, {"state": "twins" if live and (len(live) > 1 or live[0].get("twins")) else "away"}
         return {"id": sid, "name": row[0]["name"], "from": row[0]["from"], "state": said["state"] if mine else ("away" if sound else "off"),
                 "arriving": bool(mine and said.get("arriving") is True)}
 
