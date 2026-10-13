@@ -56,10 +56,12 @@ ReadWritePaths=/run/pvj-ndi -/run/pvj-ndi-pipe
 # Bounds, so that a library gone wrong (or taken over) cannot starve the player. How they were chosen, none of
 # them measured on a device: memory, three buffers of the largest frame taken (3840 x 2160, 16.6 MB each) plus the
 # library's own decoding, with room, and what it writes to /run and its /tmp counts against the same figure;
-# tasks, the two threads here plus a library that starts a few per processor; processor, three of a Pi 4's four
-# cores at the very most, so the player always has one.
+# tasks, see below; processor, three of a Pi 4's four cores at the very most, so the player always has one.
+# Tasks were measured by hand on a Pi 4 with the real library (2026-10-12, NDI.md): one process had 35 at most
+# with one picture connection and 46 to 47 with a sound-only connection beside it (the box's one sound source,
+# D87), and the helper has about five threads of its own. 64 left about ten to spare, so it is 96.
 MemoryMax=512M
-TasksMax=64
+TasksMax=96
 CPUQuota=300%
 InaccessiblePaths=-/var/lib/pvj -/etc/pvj -/run/pvj
 ProtectKernelTunables=yes
