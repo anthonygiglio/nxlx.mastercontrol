@@ -865,7 +865,7 @@ def case_sound_only_play(rig, voice):
 
     NOT CHOSEN as the box's sound source (each picture plays its own sound): the helper is asked, finds sound and no
     picture, and the answer names the source, says that it sends sound and no picture and where to choose it; from
-    then on its row in the page's list says "sound_only", and a second press is refused by the panel at once.
+    then on its row in the page's list says "sound_only"; a second press asks it again (the label never locks).
 
     CHOSEN as the box's sound source: the panel refuses before the player or the helper is touched, in words that
     name it, say that the box takes its sound from it and that what plays was not touched; it stays the sound source."""
@@ -878,9 +878,9 @@ def case_sound_only_play(rig, voice):
     row = [s for s in rig.page().get("sources", []) if isinstance(s, dict) and s.get("id") == sid]
     if not row or row[0].get("sound_only") is not True:
         raise Failed("%s was refused, and its row in the page's list does not say sound_only: %s" % (what, json.dumps(row, sort_keys=True)))
-    _words, took = _refused_play(rig, what + ", pressed again", sid, voice, (SOUND_ONLY_WORDS,))
-    if took > 3.0:
-        raise Failed("%s, pressed again, was answered after %.1f seconds: a sender known to be sound only is refused at once, without asking it again" % (what, took))
+    # The label is advice, never a lock (the review of #132, H1): a second press asks the sender again, and since it
+    # still sends no picture it is refused again in the same words.
+    _refused_play(rig, what + ", pressed again", sid, voice, (SOUND_ONLY_WORDS,))
     what = "Play on the sound-only source %r, chosen as the box's sound source" % voice
     rig.sound_from(voice)
     _words, took = _refused_play(rig, what, sid, voice, (SOUND_SOURCE_WORDS, NOT_TOUCHED_WORDS, "choose another sound source"))

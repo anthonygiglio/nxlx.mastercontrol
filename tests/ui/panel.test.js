@@ -1110,8 +1110,8 @@ function startServer(env) {          // env: more for the harness's environment 
       });
       await page.waitForSelector('.ndi-entry.ndi-soundonly');
       const rows = await page.$$eval('.ndi-entry', (rs) => rs.map((r) => [r.getAttribute('data-id'), (r.querySelector('.ndionly') || {}).textContent || '', Array.from(r.querySelectorAll('.lacts button')).map((b) => b.textContent)]));
-      assert.deepStrictEqual(rows, [[CAM.id, '', ['Play']], [VOX.id, 'sound only', ['Use for sound']]], 'a sender with sound and no picture is labelled and is not offered as a picture');
-      assert(/has sound and no picture, so it cannot be shown/.test(await page.textContent('.ndi-soundonly .lnote')), 'and the row says why');
+      assert.deepStrictEqual(rows, [[CAM.id, '', ['Play']], [VOX.id, 'sound only', ['Use for sound', 'Play']]], 'a sender that sent sound and no picture is labelled, offered for sound first, and Play stays: the label never locks');
+      assert(/sent sound and no picture\..*If it does have a picture and was only slow, Play shows it\./.test(await page.textContent('.ndi-soundonly .lnote')), 'and the row says why, and what Play is for');
       await page.click('.ndi-soundonly .ndiusesound');
       await page.waitForFunction(() => /Sound was off: choosing a sound source switched it on\./.test(document.getElementById('msg').textContent));
       assert.deepStrictEqual(world.sent, [{ action: 'sound_from', id: VOX.id }], 'the box is given the id, never a name or an address');

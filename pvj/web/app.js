@@ -3388,16 +3388,12 @@
       if (!d.sources.length && !n) srcBody.appendChild(h('div', { class: 'empty', id: 'ndiempty', text: (d.groups_now && d.groups_now.length ? 'No senders found in ' + (d.groups_now.length === 1 ? 'the group ' : 'the groups ') + d.groups_now.join(', ') + ' yet. A sender must be put in that group in its own program to be found. ' : 'No NDI sources found yet. ') + 'Switch on NDI output in the sending program (Resolume, MadMapper, OBS), on the same network as this box. A new sender takes a few seconds to appear. If it never does, add its address below.' }));
       d.sources.forEach(function (s) {
         var mine = playing && playing.id === s.id && playing.state !== 'refused' && playing.state !== 'stopped';
-        // A sender that was asked for a picture and had only sound (D87): labelled, and offered as the sound source
-        // in place of Play. The sender the sound comes from says so on its row.
+        // A sender that was asked for a picture and sent sound and none (D87) is labelled "sound only" and offered as
+        // the sound source first. Play stays beside it: the label is advice, and a picture sender that was only slow
+        // that once is shown by it (the label then goes). The sender the sound comes from says so on its row, and is
+        // not offered as a picture: the box refuses that press and touches nothing.
         var only = !!s.sound_only, isSound = d.sound_from === s.id;
-        srcBody.appendChild(listRow({ cls: 'ndi-entry' + (only ? ' ndi-soundonly' : ''), data: s.id, name: s.name, sub: s.from, key: 'ndi-' + s.id, redraw: function () { drawSources(d); },
-          state: mine ? playLine(playing) : only ? h('div', { class: 'state ndionly', text: 'sound only' }) : '',
-          note: isSound ? (d.sound ? 'The sound of every NDI picture comes from this sender.' : 'Kept as the sound source; sound is off now.')
-            : only ? 'This sender has sound and no picture, so it cannot be shown. ' + (full ? 'It can be where the sound of every NDI picture comes from.' : 'The owner can choose it under "Where sound comes from".') : '',
-          // (the sender the sound comes from is not offered as a picture either: the box refuses that press and touches nothing)
-          primary: isSound && d.sound ? null : only ? (full ? h('button', { class: 'btn on pri ndiusesound', text: 'Use for sound', 'aria-label': 'Use ' + s.name + ' for sound', onclick: function () { useForSound(s, d); } }) : null)
-            : can('live') ? h('button', { class: 'btn on pri', text: ndiBusy === s.id ? 'Connecting...' : 'Play', 'aria-label': 'Play ' + s.name, disabled: !!ndiBusy, onclick: function () {
+        var playBtn = !can('live') ? null : h('button', { class: 'btn' + (only ? ' ndiplayanyway' : ' on pri'), text: ndiBusy === s.id ? 'Connecting...' : 'Play', 'aria-label': 'Play ' + s.name, disabled: !!ndiBusy, onclick: function () {
             if (ndiBusy) return;
             ndiBusy = s.id;                            // one connection at a time, and the button stays off through redraws
             drawSources(d);
@@ -3409,7 +3405,13 @@
               poll(); refresh();
               if (document.getElementById('ndicard')) drawSources(d);
             });
-          } }) : null }));
+          } });
+        var useBtn = only && full ? h('button', { class: 'btn on pri ndiusesound', text: 'Use for sound', 'aria-label': 'Use ' + s.name + ' for sound', onclick: function () { useForSound(s, d); } }) : null;
+        srcBody.appendChild(listRow({ cls: 'ndi-entry' + (only ? ' ndi-soundonly' : ''), data: s.id, name: s.name, sub: s.from, key: 'ndi-' + s.id, redraw: function () { drawSources(d); },
+          state: mine ? playLine(playing) : only ? h('div', { class: 'state ndionly', text: 'sound only' }) : '',
+          note: isSound ? (d.sound ? 'The sound of every NDI picture comes from this sender.' : 'Kept as the sound source; sound is off now.')
+            : only ? 'When it was last asked for a picture, this sender sent sound and no picture. ' + (full ? 'It can be where the sound of every NDI picture comes from.' : 'The owner can choose it under "Where sound comes from".') + ' If it does have a picture and was only slow, Play shows it.' : '',
+          primary: isSound && d.sound ? null : only ? [useBtn, playBtn].filter(Boolean) : playBtn }));
       });
     }
     function drawAddresses(d) {

@@ -2018,6 +2018,18 @@ class SoundFromServiceTest(unittest.TestCase):
         self.s.sound_only.clear()
         self.lib.own.put(sound(480))
         self.assertIs(self.s.handle({"cmd": "open", "id": VID}).get("sound_only"), True)
+        # the label goes by itself: after ten minutes, and when the sender leaves the list
+        self.assertEqual(ndi.SOUND_ONLY_SECONDS, 600)
+        label = lambda later: {r["id"]: r.get("sound_only") for r in self.status(later)["sources"]}      # noqa: E731
+        self.assertEqual(label(598)[VID], True)
+        self.assertEqual(label(4)[VID], None)
+        self.assertEqual(self.s.sound_only, {})
+        self.lib.own.put(sound(480))
+        self.assertIs(self.s.handle({"cmd": "open", "id": VID}).get("sound_only"), True)
+        self.lib.raw.remove(VOICE)
+        self.assertNotIn(VID, label(2))
+        self.lib.raw.append(VOICE)
+        self.assertEqual(label(2)[VID], None)                                            # back on the list: not labelled
         # and the label goes the moment the sender does send a picture
         self.lib.frames.put(frame(64, 16))
         self.assertTrue(self.s.handle({"cmd": "open", "id": VID})["ok"])
@@ -2344,21 +2356,43 @@ class ApiSoundFromTest(ServerBase):
         self.assertEqual((released, len([m for m in self.client.sent if m["cmd"] in ("open", "close")])), ([], asked))
         self.assertNotIn(self.service.receiver.state, ndi.ENDED)
         self.assertTrue(self.service.feed.alive())
-        # a sender known to have sound and no picture, which is not the sound source: the same
-        self.assertEqual(self.post({"action": "sound_from", "id": ""})[0], 200)
-        self.service.sound_only.add(VID)
-        self.service._sources_at = None
-        self.lib.frames.put(frame(64, 16))
-        self.assertEqual(self.call("POST", "/api/play", {"ndi": PID}, token=self.full)[0], 200)
-        playing, calls = self.service.receiver, len(self.player.calls)
-        del released[:]
+
+    def test_the_sound_only_label_is_advice_and_never_locks_a_sender_out(self):
+        """The review of #132, H1. A picture sender that was slow once (no picture in time, and sound) was labelled,
+        the panel then refused every press on it before asking the helper, the page had no Play for it, and only a
+        press that reached the helper could have cleared the label: locked out until the helper started again.
+        Through the panel's road, as a person presses: refused in words while it sends no picture, labelled, asked
+        AGAIN at the next press, played when its picture is there, and the label gone."""
+        self.assertEqual(self.post({"action": "sound", "on": True})[0], 200)             # each picture's own sound
+
+        def label():
+            return {r["id"]: r.get("sound_only") for r in self.call("GET", "/api/ndi", token=self.full)[1]["sources"]}
+        opens = lambda: len([m for m in self.client.sent if m["cmd"] == "open"])          # noqa: E731
+        self.lib.own.put(sound(480))
         st, body, _ = self.call("POST", "/api/play", {"ndi": VID}, token=self.full)
-        self.assertEqual((st, body["error"]), (409, "VLC (Audio) sends sound and no picture; to hear it under NDI pictures, choose it under 'Where sound comes from' on the NDI page"))
-        self.assertIs(self.service.receiver, playing)
-        self.assertNotIn(playing.state, ndi.ENDED)
-        self.assertEqual((released, len(self.player.calls)), ([], calls))
-        # with sound off the kept choice refuses nothing (no sound connection is at stake), and a pad's press goes the same road
-        self.assertIn("again is None", inspect.getsource(type(self.api).play_ndi))
+        self.assertEqual((st, body["error"]), (409, "VLC (Audio) sends sound and no picture; to hear it under NDI pictures, choose it under "
+                                                    "'Where sound comes from' on the NDI page"))
+        self.service._sources_at = None
+        self.assertEqual(label(), {PID: None, VID: True})
+        asked = opens()
+        self.lib.own.put(sound(480))
+        st, body, _ = self.call("POST", "/api/play", {"ndi": VID}, token=self.full)      # pressed again: the helper is asked again
+        self.assertEqual((st, opens()), (409, asked + 1))
+        self.assertIn("sends sound and no picture", body["error"])
+        self.lib.frames.put(frame(64, 16))                                               # it was a picture sender, and slow
+        self.lib.own.put(sound(480))
+        st, body, _ = self.call("POST", "/api/play", {"ndi": VID}, token=self.full)
+        self.assertEqual((st, body.get("sound")), (200, True), body)
+        self.service._sources_at = None
+        self.assertEqual(label(), {PID: None, VID: None})                                # the label went with its first picture
+        # a pad that holds a labelled source plays it too
+        self.assertEqual(self.call("POST", "/api/control", {"action": "stop"}, token=self.full)[0], 200)
+        self.assertEqual(self.call("POST", "/api/pads", {"bank": 0, "index": 0, "ndi": VID}, token=self.full)[0], 200)
+        self.service.sound_only[VID] = self.service._clock()
+        self.lib.frames.put(frame(64, 16))
+        st, body, _ = self.call("POST", "/api/play", {"pad": [0, 0]}, token=self.full)
+        self.assertEqual(st, 200, body)
+        self.assertNotIn(VID, self.service.sound_only)
 
     def test_the_delay_goes_to_the_player_with_the_stream_with_sound_and_never_with_bare_frames(self):
         self.assertEqual(self.post({"action": "sound_from", "id": VID})[0], 200)

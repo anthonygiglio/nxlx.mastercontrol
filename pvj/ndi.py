@@ -115,6 +115,7 @@ SOUND_DELAY_MS = (-250, 500)              # ndi.sound_delay_ms: how far the pane
 SOUND_STATES = ("playing", "ready", "away", "twins")      # the one sound source, as the helper says it (Service._sound_source)
 FEED_IDLE_SECONDS = 30.0                  # a sound connection that no picture has used for this long is given back
 FEED_RETRY_SECONDS = 2.0                  # between looks for a sound source that was not on the network
+SOUND_ONLY_SECONDS = 600.0                # how long a sender stays labelled "sound only" after a press that got sound and no picture
 OPEN_TRIES = 3                            # a source that changes size while it is being opened is opened again: this many tries in all
 OPEN_AGAIN_SECONDS = 4.0                  # and no new try later than this after the time a first picture may take (the panel waits 8 more)
 CONTAINERS = ("raw", "matroska")          # what the pipe carries: bare frames (no sound), or frames and sound with times
@@ -1801,10 +1802,12 @@ class Service:
         # Receiver's, so it stays while a picture is closed and opened again. Set and closed under self.lock.
         self.sound_from, self.sound_delay_ms = "", 0       # the delay is the panel's (the player's audio-delay): kept and said back, used by nothing here
         self.feed, self._feed_at = None, 0.0
-        # Ids of sources that were asked for a picture, sent none in time and had sound: the page labels them
-        # "sound only" and offers them as the sound source instead of Play. Kept while this helper runs, and
-        # dropped the moment such a source does send a picture.
-        self.sound_only = set()
+        # Sources that were asked for a picture, sent none in time and had sound: {id: the clock then}. The page
+        # labels them "sound only" and offers them as the sound source. The label is ADVICE, never a lock (the
+        # review of #132, H1): nothing refuses a press for it, since a picture sender that was only slow once
+        # (starting up, a weak link, a sleeping display) looks the same. It goes when the source sends a picture,
+        # when the sender leaves the list, and by itself after SOUND_ONLY_SECONDS.
+        self.sound_only = {}
         self._finder, self._sources, self._sources_at, self._cut = None, [], None, False
         self.receiver = None
 
@@ -1897,6 +1900,15 @@ class Service:
             if self.feed is not None and not (on and sound and self.feed.source["id"] == sound_from):
                 self._close_feed()                 # no longer the sound that is wanted
         return self.status()
+
+    def _sound_only_now(self, sources):
+        """The ids that are labelled "sound only" now: the label of a sender that left the list, and one older than
+        SOUND_ONLY_SECONDS, is dropped here."""
+        now, here = self._clock(), set(s["id"] for s in sources)
+        with self._find_lock:
+            for sid in [k for k, since in self.sound_only.items() if k not in here or now - since > SOUND_ONLY_SECONDS]:
+                del self.sound_only[sid]
+            return set(self.sound_only)
 
     def _outside(self, sid):
         """Whether the picture `sid` is to be played with another sender's sound: sound is on, one sound source is
@@ -2049,12 +2061,13 @@ class Service:
                     r.use_feed(feed)
             finally:
                 self.lock.release()
+        labelled = self._sound_only_now(sources)
         return {"ok": True, "configured": self.configured, "on": self.on, "addresses": list(self.addresses), "sound": self.sound,
                 "sound_from": self.sound_from, "sound_delay_ms": self.sound_delay_ms, "sound_source": self._sound_source(sources, r),
                 "groups": list(self.groups), "discovery": list(self.discovery or []), "allowed": list(self.allowed),
                 "runtime": self.runtime(),
                 "sources": [dict({"id": s["id"], "name": s["name"], "from": s["from"]}, **dict({"twins": True} if s.get("twins") else {},
-                                                                                              **({"sound_only": True} if s["id"] in self.sound_only else {})))
+                                                                                              **({"sound_only": True} if s["id"] in labelled else {})))
                             for s in sources], "cut": self._cut,
                 "playing": r.status() if r is not None else None}
 
@@ -2142,8 +2155,9 @@ class Service:
             only = not r.format and st["state"] not in ENDED and r.heard()
             self._close_receiver()
             if only:
-                if len(self.sound_only) < MAX_SOURCES * 4:
-                    self.sound_only.add(sid)
+                with self._find_lock:
+                    if len(self.sound_only) < MAX_SOURCES:
+                        self.sound_only[sid] = self._clock()
                 return {"ok": False, "sound_only": True, "error": "%s sends sound and no picture; to hear it under NDI pictures, choose it under 'Where sound comes from' on the NDI page" % row["name"]}
             # Neither a picture nor sound in time. Said so that a sound sender that is quiet does not look
             # broken: such a sender sends nothing at all while nothing plays into it (seen on the owner's).
@@ -2151,7 +2165,8 @@ class Service:
                 return {"ok": False, "error": st["message"], "again": True}
             return {"ok": False, "error": st["message"] or ("%s sent no picture in %d seconds, and no sound either (a sender of sound alone sends nothing while nothing plays into it)"
                                                             % (row["name"], self._first_frame))}
-        self.sound_only.discard(sid)           # it has a picture after all
+        with self._find_lock:
+            self.sound_only.pop(sid, None)         # it has a picture after all
         self.log("pvj-ndi: %s is %d x %d at %s" % ((row["name"],) + r.format))
         try:
             clear = self._clear_pipe(r)
