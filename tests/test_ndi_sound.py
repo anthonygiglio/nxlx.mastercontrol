@@ -1898,11 +1898,21 @@ class SoundFeedTest(FeedBase):
         t = self.now[0]
         self.lib.sounds.put(other())                                                     # it changes again: the pause is twice as long
         self.assertTrue(wait(lambda: feed.status()["restless"]))
-        self.assertAlmostEqual(feed._quiet_until - t, 6.0, places=3)
+        self.assertAlmostEqual(feed.pace.quiet_until - t, 6.0, places=3)
         self.now[0] += 5.0
+        self.lib.sounds.put(sound(480))
+        self.lib.sounds.put(other())                                                     # and again while it is held: never handed
+        self.assertTrue(wait(lambda: not self.lib.sounds.qsize()))
+        time.sleep(0.2)
+        self.assertEqual(r.state, "playing")
+        self.now[0] += 1.5                                                               # the pause is over: one ending, and the next pause is 12 s
         self.lib.sounds.put(other())
-        self.lib.sounds.put(sound(480))                                                  # and again while it is held: longer still, never handed
-        self.assertTrue(wait(lambda: feed._quiet_until - self.now[0] > 11.9))
+        self.assertTrue(wait(lambda: r.state == "changed"))
+        r = self.again(feed, other())
+        t = self.now[0]
+        self.lib.sounds.put(sound(480))
+        self.assertTrue(wait(lambda: feed.status()["restless"]))
+        self.assertAlmostEqual(feed.pace.quiet_until - t, 12.0, places=3)
         self.assertEqual(r.state, "playing")
         waits, w = [], ndi.FEED_QUIET_SECONDS
         while w < ndi.FEED_QUIET_MAX:
@@ -1912,14 +1922,13 @@ class SoundFeedTest(FeedBase):
         self.assertEqual((ndi.Input.RETRY_SECONDS, ndi.Input.RETRY_MAX), (ndi.FEED_QUIET_SECONDS, ndi.FEED_QUIET_MAX))
         # calm for long enough, a change is a first one again
         self.now[0] += 300
-        written = r.status()["audio"]["counts"]["written"]
-        self.lib.sounds.put(sound(480))                                                  # what it sends now is what the stream has: played, nothing ends
+        self.lib.sounds.put(other())                                                     # (what the pause still owed: the stream has 44100 already, nothing ends)
         self.lib.frames.put(frame(64, 16, fill=9))
-        self.assertTrue(wait(lambda: r.status()["audio"]["counts"]["written"] > written))
+        self.assertTrue(wait(lambda: r.status()["audio"]["counts"]["written"] >= 1))
         self.assertEqual(r.state, "playing")
-        self.lib.sounds.put(other())
+        self.lib.sounds.put(sound(480))
         self.assertTrue(wait(lambda: r.state == "changed"))
-        self.assertEqual((feed.status()["restless"], feed._wait), (False, ndi.FEED_QUIET_SECONDS))
+        self.assertEqual((feed.status()["restless"], feed.pace.wait), (False, ndi.FEED_QUIET_SECONDS))
         self.assertEqual(len(self.lib.sound_opens()), 1)
 
     def test_a_feed_whose_thread_cannot_be_started_gives_its_connection_back_and_close_waits_for_nobody(self):
@@ -2039,7 +2048,7 @@ class SoundFromServiceTest(unittest.TestCase):
         self.pump()
         self.lib.frames.put(frame(64, 16))
         self.assertTrue(self.s.handle({"cmd": "open", "id": PID})["ok"])
-        self.s.feed._quiet_until = self.now[0] + 10
+        self.s.feed.pace.quiet_until = self.now[0] + 10
         self.assertEqual(self.status()["sound_source"]["state"], "restless")
         self.assertIn("restless", ndi.SOUND_STATES)
         self.assertEqual(self.status(11)["sound_source"]["state"], "playing")
@@ -2166,6 +2175,54 @@ class SoundFromServiceTest(unittest.TestCase):
         i.sync()
         told = [m for m in client.sent if m["cmd"] == "configure"][-1]
         self.assertEqual((told["sound_from"], told["sound_row"]), (VID, VOICE_ROW))       # the helper is told the row the owner allowed
+
+    def test_closing_and_opening_the_sounds_connection_does_not_wipe_the_pace_a_twin_cannot_be_used_to_blink_the_picture(self):
+        """The re-check of #132: the back-off lived on the connection. A hostile sound sender announced a second
+        sender of its name (the connection is closed: "plays neither"), withdrew it (a fresh connection, its count
+        at nothing), then changed rate: six re-opens of the picture in 19 seconds, never "restless". The pace is
+        the SOURCE's now, kept by the Service; and what is counted is every ending of a picture's stream by that
+        source's sound, also sound that "starts" under a picture which was opened while the twin was there."""
+        twin = (VOICE[0], b"192.168.0.20:5999")
+        form = [sound]
+        self.conf()
+        self.pump(lambda: form[0](480) if form[0] is sound else sound(441, rate=44100))
+        self.lib.frames.put(frame(64, 16))
+        self.assertTrue(self.s.handle({"cmd": "open", "id": PID})["ok"])
+        ended, began = [], self.now[0]
+
+        def reopen():
+            """What the panel does when the helper says "changed": the picture is opened again."""
+            r = self.s.receiver
+            if r is not None and r.state == "changed":
+                ended.append((round(self.now[0] - began, 1), r.message))
+                self.status()
+                self.lib.frames.put(frame(64, 16))
+                self.assertTrue(self.s.handle({"cmd": "open", "id": PID})["ok"])
+
+        def step(seconds=0.5):
+            self.now[0] += seconds
+            self.status()
+            time.sleep(0.12)
+            reopen()
+        states = set()
+        for cycle in range(12):                                                          # 12 cycles of the attack, 5 s each: a minute
+            self.lib.raw.append(twin)                                                    # a second sender of its name: the connection is closed
+            for _ in range(3):
+                step()
+            self.lib.raw.remove(twin)                                                    # withdrawn: a fresh connection
+            form[0] = None if form[0] is sound else sound                                # and another rate
+            for _ in range(7):
+                step()
+                states.add((self.s.handle({"cmd": "status"})["sound_source"] or {}).get("state"))
+        self.assertIsNotNone(self.s._pace[1])
+        self.assertGreaterEqual(len(self.lib.sound_opens()), 8)                          # the connection really was opened again and again
+        self.assertIn("restless", states)                                                # and the page was told why there is no sound
+        # at the pace of the back-off: one ending that is free, then one after each pause of 3, 6, 12, 24 ... seconds
+        self.assertLessEqual(len(ended), 5, ended)
+        gaps = [b[0] - a[0] for a, b in zip(ended, ended[1:])]
+        for n, gap in enumerate(gaps):
+            self.assertGreaterEqual(gap, min(ndi.FEED_QUIET_SECONDS * 2 ** n, ndi.FEED_QUIET_MAX) - 0.01, (n, ended))
+        self.assertNotIn(self.s.receiver.state, ("refused", "stopped"))                  # and the picture is there throughout
 
     def test_with_sound_off_no_sound_source_is_connected_to_and_the_pipe_carries_bare_frames(self):
         self.assertIsNone(self.conf(sound=False)["sound_source"])

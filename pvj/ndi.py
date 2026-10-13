@@ -113,10 +113,13 @@ MIN_TURN = 0.1                            # a call into the library that came ba
 AUDIO_SILENT_DB = -70.0                   # a second whose loudest sample is under this is "silent" on the page
 SOUND_DELAY_MS = (-250, 500)              # ndi.sound_delay_ms: how far the panel may move the sound against the picture (the player's audio-delay)
 SOUND_STATES = ("playing", "ready", "away", "twins", "restless")      # the one sound source, as the helper says it (Service._sound_source)
-# A sound source whose sound changes form (rate, channels) ends the picture's stream as "changed": the new track needs
-# a new stream. Once. If it changes again before it has been calm for a while, its sound is not handed to any picture
-# for a pause that doubles each time, 3 s, 6, 12 ... to a minute (the pauses of Input.tick), and the picture plays on
-# WITHOUT it meanwhile: another sender must never be able to take the picture off the screen in a loop (#132, M4).
+# The sound source's sound can END a picture's stream as "changed": when it changes form (rate, channels: the new
+# track needs a new stream), and when it starts under a picture that was opened without it. Once. If it would end a
+# stream again before it has been calm for a while, its sound is not handed to any picture for a pause that doubles
+# each time, 3 s, 6, 12 ... to a minute (the pauses of Input.tick); the picture plays on WITHOUT it meanwhile, and
+# when the pause is over it may end a stream once more. Another sender must never be able to take the picture off
+# the screen in a loop (#132, M4). The count is kept by the Service for the source (SoundPace), not by a connection:
+# it outlives every close and re-open of the sound's connection (twins that come and go, an idle close, a fault).
 FEED_QUIET_SECONDS, FEED_QUIET_MAX = 3.0, 60.0
 FEED_CALM_SECONDS = 30.0                  # no change for this long (and twice the last pause): the next change is a first one again
 FEED_IDLE_SECONDS = 30.0                  # a sound connection that no picture has used for this long is given back
@@ -1230,6 +1233,15 @@ class Receiver:
         finally:
             self._leave()
 
+    def would_end(self, form):
+        """Whether a block of sound in this form would end this receiver's stream as "changed": the pipe's form is
+        fixed, and it carries no sound or sound in another form. Asked by the box's sound source before it hands
+        the block over (SoundPace), with nothing of the block read."""
+        with self._cond:
+            if self._stop.is_set() or self.container is None:
+                return False
+            return self.audio is None or (form["rate"], form["channels"]) != (self.audio["rate"], self.audio["channels"])
+
     def take_audio(self, a):
         """One block of sound as the library handed it up, from this receiver's own connection or from the box's
         sound source (SoundFeed, on its thread). The caller gives the block back to the library afterwards, never
@@ -1653,6 +1665,40 @@ class Receiver:
 
 
 # ---- the box's one sound source ----------------------------------------------------------------------------------
+class SoundPace:
+    """How often the box's sound source may end a picture's stream (see FEED_QUIET_SECONDS). One for a source, kept
+    by the Service across every connection to it. Asked by the feed's thread before it hands a block that would
+    end the stream of the picture on the screen; `clock` values are the feed's."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.quiet_until, self.calm_until, self.wait, self.owed = 0.0, 0.0, FEED_QUIET_SECONDS, False
+
+    def quiet(self, now):
+        with self.lock:
+            return now < self.quiet_until
+
+    def may_end(self, now):
+        """This block would end the picture's stream: may it? (True, 0): yes, and it is counted. (False, seconds):
+        no, the source's sound is held back from now for that long (a pause that has just begun). (False, 0): no,
+        a pause is running."""
+        with self.lock:
+            if now < self.quiet_until:
+                return False, 0
+            if self.owed or now >= self.calm_until:
+                # the first after a calm stretch, or the one ending that a pause is followed by
+                if now >= self.calm_until:
+                    self.wait = FEED_QUIET_SECONDS         # calm for long enough: the pauses begin at the shortest again
+                self.owed = False
+                self.calm_until = now + max(FEED_CALM_SECONDS, 2 * self.wait)
+                return True, 0
+            began = self.wait
+            self.quiet_until, self.owed = now + began, True
+            self.wait = min(began * 2, FEED_QUIET_MAX)
+            self.calm_until = self.quiet_until + max(FEED_CALM_SECONDS, 2 * self.wait)
+            return False, began
+
+
 class SoundFeed:
     """One connection to one sender, asked for its sound alone, and one thread that takes that sound from the
     library and hands each block to whichever Receiver is attached now (Receiver.take_audio). It belongs to the
@@ -1666,8 +1712,9 @@ class SoundFeed:
     A feed that no picture has used for FEED_IDLE_SECONDS ends by itself and gives its connection back: nothing
     stays connected to the network under a screen that shows no NDI picture."""
 
-    def __init__(self, lib, source, log=print, clock=time.monotonic, join_wait=3.0, idle=FEED_IDLE_SECONDS):
+    def __init__(self, lib, source, log=print, clock=time.monotonic, join_wait=3.0, idle=FEED_IDLE_SECONDS, pace=None):
         self.lib, self.source, self.log, self._clock, self._join_wait, self._idle = lib, source, log, clock, join_wait, idle
+        self.pace = pace if pace is not None else SoundPace()      # the Service's, for this source; one of its own without
         self._lock = threading.Lock()              # who is attached, and the connection's handle
         self._receiver = None
         self._handle, self._thread = None, None
@@ -1675,8 +1722,6 @@ class SoundFeed:
         self.lost = False                          # the library says the connection is down
         self._last = None                          # the clock at the last block of sound
         self.format = None                         # {"rate", "channels", "played"} of the last block that passed check_audio
-        # M4: the pause after a repeated change of the sound's form (see FEED_QUIET_SECONDS)
-        self._quiet_until, self._calm_until, self._wait = 0.0, 0.0, FEED_QUIET_SECONDS
         self._said_stuck = False
 
     def start(self):
@@ -1695,19 +1740,7 @@ class SoundFeed:
     def known(self):
         """The form of this source's sound as a new picture may take it on trust, or None: not while its sound is
         held back for changing form again and again (what it is then is not known)."""
-        return None if self._clock() < self._quiet_until else self.format
-
-    def _form_changed(self, now):
-        """The sound's form is another than the block before had. A first change is handed on (it ends the picture's
-        stream once, for the new track). One that comes before the source has been calm starts a pause, twice as
-        long each time, in which no picture is handed its sound."""
-        if now < self._calm_until:
-            self._quiet_until = now + self._wait
-            self.log("pvj-ndi: the sound source %s keeps changing its sound; pictures play without it for %d seconds" % (self.source["name"], self._wait))
-            self._wait = min(self._wait * 2, FEED_QUIET_MAX)
-        else:
-            self._wait = FEED_QUIET_SECONDS
-        self._calm_until = now + max(FEED_CALM_SECONDS, 2 * self._wait)
+        return None if self.pace.quiet(self._clock()) else self.format
 
     def attach(self, receiver):
         with self._lock:
@@ -1726,7 +1759,7 @@ class SoundFeed:
         with self._lock:
             last = self._last
         now = self._clock()
-        return {"id": self.source["id"], "lost": self.lost, "arriving": last is not None and now - last <= 1.0, "restless": now < self._quiet_until}
+        return {"id": self.source["id"], "lost": self.lost, "arriving": last is not None and now - last <= 1.0, "restless": self.pace.quiet(now)}
 
     def _release(self):
         with self._lock:
@@ -1777,12 +1810,18 @@ class SoundFeed:
                     try:                           # numbers only; nothing of the block is read for it
                         said = check_audio(a)
                         form = {"rate": said[0], "channels": said[1], "played": said[2]}
-                        if self.format is not None and form != self.format:
-                            self._form_changed(now)
                         self.format = form
+                        # Would this block END the stream of the picture on the screen (another form than the stream
+                        # has, or sound under a picture opened without it)? Then the source's pace is asked first.
+                        if r is not None and r.would_end(form):
+                            go, began = self.pace.may_end(now)
+                            if not go:
+                                r = None
+                                if began:
+                                    self.log("pvj-ndi: the sound source %s keeps changing its sound; pictures play without it for %d seconds" % (self.source["name"], began))
                     except NdiError:
                         pass
-                    if now < self._quiet_until:
+                    if self.pace.quiet(now):
                         r = None                   # held back: the block is given back unread, and the picture plays on without it
                     if r is not None:
                         try:
@@ -1850,6 +1889,7 @@ class Service:
         self.sound_from, self.sound_delay_ms = "", 0       # the delay is the panel's (the player's audio-delay): kept and said back, used by nothing here
         self.feed, self._feed_at = None, 0.0
         self.sound_row = None                      # {"id", "name", "from"} of the sound source as the owner allowed it (M1)
+        self._pace = ("", None)                    # (the sound source's id, its SoundPace): kept across connections to it
         # Sources that were asked for a picture, sent none in time and had sound: {id: the clock then}. The page
         # labels them "sound only" and offers them as the sound source. The label is ADVICE, never a lock (the
         # review of #132, H1): nothing refuses a press for it, since a picture sender that was only slow once
@@ -1992,7 +2032,9 @@ class Service:
             return feed
         if row is None:
             return None
-        feed = self._feed_class(self.lib, row, log=self.log, clock=self._clock)
+        if self._pace[0] != self.sound_from:       # the pace is the SOURCE's: it outlives every connection to it
+            self._pace = (self.sound_from, SoundPace())
+        feed = self._feed_class(self.lib, row, log=self.log, clock=self._clock, pace=self._pace[1])
         try:
             feed.start()
         except Exception as e:
