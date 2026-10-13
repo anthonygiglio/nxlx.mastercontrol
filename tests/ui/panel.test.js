@@ -1074,7 +1074,10 @@ function startServer(env) {          // env: more for the harness's environment 
     assert.strictEqual(await page.getAttribute('#ndisoundone', 'aria-checked'), 'true');
     assert.strictEqual((await get('/api/ndi')).sound_from, '', 'opening the picker saves nothing');
     assert.strictEqual(await post('/api/ndi', { action: 'sound_from', id: 'VLC (NDI Audio)' }), 400, 'a name is never a sound source, only an id');
-    assert.strictEqual(await post('/api/ndi', { action: 'sound_from', id: '0123456789ab' }), 404, 'and only an id that is on the network now');
+    // (asked beside the page, not from it: a 404 answered to the page's own fetch is a console error, and the page
+    // itself must never ask for what is not there; the check at the end holds it to that)
+    assert.strictEqual((await page.request.post(base + '/api/ndi', { data: { action: 'sound_from', id: '0123456789ab' }, headers: { 'X-PVJ-Request': '1' } })).status(), 404,
+      'and only an id that is on the network now');
     await page.click('#ndisoundnone');
     await page.waitForFunction(() => /No sound: NDI pictures are shown without sound/.test(document.getElementById('ndisoundline').textContent));
     assert.strictEqual((await get('/api/ndi')).sound, false, 'and off again, as it is on a new box');
