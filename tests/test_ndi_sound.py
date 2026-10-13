@@ -1812,6 +1812,96 @@ class SoundFeedTest(FeedBase):
         self.assertTrue(wait(lambda: r.status()["state"] == "playing"))
         self.assertIn(struct.pack(">d", 48000.0), bytes(self.got[:400]))
 
+    def again(self, feed, block):
+        """The picture is opened again on the same sound connection (as the panel does after "changed")."""
+        self.r.close()
+        self.stall.clear()
+        self.reader.join(3)
+        del self.got[:]
+        return self.play_with(feed, block=block)
+
+    def test_a_sound_source_that_keeps_changing_its_sound_cannot_take_the_picture_off_the_screen_in_a_loop(self):
+        """The review of #132, M4. Every change of rate or channels in the SOUND source ended the picture as
+        "changed", and the panel opened it again each time: a second sender could blink the picture at will. A
+        first change still ends the stream once (the new track needs it). Changes that come before the source has
+        been calm are answered by holding its sound back, 3 s, then 6, 12 ... 60, and the picture plays on."""
+        other = lambda: sound(441, rate=44100)                                           # noqa: E731
+        feed = self.feed()
+        r = self.play_with(feed)
+        self.lib.sounds.put(other())                                                     # the first change: handed on
+        self.assertTrue(wait(lambda: r.state == "changed"))
+        self.assertFalse(feed.status()["restless"])
+        r = self.again(feed, other())
+        self.assertEqual(r.audio["rate"], 44100)
+        self.now[0] += 1.0
+        back = sound(480)
+        self.lib.sounds.put(back)                                                        # and back again a second later: held
+        self.assertTrue(wait(lambda: feed.status()["restless"]))
+        self.assertEqual(back.token, [])                                                 # given back unread
+        self.assertIsNone(feed.known())
+        self.assertIn("keeps changing its sound; pictures play without it for 3 seconds", " ".join(self.logged))
+        for k in range(4):                                                               # 2.8 seconds of it: the picture plays on, silence is written
+            self.now[0] += 0.7
+            self.lib.sounds.put(sound(480))
+            self.lib.frames.put(frame(64, 16, fill=2 + k))
+            self.assertTrue(wait(lambda: len([b for b in self.stream() if b[0] == 1]) == 2 + k))
+        self.assertEqual(r.state, "playing")
+        self.assertGreaterEqual(r.status()["audio"]["counts"]["filled"], 1)
+        self.assertTrue(feed.status()["restless"])
+        self.now[0] += 0.5                                                               # the pause is over: its sound, as it is now, ends the stream ONCE
+        self.lib.sounds.put(sound(480))
+        self.assertTrue(wait(lambda: r.state == "changed"))
+        self.assertFalse(feed.status()["restless"])
+        r = self.again(feed, sound(480))
+        t = self.now[0]
+        self.lib.sounds.put(other())                                                     # it changes again: the pause is twice as long
+        self.assertTrue(wait(lambda: feed.status()["restless"]))
+        self.assertAlmostEqual(feed._quiet_until - t, 6.0, places=3)
+        self.now[0] += 5.0
+        self.lib.sounds.put(other())
+        self.lib.sounds.put(sound(480))                                                  # and again while it is held: longer still, never handed
+        self.assertTrue(wait(lambda: feed._quiet_until - self.now[0] > 11.9))
+        self.assertEqual(r.state, "playing")
+        waits, w = [], ndi.FEED_QUIET_SECONDS
+        while w < ndi.FEED_QUIET_MAX:
+            waits.append(w)
+            w *= 2
+        self.assertEqual(waits + [ndi.FEED_QUIET_MAX], [3.0, 6.0, 12.0, 24.0, 48.0, 60.0])   # the pauses of Input.tick
+        self.assertEqual((ndi.Input.RETRY_SECONDS, ndi.Input.RETRY_MAX), (ndi.FEED_QUIET_SECONDS, ndi.FEED_QUIET_MAX))
+        # calm for long enough, a change is a first one again
+        self.now[0] += 300
+        written = r.status()["audio"]["counts"]["written"]
+        self.lib.sounds.put(sound(480))                                                  # what it sends now is what the stream has: played, nothing ends
+        self.lib.frames.put(frame(64, 16, fill=9))
+        self.assertTrue(wait(lambda: r.status()["audio"]["counts"]["written"] > written))
+        self.assertEqual(r.state, "playing")
+        self.lib.sounds.put(other())
+        self.assertTrue(wait(lambda: r.state == "changed"))
+        self.assertEqual((feed.status()["restless"], feed._wait), (False, ndi.FEED_QUIET_SECONDS))
+        self.assertEqual(len(self.lib.sound_opens()), 1)
+
+    def test_a_feed_whose_thread_cannot_be_started_gives_its_connection_back_and_close_waits_for_nobody(self):
+        """A Low of the review: under the unit's bound on tasks a thread may not start. close() then joined a thread
+        that never started (RuntimeError) and the connection was never given back."""
+        f = ndi.SoundFeed(self.lib, self.voice, log=self.logged.append, clock=lambda: self.now[0])
+        real = threading.Thread.start
+
+        def no_thread(thread):
+            if thread.name == "ndi-sound-feed":
+                raise RuntimeError("can't start new thread")
+            return real(thread)
+        threading.Thread.start = no_thread
+        try:
+            with self.assertRaises(ndi.NdiError):
+                f.start()
+        finally:
+            threading.Thread.start = real
+        self.assertEqual(self.lib.closed_handles, [("recv", 1)])
+        self.assertFalse(f.alive())
+        f.close()                                                                        # and no error, twice
+        f.close()
+        self.assertEqual(self.lib.closed_handles, [("recv", 1)])
+
     def test_close_leaves_the_connection_open_under_a_thread_that_will_not_come_out(self):
         self.lib.hold = threading.Event()
         feed = self.feed(join_wait=0.3)
@@ -1901,6 +1991,16 @@ class SoundFromServiceTest(unittest.TestCase):
         self.assertTrue(self.s.handle({"cmd": "close"})["ok"])                           # nothing of NDI on the screen: both are given back
         self.assertEqual(sorted(self.lib.closed_handles), [("recv", 1), ("recv", 2), ("recv", 3)])
         self.assertEqual(self.status()["sound_source"]["state"], "ready")
+
+    def test_the_page_is_told_when_the_sound_is_held_back_for_changing_again_and_again(self):
+        self.conf()
+        self.pump()
+        self.lib.frames.put(frame(64, 16))
+        self.assertTrue(self.s.handle({"cmd": "open", "id": PID})["ok"])
+        self.s.feed._quiet_until = self.now[0] + 10
+        self.assertEqual(self.status()["sound_source"]["state"], "restless")
+        self.assertIn("restless", ndi.SOUND_STATES)
+        self.assertEqual(self.status(11)["sound_source"]["state"], "playing")
 
     def test_a_sound_source_that_is_away_gives_bare_frames_and_its_first_sound_ends_the_picture_as_changed(self):
         self.lib.raw.remove(VOICE)

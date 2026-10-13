@@ -112,7 +112,13 @@ AUDIO_LOST = "lost"                       # what recv_audio answers while the co
 MIN_TURN = 0.1                            # a call into the library that came back with nothing sooner than this is waited out
 AUDIO_SILENT_DB = -70.0                   # a second whose loudest sample is under this is "silent" on the page
 SOUND_DELAY_MS = (-250, 500)              # ndi.sound_delay_ms: how far the panel may move the sound against the picture (the player's audio-delay)
-SOUND_STATES = ("playing", "ready", "away", "twins")      # the one sound source, as the helper says it (Service._sound_source)
+SOUND_STATES = ("playing", "ready", "away", "twins", "restless")      # the one sound source, as the helper says it (Service._sound_source)
+# A sound source whose sound changes form (rate, channels) ends the picture's stream as "changed": the new track needs
+# a new stream. Once. If it changes again before it has been calm for a while, its sound is not handed to any picture
+# for a pause that doubles each time, 3 s, 6, 12 ... to a minute (the pauses of Input.tick), and the picture plays on
+# WITHOUT it meanwhile: another sender must never be able to take the picture off the screen in a loop (#132, M4).
+FEED_QUIET_SECONDS, FEED_QUIET_MAX = 3.0, 60.0
+FEED_CALM_SECONDS = 30.0                  # no change for this long (and twice the last pause): the next change is a first one again
 FEED_IDLE_SECONDS = 30.0                  # a sound connection that no picture has used for this long is given back
 FEED_RETRY_SECONDS = 2.0                  # between looks for a sound source that was not on the network
 SOUND_ONLY_SECONDS = 600.0                # how long a sender stays labelled "sound only" after a press that got sound and no picture
@@ -1069,7 +1075,7 @@ class Receiver:
         when the sound came. If the sound then comes in another form, it is "changed", as ever."""
         if self.sound and self.outside:
             self.feed = feed
-            known = feed.format
+            known = feed.known()
             with self._cond:
                 if known and self.audio is None and self.container is None:
                     self.audio, self._taken_on_trust = dict(known), True
@@ -1117,7 +1123,8 @@ class Receiver:
 
     def decide(self):
         """Called once after the first picture: wait a moment for sound, then fix what the pipe carries. Returns it."""
-        if self.sound and self.format is not None and not self._stop.is_set() and not (self.outside and self.feed is None):
+        if (self.sound and self.format is not None and not self._stop.is_set()
+                and not (self.outside and (self.feed is None or self.feed.status()["restless"]))):
             self._audio_seen.wait(self._audio_wait)
         with self._cond:
             if self.container is None:
@@ -1662,12 +1669,39 @@ class SoundFeed:
         self.lost = False                          # the library says the connection is down
         self._last = None                          # the clock at the last block of sound
         self.format = None                         # {"rate", "channels", "played"} of the last block that passed check_audio
+        # M4: the pause after a repeated change of the sound's form (see FEED_QUIET_SECONDS)
+        self._quiet_until, self._calm_until, self._wait = 0.0, 0.0, FEED_QUIET_SECONDS
         self._said_stuck = False
 
     def start(self):
         self._handle = self.lib.recv_open(self.source["raw"], audio_only=True)
-        self._thread = threading.Thread(target=self._run, name="ndi-sound-feed", daemon=True)
-        self._thread.start()
+        thread = threading.Thread(target=self._run, name="ndi-sound-feed", daemon=True)
+        try:
+            thread.start()
+        except RuntimeError as e:
+            # The system gave no thread (the unit's bound on tasks): nothing is inside the library with the
+            # connection, so it is given back here, and close() has no thread to wait for.
+            self._stop.set()
+            self._release()
+            raise NdiError("the sound source's thread could not be started (%s)" % str(e)[-120:])
+        self._thread = thread
+
+    def known(self):
+        """The form of this source's sound as a new picture may take it on trust, or None: not while its sound is
+        held back for changing form again and again (what it is then is not known)."""
+        return None if self._clock() < self._quiet_until else self.format
+
+    def _form_changed(self, now):
+        """The sound's form is another than the block before had. A first change is handed on (it ends the picture's
+        stream once, for the new track). One that comes before the source has been calm starts a pause, twice as
+        long each time, in which no picture is handed its sound."""
+        if now < self._calm_until:
+            self._quiet_until = now + self._wait
+            self.log("pvj-ndi: the sound source %s keeps changing its sound; pictures play without it for %d seconds" % (self.source["name"], self._wait))
+            self._wait = min(self._wait * 2, FEED_QUIET_MAX)
+        else:
+            self._wait = FEED_QUIET_SECONDS
+        self._calm_until = now + max(FEED_CALM_SECONDS, 2 * self._wait)
 
     def attach(self, receiver):
         with self._lock:
@@ -1685,7 +1719,8 @@ class SoundFeed:
     def status(self):
         with self._lock:
             last = self._last
-        return {"id": self.source["id"], "lost": self.lost, "arriving": last is not None and self._clock() - last <= 1.0}
+        now = self._clock()
+        return {"id": self.source["id"], "lost": self.lost, "arriving": last is not None and now - last <= 1.0, "restless": now < self._quiet_until}
 
     def _release(self):
         with self._lock:
@@ -1730,13 +1765,19 @@ class SoundFeed:
                     # The receiver is taken under the lock and called without it: a picture that is being closed
                     # never waits for a block of sound, and a block handed to a receiver that has just ended is
                     # left out by the receiver itself.
+                    now = self._clock()
                     with self._lock:
-                        r, self._last = self._receiver, self._clock()
+                        r, self._last = self._receiver, now
                     try:                           # numbers only; nothing of the block is read for it
                         said = check_audio(a)
-                        self.format = {"rate": said[0], "channels": said[1], "played": said[2]}
+                        form = {"rate": said[0], "channels": said[1], "played": said[2]}
+                        if self.format is not None and form != self.format:
+                            self._form_changed(now)
+                        self.format = form
                     except NdiError:
                         pass
+                    if now < self._quiet_until:
+                        r = None                   # held back: the block is given back unread, and the picture plays on without it
                     if r is not None:
                         try:
                             on = r.take_audio(a)
@@ -1985,7 +2026,7 @@ class Service:
             pass                                   # another sender answers to the id: as good as away, and never played
         elif feed is not None and feed.alive() and feed.source["id"] == self.sound_from:
             said = feed.status()
-            out.update(state="away" if said["lost"] else "playing", arriving=said["arriving"])
+            out.update(state="away" if said["lost"] else "restless" if said.get("restless") else "playing", arriving=said["arriving"])
         elif r is not None and r.state not in ENDED and r.source["id"] == self.sound_from:
             out["state"] = "playing"
         elif row:
@@ -2660,7 +2701,7 @@ class Input:
         # machine before anything is said to play (the review of #132, M1; as a pad's source is compared). Another
         # sender behind the id is "not on the network now", whatever the helper says of it.
         live = [r for r in self._rows(st) if r["id"] == sid]
-        if mine and said["state"] in ("playing", "ready") and not (
+        if mine and said["state"] in ("playing", "ready", "restless") and not (
                 len(live) == 1 and not live[0].get("twins") and live[0]["name"] == row[0]["name"] and host_of(live[0]["from"]) == host_of(row[0]["from"])):
             mine, said = True, {"state": "twins" if live and (len(live) > 1 or live[0].get("twins")) else "away"}
         return {"id": sid, "name": row[0]["name"], "from": row[0]["from"], "state": said["state"] if mine else ("away" if sound else "off"),

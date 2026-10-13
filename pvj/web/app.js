@@ -3252,6 +3252,7 @@
         // one sound source for every picture, and it is not the picture on the screen itself
         var who = ss.name + ' at ' + ss.from;
         if (ss.state === 'away') return ss.name + ' is not on the network now; pictures play without sound.';
+        if (ss.state === 'restless') return ss.name + ' keeps changing its sound; pictures play without it for now. The box takes its sound again by itself once it has stopped changing.';
         if (ss.state === 'twins') return 'Two senders announce ' + ss.name + ' from one address. The box cannot tell them apart, so it plays neither; pictures play without sound.';
         if (!p) return 'Sound comes from ' + who + '. It is on the network; the box connects to it when an NDI picture plays.';
         if (ss.state !== 'playing') return 'Sound comes from ' + who + '. The box is connecting to it.';
