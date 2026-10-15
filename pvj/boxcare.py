@@ -929,17 +929,9 @@ class BoxCare:
             # networks now (the tunnel never counts), unless the box has it already; and the switch that points the
             # input at this box's own discovery server, whose routes no session may use, is not set by a file.
             mine = current.get("ndi") or {}
-            own = [i.network for i in api.osc.local_nets()] if getattr(api, "osc", None) is not None else []
-
-            def local(text):
-                try:
-                    addr = ipaddress.IPv4Address(str(text).partition(":")[0])
-                except ValueError:
-                    return False
-                return any(addr in net for net in own)
             for part in ("addresses", "discovery"):
                 had = list(mine.get(part) or [])
-                if any(a not in had and not local(a) for a in clean["ndi"].get(part, [])):
+                if any(a not in had and not api.ndi_on_own_net(a) for a in clean["ndi"].get(part, [])):
                     clean["ndi"][part] = had
                     kept.append("ndi.%s" % part)
                     notes.append("NDI: an address that is not on one of this box's own networks is not added through remote support; %s left as this box has them" % part)

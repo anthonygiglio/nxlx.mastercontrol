@@ -8,6 +8,7 @@ through the gate there; a route without a row fails there. Here: the two lists a
 every opened and every refused route asked with the real handlers."""
 import json
 import os
+import types
 from unittest import mock
 
 from pvj import boxcare, osc, policy, support as sp, themes
@@ -368,6 +369,42 @@ class NdiTest(Base):
         self.assertEqual(self.care._remote_parts(clean, []), ["ndi.own_discovery"], "nor point the input at a discovery server on this box that he cannot switch")
         self.assertNotIn("own_discovery", clean["ndi"])
         self.assertEqual(boxcare.REMOTE_SETS["ndi"], "/api/ndi")
+
+    def test_the_route_adds_no_ndi_address_or_discovery_server_off_the_boxes_own_networks(self):
+        """D88: POST /api/ndi is held to the rule a file is held to (D84 had left the route open, and said so). For a
+        session: an address or a discovery server only on one of the box's own networks now (the tunnel never counts),
+        and not the switch to this box's own discovery server. Removing is allowed, and the owner in the room is as before."""
+        self.api._ip_json = lambda: [{"ifname": "eth0", "addr_info": [{"family": "inet", "local": "192.168.1.5", "prefixlen": 24}]},
+                                     {"ifname": "wg-pvj", "addr_info": [{"family": "inet", "local": "10.77.0.5", "prefixlen": 24}]}]
+        self.api.ndi = types.SimpleNamespace(_wanted=lambda: None, sync=lambda: None, status=lambda: {"ok": True})
+        self.api.registry.enabled = lambda mid: True
+        with self.settings.lock:
+            self.settings.data["ndi"] = {"addresses": ["10.9.9.9"], "discovery": ["10.9.9.8:5959"]}
+        dev = self.session("full")
+        for body in ({"action": "add_address", "address": "172.16.3.3"}, {"action": "add_address", "address": "10.77.0.9"},
+                     {"action": "add_discovery", "server": "192.168.2.5"}, {"action": "add_discovery", "server": "10.77.0.9:5959"},
+                     {"action": "own_discovery", "on": True}):
+            st, out = self.remote("POST", "/api/ndi", body, dev)
+            self.assertEqual(st, 403, (body, out))
+            self.assertIn("remote support", out["error"])
+            with self.assertRaises(ApiError) as e:          # and the handler itself, whatever the gate
+                self.api.set_ndi(body, dev, TUNNEL)
+            self.assertEqual(e.exception.status, 403)
+        ndi = self.settings.data["ndi"]
+        self.assertEqual((ndi["addresses"], ndi["discovery"], ndi.get("own_discovery")), (["10.9.9.9"], ["10.9.9.8:5959"], None))
+        self.assertIn("was refused adding an NDI address off this box's networks", self.did())
+        self.assertIn("was refused using this box's own NDI discovery server", self.did())
+        for body in ({"action": "add_address", "address": "192.168.1.40"}, {"action": "add_discovery", "server": "192.168.1.41:5960"},
+                     {"action": "remove_address", "address": "10.9.9.9"}, {"action": "remove_discovery", "server": "10.9.9.8:5959"},
+                     {"action": "own_discovery", "on": False}, {"action": "add_group", "group": "studio"}):
+            st, out = self.remote("POST", "/api/ndi", body, dev)
+            self.assertEqual(st, 200, (body, out))
+        st, out = self.remote("POST", "/api/ndi", {"action": "add_address", "address": "192.168.1.40"}, dev)
+        self.assertEqual((st, out["error"]), (400, "that address is already in the list"), "one that is there is the handler's to answer")
+        self.assertEqual(self.remote("POST", "/api/ndi", {"action": "add_address", "address": "8.8.8.8"}, dev)[0], 400, "and a wrong one too")
+        for body in ({"action": "add_address", "address": "172.16.3.3"}, {"action": "add_discovery", "server": "192.168.2.5"},
+                     {"action": "own_discovery", "on": True}):
+            self.assertEqual(self.h("POST", "/api/ndi", body, self.full_dev)[0], 200, ("the owner in the room", body))
 
 
 class SecondReviewTest(Base):

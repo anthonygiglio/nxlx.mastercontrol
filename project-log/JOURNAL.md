@@ -4,6 +4,12 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-15, the NDI route held to the file's rule for remote support (`ndi-remote-addresses`, D88)
+
+- The Low queued from the review of #125: through remote support, `POST /api/ndi` now refuses an NDI address or discovery server off the box's own networks, and the switch to this box's own discovery server, as a settings file already did. One method for both (`Api.ndi_on_own_net`). A new test in `NdiTest` fails with the check taken out. Decided without the owner, under his rule for low and medium risk; it only narrows what a helper may do.
+- Seen while testing in WSL: `tests.test_ndi.PipeReuseTest.test_what_the_last_source_left_in_the_pipe_is_not_the_start_of_the_next` failed once in a run of four modules together and passed five times out of five alone, on master and on this branch. It does not touch what changed here. Left as a timing flake to watch.
+- Not run on the Pi.
+
 ## 2026-10-13, winding down for the move: what merged in the night, what the Pi runs, what nobody has heard
 
 The owner went to bed with "keep up the good work. tidy up where we can", and in the morning asked for the move kit to be refreshed and everything wound down.
