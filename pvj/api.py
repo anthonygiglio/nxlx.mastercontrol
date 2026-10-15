@@ -533,7 +533,13 @@ class Api:
             player["shader_refused"] = {"id": refused["id"], "message": refused.get("message", ""), "at": refused.get("at", "")}
         # "fade": "out" while the operator's Fade out runs and while the screen is black from it, "in" while a fade
         # in runs, else null: the one fade button flashes by it (D75). The fader's own label, read from memory.
-        return {"player": player, "mix": dict(self.mix, fade=getattr(self.fader, "label", None), **self._mix_settings()),
+        # "last": what the last transition did (still_ms, the kind of still and its size, steps, ...; D71, D89), from
+        # memory, so that a run on a box can be read off the status.
+        mix = dict(self.mix, fade=getattr(self.fader, "label", None), **self._mix_settings())
+        last = getattr(getattr(self, "transitions", None), "last", None)
+        if last:
+            mix["last"] = dict(last)
+        return {"player": player, "mix": mix,
                 "system": {"board": self.board["kind"], "model": self.board["model"],
                            "temp_c": max((t["celsius"] for t in temps), default=None)},
                 "device": device, "support": self.support.banner(), "guest_controls": self.guests.state(),

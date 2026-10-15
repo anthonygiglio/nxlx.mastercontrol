@@ -11,7 +11,10 @@ the order they arrived, the commands that change what plays. It answers one requ
 does, and can answer late: `lag(kind)` gives the seconds a command of that kind takes ("opacity" for a level,
 "play" for a load, "still" for a screenshot, "path" for how long the old path is still read after a load).
 
-It knows nothing of video. A screenshot is a small PNG of one colour, of the size it says its screen has.
+It knows nothing of video. A screenshot is a small PNG of one colour, of the size it says its screen has; one of the
+clip alone ("video") is of the size it says its clip has (`video`, 1920 x 1080 unless a test says otherwise).
+`scales`: it draws an overlay at a size of its own (overlay-add with `dw` and `dh`), as mpv 0.38 on does; False (the
+default) refuses those two arguments with "invalid parameter", as CI's mpv 0.37 does.
 """
 import json
 import os
@@ -45,6 +48,8 @@ class FakeMpv:
         self.fail = set()           # names of commands that are answered with an error
         self.mute = set()           # names of commands that are not answered at all (the connection is closed)
         self.dies = False           # True: `quit` ends the process without an answer, as a player that goes at once
+        self.scales = False         # True: overlay-add takes a size to draw at (mpv 0.38 on); False refuses it (0.37)
+        self.video = (1920, 1080)   # the size of a clip's own picture
         self._reset()
         self._stop = threading.Event()
         try:
@@ -61,10 +66,11 @@ class FakeMpv:
     def _reset(self):
         """A new process: nothing loaded, nothing drawn over it, the picture at its own brightness."""
         self.props = {"pause": False, "brightness": 0, "glsl-shaders": [], "loop-file": "no", "loop-playlist": "no", "current-vo": "null",
-                      "speed": 1.0, "volume": 100.0, "mute": False, "frame-drop-count": 0, "decoder-frame-drop-count": 0}
+                      "speed": 1.0, "volume": 100.0, "mute": False, "frame-drop-count": 0, "decoder-frame-drop-count": 0,
+                      "video-zoom": 0.0, "video-pan-x": 0.0, "video-pan-y": 0.0, "video-rotate": 0, "keepaspect": True}
         self.playlist, self.pos = [], -1
         self.path, self._path_before, self._path_at = None, None, 0.0
-        self.overlays = {}          # id -> (x, y, offset, width, height, the alpha of its first pixel)
+        self.overlays = {}          # id -> (x, y, offset, width, height, the alpha of its first pixel, (dw, dh) or None)
 
     def stop(self):
         self._stop.set()
@@ -175,16 +181,24 @@ class FakeMpv:
             self._wait("still")
             if self.path is None:
                 raise ValueError("nothing to take a screenshot of")
+            w, h = self._clip() if len(args) > 1 and args[1] == "video" else self.size
             with open(args[0], "wb") as f:
-                f.write(png(self.size[0], self.size[1], (200, 100, 50)))
+                f.write(png(w, h, (200, 100, 50)))
             return None
         if name == "overlay-add":
             oid, x, y, path, offset, _fmt, w, h, stride = args[:9]
+            shown = None
+            if len(args) > 9:
+                if not self.scales or len(args) != 11:
+                    raise ValueError("mpv before 0.38 takes no display size")
+                shown = (int(args[9]), int(args[10]))
+                if shown[0] <= 0 or shown[1] <= 0:
+                    raise ValueError("a display size of nothing")
             with open(path, "rb") as f:
                 data = f.read()
             if len(data) < offset + (h - 1) * stride + w * 4:
                 raise ValueError("the overlay's file is too short")
-            self.overlays[oid] = (x, y, offset, w, h, data[offset + 3])
+            self.overlays[oid] = (x, y, offset, w, h, data[offset + 3], shown)
             return None
         if name == "overlay-remove":
             self.overlays.pop(args[0], None)
@@ -195,6 +209,12 @@ class FakeMpv:
             self.log.append(("load", "quit", ""))
             return None
         return None                             # seek, vf, playlist-shuffle and the rest: taken, nothing kept
+
+    def _clip(self):
+        """The size of what plays: a generator's carrier is a small picture, a clip has its own (`video`)."""
+        if self.path is not None and self.kind(self.path) == "carrier":
+            return (64, 36)
+        return self.video
 
     def _get(self, prop):
         if prop == "pid":
@@ -220,9 +240,24 @@ class FakeMpv:
                 raise Unavailable()
             if prop == "container-fps":
                 return 30.0
+            w, h = self._clip()
             if self.kind(self.path) == "carrier":
-                return {"pixelformat": "rgb0", "w": 64, "h": 36, "colormatrix": "rgb", "colorlevels": "full"}
-            return {"pixelformat": "yuv420p", "w": 1920, "h": 1080, "colormatrix": "bt.709", "colorlevels": "limited"}
+                return {"pixelformat": "rgb0", "w": w, "h": h, "dw": w, "dh": h, "rotate": 0, "colormatrix": "rgb", "colorlevels": "full"}
+            return {"pixelformat": "yuv420p", "w": w, "h": h, "dw": w, "dh": h, "rotate": 0, "colormatrix": "bt.709", "colorlevels": "limited"}
+        if prop == "osd-dimensions":
+            # the clip fitted into the screen and centred, as mpv lays it out with keepaspect (stretched without)
+            sw, sh = self.size
+            if self.path is None or self.kind(self.path) == "tone":
+                return {"w": sw, "h": sh, "par": 1.0, "aspect": sw / float(sh), "mt": 0, "mb": 0, "ml": 0, "mr": 0}
+            cw, ch = self._clip()
+            if not self.props.get("keepaspect", True):
+                pw, ph = sw, sh
+            elif cw * sh >= ch * sw:
+                pw, ph = sw, int(round(sw * ch / float(cw)))
+            else:
+                pw, ph = int(round(sh * cw / float(ch))), sh
+            ml, mt = (sw - pw) // 2, (sh - ph) // 2
+            return {"w": sw, "h": sh, "par": 1.0, "aspect": sw / float(sh), "mt": mt, "mb": sh - ph - mt, "ml": ml, "mr": sw - pw - ml}
         if prop == "osd-width":
             return self.size[0]
         if prop == "osd-height":
