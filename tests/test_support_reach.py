@@ -6,6 +6,7 @@ nothing that outlives it or locks the owner out. Sessions below the Owner's role
 The table of every route against a support session of each role is tests.test_roles.ROWS (columns 5 to 7), asked
 through the gate there; a route without a row fails there. Here: the two lists as data, held against that table, and
 every opened and every refused route asked with the real handlers."""
+import ipaddress
 import json
 import os
 import types
@@ -405,6 +406,26 @@ class NdiTest(Base):
         for body in ({"action": "add_address", "address": "172.16.3.3"}, {"action": "add_discovery", "server": "192.168.2.5"},
                      {"action": "own_discovery", "on": True}):
             self.assertEqual(self.h("POST", "/api/ndi", body, self.full_dev)[0], 200, ("the owner in the room", body))
+        # on, it may be said on again; an off-network entry already in the list is the handler's (a duplicate)
+        self.assertEqual(self.remote("POST", "/api/ndi", {"action": "own_discovery", "on": True}, dev)[0], 200)
+        st, out = self.remote("POST", "/api/ndi", {"action": "add_address", "address": "172.16.3.3"}, dev)
+        self.assertEqual((st, out["error"]), (400, "that address is already in the list"))
+
+    def test_what_counts_as_on_the_boxes_own_networks_for_ndi(self):
+        """The review of #137 (D88): the box's own address is this box's own discovery server by another name; a
+        network's own and broadcast addresses are no device; a studio network that overlaps the support session's
+        network does not make the tunnel's addresses local; and with no way to read the networks nothing is local."""
+        self.api._ip_json = lambda: [{"ifname": "eth0", "addr_info": [{"family": "inet", "local": "192.168.1.5", "prefixlen": 24}]},
+                                     {"ifname": "wg-pvj", "addr_info": [{"family": "inet", "local": "10.77.0.5", "prefixlen": 24}]}]
+        on = self.api.ndi_on_own_net
+        self.assertEqual([on(a) for a in ("192.168.1.40", "192.168.1.41:5960", "192.168.1.5", "192.168.1.5:5959", "192.168.1.0",
+                                          "192.168.1.255", "10.77.0.9", "192.168.2.5", "x")],
+                         [True, True, False, False, False, False, False, False, False])
+        with mock.patch.object(self.api.support, "network", lambda: ipaddress.ip_network("192.168.1.128/25")):
+            self.assertEqual((on("192.168.1.40"), on("192.168.1.200")), (True, False))
+        self.api.osc = None
+        self.assertFalse(on("192.168.1.40"))
+        self.assertEqual(self.api.ndi_nets(), [])
 
 
 class SecondReviewTest(Base):

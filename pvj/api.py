@@ -2432,16 +2432,27 @@ class Api:
             bad.append(str(n))
         return bad
 
-    def ndi_on_own_net(self, text):
-        """Whether the host of an NDI address or discovery server ("a.b.c.d" or "a.b.c.d:port") is on one of the
-        networks the box is directly connected to now. The tunnel's network never counts (OscManager.local_nets
-        leaves it out). D84 and D88: what a support session may add to the NDI input, by a file or by the route."""
-        own = [i.network for i in self.osc.local_nets()] if getattr(self, "osc", None) is not None else []
+    def ndi_nets(self):
+        """The box's own networks now, read once for a run of ndi_on_own_net (reading them starts a program). None
+        of them when OSC's manager is missing: then nothing counts as on the box's networks."""
+        return self.osc.local_nets() if getattr(self, "osc", None) is not None else []
+
+    def ndi_on_own_net(self, text, nets=None):
+        """Whether the host of an NDI address or discovery server ("a.b.c.d" or "a.b.c.d:port") is another device on
+        one of the networks the box is directly connected to now, by the rule a state target is held to (D82,
+        oscfeedback.not_local): never the box's own address (that would be this box's own discovery server, which no
+        session may switch), a network's own or broadcast address, or the tunnel's network (left out by name in
+        local_nets, and here also by the support session's own network, should a studio network overlap it). D84 and
+        D88: what a support session may add to the NDI input, by a file or by the route."""
+        from . import oscfeedback
+        host = str(text).partition(":")[0]
+        if oscfeedback.not_local(host, self.ndi_nets() if nets is None else nets) is not None:
+            return False
+        tunnel = self.support.network() if getattr(self, "support", None) is not None else None
         try:
-            addr = ipaddress.IPv4Address(str(text).partition(":")[0])
+            return not (tunnel is not None and ipaddress.IPv4Address(host) in tunnel)
         except ValueError:
             return False
-        return any(addr in net for net in own)
 
     def _ndi_remote_refused(self, action, body):
         """What a support session may not do on POST /api/ndi (D88, the route held to the rule a file is held to
@@ -2451,7 +2462,7 @@ class Api:
         handler (an entry that is there already is refused there as a duplicate)."""
         from . import ndi as ndi_mod
         if action == "own_discovery":
-            have = bool((self.settings.data.get("ndi") or {}).get("own_discovery"))
+            have = (self.settings.data.get("ndi") or {}).get("own_discovery") is True        # as every reader of it
             return "using this box's own NDI discovery server" if body.get("on") is True and not have else None
         if action not in ("add_address", "add_discovery"):
             return None
