@@ -91,6 +91,7 @@ LATE = 5.0                      # seconds after a command the player did not ans
 # HALF_ANY.
 HALF_WINDOW = 1280 * 720
 HALF_ANY = 1920 * 1080
+MISSES = 2                      # stills of the clip in a row not of the clip's size or shape, and the player gets stills of the window
 STILL_NAME = r"transition-\d+\.(?:png|bgra)(?:\.tmp)?"
 
 
@@ -328,6 +329,8 @@ class Transitions:
         self.last = {}                      # what the last one did: {"name", "still_ms", "steps", "seconds", "dropped", "ended",
         #                                     "still": "window" or "video", "still_size": [w, h] as sent, "drawn": [x, y, w, h] on the screen}
         self._scaling = None                # (pid, bool): does that player draw an overlay at a size of its own (D89)
+        self._misses = 0                    # stills of the clip in a row that were not what the player said (D89)
+        self._no_clip = None                # the player process that gets stills of the window only, after MISSES of those
 
     # -- what the box will do --
     def fallback(self):
@@ -418,6 +421,11 @@ class Transitions:
             began = self._clock()               # from here: the wait behind another play's still is not this still's time
             froze, laid = inherited, False
             path = os.path.join(player.rundir, "transition-%d.png" % os.getpid())
+            # What plays now, by the player's own count of changes of hands (this play has claimed the screen
+            # already). A still that fails after something else took the screen is not the box being slow: a still
+            # of the clip is of the clip's size, and a generator or a list loaded meanwhile has another (D89).
+            epoch = getattr(player, "source_epoch", None)
+            kind, pid = "window", None
             try:
                 if self.api.access_on_screen():
                     return self._let_go(token, froze)
@@ -433,9 +441,9 @@ class Transitions:
                 # overlay at a size of its own, the clip's own picture when that is the screen and smaller than it,
                 # else the window; a large one at half its size. `place` is where it is drawn on the screen; None
                 # where the player cannot scale, which is the full-size way of D71, command for command.
-                kind, place, half = "window", None, None
+                place, half = None, None
                 if self._scales(player, pid):
-                    spot = self._clip_spot(player, size)
+                    spot = self._clip_spot(player, size, pid)
                     if spot is not None:
                         kind, place, half = "video", spot, HALF_ANY
                     else:
@@ -483,7 +491,10 @@ class Transitions:
                 self._let_go(token, froze, remove=laid)
                 if not ended:
                     self.log("pvj-web: no %s, a cut instead: %s" % (name, e))
-                    if not gone:                # a player that went away is not a box that is too slow
+                    moved = epoch is not None and getattr(player, "source_epoch", None) != epoch
+                    if kind == "video" and isinstance(e, StillError):
+                        self._clip_missed(pid)  # a still of the clip that is not what was expected: the window's next
+                    elif not gone and not moved:    # a player that went away, or a picture that changed hands, is not a box that is too slow
                         self._give_up("the still failed (%s)" % (str(e) or type(e).__name__)[:80])
                 if "no reply" in str(e):
                     self._once_more()
@@ -494,6 +505,9 @@ class Transitions:
                 except OSError:
                     pass
             took = self._clock() - began
+            if kind == "video":
+                with self._mark:
+                    self._misses = 0
             self.last = {"name": name, "still_ms": int(round(shot * 1000)), "hold_ms": int(round(took * 1000)), "steps": 0,
                          "seconds": 0.0, "ended": "", "still": kind, "still_size": [w, h], "drawn": list(place or (0, 0, w, h))}
             # One slow still is used and nothing more: the blend starts late this once. The box gives up when
@@ -548,17 +562,34 @@ class Transitions:
         except Exception:
             return True
 
-    def _clip_spot(self, player, size):
+    def _clip_spot(self, player, size, pid):
         """Where to lay a still of the clip at its own size: (x, y, width, height) on the screen, or None for a
-        still of the window (`Player.video_place` says when the clip's own picture is the screen)."""
+        still of the window (`Player.video_place` says when the clip's own picture is the screen). None for the
+        rest of a player process in which two stills of the clip in a row were not what was expected."""
         place = getattr(player, "video_place", None)
-        if place is None or self._drawn_over():
+        with self._mark:
+            off = self._no_clip == pid
+        if place is None or off or self._drawn_over():
             return None
         try:
             spot = place(tuple(size))
         except PlayerError:
             return None
         return tuple(spot[0]) if spot else None
+
+    def _clip_missed(self, pid):
+        """A still of the clip was not of the size or the shape its place on the screen said (D89). Once is a cut
+        and no reason to give up: the clip may have changed hands between the look and the screenshot (a
+        generator's carrier is loaded before the player counts the change). MISSES in a row, and this player
+        process gets stills of the window from then on, which is the way that works everywhere."""
+        with self._mark:
+            self._misses += 1
+            stop = self._misses >= MISSES and self._no_clip != pid
+            if stop:
+                self._no_clip, self._misses = pid, 0
+        if stop:
+            self.log("pvj-web: transitions: %d stills of the clip in a row were not what the player said; stills of the window "
+                     "from now on for this player (process %s)" % (MISSES, pid))
 
     def _source(self):
         return os.path.join(self.api.player.rundir, "transition-%d.bgra" % os.getpid())

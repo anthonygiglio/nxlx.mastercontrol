@@ -50,6 +50,7 @@ class FakeMpv:
         self.dies = False           # True: `quit` ends the process without an answer, as a player that goes at once
         self.scales = False         # True: overlay-add takes a size to draw at (mpv 0.38 on); False refuses it (0.37)
         self.video = (1920, 1080)   # the size of a clip's own picture
+        self.counts = {"scaled": 0, "video stills": 0}     # overlays drawn at a size of their own, stills of the clip alone
         self._reset()
         self._stop = threading.Event()
         try:
@@ -182,6 +183,7 @@ class FakeMpv:
             if self.path is None:
                 raise ValueError("nothing to take a screenshot of")
             w, h = self._clip() if len(args) > 1 and args[1] == "video" else self.size
+            self.counts["video stills"] += 1 if len(args) > 1 and args[1] == "video" else 0
             with open(args[0], "wb") as f:
                 f.write(png(w, h, (200, 100, 50)))
             return None
@@ -192,6 +194,7 @@ class FakeMpv:
                 if not self.scales or len(args) != 11:
                     raise ValueError("mpv before 0.38 takes no display size")
                 shown = (int(args[9]), int(args[10]))
+                self.counts["scaled"] += 1 if shown != (w, h) else 0       # the question's pixel is not counted
                 if shown[0] <= 0 or shown[1] <= 0:
                     raise ValueError("a display size of nothing")
             with open(path, "rb") as f:
