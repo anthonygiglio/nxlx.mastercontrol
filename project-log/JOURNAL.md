@@ -4,6 +4,15 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-15, a smaller still for the crossfade where mpv can scale an overlay (D89, #138)
+
+The owner called the second of standing still before a crossfade "not acceptable" and suggested working at a lower size and scaling up. The coordinator measured on the test Pi 4 the same day (2560 x 1440, a 1920 x 1080 clip, mpv 0.40.0): a still of the window 0.63 to 0.68 s, of the clip alone 0.38 to 0.44 s, a full-size step 57 to 71 ms and a half-size step drawn at full size with `dw`, `dh` 26 to 38 ms.
+
+- **Built on the branch `transitions-fast`, draft pull request #138:** the player is asked once per process whether it scales an overlay; where it does, a still of the clip at its own size when that is the screen (else of the window), a large still read at half its size, every step and every wipe's part drawn at full size by the player; where it does not (CI's 0.37), the commands of D71 unchanged. `mix.last` in `GET /api/status` says which still and what size. D89 has the rules and what a still of the clip lacks (the logo, the bars beside a clip of another shape).
+- **The stress test found one fault in its first run** against a stand-in that scales: a generator chosen during the screenshot made the still of the clip the carrier's size, and the box gave up. A still of the clip that misses is now a cut, and twice in a row that player gets stills of the window. A lesson.
+- **Tests:** hand tests of each piece, the real Player over the stand-in for both kinds of mpv, the stress test on both, and `ScaledCase` on a real mpv: 0.37 in the effects-gpu jobs, the Pi's 0.40 in the job ndi-mpv (new step, with a virtual display). Each piece was broken on purpose; the table is in D89 and in the stress test's docstring.
+- **Not run:** nothing on the Pi. X24 to X27 in `tools/DEVICE-TESTING.md` are for the coordinator's measurement there.
+
 ## 2026-10-15, the first session on the HP: the move checked, and a test that failed by chance
 
 The owner moved development from the Mac to his HP (Windows 11) and asked for the WSL route.
