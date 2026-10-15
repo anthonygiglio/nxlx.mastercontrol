@@ -10,6 +10,7 @@ or a path unchecked.
 
 import copy
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -2430,6 +2431,28 @@ class Api:
                 continue
             bad.append(str(n))
         return bad
+
+    def ndi_nets(self):
+        """The box's own networks now, read once for a run of ndi_on_own_net (reading them starts a program). None
+        of them when OSC's manager is missing: then nothing counts as on the box's networks."""
+        return self.osc.local_nets() if getattr(self, "osc", None) is not None else []
+
+    def ndi_on_own_net(self, text, nets=None):
+        """Whether the host of an NDI address or discovery server ("a.b.c.d" or "a.b.c.d:port") is another device on
+        one of the networks the box is directly connected to now, by the rule a state target is held to (D82,
+        oscfeedback.not_local): never the box's own address (that would be this box's own discovery server, which no
+        session may switch), a network's own or broadcast address, or the tunnel's network (left out by name in
+        local_nets, and here also by the support session's own network, should a studio network overlap it). D84 and
+        D88: what a settings file brought through remote support may add to the NDI input (BoxCare._remote_parts)."""
+        from . import oscfeedback
+        host = str(text).partition(":")[0]
+        if oscfeedback.not_local(host, self.ndi_nets() if nets is None else nets) is not None:
+            return False
+        tunnel = self.support.network() if getattr(self, "support", None) is not None else None
+        try:
+            return not (tunnel is not None and ipaddress.IPv4Address(host) in tunnel)
+        except ValueError:
+            return False
 
     def set_osc(self, body, device, client):
         if self.osc is None:

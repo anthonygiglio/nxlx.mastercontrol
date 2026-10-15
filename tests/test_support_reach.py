@@ -6,8 +6,10 @@ nothing that outlives it or locks the owner out. Sessions below the Owner's role
 The table of every route against a support session of each role is tests.test_roles.ROWS (columns 5 to 7), asked
 through the gate there; a route without a row fails there. Here: the two lists as data, held against that table, and
 every opened and every refused route asked with the real handlers."""
+import ipaddress
 import json
 import os
+import types
 from unittest import mock
 
 from pvj import boxcare, osc, policy, support as sp, themes
@@ -355,7 +357,9 @@ class NdiTest(Base):
         for part, bad, ok in (("addresses", ["10.9.9.9", "10.77.0.9"], ["10.9.9.9", "192.168.1.40"]),
                               ("addresses", ["172.16.3.3"], []),
                               ("discovery", ["10.9.9.8:5959", "10.77.0.9:5959"], ["10.9.9.8:5959", "192.168.1.41", "192.168.1.42:5960"]),
-                              ("discovery", ["192.168.2.5"], ["10.9.9.8:5959"])):
+                              ("discovery", ["192.168.2.5"], ["10.9.9.8:5959"]),
+                              ("discovery", ["192.168.1.5:5959"], ["10.9.9.8:5959"]),           # the box itself (D88)
+                              ("addresses", ["192.168.1.255"], [])):                             # a broadcast address is no device
             clean = {"ndi": {"addresses": ["10.9.9.9"], "discovery": ["10.9.9.8:5959"]}}
             clean["ndi"][part] = list(bad)
             kept = self.care._remote_parts(clean, [])
@@ -368,6 +372,23 @@ class NdiTest(Base):
         self.assertEqual(self.care._remote_parts(clean, []), ["ndi.own_discovery"], "nor point the input at a discovery server on this box that he cannot switch")
         self.assertNotIn("own_discovery", clean["ndi"])
         self.assertEqual(boxcare.REMOTE_SETS["ndi"], "/api/ndi")
+
+    def test_what_counts_as_on_the_boxes_own_networks_for_ndi(self):
+        """D88, from the review of #137: the box's own address is this box's own discovery server by another name, so a
+        file could point the input at it although `own_discovery` is held back; a
+        network's own and broadcast addresses are no device; a studio network that overlaps the support session's
+        network does not make the tunnel's addresses local; and with no way to read the networks nothing is local."""
+        self.api._ip_json = lambda: [{"ifname": "eth0", "addr_info": [{"family": "inet", "local": "192.168.1.5", "prefixlen": 24}]},
+                                     {"ifname": "wg-pvj", "addr_info": [{"family": "inet", "local": "10.77.0.5", "prefixlen": 24}]}]
+        on = self.api.ndi_on_own_net
+        self.assertEqual([on(a) for a in ("192.168.1.40", "192.168.1.41:5960", "192.168.1.5", "192.168.1.5:5959", "192.168.1.0",
+                                          "192.168.1.255", "10.77.0.9", "192.168.2.5", "x")],
+                         [True, True, False, False, False, False, False, False, False])
+        with mock.patch.object(self.api.support, "network", lambda: ipaddress.ip_network("192.168.1.128/25")):
+            self.assertEqual((on("192.168.1.40"), on("192.168.1.200")), (True, False))
+        self.api.osc = None
+        self.assertFalse(on("192.168.1.40"))
+        self.assertEqual(self.api.ndi_nets(), [])
 
 
 class SecondReviewTest(Base):

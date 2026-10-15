@@ -4,6 +4,13 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-15, remote support and NDI: one gap in the file's rule closed, the owner's rule kept (`ndi-remote-addresses`, D88)
+
+- Started as the Low queued from the review of #125: hold `POST /api/ndi` through remote support to the rule a settings file is held to. CI then failed `tests/test_ndi_setup.py` `TunnelSameAsStreamsTest`, which pins the owner's answer of 2026-10-08 (NDI as Streams for a full-access session); I had not run that file locally. Asked again, he said "Keep my rule", so the route change was taken out and the queued item is closed by his answer.
+- What stays, from the independent review of the first version (default model, nothing above Low): in a settings file through remote support, "on the box's networks" now means another device there, so the box's own address (this box's own discovery server by another name) and a network's own or broadcast address no longer pass, nor an address in the support session's network; `own_discovery` read as `is True`; the networks read once per file. D88.
+- Seen while testing in WSL: `tests.test_ndi.PipeReuseTest.test_what_the_last_source_left_in_the_pipe_is_not_the_start_of_the_next` failed once in a run of four modules together and passed five times out of five alone, on master and on this branch. It does not touch what changed here. Left as a timing flake to watch.
+- Lesson in LESSONS.md. Not run on the Pi.
+
 ## 2026-10-15, the first session on the HP: the move checked, and a test that failed by chance
 
 The owner moved development from the Mac to his HP (Windows 11) and asked for the WSL route.
