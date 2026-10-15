@@ -2571,6 +2571,14 @@ class Stress(ServerBase):
     | s  a shader pad taking the play's ticket before its shader: two newest wishes for one tap | 0 of 3       | yes               |
     | t  a queued shader refused by the queue's own job before it (the older tap stays on)      | not in it    | yes               |
     | u  the effect put before the generator in the player's shader list (D74)                 | 3 of 3       | yes               |
+    | v  the question's pixel left on the screen (D89, `Player.overlay_scales`)                | 3 of 3       | yes               |
+    | w  the player asked with a still of ours on the screen (D89)                             | 0 of 3       | yes               |
+    | x  the answer kept for the next player process (D89)                                     | 0 of 3       | yes               |
+    | y  a scaled crossfade step sent without its display size (D89)                           | 0 of 3       | yes               |
+    | z  a part of a halved still placed by the still's own pixels (D89, `on_screen`)          | 0 of 3       | yes               |
+    | aa a still of the clip that misses making the box give up (D89, the fault it found)      | 2 of 3       | yes               |
+    | ab a still of the clip taken with the logo on (D89)                                      | 0 of 3       | yes               |
+    | ac misses of the still of the clip never turning to the window (D89)                     | 0 of 3       | yes               |
 
     What the rows say that is not "caught":
     * h needs a level wish that runs (a Fade in, a Fade out), a clip tapped with a blend, and then something newer
@@ -2614,6 +2622,12 @@ class Stress(ServerBase):
       first put into the first test's rounds, and for a while the second test did not hold "the box never gives
       up on transitions": a still had a tenth of a second of real time on this test's fast clock, and a stalled
       runner failed a round. That limit is out of the way now (setUp), and both tests hold it for every other reason.
+    * v to ac (D89, 2026-10-15; most rounds run on a stand-in that scales an overlay, about half with a clip
+      smaller than the screen). This test holds the order of things, not what is drawn where, so faults of place
+      and size (y, z), of a setting (ab) and of what one player process is told (w, x, ac: they need two processes,
+      two misses in a row, or a still on the screen at the moment of the question) are for the tests by hand
+      (`Scaled`, `ScaledRealPlayer`, `ReadHalf`); each of v to ac fails at least one of those. aa is the fault this
+      test found in its first run on the new stand-in (a generator chosen during the screenshot).
     The table is run again whenever this test changes: adding ten kinds of action to it took a from three of
     three to none, and moving the fake's lateness from the caller to the stand-in for mpv took d and i to none,
     before weights, a look inside each wish's own step and lateness on the way to the player brought them back.
