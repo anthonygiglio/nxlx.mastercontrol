@@ -161,6 +161,30 @@ jobs:
         # Sound from another sender (D87, cases 40 to 46) is in the same run and fatal, every one of them: nothing
         # of it is under the switch. test_47 is for the record and never fatal.
         run: su ci -c "PVJ_NDI_MPV_TEST=1 PVJ_NDI_MPV_WANT=0.40. PVJ_NDI_FINDINGS_FATAL=yes python3 -X faulthandler -m unittest -v tests.test_ndi_mpv"
+      - name: The crossfade's smaller still on this mpv (D89, overlay-add with a display size; a virtual display and Mesa's software GPU; a skip is a failure)
+        # mpv 0.38 on draws an overlay at a size of its own; the other jobs run Ubuntu's 0.37, which refuses it, so
+        # this is the one job where the scaled still is drawn by a real mpv. A software GPU in a 320 x 180 window on
+        # x86_64: what it shows is the commands and the places, not a Pi's timings.
+        timeout-minutes: 15
+        run: |
+          ok=0
+          for n in 1 2 3; do
+            if apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 install -y --no-install-recommends xvfb xauth libegl1 libgles2 libgl1-mesa-dri; then
+              ok=1
+              break
+            fi
+            echo "attempt $n failed"
+            sleep 5
+          done
+          [ "$ok" = 1 ] || exit 1
+          su ci -c "PVJ_GPU_TEST=1 PVJ_GPU_ONLY=gles PVJ_SCALE_WANT=yes xvfb-run -a -s '-screen 0 1280x720x24' python3 -X faulthandler -m unittest -v tests.test_transitions_gpu.GlesScaledTest" > /tmp/scaled.txt 2>&1 || code=$?
+          cat /tmp/scaled.txt
+          if grep -q -E "skipped|OK \(skipped" /tmp/scaled.txt; then
+            echo "::error::the scaled still's tests were skipped: they judge nothing here"
+            exit 1
+          fi
+          grep -q -E "^Ran [1-9]" /tmp/scaled.txt || { echo "::error::no test of the scaled still ran"; exit 1; }
+          exit "${code:-0}"
       - name: The still-with-sound cases on the pvj code that was stuck on the Pi (master at 5f62763) must FAIL there, or they judge nothing
         # The same tests and the same stand-in, with the pvj folder of the commit before the hand-over of the pipe and
         # the player's options for a standing picture were mended. A case that passes on that code would have been

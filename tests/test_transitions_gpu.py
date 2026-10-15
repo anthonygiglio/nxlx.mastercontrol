@@ -21,7 +21,7 @@ import unittest
 
 from pvj import transitions as T
 from pvj.player import PlayerError
-from tests.test_effects_gpu import CLIP, GPU, H, INVERT, ONLY, W, FxCase, differ, grid
+from tests.test_effects_gpu import CLIP, GPU, H, INVERT, ONLY, W, FxCase, clip, differ, grid
 from tests.test_server import ServerBase
 from tests.test_transitions import png
 
@@ -417,6 +417,173 @@ if ONLY != "desktop":
 if ONLY != "gles":
     @unittest.skipUnless(GPU and shutil.which("mpv"), "set PVJ_GPU_TEST=1 and run under a display (xvfb-run) with mpv")
     class DesktopGlCrossfadeTest(CrossCase, ServerBase):
+        ES = "no"
+
+
+class ScaledCase(CrossCase):
+    """D89 on a real mpv: whether the player draws an overlay at a size of its own (mpv 0.38 on), and, where it does,
+    a still of the window read at half its size and a still of a clip smaller than the screen, each laid where it
+    belongs. Where it does not (mpv 0.37, the effects-gpu jobs) the same tests hold the full-size way of D71. The job
+    ndi-mpv runs this class on the Pi's release of mpv (0.40), with PVJ_SCALE_WANT=yes: there it must scale.
+    A software GPU and a 320 x 180 window, as for the rest of this file: no figure here is a Pi's."""
+
+    def setUp(self):
+        super().setUp()
+        half = T.HALF_WINDOW
+        T.HALF_WINDOW = 0                       # this window is small: halved as a large screen is
+        self.addCleanup(setattr, T, "HALF_WINDOW", half)
+        self.version = self.real.ipc.request("get_property", "mpv-version")
+        self.scales = self.real.overlay_scales(T.OVERLAY_ID)
+
+    def close_to(self, rows, old, what, mean=10.0, share=0.15):
+        """The screen with the still on it is the screen it was taken of, give or take what halving and scaling
+        cost: a mean and a share of points that differ clearly. Without scaling, as exact as D71's tests."""
+        d = differ(rows, old)
+        print("scaled still, ES %s, %s: %s, %s: largest %d, mean %.1f, share %.2f; last %s" % (self.ES, self.version, what,
+              "scaling" if self.scales else "not scaling", d[0], d[1], d[2], self.tr.last))
+        if self.scales:
+            self.assertLessEqual(d[1], mean, "%s: the still is not the screen: %s" % (what, d))
+            self.assertLessEqual(d[2], share, "%s: the still is not the screen: %s" % (what, d))
+        else:
+            self.assertLessEqual(d[0], 3, "%s: the full-size still is not the screen: %s" % (what, d))
+
+    def test_the_player_scales_an_overlay_as_its_release_says(self):
+        import re
+        m = re.search(r"(\d+)\.(\d+)", str(self.version))
+        self.assertTrue(m, self.version)
+        expect = (int(m.group(1)), int(m.group(2))) >= (0, 38)
+        print("scaled still, ES %s: %s draws an overlay at a size of its own: %s" % (self.ES, self.version, self.scales))
+        self.assertEqual(self.scales, expect, "%s says %s" % (self.version, self.scales))
+        want = os.environ.get("PVJ_SCALE_WANT")
+        if want:
+            self.assertEqual(self.scales, want == "yes", "this job is for an mpv that %s" % ("scales" if want == "yes" else "does not"))
+        self.assertEqual(self.real.ipc.request("get_property", "osd-dimensions")["w"], W)
+        self.nothing_left()
+
+    def test_a_halved_still_of_the_window_is_the_screen_and_blends_away(self):
+        old = self.still()
+        token = self.tr.hold("crossfade")
+        self.assertTrue(token, "%s %s" % (self.tr.last, self.tr.given_up))
+        want = ([W // 2, H // 2] if self.scales else [W, H])
+        self.assertEqual((self.tr.last["still"], self.tr.last["still_size"], self.tr.last["drawn"]), ("window", want, [0, 0, W, H]))
+        time.sleep(0.15)
+        self.close_to(self.shot(), old, "a still of the window")
+        self.under()
+        self.tr.run(token, 1.5)
+        self.through(self.watch(), old[H // 2][W // 2], BLUE, "a halved still of the window")
+        self.assertTrue(all(far(p, BLUE) <= 30 for p in grid(self.still(flat=True))), "the new clip is not alone on the screen at the end")
+        self.nothing_left()
+
+    def test_a_still_of_a_smaller_clip_of_the_screens_shape_covers_the_screen(self):
+        self.play(clip("160x90"))
+        old = self.still()
+        token = self.tr.hold("crossfade")
+        self.assertTrue(token, "%s %s" % (self.tr.last, self.tr.given_up))
+        if self.scales:
+            self.assertEqual((self.tr.last["still"], self.tr.last["still_size"], self.tr.last["drawn"]), ("video", [160, 90], [0, 0, W, H]))
+        else:
+            self.assertEqual((self.tr.last["still"], self.tr.last["still_size"]), ("window", [W, H]))
+        time.sleep(0.15)
+        self.close_to(self.shot(), old, "a still of a 160 x 90 clip")
+        self.under()
+        self.tr.run(token, 1.5)
+        self.through(self.watch(), old[H // 2][W // 2], BLUE, "a still of a smaller clip")
+        self.nothing_left()
+
+    def test_a_still_of_a_tall_clip_lies_over_its_place_and_the_new_clip_shows_in_the_bars_at_once(self):
+        self.play(clip("90x160"))
+        old = self.still()
+        bars = self.real.ipc.request("get_property", "osd-dimensions")
+        place = [bars["ml"], bars["mt"], W - bars["ml"] - bars["mr"], H - bars["mt"] - bars["mb"]]
+        self.assertGreater(bars["ml"], 40, "the tall clip has no bars beside it: %s" % bars)
+        token = self.tr.hold("crossfade")
+        self.assertTrue(token, "%s %s" % (self.tr.last, self.tr.given_up))
+        if self.scales:
+            self.assertEqual((self.tr.last["still"], self.tr.last["still_size"], self.tr.last["drawn"]), ("video", [90, 160], place))
+        time.sleep(0.15)
+        self.close_to(self.shot(), old, "a still of a 90 x 160 clip")
+        self.under()                                # the flat blue clip fills the whole screen
+        time.sleep(0.2)
+        rows = self.shot()
+        bar, middle = rows[H // 2][bars["ml"] // 2], rows[H // 2][W // 2]
+        print("scaled still, ES %s: under the still of a tall clip, the bar is %s and the middle %s (the old middle %s)" % (self.ES, bar, middle, old[H // 2][W // 2]))
+        self.assertLessEqual(far(middle, old[H // 2][W // 2]), 24, "the still does not cover the clip's place")
+        if self.scales:
+            self.assertLessEqual(far(bar, BLUE), 30, "a still of the clip covers the bars too")
+        else:
+            self.assertLessEqual(far(bar, old[H // 2][bars["ml"] // 2]), 8, "a still of the window does not cover the bars")
+        self.tr.run(token, 1.0)
+        self.watch()
+        self.assertEqual((self.tr.last["ended"], self.tr.given_up), ("done", ""))
+        self.assertTrue(all(far(p, BLUE) <= 30 for p in grid(self.still(flat=True))))
+        self.nothing_left()
+
+    def test_an_effect_and_the_brightness_are_in_a_still_of_the_clip(self):
+        # what pvj/transitions.py says of the "video" kind, held on this mpv: the effect (hooked where the effects
+        # hook) and the player's brightness are in it, so laid over the clip it is the screen
+        self.play(clip("160x90"))
+        self.fx.upload("invert.fs", INVERT)
+        self.put("invert.fs")
+        self.real.opacity(128)
+        try:
+            old = self.still()
+            self.assertGreater(differ(old, self.plain())[1], 20, "the effect and the brightness did nothing: nothing is proved")
+            token = self.tr.hold("crossfade")
+            self.assertTrue(token, "%s %s" % (self.tr.last, self.tr.given_up))
+            self.assertEqual(self.tr.last["still"], "video" if self.scales else "window")
+            time.sleep(0.15)
+            self.close_to(self.shot(), old, "a still of a clip under an effect at half brightness")
+            self.tr.abandon(token)
+        finally:
+            self.real.opacity(255)
+            self.fx.off()
+        self.nothing_left()
+
+    def plain(self):
+        """The same clip with neither the effect nor the dimming: what the still must NOT look like."""
+        self.real.opacity(255)
+        self.fx.off()
+        rows = self.still()
+        self.put("invert.fs")
+        self.real.opacity(128)
+        return rows
+
+    def test_a_wipe_on_a_halved_still_keeps_the_old_half_where_it_was(self):
+        self.play(CLIP)
+        old = self.still()
+        token = self.tr.hold("wipe-from-left")
+        self.assertTrue(token, "%s %s" % (self.tr.last, self.tr.given_up))
+        self.under(YELLOW_CLIP)
+        self.assertEqual(self.tr._draw(token, 0.5), "drawn")
+        time.sleep(0.15)
+        rows = self.shot()
+        left, right = rows[H // 2][W // 4], rows[H // 2][3 * W // 4]
+        print("scaled still, ES %s: a wipe at its half on a %s still: left %s, right %s (old %s)" % (
+            self.ES, self.tr.last["still_size"], left, right, old[H // 2][3 * W // 4]))
+        self.assertLessEqual(far(left, YELLOW), 30, "the new clip is not on the side it comes in from")
+        self.assertLessEqual(far(right, old[H // 2][3 * W // 4]), 24, "the half of the still that stays moved or is not the old picture")
+        # the edge itself: just left of the middle the new clip, just right of it the old picture
+        self.assertLessEqual(far(rows[H // 2][W // 2 - 4], YELLOW), 36, "the wipe's edge is not at the middle of the screen")
+        self.assertGreater(far(rows[H // 2][W // 2 + 4], YELLOW), 60, "the wipe's edge is not at the middle of the screen")
+        self.tr.run(token, 0.6)
+        self.watch()
+        self.assertEqual((self.tr.last["ended"], self.tr.given_up), ("done", ""))
+        self.nothing_left()
+
+
+for _name in dir(CrossCase):                  # the crossfade's own tests run from their classes, not here again
+    if _name.startswith("test_") and _name not in ScaledCase.__dict__:
+        setattr(ScaledCase, _name, None)
+
+if ONLY != "desktop":
+    @unittest.skipUnless(GPU and shutil.which("mpv"), "set PVJ_GPU_TEST=1 and run under a display (xvfb-run) with mpv")
+    class GlesScaledTest(ScaledCase, ServerBase):
+        ES = "yes"
+
+
+if ONLY != "gles":
+    @unittest.skipUnless(GPU and shutil.which("mpv"), "set PVJ_GPU_TEST=1 and run under a display (xvfb-run) with mpv")
+    class DesktopGlScaledTest(ScaledCase, ServerBase):
         ES = "no"
 
 
