@@ -5,6 +5,7 @@
 # module it loads, does.
 import atexit
 import os
+import re
 import sys
 import threading
 import unittest
@@ -25,6 +26,13 @@ _left = []
 # test's count). Only these names are looked for, after every test, cleanups included; other threads are not policed.
 WATCHERS = ("shader-changes",)
 _blamed = set()                         # a thread is one test's fault: the tests after it are not failed for it too
+
+
+def pin_stands_in(pin, text):
+    """Whether the four-digit PIN is in the text as a number of its own. A guest code, a token or a device id is
+    random and can hold the same four digits by chance (seen in CI: the PIN 6283 inside the guest code 628324), so a
+    plain `in` fails a sound test now and then; test_boxcare looks for the PIN the same way since #125."""
+    return re.search(r"(?<![0-9])%s(?![0-9])" % re.escape(pin), text) is not None
 
 
 def left_watchers():
