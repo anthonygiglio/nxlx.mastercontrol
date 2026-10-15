@@ -29,10 +29,12 @@ _blamed = set()                         # a thread is one test's fault: the test
 
 
 def pin_stands_in(pin, text):
-    """Whether the four-digit PIN is in the text as a number of its own. A guest code, a token or a device id is
-    random and can hold the same four digits by chance (seen in CI: the PIN 6283 inside the guest code 628324), so a
-    plain `in` fails a sound test now and then; test_boxcare looks for the PIN the same way since #125."""
-    return re.search(r"(?<![0-9])%s(?![0-9])" % re.escape(pin), text) is not None
+    """Whether the four-digit PIN is in the text as a word of its own. A guest code, a port, a token, a device id or
+    a hash is random and can hold the same four digits by chance (seen in CI: the PIN 6283 inside the guest code
+    628324), so a plain `in` fails a sound test now and then. A letter counts as a neighbour as well as a digit, so
+    that hex (a token, an id, the PIN's own hash and salt) never matches; a leak of the PIN shows it between quotes,
+    spaces or punctuation, which this finds. test_boxcare and test_pin_and_logout look for it the same way."""
+    return re.search(r"(?<![0-9A-Za-z])%s(?![0-9A-Za-z])" % re.escape(pin), text) is not None
 
 
 def left_watchers():
