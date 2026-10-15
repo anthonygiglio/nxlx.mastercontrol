@@ -234,7 +234,7 @@ If the library is taken away by hand on a box that is set up, the page says "The
 | Route | Role | What |
 | --- | --- | --- |
 | `GET /api/ndi` | live (an Operator; a Guest has no NDI page, D80) | Whether the box is set up for NDI (`setup`, with the command when it is not), the runtime (present, version, a problem in words), the helper, the sources found, the saved addresses, what plays and its counts |
-| `POST /api/ndi` `{"action": "add_address", "address": "192.168.1.20"}` | full; through remote support only another device on one of the box's own networks (D88) | Also look for senders at this address |
+| `POST /api/ndi` `{"action": "add_address", "address": "192.168.1.20"}` | full | Also look for senders at this address |
 | `POST /api/ndi` `{"action": "remove_address", "address": "..."}` | full | Forget it |
 | `POST /api/ndi` `{"action": "sound", "on": true}` | full | Play a source's sound with its picture, or not |
 | `POST /api/ndi` `{"action": "sound_from", "id": "<id>"}` | full | One sound source for every NDI picture (a source on the list now; it becomes allowed), or `""` for each picture's own sound. Switches sound on |
@@ -244,8 +244,8 @@ If the library is taken away by hand on a box that is set up, the page says "The
 | `POST /api/play` `{"pad": [bank, index]}` on such a pad | live; a Guest is refused (403) | Show the pad's source, after the checks under "Pads" |
 | `POST /api/ndi` `{"action": "forget", "id": "<id>"}` | full | Take a source off the allowed list |
 | `POST /api/ndi` `{"action": "add_group" or "remove_group", "group": "Leyline"}` | full | Which NDI groups the box looks in |
-| `POST /api/ndi` `{"action": "add_discovery" or "remove_discovery", "server": "192.168.1.5:5959"}` | full; through remote support only another device on one of the box's own networks (D88) | Which NDI Discovery Servers the box asks |
-| `POST /api/ndi` `{"action": "own_discovery", "on": true}` | full; never switched on through remote support (D88) | Also ask the discovery server this box runs |
+| `POST /api/ndi` `{"action": "add_discovery" or "remove_discovery", "server": "192.168.1.5:5959"}` | full | Which NDI Discovery Servers the box asks |
+| `POST /api/ndi` `{"action": "own_discovery", "on": true}` | full | Also ask the discovery server this box runs |
 | `GET /api/ndi/discovery` | full, never through remote support | The discovery server on this box: set up or not, what listens, what to tell senders |
 | `POST /api/ndi/discovery` `{"network": "wired" or "wifi" or "all", "port": 5959}` | full, never through remote support | Which network it listens on, and the port |
 | `POST /api/modules/ndi-discovery` `{"enabled": true}` | full, never through remote support | Switch the discovery server on or off |

@@ -2443,7 +2443,7 @@ class Api:
         oscfeedback.not_local): never the box's own address (that would be this box's own discovery server, which no
         session may switch), a network's own or broadcast address, or the tunnel's network (left out by name in
         local_nets, and here also by the support session's own network, should a studio network overlap it). D84 and
-        D88: what a support session may add to the NDI input, by a file or by the route."""
+        D88: what a settings file brought through remote support may add to the NDI input (BoxCare._remote_parts)."""
         from . import oscfeedback
         host = str(text).partition(":")[0]
         if oscfeedback.not_local(host, self.ndi_nets() if nets is None else nets) is not None:
@@ -2453,29 +2453,6 @@ class Api:
             return not (tunnel is not None and ipaddress.IPv4Address(host) in tunnel)
         except ValueError:
             return False
-
-    def _ndi_remote_refused(self, action, body):
-        """What a support session may not do on POST /api/ndi (D88, the route held to the rule a file is held to
-        since D84): add an address or a discovery server that is not on one of the box's own networks now, or
-        switch on the use of this box's own discovery server, whose routes no session may use. Returns what was
-        refused, for the session's log, or None. Removing, and anything already in the list, is left to the
-        handler (an entry that is there already is refused there as a duplicate)."""
-        from . import ndi as ndi_mod
-        if action == "own_discovery":
-            have = (self.settings.data.get("ndi") or {}).get("own_discovery") is True        # as every reader of it
-            return "using this box's own NDI discovery server" if body.get("on") is True and not have else None
-        if action not in ("add_address", "add_discovery"):
-            return None
-        try:
-            entry = (ndi_mod.clean_address if action == "add_address" else ndi_mod.clean_discovery)(
-                body.get("address" if action == "add_address" else "server"))
-        except ndi_mod.NdiError:
-            return None                         # the handler says what is wrong with it
-        ndi = self.settings.data.get("ndi")
-        had = ndi_mod.saved_addresses(ndi)[0] if action == "add_address" else ndi_mod.saved_discovery(ndi)
-        if entry in had or self.ndi_on_own_net(entry):
-            return None
-        return "adding an NDI address off this box's networks" if action == "add_address" else "adding an NDI discovery server off this box's networks"
 
     def set_osc(self, body, device, client):
         if self.osc is None:
@@ -3292,12 +3269,6 @@ class Api:
                           "add_discovery", "remove_discovery", "own_discovery"):
             raise bad("action must be add_address, remove_address, sound, sound_from, sound_delay, forget, add_group, remove_group, "
                       "add_discovery, remove_discovery or own_discovery")
-        if (isinstance(device, dict) and device.get("remote")) or self.support.is_remote(client):
-            refused = self._ndi_remote_refused(action, body)
-            if refused:
-                self.support.refused(device, refused)
-                raise ApiError(403, "through remote support the NDI input is pointed only at machines on this box's own networks, and "
-                                    "not at this box's own discovery server; ask someone at the studio")
         if action == "sound_from":
             # Where the sound of an NDI picture comes from (D87): {"id": "<id>"} is one sound source for the whole
             # box, played under every NDI picture; {"id": ""} is each picture's own sound. Either way sound is
