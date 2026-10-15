@@ -18,6 +18,7 @@ import unittest
 
 from pvj import httpsbox, server
 from pvj.settings import Settings
+import tests
 from tests.test_boxcert import TOOL, openssls
 from tests.test_server import ServerBase
 
@@ -363,7 +364,7 @@ class HttpsTest(HttpsBase):
                 st, body, _ = self.call(method, path, {} if method == "POST" else None, token=token)
                 self.assertEqual(st, 403, (path, body))
                 self.assertIn(self.box.https_address("testbox.local"), body["error"])
-                self.assertNotIn(self.pin, json.dumps(body))
+                self.assertFalse(tests.pin_stands_in(self.pin, json.dumps(body)), body)      # the error holds a random port
         for method, path in (("GET", "/api/hello"), ("GET", "/api/https"), ("POST", "/api/logout")):
             st, body, _ = self.call(method, path, {} if method == "POST" else None, token=self.full if path != "/api/logout" else None)
             self.assertEqual(st, 200, (path, body))
@@ -413,7 +414,7 @@ class HttpsTest(HttpsBase):
         for method, path in (("GET", "/api/status"), ("POST", "/api/pin/show")):
             st, body, _ = self.scall(method, path, {} if method == "POST" else None, token=self.full)
             self.assertEqual(st, 403, (path, body))
-            self.assertNotIn(self.pin, json.dumps(body))
+            self.assertFalse(tests.pin_stands_in(self.pin, json.dumps(body)), body)
         # and the session route itself, over TLS with the switch on, does not let it in either
         self.assertEqual(self.scall("POST", "/api/session", {"token": self.full})[0], 200)      # a cookie, nothing more
         self.assertEqual(self.scall("POST", "/api/pin/show", {}, token=self.full)[0], 403)

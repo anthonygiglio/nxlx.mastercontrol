@@ -162,7 +162,7 @@ class AuthTest(unittest.TestCase):
         self.assertEqual(self.auth.show_pin("dev-b"), self.pin)         # another device is not counted with it
         self.clock.t += auth.PIN_SHOW_WINDOW + 1
         self.assertEqual(self.auth.show_pin("dev-a"), self.pin)
-        self.assertNotIn(self.pin, str(self.settings.data))
+        self.assertFalse(tests.pin_stands_in(self.pin, str(self.settings.data)))      # the hash and salt are random hex
 
 
 if __name__ == "__main__":

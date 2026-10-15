@@ -15,6 +15,7 @@ import unittest
 from unittest import mock
 
 from pvj import auth as auth_mod, pinscreen as pinscreen_mod, recovery as recovery_mod
+import tests
 from tests.test_server import ServerBase
 from tests.test_support import LAN, SupportBase
 
@@ -88,7 +89,7 @@ class RecoveryCodesTest(ServerBase):
         st, body, r = self.redeem(codes[3], "Anna's phone")
         self.assertEqual(st, 200, body)
         self.assertEqual((body["device"]["role"], body["device"].get("via")), ("full", "recovery"))
-        self.assertNotIn(self.pin, json.dumps(body))
+        self.assertFalse(tests.pin_stands_in(self.pin, json.dumps(body)), body)     # the token may hold its digits
         devices = self.call("GET", "/api/devices", token=self.full)[1]["devices"]
         self.assertEqual([d.get("via") for d in devices if d["name"] == "Anna's phone"], ["recovery"])    # owners see which came by a code
         self.assertTrue(r.getheader("Set-Cookie").startswith("pvj_token="))

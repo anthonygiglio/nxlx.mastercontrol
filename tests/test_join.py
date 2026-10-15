@@ -8,6 +8,7 @@ from pvj import auth as auth_mod, pinscreen
 from pvj.auth import Auth, AuthError
 from pvj.player import PlayerError
 from pvj.settings import Settings
+import tests
 from tests.test_pinscreen import Api as PinApi, Auth as PinAuth, Player as PinPlayer
 from tests.test_server import ServerBase
 
@@ -590,7 +591,7 @@ class PresenterGuestCodeTest(AccessApiTest):
         self.post("/api/access/screen", {"show": True, "items": ["pin", "view"], "seconds": 120})
         st, body, _ = self.call("GET", "/api/access", token=self.live)
         self.assertEqual((body["screen"]["items"], body["screen"]["other"]), (["view"], True))
-        self.assertNotIn(pin, str(body))
+        self.assertFalse(tests.pin_stands_in(pin, str(body)), body)      # the guest code may hold its digits
         self.assertNotIn("pin", str(body["screen"]))
         self.assertEqual(self.as_live("/api/access/screen", {"show": True, "items": ["view"], "seconds": 3600})[0], 409)
         self.assertLessEqual(self.api.pinscreen.status()["seconds_left"], 120)

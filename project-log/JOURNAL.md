@@ -4,6 +4,15 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-15, the first session on the HP: the move checked, and a test that failed by chance
+
+The owner moved development from the Mac to his HP (Windows 11) and asked for the WSL route.
+
+- **Checked before trusting the notes:** master is 67da348 (#135 merged), all 16 of its checks green; open are only #116 and #65. The box answers on the network, and its secure connection checks out against the owner's `root.pem` (the certificate names nxlx-mastercontrol.local and 192.168.0.169, good until 2027-11-14). Curl on Windows itself refuses that connection unless given `--ssl-no-revoke`, because Windows asks for a revocation list that a private root does not publish; curl inside WSL has no such step.
+- **WSL:** Ubuntu installed with git, gh, Python, Node and curl. Mirrored networking failed to start on this computer (WSL error 0x8007054f, falling back to no network at all), so WSL runs with its normal networking for now, which reaches the Pi; mirrored is needed only for TouchOSC's helper and is to be tried again after a Windows restart.
+- **The test that failed by chance:** `test_never_the_pin` in `tests/test_join.py` looked for the four-digit PIN anywhere in an answer that also holds a random six-digit guest code (seen: PIN 6283, code 628324). It now looks for the PIN as a word of its own, through `tests.pin_stands_in` (a digit or a letter beside it means it is part of something else), and so do four more checks that a review found or I did: the recovery test whose answer holds a new device's token, two in `test_https` whose error holds the test server's random port, and one in `test_auth` that looks through the settings, where the PIN's hash and salt are random hex (about one run in 730). The other checks of the same kind look at short fixed texts. The same rule written twice before (`test_boxcare`, `test_pin_and_logout`) is left as it is.
+- **Not run:** nothing on the Pi; SSH from the HP is not yet allowed by the Pi.
+
 ## 2026-10-13, winding down for the move: what merged in the night, what the Pi runs, what nobody has heard
 
 The owner went to bed with "keep up the good work. tidy up where we can", and in the morning asked for the move kit to be refreshed and everything wound down.
