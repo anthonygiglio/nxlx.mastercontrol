@@ -52,7 +52,7 @@ class HardwareTest(unittest.TestCase):
                           "sys/class/drm/card1-HDMI-A-1/modes": "1920x1080\n1280x720\n",
                           "sys/class/drm/card1-HDMI-A-2/status": "disconnected\n"})
         conns = hardware.drm_connectors(root)
-        self.assertEqual(conns[0], {"connector": "HDMI-A-1", "status": "connected", "modes": ["1920x1080", "1280x720"]})
+        self.assertEqual(conns[0], {"connector": "HDMI-A-1", "status": "connected", "modes": ["1920x1080", "1280x720"], "card": 1})
         self.assertEqual(conns[1]["status"], "disconnected")
 
     def test_profile_headless_uses_drm(self):

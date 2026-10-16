@@ -268,12 +268,16 @@ def decide(wanted, screens, problem, sysfs, boot):
                       if not connected else "the screen's modes could not be read (%s), so its own mode is used" % (problem or "no answer"))
         return rep
     # Which screen: help lists only connected connectors, card by card. A board can have two cards (a Pi 5: HDMI on
-    # one, composite or DSI on another), so the connector is chosen here, an HDMI one first, and passed with its card
-    # (`--drm-connector=CARD.NAME`), so the mode always belongs to the screen mpv drives (the review of #139, L5).
+    # one, composite or DSI on another), so the connector is chosen here, an HDMI one first (the review of #139, L5).
+    # Which card it is on comes from the kernel, not from mpv's list (D91): the number in mpv's "drm-connector=N.NAME"
+    # is its place in libdrm's list of devices, which `--drm-connector` does not read at all (mpv 0.37 and 0.40 take
+    # a bare name there and pick the card themselves, or take `--drm-device=PATH`). /sys/class/drm/cardN-NAME is
+    # /dev/dri/cardN: on a Pi 4 that is card1 (card0 is v3d, which draws but has no outputs).
     screen = next((s for s in screens if s["connector"].upper().startswith("HDMI")), screens[0])
     modes = screen["modes"]
     rep["connector"] = screen["connector"]
-    rep["card"] = screen["card"]
+    cards = sorted({c["card"] for c in connected if c["connector"] == screen["connector"] and isinstance(c.get("card"), int)})
+    rep["card"] = cards[0] if len(cards) == 1 else None      # two cards with a connected screen of one name: mpv's own pick
     rep["modes"] = [dict(m) for m in modes]
     prog = progressive(modes)
     rep["own"] = prog[0]["text"] if prog else None
@@ -295,15 +299,17 @@ def decide(wanted, screens, problem, sysfs, boot):
     if chosen:
         rep["used"] = chosen["text"]
         rep["arg"] = "--drm-mode=" + drm_value(chosen, modes)
-        rep["connector_arg"] = "--drm-connector=%d.%s" % (screen["card"], screen["connector"])
+        if rep["card"] is not None:              # the card and the screen on it, as mpv reads them (D91)
+            rep["device_arg"] = "--drm-device=/dev/dri/card%d" % rep["card"]
+            rep["connector_arg"] = "--drm-connector=" + screen["connector"]
         rep["auto_why"] = auto_why if asked == AUTO or why else ""
     rep["why"] = why
     return rep
 
 
 def prepare(extra_args, rundir, mpv_bin="mpv", env=None, run=subprocess.run, sysfs=None, boot=None, log=None):
-    """The arguments for the player that is about to start: none, or `--drm-connector=CARD.NAME` and `--drm-mode=...`
-    for that screen, with REPORT written.
+    """The arguments for the player that is about to start: none, or `--drm-mode=...`, after `--drm-device=/dev/dri/cardN`
+    and `--drm-connector=NAME` for that screen where the kernel says which card it is on (D91), with REPORT written.
 
     Only where the player draws through DRM itself (`--gpu-context=drm`, a box without a desktop) and nobody gave a
     --drm-mode, --drm-connector or --drm-device by hand (`pvj-player --mpv-arg`, which wins). Never raises: a player that cannot choose a mode starts
@@ -323,13 +329,14 @@ def prepare(extra_args, rundir, mpv_bin="mpv", env=None, run=subprocess.run, sys
     rep.update(pid=os.getpid(), boot=boot or "", at=int(time.time()))
     if rep["why"]:
         log("pvj-player: screen output: %s" % rep["why"])
-    if rep["arg"]:
-        log("pvj-player: screen output: %s on %s (%s %s)" % (text_words(rep["used"]), rep["connector"], rep["connector_arg"], rep["arg"]))
+    args = [a for a in (rep.get("device_arg"), rep.get("connector_arg"), rep["arg"]) if a] if rep["arg"] else []
+    if args:
+        log("pvj-player: screen output: %s on %s (%s)" % (text_words(rep["used"]), rep["connector"], " ".join(args)))
     try:
         write_json(os.path.join(rundir, REPORT), rep)
     except OSError as e:
         log("pvj-player: screen output: the report was not written (%s)" % e)
-    return [rep["connector_arg"], rep["arg"]] if rep["arg"] else []
+    return args
 
 
 # ---- the panel's side ------------------------------------------------------------------------------------------------
@@ -360,7 +367,10 @@ def clean_report(data):
             "used": mode(data.get("used")),
             "arg": arg if isinstance(arg, str) and re.fullmatch(r"--drm-mode=([0-9]{1,3}|%s)" % MODE_TEXT.pattern, arg) else None,
             "connector_arg": data.get("connector_arg") if isinstance(data.get("connector_arg"), str)
-            and re.fullmatch(r"--drm-connector=[0-9]{1,2}\.[A-Za-z0-9_-]{1,32}", data["connector_arg"]) else None,
+            and re.fullmatch(r"--drm-connector=[A-Za-z0-9_-]{1,32}", data["connector_arg"]) else None,
+            "device_arg": data.get("device_arg") if isinstance(data.get("device_arg"), str)
+            and re.fullmatch(r"--drm-device=/dev/dri/card[0-9]{1,2}", data["device_arg"]) else None,
+            "card": data.get("card") if isinstance(data.get("card"), int) and not isinstance(data.get("card"), bool) else None,
             "why": text(data.get("why")), "auto_why": text(data.get("auto_why")),
             "connector": text(data.get("connector"), 32) or None, "modes": modes,
             "own": mode(data.get("own")), "automatic": mode(data.get("automatic")),

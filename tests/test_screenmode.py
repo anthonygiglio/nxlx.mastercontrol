@@ -23,7 +23,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BOOT = "11111111-2222-3333-4444-555555555555"
 
 
-def help_text(*modes, connector="HDMI-A-1", card=1):
+def help_text(*modes, connector="HDMI-A-1", card=0):
     """What mpv prints for one screen: "  Mode N: name (WxH@R.RRHz)"."""
     lines = ["Available modes for drm-connector=%d.%s" % (card, connector)]
     for i, m in enumerate(modes):
@@ -55,14 +55,15 @@ def modes(text):
 
 
 def connected():
-    return [{"connector": "HDMI-A-1", "status": "connected", "modes": []},
-            {"connector": "HDMI-A-2", "status": "disconnected", "modes": []}]
+    """A Pi 4 as the kernel shows it (/sys/class/drm): its outputs are card1's, card0 is v3d with none (D91)."""
+    return [{"connector": "HDMI-A-1", "status": "connected", "modes": [], "card": 1},
+            {"connector": "HDMI-A-2", "status": "disconnected", "modes": [], "card": 1}]
 
 
 class ParseTest(unittest.TestCase):
     def test_mpvs_list_is_read_with_the_rate_as_mpv_prints_it(self):
         screens = S.parse_help("[vo/gpu/drm] noise\n" + XGA)
-        self.assertEqual([(s["card"], s["connector"]) for s in screens], [(1, "HDMI-A-1")])
+        self.assertEqual([(s["card"], s["connector"]) for s in screens], [(0, "HDMI-A-1")])
         m = screens[0]["modes"]
         self.assertEqual(len(m), 11)
         self.assertEqual(m[0], {"index": 0, "name": "1024x768", "width": 1024, "height": 768, "hz": 60.0,
@@ -176,19 +177,6 @@ class DecideTest(unittest.TestCase):
         self.assertEqual((rep["asked"], rep["used"], rep["arg"], rep["why"]), ("auto", "1920x1080@60.00", "--drm-mode=1920x1080@60.00", ""))
         self.assertEqual((rep["connector"], rep["own"], rep["automatic"]), ("HDMI-A-1", "2560x1440@74.97", "1920x1080@60.00"))
 
-    def test_l5_two_cards_the_hdmi_screen_and_its_card_are_passed(self):
-        """A Pi 5 (the review of #139, L5): composite on one card, HDMI on another. The mode is the HDMI screen's,
-        and mpv is told which connector on which card, so the mode is never set on the other one."""
-        text = help_text("720x576@50.00", "720x480@59.94", connector="Composite-1", card=0) + help_text(
-            "1024x768@60.00", "1920x1080@60.00", connector="HDMI-A-2", card=2)
-        rep = self.decide({}, text=text)
-        self.assertEqual((rep["connector"], rep["card"], rep["used"]), ("HDMI-A-2", 2, "1024x768@60.00"))
-        self.assertEqual(rep["connector_arg"], "--drm-connector=2.HDMI-A-2")
-        rep = self.decide({}, text=help_text("720x576@50.00", connector="Composite-1", card=0) + help_text("800x480@60.00", connector="DSI-1", card=1))
-        self.assertEqual((rep["connector"], rep["connector_arg"]), ("Composite-1", "--drm-connector=0.Composite-1"), "no HDMI: the first one listed")
-        self.assertEqual(S.clean_report(dict(rep, pid=1))["connector_arg"], "--drm-connector=0.Composite-1")
-        self.assertIsNone(S.clean_report(dict(rep, connector_arg="--drm-connector=0.x;reboot"))["connector_arg"])
-
     def test_a_mode_chosen_by_hand(self):
         rep = self.decide({"mode": "1920x1080@50.00"})
         self.assertEqual((rep["used"], rep["arg"], rep["why"]), ("1920x1080@50.00", "--drm-mode=1920x1080@50.00", ""))
@@ -234,6 +222,80 @@ class DecideTest(unittest.TestCase):
         self.assertEqual(S.clean_wanted({"mode": "auto", "trial": {"mode": "10x10@1.00", "boot": 5}}), {"mode": "auto"})
 
 
+def sysfs(*entries):
+    """/sys/class/drm as hardware.drm_connectors reads it: (card, connector, status)."""
+    return [{"card": card, "connector": name, "status": status, "modes": []} for card, name, status in entries]
+
+
+class CardTest(unittest.TestCase):
+    """D91: which card and which screen mpv is told, and the exact arguments, for the layouts there are.
+
+    mpv 0.40 (video/out/drm_common.c): `--drm-connector=<name>` is compared whole with each connector's own name
+    ("HDMI-A-1"); a "1." in front is no card number but part of the name, so no connector matches and the player has
+    no screen. The number help prints ("drm-connector=0.HDMI-A-1") is the screen's card's place in libdrm's list of
+    devices; the card is picked by `--drm-device=PATH` or, without it, as the first card with KMS and a connected
+    output. So the card is taken from the kernel's name for the output (cardN-NAME is /dev/dri/cardN)."""
+
+    def args(self, text, layout, wanted=None):
+        rep = S.decide(S.clean_wanted(wanted or {}), S.parse_help(text), "", layout, BOOT)
+        return [a for a in (rep.get("device_arg"), rep.get("connector_arg"), rep["arg"]) if a], rep
+
+    def test_a_pi_4_its_hdmi_is_card1_whatever_number_mpv_prints(self):
+        """The test Pi (2026-10-16): card0 is v3d (no outputs), the HDMI ports are card1's; mpv printed 0."""
+        layout = sysfs((1, "HDMI-A-1", "connected"), (1, "HDMI-A-2", "disconnected"))
+        argv, rep = self.args(help_text("2560x1440@59.95", "1920x1080@60.00", "1024x768@60.00", card=0), layout)
+        self.assertEqual(argv, ["--drm-device=/dev/dri/card1", "--drm-connector=HDMI-A-1", "--drm-mode=1920x1080@60.00"])
+        self.assertEqual(rep["card"], 1)
+        argv, _ = self.args(help_text("1920x1080@60.00", connector="HDMI-A-2", card=1),
+                            sysfs((1, "HDMI-A-1", "disconnected"), (1, "HDMI-A-2", "connected")))
+        self.assertEqual(argv, ["--drm-device=/dev/dri/card1", "--drm-connector=HDMI-A-2", "--drm-mode=1920x1080@60.00"])
+
+    def test_a_pc_with_one_card(self):
+        layout = sysfs((0, "DP-1", "disconnected"), (0, "HDMI-A-1", "connected"), (0, "eDP-1", "connected"))
+        text = help_text("1920x1080@60.00", connector="HDMI-A-1", card=0) + help_text("1366x768@60.00", connector="eDP-1", card=0)
+        argv, _ = self.args(text, layout)
+        self.assertEqual(argv, ["--drm-device=/dev/dri/card0", "--drm-connector=HDMI-A-1", "--drm-mode=1920x1080@60.00"])
+
+    def test_a_board_with_two_cards_the_hdmi_screen_and_its_own_card(self):
+        """A Pi 5 kind of board: v3d card0 with nothing, HDMI on card1, composite on card2; mpv numbers them 0 and 1."""
+        layout = sysfs((1, "HDMI-A-1", "connected"), (1, "HDMI-A-2", "disconnected"), (2, "Composite-1", "connected"))
+        text = help_text("720x576@50.00", connector="Composite-1", card=0) + help_text("1024x768@60.00", "1920x1080@60.00", card=1)
+        argv, rep = self.args(text, layout)
+        self.assertEqual(argv, ["--drm-device=/dev/dri/card1", "--drm-connector=HDMI-A-1", "--drm-mode=1024x768@60.00"])
+        argv, rep = self.args(help_text("720x576@50.00", connector="Composite-1", card=0), sysfs((2, "Composite-1", "connected")))
+        self.assertEqual(argv, ["--drm-device=/dev/dri/card2", "--drm-connector=Composite-1", "--drm-mode=720x576@50.00"],
+                         "no HDMI: the one there is")
+
+    def test_one_name_on_two_cards_or_no_card_known_passes_the_mode_alone(self):
+        two = sysfs((0, "HDMI-A-1", "connected"), (1, "HDMI-A-1", "connected"))
+        argv, rep = self.args(help_text("1920x1080@60.00"), two)
+        self.assertEqual((argv, rep["card"]), (["--drm-mode=1920x1080@60.00"], None))
+        argv, _ = self.args(help_text("1920x1080@60.00"), [{"connector": "HDMI-A-1", "status": "connected", "modes": []}])
+        self.assertEqual(argv, ["--drm-mode=1920x1080@60.00"], "a list without cards (an older reader): mpv's own pick")
+
+    def test_never_a_card_number_in_the_connector_and_the_report_checks_both(self):
+        _, rep = self.args(help_text("1920x1080@60.00", card=0), sysfs((1, "HDMI-A-1", "connected")))
+        clean = S.clean_report(dict(rep, pid=1))
+        self.assertEqual((clean["device_arg"], clean["connector_arg"], clean["card"]),
+                         ("--drm-device=/dev/dri/card1", "--drm-connector=HDMI-A-1", 1))
+        for bad in ("--drm-connector=0.HDMI-A-1", "--drm-connector=x;reboot"):
+            self.assertIsNone(S.clean_report(dict(rep, connector_arg=bad))["connector_arg"], bad)
+        for bad in ("--drm-device=/etc/shadow", "--drm-device=/dev/dri/../sda", "--drm-device=/dev/dri/renderD128"):
+            self.assertIsNone(S.clean_report(dict(rep, device_arg=bad))["device_arg"], bad)
+
+    def test_the_kernels_card_number_from_sys(self):
+        from pvj import hardware
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        for name, status in (("card1-HDMI-A-1", "connected"), ("card1-HDMI-A-2", "disconnected"), ("card1-Writeback-1", "unknown")):
+            os.makedirs(os.path.join(tmp, "sys/class/drm", name))
+            with open(os.path.join(tmp, "sys/class/drm", name, "status"), "w") as f:
+                f.write(status + "\n")
+        os.makedirs(os.path.join(tmp, "sys/class/drm/card0"))          # v3d: a card with no outputs (no dash, not listed)
+        self.assertEqual([(c["card"], c["connector"], c["status"]) for c in hardware.drm_connectors(tmp)],
+                         [(1, "HDMI-A-1", "connected"), (1, "HDMI-A-2", "disconnected"), (1, "Writeback-1", "unknown")])
+
+
 class PrepareTest(unittest.TestCase):
     def setUp(self):
         self.state = tempfile.mkdtemp()
@@ -261,22 +323,22 @@ class PrepareTest(unittest.TestCase):
 
     def test_the_argument_and_the_report(self):
         out, lines = self.prepare()
-        self.assertEqual(out, ["--drm-connector=1.HDMI-A-1", "--drm-mode=1920x1080@60.00"])
+        self.assertEqual(out, ["--drm-device=/dev/dri/card1", "--drm-connector=HDMI-A-1", "--drm-mode=1920x1080@60.00"])
         rep = self.report()
         self.assertEqual((rep["used"], rep["pid"], rep["boot"]), ("1920x1080@60.00", os.getpid(), BOOT))
         self.assertEqual(oct(os.stat(os.path.join(self.run_dir, S.REPORT)).st_mode & 0o777), "0o640")
-        self.assertEqual(lines, ["pvj-player: screen output: 1920 x 1080 at 60 Hz on HDMI-A-1 (--drm-connector=1.HDMI-A-1 --drm-mode=1920x1080@60.00)"])
+        self.assertEqual(lines, ["pvj-player: screen output: 1920 x 1080 at 60 Hz on HDMI-A-1 (--drm-device=/dev/dri/card1 --drm-connector=HDMI-A-1 --drm-mode=1920x1080@60.00)"])
 
     def test_the_wanted_file_is_read(self):
         S.write_json(os.path.join(self.state, S.WANTED), {"mode": "1280x720@50.00"})
-        self.assertEqual(self.prepare()[0], ["--drm-connector=1.HDMI-A-1", "--drm-mode=1280x720@50.00"])
+        self.assertEqual(self.prepare()[0], ["--drm-device=/dev/dri/card1", "--drm-connector=HDMI-A-1", "--drm-mode=1280x720@50.00"])
         S.write_json(os.path.join(self.state, S.WANTED), {"mode": "1280x720@51.00"})
         out, lines = self.prepare()
-        self.assertEqual(out, ["--drm-connector=1.HDMI-A-1", "--drm-mode=1920x1080@60.00"])
+        self.assertEqual(out, ["--drm-device=/dev/dri/card1", "--drm-connector=HDMI-A-1", "--drm-mode=1920x1080@60.00"])
         self.assertIn("is not offered by this screen now, so Automatic is used", lines[0])
         with open(os.path.join(self.state, S.WANTED), "w") as f:
             f.write("not json")
-        self.assertEqual(self.prepare()[0], ["--drm-connector=1.HDMI-A-1", "--drm-mode=1920x1080@60.00"], "a damaged file is Automatic")
+        self.assertEqual(self.prepare()[0], ["--drm-device=/dev/dri/card1", "--drm-connector=HDMI-A-1", "--drm-mode=1920x1080@60.00"], "a damaged file is Automatic")
 
     def test_nothing_where_mpv_does_not_draw_through_drm_or_a_mode_was_given_by_hand(self):
         self.assertEqual(self.prepare(args=("--vo=gpu",))[0], [])
@@ -297,7 +359,7 @@ class PrepareTest(unittest.TestCase):
         self.assertEqual(self.report()["why"], "the mode was not chosen (RuntimeError)")
         out = S.prepare(["--gpu-context=drm"], os.path.join(self.run_dir, "missing"), "mpv", env=self.env,
                         run=self.run_mpv(MONITOR), sysfs=connected(), boot=BOOT)
-        self.assertEqual(out, ["--drm-connector=1.HDMI-A-1", "--drm-mode=1920x1080@60.00"], "a report that cannot be written does not stop the mode")
+        self.assertEqual(out, ["--drm-device=/dev/dri/card1", "--drm-connector=HDMI-A-1", "--drm-mode=1920x1080@60.00"], "a report that cannot be written does not stop the mode")
 
     def test_serve_passes_it_to_mpv(self):
         p = Player(mpv_bin="mpv", extra_args=["--vo=gpu", "--gpu-context=drm"], rundir=self.run_dir)
@@ -744,7 +806,7 @@ class RealMpvTest(unittest.TestCase):
         self.assertEqual(self.mpv("--drm-mode=1", "av://lavfi:color=c=black:size=64x64:rate=25").returncode, 0)
         bad = self.mpv("--drm-mode=1920x1080@sixty", "av://lavfi:color=c=black:size=64x64:rate=25")
         self.assertNotEqual(bad.returncode, 0, "mpv checks the text: the test above means something")
-        both = self.mpv("--drm-connector=1.HDMI-A-1", "--drm-mode=1920x1080@60.00", "av://lavfi:color=c=black:size=64x64:rate=25")
+        both = self.mpv("--drm-device=/dev/dri/card1", "--drm-connector=HDMI-A-1", "--drm-mode=1920x1080@60.00", "av://lavfi:color=c=black:size=64x64:rate=25")
         self.assertEqual(both.returncode, 0, both.stderr)          # the connector with its card (L5) is an option mpv takes
 
     def test_mpv_opens_the_test_pattern_graph(self):

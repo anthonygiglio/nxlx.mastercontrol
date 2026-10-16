@@ -4,6 +4,13 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-16, the screen's card: Automatic did nothing on the Pi, and why (`screen-card`, D91)
+
+- **On the test Pi** (master 3ad61a7, #139 deployed by the coordinator): the player was started with `--drm-connector=0.HDMI-A-1`, had no screen, and the panel started it again with the monitor's own 2560 x 1440. No black screen: D90's net held. Automatic itself did nothing.
+- **Cause, read in mpv 0.40's drm_common.c:** `--drm-connector` takes a bare name and compares it whole; the "0." that help prints is the card's place in libdrm's list, which nothing parses. The card is picked by `--drm-device` or as the first with an output. On a Pi 4 the outputs are card1's.
+- **Fixed:** the card from /sys/class/drm (cardN-NAME), and `--drm-device=/dev/dri/cardN --drm-connector=NAME --drm-mode=...`; the mode alone where two cards share a name. `CardTest` holds the Pi 4, a one-card PC and a two-card board to exact argv; each case fails with the old text. Lesson in LESSONS.md.
+- **Not run on the Pi.** S1 says what to check after the next deploy.
+
 ## 2026-10-15, the screen's mode: Automatic up to 1920 x 1200 at 60 Hz, a mode by hand tried and kept or back (`screen-modes`, #139, D90)
 
 The owner, after the research on outputs and resolutions: "I want you to proceed with whatever is going to provide the most economic output for performance and clarity and detail in the output." Read as the research's recommendation; built on a branch of its own while #138 (transitions-fast, D89) changes the crossfade.
