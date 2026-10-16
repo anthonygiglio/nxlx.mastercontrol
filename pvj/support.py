@@ -114,6 +114,8 @@ REMOTE_OWNER_OPENED = {
     ("POST", "/api/osc/feedback"): "a target is still only a device on the box's own network, never the tunnel",
     ("POST", "/api/guests"): "the lock on guest controls: a switch the owner or an Operator sets back",
     ("POST", "/api/devices/revoke"): "a Guest's or an Operator's device only: never an Owner's",
+    # D94: the nearest setting is the state targets above: the box sending to a device in the room
+    ("POST", "/api/render"): "a render node is only a device on the box's own network, checked at every send, never the tunnel",
 }
 # What a session did, kept with its entry in the support log (SupportManager.note): the major lines, the routine
 # lines (one per route, so a few hundred covers every route there is), and the characters of one line.
