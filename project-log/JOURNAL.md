@@ -13,6 +13,14 @@ Newest entry first. One entry per working session: what was done, what merged, w
 - **Tests:** `AutoDetailTest` (eight, one of them running master's code on a file written here) and the changed `BoardTest`; each of twelve deliberate breaks of the code made a test fail. The browser test is given a Pi 4's answer for the chooser and the line; it runs in CI only (no Playwright here).
 - **Open:** whether 720 lines look better than 540 on the projector, and whether tide and bloom keep up at 720 with an effect on (DEVICE-TESTING A1 to A5). Nothing was run on the Pi by this session.
 
+## 2026-10-16, a skip of one set of arguments no longer bars another (`screen-skip`, D92)
+
+- **On the test Pi:** after #140 was deployed, the skip left by the failed `--drm-connector=0.HDMI-A-1` start (same boot, same mode text) kept the corrected arguments from being tried until the Pi was restarted. After a restart it worked.
+- **Fixed:** the skip in the wanted file now holds the arguments that gave no screen, and `decide` bars only those. A skip of the old shape (no `args`) is ignored: at most one more try of the same arguments, then a skip of the new shape. The once-per-boot rule for the same arguments is kept.
+- **The review of #141 (e977c00): nothing above Low; one Low closed.** One skip let two alternating sets cost a dark start every round; every failed set of the boot is now kept (a list of at most 8, cleared by a new boot).
+- **Tests:** `tests.test_screenmode` (other arguments not barred, in `decide` and through the panel; the same ones barred with no loop; the old shape; checked arguments; alternating sets; the bound; a new boot). Comparing by mode text again fails two of them; keeping one skip again fails three. `tests.test_transport` passes.
+- **Not run on the Pi.**
+
 ## 2026-10-16, the screen's card: Automatic did nothing on the Pi, and why (`screen-card`, D91)
 
 - **On the test Pi** (master 3ad61a7, #139 deployed by the coordinator): the player was started with `--drm-connector=0.HDMI-A-1`, had no screen, and the panel started it again with the monitor's own 2560 x 1440. No black screen: D90's net held. Automatic itself did nothing.

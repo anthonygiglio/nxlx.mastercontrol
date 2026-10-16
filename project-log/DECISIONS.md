@@ -1673,6 +1673,20 @@ Supersedes the part of D90's last paragraph (the review's L5) that passed `--drm
 
 Cost: one more argument for mpv, and a box whose display card the kernel renumbers between the player's start and mpv's open would fail once and fall back by D90's net.
 
+## D92. A skip bars the arguments that gave no screen, not the mode text alone (2026-10-16)
+
+Adds to D90's net and D91; neither is changed.
+
+**What happened.** On the test Pi the first start with a mode had `--drm-connector=0.HDMI-A-1`, gave no screen, and the panel wrote `skip: {"mode": "1920x1080@60.00", "boot": ...}`. After #140 was deployed the player would have passed `--drm-device=/dev/dri/card1 --drm-connector=HDMI-A-1` with the same mode text in the same boot, and `decide` dropped it for that skip: the corrected arguments were never tried until the Pi was restarted.
+
+**Now.** The skip is `{"mode", "boot", "args"}`, `args` the list the player was given for the screen (`--drm-device`, `--drm-connector`, `--drm-mode`, those there were; `screen_args`), as the panel read it back from the report. `decide` bars the mode only when this boot's skip has exactly the arguments it would pass now. Other arguments (another card, another connector, a mode passed alone) are tried; the same ones stay barred for the boot, so there is still no loop. The player emits a device or connector argument only in the form the panel's report reader keeps, so the skip the panel writes always matches what the player would pass again.
+
+**A skip of the old shape** (`mode` and `boot` only, written by #139 or #140) **is ignored**: `clean_wanted` drops it. It does not say which device and connector earned it, and the release that wrote the first ones is the one that passed a wrong connector, so honouring it would repeat this fault after the update. Ignoring it costs at most one more try of the same arguments in that boot (six seconds without a picture, then the screen's own mode), which writes a skip of the new shape. A skip whose arguments are not of the known forms is dropped the same way, so `--drm-connector=0.HDMI-A-1` can never be one.
+
+**Every failed set is kept for the boot (the review of #141, Low).** With one skip, two sets that alternate between starts (a second output that flaps and makes the card ambiguous, or an EDID read two ways) would each overwrite the other, and each round would cost about six seconds without a picture. So `skip` is a list: each set that gave no screen is added (`with_skip`), at most MAX_SKIPS (8, the newest kept), and entries of another boot are dropped when one is added or the panel starts. A single skip object of the first D92 shape is read as a list of one; the shape before D92 (no `args`) is still ignored, as above. More than eight sets alternating in one boot would again cost one dark start each per round; none is known.
+
+Tests (`tests/test_screenmode.py`): a skip with other arguments does not bar the new ones, in `decide` and through the panel with a new release in the same boot; the same arguments stay barred and the player is not restarted again; an old-shape skip is tried once more and then barred; a skip's arguments are checked; two sets that alternate cost one dark start each and then stay barred; the list stays at eight; a new boot clears it. Comparing by mode text again fails two of them, and keeping one skip again fails three. **Not run on the Pi.**
+
 ## D93. A shader is drawn at the most lines it held on a Pi 4 at the box's output: Automatic picture detail, from the run at 1920 x 1080 (2026-10-16)
 
 Pull request #142. The owner asked for "improving the shader rendering and overall performance", then "improving shader variety and detail", and for outputs "the most economic output for performance and clarity and detail" (2026-10-15, D90).
