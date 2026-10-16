@@ -393,6 +393,20 @@ class CueTest(ApiBase):
             st, out = self.h("POST", "/api/room/scene", body, self.guest)
             self.assertEqual((st, out["error"]), (403, "this scene cues a render node; ask an operator to start it"), body)
 
+    def test_a_guest_is_refused_at_the_gate_and_in_the_handler_each(self):
+        """Two walls, each tested alone: the gate's form (policy) and the handler, past the gate."""
+        from pvj import policy
+        from pvj.api import ApiError
+        self.add()
+        self.cue_pad()
+        with self.assertRaises(policy.Refused) as e:
+            policy.GUEST[("POST", "/api/play")]({"pad": [0, 0]}, self.api)
+        self.assertEqual(e.exception.message, policy.RENDER_PAD_TEXT)
+        with self.assertRaises(ApiError) as e:
+            self.api.play({"pad": [0, 0]}, self.guest, LAN)
+        self.assertEqual((e.exception.status, e.exception.message), (403, policy.RENDER_PAD_TEXT))
+        self.assertEqual(self.socks.sent, [])
+
     def test_what_a_pad_refuses(self):
         self.add()
         for cue, status in (({"node": "0f0f0f0f"}, 404), ({"address": "/a b"}, 400), ({"show": True}, 409)):
