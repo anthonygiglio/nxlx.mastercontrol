@@ -441,11 +441,16 @@ class Transitions:
                 # overlay at a size of its own, the clip's own picture when that is the screen and smaller than it,
                 # else the window; a large one at half its size. `place` is where it is drawn on the screen; None
                 # where the player cannot scale, which is the full-size way of D71, command for command.
-                place, half = None, None
+                place, half, clip = None, None, None
                 if self._scales(player, pid):
                     spot = self._clip_spot(player, size, pid)
+                    # A wipe or a slide moves across the whole screen: over a clip with bars beside it a still of
+                    # the clip alone would stop at the bar's edge, with the new clip already showing beyond it. So
+                    # they take the window unless the clip's place is the whole screen (the review of #138, M1).
+                    if spot is not None and blend().moves and spot[0] != (0, 0, size[0], size[1]):
+                        spot = None
                     if spot is not None:
-                        kind, place, half = "video", spot, HALF_ANY
+                        kind, (place, clip), half = "video", spot, HALF_ANY
                     else:
                         place, half = (0, 0, size[0], size[1]), HALF_WINDOW
                 froze = inherited or player.ipc.request("get_property", "pause") is not True
@@ -463,8 +468,13 @@ class Transitions:
                     player.still(path)
                 w, h, pixels = read_still(path, size, half, within=kind == "video")
                 shot = self._clock() - shot
-                if kind == "video" and abs(w * place[3] - h * place[2]) > 0.02 * w * place[3]:
-                    raise StillError("the still of the clip is %d x %d, not the shape of its place on the screen (%d x %d)" % (w, h, place[2], place[3]))
+                if kind == "video":
+                    # its size, as the player gave it before the freeze (halved as read_still halves), and its shape
+                    want = clip if clip[0] * clip[1] <= HALF_ANY else ((clip[0] + 1) // 2, (clip[1] + 1) // 2)
+                    if (w, h) != tuple(want):
+                        raise StillError("the still of the clip is %d x %d, not the %d x %d the player said" % (w, h, want[0], want[1]))
+                    if abs(w * place[3] - h * place[2]) > 0.02 * w * place[3]:
+                        raise StillError("the still of the clip is %d x %d, not the shape of its place on the screen (%d x %d)" % (w, h, place[2], place[3]))
                 if place == (0, 0, w, h):
                     place = None                # nothing to scale: the commands of D71
                 # An end() does not wait for a still (Stop and Blackout act at once), so the still looks for one:
@@ -492,8 +502,10 @@ class Transitions:
                 if not ended:
                     self.log("pvj-web: no %s, a cut instead: %s" % (name, e))
                     moved = epoch is not None and getattr(player, "source_epoch", None) != epoch
-                    if kind == "video" and isinstance(e, StillError):
-                        self._clip_missed(pid)  # a still of the clip that is not what was expected: the window's next
+                    if kind == "video" and not gone and "no reply" not in str(e):
+                        # a still of the clip that failed or is not what was expected (the player refused that kind
+                        # of screenshot, or the clip changed hands): a cut, never a give-up; the window's next
+                        self._clip_missed(pid)
                     elif not gone and not moved:    # a player that went away, or a picture that changed hands, is not a box that is too slow
                         self._give_up("the still failed (%s)" % (str(e) or type(e).__name__)[:80])
                 if "no reply" in str(e):
@@ -543,7 +555,7 @@ class Transitions:
                     return False
             try:
                 took = bool(probe(OVERLAY_ID))
-            except PlayerError:
+            except (PlayerError, OSError):      # no answer, or the pixel's file could not be written: cannot tell
                 return False
         with self._mark:
             self._scaling = (pid, took)
@@ -563,7 +575,8 @@ class Transitions:
             return True
 
     def _clip_spot(self, player, size, pid):
-        """Where to lay a still of the clip at its own size: (x, y, width, height) on the screen, or None for a
+        """Where to lay a still of the clip at its own size: ((x, y, width, height) on the screen, (width, height) of
+        the clip's picture), or None for a
         still of the window (`Player.video_place` says when the clip's own picture is the screen). None for the
         rest of a player process in which two stills of the clip in a row were not what was expected."""
         place = getattr(player, "video_place", None)
@@ -575,7 +588,7 @@ class Transitions:
             spot = place(tuple(size))
         except PlayerError:
             return None
-        return tuple(spot[0]) if spot else None
+        return (tuple(spot[0]), tuple(spot[1])) if spot else None
 
     def _clip_missed(self, pid):
         """A still of the clip was not of the size or the shape its place on the screen said (D89). Once is a cut

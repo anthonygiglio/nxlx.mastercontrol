@@ -3140,9 +3140,13 @@ class ScaledScreen(Screen):
         self.clip_still = None          # the size of a still of the clip alone
         self.kinds = []                 # the kind of every still taken
         self.shown = []                 # (x, y, width, height) on the screen of every overlay, and the size of its pixels
+        self.video_refused = False      # a still of the clip is refused ("mpv: error running command")
+        self.probe_oserror = False      # the question's pixel cannot be written
 
     def overlay_scales(self, oid):
         self.calls.append(("overlay_scales", oid))
+        if self.probe_oserror:
+            raise OSError(28, "No space left on device")
         if self.probe_fails:
             raise PlayerError("no reply from mpv")
         assert not self.overlay_up, "asked with a still of ours on the screen: the pixel would take its place"
@@ -3156,6 +3160,8 @@ class ScaledScreen(Screen):
         self.kinds.append(kind)
         if kind == "video":
             self.calls.append(("still", os.path.basename(path)))
+            if self.video_refused:
+                raise PlayerError("mpv: error running command")
             with open(path, "wb") as f:
                 f.write(png(self.clip_still[0], self.clip_still[1], self.colour))
             return
@@ -3280,13 +3286,13 @@ class Scaled(Base):
     def test_a_still_of_the_clip_of_another_shape_than_its_place_is_a_cut_and_twice_makes_it_the_window(self):
         # the clip may have changed hands between the look and the screenshot (a generator's carrier is loaded
         # before the player counts the change, which the stress test found): once is a cut and no give-up
-        self.player.clip_place, self.player.clip_still = ((0, 1, 8, 2), (4, 4)), (4, 4)
+        self.player.clip_place, self.player.clip_still = ((0, 1, 8, 2), (4, 1)), (4, 4)
         self.assertEqual(self.play(), {"playing": "a.mp4"})
         self.assertNotIn("overlay", self.names())
         self.assertIn("play", self.names())
         self.assertFalse(self.player.props["pause"])
         self.assertEqual(self.tr.given_up, "")
-        self.assertTrue(any("shape" in line for line in self.lines), self.lines)
+        self.assertTrue(any("the still of the clip is 4 x 4" in line for line in self.lines), self.lines)
         self.assertEqual(self.left(), [])
         # twice in a row, and this player process gets stills of the window, which work everywhere
         self.play("b.mov")
@@ -3302,8 +3308,79 @@ class Scaled(Base):
         self.play("b.mov")
         self.assertEqual((self.tr.last["still"], self.tr.last["ended"]), ("video", "done"))
 
-    def test_one_still_of_the_clip_that_misses_between_good_ones_does_not_count_up(self):
+    def test_a_still_of_the_clip_of_the_right_shape_and_the_wrong_size_is_a_miss(self):
+        # the review of #138, L3: the size is held, not only the shape
+        self.player.clip_place, self.player.clip_still = ((0, 1, 8, 2), (4, 1)), (8, 2)
+        self.play()
+        self.assertNotIn("overlay", self.names())
+        self.assertTrue(any("not the 4 x 1 the player said" in line for line in self.lines), self.lines)
+        self.assertEqual((self.tr.given_up, self.tr._misses), ("", 1))
+        # and the shape: the size the player said, in a place of another shape
         self.player.clip_place, self.player.clip_still = ((0, 1, 8, 2), (4, 4)), (4, 4)
+        self.play("b.mov")
+        self.assertTrue(any("not the shape of its place" in line for line in self.lines), self.lines)
+        self.assertEqual(self.tr.given_up, "")
+
+    def test_a_still_of_the_clip_the_player_refuses_is_a_cut_and_never_a_give_up(self):
+        # the review of #138, M2: "mpv: error running command" on the clip's kind of screenshot
+        self.player.clip_place, self.player.clip_still = ((0, 1, 8, 2), (4, 1)), (4, 1)
+        self.player.video_refused = True
+        self.assertEqual(self.play(), {"playing": "a.mp4"})
+        self.assertEqual(self.tr.given_up, "")
+        self.assertFalse(self.player.props["pause"])
+        self.assertIn("play", self.names())
+        self.play("b.mov")
+        self.assertEqual(self.tr.given_up, "")
+        self.play()
+        self.assertEqual(self.player.kinds, ["video", "video", "window"], "two refusals in a row and the player gets the window's still")
+        self.assertEqual((self.tr.last["still"], self.tr.last["ended"], self.tr.given_up), ("window", "done", ""))
+        self.assertEqual(self.left(), [])
+
+    def test_a_question_whose_pixel_cannot_be_written_is_the_full_size_this_once(self):
+        # the review of #138, L5: an OSError writing overlay-63.bgra is "cannot tell", not a failed still
+        self.player.probe_oserror = True
+        self.play()
+        self.assertEqual(self.tr.given_up, "")
+        self.assertEqual((self.tr.last["still_size"], self.tr.last["ended"]), ([8, 4], "done"))
+        self.player.probe_oserror = False
+        self.play("b.mov")
+        self.assertEqual(self.names().count("overlay_scales"), 2, "not asked again")
+        self.assertEqual(self.tr.last["still_size"], [4, 2])
+
+    def test_a_wipe_or_a_slide_over_a_clip_with_bars_takes_the_window(self):
+        # the review of #138, M1: a still of the clip would be moved inside the clip's place and stop at the bar's
+        # edge, with the new clip already beside it; over the whole screen, the window's still moves as it should
+        self.player.clip_place, self.player.clip_still = ((2, 0, 4, 4), (2, 2)), (2, 2)       # pillarboxed
+        for name in T.WIPES + T.SLIDES:
+            self.settings.data["mix"] = T.stored(name, 1.0)
+            del self.player.kinds[:], self.player.shown[:]
+            self.now[0] = 50.0
+            self.play()
+            self.assertEqual(self.player.kinds, ["window"], name)
+            self.assertEqual(self.player.shown[0][0], (0, 0, 8, 4), "%s: the still does not cover the screen" % name)
+            self.assertEqual(self.tr.last["ended"], "done", name)
+        self.player.clip_place = ((0, 1, 8, 2), (4, 1))                                          # letterboxed
+        self.player.clip_still = (4, 1)
+        for name in ("wipe-from-top", "slide-down"):
+            self.settings.data["mix"] = T.stored(name, 1.0)
+            del self.player.kinds[:]
+            self.play()
+            self.assertEqual(self.player.kinds, ["window"], name)
+        # a crossfade over the same place fades where the clip was, which is right: the clip's own still
+        self.settings.data["mix"] = T.stored("crossfade", 1.0)
+        del self.player.kinds[:]
+        self.play()
+        self.assertEqual(self.player.kinds, ["video"])
+        # and a move over a clip that fills the screen keeps the clip's own still
+        self.player.clip_place, self.player.clip_still = ((0, 0, 8, 4), (4, 2)), (4, 2)
+        self.settings.data["mix"] = T.stored("slide-left", 1.0)
+        del self.player.kinds[:], self.player.shown[:]
+        self.play()
+        self.assertEqual(self.player.kinds, ["video"])
+        self.assertEqual(self.player.shown[0][0], (0, 0, 8, 4))
+
+    def test_one_still_of_the_clip_that_misses_between_good_ones_does_not_count_up(self):
+        self.player.clip_place, self.player.clip_still = ((0, 1, 8, 2), (4, 1)), (4, 4)
         self.play()
         self.player.clip_still = (4, 1)
         self.play("b.mov")
