@@ -385,6 +385,12 @@ class Transitions:
         with self._mark:
             return ticket[0] == self._gen
 
+    def generation(self):
+        """The count of wishes so far: it moves with every play, Stop and generator (claim, newer, end with newer).
+        The render bridge (D94) reads it to tell a picture that ended by itself from one that something newer took."""
+        with self._mark:
+            return self._gen
+
     def ended_since(self, ticket):
         """True if an end() came since the ticket was taken: Blackout, a fade, an opacity change. The play's clip
         still loads, without its blend, and it leaves the picture's brightness to whoever set it since."""

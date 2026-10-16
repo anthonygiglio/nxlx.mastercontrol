@@ -84,6 +84,12 @@ ROWS = {
     ("GET", "/api/schedule"): KINDS["read"],
     ("GET", "/api/preview.jpg"): KINDS["read"],
     ("POST", "/api/play"): KINDS["guest"],
+    # Render nodes (D94): seeing them and cueing one by hand are running the room, the Operator's; keeping the list (where
+    # the box sends) is the Owner's and, by D84, a support session of his role's, as the OSC state targets. Controllers, a
+    # scene and the schedule reach a cue only through a pad, on /api/play, as before.
+    ("GET", "/api/render"): KINDS["op"],
+    ("POST", "/api/render"): KINDS["owner"],          # D84: a support session of the Owner's role too
+    ("POST", "/api/render/cue"): KINDS["op"],
     ("POST", "/api/control"): KINDS["guest"],
     ("POST", "/api/blackout"): KINDS["guest"],
     ("POST", "/api/vibes"): KINDS["guest"],

@@ -97,20 +97,36 @@ def _play(body, api):
         return False
     if "pad" in body and _ndi_pad(api, body["pad"]):
         raise Refused(403, NDI_PAD_TEXT)
+    if "pad" in body and _render_pad(api, body["pad"]):
+        raise Refused(403, RENDER_PAD_TEXT)
     return "loop" not in body or isinstance(body["loop"], bool)
 
 
 NDI_PAD_TEXT = "this pad plays an NDI source; ask an operator to start it"
+RENDER_PAD_TEXT = "this pad cues a render node; ask an operator to start it"
+
+
+def _pad_of(api, pad):
+    bank, index = pad
+    if isinstance(bank, bool) or isinstance(index, bool) or bank < 0 or index < 0:
+        raise IndexError(pad)
+    return api.settings.data["pads"]["banks"][bank]["pads"][index]
+
+
+def _render_pad(api, pad):
+    """True when [bank, index] names a pad that holds a render cue (D94): it sends to another machine on the network,
+    refused to a Guest as an NDI source and a stream are. Anything that is not a pad of the box is False here."""
+    try:
+        return api.pad_render(_pad_of(api, pad)) is not None
+    except Exception:
+        return False
 
 
 def _ndi_pad(api, pad):
     """True when [bank, index] names a pad that holds an NDI source: a network source, refused to a Guest as a
     stream is (D80, D62). Anything that is not a pad of the box is False here and answered by the handler."""
     try:
-        bank, index = pad
-        if isinstance(bank, bool) or isinstance(index, bool) or bank < 0 or index < 0:
-            return False
-        return api.pad_ndi(api.settings.data["pads"]["banks"][bank]["pads"][index]) is not None
+        return api.pad_ndi(_pad_of(api, pad)) is not None
     except Exception:
         return False
 
@@ -178,6 +194,8 @@ def _scene(body, api):
     box = scene.get("box") or {}
     if box.get("action") == "pad" and _ndi_pad(api, box.get("pad")):
         raise Refused(403, "this scene plays an NDI source; ask an operator to start it")
+    if box.get("action") == "pad" and _render_pad(api, box.get("pad")):
+        raise Refused(403, "this scene cues a render node; ask an operator to start it")
     return OFF if any(r.get("power") == "off" for r in scene.get("groups", [])) else True
 
 

@@ -735,6 +735,10 @@ class ImportTest(Base):
             ("room", []),
             ("recovery", {"usb": "yes"}),
             ("recovery", []),
+            ("render", {"nodes": [{"id": "abcd0001", "name": "Max", "host": "8.8.8.8", "port": 7400}]}),          # D94: not a private address
+            ("render", {"nodes": [{"id": "abcd0001", "name": "Max", "host": "max.example.com", "port": 7400}]}),  # a name on the internet
+            ("render", {"nodes": [{"id": "abcd0001", "name": "Max", "host": "192.168.1.9", "port": 53}]}),       # a reflector's port
+            ("render", {"nodes": [], "url": "x"}),
         ]
         self.assertEqual({section for section, _ in bad}, {name for name, _ in boxcare.SECTIONS})      # no section without a bad value
         for section, value in bad:
