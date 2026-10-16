@@ -37,6 +37,18 @@ What that costs, and the rules that follow:
   While an access code is on the display it dips as well (the code's pixels would go into the still).
 * The player draws no overlay with nothing to draw on, so a transition needs something playing.
 
+Smaller and quicker where the player can scale an overlay (D89; mpv 0.38 on draws one at a size of its own, given
+as `dw` and `dh`; asked once per player process, and a player that refuses gets everything above as it was):
+* The still is of the clip at its own size ("video") when that is smaller than the screen and is what the screen
+  shows: no mapping, no generator, the picture not turned, moved or enlarged past the screen, and nothing of the
+  panel's drawn over it (the logo, overlay 10). The effect, a flip and the brightness are in such a still; the
+  bars beside a clip of another shape are not, so there the new clip shows at once. It is laid over the clip's
+  place on the screen (`osd-dimensions`). Otherwise it is of the window, as before. The player's screenshot of the
+  clip costs less than one of the window (it does not read the screen back; see D89 for the Pi's figures).
+* A large still is read at half its width and height (`read_still`'s `half`) and drawn at its full size, so a step
+  of the crossfade scales and sends a quarter of the bytes; a wipe's or a slide's part is scaled the same way, its
+  edge moving in steps of two pixels on the screen.
+
 Rollback: an older release knows "cut" and "dip" only and refuses any other value when the transition or its
 duration is saved or a settings file is imported. So the settings keep `transition: "dip"` and name the newer
 transition beside it in `style`, a key older code never reads. It stays in the file there, unread, until
@@ -73,6 +85,13 @@ MOVES = 30.0                    # and by a wipe or a slide: a step of theirs rew
 FIRST_FRAME = 10.0              # seconds to wait for the new clip's first frame under the still (a stream that does not come)
 POLL = 0.03
 LATE = 5.0                      # seconds after a command the player did not answer, when the still is taken off once more
+# Where the player can draw an overlay at a size of its own (mpv 0.38 on, D89), a large still is read at half its
+# width and height and drawn at its full size: a quarter of the bytes at every step. A still of the window is halved
+# above HALF_WINDOW pixels (on a smaller screen the steps are cheap and the detail is worth more), any still above
+# HALF_ANY.
+HALF_WINDOW = 1280 * 720
+HALF_ANY = 1920 * 1080
+MISSES = 2                      # stills of the clip in a row not of the clip's size or shape, and the player gets stills of the window
 STILL_NAME = r"transition-\d+\.(?:png|bgra)(?:\.tmp)?"
 
 
@@ -99,11 +118,16 @@ class Gone(Exception):
     """The player a still was given to is not there any more (it stopped, or it is another process)."""
 
 
-def read_still(path, size):
+def read_still(path, size, half=None, within=False):
     """The pixels of the player's screenshot at `path` as premultiplied BGRA, opaque: (width, height, bytearray).
     The file must be what Player.still writes: an 8-bit PNG of exactly `size` whose rows are plain bytes (no row
     filter), so that reading it is a few copies and no arithmetic in Python. Anything else is refused with a
-    StillError, a file cut short anywhere too, and no more is unpacked than such a picture holds.
+    StillError, a file cut short anywhere too, and no more is unpacked than such a picture holds. With `within`
+    the picture may be any size that fits in `size` (a still of the clip at its own size, D89).
+
+    `half`: a picture of more than that many pixels comes out at half its width and height (every other pixel of
+    every other row, rounded up; the width and height returned are the halved ones). Picked by slicing whole rows,
+    as the rest is: no loop over pixels in Python. The player draws it at its full size again (D89).
 
     Memory: the file goes before its rows are unpacked, and the packed rows go before the result is made.
     Measured with tracemalloc: at most 2.3 times the picture's own bytes, which is about 34 MB for a 2560 x 1440
@@ -130,7 +154,8 @@ def read_still(path, size):
             if kind == b"IHDR":
                 w, h, depth, ctype = struct.unpack(">IIBB", view[pos + 8:pos + 18])
                 bpp = {2: 3, 6: 4}.get(ctype, 0) if depth == 8 else 0
-                if (w, h) != tuple(size) or not bpp:
+                fits = 0 < w <= size[0] and 0 < h <= size[1] if within else (w, h) == tuple(size)
+                if not fits or not bpp:
                     raise StillError("the still is not an 8-bit picture of the screen's size")
             elif kind == b"IDAT":
                 if not bpp:
@@ -161,12 +186,15 @@ def read_still(path, size):
     if len(raw) != stride * h or raw[0::stride].count(0) != h:
         raise StillError("the still's rows are not plain bytes")
     # Row by row on plain bytes: a step through bytes is a copy in C, the same step through a view was four times
-    # slower on a Pi 4. The alpha is there from the start.
-    out = bytearray(b"\xff") * (w * h * 4)
-    for y in range(h):
-        row, a, b = raw[y * stride + 1:(y + 1) * stride], y * w * 4, (y + 1) * w * 4
-        out[a:b:4], out[a + 1:b:4], out[a + 2:b:4] = row[2::bpp], row[1::bpp], row[0::bpp]
-    return w, h, out
+    # slower on a Pi 4. The alpha is there from the start. Halved: every other row, and in it every other pixel.
+    every = 2 if half is not None and w * h > half else 1
+    ow, oh, step = (w + every - 1) // every, (h + every - 1) // every, bpp * every
+    out = bytearray(b"\xff") * (ow * oh * 4)
+    for y in range(oh):
+        start = y * every * stride + 1
+        row, a, b = raw[start:start + w * bpp], y * ow * 4, (y + 1) * ow * 4
+        out[a:b:4], out[a + 1:b:4], out[a + 2:b:4] = row[2::step], row[1::step], row[0::step]
+    return ow, oh, out
 
 
 _TABLES = {}
@@ -264,7 +292,9 @@ class Transitions:
     | `_ends`  | every end()                                                   | a play that waited for its turn: was its blend ended meanwhile (the clip loads without it) |
 
     Beside them: `_held`, the token of the newest hold that began, and `_paused`, true while a hold has frozen the
-    clip and nobody has thawed it; the hold named by `_held` owns that thaw."""
+    clip and nobody has thawed it; the hold named by `_held` owns that thaw. And `_scaling`, (pid, True or False):
+    whether that player process draws an overlay at a size of its own (D89), asked once per process, by a hold,
+    under `_io`, before it freezes anything, and only while nothing of ours is on the screen."""
 
     def _effect_on(self):
         """The name of the effect that is on, from the effects' own memory (no question to the player, no lock), or
@@ -296,7 +326,11 @@ class Transitions:
         self._slow = []                     # the seconds of the slow stills in a row so far
         self._large = ""                    # the same for a screen that is too large, from the last look at it
         self.late = []                      # with no threads (tests): the removals `_once_more` would send later
-        self.last = {}                      # what the last one did: {"name", "still_ms", "steps", "seconds", "dropped", "ended"}
+        self.last = {}                      # what the last one did: {"name", "still_ms", "steps", "seconds", "dropped", "ended",
+        #                                     "still": "window" or "video", "still_size": [w, h] as sent, "drawn": [x, y, w, h] on the screen}
+        self._scaling = None                # (pid, bool): does that player draw an overlay at a size of its own (D89)
+        self._misses = 0                    # stills of the clip in a row that were not what the player said (D89)
+        self._no_clip = None                # the player process that gets stills of the window only, after MISSES of those
 
     # -- what the box will do --
     def fallback(self):
@@ -387,6 +421,11 @@ class Transitions:
             began = self._clock()               # from here: the wait behind another play's still is not this still's time
             froze, laid = inherited, False
             path = os.path.join(player.rundir, "transition-%d.png" % os.getpid())
+            # What plays now, by the player's own count of changes of hands (this play has claimed the screen
+            # already). A still that fails after something else took the screen is not the box being slow: a still
+            # of the clip is of the clip's size, and a generator or a list loaded meanwhile has another (D89).
+            epoch = getattr(player, "source_epoch", None)
+            kind, pid = "window", None
             try:
                 if self.api.access_on_screen():
                     return self._let_go(token, froze)
@@ -398,6 +437,22 @@ class Transitions:
                 if not size or size[0] * size[1] > MAX_PIXELS:
                     raise StillError("no screen size")
                 pid = player.ipc.request("get_property", "pid")
+                # What kind of still, and at what size (D89), decided before the freeze: where the player draws an
+                # overlay at a size of its own, the clip's own picture when that is the screen and smaller than it,
+                # else the window; a large one at half its size. `place` is where it is drawn on the screen; None
+                # where the player cannot scale, which is the full-size way of D71, command for command.
+                place, half, clip = None, None, None
+                if self._scales(player, pid):
+                    spot = self._clip_spot(player, size, pid)
+                    # A wipe or a slide moves across the whole screen: over a clip with bars beside it a still of
+                    # the clip alone would stop at the bar's edge, with the new clip already showing beyond it. So
+                    # they take the window unless the clip's place is the whole screen (the review of #138, M1).
+                    if spot is not None and blend().moves and spot[0] != (0, 0, size[0], size[1]):
+                        spot = None
+                    if spot is not None:
+                        kind, (place, clip), half = "video", spot, HALF_ANY
+                    else:
+                        place, half = (0, 0, size[0], size[1]), HALF_WINDOW
                 froze = inherited or player.ipc.request("get_property", "pause") is not True
                 player.pause(True)              # the outgoing picture stands still from the tap on (see the top)
                 if froze:
@@ -407,9 +462,21 @@ class Transitions:
                 # umask leaves every file of the panel, and removed here whatever happens.
                 os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o660))
                 shot = self._clock()            # the still alone: the player's screenshot and its reading
-                player.still(path)
-                w, h, pixels = read_still(path, size)
+                if kind == "video":
+                    player.still(path, "video")
+                else:
+                    player.still(path)
+                w, h, pixels = read_still(path, size, half, within=kind == "video")
                 shot = self._clock() - shot
+                if kind == "video":
+                    # its size, as the player gave it before the freeze (halved as read_still halves), and its shape
+                    want = clip if clip[0] * clip[1] <= HALF_ANY else ((clip[0] + 1) // 2, (clip[1] + 1) // 2)
+                    if (w, h) != tuple(want):
+                        raise StillError("the still of the clip is %d x %d, not the %d x %d the player said" % (w, h, want[0], want[1]))
+                    if abs(w * place[3] - h * place[2]) > 0.02 * w * place[3]:
+                        raise StillError("the still of the clip is %d x %d, not the shape of its place on the screen (%d x %d)" % (w, h, place[2], place[3]))
+                if place == (0, 0, w, h):
+                    place = None                # nothing to scale: the commands of D71
                 # An end() does not wait for a still (Stop and Blackout act at once), so the still looks for one:
                 # here, before it is laid down, and again under the overlay's lock, where end() takes it off.
                 stale = ticket is not None and (not self.newest(ticket) or self.ended_since(ticket))
@@ -421,20 +488,25 @@ class Transitions:
                     laid = True
                     with self._mark:
                         self._up = True
-                    self._lay(blend(), w, h, pixels)
+                    self._lay(blend(), w, h, pixels, place)
                     with self._mark:
                         # An end() that came while the still was laid (it marks at once, and then waits for `_io`
                         # to take the overlay off): the still is not this hold's any more, and goes here.
                         if token != self._token:
                             raise StillError("ended while the still was laid")
-                        self._still, self.running, self._pid = (w, h, pixels), name, pid
+                        self._still, self.running, self._pid = (w, h, pixels, place), name, pid
             except Exception as e:              # every kind: a frozen clip and a 500 are worse than any cause
                 ended = not self.current(token)
                 gone = isinstance(e, PlayerError) and ("not running" in str(e) or "ipc error" in str(e))
                 self._let_go(token, froze, remove=laid)
                 if not ended:
                     self.log("pvj-web: no %s, a cut instead: %s" % (name, e))
-                    if not gone:                # a player that went away is not a box that is too slow
+                    moved = epoch is not None and getattr(player, "source_epoch", None) != epoch
+                    if kind == "video" and not gone and "no reply" not in str(e):
+                        # a still of the clip that failed or is not what was expected (the player refused that kind
+                        # of screenshot, or the clip changed hands): a cut, never a give-up; the window's next
+                        self._clip_missed(pid)
+                    elif not gone and not moved:    # a player that went away, or a picture that changed hands, is not a box that is too slow
                         self._give_up("the still failed (%s)" % (str(e) or type(e).__name__)[:80])
                 if "no reply" in str(e):
                     self._once_more()
@@ -445,8 +517,11 @@ class Transitions:
                 except OSError:
                     pass
             took = self._clock() - began
+            if kind == "video":
+                with self._mark:
+                    self._misses = 0
             self.last = {"name": name, "still_ms": int(round(shot * 1000)), "hold_ms": int(round(took * 1000)), "steps": 0,
-                         "seconds": 0.0, "ended": ""}
+                         "seconds": 0.0, "ended": "", "still": kind, "still_size": [w, h], "drawn": list(place or (0, 0, w, h))}
             # One slow still is used and nothing more: the blend starts late this once. The box gives up when
             # stills are slow one after the other, or when one took hopelessly long. The duration asked for is not
             # part of the rule: at the box's own default of one second it made every slow still the last one.
@@ -461,12 +536,80 @@ class Transitions:
                 self._slow = []
             return token
 
+    def _scales(self, player, pid):
+        """True if the player process `pid` draws an overlay at a size of its own (D89). Asked once per process,
+        with one transparent pixel under our overlay's number (`Player.overlay_scales`), so only while nothing of
+        ours is on the screen: with a still up (a play during a transition) the answer is "no" this once, which is
+        the full-size way. A player that does not answer is asked again next time. One line in the log for a
+        player that cannot."""
+        probe = getattr(player, "overlay_scales", None)
+        if probe is None:
+            return False
+        with self._mark:
+            known = self._scaling
+        if known is not None and known[0] == pid:
+            return known[1]
+        with self._io:
+            with self._mark:
+                if self._up:
+                    return False
+            try:
+                took = bool(probe(OVERLAY_ID))
+            except (PlayerError, OSError):      # no answer, or the pixel's file could not be written: cannot tell
+                return False
+        with self._mark:
+            self._scaling = (pid, took)
+        if not took:
+            self.log("pvj-web: transitions: this player (process %s) cannot draw an overlay at another size (mpv before 0.38): "
+                     "stills are taken of the window and sent at full size" % pid)
+        return took
+
+    def _drawn_over(self):
+        """True when something of the panel's own may be drawn over the clip besides the still: the picture over
+        the video (pvj/overlay.py, overlay 10, a logo). A still of the clip alone would leave it out. (The access
+        codes and the player's on-screen text make a transition dip before this is asked: `hold`.) When unsure, yes."""
+        try:
+            cfg = self.api.settings.data["overlay"]
+            return bool(cfg.get("on") and cfg.get("file"))
+        except Exception:
+            return True
+
+    def _clip_spot(self, player, size, pid):
+        """Where to lay a still of the clip at its own size: ((x, y, width, height) on the screen, (width, height) of
+        the clip's picture), or None for a
+        still of the window (`Player.video_place` says when the clip's own picture is the screen). None for the
+        rest of a player process in which two stills of the clip in a row were not what was expected."""
+        place = getattr(player, "video_place", None)
+        with self._mark:
+            off = self._no_clip == pid
+        if place is None or off or self._drawn_over():
+            return None
+        try:
+            spot = place(tuple(size))
+        except PlayerError:
+            return None
+        return (tuple(spot[0]), tuple(spot[1])) if spot else None
+
+    def _clip_missed(self, pid):
+        """A still of the clip was not of the size or the shape its place on the screen said (D89). Once is a cut
+        and no reason to give up: the clip may have changed hands between the look and the screenshot (a
+        generator's carrier is loaded before the player counts the change). MISSES in a row, and this player
+        process gets stills of the window from then on, which is the way that works everywhere."""
+        with self._mark:
+            self._misses += 1
+            stop = self._misses >= MISSES and self._no_clip != pid
+            if stop:
+                self._no_clip, self._misses = pid, 0
+        if stop:
+            self.log("pvj-web: transitions: %d stills of the clip in a row were not what the player said; stills of the window "
+                     "from now on for this player (process %s)" % (MISSES, pid))
+
     def _source(self):
         return os.path.join(self.api.player.rundir, "transition-%d.bgra" % os.getpid())
 
-    def _lay(self, blend, w, h, pixels):
-        """The whole still on the screen, as the blend's first moment (under `_io`). For a wipe or a slide the
-        still's bytes go into a file first, once: every step then names a part of it. One more row of nothing
+    def _lay(self, blend, w, h, pixels, place=None):
+        """The whole still on the screen at `place` (see `_show`), as the blend's first moment (under `_io`). For a
+        wipe or a slide the still's bytes go into a file first, once: every step then names a part of it. One more row of nothing
         follows the picture, because the player maps `offset` plus `height` whole rows, and a part that begins in
         the middle of a row would otherwise end past the file. The file comes by a rename: the player may still be
         reading the one before it (a second play during a transition)."""
@@ -478,20 +621,40 @@ class Transitions:
                 f.write(pixels)
                 f.write(bytes(w * 4))
             os.replace(path + ".tmp", path)
-        self._show(blend, w, h, pixels, 0.0)
+        self._show(blend, w, h, pixels, 0.0, place=place)
 
-    def _show(self, blend, w, h, pixels, progress, part=None):
+    @staticmethod
+    def on_screen(place, w, h, x, y, pw, ph):
+        """The part (x, y, pw, ph) of a still of w x h, where the still is drawn at `place` (x, y, width, height on
+        the screen): (x, y, width, height) of that part on the screen. Both edges are rounded, so parts side by
+        side meet, and a part is never drawn less than a pixel wide."""
+        X, Y, W, H = place
+        left, top = X + int(round(x * W / float(w))), Y + int(round(y * H / float(h)))
+        right, bottom = X + int(round((x + pw) * W / float(w))), Y + int(round((y + ph) * H / float(h)))
+        return left, top, max(1, right - left), max(1, bottom - top)
+
+    def _show(self, blend, w, h, pixels, progress, part=None, place=None):
         """Draw the blend at `progress` (under `_io`). False if it has nothing more to draw. `part` is what
         `blend.step` gave for this moment, where the caller has asked already: a crossfade's step scales the whole
-        still, and that is done once."""
+        still, and that is done once. `place`: where the still is drawn on the screen, at a size of the player's
+        (D89); None for the still's own size at 0, 0, which is D71's commands as they were."""
         part = blend.step(w, h, pixels, progress) if part is None else part
         if part is None:
             return False
+        player = self.api.player
         if blend.moves:
             x, y, offset, pw, ph = part
-            self.api.player.overlay_part(OVERLAY_ID, self._source(), x, y, offset, pw, ph, w * 4)
+            if place is None:
+                player.overlay_part(OVERLAY_ID, self._source(), x, y, offset, pw, ph, w * 4)
+            else:
+                sx, sy, sw, sh = self.on_screen(place, w, h, x, y, pw, ph)
+                player.overlay_part(OVERLAY_ID, self._source(), sx, sy, offset, pw, ph, w * 4, sw, sh)
+        elif place is None:
+            player.overlay(OVERLAY_ID, *part)
         else:
-            self.api.player.overlay(OVERLAY_ID, *part)
+            x, y, pw, ph, shown = part
+            sx, sy, sw, sh = self.on_screen(place, w, h, x, y, pw, ph)
+            player.overlay(OVERLAY_ID, sx, sy, pw, ph, shown, sw, sh)
         return True
 
     def _let_go(self, token, froze, remove=False, locked=False):
@@ -648,7 +811,7 @@ class Transitions:
             with self._mark:
                 if token != self._token or self._still is None:
                     return "ended"
-                (w, h, pixels), name, pid = self._still, self.running, self._pid
+                (w, h, pixels, place), name, pid = self._still, self.running, self._pid
             blend = BLENDS[name]()
             part = blend.step(w, h, pixels, progress)       # once: for a crossfade this is the whole still, scaled
             if part is None:
@@ -659,7 +822,7 @@ class Transitions:
                 raise Gone(str(e))
             if not same:
                 raise Gone("the player was restarted")
-            self._show(blend, w, h, pixels, progress, part)
+            self._show(blend, w, h, pixels, progress, part, place)
             return "drawn"
 
     def _work(self, token, seconds, name):
