@@ -79,14 +79,16 @@ def temperatures(root="/"):
 
 
 def drm_connectors(root="/"):
-    """Display connectors from /sys/class/drm with connection state and modes."""
+    """Display connectors from /sys/class/drm with connection state, modes and card: `cardN-NAME` is the output NAME
+    of /dev/dri/cardN, so `card` is N (on a Pi 4 the outputs are card1's; card0 is v3d, which has none)."""
     result = []
     pattern = os.path.join(root, "sys/class/drm/card*-*")
     for path in sorted(glob.glob(pattern)):
-        name = os.path.basename(path).split("-", 1)[1]
+        head, name = os.path.basename(path).split("-", 1)
         status = _read("/", os.path.join(path, "status")) or "unknown"
         modes = (_read("/", os.path.join(path, "modes")) or "").split()
-        result.append({"connector": name, "status": status, "modes": modes})
+        m = re.fullmatch(r"card([0-9]{1,3})", head)
+        result.append({"connector": name, "status": status, "modes": modes, "card": int(m.group(1)) if m else None})
     return result
 
 
