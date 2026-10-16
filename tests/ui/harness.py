@@ -36,6 +36,13 @@ os.environ.update(PVJ_STATE_DIR=tmp, PVJ_MEDIA_DIR=media, PVJ_DEV_SPAWN="1")
 _mpv = os.path.join(tmp, "no-such-mpv") if os.environ.get("PVJ_HARNESS_NO_PLAYER") else "mpv"
 player = Player(mpv_bin=_mpv, extra_args=["--vo=null", "--ao=null"], rundir=rundir)
 api, auth, _ = server.build(os.environ, player=player)
+# D90: the report a player on the owner's 1440p monitor writes (the list of tests/test_screenmode.py), so Setup >
+# Screen output has a screen's modes to show; the real player here draws to no screen (--vo=null). No pid: the panel
+# never takes this for the player it talks to, so nothing is restarted for it.
+from pvj import screenmode  # noqa: E402
+from tests.test_screenmode import MONITOR, connected  # noqa: E402
+_rep = screenmode.decide({"mode": "auto"}, screenmode.parse_help(MONITOR), "", connected(), "harness")
+screenmode.write_json(os.path.join(rundir, screenmode.REPORT), dict(_rep, pid=None, boot="harness", at=0))
 from tests.test_netd import FakeNm, make_sysfs  # noqa: E402
 from pvj.netd import NetService  # noqa: E402
 

@@ -1181,6 +1181,10 @@
           onclick: function () { send({ action: 'edit', target: t[0] }); } });
       })));
       stage.appendChild(testRow);
+      // D90: the screen's mode changed to another shape under this mapping (16:9 to 4:3, say): its corners were
+      // moved to fit, each way on its own, so shapes are squeezed. Said until the mapping is next changed.
+      if (d.reshaped && d.made_at) stage.appendChild(h('div', { class: 'hint warn', id: 'mapreshaped', role: 'status',
+        text: 'This mapping was made on a ' + d.made_at[0] + ' x ' + d.made_at[1] + ' screen, another shape than this one (' + d.screen[0] + ' x ' + d.screen[1] + '). Its corners were moved to fit, so shapes may be squeezed: check each surface on the screen.' }));
       stage.appendChild(h('div', { class: 'hint', text: 'Masks: use the overlay picture on Shape > Picture (a PNG, black where no light should fall). Map at 1920x1080 or less on a Pi 4; at 2560x1440 it drops frames.' }));
       // the owner's switch for mapping mode (D75): in the stage, with the other controls that act on the whole mapping.
       // The mapping is an Operator's since D80; this switch stays the Owner's (the box refuses it to anyone else), so
@@ -1658,6 +1662,9 @@
       { id: 'network', group: 'box', name: 'Network', role: 'full', module: 'network', url: '/api/network', urlRole: 'full',
         blurb: 'Change the box\'s wired and Wi-Fi network: automatic, a fixed address, a direct cable, handing out addresses, joining a Wi-Fi network or making its own hotspot. Every change goes back by itself unless you confirm it.',
         body: function () { return [networkCard()]; } },
+      { id: 'screen', group: 'box', name: 'Screen output', role: 'full', url: '/api/screen', urlRole: 'full',
+        blurb: 'The size and rate the box sends to the screen or projector. Automatic picks the screen\'s own mode up to 1920 x 1200 at 60 Hz. A change is tried and goes back by itself unless you keep it.',
+        body: function () { return [screenCard()]; } },
       { id: 'updates', group: 'box', name: 'Updates', role: 'full', url: '/api/system',
         blurb: 'Install a newer version from a USB stick or an upload. Only updates signed with your key are taken, and a failed one goes back by itself.',
         body: function () { return [updateCard()]; } },
@@ -1867,6 +1874,12 @@
       d.interfaces.forEach(function (i) { if (i.kind === 'wired') addr = addr.concat(i.addresses || []); });
       var ports = (d.wifi && d.wifi.ports) || {}, air = Object.keys(ports).filter(function (k) { return ports[k] && ports[k].ssid; }).map(function (k) { return (ports[k].hotspot ? 'Own hotspot: ' : 'Wi-Fi: ') + ports[k].ssid; });
       return st('ready', air.concat(addr.length ? ['wired: ' + addr.join(', ')] : []).join(', ') || 'No wired address');
+    },
+    screen: function (d) {
+      if (d.pending) return st('active', 'A mode is being tried: keep it or it goes back');
+      var now = screenWords(d.used) + (d.saved === 'auto' ? ' (Automatic)' : ' (chosen)');
+      if (d.why) return st('check', now + '. ' + d.why);
+      return st(d.used ? 'ready' : null, now);
     },
     updates: function (d) { return st(null, 'Version ' + d.version); },
     support: function (d) {
@@ -2952,6 +2965,85 @@
       if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'hint', id: 'audiomsg', text: (r.data.error || 'Not available') + '. Open the page again in a moment.' })); return; }
       draw(r.data);
     });
+    return card;
+  }
+  // ---- the screen's mode (D90) ------------------------------------------
+  // "1920x1080@60.00" -> "1920 x 1080 at 60 Hz"; null -> the screen's own mode
+  function screenWords(text) {
+    var m = /^(\d+)x(\d+)@(\d+\.\d\d)$/.exec(text || '');
+    if (!m) return 'The screen\'s own mode';
+    return m[1] + ' x ' + m[2] + ' at ' + String(parseFloat(m[3])) + ' Hz';
+  }
+  var screenTimer = null, screenPick = null;
+  function screenCard() {
+    clearTimeout(screenTimer);
+    var body = h('div', { class: 'list sp', id: 'screenbody' }, h('div', { class: 'state', text: 'Loading...' }));
+    var card = h('div', { class: 'card', id: 'screencard' }, h('h2', { text: 'Screen output' }), body);
+    var out = h('div', { class: 'msg inmsg', id: 'screenmsg', role: 'status' });
+    function refresh() {
+      clearTimeout(screenTimer);
+      api('GET', '/api/screen').then(function (r) {
+        if (!document.getElementById('screencard')) return;
+        if (asking(card)) { screenTimer = setTimeout(refresh, 1000); return; }      // a question is open: not wiped
+        if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'hint', id: 'screenerr', text: (r.data.error || 'Not available') + '. Open the page again in a moment.' })); return; }
+        draw(r.data);
+      });
+    }
+    function draw(d) {
+      body.textContent = '';
+      var p = d.pending;
+      body.appendChild(h('div', { class: 'state', id: 'screenline', text: 'In use: ' + screenWords(d.used) + (d.saved === 'auto' ? ', Automatic.' : ', chosen by hand.') }));
+      if (d.display) body.appendChild(h('div', { class: 'hint', id: 'screendisplay', text: 'The player draws ' + d.display.width + ' x ' + d.display.height + ' at ' + d.display.hz + ' Hz' + (d.connector ? ' on ' + d.connector : '') + '.' }));
+      if (d.why) body.appendChild(h('div', { class: 'hint warn', id: 'screenwhy', role: 'status', text: d.why.charAt(0).toUpperCase() + d.why.slice(1) + '.' }));
+      if (d.note) body.appendChild(h('div', { class: 'hint warn', id: 'screennote', role: 'status', text: d.note }));
+      if (p) {
+        var left = p.state === 'waiting' ? 'Going back in ' + p.seconds_left + ' s' : 'The player is starting with it...';
+        body.appendChild(h('div', { class: 'card', id: 'screenpending', role: 'alert' },
+          h('div', { class: 'field', text: 'Keep this mode? ' + screenWords(p.mode === 'auto' ? d.automatic : p.mode) + (p.mode === 'auto' ? ' (Automatic)' : '') }),
+          h('div', { class: 'state', id: 'screenleft', text: left }),
+          h('div', { class: 'hint', text: 'Look at the screen or projector. If the picture is wrong or black, do nothing: it goes back to ' + (p.previous === 'auto' ? 'Automatic' : screenWords(p.previous)) + ' by itself.' }),
+          h('div', { class: 'row' },
+            h('button', { class: 'btn on pri grow', id: 'screenkeep', text: 'Keep this mode', disabled: p.state !== 'waiting', onclick: function () {
+              api('POST', '/api/screen/confirm', {}).then(function (r) { sayAt(out, r.ok ? 'Kept.' : (r.data.error || 'Could not keep it'), !r.ok); refresh(); });
+            } }),
+            h('button', { class: 'btn grow', id: 'screenback', text: 'Go back now', onclick: function () {
+              api('POST', '/api/screen/revert', {}).then(function () { refresh(); });
+            } }))));
+        body.appendChild(out);
+        screenTimer = setTimeout(refresh, 1000);
+        return;
+      }
+      if (!d.modes.length) {
+        body.appendChild(h('div', { class: 'hint', id: 'screennone', text: d.connected ? 'The screen\'s modes are not known yet. They are read each time the player starts.' : 'No screen is connected. Connect one and restart the player (or the box); its modes are read then.' }));
+      } else {
+        var current = d.saved;
+        if (screenPick === null || (screenPick !== 'auto' && !d.modes.some(function (m) { return m.mode === screenPick; }))) screenPick = current;
+        var sel = h('select', { class: 'text-input', id: 'screenmode', onchange: function () { screenPick = sel.value; tryBtn.disabled = sel.value === current; } },
+          [h('option', { value: 'auto', text: 'Automatic (recommended)' + (d.automatic ? ': ' + screenWords(d.automatic) : ''), selected: screenPick === 'auto' })].concat(
+            d.modes.map(function (m) {
+              return h('option', { value: m.mode, text: m.words + (m.mode === d.own ? ' (the screen\'s own)' : ''), selected: screenPick === m.mode });
+            })));
+        body.appendChild(labelled('Mode', sel, 'The sizes and rates this screen says it takes' + (d.connector ? ' (' + d.connector + ')' : '') + '. 60 Hz suits clips made at 30 or 29.97 frames a second; 50 Hz suits clips made at 25.'));
+        if (d.saved === 'auto' && d.auto_why) body.appendChild(h('div', { class: 'hint', id: 'screenauto', text: 'Automatic chose ' + d.auto_why + '.' }));
+        var tryBtn = h('button', { class: 'btn on pri grow', id: 'screentry', text: 'Try this mode', disabled: screenPick === current, onclick: function (e) {
+          var want = sel.value;
+          confirmRow('The player restarts and the screen goes dark for a few seconds. Then you have ' + d.keep_seconds + ' seconds to keep the new mode; if you do not, it goes back by itself.',
+            'Try it', 'Cancel', function () {
+              sayAt(out, 'Trying it...');
+              api('POST', '/api/screen', { mode: want }).then(function (r) {
+                if (!r.ok) sayAt(out, (r.data.error || 'Could not try it') + '. Nothing was changed.', true);
+                else { screenPick = null; draw(r.data); screenTimer = setTimeout(refresh, 1000); }
+              });
+            }, e.currentTarget);
+        } });
+        body.appendChild(h('div', { class: 'row' }, tryBtn));
+      }
+      body.appendChild(out);
+      body.appendChild(h('div', { class: 'field', text: 'Test pattern' }));
+      body.appendChild(h('div', { class: 'hint', text: 'Colour bars at the screen\'s own size, with a grid, a red border one pixel wide at the very edge and the mode in words, in place of what plays. A border you cannot see means the projector cuts the edge off.' }));
+      body.appendChild(h('div', { class: 'row' }, testPattern()));
+    }
+    refresh();
     return card;
   }
   // ---- autostart -------------------------------------------------------

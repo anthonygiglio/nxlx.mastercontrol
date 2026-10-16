@@ -697,6 +697,10 @@ def build(env=None, player=None):
     except Exception as e:
         print("pvj-web: an old transition was not tidied: %s" % e, file=sys.stderr)
     try:
+        api.screen.start()                   # the screen's mode the player reads (D90); a try left from before goes back
+    except Exception as e:
+        print("pvj-web: screen output not written: %s" % e, file=sys.stderr)
+    try:
         api.sync.apply()                     # lead or follow, as the settings say
     except Exception as e:                   # a busy port must not stop the panel
         print("pvj-web: sync not started: %s" % e, file=sys.stderr)

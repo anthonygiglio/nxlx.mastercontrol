@@ -1979,7 +1979,9 @@ class RealFaderTest(Base):
         self.now[0] += 180
         self.hook = lambda: self.api.test_pattern({"on": True}, None, "t")
         self.assertFalse(self.vibes.tick())
-        self.assertEqual((self.player.path, self.vibes.running), (self.player.TEST_PATTERN, False))
+        # the test pattern is what plays (at the screen's size since D90, so not the fixed TEST_PATTERN text)
+        self.assertEqual((self.player.path, self.vibes.running), (self.api._pattern_url(), False))
+        self.assertTrue(self.api.is_test_pattern(self.player.path))
 
     def test_vibes_never_calls_the_panels_fader(self):
         used = []

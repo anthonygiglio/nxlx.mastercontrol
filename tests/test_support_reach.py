@@ -44,6 +44,8 @@ REFUSED = {
     ("POST", "/api/system/poweroff"), ("POST", "/api/system/factory-reset"),
     # the confirm of a network change: only someone at the studio can show that the studio still reaches the box
     ("POST", "/api/network/confirm"),
+    # the keep of a screen mode (D90): only someone in the room sees what the projector shows
+    ("POST", "/api/screen/confirm"),
     # the NDI discovery server on this box (D85): a listener on the network is the owner's, in the room
     ("GET", "/api/ndi/discovery"), ("POST", "/api/ndi/discovery"),
 }
