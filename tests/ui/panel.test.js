@@ -401,7 +401,7 @@ function startServer(env) {          // env: more for the harness's environment 
     assert.deepStrictEqual(await page.$$eval('.navhead', (hs) => hs.map((x) => x.textContent)), ['Everyday', 'Show tools', 'This box']);
     assert.deepStrictEqual(await page.$$eval('.navname', (ns) => ns.map((x) => x.textContent)), ['Health', 'Projectors', 'Room', 'Schedule', 'Shaders and Vibes', 'People and codes', 'Sound',
       'At power-up', 'Streams', 'NDI\u00ae input', 'NDI\u00ae discovery server', 'Projection mapping', 'Boxes in step', 'MIDI controller', 'DMX lighting desk', 'OSC',
-      'Network', 'Updates', 'Remote support', 'Secure connection', 'Backup and reset', 'Look', 'About and power'], 'the rows a full-access device sees');
+      'Network', 'Screen output', 'Updates', 'Remote support', 'Secure connection', 'Backup and reset', 'Look', 'About and power'], 'the rows a full-access device sees');
     const low = await page.$$eval('.navrow', (rs) => rs.filter((r) => r.getBoundingClientRect().height < 56).map((r) => r.textContent));
     assert.deepStrictEqual(low, [], 'every row is at least 56 px high');
     assert.strictEqual(await page.textContent('#notbuilt summary'), 'Not built yet (4)');
@@ -417,6 +417,32 @@ function startServer(env) {          // env: more for the harness's environment 
     await chip('At power-up', 'Off');
     await fitsCard('.card', 'System index');
     await fitsPhone('System index');
+    // Screen output (D90): the screen's own list (the harness writes the report a player on the owner's 1440p monitor
+    // would write), Automatic first with what it chose; a try is asked in place first, and Cancel sends nothing
+    await chip('Screen output', 'Ready');
+    await sys('Screen output');
+    await page.waitForSelector('#screenline');
+    assert.strictEqual(await page.textContent('#screenline'), 'In use: 1920 x 1080 at 60 Hz, Automatic.');
+    assert.strictEqual(await page.$eval('#screenmode', (s) => s.options[0].textContent), 'Automatic (recommended): 1920 x 1080 at 60 Hz');
+    assert.strictEqual(await page.$eval('#screenmode', (s) => s.options[1].textContent), '2560 x 1440 at 74.97 Hz (the screen\'s own)');
+    assert(/2560 x 1440 at 74.97 Hz/.test(await page.textContent('#screenauto')), 'why Automatic chose what it chose');
+    assert(/50 Hz suits clips made at 25/.test(await page.textContent('#screenmodewrap')), 'the note on 50 Hz');
+    assert(await page.isDisabled('#screentry'), 'nothing to try while what is saved is chosen');
+    await page.selectOption('#screenmode', '1920x1080@50.00');
+    assert(!(await page.isDisabled('#screentry')), 'another mode can be tried');
+    {
+      let tried = false;
+      const seen = (r) => { if (r.method() === 'POST' && r.url().endsWith('/api/screen')) tried = true; };
+      page.on('request', seen);
+      await page.click('#screentry');
+      await page.waitForSelector('#confirmrow:has-text("The player restarts")');
+      await page.click('#confirmno');
+      page.off('request', seen);
+      assert(!tried, 'Cancel sent nothing');
+    }
+    assert(await page.isVisible('#screencard #testpattern'), 'the test pattern is on the page');
+    await onPage('Screen output');
+    await sysIndex();
     // Network: switch the module on, preview, apply, watch the countdown, confirm
     await sys('Network');
     assert.strictEqual(await page.locator('#netcard').count(), 0, 'a module that is off shows no card');
@@ -3181,7 +3207,7 @@ function startServer(env) {          // env: more for the harness's environment 
       for (const name of ['Health', 'Projectors', 'Shaders and Vibes', 'People and codes', 'Sound', 'At power-up', 'Streams', 'Boxes in step', 'About and power']) {
         assert(rows.includes(name), 'an operator sees ' + name + ': ' + rows.join(', '));
       }
-      for (const name of ['Network', 'Updates', 'Remote support', 'Backup and reset', 'Look', 'DMX lighting desk', 'OSC']) {
+      for (const name of ['Network', 'Screen output', 'Updates', 'Remote support', 'Backup and reset', 'Look', 'DMX lighting desk', 'OSC']) {
         assert(!rows.includes(name), 'an operator does not see ' + name + ': ' + rows.join(', '));
       }
     }

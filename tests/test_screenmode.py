@@ -414,6 +414,25 @@ class ScreenTest(unittest.TestCase):
         self.assertEqual(self.screen.report()["used"], "1920x1080@60.00")
         self.assertEqual(self.screen.note, "Nobody kept 1920 x 1080 at 50 Hz, so it went back by itself.")
 
+    def test_the_15_seconds_begin_when_the_new_player_is_up_not_at_the_tap(self):
+        player = self.api.player
+
+        def slow_quit():                          # the service needs a few seconds to start the new one
+            player.quits += 1
+            player.pid += 1
+        player.quit = slow_quit
+        self.screen.choose("1920x1080@50.00")
+        self.assertEqual(self.screen.state()["pending"]["state"], "starting")
+        self.later(6)
+        self.player_started()
+        self.assertEqual(self.screen.tick(), "counting")
+        st = self.screen.state()["pending"]
+        self.assertEqual((st["state"], st["seconds_left"]), ("waiting", 15))
+        self.later(10)
+        self.assertFalse(self.timers[-1].fn(), "16 seconds after the tap, 10 after the picture: not yet")
+        self.later(5)
+        self.assertTrue(self.timers[-1].fn())
+
     def test_kept_it_is_saved_and_stays(self):
         self.screen.choose("1920x1080@50.00")
         st = self.screen.confirm()
