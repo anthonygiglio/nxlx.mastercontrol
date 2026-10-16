@@ -213,6 +213,12 @@ class Autostart:
         Returns True if it ran."""
         pid = self._pid()
         self._ticks += 1
+        screen = getattr(self.api, "screen", None)
+        if screen is not None:              # the screen's mode (D90): a try's countdown, a mode that gave no screen
+            try:
+                screen.watch(pid)
+            except Exception as e:
+                self.log("pvj-web: screen output: %s" % e)
         if pid is not None and pid == self.seen_pid and self._ticks % AUDIO_CHECK_EVERY == 0:
             ensure = getattr(self.api, "ensure_audio", None)
             if ensure:

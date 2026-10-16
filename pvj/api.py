@@ -26,6 +26,7 @@ from . import dmx as dmx_mod, hardware, midi as midi_mod, netcfg, osc as osc_mod
 from . import auth as auth_mod
 from . import locks, paths
 from . import policy
+from . import screenmode
 from . import transitions as transitions_mod
 from .auth import Auth, AuthError
 from .modules import ModuleError
@@ -283,6 +284,10 @@ class Api:
         self.room = room_mod.Room(self, log=lambda line: self.log(line))     # groups, scenes and the Room screen (see room.py)
         from . import boxcare as boxcare_mod
         self.boxcare = boxcare_mod.BoxCare(self)                   # settings export and import, diagnostics, factory reset
+        # The screen's mode (D90): the setting beside settings.json, the player's report beside its socket.
+        player_dir = os.path.dirname(getattr(player, "socket_path", "") or "") or paths.player_dir()
+        self.screen = screenmode.Screen(self, settings, os.path.dirname(getattr(settings, "path", "") or "") or ".",
+                                        player_dir, log=lambda line: self.log(line))
 
     # --- helpers -------------------------------------------------------
     # The picture's level: one rule for everything that loads something (a clip by a cut, a dip or a blend, a list, a
@@ -538,7 +543,8 @@ class Api:
                 "system": {"board": self.board["kind"], "model": self.board["model"],
                            "temp_c": max((t["celsius"] for t in temps), default=None)},
                 "device": device, "support": self.support.banner(), "guest_controls": self.guests.state(),
-                "reach": policy.reach(device, self.guests.locked())}
+                "reach": policy.reach(device, self.guests.locked()),
+                "screen": self.screen.brief()}           # the mode in use, the one asked for, and why they differ (D90)
 
     def access_on_screen(self):
         """True while the PIN or join codes are drawn on the display (on request, or the first-run screen)."""
@@ -691,7 +697,7 @@ class Api:
             self._hold_speed(False)
             if not self._speed_held:
                 status["speed"] = self.levels["speed"]
-        if path == getattr(self.player, "TEST_PATTERN", None):
+        if self.is_test_pattern(path):
             status["path"], status["test_pattern"] = None, True
             effect = self.effects.current()               # the colour bars are a picture too, and take an effect (seen on the Pi 4)
             if effect is not None:
@@ -1924,22 +1930,64 @@ class Api:
         return self._mpv_ver
 
     def test_pattern(self, body, device, client):
-        """Show colour bars (for lining up a projector), or stop them. They come from the player itself, no file."""
+        """Show colour bars (for lining up a projector), or stop them. They come from the player itself, no file.
+        At the screen's own size (D90) they carry a grid and a border one pixel wide at the very edge, and the mode
+        in words is drawn over them (Screen.tick keeps it there while they are on)."""
         on = body.get("on")
         if on == "toggle":                          # a controller's button (D75): off if the bars are on, else on
-            on = self._player_call(self.player.status).get("path") != self.player.TEST_PATTERN
+            on = not self.is_test_pattern(self._player_call(self.player.status).get("path"))
         if not isinstance(on, bool):
             raise bad("on must be true or false")
         if not on:
             self._stop_screen()
             self._stop_capture()
             self._stop_ndi()
+            self.screen.pattern_words(False)
             return {"test_pattern": False}
         mark = self._level_mark()
-        self._as_newest("another play", self.player.play, [self.player.TEST_PATTERN], True, None, False, self.spawn)
+        self._as_newest("another play", self.player.play, [self._pattern_url()], True, None, False, self.spawn)
         self._show_level(mark)
         self._started_playing()
+        self.screen.pattern_words(True)
         return {"test_pattern": True}
+
+    def _pattern_url(self):
+        """The test pattern at the size the player draws at, or the old colour bars when that is not known."""
+        try:
+            size = self.player.osd_size()
+        except Exception:
+            size = None
+        if size and all(isinstance(n, int) and not isinstance(n, bool) for n in size):
+            try:
+                return screenmode.pattern_url(size)
+            except ValueError:
+                pass
+        return self.player.TEST_PATTERN
+
+    def is_test_pattern(self, path):
+        return isinstance(path, str) and (path == getattr(self.player, "TEST_PATTERN", None) or path.startswith(screenmode.PATTERN_PREFIX))
+
+    # --- the screen's mode (D90) -------------------------------------------
+    def _screen_call(self, fn, *args):
+        try:
+            return fn(*args)
+        except screenmode.ScreenError as e:
+            raise ApiError(e.status, e.message)
+
+    def get_screen(self, body, device, client):
+        return self.screen.state()
+
+    def set_screen(self, body, device, client):
+        """{"mode": "auto" | "1920x1080@60.00"}: tried at once (the player restarts), and back by itself unless kept."""
+        if set(body) != {"mode"}:
+            raise bad("send mode: auto or one of the screen's modes")
+        return self._screen_call(self.screen.choose, body["mode"])
+
+    def confirm_screen(self, body, device, client):
+        return self._screen_call(self.screen.confirm)
+
+    def revert_screen(self, body, device, client):
+        return self._screen_call(self.screen.revert)
 
     def set_mix(self, body, device, client):
         # one of the two may be left out (OSC sets them one at a time, D75): the other stays as it is
@@ -4165,6 +4213,10 @@ class Api:
             ("POST", "/api/fadein"): ("live", self.fadein),
             ("POST", "/api/fade"): ("live", self.fade),
             ("POST", "/api/testpattern"): ("live", self.test_pattern),
+            ("GET", "/api/screen"): ("full", self.get_screen),          # the screen's mode (D90): the Owner's
+            ("POST", "/api/screen"): ("full", self.set_screen),
+            ("POST", "/api/screen/confirm"): ("full", self.confirm_screen),     # never through the support tunnel (D84)
+            ("POST", "/api/screen/revert"): ("full", self.revert_screen),
             ("POST", "/api/testtone"): ("live", self.test_tone),
             ("POST", "/api/media/info"): ("view", self.media_info),
             ("POST", "/api/media/import"): ("live", self.import_usb),

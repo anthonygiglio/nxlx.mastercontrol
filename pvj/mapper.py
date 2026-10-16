@@ -661,6 +661,15 @@ def scaled(surfaces, frm, to):
     return out
 
 
+def shape_changed(frm, to):
+    """True when a frm = (w, h) screen and a `to` screen are not the same shape (more than 1 percent apart), as
+    1920 x 1080 (16:9) and 1024 x 768 (4:3) are, and 2560 x 1440 and 1920 x 1080 are not."""
+    if not frm or not to or not frm[1] or not to[1]:
+        return False
+    a, b = frm[0] / float(frm[1]), to[0] / float(to[1])
+    return abs(a - b) > 0.01 * b
+
+
 def resample_grid(s, cols, rows):
     """A grid surface with a new number of cells, spread evenly between its four outer corners (inner points reset)."""
     o = s["vertices"]
@@ -749,8 +758,17 @@ class Engine:
         cfg = self.settings.data["mapper"]
         with self._lock:
             status = dict(self.status)
-        return {"enabled": self.enabled(), "on": cfg["on"], "screen": list(self.screen()), "surfaces": self.current(),
+        size = tuple(self.screen())
+        surfaces, placed_in = self.placed(size)
+        made = cfg.get("screen")
+        # D90: the screen's mode can change under a saved mapping. Its points are moved by each axis on their own
+        # (`scaled`), which keeps every corner on the same part of the screen; from 16:9 to 4:3 that squeezes shapes,
+        # so the page asks for the mapping to be checked. Nothing is stored for it: the size the mapping was made
+        # at is `screen`, as before, and it becomes the new size at the next change of the mapping.
+        reshaped = bool(made and cfg["surfaces"] and tuple(placed_in) == size and shape_changed(made, size))
+        return {"enabled": self.enabled(), "on": cfg["on"], "screen": list(size), "surfaces": surfaces,
                 "sets": sorted(cfg["sets"]), "edit": dict(self.edit), "status": status, "controllers": self.remote_state(),
+                "made_at": list(made) if made else None, "reshaped": reshaped,
                 "limits": {"surfaces": MAX_SURFACES, "cells": MAX_CELLS, "grid": MAX_GRID, "sets": MAX_SETS}}
 
     # -- from a controller: mapping mode (D75) --

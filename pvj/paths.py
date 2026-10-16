@@ -5,7 +5,7 @@
 On a box each service has a folder of its own that only it can write, under a parent that belongs to root:
 
     /run/pvj                root:root       0755   made by systemd and install/pvj-tmpfiles.conf, never a service's own
-    /run/pvj/player         <display>:pvj   0750   pvj-player: player.sock, preview.jpg
+    /run/pvj/player         <display>:pvj   0750   pvj-player: player.sock, preview.jpg, screen.json
     /run/pvj/web            pvj-web:pvj     0750   pvj-web: pin, capture.fifo, overlays, shader and mapping files
     /run/pvj/netd           root:pvj        0750   pvj-netd: netd.sock
     /run/pvj-sysd           root:pvj        0750   pvj-sysd: sysd.sock
@@ -57,6 +57,8 @@ UPDATE_RESULT = UPDATE_DIR + "/result.json"
 PLAYER_SOCKET = "player.sock"
 PLAYER_PID = "player.pid"
 PREVIEW = "preview.jpg"                       # written by mpv, so it lives in the player's folder
+SCREEN_REPORT = "screen.json"                 # the screen's modes and the one the player chose (pvj/screenmode.py, D90)
+STATE_DIR = "/var/lib/pvj"                    # the panel's settings; the player may pass through and read what is its group's
 NETD_SOCKET = "netd.sock"
 SYSD_SOCKET = "sysd.sock"
 SUPPORTD_SOCKET = "supportd.sock"
@@ -122,6 +124,11 @@ def sysd_dir(env=None):
 
 def supportd_dir(env=None):
     return _env(env).get("PVJ_SUPPORTD_DIR") or SUPPORTD_DIR
+
+
+def state_dir(env=None):
+    """The panel's state folder (settings.json, and screen-mode.json, which the player reads: D90)."""
+    return _env(env).get("PVJ_STATE_DIR") or STATE_DIR
 
 
 def player_socket(env=None):

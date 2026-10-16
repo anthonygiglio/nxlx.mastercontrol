@@ -42,6 +42,8 @@ jobs:
         run: git fetch --depth=1 origin +master:refs/remotes/origin/master
       - name: Fetch the release before NDI (the rollback tests of D62 and D85 run that release's code on a settings file written here)
         run: git fetch --depth=1 origin f36f8f0d040a35a6ecc72fb8a1001273b7f7ba0d
+      - name: Fetch the release before the screen's mode (the rollback test of D90 runs that release's code on a settings file written here)
+        run: git fetch --depth=1 origin 33e7eb419eb1b26b08618dd54b3e1481d4b60f0e
       - name: Install mpv
         timeout-minutes: 10   # usually half a minute; see the note at the top of this file
         run: tools/ci-apt.sh mpv
@@ -161,6 +163,9 @@ jobs:
         # Sound from another sender (D87, cases 40 to 46) is in the same run and fatal, every one of them: nothing
         # of it is under the switch. test_47 is for the record and never fatal.
         run: su ci -c "PVJ_NDI_MPV_TEST=1 PVJ_NDI_MPV_WANT=0.40. PVJ_NDI_FINDINGS_FATAL=yes python3 -X faulthandler -m unittest -v tests.test_ndi_mpv"
+      - name: The screen's mode against the Pi's mpv (D90; the --drm-mode texts and the test pattern's graph, no screen here)
+        timeout-minutes: 5
+        run: su ci -c "python3 -X faulthandler -m unittest -v tests.test_screenmode.RealMpvTest"
       - name: The still-with-sound cases on the pvj code that was stuck on the Pi (master at 5f62763) must FAIL there, or they judge nothing
         # The same tests and the same stand-in, with the pvj folder of the commit before the hand-over of the pipe and
         # the player's options for a standing picture were mended. A case that passes on that code would have been

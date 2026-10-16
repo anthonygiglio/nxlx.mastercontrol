@@ -158,6 +158,13 @@ ROWS = {
     ("POST", "/api/network/confirm"): STUDIO("owner"),      # D84: confirmed from the studio, never through the support tunnel
     ("POST", "/api/network/revert"): KINDS["owner"],
     ("POST", "/api/network/scan"): KINDS["owner"],
+    # The screen's mode (D90): the Owner's, as the network is. A wrong mode blacks out the room's screen and it is set
+    # once per screen, not during a show (the sound output and Effect detail are an Operator's: daily work). A support
+    # session of the Owner's role may read, try and take back a mode; the keep is from the room (D84, as the network's).
+    ("GET", "/api/screen"): KINDS["owner"],
+    ("POST", "/api/screen"): KINDS["owner"],
+    ("POST", "/api/screen/confirm"): STUDIO("owner"),
+    ("POST", "/api/screen/revert"): KINDS["owner"],
     ("POST", "/api/system/reboot"): KINDS["owner"],
     ("POST", "/api/system/poweroff"): STUDIO("owner"),
     ("POST", "/api/system/clock"): KINDS["owner"],

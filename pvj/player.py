@@ -14,6 +14,7 @@ import signal
 import socket
 import stat
 import subprocess
+import sys
 import threading
 import time
 
@@ -267,6 +268,11 @@ class Player:
         if os.path.exists(self.socket_path):
             os.unlink(self.socket_path)
         args = self.mpv_command(audio_device, windowed)
+        # The screen's mode (D90): one --drm-mode from the screen's own list, chosen here before this process becomes
+        # mpv, with what was chosen and why written for the panel. Nothing where mpv does not draw through DRM.
+        from . import screenmode
+        args += screenmode.prepare(self.extra_args, self.rundir, self.mpv_bin,
+                                   log=lambda line: print(line, file=sys.stderr, flush=True))
         # mpv creates its socket owner-only (0600) whatever the umask, so the web panel (another user, same
         # group) could not reach it. A short-lived helper waits for the NEW socket and opens it to the group.
         detach_socket_opener(self.socket_path)

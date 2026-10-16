@@ -77,6 +77,10 @@ REMOTE_DENY = {
     # make the change and take it back; someone at the studio confirms it. (Added by D84: found while trying to
     # lock the owner out.)
     ("POST", "/api/network/confirm"): "a network change is confirmed from the studio: only that shows the studio still reaches the box",
+    # the same for the screen's mode (D90): it is tried and goes back by itself unless kept, and the keep is the proof
+    # that someone sees the picture in the room. A helper sees a snapshot of what the player draws, which says nothing
+    # about what the projector shows. He may try a mode and take it back; someone in the room keeps it.
+    ("POST", "/api/screen/confirm"): "a screen mode is kept by someone who sees the screen in the room",
     # the NDI discovery server (D85): a program listening on the network is opened by the Owner in the room. Its
     # switch is here; its own routes are under a prefix below.
     ("POST", "/api/modules/ndi-discovery"): "a program that listens on the network is switched by the owner in the room (D85)",
