@@ -45,9 +45,12 @@
   function work(s) {
     var words = WORK[s.weight] || (s.cost ? 'Cost: ' + s.cost : ''), m = s.measured;
     if (!m) return words;
-    var ms = typeof m.pass_ms === 'number' ? round(m.pass_ms) : (m.pass_ms_range ? round(m.pass_ms_range[0]) + ' to ' + round(m.pass_ms_range[1]) : '');
+    // the shader's own pass where that was measured; at 1080p (D93) the run kept the whole frame's passes instead
+    var all = typeof m.pass_ms !== 'number' && typeof m.all_passes_ms === 'number';
+    var ms = typeof m.pass_ms === 'number' ? round(m.pass_ms) : all ? round(m.all_passes_ms) : (m.pass_ms_range ? round(m.pass_ms_range[0]) + ' to ' + round(m.pass_ms_range[1]) : '');
     if (!ms) return words;
-    return words + '. ' + ms + ' ms on ' + (BOARDS[m.board] || m.board) + (m.lines ? ' at ' + m.lines + ' lines' : '') + (m.stale ? ' (before its look was changed)' : '');
+    return words + '. ' + ms + ' ms' + (all ? ' a frame in all' : '') + ' on ' + (BOARDS[m.board] || m.board) + (m.lines ? ' at ' + m.lines + ' lines' : '') +
+      (s.lines && s.lines !== m.lines ? '; drawn at ' + s.lines + ' here' : '') + (m.stale ? ' (before its look was changed)' : '');
   }
   function family(s) { return FAMILIES.filter(function (f) { return (s.categories || []).some(function (x) { return String(x).toLowerCase() === f.toLowerCase(); }); })[0] || ''; }
 
@@ -71,12 +74,27 @@
     var e = ui.startSet && d.sets.length > 1 ? setById(d, ui.startSet) : null;
     return e && e.id !== d.active ? e : null;
   }
-  // The saved picture detail is above what this board is given by default: the words, the button and the request
-  // that puts it back. Null when there is nothing to say. (Also used by the Room screen's ambience control.)
+  // The saved picture detail is not what serves this board best: the words (in full and short), the button, the
+  // request that changes it and what to say after. Null when there is nothing to say. (Also used by the Room screen's
+  // ambience control.) Where Automatic is offered (D93), a height an earlier version saved is said, since nobody can
+  // tell whether it was chosen; one chosen by hand here is left alone.
   function detailHigh(d) {
-    var now = d && d.config && d.config.height, usual = d && d.render && d.render['default'];
+    var now = d && d.config && d.config.height, usual = d && d.render && d.render['default'], auto = d && d.render && d.render.auto;
+    if (auto) {
+      if (typeof now !== 'number' || !d.config.height_kept) return null;
+      return { words: 'Picture detail is ' + now + ' lines for every shader, saved by an earlier version. Automatic draws each shader at the most lines it keeps up at on this box.',
+        short: 'Picture detail ' + now + ' for every shader.', button: 'Use Automatic', body: { action: 'config', height: 'auto' }, done: 'Picture detail is Automatic now.' };
+    }
     if (typeof now !== 'number' || typeof usual !== 'number' || now <= usual) return null;
-    return { words: 'Picture detail is ' + now + ' lines. This box is happier at ' + usual + '.', button: 'Use ' + usual, body: { action: 'config', height: usual } };
+    return { words: 'Picture detail is ' + now + ' lines. This box is happier at ' + usual + '.', short: 'Picture detail ' + now + ' is high here.',
+      button: 'Use ' + usual, body: { action: 'config', height: usual }, done: 'Picture detail is ' + usual + ' lines now.' };
+  }
+  // What Automatic does here, in one sentence, from render.auto.
+  function autoWords(a) {
+    var low = Object.keys(a.lower || {}), at = low.length ? a.lower[low[0]] : a.lines;
+    return 'Automatic draws each shader at the most lines it kept up at on a Pi 4 with a ' + a.output[0] + ' x ' + a.output[1] + ' screen: ' + a.lines + ' lines' +
+      (low.length ? ', ' + at + ' for ' + low.length + ' heavier ones (' + low.map(nice).join(', ') + ')' : '') +
+      ', and ' + a.other + ' for a shader you add.';
   }
   function vibesBody(d, on) { var e = on && d ? startSet(d) : null; return e ? { on: true, set: e.id } : { on: on }; }
   // The inputs a controller's knobs 1 to 8 drive, in the box's own count: numbers, switches, choices and events.
@@ -676,16 +694,19 @@
       card.appendChild(h('div', { class: 'loadbox', id: 'shaderload', hidden: true },
         h('span', { class: 'loadmeter', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')), h('span', { id: 'shaderloadwords', role: 'status' })));
       if (full) {       // picture detail sits with the load it changes
-        var lightest = Math.min.apply(null, d.render.heights);
-        var height = h('select', { class: 'text-input', id: 'shaderheight' }, d.render.heights.map(function (x) {
-          return h('option', { value: String(x), text: x + ' lines' + (x === d.render['default'] ? ' (usual here)' : x === lightest ? ' (lightest)' : ''), selected: x === d.config.height });
+        var lightest = Math.min.apply(null, d.render.heights), auto = d.render.auto;
+        // Automatic first where the board has it (D93), marked as the usual choice; a number is then a choice by hand
+        var choices = (auto ? [h('option', { value: 'auto', text: 'Automatic (usual here)', selected: d.config.height === 'auto' })] : []).concat(d.render.heights.map(function (x) {
+          return h('option', { value: String(x), text: x + ' lines' + (!auto && x === d.render['default'] ? ' (usual here)' : x === lightest ? ' (lightest)' : ''), selected: x === d.config.height });
         }));
+        var height = h('select', { class: 'text-input', id: 'shaderheight' }, choices);
         height.addEventListener('change', function () {
           height.blur();
-          send('/api/shaders', { action: 'config', height: +height.value }, function () { saved('height'); var m = document.getElementById('saved-height'); if (m) m.textContent = 'Saved'; }, 'shadernowmsg');
+          send('/api/shaders', { action: 'config', height: height.value === 'auto' ? 'auto' : +height.value }, function () { saved('height'); var m = document.getElementById('saved-height'); if (m) m.textContent = 'Saved'; }, 'shadernowmsg');
         });
         picks.appendChild(h('div', { class: 'detailbox' }, h('label', { class: 'field', for: 'shaderheight' }, 'Picture detail ', savedMark('height')), height));
         if (!d.render.measured) card.appendChild(h('p', { class: 'hint', id: 'detailhint', text: 'Speed on this board is not measured: choose fewer lines if the picture stutters.' }));
+        else if (auto && d.config.height === 'auto') card.appendChild(h('p', { class: 'hint', id: 'detailhint', text: autoWords(auto) }));
         // A box set up by an earlier version keeps the detail it saved then (the test Pi 4: 720 lines, where eight of
         // the Ambient shaders drop frames, against 540 now). Say so, with the way back in one tap.
         var high = detailHigh(d);
@@ -928,7 +949,7 @@
     }
     function libShape(d) {
       var e = editing(d);
-      return JSON.stringify([d.error, e && [e.id, e.name, e.shaders], d.sets.length > 1, d.shaders.map(function (s) { return [s.id, s.error, s.refused, s.heavy, s.weight, s.categories, s.description]; })]);
+      return JSON.stringify([d.error, e && [e.id, e.name, e.shaders], d.sets.length > 1, d.shaders.map(function (s) { return [s.id, s.error, s.refused, s.heavy, s.weight, s.lines, s.categories, s.description]; })]);
     }
     function listCard(d) {
       var e = editing(d), many = d.sets.length > 1;

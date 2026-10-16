@@ -113,11 +113,11 @@
           detail.textContent = '';
           if (high) {
             // one line on a phone: the short form of what the Shaders page says in full
-            detail.appendChild(h('span', { class: 'hint grow', id: 'roomambdetailwords', text: 'Picture detail ' + data.config.height + ' is high here.' }));
+            detail.appendChild(h('span', { class: 'hint grow', id: 'roomambdetailwords', text: high.short }));
             detail.appendChild(h('button', { class: 'btn', id: 'roomambuse', text: high.button, onclick: function () {
               c.api('POST', '/api/shaders', high.body).then(function (r) {
                 if (!r.ok) return c.say(r.data.error || 'Could not save', true);
-                c.say('Picture detail is ' + high.body.height + ' lines now.');
+                c.say(high.done);
                 read();
               });
             } }));

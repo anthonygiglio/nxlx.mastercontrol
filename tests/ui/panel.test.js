@@ -2940,7 +2940,12 @@ function startServer(env) {          // env: more for the harness's environment 
     assert.strictEqual((await get('/api/midi')).map.filter((e) => e.action === 'shader_control_1').length, 0);
     await page.click('[data-midi="shader_control_1"]');
     // The library: measured numbers, the pack filter, picture detail from this board's own list
-    assert(/Light work\. 7\.5 ms on a Pi 4 at 720 lines/.test(await page.textContent('#shadercard [data-shader="nxlx-silk.fs"]')), 'a measured shader says its numbers');
+    {
+      // the run that counts for this harness's screen (D93): the shader's own pass above 1920 x 1080, a whole frame's passes up to it
+      const silk = (await get('/api/shaders')).shaders.find((s) => s.id === 'nxlx-silk.fs').measured;
+      const want = typeof silk.pass_ms === 'number' ? 'Light work. 7.5 ms on a Pi 4 at 720 lines' : 'Light work. 19.6 ms a frame in all on a Pi 4 at 720 lines';
+      assert((await page.textContent('#shadercard [data-shader="nxlx-silk.fs"]')).includes(want), 'a measured shader says its numbers: ' + want);
+    }
     await page.selectOption('#shaderpack', 'isf-files');
     assert.strictEqual((await shownRows()).length, packed.length, 'the pack filter shows the pack');
     await page.selectOption('#shaderpack', 'all');
@@ -2995,6 +3000,40 @@ function startServer(env) {          // env: more for the harness's environment 
       assert.strictEqual(await page.inputValue('#shaderheight'), String(render.default), 'and the chooser shows it');
       assert.strictEqual(await post('/api/shaders', { action: 'config', height: saved }), 200);       // as it was, for the steps that follow
       await page.waitForFunction((x) => document.getElementById('shaderheight') && document.getElementById('shaderheight').value === String(x), saved, { timeout: 15000 });
+    }
+    // Automatic picture detail (D93) is offered on a Pi 4 only, and this box is not one: its answer is given what a
+    // Pi 4's says, first under Automatic, then with a height an earlier version saved. The tap is answered here too.
+    {
+      const auto = { lines: 720, other: 540, lower: { 'nxlx-drift.fs': 540, 'nxlx-nebula.fs': 540 }, output: [1920, 1080] }, render0 = (await get('/api/shaders')).render;
+      let mode = 'auto', sent = null, last = null;
+      await page.route('**/api/shaders', async (route) => {
+        if (route.request().method() === 'POST') {
+          sent = route.request().postData();
+          mode = 'auto';
+          return route.fulfill({ status: 200, json: Object.assign({}, last, { config: Object.assign({}, last.config, { height: 'auto', height_kept: false }) }) });
+        }
+        const res = await route.fetch(), d = await res.json();
+        d.render.auto = auto;
+        d.config.height = mode === 'auto' ? 'auto' : 720;
+        d.config.height_kept = mode !== 'auto';
+        last = d;
+        await route.fulfill({ response: res, json: d });
+      });
+      await page.waitForSelector('#shaderheight option[value="auto"]', { timeout: 20000 });
+      assert.deepStrictEqual(await page.$$eval('#shaderheight option', (os) => os.map((o) => o.value)), ['auto'].concat(render0.heights.map(String)), 'Automatic first, then the heights');
+      assert.strictEqual(await page.textContent('#shaderheight option[value="auto"]'), 'Automatic (usual here)');
+      assert.strictEqual(await page.inputValue('#shaderheight'), 'auto');
+      assert.strictEqual(await page.textContent('#detailhint'), 'Automatic draws each shader at the most lines it kept up at on a Pi 4 with a 1920 x 1080 screen: 720 lines, 540 for 2 heavier ones (Drift, Nebula), and 540 for a shader you add.');
+      assert.strictEqual(await page.locator('#detailhigh').count(), 0, 'nothing more is said under Automatic');
+      mode = 'kept';
+      await page.waitForSelector('#shadernow #detailhigh', { timeout: 20000 });
+      assert.strictEqual(await page.textContent('#detailhighwords'), 'Picture detail is 720 lines for every shader, saved by an earlier version. Automatic draws each shader at the most lines it keeps up at on this box.');
+      assert.strictEqual(await page.textContent('#detailuse'), 'Use Automatic');
+      await page.click('#detailuse');
+      await page.waitForFunction(() => !document.getElementById('detailhigh'), null, { timeout: 20000 });
+      assert.strictEqual(sent, JSON.stringify({ action: 'config', height: 'auto' }), 'Use Automatic sends Automatic');
+      await page.unroute('**/api/shaders');
+      await page.waitForFunction(() => !document.querySelector('#shaderheight option[value="auto"]'), null, { timeout: 20000 });
     }
     // What this harness cannot make happen by itself (no GPU): a load that is too high and a GPU refusal. The box's
     // answer is given those fields on its way to the page.
