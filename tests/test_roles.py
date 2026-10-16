@@ -165,6 +165,10 @@ ROWS = {
     ("POST", "/api/screen"): KINDS["owner"],
     ("POST", "/api/screen/confirm"): STUDIO("owner"),
     ("POST", "/api/screen/revert"): KINDS["owner"],
+    # The renderer (D95): the Owner's, like the screen's mode. The switch outlives a support session and nothing takes
+    # it back by itself, so it is never made through the tunnel; a support session of the Owner's role may read it.
+    ("GET", "/api/renderer"): KINDS["owner"],
+    ("POST", "/api/renderer"): STUDIO("owner"),
     ("POST", "/api/system/reboot"): KINDS["owner"],
     ("POST", "/api/system/poweroff"): STUDIO("owner"),
     ("POST", "/api/system/clock"): KINDS["owner"],
