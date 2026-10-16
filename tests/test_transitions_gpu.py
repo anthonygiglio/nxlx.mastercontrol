@@ -435,6 +435,14 @@ class ScaledCase(CrossCase):
         self.version = self.real.ipc.request("get_property", "mpv-version")
         self.scales = self.real.overlay_scales(T.OVERLAY_ID)
 
+    def cleaned(self):
+        """Nothing left, once the worker has finished taking the still off: it marks the transition over and then
+        removes the overlay and its file under `_io`, so `running` can be None a moment before the file is gone
+        (seen on the job ndi-mpv). Taking `_io` once waits for exactly that."""
+        with self.tr._io:
+            pass
+        self.nothing_left()
+
     def close_to(self, rows, old, what, mean=10.0, share=0.15):
         """The screen with the still on it is the screen it was taken of, give or take what halving and scaling
         cost: a mean and a share of points that differ clearly. Without scaling, as exact as D71's tests."""
@@ -472,7 +480,7 @@ class ScaledCase(CrossCase):
         self.tr.run(token, 1.5)
         self.through(self.watch(), old[H // 2][W // 2], BLUE, "a halved still of the window")
         self.assertTrue(all(far(p, BLUE) <= 30 for p in grid(self.still(flat=True))), "the new clip is not alone on the screen at the end")
-        self.nothing_left()
+        self.cleaned()
 
     def test_a_still_of_a_smaller_clip_of_the_screens_shape_covers_the_screen(self):
         self.play(clip("160x90"))
@@ -488,7 +496,7 @@ class ScaledCase(CrossCase):
         self.under()
         self.tr.run(token, 1.5)
         self.through(self.watch(), old[H // 2][W // 2], BLUE, "a still of a smaller clip")
-        self.nothing_left()
+        self.cleaned()
 
     def test_a_still_of_a_tall_clip_lies_over_its_place_and_the_new_clip_shows_in_the_bars_at_once(self):
         self.play(clip("90x160"))
@@ -516,7 +524,7 @@ class ScaledCase(CrossCase):
         self.watch()
         self.assertEqual((self.tr.last["ended"], self.tr.given_up), ("done", ""))
         self.assertTrue(all(far(p, BLUE) <= 30 for p in grid(self.still(flat=True))))
-        self.nothing_left()
+        self.cleaned()
 
     def test_an_effect_and_the_brightness_are_in_a_still_of_the_clip(self):
         # what pvj/transitions.py says of the "video" kind, held on this mpv: the effect (hooked where the effects
@@ -537,7 +545,7 @@ class ScaledCase(CrossCase):
         finally:
             self.real.opacity(255)
             self.fx.off()
-        self.nothing_left()
+        self.cleaned()
 
     def plain(self):
         """The same clip with neither the effect nor the dimming: what the still must NOT look like."""
@@ -568,7 +576,7 @@ class ScaledCase(CrossCase):
         self.tr.run(token, 0.6)
         self.watch()
         self.assertEqual((self.tr.last["ended"], self.tr.given_up), ("done", ""))
-        self.nothing_left()
+        self.cleaned()
 
 
 for _name in dir(CrossCase):                  # the crossfade's own tests run from their classes, not here again
