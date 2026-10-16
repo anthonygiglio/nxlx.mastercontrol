@@ -3014,12 +3014,13 @@ function startServer(env) {          // env: more for the harness's environment 
         }
         const res = await route.fetch(), d = await res.json();
         d.render.auto = auto;
+        d.render.measured = true;
         d.config.height = mode === 'auto' ? 'auto' : 720;
         d.config.height_kept = mode !== 'auto';
         last = d;
         await route.fulfill({ response: res, json: d });
       });
-      await page.waitForSelector('#shaderheight option[value="auto"]', { timeout: 20000 });
+      await page.waitForSelector('#shaderheight option[value="auto"]', { state: 'attached', timeout: 20000 });     // an option is never "visible"
       assert.deepStrictEqual(await page.$$eval('#shaderheight option', (os) => os.map((o) => o.value)), ['auto'].concat(render0.heights.map(String)), 'Automatic first, then the heights');
       assert.strictEqual(await page.textContent('#shaderheight option[value="auto"]'), 'Automatic (usual here)');
       assert.strictEqual(await page.inputValue('#shaderheight'), 'auto');
@@ -3033,7 +3034,7 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.waitForFunction(() => !document.getElementById('detailhigh'), null, { timeout: 20000 });
       assert.strictEqual(sent, JSON.stringify({ action: 'config', height: 'auto' }), 'Use Automatic sends Automatic');
       await page.unroute('**/api/shaders');
-      await page.waitForFunction(() => !document.querySelector('#shaderheight option[value="auto"]'), null, { timeout: 20000 });
+      await page.waitForFunction(() => document.getElementById('shaderheight') && !document.querySelector('#shaderheight option[value="auto"]'), null, { timeout: 20000 });
     }
     // What this harness cannot make happen by itself (no GPU): a load that is too high and a GPU refusal. The box's
     // answer is given those fields on its way to the page.
