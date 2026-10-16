@@ -57,6 +57,10 @@ MODE_TEXT = re.compile(r"([1-9][0-9]{1,4})x([1-9][0-9]{1,4})@([0-9]{1,3}\.[0-9]{
 _HEAD = re.compile(r"Available modes for drm-connector=([0-9]+)\.([A-Za-z0-9_-]{1,32})")
 _MODE = re.compile(r"Mode ([0-9]{1,3}): ([A-Za-z0-9_.-]{1,32}) \(([0-9]{1,5})x([0-9]{1,5})@([0-9]{1,4}\.[0-9]{2})Hz\)")
 _WHY = re.compile(r"[^A-Za-z0-9 .,:;()'@x/-]")
+# The screen's arguments for mpv, each as the player may pass it and the panel may read it back (D91, D92).
+MODE_ARG = re.compile(r"--drm-mode=([0-9]{1,3}|%s)" % MODE_TEXT.pattern)
+CONNECTOR_ARG = re.compile(r"--drm-connector=[A-Za-z0-9_-]{1,32}")
+DEVICE_ARG = re.compile(r"--drm-device=/dev/dri/card[0-9]{1,2}")
 
 
 # ---- the screen's list ---------------------------------------------------------------------------------------------
@@ -240,13 +244,39 @@ def wanted_path(env=None):
     return os.path.join(paths.state_dir(env), WANTED)
 
 
+def screen_args(rep):
+    """The screen's arguments for mpv in a report, in the order they are passed: [device, connector, mode], those
+    there are; [] when no --drm-mode is passed."""
+    if not rep.get("arg"):
+        return []
+    return [a for a in (rep.get("device_arg"), rep.get("connector_arg"), rep["arg"]) if a]
+
+
+def valid_args(value):
+    """A skip's arguments (D92): one to three of the screen's arguments, as screen_args gives them."""
+    if not isinstance(value, list) or not 1 <= len(value) <= 3 or not all(isinstance(a, str) for a in value):
+        return False
+    *head, last = value
+    kinds = [DEVICE_ARG, CONNECTOR_ARG][-len(head):] if head else []
+    return MODE_ARG.fullmatch(last) is not None and all(k.fullmatch(a) for k, a in zip(kinds, head))
+
+
 def clean_wanted(data):
-    """What the player may take from WANTED: {"mode", "trial", "skip"}, every part checked."""
+    """What the player may take from WANTED: {"mode", "trial", "skip"}, every part checked.
+
+    A skip is {"mode", "boot", "args"}: the arguments that gave no screen (D92). A skip of the shape before D92, with
+    no "args", is dropped: it does not say which device and connector it was earned with, and the release that wrote
+    it is the one that passed a wrong connector (D91), so honouring it would bar the right arguments for the boot.
+    Dropping it costs at most one more try of the same arguments, which then earns a skip of the new shape."""
     out = {"mode": data.get("mode") if valid_mode(data.get("mode")) else AUTO}
     for key in ("trial", "skip"):
         part = data.get(key)
         if isinstance(part, dict) and valid_mode(part.get("mode")) and isinstance(part.get("boot"), str) and len(part["boot"]) <= 64:
-            out[key] = {"mode": part["mode"], "boot": part["boot"]}
+            if key == "skip":
+                if valid_args(part.get("args")):
+                    out[key] = {"mode": part["mode"], "boot": part["boot"], "args": list(part["args"])}
+            else:
+                out[key] = {"mode": part["mode"], "boot": part["boot"]}
     return out
 
 
@@ -292,16 +322,21 @@ def decide(wanted, screens, problem, sysfs, boot):
         chosen = auto
         if asked == AUTO:
             why = "" if auto else auto_why
-    skip = wanted.get("skip")
-    if chosen and skip and skip["boot"] == boot and skip["mode"] == chosen["text"]:
-        why = "%s did not start on this screen, so the screen's own mode is used" % words(chosen)
-        chosen = None
+    if chosen:
+        cand = {"arg": "--drm-mode=" + drm_value(chosen, modes)}
+        if rep["card"] is not None:              # the card and the screen on it, as mpv reads them (D91)
+            device, conn = "--drm-device=/dev/dri/card%d" % rep["card"], "--drm-connector=" + screen["connector"]
+            if DEVICE_ARG.fullmatch(device) and CONNECTOR_ARG.fullmatch(conn):     # as the panel reads them back (D92)
+                cand.update(device_arg=device, connector_arg=conn)
+        # A skip bars these very arguments for the boot, not the mode alone (D92): one earned with another device or
+        # connector (a release that passed a wrong one) does not stop the right ones being tried.
+        skip = wanted.get("skip")
+        if skip and skip["boot"] == boot and skip.get("args") == screen_args(cand):
+            why = "%s did not start on this screen, so the screen's own mode is used" % words(chosen)
+            chosen = None
     if chosen:
         rep["used"] = chosen["text"]
-        rep["arg"] = "--drm-mode=" + drm_value(chosen, modes)
-        if rep["card"] is not None:              # the card and the screen on it, as mpv reads them (D91)
-            rep["device_arg"] = "--drm-device=/dev/dri/card%d" % rep["card"]
-            rep["connector_arg"] = "--drm-connector=" + screen["connector"]
+        rep.update(cand)
         rep["auto_why"] = auto_why if asked == AUTO or why else ""
     rep["why"] = why
     return rep
@@ -329,7 +364,7 @@ def prepare(extra_args, rundir, mpv_bin="mpv", env=None, run=subprocess.run, sys
     rep.update(pid=os.getpid(), boot=boot or "", at=int(time.time()))
     if rep["why"]:
         log("pvj-player: screen output: %s" % rep["why"])
-    args = [a for a in (rep.get("device_arg"), rep.get("connector_arg"), rep["arg"]) if a] if rep["arg"] else []
+    args = screen_args(rep)
     if args:
         log("pvj-player: screen output: %s on %s (%s)" % (text_words(rep["used"]), rep["connector"], " ".join(args)))
     try:
@@ -365,11 +400,11 @@ def clean_report(data):
     pid = data.get("pid")
     return {"asked": data.get("asked") if valid_mode(data.get("asked")) else AUTO, "trial": data.get("trial") is True,
             "used": mode(data.get("used")),
-            "arg": arg if isinstance(arg, str) and re.fullmatch(r"--drm-mode=([0-9]{1,3}|%s)" % MODE_TEXT.pattern, arg) else None,
+            "arg": arg if isinstance(arg, str) and MODE_ARG.fullmatch(arg) else None,
             "connector_arg": data.get("connector_arg") if isinstance(data.get("connector_arg"), str)
-            and re.fullmatch(r"--drm-connector=[A-Za-z0-9_-]{1,32}", data["connector_arg"]) else None,
+            and CONNECTOR_ARG.fullmatch(data["connector_arg"]) else None,
             "device_arg": data.get("device_arg") if isinstance(data.get("device_arg"), str)
-            and re.fullmatch(r"--drm-device=/dev/dri/card[0-9]{1,2}", data["device_arg"]) else None,
+            and DEVICE_ARG.fullmatch(data["device_arg"]) else None,
             "card": data.get("card") if isinstance(data.get("card"), int) and not isinstance(data.get("card"), bool) else None,
             "why": text(data.get("why")), "auto_why": text(data.get("auto_why")),
             "connector": text(data.get("connector"), 32) or None, "modes": modes,
@@ -641,7 +676,8 @@ class Screen:
             self.revert("%s did not start on this screen, so it went back." % text_words(p["mode"]))
             return "reverted"
         try:
-            self._write(dict(self._wanted(), skip={"mode": failed, "boot": self._boot()}))
+            # the arguments it was given, not the mode alone (D92): a different set is tried, this one is not again
+            self._write(dict(self._wanted(), skip={"mode": failed, "boot": self._boot(), "args": screen_args(rep)}))
         except OSError as e:
             self.log("pvj-web: screen output: %s not written (%s)" % (self.wanted_file, e))
             return did
