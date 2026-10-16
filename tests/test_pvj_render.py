@@ -346,6 +346,9 @@ class MappingTest(Base):
         self.r.load(self.picture)
         self.r("set_property", "glsl-shaders", [self.write(mapper.warp_shader(lw, lh, values))])
         self.check_left_half()
+        # the editing shader measures in screen pixels (HOOKED_pos * HOOKED_size): the output's size, not the inside's
+        self.r("set_property", "glsl-shaders", [self.write(mapper.shader(surfaces))])
+        self.check_left_half()
 
     def test_a_damaged_mapping_file_is_refused_and_nothing_changes(self):
         surfaces = self.surface([[0, 0], [W / 2, 0], [W / 2, H], [0, H]])
