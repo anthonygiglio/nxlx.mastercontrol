@@ -736,15 +736,61 @@ class Player:
         self._set("screenshot-jpeg-quality", int(quality))
         self.ipc.request("screenshot-to-file", path, "window" if with_text else "video")
 
-    def still(self, path):
+    def still(self, path, kind="window"):
         """Save the whole window as it is now (the picture with its effect, mapping and brightness, and what is
         drawn over it) into `path` as a PNG whose rows are plain bytes: no compression and no row filter, so the
         player does not spend time packing it and Python can read it with a few copies (pvj/transitions.py). The
-        file's ending says PNG to the player; `path` may be a file that exists, which is then written over."""
+        file's ending says PNG to the player; `path` may be a file that exists, which is then written over.
+        With `kind` "video" it is the clip's own picture at its own size instead (with its effect and its
+        brightness, without anything drawn over it and without the bars beside it; D89): see `video_place` for
+        when that is the screen."""
         self._set("screenshot-high-bit-depth", False)
         self._set("screenshot-png-compression", 0)
         self._set("screenshot-png-filter", 0)
-        self.ipc.request("screenshot-to-file", path, "window")
+        self.ipc.request("screenshot-to-file", path, "video" if kind == "video" else "window")
+
+    def video_place(self, screen):
+        """Where the clip's own picture lies on a screen of `screen` (width, height), when a still of it at its own
+        size (`still(kind="video")`) laid there at that place would be what the screen shows: ((x, y, width,
+        height) on the screen, (width, height) of the clip's picture). None when it would not be, or the player
+        cannot say: the projection mapping is shown (a still of the clip has no mapping in it), a generator plays
+        (its picture is drawn at the screen's size), the picture is turned, moved or made larger than fits (part
+        of it would be cut off on the screen), it has another shape than its place, or it is not smaller than the
+        screen (a still of the window costs no more then)."""
+        if self._mapping_mode or self._source is not None:
+            return None
+        try:
+            box = self.ipc.request("get_property", "osd-dimensions")
+            try:
+                clip = self.ipc.request("get_property", "video-out-params")
+            except PlayerError:
+                clip = None
+            if not isinstance(clip, dict):
+                clip = self.ipc.request("get_property", "video-params")
+            moved = [self.ipc.request("get_property", p) for p in ("video-zoom", "video-pan-x", "video-pan-y", "video-rotate")]
+        except PlayerError:
+            return None
+        if not (isinstance(box, dict) and isinstance(clip, dict)):
+            return None
+        number = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)
+        if not all(number(v) for v in moved) or moved[0] > 0 or moved[1] or moved[2] or moved[3] % 360:
+            return None
+        if clip.get("rotate", 0) not in (0, None):
+            return None
+        sw, sh = screen
+        try:
+            if (int(box["w"]), int(box["h"])) != (sw, sh):
+                return None
+            ml, mt, mr, mb = (int(box[k]) for k in ("ml", "mt", "mr", "mb"))
+            cw, ch = int(clip.get("dw") or clip["w"]), int(clip.get("dh") or clip["h"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        pw, ph = sw - ml - mr, sh - mt - mb
+        if min(ml, mt, mr, mb) < 0 or pw <= 0 or ph <= 0 or cw <= 0 or ch <= 0 or cw * ch >= sw * sh:
+            return None
+        if abs(cw * ph - ch * pw) > 0.01 * cw * ph:
+            return None
+        return (ml, mt, pw, ph), (cw, ch)
 
     def osd_size(self):
         """(width, height) of the picture the player is drawing on, in pixels, or None if unknown."""
@@ -754,9 +800,10 @@ class Player:
             return None
         return (int(w), int(h)) if isinstance(w, (int, float)) and isinstance(h, (int, float)) and w > 0 and h > 0 else None
 
-    def overlay(self, oid, x, y, width, height, pixels):
+    def overlay(self, oid, x, y, width, height, pixels, dw=None, dh=None):
         """Draw a bitmap (raw BGRA, `width` x `height`) over the picture and the on-screen text, at x, y, until
-        overlay_remove(oid). The pixels go through a file in the runtime folder that the player reads."""
+        overlay_remove(oid). The pixels go through a file in the runtime folder that the player reads. With `dw`
+        and `dh` the player draws it at that size instead (mpv 0.38 on; an older one refuses: `overlay_scales`)."""
         if not (isinstance(oid, int) and 0 <= oid < 64) or len(pixels) != width * height * 4:
             raise PlayerError("bad overlay")
         path = os.path.join(self.rundir, "overlay-%d.bgra" % oid)
@@ -764,7 +811,27 @@ class Player:
         with os.fdopen(fd, "wb") as f:
             os.fchmod(f.fileno(), 0o640)          # on the open file: a name swapped for a link cannot redirect it
             f.write(pixels)
-        self.ipc.request("overlay-add", oid, int(x), int(y), path, 0, "bgra", int(width), int(height), int(width) * 4)
+        shown = (int(dw), int(dh)) if dw is not None and dh is not None else ()
+        self.ipc.request("overlay-add", oid, int(x), int(y), path, 0, "bgra", int(width), int(height), int(width) * 4, *shown)
+
+    def overlay_scales(self, oid):
+        """True if this mpv draws an overlay at a size of its own (overlay-add's `dw` and `dh`, mpv 0.38 on); False
+        if it refuses them (mpv 0.37 answers "invalid parameter"). Asked with one transparent pixel under `oid`,
+        which is taken off again at once: nothing shows, and nothing of ours may be under `oid` when this is asked.
+        Raises PlayerError when the player does not answer."""
+        try:
+            self.overlay(oid, 0, 0, 1, 1, bytes(4), 1, 1)
+            took = True
+        except PlayerError as e:
+            if not str(e).startswith("mpv: "):
+                raise                               # no answer at all: nothing learnt
+            took = False
+        finally:
+            try:
+                self.overlay_remove(oid)            # also removes the pixel's file
+            except PlayerError:
+                pass
+        return took
 
     def overlay_remove(self, oid):
         """Take an overlay off, and remove the file overlay() wrote for it: for a QR code those pixels are an access
@@ -783,12 +850,14 @@ class Player:
         """Draw a ready raw BGRA file (width x height, at 0, 0) over the picture until overlay_remove(oid)."""
         self.ipc.request("overlay-add", oid, 0, 0, path, 0, "bgra", int(width), int(height), int(width) * 4)
 
-    def overlay_part(self, oid, path, x, y, offset, width, height, stride):
+    def overlay_part(self, oid, path, x, y, offset, width, height, stride, dw=None, dh=None):
         """Draw a part of a raw BGRA file at x, y until overlay_remove(oid): `width` x `height` pixels, the first of
         them `offset` bytes into the file, each row `stride` bytes after the one before. With the stride of the
         whole picture this draws any rectangle of it without writing it anew (a wipe, pvj/transitions.py). The
-        file must hold `offset` plus `height` times `stride` bytes: that much the player maps."""
-        self.ipc.request("overlay-add", oid, int(x), int(y), path, int(offset), "bgra", int(width), int(height), int(stride))
+        file must hold `offset` plus `height` times `stride` bytes: that much the player maps. `dw` and `dh` as for
+        `overlay`."""
+        shown = (int(dw), int(dh)) if dw is not None and dh is not None else ()
+        self.ipc.request("overlay-add", oid, int(x), int(y), path, int(offset), "bgra", int(width), int(height), int(stride), *shown)
 
     def set_mapping_mode(self, on):
         """While a projection mapping is shown: stretch the picture to the whole screen (the mapping is in screen

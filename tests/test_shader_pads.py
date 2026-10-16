@@ -1594,7 +1594,7 @@ class Mixed(ServerBase):
                 self.assertEqual((self.mpv.log[-1][1], self.api.shaders.on_screen()["id"]), ("carrier", ONE), what)
 
     def test_out_of_a_shader_a_clip_blends_from_a_still_of_it_by_pad_as_by_hand(self):
-        seen = {}
+        seen, asked = {}, 0
         for how in ("hand", "pad"):
             self.settings.data["mix"] = self.T.stored("crossfade", 0.2)
             self.choose(how)
@@ -1602,6 +1602,12 @@ class Mixed(ServerBase):
             self.assertEqual(self.api.play({"pad": [0, 1]}, None, "t")["playing"], "a.mp4")
             self.settle()
             seen[how] = [c for c in self.mpv.commands if c in ("screenshot-to-file", "loadfile", "overlay-remove")]
+            if seen[how][:1] == ["overlay-remove"]:
+                # D89: once per player process, before the freeze, the player is asked whether it scales an overlay
+                # (one pixel, taken off at once); this stand-in says no, as CI's mpv 0.37 does
+                asked += 1
+                seen[how] = seen[how][1:]
+            self.assertLessEqual(asked, 1, "the player was asked again within one process")
             self.assertEqual(seen[how][:2], ["screenshot-to-file", "loadfile"], how)
             self.assertIn("overlay-add", self.mpv.commands, how)
             self.assertEqual((os.path.basename(self.mpv.path), self.player.source_shader, self.api.transitions.given_up), ("a.mp4", None, ""), how)

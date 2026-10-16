@@ -2571,6 +2571,14 @@ class Stress(ServerBase):
     | s  a shader pad taking the play's ticket before its shader: two newest wishes for one tap | 0 of 3       | yes               |
     | t  a queued shader refused by the queue's own job before it (the older tap stays on)      | not in it    | yes               |
     | u  the effect put before the generator in the player's shader list (D74)                 | 3 of 3       | yes               |
+    | v  the question's pixel left on the screen (D89, `Player.overlay_scales`)                | 3 of 3       | yes               |
+    | w  the player asked with a still of ours on the screen (D89)                             | 0 of 3       | yes               |
+    | x  the answer kept for the next player process (D89)                                     | 0 of 3       | yes               |
+    | y  a scaled crossfade step sent without its display size (D89)                           | 0 of 3       | yes               |
+    | z  a part of a halved still placed by the still's own pixels (D89, `on_screen`)          | 0 of 3       | yes               |
+    | aa a still of the clip that misses making the box give up (D89, the fault it found)      | 2 of 3       | yes               |
+    | ab a still of the clip taken with the logo on (D89)                                      | 0 of 3       | yes               |
+    | ac misses of the still of the clip never turning to the window (D89)                     | 0 of 3       | yes               |
 
     What the rows say that is not "caught":
     * h needs a level wish that runs (a Fade in, a Fade out), a clip tapped with a blend, and then something newer
@@ -2614,6 +2622,12 @@ class Stress(ServerBase):
       first put into the first test's rounds, and for a while the second test did not hold "the box never gives
       up on transitions": a still had a tenth of a second of real time on this test's fast clock, and a stalled
       runner failed a round. That limit is out of the way now (setUp), and both tests hold it for every other reason.
+    * v to ac (D89, 2026-10-15; most rounds run on a stand-in that scales an overlay, about half with a clip
+      smaller than the screen). This test holds the order of things, not what is drawn where, so faults of place
+      and size (y, z), of a setting (ab) and of what one player process is told (w, x, ac: they need two processes,
+      two misses in a row, or a still on the screen at the moment of the question) are for the tests by hand
+      (`Scaled`, `ScaledRealPlayer`, `ReadHalf`); each of v to ac fails at least one of those. aa is the fault this
+      test found in its first run on the new stand-in (a generator chosen during the screenshot).
     The table is run again whenever this test changes: adding ten kinds of action to it took a from three of
     three to none, and moving the fake's lateness from the caller to the stand-in for mpv took d and i to none,
     before weights, a look inside each wish's own step and lateness on the way to the player brought them back.
@@ -2645,6 +2659,9 @@ class Stress(ServerBase):
         slow = T.SLOW
         T.SLOW = 600.0
         self.addCleanup(setattr, T, "SLOW", slow)
+        half = T.HALF_WINDOW
+        T.HALF_WINDOW = 0                   # the stand-in's screen is 8 x 4: halved as a large one is (D89)
+        self.addCleanup(setattr, T, "HALF_WINDOW", half)
         self.mpv = FakeMpv(os.path.join(self.rundir, "player.sock"), lag=self.lag)
         self.addCleanup(self.mpv.stop)
         self.player = self.api.player = Player(rundir=self.rundir)
@@ -2857,6 +2874,13 @@ class Stress(ServerBase):
         api.blackout({"on": False}, None, "stress")
         api.control({"action": "opacity", "value": 100}, None, "stress")
         self.tr.given_up = ""
+        # D89: an mpv that scales an overlay (0.38 on) in 80 of 100 rounds, 55 of them with a clip smaller than the
+        # screen (a still of the clip) and 25 with a clip larger (a still of the window, halved); an mpv that cannot
+        # (0.37) in the rest. From numbers of their own, so the rounds' actions are as they were, and asked anew in
+        # every round (the stand-in's answer changes between rounds, its process does not).
+        scaling = random.Random("%d/%d/scaling" % (seed, number)).random()
+        mpv.scales, mpv.video = scaling < 0.8, ((4, 2) if scaling < 0.55 else (1920, 1080))
+        self.tr._scaling, self.tr._no_clip, self.tr._misses = None, None, 0
         self.settings.data["mix"] = T.stored("cut", 0.3)
         api.play({"file": "a.mp4"}, None, "stress")
         before = rng.random()
@@ -2977,7 +3001,10 @@ class Stress(ServerBase):
         for seed in self.SEEDS:
             for i in range(self.ROUNDS):
                 self.one_round(seed, i)
-        print("stress: %d rounds in %.1f s" % (len(self.SEEDS) * self.ROUNDS, self.time.monotonic() - began))
+        print("stress: %d rounds in %.1f s; %d overlays drawn at a size of their own, %d stills of the clip alone (D89)"
+              % (len(self.SEEDS) * self.ROUNDS, self.time.monotonic() - began, self.mpv.counts["scaled"], self.mpv.counts["video stills"]))
+        self.assertGreater(self.mpv.counts["video stills"], 8, "the rounds hardly ever took a still of the clip: they prove nothing of D89")
+        self.assertGreater(self.mpv.counts["scaled"], 100, "the rounds hardly ever drew a scaled still: they prove nothing of D89")
 
     def test_with_an_effect_beside_everything_an_operator_can_do(self):
         """The same rounds with one or two actions of an effect added to each (on, off, the next one), and one more
@@ -3031,6 +3058,453 @@ class OddRun(Base):
             smallest = min(p[3] * p[4] for p in self.player.parts)
             self.assertLessEqual(smallest, 2 * max(41, 23), "%s never came near its last column or row: %s" % (name, self.player.parts[-1]))
             self.assertEqual(self.left(), [], name)
+
+
+# -- D89: a smaller still and scaled steps, where the player draws an overlay at a size of its own --
+
+def png_of(rows, bpp=3):
+    """A PNG of these rows of pixels (each a tuple of three or four bytes), with plain rows."""
+    raw = b"".join(b"\x00" + b"".join(bytes(p) for p in row) for row in rows)
+
+    def chunk(kind, body):
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body) & 0xffffffff)
+    head = struct.pack(">IIBBBBB", len(rows[0]), len(rows), 8, 2 if bpp == 3 else 6, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", head) + chunk(b"IDAT", zlib.compress(raw, 1)) + chunk(b"IEND", b"")
+
+
+class ReadHalf(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, self.dir, True)
+        self.path = os.path.join(self.dir, "s.png")
+
+    def put(self, data):
+        with open(self.path, "wb") as f:
+            f.write(data)
+
+    def test_a_still_above_the_bound_comes_out_at_half_its_size_every_other_pixel_of_every_other_row(self):
+        for bpp in (3, 4):
+            for w, h in ((5, 3), (6, 4), (1, 1), (7, 2)):
+                rows = [[(x, y, 100 + x + 10 * y) + ((9,) if bpp == 4 else ()) for x in range(w)] for y in range(h)]
+                self.put(png_of(rows, bpp))
+                ow, oh, out = T.read_still(self.path, (w, h), half=0)
+                self.assertEqual((ow, oh), ((w + 1) // 2, (h + 1) // 2), (w, h))
+                want = b"".join(bytes([100 + x + 10 * y, y, x, 255]) for y in range(0, h, 2) for x in range(0, w, 2))
+                self.assertEqual(bytes(out), want, "%d x %d, %d bytes a pixel" % (w, h, bpp))
+
+    def test_at_or_under_the_bound_it_is_read_whole(self):
+        rows = [[(x, y, 7) for x in range(4)] for y in range(2)]
+        self.put(png_of(rows))
+        self.assertEqual(T.read_still(self.path, (4, 2), half=8)[:2], (4, 2))
+        self.assertEqual(T.read_still(self.path, (4, 2), half=7)[:2], (2, 1))
+        self.assertEqual(T.read_still(self.path, (4, 2), half=None)[:2], (4, 2))
+
+    def test_a_still_of_the_clip_may_be_any_size_that_fits_the_screen_and_no_larger(self):
+        self.put(png(3, 2, (1, 2, 3)))
+        self.assertEqual(T.read_still(self.path, (8, 4), within=True)[:2], (3, 2))
+        self.assertEqual(T.read_still(self.path, (3, 2), within=True)[:2], (3, 2))
+        for bound in ((2, 4), (8, 1)):
+            with self.assertRaises(T.StillError):
+                T.read_still(self.path, bound, within=True)
+        with self.assertRaises(T.StillError, msg="without `within` the size is exact, as before"):
+            T.read_still(self.path, (8, 4))
+
+    def test_halving_holds_less_than_reading_whole(self):
+        import tracemalloc
+        w, h = 640, 360
+        raw = b"".join(b"\x00" + os.urandom(w * 3) for _ in range(h))
+
+        def chunk(kind, body):
+            return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body) & 0xffffffff)
+        self.put(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(raw, 0)) + chunk(b"IEND", b""))
+        tracemalloc.start()
+        try:
+            got = T.read_still(self.path, (w, h), half=0)
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        self.assertEqual(len(got[2]), w * h)                     # a quarter of the picture's four bytes a pixel
+        self.assertLess(peak, 2.5 * w * h * 4)
+
+
+class ScaledScreen(Screen):
+    """The fake screen of a player that draws an overlay at a size of its own (mpv 0.38 on, D89), or that refuses
+    to (`can_scale` False, as mpv 0.37). It notes where every overlay lands on the screen and at what size."""
+
+    def __init__(self, rundir):
+        super().__init__(rundir)
+        self.can_scale = True
+        self.probe_fails = False        # the question is not answered
+        self.clip_place = None          # what video_place answers: ((x, y, w, h) on the screen, (w, h) of the clip)
+        self.clip_still = None          # the size of a still of the clip alone
+        self.kinds = []                 # the kind of every still taken
+        self.shown = []                 # (x, y, width, height) on the screen of every overlay, and the size of its pixels
+        self.video_refused = False      # a still of the clip is refused ("mpv: error running command")
+        self.probe_oserror = False      # the question's pixel cannot be written
+
+    def overlay_scales(self, oid):
+        self.calls.append(("overlay_scales", oid))
+        if self.probe_oserror:
+            raise OSError(28, "No space left on device")
+        if self.probe_fails:
+            raise PlayerError("no reply from mpv")
+        assert not self.overlay_up, "asked with a still of ours on the screen: the pixel would take its place"
+        return self.can_scale
+
+    def video_place(self, screen):
+        self.calls.append(("video_place",))
+        return self.clip_place
+
+    def still(self, path, kind="window"):
+        self.kinds.append(kind)
+        if kind == "video":
+            self.calls.append(("still", os.path.basename(path)))
+            if self.video_refused:
+                raise PlayerError("mpv: error running command")
+            with open(path, "wb") as f:
+                f.write(png(self.clip_still[0], self.clip_still[1], self.colour))
+            return
+        super().still(path)
+
+    def overlay(self, oid, x, y, w, h, pixels, dw=None, dh=None):
+        if dw is not None and not self.can_scale:
+            raise PlayerError("mpv: invalid parameter")
+        super().overlay(oid, x, y, w, h, pixels)
+        self.calls[-1] = self.calls[-1] + (dw, dh)
+        self.shown.append(((x, y, dw if dw is not None else w, dh if dh is not None else h), (w, h)))
+
+    def overlay_part(self, oid, path, x, y, offset, w, h, stride, dw=None, dh=None):
+        if dw is not None and not self.can_scale:
+            raise PlayerError("mpv: invalid parameter")
+        super().overlay_part(oid, path, x, y, offset, w, h, stride)
+        self.calls[-1] = self.calls[-1] + (dw, dh)
+        self.shown.append(((x, y, dw if dw is not None else w, dh if dh is not None else h), (w, h)))
+
+
+class Scaled(Base):
+    def setUp(self):
+        super().setUp()
+        self.player = self.api.player = ScaledScreen(self.rundir)
+        self.player.running = True
+        half = T.HALF_WINDOW
+        T.HALF_WINDOW = 0                       # the screen of these tests is small: halve it as a large one is
+        self.addCleanup(setattr, T, "HALF_WINDOW", half)
+
+    def overlays(self):
+        return [c for c in self.player.calls if c[0] == "overlay"]
+
+    def test_a_still_of_the_window_is_read_at_half_its_size_and_every_step_drawn_at_the_full_size(self):
+        self.assertEqual(self.play(), {"playing": "a.mp4"})
+        names = self.names()
+        self.assertLess(names.index("overlay_scales"), names.index("pause"), "the player was asked while the clip stood still")
+        drawn = self.overlays()
+        self.assertEqual(len(drawn), 21)
+        self.assertEqual(set(c[1:] for c in drawn), {(T.OVERLAY_ID, 0, 0, 4, 2, 8, 4)}, "a quarter of the pixels, drawn over the whole screen")
+        self.assertEqual(len(self.player.pixels), 4 * 2 * 4)
+        self.assertEqual((self.tr.last["still"], self.tr.last["still_size"], self.tr.last["drawn"]), ("window", [4, 2], [0, 0, 8, 4]))
+        self.assertEqual(self.tr.last["ended"], "done")
+        self.assertEqual(self.left(), [])
+
+    def test_the_status_says_what_kind_of_still_was_taken_and_at_what_size(self):
+        self.assertNotIn("last", self.api.status({}, None, "t")["mix"], "nothing to say before the first transition")
+        self.play()
+        last = self.api.status({}, None, "t")["mix"]["last"]
+        self.assertEqual((last["still"], last["still_size"], last["drawn"], last["ended"]), ("window", [4, 2], [0, 0, 8, 4], "done"))
+        self.assertIn("still_ms", last)
+
+    def test_a_small_screen_is_not_halved_and_gets_the_commands_of_before(self):
+        T.HALF_WINDOW = 8 * 4
+        self.play()
+        self.assertEqual(set(c[1:] for c in self.overlays()), {(T.OVERLAY_ID, 0, 0, 8, 4, None, None)})
+        self.assertEqual(self.tr.last["still_size"], [8, 4])
+
+    def test_a_player_that_cannot_scale_gets_the_commands_of_before_and_is_asked_once(self):
+        self.player.can_scale = False
+        self.play()
+        self.play("b.mov")
+        self.assertEqual(set(c[1:] for c in self.overlays()), {(T.OVERLAY_ID, 0, 0, 8, 4, None, None)}, "a still was scaled on a player that cannot")
+        self.assertEqual(self.names().count("overlay_scales"), 1, "asked again within one player process")
+        said = [line for line in self.lines if "cannot draw an overlay at another size" in line]
+        self.assertEqual(len(said), 1, self.lines)
+        self.assertEqual((self.tr.given_up, self.tr.last["ended"], self.tr.last["still"]), ("", "done", "window"))
+        # another player process is asked again, and said so of again
+        self.player.props["pid"] = 4243
+        self.play()
+        self.assertEqual(self.names().count("overlay_scales"), 2)
+        self.assertEqual(len([line for line in self.lines if "cannot draw" in line]), 2)
+
+    def test_a_player_that_can_is_asked_once_and_says_nothing(self):
+        self.play()
+        self.play("b.mov")
+        self.assertEqual(self.names().count("overlay_scales"), 1)
+        self.assertFalse([line for line in self.lines if "cannot draw" in line], self.lines)
+
+    def test_a_question_that_is_not_answered_is_the_full_size_this_once_and_asked_again(self):
+        self.player.probe_fails = True
+        self.play()
+        self.assertEqual(set(c[1:] for c in self.overlays()), {(T.OVERLAY_ID, 0, 0, 8, 4, None, None)})
+        self.assertEqual(self.tr.given_up, "", "a question that is not answered is no reason to give up")
+        self.player.probe_fails = False
+        del self.player.calls[:]
+        self.play("b.mov")
+        self.assertEqual(self.names().count("overlay_scales"), 1)
+        self.assertEqual(set(c[1:] for c in self.overlays()), {(T.OVERLAY_ID, 0, 0, 4, 2, 8, 4)})
+
+    def test_with_a_still_on_the_screen_the_player_is_not_asked(self):
+        # a second play during a transition, on a player not asked yet (here: its answer forgotten in between):
+        # asking would put the pixel in place of the still that is on the screen
+        def again():
+            self.tr._scaling = None
+            self.play("b.mov")
+        self.hook = again
+        self.play()
+        self.assertEqual(self.names().count("overlay_scales"), 1, "asked with the first still on the screen")
+        self.assertEqual(self.names().count("still"), 2)
+        self.assertEqual(self.tr.last["still_size"], [8, 4], "the second still is the full-size way, this once")
+        self.assertEqual(self.player.levels[-1], None)
+        self.assertEqual(self.left(), [])
+
+    def test_a_still_of_the_clip_is_laid_over_the_clips_place(self):
+        # a clip of 4 x 1 shown at 8 x 2 in the middle of a screen of 8 x 4
+        self.player.clip_place, self.player.clip_still = ((0, 1, 8, 2), (4, 1)), (4, 1)
+        self.play()
+        self.assertEqual(self.player.kinds, ["video"])
+        self.assertEqual(set(c[1:] for c in self.overlays()), {(T.OVERLAY_ID, 0, 1, 4, 1, 8, 2)})
+        self.assertEqual((self.tr.last["still"], self.tr.last["still_size"], self.tr.last["drawn"]), ("video", [4, 1], [0, 1, 8, 2]))
+        self.assertEqual((self.tr.last["ended"], self.tr.given_up), ("done", ""))
+        self.assertEqual(self.left(), [])
+
+    def test_with_the_picture_over_the_video_on_the_still_is_of_the_window(self):
+        self.player.clip_place, self.player.clip_still = ((0, 1, 8, 2), (4, 1)), (4, 1)
+        self.settings.data["overlay"] = dict(self.settings.data["overlay"], on=True, file="logo.png")
+        self.play()
+        self.assertEqual(self.player.kinds, ["window"], "a still of the clip would leave the logo out")
+        self.assertNotIn("video_place", self.names())
+        self.assertEqual(self.tr.last["drawn"], [0, 0, 8, 4])
+
+    def test_a_still_of_the_clip_of_another_shape_than_its_place_is_a_cut_and_twice_makes_it_the_window(self):
+        # the clip may have changed hands between the look and the screenshot (a generator's carrier is loaded
+        # before the player counts the change, which the stress test found): once is a cut and no give-up
+        self.player.clip_place, self.player.clip_still = ((0, 1, 8, 2), (4, 1)), (4, 4)
+        self.assertEqual(self.play(), {"playing": "a.mp4"})
+        self.assertNotIn("overlay", self.names())
+        self.assertIn("play", self.names())
+        self.assertFalse(self.player.props["pause"])
+        self.assertEqual(self.tr.given_up, "")
+        self.assertTrue(any("the still of the clip is 4 x 4" in line for line in self.lines), self.lines)
+        self.assertEqual(self.left(), [])
+        # twice in a row, and this player process gets stills of the window, which work everywhere
+        self.play("b.mov")
+        self.assertEqual(self.tr.given_up, "")
+        self.assertTrue(any("stills of the window from now on" in line for line in self.lines), self.lines)
+        del self.player.calls[:]
+        self.play()
+        self.assertEqual(self.player.kinds, ["video", "video", "window"])
+        self.assertEqual((self.tr.last["still"], self.tr.last["ended"]), ("window", "done"))
+        # a new player process tries the clip's own picture again
+        self.player.props["pid"] = 4243
+        self.player.clip_still = (4, 1)
+        self.play("b.mov")
+        self.assertEqual((self.tr.last["still"], self.tr.last["ended"]), ("video", "done"))
+
+    def test_a_still_of_the_clip_of_the_right_shape_and_the_wrong_size_is_a_miss(self):
+        # the review of #138, L3: the size is held, not only the shape
+        self.player.clip_place, self.player.clip_still = ((0, 1, 8, 2), (4, 1)), (8, 2)
+        self.play()
+        self.assertNotIn("overlay", self.names())
+        self.assertTrue(any("not the 4 x 1 the player said" in line for line in self.lines), self.lines)
+        self.assertEqual((self.tr.given_up, self.tr._misses), ("", 1))
+        # and the shape: the size the player said, in a place of another shape
+        self.player.clip_place, self.player.clip_still = ((0, 1, 8, 2), (4, 4)), (4, 4)
+        self.play("b.mov")
+        self.assertTrue(any("not the shape of its place" in line for line in self.lines), self.lines)
+        self.assertEqual(self.tr.given_up, "")
+
+    def test_a_still_of_the_clip_the_player_refuses_is_a_cut_and_never_a_give_up(self):
+        # the review of #138, M2: "mpv: error running command" on the clip's kind of screenshot
+        self.player.clip_place, self.player.clip_still = ((0, 1, 8, 2), (4, 1)), (4, 1)
+        self.player.video_refused = True
+        self.assertEqual(self.play(), {"playing": "a.mp4"})
+        self.assertEqual(self.tr.given_up, "")
+        self.assertFalse(self.player.props["pause"])
+        self.assertIn("play", self.names())
+        self.play("b.mov")
+        self.assertEqual(self.tr.given_up, "")
+        self.play()
+        self.assertEqual(self.player.kinds, ["video", "video", "window"], "two refusals in a row and the player gets the window's still")
+        self.assertEqual((self.tr.last["still"], self.tr.last["ended"], self.tr.given_up), ("window", "done", ""))
+        self.assertEqual(self.left(), [])
+
+    def test_a_question_whose_pixel_cannot_be_written_is_the_full_size_this_once(self):
+        # the review of #138, L5: an OSError writing overlay-63.bgra is "cannot tell", not a failed still
+        self.player.probe_oserror = True
+        self.play()
+        self.assertEqual(self.tr.given_up, "")
+        self.assertEqual((self.tr.last["still_size"], self.tr.last["ended"]), ([8, 4], "done"))
+        self.player.probe_oserror = False
+        self.play("b.mov")
+        self.assertEqual(self.names().count("overlay_scales"), 2, "not asked again")
+        self.assertEqual(self.tr.last["still_size"], [4, 2])
+
+    def test_a_wipe_or_a_slide_over_a_clip_with_bars_takes_the_window(self):
+        # the review of #138, M1: a still of the clip would be moved inside the clip's place and stop at the bar's
+        # edge, with the new clip already beside it; over the whole screen, the window's still moves as it should
+        self.player.clip_place, self.player.clip_still = ((2, 0, 4, 4), (2, 2)), (2, 2)       # pillarboxed
+        for name in T.WIPES + T.SLIDES:
+            self.settings.data["mix"] = T.stored(name, 1.0)
+            del self.player.kinds[:], self.player.shown[:]
+            self.now[0] = 50.0
+            self.play()
+            self.assertEqual(self.player.kinds, ["window"], name)
+            self.assertEqual(self.player.shown[0][0], (0, 0, 8, 4), "%s: the still does not cover the screen" % name)
+            self.assertEqual(self.tr.last["ended"], "done", name)
+        self.player.clip_place = ((0, 1, 8, 2), (4, 1))                                          # letterboxed
+        self.player.clip_still = (4, 1)
+        for name in ("wipe-from-top", "slide-down"):
+            self.settings.data["mix"] = T.stored(name, 1.0)
+            del self.player.kinds[:]
+            self.play()
+            self.assertEqual(self.player.kinds, ["window"], name)
+        # a crossfade over the same place fades where the clip was, which is right: the clip's own still
+        self.settings.data["mix"] = T.stored("crossfade", 1.0)
+        del self.player.kinds[:]
+        self.play()
+        self.assertEqual(self.player.kinds, ["video"])
+        # and a move over a clip that fills the screen keeps the clip's own still
+        self.player.clip_place, self.player.clip_still = ((0, 0, 8, 4), (4, 2)), (4, 2)
+        self.settings.data["mix"] = T.stored("slide-left", 1.0)
+        del self.player.kinds[:], self.player.shown[:]
+        self.play()
+        self.assertEqual(self.player.kinds, ["video"])
+        self.assertEqual(self.player.shown[0][0], (0, 0, 8, 4))
+
+    def test_one_still_of_the_clip_that_misses_between_good_ones_does_not_count_up(self):
+        self.player.clip_place, self.player.clip_still = ((0, 1, 8, 2), (4, 1)), (4, 4)
+        self.play()
+        self.player.clip_still = (4, 1)
+        self.play("b.mov")
+        self.player.clip_still = (4, 4)
+        self.play()
+        self.player.clip_still = (4, 1)
+        self.play("b.mov")
+        self.assertEqual(self.player.kinds, ["video"] * 4)
+        self.assertEqual(self.tr.last["still"], "video")
+        self.assertEqual(self.tr.given_up, "")
+
+    def test_a_wipe_and_a_slide_on_a_halved_still_keep_their_edges_where_they_belong(self):
+        self.player.screen = (40, 20)
+        for name in T.WIPES + T.SLIDES:
+            self.settings.data["mix"] = T.stored(name, 1.0)
+            del self.player.shown[:], self.player.calls[:]
+            self.now[0] = 50.0
+            sizes = []
+            self.player.on_overlay = lambda: sizes.append(os.path.getsize(os.path.join(self.rundir, "transition-%d.bgra" % os.getpid())))
+            self.play()
+            self.assertEqual(self.tr.last["ended"], "done", name)
+            self.assertEqual(set(sizes), {20 * 10 * 4 + 20 * 4}, "%s: the file is the halved still and one row more" % name)
+            parts = [c for c in self.player.calls if c[0] == "overlay_part"]
+            self.assertEqual(parts[0][1:], (T.OVERLAY_ID, 0, 0, 0, 20, 10, 80, 40, 20), name)
+            blend = T.BLENDS[name]()
+            across = blend.cut in ("left", "right")
+            for (sx, sy, sw, sh), (pw, ph) in self.player.shown:
+                self.assertTrue(0 <= sx and sx + sw <= 40 and 0 <= sy and sy + sh <= 20, "%s draws outside the screen: %s" % (name, (sx, sy, sw, sh)))
+                self.assertEqual((sw, sh), (2 * pw, 2 * ph), "%s: a part is not drawn at twice its size" % name)
+                near, far = (sx, sx + sw) if across else (sy, sy + sh)
+                full = 40 if across else 20
+                kept = 0 if blend.shift else (full if blend.cut in ("left", "top") else 0)
+                if blend.shift:
+                    self.assertEqual(near if blend.cut in ("left", "top") else far, 0 if blend.cut in ("left", "top") else full, "%s: the slide does not leave from its side" % name)
+                else:
+                    self.assertEqual(far if blend.cut in ("left", "top") else near, kept, "%s: the edge that stays moved" % name)
+            self.assertEqual(self.left(), [], name)
+
+
+class ScaledRealPlayer(ServerBase):
+    """The real Player over the stand-in for mpv, which scales an overlay or refuses to (D89)."""
+
+    def setUp(self):
+        super().setUp()
+        from pvj.player import Player
+        from tests.fakempv import FakeMpv
+        self.mpv = FakeMpv(os.path.join(self.rundir, "player.sock"))
+        self.addCleanup(self.mpv.stop)
+        self.player = self.api.player = Player(rundir=self.rundir)
+        self.api.log = lambda line: None
+        self.lines = []
+        self.api.transitions.log = self.lines.append
+        self.api.transitions._thread = False
+        self.clip = os.path.join(self.media, "a.mp4")
+        half = T.HALF_WINDOW
+        T.HALF_WINDOW = 0
+        self.addCleanup(setattr, T, "HALF_WINDOW", half)
+
+    def left(self):
+        return [n for n in os.listdir(self.rundir) if n.startswith("transition-") or n.startswith("overlay-")]
+
+    def test_the_player_asks_with_one_pixel_and_takes_it_off_either_way(self):
+        for scales in (True, False):
+            self.mpv.scales = scales
+            self.assertIs(self.player.overlay_scales(T.OVERLAY_ID), scales)
+            self.assertEqual(self.mpv.overlays, {})
+            self.assertEqual(self.left(), [])
+
+    def test_where_the_clips_own_picture_is_the_screen(self):
+        self.mpv.size = (8, 4)
+        self.player.play([self.clip], spawn=False)
+        for video, want in (((4, 2), ((0, 0, 8, 4), (4, 2))), ((2, 2), ((2, 0, 4, 4), (2, 2))), ((4, 1), ((0, 1, 8, 2), (4, 1))),
+                            ((8, 4), None), ((16, 8), None)):
+            self.mpv.video = video
+            self.assertEqual(self.player.video_place((8, 4)), want, video)
+        self.mpv.video = (4, 2)
+        for prop, value in (("video-zoom", 0.5), ("video-pan-x", 0.1), ("video-pan-y", -0.1), ("video-rotate", 90)):
+            was = self.mpv.props[prop]
+            self.mpv.props[prop] = value
+            self.assertIsNone(self.player.video_place((8, 4)), "%s %s" % (prop, value))
+            self.mpv.props[prop] = was
+        self.mpv.props["video-zoom"] = -0.5             # smaller than fits: still all of it on the screen
+        self.assertIsNotNone(self.player.video_place((8, 4)))
+        self.mpv.props["video-zoom"] = 0.0
+        self.assertIsNone(self.player.video_place((16, 8)), "the player's screen is another one")
+        self.player.set_mapping_mode(True)
+        self.assertIsNone(self.player.video_place((8, 4)), "the mapping is not in a still of the clip")
+        self.player.set_mapping_mode(False)
+        self.assertIsNotNone(self.player.video_place((8, 4)))
+
+    def test_no_still_of_the_clip_over_a_generator(self):
+        self.mpv.size, self.mpv.video = (8, 4), (4, 2)
+        self.api.registry.set_enabled("shaders", True)
+        self.api.shaders.log = lambda *_: None
+        self.assertTrue(self.api.shaders.show(self.api.shaders.library()[0]["id"])["ok"])
+        self.assertIsNone(self.player.video_place((8, 4)))
+
+    def go(self):
+        self.player.play([self.clip], spawn=False)
+        self.settings.data["mix"] = T.stored("crossfade", 0.3)
+        open(os.path.join(self.media, "b.mp4"), "w").close()
+        self.assertEqual(self.api.play({"file": "b.mp4"}, None, "t"), {"playing": "b.mp4"})
+        shots = [c for c in self.mpv.commands if c == "screenshot-to-file"]
+        self.assertEqual(len(shots), 1)
+        self.assertEqual(self.mpv.overlays, {})
+        self.assertEqual(self.left(), [])
+        self.assertEqual((self.api.transitions.last["ended"], self.api.transitions.given_up), ("done", ""))
+        return self.api.transitions.last
+
+    def test_a_crossfade_on_an_mpv_that_scales_takes_the_clips_own_picture(self):
+        self.mpv.scales, self.mpv.size, self.mpv.video = True, (8, 4), (4, 2)
+        last = self.go()
+        self.assertEqual((last["still"], last["still_size"], last["drawn"]), ("video", [4, 2], [0, 0, 8, 4]))
+
+    def test_a_crossfade_on_an_mpv_that_scales_with_a_clip_as_large_as_the_screen_halves_the_window(self):
+        self.mpv.scales, self.mpv.size, self.mpv.video = True, (8, 4), (8, 4)
+        last = self.go()
+        self.assertEqual((last["still"], last["still_size"], last["drawn"]), ("window", [4, 2], [0, 0, 8, 4]))
+
+    def test_a_crossfade_on_an_mpv_that_cannot_scale_is_as_before(self):
+        self.mpv.scales, self.mpv.size, self.mpv.video = False, (8, 4), (4, 2)
+        last = self.go()
+        self.assertEqual((last["still"], last["still_size"], last["drawn"]), ("window", [8, 4], [0, 0, 8, 4]))
+        self.assertEqual(len([line for line in self.lines if "cannot draw an overlay" in line]), 1)
 
 
 if __name__ == "__main__":
