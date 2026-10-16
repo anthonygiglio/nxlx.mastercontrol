@@ -8,6 +8,7 @@ would judge nothing. Every question goes through pvj.player.Ipc, the panel's own
 panel will meet. The pictures are read back with pvj-render's own `pvj-capture` (the final picture as it would go to
 the screen) and judged by their pixels.
 """
+import atexit
 import json
 import os
 import shutil
@@ -64,6 +65,24 @@ def near(a, b, tol=40):
     return all(abs(int(p) - int(q)) <= tol for p, q in zip(a, b))
 
 
+LIVE = set()        # every Renderer not yet closed: ended at exit whatever happened (atexit below)
+
+
+def _die_with_parent():
+    """In the child, before pvj-render runs: the kernel ends it with SIGTERM if this test process dies first."""
+    try:
+        import ctypes
+        ctypes.CDLL(None, use_errno=True).prctl(1, signal.SIGTERM)       # PR_SET_PDEATHSIG
+    except Exception:
+        pass
+
+
+@atexit.register
+def _end_all():
+    for r in list(LIVE):
+        r.close()
+
+
 class Renderer:
     """One pvj-render process in its own folder."""
 
@@ -73,7 +92,9 @@ class Renderer:
         env = dict(os.environ, LIBGL_ALWAYS_SOFTWARE="1")
         self.log = open(os.path.join(self.dir, "stderr.txt"), "w+")
         self.proc = subprocess.Popen([BIN, "--socket=" + self.sock, "--headless=%dx%d" % (W, H)] + list(args),
-                                     stdin=subprocess.DEVNULL, stdout=self.log, stderr=self.log, env=env)
+                                     stdin=subprocess.DEVNULL, stdout=self.log, stderr=self.log, env=env,
+                                     preexec_fn=_die_with_parent)
+        LIVE.add(self)
         self.ipc = Ipc(self.sock, timeout=10.0)
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
@@ -126,6 +147,7 @@ class Renderer:
         time.sleep(0.3)
 
     def close(self):
+        LIVE.discard(self)
         if self.log.closed:
             return
         if self.proc.poll() is None:
