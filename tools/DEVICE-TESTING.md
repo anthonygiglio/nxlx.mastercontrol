@@ -568,6 +568,29 @@ What is not known is whether 720 lines look better than 540 on the room's own sc
 | A4 | Vibes on Ambient under Automatic for 20 minutes | No shader marked "Too heavy on this box"; nxlx-drift and nxlx-nebula now come round too, at 540 lines | Any shader marked, with its rate |
 | A5 | nxlx-drift and nxlx-nebula at 540 lines (the GPU was 97 percent busy) | Their slow clouds: smooth, or an occasional hitch | Whether they look smooth |
 
+### pvj-render, the box's own renderer (D95): never run on a Pi; do these before anyone chooses it for a show
+
+Only the spike ran on the Pi (two clips at 960 x 540 held for 10 minutes; 720 held 2 minutes with 3 misses; 1080 did
+not). pvj-render itself has run only headless, on a PC's software GPU. Before: the box updated to this release, and
+`ls -l /opt/pvj/current/render/pvj-render` shows the program (if not: `cat /opt/pvj/current/render/build.log`).
+Use one 1080p30 H.264 clip (the owner's own, or the spike's). Measuring: stop the player (`sudo systemctl stop
+pvj-player`), run as the display's account `/opt/pvj/current/render/pvj-render --socket=/tmp/r.sock --drm-device=/dev/dri/card1
+--drm-connector=HDMI-A-1 --drm-mode=1920x1080@60.00 --detail=540 --fast --every-vblank`, load the clip over the socket
+(`echo '{"command":["loadfile","/path/clip.mp4"]}' | socat - /tmp/r.sock`, then `["set_property","loop-file","inf"]`),
+and read `["get_property","pvj-render"]` (missed-vblanks) and `["get_property","frame-drop-count"]` after each run.
+Start the player again afterwards.
+
+| # | Do | Look for | Send back |
+| --- | --- | --- | --- |
+| R1 | One 1080p30 clip at `--detail=540`, 10 minutes, `--every-vblank` | missed-vblanks after the first 3 seconds, frame-drop-count, `top` (CPU per core), the GPU's busy share (`/sys/devices/platform/v3dbus/fec00000.v3d/gpu_stats`, as in the spike) | The four numbers and the temperature at the end |
+| R2 | The same at `--detail=720` | As R1 | As R1 |
+| R3 | The same at `--detail=output` (1080 lines) | As R1. The spike's two clips did not hold at 1080; one may | As R1 |
+| R4 | Setup > Screen output > Renderer: New (pvj-render), detail Automatic; play a clip from the panel, pause, seek, Loop, volume, Stop | The page says "Drawing now: New (pvj-render)"; everything as with classic, black after Stop; the player journal says "pvj-render is drawing" | What differed from classic |
+| R5 | With New: a mapping (one quad, then a 4 x 4 grid) on Mapping, editing and then shown | The surfaces where they are with classic, to the pixel at the corners; the outlines while editing; masks over it | A photo of each with classic and with New |
+| R6 | With New: Show PIN on the display, a join QR code, the test pattern's words, the logo overlay | The PIN screen's text and the QR code as with classic, sharp and in screen space (not warped by a mapping) | A photo of the PIN screen |
+| R7 | The fallback: with New chosen, `sudo mv /opt/pvj/current/render/pvj-render /tmp/` and Restart player; then put it back. Then `sudo pkill -x -SEGV pvj-render` twice within a minute | The first: classic draws and the page says "pvj-render is not built on this box" or why; the second: one restart, then classic, and the page says "ended twice in a row (signal 11)". A picture all the time but a few seconds | The page's words and `journalctl -u pvj-player -n 30` |
+| R8 | Classic again (the default) after R4 to R7 | Everything as before this release; no pvj-render running (`pgrep -x pvj-render` says nothing) | Yes or no |
+
 ### What to send back
 
 The output of checks 1 to 7 and 13, the `journalctl` tail for anything that failed, and a note of what you saw on screen. Say clearly what you did **not** test.
