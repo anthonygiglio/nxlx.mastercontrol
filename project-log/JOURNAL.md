@@ -4,6 +4,14 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-16, Automatic picture detail for shaders, from the run at 1920 x 1080 (`shader-height`, #142, D93)
+
+- **The measurement** (the test Pi 4 at master 0648db6, output 1920 x 1080 at 60 Hz, run by the coordinator): all 47 shaders hold at 540 lines, 41 at 720. Drift, nebula and ridgelines, heavy at 1440p, hold at 540 here. Recorded in `PI4` (all of a frame's passes, so not comparable with the first run's own-pass numbers, which stay as `PI4_1440`) and in `pvj/SHADERS.md`; the raw rows stayed outside the repository, which keeps no raw measurement files.
+- **Built:** Automatic picture detail on a Pi 4, each shader at 720 where it held, else 540, by the table for the box's output; the default where no height was saved. A hand choice wins; a height an earlier release saved is kept and the page offers Use Automatic. `height_auto` beside `height`, as D71 did; no schema change.
+- **The default.** 540 was the measurement's (D51), not the owner's choice, so Automatic is the default. The test box keeps its saved 720 until someone presses Use Automatic.
+- **Tests:** `AutoDetailTest` (eight, one of them running master's code on a file written here) and the changed `BoardTest`; each of twelve deliberate breaks of the code made a test fail. The browser test is given a Pi 4's answer for the chooser and the line; it runs in CI only (no Playwright here).
+- **Open:** whether 720 lines look better than 540 on the projector, and whether tide and bloom keep up at 720 with an effect on (DEVICE-TESTING A1 to A5). Nothing was run on the Pi by this session.
+
 ## 2026-10-16, the screen's card: Automatic did nothing on the Pi, and why (`screen-card`, D91)
 
 - **On the test Pi** (master 3ad61a7, #139 deployed by the coordinator): the player was started with `--drm-connector=0.HDMI-A-1`, had no screen, and the panel started it again with the monitor's own 2560 x 1440. No black screen: D90's net held. Automatic itself did nothing.

@@ -6,13 +6,13 @@ Moving pictures drawn by the box's GPU instead of played from a file, and **Vibe
 
 Switch it on under Setup > Shaders and Vibes (beta, off by default). Switching it off while a shader is on the screen asks first, because it stops at once. It is offered on a Raspberry Pi 4, a Pi 5 and x86; not on a Pi 3.
 
-**Read this first: what is measured and what is not.** All 47 bundled shaders (the first ten, the Ambient and the Performance family, the ISF-Files pack) were run on a real Raspberry Pi 4 on 2026-10-05 through this engine, at 540 and at 720 lines (mpv 0.40, a 2560 x 1440 screen at 75 Hz; judged from snapshots and from the player's counters over SSH, nobody watched the monitor): the GPU took every one, every picture looked right, and their speed is in [the table below](#measured-on-a-raspberry-pi-4). The same run tried the engine itself on that box: a change of each kind of value, the speed control and the carrier that counts its own frames, a preset, Previous and Next, Vibes on both sets and the guard. What it found is said in each section; what it could not show (a single black frame, a controller, a long run) is under [Not verified](#not-verified). A Pi 5 and x86 are not measured at all, and every number here belongs to a 75 Hz screen (see the table's notes for why that matters).
+**Read this first: what is measured and what is not.** All 47 bundled shaders (the first ten, the Ambient and the Performance family, the ISF-Files pack) were run on a real Raspberry Pi 4 on 2026-10-05 through this engine, at 540 and at 720 lines (mpv 0.40, a 2560 x 1440 screen at 75 Hz; judged from snapshots and from the player's counters over SSH, nobody watched the monitor): the GPU took every one, every picture looked right, and their speed is in [the table below](#measured-on-a-raspberry-pi-4). The same run tried the engine itself on that box: a change of each kind of value, the speed control and the carrier that counts its own frames, a preset, Previous and Next, Vibes on both sets and the guard. What it found is said in each section; what it could not show (a single black frame, a controller, a long run) is under [Not verified](#not-verified). A Pi 5 and x86 are not measured at all. **A second run on 2026-10-16** played all 47 again at a 1920 x 1080 output at 60 Hz, the box's own screen mode since D90: there every shader holds at 540 lines and 41 hold at 720, and that run is what the box goes by up to that size of output ([the table](#at-1920-x-1080-at-60-hz-2026-10-16)); the first run's numbers belong to a 2560 x 1440 screen at 75 Hz and count above it. On a Pi 4 the **Automatic** picture detail draws each shader at the most lines it held (D93).
 
 ## Using it
 
 - **Live screen: the big Vibes button** (presenter, that is live access, and above; full width on a phone). It reads "Start Vibes" and starts the rotation; while that runs it reads "Vibes is playing: Aurora" and a tap stops it. "Now playing" shows `Vibes: <shader>`. While a shader is on, **Previous** and **Next** are beside it (`/api/shaders/step`), and a card with **Speed** and the shader's first four controls (a column of its own from 900 px). With more than one set a list chooses the set a start uses. The **Shaders** link opens the page below, and Back returns to Live.
 - **The Shaders and Vibes page** (Setup > Shaders and Vibes, or the Shaders link on Live; it is the same page). On a phone, top to bottom:
-  1. **On screen now**: the shader's name, the time until the next one, the load (`playing.load` and `drops_per_second` as three lights and words: "Running smoothly", "Close to the limit", "Dropping frames: try a lower picture detail"; `pass_ms` beside it), for full access **Picture detail** (from `render.heights`, the default marked), with more than one set the set Vibes plays, then **Previous**, **Start Vibes** / **Stop Vibes** and **Next** (live access). Why Vibes last ended is said here.
+  1. **On screen now**: the shader's name, the time until the next one, the load (`playing.load` and `drops_per_second` as three lights and words: "Running smoothly", "Close to the limit", "Dropping frames: try a lower picture detail"; `pass_ms` beside it), for full access **Picture detail** (on a Pi 4 **Automatic** first, marked as usual, with one line on what it does here; then the heights of `render.heights`, the default marked where there is no Automatic), with more than one set the set Vibes plays, then **Previous**, **Start Vibes** / **Stop Vibes** and **Next** (live access). Why Vibes last ended is said here.
   2. **Controls** for the shader on screen (live access). First the three every shader has: **Speed** (0 to the shader's `speed_max`, 1 marked, **Freeze** sets 0 and goes back to the speed before; a Performance shader says why it stops at 1), **Colour turn** and **Brightness trim**, each with Reset. Then the shader's own, drawn by type in one function (`inputControl`): `float` a slider with its value, `bool` the switch, `long` a row of buttons for up to five `VALUES` and a list for more (a slider in whole steps for a range), `color` a native colour field with an alpha slider, `point2D` a square to drag in (the arrows nudge it; the two numbers are shown), `event` a button. Every one sends `POST /api/shaders/values` with the shader's `id`, while it is dragged (at most ten times a second for one control, and always the last value on release), so Vibes goes on. A refusal from the answer is said beside the control; a refusal by the GPU, which comes a moment later in `error`, is said beside the control that sent last. **Reset all** sends every default in one call.
   3. **Presets** of that shader: a button each (a tap applies it: `/api/shaders/preset`, live access), the one in use filled, "Changed" once a value was moved since. Full access: a name and **Save as preset**, and under **More** rename and delete (it asks in place) and the MIDI buttons for preset 1 to 8.
   4. **Shaders**, the library: a filter by name, by `weight`, by `pack`, and by family when a shader's `categories` say Ambient or Performance. A row says its weight with the `measured` numbers ("Light work. 7.5 ms on a Pi 4 at 720 lines"), `heavy` ("Too heavy on this box. Left out of Vibes." with **Put it back**) and `refused`. **Play** (live access) shows one shader until something else is played. Full access: the switch **In Vibes** per shader (with more than one set it reads **In this set** and means the set being edited, which the card names), and **Remove** for uploads, which asks first.
@@ -30,7 +30,8 @@ Switch it on under Setup > Shaders and Vibes (beta, off by default). Switching i
 
 - Picks from the shaders of the **active set** (or the set a start names; see [Performing](#performing)), in a shuffled order, or in the set's own order if the set says so; shuffled, every shader is shown once before any comes again, and never the same one twice in a row. A third-party pack's shaders (the ISF-Files pack) are in no set until someone puts them in. A shader that is broken, that this box's GPU refused, or that the guard found too heavy here is passed over.
 - Each stays for the set's **dwell time** (default 180 seconds, 10 to 3600).
-- **A picture detail above the board's usual one is said out loud.** A box set up by the first version keeps the 720 lines it saved then, while a Pi 4 now starts at 540 (at 720 eight of the Ambient shaders drop frames there). When `config.height` is above `render.default`, the Shaders page shows, with the load: "Picture detail is 720 lines. This box is happier at 540." and **Use 540**, which applies on tap (`{"action": "config", "height": 540}`); the owner reads a one-line form of it on the Room screen's ambience card ("Picture detail 720 is high here." and **Use 540**). Full access only. Nothing is changed by itself.
+- **Automatic picture detail (D93), on a Pi 4.** Each shader is drawn at the most lines at which it held 30 frames a second on a Pi 4 at the box's size of output: at 1920 x 1080 or less ([the run of 2026-10-16](#at-1920-x-1080-at-60-hz-2026-10-16)) 720 lines for 41 of the 47, 540 for nxlx-aurora, nxlx-drift, nxlx-lantern, nxlx-nebula, isf-ridgelines and isf-simplex-noise; above it (a box set to 1440p by hand) the first run's classes, 720 for a light shader and 540 for the rest; 540 for a shader you add. `GET /api/shaders` says `config.height: "auto"`, each row's `lines`, and `render.auto` (what Automatic does here). It is what a Pi 4 has where no height was saved. **A height chosen by hand wins** and stays (`{"action": "config", "height": 540}`; `{"height": "auto"}` goes back). A Pi 5, x86 and the rest keep one height for every shader: nothing was measured there.
+- **A height saved by an earlier version is kept, and said.** Every save of the Shaders and Vibes settings by an earlier version wrote the height, chosen or not, so nobody can tell which; it stays, and on a Pi 4 (`config.height_kept`) the Shaders page shows, with the load: "Picture detail is 720 lines for every shader, saved by an earlier version. Automatic draws each shader at the most lines it keeps up at on this box." and **Use Automatic**, which applies on tap; the owner reads a one-line form of it on the Room screen's ambience card ("Picture detail 720 for every shader." and **Use Automatic**). On another board a height above its usual one is said as before ("This box is happier at 540." and **Use 540**). Full access only. Nothing is changed by itself.
 - **A set with one shader that can play** (a set of one, or one whose other members are left out) keeps it on: no dip and no reload at the end of each dwell. With variation on, its numbers still get new values each round, through a live change that does not flash; the palette turn and the start time stay. Next and Previous load it again, with the dip. (Before, such a set went dark for the Mix duration every dwell and came back as the same picture; seen on the Pi 4. The fix has run in tests only.)
 - Between shaders: a **dip to black** over the Mix screen's transition duration (down for half of it, up for half). During a Blackout, and after you have faded the picture out, nothing fades and the screen stays dark: the shaders go on changing unseen until you show the picture again.
 - **Variation each round** (can be switched off): every number input gets a new value between its MIN and MAX, pulled towards the default, or towards the preset's value (at most 60 percent of the way to either end, since the author chose the default as the good place); the palette is turned by up to 120 degrees either way around the grey axis (black, white and greys stay as they are); and the shader's time starts somewhere else. The values come from a random generator seeded when the service starts.
@@ -167,6 +168,73 @@ The rules every one of them keeps (the tests check what a test can check):
 
 ### Measured on a Raspberry Pi 4
 
+Two runs, each at its own size of output, because every frame also pays a scale to the screen and a 75 Hz screen gives a frame less time than a 60 Hz one. The box goes by the run at 1920 x 1080 for an output of that many pixels or fewer (`PI4` in `pvj/shaderlive.py`), and by the first run above it (`PI4_1440`; 1920 x 1200 too, which was not measured). **Their times are not the same measure**: the second run's is the sum of all of a frame's passes, the first run's the shader's own pass only.
+
+#### At 1920 x 1080 at 60 Hz (2026-10-16)
+
+**How.** The test Pi 4, master at `0648db6`, the output at 1920 x 1080 at 60 Hz (the box's Automatic screen mode since D90 and D91). Every one of the 47 was played through the panel with its defaults for 20 seconds at each height the Pi 4 offers (540 and 720 lines), reading the player's dropped frames, mpv's `vo-passes` (summed over all passes of a frame: the shader's own, the remainder and the scale to the screen), the kernel's GPU busy and the temperature. The carrier ran at 30 pictures a second throughout and no frame was mistimed; the board was at 36 to 39.4 degrees. The shader's own pass was kept only where frames were dropped. Nobody watched the screen. The raw rows (one JSON line per shader and height) were not added to the repository, which keeps no raw measurement files; they were in `~/.cache/nxlx-test/shaders-1080p.jsonl` on the WSL machine that ran the run.
+
+| Shader | Family | Class | All passes at 540 lines | Dropped a second at 540 | GPU busy at 540 | All passes at 720 lines | Dropped a second at 720 | GPU busy at 720 | Automatic |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| nxlx-aurora | First ten | medium | 22.6 ms | 0 | 71 percent | 34.2 ms | 2.59 | 98 percent | 540 |
+| nxlx-drift | First ten | medium | 29.8 ms | 0 | 97 percent | 47 ms | 10.07 | 99 percent | 540 |
+| nxlx-ember | First ten | light | 16.4 ms | 0 | 57 percent | 23.2 ms | 0 | 77 percent | 720 |
+| nxlx-horizon | First ten | light | 15.4 ms | 0 | 50 percent | 21.6 ms | 0 | 72 percent | 720 |
+| nxlx-lattice | First ten | light | 14.9 ms | 0 | 53 percent | 20.5 ms | 0 | 69 percent | 720 |
+| nxlx-nebula | First ten | medium | 29.3 ms | 0 | 96 percent | 46.1 ms | 9.67 | 99 percent | 540 |
+| nxlx-prism | First ten | light | 15.5 ms | 0 | 55 percent | 21.5 ms | 0 | 72 percent | 720 |
+| nxlx-pulse | First ten | light | 16.1 ms | 0 | 57 percent | 22.9 ms | 0 | 76 percent | 720 |
+| nxlx-silk | First ten | light | 14.3 ms | 0 | 51 percent | 19.6 ms | 0 | 67 percent | 720 |
+| nxlx-tide | First ten | light | 18.6 ms | 0 | 64 percent | 27.3 ms | 0 | 90 percent | 720 |
+| nxlx-bloom | Ambient | light | 18.1 ms | 0 | 62 percent | 26.3 ms | 0 | 87 percent | 720 |
+| nxlx-caustic | Ambient | light | 15.8 ms | 0 | 56 percent | 22.2 ms | 0 | 74 percent | 720 |
+| nxlx-contour | Ambient | light | 14.7 ms | 0 | 52 percent | 20.2 ms | 0 | 68 percent | 720 |
+| nxlx-dusk | Ambient | light | 15.3 ms | 0 | 54 percent | 21.3 ms | 0 | 72 percent | 720 |
+| nxlx-fringe | Ambient | light | 16.2 ms | 0 | 57 percent | 23 ms | 0 | 77 percent | 720 |
+| nxlx-kaleido | Ambient | light | 16.2 ms | 0 | 57 percent | 22.9 ms | 0 | 76 percent | 720 |
+| nxlx-lantern | Ambient | medium | 21.1 ms | 0 | 68 percent | 31.6 ms | 1.05 | 98 percent | 540 |
+| nxlx-moire | Ambient | light | 14.5 ms | 0 | 52 percent | 19.8 ms | 0 | 67 percent | 720 |
+| nxlx-petal | Ambient | light | 17.9 ms | 0 | 62 percent | 25.9 ms | 0 | 86 percent | 720 |
+| nxlx-pool | Ambient | light | 17.2 ms | 0 | 60 percent | 24.8 ms | 0 | 82 percent | 720 |
+| nxlx-ribbon | Ambient | light | 14.9 ms | 0 | 53 percent | 20.4 ms | 0 | 69 percent | 720 |
+| nxlx-ridge | Ambient | light | 17.2 ms | 0 | 60 percent | 24.7 ms | 0 | 82 percent | 720 |
+| nxlx-stars | Ambient | light | 17.1 ms | 0 | 60 percent | 24.7 ms | 0 | 82 percent | 720 |
+| nxlx-tiles | Ambient | light | 14.6 ms | 0 | 52 percent | 19.9 ms | 0 | 68 percent | 720 |
+| nxlx-veil | Ambient | light | 14.6 ms | 0 | 52 percent | 20 ms | 0 | 68 percent | 720 |
+| nxlx-bars | Performance | light | 14 ms | 0 | 50 percent | 19.2 ms | 0 | 61 percent | 720 |
+| nxlx-beam | Performance | light | 16.9 ms | 0 | 59 percent | 24.2 ms | 0 | 80 percent | 720 |
+| nxlx-burst | Performance | light | 16.3 ms | 0 | 57 percent | 23.1 ms | 0 | 77 percent | 720 |
+| nxlx-checker | Performance | light | 14.2 ms | 0 | 51 percent | 19.3 ms | 0 | 66 percent | 720 |
+| nxlx-chevron | Performance | light | 14.7 ms | 0 | 52 percent | 20.1 ms | 0 | 68 percent | 720 |
+| nxlx-glitch | Performance | light | 15.7 ms | 0 | 55 percent | 22 ms | 0 | 74 percent | 720 |
+| nxlx-grid | Performance | light | 15.1 ms | 0 | 53 percent | 20.8 ms | 0 | 70 percent | 720 |
+| nxlx-halftone | Performance | light | 14.3 ms | 0 | 51 percent | 19.5 ms | 0 | 66 percent | 720 |
+| nxlx-mirror | Performance | light | 14.5 ms | 0 | 52 percent | 19.9 ms | 0 | 67 percent | 720 |
+| nxlx-radar | Performance | light | 16.8 ms | 0 | 58 percent | 23.9 ms | 0 | 80 percent | 720 |
+| nxlx-scope | Performance | light | 16.6 ms | 0 | 58 percent | 23.7 ms | 0 | 79 percent | 720 |
+| nxlx-spokes | Performance | light | 15 ms | 0 | 53 percent | 20.7 ms | 0 | 70 percent | 720 |
+| nxlx-stripes | Performance | light | 14.3 ms | 0 | 50 percent | 19.4 ms | 0 | 66 percent | 720 |
+| nxlx-tunnel | Performance | light | 15.3 ms | 0 | 54 percent | 21.2 ms | 0 | 71 percent | 720 |
+| nxlx-zoom | Performance | light | 14.6 ms | 0 | 52 percent | 19.9 ms | 0 | 68 percent | 720 |
+| isf-color-bars | ISF pack | light | 12.1 ms | 0 | 44 percent | 15.5 ms | 0 | 54 percent | 720 |
+| isf-corner-colors | ISF pack | light | 14.7 ms | 0 | 52 percent | 20.1 ms | 0 | 68 percent | 720 |
+| isf-linear-gradient | ISF pack | light | 11.8 ms | 0 | 43 percent | 14.9 ms | 0 | 53 percent | 720 |
+| isf-radial-gradient | ISF pack | light | 12.2 ms | 0 | 41 percent | 15.8 ms | 0 | 55 percent | 720 |
+| isf-ridgelines | ISF pack | medium | 26.5 ms | 0 | 88 percent | 41.2 ms | 7.32 | 99 percent | 540 |
+| isf-simplex-noise | ISF pack | medium | 25.5 ms | 0 | 84 percent | 39.3 ms | 6.43 | 99 percent | 540 |
+| isf-sine-warp-gradient | ISF pack | light | 13.8 ms | 0 | 50 percent | 18.6 ms | 0 | 64 percent | 720 |
+
+What it shows:
+
+- **At 540 lines all 47 hold**, with nothing dropped by any of them; at 720 lines 41 hold. Before, at 1440p, nxlx-drift, nxlx-nebula and isf-ridgelines dropped frames at 540 too and were heavy; at this output none is heavy, and eight of the eleven that were medium there (nxlx-tide, nxlx-bloom, nxlx-beam, nxlx-petal, nxlx-pool, nxlx-ridge, nxlx-scope, nxlx-stars) are light here. So at this output the default set Ambient has all 25 calm shaders, nxlx-drift and nxlx-nebula included.
+- **Why the difference.** The six shaders' own passes at 720 lines, kept where frames were dropped, are what the first run measured (nxlx-drift 35.7 ms both times, nxlx-nebula 34.8, nxlx-aurora 23.0 against 22.8, nxlx-lantern 20.5, isf-ridgelines 29.9 against 29.8, isf-simplex-noise 28.0 against 27.9): the shader costs the same. What changed is the rest: the scale to a 1920 x 1080 screen took 7.3 to 7.4 ms (8.4 to 12.8 at 1440p), the remainder pass 3.7 to 3.8 at 720 lines, and at 60 Hz every carrier picture has two refreshes, 33.3 ms, where at 75 Hz every other one had 26.7.
+- **Little room for some.** At 540 lines nxlx-drift and nxlx-nebula held with the GPU 97 and 96 percent busy, and at 720 lines nxlx-tide (90) and nxlx-bloom (87) were the closest of those that held. An effect over them or the mapping (17 ms a frame by itself at 1440p) would tip them; the guard sees that, and D58 shows the same reasoning for two effects. Not changed here: Automatic follows the measurement, and the owner has not been asked.
+- **One board, one run of 20 seconds per height, on one screen.** A 1024 x 768 projector has fewer pixels to scale to and is taken by this table; nothing was measured on one.
+
+#### At 2560 x 1440 at 75 Hz (2026-10-05, the first run)
+
+Kept as it was measured. It counts for an output larger than 1920 x 1080, and the project's own `COST` notes follow its classes (the stricter of the two).
+
 **How.** 2026-10-05, the owner's Pi 4 Model B Rev 1.5 over SSH: mpv 0.40 on DRM with `--vo=gpu`, a desktop OpenGL 3.1 context on V3D (read from the player's start-up log in the first run, not read again), Mesa 26.2.2, kernel 6.18, a 2560 x 1440 screen at 75 Hz, the code of master at `b62c353`. Each shader was put on with `POST /api/shaders/play` and its defaults, left for 4 seconds, then watched for 20 seconds with no snapshot in them. The pass time is mpv's own average for the shader's pass (`vo-passes`), the dropped frames are the change of mpv's `frame-drop-count`, GPU busy is the kernel's `gpu_stats` for the render queue. `GET /api/shaders` was asked every 3 seconds meanwhile, as an open Shaders page does. A snapshot was taken after the window and looked at. Where a few frames were dropped in those 20 seconds (between 0.05 and 2.5 a second: 13 shaders at 720 lines, 4 at 540) the shader was watched for 60 seconds more, and its rate is over all 80. The GPU took all 47 at both heights, the player logged no warning about any of them, and every picture looked right.
 
 | Shader | Family | Class | Pass at 540 lines | Dropped a second at 540 | Pass at 720 lines | Dropped a second at 720 | GPU busy at 720 |
@@ -225,7 +293,7 @@ A pass time moves by about a millisecond from one minute to the next (single fra
 
 **Why 720 lines is tight on this screen.** Every picture pays two more passes whatever the shader: the scale to the screen (8.4 to 12.8 ms at 2560 x 1440, 10 in the middle) and a remainder pass (1.8 ms at 540 lines, 3.2 at 720). The carrier makes 30 pictures a second and this screen shows 75, so pictures are given two and three refreshes in turn: 26.7 ms, then 40. A picture that takes longer than 26.7 ms is late for every other place. That leaves the shader about 15 ms at 540 lines and 13.5 at 720, less whatever the passes vary by. The table agrees. At 540 lines everything up to nxlx-aurora's 12.9 ms is clean, and the four above 15 ms drop frames. At 720 lines everything up to 10.5 ms is clean; from 10.9 to 15.4 ms frames are dropped in bursts (0.15 to 1.2 a second on average: seconds with none, then seconds with 2 to 4); above 20 ms they are dropped all the time. **A 60 Hz screen gives every picture 33.3 ms**, and one of 1920 x 1080 has fewer pixels to scale to, so a projector should be kinder than this monitor. That is reasoning from these numbers, not a measurement.
 
-What follows from it:
+What followed from it then (D51; it still holds above 1920 x 1080, while at that size and under Automatic the run above decides):
 
 - **540 lines is the right default for a Pi 4** (and stays the default for a board that is unknown): 43 of the 47 drop nothing there. 1080 lines is not offered on a Pi 4. A Pi 5 and x86 start at 720 and keep 1080; **neither is measured**, so those are guesses. mpv scales the result to the screen.
 - **The two default sets are as they were.** Ambient is the first ten and the Ambient family without the two heavy ones (nxlx-drift, nxlx-nebula): 23 shaders, every one clean at 540 lines. Show is the 15 Performance shaders, every one clean at 540 lines. No shader had to be moved out.
@@ -252,7 +320,7 @@ Seven generators from Vidvox's public ISF collection (https://github.com/Vidvox/
 | isf-simplex-noise | Simplex Noise | soft clouds of noise | yes | medium: up to 6 octaves of simplex noise |
 | isf-sine-warp-gradient | Sine Warp Gradient | a gradient bent by sines | no | low: no loop |
 
-**Measured on the Pi 4** with their defaults (2026-10-05, [the table above](#measured-on-a-raspberry-pi-4)); the GPU took all seven and their pictures looked right. The five without a loop are the lightest shaders in the library. `isf-ridgelines` (16.8 ms at 540 lines, 29.8 at 720) drops about one frame a second even at 540 lines, and `isf-simplex-noise` (15.7 and 27.9 ms) is at the line there; at 720 lines both drop 7 a second. Both have an `octaves` input, 6 by default, and fewer octaves should cost less; that was not measured, and neither was any other of the seven's inputs. Before putting either into Vibes on a Pi 4, turn `octaves` down and read `playing.pass_ms` in `GET /api/shaders` (mpv's own timing of the pass): about 12 ms or less holds at 540 lines. Upstream's Random Lines (60 rounds per pixel) is not in the pack.
+**Measured on the Pi 4** with their defaults (2026-10-05, [the table above](#measured-on-a-raspberry-pi-4)); the GPU took all seven and their pictures looked right. The five without a loop are the lightest shaders in the library. `isf-ridgelines` (16.8 ms at 540 lines, 29.8 at 720) drops about one frame a second even at 540 lines, and `isf-simplex-noise` (15.7 and 27.9 ms) is at the line there; at 720 lines both drop 7 a second. At a 1920 x 1080 output (2026-10-16) both hold at 540 lines with nothing dropped and drop 6 to 7 a second at 720, so Automatic draws them at 540. Both have an `octaves` input, 6 by default, and fewer octaves should cost less; that was not measured, and neither was any other of the seven's inputs. Before putting either into Vibes on a Pi 4, turn `octaves` down and read `playing.pass_ms` in `GET /api/shaders` (mpv's own timing of the pass): about 12 ms or less holds at 540 lines. Upstream's Random Lines (60 rounds per pixel) is not in the pack.
 
 How these seven were chosen: see "The survey of ISF-Files" below.
 
@@ -940,11 +1008,14 @@ With a player that has no GPU output (the tests' `--vo=null`), nothing can be ch
  "shaders": [{"id": "nxlx-tide.fs", "name": "nxlx-tide", "source": "bundled" | "uploaded", "pack": "nxlx" | "isf-files" | "uploads", "description", "credit",
               "cost": "medium: 5 layers, ...",            the file's own note, as before
               "weight": "light" | "medium" | "heavy" | "",   measured for the bundled ones, else from the note's first word
-              "measured": {"board": "pi4", "lines": 720, "pass_ms": 15.4,       the pass at 720 lines, for every bundled shader
-                           "pass_ms_by_lines": {"540": 8.7, "720": 15.4},
-                           "drops_per_second": {"540": 0.0, "720": 1.17}, "stale": false} | null,     null for an upload
+              "measured": {"board": "pi4", "output": [1920, 1080], "lines": 720,     the run for this size of output (D93)
+                           "all_passes_ms": 27.3,                  at 1920 x 1080: all of a frame's passes at 720 lines
+                           "all_passes_ms_by_lines": {"540": 18.6, "720": 27.3},
+                           "drops_per_second": {"540": 0.0, "720": 0.0}, "stale": false} | null,     null for an upload
+                         above 1920 x 1080: "output": [2560, 1440], "pass_ms": 15.4 and "pass_ms_by_lines" (the shader's own pass)
+              "lines": 720,                                 the drawing height it gets here now (its own under Automatic)
               "vibes": true,                                in the active set
-              "heavy": {"at", "drops", "height", "board"?} | null,   the guard's mark, if it counts at this height on this board
+              "heavy": {"at", "drops", "height", "board"?} | null,   the guard's mark, if it counts at the height it is drawn at on this board
               "refused": "line 6: ..." | null,              what this box's GPU said about this file
               "speed_max": 1 | 4,                           1 for a Performance shader unless "faster" is on
               "categories": ["Generator", "Performance"],
@@ -957,8 +1028,10 @@ With a player that has no GPU output (the tests' `--vo=null`), nothing can be ch
              "load"?: "ok" | "tight" | "heavy" | null, "drops_per_second"?} | null,
  "error": {"id", "message", "at"} | null,
  "vibes": {"running", "current", "next_in", "rounds", "last", "set"?: {"id", "name"}},
- "config": {"dwell", "vary", "height", "guard", "clock", "faster"},      dwell and vary are the active set's
- "render": {"width", "height", "fps", "heights": [360, 540, 720], "default": 540, "measured": true, "board": "pi4"},
+ "config": {"dwell", "vary", "height", "guard", "clock", "faster",     dwell and vary are the active set's
+            "height_kept"?},                    height: "auto" under Automatic, else lines; height_kept (a Pi 4 only): the number was saved by an earlier version
+ "render": {"width", "height", "fps", "heights": [360, 540, 720], "default": 540, "measured": true, "board": "pi4",     width and height: the shader on screen's
+            "auto": {"lines": 720, "other": 540, "lower": {"nxlx-drift.fs": 540, ...}, "output": [1920, 1080]} | null},   what Automatic does here; null where it is not offered
  "sets": [{"id", "name", "shaders": [{"id", "preset"?}], "dwell", "vary", "order": "shuffle" | "listed"}],
  "active": "00000000",
  "controls": {"speed": {"min": 0, "max": 4, "default": 1}, "hue": {"min": -180, "max": 180, "default": 0}, "brightness": {"min": 0, "max": 2, "default": 1}},
@@ -979,11 +1052,11 @@ Live access (presenters):
 Full access:
 
 - `POST /api/shaders/presets`: `{"action": "save", "name", "id"?}` keeps what is on the screen (over a preset of that name, in any letter case), `{"action": "rename", "id", "name", "to"}`, `{"action": "delete", "id", "name"}`.
-- `POST /api/shaders`, one action: `{"action": "upload", "name": "x.fs", "source": "<the file's text>", "replace"?: bool}`, `{"action": "delete", "id"}` (also removes its presets and its place in the sets), `{"action": "vibes", "id", "on": bool}` (in or out of the active set), `{"action": "config", "dwell"?, "vary"?, "height"?, "guard"?, "clock"?, "faster"?}`, `{"action": "set", "op": "add", "name", "shaders"?: ["a.fs", {"id": "b.fs", "preset": "x"}], "dwell"?, "vary"?, "order"?}`, `{"action": "set", "op": "update", "id", ...}`, `{"action": "set", "op": "delete", "id"}` (never the last one), `{"action": "set", "op": "activate", "id"}`, `{"action": "heavy", "id", "on": bool}`.
+- `POST /api/shaders`, one action: `{"action": "upload", "name": "x.fs", "source": "<the file's text>", "replace"?: bool}`, `{"action": "delete", "id"}` (also removes its presets and its place in the sets), `{"action": "vibes", "id", "on": bool}` (in or out of the active set), `{"action": "config", "dwell"?, "vary"?, "height"?, "guard"?, "clock"?, "faster"?}` (`height` is one of `render.heights`, or `"auto"` where `render.auto` is not null), `{"action": "set", "op": "add", "name", "shaders"?: ["a.fs", {"id": "b.fs", "preset": "x"}], "dwell"?, "vary"?, "order"?}`, `{"action": "set", "op": "update", "id", ...}`, `{"action": "set", "op": "delete", "id"}` (never the last one), `{"action": "set", "op": "activate", "id"}`, `{"action": "heavy", "id", "on": bool}`.
 
 Uploads go through the JSON API (auth, the request header and the Origin check as for every other change), not through the raw media upload path: that path streams gigabytes into the media folder and accepts media extensions only, and a shader is a few kilobytes of text that has to be parsed before it is stored.
 
-Settings live under `"shaders"` in the settings file once something is changed: `dwell`, `vary`, `height`, `disabled` (and `included`) from the first version, and `presets`, `sets`, `active`, `heavy`, `guard`, `faster`, `clock` and `v` (2 once this version has saved the section). **There is no settings migration and the schema is unchanged** (13): a missing or damaged entry means the defaults. A box whose shader settings the first version saved keeps its rotation: on the first save its list (everything that was not switched off, uploads included, without the two heavy shaders) is written as the set Ambient. A box where shaders were uploaded but no shader setting was ever saved has no such section, and is treated as new: its uploads are in the library and have to be put into the rotation once. The first version's `included` (third-party pack shaders that were put into Vibes) is still read for the first set while no set has been saved; once a set is saved, the set is the list. Settings export and import check every key ([boxcare.py](boxcare.py)); a factory reset removes the section.
+Settings live under `"shaders"` in the settings file once something is changed: `dwell`, `vary`, `height`, `disabled` (and `included`) from the first version, and `presets`, `sets`, `active`, `heavy`, `guard`, `faster`, `clock` and `v` (2 once this version has saved the section), and `height_auto` (D93): true under Automatic, false for a height chosen by hand, absent where an earlier version saved the height (it is kept). Under Automatic `height` is still a number, 540, which is what an earlier release reads and draws every shader at; that release's next save of the section leaves `height_auto` out, and back on this one the box then has 540 kept. **There is no settings migration and the schema is unchanged** (13): a missing or damaged entry means the defaults. A box whose shader settings the first version saved keeps its rotation: on the first save its list (everything that was not switched off, uploads included, without the two heavy shaders) is written as the set Ambient. A box where shaders were uploaded but no shader setting was ever saved has no such section, and is treated as new: its uploads are in the library and have to be put into the rotation once. The first version's `included` (third-party pack shaders that were put into Vibes) is still read for the first set while no set has been saved; once a set is saved, the set is the list. Settings export and import check every key ([boxcare.py](boxcare.py)); a factory reset removes the section.
 
 ## Not verified
 

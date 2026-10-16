@@ -2464,6 +2464,7 @@ class OverShaderTest(Base):
                                   (720, "isf-edge-blowout.fs", (540, 960, 540, True, None))):     # the generator draws more: the effect works at its cap
             cfg = self.gen.config()
             cfg["height"] = height
+            cfg["height_auto"] = False          # a height chosen by hand: under a Pi 4's Automatic the generator would get its own lines (D93)
             self.gen._save(cfg)
             self.show()
             self.fx.put(sid)

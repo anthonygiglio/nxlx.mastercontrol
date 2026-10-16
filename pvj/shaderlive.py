@@ -953,8 +953,8 @@ class LiveEngine(S.Engine):
 
     def _save(self, cfg):
         """Save the section. The first save by this version of a section the first version wrote turns that box's
-        list into the set Ambient: everything that was not switched off, uploads included, without the two heavy
-        shaders (see _first_set). A box with no saved section has nothing to turn: its first set stays computed
+        list into the set Ambient: everything that was not switched off, uploads included, without the shaders that
+        are heavy at the box's output (see _first_set; none at 1920 x 1080, two at 2560 x 1440). A box with no saved section has nothing to turn: its first set stays computed
         until someone edits a set. A key that could not be read at all is left in the file as it is."""
         super()._save(self._prepared(cfg))
 

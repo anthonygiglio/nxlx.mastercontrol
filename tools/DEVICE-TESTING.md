@@ -553,6 +553,21 @@ crossfade's still. Clips: one 1080p H.264 at 29.97, one at 25, one 720p at 30.
 | S13 | A mapping made on the 1440p monitor, then the X39 at 1024 x 768 | The mapping page says the mapping was made on another shape and asks for a check; every surface keeps its place on the screen, squeezed sideways | A photo; whether the squeeze matters for the owner's real mappings |
 | S14 | `sudo -u <the display account> cat /var/lib/pvj/screen-mode.json` and `ls -l /var/lib/pvj/screen-mode.json /run/pvj/player/screen.json` | The first is readable by the player (0640, group pvj); the second 0640 too | The listing |
 
+### Automatic picture detail for shaders (D93): only eyes can judge these
+
+The numbers behind it were measured on the test Pi 4 at 1920 x 1080 at 60 Hz on 2026-10-16 (nobody watched a screen).
+What is not known is whether 720 lines look better than 540 on the room's own screen, which is the reason to draw at
+720. Before: Setup > Shaders and Vibes > Picture detail should read Automatic (on the test box it reads 720 lines with
+"saved by an earlier version": press Use Automatic first).
+
+| # | Do | Look for | Send back |
+| --- | --- | --- | --- |
+| A1 | On the projector at its own Automatic mode (D90), play nxlx-silk, nxlx-lattice, nxlx-grid and nxlx-halftone, each under Automatic (720 lines) and then with Picture detail at 540 lines by hand, from where the audience stands | Fine lines, dots and edges: sharper at 720, or no difference you would notice | For each: 720 better, the same, or 540 better. If the same everywhere, 540 for all would leave the GPU more room |
+| A2 | The same four on the 1440p monitor set to 1920 x 1080 | As A1, close up | As A1 |
+| A3 | nxlx-tide and nxlx-bloom under Automatic (720 lines; the GPU was 87 to 90 percent busy there) with an effect on over them, then with the mapping on | The load line beside the shader on the Shaders page; dropped frames in Setup > Health | Dropped frames a second for each. If they drop, these two may need 540 the way two effects got it in D58 |
+| A4 | Vibes on Ambient under Automatic for 20 minutes | No shader marked "Too heavy on this box"; nxlx-drift and nxlx-nebula now come round too, at 540 lines | Any shader marked, with its rate |
+| A5 | nxlx-drift and nxlx-nebula at 540 lines (the GPU was 97 percent busy) | Their slow clouds: smooth, or an occasional hitch | Whether they look smooth |
+
 ### What to send back
 
 The output of checks 1 to 7 and 13, the `journalctl` tail for anything that failed, and a note of what you saw on screen. Say clearly what you did **not** test.

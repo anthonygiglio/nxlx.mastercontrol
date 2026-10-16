@@ -1202,7 +1202,8 @@ class Effects(S.Engine):
             # the player speaks of (64 x 36 in CI). Its size is in the generators' record, read without their lock
             # (see Engine.on_screen). While the GPU still looks at a generator that has just come (seconds), the
             # record is the one before it: the size is then what the box draws generators at, which is what the
-            # new one has. With no record at all (black after a refused generator) no size is said.
+            # new one has (under Automatic picture detail, D93, the box's one number: the new one may have 720
+            # lines for those seconds). With no record at all (black after a refused generator) no size is said.
             live = self._live()
             self.under, shown = SHADER, live.playing
             size = None
