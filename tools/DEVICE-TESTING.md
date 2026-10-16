@@ -523,6 +523,32 @@ N30. **What the sandbox keeps from it, and what a crash does (never run).** `sud
 
 Send back the table from N6 and N7, anything in N3 that had to change, and what N2, N17, N18 and N19 printed, and the outcome of N20 and N21. Only then may any document say what the NDI input manages on a Pi 4.
 
+### Screen output (D90): never run on a Pi; do these before the next show
+
+Everything here was written against mpv's own source and run in CI without a screen: no mode has been set on a real
+screen by this code. **After the update the box drives the owner's monitor at 1920 x 1080 at 60 Hz, not 2560 x 1440
+at 75.** Before: `journalctl -u pvj-player -b | grep "screen output"` after each start says what was chosen and why;
+`cat /run/pvj/player/screen.json` has the whole list. For the numbers: `GET /api/status` (`screen`), `GET /api/screen`
+(`display` is what mpv says it draws at), Setup > Health (dropped frames), and the times the journal prints for a
+crossfade's still. Clips: one 1080p H.264 at 29.97, one at 25, one 720p at 30.
+
+| # | Do | Look for | Send back |
+| --- | --- | --- | --- |
+| S1 | `mpv --no-config --drm-mode=help` on the box (player stopped and running), for each screen you have: the 1440p monitor, the Epson X27 or X39, any 1080p TV | A list per connected screen | The whole list for each (it is the test data: the tests here were written from the kernel's usual order and the Epson's spec sheets, not from a real list), and what Automatic chose (Setup > Screen output) |
+| S2 | The update itself, with the 1440p monitor attached | The player restarts once; the monitor says 1920 x 1080 at 60 Hz in its own menu | What the monitor's menu says, and whether the picture is sharp (scaled once, by the monitor) |
+| S3 | Dropped frames at 1080p60 and at 1024 x 768 at 60: each clip for two minutes, then a shader, an effect, the mapping on, a crossfade between two pads | Setup > Health's dropped frames; the journal's crossfade lines | Dropped frames a second for each, and the crossfade's still and step times, beside the 2560 x 1440 numbers in D28, D58 and pvj/SHADERS.md (8.4 to 12.8 ms just to scale to 1440p) |
+| S4 | Judder: a slow pan at 29.97 and at 25 on 60 Hz, then on 50 Hz; then the same with display-resample: `sudo systemctl edit pvj-player`, and in the drop-in an empty `ExecStart=` and then the `ExecStart=` line that `systemctl cat pvj-player` shows with `--mpv-arg=--video-sync=display-resample` put before `serve`; restart the player, and remove the drop-in afterwards | A pan that moves evenly | Which of the eight looked even. Display-resample is NOT built; this is to decide whether it should be |
+| S5 | Setup > Screen output: choose 1920 x 1080 at 50 Hz, "Try it" | The question in place first; then the screen dark for a few seconds; then "Keep this mode? Going back in 15 s" counting down | How long the screen was dark, and whether the count started only when the picture was back |
+| S6 | S5 again and do nothing | Back to Automatic by itself after 15 s, with the line "Nobody kept ..." | That it came back |
+| S7 | S5 again and press Keep; restart the box | After the restart the screen is still at 50 Hz | |
+| S8 | Choose a mode the projector says it cannot show (on the monitor, the 75 Hz one; an X39 at 1920 x 1080) and do nothing | Black or "out of range" on the screen, back by itself after 15 s | That it came back |
+| S9 | Boot with the screen OFF or unplugged, then switch it on | As before D90: the player takes the screen's own mode when it comes (the journal says "no screen is connected") | What the screen shows, and whether Restart player (Setup > About and power) then brings Automatic's mode |
+| S10 | Hot-plug: unplug the monitor while it plays, plug the projector in | Note what happens. Nothing here follows a hot-plug: mpv keeps the mode it has until the player restarts | What the projector shows before and after Restart player |
+| S11 | The Epson X27 or X39 at 1024 x 768 (Automatic) against 1920 x 1080 at 60 (by hand): the test pattern in each | At 1024 x 768 the grid's squares are square, the red border is on every edge and the words say "1024 x 768 at 60 Hz (Automatic)" | A photo of each: at 1080p the projector shows 1024 x 576 with bars and scales twice; whether that is visibly softer is the reason for Automatic's choice |
+| S12 | The test pattern on each screen | A red line one pixel wide at the very edge on all four sides; squares in a grid; the words at the top left | Which edges are cut off (overscan): the TV or projector's own setting, not the box's |
+| S13 | A mapping made on the 1440p monitor, then the X39 at 1024 x 768 | The mapping page says the mapping was made on another shape and asks for a check; every surface keeps its place on the screen, squeezed sideways | A photo; whether the squeeze matters for the owner's real mappings |
+| S14 | `sudo -u <the display account> cat /var/lib/pvj/screen-mode.json` and `ls -l /var/lib/pvj/screen-mode.json /run/pvj/player/screen.json` | The first is readable by the player (0640, group pvj); the second 0640 too | The listing |
+
 ### What to send back
 
 The output of checks 1 to 7 and 13, the `journalctl` tail for anything that failed, and a note of what you saw on screen. Say clearly what you did **not** test.

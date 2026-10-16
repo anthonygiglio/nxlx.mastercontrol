@@ -3,6 +3,7 @@
 import threading
 import unittest
 
+from pvj import screenmode
 from pvj.api import Fader
 from pvj.player import Player, PlayerError
 from tests.test_server import ServerBase
@@ -79,10 +80,13 @@ class TransportApiTest(ServerBase):
     def test_test_pattern_on_off_and_status(self):
         st, body, _ = self.post("/api/testpattern", {"on": True})
         self.assertEqual((st, body), (200, {"test_pattern": True}))
-        self.assertEqual(self.player.calls[[c[0] for c in self.player.calls].index("play")][1], [self.player.TEST_PATTERN])
-        self.player.status = lambda: {"running": True, "path": self.player.TEST_PATTERN}
-        p = self.call("GET", "/api/status", token=self.full)[1]["player"]
-        self.assertEqual((p["path"], p["test_pattern"]), (None, True))           # never shows the internal source name
+        # D90: at the size the player draws at (the stand-in's 1920 x 1080), with the grid and the border
+        sized = screenmode.pattern_url((1920, 1080))
+        self.assertEqual(self.player.calls[[c[0] for c in self.player.calls].index("play")][1], [sized])
+        for path in (sized, self.player.TEST_PATTERN):                          # and the fixed one an older panel put up
+            self.player.status = lambda path=path: {"running": True, "path": path}
+            p = self.call("GET", "/api/status", token=self.full)[1]["player"]
+            self.assertEqual((p["path"], p["test_pattern"]), (None, True))       # never shows the internal source name
         self.assertEqual(self.post("/api/testpattern", {"on": False})[1], {"test_pattern": False})
         self.assertIn(("clear",), self.player.calls)
         self.assertEqual(self.post("/api/testpattern", {"on": "yes"})[0], 400)

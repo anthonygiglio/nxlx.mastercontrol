@@ -4,6 +4,17 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-15, the screen's mode: Automatic up to 1920 x 1200 at 60 Hz, a mode by hand tried and kept or back (`screen-modes`, #139, D90)
+
+The owner, after the research on outputs and resolutions: "I want you to proceed with whatever is going to provide the most economic output for performance and clarity and detail in the output." Read as the research's recommendation; built on a branch of its own while #138 (transitions-fast, D89) changes the crossfade.
+
+- **Automatic on every box** (`pvj/screenmode.py`): the screen's own mode up to 1920 x 1200 at about 60 Hz, else the largest up to that size of its own shape (else 1080p) at 60, 50 only without 60. The owner's 1440p monitor goes from 2560 x 1440 at 75 to 1080p60 at the update.
+- **Found on the way:** sysfs lists the sizes but never the rates, so the player's service asks `mpv --drm-mode=help` (the rates as mpv compares them, to 0.01 Hz) and passes one exact `--drm-mode` from that list. And a bad mode does not make the service loop, as expected: mpv with `--idle` stays up with no screen. So the panel asks a new player for `current-vo` and starts it once more with the screen's own mode if there is none. Both in LESSONS.md.
+- **By hand:** Setup > Screen output (Owner), the screen's modes, the question in place, then "Keep this mode? Going back in 15 s" from the moment the new player is up; back by itself, also across a restart of the panel or the box. The keep is refused through the support tunnel, like the network's confirm (D84). Not in an export, not imported (`boxcare.BOX_OWN`).
+- **The test pattern** at the screen's size, with a grid, a 1 pixel red border and the mode in words. `GET /api/status` has `screen` (in use, asked, why). The mapping page says when a change of shape squeezed a mapping; its points were already moved per axis.
+- **Tests:** `tests/test_screenmode.py` (each kind of screen, the exact text and mpv's own comparison, the fallbacks, the try with a stand-in clock and timer, the report read as untrusted, the mapping through 1080p and 1024 x 768, rollback on master's own code at 33e7eb4, and the texts against a real mpv in CI and in the 0.40 job). Each part was broken on purpose and seen to fail. `tests/test_transport.py` and `tests/test_shaders.py` now expect the sized pattern; `tests/test_boxcare.py` knows `BOX_OWN`.
+- **Not run:** nothing on the Pi, no screen, no projector; no mode has been set by this code on any display. The device rows are S1 to S14. It reads devices and takes a file from another account: it needs the independent review before it is merged.
+
 ## 2026-10-15, remote support and NDI: one gap in the file's rule closed, the owner's rule kept (`ndi-remote-addresses`, D88)
 
 - Started as the Low queued from the review of #125: hold `POST /api/ndi` through remote support to the rule a settings file is held to. CI then failed `tests/test_ndi_setup.py` `TunnelSameAsStreamsTest`, which pins the owner's answer of 2026-10-08 (NDI as Streams for a full-access session); I had not run that file locally. Asked again, he said "Keep my rule", so the route change was taken out and the queued item is closed by his answer.

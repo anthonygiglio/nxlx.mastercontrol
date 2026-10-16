@@ -14,6 +14,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+import tests  # noqa: F401  (the lock order and a temp folder of its own, tests/__init__.py)
 from pvj import mapper as M, screenmode as S
 from pvj.player import Player, PlayerError
 from pvj.settings import Settings

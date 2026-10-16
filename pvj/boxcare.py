@@ -63,6 +63,10 @@ MAX_NUMBER_DIGITS = 40
 MAX_DEPTH = 24
 # never exported, never imported. "controller_code" (D61) is a way to hand out access, so a file cannot switch it on
 NEVER = ("auth", "devices", "support", "support_log", "controller_code", "guest_controls", "ndi_discovery")      # ndi_discovery (D85): which network a listener is on belongs to this box
+# The box's own and no secret: in the diagnostics file, never in an export, and a file that holds it is not imported
+# (it is noted and the box's own stays). "screen" (D90): the mode is chosen for the screen on this box, and an import
+# would set it with nobody in the room to keep it or let it go back.
+BOX_OWN = ("screen",)
 ENVELOPE = ("format", "format_version", "exported", "version", "box", "passwords_included", "settings", "themes")
 KEEP_IMPORT_BACKUPS = 3
 KEEP_SESSION_BACKUPS = 3          # copies of the settings from before a support session's first import, one per session
@@ -555,7 +559,10 @@ def public_settings(data, support_configured=None):
                           for e in data.get("support_log", []) if isinstance(e, dict)]
     from . import auth as auth_mod
     out["controller_code"] = auth_mod.controller_setting(data.get("controller_code"))      # what it means: never owner without enabled
-    known = {n for n, _ in SECTIONS} | set(NEVER) | {"schema"}
+    for name in BOX_OWN:
+        if isinstance(data.get(name), dict):
+            out[name] = copy.deepcopy(data[name])
+    known = {n for n, _ in SECTIONS} | set(NEVER) | set(BOX_OWN) | {"schema"}
     out["not_shown"] = sorted(k for k in data if k not in known) + ["auth (the PIN)"]
     return out
 

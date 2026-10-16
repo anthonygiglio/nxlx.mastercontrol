@@ -623,11 +623,24 @@ class ImportTest(Base):
 
     def test_every_settings_section_is_either_checked_or_never_exported(self):
         """A new top-level section must be given a check in boxcare.SECTIONS (and KNOWN_SCHEMA raised), or be listed
-        in NEVER: otherwise it would silently be missing from every export."""
-        known = {name for name, _ in boxcare.SECTIONS} | set(boxcare.NEVER) | {"schema"}
+        in NEVER, or in BOX_OWN (D90: the box's own and no secret): otherwise it would silently be missing from every export."""
+        known = {name for name, _ in boxcare.SECTIONS} | set(boxcare.NEVER) | set(boxcare.BOX_OWN) | {"schema"}
         self.assertEqual(sorted(set(settings_mod.default_settings()) - known), [])
         self.assertIn("shaders", known)             # not in the defaults: it appears in the settings once something was changed
         self.assertLessEqual(boxcare.KNOWN_SCHEMA, settings_mod.SCHEMA)
+        self.assertEqual(set(boxcare.BOX_OWN) & ({name for name, _ in boxcare.SECTIONS} | set(boxcare.NEVER)), set())
+
+    def test_the_screens_mode_is_in_no_export_and_an_import_leaves_it(self):
+        """D90: the mode belongs to the screen on this box. An import would set it with nobody to keep it."""
+        self.settings.data["screen"] = {"mode": "1024x768@60.00"}
+        file = self.export()
+        self.assertNotIn("screen", file["settings"])
+        file["settings"]["screen"] = {"mode": "3840x2160@30.00"}
+        self.settings.data["screen"] = {"mode": "1280x720@60.00"}
+        st, out = self.send(file)
+        self.assertEqual((st, out["problems"]), (200, []), out)
+        self.assertEqual(self.settings.data["screen"], {"mode": "1280x720@60.00"})
+        self.assertIn("screen is not imported by this version; left as it is", out["notes"])
 
     def test_access_data_in_a_file_is_refused(self):
         for name, value in (("devices", [{"id": "x", "name": "evil", "role": "full", "token_hash": "0" * 64, "created": 1}]),
