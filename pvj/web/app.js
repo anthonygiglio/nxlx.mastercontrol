@@ -1664,7 +1664,7 @@
         body: function () { return [networkCard()]; } },
       { id: 'screen', group: 'box', name: 'Screen output', role: 'full', url: '/api/screen', urlRole: 'full',
         blurb: 'The size and rate the box sends to the screen or projector. Automatic picks the screen\'s own mode up to 1920 x 1200 at 60 Hz. A change is tried and goes back by itself unless you keep it.',
-        body: function () { return [screenCard()]; } },
+        body: function () { return [screenCard(), rendererCard()]; } },
       { id: 'updates', group: 'box', name: 'Updates', role: 'full', url: '/api/system',
         blurb: 'Install a newer version from a USB stick or an upload. Only updates signed with your key are taken, and a failed one goes back by itself.',
         body: function () { return [updateCard()]; } },
@@ -3042,6 +3042,50 @@
       body.appendChild(h('div', { class: 'field', text: 'Test pattern' }));
       body.appendChild(h('div', { class: 'hint', text: 'Colour bars at the screen\'s own size, with a grid, a red border one pixel wide at the very edge and the mode in words, in place of what plays. A border you cannot see means the projector cuts the edge off.' }));
       body.appendChild(h('div', { class: 'row' }, testPattern()));
+    }
+    refresh();
+    return card;
+  }
+  // ---- the renderer (D95) -----------------------------------------------
+  var RENDERER_NAMES = { classic: 'Classic (mpv)', 'new': 'New (pvj-render)' };
+  var DETAIL_NAMES = { auto: 'Automatic (540 lines on a Pi 3 or 4, else the screen\'s own)', 540: '540 lines', 720: '720 lines', output: 'The screen\'s own size' };
+  function rendererCard() {
+    var body = h('div', { class: 'list sp', id: 'renderbody' }, h('div', { class: 'state', text: 'Loading...' }));
+    var card = h('div', { class: 'card', id: 'rendercard' }, h('h2', { text: 'Renderer' }), body);
+    var out = h('div', { class: 'msg inmsg', id: 'rendermsg', role: 'status' });
+    function refresh() {
+      api('GET', '/api/renderer').then(function (r) {
+        if (!document.getElementById('rendercard') || asking(card)) return;
+        body.textContent = '';
+        if (!r.ok) { body.appendChild(h('div', { class: 'hint', id: 'rendererr', text: (r.data.error || 'Not available') + '.' })); return; }
+        draw(r.data);
+      });
+    }
+    function draw(d) {
+      body.textContent = '';
+      body.appendChild(h('div', { class: 'state', id: 'renderline', text: 'Drawing now: ' + (RENDERER_NAMES[d.drawing] || d.drawing) + '.' }));
+      if (d.why) body.appendChild(h('div', { class: 'hint warn', id: 'renderwhy', role: 'status', text: 'New was chosen; classic mpv is drawing: ' + d.why + '.' }));
+      if (!d.available) body.appendChild(h('div', { class: 'hint', id: 'rendernone', text: 'pvj-render is not built on this box, so only classic mpv can draw.' }));
+      var use = h('select', { class: 'text-input', id: 'renderuse' }, d.uses.map(function (u) {
+        return h('option', { value: u, text: RENDERER_NAMES[u] || u, selected: u === d.use, disabled: u === 'new' && !d.available && d.use !== 'new' });
+      }));
+      var detail = h('select', { class: 'text-input', id: 'renderdetail' }, d.details.map(function (v) {
+        return h('option', { value: String(v), text: DETAIL_NAMES[v] || String(v), selected: v === d.detail });
+      }));
+      body.appendChild(labelled('Renderer', use, 'Classic is the player as it always was. New is the box\'s own renderer, a first step towards layers and live visuals; if it fails to start the box goes back to classic by itself.'));
+      body.appendChild(labelled('Picture detail inside (new only)', detail, 'The new renderer draws the clip at this size and scales it to the screen once.'));
+      var go = h('button', { class: 'btn on pri grow', id: 'renderapply', text: 'Use this', onclick: function (e) {
+        var want = { use: use.value, detail: /^\d+$/.test(detail.value) ? parseInt(detail.value, 10) : detail.value };
+        confirmRow('The player restarts and the screen goes dark for a few seconds.', 'Restart with it', 'Cancel', function () {
+          sayAt(out, 'Restarting the player...');
+          api('POST', '/api/renderer', want).then(function (r) {
+            if (!r.ok) sayAt(out, (r.data.error || 'Could not change it') + '. Nothing was changed.', true);
+            else { sayAt(out, 'Saved. The player is restarting.'); draw(r.data); setTimeout(refresh, 6000); }
+          });
+        }, e.currentTarget);
+      } });
+      body.appendChild(h('div', { class: 'row' }, go));
+      body.appendChild(out);
     }
     refresh();
     return card;

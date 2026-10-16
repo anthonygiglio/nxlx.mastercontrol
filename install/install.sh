@@ -172,6 +172,22 @@ if [ ${#optional[@]} -gt 0 ]; then
 	fi
 fi
 
+# Optional: the box's own renderer (render/, D95) is built here from its source, so it needs a compiler and the
+# headers of libmpv, EGL, GLES, GBM and libdrm. Missing ones are installed when the network allows; without them
+# the renderer is not built and the panel says so. Classic mpv, the default, needs none of this.
+render_need=()
+for p in gcc make pkg-config libc6-dev libmpv-dev libegl-dev libgles-dev libgbm-dev libdrm-dev; do
+	dpkg-query -W -f '${Status}' "$p" 2>/dev/null | grep -q 'install ok installed' || render_need+=("$p")
+done
+if [ ${#render_need[@]} -gt 0 ] && command -v dpkg-query >/dev/null; then
+	if [ "$OFFLINE" = 1 ] || [ "$REAL" = 0 ] || ! command -v apt-get >/dev/null; then
+		log "pvj-render will not be built until these are installed: ${render_need[*]}"
+	else
+		log "installing ${render_need[*]} (to build pvj-render)"
+		run apt-get install -y --no-install-recommends "${render_need[@]}" || log "could not install ${render_need[*]}; pvj-render stays unavailable"
+	fi
+fi
+
 # Nothing is installed for the NDI input here, not avahi either: that is opt-in per box (pvj/ndisetup.py, D62).
 
 # --- accounts -----------------------------------------------------------
@@ -218,7 +234,25 @@ run rm -rf "$RELEASE.new"
 run mkdir -p "$RELEASE.new"
 if [ "$DRY" = 0 ]; then
 	cp -a "$SRC/pvj" "$SRC/bin" "$RELEASE.new/"
+	[ -d "$SRC/render" ] && cp -a "$SRC/render" "$RELEASE.new/"
 	find "$RELEASE.new" -name __pycache__ -type d -prune -exec rm -rf {} +
+	# The renderer (D95), built from source here and never shipped as a binary. A failed build leaves the box as it
+	# was: classic mpv draws and the panel says pvj-render is not built. Not in stage mode (tests, the image's own
+	# copy is installed for real in the image's chroot).
+	if [ "$REAL" = 1 ] && [ -f "$RELEASE.new/render/Makefile" ]; then
+		rm -f "$RELEASE.new/render/pvj-render" "$RELEASE.new"/render/src/*.o
+		if command -v make >/dev/null && command -v pkg-config >/dev/null && pkg-config --exists mpv egl glesv2 gbm libdrm; then
+			log "building pvj-render (a minute or two on a Pi 4)"
+			if timeout 1200 make -C "$RELEASE.new/render" > "$RELEASE.new/render/build.log" 2>&1; then
+				log "pvj-render built"
+			else
+				log "pvj-render was not built (render/build.log in the release); classic mpv stays the only renderer"
+			fi
+			rm -f "$RELEASE.new"/render/src/*.o
+		else
+			log "pvj-render was not built: the build tools or headers are missing"
+		fi
+	fi
 fi
 previous=""
 [ -L "$ROOT$PREFIX/current" ] && previous="$(readlink "$ROOT$PREFIX/current")"

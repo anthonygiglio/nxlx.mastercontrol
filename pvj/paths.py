@@ -58,6 +58,7 @@ PLAYER_SOCKET = "player.sock"
 PLAYER_PID = "player.pid"
 PREVIEW = "preview.jpg"                       # written by mpv, so it lives in the player's folder
 SCREEN_REPORT = "screen.json"                 # the screen's modes and the one the player chose (pvj/screenmode.py, D90)
+RENDERER_REPORT = "renderer.json"             # which program draws and why (pvj/renderer.py, D95)
 STATE_DIR = "/var/lib/pvj"                    # the panel's settings; the player may pass through and read what is its group's
 NETD_SOCKET = "netd.sock"
 SYSD_SOCKET = "sysd.sock"

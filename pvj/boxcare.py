@@ -66,7 +66,7 @@ NEVER = ("auth", "devices", "support", "support_log", "controller_code", "guest_
 # The box's own and no secret: in the diagnostics file, never in an export, and a file that holds it is not imported
 # (it is noted and the box's own stays). "screen" (D90): the mode is chosen for the screen on this box, and an import
 # would set it with nobody in the room to keep it or let it go back.
-BOX_OWN = ("screen",)
+BOX_OWN = ("screen", "renderer")    # "renderer" (D95): chosen for this box and its screen, like the mode
 ENVELOPE = ("format", "format_version", "exported", "version", "box", "passwords_included", "settings", "themes")
 KEEP_IMPORT_BACKUPS = 3
 KEEP_SESSION_BACKUPS = 3          # copies of the settings from before a support session's first import, one per session
@@ -896,7 +896,8 @@ class BoxCare:
                           ("Mapper", api.mapper.apply), ("Picture over the video", api.apply_overlay),
                           ("Sound output", api.apply_audio), ("Projectors", api.projectors.apply),
                           # the screen's mode (D90) is no section of a file; a reset puts it back to Automatic
-                          ("Screen output", getattr(getattr(api, "screen", None), "sync", None))):
+                          ("Screen output", getattr(getattr(api, "screen", None), "sync", None)),
+                          ("Renderer", getattr(getattr(api, "renderer", None), "sync", None))):
             if fn is None:
                 continue
             try:

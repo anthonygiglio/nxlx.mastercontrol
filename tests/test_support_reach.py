@@ -46,6 +46,8 @@ REFUSED = {
     ("POST", "/api/network/confirm"),
     # the keep of a screen mode (D90): only someone in the room sees what the projector shows
     ("POST", "/api/screen/confirm"),
+    # the renderer (D95): which program draws outlives the session and is not taken back by itself
+    ("POST", "/api/renderer"),
     # the NDI discovery server on this box (D85): a listener on the network is the owner's, in the room
     ("GET", "/api/ndi/discovery"), ("POST", "/api/ndi/discovery"),
 }

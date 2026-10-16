@@ -271,8 +271,17 @@ class Player:
         # The screen's mode (D90): one --drm-mode from the screen's own list, chosen here before this process becomes
         # mpv, with what was chosen and why written for the panel. Nothing where mpv does not draw through DRM.
         from . import screenmode
-        args += screenmode.prepare(self.extra_args, self.rundir, self.mpv_bin,
-                                   log=lambda line: print(line, file=sys.stderr, flush=True))
+        log = lambda line: print(line, file=sys.stderr, flush=True)
+        screen = screenmode.prepare(self.extra_args, self.rundir, self.mpv_bin, log=log)
+        args += screen
+        # The renderer (D95): pvj-render where the owner chose it, run by a supervisor in this process; it comes back
+        # here only to fall back, and then this process becomes classic mpv as always.
+        from . import renderer
+        use, detail, why = renderer.chosen(self.rundir, self.extra_args, windowed)
+        if use == "new":
+            why = renderer.serve(self, screen, detail, log)
+        if why:
+            renderer.fallback(self.rundir, detail, why, log)
         # mpv creates its socket owner-only (0600) whatever the umask, so the web panel (another user, same
         # group) could not reach it. A short-lived helper waits for the NEW socket and opens it to the group.
         detach_socket_opener(self.socket_path)

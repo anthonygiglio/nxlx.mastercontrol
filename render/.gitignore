@@ -1,0 +1,5 @@
+# SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# built here by make, never committed
+/pvj-render
+*.o
