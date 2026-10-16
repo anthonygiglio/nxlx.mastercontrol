@@ -8,7 +8,8 @@ Newest entry first. One entry per working session: what was done, what merged, w
 
 - **On the test Pi:** after #140 was deployed, the skip left by the failed `--drm-connector=0.HDMI-A-1` start (same boot, same mode text) kept the corrected arguments from being tried until the Pi was restarted. After a restart it worked.
 - **Fixed:** the skip in the wanted file now holds the arguments that gave no screen, and `decide` bars only those. A skip of the old shape (no `args`) is ignored: at most one more try of the same arguments, then a skip of the new shape. The once-per-boot rule for the same arguments is kept.
-- **Tests:** `tests.test_screenmode` (other arguments not barred, in `decide` and through the panel; the same ones barred with no loop; the old shape; checked arguments). Comparing by mode text again fails two of them. `tests.test_transport` passes.
+- **The review of #141 (e977c00): nothing above Low; one Low closed.** One skip let two alternating sets cost a dark start every round; every failed set of the boot is now kept (a list of at most 8, cleared by a new boot).
+- **Tests:** `tests.test_screenmode` (other arguments not barred, in `decide` and through the panel; the same ones barred with no loop; the old shape; checked arguments; alternating sets; the bound; a new boot). Comparing by mode text again fails two of them; keeping one skip again fails three. `tests.test_transport` passes.
 - **Not run on the Pi.**
 
 ## 2026-10-16, the screen's card: Automatic did nothing on the Pi, and why (`screen-card`, D91)

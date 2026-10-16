@@ -49,6 +49,7 @@ SCREEN_GRACE = 6.0                      # a new player has this long to open its
 HELP_TIMEOUT = 8                        # seconds for `mpv --drm-mode=help`
 MAX_MODES = 64                          # kept of a screen's list (a real one has 20 to 40)
 MAX_FILE = 64 * 1024                    # bytes read of WANTED or REPORT
+MAX_SKIPS = 8                           # sets of arguments kept as "gave no screen" for a boot (D92)
 
 WANTED = "screen-mode.json"             # in the state folder: the panel writes it, the player reads it
 REPORT = paths.SCREEN_REPORT            # in the player's folder: the player writes it, the panel reads it
@@ -264,20 +265,36 @@ def valid_args(value):
 def clean_wanted(data):
     """What the player may take from WANTED: {"mode", "trial", "skip"}, every part checked.
 
-    A skip is {"mode", "boot", "args"}: the arguments that gave no screen (D92). A skip of the shape before D92, with
-    no "args", is dropped: it does not say which device and connector it was earned with, and the release that wrote
-    it is the one that passed a wrong connector (D91), so honouring it would bar the right arguments for the boot.
-    Dropping it costs at most one more try of the same arguments, which then earns a skip of the new shape."""
+    "skip" is a list of {"mode", "boot", "args"}, one per set of arguments that gave no screen (D92), the newest last
+    and at most MAX_SKIPS; a single such object (the first shape of D92) is a list of one. A skip of the shape before
+    D92, with no "args", is dropped: it does not say which device and connector it was earned with, and the release
+    that wrote it is the one that passed a wrong connector (D91), so honouring it would bar the right arguments for the
+    boot. Dropping it costs at most one more try of the same arguments, which then earns a skip of the new shape."""
     out = {"mode": data.get("mode") if valid_mode(data.get("mode")) else AUTO}
-    for key in ("trial", "skip"):
-        part = data.get(key)
-        if isinstance(part, dict) and valid_mode(part.get("mode")) and isinstance(part.get("boot"), str) and len(part["boot"]) <= 64:
-            if key == "skip":
-                if valid_args(part.get("args")):
-                    out[key] = {"mode": part["mode"], "boot": part["boot"], "args": list(part["args"])}
-            else:
-                out[key] = {"mode": part["mode"], "boot": part["boot"]}
+
+    def entry(part):
+        return isinstance(part, dict) and valid_mode(part.get("mode")) and isinstance(part.get("boot"), str) \
+            and len(part["boot"]) <= 64
+    if entry(data.get("trial")):
+        out["trial"] = {"mode": data["trial"]["mode"], "boot": data["trial"]["boot"]}
+    skips = data.get("skip")
+    skips = [skips] if isinstance(skips, dict) else skips if isinstance(skips, list) else []
+    kept = [{"mode": s["mode"], "boot": s["boot"], "args": list(s["args"])}
+            for s in skips[-MAX_SKIPS:] if entry(s) and valid_args(s.get("args"))]
+    if kept:
+        out["skip"] = kept
     return out
+
+
+def barred(wanted, boot, args):
+    """True if this boot's skips hold exactly these arguments (D92)."""
+    return any(s["boot"] == boot and s["args"] == args for s in wanted.get("skip", []))
+
+
+def with_skip(wanted, boot, mode, args):
+    """The skips after a failure of `args`: this boot's only, the newest last, at most MAX_SKIPS (D92)."""
+    old = [s for s in wanted.get("skip", []) if s["boot"] == boot and s["args"] != args]
+    return (old + [{"mode": mode, "boot": boot, "args": list(args)}])[-MAX_SKIPS:]
 
 
 # ---- the player's side: which --drm-mode, just before it becomes mpv ------------------------------------------------
@@ -330,8 +347,7 @@ def decide(wanted, screens, problem, sysfs, boot):
                 cand.update(device_arg=device, connector_arg=conn)
         # A skip bars these very arguments for the boot, not the mode alone (D92): one earned with another device or
         # connector (a release that passed a wrong one) does not stop the right ones being tried.
-        skip = wanted.get("skip")
-        if skip and skip["boot"] == boot and skip.get("args") == screen_args(cand):
+        if barred(wanted, boot, screen_args(cand)):
             why = "%s did not start on this screen, so the screen's own mode is used" % words(chosen)
             chosen = None
     if chosen:
@@ -493,8 +509,9 @@ class Screen:
             have, boot = {}, ""
         trial = have.get("trial")
         want = {"mode": self.saved()}
-        if have.get("skip") and have["skip"]["boot"] == boot:
-            want["skip"] = have["skip"]
+        mine = [s for s in have.get("skip", []) if s["boot"] == boot]
+        if mine:
+            want["skip"] = mine
         if have == want and os.path.exists(self.wanted_file):
             return False
         try:
@@ -676,8 +693,10 @@ class Screen:
             self.revert("%s did not start on this screen, so it went back." % text_words(p["mode"]))
             return "reverted"
         try:
-            # the arguments it was given, not the mode alone (D92): a different set is tried, this one is not again
-            self._write(dict(self._wanted(), skip={"mode": failed, "boot": self._boot(), "args": screen_args(rep)}))
+            # the arguments it was given, not the mode alone, kept beside this boot's earlier ones (D92): a different
+            # set is tried, none of these again, so two sets that alternate cost one try each
+            have = self._wanted()
+            self._write(dict(have, skip=with_skip(have, self._boot(), failed, screen_args(rep))))
         except OSError as e:
             self.log("pvj-web: screen output: %s not written (%s)" % (self.wanted_file, e))
             return did

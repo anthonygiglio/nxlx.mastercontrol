@@ -230,8 +230,28 @@ class DecideTest(unittest.TestCase):
                      ["--drm-device=/etc/shadow", "--drm-connector=HDMI-A-1", "--drm-mode=1920x1080@60.00"],
                      ["--drm-connector=HDMI-A-1", "--drm-device=/dev/dri/card1", "--drm-mode=1920x1080@60.00"], [5]):
             self.assertNotIn("skip", S.clean_wanted({"mode": "auto", "skip": {"mode": "1920x1080@60.00", "boot": BOOT, "args": args}}), args)
-        self.assertEqual(S.clean_wanted({"skip": {"mode": "1920x1080@60.00", "boot": BOOT, "args": self.PI_ARGS, "x": 1}})["skip"],
-                         {"mode": "1920x1080@60.00", "boot": BOOT, "args": self.PI_ARGS})
+        one = {"mode": "1920x1080@60.00", "boot": BOOT, "args": self.PI_ARGS}
+        self.assertEqual(S.clean_wanted({"skip": dict(one, x=1)})["skip"], [one], "a single skip is a list of one")
+        self.assertEqual(S.clean_wanted({"skip": [one, {"mode": "1920x1080@60.00", "boot": BOOT}, "x", None]})["skip"], [one],
+                         "a bad entry is dropped, the good one kept")
+        many = [dict(one, args=["--drm-mode=%d" % i]) for i in range(20)]
+        self.assertEqual(S.clean_wanted({"skip": many})["skip"], many[-S.MAX_SKIPS:], "the newest eight")
+
+    def test_sets_that_alternate_stay_barred_after_one_try_each(self):
+        """The review of #141 (Low): with one skip, A then B then A again cost a dark start every round."""
+        a = ["--drm-device=/dev/dri/card1", "--drm-connector=HDMI-A-1", "--drm-mode=1920x1080@60.00"]
+        b = ["--drm-mode=1920x1080@60.00"]
+        w = S.clean_wanted({"skip": S.with_skip({}, BOOT, "1920x1080@60.00", a)})
+        w = S.clean_wanted({"skip": S.with_skip(w, BOOT, "1920x1080@60.00", b)})
+        self.assertTrue(S.barred(w, BOOT, a) and S.barred(w, BOOT, b), "both kept")
+        self.assertFalse(S.barred(w, "next", a), "only for that boot")
+        self.assertEqual(S.with_skip(w, BOOT, "1920x1080@60.00", a)[-1]["args"], a, "a repeat is moved, not doubled")
+        self.assertEqual(len(S.with_skip(w, BOOT, "1920x1080@60.00", a)), 2)
+        for i in range(20):
+            w = S.clean_wanted({"skip": S.with_skip(w, BOOT, "1920x1080@60.00", ["--drm-mode=%d" % i])})
+        self.assertEqual(len(w["skip"]), S.MAX_SKIPS, "bounded")
+        self.assertEqual(S.with_skip(w, "next", "1920x1080@60.00", a), [{"mode": "1920x1080@60.00", "boot": "next", "args": a}],
+                         "a new boot clears the old ones")
 
     def test_no_screen_connected_is_as_before(self):
         rep = S.decide({"mode": "auto"}, [], "", [{"connector": "HDMI-A-1", "status": "disconnected", "modes": []}], BOOT)
@@ -733,7 +753,7 @@ class ScreenTest(unittest.TestCase):
         self.assertIsNone(self.screen.tick(), "it is given time")
         self.later(1)
         self.assertEqual(self.screen.tick(), "own mode")
-        self.assertEqual(self.wanted(), {"mode": "auto", "skip": {"mode": "1920x1080@60.00", "boot": BOOT, "args": DecideTest.PI_ARGS}})
+        self.assertEqual(self.wanted(), {"mode": "auto", "skip": [{"mode": "1920x1080@60.00", "boot": BOOT, "args": DecideTest.PI_ARGS}]})
         self.assertEqual(self.api.player.quits, 1)
         rep = self.screen.report()
         self.assertEqual((rep["used"], rep["arg"]), (None, None))
@@ -755,7 +775,7 @@ class ScreenTest(unittest.TestCase):
         self.api.player.quit()
         self.assertEqual(self.give_no_screen_until_restarted(), "own mode")
         first = ["--drm-device=/dev/dri/card0", "--drm-connector=HDMI-A-1", "--drm-mode=1920x1080@60.00"]
-        self.assertEqual(self.wanted()["skip"], {"mode": "1920x1080@60.00", "boot": BOOT, "args": first})
+        self.assertEqual(self.wanted()["skip"], [{"mode": "1920x1080@60.00", "boot": BOOT, "args": first}])
         self.assertEqual(self.screen.report()["arg"], None)
         self.layout = connected()                                   # the fix is deployed and the player restarted
         self.api.player.quit()
@@ -764,7 +784,7 @@ class ScreenTest(unittest.TestCase):
         self.assertEqual(rep["why"], "")
         quits = self.api.player.quits
         self.assertEqual(self.give_no_screen_until_restarted(), "own mode", "these give no screen either")
-        self.assertEqual(self.wanted()["skip"]["args"], DecideTest.PI_ARGS)
+        self.assertEqual([s["args"] for s in self.wanted()["skip"]], [first, DecideTest.PI_ARGS], "both kept")
         self.assertEqual(self.api.player.quits, quits + 1)
         self.api.player.quit()                                      # any later start of the player in this boot
         self.assertEqual((self.screen.report()["arg"], self.screen.report()["used"]), (None, None), "the same arguments stay barred")
@@ -772,12 +792,32 @@ class ScreenTest(unittest.TestCase):
         self.assertIsNone(self.screen.tick())
         self.assertEqual(self.api.player.quits, quits + 2, "no loop")
 
+    def test_two_sets_that_alternate_cost_one_dark_start_each_and_a_new_boot_clears_them(self):
+        """The review of #141 (Low): the card flaps between starts (a second output), so the arguments go A, B, A."""
+        a, b = sysfs((0, "HDMI-A-1", "connected")), connected()
+        dark = 0
+        for layout in (a, b, a, b, a, b):
+            self.layout = layout
+            self.api.player.quit()
+            if self.screen.report()["arg"]:
+                self.assertEqual(self.give_no_screen_until_restarted(), "own mode")
+                dark += 1
+            self.later(60)
+            self.assertIsNone(self.screen.tick())
+        self.assertEqual(dark, 2, "one try each, then both stay barred")
+        self.assertEqual(len(self.wanted()["skip"]), 2)
+        self.boot = "next-boot"                                      # the box restarted: tried again, the old list goes
+        self.api.player.quit()
+        self.assertEqual(S.screen_args(self.screen.report()), DecideTest.PI_ARGS)
+        self.assertEqual(self.give_no_screen_until_restarted(), "own mode")
+        self.assertEqual(self.wanted()["skip"], [{"mode": "1920x1080@60.00", "boot": "next-boot", "args": DecideTest.PI_ARGS}])
+
     def test_a_skip_of_the_old_shape_costs_one_more_try_and_no_loop(self):
         S.write_json(os.path.join(self.state, S.WANTED), {"mode": "auto", "skip": {"mode": "1920x1080@60.00", "boot": BOOT}})
         self.api.player.quit()
         self.assertEqual(S.screen_args(self.screen.report()), DecideTest.PI_ARGS, "the old skip is not honoured")
         self.assertEqual(self.give_no_screen_until_restarted(), "own mode")
-        self.assertEqual(self.wanted()["skip"]["args"], DecideTest.PI_ARGS)
+        self.assertEqual([s["args"] for s in self.wanted()["skip"]], [DecideTest.PI_ARGS], "the old one is gone, the new one kept")
         self.api.player.quit()
         self.assertEqual(self.screen.report()["arg"], None)
         self.later(60)
