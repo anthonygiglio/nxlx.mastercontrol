@@ -440,6 +440,42 @@ class AutoDetailTest(Live):
         self.assertIsNone(self.row("nxlx-drift.fs")["heavy"])
         self.assertIsNotNone(self.row("nxlx-silk.fs")["heavy"])
 
+    def test_a_computed_set_judges_each_shader_at_the_height_it_will_be_drawn_at(self):
+        """The review of #142: "not heavy" at 1080p is only true where the shader held. A box with 720 lines kept
+        would put drift and nebula in Ambient at 720, where they drop about 10 frames a second."""
+        calm = {"nxlx-%s.fs" % n for n in FIRST_TEN + AMBIENT}
+        dropped_at_720 = {"nxlx-drift.fs", "nxlx-nebula.fs", "nxlx-aurora.fs", "nxlx-lantern.fs"}
+        self.assertEqual(set(self.engine.vibes_ids()), calm)                     # Automatic: those four at 540, where they hold
+        self.settings.data["shaders"] = {"dwell": 180, "vary": True, "height": 720, "disabled": []}      # kept 720
+        self.assertEqual(set(self.engine.vibes_ids()), calm - dropped_at_720)
+        self.assertEqual({s["id"] for s in self.engine.state()["shaders"] if s["vibes"]}, calm - dropped_at_720)
+        self.settings.data["shaders"] = {"height": 540, L.HEIGHT_AUTO: False}    # chosen 540: all hold there
+        self.assertEqual(set(self.engine.vibes_ids()), calm)
+        self.player.osd_size = lambda: (2560, 1440)                             # 1440p, 720 chosen: the old table's numbers at 720
+        self.settings.data["shaders"] = {"height": 720, L.HEIGHT_AUTO: False}
+        self.assertEqual(set(self.engine.vibes_ids()), {sid for sid in calm if L.PI4_1440[sid][2][1] < L.HOLDS})
+        self.api.board = {"kind": "x86", "model": "t"}                        # not measured: the class decides, as before
+        self.assertEqual(set(self.engine.vibes_ids()), {"nxlx-%s.fs" % n for n in ROTATION_1440})
+
+    def test_a_heavy_mark_belongs_to_the_output_it_was_made_at(self):
+        self.player.osd_size = lambda: (2560, 1440)
+        self.engine.note_heavy("nxlx-tide.fs", {"drops_per_second": 1.2})
+        mark = self.settings.data["shaders"]["heavy"]["nxlx-tide.fs"]
+        self.assertEqual((mark["height"], mark["output"]), (540, [2560, 1440]))
+        self.assertNotIn("nxlx-tide.fs", self.engine.vibes_ids())
+        self.player.osd_size = lambda: (1920, 1080)                             # another table counts: the mark does not
+        self.assertIn("nxlx-tide.fs", self.engine.vibes_ids())
+        self.assertIsNone(self.row("nxlx-tide.fs")["heavy"])
+        self.settings.data["shaders"]["heavy"]["nxlx-tide.fs"].pop("output")     # a mark from before D93 counts as it did
+        self.assertNotIn("nxlx-tide.fs", self.engine.vibes_ids())
+        self.assertEqual(L.check_heavy({"a.fs": {"height": 540, "output": [1920, 1080]}})["a.fs"]["output"], [1920, 1080])
+        for bad in ([1920], [1920, "1080"], [1920, True], "1920x1080", [1920, 10 ** 6]):
+            with self.assertRaises(ValueError, msg=bad):
+                L.check_heavy({"a.fs": {"output": bad}})
+        saved = json.loads(json.dumps(self.settings.data["shaders"]))
+        saved["heavy"]["nxlx-tide.fs"]["output"] = [2560, 1440]
+        self.assertEqual(boxcare.check_shaders(saved, None)["heavy"]["nxlx-tide.fs"]["output"], [2560, 1440])     # an import keeps it
+
     def test_the_rule(self):
         self.assertEqual([L.auto_lines(sid, L.PI4) for sid in ("nxlx-silk.fs", "nxlx-aurora.fs", "mine.fs")], [720, 540, 540])
         self.assertEqual(L.auto_lines("nxlx-silk.fs", L.PI4, (360, 540)), 540)     # 720 not offered: never above what is

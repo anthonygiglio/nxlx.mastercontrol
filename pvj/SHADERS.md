@@ -226,10 +226,13 @@ Two runs, each at its own size of output, because every frame also pays a scale 
 
 What it shows:
 
-- **At 540 lines all 47 hold**, with nothing dropped by any of them; at 720 lines 41 hold. Before, at 1440p, nxlx-drift, nxlx-nebula and isf-ridgelines dropped frames at 540 too and were heavy; at this output none is heavy, and eight of the eleven that were medium there (nxlx-tide, nxlx-bloom, nxlx-beam, nxlx-petal, nxlx-pool, nxlx-ridge, nxlx-scope, nxlx-stars) are light here. So at this output the default set Ambient has all 25 calm shaders, nxlx-drift and nxlx-nebula included.
+- **At 540 lines all 47 hold**, with nothing dropped by any of them; at 720 lines 41 hold. Before, at 1440p, nxlx-drift, nxlx-nebula and isf-ridgelines dropped frames at 540 too and were heavy; at this output none is heavy, and eight of the eleven that were medium there (nxlx-tide, nxlx-bloom, nxlx-beam, nxlx-petal, nxlx-pool, nxlx-ridge, nxlx-scope, nxlx-stars) are light here. So at this output and under Automatic the default set Ambient has all 25 calm shaders, nxlx-drift and nxlx-nebula included (at 540 lines).
 - **Why the difference.** The six shaders' own passes at 720 lines, kept where frames were dropped, are what the first run measured (nxlx-drift 35.7 ms both times, nxlx-nebula 34.8, nxlx-aurora 23.0 against 22.8, nxlx-lantern 20.5, isf-ridgelines 29.9 against 29.8, isf-simplex-noise 28.0 against 27.9): the shader costs the same. What changed is the rest: the scale to a 1920 x 1080 screen took 7.3 to 7.4 ms (8.4 to 12.8 at 1440p), the remainder pass 3.7 to 3.8 at 720 lines, and at 60 Hz every carrier picture has two refreshes, 33.3 ms, where at 75 Hz every other one had 26.7.
 - **Little room for some.** At 540 lines nxlx-drift and nxlx-nebula held with the GPU 97 and 96 percent busy, and at 720 lines nxlx-tide (90) and nxlx-bloom (87) were the closest of those that held. An effect over them or the mapping (17 ms a frame by itself at 1440p) would tip them; the guard sees that, and D58 shows the same reasoning for two effects. Not changed here: Automatic follows the measurement, and the owner has not been asked.
-- **One board, one run of 20 seconds per height, on one screen.** A 1024 x 768 projector has fewer pixels to scale to and is taken by this table; nothing was measured on one.
+- **One board, one run of 20 seconds per height, on one screen.** A 1024 x 768 projector has fewer pixels to scale to and is taken by this table; nothing was measured on one. The table is chosen when a shader is put on (`table_for` of the screen size then): a change of screen mode does not redraw the shader on the screen; the next shader goes by the new size.
+- **Where the own-pass numbers above come from.** The six shaders' own passes at 720 lines are the `passes` field of the run's raw rows, which the run kept only for the rows where frames were dropped. They were copied, not measured again or checked against another run.
+- **Who is left out of a default set.** On a Pi 4 a computed Ambient or Show leaves out a shader that did not hold at the height it will be drawn at, by the table for the output (D93, after the review of #142): under Automatic every calm shader is in (the six heavier ones at 540); with 720 lines kept, nxlx-drift, nxlx-nebula, nxlx-aurora and nxlx-lantern are out. A heavy mark from the guard records the output it was made at (`output`) and counts only while that output's table counts.
+- **Under Automatic a lower picture detail is one number for every shader.** The load line says so when the shader on screen drops frames: "Picture detail is Automatic: this shader is drawn at 540 lines. A number chosen there draws every shader at it." A choice per shader would need a new setting; it was not built.
 
 #### At 2560 x 1440 at 75 Hz (2026-10-05, the first run)
 
@@ -1015,7 +1018,7 @@ With a player that has no GPU output (the tests' `--vo=null`), nothing can be ch
                          above 1920 x 1080: "output": [2560, 1440], "pass_ms": 15.4 and "pass_ms_by_lines" (the shader's own pass)
               "lines": 720,                                 the drawing height it gets here now (its own under Automatic)
               "vibes": true,                                in the active set
-              "heavy": {"at", "drops", "height", "board"?} | null,   the guard's mark, if it counts at the height it is drawn at on this board
+              "heavy": {"at", "drops", "height", "board"?, "output"?} | null,   the guard's mark, if it counts at the height it is drawn at, on this board and output
               "refused": "line 6: ..." | null,              what this box's GPU said about this file
               "speed_max": 1 | 4,                           1 for a Performance shader unless "faster" is on
               "categories": ["Generator", "Performance"],

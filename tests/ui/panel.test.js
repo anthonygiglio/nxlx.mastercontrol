@@ -3017,6 +3017,7 @@ function startServer(env) {          // env: more for the harness's environment 
         d.render.measured = true;
         d.config.height = mode === 'auto' ? 'auto' : 720;
         d.config.height_kept = mode !== 'auto';
+        if (d.playing && mode === 'auto') { d.playing.load = 'heavy'; d.playing.drops_per_second = 4.2; }
         last = d;
         await route.fulfill({ response: res, json: d });
       });
@@ -3026,6 +3027,10 @@ function startServer(env) {          // env: more for the harness's environment 
       assert.strictEqual(await page.inputValue('#shaderheight'), 'auto');
       assert.strictEqual(await page.textContent('#detailhint'), 'Automatic draws each shader at the most lines it kept up at on a Pi 4 with a 1920 x 1080 screen: 720 lines, 540 for 2 heavier ones (Drift, Nebula), and 540 for a shader you add.');
       assert.strictEqual(await page.locator('#detailhigh').count(), 0, 'nothing more is said under Automatic');
+      // dropping frames under Automatic: the page says that a number is for every shader before anyone chooses one
+      await page.waitForSelector('#shaderload[data-load="heavy"]', { timeout: 20000 });
+      assert(/Picture detail is Automatic: this shader is drawn at \d+ lines\. A number chosen there draws every shader at it\./.test(await page.textContent('#shaderloadwords')),
+        'under Automatic the load line says what a lower detail does: ' + await page.textContent('#shaderloadwords'));
       mode = 'kept';
       await page.waitForSelector('#shadernow #detailhigh', { timeout: 20000 });
       assert.strictEqual(await page.textContent('#detailhighwords'), 'Picture detail is 720 lines for every shader, saved by an earlier version. Automatic draws each shader at the most lines it keeps up at on this box.');

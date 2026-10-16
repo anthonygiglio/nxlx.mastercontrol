@@ -252,6 +252,21 @@ def auto_lines(sid, table, offered=(540, 720)):
     return 720 if 720 in offered and row[2][1] < HOLDS else 540
 
 
+def output_of(table):
+    """[width, height] of the output a table was measured at."""
+    return list(PI4_OUTPUT if table is PI4 else PI4_1440_OUTPUT)
+
+
+def holds_at(sid, table, lines):
+    """Whether a measured shader held at `lines` by `table`: at 540 lines or fewer by its number at 540, above that
+    by its number at 720 (nothing was measured higher, and more lines never cost less). None where it is not in the
+    table."""
+    row = table.get(sid)
+    if row is None:
+        return None
+    return (row[1] if lines <= 540 else row[2])[1] < HOLDS
+
+
 _BRANCH = re.compile(r"\b(?:for|while|if)\s*\(")
 
 
@@ -400,6 +415,11 @@ def check_heavy(v):
             if not isinstance(note["board"], str) or not re.fullmatch(r"[a-z0-9-]{1,20}", note["board"]):
                 raise ValueError("the board of a heavy mark is not a board name")
             row["board"] = note["board"]
+        if note.get("output") is not None:              # the output whose table counted when it was seen (D93)
+            o = note["output"]
+            if not isinstance(o, list) or len(o) != 2 or not all(type(n) is int and 16 <= n <= 16384 for n in o):
+                raise ValueError("the output of a heavy mark is not a width and a height")
+            row["output"] = list(o)
         out[sid] = row
     return out
 
@@ -1148,7 +1168,9 @@ class LiveEngine(S.Engine):
         they were in the rotation, and they stay). Shaders that were switched off stay out."""
         rows = super().library() if rows is None else rows
         old = self._saved() is not None and cfg.get("v") != 2
-        table = self.table()            # heavy at this size of output: drift and nebula are not at 1920 x 1080 (D93)
+        table = self.table()            # the table for this size of output (D93)
+        auto = self.auto_table(cfg)
+        heavy = lambda s: self.too_heavy(s["id"], s["cost"], cfg, table, auto)
         out = []
         for s in rows:
             sid = s["id"]
@@ -1159,14 +1181,26 @@ class LiveEngine(S.Engine):
             elif s.get("pack", "nxlx") != "nxlx" or performance(s.get("categories")):
                 keep = sid in cfg.get("included", ())       # a pack's shader, or one of ours made to perform with: only if put in
             else:
-                keep = weight_of(sid, s["cost"], table) != "heavy"
+                keep = not heavy(s)
             if keep:
                 out.append({"id": sid})
         first = {"id": FIRST_SET, "name": "Ambient", "shaders": out, "dwell": cfg["dwell"], "vary": cfg["vary"], "order": ORDERS[0]}
         # The second set a box has from the start: the project's shaders made to perform with. It is not the active one.
         show = [{"id": s["id"]} for s in rows if s["source"] == "bundled" and s.get("pack", "nxlx") == "nxlx" and performance(s.get("categories"))
-                and not s["error"] and s["id"] not in cfg["disabled"] and weight_of(s["id"], s["cost"], table) != "heavy"]
+                and not s["error"] and s["id"] not in cfg["disabled"] and not heavy(s)]
         return [first] + ([{"id": SHOW_SET, "name": "Show", "shaders": show, "dwell": S.DWELL_DEFAULT, "vary": True, "order": ORDERS[0]}] if show else [])
+
+    def too_heavy(self, sid, cost, cfg, table, auto):
+        """Whether a computed set leaves a shader out (D93). On a measured board (AUTO_BOARDS): when it did not hold
+        at the height it will be drawn at here (height_for: its own under Automatic, else the box's one height), by
+        the table for the output; so a box with 720 lines kept leaves out nxlx-drift, nxlx-nebula, nxlx-aurora and
+        nxlx-lantern at 1080p, and Automatic lets them in at 540. Elsewhere, and for a shader nobody measured: when
+        its class is heavy."""
+        if self.board() in AUTO_BOARDS:
+            held = holds_at(sid, table, self.height_for(sid, cfg, auto))
+            if held is not None:
+                return not held
+        return weight_of(sid, cost, table) == "heavy"
 
     def sets(self, cfg=None, rows=None):
         cfg = cfg or self.config()
@@ -1281,8 +1315,11 @@ class LiveEngine(S.Engine):
         board = self.board()
         if table is False:
             table = self.auto_table(cfg)
+        # and made for the output whose table counts now: a mark seen at 1440p says nothing at 1080p (a mark from
+        # before D93 has no output and counts as it did)
+        output = output_of(self.table())
         return {sid: m for sid, m in cfg.get("heavy", {}).items()
-                if m.get("board") in (None, board) and m.get("height", 0) <= self.height_for(sid, cfg, table)}
+                if m.get("board") in (None, board) and m.get("output", output) == output and m.get("height", 0) <= self.height_for(sid, cfg, table)}
 
     def note_heavy(self, sid, verdict=None):
         """The guard found this shader too heavy in a rotation (or someone marked it by hand): remember it, with the
@@ -1292,7 +1329,7 @@ class LiveEngine(S.Engine):
         with self._cfg:
             cfg = self.config()
             lines = int(self.height_for(sid, cfg))
-            mark = {"at": time.strftime("%Y-%m-%d %H:%M"), "drops": drops, "height": lines}
+            mark = {"at": time.strftime("%Y-%m-%d %H:%M"), "drops": drops, "height": lines, "output": output_of(self.table())}
             if self.board():
                 mark["board"] = self.board()
             cfg.setdefault("heavy", {})[sid] = mark

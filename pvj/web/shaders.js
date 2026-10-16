@@ -660,11 +660,14 @@
     }
 
     // ---- 1. Now: what is on, its load, and the transport --------------------------------------------------------
-    function loadWords(p) {
+    function loadWords(p, d) {
       var parts = [LOAD[p.load] || ''];
       if (typeof p.drops_per_second === 'number' && p.drops_per_second > 0) parts.push(round(p.drops_per_second) + ' dropped frames a second.');
       if (p.pass_ms) parts.push(p.pass_ms + ' ms a frame.');
       if (p.effect) parts.push('An effect is on over it: Vibes does not judge the shader meanwhile.');
+      // Under Automatic (D93) a lower detail is one number for every shader: say so before anyone chooses it
+      var row = d && d.config && d.config.height === 'auto' && p.load === 'heavy' ? d.shaders.filter(function (s) { return s.id === p.id; })[0] : null;
+      if (row && row.lines) parts.push('Picture detail is Automatic: this shader is drawn at ' + row.lines + ' lines. A number chosen there draws every shader at it.');
       return parts.filter(Boolean).join(' ');
     }
     function patchLoad(d) {
@@ -676,7 +679,7 @@
       box.className = 'loadbox load-' + state;
       box.setAttribute('data-load', state);
       var w = document.getElementById('shaderloadwords');
-      var text = loadWords(p) || (d.config.guard === false ? 'The load is not being watched (the guard is off).' : 'Watching the load...');
+      var text = loadWords(p, d) || (d.config.guard === false ? 'The load is not being watched (the guard is off).' : 'Watching the load...');
       if (w && w.textContent !== text) w.textContent = text;
       var pend = document.getElementById('shaderpending');
       if (pend) pend.hidden = !p.pending;
