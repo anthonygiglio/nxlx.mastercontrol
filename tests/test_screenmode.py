@@ -176,6 +176,19 @@ class DecideTest(unittest.TestCase):
         self.assertEqual((rep["asked"], rep["used"], rep["arg"], rep["why"]), ("auto", "1920x1080@60.00", "--drm-mode=1920x1080@60.00", ""))
         self.assertEqual((rep["connector"], rep["own"], rep["automatic"]), ("HDMI-A-1", "2560x1440@74.97", "1920x1080@60.00"))
 
+    def test_l5_two_cards_the_hdmi_screen_and_its_card_are_passed(self):
+        """A Pi 5 (the review of #139, L5): composite on one card, HDMI on another. The mode is the HDMI screen's,
+        and mpv is told which connector on which card, so the mode is never set on the other one."""
+        text = help_text("720x576@50.00", "720x480@59.94", connector="Composite-1", card=0) + help_text(
+            "1024x768@60.00", "1920x1080@60.00", connector="HDMI-A-2", card=2)
+        rep = self.decide({}, text=text)
+        self.assertEqual((rep["connector"], rep["card"], rep["used"]), ("HDMI-A-2", 2, "1024x768@60.00"))
+        self.assertEqual(rep["connector_arg"], "--drm-connector=2.HDMI-A-2")
+        rep = self.decide({}, text=help_text("720x576@50.00", connector="Composite-1", card=0) + help_text("800x480@60.00", connector="DSI-1", card=1))
+        self.assertEqual((rep["connector"], rep["connector_arg"]), ("Composite-1", "--drm-connector=0.Composite-1"), "no HDMI: the first one listed")
+        self.assertEqual(S.clean_report(dict(rep, pid=1))["connector_arg"], "--drm-connector=0.Composite-1")
+        self.assertIsNone(S.clean_report(dict(rep, connector_arg="--drm-connector=0.x;reboot"))["connector_arg"])
+
     def test_a_mode_chosen_by_hand(self):
         rep = self.decide({"mode": "1920x1080@50.00"})
         self.assertEqual((rep["used"], rep["arg"], rep["why"]), ("1920x1080@50.00", "--drm-mode=1920x1080@50.00", ""))
@@ -248,22 +261,22 @@ class PrepareTest(unittest.TestCase):
 
     def test_the_argument_and_the_report(self):
         out, lines = self.prepare()
-        self.assertEqual(out, ["--drm-mode=1920x1080@60.00"])
+        self.assertEqual(out, ["--drm-connector=1.HDMI-A-1", "--drm-mode=1920x1080@60.00"])
         rep = self.report()
         self.assertEqual((rep["used"], rep["pid"], rep["boot"]), ("1920x1080@60.00", os.getpid(), BOOT))
         self.assertEqual(oct(os.stat(os.path.join(self.run_dir, S.REPORT)).st_mode & 0o777), "0o640")
-        self.assertEqual(lines, ["pvj-player: screen output: 1920 x 1080 at 60 Hz (--drm-mode=1920x1080@60.00)"])
+        self.assertEqual(lines, ["pvj-player: screen output: 1920 x 1080 at 60 Hz on HDMI-A-1 (--drm-connector=1.HDMI-A-1 --drm-mode=1920x1080@60.00)"])
 
     def test_the_wanted_file_is_read(self):
         S.write_json(os.path.join(self.state, S.WANTED), {"mode": "1280x720@50.00"})
-        self.assertEqual(self.prepare()[0], ["--drm-mode=1280x720@50.00"])
+        self.assertEqual(self.prepare()[0], ["--drm-connector=1.HDMI-A-1", "--drm-mode=1280x720@50.00"])
         S.write_json(os.path.join(self.state, S.WANTED), {"mode": "1280x720@51.00"})
         out, lines = self.prepare()
-        self.assertEqual(out, ["--drm-mode=1920x1080@60.00"])
+        self.assertEqual(out, ["--drm-connector=1.HDMI-A-1", "--drm-mode=1920x1080@60.00"])
         self.assertIn("is not offered by this screen now, so Automatic is used", lines[0])
         with open(os.path.join(self.state, S.WANTED), "w") as f:
             f.write("not json")
-        self.assertEqual(self.prepare()[0], ["--drm-mode=1920x1080@60.00"], "a damaged file is Automatic")
+        self.assertEqual(self.prepare()[0], ["--drm-connector=1.HDMI-A-1", "--drm-mode=1920x1080@60.00"], "a damaged file is Automatic")
 
     def test_nothing_where_mpv_does_not_draw_through_drm_or_a_mode_was_given_by_hand(self):
         self.assertEqual(self.prepare(args=("--vo=gpu",))[0], [])
@@ -284,7 +297,7 @@ class PrepareTest(unittest.TestCase):
         self.assertEqual(self.report()["why"], "the mode was not chosen (RuntimeError)")
         out = S.prepare(["--gpu-context=drm"], os.path.join(self.run_dir, "missing"), "mpv", env=self.env,
                         run=self.run_mpv(MONITOR), sysfs=connected(), boot=BOOT)
-        self.assertEqual(out, ["--drm-mode=1920x1080@60.00"], "a report that cannot be written does not stop the mode")
+        self.assertEqual(out, ["--drm-connector=1.HDMI-A-1", "--drm-mode=1920x1080@60.00"], "a report that cannot be written does not stop the mode")
 
     def test_serve_passes_it_to_mpv(self):
         p = Player(mpv_bin="mpv", extra_args=["--vo=gpu", "--gpu-context=drm"], rundir=self.run_dir)
@@ -328,8 +341,10 @@ class ScreenTest(unittest.TestCase):
                     if key == "pid":
                         return outer.pid
                     if key == "current-vo":
+                        if isinstance(outer.vo, Exception):
+                            raise outer.vo                          # a word with the player that failed (L3)
                         if not outer.vo:
-                            raise PlayerError("property unavailable")
+                            raise PlayerError("mpv: property unavailable")      # what Ipc.request says for mpv's answer
                         return outer.vo
                     if key == "path":
                         return getattr(outer, "path", None)
@@ -466,6 +481,146 @@ class ScreenTest(unittest.TestCase):
         self.assertTrue(self.timers[-1].fn())
         self.assertEqual(self.wanted(), {"mode": "auto"})
 
+    # -- the review of #139 ------------------------------------------------------------------------------------------
+    def test_m1_a_pipe_a_link_a_folder_or_a_huge_file_is_no_report_and_never_waits(self):
+        import threading
+        import time as _time
+        rpath = os.path.join(self.pdir, S.REPORT)
+        good = S.read_json(rpath)
+        self.assertTrue(good)
+        for make in ("fifo", "link", "folder", "huge"):
+            os.unlink(rpath) if not os.path.isdir(rpath) or os.path.islink(rpath) else os.rmdir(rpath)
+            if make == "fifo":
+                os.mkfifo(rpath)
+            elif make == "link":
+                other = os.path.join(self.tmp, "elsewhere.json")
+                S.write_json(other, dict(good))
+                os.symlink(other, rpath)
+            elif make == "folder":
+                os.mkdir(rpath)
+            else:
+                with open(rpath, "w") as f:
+                    f.write('{"why": "' + "x" * (S.MAX_FILE + 10) + '"}')
+            self.screen._report_cache = (None, None)
+            out = {}
+            t = threading.Thread(target=lambda: out.update(rep=self.screen.report(), brief=self.screen.brief(),
+                                                            raw=S.read_json(rpath)), daemon=True)
+            started = _time.monotonic()
+            t.start()
+            t.join(2.0)
+            self.assertFalse(t.is_alive(), "%s: the read waited (a stuck thread for every status poll)" % make)
+            self.assertLess(_time.monotonic() - started, 2.0)
+            self.assertEqual((out["rep"], out["raw"]), (None, {}), make)
+            self.assertEqual(out["brief"]["used"], None, make)
+        if os.path.isdir(rpath):
+            os.rmdir(rpath)
+        else:
+            os.unlink(rpath)
+
+    def test_l1_keep_and_the_timer_are_one_step_in_either_order(self):
+        import threading
+        self.screen.choose("1920x1080@50.00")
+        self.later(20)                                  # the 15 seconds are over: the timer may fire at any moment
+        timer = self.timers[-1].fn
+        real_save, fired = self.settings.save, []
+
+        def save_while_the_timer_fires():               # the timer's thread comes in the middle of Keep's save
+            t = threading.Thread(target=lambda: fired.append(timer()), daemon=True)
+            t.start()
+            t.join(0.3)
+            real_save()
+            self.later(0)
+            return None
+        with mock.patch.object(self.settings, "save", side_effect=save_while_the_timer_fires):
+            st = self.screen.confirm()
+        for _ in range(50):
+            if fired:
+                break
+            import time as _time
+            _time.sleep(0.02)
+        self.assertEqual(fired, [False], "the timer found nothing to take back once Keep was done")
+        self.assertIsNone(st["pending"])
+        self.assertEqual((self.settings.data["screen"], self.wanted()), ({"mode": "1920x1080@50.00"}, {"mode": "1920x1080@50.00"}))
+        self.assertEqual(self.api.player.quits, 1, "kept: the player was not sent back")
+        # the other order: the timer first, then Keep is refused and nothing is saved
+        self.screen.choose("1280x720@60.00")
+        self.later(20)
+        self.assertTrue(self.timers[-1].fn())
+        with self.assertRaises(S.ScreenError) as e:
+            self.screen.confirm()
+        self.assertEqual(e.exception.status, 409)
+        self.assertEqual((self.settings.data["screen"], self.wanted()), ({"mode": "1920x1080@50.00"}, {"mode": "1920x1080@50.00"}))
+
+    def test_l2_two_threads_looking_at_a_player_restart_it_once(self):
+        import threading
+        self.api.player.vo = ""
+        pid = self.api.player.pid
+        self.screen.tick(pid)
+        self.later(S.SCREEN_GRACE)
+        gate = threading.Barrier(2, timeout=1.0)
+        clock = self.screen._clock
+
+        def meeting_clock():                            # both threads reach the look before either has claimed it
+            if threading.current_thread().name.startswith("look"):
+                try:
+                    gate.wait()
+                except threading.BrokenBarrierError:
+                    pass
+            return clock()
+        self.screen._clock = meeting_clock
+        quits = []
+        self.api.player.quit = lambda: quits.append(1)
+        threads = [threading.Thread(target=self.screen.tick, args=(pid,), name="look%d" % i, daemon=True) for i in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(5)
+        self.assertEqual(len(quits), 1, "one restart, not two")
+        self.assertEqual(sum("has no screen" in line for line in self.lines), 1, "and one look")
+        self.assertEqual([n for n in os.listdir(self.state) if n.endswith(".tmp")], [], "no temp file left")
+
+    def test_two_threads_writing_the_wanted_file_at_once_both_succeed(self):
+        import threading
+        errors, path = [], os.path.join(self.state, S.WANTED)
+
+        def write(n):
+            for i in range(200):
+                try:
+                    S.write_json(path, {"mode": "auto", "n": n, "i": i})
+                except OSError as e:
+                    errors.append(e)
+        threads = [threading.Thread(target=write, args=(n,), daemon=True) for n in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(30)
+        self.assertEqual(errors, [])
+        self.assertEqual([n for n in os.listdir(self.state) if n.endswith(".tmp")], [])
+        self.assertEqual(oct(os.stat(path).st_mode & 0o777), "0o640")
+
+    def test_l3_a_word_with_the_player_that_failed_is_not_known_yet(self):
+        self.api.player.vo = PlayerError("ipc error: [Errno 104] Connection reset by peer")
+        self.screen.tick()
+        self.later(S.SCREEN_GRACE)
+        self.assertIsNone(self.screen.tick())
+        self.assertEqual((self.api.player.quits, self.wanted().get("skip")), (0, None), "no skip for a hiccup")
+        self.api.player.vo = PlayerError("no reply from mpv")
+        self.later(2)
+        self.assertIsNone(self.screen.tick())
+        self.api.player.vo = "gpu"
+        self.later(2)
+        self.assertIsNone(self.screen.tick(), "asked again and answered")
+        self.assertEqual(self.api.player.quits, 0)
+        self.assertEqual(self.screen._has_screen(), True)
+        self.api.player.vo = ""
+        self.assertIs(self.screen._has_screen(), False, "mpv's own answer: no output")
+
+    def test_l4_a_setting_of_the_wrong_kind_is_automatic_and_the_status_answers(self):
+        for value in ("1280x720@60.00", ["x"], 7, None, {"mode": 5}):
+            self.settings.data["screen"] = value
+            self.assertEqual(self.screen.saved(), "auto", value)
+            self.assertEqual(self.screen.brief()["asked"], "auto", value)
+
     def test_what_may_be_chosen(self):
         for bad, status in (("1920x1080@60", 400), ("1920x1080", 400), ("", 400), (None, 400), ("1920x1080@61.00", 409)):
             with self.assertRaises(S.ScreenError) as e:
@@ -589,6 +744,8 @@ class RealMpvTest(unittest.TestCase):
         self.assertEqual(self.mpv("--drm-mode=1", "av://lavfi:color=c=black:size=64x64:rate=25").returncode, 0)
         bad = self.mpv("--drm-mode=1920x1080@sixty", "av://lavfi:color=c=black:size=64x64:rate=25")
         self.assertNotEqual(bad.returncode, 0, "mpv checks the text: the test above means something")
+        both = self.mpv("--drm-connector=1.HDMI-A-1", "--drm-mode=1920x1080@60.00", "av://lavfi:color=c=black:size=64x64:rate=25")
+        self.assertEqual(both.returncode, 0, both.stderr)          # the connector with its card (L5) is an option mpv takes
 
     def test_mpv_opens_the_test_pattern_graph(self):
         r = self.mpv(S.pattern_url((1024, 768)))

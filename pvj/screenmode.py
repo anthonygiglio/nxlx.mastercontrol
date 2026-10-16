@@ -32,7 +32,9 @@ mode is chosen at the next start of the player. Forcing a mode at boot (`video=H
 import json
 import os
 import re
+import stat
 import subprocess
+import tempfile
 import threading
 import time
 
@@ -180,12 +182,31 @@ def boot_id(path="/proc/sys/kernel/random/boot_id"):
 
 # ---- the files between the panel and the player ----------------------------------------------------------------------
 def read_json(path):
-    """A small JSON object from `path`, or {} (missing, unreadable, too big, not an object)."""
+    """A small JSON object from `path`, or {} (missing, unreadable, too big, not an object, not a plain file).
+
+    The report is written by the player's account, which plays untrusted media: it could put a pipe, a link or a
+    folder at the name. So it is opened as preview.jpg is (Api.preview_jpeg): never through a link, never waiting
+    on a pipe (O_NONBLOCK), and read only if it is a regular file, at most MAX_FILE + 1 bytes (the review of #139, M1)."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
     try:
-        with open(path, "rb") as f:
-            raw = f.read(MAX_FILE + 1)
+        fd = os.open(path, flags)
     except OSError:
         return {}
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return {}
+        chunks, left = [], MAX_FILE + 1
+        while left > 0:
+            part = os.read(fd, left)
+            if not part:
+                break
+            chunks.append(part)
+            left -= len(part)
+        raw = b"".join(chunks)
+    except OSError:
+        return {}
+    finally:
+        os.close(fd)
     if len(raw) > MAX_FILE:
         return {}
     try:
@@ -198,8 +219,9 @@ def read_json(path):
 def write_json(path, data, mode=0o640):
     """Write a small JSON object whole (a temp file renamed over the old one), readable by the group (pvj)."""
     folder = os.path.dirname(path) or "."
-    tmp = os.path.join(folder, ".%s.%d.tmp" % (os.path.basename(path), os.getpid()))
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), mode)
+    # A name of its own for each write (O_EXCL, random): two threads of the panel writing at once each rename their
+    # own file; with one name per process the second rename failed (found while testing the review's L2).
+    fd, tmp = tempfile.mkstemp(prefix=".%s." % os.path.basename(path), suffix=".tmp", dir=folder)
     try:
         with os.fdopen(fd, "w") as f:
             os.fchmod(f.fileno(), mode)
@@ -245,9 +267,13 @@ def decide(wanted, screens, problem, sysfs, boot):
         rep["why"] = ("no screen is connected: the player starts as it always did and takes a screen's own mode when one comes"
                       if not connected else "the screen's modes could not be read (%s), so its own mode is used" % (problem or "no answer"))
         return rep
-    screen = screens[0]                       # mpv drives the first connected screen; help lists only connected ones
+    # Which screen: help lists only connected connectors, card by card. A board can have two cards (a Pi 5: HDMI on
+    # one, composite or DSI on another), so the connector is chosen here, an HDMI one first, and passed with its card
+    # (`--drm-connector=CARD.NAME`), so the mode always belongs to the screen mpv drives (the review of #139, L5).
+    screen = next((s for s in screens if s["connector"].upper().startswith("HDMI")), screens[0])
     modes = screen["modes"]
     rep["connector"] = screen["connector"]
+    rep["card"] = screen["card"]
     rep["modes"] = [dict(m) for m in modes]
     prog = progressive(modes)
     rep["own"] = prog[0]["text"] if prog else None
@@ -269,18 +295,20 @@ def decide(wanted, screens, problem, sysfs, boot):
     if chosen:
         rep["used"] = chosen["text"]
         rep["arg"] = "--drm-mode=" + drm_value(chosen, modes)
+        rep["connector_arg"] = "--drm-connector=%d.%s" % (screen["card"], screen["connector"])
         rep["auto_why"] = auto_why if asked == AUTO or why else ""
     rep["why"] = why
     return rep
 
 
 def prepare(extra_args, rundir, mpv_bin="mpv", env=None, run=subprocess.run, sysfs=None, boot=None, log=None):
-    """The --drm-mode argument for the player that is about to start (a list of none or one), with REPORT written.
+    """The arguments for the player that is about to start: none, or `--drm-connector=CARD.NAME` and `--drm-mode=...`
+    for that screen, with REPORT written.
 
     Only where the player draws through DRM itself (`--gpu-context=drm`, a box without a desktop) and nobody gave a
-    --drm-mode by hand (`pvj-player --mpv-arg`, which wins). Never raises: a player that cannot choose a mode starts
+    --drm-mode, --drm-connector or --drm-device by hand (`pvj-player --mpv-arg`, which wins). Never raises: a player that cannot choose a mode starts
     with the screen's own, as before."""
-    if "--gpu-context=drm" not in extra_args or any(a.startswith("--drm-mode") for a in extra_args):
+    if "--gpu-context=drm" not in extra_args or any(a.startswith(("--drm-mode", "--drm-connector", "--drm-device")) for a in extra_args):
         return []
     log = log or (lambda line: None)
     try:
@@ -296,12 +324,12 @@ def prepare(extra_args, rundir, mpv_bin="mpv", env=None, run=subprocess.run, sys
     if rep["why"]:
         log("pvj-player: screen output: %s" % rep["why"])
     if rep["arg"]:
-        log("pvj-player: screen output: %s (%s)" % (text_words(rep["used"]), rep["arg"]))
+        log("pvj-player: screen output: %s on %s (%s %s)" % (text_words(rep["used"]), rep["connector"], rep["connector_arg"], rep["arg"]))
     try:
         write_json(os.path.join(rundir, REPORT), rep)
     except OSError as e:
         log("pvj-player: screen output: the report was not written (%s)" % e)
-    return [rep["arg"]] if rep["arg"] else []
+    return [rep["connector_arg"], rep["arg"]] if rep["arg"] else []
 
 
 # ---- the panel's side ------------------------------------------------------------------------------------------------
@@ -331,6 +359,8 @@ def clean_report(data):
     return {"asked": data.get("asked") if valid_mode(data.get("asked")) else AUTO, "trial": data.get("trial") is True,
             "used": mode(data.get("used")),
             "arg": arg if isinstance(arg, str) and re.fullmatch(r"--drm-mode=([0-9]{1,3}|%s)" % MODE_TEXT.pattern, arg) else None,
+            "connector_arg": data.get("connector_arg") if isinstance(data.get("connector_arg"), str)
+            and re.fullmatch(r"--drm-connector=[0-9]{1,2}\.[A-Za-z0-9_-]{1,32}", data["connector_arg"]) else None,
             "why": text(data.get("why")), "auto_why": text(data.get("auto_why")),
             "connector": text(data.get("connector"), 32) or None, "modes": modes,
             "own": mode(data.get("own")), "automatic": mode(data.get("automatic")),
@@ -360,7 +390,12 @@ class Screen:
         self._timer_factory = timer or (lambda seconds, fn: threading.Timer(seconds, fn))
         self._timer = None
         self._lock = threading.Lock()
-        self.pending = None          # {"mode", "previous", "since", "until" (None while the new player starts), "pid_before"}
+        # The keep and the going back are one step each, under this one lock (the review of #139, L1): the timer's
+        # going back cannot take the try away while Keep saves it, nor Keep save a try that has just gone back. The
+        # look at a new player's screen is one step under it too (L2), so two threads never both restart it. It is
+        # held over the settings' save and the wanted file, never over a word with the player or its restart.
+        self._step = threading.Lock()
+        self.pending = None         # {"mode", "previous", "since", "until" (None while the new player starts), "pid_before"}
         self.note = ""               # the last thing that happened by itself, for the page
         self._said = set()           # reasons already written to the log
         self._checked = {}           # pid -> when it was first seen with a mode (the look that it has a screen)
@@ -368,7 +403,8 @@ class Screen:
 
     # -- the setting ----------------------------------------------------------
     def saved(self):
-        mode = (self.settings.data.get("screen") or {}).get("mode", AUTO)
+        section = self.settings.data.get("screen")
+        mode = section.get("mode", AUTO) if isinstance(section, dict) else AUTO      # a wrong kind is no setting (L4)
         return mode if valid_mode(mode) else AUTO
 
     def _wanted(self):
@@ -379,10 +415,12 @@ class Screen:
 
     def report(self):
         try:
-            st = os.stat(self.report_file)
-            key = (st.st_ino, st.st_mtime_ns, st.st_size)
+            st = os.lstat(self.report_file)          # the name itself: a link or a pipe there is no report (M1)
         except OSError:
             return None
+        if not stat.S_ISREG(st.st_mode):
+            return None
+        key = (st.st_ino, st.st_mtime_ns, st.st_size)
         if self._report_cache[0] != key:
             self._report_cache = (key, clean_report(read_json(self.report_file)))
         return self._report_cache[1]
@@ -480,51 +518,59 @@ class Screen:
                 return False                    # an older timer; the newer one is set
             if p["until"] is None and self._clock() - p["since"] < START_SECONDS - 0.25:
                 return False
-        self.revert("Nobody kept %s, so it went back by itself." % text_words(p["mode"]))
-        return True
+        return self._go_back("Nobody kept %s, so it went back by itself." % text_words(p["mode"]), only=p)
 
     def confirm(self):
-        with self._lock:
-            p = self.pending
-            if p is None:
-                raise ScreenError(409, "no mode is being tried")
-            if p["until"] is None:
-                raise ScreenError(409, "the player is still starting with that mode; look at the screen first")
-        with self.settings.lock:
-            before = self.settings.data.get("screen")
-            self.settings.data["screen"] = {"mode": p["mode"]}
+        with self._step:                        # one step with the going back (L1)
+            with self._lock:
+                p = self.pending
+                if p is None:
+                    raise ScreenError(409, "no mode is being tried (it may have gone back just now)")
+                if p["until"] is None:
+                    raise ScreenError(409, "the player is still starting with that mode; look at the screen first")
+            with self.settings.lock:
+                before = self.settings.data.get("screen")
+                self.settings.data["screen"] = {"mode": p["mode"]}
+                try:
+                    self.settings.save()
+                except OSError as e:
+                    if before is None:
+                        self.settings.data.pop("screen", None)
+                    else:
+                        self.settings.data["screen"] = before
+                    raise ScreenError(500, "could not save: %s" % (e.strerror or e))
             try:
-                self.settings.save()
+                self._write({"mode": p["mode"]})
             except OSError as e:
-                if before is None:
-                    self.settings.data.pop("screen", None)
-                else:
-                    self.settings.data["screen"] = before
-                raise ScreenError(500, "could not save: %s" % (e.strerror or e))
-        try:
-            self._write({"mode": p["mode"]})
-        except OSError as e:
-            self.log("pvj-web: screen output: %s not written (%s)" % (self.wanted_file, e))
-        self._end_pending()
-        self.note = ""
+                self.log("pvj-web: screen output: %s not written (%s)" % (self.wanted_file, e))
+            self._end_pending()
+            self.note = ""
         self.log("pvj-web: screen output: %s kept" % text_words(p["mode"]))
         return self.state()
 
     def revert(self, note=""):
-        with self._lock:
-            p, self.pending = self.pending, None
-        if self._timer is not None:
-            self._timer.cancel()
-            self._timer = None
-        if p is None:
-            return self.state()
-        try:
-            self._write({"mode": p["previous"]})
-        except OSError as e:
-            self.log("pvj-web: screen output: %s not written (%s)" % (self.wanted_file, e))
-        self.note = note or "Went back to %s." % ("Automatic" if p["previous"] == AUTO else text_words(p["previous"]))
-        self._restart("going back from %s" % text_words(p["mode"]))
+        self._go_back(note)
         return self.state()
+
+    def _go_back(self, note="", only=None):
+        """Take the try back: one step with Keep (L1). With `only`, only that try (the timer's, which a Keep and a
+        new try may have replaced meanwhile). True if a try went back. The player is restarted after the step."""
+        with self._step:
+            with self._lock:
+                p = self.pending
+                if p is None or (only is not None and p is not only):
+                    return False
+                self.pending = None
+            if self._timer is not None:
+                self._timer.cancel()
+                self._timer = None
+            try:
+                self._write({"mode": p["previous"]})
+            except OSError as e:
+                self.log("pvj-web: screen output: %s not written (%s)" % (self.wanted_file, e))
+            self.note = note or "Went back to %s." % ("Automatic" if p["previous"] == AUTO else text_words(p["previous"]))
+        self._restart("going back from %s" % text_words(p["mode"]))
+        return True
 
     def _end_pending(self):
         with self._lock:
@@ -562,13 +608,20 @@ class Screen:
             self._arm(self.keep)
         if not rep.get("arg"):
             return did
-        first = self._checked.setdefault(pid, self._clock())
-        if len(self._checked) > 16:
-            self._checked = {pid: first}
-        if first is False or self._clock() - first < SCREEN_GRACE:
+        with self._step:                       # one thread claims the look at this player (L2)
+            first = self._checked.setdefault(pid, self._clock())
+            if len(self._checked) > 16:
+                self._checked = {pid: first}
+            if first is False or self._clock() - first < SCREEN_GRACE:
+                return did
+            self._checked[pid] = False         # looked at once per player
+        seen = self._has_screen()
+        if seen is None:                       # no clear answer (a word with the player that failed): ask again next time (L3)
+            with self._step:
+                if self._checked.get(pid) is False:
+                    self._checked[pid] = first
             return did
-        self._checked[pid] = False             # looked at once per player
-        if self._has_screen():
+        if seen:
             return did
         failed = rep.get("used")
         self.log("pvj-web: screen output: the player was given %s and has no screen" % text_words(failed))
@@ -609,11 +662,16 @@ class Screen:
             self.pattern_words(True)
 
     def _has_screen(self):
+        """True: the player has a video output. False only on mpv's own clear answer: no output (the property is
+        unavailable, or empty). None for anything else, a socket that hiccuped, a timeout, a player that is going
+        away: not known yet (the review of #139, L3), so a passing fault never costs the box its mode for the boot."""
         try:
             vo = self.api.player.ipc.request("get_property", "current-vo")
-        except Exception:
+        except Exception as e:
+            return False if str(e) == "mpv: property unavailable" else None
+        if vo == "":
             return False
-        return bool(vo)
+        return True if isinstance(vo, str) else None
 
     # -- what the page and the status say -----------------------------------------
     def display(self):
