@@ -67,17 +67,75 @@ EVENT_HOLD = 0.25               # how long a pressed event stays true
 MAX_CONTROLS = 8
 V3D_STATS = "/sys/devices/platform/v3dbus/*/gpu_stats"
 
-# Measured on a real board: a Raspberry Pi 4 (mpv 0.40, desktop OpenGL 3.1 on V3D, Mesa 26.2, a 2560 x 1440 screen at
-# 75 Hz), every bundled shader with its defaults through this engine on 2026-10-05, for 20 seconds at each drawing
-# height (60 where the first look was near the line). Per shader: the class, then (the shader's own pass in
-# milliseconds, frames dropped a second) at 540 lines and at 720 lines. The method and what else was seen are in
-# project-log/JOURNAL.md ("every bundled shader on the Pi 4").
+# Measured on a real board, a Raspberry Pi 4: every bundled shader with its defaults through this engine, for 20
+# seconds at each drawing height the board offers. Two runs, each at its own size of the box's OUTPUT (the screen the
+# player draws on), because every frame pays a scale to that screen and a 75 Hz screen gives a frame less time:
+#   PI4       2026-10-16, a 1920 x 1080 output at 60 Hz (the box's Automatic screen mode since D90 and D91), master
+#             0648db6. Per shader: the class, then (ALL of mpv's passes of a frame summed, in milliseconds: the shader's
+#             own, the remainder and the scale to the screen; frames dropped a second) at 540 lines and at 720 lines.
+#             The raw rows were not kept in the repository (pvj/SHADERS.md says where they are).
+#   PI4_1440  2026-10-05, a 2560 x 1440 output at 75 Hz (mpv 0.40, desktop OpenGL 3.1 on V3D, Mesa 26.2), 60 seconds
+#             more where the first look was near the line. Per shader: the class, then (THE SHADER'S OWN PASS alone, in
+#             milliseconds; frames dropped a second) at 540 and at 720 lines. project-log/JOURNAL.md, "every bundled
+#             shader on the Pi 4". It counts for an output larger than PI4_OUTPUT (a box set to 1440p by hand).
+# The two first numbers are not the same measure: never compare a PI4 pass time with a PI4_1440 one.
 #   light   holds 30 frames a second at 720 lines
 #   medium  holds at 540 lines only
 #   heavy   drops frames at 540 lines
 # "Holds" is fewer than HOLDS dropped frames a second, the line under which the guard says "ok" (Guard.TIGHT).
 HOLDS = 0.5
+PI4_OUTPUT = (1920, 1080)       # the output PI4 was measured at: it counts up to this many pixels
+PI4_1440_OUTPUT = (2560, 1440)
 PI4 = {
+    "nxlx-aurora.fs": ("medium", (22.6, 0.0), (34.2, 2.59)),
+    "nxlx-drift.fs": ("medium", (29.8, 0.0), (47.0, 10.07)),
+    "nxlx-ember.fs": ("light", (16.4, 0.0), (23.2, 0.0)),
+    "nxlx-horizon.fs": ("light", (15.4, 0.0), (21.6, 0.0)),
+    "nxlx-lattice.fs": ("light", (14.9, 0.0), (20.5, 0.0)),
+    "nxlx-nebula.fs": ("medium", (29.3, 0.0), (46.1, 9.67)),
+    "nxlx-prism.fs": ("light", (15.5, 0.0), (21.5, 0.0)),
+    "nxlx-pulse.fs": ("light", (16.1, 0.0), (22.9, 0.0)),
+    "nxlx-silk.fs": ("light", (14.3, 0.0), (19.6, 0.0)),
+    "nxlx-tide.fs": ("light", (18.6, 0.0), (27.3, 0.0)),
+    "nxlx-bloom.fs": ("light", (18.1, 0.0), (26.3, 0.0)),
+    "nxlx-caustic.fs": ("light", (15.8, 0.0), (22.2, 0.0)),
+    "nxlx-contour.fs": ("light", (14.7, 0.0), (20.2, 0.0)),
+    "nxlx-dusk.fs": ("light", (15.3, 0.0), (21.3, 0.0)),
+    "nxlx-fringe.fs": ("light", (16.2, 0.0), (23.0, 0.0)),
+    "nxlx-kaleido.fs": ("light", (16.2, 0.0), (22.9, 0.0)),
+    "nxlx-lantern.fs": ("medium", (21.1, 0.0), (31.6, 1.05)),
+    "nxlx-moire.fs": ("light", (14.5, 0.0), (19.8, 0.0)),
+    "nxlx-petal.fs": ("light", (17.9, 0.0), (25.9, 0.0)),
+    "nxlx-pool.fs": ("light", (17.2, 0.0), (24.8, 0.0)),
+    "nxlx-ribbon.fs": ("light", (14.9, 0.0), (20.4, 0.0)),
+    "nxlx-ridge.fs": ("light", (17.2, 0.0), (24.7, 0.0)),
+    "nxlx-stars.fs": ("light", (17.1, 0.0), (24.7, 0.0)),
+    "nxlx-tiles.fs": ("light", (14.6, 0.0), (19.9, 0.0)),
+    "nxlx-veil.fs": ("light", (14.6, 0.0), (20.0, 0.0)),
+    "nxlx-bars.fs": ("light", (14.0, 0.0), (19.2, 0.0)),
+    "nxlx-beam.fs": ("light", (16.9, 0.0), (24.2, 0.0)),
+    "nxlx-burst.fs": ("light", (16.3, 0.0), (23.1, 0.0)),
+    "nxlx-checker.fs": ("light", (14.2, 0.0), (19.3, 0.0)),
+    "nxlx-chevron.fs": ("light", (14.7, 0.0), (20.1, 0.0)),
+    "nxlx-glitch.fs": ("light", (15.7, 0.0), (22.0, 0.0)),
+    "nxlx-grid.fs": ("light", (15.1, 0.0), (20.8, 0.0)),
+    "nxlx-halftone.fs": ("light", (14.3, 0.0), (19.5, 0.0)),
+    "nxlx-mirror.fs": ("light", (14.5, 0.0), (19.9, 0.0)),
+    "nxlx-radar.fs": ("light", (16.8, 0.0), (23.9, 0.0)),
+    "nxlx-scope.fs": ("light", (16.6, 0.0), (23.7, 0.0)),
+    "nxlx-spokes.fs": ("light", (15.0, 0.0), (20.7, 0.0)),
+    "nxlx-stripes.fs": ("light", (14.3, 0.0), (19.4, 0.0)),
+    "nxlx-tunnel.fs": ("light", (15.3, 0.0), (21.2, 0.0)),
+    "nxlx-zoom.fs": ("light", (14.6, 0.0), (19.9, 0.0)),
+    "isf-color-bars.fs": ("light", (12.1, 0.0), (15.5, 0.0)),
+    "isf-corner-colors.fs": ("light", (14.7, 0.0), (20.1, 0.0)),
+    "isf-linear-gradient.fs": ("light", (11.8, 0.0), (14.9, 0.0)),
+    "isf-radial-gradient.fs": ("light", (12.2, 0.0), (15.8, 0.0)),
+    "isf-ridgelines.fs": ("medium", (26.5, 0.0), (41.2, 7.32)),
+    "isf-simplex-noise.fs": ("medium", (25.5, 0.0), (39.3, 6.43)),
+    "isf-sine-warp-gradient.fs": ("light", (13.8, 0.0), (18.6, 0.0)),
+}
+PI4_1440 = {
     "nxlx-aurora.fs": ("medium", (12.9, 0.0), (22.8, 4.87)),
     "nxlx-drift.fs": ("heavy", (20.1, 2.01), (35.7, 10.55)),
     "nxlx-ember.fs": ("light", (6.5, 0.0), (11.4, 0.39)),
@@ -138,11 +196,19 @@ def performance(categories):
     return any(isinstance(c, str) and c.lower() == S.PERFORMANCE for c in (categories or ()))
 
 
-def weight_of(sid, cost):
-    """light, medium or heavy: measured for the bundled shaders, otherwise read from the first word of the file's own
-    COST note, otherwise "" (unknown)."""
-    if sid in PI4:
-        return PI4[sid][0]
+def table_for(screen):
+    """The measured table that counts for an output of this size: PI4 up to PI4_OUTPUT's pixels (a 1920 x 1080 screen
+    and anything smaller), PI4_1440 above it (1920 x 1200 too: more to scale to than was measured)."""
+    sw, sh = S.usable(screen)
+    return PI4 if sw * sh <= PI4_OUTPUT[0] * PI4_OUTPUT[1] else PI4_1440
+
+
+def weight_of(sid, cost, table=PI4):
+    """light, medium or heavy: measured for the bundled shaders (in `table`, the one for the box's output), otherwise
+    read from the first word of the file's own COST note, otherwise "" (unknown). The project's own COST notes follow
+    PI4_1440, the stricter of the two."""
+    if sid in table:
+        return table[sid][0]
     word = (cost or "").strip().lower()
     for prefix, weight in (("medium to high", "heavy"), ("low", "light"), ("light", "light"), ("medium", "medium"), ("high", "heavy"), ("heavy", "heavy")):
         if word.startswith(prefix):
@@ -150,14 +216,55 @@ def weight_of(sid, cost):
     return ""
 
 
-def measured(sid):
-    """What was measured for a bundled shader on a Pi 4, or None: the pass time at 720 lines as "pass_ms" (the number
-    the library shows), both heights in "pass_ms_by_lines", and the frames dropped a second by drawing height."""
-    if sid not in PI4:
+def measured(sid, table=PI4):
+    """What was measured for a bundled shader on a Pi 4 at the output `table` belongs to, or None. "output" is the
+    screen it was measured on, "drops_per_second" the frames dropped a second by drawing height. The time: from
+    PI4_1440 the shader's own pass, "pass_ms" at 720 lines (the number the library shows) and "pass_ms_by_lines";
+    from PI4 the sum of all of a frame's passes, "all_passes_ms" and "all_passes_ms_by_lines" (that run kept the
+    shader's own pass only where frames were dropped)."""
+    if sid not in table:
         return None
-    _, low, high = PI4[sid]
-    return {"board": "pi4", "lines": 720, "pass_ms": high[0], "pass_ms_by_lines": {"540": low[0], "720": high[0]},
-            "drops_per_second": {"540": low[1], "720": high[1]}, "stale": sid in RETUNED}
+    _, low, high = table[sid]
+    out = {"board": "pi4", "output": list(PI4_OUTPUT if table is PI4 else PI4_1440_OUTPUT), "lines": 720,
+           "drops_per_second": {"540": low[1], "720": high[1]}, "stale": sid in RETUNED}
+    if table is PI4:
+        out.update(all_passes_ms=high[0], all_passes_ms_by_lines={"540": low[0], "720": high[0]})
+    else:
+        out.update(pass_ms=high[0], pass_ms_by_lines={"540": low[0], "720": high[0]})
+    return out
+
+
+# Automatic picture detail (D93): each shader is drawn at the most lines at which it held 30 frames a second on this
+# kind of board at this size of output, the way Effect detail's Automatic chooses per filter (effects.AUTO). Only a
+# board that was measured has it. The rule, from the table that counts for the output (table_for): 720 lines where the
+# shader held at 720, else 540 (where it held, or, at an output larger than PI4's, the lowest that was measured: the
+# guard decides there, as before). A shader nobody measured (an upload) gets AUTO_OTHER.
+AUTO_BOARDS = ("pi4",)
+AUTO_OTHER = 540
+HEIGHT_AUTO = "height_auto"     # beside "height" in the settings, as D71 put "style" beside "transition" (see LiveEngine.config)
+
+
+def auto_lines(sid, table, offered=(540, 720)):
+    """The lines Automatic draws `sid` at, from `table`."""
+    row = table.get(sid)
+    if row is None:
+        return AUTO_OTHER
+    return 720 if 720 in offered and row[2][1] < HOLDS else 540
+
+
+def output_of(table):
+    """[width, height] of the output a table was measured at."""
+    return list(PI4_OUTPUT if table is PI4 else PI4_1440_OUTPUT)
+
+
+def holds_at(sid, table, lines):
+    """Whether a measured shader held at `lines` by `table`: at 540 lines or fewer by its number at 540, above that
+    by its number at 720 (nothing was measured higher, and more lines never cost less). None where it is not in the
+    table."""
+    row = table.get(sid)
+    if row is None:
+        return None
+    return (row[1] if lines <= 540 else row[2])[1] < HOLDS
 
 
 _BRANCH = re.compile(r"\b(?:for|while|if)\s*\(")
@@ -308,6 +415,11 @@ def check_heavy(v):
             if not isinstance(note["board"], str) or not re.fullmatch(r"[a-z0-9-]{1,20}", note["board"]):
                 raise ValueError("the board of a heavy mark is not a board name")
             row["board"] = note["board"]
+        if note.get("output") is not None:              # the output whose table counted when it was seen (D93)
+            o = note["output"]
+            if not isinstance(o, list) or len(o) != 2 or not all(type(n) is int and 16 <= n <= 16384 for n in o):
+                raise ValueError("the output of a heavy mark is not a width and a height")
+            row["output"] = list(o)
         out[sid] = row
     return out
 
@@ -801,6 +913,25 @@ class LiveEngine(S.Engine):
     def board(self):
         return (getattr(self.api, "board", None) or {}).get("kind")
 
+    def table(self):
+        """The measured table that counts for the box's output now (table_for)."""
+        return table_for(self.screen())
+
+    def auto_table(self, cfg=None):
+        """The table Automatic reads now, or None while the box draws every shader at its one height."""
+        cfg = cfg or self.config()
+        return self.table() if cfg.get(HEIGHT_AUTO) is True and self.board() in AUTO_BOARDS else None
+
+    def height_for(self, sid, cfg=None, table=False):
+        """The lines `sid` is drawn at: under Automatic its own (auto_lines), else the box's one height. `table` is
+        auto_table(cfg) when the caller has it already."""
+        cfg = cfg or self.config()
+        if table is False:
+            table = self.auto_table(cfg)
+        if table is None or sid is None:
+            return cfg["height"]
+        return auto_lines(sid, table, S.heights_for(self.board()))
+
     # -- settings --
     def _saved(self):
         saved = self.api.settings.data.get("shaders")
@@ -809,8 +940,19 @@ class LiveEngine(S.Engine):
     def config(self):
         cfg = super().config()
         saved, board = self._saved() or {}, self.board()
-        if saved.get("height") not in S.heights_for(board) or isinstance(saved.get("height"), bool):
+        kept = saved.get("height") in S.heights_for(board) and not isinstance(saved.get("height"), bool)
+        if not kept:
             cfg["height"] = S.default_height(board)                 # also a height this board is not offered (1080 on a Pi 4)
+        # Automatic picture detail (D93). "height" stays a number every release reads (an older one draws every shader
+        # at it); HEIGHT_AUTO beside it says whether Automatic is on: true, or false for a height chosen by hand. With
+        # no HEIGHT_AUTO, a box that saved a height it can use (any save of an older release wrote one, chosen or
+        # not: nobody can tell) keeps it, and one that saved none has the board's default, Automatic where offered.
+        if isinstance(saved.get(HEIGHT_AUTO), bool):
+            cfg[HEIGHT_AUTO] = saved[HEIGHT_AUTO]
+        elif board in AUTO_BOARDS and not kept:
+            cfg[HEIGHT_AUTO] = True
+        if cfg.get(HEIGHT_AUTO) and board not in AUTO_BOARDS:
+            cfg["height"] = S.default_height(board)                 # Automatic from another kind of board: this one's default
         for key, read in READ:
             if key in saved:
                 rows = read(saved[key])         # damaged by hand: the rows that still pass are kept, one bad row is only itself
@@ -831,8 +973,8 @@ class LiveEngine(S.Engine):
 
     def _save(self, cfg):
         """Save the section. The first save by this version of a section the first version wrote turns that box's
-        list into the set Ambient: everything that was not switched off, uploads included, without the two heavy
-        shaders (see _first_set). A box with no saved section has nothing to turn: its first set stays computed
+        list into the set Ambient: everything that was not switched off, uploads included, without the shaders that
+        are heavy at the box's output (see _first_set; none at 1920 x 1080, two at 2560 x 1440). A box with no saved section has nothing to turn: its first set stays computed
         until someone edits a set. A key that could not be read at all is left in the file as it is."""
         super()._save(self._prepared(cfg))
 
@@ -863,13 +1005,15 @@ class LiveEngine(S.Engine):
 
     def library(self, cfg=None):
         """The first version's list, with what a panel needs to perform: per shader "weight" (light, medium, heavy or
-        ""), "measured" (the Pi 4's numbers, for the bundled ones), "heavy" (what the guard saw on this box, or null),
+        ""), "measured" (the Pi 4's numbers, for the bundled ones), "lines" (the drawing height it gets here now),
+        "heavy" (what the guard saw on this box, or null),
         "refused" (what this box's GPU said, or null), "presets" (names), and per input "value" (what is on now, or
         what Play would use) and "varies" (whether Vibes may vary it). "vibes" is membership of the active set."""
         cfg = cfg or self.config()
         rows = super().library()
         members = {e["id"] for e in self.rotation(None, cfg, rows)["shaders"]}
-        heavy = self.heavy_here(cfg)
+        table, auto = self.table(), self.auto_table(cfg)
+        heavy = self.heavy_here(cfg, auto)
         on = self.on_screen() if self.enabled() else None
         pads, with_preset = {}, {}
         try:
@@ -884,7 +1028,8 @@ class LiveEngine(S.Engine):
             pads, with_preset = {}, {}
         for s in rows:
             sid = s["id"]
-            s["weight"], s["measured"] = weight_of(sid, s["cost"]), measured(sid)
+            s["weight"], s["measured"] = weight_of(sid, s["cost"], table), measured(sid, table)
+            s["lines"] = self.height_for(sid, cfg, auto)        # what it is drawn at here now (D93)
             s["heavy"] = heavy.get(sid)
             s["presets"] = [p["name"] for p in cfg.get("presets", {}).get(sid, [])]
             s["pads"] = pads.get(sid, 0)            # how many pads hold it (D73): a Remove says so before it is done
@@ -1023,6 +1168,9 @@ class LiveEngine(S.Engine):
         they were in the rotation, and they stay). Shaders that were switched off stay out."""
         rows = super().library() if rows is None else rows
         old = self._saved() is not None and cfg.get("v") != 2
+        table = self.table()            # the table for this size of output (D93)
+        auto = self.auto_table(cfg)
+        heavy = lambda s: self.too_heavy(s["id"], s["cost"], cfg, table, auto)
         out = []
         for s in rows:
             sid = s["id"]
@@ -1033,14 +1181,26 @@ class LiveEngine(S.Engine):
             elif s.get("pack", "nxlx") != "nxlx" or performance(s.get("categories")):
                 keep = sid in cfg.get("included", ())       # a pack's shader, or one of ours made to perform with: only if put in
             else:
-                keep = weight_of(sid, s["cost"]) != "heavy"
+                keep = not heavy(s)
             if keep:
                 out.append({"id": sid})
         first = {"id": FIRST_SET, "name": "Ambient", "shaders": out, "dwell": cfg["dwell"], "vary": cfg["vary"], "order": ORDERS[0]}
         # The second set a box has from the start: the project's shaders made to perform with. It is not the active one.
         show = [{"id": s["id"]} for s in rows if s["source"] == "bundled" and s.get("pack", "nxlx") == "nxlx" and performance(s.get("categories"))
-                and not s["error"] and s["id"] not in cfg["disabled"] and weight_of(s["id"], s["cost"]) != "heavy"]
+                and not s["error"] and s["id"] not in cfg["disabled"] and not heavy(s)]
         return [first] + ([{"id": SHOW_SET, "name": "Show", "shaders": show, "dwell": S.DWELL_DEFAULT, "vary": True, "order": ORDERS[0]}] if show else [])
+
+    def too_heavy(self, sid, cost, cfg, table, auto):
+        """Whether a computed set leaves a shader out (D93). On a measured board (AUTO_BOARDS): when it did not hold
+        at the height it will be drawn at here (height_for: its own under Automatic, else the box's one height), by
+        the table for the output; so a box with 720 lines kept leaves out nxlx-drift, nxlx-nebula, nxlx-aurora and
+        nxlx-lantern at 1080p, and Automatic lets them in at 540. Elsewhere, and for a shader nobody measured: when
+        its class is heavy."""
+        if self.board() in AUTO_BOARDS:
+            held = holds_at(sid, table, self.height_for(sid, cfg, auto))
+            if held is not None:
+                return not held
+        return weight_of(sid, cost, table) == "heavy"
 
     def sets(self, cfg=None, rows=None):
         cfg = cfg or self.config()
@@ -1146,28 +1306,37 @@ class LiveEngine(S.Engine):
             self._save(cfg)
 
     # -- the guard --
-    def heavy_here(self, cfg=None):
+    def heavy_here(self, cfg=None, table=False):
         """The heavy marks that count on this box now: made on this board (a mark with no board is this box's own),
-        at the drawing height that is set now or a lower one. A mark made at a greater height says nothing about a
-        lower one, so lowering the picture detail gives every marked shader another chance; raising it keeps them."""
+        at the height the shader is drawn at now (height_for: under Automatic its own) or a lower one. A mark made at
+        a greater height says nothing about a lower one, so lowering the picture detail gives every marked shader
+        another chance; raising it keeps them. `table` is auto_table(cfg) when the caller has it."""
         cfg = cfg or self.config()
         board = self.board()
-        return {sid: m for sid, m in cfg.get("heavy", {}).items() if m.get("board") in (None, board) and m.get("height", 0) <= cfg["height"]}
+        if table is False:
+            table = self.auto_table(cfg)
+        # and made for the output whose table counts now: a mark seen at 1440p says nothing at 1080p (a mark from
+        # before D93 has no output and counts as it did)
+        output = output_of(self.table())
+        return {sid: m for sid, m in cfg.get("heavy", {}).items()
+                if m.get("board") in (None, board) and m.get("output", output) == output and m.get("height", 0) <= self.height_for(sid, cfg, table)}
 
     def note_heavy(self, sid, verdict=None):
         """The guard found this shader too heavy in a rotation (or someone marked it by hand): remember it, with the
-        drawing height and the board, so no rotation shows it until someone puts it back."""
+        drawing height it has here (its own under Automatic) and the board, so no rotation shows it until someone
+        puts it back."""
         drops = (verdict or {}).get("drops_per_second") or 0
         with self._cfg:
             cfg = self.config()
-            mark = {"at": time.strftime("%Y-%m-%d %H:%M"), "drops": drops, "height": int(cfg["height"])}
+            lines = int(self.height_for(sid, cfg))
+            mark = {"at": time.strftime("%Y-%m-%d %H:%M"), "drops": drops, "height": lines, "output": output_of(self.table())}
             if self.board():
                 mark["board"] = self.board()
             cfg.setdefault("heavy", {})[sid] = mark
             self._save(cfg)
         if verdict:
             self.log("pvj-web: shader %s drops %s frames a second at %d lines: too heavy on this box, left out of rotations"
-                     % (sid, drops, cfg["height"]))
+                     % (sid, drops, lines))
 
     def unmark(self, ids):
         """Take heavy marks back."""
@@ -1691,7 +1860,13 @@ class LiveEngine(S.Engine):
         base["config"].update(guard=cfg.get("guard", True), clock=cfg.get("clock", S.CLOCKS[0]), faster=cfg.get("faster", False))
         if active:
             base["config"].update(dwell=active["dwell"], vary=active["vary"])
-        base["render"].update(heights=list(S.heights_for(board)), default=S.default_height(board), measured=board == "pi4", board=board)
+        base["render"].update(heights=list(S.heights_for(board)), default=S.default_height(board), measured=board == "pi4", board=board,
+                              auto=self.auto_state())
+        if self.auto_table(cfg) is not None:
+            base["config"]["height"] = "auto"
+        if board in AUTO_BOARDS:
+            # a number saved by a release without Automatic: chosen or an old default, nobody can tell
+            base["config"]["height_kept"] = HEIGHT_AUTO not in cfg
         base["sets"] = self.sets(cfg, base["shaders"]) if self.enabled() else []
         base["active"] = active["id"] if active else None
         base["controls"] = {"speed": {"min": S.SPEED_MIN, "max": S.SPEED_MAX, "default": 1.0}, "hue": {"min": -180.0, "max": 180.0, "default": 0.0},
@@ -1699,6 +1874,18 @@ class LiveEngine(S.Engine):
         base["gpu"] = seen.get("gpu")
         base["limits"].update(presets=MAX_PRESETS, sets=MAX_SETS, set_shaders=MAX_SET_ENTRIES, name=40, controls=MAX_CONTROLS)
         return base
+
+    def auto_state(self):
+        """What Automatic picture detail does on this board at this output, or None where it is not offered:
+        {"lines": what a measured shader that held there gets, "other": what an unmeasured one gets, "lower": {file:
+        lines} for the measured ones that get fewer, "output": [width, height] of the screen the table was measured
+        on}. Whether it is on is config.height ("auto")."""
+        if self.board() not in AUTO_BOARDS:
+            return None
+        table, offered = self.table(), S.heights_for(self.board())
+        top = max(h for h in offered if h in (540, 720))
+        return {"lines": top, "other": AUTO_OTHER, "lower": {sid: auto_lines(sid, table, offered) for sid in sorted(table) if auto_lines(sid, table, offered) < top},
+                "output": list(PI4_OUTPUT if table is PI4 else PI4_1440_OUTPUT)}
 
     def api_play(self, body, device, client):
         """{"id": "name.fs", "values"?: {input: value}, "controls"?: {speed, hue, brightness}, "preset"?: name}: show
@@ -1733,7 +1920,8 @@ class LiveEngine(S.Engine):
     def api_set(self, body, device, client):
         """The first version's actions (upload, delete, vibes, config) and: {"action": "set", "op": "add" | "update" |
         "delete" | "activate", ...}, {"action": "heavy", "id", "on": bool} (false puts a shader the guard took out
-        back into the rotations), and in "config" also "guard" (bool) and "clock" ("carrier" or "frame")."""
+        back into the rotations), and in "config" also "guard" (bool) and "clock" ("carrier" or "frame"), and "height"
+        may be "auto" on a board with Automatic picture detail (D93)."""
         self._need()
         action = body.get("action")
         if action == "set":
@@ -1760,8 +1948,13 @@ class LiveEngine(S.Engine):
                     cfg.get("heavy", {}).pop(sid, None)             # put back by hand: the guard's note goes
             self._edit_sets(toggle)
         elif action == "config":
-            if "height" in body and (isinstance(body["height"], bool) or body["height"] not in S.heights_for(self.board())):
-                raise ApiError(400, "height must be one of %s on this board" % ", ".join(str(h) for h in S.heights_for(self.board())))
+            board = self.board()
+            auto = "height" in body and body["height"] == "auto" and board in AUTO_BOARDS
+            if "height" in body and not auto and (isinstance(body["height"], bool) or body["height"] not in S.heights_for(board)):
+                raise ApiError(400, "height must be one of %s on this board" % ", ".join(
+                    (["auto"] if board in AUTO_BOARDS else []) + [str(h) for h in S.heights_for(board)]))
+            if auto:
+                body = dict(body, height=S.default_height(board))   # the number an older release reads (see config)
             for key, ok in (("guard", lambda v: isinstance(v, bool)), ("faster", lambda v: isinstance(v, bool)), ("clock", lambda v: v in S.CLOCKS)):
                 if key in body and not ok(body[key]):
                     raise ApiError(400, "guard and faster must be true or false, and clock carrier or frame")
@@ -1774,6 +1967,8 @@ class LiveEngine(S.Engine):
                 for key in ("guard", "clock", "faster"):
                     if key in body:
                         cfg[key] = body[key]
+                if "height" in body and (board in AUTO_BOARDS or HEIGHT_AUTO in cfg):
+                    cfg[HEIGHT_AUTO] = auto             # false: a height chosen by hand, which Automatic never overrides
                 self._save(cfg)
                 self.tune_set(None, cfg["dwell"], cfg["vary"])      # dwell and variation belong to the active set
             on = self.on_screen()

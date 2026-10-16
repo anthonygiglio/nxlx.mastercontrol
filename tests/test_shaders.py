@@ -42,17 +42,25 @@ FIRST_TEN = ["aurora", "drift", "ember", "horizon", "lattice", "nebula", "prism"
 AMBIENT = ["bloom", "caustic", "contour", "dusk", "fringe", "kaleido", "lantern", "moire", "petal", "pool", "ribbon", "ridge", "stars", "tiles", "veil"]
 PERFORMANCE = ["bars", "beam", "burst", "checker", "chevron", "glitch", "grid", "halftone", "mirror", "radar", "scope", "spokes", "stripes", "tunnel", "zoom"]
 BUNDLED = len(FIRST_TEN) + len(AMBIENT) + len(PERFORMANCE)
-# The classes a Raspberry Pi 4 measured (PI4 in pvj/shaderlive.py), named one by one: a light shader holds 30 frames a
-# second at 720 lines, a medium one at 540 lines only, a heavy one drops frames at 540 lines too. All that is not
-# named here is light.
+# The classes a Raspberry Pi 4 measured, named one by one: a light shader holds 30 frames a second at 720 lines, a
+# medium one at 540 lines only, a heavy one drops frames at 540 lines too. All that is not named here is light. Two
+# runs, each at its own output (D93): PI4 in pvj/shaderlive.py at 1920 x 1080, the screen these tests' player has
+# (SourcePlayer.osd_size), and PI4_1440 at 2560 x 1440, which the project's own COST notes follow.
 # measured classes: begin
-MEDIUM = ["aurora", "beam", "bloom", "lantern", "petal", "pool", "ridge", "scope", "stars", "tide"]
-HEAVY = ["drift", "nebula"]                   # out of the rotation until someone puts them in
-PACK_MEDIUM = ["isf-simplex-noise"]
-PACK_HEAVY = ["isf-ridgelines"]
+MEDIUM = ["aurora", "drift", "lantern", "nebula"]
+HEAVY = []                                    # none at 1920 x 1080
+PACK_MEDIUM = ["isf-ridgelines", "isf-simplex-noise"]
+PACK_HEAVY = []
+MEDIUM_1440 = ["aurora", "beam", "bloom", "lantern", "petal", "pool", "ridge", "scope", "stars", "tide"]
+HEAVY_1440 = ["drift", "nebula"]              # out of the default rotation at that output until someone puts them in
+PACK_MEDIUM_1440 = ["isf-simplex-noise"]
+PACK_HEAVY_1440 = ["isf-ridgelines"]
 # measured classes: end
 ROTATION = [n for n in FIRST_TEN + AMBIENT if n not in HEAVY]
 IN_VIBES = len(ROTATION)
+ROTATION_1440 = [n for n in FIRST_TEN + AMBIENT if n not in HEAVY_1440]
+# Automatic picture detail at 1920 x 1080 (D93): the shaders that are drawn at 540 lines; every other bundled one at 720.
+AUTO_540 = ["nxlx-aurora.fs", "nxlx-drift.fs", "nxlx-lantern.fs", "nxlx-nebula.fs", "isf-ridgelines.fs", "isf-simplex-noise.fs"]
 # Numbers from the hash and noise one-liners that are passed around everywhere: the bundled shaders build their own.
 WELL_KNOWN = ("43758.5453", "12.9898", "78.233", "0.1031", ".1030", "437.585", "289.0", "6.2831 * (", "0.5 + 0.5 * cos(6.28318 * (")
 
@@ -376,8 +384,8 @@ class TranslatorTest(unittest.TestCase):
                 self.assertEqual(S.default_in_vibes(p), family == "Ambient", name)
                 self.assertEqual(head["CREDIT"], "NXLX.Systems and contributors", name)
                 self.assertTrue(4 <= len(p["inputs"]) <= 8, (name, len(p["inputs"])))
-                self.assertEqual(p["cost"].split(":")[0], "medium" if name in MEDIUM else "low", name)      # what the Pi 4 measured
-                self.assertNotIn(name, HEAVY)                 # a heavy one would be left out of its set (Ambient or Show)
+                self.assertEqual(p["cost"].split(":")[0], "medium" if name in MEDIUM_1440 else "low", name)     # what the Pi 4 measured at 1440p
+                self.assertNotIn(name, HEAVY_1440 + HEAVY)    # a heavy one would be left out of its set (Ambient or Show)
                 self.assertTrue(20 <= len(head["DESCRIPTION"]) <= S.MAX_TEXT and head["DESCRIPTION"].endswith("."), name)
                 for spec, i in zip(head["INPUTS"], p["inputs"]):
                     self.assertTrue(spec.get("LABEL") and i["label"] != i["name"], (name, i["name"]))

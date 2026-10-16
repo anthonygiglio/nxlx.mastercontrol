@@ -152,8 +152,9 @@ def heights_for(board):
 
 
 def default_height(board):
-    """540 lines on a Pi 4 (every bundled shader but the two heavy ones kept up there) and on a board that is unknown
-    or weaker; 720 on a Pi 5 and x86, which is a guess until someone measures them."""
+    """The one height for every shader: 540 lines on a Pi 4 (all 47 bundled shaders keep up there at a 1920 x 1080
+    output; the Pi 4's own default is Automatic, which draws most of them at 720: shaderlive, D93) and on a board that
+    is unknown or weaker; 720 on a Pi 5 and x86, which is a guess until someone measures them."""
     return 720 if board in ("pi5", "x86") else DEFAULT_HEIGHT
 
 
@@ -925,6 +926,10 @@ class Engine:
                 cfg["included"] = [n for n in saved["included"] if isinstance(n, str) and FILE.fullmatch(n)][:MAX_UPLOADS + 64]
         return cfg
 
+    def height_for(self, sid, cfg=None, table=False):
+        """The lines `sid` is drawn at: the box's one height (shaderlive gives each shader its own under Automatic)."""
+        return (cfg or self.config())["height"]
+
     def _save(self, cfg):
         with self.api.settings.lock:
             self.api.settings.data["shaders"] = cfg
@@ -1244,7 +1249,7 @@ class Engine:
             try:
                 parsed, digest = self._parsed(path)
                 cfg = self.config()
-                size = render_size(self.screen(), cfg["height"])
+                size = render_size(self.screen(), self.height_for(sid, cfg))
                 carrier = carrier_url(self.screen(), cfg.get("clock", CLOCKS[0]) == "carrier")
                 desc = "nxlx shader %d %d" % (os.getpid(), self._serial + 1)      # mpv outlives this service: no two alike
                 clean = clean_values(parsed, values)
@@ -1490,7 +1495,7 @@ class Engine:
                 if isinstance(x.get("avg"), (int, float)) and not isinstance(x["avg"], bool) and x["avg"] > 0:
                     playing["pass_ms"] = round(x["avg"] / 1e6, 2)
         vibes = getattr(self.api, "vibes", None)
-        size = render_size(self.screen(), cfg["height"])
+        size = render_size(self.screen(), self.height_for(showing["id"] if showing else None, cfg))
         return {"enabled": self.enabled(), "shaders": self.library() if self.enabled() else [], "playing": playing,
                 "error": self.error, "vibes": vibes.status() if vibes else {"running": False},
                 "config": {"dwell": cfg["dwell"], "vary": cfg["vary"], "height": cfg["height"]},
