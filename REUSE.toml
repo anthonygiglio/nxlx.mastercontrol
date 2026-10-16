@@ -82,3 +82,15 @@ path = [
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)"
 SPDX-License-Identifier = "OFL-1.1"
+
+# pvj-render (render/, D95): the box's own renderer, a separate program that links libmpv (GPLv2 or later as Debian
+# builds it), so the folder is GPL-3.0-or-later while the rest of the tree stays Apache-2.0. Every source file in it
+# carries its own SPDX header; the licence's text, as the Free Software Foundation publishes it, is beside it.
+[[annotations]]
+path = [
+  "render/LICENSE",
+  "LICENSES/GPL-3.0-or-later.txt",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2007 Free Software Foundation, Inc. <https://fsf.org/>"
+SPDX-License-Identifier = "GPL-3.0-or-later"
