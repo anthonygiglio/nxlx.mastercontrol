@@ -925,6 +925,10 @@ class Engine:
                 cfg["included"] = [n for n in saved["included"] if isinstance(n, str) and FILE.fullmatch(n)][:MAX_UPLOADS + 64]
         return cfg
 
+    def height_for(self, sid, cfg=None, table=False):
+        """The lines `sid` is drawn at: the box's one height (shaderlive gives each shader its own under Automatic)."""
+        return (cfg or self.config())["height"]
+
     def _save(self, cfg):
         with self.api.settings.lock:
             self.api.settings.data["shaders"] = cfg
@@ -1244,7 +1248,7 @@ class Engine:
             try:
                 parsed, digest = self._parsed(path)
                 cfg = self.config()
-                size = render_size(self.screen(), cfg["height"])
+                size = render_size(self.screen(), self.height_for(sid, cfg))
                 carrier = carrier_url(self.screen(), cfg.get("clock", CLOCKS[0]) == "carrier")
                 desc = "nxlx shader %d %d" % (os.getpid(), self._serial + 1)      # mpv outlives this service: no two alike
                 clean = clean_values(parsed, values)
@@ -1490,7 +1494,7 @@ class Engine:
                 if isinstance(x.get("avg"), (int, float)) and not isinstance(x["avg"], bool) and x["avg"] > 0:
                     playing["pass_ms"] = round(x["avg"] / 1e6, 2)
         vibes = getattr(self.api, "vibes", None)
-        size = render_size(self.screen(), cfg["height"])
+        size = render_size(self.screen(), self.height_for(showing["id"] if showing else None, cfg))
         return {"enabled": self.enabled(), "shaders": self.library() if self.enabled() else [], "playing": playing,
                 "error": self.error, "vibes": vibes.status() if vibes else {"running": False},
                 "config": {"dwell": cfg["dwell"], "vary": cfg["vary"], "height": cfg["height"]},

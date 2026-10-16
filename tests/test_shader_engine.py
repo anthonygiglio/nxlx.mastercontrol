@@ -7,6 +7,7 @@ import datetime
 import json
 import os
 import random
+import re
 import threading
 import time
 from unittest import mock
@@ -15,8 +16,8 @@ from pvj import boxcare, midi, osc, scheduler, shaderlive as L, shaders as S, vi
 from pvj.api import ApiError
 from pvj.midi import MidiMapper
 from pvj.settings import SCHEMA
-from tests.test_shaders import (AMBIENT, FIRST_TEN, GOOD, HEAVY, IN_VIBES, MEDIUM, PACK_HEAVY, PACK_MEDIUM, PACKED, PERFORMANCE, REFUSAL,
-                                ROTATION, Base, FakeTap)
+from tests.test_shaders import (AMBIENT, AUTO_540, FIRST_TEN, GOOD, HEAVY, HEAVY_1440, IN_VIBES, MEDIUM, MEDIUM_1440, PACK_HEAVY, PACK_HEAVY_1440,
+                                PACK_MEDIUM, PACK_MEDIUM_1440, PACKED, PERFORMANCE, REFUSAL, ROTATION, ROTATION_1440, Base, FakeTap)
 
 ALL = """/*{"INPUTS": [
  {"NAME": "level", "TYPE": "float", "MIN": 0.0, "MAX": 2.0, "DEFAULT": 0.5, "LABEL": "Level"},
@@ -175,37 +176,50 @@ class BoardTest(Live):
             self.api.board = {"kind": board, "model": "t"}
             st = self.engine.state()
             self.assertEqual((st["config"]["height"], st["render"]["heights"], st["render"]["default"], st["render"]["measured"]),
-                             (default, heights, default, board == "pi4"), board)
+                             ("auto" if board == "pi4" else default, heights, default, board == "pi4"), board)    # Automatic on a Pi 4 (D93)
+            self.assertEqual(self.engine.config()["height"], default, board)     # the number an older release reads
         self.api.board = {"kind": "pi4", "model": "t"}
         with self.assertRaises(ApiError) as c:                        # never 1080 on a Pi 4
             self.engine.api_set({"action": "config", "height": 1080}, None, "t")
         self.assertEqual(c.exception.status, 400)
         self.settings.data["shaders"] = {"height": 1080}              # a settings file from a Pi 5: read as this board's default
-        self.assertEqual(self.engine.config()["height"], 540)
+        self.assertEqual((self.engine.config()["height"], self.engine.config()[L.HEIGHT_AUTO]), (540, True))
         self.assertEqual(self.engine.api_set({"action": "config", "height": 720}, None, "t")["render"]["height"], 720)
         self.assertEqual(S.default_config()["height"], 540)           # what a box of an unknown kind gets
         self.assertEqual(boxcare.check_shaders({"height": 1080}, None)["height"], 1080)       # a file may carry any known height
         self.assertNotIn("height", boxcare.check_shaders({"dwell": 60}, None))                # and none is made up for it
 
     def test_every_bundled_shader_says_how_heavy_it_is_and_what_was_measured(self):
-        """All 47, each with the class and the numbers a Pi 4 measured (2026-10-05), named one by one in
-        tests/test_shaders.py."""
-        rows = {s["id"]: s for s in self.engine.state()["shaders"]}
+        """All 47, each with the class and the numbers a Pi 4 measured at the box's output (PI4, 1920 x 1080 on
+        2026-10-16; PI4_1440, 2560 x 1440 on 2026-10-05), named one by one in tests/test_shaders.py."""
         own = ["nxlx-%s.fs" % n for n in FIRST_TEN + AMBIENT + PERFORMANCE]
-        self.assertEqual(sorted(L.PI4), sorted(own + PACKED))             # every bundled file, and nothing else
-        want = {"medium": sorted(["nxlx-%s.fs" % n for n in MEDIUM] + ["%s.fs" % n for n in PACK_MEDIUM]),
-                "heavy": sorted(["nxlx-%s.fs" % n for n in HEAVY] + ["%s.fs" % n for n in PACK_HEAVY])}
-        want["light"] = sorted(set(L.PI4) - set(want["medium"]) - set(want["heavy"]))
-        self.assertEqual({w: sorted(sid for sid, s in rows.items() if s["weight"] == w) for w in ("light", "medium", "heavy")}, want)
-        for sid, (weight, low, high) in L.PI4.items():
-            self.assertEqual(L.weigh(low[1], high[1]), weight, sid)       # the class is what the two drop rates make
-            self.assertTrue(0 < low[0] < high[0] < 100 and 0 <= low[1] <= high[1] < 30, sid)      # more lines never cost less
-            self.assertEqual(rows[sid]["measured"], {"board": "pi4", "lines": 720, "pass_ms": high[0], "pass_ms_by_lines": {"540": low[0], "720": high[0]},
-                                                     "drops_per_second": {"540": low[1], "720": high[1]}, "stale": False}, sid)
+        for screen, table, medium, heavy, output in (((1920, 1080), L.PI4, MEDIUM + PACK_MEDIUM, HEAVY + PACK_HEAVY, [1920, 1080]),
+                                                     ((2560, 1440), L.PI4_1440, MEDIUM_1440 + PACK_MEDIUM_1440, HEAVY_1440 + PACK_HEAVY_1440, [2560, 1440])):
+            self.player.osd_size = lambda: screen
+            rows = {s["id"]: s for s in self.engine.state()["shaders"]}
+            name = lambda n: n + ".fs" if n.startswith("isf-") else "nxlx-%s.fs" % n
+            self.assertEqual(sorted(table), sorted(own + PACKED))             # every bundled file, and nothing else
+            want = {"medium": sorted(map(name, medium)), "heavy": sorted(map(name, heavy))}
+            want["light"] = sorted(set(table) - set(want["medium"]) - set(want["heavy"]))
+            self.assertEqual({w: sorted(sid for sid, s in rows.items() if s["weight"] == w) for w in ("light", "medium", "heavy")}, want, screen)
+            for sid, (weight, low, high) in table.items():
+                self.assertEqual(L.weigh(low[1], high[1]), weight, sid)       # the class is what the two drop rates make
+                self.assertTrue(0 < low[0] < high[0] < 100 and 0 <= low[1] <= high[1] < 30, sid)      # more lines never cost less
+                # PI4's time is all of a frame's passes, PI4_1440's the shader's own: each under its own name
+                key = "all_passes_ms" if table is L.PI4 else "pass_ms"
+                self.assertEqual(rows[sid]["measured"], {"board": "pi4", "output": output, "lines": 720, key: high[0], key + "_by_lines": {"540": low[0], "720": high[0]},
+                                                         "drops_per_second": {"540": low[1], "720": high[1]}, "stale": False}, sid)
+        self.player.osd_size = lambda: (1920, 1080)
+        for sid in L.PI4:                                             # the run at 1080p dropped no more than the one at 1440p
+            self.assertLessEqual(L.PI4[sid][1][1], L.PI4_1440[sid][1][1], sid)
+            self.assertLessEqual(L.PI4[sid][2][1], L.PI4_1440[sid][2][1], sid)
+        self.assertEqual((L.table_for((1920, 1080)), L.table_for((1280, 720)), L.table_for((1920, 1200)), L.table_for((2560, 1440)), L.table_for((0, 0))),
+                         (L.PI4, L.PI4, L.PI4_1440, L.PI4_1440, L.PI4))     # a player with no window is taken as 1920 x 1080 (S.usable)
+        rows = {s["id"]: s for s in self.engine.state()["shaders"]}
         self.assertEqual((L.weigh(0, 0), L.weigh(0, 0.49), L.weigh(0, 0.5), L.weigh(0.49, 9), L.weigh(0.5, 9)), ("light", "light", "medium", "medium", "heavy"))
         self.assertEqual(L.HOLDS, L.Guard.TIGHT)                          # "holds" is where the guard says "ok"
-        for sid in own:                                               # the file's own note starts with the same class
-            self.assertEqual(L.weight_of("other.fs", rows[sid]["cost"]), rows[sid]["weight"], sid)
+        for sid in own:                                               # the file's own note starts with the stricter run's class (1440p)
+            self.assertEqual(L.weight_of("other.fs", rows[sid]["cost"]), L.PI4_1440[sid][0], sid)
         for name in AMBIENT + PERFORMANCE:                            # no heavy one in the two families (it would be left out of its set)
             self.assertIn(rows["nxlx-%s.fs" % name]["weight"], ("light", "medium"), name)
         for sid in PACKED:                                            # a pack's files are not ours to edit: only the table says it
@@ -224,12 +238,17 @@ class BoardTest(Live):
         self.assertIn("nxlx-nebula.fs", self.engine.vibes_ids())
 
     def test_a_box_set_up_by_the_first_version_keeps_its_list(self):
-        """Its uploads were in the rotation and stay; what was switched off stays off; the heavy two go."""
+        """Its uploads were in the rotation and stay; what was switched off stays off; the shaders heavy at the box's
+        output go (none at 1920 x 1080, drift and nebula at 2560 x 1440)."""
         self.engine.upload("mine.fs", GOOD)
         self.settings.data["shaders"] = {"dwell": 45, "vary": False, "height": 540, "disabled": ["nxlx-silk.fs"]}
+        self.player.osd_size = lambda: (2560, 1440)
+        self.assertEqual(({"nxlx-nebula.fs", "nxlx-drift.fs"}) & set(self.engine.vibes_ids()), set())
+        self.player.osd_size = lambda: (1920, 1080)
         ids = self.engine.vibes_ids()
         self.assertIn("mine.fs", ids)
-        self.assertEqual(({"nxlx-silk.fs", "nxlx-nebula.fs", "nxlx-drift.fs"} | {"nxlx-%s.fs" % n for n in PERFORMANCE}) & set(ids), set())
+        self.assertLessEqual({"nxlx-nebula.fs", "nxlx-drift.fs"}, set(ids))
+        self.assertEqual(({"nxlx-silk.fs"} | {"nxlx-%s.fs" % n for n in PERFORMANCE}) & set(ids), set())
         self.engine.api_set({"action": "config", "dwell": 50}, None, "t")          # the first save makes the list a real set
         saved = self.settings.data["shaders"]
         self.assertEqual((saved["v"], [e["name"] for e in saved["sets"]], saved["sets"][0]["dwell"], saved["sets"][0]["vary"]), (2, ["Ambient", "Show"], 50, False))
@@ -279,6 +298,156 @@ class BoardTest(Live):
         os.utime(os.path.join(self.tmp, "shaders", "mine.fs"), (1, 1))
         self.assertIn("mine.fs", self.engine.vibes_ids())             # another file under the same name: it gets its chance
         self.assertIsNone(self.row("mine.fs")["refused"])
+
+
+class AutoDetailTest(Live):
+    """Automatic picture detail on a Pi 4 (D93): each shader at the most lines it held at the box's output."""
+
+    def setUp(self):
+        super().setUp()
+        self.api.board = {"kind": "pi4", "model": "t"}
+
+    def drawn(self, sid):
+        self.engine.play(sid)
+        return int(re.search(r"//!HEIGHT (\d+)", self.text()).group(1))
+
+    def test_each_shader_is_drawn_at_the_most_lines_it_held_at_1080p(self):
+        self.assertNotIn("shaders", self.settings.data)               # nobody chose: Automatic is this board's default
+        st = self.engine.state()
+        self.assertEqual((st["config"]["height"], st["config"]["height_kept"]), ("auto", False))
+        self.assertEqual(st["render"]["auto"], {"lines": 720, "other": 540, "lower": {sid: 540 for sid in AUTO_540}, "output": [1920, 1080]})
+        rows = {s["id"]: s for s in st["shaders"]}
+        self.assertEqual(sorted(sid for sid, s in rows.items() if s["lines"] == 540), sorted(AUTO_540))
+        self.assertEqual(sorted(sid for sid, s in rows.items() if s["lines"] == 720), sorted(set(L.PI4) - set(AUTO_540)))
+        self.assertEqual(len(AUTO_540), 6)                            # 41 of the 47 at 720 lines
+        self.assertEqual((self.drawn("nxlx-silk.fs"), self.engine.state()["render"]["height"]), (720, 720))
+        self.assertEqual((self.drawn("nxlx-drift.fs"), self.engine.state()["render"]["height"]), (540, 540))
+        self.assertEqual(self.drawn("isf-ridgelines.fs"), 540)
+        self.engine.upload("mine.fs", GOOD)                           # nobody measured it: the careful height
+        self.assertEqual((self.row("mine.fs")["lines"], self.drawn("mine.fs")), (540, 540))
+        # the guard and Vibes: nothing is heavy at this output, so the default Ambient has all 25 calm shaders
+        self.assertEqual(sorted(self.engine.vibes_ids()), sorted("nxlx-%s.fs" % n for n in FIRST_TEN + AMBIENT))
+
+    def test_at_a_larger_output_the_older_classes_decide(self):
+        self.player.osd_size = lambda: (2560, 1440)
+        st = self.engine.state()
+        rows = {s["id"]: s for s in st["shaders"]}
+        self.assertEqual(st["render"]["auto"]["output"], [2560, 1440])
+        for sid, (weight, _, _) in L.PI4_1440.items():               # light at 720, medium and heavy at 540 (the guard decides there)
+            self.assertEqual((rows[sid]["weight"], rows[sid]["lines"]), (weight, 720 if weight == "light" else 540), sid)
+        self.assertEqual(self.drawn("nxlx-tide.fs"), 540)             # medium at 1440p, at 720 lines at 1080p
+        self.assertEqual(sorted(self.engine.vibes_ids()), sorted("nxlx-%s.fs" % n for n in ROTATION_1440))     # drift and nebula out
+        self.player.osd_size = lambda: (1920, 1080)
+        self.assertEqual(self.drawn("nxlx-tide.fs"), 720)
+
+    def test_a_height_chosen_by_hand_wins_and_automatic_can_be_chosen_again(self):
+        for height in (540, 720):
+            st = self.engine.api_set({"action": "config", "height": height}, None, "t")
+            self.assertEqual((st["config"]["height"], st["config"]["height_kept"]), (height, False))
+            saved = self.settings.data["shaders"]
+            self.assertEqual((saved["height"], saved[L.HEIGHT_AUTO]), (height, False))
+            self.assertEqual({s["lines"] for s in st["shaders"]}, {height})
+            self.assertEqual((self.drawn("nxlx-silk.fs"), self.drawn("nxlx-drift.fs")), (height, height))
+        st = self.engine.api_set({"action": "config", "height": "auto"}, None, "t")
+        saved = self.settings.data["shaders"]
+        self.assertEqual((st["config"]["height"], saved["height"], saved[L.HEIGHT_AUTO]), ("auto", 540, True))     # an older release reads 540
+        self.assertEqual((self.drawn("nxlx-silk.fs"), self.drawn("nxlx-drift.fs")), (720, 540))
+        self.engine.api_set({"action": "config", "dwell": 60}, None, "t")        # another change keeps the choice
+        self.assertEqual(self.engine.state()["config"]["height"], "auto")
+        for bad in ("Auto", "full", True, None, 1080):
+            with self.assertRaises(ApiError, msg=bad) as c:
+                self.engine.api_set({"action": "config", "height": bad}, None, "t")
+            self.assertEqual(c.exception.status, 400)
+        self.assertIn("auto, 360, 540, 720", str(c.exception))
+        self.api.board = {"kind": "x86", "model": "t"}                # not measured there: no Automatic to choose
+        with self.assertRaises(ApiError) as c:
+            self.engine.api_set({"action": "config", "height": "auto"}, None, "t")
+        self.assertEqual(c.exception.status, 400)
+        self.assertIsNone(self.engine.state()["render"]["auto"])
+        self.assertNotIn("height_kept", self.engine.state()["config"])
+        self.assertEqual({s["lines"] for s in self.engine.state()["shaders"]}, {720})      # Automatic from a Pi 4: x86's own default
+
+    def test_a_height_saved_by_an_older_release_is_kept(self):
+        """Every save of an older release wrote a height, chosen or not; nobody can tell which, so it stays, and the
+        page offers Automatic (config.height_kept)."""
+        for height in (540, 720, 360):
+            self.settings.data["shaders"] = {"dwell": 45, "vary": True, "height": height, "disabled": []}
+            st = self.engine.state()
+            self.assertEqual((st["config"]["height"], st["config"]["height_kept"]), (height, True))
+            self.assertEqual((self.drawn("nxlx-silk.fs"), self.drawn("nxlx-drift.fs")), (height, height))
+        self.engine.api_set({"action": "config", "dwell": 50}, None, "t")        # a save by this release does not make it a choice
+        self.assertNotIn(L.HEIGHT_AUTO, self.settings.data["shaders"])
+        self.assertTrue(self.engine.state()["config"]["height_kept"])
+
+    def test_rollback_an_older_release_reads_the_height_and_this_one_reads_what_it_saved(self):
+        """An older release knows "height" only: under Automatic it is 540 (the old default), so it draws every shader
+        there. Its save drops the key beside it, and this release then reads a kept height. An import takes the key."""
+        self.engine.api_set({"action": "config", "height": "auto"}, None, "t")
+        saved = json.loads(json.dumps(self.settings.data["shaders"]))
+        self.assertEqual(S.Engine.config(self.engine)["height"], 540)  # what the base engine (the first version's reading) makes of it
+        self.assertEqual(boxcare.check_shaders(saved, None)[L.HEIGHT_AUTO], True)
+        self.assertEqual(boxcare.check_shaders(dict(saved, height_auto=False), None)[L.HEIGHT_AUTO], False)
+        for bad in (1, "yes", None):
+            with self.assertRaises(ValueError):
+                boxcare.check_shaders(dict(saved, height_auto=bad), None)
+        self.assertNotIn(L.HEIGHT_AUTO, boxcare.check_shaders({"height": 540}, None))
+        older = {k: v for k, v in saved.items() if k != L.HEIGHT_AUTO}           # as the older release writes it back
+        self.settings.data["shaders"] = older
+        self.assertEqual((self.engine.state()["config"]["height"], self.drawn("nxlx-silk.fs")), (540, 540))
+
+    def test_older_release_loads_a_file_with_automatic(self):
+        """The release before this one (master at 0648db6), run from this clone on a settings file written here: it
+        loads the file and draws every shader at 540 lines. Skipped where that commit is not in the clone."""
+        import subprocess
+        import sys
+        import textwrap
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        try:
+            tree = subprocess.run(["git", "archive", OLDER_THAN_AUTO, "pvj"], cwd=repo, capture_output=True, check=True, timeout=60).stdout
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            self.skipTest("the older release %s is not in this clone" % OLDER_THAN_AUTO)
+        self.engine.api_set({"action": "config", "height": "auto"}, None, "t")
+        self.settings.save()
+        old = os.path.join(self.rundir, "older")
+        os.makedirs(old)
+        subprocess.run(["tar", "-x", "-C", old], input=tree, check=True, timeout=60)
+        script = textwrap.dedent("""
+            import json, sys
+            sys.path.insert(0, sys.argv[1])
+            from pvj import shaderlive as L
+            from pvj.settings import Settings
+            assert not hasattr(L, "HEIGHT_AUTO")
+            s = Settings(sys.argv[2])
+            s.load()
+            class Api:
+                settings, board = s, {"kind": "pi4"}
+            e = object.__new__(L.LiveEngine)
+            e.api = Api
+            print(json.dumps([e.config()["height"], s.data["shaders"]["height"]]))
+        """)
+        run = subprocess.run([sys.executable, "-I", "-c", script, old, self.settings.path], capture_output=True, text=True, timeout=120)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(json.loads(run.stdout.strip().splitlines()[-1]), [540, 540])
+
+    def test_a_heavy_mark_under_automatic_belongs_to_the_shaders_own_height(self):
+        self.engine.note_heavy("nxlx-drift.fs", {"drops_per_second": 2.0})
+        self.engine.note_heavy("nxlx-silk.fs", {"drops_per_second": 1.0})
+        marks = self.settings.data["shaders"]["heavy"]
+        self.assertEqual((marks["nxlx-drift.fs"]["height"], marks["nxlx-silk.fs"]["height"]), (540, 720))
+        self.assertEqual({"nxlx-drift.fs", "nxlx-silk.fs"} & set(self.engine.vibes_ids()), set())
+        self.settings.data["shaders"]["heavy"]["nxlx-drift.fs"]["height"] = 720     # made at 720 by hand before: drift is at 540 now
+        self.assertIn("nxlx-drift.fs", self.engine.vibes_ids())
+        self.assertIsNone(self.row("nxlx-drift.fs")["heavy"])
+        self.assertIsNotNone(self.row("nxlx-silk.fs")["heavy"])
+
+    def test_the_rule(self):
+        self.assertEqual([L.auto_lines(sid, L.PI4) for sid in ("nxlx-silk.fs", "nxlx-aurora.fs", "mine.fs")], [720, 540, 540])
+        self.assertEqual(L.auto_lines("nxlx-silk.fs", L.PI4, (360, 540)), 540)     # 720 not offered: never above what is
+        self.assertEqual([L.auto_lines(sid, L.PI4_1440) for sid in ("nxlx-silk.fs", "nxlx-tide.fs", "nxlx-drift.fs")], [720, 540, 540])
+        self.assertEqual(sorted(sid for sid in L.PI4 if L.auto_lines(sid, L.PI4) == 540), sorted(AUTO_540))
+
+
+OLDER_THAN_AUTO = "0648db6b014db99ee890fc931353ea861fe41d7f"     # master before Automatic picture detail (D93), for the rollback test
 
 
 class FadeTest(Live):

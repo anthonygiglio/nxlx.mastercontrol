@@ -462,6 +462,8 @@ def check_shaders(v, care):
         if type(v["height"]) is not int or v["height"] not in shaders_mod.HEIGHTS:
             raise ValueError("height must be one of %s" % ", ".join(str(h) for h in shaders_mod.HEIGHTS))
         out["height"] = v["height"]
+    if shaderlive_mod.HEIGHT_AUTO in v:     # Automatic picture detail (D93): true, or false for a height chosen by hand
+        out[shaderlive_mod.HEIGHT_AUTO] = _flag(v[shaderlive_mod.HEIGHT_AUTO], shaderlive_mod.HEIGHT_AUTO)
     if "disabled" in v:
         names = v["disabled"]
         if (not isinstance(names, list) or len(names) > shaders_mod.MAX_UPLOADS + 64 or len(set(map(str, names))) != len(names)

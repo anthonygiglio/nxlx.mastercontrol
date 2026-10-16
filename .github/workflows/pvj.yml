@@ -44,6 +44,8 @@ jobs:
         run: git fetch --depth=1 origin f36f8f0d040a35a6ecc72fb8a1001273b7f7ba0d
       - name: Fetch the release before the screen's mode (the rollback test of D90 runs that release's code on a settings file written here)
         run: git fetch --depth=1 origin 33e7eb419eb1b26b08618dd54b3e1481d4b60f0e
+      - name: Fetch the release before Automatic picture detail (the rollback test of D93 runs that release's shader settings on a file written here)
+        run: git fetch --depth=1 origin 0648db6b014db99ee890fc931353ea861fe41d7f
       - name: Install mpv
         timeout-minutes: 10   # usually half a minute; see the note at the top of this file
         run: tools/ci-apt.sh mpv
