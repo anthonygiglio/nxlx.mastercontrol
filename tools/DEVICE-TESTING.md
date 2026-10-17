@@ -568,6 +568,23 @@ What is not known is whether 720 lines look better than 540 on the room's own sc
 | A4 | Vibes on Ambient under Automatic for 20 minutes | No shader marked "Too heavy on this box"; nxlx-drift and nxlx-nebula now come round too, at 540 lines | Any shader marked, with its rate |
 | A5 | nxlx-drift and nxlx-nebula at 540 lines (the GPU was 97 percent busy) | Their slow clouds: smooth, or an occasional hitch | Whether they look smooth |
 
+### Render nodes (D94): never run with a real render node
+
+What runs is the loopback tests. Needs: the Mac with Max 9 and jit.ndi installed (tools/max/README.md), the box
+with NDI set up (D62), both on the same network. Before: Setup > Render nodes > Add, Tool "Max/Jitter (the nxlx
+patch)", port 7400, its picture `nxlx-render-node`.
+
+| # | Do | Look for | Send back |
+| --- | --- | --- | --- |
+| RN1 | Open `tools/max/nxlx-render-node.maxpat` in Max 9 | It opens; the Max window has no red lines; the world window shows a torus | Every error Max prints, word for word |
+| RN2 | On the box's NDI input page | `nxlx-render-node` from the Mac is listed | Its name and address as listed |
+| RN3 | Send a cue: Go to scene 1, 2, 3; Set a parameter `spin` 0.25; Set a colour `bg` 0 0 1 | The shape and the colours change on the Mac; the Max window prints what came in | Which cue did nothing |
+| RN4 | Cue timing: tap a pad with Go, 20 times, watching the Mac | Each tap changes the shape once, at once | Roughly how long from the tap to the change; any tap lost |
+| RN5 | A cue with "Then show": the box's screen | The Mac's picture on the box within a few seconds; the chip says its picture is on the screen | Seconds from the tap to the picture; frames dropped (Setup > Health) |
+| RN6 | The fallback: a clip plays, show the node's picture, then quit Max (or pull the Mac's network cable) | Within about 5 seconds the clip is back, never black or a frozen frame for longer; the page says why it went back | Seconds until the clip came back; what the screen showed meanwhile; the words on the page |
+| RN7 | The same with Max left running and its patch closed (the sender gone, the machine there), and with the patch frozen (stop the world) | Back to the clip; for the frozen one, after the still time (10 s) and 3 more | Seconds; whether a still picture from Max ever counted as gone when it should not |
+| RN8 | A node by `.local` name instead of the address; then a node on another network (a Wi-Fi the box is not on) | The `.local` node takes cues; the other is refused when added and says why | The words |
+
 ### What to send back
 
 The output of checks 1 to 7 and 13, the `journalctl` tail for anything that failed, and a note of what you saw on screen. Say clearly what you did **not** test.

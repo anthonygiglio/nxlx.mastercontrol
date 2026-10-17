@@ -135,6 +135,13 @@ The pad lights, the fade and Blackout come from the same picture of the box the 
 
 **The eight controls and their names.** The count is the one `/pvj/shader/control/<n>` and a MIDI controller's knobs use: the file's numbers, switches, choices and events, in the file's order, the first eight. A colour and a point (x and y) have no knob, so they have no place among the eight and no name is sent for them; a number whose MIN is its MAX cannot move and is left out too. The names and kinds are sent when the shader or the effect changes and with every full state, not at every look, so a knob that moves sends its value alone. Like a clip's name, a control's name is read by anyone on the network.
 
+## Cues sent to a render node (D94)
+
+The box also sends OSC to render nodes the Owner lists (a laptop running Max/Jitter or another tool), under the same rule
+of where it may send as the state above, from a socket it opens for one datagram and never reads. Those cues are not
+this receiver's addresses: they are what the person types, or the `/nxlx/` scheme of the Max profile. See
+[RENDERNODES.md](RENDERNODES.md).
+
 ## Setting up TouchOSC to listen
 
 Not tried with a real TouchOSC yet; this is written from how OSC and TouchOSC's connection settings work, and the first try on a tablet may correct it.

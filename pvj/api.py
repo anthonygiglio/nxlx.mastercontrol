@@ -276,6 +276,9 @@ class Api:
         from . import support as support_mod
         self.support = support_mod.SupportManager(settings, auth, None,      # the helper client is set by server.build
                                                   networks_in_use=self._support_clash_networks)
+        from . import render as render_mod
+        self.render = render_mod.Bridge(nets=self._render_nets, tunnel=lambda: self.support.network(),
+                                        log=lambda line: self.log(line))           # render nodes (D94)
         from . import projector as projector_mod
         self.projectors = projector_mod.Monitor(self, log=lambda line: self.log(line))    # started by server.build and the module switch
         self.dmx = None           # DmxManager or None
@@ -1006,6 +1009,9 @@ class Api:
             if held:
                 out["ndi"] = {r["id"]: {"name": r["name"], "from": r["from"]}
                               for r in ndi_mod.saved_sources(self.settings.data.get("ndi")) if r["id"] in held}
+            cued = {(self.pad_render(p) or {}).get("node") for b in out["banks"] for p in b["pads"]} - {None}
+            if cued:                   # the names of the render nodes that pads cue (D94); never a host or a port here
+                out["render"] = {n["id"]: {"name": n["name"]} for n in self._render_nodes() if n["id"] in cued}
         return out
 
     @staticmethod
@@ -1044,6 +1050,19 @@ class Api:
             return None
         preset = pad.get("preset")
         return sid, (preset if isinstance(preset, str) and preset else None)
+
+    @staticmethod
+    def pad_render(pad):
+        """The render cue a pad holds (D94), checked, else None. Such a pad keeps `file` empty and has the cue under
+        `render` ({"node", "address", "args", "show"}); a release that does not know the key sees an empty pad. A
+        clip, a shader or an NDI source beside it in a hand-edited file wins, in that order."""
+        if not isinstance(pad, dict) or pad.get("file") or Api.pad_shader(pad) or Api.pad_ndi(pad):
+            return None
+        from . import render as render_mod
+        try:
+            return render_mod.cue_form(pad.get("render")) if pad.get("render") is not None else None
+        except render_mod.RenderError:
+            return None
 
     def _shader_preset(self, sid, preset):
         """The preset of `sid` that is called `preset`, by its stored name, or 404."""
@@ -1107,6 +1126,20 @@ class Api:
                                    % (seen[0]["name"], ndi_mod.host_of(seen[0]["from"])))
                 allow = {"id": source, "name": seen[0]["name"], "from": seen[0]["from"]}
             pad = {"label": label, "file": "", "ndi": source}
+        if body.get("render") is not None:
+            # A render cue (D94): an OSC message to a node the Owner listed, and whether to show its picture. The
+            # node must be in the list now; where the cue may really go is decided again when it is sent.
+            from . import render as render_mod
+            if file != "" or shader != "" or source != "":
+                raise bad("a pad holds a clip, a shader, an NDI source or a render cue, not two of them")
+            try:
+                cue = render_mod.cue_form(body["render"])
+            except render_mod.RenderError as e:
+                raise bad(str(e))
+            node = self._render_node(cue["node"])
+            if cue["show"] and not node["ndi"]:
+                raise ApiError(409, "%s has no NDI picture chosen: the owner chooses one under Render nodes, or the cue only sends" % node["name"])
+            pad = {"label": label, "file": "", "render": cue}
         with self.settings.lock:
             if allow is not None and self._ndi_allowed(source) is None:
                 rows = ndi_mod.saved_sources(self.settings.data.get("ndi"))
@@ -1312,6 +1345,11 @@ class Api:
             source = self.pad_ndi(banks[pad[0]]["pads"][pad[1]])
             if source:                  # before anything is claimed, too: play_ndi claims for itself
                 return self._play_ndi_pad(source, device)
+            cue = self.pad_render(banks[pad[0]]["pads"][pad[1]])
+            if cue:                     # a render cue (D94): sent, and the node's picture through play_ndi if asked
+                if policy.is_guest(device):
+                    raise ApiError(403, policy.RENDER_PAD_TEXT)
+                return self.render_fire(cue, device)
             name = banks[pad[0]]["pads"][pad[1]]["file"]
             if not name:
                 raise bad("pad is empty")
@@ -3524,6 +3562,347 @@ class Api:
             new.pop("sound_delay_ms", None)
         self.settings.data["ndi"] = new
 
+    # ---- render nodes (pvj/render.py, D94): OSC cues out, the node's NDI picture back, and the way back ----
+    def _render_nets(self, fresh=False):
+        """The box's own networks for where a cue may go (D82's rule): read by OSC's manager when there is one (it keeps
+        them for ten seconds), else here."""
+        if getattr(self, "osc", None) is not None:
+            return self.osc.local_nets(fresh=fresh)
+        from . import oscfeedback
+        return oscfeedback.local_nets(self._ip_json())
+
+    def _render_nodes(self):
+        from . import render as render_mod
+        return render_mod.stored(self.settings.data.get("render"))
+
+    def _render_node(self, nid):
+        for n in self._render_nodes():
+            if n["id"] == nid:
+                return n
+        raise ApiError(404, "no render node with that id (the owner may have removed it)")
+
+    @staticmethod
+    def _ago(t):
+        return None if t is None else max(0, int(time.time() - t))
+
+    def get_render(self, body, device, client):
+        """The nodes and their health, for the Operator and the Owner. A node's host, port and the NDI sender's address
+        are the Owner's (and a support session of his role) to see, as projectors' and streams' are (D80)."""
+        from . import ndi as ndi_mod, render as render_mod
+        nodes = self._render_nodes()
+        ndi_on = self.ndi is not None and self.registry.enabled("inputs-ndi")
+        rows, why = [], ""
+        if not ndi_on:
+            why = "the NDI input is off" if self.ndi is not None else "the NDI input is not available on this box"
+        elif any(n["ndi"] for n in nodes):
+            rows, why = self.ndi.find()
+        here = {r["id"]: r for r in rows if not r.get("twins")}
+        allowed = {r["id"]: r for r in ndi_mod.saved_sources(self.settings.data.get("ndi"))}
+        with self.render.lock:
+            showing = dict(self.render.showing) if self.render.showing else None
+            back = dict(self.render.back) if self.render.back else None
+        cur = (self.ndi.current or {}).get("id") if self.ndi is not None else None
+        owner = isinstance(device, dict) and device.get("role") == "full" and not policy.held_to_legacy(device)
+        out = []
+        for n in nodes:
+            src = allowed.get(n["ndi"]) if n["ndi"] else None
+            seen = here.get(n["ndi"]) if src else None
+            if not n["ndi"]:
+                picture = "none"
+            elif not ndi_on:
+                picture = "off"
+            elif src is None:
+                picture = "not_allowed"
+            elif why:
+                picture = "unknown"
+            elif seen and seen["name"] == src["name"] and ndi_mod.host_of(seen["from"]) == ndi_mod.host_of(src["from"]):
+                picture = "here"
+            else:
+                picture = "away"
+            health = self.render.health(n["id"])
+            row = {"id": n["id"], "name": n["name"], "profile": n["profile"], "still": n["still"], "ndi": n["ndi"],
+                   "ndi_name": src["name"] if src else "", "picture": picture,
+                   "showing": bool(showing and showing["node"] == n["id"] and showing["confirmed"] and cur == n["ndi"]),
+                   "last_sent_ago": self._ago(health["last_sent"]), "last_address": health["last_address"],
+                   "error": health["error"], "error_ago": self._ago(health["error_at"])}
+            if owner:
+                row.update(host=n["host"], port=n["port"], ndi_from=src["from"] if src else "")
+            out.append(row)
+        if back:
+            back["ago"] = self._ago(back.pop("at"))
+        return {"nodes": out, "max": render_mod.MAX_NODES, "max_args": render_mod.MAX_ARGS, "types": list(render_mod.TYPES),
+                "ndi": {"on": ndi_on, "why": why}, "back": back, "pending": bool(showing and not showing["confirmed"]),
+                "reply": False, "sent_words": render_mod.SENT_WORDS, "profiles": render_mod.PROFILES,
+                "still": {"default": render_mod.STILL_DEFAULT, "min": render_mod.STILL_MIN, "max": render_mod.STILL_MAX},
+                "gone_seconds": render_mod.GONE_SECONDS}
+
+    def set_render(self, body, device, client):
+        """The Owner's (and, by D84, a support session of the Owner's role, held to the same rule of where): {"add": {"name",
+        "host", "port", "ndi"?, "still"?}}, {"update": {"id", and what changes}}, {"remove": {"id"}}. An IPv4 host
+        must be another device on one of the box's own networks now (D82's rule, the tunnel's network never); a
+        `.local` name is checked for its form and looked up at every send. An NDI source is chosen by the id of one
+        that is allowed already or one on the network now, which this makes allowed (as an NDI pad's, D62)."""
+        from . import ndi as ndi_mod, oscfeedback, render as render_mod
+        remote = self._remote_owner(device, client, "changing the render nodes")      # D84
+        if not self._still_paired(device):
+            raise ApiError(401, "this device is no longer paired")
+        if len(body) != 1 or next(iter(body)) not in ("add", "update", "remove") or not isinstance(next(iter(body.values())), dict):
+            raise bad("send add, update or remove, each with a node")
+        verb, item = next(iter(body.items()))
+        nodes = self._render_nodes()
+        allow = None
+        if verb == "remove":
+            new_nodes = [n for n in nodes if n["id"] != item.get("id")]
+            if len(new_nodes) == len(nodes):
+                raise ApiError(404, "no render node with that id")
+            name = [n["name"] for n in nodes if n["id"] == item.get("id")][0]
+        else:
+            if verb == "add":
+                if len(nodes) >= render_mod.MAX_NODES:
+                    raise bad("at most %d render nodes; remove one first" % render_mod.MAX_NODES)
+                if item.get("id") not in (None, ""):
+                    raise bad("a new render node is given its id by the box")
+                old, cand = None, dict(item)
+            else:
+                old = self._render_node(item.get("id"))
+                if set(item) - {"id", "name", "host", "port", "ndi", "still"}:
+                    raise bad("a render node is a name, a host, a port, an NDI source and a still time")
+                cand = dict(old, **item)
+            try:
+                node = render_mod.node_form(cand, new_id=old is None)
+            except render_mod.RenderError as e:
+                raise bad(str(e))
+            name = node["name"]
+            if render_mod.is_ipv4_text(node["host"]) and (old is None or old["host"] != node["host"]):
+                nets = self._render_nets(fresh=True)
+                if not nets:
+                    raise ApiError(409, "the box's own network addresses could not be read; try again in a moment")
+                why = self.render.why_not(node["host"], nets)
+                if why:
+                    raise bad("%s is %s" % (node["host"], oscfeedback.WHY_ADD if why == oscfeedback.WHY_NETWORK else why))
+            if any((n["host"], n["port"]) == (node["host"], node["port"]) for n in nodes if n["id"] != node["id"]):
+                raise bad("%s port %d is in the list already" % (node["host"], node["port"]))
+            if node["ndi"] and (old is None or old["ndi"] != node["ndi"]) and self._ndi_allowed(node["ndi"]) is None:
+                self._need_ndi()
+                rows, why = self.ndi.find()             # outside the settings' lock: it asks the helper
+                seen = [r for r in rows if r["id"] == node["ndi"]]
+                if not seen:
+                    raise ApiError(404, why or "that NDI source is not on the network now: a node's picture is chosen from the list")
+                if seen[0].get("twins"):
+                    raise ApiError(409, "two senders announce '%s' from %s: the box cannot tell them apart"
+                                   % (seen[0]["name"], ndi_mod.host_of(seen[0]["from"])))
+                allow = {"id": node["ndi"], "name": seen[0]["name"], "from": seen[0]["from"]}
+            new_nodes = nodes + [node] if old is None else [node if n["id"] == node["id"] else n for n in nodes]
+        with self.settings.lock:
+            if allow is not None and self._ndi_allowed(allow["id"]) is None:
+                rows = ndi_mod.saved_sources(self.settings.data.get("ndi"))
+                if len(rows) >= ndi_mod.MAX_ALLOWED:
+                    raise bad("at most %d NDI sources can be kept; the owner removes one under NDI input" % ndi_mod.MAX_ALLOWED)
+                self._ndi_write(sources=rows + [allow])
+            self.settings.data["render"] = {"nodes": new_nodes}
+            self.settings.save()
+        if allow is not None and self.ndi is not None:
+            self.ndi._wanted()
+            self.ndi.sync()
+        self.render.forget({n["id"] for n in new_nodes})
+        said = {"add": "added", "update": "changed", "remove": "removed"}[verb]
+        self.log("pvj-web: render node '%s' %s by device %s (%s) from %s; %d node(s)"
+                 % (name, said, device["id"], device["name"], client, len(new_nodes)))
+        if remote:
+            self.support.note(device, "changed the render nodes", detail="%s a node; %d node(s)" % (said, len(new_nodes)))
+        return self.get_render({}, device, client)
+
+    def render_cue(self, body, device, client):
+        """{"node", "address"?, "args"?, "show"?}: one cue by hand, the panel's Send. The Operator's (D94)."""
+        from . import render as render_mod
+        try:
+            cue = render_mod.cue_form(body)
+        except render_mod.RenderError as e:
+            raise bad(str(e))
+        return self.render_fire(cue, device)
+
+    def render_fire(self, cue, device):
+        """Send a cue (checked by render.cue_form) and, if it asks, show the node's NDI picture through the one road an
+        NDI source has (_play_ndi_pad: its checks, play_ndi, a controller's press on a thread of its own). A cue that
+        shows a picture is checked for the picture BEFORE anything is sent: a refusal sends nothing. What played
+        before is kept for the way back (render_tick)."""
+        from . import render as render_mod
+        node = self._render_node(cue["node"])
+        controller = isinstance(device, dict) and device.get("id") in CONTROLLERS
+        out = {"node": node["name"], "sent": False, "shown": False, "reply": False, "words": render_mod.SENT_WORDS}
+        if cue["show"]:
+            if not node["ndi"]:
+                raise ApiError(409, "%s has no NDI picture chosen; nothing was sent" % node["name"])
+            self._need_ndi()
+            try:
+                self._ndi_pad_check(node["ndi"])
+            except ApiError as e:
+                raise ApiError(e.status, "%s; nothing was sent" % e.message)
+        if cue["address"]:
+            try:
+                out.update(self.render.send(node, cue["address"], cue["args"],
+                                            wait=render_mod.RESOLVE_QUICK if controller else render_mod.RESOLVE_SECONDS))
+            except render_mod.RenderError as e:
+                raise ApiError(e.status, str(e))
+        if cue["show"]:
+            self.render.begin_show(node, node["ndi"], self._render_before(node["ndi"]))
+            try:
+                shown = self._play_ndi_pad(node["ndi"], device)
+            except ApiError as e:
+                self.render.end_show()
+                raise ApiError(e.status, ("the cue was sent; the picture was not shown: %s" % e.message) if out["sent"] else e.message)
+            out.update(shown=True, playing="ndi", name=shown.get("name"), pending=bool(shown.get("pending")))
+        return out
+
+    def _render_before(self, sid):
+        """What plays now, as what the way back can put up again: clips or a list from the media folder (in mpv's own
+        order, from the one that plays), a shader, Vibes, another NDI source, a saved stream; else {"kind": "none"}."""
+        try:
+            st = self.player.status()
+        except Exception:
+            return {"kind": "none"}
+        if not st.get("running"):
+            return {"kind": "none"}
+        path = st.get("path")
+        if self.vibes.running:
+            return {"kind": "vibes", "set": self.vibes.set_id}
+        if self.shaders.is_carrier(path):
+            on = self.shaders.on_screen()
+            return {"kind": "shader", "id": on["id"], "preset": on.get("preset")} if on else {"kind": "none"}
+        if self.ndi is not None and path == self.ndi.fifo:
+            cur = (self.ndi.current or {}).get("id")
+            return {"kind": "ndi", "id": cur} if cur and cur != sid else {"kind": "none"}
+        for s in self.settings.data.get("streams", []):
+            if s.get("url") == path:
+                return {"kind": "stream", "id": s["id"]}
+        if not isinstance(path, str) or "://" in path or self.is_test_pattern(path):
+            return {"kind": "none"}
+        files = None
+        listed = getattr(self.player, "playlist_files", None)
+        if listed is not None:
+            try:
+                files = listed()
+            except Exception:
+                files = None
+        media = os.path.realpath(self.media_dir)
+        keep = []
+        for f in (files or [path]):
+            try:
+                if isinstance(f, str) and os.path.realpath(f).startswith(media + os.sep) and os.path.isfile(f):
+                    keep.append(f)
+            except (OSError, ValueError):
+                continue
+        if not keep:
+            return {"kind": "none"}
+        loop = (st.get("loop_file") or "no") != "no" or (st.get("loop_playlist") or "no") != "no"
+        return {"kind": "clips", "paths": keep[:500], "pos": keep.index(path) if path in keep else 0, "loop": bool(loop)}
+
+    def _render_back(self, before):
+        """Put back what played before a node's picture (D94). Returns the words for the page and the journal. Never
+        raises: what cannot be put back is said, and the box stops as Stop does."""
+        kind = (before or {}).get("kind")
+        try:
+            if kind == "clips":
+                paths = [p for p in before["paths"] if os.path.isfile(p)]
+                if paths:
+                    pos = min(max(0, int(before.get("pos") or 0)), len(paths) - 1)
+                    order = paths[pos:] + paths[:pos] if before.get("loop") else paths[pos:]
+                    self._start_list(order, "loop" if before.get("loop") else "stop", False)
+                    return "back to %s%s" % (os.path.basename(order[0]), " and the list after it" if len(order) > 1 else "")
+            elif kind == "shader":
+                self.shaders.play(before["id"], preset=before.get("preset"))
+                return "back to the shader %s" % before["id"][:-3]
+            elif kind == "vibes":
+                self.vibes.start(before.get("set"))
+                return "back to Vibes"
+            elif kind == "ndi":
+                self.play_ndi({"ndi": before["id"]})
+                return "back to the NDI source that played before"
+            elif kind == "stream":
+                self.play_stream({"stream": before["id"]})
+                return "back to the stream that played before"
+        except Exception as e:
+            self.log("pvj-web: render bridge: what played before could not be put back (%s)" % (getattr(e, "message", None) or type(e).__name__))
+            kind = "failed"
+        try:
+            self.control({"action": "stop"}, None, "render")
+        except Exception:
+            pass
+        return "stopped: what played before could not be put back" if kind not in (None, "none") else "stopped: nothing played before the cue"
+
+    def render_tick(self):
+        """About once a second (server.py, beside ndi_tick): the way back of D94. A node's picture that a cue put on the
+        screen and that went (the helper says the connection dropped, the source is not announced any more, the
+        picture stood still past the node's still time, the helper does not answer, or the picture ended by itself)
+        for GONE_SECONDS is replaced by what played before the cue, said once in the journal and on the page.
+        Anything chosen after the cue (a tap, a scene, a Stop: every one moves the wishes' count) stands."""
+        from . import ndi as ndi_mod, render as render_mod
+        with self.render.lock:
+            show = dict(self.render.showing) if self.render.showing else None
+        if show is None:
+            return False
+        now = self.render._clock()
+        cur = (self.ndi.current or {}).get("id") if self.ndi is not None else None
+        gen = self.transitions.generation()
+        if not show["confirmed"]:
+            if cur == show["sid"]:
+                self._render_mark(show, confirmed=True, gen=gen)
+            elif now - show["at"] >= render_mod.SHOW_SECONDS:
+                self.render.end_show()      # the press never reached the screen: nothing to go back from
+            return False
+        if cur != show["sid"]:
+            if gen != show["gen"]:
+                self.render.end_show()      # something newer took the screen: it stands
+                return False
+            ended = (getattr(self.ndi, "ended", None) or {}).get("message") if self.ndi is not None else ""
+            return self._render_fall(show, "the node's picture ended (%s)" % ended if ended else "the node's picture ended")
+        self._render_mark(show, gen=gen)    # a picture the watch showed again (a change of size) is still the cue's
+        gone, still_since = "", None
+        try:
+            st = self.ndi.client.status()
+        except Exception:
+            st = {}
+        if st.get("ok") is not True:
+            gone = "the NDI helper does not answer"
+        else:
+            p = ndi_mod._playing(st.get("playing"))
+            if show["sid"] not in [r["id"] for r in self.ndi._rows(st)]:
+                gone = "the node's NDI source is not on the network any more"
+            elif p is not None and p["id"] == show["sid"] and p["state"] == "waiting":
+                gone = "the node's NDI connection dropped"
+            elif p is not None and p["id"] == show["sid"] and p["state"] == "still" and show["still"]:
+                still_since = show.get("still_since") or now
+                if now - still_since >= show["still"]:
+                    gone = "the node's picture stood still for %d seconds" % show["still"]
+        if not gone:
+            self._render_mark(show, gone_since=None, still_since=still_since)
+            return False
+        if show["gone_since"] is None:
+            self._render_mark(show, gone_since=now, still_since=still_since)
+            return False
+        if now - show["gone_since"] < render_mod.GONE_SECONDS:
+            return False
+        return self._render_fall(show, gone)
+
+    def _render_mark(self, show, **fields):
+        with self.render.lock:
+            had = self.render.showing
+            if had is not None and had["at"] == show["at"] and had["node"] == show["node"]:
+                had.update(fields)
+
+    def _render_fall(self, show, why):
+        """Once per picture: the record is taken first, so a second tick finds nothing to do."""
+        with self.render.lock:
+            had = self.render.showing
+            if had is None or had["at"] != show["at"] or had["node"] != show["node"]:
+                return False
+            self.render.showing = None
+        to = self._render_back(show["before"])
+        with self.render.lock:
+            self.render.back = {"at": time.time(), "node": show["name"], "why": why, "to": to}
+        self.log("pvj-web: render node '%s': %s; %s" % (show["name"], why, to))
+        return True
+
     # ---- the NDI discovery server on this box (pvj/ndiscovery.py, D85): the Owner's, and never through remote support ----
     def _need_ndisc(self):
         if self.ndisc is None:
@@ -4213,6 +4592,9 @@ class Api:
             ("POST", "/api/osc/key"): ("full", self.osc_key),
             ("POST", "/api/osc/feedback"): ("full", self.osc_feedback),
             ("POST", "/api/play"): ("live", self.play),
+            ("GET", "/api/render"): ("live", self.get_render),            # render nodes (D94): seen by the Operator,
+            ("POST", "/api/render"): ("full", self.set_render),           # kept by the Owner,
+            ("POST", "/api/render/cue"): ("live", self.render_cue),       # and cued by hand by the Operator
             ("POST", "/api/control"): ("live", self.control),
             ("POST", "/api/blackout"): ("live", self.blackout),
             ("POST", "/api/fadeout"): ("live", self.fadeout),

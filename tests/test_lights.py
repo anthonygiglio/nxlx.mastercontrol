@@ -687,7 +687,7 @@ class LightsHubTest(LightsHubBase):
     def test_the_lights_go_off_when_midi_is_switched_off_and_at_shutdown(self):
         self.plug(C_NANO, C_PAD)
         self.post("/api/midi", {"controller": "nanoKONTROL2", "lights": True})
-        self.wait(lambda: C_NANO in self.out and self.out[C_NANO].lit().get((0xB0, 32)) == 127 and len(self.out[C_PAD].lit()) == 80)
+        self.wait(lambda: C_NANO in self.out and C_PAD in self.out and self.out[C_NANO].lit().get((0xB0, 32)) == 127 and len(self.out[C_PAD].lit()) == 80)
         self.assertEqual(self.post("/api/midi", {"enabled": False})[0], 200)
         self.assertEqual(self.out[C_PAD].read()[-1], (0xB0, 0, 0))
         self.assertEqual(set(self.out[C_NANO].lit().values()), {0})
