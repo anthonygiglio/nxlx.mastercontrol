@@ -137,9 +137,19 @@ class Renderer:
                 return got
             time.sleep(step)
 
+    def playing(self):
+        """The file the helper plays now, or None: right after a loadfile, and while idle, mpv answers "property
+        unavailable" for `path`, which means "not yet" here (a CI run met it once, 2026-10-17)."""
+        try:
+            return self("get_property", "path")
+        except PlayerError as e:
+            if "property unavailable" in str(e):
+                return None
+            raise
+
     def load(self, path):
         self("loadfile", path, "replace")
-        ok = self.wait(lambda: self("get_property", "path") == path)
+        ok = self.wait(lambda: self.playing() == path)
         assert ok, "the clip was not loaded: " + self.stderr()
         # a picture is on the screen once the video layer drew it (its own counter) and one more frame went out
         drawn = self("get_property", "pvj-render")["drawn"]
