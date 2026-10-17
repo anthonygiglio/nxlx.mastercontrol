@@ -764,6 +764,10 @@ def main(argv=None):
                 api.ndi_tick()
             except Exception as e:
                 print("pvj-web: NDI watch: %s" % e, file=sys.stderr)
+            try:
+                api.render_tick()            # a render node's picture that went: back to what played before (D94)
+            except Exception as e:
+                print("pvj-web: render watch: %s" % e, file=sys.stderr)
     threading.Thread(target=ndi_watch, name="ndi-watch", daemon=True).start()
     print("pvj-web: listening on %s:%d%s; pairing PIN %s (also in %s/pin)"
           % (host, port, " and https on %d (%s)" % (tls_port, "certificate loaded" if api.https.context else "no certificate yet") if tlsd else "",

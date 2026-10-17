@@ -1193,6 +1193,16 @@ class Player:
                 out[key] = None
         return out
 
+    def playlist_files(self, limit=500):
+        """The files of the list mpv holds now, in its order (what the render bridge goes back to, D94). Read only."""
+        try:
+            items = self.ipc.request("get_property", "playlist")
+        except PlayerError:
+            return []
+        if not isinstance(items, list):
+            return []
+        return [i["filename"] for i in items[:limit] if isinstance(i, dict) and isinstance(i.get("filename"), str)]
+
 
 def _alive(pid):
     try:

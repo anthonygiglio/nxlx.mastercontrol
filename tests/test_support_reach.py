@@ -62,6 +62,7 @@ OPENED = {
     ("POST", "/api/osc/feedback"): {"on": True},
     ("POST", "/api/guests"): {"locked": True},
     ("POST", "/api/devices/revoke"): None,                  # the body names a device: asked below
+    ("POST", "/api/render"): {"add": {"name": "Max", "host": "render-mac.local", "port": 7400}},   # D94, as the state targets
 }
 
 
@@ -523,7 +524,7 @@ class SecondReviewTest(Base):
         self.assertIn("was refused setting a MIDI control that shows an access code", self.did()[-1])
 
     def test_l1_every_opened_handler_refuses_a_login_whose_session_is_over(self):
-        """Driven directly, past the gate and the token check: each of the seven asks for itself."""
+        """Driven directly, past the gate and the token check: each of the eight asks for itself (D94 added the render nodes)."""
         dev = self.session("full")
         self.h("POST", "/api/support/stop", device=self.full_dev)
         routes = self.api.routes()
@@ -539,7 +540,7 @@ class SecondReviewTest(Base):
                         routes[key][1](bodies[key], dev, client)
                 self.assertEqual(e.exception.status, 403, key)
             asked.append(key)
-        self.assertEqual(len(asked), 7)
+        self.assertEqual(len(asked), 8)
         self.assertFalse(self.api.guests.locked())
         self.assertIn(self.view_dev["id"], [d["id"] for d in self.auth.list_devices()])
 

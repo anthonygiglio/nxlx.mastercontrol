@@ -51,7 +51,7 @@ from urllib.parse import unquote
 from . import dmx as dmx_mod, midi as midi_mod, ndi as ndi_mod, osc as osc_mod, projector as projector_mod, streams as streams_mod
 from . import mapper as mapper_mod, scheduler as scheduler_mod, sync as sync_mod, themes as themes_mod
 from . import autostart as autostart_mod, room as room_mod, shaderlive as shaderlive_mod, shaders as shaders_mod
-from . import transitions as transitions_mod
+from . import render as render_mod, transitions as transitions_mod
 from .api import ApiError, MEDIA_EXTENSIONS, valid_name
 from .settings import SettingsError, default_control, default_settings, migrate
 
@@ -222,6 +222,12 @@ def check_pads(v, care):
                 if not isinstance(pad["ndi"], str) or not ndi_mod._ID.fullmatch(pad["ndi"]):
                     raise ValueError("a pad's NDI source is not a source id")
                 item = {"label": item["label"], "file": "", "ndi": pad["ndi"]}
+            elif pad.get("render") is not None:
+                # A pad that holds a render cue (D94): its form, by the panel's own check. The node it names is looked
+                # up when the pad is pressed (the file's `render` section says which nodes there are).
+                if item["file"] != "":
+                    raise ValueError("a pad holds a clip or a render cue, not both")
+                item = {"label": item["label"], "file": "", "render": render_mod.cue_form(pad["render"])}
             clean.append(item)
         name = _text(bank.get("name", ""), 40, "a bank name")
         if not name:
@@ -490,6 +496,11 @@ def check_ndi(v, care):
     return ndi_mod.validate_saved(v)
 
 
+def check_render(v, care):
+    """The render nodes (D94), form only: where a cue may really go is decided at every send."""
+    return render_mod.validate(v)
+
+
 def check_recovery(v, care):
     """The stick switch only (D81). The code hashes belong to one box: never in a file, never taken from one."""
     on = _obj(v).get("usb", True)
@@ -503,7 +514,7 @@ SECTIONS = (("pads", check_pads), ("modules", check_modules), ("theme", check_th
             ("schedule", check_schedule), ("streams", check_streams), ("control", check_control),
             ("autostart", check_autostart), ("audio", check_audio), ("overlay", check_overlay),
             ("projectors", check_projectors), ("mapper", check_mapper), ("sync", check_sync), ("shaders", check_shaders),
-            ("room", check_room), ("recovery", check_recovery), ("ndi", check_ndi))
+            ("room", check_room), ("recovery", check_recovery), ("ndi", check_ndi), ("render", check_render))
 # D84. An import through a support session of the Owner's role takes every section but these, which are set by
 # routes no support session may use (support.REMOTE_DENY_PREFIX): the file's part is dropped, the box's own stays.
 # REMOTE_SETS says, for every section, the route that sets it at the panel: a test holds each one that is not in
@@ -512,7 +523,8 @@ REMOTE_KEPT = ("recovery",)
 REMOTE_SETS = {"pads": "/api/pads", "modules": "/api/modules/*", "theme": "/api/theme", "mix": "/api/mix", "osc": "/api/osc",
                "schedule": "/api/schedule", "streams": "/api/streams", "control": "/api/midi", "autostart": "/api/autostart",
                "audio": "/api/audio", "overlay": "/api/overlay", "projectors": "/api/projectors", "mapper": "/api/mapper",
-               "sync": "/api/sync", "shaders": "/api/shaders", "room": "/api/room", "recovery": "/api/recovery/usb", "ndi": "/api/ndi"}
+               "sync": "/api/sync", "shaders": "/api/shaders", "room": "/api/room", "recovery": "/api/recovery/usb", "ndi": "/api/ndi",
+               "render": "/api/render"}
 CHECK_ERRORS = (ValueError, KeyError, TypeError, AttributeError, osc_mod.OscError, streams_mod.StreamError,
                 scheduler_mod.ScheduleError, dmx_mod.DmxError, midi_mod.MidiError, autostart_mod.AutostartError,
                 projector_mod.ProjectorError, themes_mod.ThemeError, room_mod.RoomError, ndi_mod.NdiError)
@@ -542,6 +554,10 @@ def public_settings(data, support_configured=None):
         if name in ("streams", "projectors", "recovery") or name not in data:
             continue
         out[name] = _net(copy.deepcopy(data[name]))
+    if isinstance(out.get("render"), dict):      # where the box sends cues (D94): device addresses, as the state targets
+        for n in out["render"].get("nodes") or []:
+            if isinstance(n, dict) and "host" in n:
+                n["host"] = "(set)"
     if isinstance(out.get("osc"), dict):         # where the box sends its state (D82): a device's address and the Owner's
         for key in FEEDBACK_KEYS:                # name for it. A diagnostics file leaves the box, so never in one.
             out["osc"].pop(key, None)
@@ -954,6 +970,18 @@ class BoxCare:
                     clean["ndi"]["own_discovery"] = mine["own_discovery"]
                 kept.append("ndi.own_discovery")
                 notes.append("NDI: using this box's own discovery server is not switched on by a file through remote support")
+        if "render" in clean:
+            # Render nodes (D94): a file through remote support adds no node whose IPv4 host is not another device on
+            # one of the box's own networks now (the route's rule; the tunnel's network never counts). A `.local`
+            # name is held to that rule at every send, as on the route.
+            had = render_mod.stored(current.get("render"))
+            known = {(n["host"], n["port"]) for n in had}
+            nets = api.ndi_nets()
+            if any(render_mod.is_ipv4_text(n["host"]) and (n["host"], n["port"]) not in known and api.render.why_not(n["host"], nets)
+                   for n in clean["render"]["nodes"]):
+                clean["render"] = {"nodes": had}
+                kept.append("render.nodes")
+                notes.append("Render nodes: a host that is not on one of this box's own networks is not added through remote support; the nodes are left as this box has them")
         if "osc" in clean:
             mine = list((current.get("osc") or {}).get("allow") or [])
             if api.remote_allow_refused(clean["osc"].get("allow", []), mine):

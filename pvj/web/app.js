@@ -440,7 +440,12 @@
   // A pad that holds an NDI source (D62): `file` is empty and `ndi` is the source's id, nothing else. The names come
   // beside the banks (`ndi` in the answer of /api/pads) for everyone above a guest; a guest gets none and sees such
   // a pad as not available. Everything the pads know of such a pad is in these functions and in padKinds.
-  function padsGot(d) { S.banks = d.banks; S.padNdi = d.ndi || {}; }
+  function padsGot(d) { S.banks = d.banks; S.padNdi = d.ndi || {}; S.padRender = d.render || {}; }
+  // A pad that holds a render cue (D94): `file` empty and `render` the cue ({node, address, args, show}). The node's name
+  // comes beside the banks (`render`); a guest gets none and sees the pad as the Operator's.
+  function padRender(pad) { return !pad.file && !padShader(pad) && !padNdi(pad) && pad.render && typeof pad.render === 'object' && /^[0-9a-f]{8}$/.test(pad.render.node || '') ? pad.render : null; }
+  function padRenderName(cue) { var r = (S.padRender || {})[cue.node]; return r && r.name ? r.name : 'Render node'; }
+  var RENDER_PAD_GUEST = 'This pad cues a render node. Ask an operator to start it.';
   function padNdi(pad) { return !pad.file && !padShader(pad) && typeof pad.ndi === 'string' && /^[0-9a-f]{12}$/.test(pad.ndi) ? pad.ndi : ''; }
   function padNdiName(id) { var r = (S.padNdi || {})[id]; return r && r.name ? r.name : 'NDI source'; }
   function padNdiHost(from) { return String(from || '').replace(/:[0-9]{1,5}$/, '').replace(/^\[|\]$/g, '').toLowerCase(); }
@@ -476,19 +481,21 @@
     if (line.textContent !== text) line.textContent = text;
   }
   function padButton(bank, index, pad) {
-    var held = padShader(pad), src = padNdi(pad);
-    var na = !!src && !can('live') && !S.editing;        // an NDI pad is the Operator's: a guest sees it as not available
+    var held = padShader(pad), src = padNdi(pad), cue = padRender(pad);
+    var na = !!(src || cue) && !can('live') && !S.editing;        // an NDI or render pad is the Operator's: a guest sees it as not available
     var playing = padPlaying(pad, (S.status && S.status.player) || {});
-    var label = pad.label || (pad.file ? pad.file.replace(/\.[^.]+$/, '') : held ? padShaderNice(held) : src ? padNdiName(src) : 'Empty');
+    var label = pad.label || (pad.file ? pad.file.replace(/\.[^.]+$/, '') : held ? padShaderNice(held) : src ? padNdiName(src) : cue ? padRenderName(cue) + (cue.address ? ' ' + cue.address : '') : 'Empty');
     var from = src && (S.padNdi || {})[src] ? (S.padNdi[src].from || '') : '';
-    var b = h('button', { class: 'pad' + (playing ? ' on' : '') + (pad.file || held || src ? '' : ' empty') + (held ? ' shader' : '') + (src ? ' shader ndi' : '') + (na ? ' na' : ''),
+    var b = h('button', { class: 'pad' + (playing ? ' on' : '') + (pad.file || held || src || cue ? '' : ' empty') + (held ? ' shader' : '') + (src ? ' shader ndi' : '') + (cue ? ' shader render' : '') + (na ? ' na' : ''),
       'aria-pressed': playing ? 'true' : 'false', 'aria-disabled': na ? 'true' : null, 'data-pad': index,
-      title: held ? 'Shader: ' + padShaderNice(held) + (pad.preset ? ', preset ' + pad.preset : '') : src ? (na ? NDI_PAD_GUEST : 'NDI source: ' + padNdiName(src) + (from ? ', from ' + from : '')) : null },
-      h('span', { class: 'n', text: (index + 1 < 10 ? '0' : '') + (index + 1) }, held ? h('span', { class: 'padkind', text: 'Shader' }) : src ? h('span', { class: 'padkind', text: na ? 'Operator' : 'NDI' }) : null), h('span', { class: 't', text: label }));
+      title: cue ? (na ? RENDER_PAD_GUEST : 'Render cue to ' + padRenderName(cue) + (cue.address ? ': ' + cue.address : '') + (cue.show ? ', then its picture' : '')) : held ? 'Shader: ' + padShaderNice(held) + (pad.preset ? ', preset ' + pad.preset : '') : src ? (na ? NDI_PAD_GUEST : 'NDI source: ' + padNdiName(src) + (from ? ', from ' + from : '')) : null },
+      h('span', { class: 'n', text: (index + 1 < 10 ? '0' : '') + (index + 1) }, held ? h('span', { class: 'padkind', text: 'Shader' }) : src ? h('span', { class: 'padkind', text: na ? 'Operator' : 'NDI' }) : cue ? h('span', { class: 'padkind', text: na ? 'Operator' : 'Render' }) : null), h('span', { class: 't', text: label }));
     b.addEventListener('click', function () {
       if (S.editing && canOp()) return openSheet(bank, index);
-      if (!pad.file && !held && !src) return say(canOp() ? 'Empty pad. Tap "Edit pads" to assign a clip, a shader or an NDI source.' : 'Empty pad.', true);
+      if (!pad.file && !held && !src && !cue) return say(canOp() ? 'Empty pad. Tap "Edit pads" to assign a clip, a shader, an NDI source or a render cue.' : 'Empty pad.', true);
       if (src && !can('live')) return say(guestsLocked() ? LOCKED_TEXT : NDI_PAD_GUEST, true);     // never sent: the box refuses a guest an NDI pad (D80)
+      if (cue && !can('live')) return say(guestsLocked() ? LOCKED_TEXT : RENDER_PAD_GUEST, true);     // never sent: the box refuses it to a guest (D94)
+      if (cue && !cue.show) return act('POST', '/api/play', { pad: [bank, index] }, function () { say('Cue sent to ' + padRenderName(cue) + ' (OSC has no reply).'); });
       if (canGuest()) return guestSend('/api/play', { pad: [bank, index] }, '', b);
       if (!can('live')) return say(guestsLocked() ? LOCKED_TEXT : 'This device can watch only.', true);
       if (!src) return act('POST', '/api/play', { pad: [bank, index] }, function () { say(''); poll(); });
@@ -873,12 +880,55 @@
         ndiList.appendChild(h('div', { class: 'hint', id: 'padndinote', text: NDI_PAD_NOTE }));
       });
     };
-    var kinds = ['clip', 'shader', 'ndi'];
+    // The fourth kind (D94): a render cue, to a node the owner listed: an OSC address with typed arguments (a
+    // profile's cue fills them in), and whether to show the node's NDI picture after it.
+    var renderList = h('div', { class: 'list', id: 'padrender' });
+    var had = padRender(current);
+    var cueState = { node: had ? had.node : '', address: had ? had.address : '', show: had ? !!had.show : false,
+      args: had ? (had.args || []).map(function (a) { return { type: a.type, value: String(a.value) }; }) : [] };
+    var fillRender = function () {
+      renderList.textContent = '';
+      renderList.appendChild(h('div', { class: 'k', text: 'Loading the render nodes...' }));
+      api('GET', '/api/render').then(function (r) {
+        if (!renderList.isConnected) return;
+        renderList.textContent = '';
+        if (!r.ok || !r.data.nodes.length) { renderList.appendChild(h('div', { class: 'k', id: 'padrenderempty', text: r.ok ? 'No render nodes yet. The owner adds them under Setup, Render nodes.' : (r.data.error || 'The render nodes could not be read.') })); return; }
+        var d = r.data;
+        if (!d.nodes.some(function (n) { return n.id === cueState.node; })) cueState.node = d.nodes[0].id;
+        var node = d.nodes.filter(function (n) { return n.id === cueState.node; })[0];
+        var pick = h('select', { class: 'text-input', id: 'padrendernode', 'aria-label': 'Render node' },
+          d.nodes.map(function (n) { return h('option', { value: n.id, text: n.name, selected: n.id === cueState.node }); }));
+        pick.addEventListener('change', function () { cueState.node = pick.value; fillRender(); });
+        var addr = h('input', { class: 'text-input mono', id: 'padrenderaddress', placeholder: '/nxlx/scene', value: cueState.address, maxlength: 128 });
+        addr.addEventListener('input', function () { cueState.address = addr.value; });
+        var showPic = h('input', { type: 'checkbox', id: 'padrendershow', checked: cueState.show && !!node.ndi, disabled: !node.ndi });
+        showPic.addEventListener('change', function () { cueState.show = showPic.checked; });
+        var err = h('div', { class: 'msg inmsg', id: 'padrendererr', role: 'alert' });
+        var template = profilePick(d.profiles, node.profile, function (a, args) { cueState.address = a; cueState.args = args; fillRender(); }, 'padrender');
+        renderList.appendChild(h('div', { class: 'addform' }, labelled('Node', pick), template ? labelled('Cue', template) : null,
+          labelled('OSC address', addr, 'Leave it empty to only show the node\'s picture.'), argRows(cueState.args, d.max_args, 'padrender'),
+          h('label', { class: 'row', for: 'padrendershow' }, showPic, h('span', { text: node.ndi ? ' Then show ' + node.name + '\'s NDI picture' : ' No NDI picture is chosen for ' + node.name })),
+          h('button', { class: 'btn on pri', id: 'padrendersave', text: 'Save the cue', onclick: function () {
+            var args = argsOut(cueState.args);
+            if (typeof args === 'string') return sayAt(err, args, true);
+            var cue = { node: cueState.node, show: !!(cueState.show && node.ndi) };
+            if (cueState.address.trim()) { cue.address = cueState.address.trim(); cue.args = args; }
+            var label = (node.name + (cue.address ? ' ' + cue.address.split('/').pop() : '')).slice(0, 40);
+            api('POST', '/api/pads', { bank: s.bank, index: s.index, label: label, render: cue }).then(function (r2) {
+              if (!r2.ok) return sayAt(err, r2.data.error || 'The cue could not be saved.', true);
+              padsGot(r2.data); close();
+            });
+          } }), err, h('div', { class: 'hint', text: d.sent_words + '.' })));
+      });
+    };
+    var kinds = ['clip', 'shader', 'ndi', 'render'];
     var show = function (kind) {
       s.kind = kind;        // kept on the open sheet: a redraw of the page while it is open must not flip it back
       clips.forEach(function (c) { if (c) c.hidden = kind !== 'clip'; });
       list.hidden = kind !== 'shader';
       ndiList.hidden = kind !== 'ndi';
+      renderList.hidden = kind !== 'render';
+      if (kind === 'render') fillRender();
       kinds.forEach(function (k, i) {
         seg.children[i].classList.toggle('on', kind === k);
         seg.children[i].setAttribute('aria-pressed', kind === k ? 'true' : 'false');
@@ -889,12 +939,14 @@
     var seg = h('div', { class: 'seg', id: 'padkind', role: 'group', 'aria-label': 'What this pad plays' },
       h('button', { class: 'btn segbtn', id: 'padkindclip', text: 'Clip', onclick: function () { show('clip'); } }),
       h('button', { class: 'btn segbtn', id: 'padkindshader', text: 'Shader', onclick: function () { show('shader'); } }),
-      h('button', { class: 'btn segbtn', id: 'padkindndi', text: 'NDI source', onclick: function () { show('ndi'); } }));
+      h('button', { class: 'btn segbtn', id: 'padkindndi', text: 'NDI source', onclick: function () { show('ndi'); } }),
+      h('button', { class: 'btn segbtn', id: 'padkindrender', text: 'Render cue', onclick: function () { show('render'); } }));
     var head = box.querySelector('h2');
     box.insertBefore(seg, head.nextSibling);
     box.insertBefore(list, clips[2] ? clips[2].nextSibling : null);
     box.insertBefore(ndiList, list.nextSibling);
-    show(s.kind || (padNdi(current) ? 'ndi' : padShader(current) ? 'shader' : 'clip'));
+    box.insertBefore(renderList, ndiList.nextSibling);
+    show(s.kind || (padRender(current) ? 'render' : padNdi(current) ? 'ndi' : padShader(current) ? 'shader' : 'clip'));
     return el;
   }
   function sheet() {
@@ -1635,6 +1687,9 @@
         confirmOff: function (ask) { ndiWasOn = !!((S.status && S.status.player) || {}).ndi; ask(ndiWasOn ? 'The NDI picture comes off the screen now.' : null); },
         offSaid: function () { return ndiWasOn ? 'Switched off. The NDI picture came off the screen because the input was switched off.' : null; },
         body: function () { return ndiCards(full); } },
+      { id: 'render', group: 'show', name: 'Render nodes', role: 'op', url: '/api/render', urlRole: 'op',
+        blurb: 'Cue a laptop or GPU box running Max/Jitter or another tool over OSC, and show its NDI picture. If its picture goes, the box goes back to what played before. Not yet tried with a real render node.',
+        body: function () { return renderCards(full); } },
       { id: 'ndisc', group: 'show', name: 'NDI\u00ae discovery server', role: 'full', module: 'ndi-discovery', url: '/api/ndi/discovery', urlRole: 'full',
         blurb: 'Run NDI\'s own Discovery Server on this box, so senders and receivers on a network you control find each other through it. The program is NDI\'s, not part of this box: someone with a keyboard or SSH puts it in place from your copy first. It is not a password: whatever can reach it can register with it and ask it. Switching it on makes the box listen on the network.',
         body: function () { return ndiscCards(); } },
@@ -1820,6 +1875,15 @@
       if (d.state === 'failed') return st('problem', 'It stopped and is being started again');
       if (!d.bind) return st('check', 'No address on that network now');
       return st('check', 'Starting');
+    },
+    render: function (d) {
+      if (!d.nodes.length) return st('setup', 'No render nodes yet');
+      var on = d.nodes.filter(function (n) { return n.showing; })[0];
+      if (on) return st('active', 'Showing ' + on.name);
+      var bad = d.nodes.filter(function (n) { return n.error; })[0];
+      if (bad) return st('problem', bad.name + ': ' + bad.error);
+      if (d.back && d.back.ago < 600) return st('check', 'Went back from ' + d.back.node + ': ' + d.back.why);
+      return st('ready', plural(d.nodes.length, 'node'));
     },
     ndi: function (d) {
       var p = d.playing;
@@ -3238,6 +3302,173 @@
       draw(r.data);
     });
     return card;
+  }
+  // ---- Render nodes (pvj/render.py, D94). The box cues a render node (Max/Jitter first, by the owner's choice) over
+  // OSC and shows its NDI picture. The list is the Owner's; an Operator sees each node's health and sends a cue by
+  // hand. OSC over UDP has no reply, so the page says "sent", never "received".
+  var renderForm = { name: '', host: '', port: '7400', ndi: '', profile: 'max' };
+  var RENDER_PICTURE = { none: 'No NDI picture chosen', off: 'NDI input is off', not_allowed: 'Its NDI source is not allowed any more',
+    unknown: 'The box cannot tell whether its picture is there', here: 'Its picture is on the network', away: 'Its picture is not on the network now' };
+  function agoWords(s) { return s == null ? '' : s < 60 ? s + ' s ago' : s < 7200 ? Math.round(s / 60) + ' min ago' : Math.round(s / 3600) + ' h ago'; }
+  function renderState(n) {
+    if (n.showing) return st('active', 'Its picture is on the screen');
+    if (n.error) return st('problem', n.error);
+    if (n.picture === 'away' || n.picture === 'not_allowed' || n.picture === 'unknown') return st('check', RENDER_PICTURE[n.picture]);
+    if (n.picture === 'none' || n.picture === 'off') return st('setup', RENDER_PICTURE[n.picture]);
+    return st('ready', n.last_sent_ago != null ? 'Cue sent ' + agoWords(n.last_sent_ago) + ' (no reply over UDP)' : RENDER_PICTURE.here);
+  }
+  // A cue's arguments as the person types them: one row each, a type and a value, at most `max`.
+  function argRows(args, max, idp) {
+    var box = h('div', { class: 'list', id: idp + 'args' });
+    function draw() {
+      box.textContent = '';
+      args.forEach(function (a, i) {
+        var type = h('select', { class: 'text-input', id: idp + 'argtype' + i, 'aria-label': 'Type of argument ' + (i + 1) },
+          ['int', 'float', 'string', 'bool'].map(function (t) { return h('option', { value: t, text: t, selected: t === a.type }); }));
+        var value = h('input', { class: 'text-input mono', id: idp + 'argvalue' + i, 'aria-label': 'Value of argument ' + (i + 1), value: String(a.value), maxlength: 64 });
+        type.addEventListener('change', function () { a.type = type.value; });
+        value.addEventListener('input', function () { a.value = value.value; });
+        box.appendChild(h('div', { class: 'row' }, type, value, h('button', { class: 'btn', text: 'Remove', 'aria-label': 'Remove argument ' + (i + 1),
+          onclick: function () { args.splice(i, 1); draw(); } })));
+      });
+      if (args.length < max) box.appendChild(h('button', { class: 'btn', id: idp + 'argadd', text: '+ Add an argument', onclick: function () { args.push({ type: 'float', value: '0' }); draw(); } }));
+    }
+    draw();
+    return box;
+  }
+  // The typed values as the box takes them; a value that is not of its type is said, and nothing is sent.
+  function argsOut(args) {
+    var out = [];
+    for (var i = 0; i < args.length; i++) {
+      var a = args[i], v = String(a.value).trim();
+      if (a.type === 'int') { if (!/^-?[0-9]{1,10}$/.test(v)) return 'Argument ' + (i + 1) + ' is not a whole number.'; out.push({ type: 'int', value: parseInt(v, 10) }); }
+      else if (a.type === 'float') { if (v === '' || isNaN(Number(v))) return 'Argument ' + (i + 1) + ' is not a number.'; out.push({ type: 'float', value: Number(v) }); }
+      else if (a.type === 'bool') { if (!/^(true|false|1|0|on|off)$/i.test(v)) return 'Argument ' + (i + 1) + ' is true or false.'; out.push({ type: 'bool', value: /^(true|1|on)$/i.test(v) }); }
+      else out.push({ type: 'string', value: String(a.value) });
+    }
+    return out;
+  }
+  // A profile's cues (the "max" profile is this project's /nxlx/ scheme): choosing one fills the address and the
+  // argument rows, which stay editable; what is sent is an ordinary cue.
+  function profilePick(profiles, profile, onPick, idp) {
+    var p = profiles && profiles[profile];
+    if (!p) return null;
+    var keys = Object.keys(p.cues);
+    var sel = h('select', { class: 'text-input', id: idp + 'template', 'aria-label': 'A cue of ' + p.name },
+      [h('option', { value: '', text: 'A cue of ' + p.name + '...' })].concat(keys.map(function (k) { return h('option', { value: k, text: p.cues[k].label + ' (' + p.cues[k].address + ')' }); })));
+    sel.addEventListener('change', function () {
+      var c = p.cues[sel.value];
+      if (c) onPick(c.address, c.args.map(function (a) { return { type: a.type, value: a.type === 'string' ? a.name : a.type === 'bool' ? 'true' : String(a.min || 0) }; }));
+    });
+    return sel;
+  }
+  function renderCards(full) {
+    var body = h('div', { class: 'list sp', id: 'renderbody' }, h('div', { class: 'hint', text: 'Looking...' }));
+    var card = h('div', { class: 'card', id: 'rendercard' }, h('h2', { text: 'Render nodes' }),
+      h('div', { class: 'hint', id: 'renderwhat', text: 'A render node is a laptop or a GPU box running Max/Jitter or another tool. The box sends it OSC cues and can show its NDI picture. If its picture goes, the box goes back to what played before. Nothing the room needs lives only on a render node.' }), body);
+    var sendCard = h('div', { class: 'card', id: 'rendersendcard' }, h('h2', { text: 'Send a cue' }), h('div', { class: 'list sp', id: 'rendersendbody' }));
+    var sendState = { node: '', address: '', args: [], show: false };
+    function draw(d) {
+      body.textContent = '';
+      if (d.back) body.appendChild(h('div', { class: 'hint warn', id: 'renderback', role: 'status', text: 'Went back from ' + d.back.node + '\'s picture ' + agoWords(d.back.ago) + ': ' + d.back.why + '; ' + d.back.to + '.' }));
+      if (!d.nodes.length) body.appendChild(h('div', { class: 'empty', id: 'renderempty', text: 'No render nodes yet.' + (full ? ' Add one below: its name, its address on this network and its OSC port.' : ' The owner adds them.') }));
+      d.nodes.forEach(function (n) {
+        var s = renderState(n);
+        body.appendChild(listRow({ cls: 'render-entry', data: n.id, name: n.name, key: 'render-' + n.id, redraw: function () { draw(d); },
+          sub: [full && n.host ? n.host + ' : ' + n.port : '', n.ndi_name ? 'NDI: ' + n.ndi_name : '', n.profile !== 'generic' && d.profiles[n.profile] ? d.profiles[n.profile].name : ''].filter(Boolean).join(' · '),
+          state: h('div', { class: 'state' }, h('span', { class: 'chip chip-' + s.chip, text: CHIPS[s.chip] || '' }), ' ', h('span', { text: s.text })),
+          note: n.last_address ? 'Last cue: ' + n.last_address + ', sent ' + agoWords(n.last_sent_ago) : null,
+          more: full ? [h('button', { class: 'btn', text: n.still ? 'Never count a still picture as gone' : 'A still picture counts as gone after ' + d.still.default + ' s',
+            onclick: function () { act('POST', '/api/render', { update: { id: n.id, still: n.still ? 0 : d.still.default } }, function (data) { draw(data); }); } }),
+            h('button', { class: 'btn', text: 'Remove', 'aria-label': 'Remove ' + n.name, onclick: function (e) {
+              confirmRow('Remove ' + n.name + '? Pads that cue it will say it is gone.', 'Remove', 'Keep it', function () {
+                act('POST', '/api/render', { remove: { id: n.id } }, function (data) { moreOpen = null; draw(data); say(n.name + ' is removed.'); });
+              }, e.currentTarget);
+            } })] : null }));
+      });
+      body.appendChild(h('div', { class: 'hint', id: 'renderudp', text: d.sent_words + '.' }));
+      drawSend(d);
+      if (!full || d.nodes.length >= d.max) return;
+      body.appendChild(addBlock('render', 'a render node', !d.nodes.length, function (cancel) {
+        var name = h('input', { class: 'text-input', id: 'rendername', placeholder: 'Max on the MacBook', maxlength: 32, value: renderForm.name });
+        var host = h('input', { class: 'text-input mono', id: 'renderhost', placeholder: '192.168.1.40 or render-mac.local', value: renderForm.host, autocomplete: 'off' });
+        var port = h('input', { class: 'text-input mono', id: 'renderport', inputmode: 'numeric', value: renderForm.port });
+        var prof = h('select', { class: 'text-input', id: 'renderprofile' }, [h('option', { value: 'generic', text: 'Any tool: I type the OSC addresses' })].concat(
+          Object.keys(d.profiles).map(function (k) { return h('option', { value: k, text: d.profiles[k].name, selected: renderForm.profile === k }); })));
+        var src = h('select', { class: 'text-input', id: 'renderndi' }, h('option', { value: '', text: 'No picture (cues only)' }));
+        var err = h('div', { class: 'msg inmsg', id: 'rendererr', role: 'alert' });
+        name.addEventListener('input', function () { renderForm.name = name.value; });
+        host.addEventListener('input', function () { renderForm.host = host.value; });
+        port.addEventListener('input', function () { renderForm.port = port.value; });
+        prof.addEventListener('change', function () { renderForm.profile = prof.value; if (d.profiles[prof.value] && d.profiles[prof.value].port) { port.value = renderForm.port = String(d.profiles[prof.value].port); } });
+        src.addEventListener('change', function () { renderForm.ndi = src.value; });
+        if (moduleOn('inputs-ndi')) api('GET', '/api/ndi').then(function (r) {
+          if (!r.ok || !src.isConnected) return;
+          var seen = {};
+          (r.data.sources || []).concat(r.data.allowed || []).forEach(function (x) {
+            if (seen[x.id] || x.twins) return;
+            seen[x.id] = true;
+            src.appendChild(h('option', { value: x.id, text: x.name + ' (' + x.from + ')', selected: renderForm.ndi === x.id }));
+          });
+        });
+        return h('div', { class: 'addform', id: 'renderform' }, h('div', { class: 'field', text: 'Add a render node' }),
+          labelled('Name', name), labelled('Address', host, 'An IPv4 address on this box\'s own network, or the machine\'s .local name. Never an address outside the building.'),
+          labelled('OSC port', port, 'The port the tool listens on: 1024 or higher.'), labelled('Tool', prof),
+          labelled('Its NDI picture', src, moduleOn('inputs-ndi') ? 'Chosen from the NDI senders the box sees, the way a pad\'s source is.' : 'Turn on NDI input to choose a picture.'),
+          h('div', { class: 'row' },
+            h('button', { class: 'btn on pri grow', id: 'renderadd', text: 'Add', onclick: function () {
+              var node = { name: renderForm.name, host: renderForm.host.trim(), port: parseInt(renderForm.port, 10) };
+              if (renderForm.ndi) node.ndi = renderForm.ndi;
+              if (renderForm.profile !== 'generic') node.profile = renderForm.profile;
+              api('POST', '/api/render', { add: node }).then(function (r) {
+                if (!r.ok) return sayAt(err, r.data.error || 'Could not add the render node.', true);
+                renderForm = { name: '', host: '', port: '7400', ndi: '', profile: 'max' }; addOpen.render = false; draw(r.data); say('Render node added.');
+              });
+            } }),
+            cancel ? h('button', { class: 'btn grow', id: 'rendercancel', text: 'Cancel', onclick: cancel }) : null),
+          err);
+      }, function () { draw(d); }));
+    }
+    function drawSend(d) {
+      var box = sendCard.querySelector('#rendersendbody');
+      box.textContent = '';
+      sendCard.hidden = !d.nodes.length || !canOp();
+      if (sendCard.hidden) return;
+      if (!d.nodes.some(function (n) { return n.id === sendState.node; })) sendState.node = d.nodes[0].id;
+      var node = d.nodes.filter(function (n) { return n.id === sendState.node; })[0];
+      var pick = h('select', { class: 'text-input', id: 'rendersendnode', 'aria-label': 'Render node' },
+        d.nodes.map(function (n) { return h('option', { value: n.id, text: n.name, selected: n.id === sendState.node }); }));
+      pick.addEventListener('change', function () { sendState.node = pick.value; drawSend(d); });
+      var addr = h('input', { class: 'text-input mono', id: 'rendersendaddress', placeholder: '/nxlx/scene', value: sendState.address, maxlength: 128 });
+      addr.addEventListener('input', function () { sendState.address = addr.value; });
+      var show = h('input', { type: 'checkbox', id: 'rendersendshow', checked: sendState.show, disabled: !node.ndi });
+      show.addEventListener('change', function () { sendState.show = show.checked; });
+      var err = h('div', { class: 'msg inmsg', id: 'rendersenderr', role: 'status' });
+      var template = profilePick(d.profiles, node.profile, function (a, args) { sendState.address = a; sendState.args = args; drawSend(d); }, 'rendersend');
+      box.appendChild(h('div', { class: 'addform' }, labelled('Node', pick), template ? labelled('Cue', template) : null,
+        labelled('OSC address', addr), argRows(sendState.args, d.max_args, 'rendersend'),
+        h('label', { class: 'row', for: 'rendersendshow' }, show, h('span', { text: node.ndi ? ' Then show ' + node.name + '\'s NDI picture' : ' No NDI picture is chosen for ' + node.name })),
+        h('div', { class: 'row' }, h('button', { class: 'btn on pri grow', id: 'rendersend', text: 'Send', onclick: function () {
+          var args = argsOut(sendState.args);
+          if (typeof args === 'string') return sayAt(err, args, true);
+          var cue = { node: sendState.node, show: !!(sendState.show && node.ndi) };
+          if (sendState.address) { cue.address = sendState.address.trim(); cue.args = args; }
+          api('POST', '/api/render/cue', cue).then(function (r) {
+            if (!r.ok) return sayAt(err, r.data.error || 'The cue was not sent.', true);
+            sayAt(err, (r.data.sent ? 'Sent to ' + r.data.node + ' (OSC has no reply: the box cannot tell whether it was taken).' : '') + (r.data.shown ? ' Showing its picture.' : ''));
+            load();
+          });
+        } })), err));
+    }
+    function load() {
+      api('GET', '/api/render').then(function (r) {
+        if (!document.getElementById('rendercard')) return;
+        if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'hint', id: 'rendermsg', text: (r.data.error || 'Not available') + '. Open the page again in a moment.' })); return; }
+        draw(r.data);
+      });
+    }
+    load();
+    return [card, sendCard];
   }
   // ---- NDI input (pvj/ndi.py, D62). NDI's terms: the mark with its sign on first use, the trademark sentence and a
   // link to ndi.video beside the place a source is chosen. The runtime is not part of the box; when it is missing

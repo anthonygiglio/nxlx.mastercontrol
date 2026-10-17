@@ -4,6 +4,15 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-16, the render bridge: OSC cues to a render node, its NDI picture back (`render-bridge`, #143, D94)
+
+- **The owner's words:** "Yes, the three-tier picture fits. Build the bridge first: Mastercontrol cues a render node over OSC and plays its picture back over NDI." Later the same day: "Try to start with Max and Jitter as the first render node", and "pull packages and libraries as needed" (none was needed).
+- **Built:** render nodes under Setup (the Owner's list, held to the rule of an OSC state target, D82), cues of an address and typed arguments sent by hand or from a pad (so from scenes, the schedule and the controllers), health per node with a state chip, the way back to what played before when a node's picture goes, the `max` profile (`/nxlx/` scheme) and a companion Max patch. Design note first (2a4d15e), then the code.
+- **Roles:** seeing and cueing are the Operator's, the list the Owner's and a support session of his role's (as the state targets, D84); a Guest is refused a render pad and a scene with one.
+- **Tests:** `tests/test_render.py` and rows in `test_roles`, `test_support_reach`, `test_boxcare`; every part broken on purpose once and caught. Loopback only.
+- **CI, first run (2026-10-17):** the browser test held the Setup rows to a list without "Render nodes" (added there, and to the rows an Operator must see); `test_lights` once read the Launchpad's lights in a wait before the Launchpad had any (a KeyError in the wait's own condition, a race the other waits of that file already guard): the same guard added. Neither touched an assertion.
+- **Open:** everything on real machines (RN1 to RN8): Max opening the patch, jit.ndi's object name, cue timing, the picture back, the way back with a real sender going. Profiles for VDMX, Resolume, MadMapper, TouchDesigner need the facts listed in `pvj/RENDERNODES.md`. A security review before merge.
+
 ## 2026-10-16, pvj-render phase 1: a renderer of the box's own behind the same socket (`pvj-render`, #144, D95)
 
 - **The owner's decision:** a native helper beside the Python panel ("Yes, a native helper"), the Pi renderer rebuilt now, the Pi as an all-in-one VJ rig. Licence, his working choice: `render/` is GPL-3.0-or-later (it links libmpv); the rest stays Apache-2.0. Recorded with the spike's numbers (two 1080p30 clips at 960 x 540 held 10 minutes on the test Pi 4; 1080 inside and hardware decode did not) in D95; D94 is the render bridge's.

@@ -24,6 +24,12 @@ Inventory of components bundled with or fetched by the legacy code. Licences are
 | libmpv (mpv), linked by pvj-render; not shipped, the box's own package | `render/` builds against it | GPLv2 or later as Debian builds it (see below) |
 | Mesa's EGL, OpenGL ES and GBM, libdrm, glibc: linked by pvj-render; not shipped | `render/` builds against them | MIT (Mesa, libdrm), LGPL-2.1 (glibc) |
 
+## Not bundled: jit.ndi for the Max render node patch (D94)
+
+`tools/max/nxlx-render-node.maxpat` uses `jit.ndi.send~` from jit.ndi by 2bbb (<https://github.com/2bbb/jit.ndi>), a
+third-party Max package. Nothing of it is in this repository or on the box: the owner installs it in Max 9 himself,
+under its own licence, as NDI's runtime (D62). The patch is this project's (Apache-2.0).
+
 ## Fonts of the panel's "Signal" look (new code's side of the tree)
 
 Two typefaces are shipped with the panel, in `pvj/web/fonts/`, for the look called Signal (D54 in the project log). They are served by the box itself; nothing is fetched from the internet. They are **not** this project's work and are not under its Apache-2.0 licence.
