@@ -400,7 +400,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.waitForSelector('h1#wstitle:text-is("Setup")');
     assert.deepStrictEqual(await page.$$eval('.navhead', (hs) => hs.map((x) => x.textContent)), ['Everyday', 'Show tools', 'This box']);
     assert.deepStrictEqual(await page.$$eval('.navname', (ns) => ns.map((x) => x.textContent)), ['Health', 'Projectors', 'Room', 'Schedule', 'Shaders and Vibes', 'People and codes', 'Sound',
-      'At power-up', 'Streams', 'NDI\u00ae input', 'NDI\u00ae discovery server', 'Projection mapping', 'Boxes in step', 'MIDI controller', 'DMX lighting desk', 'OSC',
+      'At power-up', 'Streams', 'NDI\u00ae input', 'Render nodes', 'NDI\u00ae discovery server', 'Projection mapping', 'Boxes in step', 'MIDI controller', 'DMX lighting desk', 'OSC',
       'Network', 'Screen output', 'Updates', 'Remote support', 'Secure connection', 'Backup and reset', 'Look', 'About and power'], 'the rows a full-access device sees');
     const low = await page.$$eval('.navrow', (rs) => rs.filter((r) => r.getBoundingClientRect().height < 56).map((r) => r.textContent));
     assert.deepStrictEqual(low, [], 'every row is at least 56 px high');
@@ -3249,7 +3249,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await presenter.waitForSelector('#sysindex');
     {     // an Operator's rows (D80): what a presenter had, the daily pages that were the owner's, and nothing system critical
       const rows = await presenter.$$eval('.navname', (ns) => ns.map((x) => x.textContent));
-      for (const name of ['Health', 'Projectors', 'Shaders and Vibes', 'People and codes', 'Sound', 'At power-up', 'Streams', 'Boxes in step', 'About and power']) {
+      for (const name of ['Health', 'Projectors', 'Shaders and Vibes', 'People and codes', 'Sound', 'At power-up', 'Streams', 'Render nodes', 'Boxes in step', 'About and power']) {
         assert(rows.includes(name), 'an operator sees ' + name + ': ' + rows.join(', '));
       }
       for (const name of ['Network', 'Screen output', 'Updates', 'Remote support', 'Backup and reset', 'Look', 'DMX lighting desk', 'OSC']) {
