@@ -3754,7 +3754,7 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.click('text=Edit pads');
       await page.click('.pad >> nth=7');
       await page.waitForSelector('#padkind');
-      assert.deepStrictEqual(await page.$$eval('#padkind button', (bs) => bs.map((b) => b.textContent)), ['Clip', 'Shader', 'NDI source'], 'the three kinds of pad');
+      assert.deepStrictEqual(await page.$$eval('#padkind button', (bs) => bs.map((b) => b.textContent)), ['Clip', 'Shader', 'NDI source', 'Render cue'], 'the four kinds of pad (D94 added the render cue)');
       await page.click('#padkindndi');
       assert.strictEqual(await page.textContent('#padndioff'), 'NDI is off. Turn on NDI input in Setup, then give the pad a source.', 'with NDI off the editor says where to switch it on');
       assert(!(await page.isVisible('#padending')), 'an NDI source has no ending to choose');
