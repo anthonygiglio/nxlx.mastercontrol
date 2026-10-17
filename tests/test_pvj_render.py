@@ -241,6 +241,33 @@ class AnswersTest(Base):
         self.assertFalse(os.path.exists(os.path.join(self.tmp, "ran")))
         self.assertEqual(r("get_property", "osd-width"), W, "still answering")
 
+    def test_an_overlay_file_that_mpv_would_map_past_its_end_is_refused_and_the_helper_lives(self):
+        # mpv maps offset + h * stride bytes of the file without a look at its size: a short file was SIGBUS
+        r = self.r
+        short = os.path.join(self.tmp, "short.bgra")
+        with open(short, "wb") as f:
+            f.write(b"\0" * 100)
+        fifo = os.path.join(self.tmp, "fifo.bgra")
+        os.mkfifo(fifo)
+        link = os.path.join(self.tmp, "link.bgra")
+        os.symlink(short, link)
+        good = os.path.join(self.tmp, "good.bgra")
+        with open(good, "wb") as f:
+            f.write(b"\0" * (10 * 10 * 4))
+        goodlink = os.path.join(self.tmp, "goodlink.bgra")
+        os.symlink(good, goodlink)
+        for path, w, h, stride, off in ((short, 100, 100, 400, 0), ("/etc/hostname", 100, 100, 400, 0),
+                                        (fifo, 10, 10, 40, 0), (link, 5, 5, 20, 0), (goodlink, 10, 10, 40, 0),
+                                        (self.tmp, 10, 10, 40, 0), (good, 10, 10, 40, 4), (good, 0, 10, 40, 0),
+                                        (good, 10, 10, 39, 0), (good, 100000, 1, 400000, 0), (good, 10, 10, 40, -1)):
+            with self.assertRaises(PlayerError, msg=str((path, w, h, stride, off))) as e:
+                r("overlay-add", 3, 0, 0, path, off, "bgra", w, h, stride)
+            self.assertEqual(str(e.exception), "mpv: invalid parameter")
+        self.assertEqual(r("get_property", "osd-width"), W, "still answering")
+        self.assertIsNone(self.r.proc.poll(), "the helper is alive")
+        r("overlay-add", 3, 0, 0, good, 0, "bgra", 10, 10, 40)    # a file that is big enough still goes
+        r("overlay-remove", 3)
+
     def test_bad_lines_are_answered_or_dropped_and_the_socket_lives_on(self):
         for junk in (b"quit\n", b"{not json}\n", b'{"command": "quit"}\n', b'["quit"]\n', b'{"command": []}\n',
                      b'{"command": [' * 40 + b"\n"):

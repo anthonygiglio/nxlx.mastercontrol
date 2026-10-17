@@ -360,6 +360,24 @@ static void get_property(int fd, const mpv_node *id, const char *name)
     mpv_free_node_contents(&res);
 }
 
+// An overlay file is mmapped by mpv for offset + h * stride bytes without a look at its size, and a file
+// shorter than that kills this process with SIGBUS. So: a regular file (not a link, FIFO, directory or
+// device), big enough, and a size of picture that is sane. Anything else is refused as mpv would refuse it.
+#define OVERLAY_MAX_SIDE 8192.0
+static int overlay_file_ok(const char *path, const mpv_node *off, const mpv_node *w, const mpv_node *h, const mpv_node *stride)
+{
+    double o = num(off), ww = num(w), hh = num(h), st = num(stride);
+    if (!(o >= 0 && o <= 4294967296.0) || !(ww >= 1 && ww <= OVERLAY_MAX_SIDE) || !(hh >= 1 && hh <= OVERLAY_MAX_SIDE)
+        || !(st >= ww * 4 && st <= OVERLAY_MAX_SIDE * 4))
+        return 0;
+    int fd = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0) return 0;
+    struct stat sb;
+    int ok = fstat(fd, &sb) == 0 && S_ISREG(sb.st_mode) && (double)sb.st_size >= o + hh * st;
+    close(fd);
+    return ok;
+}
+
 static void capture(int fd, const mpv_node *id, const char *path)
 {
     if (!path || path[0] != '/' || strlen(path) > 4000) { reply(fd, id, "invalid parameter", NULL); return; }
@@ -449,6 +467,7 @@ static void handle(int fd, const char *line, size_t len)
                  && !strcmp(fmt, "bgra");
         for (int i = 2; ok && i < nargs; i++)
             if (i != 4 && i != 6) ok = is_num(arg(cmd, i));
+        if (ok) ok = overlay_file_ok(file, arg(cmd, 5), arg(cmd, 7), arg(cmd, 8), arg(cmd, 9));
         if (!ok) {
             reply(fd, id, "invalid parameter", NULL);
         } else {

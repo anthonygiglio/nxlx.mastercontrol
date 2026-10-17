@@ -219,6 +219,9 @@ int hook_load(const char *path, Hook **out, char *err, size_t n)
             if (h->ntex == MAX_TEX) { snprintf(err, n, "more than %d textures", MAX_TEX); goto bad; }
             for (int i = 0; i < h->ntex; i++)
                 if (!strcmp(h->tex[i].name, t.name)) { snprintf(err, n, "two textures of one name"); goto bad; }
+            if (t.w > MAX_TEX_SIDE || t.h > MAX_TEX_SIDE || (size_t)(blocks[b].end - blocks[b].body) < (size_t)t.w * (size_t)t.h * (size_t)t.bpp * 2) {
+                snprintf(err, n, "a texture's data is not as long as its SIZE says"); goto bad;
+            }
             size_t need = (size_t)t.w * (size_t)t.h * (size_t)t.bpp;
             t.data = malloc(need);
             if (!t.data) { snprintf(err, n, "out of memory"); goto bad; }

@@ -150,6 +150,14 @@ static int set(mpv_handle *h, const char *k, const char *v)
     return r;
 }
 
+// A hardening option (nothing a file can point elsewhere) that mpv rejects is fatal at start: running without it
+// would be running with the media able to name other files, scripts or programs.
+static int hard_failed;
+static void hard(mpv_handle *h, const char *k, const char *v)
+{
+    if (set(h, k, v) < 0) { hard_failed = 1; LOG("fatal: the option %s is needed and mpv does not take it", k); }
+}
+
 static int target(Layer *l, int w, int h)
 {
     l->w = w;
@@ -175,22 +183,23 @@ static int layer_open(Layer *l, int is_text, const Cfg *c, int w, int h)
     l->h = mpv_create();
     if (!l->h) return -1;
     // as classic mpv is started (pvj/player.py, mpv_command): media only, nothing a file can point elsewhere
-    set(l->h, "config", "no");
+    hard(l->h, "config", "no");
     set(l->h, "vo", "libmpv");
     set(l->h, "idle", "yes");
     set(l->h, "force-window", "yes");
     set(l->h, "keep-open", "no");
     set(l->h, "osd-level", "0");
     set(l->h, "terminal", "no");
-    set(l->h, "input-default-bindings", "no");
-    set(l->h, "input-vo-keyboard", "no");
-    set(l->h, "load-unsafe-playlists", "no");
-    set(l->h, "access-references", "no");
-    set(l->h, "sub-auto", "no");
-    set(l->h, "audio-file-auto", "no");
-    set(l->h, "ytdl", "no");
-    set(l->h, "load-scripts", "no");
-    set(l->h, "load-auto-profiles", "no");
+    hard(l->h, "input-default-bindings", "no");
+    hard(l->h, "input-vo-keyboard", "no");
+    hard(l->h, "load-unsafe-playlists", "no");
+    hard(l->h, "access-references", "no");
+    hard(l->h, "sub-auto", "no");
+    hard(l->h, "audio-file-auto", "no");
+    hard(l->h, "ytdl", "no");
+    hard(l->h, "load-scripts", "no");
+    hard(l->h, "load-auto-profiles", "no");
+    if (hard_failed) return -1;
     if (is_text) {
         // plays nothing: only its on-screen layer, over a clear background
         set(l->h, "ao", "null");
@@ -365,7 +374,7 @@ static int write_capture(const char *path)
     glBindFramebuffer(GL_FRAMEBUFFER, out_target());
     glPixelStorei(GL_PACK_ALIGNMENT, 4);
     glReadPixels(0, 0, app.out_w, app.out_h, GL_RGBA, GL_UNSIGNED_BYTE, px);
-    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0640);
+    int fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0640);
     if (fd < 0) { LOG("capture: %s: %s", path, strerror(errno)); free(px); return -1; }
     FILE *f = fdopen(fd, "wb");
     if (!f) { close(fd); free(px); return -1; }
