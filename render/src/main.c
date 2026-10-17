@@ -195,7 +195,8 @@ static int layer_open(Layer *l, int is_text, const Cfg *c, int w, int h)
         // plays nothing: only its on-screen layer, over a clear background
         set(l->h, "ao", "null");
         set(l->h, "aid", "no");
-        set(l->h, "background-color", "#00000000");
+        // a clear background: mpv 0.38 on calls the colour background-color; 0.37 (Ubuntu 24.04) calls it background
+        if (mpv_set_option_string(l->h, "background-color", "#00000000") < 0) set(l->h, "background", "#00000000");
         set(l->h, "osd-bar", "no");
     } else {
         set(l->h, "hwdec", c->hwdec);
