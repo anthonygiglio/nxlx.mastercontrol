@@ -483,14 +483,16 @@ class TextLayerTest(Base):
         self.assertTrue(self.r.wait(lambda: changed() < 20), self.r.stderr())
 
 
-def make_clip(case, path, seconds=3):
-    """A 30 fps H.264 clip of W x H made with ffmpeg (a skip without it, a failure where PVJ_RENDER_TEST=1)."""
+def make_clip(case, path, seconds=3, source="testsrc2"):
+    """A 30 fps H.264 clip of W x H made with ffmpeg (a skip without it, a failure where PVJ_RENDER_TEST=1).
+    `source`: ffmpeg's test source, or "color=c=red" for one plain colour."""
     maker = shutil.which("ffmpeg")
     if not maker:
         if STRICT:
             case.fail("PVJ_RENDER_TEST=1 and no ffmpeg to make the clip")
         case.skipTest("no ffmpeg to make a clip")
-    subprocess.run([maker, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=30:d=%d" % seconds, "-pix_fmt", "yuv420p",
+    sep = ":" if "=" in source else "="
+    subprocess.run([maker, "-v", "error", "-y", "-f", "lavfi", "-i", "%s%ss=320x180:r=30:d=%d" % (source, sep, seconds), "-pix_fmt", "yuv420p",
                     "-c:v", "libx264", "-g", "15", path], check=True, timeout=120, stdin=subprocess.DEVNULL)
 
 
@@ -939,10 +941,16 @@ def fd_count(pid):
     return len(os.listdir("/proc/%d/fd" % pid))
 
 
+def thread_count(pid):
+    return len(os.listdir("/proc/%d/task" % pid))
+
+
 class ManyFadesTest(FadeBase):
-    """A show crossfades all night: 200 fades in a row (two pictures, then two clips) leave no file descriptor, GL
-    fence or GL object behind. Bounded: the whole test gives up after LIMIT seconds."""
+    """A show crossfades all night: 200 fades in a row (two pictures, then two clips) and 30 more each cut short by
+    the next leave no file descriptor, thread, GL fence or GL object behind. After a warm-up the counts are the same
+    at the same state (two clips, nothing fading), give or take SLACK. Bounded: the test gives up after LIMIT."""
     LIMIT = 300.0
+    SLACK = 2
 
     def run_fades(self, a, b, n, seconds, deadline):
         r = self.r
@@ -952,35 +960,151 @@ class ManyFadesTest(FadeBase):
             self.fade(b if i % 2 == 0 else a, seconds)
             self.assertTrue(r.wait(lambda: self.st()["fades-done"] > done, 10, 0.01), "fade %d: %s\n%s" % (i, self.st(), r.stderr()))
 
+    def counts(self):
+        """At rest: nothing fading, the other layer idle, the socket's client threads gone (each Ipc question is a
+        connection of its own, reaped within a fifth of a second)."""
+        st = self.settled()
+        self.assertTrue(self.r.wait(lambda: self.st()["back-idle"] is True, 5))
+        time.sleep(0.6)
+        pid = self.r.proc.pid
+        return {"fds": fd_count(pid), "threads": thread_count(pid), "gl-objects": self.st()["gl-objects"], "fences": st["gl-fences"]}
+
+    def same(self, now, then, what):
+        for k in ("fds", "threads", "gl-objects"):
+            self.assertLessEqual(now[k], then[k] + self.SLACK, "%s: %s piled up: %s, at the start %s" % (what, k, now, then))
+        self.assertLessEqual(now["fences"], 4, now)
+
     def test_two_hundred_fades_leave_nothing_behind(self):
         r = self.r
         deadline = time.monotonic() + self.LIMIT
-        r.load(self.red)
-        self.run_fades(self.red, self.blue, 10, 0.03, deadline)     # libmpv's pools filled once
-        start, fds = self.st(), fd_count(r.proc.pid)
-        self.run_fades(self.red, self.blue, 180, 0.03, deadline)
         a, b = os.path.join(self.tmp, "a.mp4"), os.path.join(self.tmp, "b.mp4")
         make_clip(self, a, 2)
         shutil.copy(a, b)
+        r.load(self.red)
+        self.run_fades(self.red, self.blue, 10, 0.03, deadline)     # libmpv's pools filled once, for pictures
         r("set_property", "loop-file", "inf")
-        r.load(a)
+        self.run_fades(a, b, 10, 0.1, deadline)                     # and for clips
+        start = self.counts()
+        self.run_fades(self.red, self.blue, 180, 0.03, deadline)
         self.run_fades(a, b, 20, 0.1, deadline)
-        st = self.settled()
-        self.assertGreaterEqual(st["fades-done"], 210)
+        after = self.counts()
+        st = self.st()
+        self.assertGreaterEqual(st["fades-done"], 220)
         self.assertEqual(st["fades-cut"], 0)
-        self.assertLessEqual(fd_count(r.proc.pid), fds + 4, "file descriptors piled up over 200 fades")
-        self.assertLessEqual(st["gl-fences"], 6, st)
-        # libmpv's own GL objects: a clip has more of them than a picture, but no more with every fade
-        self.assertLessEqual(st["gl-objects"], start["gl-objects"] + 64, "GL objects piled up: %s, at the start %s" % (st, start))
-        self.run_fades(a, b, 10, 0.1, deadline)
-        later = self.st()
-        self.assertLessEqual(later["gl-objects"], st["gl-objects"] + 8, "GL objects grow with every fade: %s then %s" % (st, later))
-        self.assertLessEqual(fd_count(r.proc.pid), fds + 4)
+        self.same(after, start, "200 fades")
+        # 30 fades, each ended by the next one while it runs (end_fade), then one that runs to its end
+        cut = st["fades-cut"]
+        for i in range(30):
+            self.assertLess(time.monotonic(), deadline, "the bounded run of fades took too long")
+            self.fade(b if i % 2 == 0 else a, 5.0)
+            self.assertTrue(r.wait(lambda: self.st()["fade"] == "running", 10, 0.01), "fade %d: %s" % (i, self.st()))
+        self.run_fades(a, b, 2, 0.1, deadline)
+        self.assertEqual(self.st()["fades-cut"], cut + 30)
+        cut_short = self.counts()
+        self.same(cut_short, start, "30 fades cut short")
         self.assertNotIn("Export failed", r.stderr())
         self.assertIsNone(r.proc.poll())
-        print("\n%d fades: file descriptors %d then %d; libmpv's GL objects %d then %d; GL fences held %d, deleted %d"
-              % (later["fades-done"], fds, fd_count(r.proc.pid), start["gl-objects"], later["gl-objects"], later["gl-fences"],
-                 later["gl-fences-freed"]))
+        print("\n%d fades (%d cut short): at the start %s, after 200 %s, after 30 cut short %s; GL fences deleted %d"
+              % (self.st()["fades-done"] + self.st()["fades-cut"], self.st()["fades-cut"], start, after, cut_short,
+                 self.st()["gl-fences-freed"]))
+
+
+def make_clip_with_sound(case, path, seconds=3):
+    """As make_clip, with a sound track (a tone)."""
+    maker = shutil.which("ffmpeg")
+    if not maker:
+        if STRICT:
+            case.fail("PVJ_RENDER_TEST=1 and no ffmpeg to make the clip")
+        case.skipTest("no ffmpeg to make a clip")
+    subprocess.run([maker, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=30:d=%d" % seconds,
+                    "-f", "lavfi", "-i", "sine=frequency=440:duration=%d" % seconds, "-pix_fmt", "yuv420p",
+                    "-c:v", "libx264", "-g", "15", "-c:a", "aac", "-shortest", path],
+                   check=True, timeout=120, stdin=subprocess.DEVNULL)
+
+
+class FadeEdgesTest(FadeBase):
+    """The review of #148: a clip that ends during the fade, a crossfade with nothing on the screen, the sound."""
+
+    def mean(self, shot):
+        px = shot[2]
+        return sum(px[::97]) / float(len(px[::97]))
+
+    def test_an_outgoing_clip_that_ends_during_the_fade_keeps_its_last_frame(self):
+        r = self.r
+        short = os.path.join(self.tmp, "short.mp4")
+        make_clip(self, short, 3, "color=c=red")
+        black = os.path.join(self.tmp, "black.png")
+        png(black, W, H, lambda x, y: BLACK)
+        r("set_property", "loop-file", "no")
+        r("set_property", "keep-open", "no")
+        r.load(short)
+        # In a fresh headless process a clip is sometimes drawn black for the whole run, on master's phase 1 build too
+        # (2026-10-18, the journal: a fault of its own, still open). So the picture is judged only when the clip was
+        # seen red before the fade; the layer's state is judged always.
+        shown = r.wait(lambda: near(self.centre(), RED), 0.6)
+        self.assertLess(r("get_property", "time-pos"), 2.0, "the clip still has a second to play: %s" % r.stderr())
+        self.fade(black, 8.0)                   # into black: what shows is the outgoing clip's share alone
+        # past the clip's end (3 s, of which some went before the fade), and still well inside the fade
+        self.assertTrue(r.wait(lambda: self.st()["fade"] == "running" and 0.45 < self.st()["fade-progress"] < 0.7, 10, 0.02), self.st())
+        shot = r.capture()
+        self.assertIs(self.st()["back-idle"], False, "the outgoing clip ended and went idle (black) under the fade")
+        if shown:
+            red = self.r.pixel(W // 2, H // 2, shot)
+            self.assertGreater(red[0], 40, "the outgoing clip went black when it ended, half way through the fade: %s" % (red,))
+        self.settled()
+        self.assertTrue(r.wait(lambda: self.st()["back-idle"] is True, 5), "stopped at the end of the fade")
+
+    def test_a_crossfade_with_nothing_on_the_screen_is_a_cut(self):
+        r = self.r
+        r.load(self.red)
+        r("stop")
+        self.assertTrue(r.wait(lambda: r("get_property", "idle-active") is True))
+        self.fade(self.blue, 3.0)
+        st = self.st()
+        self.assertEqual((st["fades"], st["fades-from-nothing"], st["front"], st["fade"]), (0, 1, 0, "off"))
+        self.assertTrue(r.wait(lambda: r.playing() == self.blue))
+        began = time.monotonic()
+        self.assertTrue(r.wait(lambda: near(self.centre(), BLUE), 5))
+        self.assertLess(time.monotonic() - began, 1.5, "it rose from black instead of cutting")
+        time.sleep(1.5)
+        self.assertColour(self.centre(), BLUE, "the options went with it: the picture stays (image-display-duration inf)")
+        # and at power-up, before anything was ever loaded
+        self.r.close()
+        self.r = Renderer()
+        self.fade(self.blue, 3.0)
+        self.assertEqual(self.st()["fades-from-nothing"], 1)
+
+    def test_the_sound_is_handed_from_the_outgoing_clip_to_the_incoming_one(self):
+        # ALSA's null device: a real sound output that opens at once and plays to nothing. Not the machine's own
+        # sound server, which may answer slowly (WSLg's PulseAudio held a core for over 10 seconds once).
+        self.r.close()
+        self.r = r = Renderer("--audio-device=alsa/null")
+        a, b = os.path.join(self.tmp, "a.mp4"), os.path.join(self.tmp, "b.mp4")
+        make_clip_with_sound(self, a, 4)
+        shutil.copy(a, b)
+        r("set_property", "loop-file", "inf")
+        r.load(a)
+        self.assertTrue(r.wait(lambda: r("get_property", "aid") not in (False, None, "no")), "the first clip has its sound track")
+        self.assertTrue(r.wait(lambda: self.output(r) == "alsa", 5), "the first clip's sound output is open: %s" % r.stderr())
+        self.fade(b, 0.5)
+        self.assertNotIn(r("get_property", "aid"), (False, None, "no"), "the incoming clip was given its sound track")
+        self.assertTrue(r.wait(lambda: self.output(r) == "alsa", 5), "the incoming clip's sound output opened")
+        st = self.settled()
+        self.assertEqual(st["sound-held"], 0, "the outgoing core had not closed its output in time: %s" % r.stderr())
+        self.assertNotIn("still holds the sound device", r.stderr())
+        self.fade(a, 0.5)                       # and back: the layer that gave its sound up gets it again
+        self.settled()
+        self.assertNotIn(r("get_property", "aid"), (False, None, "no"))
+        self.assertTrue(r.wait(lambda: self.output(r) == "alsa", 5))
+        self.assertEqual(self.st()["sound-held"], 0)
+
+    @staticmethod
+    def output(r):
+        """The front layer's open sound output (`current-ao`), or None."""
+        try:
+            return r("get_property", "current-ao")
+        except PlayerError:
+            return None
 
 
 class PlayerFadeTest(FadeBase):

@@ -235,6 +235,11 @@ static void *event_loop(void *arg)
                 wake_render();
             }
             if (ev->event_id == MPV_EVENT_START_FILE) __atomic_add_fetch(&app.starts[i], 1, __ATOMIC_RELEASE);
+            if (ev->event_id == MPV_EVENT_PROPERTY_CHANGE) {
+                mpv_event_property *p = ev->data;
+                if (p && p->format == MPV_FORMAT_FLAG && p->data && !strcmp(p->name, "idle-active"))
+                    __atomic_store_n(&app.idle[i], *(int *)p->data, __ATOMIC_RELEASE);
+            }
             if (ev->event_id == MPV_EVENT_PLAYBACK_RESTART) {
                 __atomic_store_n(&app.restart_of[i], __atomic_load_n(&app.starts[i], __ATOMIC_ACQUIRE), __ATOMIC_RELEASE);
                 wake_render();
@@ -300,7 +305,9 @@ static int layer_open(Layer *l, int index, const Cfg *c, int w, int h)
     hard(l->h, "config", "no");
     set(l->h, "vo", "libmpv");
     set(l->h, "idle", "yes");
-    set(l->h, "force-window", "yes");
+    // force-window is turned on only once the render context exists (below): set here, the core tried to make its
+    // window before there was one ("No render context set") and raced the render context's creation
+    set(l->h, "force-window", "no");
     set(l->h, "keep-open", "no");
     set(l->h, "osd-level", "0");
     set(l->h, "terminal", "no");
@@ -328,6 +335,11 @@ static int layer_open(Layer *l, int index, const Cfg *c, int w, int h)
     }
     if (mpv_initialize(l->h) < 0) return -1;
     mpv_request_log_messages(l->h, c->verbose ? "info" : "warn");
+    if (!is_text) {
+        // the layer's idleness, kept by its event thread, so the renderer's own state never waits on the core
+        __atomic_store_n(&app.idle[index], 1, __ATOMIC_RELEASE);
+        mpv_observe_property(l->h, 0, "idle-active", MPV_FORMAT_FLAG);
+    }
     int adv = 0;
     mpv_opengl_init_params gl = { .get_proc_address = get_proc };
     mpv_render_param params[] = {
@@ -337,6 +349,7 @@ static int layer_open(Layer *l, int index, const Cfg *c, int w, int h)
         { 0 } };
     if (mpv_render_context_create(&l->rc, l->h, params) < 0) return -1;
     mpv_render_context_set_update_callback(l->rc, on_update, NULL);
+    mpv_set_property_string(l->h, "force-window", "yes");
     if (target(l, w, h)) return -1;
     l->dirty = 1;
     if (pthread_create(&l->events, NULL, event_loop, l) == 0) l->have_events = 1;
@@ -652,8 +665,9 @@ int main(int argc, char **argv)
         pthread_mutex_lock(&app.lock);
         int quit = app.quit, cap = app.capture_serial != app.capture_done_serial;
         int text_on = app.overlays != 0 || now_s() < app.text_until;
+        // one look at the whole fade: the layer, the phase and its clock are never from two different crossfades
         int fi = app.front, phase = app.fade.phase, base = app.fade.base_starts;
-        double asked = app.fade.asked;
+        double asked = app.fade.asked, t0 = app.fade.t0, len = app.fade.seconds;
         pthread_mutex_unlock(&app.lock);
         if (quit) break;
         if (app.hook_pending) take_hook();
@@ -679,7 +693,7 @@ int main(int argc, char **argv)
                 pthread_mutex_lock(&app.lock);
                 if (app.fade.phase == FADE_WAITING && app.front == fi) {
                     app.fade.phase = phase = FADE_RUNNING;
-                    app.fade.t0 = now;
+                    app.fade.t0 = t0 = now;
                 }
                 pthread_mutex_unlock(&app.lock);
                 front->dirty = 1;
@@ -707,9 +721,6 @@ int main(int argc, char **argv)
         if (phase != FADE_OFF) {
             float share = 0.0f;
             if (phase == FADE_RUNNING) {
-                pthread_mutex_lock(&app.lock);
-                double t0 = app.fade.t0, len = app.fade.seconds;
-                pthread_mutex_unlock(&app.lock);
                 double p = len > 0 ? (now - t0) / len : 1.0;
                 share = (float)(p < 0 ? 0 : p > 1 ? 1 : p);
             }
@@ -727,14 +738,22 @@ int main(int argc, char **argv)
                     mpv_command_async(back->h, 0, stop);
                 }
                 pthread_mutex_unlock(&app.lock);
-            } else if (share <= 0.0f) {
-                picture = back->tex;            // waiting for the incoming clip: the outgoing picture, with no mix
             } else {
-                mix_pass(back, front, share);
-                picture = mix_tex;
+                // A new crossfade may have begun since the look above (the socket's thread made the other layer the
+                // front): then this turn's front is that fade's outgoing layer, which is what its first picture
+                // shows, and nothing of the old fade is mixed or written.
                 pthread_mutex_lock(&app.lock);
-                if (app.fade.phase != FADE_OFF) app.fade.progress = share;
+                int same = app.front == fi && app.fade.phase != FADE_OFF;
+                if (same) app.fade.progress = share;
                 pthread_mutex_unlock(&app.lock);
+                if (!same) {
+                    picture = front->tex;
+                } else if (share <= 0.0f) {
+                    picture = back->tex;        // waiting for the incoming clip: the outgoing picture, with no mix
+                } else {
+                    mix_pass(back, front, share);
+                    picture = mix_tex;
+                }
             }
         }
         final_pass(picture, text_on);

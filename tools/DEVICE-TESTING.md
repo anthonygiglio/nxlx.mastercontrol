@@ -621,7 +621,7 @@ before and after each run; the GPU's busy share as in R1.
 
 | # | Do | Look for | Send back |
 | --- | --- | --- | --- |
-| CF1 | Play A1, then A2, by eye | A1 goes on moving while A2 comes in over two seconds; no freeze before the fade, no step in it, no flash of black or of an old picture at its start or end; A1's sound stops at the tap and A2's begins with it | Smooth or stepped; anything that flashed; how the sound changed |
+| CF1 | Play A1, then A2, by eye | A1 goes on moving while A2 comes in over two seconds; no freeze before the fade, no step in it, no flash of black or of an old picture at its start or end; A1's sound stops at the tap and A2's begins with it | Smooth or stepped; anything that flashed; how the sound changed; `sound-held` in the property (must stay 0) and any line "still holds the sound device" in `journalctl -u pvj-player` |
 | CF2 | Flips and missed vblanks during a fade at detail **Automatic** (540 on a Pi 4): read the property, play A2, read it again 2.5 s later | `flips` up by about 150 (60 a second, 2.5 s), `missed-vblanks` up by 0 or a few, `drawn` and `back-drawn` each up by about 60 to 75 (30 fps each) | The four differences |
 | CF3 | The same at detail **540** | As CF2 | As CF2 |
 | CF4 | The same at detail **720** | As CF2. The spike missed 3 vblanks in 2 minutes at 720 with two layers | As CF2 |
@@ -629,6 +629,8 @@ before and after each run; the GPU's busy share as in R1.
 | CF6 | The GPU's busy share during a fade at each detail of CF2 to CF5 (`gpu_stats` read before and after one fade) | Under 100 percent at 540 and 720 | The share at each detail |
 | CF7 | 200 fades, with pvj-render run by hand as in R1 and A1's clip loaded: `ls /proc/$(pgrep -x pvj-render)/fd \| wc -l`, then `for i in $(seq 100); do echo '{"command":["pvj-crossfade","/path/a2.mp4",0.5]}' \| socat - /tmp/r.sock; sleep 1.5; echo '{"command":["pvj-crossfade","/path/a1.mp4",0.5]}' \| socat - /tmp/r.sock; sleep 1.5; done` (five minutes), then the count again and the property | The descriptor count the same as before the run (within a few), `gl-fences` near 0, `gl-objects` no higher than after the first ten fades, `fades-done` 200, `journalctl -u pvj-player | grep -c "Export failed"` 0 | The count before and after, the property, the grep |
 | CF8 | During a fade press **Blackout**; then **Stop** during another; then a pad during a fade; then choose **Classic** on Setup > Screen output and play A1 then A2 | Blackout: black at once (both pictures); Stop: black at once; a pad: the fade ends and the new clip is cut to; on Classic: D71's crossfade as before (X1 above), with no line "no crossfade on the new renderer" in `journalctl -u pvj-web` | Anything that stayed lit, and whether Classic looked as before |
+| CF9 | Out of a generator (a shader pad) into A1, and out of the NDI input into A1, both with Crossfade | D71's crossfade as on classic: the generator's or the NDI picture stands still and melts into A1; for NDI the next NDI source still opens (D62) | Whether both looked as on classic |
+| CF10 | Stop, then play A1 with Crossfade | A1 is there at once, as a cut (no rise from black); `fades-from-nothing` up by 1 | Yes or no |
 
 ### Sound reactivity (D96): never run on a Pi or with a real audio input
 

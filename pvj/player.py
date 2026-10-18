@@ -323,13 +323,21 @@ class Player:
         on classic mpv, or when the renderer refuses, this is a cut (the plain load below), never a black screen.
         Without `fade` nothing here differs from before."""
         with self._lock:
-            from_clip = not self._pipe and self._source is None and self._carrier is None
-            self.fade_refused = "" if from_clip else "out of a generator or a live input the new renderer cuts (D98)"
+            from_clip = self.fades_from_clip()
+            # a second guard: the panel asks fades_from_clip first and takes D71's still out of the others
+            self.fade_refused = "" if from_clip else "not from a plain clip (a generator or a live input)"
             self._end_source()
             self._pipe, self._pipe_gone = False, None
             if fade is not None and from_clip and self._crossfade(paths, loop, ending, fade):
                 return None
             return self._play(paths, loop, audio_device, windowed, spawn, ending, image_seconds)
+
+    def fades_from_clip(self):
+        """True when what this side loaded last is a plain clip: no generator (its shader and carrier), no live
+        input's pipe. Only then does the renderer's crossfade apply (D98); out of the others a crossfade takes D71's
+        still on every player, which keeps D62's hand-over of the NDI pipe as it was. Asks the player nothing and
+        takes no lock (a status reads it; three plain fields, each set under the player's lock by whoever loads)."""
+        return not self._pipe and self._source is None and self._carrier is None
 
     _layers_seen = None             # (pid, True or False): does that player process mix two video layers (D98)
     fade_refused = ""               # why the last crossfade asked of the renderer became a cut, for the log

@@ -409,13 +409,15 @@ class Api:
         return out
 
     def _layered_fade(self, ask=True):
-        """True where the player is pvj-render with two video layers, which draws a crossfade itself (D98). Asked of
-        the player once per process (Player.crossfades); a player without that question is classic."""
-        probe = getattr(self.player, "crossfades", None)
-        if probe is None:
+        """True where the player is pvj-render with two video layers, which draws a crossfade itself (D98), and what
+        plays is a plain clip (out of a generator or a live input a crossfade takes D71's still, on that player too).
+        Asked of the player once per process (Player.crossfades); a player without these questions is classic. So
+        the status shows the still's reason for giving up whenever the still is what a crossfade would use."""
+        probe, plain = getattr(self.player, "crossfades", None), getattr(self.player, "fades_from_clip", None)
+        if probe is None or plain is None:
             return False
         try:
-            return probe(ask) is True
+            return plain() is True and probe(ask) is True
         except Exception:
             return False
 
@@ -1411,8 +1413,9 @@ class Api:
         # that is dark (Blackout, a picture faded out) has nothing to blend from, as the dip skips itself there.
         # Where the box cannot do one it dips; where the still itself fails, time has passed already and the clip
         # is cut to. Whether anything is loaded in the player is the still's own first question.
-        # On pvj-render with two video layers (D98) a crossfade is the renderer's own: no still, no freeze, both
-        # pictures move, and the box never gives up on it for a slow still. Wipes and slides keep D71's still there.
+        # On pvj-render with two video layers (D98) a crossfade from a plain clip is the renderer's own: no still, no
+        # freeze, both pictures move, and the box never gives up on it for a slow still. Out of a generator or a live
+        # input, and for wipes and slides, D71's still as on classic (it works on pvj-render too; _layered_fade).
         blend = layered = False
         if kind in transitions_mod.STYLES:
             if playing and not self.mix["blackout"] and self.mix["opacity"] > 0 and not faded_out:

@@ -39,4 +39,6 @@ answer for 2 seconds, or sends nothing for 30, is dropped. libmpv 0.40 and 0.41 
 frame with the render API (on the Pi's V3D a file descriptor each); this program deletes it, and
 `gl-fences` / `gl-fences-freed` in the same property show it. The same property says `layers`, `front`, `fade`
 (`off`, `waiting`, `running`), `fade-progress`, `fades`, `fades-done`, `fades-cut`, `back-drawn`, `back-idle` and
-`gl-objects` (libmpv's textures, framebuffers, renderbuffers and buffers held now).
+`gl-objects` (libmpv's textures, framebuffers, renderbuffers and buffers held now), `fades-from-nothing` (a
+crossfade with nothing on the screen is loaded as a cut) and `sound-held` (crossfades whose outgoing core had not closed
+its sound output within a second).

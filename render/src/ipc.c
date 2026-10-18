@@ -291,6 +291,39 @@ static void end_fade(void)
 // the outgoing clip plays on under it, silent (its sound stops at the tap, as D71's freeze stopped it: one sound
 // device, one player on it at a time), and the render thread mixes the two from the incoming clip's first frame on,
 // over SECONDS, then stops the outgoing one. OPTIONS: "keep-open=..,image-display-duration=.." for the incoming clip.
+//
+// With nothing loaded on the screen (after a Stop, at power-up) there is nothing to fade from: the clip is loaded into
+// the front layer as a loadfile would load it, which is a cut, as D71 starts the clip "as with a cut" there.
+//
+// The sound is handed over in an order that never has two cores on the device at once: the incoming clip is loaded
+// with no sound track, the outgoing layer's sound is taken off, this thread waits (at most SOUND_WAIT seconds) until
+// that core has closed its audio output (`current-ao` unavailable), and only then is the incoming clip given its sound.
+#define SOUND_WAIT 1.0
+
+// "k=v,k=v" (already checked against FADE_KEYS) set on `h`; the first refusal is the answer
+static int apply_options(mpv_handle *h, const char *opts)
+{
+    if (!opts) return 0;
+    char *copy = strdup(opts), *save = NULL;
+    if (!copy) return MPV_ERROR_NOMEM;
+    int r = 0;
+    for (char *part = strtok_r(copy, ",", &save); part && r >= 0; part = strtok_r(NULL, ",", &save)) {
+        char *eq = strchr(part, '=');
+        *eq = 0;
+        r = set_str(h, part, eq + 1);
+    }
+    free(copy);
+    return r;
+}
+
+static int has_audio_out(mpv_handle *h)
+{
+    char *ao = mpv_get_property_string(h, "current-ao");
+    int open = ao != NULL;
+    mpv_free(ao);
+    return open;
+}
+
 static void crossfade(int fd, const mpv_node *id, const mpv_node *cmd)
 {
     int nargs = cmd->u.list->num;
@@ -302,37 +335,62 @@ static void crossfade(int fd, const mpv_node *id, const mpv_node *cmd)
         reply(fd, id, "invalid parameter", NULL);
         return;
     }
+    const char *load[] = { "loadfile", url, "replace", NULL };
     pthread_mutex_lock(&layer_lock);
     end_fade();
     int out = front_layer(), in = 1 - out;
     mpv_handle *H = app.layer[in], *O = app.layer[out];
-    // the incoming layer as a fresh player for this clip: playing, with its sound, and the file's own options
+    int idle = 0;
+    if (mpv_get_property(O, "idle-active", MPV_FORMAT_FLAG, &idle) >= 0 && idle) {
+        // nothing on the screen to fade from: a cut, into the front layer
+        set_str(O, "pause", "no");
+        set_str(O, "keep-open", "no");
+        int r = apply_options(O, opts);
+        if (r >= 0) r = mpv_command(O, load);
+        pthread_mutex_lock(&app.lock);
+        if (r >= 0) app.fades_from_nothing++;
+        pthread_mutex_unlock(&app.lock);
+        pthread_mutex_unlock(&layer_lock);
+        reply(fd, id, r < 0 ? mpv_error_string(r) : "success", NULL);
+        return;
+    }
+    // the incoming layer as a fresh player for this clip: playing, no sound yet (below), and the file's own options
     set_str(H, "pause", "no");
-    set_str(H, "aid", "auto");
-    int r = 0;
-    if (opts) {
-        char *copy = strdup(opts), *save = NULL;
-        if (!copy) r = MPV_ERROR_NOMEM;
-        for (char *part = copy ? strtok_r(copy, ",", &save) : NULL; part && r >= 0; part = strtok_r(NULL, ",", &save)) {
-            char *eq = strchr(part, '=');
-            *eq = 0;
-            r = set_str(H, part, eq + 1);
-        }
-        free(copy);
-    }
+    set_str(H, "keep-open", "no");
+    set_str(H, "aid", "no");
+    int r = apply_options(H, opts);
     int base = __atomic_load_n(&app.starts[in], __ATOMIC_ACQUIRE);
+    char *kept = NULL;
     if (r >= 0) {
-        set_str(O, "aid", "no");               // the outgoing sound goes first, so the incoming clip finds the device free
-        const char *load[] = { "loadfile", url, "replace", NULL };
+        // the outgoing clip keeps its last frame if it ends during the fade, instead of going idle and black; it is
+        // stopped at the end anyway
+        kept = mpv_get_property_string(O, "keep-open");
+        set_str(O, "keep-open", "yes");
         r = mpv_command(H, load);
-        if (r < 0) set_str(O, "aid", "auto");  // refused: nothing changed, the clip on the screen keeps its sound
+        if (r < 0 && kept) set_str(O, "keep-open", kept);      // refused: nothing changed on the screen
     }
+    mpv_free(kept);
     if (r < 0) {
         pthread_mutex_unlock(&layer_lock);
         LOG("ipc: pvj-crossfade: the incoming clip was not loaded: %s", mpv_error_string(r));
         reply(fd, id, mpv_error_string(r), NULL);
         return;
     }
+    // the sound: off the outgoing core, its output closed, then on the incoming one
+    int ro = set_str(O, "aid", "no");
+    if (ro < 0) LOG("ipc: pvj-crossfade: the outgoing clip's sound could not be taken off: %s", mpv_error_string(ro));
+    double until = now_s() + SOUND_WAIT;
+    while (has_audio_out(O) && now_s() < until) {
+        struct timespec ts = { 0, 5 * 1000 * 1000 };
+        nanosleep(&ts, NULL);
+    }
+    if (has_audio_out(O)) {
+        LOG("ipc: pvj-crossfade: the outgoing clip still holds the sound device after %.1f s; the incoming clip may be silent", SOUND_WAIT);
+        pthread_mutex_lock(&app.lock);
+        app.sound_held++;
+        pthread_mutex_unlock(&app.lock);
+    }
+    set_str(H, "aid", "auto");
     pthread_mutex_lock(&app.lock);
     app.fade.phase = FADE_WAITING;
     app.fade.seconds = s;
@@ -497,29 +555,33 @@ static void get_property(int fd, const mpv_node *id, const char *name)
         pthread_mutex_lock(&app.lock);
         char state[sizeof app.hook_state];
         memcpy(state, app.hook_state, sizeof state);
+        // Nothing here asks libmpv: this is read to time the flips (tests/test_pvj_render.py, PaceTest), and a question
+        // to a core sent after the counters were taken let the answer leave late with old counts (CI, mpv 0.37 and
+        // 0.40: 63 flips a second measured on a clock of 60). The other layer's idleness comes from its event thread.
         long flips = app.flips, missed = app.missed, drawn = app.drawn, fences = app.fences, freed = app.fences_freed;
         long back = app.back_drawn, fades = app.fades, done = app.fades_done, cut = app.fades_cut;
+        long nothing = app.fades_from_nothing, held = app.sound_held;
         int osd = app.overlays != 0 || now_s() < app.text_until;
         int phase = app.fade.phase, front = app.front;
         double progress = app.fade.progress, seconds = app.fade.seconds;
+        int back_idle = __atomic_load_n(&app.idle[1 - front], __ATOMIC_ACQUIRE);      // nothing loaded: it costs nothing
         pthread_mutex_unlock(&app.lock);
-        int back_idle = 0;                          // the other layer has nothing loaded: it costs nothing
-        mpv_get_property(app.layer[1 - front], "idle-active", MPV_FORMAT_FLAG, &back_idle);
         static const char *const PHASES[] = { "off", "waiting", "running" };
         static const char *const keys[] = { "version", "internal-width", "internal-height", "output-width", "output-height",
                                             "output-fps", "flips", "drawn", "missed-vblanks", "mapping", "text-layer", "hwdec",
                                             "gl-fences", "gl-fences-freed", "layers", "front", "fade", "fade-progress",
                                             "fade-seconds", "fades", "fades-done", "fades-cut", "back-drawn", "gl-objects",
-                                            "back-idle" };
-        mpv_node vals[25] = { node_str(PVJ_VERSION), node_int(app.in_w), node_int(app.in_h), node_int(app.out_w), node_int(app.out_h),
+                                            "back-idle", "fades-from-nothing", "sound-held" };
+        mpv_node vals[27] = { node_str(PVJ_VERSION), node_int(app.in_w), node_int(app.in_h), node_int(app.out_w), node_int(app.out_h),
                               node_dbl(app.out_hz), node_int(flips), node_int(drawn), node_int(missed), node_str(state),
                               { .format = MPV_FORMAT_FLAG }, node_str(app.cfg->hwdec), node_int(fences), node_int(freed),
                               node_int(LAYERS), node_int(front), node_str(PHASES[phase]), node_dbl(progress), node_dbl(seconds),
                               node_int(fades), node_int(done), node_int(cut), node_int(back),
-                              node_int(__atomic_load_n(&app.gl_objects, __ATOMIC_RELAXED)), { .format = MPV_FORMAT_FLAG } };
+                              node_int(__atomic_load_n(&app.gl_objects, __ATOMIC_RELAXED)), { .format = MPV_FORMAT_FLAG },
+                              node_int(nothing), node_int(held) };
         vals[10].u.flag = osd;
         vals[24].u.flag = back_idle;
-        mpv_node_list list = { .num = 25, .values = vals, .keys = (char **)keys };
+        mpv_node_list list = { .num = 27, .values = vals, .keys = (char **)keys };
         d.format = MPV_FORMAT_NODE_MAP;
         d.u.list = &list;
         reply(fd, id, "success", &d);

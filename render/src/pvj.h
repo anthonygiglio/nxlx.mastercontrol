@@ -78,10 +78,13 @@ typedef struct {
         int base_starts;            // the incoming layer's count of started files before its load (see Layer)
     } fade;
     long fades, fades_done, fades_cut;  // crossfades asked; run to their end; ended early (a load, a stop, a new fade)
+    long fades_from_nothing;        // crossfades asked with nothing on the screen: loaded as a cut instead
+    long sound_held;                // crossfades whose outgoing core had not closed its sound output in time
     // per video layer, kept by its event thread (atomics): files started so far, and which of those starts the last
     // playback restart (a first frame ready, after a load or a seek) and the last failed load belong to. libmpv sends
     // a layer's events in order, so what an older file of that layer said is never taken for the incoming clip's.
     int starts[LAYERS], restart_of[LAYERS], failed_of[LAYERS];
+    int idle[LAYERS];               // the layer's idle-active, as observed by its event thread (atomics)
 
     // counters
     long flips, missed, drawn, back_drawn;  // drawn: frames of the front layer converted; back_drawn: of the other

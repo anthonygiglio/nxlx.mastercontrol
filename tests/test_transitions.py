@@ -2611,22 +2611,34 @@ class LayeredCrossfade(ServerBase):
         self.assertNotIn("screenshot-to-file", self.mpv.commands)
         self.assertTrue(any("a cut instead" in line and "error running command" in line for line in self.lines), self.lines)
 
-    def test_out_of_a_generator_the_new_renderer_cuts(self):
+    def still_crossfade(self):
+        """The play went D71's way: a still of the window, the clip loaded under it, the still faded away."""
+        asked = len(self.mpv.commands)
+        self.api.play({"file": "b.mov"}, None, "t")
+        self.wait_still_gone()
+        sent = self.mpv.commands[asked:]
+        self.assertIn("screenshot-to-file", sent, "no still: %s" % sent)
+        self.assertIn("overlay-add", sent, "the still was not laid over the clip")
+        self.assertNotIn("pvj-crossfade", sent)
+        self.assertEqual(self.mpv.log[-1], ("load", "file", "b.mov"))
+        self.assertEqual(self.mpv.fades, [])
+        self.assertEqual(self.api.transitions.last.get("ended"), "done", self.api.transitions.last)
+        self.assertFalse(any("a cut instead" in line for line in self.lines), self.lines)
+
+    def test_out_of_a_generator_on_the_new_renderer_the_crossfade_is_d71s_still(self):
+        # D89: the still of the window is what a crossfade out of a generator fades from, on every player
         self.mpv.layers = True
         sid = self.api.shaders.library()[0]["id"]
         self.assertTrue(self.api.shaders.show(sid)["ok"])
-        self.api.play({"file": "b.mov"}, None, "t")
-        self.assertEqual(self.mpv.log[-1], ("load", "file", "b.mov"))
-        self.assertEqual(self.mpv.fades, [])
-        self.assertTrue(any("generator or a live input" in line for line in self.lines), self.lines)
-        self.assertIsNone(self.api.player.source_shader, "the generator came off with the cut")
+        self.still_crossfade()
+        self.assertIsNone(self.api.player.source_shader, "the generator came off when the clip loaded")
 
-    def test_out_of_a_live_input_the_new_renderer_cuts(self):
+    def test_out_of_a_live_input_on_the_new_renderer_the_crossfade_is_d71s_still(self):
+        # and D62's hand-over of the pipe stays as it was: the one layer lets go of it at the load
         self.mpv.layers = True
         self.live_input()
-        self.api.play({"file": "b.mov"}, None, "t")
-        self.assertEqual(self.mpv.log[-1], ("load", "file", "b.mov"))
-        self.assertEqual(self.mpv.fades, [])
+        self.still_crossfade()
+        self.assertFalse(self.player.pipe_playing)
 
     def test_a_crossfade_from_a_dark_screen_rises_as_before(self):
         # Blackout on: no picture to blend from; the clip loads as a cut, as on classic
@@ -2643,6 +2655,11 @@ class LayeredCrossfade(ServerBase):
         self.assertNotIn("fallback", self.api._mix_settings())
         self.settings.data["mix"] = T.stored("wipe-from-left", 1.0)
         self.assertIn("fallback", self.api._mix_settings(), "a wipe still takes the still")
+        # a crossfade out of a generator takes the still on this player too: then the still's reason is shown
+        self.settings.data["mix"] = T.stored("crossfade", 1.0)
+        self.assertNotIn("fallback", self.api._mix_settings())
+        self.player._source = "/x/generator.glsl"
+        self.assertIn("fallback", self.api._mix_settings(), "out of a generator the still's reason applies")
 
 
 class Stress(ServerBase):
