@@ -31,7 +31,12 @@ DEPTH_MIN, DEPTH_MAX = -1.0, 1.0
 SMOOTH_MIN, SMOOTH_MAX = 0.5, 10.0
 NAME_MAX = 64
 DEFAULT_MAP = {"on": False, "input": "", "source": "level", "rest": 0.0, "depth": 0.5, "smooth": 1.5}
-DEFAULT = {"on": False, "device": "", "gain_db": 0.0, "osc_state": False, "osc_render": False, "map": dict(DEFAULT_MAP)}
+# The sources (D97): what pvj-sound hears. The device is the one capture device; the others are fed in by the panel.
+INPUTS = ("device", "box", "ndi", "osc")
+INPUT_NAMES = {"device": "The capture device", "box": "The box's own sound", "ndi": "The NDI sound", "osc": "Levels sent in over OSC"}
+MAX_IN_HOSTS = 8
+DEFAULT = {"on": False, "device": "", "gain_db": 0.0, "osc_state": False, "osc_render": False, "map": dict(DEFAULT_MAP),
+           "source": "device", "allowed": ["device"], "channel": "mix", "in_hosts": []}
 
 
 class SoundError(ValueError):
@@ -71,7 +76,7 @@ def map_form(m):
 def form(section):
     """The `sound` section, checked. Raises SoundError."""
     if not isinstance(section, dict) or set(section) - set(DEFAULT):
-        raise SoundError("the sound section holds on, device, gain_db, osc_state, osc_render and map")
+        raise SoundError("the sound section holds on, device, gain_db, osc_state, osc_render, map, source, allowed, channel and in_hosts")
     out = dict(DEFAULT)
     out.update(section)
     for key in ("on", "osc_state", "osc_render"):
@@ -84,6 +89,26 @@ def form(section):
             raise SoundError(str(e))
     out["gain_db"] = _number(out["gain_db"], sound_mod.GAIN_MIN, sound_mod.GAIN_MAX, "the gain trim (dB)")
     out["map"] = map_form(out["map"])
+    allowed = out["allowed"]
+    if not isinstance(allowed, list) or any(a not in INPUTS for a in allowed) or len(set(allowed)) != len(allowed):
+        raise SoundError("the allowed sources are some of: %s" % ", ".join(INPUTS))
+    out["allowed"] = [a for a in INPUTS if a in allowed]
+    if out["source"] not in INPUTS:
+        raise SoundError("the source is one of: %s" % ", ".join(INPUTS))
+    if out["source"] not in out["allowed"]:
+        raise SoundError("%s is not one of the sources the owner allowed" % INPUT_NAMES[out["source"]])
+    ch = out["channel"]
+    if ch != "mix" and (isinstance(ch, bool) or not isinstance(ch, int) or not 1 <= ch <= sound_mod.MAX_CHANNELS):
+        raise SoundError("the input is the mix or a number from 1 to %d" % sound_mod.MAX_CHANNELS)
+    hosts = out["in_hosts"]
+    if not isinstance(hosts, list) or len(hosts) > MAX_IN_HOSTS:
+        raise SoundError("at most %d addresses may send levels in" % MAX_IN_HOSTS)
+    try:
+        out["in_hosts"] = [str(fb.address_form(h)) for h in hosts]
+    except fb.FeedbackError as e:
+        raise SoundError(str(e).replace("state is only sent to", "levels are only taken from"))
+    if len(set(out["in_hosts"])) != len(out["in_hosts"]):
+        raise SoundError("an address is in the list twice")
     return out
 
 
@@ -119,7 +144,7 @@ class Client:
         return reply if isinstance(reply, dict) else None
 
 
-STATES = ("idle", "capturing", "problem")
+STATES = ("idle", "capturing", "problem", "waiting")
 
 
 def _helper_view(reply):
@@ -127,11 +152,13 @@ def _helper_view(reply):
     if not isinstance(reply, dict) or reply.get("ok") is not True:
         return {"running": False}
     want = reply.get("want") if isinstance(reply.get("want"), dict) else {}
+    extra = {k: want.get(k) for k in ("source", "channel", "channels") if isinstance(want.get(k), (str, int)) and not isinstance(want.get(k), bool)}
     why = reply.get("why") if isinstance(reply.get("why"), str) else ""
     out = {"running": True, "state": reply.get("state") if reply.get("state") in STATES else "problem",
            "why": sound_mod._clean(why, 200), "gen": reply.get("gen") if isinstance(reply.get("gen"), int) else -1,
            "want": {"on": want.get("on") is True, "device": want.get("device") if isinstance(want.get("device"), str) else "",
                     "gain_db": want.get("gain_db") if isinstance(want.get("gain_db"), (int, float)) and not isinstance(want.get("gain_db"), bool) else None}}
+    out["want"].update(extra)
     cpu = reply.get("cpu_seconds")
     up = reply.get("uptime")
     if isinstance(cpu, (int, float)) and isinstance(up, (int, float)) and not isinstance(cpu, bool) and up > 0:
@@ -222,6 +249,18 @@ def _udp():
     return sock
 
 
+# --- the fed sources (D97) ----------------------------------------------------------------------------------------------------
+METER_LABEL = "pvjsound"
+# A filter that passes the sound through unchanged and leaves its RMS and peak level per audio frame as metadata.
+METER_FILTER = "@%s:lavfi=[astats=metadata=1:reset=1:measure_perchannel=none:measure_overall=RMS_level+Peak_level]" % METER_LABEL
+METER_EVERY = 0.04              # the player's meter is read 25 times a second
+METER_CHECK = 2.0               # and whether the filter is still there (a player that restarted lost it) every 2 s
+IN_PREFIX = "/nxlx/sound/in/"
+IN_EVERY = 0.02                 # what came in over OSC is fed at most 50 times a second
+IN_RATE, IN_BURST = 80.0, 20.0              # messages from one sender: at most 100 in any second
+IN_ALL_RATE, IN_ALL_BURST = 160.0, 40.0     # from all senders: at most 200
+
+
 # --- the shader input -------------------------------------------------------------------------------------------------------
 MAP_EVERY = 0.5                 # a new value at most twice a second (the classic renderer compiles each one)
 MAP_STEP = 0.02                 # and only when it moved by this share of the input's range
@@ -251,6 +290,11 @@ class Sound:
         self._map_sent = None               # (shader id, epoch, input, value)
         self._map_at = None
         self._last_beats = None
+        self._feeder, self._feed_stop = None, threading.Event()
+        self.feed_why, self.meter_why = "", None
+        self._in_latest, self._in_at, self._in_hosts = None, 0.0, None
+        self._in_buckets = {}
+        self.in_stats = {"taken": 0, "held": 0, "ignored": 0}
         self._plan = {"next_send": 0.0, "next_bands": 0.0}
         self._targets = None                # (when, gen, the list): where it may go, for TARGETS_EVERY
         self.targets_asked = 0
@@ -276,6 +320,7 @@ class Sound:
             self.gen += 1
         self.push()
         self.ensure()
+        self.ensure_feeder()
 
     # -- the service --
     def push(self):
@@ -283,7 +328,8 @@ class Sound:
         cfg = self.config()
         with self.lock:
             gen = self.gen
-        reply = self.client.request({"cmd": "configure", "on": cfg["on"], "device": cfg["device"], "gain_db": cfg["gain_db"], "gen": gen})
+        reply = self.client.request(dict({"cmd": "configure", "on": cfg["on"], "device": cfg["device"], "gain_db": cfg["gain_db"], "gen": gen},
+                                         **self.wanted(cfg)))
         view = _helper_view(reply)
         with self.lock:
             self.helper, self.helper_at = view, self._clock()
@@ -304,9 +350,12 @@ class Sound:
             with self.lock:
                 gen = self.gen
             want = view.get("want") or {}
-            if view.get("gen") != gen or want.get("on") != cfg["on"] or want.get("device") != cfg["device"] or want.get("gain_db") != cfg["gain_db"]:
+            w = self.wanted(cfg)
+            if (view.get("gen") != gen or want.get("on") != cfg["on"] or want.get("device") != cfg["device"] or want.get("gain_db") != cfg["gain_db"]
+                    or any(want.get(k) != w[k] for k in w)):
                 self.push()
         self.ensure()
+        self.ensure_feeder()
 
     def levels(self):
         """The last record of the levels file, with "fresh" (younger than STALE_SECONDS), or None."""
@@ -341,6 +390,7 @@ class Sound:
         with self.lock:
             self._stop.set()
             self._thread = None
+        self.stop_feeder()
 
     def plan(self, v, now):
         """The datagrams of this look at the file: a beat at once, the values every SEND_EVERY, the slow bands every
@@ -569,3 +619,205 @@ class Sound:
             why = dict(self.osc_why)
             stats = dict(self.stats)
         return {"left_out": [{"kind": k, "name": n, "why": w} for (k, n), w in sorted(why.items())], "stats": stats}
+
+    # -- the fed sources (D97): the box's own sound and the NDI sound measured in the player; levels sent in over OSC --
+    def device_channels(self, cfg=None):
+        cfg = cfg or self.config()
+        for d in self.devices():
+            if d["id"] == cfg["device"]:
+                return d.get("channels", sound_mod.DEFAULT_CHANNELS)
+        return sound_mod.DEFAULT_CHANNELS
+
+    def wanted(self, cfg=None):
+        """What the service is told: the device and its channel, or a feed."""
+        cfg = cfg or self.config()
+        if cfg["source"] == "device":
+            channels = self.device_channels(cfg)
+            channel = cfg["channel"] if cfg["channel"] == "mix" or cfg["channel"] <= channels else "mix"
+            return {"source": "device", "channel": channel, "channels": channels}
+        return {"source": "feed", "channel": "mix", "channels": 1}
+
+    def feeding(self, cfg=None):
+        cfg = cfg or self.config()
+        return bool(cfg["on"] and cfg["source"] in ("box", "ndi", "osc"))
+
+    def ensure_feeder(self):
+        want = self.feeding()
+        with self.lock:
+            running = self._feeder is not None and self._feeder.is_alive()
+            if want and not running:
+                self._feed_stop = threading.Event()
+                self._feeder = threading.Thread(target=self._feed_loop, args=(self._feed_stop,), name="sound-feed", daemon=True)
+                self._feeder.start()
+            elif not want and running:
+                self._feed_stop.set()
+                self._feeder = None
+
+    def stop_feeder(self):
+        with self.lock:
+            if self._feeder is not None:
+                self._feed_stop.set()
+                self._feeder = None
+
+    def _player(self):
+        player = getattr(self.api, "player", None)
+        return getattr(player, "ipc", None)
+
+    def meter(self, on):
+        """Put the meter into the player's audio filters (or take it out). Returns None, or why it could not."""
+        ipc = self._player()
+        if ipc is None:
+            return "the player is not there"
+        try:
+            listed = ipc.request("get_property", "af")         # Ipc.request: the answer's data, or PlayerError
+            there = isinstance(listed, list) and any(isinstance(f, dict) and f.get("label") == METER_LABEL for f in listed)
+            if on and not there:
+                ipc.request("af", "add", METER_FILTER)
+            elif not on and there:
+                ipc.request("af", "remove", "@" + METER_LABEL)
+        except Exception as e:
+            return "the player did not take the meter (%s); the new renderer does not yet, classic mpv does" % sound_mod._clean(str(e), 80)
+        return None
+
+    def read_meter(self):
+        """(rms dB, peak dB) of the player's last audio frame, or None. Only these two numbers ever leave the player."""
+        ipc = self._player()
+        try:
+            data = ipc.request("get_property", "af-metadata/" + METER_LABEL) if ipc is not None else None
+        except Exception:
+            return None
+        if not isinstance(data, dict):
+            return None
+        out = []
+        for key in ("lavfi.astats.Overall.RMS_level", "lavfi.astats.Overall.Peak_level"):
+            v = data.get(key)
+            try:
+                v = float(v) if isinstance(v, str) and len(v) < 32 else None
+            except ValueError:
+                v = None
+            if v is None:
+                return None
+            out.append(sound_mod.FLOOR_DB if v != v or v < sound_mod.FLOOR_DB else min(sound_mod.GAIN_MAX, v))    # "-inf" is silence
+        return tuple(out)
+
+    def ndi_playing(self):
+        ndi = getattr(self.api, "ndi", None)
+        cur = getattr(ndi, "current", None) if ndi is not None else None
+        return bool(isinstance(cur, dict) and cur.get("id"))
+
+    def feed_once(self, cfg):
+        """One look for the fed source; returns the feed sent, or None."""
+        src = cfg["source"]
+        if src in ("box", "ndi"):
+            if src == "ndi" and not self.ndi_playing():
+                self.feed_why = "No NDI picture is playing, so there is no NDI sound to measure"
+                return None
+            got = self.read_meter()
+            if got is None:
+                self.feed_why = "The player gives no sound level now (nothing plays, or it plays no sound)"
+                return None
+            f = {"rms_db": got[0], "peak_db": got[1]}
+        else:
+            with self.lock:
+                held, at = self._in_latest, self._in_at
+            if held is None or self._clock() - at > sound_mod.STALE_SECONDS:
+                self.feed_why = "Nothing has been sent in over OSC in the last half second"
+                return None
+            with self.lock:
+                f = dict(self._in_latest)
+                self._in_latest.pop("beat", None)        # a beat is sent once
+        self.feed_why = ""
+        self.client.request(dict(f, cmd="feed"))
+        return f
+
+    def _feed_loop(self, stop):
+        metered = None
+        try:
+            while not stop.is_set():
+                cfg = self.config()
+                if cfg["source"] in ("box", "ndi"):
+                    if metered is None or self._clock() - metered >= METER_CHECK:
+                        self.meter_why = self.meter(True)
+                        metered = self._clock()
+                elif metered is not None:
+                    self.meter(False)
+                    metered = None
+                if not self.meter_why or cfg["source"] == "osc":
+                    self.feed_once(cfg)
+                stop.wait(METER_EVERY if cfg["source"] != "osc" else IN_EVERY)
+        except Exception as e:
+            self.log("pvj-web: sound feed stopped: %s" % e)
+        finally:
+            if metered is not None:
+                self.meter(False)
+
+    # OSC in: Max/RNBO or another program sends levels to the box (D97)
+    def in_hosts_now(self):
+        """The addresses levels may come in from now: the render nodes' IPv4 hosts and the Owner's list, each another
+        device on one of the box's own networks at this moment and never on the support tunnel's."""
+        cfg = self.config()
+        if not (cfg["on"] and cfg["source"] == "osc"):
+            return set()
+        from . import render as render_mod
+        hosts = set(cfg["in_hosts"])
+        hosts |= {n["host"] for n in render_mod.stored(self.api.settings.data.get("render")) if render_mod.is_ipv4_text(n["host"])}
+        bridge = getattr(self.api, "render", None)
+        if bridge is None:
+            return set()
+        return {h for h in hosts if bridge.why_not(h) is None}
+
+    def osc_in_host(self, address):
+        now = self._clock()
+        with self.lock:
+            held = self._in_hosts
+        if held is None or now - held[0] >= TARGETS_EVERY:
+            held = (now, self.in_hosts_now())
+            with self.lock:
+                self._in_hosts = held
+        return address in held[1]
+
+    def osc_in(self, messages, address):
+        """Levels sent in. Returns how many messages were taken. Nothing is ever sent in answer."""
+        now = self._clock()
+        taken = 0
+        with self.lock:
+            for key, rate, burst in ((address, IN_RATE, IN_BURST), ("*", IN_ALL_RATE, IN_ALL_BURST)):
+                b = self._in_buckets.get(key)
+                if b is None:
+                    if len(self._in_buckets) > 64:
+                        self._in_buckets.clear()
+                    b = self._in_buckets[key] = fb.Bucket(rate, burst, now)
+                b.fill(now)
+            mine, every = self._in_buckets[address], self._in_buckets["*"]
+            latest = dict(self._in_latest or {"rms_db": sound_mod.FLOOR_DB})
+            for addr, args in messages:
+                if mine.have < 1 or every.have < 1:
+                    self.in_stats["held"] += 1
+                    continue
+                mine.have -= 1
+                every.have -= 1
+                name = addr[len(IN_PREFIX):]
+                nums = [a for a in args if isinstance(a, (int, float)) and not isinstance(a, bool)]
+                if name == "level" and nums:
+                    latest["rms_db"] = sound_mod.LOW_DB * (1.0 - min(1.0, max(0.0, float(nums[0]))))
+                elif name == "db" and nums:
+                    latest["rms_db"] = min(sound_mod.GAIN_MAX, max(sound_mod.FLOOR_DB, float(nums[0])))
+                elif name == "envelope" and nums:
+                    latest["envelope"] = min(1.0, max(0.0, float(nums[0])))
+                elif name == "beat":
+                    latest["beat"] = True
+                elif name == "bpm" and nums:
+                    latest["bpm"] = min(400.0, max(0.0, float(nums[0])))
+                elif name == "bands" and nums:
+                    latest["bands"] = [min(1.0, max(0.0, float(x))) for x in nums[:len(sound_mod.BANDS)]]
+                else:
+                    self.in_stats["ignored"] += 1
+                    continue
+                taken += 1
+            if taken:
+                for k in ("rms_db",):
+                    latest[k] = latest.get(k, sound_mod.FLOOR_DB)
+                latest["peak_db"] = latest["rms_db"]
+                self._in_latest, self._in_at = latest, now
+                self.in_stats["taken"] += taken
+        return taken

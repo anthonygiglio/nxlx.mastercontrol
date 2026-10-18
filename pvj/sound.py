@@ -355,10 +355,41 @@ def capture_devices(proc=PROC):
         if not card:
             continue
         dev = int(m.group(2))
-        out.append({"id": "%s,%d" % (card[0], dev), "name": (card[1] + (": " + _clean(m.group(3)) if _clean(m.group(3)) else ""))[:120]})
+        out.append({"id": "%s,%d" % (card[0], dev), "name": (card[1] + (": " + _clean(m.group(3)) if _clean(m.group(3)) else ""))[:120],
+                    "channels": capture_channels(proc, int(m.group(1)), dev)})
         if len(out) >= MAX_DEVICES:
             break
     return out
+
+
+MAX_CHANNELS = 32
+DEFAULT_CHANNELS = 2            # where the card does not say (D97)
+_CHANNELS = re.compile(r"^\s*Channels:\s*(\d{1,3})\s*$")
+
+
+def capture_channels(proc, card, dev):
+    """How many channels the card captures (D97): the largest "Channels:" under "Capture:" in /proc/asound's stream
+    file of a USB card, held to 1 to MAX_CHANNELS; DEFAULT_CHANNELS where nothing says."""
+    base = os.path.join(proc, "card%d" % card)
+    text = _read(os.path.join(base, "stream%d" % dev)) or _read(os.path.join(base, "stream0"))
+    most, inside = 0, False
+    for line in text.splitlines():
+        if line.strip().endswith(":") and not line.startswith(" "):
+            inside = line.strip() == "Capture:"
+            continue
+        m = _CHANNELS.match(line) if inside else None
+        if m:
+            most = max(most, int(m.group(1)))
+    return min(MAX_CHANNELS, most) if most >= 1 else DEFAULT_CHANNELS
+
+
+def channel_form(spec, channels):
+    """"mix", or the number of one input, 1 to `channels`. Raises ValueError."""
+    if spec == "mix":
+        return "mix"
+    if isinstance(spec, bool) or not isinstance(spec, int) or not 1 <= spec <= min(channels, MAX_CHANNELS):
+        raise ValueError("the input is the mix or a number from 1 to %d" % channels)
+    return spec
 
 
 def device_form(text):
@@ -375,8 +406,97 @@ def alsa_name(device):
     return "plughw:CARD=%s,DEV=%s" % (card, dev)
 
 
-def arecord_args(device, program="arecord"):
-    return [program, "-q", "-D", alsa_name(device), "-t", "raw", "-f", "S16_LE", "-r", str(RATE), "-c", "1"]
+def arecord_args(device, program="arecord", channels=1):
+    """argv only, plughw only. `channels` is 1 (ALSA's plug layer mixes down) or the card's own count when one input
+    is taken (D97); it is a number the service checked."""
+    if isinstance(channels, bool) or not isinstance(channels, int) or not 1 <= channels <= MAX_CHANNELS:
+        raise ValueError("a channel count is 1 to %d" % MAX_CHANNELS)
+    return [program, "-q", "-D", alsa_name(device), "-t", "raw", "-f", "S16_LE", "-r", str(RATE), "-c", str(channels)]
+
+
+# --- levels fed in (D97): the box's own sound measured in the player, the NDI sound, OSC in -------------------------
+FEED_KEYS = {"rms_db", "peak_db", "envelope", "beat", "bpm", "bands"}
+FEED_RATE, FEED_BURST = 100.0, 20.0     # feeds the service takes in a second, at most 120 in any second
+FEED_FLOOR_DB = 3.0                     # a rise of the level under this is no onset
+
+
+def feed_form(m):
+    """The numbers of one feed, checked and held to their ranges. Raises ValueError."""
+    if not isinstance(m, dict) or set(m) - FEED_KEYS - {"cmd"} or "rms_db" not in m:
+        raise ValueError("a feed is rms_db and optionally peak_db, envelope, beat, bpm and bands")
+
+    def num(v, low, high):
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or v != v:
+            raise ValueError("a feed's values are numbers")
+        return min(high, max(low, float(v)))
+    out = {"rms_db": num(m["rms_db"], FLOOR_DB, GAIN_MAX)}
+    out["peak_db"] = num(m.get("peak_db", out["rms_db"]), FLOOR_DB, GAIN_MAX)
+    if "envelope" in m:
+        out["envelope"] = num(m["envelope"], 0.0, 1.0)
+    if "beat" in m:
+        if not isinstance(m["beat"], bool):
+            raise ValueError("beat is true or false")
+        out["beat"] = m["beat"]
+    if "bpm" in m:
+        out["bpm"] = num(m["bpm"], 0.0, 400.0)
+    if "bands" in m:
+        b = m["bands"]
+        if not isinstance(b, list) or len(b) > MAX_BANDS:
+            raise ValueError("bands are at most %d numbers" % MAX_BANDS)
+        out["bands"] = [num(x, 0.0, 1.0) for x in b][:len(BANDS)]
+    return out
+
+
+class FeedAnalyzer:
+    """The same values as Analyzer, from levels fed in instead of samples: the envelope, onsets as a rise of the level
+    against the last second, beats (or the sender's own), the pulse, a tempo, and the slow bands of D96's review."""
+
+    def __init__(self, gain_db=0.0):
+        self.a = Analyzer(gain_db)             # its beat times and tempo, and its gain
+        self.prev_db = None
+        self.flux = collections.deque(maxlen=FLUX_BLOCKS)
+        self.env = 0.0
+        self.last = None
+        self.slow, self._slow, self._slow_at = [0.0] * len(BANDS), [], None
+
+    def feed(self, f, now):
+        a = self.a
+        a.blocks += 1
+        g_db = a.gain_db
+        level_db = min(GAIN_MAX, f["rms_db"] + g_db) if f["rms_db"] > FLOOR_DB else FLOOR_DB
+        rms = 10 ** (level_db / 20.0) if level_db > FLOOR_DB else 0.0
+        dt = min(0.5, max(0.001, now - self.last)) if self.last is not None else BLOCK_SECONDS
+        self.last = now
+        k = math.exp(-dt / (ATTACK if rms > self.env else RELEASE))
+        self.env = k * self.env + (1.0 - k) * rms
+        rise = 0.0 if self.prev_db is None else max(0.0, level_db - self.prev_db)
+        self.prev_db = level_db
+        threshold = FLUX_TIMES * (sum(self.flux) / len(self.flux) if self.flux else 0.0) + FEED_FLOOR_DB
+        self.flux.append(rise)
+        strength = rise / threshold
+        onset = strength >= 1.0 and level_db > SILENT_DB
+        wanted = f["beat"] if "beat" in f else onset
+        last = a.beat_times[-1] if a.beat_times else None
+        beat = bool(wanted and (last is None or now - last >= BEAT_GAP))
+        if beat:
+            a.beats += 1
+            a.beat_times.append(now)
+            last = now
+        pulse = max(0.0, 1.0 - (now - last) / PULSE_SECONDS) if last is not None else 0.0
+        bpm, confidence = (f["bpm"], 1.0 if f["bpm"] else 0.0) if "bpm" in f else a.tempo()
+        bands = list(f.get("bands") or [])
+        bands += [0.0] * (len(BANDS) - len(bands))
+        self._slow.append(bands)
+        if self._slow_at is None:
+            self._slow_at = now
+        if now - self._slow_at >= SLOW_SECONDS - 1e-9:
+            self.slow = [sum(b[i] for b in self._slow) / len(self._slow) for i in range(len(BANDS))]
+            self._slow, self._slow_at = [], now
+        env = f["envelope"] if "envelope" in f else unit(db(self.env))
+        return {"rms_db": level_db, "level": unit(level_db), "envelope": env, "onset": strength, "pulse": pulse, "bpm": bpm,
+                "confidence": confidence, "beats": a.beats, "bands": bands, "slow_bands": list(self.slow),
+                "peak_db": min(GAIN_MAX, f["peak_db"] + g_db), "beat": beat, "onset_flag": onset, "clipped": f["peak_db"] >= -0.01,
+                "blocks": a.blocks}
 
 
 def _waiting(fd):
@@ -422,7 +542,9 @@ class Service:
         self._spawn = spawn or self._popen
         self._clock, self.log = clock, log
         self.lock = threading.Lock()            # guards want, state, why, child; never held over a read or a write
-        self.want = {"on": False, "device": "", "gain_db": 0.0}
+        self.want = {"on": False, "device": "", "gain_db": 0.0, "source": "device", "channel": "mix", "channels": 1}
+        self._fed = collections.deque(maxlen=64)        # feeds not yet published, bounded
+        self._fed_bucket = [FEED_BURST, None]       # (have, at): FEED_RATE a second
         self.gen = 0                            # what the panel last configured, so it can tell a restart of this
         self.state, self.why = "idle", "Switched off"
         self.child = None
@@ -445,10 +567,42 @@ class Service:
             return self.status()
         if cmd == "configure":
             return self.configure(message)
+        if cmd == "feed":
+            return self.take_feed(message)
         return {"ok": False, "error": "unknown command"}
+
+    def take_feed(self, m):
+        """One feed from the panel (D97): only while a fed source is chosen, at most FEED_RATE a second, bounded."""
+        try:
+            f = feed_form(m)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        now = self._clock()
+        with self.lock:
+            if not (self.want["on"] and self.want["source"] == "feed"):
+                return {"ok": False, "error": "no fed source is chosen"}
+            have, at = self._fed_bucket
+            have = FEED_BURST if at is None else min(FEED_BURST, have + (now - at) * FEED_RATE)
+            if have < 1:
+                self._fed_bucket = [have, now]
+                self.counts["feeds_dropped"] = self.counts.get("feeds_dropped", 0) + 1
+                return {"ok": False, "error": "too many feeds"}
+            self._fed_bucket = [have - 1, now]
+            self._fed.append((now, f))
+        self.wake.set()
+        return {"ok": True}
 
     def configure(self, m):
         on, device, gain, gen = m.get("on"), m.get("device", ""), m.get("gain_db", 0.0), m.get("gen", 0)
+        source, channel, channels = m.get("source", "device"), m.get("channel", "mix"), m.get("channels", 1)
+        if source not in ("device", "feed"):
+            return {"ok": False, "error": "the source is the device or a feed"}
+        if isinstance(channels, bool) or not isinstance(channels, int) or not 1 <= channels <= MAX_CHANNELS:
+            return {"ok": False, "error": "channels is 1 to %d" % MAX_CHANNELS}
+        try:
+            channel = channel_form(channel, channels)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
         if not isinstance(on, bool):
             return {"ok": False, "error": "on must be true or false"}
         if device != "":
@@ -461,8 +615,10 @@ class Service:
         if isinstance(gen, bool) or not isinstance(gen, int) or not 0 <= gen < 2 ** 53:
             return {"ok": False, "error": "gen must be a whole number"}
         with self.lock:
-            changed = (self.want["on"], self.want["device"]) != (on, device)
-            self.want = {"on": on, "device": device, "gain_db": float(gain)}
+            key = lambda w: (w["on"], w["device"], w["source"], w["channel"], w["channels"])
+            new = {"on": on, "device": device, "gain_db": float(gain), "source": source, "channel": channel, "channels": channels}
+            changed = key(self.want) != key(new)
+            self.want = new
             self.gen = gen
             if changed:
                 self.fails = 0
@@ -552,6 +708,14 @@ class Service:
                 want = dict(self.want)
             if not want["on"]:
                 self._set("idle", "Switched off")
+            elif want.get("source") == "feed":
+                try:
+                    self._feed_run(want)
+                except Exception as e:           # as for a capture: said, and the thread goes on
+                    self._set("problem", "the analysis stopped (%s); starting again" % type(e).__name__)
+                    self.log("pvj-sound: the analysis of a feed stopped: %r" % e)
+                    time.sleep(0.2)
+                continue
             elif not want["device"]:
                 self._set("idle", "No capture device chosen")
             elif os.sep in self.program and not os.path.exists(self.program):
@@ -575,11 +739,44 @@ class Service:
             if self.wake.wait(IDLE_EVERY):
                 self.wake.clear()
 
+    def _feed_run(self, want):
+        """While a fed source is chosen: each feed becomes one record, stamped with when it came; with none for
+        STALE_SECONDS the file says not capturing (the page: waiting for the source)."""
+        key = lambda w: (w["on"], w["source"], w["gain_db"])
+        analyzer = FeedAnalyzer(want["gain_db"])
+        with self.lock:
+            self._fed.clear()
+        self._set("waiting", "Waiting for the source")
+        last = None
+        while not self.stopping:
+            self.wake.wait(IDLE_EVERY if last is None else STALE_SECONDS)
+            self.wake.clear()
+            with self.lock:
+                now_want = dict(self.want)
+                fed = list(self._fed)
+                self._fed.clear()
+            if key(now_want) != key(want):
+                return
+            for at, f in fed:
+                v = analyzer.feed(f, at)
+                flags = F_CAPTURING | (F_BEAT if v["beat"] else 0) | (F_ONSET if v["onset_flag"] else 0) | (F_CLIPPED if v["clipped"] else 0)
+                self.publish(v, flags, at)
+                last = at
+                with self.lock:
+                    self.counts["blocks"] += 1
+                    self.counts["beats"] += 1 if v["beat"] else 0
+            if fed:
+                self._set("capturing", "Taking the levels fed in")
+            elif last is None or self._clock() - last > STALE_SECONDS:
+                self._set("waiting", "Waiting for the source")
+                self.publish(IDLE, 0)
+
     def _capture(self, want):
         """Run arecord for `want` until the wish changes (True) or arecord ends or stalls (False)."""
         self.tail.clear()
         try:
-            child = self._spawn(arecord_args(want["device"], self.program))
+            nch = 1 if want["channel"] == "mix" else want["channels"]
+            child = self._spawn(arecord_args(want["device"], self.program, nch))
         except (OSError, ValueError) as e:
             self._set("problem", "arecord could not be started: %s" % (getattr(e, "strerror", None) or e))
             return False
@@ -590,7 +787,8 @@ class Service:
         self._set("capturing", "Listening to %s" % want["device"])
         analyzer = Analyzer(want["gain_db"])
         fd = child.stdout.fileno()
-        need = BLOCK * 2
+        need = BLOCK * 2 * nch
+        pick = None if want["channel"] == "mix" else want["channel"] - 1     # one input of a multi-input card (D97)
         buf = bytearray()
         last = self._clock()
         try:
@@ -599,8 +797,9 @@ class Service:
                     self.wake.clear()
                     with self.lock:
                         now_want = dict(self.want)
-                    if (now_want["on"], now_want["device"]) != (want["on"], want["device"]):
-                        return True
+                    pick_key = ("on", "device", "source", "channel", "channels")
+                    if tuple(now_want.get(k) for k in pick_key) != tuple(want.get(k) for k in pick_key):
+                        return True              # another device, input or source: arecord is started again for it
                     analyzer.set_gain(now_want["gain_db"])
                 ready, _, _ = select.select([fd], [], [], 0.5)
                 if not ready:
@@ -624,18 +823,20 @@ class Service:
                     continue
                 last = self._clock()
                 waiting = _waiting(fd)
-                if waiting > MAX_BACKLOG * RATE * 2:     # far behind: what waits is thrown away, never shown late
-                    os.read(fd, waiting - waiting % 2)
+                if waiting > MAX_BACKLOG * RATE * 2 * nch:   # far behind: what waits is thrown away, never shown late
+                    os.read(fd, waiting - waiting % (2 * nch))
                     analyzer.prev = None
                     with self.lock:
                         self.counts["dropped"] = self.counts.get("dropped", 0) + 1
                     waiting = 0
-                at = last - waiting / (2.0 * RATE)       # when the last sample of this block was heard
+                at = last - waiting / (2.0 * RATE * nch)  # when the last sample of this block was heard
                 samples = array.array("h")
                 samples.frombytes(bytes(buf))
                 buf.clear()
                 if sys.byteorder != "little":
                     samples.byteswap()
+                if pick is not None:
+                    samples = samples[pick::nch]
                 v = analyzer.block(samples)
                 self.fails = 0
                 flags = F_CAPTURING | (F_BEAT if v["beat"] else 0) | (F_ONSET if v["onset_flag"] else 0) | (F_CLIPPED if v["clipped"] else 0)

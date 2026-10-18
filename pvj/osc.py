@@ -791,6 +791,19 @@ class OscServer:
         if not self.limiter.allow(source_ip):
             return self._refuse(source_ip, WHY_RATE)
         plain = plain_address(source_ip)
+        sound = getattr(self.api, "sound", None)
+        if sound is not None and (data[:15] == b"/nxlx/sound/in/" or data[:8] == b"#bundle\x00") and sound.osc_in_host(plain):
+            # Levels sent in (D97): from a render node or an address the Owner listed, and nothing else. Checked before
+            # the locks of D78 because that list is narrower than any of them, and these addresses can only feed
+            # numbers into the levels file. A packet with anything else in it takes the normal way below.
+            try:
+                messages = parse_packet(data)
+            except OscError:
+                messages = []
+            if messages and all(a.startswith("/nxlx/sound/in/") for a, _ in messages):
+                taken = sound.osc_in(messages, plain)
+                self.watch.note(source_ip, bool(taken), "" if taken else DID_NOTHING, "/nxlx/sound/in/")
+                return 0
         if rules["only_on"] and plain not in rules["only"]:
             return self._refuse(source_ip, WHY_ONLY)
         if rules["paired_on"] and plain not in self.paired(rules["paired_roles"], rules["paired_hours"]):

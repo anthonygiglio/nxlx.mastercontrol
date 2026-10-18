@@ -2052,7 +2052,7 @@ class Api:
 
     def get_sound(self, body, device, client):
         """The page: what the Owner chose, the devices, the service's state, the meter, the shader mapping."""
-        from . import sound as sound_mod
+        from . import sound as sound_mod, soundout
         cfg = self.sound.config()
         helper = self.sound.helper if self.sound.helper_at is not None and time.monotonic() - self.sound.helper_at < 3 else self.sound.status()
         devices = self.sound.devices()
@@ -2061,7 +2061,12 @@ class Api:
                "gain": {"min": sound_mod.GAIN_MIN, "max": sound_mod.GAIN_MAX}, "shader": self.sound.shader_inputs(),
                "map_state": dict(self.sound.map_state), "osc": self.sound.osc_status(), "privacy": self.SOUND_PRIVACY,
                "slow": self.SOUND_SLOW, "bands_warning": self.SOUND_BANDS, "remote": bool(device and device.get("remote")),
-               "plugged": cfg["device"] == "" or cfg["device"] in {d["id"] for d in devices}}
+               "plugged": cfg["device"] == "" or cfg["device"] in {d["id"] for d in devices},
+               "inputs": [{"id": k, "name": soundout.INPUT_NAMES[k], "allowed": k in cfg["allowed"], "bands": k in ("device", "osc")} for k in soundout.INPUTS],
+               "channels": self.sound.device_channels(cfg), "feed_why": self.sound.feed_why, "meter_why": self.sound.meter_why or "",
+               "in_stats": dict(self.sound.in_stats)}
+        if not (device and device.get("role") == "full"):
+            out["config"] = dict(cfg, in_hosts=[])          # the addresses are the Owner's to see (as the render nodes' hosts)
         return out
 
     def sound_levels(self, body, device, client):
@@ -2073,12 +2078,18 @@ class Api:
         session of the Owner's role may switch capture off and change the gain, never switch it on, choose the device
         while it is on, or switch sending on."""
         from . import soundout
-        if not isinstance(body, dict) or not body or set(body) - {"on", "device", "gain_db", "osc_state", "osc_render"}:
-            raise bad("send on, device, gain_db, osc_state or osc_render")
+        keys = {"on", "device", "gain_db", "osc_state", "osc_render", "allowed", "channel", "in_hosts"}
+        if not isinstance(body, dict) or not body or set(body) - keys:
+            raise bad("send on, device, gain_db, osc_state, osc_render, allowed, channel or in_hosts")
         remote = self._remote_owner(device, client, "changing sound reactivity")
         cfg = self.sound.config()
         new = dict(cfg)
         new.update(body)
+        if "allowed" in body:
+            if not isinstance(body["allowed"], list) or not body["allowed"]:
+                raise bad("allow at least one source")
+            if new["source"] not in body["allowed"]:          # the source in use was taken off the list: the first allowed
+                new["source"] = next((s for s in soundout.INPUTS if s in body["allowed"]), new["source"])
         try:
             new = soundout.form(new)
         except soundout.SoundError as e:
@@ -2091,14 +2102,44 @@ class Api:
             for key in ("osc_state", "osc_render"):
                 if new[key] and not cfg[key]:
                     raise ApiError(403, "sending the sound's values to other machines is switched on by the owner in the room (D96)")
+            if new["channel"] != cfg["channel"] and cfg["on"]:
+                raise ApiError(403, "%s; another input of the device is chosen while it is off" % self.SOUND_REMOTE)
+            if set(new["allowed"]) - set(cfg["allowed"]):
+                raise ApiError(403, "a source is allowed by the owner in the room (D97); through remote support one may only be taken off the list")
+            if set(new["in_hosts"]) - set(cfg["in_hosts"]):
+                raise ApiError(403, "an address that may send levels in is added by the owner in the room (D97)")
         if "device" in body and new["device"] not in ("", cfg["device"]) and new["device"] not in {d["id"] for d in self.sound.devices()}:
             raise ApiError(409, "that capture device is not plugged in now; choose one from the list")
+        if "channel" in body and new["channel"] != "mix" and new["channel"] > self.sound.device_channels(new):
+            raise bad("this device has %d inputs" % self.sound.device_channels(new))
         try:
             self.sound.save(new)
         except OSError as e:
             raise ApiError(500, "the setting could not be saved: %s" % (e.strerror or e))
         said = ", ".join("%s %s" % (k, json.dumps(new[k])) for k in sorted(body))
         self.log("pvj-web: sound reactivity changed by device %s (%s) from %s: %s" % ((device or {}).get("id"), (device or {}).get("role"), client, said[:200]))
+        return self.get_sound({}, device, client)
+
+    def set_sound_source(self, body, device, client):
+        """{"source": "device" | "box" | "ndi" | "osc"}: the Owner and an Operator switch between the sources the Owner
+        allowed (D97). It never switches listening on. Through remote support a switch to the capture device (a
+        microphone) is refused; to the box's own sound, NDI or OSC in it is not listening to the room."""
+        from . import soundout
+        if not isinstance(body, dict) or set(body) != {"source"} or body["source"] not in soundout.INPUTS:
+            raise bad("send {\"source\": one of %s}" % ", ".join(soundout.INPUTS))
+        cfg = self.sound.config()
+        src = body["source"]
+        if src not in cfg["allowed"]:
+            raise ApiError(403, "%s is not one of the sources the owner allowed" % soundout.INPUT_NAMES[src])
+        remote = bool(self.support.is_remote(client) or (device and device.get("remote")))
+        if remote and src == "device" and cfg["source"] != "device":
+            raise ApiError(403, "%s; switching to the capture device is done in the room" % self.SOUND_REMOTE)
+        if src != cfg["source"]:
+            try:
+                self.sound.save(dict(cfg, source=src))
+            except OSError as e:
+                raise ApiError(500, "the setting could not be saved: %s" % (e.strerror or e))
+            self.log("pvj-web: sound source set to %s by device %s (%s) from %s" % (src, (device or {}).get("id"), (device or {}).get("role"), client))
         return self.get_sound({}, device, client)
 
     def set_sound_map(self, body, device, client):
@@ -4711,7 +4752,8 @@ class Api:
             ("GET", "/api/sound"): ("live", self.get_sound),              # sound reactivity (D96): seen by the Operator,
             ("GET", "/api/sound/levels"): ("live", self.sound_levels),    # the meter alone,
             ("POST", "/api/sound"): ("full", self.set_sound),             # the device, on and off and sending: the Owner's,
-            ("POST", "/api/sound/map"): ("live", self.set_sound_map),     # the shader input: the Operator's
+            ("POST", "/api/sound/map"): ("live", self.set_sound_map),
+            ("POST", "/api/sound/source"): ("live", self.set_sound_source),  # between the allowed sources: the Owner's and an Operator's (D97)     # the shader input: the Operator's
             ("POST", "/api/control"): ("live", self.control),
             ("POST", "/api/blackout"): ("live", self.blackout),
             ("POST", "/api/fadeout"): ("live", self.fadeout),

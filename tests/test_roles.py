@@ -97,6 +97,7 @@ ROWS = {
     ("GET", "/api/sound/levels"): KINDS["op"],
     ("POST", "/api/sound"): KINDS["owner"],
     ("POST", "/api/sound/map"): KINDS["op"],
+    ("POST", "/api/sound/source"): KINDS["op"],      # D97: between the allowed sources, the Owner and an Operator
     ("POST", "/api/control"): KINDS["guest"],
     ("POST", "/api/blackout"): KINDS["guest"],
     ("POST", "/api/vibes"): KINDS["guest"],
