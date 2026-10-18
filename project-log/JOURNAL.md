@@ -4,6 +4,13 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-18, pvj-render phase 2: two layers and real crossfades (`render-layers`, D98)
+
+- **The owner's words:** "yes, start phase 2 of the renderer. let's give it real crossfades across two layers."
+- **Built:** a second libmpv core and render context in pvj-render, idle (no file, never drawn) until a crossfade; `["pvj-crossfade", URL, SECONDS, OPTIONS]` loads the clip into the idle layer, which the socket speaks to from that moment, and the render thread mixes the two pictures by real opacity at the internal size once a vblank, from the clip's first frame, in a straight line over the seconds, then stops the outgoing layer. The final pass (mapping or scale) is unchanged and takes the mix. How the picture looks (brightness, zoom, pan, rotation, crop, flips, effects) is set on both layers, so a Blackout during a fade darkens both. A load, a stop, a step in the list or a new crossfade ends a fade at once. On the panel's side `Player.crossfades()` asks once per player process, and `Api.play` hands the Mix's crossfade to the renderer instead of taking D71's still; out of a generator or a live input, into a list, on a refusal, and on classic it is the cut or the still as before.
+- **Tests:** 15 new rows in `tests/test_pvj_render.py` against the real program (the mix by pixel, the swap, the answers after it, the straight line, the refusals, the idle layer, 60 flips a second during a fade, 220 fades with no file descriptor, fence or GL object left behind: 9 descriptors before and after) and 8 in `tests/test_transitions.py` (`LayeredCrossfade`). 16 breaks on purpose, each caught. `tests.test_pvj_render`, `tests.test_renderer`, `tests.test_player`, `tests.test_transitions` and `tests.test_server`: OK here (WSL, mpv 0.41, llvmpipe).
+- **Open:** everything on the Pi (DEVICE-TESTING CF1 to CF8): flips and missed vblanks during a fade at each detail, the GPU's share, the sound device handed from one core to the other, the sync files after 200 fades. Wipes and slides on the new renderer, a fade out of a generator or a live input, and a crossfade of the sound are not built.
+
 ## 2026-10-18, sound sources: a channel, the box's own sound, NDI, OSC in (`sound-sources`, #147, D97)
 
 - **The owner's words:** "All of the above please :). You can put the more 'advanced' options into an advanced subsection if it makes sense." and "Owner and Operator" may switch the source. #145 (D96) merged first, after its review (two Mediums, three Lows, all fixed).

@@ -611,6 +611,25 @@ gl-fences, which must stay near 0) and `["get_property","frame-drop-count"]` aft
 | R7 | The fallback: with New chosen, `sudo mv /opt/pvj/current/render/pvj-render /tmp/` and Restart player; then put it back. Then `sudo pkill -x -SEGV pvj-render` twice within a minute | The first: classic draws and the page says "pvj-render is not built on this box" or why; the second: one restart, then classic, and the page says "ended twice in a row (signal 11)". A picture all the time but a few seconds | The page's words and `journalctl -u pvj-player -n 30` |
 | R8 | Classic again (the default) after R4 to R7 | Classic draws within about 10 seconds with no restart by hand; the Renderer card says how pvj-render was ended (asked, SIGTERM or SIGKILL); everything as before this release; no pvj-render running (`pgrep -x pvj-render` says nothing) | Yes or no, and the card's words |
 
+### pvj-render phase 2, the renderer's own crossfade (D98): never run on a Pi
+
+Everything of D98 ran on a software GPU in a 320 x 180 headless window. Before: R1 to R8 above done, New chosen on
+Setup > Screen output, two 1080p30 clips of the owner's on pads A1 and A2, Mix > Transition between clips set to
+**Crossfade**, duration 2 s. For the numbers, read `["get_property","pvj-render"]` over the socket as in R1 (`flips`,
+`missed-vblanks`, `drawn`, `back-drawn`, `fade`, `fades`, `fades-done`, `fades-cut`, `gl-fences`, `gl-objects`)
+before and after each run; the GPU's busy share as in R1.
+
+| # | Do | Look for | Send back |
+| --- | --- | --- | --- |
+| CF1 | Play A1, then A2, by eye | A1 goes on moving while A2 comes in over two seconds; no freeze before the fade, no step in it, no flash of black or of an old picture at its start or end; A1's sound stops at the tap and A2's begins with it | Smooth or stepped; anything that flashed; how the sound changed |
+| CF2 | Flips and missed vblanks during a fade at detail **Automatic** (540 on a Pi 4): read the property, play A2, read it again 2.5 s later | `flips` up by about 150 (60 a second, 2.5 s), `missed-vblanks` up by 0 or a few, `drawn` and `back-drawn` each up by about 60 to 75 (30 fps each) | The four differences |
+| CF3 | The same at detail **540** | As CF2 | As CF2 |
+| CF4 | The same at detail **720** | As CF2. The spike missed 3 vblanks in 2 minutes at 720 with two layers | As CF2 |
+| CF5 | The same at detail **output** (1080 lines) | As CF2. Two layers did not hold at 1080 in the spike: missed vblanks are expected here; say how many | As CF2 |
+| CF6 | The GPU's busy share during a fade at each detail of CF2 to CF5 (`gpu_stats` read before and after one fade) | Under 100 percent at 540 and 720 | The share at each detail |
+| CF7 | 200 fades, with pvj-render run by hand as in R1 and A1's clip loaded: `ls /proc/$(pgrep -x pvj-render)/fd \| wc -l`, then `for i in $(seq 100); do echo '{"command":["pvj-crossfade","/path/a2.mp4",0.5]}' \| socat - /tmp/r.sock; sleep 1.5; echo '{"command":["pvj-crossfade","/path/a1.mp4",0.5]}' \| socat - /tmp/r.sock; sleep 1.5; done` (five minutes), then the count again and the property | The descriptor count the same as before the run (within a few), `gl-fences` near 0, `gl-objects` no higher than after the first ten fades, `fades-done` 200, `journalctl -u pvj-player | grep -c "Export failed"` 0 | The count before and after, the property, the grep |
+| CF8 | During a fade press **Blackout**; then **Stop** during another; then a pad during a fade; then choose **Classic** on Setup > Screen output and play A1 then A2 | Blackout: black at once (both pictures); Stop: black at once; a pad: the fade ends and the new clip is cut to; on Classic: D71's crossfade as before (X1 above), with no line "no crossfade on the new renderer" in `journalctl -u pvj-web` | Anything that stayed lit, and whether Classic looked as before |
+
 ### Sound reactivity (D96): never run on a Pi or with a real audio input
 
 Before: the box updated to this release; `systemctl status pvj-sound` says active; `arecord --version` answers (if

@@ -4,7 +4,8 @@
 // The control socket: mpv's JSON IPC protocol, a fixed subset (project-log/DECISIONS.md, D95). One JSON object a
 // line, {"command": [...], "request_id": n}, answered {"request_id": n, "error": "success", "data": ...}. Anything
 // outside the subset is answered with mpv's own words ("invalid parameter", "property not found"), so the panel's
-// code treats it as it treats mpv refusing something.
+// code treats it as it treats mpv refusing something. Phase 2 (D98) adds one command, pvj-crossfade (below), and
+// every other command speaks to the video layer on the screen, so the panel still sees one player.
 //
 // The socket is reachable by the panel's group only (0660, as mpv's is made by the player's service). Still every
 // line is bounded, every command and every name that may be set is on a fixed list, and nothing here can run a
@@ -90,7 +91,11 @@ void ipc_close(void)
 }
 
 /* ---- the lists ---------------------------------------------------------------------------------------------------- */
-// Names the panel may set, all on the video layer (glsl-shaders is handled apart).
+// Names the panel may set, all on the video layer on the screen (glsl-shaders is handled apart). The names in MIRRORED
+// are set on both video layers (D98): they are how the picture looks and sounds (the panel's opacity is
+// `brightness`), so the clip a crossfade brings in has them from its first frame, and a Blackout or a fade of the
+// level during a crossfade reaches both pictures. The others are the file's own (pause, loops, a live input's keys)
+// and go to the layer on the screen only.
 static const char *const SETTABLE[] = {
     "pause", "speed", "volume", "mute", "loop-file", "loop-playlist", "keep-open", "image-display-duration",
     "audio-device", "brightness", "video-zoom", "video-pan-x", "video-pan-y", "video-rotate", "video-crop",
@@ -100,6 +105,14 @@ static const char *const SETTABLE[] = {
     "demuxer", "demuxer-rawvideo-w", "demuxer-rawvideo-h", "demuxer-rawvideo-mp-format", "demuxer-rawvideo-fps",
     "cache", "cache-pause", "initial-audio-sync", "demuxer-readahead-secs", "demuxer-max-bytes", "vd", "ad", "sid",
     "ordered-chapters", "cover-art-auto", "embeddedfonts", "audio-delay", NULL };
+
+static const char *const MIRRORED[] = {
+    "speed", "volume", "mute", "audio-device", "brightness", "video-zoom", "video-pan-x", "video-pan-y", "video-rotate",
+    "video-crop", "keepaspect", "fbo-format", "screenshot-format", "screenshot-jpeg-quality", "screenshot-png-compression",
+    "screenshot-png-filter", "screenshot-high-bit-depth", NULL };
+
+// Keys a crossfade's options may hold: what Player.play sets before a load, for the incoming clip alone.
+static const char *const FADE_KEYS[] = { "keep-open", "image-display-duration", NULL };
 
 // Keys loadfile's options may hold (the pipe's, set with the load on mpv 0.38 and later).
 static const char *const LOAD_KEYS[] = {
@@ -193,7 +206,10 @@ static int plain_value(const char *v)
 }
 
 // loadfile's per-file options: "k=v,k=v", every key from LOAD_KEYS and every value plain.
-static int load_options_ok(const char *s)
+static int options_ok(const char *s, const char *const *keys);
+static int load_options_ok(const char *s) { return options_ok(s, LOAD_KEYS); }
+
+static int options_ok(const char *s, const char *const *keys)
 {
     if (strlen(s) > 1024) return 0;
     char *copy = strdup(s), *save = NULL;
@@ -203,7 +219,7 @@ static int load_options_ok(const char *s)
         char *eq = strchr(part, '=');
         if (!eq) { ok = 0; break; }
         *eq = 0;
-        ok = in_list(LOAD_KEYS, part) && plain_value(eq + 1);
+        ok = in_list(keys, part) && plain_value(eq + 1);
     }
     free(copy);
     return ok;
@@ -218,6 +234,135 @@ static int seek_flags_ok(const char *s)
     for (char *w = strtok_r(copy, "+", &save); w && ok; w = strtok_r(NULL, "+", &save)) ok = in_list(words, w);
     free(copy);
     return ok;
+}
+
+/* ---- the two video layers (D98) ------------------------------------------------------------------------------------ */
+// One change of the layers' roles at a time: a crossfade, and the loads and stops that end one, take this lock
+// (never the render thread). Under it a client's thread may wait on libmpv; app.lock is only taken for moments.
+static pthread_mutex_t layer_lock = PTHREAD_MUTEX_INITIALIZER;
+
+// A name of how the picture looks, set on the layer on the screen and then on the other one. The answer is the
+// front's; the other layer's refusal is only logged (it is idle or on its way out, and gets the value again with
+// the next set).
+static int set_both(const char *name, const mpv_node *v)
+{
+    int f = front_layer();
+    int r = mpv_set_property(app.layer[f], name, MPV_FORMAT_NODE, (void *)v);
+    if (r >= 0) {
+        int r2 = mpv_set_property(app.layer[1 - f], name, MPV_FORMAT_NODE, (void *)v);
+        if (r2 < 0 && app.cfg->verbose) LOG("ipc: %s on the second layer: %s", name, mpv_error_string(r2));
+    }
+    return r;
+}
+
+// The same for a command on the video filters (a flip), whose answer is the front's.
+static int command_both(const mpv_node *cmd, mpv_node *res)
+{
+    int f = front_layer();
+    int r = mpv_command_node(app.layer[f], (mpv_node *)cmd, res);
+    mpv_node other;
+    if (mpv_command_node(app.layer[1 - f], (mpv_node *)cmd, &other) >= 0) mpv_free_node_contents(&other);
+    return r;
+}
+
+static int set_str(mpv_handle *h, const char *name, const char *v) { return mpv_set_property_string(h, name, v); }
+
+// A crossfade that is on its way ends now (under layer_lock): its incoming clip is the picture from here on, the
+// outgoing layer is stopped and idle. Called before anything that changes what the front plays (a load, a stop, a
+// step in its list, a new crossfade), so nothing is ever mixed with a picture nobody asked for.
+static void end_fade(void)
+{
+    pthread_mutex_lock(&app.lock);
+    int was = app.fade.phase != FADE_OFF, back = 1 - app.front;
+    if (was) {
+        app.fade.phase = FADE_OFF;
+        app.fades_cut++;
+    }
+    pthread_mutex_unlock(&app.lock);
+    if (was) {
+        const char *stop[] = { "stop", NULL };
+        mpv_command(app.layer[back], stop);
+        wake_render();
+    }
+}
+
+// ["pvj-crossfade", URL, SECONDS, OPTIONS?]: the incoming clip is loaded into the idle layer, which is the one the
+// socket speaks to from this moment (path, pause, time-pos, the loops, a seek: the new clip's, as after a loadfile);
+// the outgoing clip plays on under it, silent (its sound stops at the tap, as D71's freeze stopped it: one sound
+// device, one player on it at a time), and the render thread mixes the two from the incoming clip's first frame on,
+// over SECONDS, then stops the outgoing one. OPTIONS: "keep-open=..,image-display-duration=.." for the incoming clip.
+static void crossfade(int fd, const mpv_node *id, const mpv_node *cmd)
+{
+    int nargs = cmd->u.list->num;
+    const char *url = arg_str(cmd, 1);
+    const mpv_node *secs = arg(cmd, 2);
+    const char *opts = nargs == 4 ? arg_str(cmd, 3) : NULL;
+    double s = is_num(secs) ? num(secs) : -1;
+    if (!url || !*url || strlen(url) > 4096 || !(s >= 0 && s <= FADE_MAX_SECONDS) || (nargs == 4 && (!opts || !options_ok(opts, FADE_KEYS)))) {
+        reply(fd, id, "invalid parameter", NULL);
+        return;
+    }
+    pthread_mutex_lock(&layer_lock);
+    end_fade();
+    int out = front_layer(), in = 1 - out;
+    mpv_handle *H = app.layer[in], *O = app.layer[out];
+    // the incoming layer as a fresh player for this clip: playing, with its sound, and the file's own options
+    set_str(H, "pause", "no");
+    set_str(H, "aid", "auto");
+    int r = 0;
+    if (opts) {
+        char *copy = strdup(opts), *save = NULL;
+        if (!copy) r = MPV_ERROR_NOMEM;
+        for (char *part = copy ? strtok_r(copy, ",", &save) : NULL; part && r >= 0; part = strtok_r(NULL, ",", &save)) {
+            char *eq = strchr(part, '=');
+            *eq = 0;
+            r = set_str(H, part, eq + 1);
+        }
+        free(copy);
+    }
+    int base = __atomic_load_n(&app.starts[in], __ATOMIC_ACQUIRE);
+    if (r >= 0) {
+        set_str(O, "aid", "no");               // the outgoing sound goes first, so the incoming clip finds the device free
+        const char *load[] = { "loadfile", url, "replace", NULL };
+        r = mpv_command(H, load);
+        if (r < 0) set_str(O, "aid", "auto");  // refused: nothing changed, the clip on the screen keeps its sound
+    }
+    if (r < 0) {
+        pthread_mutex_unlock(&layer_lock);
+        LOG("ipc: pvj-crossfade: the incoming clip was not loaded: %s", mpv_error_string(r));
+        reply(fd, id, mpv_error_string(r), NULL);
+        return;
+    }
+    pthread_mutex_lock(&app.lock);
+    app.fade.phase = FADE_WAITING;
+    app.fade.seconds = s;
+    app.fade.asked = now_s();
+    app.fade.progress = 0.0;
+    app.fade.base_starts = base;
+    app.fades++;
+    __atomic_store_n(&app.front, in, __ATOMIC_RELEASE);
+    pthread_mutex_unlock(&app.lock);
+    pthread_mutex_unlock(&layer_lock);
+    wake_render();
+    reply(fd, id, "success", NULL);
+}
+
+// A command that changes what the front plays: a crossfade on its way ends first (end_fade), then the command goes
+// to the front.
+// The answer is sent after the lock is let go: a client that does not read must not hold up the layers.
+static void forward_front(int fd, const mpv_node *id, const mpv_node *cmd, int ends_fade)
+{
+    mpv_node res;
+    pthread_mutex_lock(&layer_lock);
+    if (ends_fade) end_fade();
+    int r = mpv_command_node(front_handle(), (mpv_node *)cmd, &res);
+    pthread_mutex_unlock(&layer_lock);
+    if (r < 0) {
+        reply(fd, id, mpv_error_string(r), NULL);
+        return;
+    }
+    reply(fd, id, "success", res.format == MPV_FORMAT_NONE ? NULL : &res);
+    mpv_free_node_contents(&res);
 }
 
 /* ---- the render thread's parts ------------------------------------------------------------------------------------ */
@@ -273,7 +418,7 @@ static void set_shaders(int fd, const mpv_node *id, const mpv_node *val)
     mpv_node_list list = { .num = nmpv, .values = items };
     mpv_node arr = { .format = MPV_FORMAT_NODE_ARRAY };
     arr.u.list = &list;
-    int r = mpv_set_property(app.video, "glsl-shaders", MPV_FORMAT_NODE, &arr);
+    int r = set_both("glsl-shaders", &arr);
     if (r < 0) {
         hook_free(ours);
         reply(fd, id, mpv_error_string(r), NULL);
@@ -329,7 +474,7 @@ static void get_property(int fd, const mpv_node *id, const char *name)
         // the output's size, with the video layer's margins taken from the internal size to the output's
         double sx = (double)app.out_w / app.in_w, sy = (double)app.out_h / app.in_h;
         mpv_node vid;
-        int have = mpv_get_property(app.video, "osd-dimensions", MPV_FORMAT_NODE, &vid) >= 0;
+        int have = mpv_get_property(front_handle(), "osd-dimensions", MPV_FORMAT_NODE, &vid) >= 0;
         static const char *const keys[] = { "w", "h", "par", "aspect", "mt", "mb", "ml", "mr" };
         mpv_node vals[8];
         for (int i = 0; i < 8; i++) {
@@ -353,24 +498,36 @@ static void get_property(int fd, const mpv_node *id, const char *name)
         char state[sizeof app.hook_state];
         memcpy(state, app.hook_state, sizeof state);
         long flips = app.flips, missed = app.missed, drawn = app.drawn, fences = app.fences, freed = app.fences_freed;
+        long back = app.back_drawn, fades = app.fades, done = app.fades_done, cut = app.fades_cut;
         int osd = app.overlays != 0 || now_s() < app.text_until;
+        int phase = app.fade.phase, front = app.front;
+        double progress = app.fade.progress, seconds = app.fade.seconds;
         pthread_mutex_unlock(&app.lock);
+        int back_idle = 0;                          // the other layer has nothing loaded: it costs nothing
+        mpv_get_property(app.layer[1 - front], "idle-active", MPV_FORMAT_FLAG, &back_idle);
+        static const char *const PHASES[] = { "off", "waiting", "running" };
         static const char *const keys[] = { "version", "internal-width", "internal-height", "output-width", "output-height",
                                             "output-fps", "flips", "drawn", "missed-vblanks", "mapping", "text-layer", "hwdec",
-                                            "gl-fences", "gl-fences-freed" };
-        mpv_node vals[14] = { node_str(PVJ_VERSION), node_int(app.in_w), node_int(app.in_h), node_int(app.out_w), node_int(app.out_h),
+                                            "gl-fences", "gl-fences-freed", "layers", "front", "fade", "fade-progress",
+                                            "fade-seconds", "fades", "fades-done", "fades-cut", "back-drawn", "gl-objects",
+                                            "back-idle" };
+        mpv_node vals[25] = { node_str(PVJ_VERSION), node_int(app.in_w), node_int(app.in_h), node_int(app.out_w), node_int(app.out_h),
                               node_dbl(app.out_hz), node_int(flips), node_int(drawn), node_int(missed), node_str(state),
-                              { .format = MPV_FORMAT_FLAG }, node_str(app.cfg->hwdec), node_int(fences), node_int(freed) };
+                              { .format = MPV_FORMAT_FLAG }, node_str(app.cfg->hwdec), node_int(fences), node_int(freed),
+                              node_int(LAYERS), node_int(front), node_str(PHASES[phase]), node_dbl(progress), node_dbl(seconds),
+                              node_int(fades), node_int(done), node_int(cut), node_int(back),
+                              node_int(__atomic_load_n(&app.gl_objects, __ATOMIC_RELAXED)), { .format = MPV_FORMAT_FLAG } };
         vals[10].u.flag = osd;
-        mpv_node_list list = { .num = 14, .values = vals, .keys = (char **)keys };
+        vals[24].u.flag = back_idle;
+        mpv_node_list list = { .num = 25, .values = vals, .keys = (char **)keys };
         d.format = MPV_FORMAT_NODE_MAP;
         d.u.list = &list;
         reply(fd, id, "success", &d);
         return;
     }
-    // everything else is read from the video layer (a read changes nothing)
+    // everything else is read from the video layer on the screen (a read changes nothing)
     mpv_node res;
-    int r = mpv_get_property(app.video, name, MPV_FORMAT_NODE, &res);
+    int r = mpv_get_property(front_handle(), name, MPV_FORMAT_NODE, &res);
     if (r < 0) { reply(fd, id, mpv_error_string(r), NULL); return; }
     reply(fd, id, "success", &res);
     mpv_free_node_contents(&res);
@@ -435,8 +592,11 @@ static void handle(int fd, const char *line, size_t len)
     } else if (!strcmp(name, "set_property") && nargs == 3 && arg_str(cmd, 1)) {
         const char *prop = arg_str(cmd, 1);
         if (!strcmp(prop, "glsl-shaders")) set_shaders(fd, id, arg(cmd, 2));
-        else if (in_list(SETTABLE, prop)) {
-            int r = mpv_set_property(app.video, prop, MPV_FORMAT_NODE, (void *)arg(cmd, 2));
+        else if (in_list(MIRRORED, prop)) {
+            int r = set_both(prop, arg(cmd, 2));
+            reply(fd, id, r < 0 ? mpv_error_string(r) : "success", NULL);
+        } else if (in_list(SETTABLE, prop)) {
+            int r = mpv_set_property(front_handle(), prop, MPV_FORMAT_NODE, (void *)arg(cmd, 2));
             reply(fd, id, r < 0 ? mpv_error_string(r) : "success", NULL);
         } else {
             LOG("ipc: set_property %s is not on the list", prop);
@@ -451,28 +611,47 @@ static void handle(int fd, const char *line, size_t len)
             ok = a->format == MPV_FORMAT_INT64 || (a->format == MPV_FORMAT_STRING && load_options_ok(a->u.string));
         }
         if (ok && nargs == 5) ok = arg_str(cmd, 4) && load_options_ok(arg_str(cmd, 4));
-        if (ok) forward(fd, id, app.video, cmd);
+        // a load that replaces what the front plays ends a crossfade first; one appended to its list does not
+        int replaces = nargs < 3 || !arg_str(cmd, 2) || !strcmp(arg_str(cmd, 2), "replace");
+        if (ok) forward_front(fd, id, cmd, replaces);
         else reply(fd, id, "invalid parameter", NULL);
+    } else if (!strcmp(name, "pvj-crossfade") && (nargs == 3 || nargs == 4)) {
+        crossfade(fd, id, cmd);
     } else if ((!strcmp(name, "stop") || !strcmp(name, "playlist-shuffle")) && nargs == 1) {
-        forward(fd, id, app.video, cmd);
+        forward_front(fd, id, cmd, !strcmp(name, "stop"));
     } else if ((!strcmp(name, "playlist-next") || !strcmp(name, "playlist-prev")) && nargs <= 2) {
         const char *f = nargs == 2 ? arg_str(cmd, 1) : "weak";
-        if (f && (!strcmp(f, "weak") || !strcmp(f, "force"))) forward(fd, id, app.video, cmd);
+        if (f && (!strcmp(f, "weak") || !strcmp(f, "force"))) forward_front(fd, id, cmd, 1);
         else reply(fd, id, "invalid parameter", NULL);
     } else if (!strcmp(name, "seek") && nargs >= 2 && nargs <= 3 && is_num(arg(cmd, 1))) {
-        if (nargs == 2 || (arg_str(cmd, 2) && seek_flags_ok(arg_str(cmd, 2)))) forward(fd, id, app.video, cmd);
+        if (nargs == 2 || (arg_str(cmd, 2) && seek_flags_ok(arg_str(cmd, 2)))) forward(fd, id, front_handle(), cmd);
         else reply(fd, id, "invalid parameter", NULL);
     } else if (!strcmp(name, "add") && nargs == 3 && arg_str(cmd, 1) && !strcmp(arg_str(cmd, 1), "volume") && is_num(arg(cmd, 2))) {
-        forward(fd, id, app.video, cmd);
+        // on the front, and the volume it gives is then the other layer's too (MIRRORED)
+        mpv_node res;
+        int r = mpv_command_node(front_handle(), (mpv_node *)cmd, &res);
+        if (r >= 0) {
+            mpv_free_node_contents(&res);
+            double v;
+            if (mpv_get_property(front_handle(), "volume", MPV_FORMAT_DOUBLE, &v) >= 0)
+                mpv_set_property(app.layer[1 - front_layer()], "volume", MPV_FORMAT_DOUBLE, &v);
+        }
+        reply(fd, id, r < 0 ? mpv_error_string(r) : "success", NULL);
     } else if (!strcmp(name, "vf") && nargs == 3 && arg_str(cmd, 1) && arg_str(cmd, 2)) {
         const char *op = arg_str(cmd, 1), *what = arg_str(cmd, 2);
         int ok = (!strcmp(op, "add") && (!strcmp(what, "@pvjfliph:hflip") || !strcmp(what, "@pvjflipv:vflip")))
                  || (!strcmp(op, "remove") && (!strcmp(what, "@pvjfliph") || !strcmp(what, "@pvjflipv")));
-        if (ok) forward(fd, id, app.video, cmd);
-        else reply(fd, id, "invalid parameter", NULL);
+        if (ok) {
+            mpv_node res;
+            int r = command_both(cmd, &res);          // a flip is how the picture looks: both layers (MIRRORED)
+            if (r >= 0) mpv_free_node_contents(&res);
+            reply(fd, id, r < 0 ? mpv_error_string(r) : "success", NULL);
+        } else {
+            reply(fd, id, "invalid parameter", NULL);
+        }
     } else if (!strcmp(name, "screenshot-to-file") && (nargs == 2 || nargs == 3) && arg_str(cmd, 1) && arg_str(cmd, 1)[0] == '/') {
         const char *f = nargs == 3 ? arg_str(cmd, 2) : "subtitles";
-        if (f && (!strcmp(f, "video") || !strcmp(f, "window") || !strcmp(f, "subtitles"))) forward(fd, id, app.video, cmd);
+        if (f && (!strcmp(f, "video") || !strcmp(f, "window") || !strcmp(f, "subtitles"))) forward(fd, id, front_handle(), cmd);
         else reply(fd, id, "invalid parameter", NULL);
     } else if (!strcmp(name, "overlay-add") && (nargs == 10 || nargs == 12)) {
         // id, x, y, file, offset, fmt, w, h, stride[, dw, dh]: a file by its path only (mpv's "@fd" and "&addr"

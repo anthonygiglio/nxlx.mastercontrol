@@ -2,6 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Transitions between clips that blend two pictures: the crossfade, the wipes and the slides (D71).
 
+On pvj-render with two video layers (D98) the crossfade is not done here: Api.play hands it to the renderer
+(Player.play with `fade`), which mixes both moving pictures itself once a vblank. Everything below is classic mpv's
+crossfade, and the wipes and slides on both players.
+
 The player shows one picture at a time, so the outgoing picture cannot go on moving under the incoming one. What
 is built: a still of the SCREEN as it is at the moment of the play is laid over everything as the player's own
 overlay, the new clip starts under it, and from the new clip's first frame the still is made more transparent step

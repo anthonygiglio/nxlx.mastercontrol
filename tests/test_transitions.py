@@ -2530,6 +2530,121 @@ class RealPlayer(ServerBase):
         self.assertIsNone(self.mpv.path)
 
 
+class LayeredCrossfade(ServerBase):
+    """D98: on pvj-render with two video layers the Mix's crossfade is the renderer's (`pvj-crossfade`), with no still
+    and no freeze; on classic mpv it is D71's still exactly as before; where the renderer refuses, a cut. The stand-in
+    answers as pvj-render does when `layers` is on (tests/fakempv.py). The set-up is RealPlayer's."""
+
+    live_input = RealPlayer.live_input
+
+    def setUp(self):
+        super().setUp()
+        import threading
+        import time
+        from pvj.player import Player
+        from tests.fakempv import FakeMpv
+        self.threading, self.time = threading, time
+        self.mpv = FakeMpv(os.path.join(self.rundir, "player.sock"))
+        self.addCleanup(self.mpv.stop)
+        self.player = self.api.player = Player(rundir=self.rundir)
+        self.helper = self.api.capture = Helper(self.rundir)
+        self.api.transitions.log = lambda line: None
+        self.api.registry.set_enabled("shaders", True)
+        self.api.shaders.log = lambda *_: None
+        self.clip = os.path.join(self.media, "a.mp4")
+        self.player.play([self.clip], spawn=False)
+        self.settings.data["mix"] = T.stored("crossfade", 1.5)
+        self.lines = []
+        self.api.log = self.lines.append
+
+    def wait_still_gone(self):
+        deadline = self.time.monotonic() + 10
+        while self.time.monotonic() < deadline and (self.api.transitions.running is not None or self.mpv.overlays):
+            self.time.sleep(0.01)
+
+    def test_on_the_new_renderer_a_crossfade_is_the_renderers_with_no_still(self):
+        self.mpv.layers = True
+        asked = len(self.mpv.commands)
+        self.assertEqual(self.api.play({"file": "b.mov"}, None, "t"), {"playing": "b.mov"})
+        self.assertEqual(self.mpv.log[-1], ("fade", "file", "b.mov"))
+        self.assertEqual(self.mpv.fades, [1.5], "the Mix's own duration")
+        sent = self.mpv.commands[asked:]
+        for word in ("screenshot-to-file", "overlay-add", "loadfile", "set_property pause"):
+            if word == "set_property pause":
+                # the one pause is the player's own "play" after the load; nothing froze the old clip
+                self.assertEqual(sent.count(word), 1, sent)
+            else:
+                self.assertNotIn(word, sent, "the still's way was taken: %s" % sent)
+        self.assertIs(self.mpv.props["pause"], False)
+        self.assertEqual(self.mpv.props["loop-file"], "inf", "a pad's clip loops as after any play")
+        self.assertIsNone(self.api.transitions.running)
+        self.assertEqual(self.lines, [])
+        # asked once per player process: the next crossfade does not ask again
+        self.api.play({"file": "a.mp4"}, None, "t")
+        self.assertEqual(self.mpv.commands.count("get_property pvj-render"), 1)
+        self.assertEqual(self.mpv.log[-1], ("fade", "file", "a.mp4"))
+
+    def test_on_classic_mpv_the_crossfade_is_the_still_as_before(self):
+        self.api.play({"file": "b.mov"}, None, "t")
+        self.wait_still_gone()
+        self.assertIn("screenshot-to-file", self.mpv.commands, "D71's still")
+        self.assertNotIn("pvj-crossfade", self.mpv.commands)
+        self.assertEqual(self.mpv.log[-1], ("load", "file", "b.mov"))
+        self.assertEqual(self.mpv.fades, [])
+        # classic mpv's "property not found" is remembered for that process: asked once
+        self.api.play({"file": "a.mp4"}, None, "t")
+        self.wait_still_gone()
+        self.assertEqual(self.mpv.commands.count("get_property pvj-render"), 1)
+
+    def test_a_cut_or_a_dip_never_asks_about_layers(self):
+        for style in ("cut", "dip"):
+            self.settings.data["mix"] = T.stored(style, 0.2)
+            self.api.play({"file": "b.mov"}, None, "t")
+        self.assertNotIn("get_property pvj-render", self.mpv.commands, "classic plays are unchanged")
+
+    def test_when_the_renderer_refuses_the_fade_it_is_a_cut_never_black(self):
+        self.mpv.layers = True
+        self.mpv.fail.add("pvj-crossfade")
+        self.assertEqual(self.api.play({"file": "b.mov"}, None, "t"), {"playing": "b.mov"})
+        self.assertEqual(self.mpv.log[-1], ("load", "file", "b.mov"), "cut to the clip")
+        self.assertEqual(self.mpv.path, self.mpv.playlist[0])
+        self.assertNotIn("screenshot-to-file", self.mpv.commands)
+        self.assertTrue(any("a cut instead" in line and "error running command" in line for line in self.lines), self.lines)
+
+    def test_out_of_a_generator_the_new_renderer_cuts(self):
+        self.mpv.layers = True
+        sid = self.api.shaders.library()[0]["id"]
+        self.assertTrue(self.api.shaders.show(sid)["ok"])
+        self.api.play({"file": "b.mov"}, None, "t")
+        self.assertEqual(self.mpv.log[-1], ("load", "file", "b.mov"))
+        self.assertEqual(self.mpv.fades, [])
+        self.assertTrue(any("generator or a live input" in line for line in self.lines), self.lines)
+        self.assertIsNone(self.api.player.source_shader, "the generator came off with the cut")
+
+    def test_out_of_a_live_input_the_new_renderer_cuts(self):
+        self.mpv.layers = True
+        self.live_input()
+        self.api.play({"file": "b.mov"}, None, "t")
+        self.assertEqual(self.mpv.log[-1], ("load", "file", "b.mov"))
+        self.assertEqual(self.mpv.fades, [])
+
+    def test_a_crossfade_from_a_dark_screen_rises_as_before(self):
+        # Blackout on: no picture to blend from; the clip loads as a cut, as on classic
+        self.mpv.layers = True
+        self.api.blackout({"on": True}, None, "t")
+        self.api.play({"file": "b.mov"}, None, "t")
+        self.assertEqual(self.mpv.log[-1], ("load", "file", "b.mov"))
+        self.assertEqual(self.mpv.fades, [])
+
+    def test_the_status_says_no_fallback_for_the_renderers_crossfade(self):
+        self.mpv.layers = True
+        self.api.play({"file": "b.mov"}, None, "t")
+        self.api.transitions._give_up("a still took long")          # from a time before the new renderer
+        self.assertNotIn("fallback", self.api._mix_settings())
+        self.settings.data["mix"] = T.stored("wipe-from-left", 1.0)
+        self.assertIn("fallback", self.api._mix_settings(), "a wipe still takes the still")
+
+
 class Stress(ServerBase):
     """A test of another kind (after reviews that each found an order of events the hand-written tests did not
     have): random actions that overlap, from several threads, against the fake player, which has the real one's
