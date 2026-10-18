@@ -60,6 +60,8 @@ def default_settings():
         "sync": {"role": "off", "group": "main", "port": 5577, "wall": {"cols": 1, "rows": 1, "col": 0, "row": 0, "bezel": 0.0}},
         "screen": {"mode": "auto"},                # D90: read with defaults everywhere (screenmode.Screen.saved): no schema change
         "renderer": {"use": "classic", "detail": "auto"},     # D95: read with defaults everywhere (renderer.clean): no schema change
+        "sound": {"on": False, "device": "", "gain_db": 0.0, "osc_state": False, "osc_render": False,     # D96: read with defaults
+                  "map": {"on": False, "input": "", "source": "level", "rest": 0.0, "depth": 0.5, "smooth": 1.5}},  # (soundout.stored)
         "controller_code": default_controller_code(),
         "ndi": {"addresses": []},                 # read with defaults everywhere (ndi.saved_addresses): no schema change
         "room": {"groups": [], "scenes": []},      # read with defaults everywhere: an older file has no such key (no schema change)

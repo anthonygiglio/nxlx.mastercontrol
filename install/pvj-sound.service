@@ -1,0 +1,66 @@
+# SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+# SPDX-License-Identifier: Apache-2.0
+[Unit]
+Description=nxlx.mastercontrol sound analysis (levels only; no network, no sound kept)
+# After a rollback to a release from before D96 this unit is still here and its program is not. A condition that is
+# not met is not a failure: the unit is skipped, once, and nothing is started again (as the NDI helper's, D62).
+ConditionPathExists=@PVJ_DIR@/bin/pvj-sound
+StartLimitIntervalSec=0
+
+[Service]
+# Its own account, whose only group is "audio" (D96): whoever is in audio can already open the microphone, so the
+# levels it writes add nothing to what that group reads. The panel (pvj-web) and the player are in audio; the panel
+# alone may configure it (the socket checks the caller's uid). It is NOT in group "pvj" (the player's socket, the
+# settings, the PIN).
+User=pvj-sound
+Group=audio
+UMask=0027
+# Its own folder: the socket for the panel and the levels file (0640, group audio). Nobody else writes here.
+RuntimeDirectory=pvj-sound
+RuntimeDirectoryMode=0750
+Environment=PVJ_SOUND_DIR=/run/pvj-sound
+Environment=HOME=/nonexistent
+ExecStart=@PVJ_DIR@/bin/pvj-sound
+Restart=always
+RestartSec=2
+
+# Sandbox. The one process that reads the microphone has no network at all: it cannot send anything anywhere.
+CapabilityBoundingSet=
+NoNewPrivileges=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+# Only ALSA's devices: arecord (alsa-lib) opens a capture device and its card's control device read-write.
+DevicePolicy=closed
+DeviceAllow=/dev/null rw
+DeviceAllow=/dev/urandom r
+DeviceAllow=char-alsa rw
+InaccessiblePaths=-/var/lib/pvj -/etc/pvj -/run/pvj -/run/pvj-ndi -/run/pvj-sysd -/run/pvj-supportd
+# Bounds: one block of samples, a small FFT and arecord. The analysis was measured at about 1.2 percent of a laptop
+# core (pvj/SOUND.md); this cap keeps a fault from taking more than a quarter of one Pi core from the player.
+MemoryMax=64M
+# A crash must never write its memory (capture buffers) to disk: no core file, for it or for arecord (review M2 of
+# #145). pvj/sound.py also marks itself not dumpable at start.
+LimitCORE=0
+TasksMax=16
+CPUQuota=25%
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+# Not PrivateUsers: it would hide the caller's uid from the socket's peer check.
+
+[Install]
+WantedBy=multi-user.target

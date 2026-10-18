@@ -90,6 +90,13 @@ ROWS = {
     ("GET", "/api/render"): KINDS["op"],
     ("POST", "/api/render"): KINDS["owner"],          # D84: a support session of the Owner's role too
     ("POST", "/api/render/cue"): KINDS["op"],
+    # Sound reactivity (D96): the page, the meter and the shader input are the Operator's; the device, on and off and
+    # sending the values out are the Owner's. A support session of his role passes the gate; the handler refuses it
+    # switching capture on, the device while it is on, and sending on (tests/test_sound.py).
+    ("GET", "/api/sound"): KINDS["op"],
+    ("GET", "/api/sound/levels"): KINDS["op"],
+    ("POST", "/api/sound"): KINDS["owner"],
+    ("POST", "/api/sound/map"): KINDS["op"],
     ("POST", "/api/control"): KINDS["guest"],
     ("POST", "/api/blackout"): KINDS["guest"],
     ("POST", "/api/vibes"): KINDS["guest"],

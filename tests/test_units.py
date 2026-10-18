@@ -229,7 +229,11 @@ class RuntimeFolderTest(unittest.TestCase):
         # and the NDI discovery server's supervisor has a folder and an account of its own (D85)
         self.assertEqual(folders["pvj-ndisc"], {("pvj-ndi-discovery.service", "pvj-ndisc", "0750", "no")})
         self.assertEqual("/run/pvj-ndisc", p.NDISC_DIR)
-        self.assertEqual(set(folders), set(want) | {"pvj-update", "pvj-ndi", "pvj-ndisc"})
+        # and the sound analysis has its own folder and account, reached through group audio, never pvj (D96)
+        self.assertEqual(folders["pvj-sound"], {("pvj-sound.service", "pvj-sound", "0750", "no")})
+        self.assertEqual(self.units["pvj-sound.service"]["Group"], ["audio"])
+        self.assertEqual("/run/pvj-sound", p.SOUND_DIR)
+        self.assertEqual(set(folders), set(want) | {"pvj-update", "pvj-ndi", "pvj-ndisc", "pvj-sound"})
         self.assertEqual(["/run/" + d for d in want], [p.PLAYER_DIR, p.WEB_DIR, p.NETD_DIR, p.SYSD_DIR, p.SUPPORTD_DIR])
         self.assertEqual("/run/pvj-update", p.UPDATE_DIR)
 
@@ -349,7 +353,7 @@ class RuntimeFolderTest(unittest.TestCase):
         known = {p.RUN, p.RUN + "/.d45", p.PLAYER_DIR, p.WEB_DIR, p.NETD_DIR, p.SYSD_DIR, p.SUPPORTD_DIR, p.UPDATE_DIR, p.NDI_PIPE_DIR, p.NDI_PIPE_DIR + "/" + p.NDI_FIFO,
                  p.UPDATE_RESULT, p.WEB_DIR + "/" + p.PIN, p.WEB_DIR + "/player.sock", p.WEB_DIR + "/netd.sock",
                  p.PLAYER_DIR + "/" + p.PLAYER_SOCKET, p.NETD_DIR + "/" + p.NETD_SOCKET, p.NETD_DIR + "/<name>",
-                 p.RUN + "/<name>", p.NDI_DIR, p.NDI_CONFIG_DIR, p.NDISC_DIR}
+                 p.RUN + "/<name>", p.NDI_DIR, p.NDI_CONFIG_DIR, p.NDISC_DIR, p.SOUND_DIR}
         files = glob.glob(os.path.join(REPO, "bin", "*")) + glob.glob(os.path.join(REPO, "install", "*")) + glob.glob(os.path.join(NDI_UNITS, "*"))
         seen = set()
         for path in files:
@@ -464,7 +468,9 @@ class WebUnitLightsTest(unittest.TestCase):
 
     def test_no_other_unit_was_given_alsa_devices_for_writing(self):
         for name, keys in load_units().items():
-            if name not in ("pvj-web.service", "pvj-player.service"):       # the player plays sound; it has no device policy of this kind
+            # the player plays sound; it has no device policy of this kind. The sound analysis (D96) reads a capture
+            # device through alsa-lib, which opens it read-write; its own test pins the rest of its sandbox.
+            if name not in ("pvj-web.service", "pvj-player.service", "pvj-sound.service"):
                 self.assertFalse([v for v in keys.get("DeviceAllow", []) if "alsa" in v], name)
 
     def test_the_check_after_the_open_refuses_what_is_not_an_alsa_device_and_leaks_no_handle(self):
@@ -774,11 +780,12 @@ class NdiUnitTest(unittest.TestCase):
         self.assertIn("systemctl enable pvj-ndi.service", guarded)
         self.assertIn("systemctl restart pvj-ndi.service", guarded)
         self.assertIn("systemctl try-restart pvj-ndi.service", guarded)
-        # the image: exactly the services it enabled before NDI, and no opt-in
+        # the image: exactly the services it enabled before NDI (and the sound analysis, which is on every box and
+        # idle until the Owner chooses a device, D96), and no opt-in
         with open(os.path.join(REPO, "image", "stage-pvj", "00-install-pvj", "01-run.sh")) as f:
             image = f.read()
         self.assertNotRegex(image, r"pvj-ndi|NDI")
-        self.assertIn("systemctl enable pvj-player.service pvj-web.service pvj-netd.service pvj-sysd.service pvj-supportd.service\n", image)
+        self.assertIn("systemctl enable pvj-player.service pvj-web.service pvj-netd.service pvj-sysd.service pvj-supportd.service pvj-sound.service\n", image)
         with open(os.path.join(REPO, "image", "stage-pvj", "00-install-pvj", "00-packages-nr")) as f:
             self.assertNotIn("avahi", f.read())
         for name in ("pvj-ndi", "pvj-ndi-runtime"):

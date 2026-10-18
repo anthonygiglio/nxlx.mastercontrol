@@ -201,6 +201,14 @@ def parse_time(line):
     return datetime.datetime.strptime(value, "%b %d %H:%M:%S %Y GMT").replace(tzinfo=datetime.timezone.utc)
 
 
+def new_serial(digits=None):
+    """32 hex digits for -set_serial: a positive 128-bit number whose first digit is 1 to 7, so it is 16 bytes in the
+    file and openssl prints all 32 digits. (The first digit was masked with 7 alone, so one serial in 8 began with 0
+    and one in 128 with 00, which openssl prints as 30 digits: CI met it on 2026-10-18.)"""
+    digits = digits or secrets.token_hex(16)
+    return "%x" % (1 + int(digits[0], 16) % 7) + digits[1:]
+
+
 def read_cert(exe, path):
     code, text, err = run(exe, ["x509", "-in", path, "-noout", "-text", "-startdate", "-enddate", "-serial", "-issuer", "-fingerprint", "-sha256"])
     if code:
@@ -310,8 +318,7 @@ def sign(exe, folder, request, add_names, add_ips, drop, days, out_path, ask, ou
     code, _, err = run(exe, ["pkey", "-in", key, "-passin", "stdin", "-noout"], passphrase)
     if code:
         raise BoxcertError("wrong passphrase (or %s is damaged); nothing was signed" % key)
-    serial = secrets.token_hex(16)
-    serial = hex(int(serial[0], 16) & 0x7)[2:] + serial[1:]            # a positive 128-bit number, so 16 bytes in the file
+    serial = new_serial()
     with tempfile.TemporaryDirectory() as tmp:
         cfg, leaf = os.path.join(tmp, "leaf.cnf"), os.path.join(tmp, "leaf.pem")
         with open(cfg, "w") as f:

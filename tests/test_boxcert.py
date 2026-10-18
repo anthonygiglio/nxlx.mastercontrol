@@ -61,6 +61,14 @@ class BoxcertTest(unittest.TestCase):
     def text(self, exe, args):
         return subprocess.run([exe] + args, capture_output=True, text=True).stdout
 
+    def test_a_serial_is_always_32_digits_and_positive(self):
+        for digits in ("00" * 16, "0f" + "00" * 15, "80" + "ff" * 15, "ff" * 16, "7" + "0" * 31):
+            serial = boxcert.new_serial(digits)
+            self.assertEqual(len(serial), 32, digits)
+            self.assertIn(serial[0], "1234567", "positive, and no leading zero for openssl to drop")
+            self.assertEqual(serial[1:], digits[1:])
+        self.assertEqual(len({boxcert.new_serial() for _ in range(200)}), 200)
+
     def test_the_whole_way_with_each_openssl(self):
         for exe in openssls():
             with self.subTest(openssl=exe):

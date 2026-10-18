@@ -611,6 +611,23 @@ gl-fences, which must stay near 0) and `["get_property","frame-drop-count"]` aft
 | R7 | The fallback: with New chosen, `sudo mv /opt/pvj/current/render/pvj-render /tmp/` and Restart player; then put it back. Then `sudo pkill -x -SEGV pvj-render` twice within a minute | The first: classic draws and the page says "pvj-render is not built on this box" or why; the second: one restart, then classic, and the page says "ended twice in a row (signal 11)". A picture all the time but a few seconds | The page's words and `journalctl -u pvj-player -n 30` |
 | R8 | Classic again (the default) after R4 to R7 | Classic draws within about 10 seconds with no restart by hand; the Renderer card says how pvj-render was ended (asked, SIGTERM or SIGKILL); everything as before this release; no pvj-render running (`pgrep -x pvj-render` says nothing) | Yes or no, and the card's words |
 
+### Sound reactivity (D96): never run on a Pi or with a real audio input
+
+Before: the box updated to this release; `systemctl status pvj-sound` says active; `arecord --version` answers (if
+not: `sudo apt install alsa-utils`). A USB audio input (a class-compliant one) plugged into the Pi, with music or a
+metronome into it. The page is Setup > Sound reactivity. It analyses levels only; nothing is recorded.
+
+| Row | Do | Expect | Send back |
+| --- | --- | --- | --- |
+| SR1 | `journalctl -u pvj-sound -n 20`; then on the page choose the USB input and switch Listen on | The service says "ready"; the device is in the list by its name; the state says Listening; nothing in the journal about a refused system call or memory | The device's name as listed; every line of the journal after the switch |
+| SR2 | Play music; watch the meter | The level and the six bands move with the music, the bass bars with the kick, the high bar with the hats; quiet is near 0 | Whether the bars lag behind what you hear (a rough guess is fine); the dB with music at a normal level |
+| SR3 | Play a click track or a four-on-the-floor track at a known tempo (120 BPM) for a minute | The Beat chip flashes on every beat; the tempo reads about 120 | How many beats were missed or doubled in a minute; the tempo it showed |
+| SR4 | Gain trim: -12 and +12 dB | The bars fall and rise; the sound itself is not changed | Whether the trim was needed for this input, and which value suits it |
+| SR5 | Play a shader that has a number input (for example nxlx-silk); under "A shader input that follows the sound" choose that input, the level, depth 0.5, Save, switch it on | The input moves with the music, slowly (at most twice a second); the picture does not stutter more than when a knob is turned | Whether it looks like it follows the music at all; any frame drops (Setup > Health) |
+| SR6 | With music playing and Listen on for five minutes: `systemctl show pvj-sound -p CPUUsageNSec` before and after, or `top -p $(pgrep -f bin/pvj-sound)`, and the arecord process beside it | The service under about 10 percent of one core; arecord a few percent | Both numbers; the page's own "uses about N percent of one core" |
+| SR7 | OSC: with "Send state back" on and a tablet or a computer as a target, switch "Send sound to the state targets" on; watch `/nxlx/sound/level`, `/nxlx/sound/bands` and `/nxlx/sound/beat` in TouchOSC's or Max's OSC monitor | About 20 bundles a second of the level, 5 of the bands (they move slowly, averaged over 200 ms), and a message at each beat, only to the listed target | Whether TouchOSC takes the bundle (D82's open question); what arrives per second |
+| SR8 | Unplug the USB input while Listen is on; plug it back | The page says it is not plugged in; when it is back the box listens again by itself within a few seconds | The words; how long until it listened again |
+
 ### What to send back
 
 The output of checks 1 to 7 and 13, the `journalctl` tail for anything that failed, and a note of what you saw on screen. Say clearly what you did **not** test.
