@@ -6,6 +6,10 @@ For a new person or a new claude session picking this up cold. Read this, then t
 
 This page is meant to be read once, top to bottom. "State and what is next" is the only part that is about a date; everything after it is by topic.
 
+## What changes when you update: sound sources (D97, #147)
+
+**Nothing changes until the Owner allows another source** (Setup > Sound reactivity > Advanced). Then the Owner and Operators can switch between: the capture device (now also one input of a multi-input card), the box's own sound (what the clip or NDI plays, measured by an audio filter inside classic mpv: level and beat, no bands), the NDI sound, and levels sent in over OSC from Max/RNBO on a render node or a listed address. Remote support never switches to the microphone. Going back to D96 reads the section as off. Never run on a Pi: DEVICE-TESTING SS1 to SS6.
+
 ## What changes when you update: sound reactivity (D96, #145)
 
 **Nothing listens until the Owner chooses a capture device and switches it on.** A new service, `pvj-sound`, is installed and started on every box and idles; with no device it says so. Setup > Show tools > **Sound reactivity**: the Owner chooses the device (a USB audio input), a gain trim, on and off, and two switches that send the values over OSC (`/nxlx/sound/...`) to the "Send state back" targets and to the render nodes; an Operator sees the meter and can let the level, the beat or a band move one number input of the shader on the screen, slowly (on classic mpv a value change is a recompile; per-frame reaction waits for pvj-render's phase 4, which will read `/run/pvj-sound/levels`, layout in `pvj/SOUND.md`). **It analyses levels only; no sound is stored or sent.** Off the box the bands leave only averaged over 200 ms, at most 5 times a second, and through remote support not at all (the review of #145). The service has no network at all and runs in group `audio` only. Remote support may switch capture off, never on. The installer adds `alsa-utils` where the network allows. **Never run on a Pi or with a real input**: DEVICE-TESTING SR1 to SR8. The CPU on a Pi 4 is an estimate (6 to 10 percent of one core), not a measurement.

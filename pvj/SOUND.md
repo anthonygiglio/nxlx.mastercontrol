@@ -24,6 +24,8 @@ The box listens to a capture device (a USB audio input, a line in) and turns wha
 | NDI sound (advanced) | the same measurement, only while NDI plays (D87's one sound source) | no (0) | the same |
 | OSC in (advanced, Max/RNBO) | levels sent to the box under `/nxlx/sound/in/` from a render node or a listed address | as sent | the same |
 
+OSC in, the addresses: `/nxlx/sound/in/level` (f 0 to 1, taken as -60 to 0 dB), `/db` (f), `/envelope` (f 0 to 1), `/beat` (no argument or i; one beat), `/bpm` (f), `/bands` (6 x f 0 to 1). Taken from the render nodes and the Owner's "Accept from" list only, at most 100 messages a second from one sender; nothing is sent in answer. The box's own sound is measured by an `astats` filter in classic mpv: only its RMS and peak in dB leave the player, 25 times a second.
+
 All of them end in the one levels file below, and the privacy rule holds for each: the bands leave the box only averaged over 200 ms, at most 5 times a second, none through the support tunnel. Details and what was rejected: D97.
 
 ## Why `arecord`

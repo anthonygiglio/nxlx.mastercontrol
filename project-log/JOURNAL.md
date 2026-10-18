@@ -4,6 +4,13 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-18, sound sources: a channel, the box's own sound, NDI, OSC in (`sound-sources`, #147, D97)
+
+- **The owner's words:** "All of the above please :). You can put the more 'advanced' options into an advanced subsection if it makes sense." and "Owner and Operator" may switch the source. #145 (D96) merged first, after its review (two Mediums, three Lows, all fixed).
+- **Built:** one input of a multi-input card (count from /proc/asound, `arecord -c N`, plughw only); the box's own sound measured inside classic mpv by an `astats` audio filter (two numbers a frame leave the player, never sound), the same for the NDI sound while NDI plays (no second NDI connection); levels sent in over OSC under `/nxlx/sound/in/` from render nodes and listed addresses only, before OSC's locks, bounded and never answered; one publish channel for all of them. The Owner allows sources; the Owner and Operators switch (`POST /api/sound/source`); remote support never switches to the microphone or listening on.
+- **Tests:** `tests/test_sound_sources.py` (20, one with a real mpv measuring a tone), `tests/test_sound.py`, `tests/test_roles.py`, `tests/test_osc`, `tests/test_osc_lockdown`: all OK here. The rollback test reads the new section with the release before (5a3a1c6): off.
+- **Open:** everything on the Pi (DEVICE-TESTING SS1 to SS6); the meter's CPU on the Pi's player; the review (it reads the player's sound and takes network input).
+
 ## 2026-10-18, sound-reactivity of the box's own (`sound`, #145, D96)
 
 - **The owner's words (2026-10-16):** "Yes, it's worthwhile to add sound-reactivity to the Pi and Mastercontrol overall." RNBO stays an optional later source; this is the box's own. Design first (6f1a5e6), then the code.

@@ -135,6 +135,10 @@ The pad lights, the fade and Blackout come from the same picture of the box the 
 
 **The eight controls and their names.** The count is the one `/pvj/shader/control/<n>` and a MIDI controller's knobs use: the file's numbers, switches, choices and events, in the file's order, the first eight. A colour and a point (x and y) have no knob, so they have no place among the eight and no name is sent for them; a number whose MIN is its MAX cannot move and is left out too. The names and kinds are sent when the shader or the effect changes and with every full state, not at every look, so a knob that moves sends its value alone. Like a clip's name, a control's name is read by anyone on the network.
 
+## Sound levels sent in (D97)
+
+With sound reactivity's source set to "Levels sent in over OSC", the box takes `/nxlx/sound/in/...` (level, dB, envelope, beat, BPM, bands) from its render nodes and from the addresses the Owner lists, before the locks above, and only those addresses; they can only feed numbers into the levels file. Details: [SOUND.md](SOUND.md).
+
 ## Sound values sent out (D96)
 
 With sound reactivity on and the Owner's switch for it, the box sends `/nxlx/sound/...` (the level, dB, the envelope, the beat pulse, the tempo, six bands, and a message at each beat) to the state targets above and to the render nodes below, the level and the beat up to 20 times a second and the bands averaged over 200 ms at most 5 times a second, under caps of their own. The table and the rule are in [SOUND.md](SOUND.md#osc-out-nxlxsound). The values are levels, never sound.
