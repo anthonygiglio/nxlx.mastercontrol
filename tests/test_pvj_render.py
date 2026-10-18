@@ -1015,7 +1015,9 @@ class ManyFadesTest(FadeBase):
         st = self.st()
         self.assertGreaterEqual(st["fades-done"], 220)
         self.assertEqual(st["fades-cut"], 0)
-        self.same(after, start, "200 fades")
+        # libmpv's pool moves up and down by 4 or 5 with no leak (600 fades, the D98 addendum): the band, not SLACK.
+        # A leak of one object every ten fades still ends 20 over.
+        self.same(after, start, "200 fades", gl=start["gl-objects"])
         # fades cut short: three warm-up checkpoints of 20, then four of 30, judged against the warm-up's highest
         warm = [self.cut_short(a, b, 20, deadline) for _ in range(3)]
         peak = max(w["gl-objects"] for w in warm)
