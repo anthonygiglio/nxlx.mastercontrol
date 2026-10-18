@@ -12,3 +12,4 @@ libegl-dev
 libgles-dev
 libgbm-dev
 libdrm-dev
+alsa-utils

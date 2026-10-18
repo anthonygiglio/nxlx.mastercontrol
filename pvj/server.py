@@ -768,6 +768,10 @@ def main(argv=None):
                 api.render_tick()            # a render node's picture that went: back to what played before (D94)
             except Exception as e:
                 print("pvj-web: render watch: %s" % e, file=sys.stderr)
+            try:
+                api.sound_tick()             # the sound service told again after a restart; the sending thread (D96)
+            except Exception as e:
+                print("pvj-web: sound watch: %s" % e, file=sys.stderr)
     threading.Thread(target=ndi_watch, name="ndi-watch", daemon=True).start()
     print("pvj-web: listening on %s:%d%s; pairing PIN %s (also in %s/pin)"
           % (host, port, " and https on %d (%s)" % (tls_port, "certificate loaded" if api.https.context else "no certificate yet") if tlsd else "",
@@ -788,6 +792,7 @@ def main(argv=None):
         if api.capture:
             api.capture.stop()
         ndi_stop.set()
+        api.sound.stop()
         if api.ndi:
             api.ndi.stop()
         api.dmx.stop()

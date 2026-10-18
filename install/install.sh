@@ -88,6 +88,7 @@ WEB_UNIT="$ROOT/etc/systemd/system/pvj-web.service"
 NET_UNIT="$ROOT/etc/systemd/system/pvj-netd.service"
 SYS_UNIT="$ROOT/etc/systemd/system/pvj-sysd.service"
 SUP_UNIT="$ROOT/etc/systemd/system/pvj-supportd.service"
+SOUND_UNIT="$ROOT/etc/systemd/system/pvj-sound.service"      # sound analysis (D96): on every box, idle until the Owner chooses a device
 # The NDI input is opt-in per box (D62): none of these four files exists unless root ran "pvj-ndi-runtime install"
 # at the box (pvj/ndisetup.py). The panel's drop-in is the mark of that; this installer never writes it.
 NDI_UNIT="$ROOT/etc/systemd/system/pvj-ndi.service"
@@ -119,13 +120,14 @@ uninstall() {
 	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then
 		systemctl disable --now pvj-ndi.service 2>/dev/null || true
 		systemctl disable --now pvj-ndi-discovery.service 2>/dev/null || true
+		systemctl disable --now pvj-sound.service 2>/dev/null || true
 	fi
 	# The discovery server's set-up, where there is one: its mark first (it lies in the same folder as the NDI mark).
 	run rm -f "$NDISC_MARK" "$NDISC_UNIT" "$NDISC_WANTS" || log "WARNING: could not remove everything of the discovery server's set-up; look at $NDISC_MARK and $NDISC_UNIT and remove them by hand"
 	# A box that was set up for NDI: the mark first, then the rest; the two folders only if nothing else is in them.
 	run rm -f "$NDI_MARK" "$NDI_PLAYER_DROPIN" "$NDI_TMPFILES" "$NDI_UNIT" "$NDI_WANTS" "$BIN_LINKS/pvj-ndi-runtime" || log "WARNING: could not remove everything of the NDI helper; look at $NDI_MARK, $NDI_PLAYER_DROPIN and $NDI_UNIT and remove them by hand"
 	if [ "$DRY" = 0 ]; then rmdir "$(dirname "$NDI_MARK")" "$(dirname "$NDI_PLAYER_DROPIN")" 2>/dev/null || true; fi
-	run rm -f "$SUP_UNIT" "$WG_LOAD" "$UPD_USB_UNIT" "$UPD_INBOX_UNIT" "$JOURNAL_CONF" "$TMPFILES"
+	run rm -f "$SUP_UNIT" "$SOUND_UNIT" "$WG_LOAD" "$UPD_USB_UNIT" "$UPD_INBOX_UNIT" "$JOURNAL_CONF" "$TMPFILES"
 	run rm -f "$UNIT" "$WEB_UNIT" "$NET_UNIT" "$SYS_UNIT" "$USB_UNIT" "$USB_RULE" "$BIN_LINKS/pvj-player" "$BIN_LINKS/pvj-selftest" "$BIN_LINKS/pvj-usb" "$BIN_LINKS/pvj-rootfs" "$BIN_LINKS/pvj-pin" "$BIN_LINKS/pvj-update"
 	run rm -rf "${ROOT}${PREFIX:?}"
 	[ "$PURGE" = 1 ] && run rm -rf "$ETC"
@@ -135,7 +137,7 @@ uninstall() {
 	if [ "$PURGE" = 1 ]; then run rm -rf "${ROOT}/opt/pvj-ndi-server"; fi
 	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then systemctl daemon-reload; fi
 	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && command -v udevadm >/dev/null; then udevadm control --reload || true; fi
-	log "done. Kept ${ETC}, media and /opt/pvj-ndi (your copy of the NDI runtime, if this box was set up for NDI) unless --purge; the users (pvj-web, the player's, and pvj-ndi on a box that was set up for NDI) and the groups pvj and pvj-ndi are left in place (remove them with deluser and delgroup if you want them gone)."
+	log "done. Kept ${ETC}, media and /opt/pvj-ndi (your copy of the NDI runtime, if this box was set up for NDI) unless --purge; the users (pvj-web, pvj-sound, the player's, and pvj-ndi on a box that was set up for NDI) and the groups pvj and pvj-ndi are left in place (remove them with deluser and delgroup if you want them gone)."
 }
 
 if [ "$UNINSTALL" = 1 ]; then uninstall; exit 0; fi
@@ -188,6 +190,17 @@ if [ ${#render_need[@]} -gt 0 ] && command -v dpkg-query >/dev/null; then
 	fi
 fi
 
+# Optional: sound reactivity (D96) reads a capture device with arecord, from alsa-utils (in Raspberry Pi OS already).
+# Without it the sound service idles and the panel says arecord is missing.
+if ! command -v arecord >/dev/null && [ ! -x /usr/bin/arecord ]; then
+	if [ "$OFFLINE" = 1 ] || [ "$REAL" = 0 ] || ! command -v apt-get >/dev/null; then
+		log "sound reactivity will be unavailable until alsa-utils is installed"
+	else
+		log "installing alsa-utils (for sound reactivity)"
+		run apt-get install -y --no-install-recommends alsa-utils || log "could not install alsa-utils; sound reactivity stays unavailable"
+	fi
+fi
+
 # Nothing is installed for the NDI input here, not avahi either: that is opt-in per box (pvj/ndisetup.py, D62).
 
 # --- accounts -----------------------------------------------------------
@@ -224,6 +237,13 @@ if [ "$REAL" = 1 ]; then
 	if ! id pvj-web >/dev/null 2>&1; then
 		log "creating system user pvj-web"
 		run useradd --system --no-create-home --shell /usr/sbin/nologin --gid pvj pvj-web
+	fi
+	# The sound analysis (D96) runs as its own account whose only group is audio: never pvj (the player's socket,
+	# the settings, the PIN). Whoever is in audio can already open the microphone.
+	getent group audio >/dev/null || run groupadd --system audio
+	if ! id pvj-sound >/dev/null 2>&1; then
+		log "creating system user pvj-sound"
+		run useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --gid audio pvj-sound
 	fi
 fi
 
@@ -330,6 +350,7 @@ if [ "$DRY" = 0 ]; then
 	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-netd.service" > "$NET_UNIT"
 	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-sysd.service" > "$SYS_UNIT"
 	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-supportd.service" > "$SUP_UNIT"
+	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-sound.service" > "$SOUND_UNIT"
 	# Updates from the panel: started on request by pvj-sysd, never enabled.
 	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-update-usb@.service" > "$UPD_USB_UNIT"
 	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-update-inbox@.service" > "$UPD_INBOX_UNIT"
@@ -494,8 +515,13 @@ if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then
 	fix_run_folder
 	if systemctl restart systemd-journald.service 2>/dev/null; then journalctl --flush 2>/dev/null || true; fi
 	systemctl enable pvj-player.service pvj-web.service pvj-sysd.service pvj-supportd.service
+	systemctl enable pvj-sound.service || log "could not enable the sound service"
 	modprobe wireguard 2>/dev/null || log "the WireGuard kernel module is not available: remote support stays unavailable"
 	if [ "$START" = 1 ]; then systemctl restart pvj-player.service pvj-web.service pvj-sysd.service pvj-supportd.service; fi
+	# The sound service moves to the new program even with --no-start, and is started where it was not running
+	# (it is idle until the Owner chooses a device): a box updated from before D96 gets it at once.
+	if [ "$START" = 1 ]; then systemctl restart pvj-sound.service || log "the sound service did not start; see: journalctl -u pvj-sound -n 30"
+	else systemctl try-restart pvj-sound.service || true; systemctl start pvj-sound.service 2>/dev/null || true; fi
 	# The network helper only makes sense with NetworkManager (Raspberry Pi OS, most desktops).
 	if command -v nmcli >/dev/null; then
 		systemctl enable pvj-netd.service

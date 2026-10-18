@@ -1,0 +1,11 @@
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+# SPDX-License-Identifier: Apache-2.0
+# The sound analysis service (D96, pvj/SOUND.md): levels only, no network, no sound kept.
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
+from pvj.sound import main  # noqa: E402
+
+sys.exit(main())

@@ -183,6 +183,24 @@ def ndi_config_dir(env=None):
     return _env(env).get("PVJ_NDI_CONFIG_DIR") or None
 
 
+SOUND_DIR = "/run/pvj-sound"              # the sound-analysis service (pvj/sound.py, D96): its socket and the levels file
+SOUND_SOCKET = "sound.sock"
+SOUND_LEVELS = "levels"
+
+
+def sound_dir(env=None):
+    """The sound service's folder: its socket for the panel and the levels file (group audio). Only the service creates it."""
+    return _env(env).get("PVJ_SOUND_DIR") or SOUND_DIR
+
+
+def sound_socket(env=None):
+    return os.path.join(sound_dir(env), SOUND_SOCKET)
+
+
+def sound_levels(env=None):
+    return os.path.join(sound_dir(env), SOUND_LEVELS)
+
+
 def ndi_fifo(env=None):
     return os.path.join(ndi_pipe_dir(env), NDI_FIFO)
 

@@ -279,6 +279,8 @@ class Api:
         from . import render as render_mod
         self.render = render_mod.Bridge(nets=self._render_nets, tunnel=lambda: self.support.network(),
                                         log=lambda line: self.log(line))           # render nodes (D94)
+        from . import soundout as soundout_mod
+        self.sound = soundout_mod.Sound(self, log=lambda line: self.log(line))      # sound reactivity (D96)
         from . import projector as projector_mod
         self.projectors = projector_mod.Monitor(self, log=lambda line: self.log(line))    # started by server.build and the module switch
         self.dmx = None           # DmxManager or None
@@ -2031,6 +2033,96 @@ class Api:
         if set(body) != {"mode"}:
             raise bad("send mode: auto or one of the screen's modes")
         return self._screen_call(self.screen.choose, body["mode"])
+
+    # --- sound reactivity (D96, pvj/sound.py, pvj/soundout.py) ----------------------------------------
+    SOUND_PRIVACY = ("The box analyses levels only. No sound is stored, recorded or sent anywhere, ever: a block of 20 ms "
+                     "lives in memory for that block and is gone.")
+    SOUND_SLOW = ("On the classic renderer a shader's value changes by compiling the shader again, so it follows the sound "
+                  "slowly: at most twice a second, smoothed. Real reaction at every frame comes with the new renderer.")
+    SOUND_REMOTE = "a helper does not start listening to the room: switching the microphone on is done by the owner in the room (D96)"
+
+    def _sound_levels_view(self, v):
+        """What the page reads of one record: the levels only, rounded."""
+        if v is None:
+            return None
+        return {"fresh": v["fresh"], "capturing": v["capturing"] and v["fresh"], "idle": v["idle"], "age": round(v["age"], 2),
+                "db": round(v["rms_db"], 1), "level": round(v["level"], 3), "envelope": round(v["envelope"], 3),
+                "pulse": round(v["pulse"], 3), "bpm": round(v["bpm"], 1), "confidence": round(v["confidence"], 2),
+                "beats": v["beats"], "bands": [round(b, 3) for b in v["bands"]], "peak_db": round(v["peak_db"], 1),
+                "clipped": v["clipped"]}
+
+    def get_sound(self, body, device, client):
+        """The page: what the Owner chose, the devices, the service's state, the meter, the shader mapping."""
+        from . import sound as sound_mod
+        cfg = self.sound.config()
+        helper = self.sound.helper if self.sound.helper_at is not None and time.monotonic() - self.sound.helper_at < 3 else self.sound.status()
+        devices = self.sound.devices()
+        out = {"config": cfg, "devices": devices, "helper": helper, "levels": self._sound_levels_view(self.sound.levels()),
+               "bands": [{"n": i + 1, "name": b[2], "low": b[0], "high": b[1]} for i, b in enumerate(sound_mod.BANDS)],
+               "gain": {"min": sound_mod.GAIN_MIN, "max": sound_mod.GAIN_MAX}, "shader": self.sound.shader_inputs(),
+               "map_state": dict(self.sound.map_state), "osc": self.sound.osc_status(), "privacy": self.SOUND_PRIVACY,
+               "slow": self.SOUND_SLOW, "remote": bool(device and device.get("remote")),
+               "plugged": cfg["device"] == "" or cfg["device"] in {d["id"] for d in devices}}
+        return out
+
+    def sound_levels(self, body, device, client):
+        """The meter alone, for a page that asks a few times a second."""
+        return {"levels": self._sound_levels_view(self.sound.levels())}
+
+    def set_sound(self, body, device, client):
+        """{"on"?, "device"?, "gain_db"?, "osc_state"?, "osc_render"?}: the Owner's. Through remote support (D84, D96) a
+        session of the Owner's role may switch capture off and change the gain, never switch it on, choose the device
+        while it is on, or switch sending on."""
+        from . import soundout
+        if not isinstance(body, dict) or not body or set(body) - {"on", "device", "gain_db", "osc_state", "osc_render"}:
+            raise bad("send on, device, gain_db, osc_state or osc_render")
+        remote = self._remote_owner(device, client, "changing sound reactivity")
+        cfg = self.sound.config()
+        new = dict(cfg)
+        new.update(body)
+        try:
+            new = soundout.form(new)
+        except soundout.SoundError as e:
+            raise bad(str(e))
+        if remote:
+            if new["on"] and not cfg["on"]:
+                raise ApiError(403, self.SOUND_REMOTE)
+            if new["device"] != cfg["device"] and (cfg["on"] or new["on"]):
+                raise ApiError(403, "%s; the device is chosen while it is off" % self.SOUND_REMOTE)
+            for key in ("osc_state", "osc_render"):
+                if new[key] and not cfg[key]:
+                    raise ApiError(403, "sending the sound's values to other machines is switched on by the owner in the room (D96)")
+        if "device" in body and new["device"] not in ("", cfg["device"]) and new["device"] not in {d["id"] for d in self.sound.devices()}:
+            raise ApiError(409, "that capture device is not plugged in now; choose one from the list")
+        try:
+            self.sound.save(new)
+        except OSError as e:
+            raise ApiError(500, "the setting could not be saved: %s" % (e.strerror or e))
+        said = ", ".join("%s %s" % (k, json.dumps(new[k])) for k in sorted(body))
+        self.log("pvj-web: sound reactivity changed by device %s (%s) from %s: %s" % ((device or {}).get("id"), (device or {}).get("role"), client, said[:200]))
+        return self.get_sound({}, device, client)
+
+    def set_sound_map(self, body, device, client):
+        """The shader mapping (the Operator's): {"on"?, "input"?, "source"?, "rest"?, "depth"?, "smooth"?}."""
+        from . import soundout
+        if not isinstance(body, dict) or not body:
+            raise bad("send on, input, source, rest, depth or smooth")
+        cfg = self.sound.config()
+        m = dict(cfg["map"])
+        m.update(body)
+        try:
+            cfg["map"] = soundout.map_form(m)
+        except soundout.SoundError as e:
+            raise bad(str(e))
+        try:
+            self.sound.save(cfg)
+        except OSError as e:
+            raise ApiError(500, "the setting could not be saved: %s" % (e.strerror or e))
+        return self.get_sound({}, device, client)
+
+    def sound_tick(self):
+        """About once a second, beside ndi_tick (server.py)."""
+        self.sound.tick()
 
     # --- the renderer (D95) --------------------------------------------------
     def _renderer_call(self, fn, *args):
@@ -4617,6 +4709,10 @@ class Api:
             ("GET", "/api/render"): ("live", self.get_render),            # render nodes (D94): seen by the Operator,
             ("POST", "/api/render"): ("full", self.set_render),           # kept by the Owner,
             ("POST", "/api/render/cue"): ("live", self.render_cue),       # and cued by hand by the Operator
+            ("GET", "/api/sound"): ("live", self.get_sound),              # sound reactivity (D96): seen by the Operator,
+            ("GET", "/api/sound/levels"): ("live", self.sound_levels),    # the meter alone,
+            ("POST", "/api/sound"): ("full", self.set_sound),             # the device, on and off and sending: the Owner's,
+            ("POST", "/api/sound/map"): ("live", self.set_sound_map),     # the shader input: the Operator's
             ("POST", "/api/control"): ("live", self.control),
             ("POST", "/api/blackout"): ("live", self.blackout),
             ("POST", "/api/fadeout"): ("live", self.fadeout),
