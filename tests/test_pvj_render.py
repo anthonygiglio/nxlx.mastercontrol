@@ -946,11 +946,19 @@ def thread_count(pid):
 
 
 class ManyFadesTest(FadeBase):
-    """A show crossfades all night: 200 fades in a row (two pictures, then two clips) and 30 more each cut short by
+    """A show crossfades all night: 200 fades in a row (two pictures, then two clips) and 180 more each cut short by
     the next leave no file descriptor, thread, GL fence or GL object behind. After a warm-up the counts are the same
-    at the same state (two clips, nothing fading), give or take SLACK. Bounded: the test gives up after LIMIT."""
-    LIMIT = 300.0
+    at the same state (two clips, nothing fading), give or take SLACK. Bounded: the test gives up after LIMIT.
+
+    libmpv's GL objects are not one number at rest: over 600 fades cut short (2026-10-18, here) they moved between 37
+    and 41, down as well as up (37, 38, 39, 39, 39, 39, 41, 41, 39, 41, 39, 39 at 0, 30, 60 ... 600), and on CI's
+    mpv 0.40 from 39 to 42 after 30: a pool (most likely the textures of the frames libmpv had queued when a load was
+    cut), not a leak. So the cut-short run is judged by its trend: GL_BAND over the highest of three warm-up
+    readings at most, at each of four later checkpoints. A leak of one object a fade is 30 more at each checkpoint,
+    and one in ten fades is 12 more by the last."""
+    LIMIT = 420.0
     SLACK = 2
+    GL_BAND = 4
 
     def run_fades(self, a, b, n, seconds, deadline):
         r = self.r
@@ -969,10 +977,26 @@ class ManyFadesTest(FadeBase):
         pid = self.r.proc.pid
         return {"fds": fd_count(pid), "threads": thread_count(pid), "gl-objects": self.st()["gl-objects"], "fences": st["gl-fences"]}
 
-    def same(self, now, then, what):
-        for k in ("fds", "threads", "gl-objects"):
+    def same(self, now, then, what, gl=None):
+        """fds and threads within SLACK of `then`; libmpv's GL objects within SLACK of it, or with `gl` (the highest
+        of some earlier readings) within GL_BAND of that."""
+        for k in ("fds", "threads"):
             self.assertLessEqual(now[k], then[k] + self.SLACK, "%s: %s piled up: %s, at the start %s" % (what, k, now, then))
+        limit = then["gl-objects"] + self.SLACK if gl is None else gl + self.GL_BAND
+        self.assertLessEqual(now["gl-objects"], limit, "%s: GL objects piled up: %s, at most %d" % (what, now, limit))
         self.assertLessEqual(now["fences"], 4, now)
+
+    def cut_short(self, a, b, n, deadline):
+        """n fades, each ended by the next one while it runs (end_fade), then one that runs to its end; the counts."""
+        r = self.r
+        cut = self.st()["fades-cut"]
+        for i in range(n):
+            self.assertLess(time.monotonic(), deadline, "the bounded run of fades took too long")
+            self.fade(b if i % 2 == 0 else a, 5.0)
+            self.assertTrue(r.wait(lambda: self.st()["fade"] == "running", 10, 0.01), "fade %d: %s" % (i, self.st()))
+        self.run_fades(a, b, 1, 0.1, deadline)
+        self.assertEqual(self.st()["fades-cut"], cut + n)
+        return self.counts()
 
     def test_two_hundred_fades_leave_nothing_behind(self):
         r = self.r
@@ -992,21 +1016,19 @@ class ManyFadesTest(FadeBase):
         self.assertGreaterEqual(st["fades-done"], 220)
         self.assertEqual(st["fades-cut"], 0)
         self.same(after, start, "200 fades")
-        # 30 fades, each ended by the next one while it runs (end_fade), then one that runs to its end
-        cut = st["fades-cut"]
-        for i in range(30):
-            self.assertLess(time.monotonic(), deadline, "the bounded run of fades took too long")
-            self.fade(b if i % 2 == 0 else a, 5.0)
-            self.assertTrue(r.wait(lambda: self.st()["fade"] == "running", 10, 0.01), "fade %d: %s" % (i, self.st()))
-        self.run_fades(a, b, 2, 0.1, deadline)
-        self.assertEqual(self.st()["fades-cut"], cut + 30)
-        cut_short = self.counts()
-        self.same(cut_short, start, "30 fades cut short")
+        # fades cut short: three warm-up checkpoints of 20, then four of 30, judged against the warm-up's highest
+        warm = [self.cut_short(a, b, 20, deadline) for _ in range(3)]
+        peak = max(w["gl-objects"] for w in warm)
+        later = []
+        for n in range(4):
+            later.append(self.cut_short(a, b, 30, deadline))
+            self.same(later[-1], start, "%d fades cut short" % (60 + 30 * (n + 1)), gl=peak)
         self.assertNotIn("Export failed", r.stderr())
         self.assertIsNone(r.proc.poll())
-        print("\n%d fades (%d cut short): at the start %s, after 200 %s, after 30 cut short %s; GL fences deleted %d"
-              % (self.st()["fades-done"] + self.st()["fades-cut"], self.st()["fades-cut"], start, after, cut_short,
-                 self.st()["gl-fences-freed"]))
+        print("\n%d fades (%d cut short): at the start %s, after 200 %s; GL objects after 20, 40, 60 cut short %s, then "
+              "after 90 to 180 %s; GL fences deleted %d"
+              % (self.st()["fades-done"] + self.st()["fades-cut"], self.st()["fades-cut"], start, after,
+                 [w["gl-objects"] for w in warm], [c["gl-objects"] for c in later], self.st()["gl-fences-freed"]))
 
 
 def make_clip_with_sound(case, path, seconds=3):
