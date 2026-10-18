@@ -187,6 +187,9 @@ class Base(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.r = Renderer(*self.ARGS)
         self.addCleanup(lambda: self.r.close())
+        # a picture stays until something else comes: mpv ends one after 1 s by default, and the screen is black then
+        # (as with classic mpv); the tests that read a picture back must not race that on a slow machine
+        self.r("set_property", "image-display-duration", "inf")
         self.picture = os.path.join(self.tmp, "quadrants.png")
         png(self.picture, W, H, quadrants)
 
@@ -464,6 +467,9 @@ class TextLayerTest(Base):
         self.assertTrue(self.r.wait(lambda: near(self.r.pixel(W - 20, H - 20), MAGENTA)), self.r.stderr())
 
     def test_show_text_is_drawn_and_goes(self):
+        # held on the screen: a picture alone ends after mpv's image-display-duration (1 s) and the screen is black
+        # then, as with classic mpv (before, the last picture stayed on by mistake, and this test leaned on that)
+        self.r("set_property", "loop-file", "inf")
         self.r.load(self.picture)
         base = self.r.capture()
         self.r("show-text", "PIN 1234 PIN 1234", 8000)
