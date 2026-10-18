@@ -477,19 +477,162 @@ class TextLayerTest(Base):
         self.assertTrue(self.r.wait(lambda: changed() < 20), self.r.stderr())
 
 
+def make_clip(case, path, seconds=3):
+    """A 30 fps H.264 clip of W x H made with ffmpeg (a skip without it, a failure where PVJ_RENDER_TEST=1)."""
+    maker = shutil.which("ffmpeg")
+    if not maker:
+        if STRICT:
+            case.fail("PVJ_RENDER_TEST=1 and no ffmpeg to make the clip")
+        case.skipTest("no ffmpeg to make a clip")
+    subprocess.run([maker, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=30:d=%d" % seconds, "-pix_fmt", "yuv420p",
+                    "-c:v", "libx264", "-g", "15", path], check=True, timeout=120, stdin=subprocess.DEVNULL)
+
+
+def connect(path, timeout=10):
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(timeout)
+    s.connect(path)
+    return s
+
+
+class SocketTest(Base):
+    """Many clients at once, and clients that misbehave, never hold up the others (the first Pi run, 2026-10-18: one
+    thread served every client, and the panel's plays answered 503 once its listen queue was full)."""
+
+    def quick(self, n=20, limit=1.0):
+        """n questions through the panel's own client, each answered within `limit` seconds."""
+        ipc = Ipc(self.r.sock, timeout=limit)
+        for i in range(n):
+            start = time.monotonic()
+            self.assertEqual(ipc.request("get_property", "osd-width"), W)
+            self.assertLess(time.monotonic() - start, limit)
+
+    def test_a_client_that_never_reads_its_answers_holds_up_nobody_and_is_dropped(self):
+        import threading
+        stuck = connect(self.r.sock)
+        self.addCleanup(stuck.close)
+        stuck.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+        line = b'{"command": ["get_property", "pvj-render"], "request_id": 1}\n'
+
+        def flood():
+            try:
+                for _ in range(20000):          # far more answers than the socket's buffers hold; never read
+                    stuck.sendall(line * 50)
+            except OSError:
+                pass
+        t = threading.Thread(target=flood, daemon=True)
+        started = time.monotonic()
+        t.start()
+        time.sleep(0.5)                         # the helper is now waiting on that client's full socket
+        self.quick(30, 0.5)
+        # it is dropped once it has taken no answer for 2 seconds (nothing is read from it before that): what it
+        # can still read then ends with the end
+        time.sleep(max(0.0, started + 3.5 - time.monotonic()))
+        deadline = time.monotonic() + 10
+        dropped = False
+        stuck.settimeout(0.5)
+        while time.monotonic() < deadline and not dropped:
+            try:
+                dropped = stuck.recv(1 << 20) == b""
+            except socket.timeout:
+                pass
+            except OSError:
+                dropped = True
+        self.assertTrue(dropped, "the client that does not read is dropped")
+        self.assertIn("took no answer", self.r.stderr())
+        self.quick(5)
+
+    def test_clients_that_say_nothing_hold_up_nobody(self):
+        silent = [connect(self.r.sock) for _ in range(12)]      # more than the 8 the one thread had room for
+        for s in silent:
+            self.addCleanup(s.close)
+        time.sleep(0.3)
+        self.quick(20, 0.5)
+
+    def test_more_clients_than_the_bound_are_turned_away_and_it_lives_on(self):
+        held = [connect(self.r.sock) for _ in range(32)]
+        time.sleep(0.5)
+        extra = connect(self.r.sock)
+        self.assertEqual(extra.recv(10), b"", "the 33rd is closed at once, never left waiting")
+        extra.close()
+        for s in held:
+            s.close()
+        time.sleep(0.5)                         # their threads end and their places are free again
+        self.quick(10)
+        self.assertIsNone(self.r.proc.poll())
+
+    def test_many_clients_at_once_are_all_answered(self):
+        import threading
+        errors, answered = [], []
+
+        def worker():
+            ipc = Ipc(self.r.sock, timeout=5.0)
+            for _ in range(25):
+                try:
+                    answered.append(ipc.request("get_property", "pvj-render")["output-width"])
+                except Exception as e:
+                    errors.append(repr(e))
+        threads = [threading.Thread(target=worker) for _ in range(16)]
+        start = time.monotonic()
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(60)
+        self.assertEqual(errors, [])
+        self.assertEqual(answered, [W] * 400)
+        self.assertLess(time.monotonic() - start, 30)
+
+
+class PaceTest(Base):
+    """A picture goes out at every vblank (here: the headless clock's 60 a second), new clip frame or not."""
+
+    def rate(self, seconds=2.0):
+        a, t0 = self.r("get_property", "pvj-render"), time.monotonic()
+        time.sleep(seconds)
+        b, t1 = self.r("get_property", "pvj-render"), time.monotonic()
+        return (b["flips"] - a["flips"]) / (t1 - t0), (b["drawn"] - a["drawn"]) / (t1 - t0)
+
+    def test_the_output_rate_with_nothing_playing(self):
+        flips, drawn = self.rate()
+        self.assertGreater(flips, 0.85 * 60, "flips a second while idle: %.1f\n%s" % (flips, self.r.stderr()))
+        self.assertLessEqual(flips, 62)
+        self.assertLess(drawn, 2, "no clip, so no clip frame converted")
+
+    def test_the_output_rate_with_a_30_fps_clip_and_each_clip_frame_once(self):
+        clip = os.path.join(self.tmp, "clip30.mp4")
+        make_clip(self, clip, 4)
+        self.r("set_property", "loop-file", "inf")
+        self.r.load(clip)
+        flips, drawn = self.rate()
+        self.assertGreater(flips, 0.85 * 60, "flips a second: %.1f, clip frames %.1f\n%s" % (flips, drawn, self.r.stderr()))
+        self.assertLessEqual(flips, 62)
+        self.assertGreater(drawn, 20, "the clip's frames are drawn")
+        self.assertLess(drawn, 36, "each clip frame converted once, not at every vblank: %.1f" % drawn)
+
+
+class FenceTest(Base):
+    """libmpv 0.40 and 0.41 leave a GL fence behind at every render (a sync file each on the Pi's V3D, until the
+    process had no file descriptor left and Mesa said "Export failed" at every frame, 2026-10-18). They are deleted."""
+
+    def test_libmpvs_fences_do_not_pile_up(self):
+        clip = os.path.join(self.tmp, "clip.mp4")
+        make_clip(self, clip, 4)
+        self.r("set_property", "loop-file", "inf")
+        self.r.load(clip)
+        self.assertTrue(self.r.wait(lambda: self.r("get_property", "pvj-render")["drawn"] >= 60, 15), self.r.stderr())
+        st = self.r("get_property", "pvj-render")
+        self.assertLessEqual(st["gl-fences"], 4, st)
+        self.assertGreaterEqual(st["gl-fences-freed"], st["drawn"] - 5, st)
+        self.assertNotIn("Export failed", self.r.stderr())
+
+
 class ClipTest(Base):
     """A real clip: pause, seek, loop, volume, stop."""
 
     def setUp(self):
         super().setUp()
         self.clip = os.path.join(self.tmp, "clip.mp4")
-        maker = shutil.which("ffmpeg")
-        if not maker:
-            if STRICT:
-                self.fail("PVJ_RENDER_TEST=1 and no ffmpeg to make the clip")
-            self.skipTest("no ffmpeg to make a clip")
-        subprocess.run([maker, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=30:d=3", "-pix_fmt", "yuv420p",
-                        "-c:v", "libx264", "-g", "15", self.clip], check=True, timeout=120, stdin=subprocess.DEVNULL)
+        make_clip(self, self.clip)
 
     def test_play_pause_seek_loop_volume_stop(self):
         r = self.r

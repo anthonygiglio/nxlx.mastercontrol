@@ -123,10 +123,57 @@ typedef struct {
 
 static Layer video, text;
 
-static void *get_proc(void *ctx, const char *name) { (void)ctx; return (void *)eglGetProcAddress(name); }
+// libmpv's GL fences. mpv 0.40 and 0.41 make a fence at the end of every mpv_render_context_render
+// (ra_gl_ctx_submit_frame, video/out/opengl/context.c) for a swap that never comes with the render API, so nothing
+// ever deletes it (mpv's own fix: f74adc4, "require swap_buffers param for FenceSync", after 0.41). On the Pi's V3D
+// every GL fence holds a sync file: about 1000 frames in, the process had no file descriptor left, every fence after
+// failed with Mesa's "Export failed" (v3d_pipe_flush, src/gallium/drivers/v3d/v3d_context.c), and the socket could
+// take no more clients (2026-10-18). mpv asks this program for its GL functions, so glFenceSync and glDeleteSync are
+// passed through two counting wrappers, and after each render the fence mpv made last in it is deleted here: that
+// is the frame's fence, since done_frame is the last thing mpv does in a render. mpv's other fences (a texture upload
+// from a mapped buffer, video/out/opengl/ra_gl.c) are always made right after a glDeleteSync of the one before and
+// are mpv's to delete; a fence made right after a delete is never taken, so an mpv that no longer leaks loses
+// nothing either. Render thread only.
+typedef GLsync (GL_APIENTRYP FenceSyncFn)(GLenum, GLbitfield);
+typedef void (GL_APIENTRYP DeleteSyncFn)(GLsync);
+static FenceSyncFn real_fence_sync;
+static DeleteSyncFn real_delete_sync;
+static GLsync render_last_fence;        // the last fence made during the render in progress
+static int render_last_after_delete;    // ... and whether it came right after a glDeleteSync
+static int last_call_delete;
+
+static GLsync GL_APIENTRY count_fence_sync(GLenum cond, GLbitfield flags)
+{
+    GLsync s = real_fence_sync(cond, flags);
+    if (s) {
+        app.fences++;
+        render_last_fence = s;
+        render_last_after_delete = last_call_delete;
+    }
+    last_call_delete = 0;
+    return s;
+}
+
+static void GL_APIENTRY count_delete_sync(GLsync s)
+{
+    if (s) app.fences--;
+    if (s && s == render_last_fence) render_last_fence = NULL;
+    last_call_delete = 1;
+    real_delete_sync(s);
+}
+
+static void *get_proc(void *ctx, const char *name)
+{
+    (void)ctx;
+    void *p = (void *)eglGetProcAddress(name);
+    if (p && !strcmp(name, "glFenceSync")) { real_fence_sync = (FenceSyncFn)p; return (void *)count_fence_sync; }
+    if (p && !strcmp(name, "glDeleteSync")) { real_delete_sync = (DeleteSyncFn)p; return (void *)count_delete_sync; }
+    return p;
+}
 static void on_update(void *ctx) { (void)ctx; wake_render(); }
 
 static volatile int events_stop;
+static int video_changed;               // goes up at the video layer's end of a file and change of its output
 
 static void *event_loop(void *arg)
 {
@@ -134,6 +181,13 @@ static void *event_loop(void *arg)
     while (!events_stop) {
         mpv_event *ev = mpv_wait_event(h, 0.5);
         if (ev->event_id == MPV_EVENT_SHUTDOWN) break;
+        if (h == video.h && (ev->event_id == MPV_EVENT_VIDEO_RECONFIG || ev->event_id == MPV_EVENT_END_FILE
+                               || ev->event_id == MPV_EVENT_IDLE)) {
+            // libmpv asks for no new frame when its video ends (a Stop): the layer is drawn once more, which gives its
+            // empty picture. Before, the last picture stayed unless a late redraw of mpv's happened to come after.
+            __atomic_add_fetch(&video_changed, 1, __ATOMIC_RELEASE);
+            wake_render();
+        }
         if (ev->event_id == MPV_EVENT_LOG_MESSAGE) {
             mpv_event_log_message *m = ev->data;
             size_t n = strlen(m->text);
@@ -235,7 +289,16 @@ static void layer_render(Layer *l)
     mpv_opengl_fbo fbo = { .fbo = (int)l->fbo, .w = l->w, .h = l->h_, .internal_format = GL_RGBA8 };
     mpv_render_param rp[] = { { MPV_RENDER_PARAM_OPENGL_FBO, &fbo }, { MPV_RENDER_PARAM_FLIP_Y, &flip },
                               { MPV_RENDER_PARAM_BLOCK_FOR_TARGET_TIME, &block }, { 0 } };
-    mpv_render_context_render(l->rc, rp);
+    render_last_fence = NULL;
+    last_call_delete = 0;
+    int r = mpv_render_context_render(l->rc, rp);
+    // the frame's fence mpv will never delete (see count_fence_sync)
+    if (r >= 0 && render_last_fence && !render_last_after_delete && real_delete_sync) {
+        real_delete_sync(render_last_fence);
+        app.fences--;
+        app.fences_freed++;
+    }
+    render_last_fence = NULL;
 }
 
 static void layer_close(Layer *l)
@@ -460,77 +523,85 @@ int main(int argc, char **argv)
     LOG("drawing %dx%d inside, %dx%d at %.2f Hz out, hwdec %s, socket %s", app.in_w, app.in_h, app.out_w, app.out_h, app.out_hz,
         cfg.hwdec, cfg.socket_path);
 
-    int failed = 0, first = 1, text_was = 0;
+    // A picture goes out at every vblank, whether or not the clip has a new frame: the compositor runs at the output's
+    // rate (shaders, crossfades and overlays move between a clip's frames). out_present queues this flip and returns
+    // once the one before it is done, so the next picture is drawn while this flip is pending, and the loop turns
+    // once a vblank. In a turn the video layer converts at most one clip frame; with none new, its last one is used.
+    int failed = 0, text_was = 0, video_seen = 0;
     long presented = 0;
     while (!g_signal) {
         pthread_mutex_lock(&app.lock);
         int quit = app.quit, cap = app.capture_serial != app.capture_done_serial;
         int text_on = app.overlays != 0 || now_s() < app.text_until;
-        double text_until = app.text_until;
         pthread_mutex_unlock(&app.lock);
         if (quit) break;
-        int changed = first || cap || cfg.every_vblank;
-        if (app.hook_pending) { take_hook(); changed = 1; }
+        if (app.hook_pending) take_hook();
         uint64_t uv = mpv_render_context_update(video.rc);
         if (uv & MPV_RENDER_UPDATE_FRAME) video.dirty = 1;
+        int vc = __atomic_load_n(&video_changed, __ATOMIC_ACQUIRE);
+        if (vc != video_seen) { video_seen = vc; video.dirty = 1; }
         uint64_t ut = mpv_render_context_update(text.rc);
         if (ut & MPV_RENDER_UPDATE_FRAME) text.dirty = 1;
-        if (text_on != text_was) changed = 1;
         if (text_on && !text_was) text.dirty = 1;          // never a stale text for a frame
         if (video.dirty) {
             reset_gl();
             layer_render(&video);
             video.dirty = 0;
-            changed = 1;
             app.drawn++;
         }
         if (text_on && text.dirty) {
             reset_gl();
             layer_render(&text);
             text.dirty = 0;
-            changed = 1;
         }
         text_was = text_on;
-        if (changed) {
-            final_pass(text_on);
-            if (cap) {
-                pthread_mutex_lock(&app.lock);
-                char *path = app.capture_path ? strdup(app.capture_path) : NULL;
-                int serial = app.capture_serial;
-                pthread_mutex_unlock(&app.lock);
-                int r = path ? write_capture(path) : -1;
-                free(path);
-                pthread_mutex_lock(&app.lock);
-                app.capture_result = r;
-                app.capture_done_serial = serial;
-                pthread_cond_broadcast(&app.cond);
-                pthread_mutex_unlock(&app.lock);
-            }
-            if (out_present()) { failed = 1; break; }
-            mpv_render_context_report_swap(video.rc);
-            if (text_on) mpv_render_context_report_swap(text.rc);
-            first = 0;
-            presented++;
-            if (cfg.frames > 0 && presented >= cfg.frames) break;
+        final_pass(text_on);
+        if (cap) {
+            pthread_mutex_lock(&app.lock);
+            char *path = app.capture_path ? strdup(app.capture_path) : NULL;
+            int serial = app.capture_serial;
+            pthread_mutex_unlock(&app.lock);
+            int r = path ? write_capture(path) : -1;
+            free(path);
+            pthread_mutex_lock(&app.lock);
+            app.capture_result = r;
+            app.capture_done_serial = serial;
+            pthread_cond_broadcast(&app.cond);
+            pthread_mutex_unlock(&app.lock);
         }
-        // until the next vblank (or the next tick headless); a change of a layer wakes the loop at once
-        double wait = 1.0 / (app.out_hz > 1 ? app.out_hz : 60.0);
-        if (!changed && !cfg.every_vblank) {
-            wait = 0.5;
-            if (text_on && text_until > now_s()) wait = fmin(wait, text_until - now_s() + 0.01);
-        }
-        out_wait(wait);
+        if (out_present()) { failed = 1; break; }
+        mpv_render_context_report_swap(video.rc);
+        if (text_on) mpv_render_context_report_swap(text.rc);
+        presented++;
+        if (cfg.frames > 0 && presented >= cfg.frames) break;
+        out_wait(0);                                        // the wake pipe and the screen's events; never a sleep
     }
     pthread_mutex_lock(&app.lock);
     app.quit = 1;
     pthread_cond_broadcast(&app.cond);
     pthread_mutex_unlock(&app.lock);
+    // The socket's threads end at once, but one may be inside libmpv waiting for this thread (a screenshot of the
+    // window is done on the render thread): libmpv's queue for it is still served until they have all ended.
+    double until = now_s() + 5.0;
+    while (!ipc_finished() && now_s() < until) {
+        mpv_render_context_update(video.rc);
+        mpv_render_context_update(text.rc);
+        struct timespec ts = { 0, 10 * 1000 * 1000 };
+        nanosleep(&ts, NULL);
+    }
+    if (!ipc_finished()) {
+        // never free libmpv under a thread that is still in it: the screen is given back and the process ends
+        LOG("the socket's threads did not end within 5 seconds; ending at once");
+        out_close();
+        _exit(failed ? 3 : 4);
+    }
     pthread_join(ipc, NULL);
     ipc_close();
     if (have_hook) hookgl_free(&hook_gl);
     layer_close(&text);
     layer_close(&video);
     out_close();
-    LOG("ended: %ld flips, %ld video frames drawn%s", app.flips, app.drawn, failed ? ", the screen failed" : "");
+    LOG("ended: %ld flips, %ld video frames drawn, %ld vblanks missed, %ld of libmpv's fences deleted%s", app.flips, app.drawn,
+        app.missed, app.fences_freed, failed ? ", the screen failed" : "");
     return failed ? 3 : app.exit_code;
 }
