@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// pvj-render: what the parts share. One render thread owns the GL context; one socket thread reads control input
-// and talks to libmpv directly (its client API may be used from any thread) and to the render thread through `app`
-// under `app.lock`.
+// pvj-render: what the parts share. One render thread owns the GL context and presents a picture at every vblank;
+// the socket has a thread that takes clients and one thread per client, which talk to libmpv directly (its client
+// API may be used from any thread) and to the render thread through `app` under `app.lock`.
 #ifndef PVJ_H
 #define PVJ_H
 
@@ -26,7 +26,7 @@ typedef struct {
     const char *hwdec;              // mpv's hwdec for the video layer ("no" by default)
     const char *audio_device;
     int fast;                       // mpv's cheap scalers in the video layer (a Pi)
-    int every_vblank;               // draw and flip at every vblank (for measuring), not only on a change
+    int every_vblank;               // accepted for old command lines: a picture goes out at every vblank anyway
     int frames;                     // > 0: end after this many presented frames (tests)
     int verbose;
 } Cfg;
@@ -64,6 +64,7 @@ typedef struct {
 
     // counters
     long flips, missed, drawn;
+    long fences, fences_freed;      // GL fences libmpv made and has not deleted yet; the ones it left that we deleted
 } App;
 
 extern App app;
@@ -76,6 +77,7 @@ void logf_(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 // socket thread (ipc.c)
 int ipc_open(const char *path, char *err, size_t n);
 void *ipc_thread(void *arg);
+int ipc_finished(void);             // ipc_thread has ended, and every client's thread with it
 void ipc_close(void);
 
 // the final pass from an mpv user shader on the OUTPUT stage (hook.c)

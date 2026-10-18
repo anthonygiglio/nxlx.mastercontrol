@@ -9,6 +9,12 @@
 // The socket is reachable by the panel's group only (0660, as mpv's is made by the player's service). Still every
 // line is bounded, every command and every name that may be set is on a fixed list, and nothing here can run a
 // program, load a script or set an option the box does not use.
+//
+// Each client has a thread of its own (at most MAX_CLIENTS at once), as each of mpv's IPC clients has: a command
+// may wait (a screenshot, a shader the render thread builds, libmpv itself), and a client that does not read its
+// answers is waited on for SEND_SECONDS at most, then dropped. Neither holds up any other client, and none of it
+// holds up the render thread. One thread for all, as before, let one slow client stop every other: on the first
+// Pi run the listen queue filled and the panel's plays answered 503 (2026-10-18).
 #define _GNU_SOURCE
 #include "pvj.h"
 #include "json.h"
@@ -26,18 +32,24 @@
 #include <unistd.h>
 
 #define MAX_LINE (64 * 1024)
-#define MAX_CLIENTS 8
+#define MAX_CLIENTS 32                  // at once; one more is closed at once (it hears nothing, as from a busy mpv)
+#define BACKLOG 64
+#define SEND_SECONDS 2                  // a client that has not taken an answer in this long is dropped
+#define IDLE_SECONDS 30.0               // a client that has sent nothing in this long is dropped (nothing comes unasked)
+#define CLIENT_STACK (512 * 1024)
 
 static int listen_fd = -1;
 static const char *sock_path;
 
 typedef struct {
-    int fd;
-    char *buf;
-    size_t len;
+    int fd;                             // -1: a free slot
+    pthread_t th;
+    int finished;                       // set by its thread as it ends (atomics: the acceptor reads it)
 } Client;
 
 static Client clients[MAX_CLIENTS];
+static int ipc_done;                    // the acceptor has ended and every client thread with it
+static __thread int t_send_failed;      // this client's thread: an answer could not be sent; the client goes
 
 int ipc_open(const char *path, char *err, size_t n)
 {
@@ -52,7 +64,7 @@ int ipc_open(const char *path, char *err, size_t n)
     }
     listen_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
     if (listen_fd < 0) { snprintf(err, n, "socket: %s", strerror(errno)); return -1; }
-    if (bind(listen_fd, (struct sockaddr *)&sa, sizeof sa) || listen(listen_fd, 16)) {
+    if (bind(listen_fd, (struct sockaddr *)&sa, sizeof sa) || listen(listen_fd, BACKLOG)) {
         snprintf(err, n, "cannot listen on %s: %s", path, strerror(errno));
         close(listen_fd);
         listen_fd = -1;
@@ -65,14 +77,11 @@ int ipc_open(const char *path, char *err, size_t n)
     return 0;
 }
 
+int ipc_finished(void) { return __atomic_load_n(&ipc_done, __ATOMIC_ACQUIRE); }
+
 void ipc_close(void)
 {
-    for (int i = 0; i < MAX_CLIENTS; i++) {
-        if (clients[i].fd >= 0) close(clients[i].fd);
-        free(clients[i].buf);
-        clients[i].fd = -1;
-        clients[i].buf = NULL;
-    }
+    // after ipc_thread has returned: every client's thread has ended and its socket is closed
     if (listen_fd >= 0) {
         close(listen_fd);
         listen_fd = -1;
@@ -124,12 +133,18 @@ static void reply(int fd, const mpv_node *id, const char *error, const mpv_node 
         buf_str(&b, ",\"request_id\":0");
     }
     buf_str(&b, "}\n");
-    if (!b.failed) {
+    if (!b.failed && !t_send_failed) {
         size_t off = 0;
         while (off < b.len) {
             ssize_t w = send(fd, b.p + off, b.len - off, MSG_NOSIGNAL);
             if (w < 0 && errno == EINTR) continue;
-            if (w <= 0) break;
+            if (w <= 0) {
+                // gone, or not reading (SO_SNDTIMEO ran out): an answer cut in two is no answer, so the client goes
+                if (w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+                    LOG("ipc: a client took no answer for %d seconds; it is dropped", SEND_SECONDS);
+                t_send_failed = 1;
+                break;
+            }
             off += (size_t)w;
         }
     }
@@ -337,16 +352,17 @@ static void get_property(int fd, const mpv_node *id, const char *name)
         pthread_mutex_lock(&app.lock);
         char state[sizeof app.hook_state];
         memcpy(state, app.hook_state, sizeof state);
-        long flips = app.flips, missed = app.missed, drawn = app.drawn;
+        long flips = app.flips, missed = app.missed, drawn = app.drawn, fences = app.fences, freed = app.fences_freed;
         int osd = app.overlays != 0 || now_s() < app.text_until;
         pthread_mutex_unlock(&app.lock);
         static const char *const keys[] = { "version", "internal-width", "internal-height", "output-width", "output-height",
-                                            "output-fps", "flips", "drawn", "missed-vblanks", "mapping", "text-layer", "hwdec" };
-        mpv_node vals[12] = { node_str(PVJ_VERSION), node_int(app.in_w), node_int(app.in_h), node_int(app.out_w), node_int(app.out_h),
+                                            "output-fps", "flips", "drawn", "missed-vblanks", "mapping", "text-layer", "hwdec",
+                                            "gl-fences", "gl-fences-freed" };
+        mpv_node vals[14] = { node_str(PVJ_VERSION), node_int(app.in_w), node_int(app.in_h), node_int(app.out_w), node_int(app.out_h),
                               node_dbl(app.out_hz), node_int(flips), node_int(drawn), node_int(missed), node_str(state),
-                              { .format = MPV_FORMAT_FLAG }, node_str(app.cfg->hwdec) };
+                              { .format = MPV_FORMAT_FLAG }, node_str(app.cfg->hwdec), node_int(fences), node_int(freed) };
         vals[10].u.flag = osd;
-        mpv_node_list list = { .num = 12, .values = vals, .keys = (char **)keys };
+        mpv_node_list list = { .num = 14, .values = vals, .keys = (char **)keys };
         d.format = MPV_FORMAT_NODE_MAP;
         d.u.list = &list;
         reply(fd, id, "success", &d);
@@ -527,76 +543,117 @@ static void handle(int fd, const char *line, size_t len)
     json_free(&req);
 }
 
-static void drop(Client *c)
+static int quitting(void)
 {
-    close(c->fd);
-    c->fd = -1;
-    free(c->buf);
-    c->buf = NULL;
-    c->len = 0;
+    pthread_mutex_lock(&app.lock);
+    int q = app.quit;
+    pthread_mutex_unlock(&app.lock);
+    return q;
 }
 
-static void on_readable(Client *c)
+// One client: its own line buffer, its own thread. It ends when the client goes, sends a line too long, sends
+// nothing for IDLE_SECONDS, does not take an answer, or the program ends. Its socket is closed by the acceptor, which
+// joins the thread first, so the number is never taken by another client while this one may still use it.
+static void *client_thread(void *arg)
 {
-    if (!c->buf) {
-        c->buf = malloc(MAX_LINE + 1);
-        if (!c->buf) { drop(c); return; }
-        c->len = 0;
+    Client *c = arg;
+    char *buf = malloc(MAX_LINE + 1);
+    size_t len = 0;
+    double heard = now_s();
+    while (buf && !t_send_failed && !quitting()) {
+        struct pollfd pf = { c->fd, POLLIN, 0 };
+        int r = poll(&pf, 1, 200);
+        if (r < 0 && errno != EINTR) break;
+        if (r <= 0) {
+            if (now_s() - heard > IDLE_SECONDS) {
+                if (app.cfg->verbose) LOG("ipc: a client sent nothing for %.0f seconds; it is dropped", IDLE_SECONDS);
+                break;
+            }
+            continue;
+        }
+        ssize_t got = recv(c->fd, buf + len, MAX_LINE - len, 0);
+        if (got == 0 || (got < 0 && errno != EINTR && errno != EAGAIN)) break;
+        if (got < 0) continue;
+        heard = now_s();
+        len += (size_t)got;
+        size_t start = 0;
+        for (size_t i = 0; i < len && !t_send_failed; i++) {
+            if (buf[i] != '\n') continue;
+            if (i > start) handle(c->fd, buf + start, i - start);
+            start = i + 1;
+        }
+        if (t_send_failed) break;
+        if (start) {
+            memmove(buf, buf + start, len - start);
+            len -= start;
+        }
+        if (len >= MAX_LINE) {
+            LOG("ipc: a line longer than %d bytes; the client is dropped", MAX_LINE);
+            break;
+        }
     }
-    ssize_t r = recv(c->fd, c->buf + c->len, MAX_LINE - c->len, 0);
-    if (r == 0 || (r < 0 && errno != EINTR && errno != EAGAIN)) { drop(c); return; }
-    if (r < 0) return;
-    c->len += (size_t)r;
-    size_t start = 0;
-    for (size_t i = 0; i < c->len; i++) {
-        if (c->buf[i] != '\n') continue;
-        if (i > start) handle(c->fd, c->buf + start, i - start);
-        start = i + 1;
-        if (c->fd < 0) return;
-    }
-    if (start) {
-        memmove(c->buf, c->buf + start, c->len - start);
-        c->len -= start;
-    }
-    if (c->len >= MAX_LINE) {
-        LOG("ipc: a line longer than %d bytes; the client is dropped", MAX_LINE);
-        drop(c);
+    free(buf);
+    shutdown(c->fd, SHUT_RDWR);         // the client hears the end now, not when the acceptor gets round to it
+    __atomic_store_n(&c->finished, 1, __ATOMIC_RELEASE);
+    return NULL;
+}
+
+static void reap(int all)
+{
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        Client *c = &clients[i];
+        if (c->fd < 0) continue;
+        if (all) shutdown(c->fd, SHUT_RDWR);        // a thread in recv or send wakes at once
+        else if (!__atomic_load_n(&c->finished, __ATOMIC_ACQUIRE)) continue;
+        pthread_join(c->th, NULL);
+        close(c->fd);
+        c->fd = -1;
     }
 }
 
+// The acceptor: takes clients and gives each a thread; never runs a command itself.
 void *ipc_thread(void *unused)
 {
     (void)unused;
-    while (1) {
-        pthread_mutex_lock(&app.lock);
-        int quit = app.quit;
-        pthread_mutex_unlock(&app.lock);
-        if (quit) break;
-        struct pollfd pf[MAX_CLIENTS + 1];
-        int map[MAX_CLIENTS + 1];
-        int np = 0;
-        pf[np] = (struct pollfd){ listen_fd, POLLIN, 0 };
-        map[np++] = -1;
-        for (int i = 0; i < MAX_CLIENTS; i++)
-            if (clients[i].fd >= 0) { pf[np] = (struct pollfd){ clients[i].fd, POLLIN, 0 }; map[np++] = i; }
-        int r = poll(pf, (nfds_t)np, 200);
-        if (r <= 0) continue;
-        for (int k = 0; k < np; k++) {
-            if (!pf[k].revents) continue;
-            if (map[k] < 0) {
-                int fd = accept4(listen_fd, NULL, NULL, SOCK_CLOEXEC);
-                if (fd < 0) continue;
-                int slot = -1;
-                for (int i = 0; i < MAX_CLIENTS; i++) if (clients[i].fd < 0) { slot = i; break; }
-                if (slot < 0) { close(fd); continue; }       // the ninth waits for another to go
-                struct timeval tv = { 2, 0 };                 // a client that does not read its answers is not waited on
-                setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
-                clients[slot].fd = fd;
-                clients[slot].len = 0;
-            } else {
-                on_readable(&clients[map[k]]);
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, CLIENT_STACK);
+    double said_full = -1e9, said_fds = -1e9;
+    while (!quitting()) {
+        reap(0);
+        struct pollfd pf = { listen_fd, POLLIN, 0 };
+        if (poll(&pf, 1, 200) <= 0) continue;
+        int fd = accept4(listen_fd, NULL, NULL, SOCK_CLOEXEC);
+        if (fd < 0) {
+            if (errno == EMFILE || errno == ENFILE || errno == ENOBUFS || errno == ENOMEM) {
+                // the connection stays queued; without a pause the poll above would turn at once, forever
+                if (now_s() - said_fds > 10) { LOG("ipc: cannot take a client (%s)", strerror(errno)); said_fds = now_s(); }
+                struct timespec ts = { 0, 50 * 1000 * 1000 };
+                nanosleep(&ts, NULL);
             }
+            continue;
+        }
+        int slot = -1;
+        for (int i = 0; i < MAX_CLIENTS; i++)
+            if (clients[i].fd < 0) { slot = i; break; }
+        if (slot < 0) {
+            if (now_s() - said_full > 10) { LOG("ipc: %d clients at once; one more is turned away", MAX_CLIENTS); said_full = now_s(); }
+            close(fd);
+            continue;
+        }
+        struct timeval tv = { SEND_SECONDS, 0 };    // a client that does not read its answers is not waited on
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
+        Client *c = &clients[slot];
+        c->fd = fd;
+        c->finished = 0;
+        if (pthread_create(&c->th, &attr, client_thread, c)) {
+            LOG("ipc: no thread for a client");
+            close(fd);
+            c->fd = -1;
         }
     }
+    reap(1);
+    pthread_attr_destroy(&attr);
+    __atomic_store_n(&ipc_done, 1, __ATOMIC_RELEASE);
     return NULL;
 }

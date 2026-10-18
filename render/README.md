@@ -22,5 +22,10 @@ builds it. The rest of nxlx.mastercontrol is Apache-2.0 and only starts this pro
         --drm-mode=1920x1080@60.00 --detail=540 --fast
 
 `--headless=WxH` draws without a screen (EGL surfaceless), for the tests: `tests/test_pvj_render.py`.
-`--every-vblank` draws and flips at every vblank and counts missed vblanks (`get_property pvj-render`), for
-measuring on a board.
+
+A picture goes out at every vblank, a new clip frame or not (the clip's last frame is used again), and
+`get_property pvj-render` counts flips, clip frames drawn and missed vblanks. `--every-vblank` is still taken and
+changes nothing. The socket gives each client a thread of its own (at most 32 at once); a client that takes no
+answer for 2 seconds, or sends nothing for 30, is dropped. libmpv 0.40 and 0.41 leave a GL fence behind at every
+frame with the render API (on the Pi's V3D a file descriptor each); this program deletes it, and
+`gl-fences` / `gl-fences-freed` in the same property show it.

@@ -3141,6 +3141,8 @@
       body.textContent = '';
       body.appendChild(h('div', { class: 'state', id: 'renderline', text: 'Drawing now: ' + (RENDERER_NAMES[d.drawing] || d.drawing) + '.' }));
       if (d.why) body.appendChild(h('div', { class: 'hint warn', id: 'renderwhy', role: 'status', text: 'New was chosen; classic mpv is drawing: ' + d.why + '.' }));
+      if (d.switched) body.appendChild(h('div', { class: 'hint', id: 'renderswitched', role: 'status',
+        text: 'At the last change the player ended pvj-render' + (d.switched_at ? ' (' + new Date(d.switched_at * 1000).toLocaleString() + ')' : '') + ': ' + d.switched + '.' }));
       if (!d.available) body.appendChild(h('div', { class: 'hint', id: 'rendernone', text: 'pvj-render is not built on this box, so only classic mpv can draw.' }));
       var use = h('select', { class: 'text-input', id: 'renderuse' }, d.uses.map(function (u) {
         return h('option', { value: u, text: RENDERER_NAMES[u] || u, selected: u === d.use, disabled: u === 'new' && !d.available && d.use !== 'new' });
