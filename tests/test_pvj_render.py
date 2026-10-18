@@ -628,7 +628,10 @@ class FenceTest(Base):
         self.assertTrue(self.r.wait(lambda: self.r("get_property", "pvj-render")["drawn"] >= 60, 15), self.r.stderr())
         st = self.r("get_property", "pvj-render")
         self.assertLessEqual(st["gl-fences"], 4, st)
-        self.assertGreaterEqual(st["gl-fences-freed"], st["drawn"] - 5, st)
+        version = self.r("get_property", "mpv-version") or ""
+        if version.startswith(("mpv 0.40.", "mpv 0.41.")):
+            # the libmpv that leaks one a frame (mpv 0.37, Ubuntu 24.04's, still skipped the fence: none to delete)
+            self.assertGreaterEqual(st["gl-fences-freed"], st["drawn"] - 5, st)
         self.assertNotIn("Export failed", self.r.stderr())
 
 
