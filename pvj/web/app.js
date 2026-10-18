@@ -1690,6 +1690,9 @@
       { id: 'render', group: 'show', name: 'Render nodes', role: 'op', url: '/api/render', urlRole: 'op',
         blurb: 'Cue a laptop or GPU box running Max/Jitter or another tool over OSC, and show its NDI picture. If its picture goes, the box goes back to what played before. Not yet tried with a real render node.',
         body: function () { return renderCards(full); } },
+      { id: 'soundin', group: 'show', name: 'Sound reactivity', role: 'op', url: '/api/sound', urlRole: 'op',
+        blurb: 'Let the picture follow the music: the level, the beat or a band of a capture device moves a shader input, and can go to other programs over OSC. The box analyses levels only; no sound is stored or sent. Not yet tried with a real audio input.',
+        body: function () { return soundInCards(full); } },
       { id: 'ndisc', group: 'show', name: 'NDI\u00ae discovery server', role: 'full', module: 'ndi-discovery', url: '/api/ndi/discovery', urlRole: 'full',
         blurb: 'Run NDI\'s own Discovery Server on this box, so senders and receivers on a network you control find each other through it. The program is NDI\'s, not part of this box: someone with a keyboard or SSH puts it in place from your copy first. It is not a password: whatever can reach it can register with it and ask it. Switching it on makes the box listen on the network.',
         body: function () { return ndiscCards(); } },
@@ -1875,6 +1878,15 @@
       if (d.state === 'failed') return st('problem', 'It stopped and is being started again');
       if (!d.bind) return st('check', 'No address on that network now');
       return st('check', 'Starting');
+    },
+    soundin: function (d) {
+      var hlp = d.helper || {};
+      if (!hlp.running) return st('problem', 'The sound service is not running');
+      if (!d.config.on) return st('off', '');
+      if (!d.config.device) return st('setup', 'No capture device chosen');
+      if (!d.plugged) return st('problem', d.config.device + ' is not plugged in');
+      if (hlp.state === 'capturing') return st('active', 'Listening' + (d.levels && d.levels.capturing ? ': ' + Math.round(d.levels.db) + ' dB' : ''));
+      return st('problem', ndiSentence(hlp.why || 'Not listening'));
     },
     render: function (d) {
       if (!d.nodes.length) return st('setup', 'No render nodes yet');
@@ -3361,6 +3373,177 @@
       if (c) onPick(c.address, c.args.map(function (a) { return { type: a.type, value: a.type === 'string' ? a.name : a.type === 'bool' ? 'true' : String(a.min || 0) }; }));
     });
     return sel;
+  }
+  // ---- Sound reactivity (pvj/sound.py, pvj/soundout.py, D96). The Owner chooses the capture device, the gain trim,
+  // on and off and whether the values go out over OSC; an Operator sees the meter and moves a shader input with it.
+  // The box analyses levels only: the page says so first. A support session may not switch capture or sending on.
+  var soundTimer = null, soundMeterTimer = null, soundMapForm = null;
+  var SOUND_SOURCES = [['level', 'The level (smoothed)'], ['beat', 'The beat (how busy it is)']];
+  function soundInCards(full) {
+    var body = h('div', { class: 'list sp', id: 'soundbody' }, h('div', { class: 'hint', text: 'Looking...' }));
+    var meter = h('div', { class: 'list sp', id: 'soundmeter', 'aria-live': 'off' });
+    var card = h('div', { class: 'card', id: 'soundcard' }, h('h2', { text: 'Sound reactivity' }),
+      h('div', { class: 'hint', id: 'soundprivacy', text: '' }), body, meter);
+    var mapBody = h('div', { class: 'list sp', id: 'soundmapbody' });
+    var mapCard = h('div', { class: 'card', id: 'soundmapcard' }, h('h2', { text: 'A shader input that follows the sound' }),
+      h('div', { class: 'hint', id: 'soundslow', text: '' }), mapBody);
+    var bars = null;
+    function bar(id, label) {
+      var fill = h('div', {});
+      var val = h('span', { class: 'hint', id: id + 'val', text: '' });
+      var row = h('div', { class: 'fieldwrap', id: id }, h('div', { class: 'rot between' }, h('span', { text: label }), val),
+        h('div', { class: 'progress', 'aria-hidden': 'true' }, fill));
+      return { row: row, fill: fill, val: val };
+    }
+    function drawMeter(d) {
+      meter.textContent = '';
+      bars = { level: bar('soundlevel', 'Level'), env: bar('soundenv', 'Envelope'), bands: [] };
+      meter.appendChild(bars.level.row);
+      meter.appendChild(bars.env.row);
+      (d.bands || []).forEach(function (b) {
+        var x = bar('soundband' + b.n, b.name.charAt(0).toUpperCase() + b.name.slice(1) + ' (' + b.low + ' to ' + b.high + ' Hz)');
+        bars.bands.push(x);
+        meter.appendChild(x.row);
+      });
+      bars.beat = h('span', { class: 'chip', id: 'soundbeat', text: 'Beat' });
+      bars.tempo = h('span', { class: 'hint', id: 'soundtempo', text: '' });
+      bars.note = h('div', { class: 'hint', id: 'soundmeternote', role: 'status', text: '' });
+      meter.appendChild(h('div', { class: 'row' }, bars.beat, ' ', bars.tempo));
+      meter.appendChild(bars.note);
+      showLevels(d.levels);
+    }
+    function setBar(b, v, text) {
+      b.fill.style.width = Math.round(100 * Math.max(0, Math.min(1, v || 0))) + '%';
+      b.val.textContent = text;
+    }
+    function showLevels(l) {
+      if (!bars) return;
+      var live = !!(l && l.capturing);
+      setBar(bars.level, live ? l.level : 0, live ? l.db.toFixed(1) + ' dB' + (l.clipped ? ', clipping' : '') : '');
+      setBar(bars.env, live ? l.envelope : 0, '');
+      bars.bands.forEach(function (b, i) { setBar(b, live ? (l.bands[i] || 0) : 0, ''); });
+      bars.beat.className = 'chip' + (live && l.pulse > 0.3 ? ' chip-active' : '');
+      bars.tempo.textContent = live && l.bpm > 0 ? 'About ' + Math.round(l.bpm) + ' BPM' + (l.confidence < 0.6 ? ' (not sure)' : '') : '';
+      bars.note.textContent = live ? '' : 'Nothing is being heard now: the meter moves while the box listens.';
+    }
+    function meterLoop() {
+      clearTimeout(soundMeterTimer);
+      if (!document.getElementById('soundmeter')) return;
+      if (document.visibilityState === 'hidden') { soundMeterTimer = setTimeout(meterLoop, 1000); return; }
+      api('GET', '/api/sound/levels').then(function (r) {
+        if (!document.getElementById('soundmeter')) return;
+        if (r.ok) showLevels(r.data.levels);
+        soundMeterTimer = setTimeout(meterLoop, 125);
+      });
+    }
+    function post(change, done) {
+      api('POST', '/api/sound', change).then(function (r) {
+        if (!r.ok) { say(ndiSentence(r.data.error || 'could not change it'), true); refresh(); return; }
+        if (done) say(done);
+        draw(r.data);
+      });
+    }
+    function stateLine(d) {
+      var hlp = d.helper || {};
+      if (!hlp.running) return ['problem', 'The sound service (pvj-sound) is not running on this box. Restarting the box usually brings it back.'];
+      if (!d.config.on) return ['off', 'Off. Nothing is listened to.'];
+      if (!d.config.device) return ['setup', 'On, but no capture device is chosen.'];
+      if (!d.plugged) return ['problem', d.config.device + ' is not plugged in now.'];
+      if (hlp.state === 'capturing') return ['active', 'Listening to ' + d.config.device + (typeof hlp.cpu_percent === 'number' ? '. The service uses about ' + hlp.cpu_percent + ' percent of one core.' : '.')];
+      return ['problem', ndiSentence(hlp.why || 'it is not listening')];
+    }
+    function draw(d) {
+      document.getElementById('soundprivacy').textContent = d.privacy;
+      body.textContent = '';
+      var s = stateLine(d);
+      body.appendChild(h('div', { class: 'state', id: 'soundstate', role: 'status' }, h('span', { class: 'chip chip-' + s[0], text: CHIPS[s[0]] || '' }), ' ', h('span', { text: s[1] })));
+      if (full) {
+        body.appendChild(toggle('soundon', 'Listen to the capture device', !!d.config.on, function (v) {
+          post({ on: v }, v ? 'The box listens to the capture device now (levels only).' : 'The box no longer listens.');
+        }, d.remote ? 'Through remote support it can be switched off, never on: a helper does not start listening to the room.' : 'Off by default. The box keeps no sound: only the levels below.'));
+        var dev = h('select', { class: 'text-input', id: 'sounddevice', disabled: !!(d.remote && d.config.on) },
+          [h('option', { value: '', text: d.devices.length ? 'None' : 'No capture device is plugged in' })].concat(d.devices.map(function (x) {
+            return h('option', { value: x.id, text: x.name + ' (' + x.id + ')', selected: x.id === d.config.device });
+          })));
+        if (d.config.device && !d.plugged) dev.appendChild(h('option', { value: d.config.device, text: d.config.device + ' (not plugged in now)', selected: true }));
+        dev.addEventListener('change', function () { post({ device: dev.value }, dev.value ? 'Capture device chosen.' : 'No capture device.'); });
+        body.appendChild(labelled('Capture device', dev, 'A USB audio input or a line in. The list is what the box sees now.'));
+        var gain = h('select', { class: 'text-input', id: 'soundgain' }, [-24, -18, -12, -6, 0, 6, 12, 18, 24].map(function (g) {
+          return h('option', { value: String(g), text: (g > 0 ? '+' : '') + g + ' dB', selected: Math.round(d.config.gain_db) === g });
+        }));
+        gain.addEventListener('change', function () { post({ gain_db: parseInt(gain.value, 10) }, 'Gain trim set.'); });
+        body.appendChild(labelled('Gain trim', gain, 'Moves the levels up or down, not the sound itself. Raise it for a quiet input.'));
+        body.appendChild(toggle('soundoscstate', 'Send sound to the state targets', !!d.config.osc_state, function (v) { post({ osc_state: v }, v ? 'Sound goes to the state targets of OSC.' : 'Sound no longer goes to the state targets.'); },
+          'To the devices listed under OSC, "Send state back", while that is on. Under /nxlx/sound/, at most 20 times a second.'));
+        body.appendChild(toggle('soundoscrender', 'Send sound to the render nodes', !!d.config.osc_render, function (v) { post({ osc_render: v }, v ? 'Sound goes to the render nodes.' : 'Sound no longer goes to the render nodes.'); },
+          'To the render nodes listed under Render nodes, on this box\'s own network only.'));
+        var left = (d.osc && d.osc.left_out) || [];
+        if ((d.config.osc_state || d.config.osc_render) && left.length) {
+          body.appendChild(h('div', { class: 'hint warn', id: 'soundoscleft', text: 'Not sent to: ' + left.map(function (x) { return x.name + ' (' + x.why + ')'; }).join('; ') + '.' }));
+        }
+        body.appendChild(h('div', { class: 'hint', id: 'soundvocoder', text: 'The values are not sound, but fast band levels can carry the outline of speech. They leave the box only to the devices you list here, on this box\'s own network.' }));
+      } else {
+        body.appendChild(h('div', { class: 'hint', id: 'soundowner', text: 'The owner chooses the capture device and switches listening on.' }));
+      }
+      if (!bars || !document.getElementById('soundlevel')) drawMeter(d);
+      else showLevels(d.levels);
+      drawMap(d);
+    }
+    function drawMap(d) {
+      document.getElementById('soundslow').textContent = d.slow;
+      mapBody.textContent = '';
+      var m = d.config.map;
+      soundMapForm = soundMapForm || { input: m.input, source: m.source, rest: String(m.rest), depth: String(m.depth), smooth: String(m.smooth) };
+      mapBody.appendChild(toggle('soundmapon', 'Move a shader input with the sound', !!m.on, function (v) {
+        api('POST', '/api/sound/map', { on: v }).then(function (r) { if (!r.ok) return say(ndiSentence(r.data.error || 'could not change it'), true); say(v ? 'The shader input follows the sound now.' : 'The shader input no longer follows the sound.'); draw(r.data); });
+      }));
+      var inputs = (d.shader && d.shader.inputs) || [];
+      var inp = h('select', { class: 'text-input', id: 'soundmapinput' }, [h('option', { value: '', text: inputs.length ? 'Choose an input' : 'No shader with a number input is on the screen' })].concat(
+        inputs.map(function (i) { return h('option', { value: i.name, text: i.label + ' (' + i.min + ' to ' + i.max + ')', selected: i.name === soundMapForm.input }); })));
+      if (soundMapForm.input && !inputs.some(function (i) { return i.name === soundMapForm.input; })) inp.appendChild(h('option', { value: soundMapForm.input, text: soundMapForm.input, selected: true }));
+      inp.addEventListener('change', function () { soundMapForm.input = inp.value; });
+      var src = h('select', { class: 'text-input', id: 'soundmapsource' }, SOUND_SOURCES.concat((d.bands || []).map(function (b) { return ['band' + b.n, 'The ' + b.name + ' band']; })).map(function (x) {
+        return h('option', { value: x[0], text: x[1], selected: x[0] === soundMapForm.source });
+      }));
+      src.addEventListener('change', function () { soundMapForm.source = src.value; });
+      function num(id, key, label, hint) {
+        var el = h('input', { class: 'text-input mono', id: id, inputmode: 'decimal', value: soundMapForm[key], autocomplete: 'off' });
+        el.addEventListener('input', function () { soundMapForm[key] = el.value; });
+        return labelled(label, el, hint);
+      }
+      var err = h('div', { class: 'msg inmsg', id: 'soundmaperr', role: 'status' });
+      mapBody.appendChild(labelled('Input of the shader on the screen', inp, d.shader ? 'Of ' + d.shader.id + '. The same name is moved on any shader that has it.' : 'Play a shader to choose one of its inputs.'));
+      mapBody.appendChild(labelled('Follows', src));
+      mapBody.appendChild(num('soundmaprest', 'rest', 'Where it rests', '0 to 1 of the input\'s range, with no sound.'));
+      mapBody.appendChild(num('soundmapdepth', 'depth', 'Depth', '-1 to 1: how far the sound moves it, and which way.'));
+      mapBody.appendChild(num('soundmapsmooth', 'smooth', 'Smoothing (seconds)', '0.5 to 10. Longer is calmer.'));
+      mapBody.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn on pri grow', id: 'soundmapsave', text: 'Save', onclick: function () {
+        var body2 = { input: soundMapForm.input, source: soundMapForm.source, rest: parseFloat(soundMapForm.rest), depth: parseFloat(soundMapForm.depth), smooth: parseFloat(soundMapForm.smooth) };
+        api('POST', '/api/sound/map', body2).then(function (r) {
+          if (!r.ok) return sayAt(err, ndiSentence(r.data.error || 'could not save it'), true);
+          soundMapForm = null; sayAt(err, 'Saved.'); draw(r.data);
+        });
+      } })));
+      mapBody.appendChild(err);
+      var ms = d.map_state || {};
+      if (m.on) mapBody.appendChild(h('div', { class: 'hint', id: 'soundmapstate', role: 'status', text: !d.config.on ? 'Listening is off, so the input rests.' : (ms.what || 'Waiting for the sound.') + (typeof ms.value === 'number' ? ': ' + ms.value.toFixed(3) : '') }));
+    }
+    var first = true;
+    function refresh() {
+      clearTimeout(soundTimer);
+      api('GET', '/api/sound').then(function (r) {
+        if (!document.getElementById('soundcard')) return;
+        soundTimer = setTimeout(refresh, 3000);
+        if (!r.ok) { if (first) { body.textContent = ''; body.appendChild(h('div', { class: 'hint', id: 'soundmsg', text: ndiSentence(r.data.error || 'not available') })); } return; }
+        var a = document.activeElement;
+        if (a && (mapCard.contains(a) || card.contains(a)) && /^(INPUT|SELECT)$/.test(a.tagName)) { showLevels(r.data.levels); return; }   // never redraw a form under a finger
+        draw(r.data);
+        if (first) meterLoop();
+        first = false;
+      });
+    }
+    refresh();
+    return [card, mapCard];
   }
   function renderCards(full) {
     var body = h('div', { class: 'list sp', id: 'renderbody' }, h('div', { class: 'hint', text: 'Looking...' }));
