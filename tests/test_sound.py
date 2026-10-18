@@ -131,6 +131,32 @@ class AnalysisTest(unittest.TestCase):
             self.assertAlmostEqual(got, bpm, delta=2.0)
             self.assertGreaterEqual(confidence, 0.8)
 
+    def test_beats_that_agree_on_nothing_give_no_tempo_and_no_fault(self):
+        a = sound.Analyzer()
+        for t in (0.0, 0.4, 0.9, 1.5, 2.2):                 # intervals 0.4, 0.5, 0.6, 0.7: the middle two are far apart
+            a.beat_times.append(t)
+        self.assertEqual(a.tempo(), (0.0, 0.0))
+
+    def test_a_fault_in_the_analysis_is_said_and_the_service_goes_on(self):
+        svc = sound.Service(os.devnull, log=lambda *_: None)
+        calls = []
+
+        def boom(want):
+            calls.append(1)
+            if len(calls) == 1:
+                raise ZeroDivisionError("x")
+            svc.stopping = True
+            return True
+        svc._capture = boom
+        svc.want = {"on": True, "device": DEVICE, "gain_db": 0.0}
+        svc.proc = proc_dir(self)
+        old = sound.BACKOFF
+        sound.BACKOFF = (0.05,)
+        self.addCleanup(setattr, sound, "BACKOFF", old)
+        svc.publish = lambda *a: None
+        svc.run()
+        self.assertEqual(len(calls), 2, "started again after the fault")
+
     def test_a_tempo_outside_the_range_is_folded_into_it(self):
         sig, _ = clicks(200.0, 6.0)
         a = sound.Analyzer()
@@ -560,6 +586,24 @@ class OscTest(unittest.TestCase):
         n = len(sent)
         out2.send(Count(), big, target, 300.0)
         self.assertEqual(len(sent), n, "nothing over one datagram's size")
+        # small datagrams (the beats) meet the count cap before the byte cap: 5 at once, 25 in a second
+        out3 = soundout.Sound(FakeApi({}), socket_path="/nonexistent", levels_path="/nonexistent", clock=clock, log=lambda *_: None)
+        sent.clear()
+        beat = soundout.beat_message(1)
+        for _ in range(60):
+            out3.send(Count(), beat, target, 400.0)
+        self.assertEqual(len(sent), 5)
+        for i in range(100):
+            out3.send(Count(), beat, target, 400.0 + (i + 1) * 0.01)
+        self.assertLessEqual(len(sent), 25 + 1)
+        # and every target together: 150 datagrams in any second, whatever the number of targets
+        out4 = soundout.Sound(FakeApi({}), socket_path="/nonexistent", levels_path="/nonexistent", clock=clock, log=lambda *_: None)
+        sent.clear()
+        many = [("state", "t%d" % i, "127.0.0.%d" % (i + 1), 9000) for i in range(12)]
+        for i in range(100):
+            out4.send(Count(), beat, many, 500.0 + i * 0.01)
+        self.assertLessEqual(len(sent), 150)
+        self.assertGreaterEqual(len(sent), 120)
 
     def test_where_it_may_go(self):
         data = {"osc": {"feedback_on": True, "feedback": [{"name": "Tablet", "address": "192.168.0.40", "port": 9000},
@@ -672,11 +716,12 @@ class OscTest(unittest.TestCase):
 class ShaderMapTest(unittest.TestCase):
     def rig(self):
         changes = []
+        self.now = [0.0]
         on = {"id": "nxlx-silk", "epoch": 3}
         parsed = {"inputs": [{"name": "zoom", "label": "Zoom", "type": "float", "min": 0.0, "max": 2.0, "default": 1.0},
                              {"name": "flip", "type": "bool", "min": 0, "max": 1}]}
         eng = Stub(enabled=lambda: True, on_screen=lambda: on, _path=lambda sid: ("p",), _parsed=lambda p: (parsed,),
-                   change=lambda body: changes.append(body))
+                   change=lambda body: changes.append(dict(body, at=self.now[0])))
         api = FakeApi({})
         api.shaders = eng
         return soundout.Sound(api, socket_path="/nonexistent", levels_path="/nonexistent", log=lambda *_: None), changes, on
@@ -686,9 +731,12 @@ class ShaderMapTest(unittest.TestCase):
         m = soundout.map_form({"on": True, "input": "zoom", "source": "level", "rest": 0.25, "depth": 0.5, "smooth": 0.5})
         t = 0.0
         while t < 5.0:
+            self.now[0] = t
             out.map_step(m, sound.unpack(sound.pack(record(envelope=1.0), 1, 1.0, 1)), t)
             t += 0.05
         self.assertLessEqual(len(changes), 11, "at most twice a second over five seconds")
+        gaps = [b["at"] - a["at"] for a, b in zip(changes, changes[1:])]
+        self.assertGreaterEqual(min(gaps), soundout.MAP_EVERY - 1e-9, "never two values within half a second")
         values = [c["values"]["zoom"] for c in changes]
         self.assertEqual(values, sorted(values), "it rises towards the level")
         self.assertAlmostEqual(values[-1], 2.0 * 0.75, delta=0.05, msg="rest + depth x the source, in the input's range")

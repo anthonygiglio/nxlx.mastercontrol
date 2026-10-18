@@ -4,6 +4,14 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-18, sound-reactivity of the box's own (`sound`, #145, D96)
+
+- **The owner's words (2026-10-16):** "Yes, it's worthwhile to add sound-reactivity to the Pi and Mastercontrol overall." RNBO stays an optional later source; this is the box's own. Design first (6f1a5e6), then the code.
+- **Built:** `pvj-sound`, its own unit and account (group `audio` only, no network at all, `CPUQuota=25%`), running `arecord` on a capture device chosen from `/proc/asound` (always `plughw:CARD=<id>,DEV=<n>`, never a free ALSA string) and analysing 20 ms blocks in pure Python at 16 kHz: RMS dB, an envelope, onsets, beats and a rough tempo, six bands from a half-size real FFT. A 128-byte levels file in `/run/pvj-sound` at 50 Hz with a fixed layout (for the panel now and pvj-render's phase 4). The panel's side: the setting (the box's own, in no settings file), telling the service again after a restart, the meter, OSC under `/nxlx/sound/...` to the D82 targets and the D94 nodes (two switches, off, capped), and a slow envelope onto one shader input on the classic renderer. Setup > Sound reactivity. D80 rows; remote support may switch capture off and never on.
+- **Measured:** 0.21 ms a block, about 1 percent of one core of the development laptop; estimated 6 to 10 percent of a Pi 4 core. 24 kHz was 60 percent dearer, so 16 kHz. Not measured on a Pi.
+- **Tests:** `tests/test_sound.py` (46) on generated signals only (WSL has no audio device), and the touched modules (roles, units, boxcare, settings, support_reach, render, paths, image, licence, install, server, health): all OK here. 31 deliberate breaks, each caught. The benchmark found a division by zero in the tempo that no test had reached (LESSONS).
+- **Open:** everything on the Pi with a USB audio input (DEVICE-TESTING SR1 to SR8); whether arecord runs in this sandbox; the browser test runs in CI only (no Playwright here). It reads a microphone and sends network output: an independent security review before merge.
+
 ## 2026-10-16, the render bridge: OSC cues to a render node, its NDI picture back (`render-bridge`, #143, D94)
 
 - **The owner's words:** "Yes, the three-tier picture fits. Build the bridge first: Mastercontrol cues a render node over OSC and plays its picture back over NDI." Later the same day: "Try to start with Max and Jitter as the first render node", and "pull packages and libraries as needed" (none was needed).

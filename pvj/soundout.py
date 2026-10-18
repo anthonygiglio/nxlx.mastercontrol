@@ -445,7 +445,7 @@ class Sound:
         """Smooth the source, and at most every MAP_EVERY send the input a new value if it moved enough."""
         raw = self.source_value(m, v)
         if self._smooth is None:
-            self._smooth = (now, raw)
+            self._smooth = (now, 0.0)          # from where it rests: never a jump when it is switched on
         t0, y = self._smooth
         dt = max(0.0, now - t0)
         y += (1.0 - math.exp(-dt / m["smooth"])) * (raw - y)

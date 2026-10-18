@@ -20,18 +20,18 @@ The box listens to a capture device (a USB audio input, a line in) and turns wha
 `arecord` is ALSA's own tool (Debian's `alsa-utils`, in Raspberry Pi OS already; the installer adds it where the network allows). It is run as a child of the service:
 
 ```
-arecord -q -D plughw:CARD=<card id>,DEV=<n> -t raw -f S16_LE -r 24000 -c 1
+arecord -q -D plughw:CARD=<card id>,DEV=<n> -t raw -f S16_LE -r 16000 -c 1
 ```
 
-The alternatives were a binding of our own to libasound through ctypes (an ABI to keep, and a crash in it takes the service down with no word) or reading `/dev/snd` ourselves (the ALSA ioctls by hand). `/proc/asound` lists devices but carries no audio. ALSA's plug layer (`plughw:`) mixes down to one channel and converts to 24,000 samples a second in C inside arecord, so the Python side reads a quarter of what a 48 kHz stereo device gives.
+The alternatives were a binding of our own to libasound through ctypes (an ABI to keep, and a crash in it takes the service down with no word) or reading `/dev/snd` ourselves (the ALSA ioctls by hand). `/proc/asound` lists devices but carries no audio. ALSA's plug layer (`plughw:`) mixes down to one channel and converts to 16,000 samples a second in C inside arecord, so the Python side reads a sixth of what a 48 kHz stereo device gives. 16 kHz puts the top band at 5 to 8 kHz, which still carries hats and cymbals; 24 kHz was measured too and cost 60 percent more (below).
 
 The device is never a free ALSA string. The setting holds `<card id>,<device number>` of a capture device that `/proc/asound` lists now, and the service makes it into `plughw:CARD=...,DEV=...` itself: ALSA's `file` and `tee` plugins write audio to a file, and a free string could name them.
 
-## The analysis (per block of 20 ms, 480 samples at 24 kHz)
+## The analysis (per block of 20 ms, 320 samples at 16 kHz)
 
 - **Level:** the RMS in dB (full scale is 0 dB, a full-scale sine is -3 dB), and a level from 0 to 1 for -60 to 0 dB. The peak and a clip flag (a sample at full scale).
 - **Envelope:** the RMS smoothed, 10 ms up and 300 ms down, from 0 to 1 on the same scale.
-- **Bands:** a 512-point FFT of the last 512 samples with a Hann window, its power summed into six bands and given as dB and 0 to 1 (a full-scale sine inside a band reads about -3 dB there):
+- **Bands:** a 256-point FFT of the last 256 samples (16 ms) with a Hann window, its power summed into six bands and given as dB and 0 to 1 (a full-scale sine inside a band reads about -3 dB there). The bins are 62.5 Hz apart, so the sub band is one or two bins: coarse, and enough for a kick. The FFT is taken as 128 complex points and split afterwards (half the work), and the window's mean is taken out in bins 0 and 1 only (with a Hann window that is exact):
 
 | n | Name | Hz |
 | --- | --- | --- |
@@ -40,12 +40,26 @@ The device is never a free ALSA string. The setting holds `<card id>,<device num
 | 3 | low mid | 250 to 500 |
 | 4 | mid | 500 to 2,000 |
 | 5 | high mid | 2,000 to 5,000 |
-| 6 | high | 5,000 to 12,000 |
+| 6 | high | 5,000 to 8,000 |
 
 - **Onset:** the spectral flux (what rose since the last block, in compressed magnitudes up to 5 kHz) against the mean of the last second.
 - **Beat:** an onset at least 0.18 s after the last beat, while the level is above -60 dB. The pulse is 1 at a beat and falls to 0 in 0.15 s.
 - **Tempo:** the median of the last beats' intervals, folded into 75 to 150 BPM, with a confidence (the share of intervals within 6 percent of it). 0 until there are four intervals. It is rough: a guide for a picture, not a clock.
 - **Gain trim:** -24 to +24 dB, applied to the levels, never to the samples.
+
+## What it costs (measured 2026-10-18, a bounded local benchmark)
+
+Ten and twenty seconds of generated sound (a sine, a hum and noise, a burst every half second) through `Analyzer.block`, timed by the process's CPU clock, on the development laptop (AMD Ryzen 7 PRO 6850U, WSL, Python 3.14). `tests/test_sound.py` prints its own number at every run.
+
+| What | Per block | CPU per second of sound |
+| --- | --- | --- |
+| 24 kHz, a 512-point complex FFT (the first build) | 0.548 ms | 2.7 percent of one core |
+| 24 kHz, the same as a 256-point complex FFT split in two | 0.390 ms | 2.0 percent |
+| **16 kHz, a 256-point real FFT (as built)** | **0.24 ms** | **1.0 to 1.3 percent** |
+| writing the 128 bytes (pack and pwrite) | 0.005 ms | |
+| reading them (the panel, per look) | 0.010 ms | |
+
+**On a Pi 4 this is an estimate, not a measurement.** A Pi 4 core runs pure Python roughly 5 to 8 times slower than this laptop's, so the analysis should take about 6 to 10 percent of one Pi 4 core, inside the budget of about 10. arecord's own share (ALSA's rate conversion from 48 kHz) was not measured: WSL has no audio device. The unit caps the service at 25 percent of one core (`CPUQuota`) so that a fault cannot starve the player. The page shows the service's own share once it runs (its CPU time over its uptime). `tools/DEVICE-TESTING.md` SR6 measures it on the Pi.
 
 ## The levels file
 
@@ -60,7 +74,7 @@ The device is never a free ALSA string. The setting holds `<card id>,<device num
 | 12 | u32 | flags: 1 capturing, 2 a beat in this block, 4 an onset in this block, 8 clipped, 16 idle (no device or off) |
 | 16 | f64 | time of the block, CLOCK_MONOTONIC seconds (the same clock in every process of the box) |
 | 24 | u32 | block count since the service started |
-| 28 | u32 | sample rate (24000) |
+| 28 | u32 | sample rate (16000) |
 | 32 | f32 | RMS level, dB (-90 to +24) |
 | 36 | f32 | level, 0 to 1 |
 | 40 | f32 | envelope, 0 to 1 |
@@ -81,7 +95,7 @@ The device is never a free ALSA string. The setting holds `<card id>,<device num
 
 ## OSC out (`/nxlx/sound/...`)
 
-Sent by the panel, never by the service, and only while the Owner's switch for it is on: "Send sound to the state targets" (the D82 targets, while OSC and "Send state back" are on, each held at every send to the rule and the address locks of D82) and "Send sound to the render nodes" (D94, each held to the same rule at every send). Every number is a float32 unless said, every message in one OSC bundle per send.
+Sent by the panel, never by the service, and only while the Owner's switch for it is on: "Send sound to the state targets" (the D82 targets, while OSC and "Send state back" are on, each held at every send to the rule and the address locks of D82) and "Send sound to the render nodes" (D94, each held to the same rule at every send). Every number is a float32 unless said. The values of one send are one OSC bundle (about 450 bytes); a beat is a message of its own.
 
 | Address | Arguments | When |
 | --- | --- | --- |
@@ -94,7 +108,7 @@ Sent by the panel, never by the service, and only while the Owner's switch for i
 | `/nxlx/sound/bands` | 6 x f 0 to 1 | every send |
 | `/nxlx/sound/beat` | i the beat count | at once, at each beat |
 
-At most 20 sends a second to a target, plus the beats. Caps: per target 25 datagrams and 10,000 bytes in any second; for all targets together 150 and 60,000. What does not fit is dropped, never queued. Add addresses, never rename one: a patch or a layout made from them would break.
+At most 20 sends a second to a target, plus the beats (the file is looked at every 10 ms while sound goes out, so a beat leaves within about 10 ms of the block it was heard in). Caps: per target 25 datagrams and 12,000 bytes in any second; for all targets together 150 and 72,000 (D82's buckets: a rate and a burst). What does not fit is dropped, never queued. Each socket has a time to live of 1. Add addresses, never rename one: a patch or a layout made from them would break.
 
 ## The classic renderer's shaders: a slow envelope
 

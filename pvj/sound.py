@@ -221,6 +221,8 @@ class Analyzer:
         s = sorted(intervals)
         mid = s[len(s) // 2] if len(s) % 2 else (s[len(s) // 2 - 1] + s[len(s) // 2]) / 2.0
         near = [iv for iv in intervals if abs(iv - mid) <= TEMPO_TOLERANCE * mid]
+        if not near:                     # an even count whose middle two are far apart: no tempo yet
+            return 0.0, 0.0
         # The mean of those near the median: a beat is seen at a block's end, so one interval is a block short and
         # the next a block long, and their mean is the tempo where the median is one of the two.
         return 60.0 * len(near) / sum(near), len(near) / float(len(intervals))
@@ -512,8 +514,12 @@ class Service:
             elif want["device"] not in {d["id"] for d in capture_devices(self.proc)}:
                 self._set("problem", "%s is not plugged in now" % want["device"])
             else:
-                if self._capture(want):
-                    continue                     # it ended because the wish changed: look again at once
+                try:
+                    if self._capture(want):
+                        continue                 # it ended because the wish changed: look again at once
+                except Exception as e:           # a fault of this program must not end the thread with the socket still answering
+                    self._set("problem", "the analysis stopped (%s); starting again" % type(e).__name__)
+                    self.log("pvj-sound: the analysis stopped: %r" % e)
                 wait = BACKOFF[min(self.fails, len(BACKOFF) - 1)]
                 self.fails += 1
                 self.publish(IDLE, F_IDLE)
