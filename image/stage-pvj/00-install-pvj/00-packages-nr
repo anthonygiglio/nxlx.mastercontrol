@@ -3,3 +3,12 @@ python3
 udev
 wireguard-tools
 nftables
+gcc
+make
+pkg-config
+libc6-dev
+libmpv-dev
+libegl-dev
+libgles-dev
+libgbm-dev
+libdrm-dev

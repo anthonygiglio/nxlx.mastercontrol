@@ -29,14 +29,14 @@ declared="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' pvj/__init__.py)"
 
 # The bundle is built from files in the working tree; refuse if they differ from the commit, so a
 # release always matches a commit anyone can check out.
-if [ "$dirty_ok" = 0 ] && ! git diff --quiet HEAD -- pvj bin install; then
-	echo "pvj/, bin/ or install/ have uncommitted changes; commit them (or pass --allow-dirty for a test build)" >&2
+if [ "$dirty_ok" = 0 ] && ! git diff --quiet HEAD -- pvj bin install render; then
+	echo "pvj/, bin/, install/ or render/ have uncommitted changes; commit them (or pass --allow-dirty for a test build)" >&2
 	exit 1
 fi
 
 mkdir -p dist
 out="dist/pvj-$version.tar.gz"
-files="$(git ls-files pvj bin install | sort)"
+files="$(git ls-files pvj bin install render | sort)"      # render/ is source only (D95): it is built on the box
 [ -n "$files" ] || { echo "no tracked files found (run inside the git checkout)" >&2; exit 1; }
 # shellcheck disable=SC2086
 tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner --transform "s,^,pvj-$version/," \

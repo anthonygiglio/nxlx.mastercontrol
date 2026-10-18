@@ -21,6 +21,8 @@ Inventory of components bundled with or fetched by the legacy code. Licences are
 | ISF-Files filter shaders, for effects (VIDVOX and contributors) | `pvj/effects.d/isf-files/` | MIT (verified, see below) |
 | Archivo (The Archivo Project Authors), a Latin subset | `pvj/web/fonts/` | SIL OFL 1.1 (verified, see below) |
 | JetBrains Mono (The JetBrains Mono Project Authors), a Latin subset of the Medium weight | `pvj/web/fonts/` | SIL OFL 1.1 (verified, see below) |
+| libmpv (mpv), linked by pvj-render; not shipped, the box's own package | `render/` builds against it | GPLv2 or later as Debian builds it (see below) |
+| Mesa's EGL, OpenGL ES and GBM, libdrm, glibc: linked by pvj-render; not shipped | `render/` builds against them | MIT (Mesa, libdrm), LGPL-2.1 (glibc) |
 
 ## Not bundled: jit.ndi for the Max render node patch (D94)
 
@@ -211,3 +213,28 @@ As before, the sources outside GitHub were not opened: "terms not read" means no
 
 **Dropped after drawing: none.** In the three rounds of CI after the test rig itself was reliable, all 32 files that were candidates then (the 25 above and the seven taken out after the review) drew right in all three ways of drawing (123 draws a way with the project's own nine of that time). In the rounds before that, draws failed for reasons that were not the filters': screenshots that the rig drew black for any picture, and a limit for "the picture again" set tighter than one more pass through the GPU allows; no file failed for a reason of its own. A file that passes only sometimes in a rig that works is to be taken out, not retried.
 
+
+## pvj-render and the libraries it links (D95)
+
+`render/` holds pvj-render, a program of this project written for the box (not third-party code). It is under
+**GPL-3.0-or-later**, not Apache-2.0, because it links **libmpv** from the box's own `libmpv2` package: mpv is GPL-2.0
+or later by default (LGPL only when built with `-Dgpl=false`, which Debian and Raspberry Pi OS do not do), so a program
+linking it is distributed under the GPL. GPL-3.0-or-later is compatible with GPLv2-or-later code. The text is
+`render/LICENSE` and `LICENSES/GPL-3.0-or-later.txt` (the FSF's text, SHA-256
+`3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986`). The rest of the tree stays Apache-2.0: the
+panel only starts pvj-render and talks to it over a Unix socket, as it does with the mpv program.
+
+Nothing of these libraries is in the repository, a release bundle or the image's own files: pvj-render is built from
+source on the box, against the distribution's packages, which come with their own copyright files
+(`/usr/share/doc/<package>/copyright`). The versions it is built and tested against (a distribution's package is
+pinned by the distribution's release; CI names what it got in its log):
+
+| Library | On the Pi (Debian 13) | Built and tested in CI | Licence |
+| --- | --- | --- | --- |
+| libmpv (render API, client API 2.x) | `libmpv-dev` of mpv 0.40.0 | Ubuntu's `libmpv-dev`, and Debian 13's (mpv 0.40.x, the job fails on another) | GPL-2.0-or-later as built |
+| EGL, OpenGL ES 3, GBM | Mesa's `libegl-dev`, `libgles-dev`, `libgbm-dev` | Ubuntu's and Debian 13's | MIT |
+| libdrm | `libdrm-dev` | Ubuntu's and Debian 13's | MIT |
+
+Nothing else is linked, and no code of mpv, Mesa, kmscube or another project is copied into `render/`; the way mpv
+picks a connector and a mode (`video/out/drm_common.c`) and mpv's user-shader format were read in mpv's open source and
+are followed as behaviour, so that the panel's arguments and shaders mean the same to both programs.

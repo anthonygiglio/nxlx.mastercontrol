@@ -441,6 +441,11 @@ function startServer(env) {          // env: more for the harness's environment 
       assert(!tried, 'Cancel sent nothing');
     }
     assert(await page.isVisible('#screencard #testpattern'), 'the test pattern is on the page');
+    // The renderer (D95) on the same page: classic mpv draws until the owner chooses the new one
+    await page.waitForSelector('#renderline');
+    assert.strictEqual(await page.textContent('#renderline'), 'Drawing now: Classic (mpv).');
+    assert.strictEqual(await page.$eval('#renderuse', (s) => s.value), 'classic');
+    assert.strictEqual(await page.$eval('#renderdetail', (s) => s.value), 'auto');
     await onPage('Screen output');
     await sysIndex();
     // Network: switch the module on, preview, apply, watch the countdown, confirm

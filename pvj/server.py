@@ -701,6 +701,10 @@ def build(env=None, player=None):
     except Exception as e:
         print("pvj-web: screen output not written: %s" % e, file=sys.stderr)
     try:
+        api.renderer.start()                 # which program the player runs (D95)
+    except Exception as e:
+        print("pvj-web: the renderer's wish not written: %s" % e, file=sys.stderr)
+    try:
         api.sync.apply()                     # lead or follow, as the settings say
     except Exception as e:                   # a busy port must not stop the panel
         print("pvj-web: sync not started: %s" % e, file=sys.stderr)

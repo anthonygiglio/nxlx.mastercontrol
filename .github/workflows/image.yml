@@ -39,7 +39,7 @@ jobs:
         run: |
           cp -a pocketvj/image/stage-pvj pi-gen/stage-pvj
           mkdir pi-gen/stage-pvj/00-install-pvj/files/pvj-src
-          cp -a pocketvj/pvj pocketvj/bin pocketvj/install pi-gen/stage-pvj/00-install-pvj/files/pvj-src/
+          cp -a pocketvj/pvj pocketvj/bin pocketvj/install pocketvj/render pi-gen/stage-pvj/00-install-pvj/files/pvj-src/
           find pi-gen/stage-pvj/00-install-pvj/files/pvj-src -name __pycache__ -type d -prune -exec rm -rf {} +
           cp pocketvj/image/config pi-gen/config
           # Lite only: our stage exports the image, so stage2 must not.

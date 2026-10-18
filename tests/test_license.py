@@ -13,6 +13,7 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 NEW_DIRS = ("pvj/", "bin/", "install/", "image/", "tests/", "tools/")
 NEW_FILES = {"security.php", ".github/workflows/ci.yml", ".github/workflows/pvj.yml",
              ".github/workflows/image.yml", ".github/workflows/security-tests.yml"}
+GPL3_SHA256 = "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"     # the FSF's GPL-3.0 text
 APACHE_SHA256 = "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
 
 
@@ -242,6 +243,27 @@ class LicenseTest(unittest.TestCase):
         self.assertIn("Modified Versions", inventory)
         with open(os.path.join(REPO, "LICENSES", "OFL-1.1.txt"), "rb") as f:
             self.assertEqual(hashlib.sha256(f.read()).hexdigest(), OFL_SHA256)
+
+    def test_the_renderer_is_gpl_in_its_own_folder(self):
+        """render/ (pvj-render, D95) links libmpv and is GPL-3.0-or-later; nothing in it says Apache-2.0, no new code
+        outside it says GPL, and the licence text beside it is the FSF's, unchanged."""
+        files = [p for p in tracked() if p.startswith("render/")]
+        self.assertIn("render/Makefile", files)
+        for p in files:
+            if p == "render/LICENSE":
+                continue
+            with open(os.path.join(REPO, p), encoding="utf-8") as f:
+                head = f.read(400)
+            self.assertIn("SPDX-License-Identifier: GPL-3.0-or-later", head, p)
+            self.assertNotIn("Apache-2.0", head, p)
+        for p in tracked():
+            if p.startswith(NEW_DIRS) and p != "tests/test_license.py" and p.endswith((".py", ".js", ".sh")):
+                with open(os.path.join(REPO, p), encoding="utf-8", errors="replace") as f:
+                    self.assertNotIn("SPDX-License-Identifier: GPL", f.read(400), p)
+        for p in ("render/LICENSE", "LICENSES/GPL-3.0-or-later.txt"):
+            with open(os.path.join(REPO, p), "rb") as f:
+                self.assertEqual(hashlib.sha256(f.read()).hexdigest(), GPL3_SHA256, p)
+        self.assertIn(("GPL-3.0-or-later", ["render/LICENSE", "LICENSES/GPL-3.0-or-later.txt"]), annotations())
 
     def test_no_compiled_or_cache_files_are_tracked(self):
         junk = [p for p in tracked() if "__pycache__" in p or p.endswith((".pyc", ".DS_Store"))

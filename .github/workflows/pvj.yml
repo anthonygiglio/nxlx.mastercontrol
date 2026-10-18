@@ -46,6 +46,8 @@ jobs:
         run: git fetch --depth=1 origin 33e7eb419eb1b26b08618dd54b3e1481d4b60f0e
       - name: Fetch the release before Automatic picture detail (the rollback test of D93 runs that release's shader settings on a file written here)
         run: git fetch --depth=1 origin 0648db6b014db99ee890fc931353ea861fe41d7f
+      - name: The release before D94 (render nodes), for the rollback test of tests/test_render.py
+        run: git fetch --depth=1 origin 1ed58bcbb5acf8b1b4122b40c3f480b186957f8d
       - name: Install mpv
         timeout-minutes: 10   # usually half a minute; see the note at the top of this file
         run: tools/ci-apt.sh mpv
@@ -239,6 +241,78 @@ jobs:
           su ci -c "timeout -s ABRT 2100 python3 -X faulthandler -m unittest discover -s tests -t . -v" || code=$?
           echo "THE WHOLE SUITE ON $(mpv --version | head -n 1): exit $code after $(( $(date +%s) - start )) seconds"
           exit "$code"
+
+  pvj-render:
+    # The box's own renderer (render/, D95): built with every warning an error, then run for real, headless (EGL
+    # without a surface on Mesa's software GPU, llvmpipe): a picture, a clip, the mapping, an overlay, text, the
+    # socket's answers and refusals, read back by their pixels (tests/test_pvj_render.py), and the player's side
+    # against a stand-in helper (tests/test_renderer.py). Twice: on Ubuntu, and on Debian 13 (the Pi's distribution
+    # and its libmpv of mpv 0.40, the release the Pi runs; the job fails on another). x86_64 both times: the same
+    # source and the same libmpv release, not the Pi's processor, GPU or screen. A skip here is a failure.
+    name: pvj-render (${{ matrix.where }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - where: Ubuntu
+            container: ''
+          - where: Debian 13, the Pi's mpv
+            container: debian:trixie
+    container: ${{ matrix.container }}
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      PKGS: gcc make pkg-config libc6-dev libmpv-dev libegl-dev libgles-dev libgbm-dev libdrm-dev libgl1-mesa-dri libegl-mesa0 ffmpeg fonts-dejavu-core python3 git ca-certificates
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the build tools, libmpv, Mesa, ffmpeg and a font (three tries; a slow mirror is given up on)
+        timeout-minutes: 12
+        run: |
+          if [ -z "${{ matrix.container }}" ]; then
+            tools/ci-apt.sh $PKGS
+            exit $?
+          fi
+          for n in 1 2 3; do
+            if apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 update && apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 install -y --no-install-recommends $PKGS; then
+              exit 0
+            fi
+            echo "attempt $n failed"
+            sleep 5
+          done
+          exit 1
+      - name: What it is built against
+        run: |
+          pkg-config --modversion mpv egl glesv2 gbm libdrm
+          cat /etc/os-release | head -n 2
+          if [ -n "${{ matrix.container }}" ]; then
+            v="$(dpkg-query -W -f '${Version}' libmpv-dev)"
+            echo "libmpv-dev $v"
+            case "$v" in
+              0.40.*) echo "the Pi's release of mpv" ;;
+              *) echo "::error::this job is for mpv 0.40.x (the Pi, Debian 13) and apt gave libmpv-dev $v"; exit 1 ;;
+            esac
+          fi
+      - name: Build pvj-render (every warning an error)
+        run: make -C render WERROR=1
+      - name: An account without privileges for the tests (in a container the job is root)
+        if: matrix.container != ''
+        run: |
+          useradd --create-home ci
+          chown -R ci: .
+      - name: pvj-render for real, headless, and the player's side (a skip is a failure)
+        timeout-minutes: 15
+        run: |
+          run="PVJ_RENDER_TEST=1 LIBGL_ALWAYS_SOFTWARE=1 python3 -X faulthandler -m unittest -v tests.test_pvj_render tests.test_renderer"
+          if [ -n "${{ matrix.container }}" ]; then su ci -c "$run" > /tmp/render.txt 2>&1 || code=$?
+          else sh -c "$run" > /tmp/render.txt 2>&1 || code=$?; fi
+          cat /tmp/render.txt
+          if grep -q -E "skipped|OK \(skipped" /tmp/render.txt; then
+            echo "::error::a test of pvj-render was skipped: it judges nothing here"
+            exit 1
+          fi
+          grep -q -E "^Ran [1-9]" /tmp/render.txt || { echo "::error::no test ran"; exit 1; }
+          exit "${code:-0}"
 
   panel-ui:
     runs-on: ubuntu-latest

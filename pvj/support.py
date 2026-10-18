@@ -81,6 +81,9 @@ REMOTE_DENY = {
     # that someone sees the picture in the room. A helper sees a snapshot of what the player draws, which says nothing
     # about what the projector shows. He may try a mode and take it back; someone in the room keeps it.
     ("POST", "/api/screen/confirm"): "a screen mode is kept by someone who sees the screen in the room",
+    # the renderer (D95): which program draws outlives the session, and unlike a screen mode nothing takes it back by
+    # itself; so the switch is the Owner's in the room. A helper may read it.
+    ("POST", "/api/renderer"): "which program draws the screen is chosen by the owner, who sees the screen in the room",
     # the NDI discovery server (D85): a program listening on the network is opened by the Owner in the room. Its
     # switch is here; its own routes are under a prefix below.
     ("POST", "/api/modules/ndi-discovery"): "a program that listens on the network is switched by the owner in the room (D85)",

@@ -291,6 +291,10 @@ class Api:
         player_dir = os.path.dirname(getattr(player, "socket_path", "") or "") or paths.player_dir()
         self.screen = screenmode.Screen(self, settings, os.path.dirname(getattr(settings, "path", "") or "") or ".",
                                         player_dir, log=lambda line: self.log(line))
+        # Which program draws (D95): classic mpv or pvj-render; the wish beside settings.json, the report beside the socket.
+        from . import renderer as renderer_mod
+        self.renderer = renderer_mod.Renderer(self, settings, os.path.dirname(getattr(settings, "path", "") or "") or ".",
+                                              player_dir, log=lambda line: self.log(line))
 
     # --- helpers -------------------------------------------------------
     # The picture's level: one rule for everything that loads something (a clip by a cut, a dip or a blend, a list, a
@@ -553,7 +557,8 @@ class Api:
                            "temp_c": max((t["celsius"] for t in temps), default=None)},
                 "device": device, "support": self.support.banner(), "guest_controls": self.guests.state(),
                 "reach": policy.reach(device, self.guests.locked()),
-                "screen": self.screen.brief()}           # the mode in use, the one asked for, and why they differ (D90)
+                "screen": self.screen.brief(),           # the mode in use, the one asked for, and why they differ (D90)
+                "renderer": self.renderer.brief()}       # which program draws, the one chosen, and why they differ (D95)
 
     def access_on_screen(self):
         """True while the PIN or join codes are drawn on the display (on request, or the first-run screen)."""
@@ -2026,6 +2031,23 @@ class Api:
         if set(body) != {"mode"}:
             raise bad("send mode: auto or one of the screen's modes")
         return self._screen_call(self.screen.choose, body["mode"])
+
+    # --- the renderer (D95) --------------------------------------------------
+    def _renderer_call(self, fn, *args):
+        from .renderer import RendererError
+        try:
+            return fn(*args)
+        except RendererError as e:
+            raise ApiError(e.status, e.message)
+
+    def get_renderer(self, body, device, client):
+        return self.renderer.state()
+
+    def set_renderer(self, body, device, client):
+        """{"use": "classic" | "new", "detail": "auto" | 540 | 720 | "output"}: saved, and the player restarts for a change."""
+        if "use" not in body or not set(body) <= {"use", "detail"}:
+            raise bad("send use (classic or new) and, if you like, detail")
+        return self._renderer_call(self.renderer.choose, body["use"], body.get("detail"))
 
     def confirm_screen(self, body, device, client):
         return self._screen_call(self.screen.confirm)
@@ -4605,6 +4627,8 @@ class Api:
             ("POST", "/api/screen"): ("full", self.set_screen),
             ("POST", "/api/screen/confirm"): ("full", self.confirm_screen),     # never through the support tunnel (D84)
             ("POST", "/api/screen/revert"): ("full", self.revert_screen),
+            ("GET", "/api/renderer"): ("full", self.get_renderer),      # which program draws (D95): the Owner's
+            ("POST", "/api/renderer"): ("full", self.set_renderer),     # never through the support tunnel (D84)
             ("POST", "/api/testtone"): ("live", self.test_tone),
             ("POST", "/api/media/info"): ("view", self.media_info),
             ("POST", "/api/media/import"): ("live", self.import_usb),
