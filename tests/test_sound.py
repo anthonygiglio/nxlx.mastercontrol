@@ -297,7 +297,7 @@ class LayoutTest(unittest.TestCase):
 class DeviceTest(unittest.TestCase):
     def test_capture_devices_from_proc(self):
         d = proc_dir(self)
-        self.assertEqual(sound.capture_devices(d), [{"id": "Device,0", "name": "USB Audio Device: USB Audio"}])
+        self.assertEqual(sound.capture_devices(d), [{"id": "Device,0", "name": "USB Audio Device: USB Audio", "channels": 2}])
         self.assertEqual(sound.capture_devices("/nonexistent"), [])
 
     def test_the_device_is_never_a_free_alsa_string(self):
@@ -310,7 +310,7 @@ class DeviceTest(unittest.TestCase):
 
     def test_a_hostile_proc_line_gives_nothing_odd(self):
         d = proc_dir(self, cards=" 2 [Ev;il  ]: x - y\n 3 [Good]: USB - \x1b[31mRed\x07 Mic\n", pcm="02-00: a : b : capture 1\n03-01: c : d : capture 1\n")
-        self.assertEqual(sound.capture_devices(d), [{"id": "Good,1", "name": "[31mRed Mic: c"}])
+        self.assertEqual(sound.capture_devices(d), [{"id": "Good,1", "name": "[31mRed Mic: c", "channels": 2}])
 
 
 # --- the service ----------------------------------------------------------------------------------------------------------
@@ -463,7 +463,7 @@ class ServiceTest(ServiceBase):
         self.addCleanup(server.shutdown)
         client = soundout.Client(path)
         reply = client.request({"cmd": "configure", "on": False, "device": DEVICE, "gain_db": 3.0, "gen": 2})
-        self.assertEqual(soundout._helper_view(reply)["want"], {"on": False, "device": DEVICE, "gain_db": 3.0})
+        self.assertEqual(soundout._helper_view(reply)["want"], {"on": False, "device": DEVICE, "gain_db": 3.0, "source": "device", "channel": "mix", "channels": 1})
         server.is_allowed = lambda uid: False
         self.assertEqual(soundout._helper_view(client.request({"cmd": "status"})), {"running": False})
         self.assertIsNone(soundout.Client(os.path.join(self.dir, "none.sock")).request({"cmd": "status"}))
@@ -811,7 +811,7 @@ class RoutesTest(RolesBase):
         st, d = self.h("GET", "/api/sound", {}, self.operator)
         self.assertEqual(st, 200, d)
         self.assertEqual((d["config"]["on"], d["config"]["device"], d["helper"]["running"]), (False, "", False))
-        self.assertEqual(d["devices"], [{"id": DEVICE, "name": "USB Audio Device: USB Audio"}])
+        self.assertEqual(d["devices"], [{"id": DEVICE, "name": "USB Audio Device: USB Audio", "channels": 2}])
         self.assertIn("No sound is stored, recorded or sent anywhere, ever", d["privacy"])
         self.assertIn("Real reaction at every frame comes with the new renderer", d["slow"])
         self.assertIsNone(d["levels"])

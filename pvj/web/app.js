@@ -3379,7 +3379,7 @@
   // ---- Sound reactivity (pvj/sound.py, pvj/soundout.py, D96). The Owner chooses the capture device, the gain trim,
   // on and off and whether the values go out over OSC; an Operator sees the meter and moves a shader input with it.
   // The box analyses levels only: the page says so first. A support session may not switch capture or sending on.
-  var soundTimer = null, soundMeterTimer = null, soundMapForm = null;
+  var soundTimer = null, soundMeterTimer = null, soundMapForm = null, soundAdvOpen = false;
   var SOUND_SOURCES = [['level', 'The level (smoothed)'], ['beat', 'The beat (how busy it is)']];
   function soundInCards(full) {
     var body = h('div', { class: 'list sp', id: 'soundbody' }, h('div', { class: 'hint', text: 'Looking...' }));
@@ -3449,6 +3449,12 @@
       var hlp = d.helper || {};
       if (!hlp.running) return ['problem', 'The sound service (pvj-sound) is not running on this box. Restarting the box usually brings it back.'];
       if (!d.config.on) return ['off', 'Off. Nothing is listened to.'];
+      if (d.config.source !== 'device') {
+        var nm = (d.inputs.filter(function (x) { return x.id === d.config.source; })[0] || {}).name || d.config.source;
+        if (d.meter_why && (d.config.source === 'box' || d.config.source === 'ndi')) return ['problem', ndiSentence(d.meter_why)];
+        if (hlp.state === 'capturing') return ['active', 'Taking the levels of: ' + nm + '.'];
+        return ['check', nm + ': ' + ndiSentence(d.feed_why || hlp.why || 'waiting for it')];
+      }
       if (!d.config.device) return ['setup', 'On, but no capture device is chosen.'];
       if (!d.plugged) return ['problem', d.config.device + ' is not plugged in now.'];
       if (hlp.state === 'capturing') return ['active', 'Listening to ' + d.config.device + (typeof hlp.cpu_percent === 'number' ? '. The service uses about ' + hlp.cpu_percent + ' percent of one core.' : '.')];
@@ -3459,6 +3465,20 @@
       body.textContent = '';
       var s = stateLine(d);
       body.appendChild(h('div', { class: 'state', id: 'soundstate', role: 'status' }, h('span', { class: 'chip chip-' + s[0], text: CHIPS[s[0]] || '' }), ' ', h('span', { text: s[1] })));
+      // The source (D97): the Owner and an Operator switch between the ones the Owner allowed; it never switches listening on
+      var allowed = (d.inputs || []).filter(function (x) { return x.allowed; });
+      if (canOp() && allowed.length > 1) {
+        var src = h('select', { class: 'text-input', id: 'soundsource' }, allowed.map(function (x) {
+          return h('option', { value: x.id, text: x.name + (x.bands ? '' : ' (no bands)'), selected: x.id === d.config.source });
+        }));
+        src.addEventListener('change', function () {
+          api('POST', '/api/sound/source', { source: src.value }).then(function (r) {
+            if (!r.ok) { say(ndiSentence(r.data.error || 'could not switch'), true); return refresh(); }
+            say('The source is now: ' + src.options[src.selectedIndex].textContent + '.'); draw(r.data);
+          });
+        });
+        body.appendChild(labelled('Source', src, 'What the box listens to. The box\'s own sound is what the clip or the NDI stream plays, measured inside the player; it gives the level and the beat, not the bands.'));
+      }
       if (full) {
         body.appendChild(toggle('soundon', 'Listen to the capture device', !!d.config.on, function (v) {
           post({ on: v }, v ? 'The box listens to the capture device now (levels only).' : 'The box no longer listens.');
@@ -3470,6 +3490,16 @@
         if (d.config.device && !d.plugged) dev.appendChild(h('option', { value: d.config.device, text: d.config.device + ' (not plugged in now)', selected: true }));
         dev.addEventListener('change', function () { post({ device: dev.value }, dev.value ? 'Capture device chosen.' : 'No capture device.'); });
         body.appendChild(labelled('Capture device', dev, 'A USB audio input or a line in. The list is what the box sees now.'));
+        if (d.config.device && d.channels > 1) {
+          var chs = [['mix', 'All inputs mixed']].concat(Array.apply(null, Array(d.channels)).map(function (_, i) {
+            return [String(i + 1), d.channels === 2 ? (i ? 'Right (input 2)' : 'Left (input 1)') : 'Input ' + (i + 1)];
+          }));
+          var ch = h('select', { class: 'text-input', id: 'soundchannel', disabled: !!(d.remote && d.config.on) }, chs.map(function (c) {
+            return h('option', { value: c[0], text: c[1], selected: String(d.config.channel) === c[0] });
+          }));
+          ch.addEventListener('change', function () { post({ channel: ch.value === 'mix' ? 'mix' : parseInt(ch.value, 10) }, 'Input chosen.'); });
+          body.appendChild(labelled('Input', ch, 'This device has ' + d.channels + ' inputs.'));
+        }
         var gain = h('select', { class: 'text-input', id: 'soundgain' }, [-24, -18, -12, -6, 0, 6, 12, 18, 24].map(function (g) {
           return h('option', { value: String(g), text: (g > 0 ? '+' : '') + g + ' dB', selected: Math.round(d.config.gain_db) === g });
         }));
@@ -3484,6 +3514,7 @@
         if ((d.config.osc_state || d.config.osc_render) && left.length) {
           body.appendChild(h('div', { class: 'hint warn', id: 'soundoscleft', text: 'Not sent to: ' + left.map(function (x) { return x.name + ' (' + x.why + ')'; }).join('; ') + '.' }));
         }
+        body.appendChild(soundAdvanced(d));
         body.appendChild(h('div', { class: 'hint', id: 'soundvocoder', text: 'The values are not sound. Off the box they go to the paired Owner and Operator devices that open this page (through remote support without the bands) and, when you switch it on, over OSC to the devices you list, on this box\'s own network. The bands leave averaged over 200 ms, at most 5 times a second.' }));
       } else {
         body.appendChild(h('div', { class: 'hint', id: 'soundowner', text: 'The owner chooses the capture device and switches listening on.' }));
@@ -3491,6 +3522,32 @@
       if (!bars || !document.getElementById('soundlevel')) drawMeter(d);
       else showLevels(d.levels);
       drawMap(d);
+    }
+    // Advanced (the owner's word of 2026-10-18): which sources may be chosen, and who may send levels in over OSC.
+    function soundAdvanced(d) {
+      var box = h('details', { class: 'fieldwrap', id: 'soundadvanced', open: soundAdvOpen || null });
+      box.addEventListener('toggle', function () { soundAdvOpen = box.open; });
+      box.appendChild(h('summary', { text: 'Advanced: sources and levels sent in' }));
+      (d.inputs || []).forEach(function (x) {
+        var cb = h('input', { type: 'checkbox', id: 'soundallow' + x.id, checked: x.allowed });
+        cb.addEventListener('change', function () {
+          var list = d.inputs.filter(function (y) { return y.id === x.id ? cb.checked : y.allowed; }).map(function (y) { return y.id; });
+          post({ allowed: list }, cb.checked ? x.name + ' may be chosen.' : x.name + ' may no longer be chosen.');
+        });
+        box.appendChild(h('label', { class: 'row', for: 'soundallow' + x.id }, cb, h('span', { text: ' Allow: ' + x.name })));
+      });
+      box.appendChild(h('div', { class: 'hint', id: 'soundallowhint', text: 'Operators switch between the allowed sources. The NDI sound is the one the box plays under an NDI picture. Levels sent in: Max/RNBO or another program sends /nxlx/sound/in/level, /db, /envelope, /beat, /bpm and /bands to the box\'s OSC port; they are taken from the render nodes and from the addresses below, and from nobody else.' }));
+      d.config.in_hosts.forEach(function (a) {
+        box.appendChild(h('div', { class: 'row' }, h('span', { class: 'addr grow', text: a }), h('button', { class: 'btn', text: 'Remove', 'aria-label': 'Remove ' + a, onclick: function () {
+          post({ in_hosts: d.config.in_hosts.filter(function (b) { return b !== a; }) }, a + ' removed.');
+        } })));
+      });
+      var host = h('input', { class: 'text-input mono', id: 'soundinhost', placeholder: '192.168.1.40', autocomplete: 'off', maxlength: 15 });
+      box.appendChild(labelled('Also take levels from', host, 'An IPv4 address on this box\'s own network.'));
+      box.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn', id: 'soundinhostadd', text: 'Add', onclick: function () {
+        post({ in_hosts: d.config.in_hosts.concat([host.value.trim()]) }, 'Added.');
+      } })));
+      return box;
     }
     function drawMap(d) {
       document.getElementById('soundslow').textContent = d.slow;

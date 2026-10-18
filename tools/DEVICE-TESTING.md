@@ -628,6 +628,19 @@ metronome into it. The page is Setup > Sound reactivity. It analyses levels only
 | SR7 | OSC: with "Send state back" on and a tablet or a computer as a target, switch "Send sound to the state targets" on; watch `/nxlx/sound/level`, `/nxlx/sound/bands` and `/nxlx/sound/beat` in TouchOSC's or Max's OSC monitor | About 20 bundles a second of the level, 5 of the bands (they move slowly, averaged over 200 ms), and a message at each beat, only to the listed target | Whether TouchOSC takes the bundle (D82's open question); what arrives per second |
 | SR8 | Unplug the USB input while Listen is on; plug it back | The page says it is not plugged in; when it is back the box listens again by itself within a few seconds | The words; how long until it listened again |
 
+### Sound sources (D97): never run on a Pi
+
+Setup > Sound reactivity, as the Owner. Under "Advanced: sources and levels sent in" allow the sources first.
+
+| Row | Do | Expect | Send back |
+| --- | --- | --- | --- |
+| SS1 | A USB interface with two or more inputs: choose it, then Input 1, Input 2 and the mix, with a signal in only one input | The meter moves on the input that has the signal and stays at the floor on the other | The card's name, the number of inputs the page shows, and whether that is right |
+| SS2 | Source: the box's own sound; play a clip with music | The meter follows the music (level and beat; no bands, the page says so); the sound in the room does not change or stutter when the source is chosen | Whether the music stuttered once at the switch; how far ahead of the loudspeakers the meter seems |
+| SS3 | `journalctl -u pvj-player -n 20` after SS2; then `top` with the box's sound as the source | No error about the filter; the player's CPU not visibly higher than without it | The player's CPU with and without |
+| SS4 | Source: the NDI sound, with an NDI picture whose sender has sound (D87) | The meter follows the NDI sound; with no NDI picture the page says none is playing | What the page said in each case |
+| SS5 | Source: levels sent in over OSC; from Max/RNBO on a render node send `/nxlx/sound/in/level` and `/nxlx/sound/in/beat` on a metronome | The meter and the Beat chip follow what Max sends; from a machine that is neither a node nor listed, nothing | Whether a sender not listed changed anything |
+| SS6 | As an Operator: switch between the allowed sources; through a remote support session try to switch to the capture device | The Operator switches; the session is refused with words, and listening is never switched on by either | The words |
+
 ### What to send back
 
 The output of checks 1 to 7 and 13, the `journalctl` tail for anything that failed, and a note of what you saw on screen. Say clearly what you did **not** test.
