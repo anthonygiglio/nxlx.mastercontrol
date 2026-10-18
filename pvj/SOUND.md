@@ -1,0 +1,116 @@
+<!-- SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+     SPDX-License-Identifier: Apache-2.0 -->
+# Sound reactivity (`pvj-sound`, D96)
+
+The box listens to a capture device (a USB audio input, a line in) and turns what it hears into a few numbers: how loud, a smoothed envelope, beats and a tempo, and six band levels. Those numbers drive the picture: a shader input on the classic renderer today (slowly), OSC to other programs, and every frame in the new renderer's phase 4 (D95).
+
+**It analyses levels only. No audio is stored, recorded, played or sent anywhere, ever.** The samples of one block (20 ms) live in memory for that block and are gone. It is off by default, with no device chosen; with no device the service idles and says so.
+
+## The parts
+
+| Part | Where | What it does |
+| --- | --- | --- |
+| The service | `pvj/sound.py`, `bin/pvj-sound`, `install/pvj-sound.service` | Runs `arecord` on the chosen device, analyses each block, writes the levels file. No network at all. |
+| The levels file | `/run/pvj-sound/levels` | 128 bytes, the layout below, 50 times a second (once a second while idle). Group `audio`, 0640. |
+| The service's socket | `/run/pvj-sound/sound.sock` | Answers the panel's account only: `status`, `configure`. |
+| The panel's side | `pvj/soundout.py`, `Api.get_sound` and the routes | The page, the meter, OSC out, the shader mapping, telling the service what the Owner chose. |
+
+## Why `arecord`
+
+`arecord` is ALSA's own tool (Debian's `alsa-utils`, in Raspberry Pi OS already; the installer adds it where the network allows). It is run as a child of the service:
+
+```
+arecord -q -D plughw:CARD=<card id>,DEV=<n> -t raw -f S16_LE -r 24000 -c 1
+```
+
+The alternatives were a binding of our own to libasound through ctypes (an ABI to keep, and a crash in it takes the service down with no word) or reading `/dev/snd` ourselves (the ALSA ioctls by hand). `/proc/asound` lists devices but carries no audio. ALSA's plug layer (`plughw:`) mixes down to one channel and converts to 24,000 samples a second in C inside arecord, so the Python side reads a quarter of what a 48 kHz stereo device gives.
+
+The device is never a free ALSA string. The setting holds `<card id>,<device number>` of a capture device that `/proc/asound` lists now, and the service makes it into `plughw:CARD=...,DEV=...` itself: ALSA's `file` and `tee` plugins write audio to a file, and a free string could name them.
+
+## The analysis (per block of 20 ms, 480 samples at 24 kHz)
+
+- **Level:** the RMS in dB (full scale is 0 dB, a full-scale sine is -3 dB), and a level from 0 to 1 for -60 to 0 dB. The peak and a clip flag (a sample at full scale).
+- **Envelope:** the RMS smoothed, 10 ms up and 300 ms down, from 0 to 1 on the same scale.
+- **Bands:** a 512-point FFT of the last 512 samples with a Hann window, its power summed into six bands and given as dB and 0 to 1 (a full-scale sine inside a band reads about -3 dB there):
+
+| n | Name | Hz |
+| --- | --- | --- |
+| 1 | sub | 40 to 120 |
+| 2 | bass | 120 to 250 |
+| 3 | low mid | 250 to 500 |
+| 4 | mid | 500 to 2,000 |
+| 5 | high mid | 2,000 to 5,000 |
+| 6 | high | 5,000 to 12,000 |
+
+- **Onset:** the spectral flux (what rose since the last block, in compressed magnitudes up to 5 kHz) against the mean of the last second.
+- **Beat:** an onset at least 0.18 s after the last beat, while the level is above -60 dB. The pulse is 1 at a beat and falls to 0 in 0.15 s.
+- **Tempo:** the median of the last beats' intervals, folded into 75 to 150 BPM, with a confidence (the share of intervals within 6 percent of it). 0 until there are four intervals. It is rough: a guide for a picture, not a clock.
+- **Gain trim:** -24 to +24 dB, applied to the levels, never to the samples.
+
+## The levels file
+
+`/run/pvj-sound/levels`, 128 bytes, little-endian, written in place. Version 1. Add fields only in the reserved bytes and raise the version only for a change a reader must know; never move a field.
+
+| Offset | Type | Field |
+| --- | --- | --- |
+| 0 | 4 bytes | magic `NXSD` |
+| 4 | u16 | version (1) |
+| 6 | u16 | size of the record (128) |
+| 8 | u32 | sequence number (the same at offset 124) |
+| 12 | u32 | flags: 1 capturing, 2 a beat in this block, 4 an onset in this block, 8 clipped, 16 idle (no device or off) |
+| 16 | f64 | time of the block, CLOCK_MONOTONIC seconds (the same clock in every process of the box) |
+| 24 | u32 | block count since the service started |
+| 28 | u32 | sample rate (24000) |
+| 32 | f32 | RMS level, dB (-90 to +24) |
+| 36 | f32 | level, 0 to 1 |
+| 40 | f32 | envelope, 0 to 1 |
+| 44 | f32 | onset strength, 0 and up (1 is the threshold) |
+| 48 | f32 | beat pulse, 0 to 1 |
+| 52 | f32 | tempo, BPM (0: not known) |
+| 56 | f32 | tempo confidence, 0 to 1 |
+| 60 | u32 | beat count since the service started |
+| 64 | u16 | number of bands (6) |
+| 66 | u16 | reserved (0) |
+| 68 | 8 x f32 | band levels, 0 to 1 (unused ones 0) |
+| 100 | f32 | peak, dB |
+| 104 | 16 bytes | reserved (0) |
+| 120 | u32 | CRC-32 (zlib's) of bytes 0 to 119 |
+| 124 | u32 | sequence number again |
+
+**How to read it:** `pread` the 128 bytes; take them only if the magic, the version and the size are right, the two sequence numbers are equal and the CRC matches; otherwise read again (a write was half done) and, after a second miss, keep the last good values. Values older than 0.5 s by the time field mean the service is not delivering; flag 16 means it is idle on purpose.
+
+## OSC out (`/nxlx/sound/...`)
+
+Sent by the panel, never by the service, and only while the Owner's switch for it is on: "Send sound to the state targets" (the D82 targets, while OSC and "Send state back" are on, each held at every send to the rule and the address locks of D82) and "Send sound to the render nodes" (D94, each held to the same rule at every send). Every number is a float32 unless said, every message in one OSC bundle per send.
+
+| Address | Arguments | When |
+| --- | --- | --- |
+| `/nxlx/sound/level` | f 0 to 1 | every send |
+| `/nxlx/sound/db` | f dB | every send |
+| `/nxlx/sound/envelope` | f 0 to 1 | every send |
+| `/nxlx/sound/pulse` | f 0 to 1 | every send |
+| `/nxlx/sound/bpm` | f BPM, f confidence | every send |
+| `/nxlx/sound/band/<n>` | f 0 to 1, n = 1 to 6 | every send |
+| `/nxlx/sound/bands` | 6 x f 0 to 1 | every send |
+| `/nxlx/sound/beat` | i the beat count | at once, at each beat |
+
+At most 20 sends a second to a target, plus the beats. Caps: per target 25 datagrams and 10,000 bytes in any second; for all targets together 150 and 60,000. What does not fit is dropped, never queued. Add addresses, never rename one: a patch or a layout made from them would break.
+
+## The classic renderer's shaders: a slow envelope
+
+On classic mpv a shader's value changes by writing a new shader text that mpv compiles again: at most five a second, 0.34 to 0.61 s to the screen on a Pi 4 (`pvj/SHADERS.md`). So an Operator may map one number input of the shader on the screen to the level, the beat (smoothed into how busy the beat is) or a band, with where it rests (0 to 1 of the input's range), a depth (-1 to 1) and a smoothing (0.5 to 10 s). It is sent at most twice a second, and only when it moved by 2 percent of the input's range. **Real per-frame reaction comes with the new renderer (D95, phase 4)**, which reads the levels file every frame.
+
+## Who may do what (D80, D84)
+
+| Route | Who | Remote support |
+| --- | --- | --- |
+| `GET /api/sound` | Operator | as the Operator; a session of the Owner's role sees what the Owner sees |
+| `GET /api/sound/levels` | Operator | the same |
+| `POST /api/sound` (on, device, gain, the two OSC switches) | Owner | the Owner's role only, and never to switch capture on, choose the device while it is on, or switch OSC sending on |
+| `POST /api/sound/map` (the shader input) | Operator | the Owner's role only (D80's rule for a support session) |
+
+A Guest gets nothing of this.
+
+## Privacy
+
+The values are not sound. But six band levels fifty times a second are close to what a channel vocoder carries, and someone determined could make speech in the room partly understandable from them. So the levels file is readable only by group `audio` (who is in it can already record the microphone), OSC is off by default, at most 20 sends a second, and only to devices the Owner listed on the box's own network, the meter goes only to paired Operators and Owners, and the diagnostics file carries the switches and never a value. Every buffer is bounded.
