@@ -2039,17 +2039,16 @@ class Api:
                      "lives in memory for that block and is gone.")
     SOUND_SLOW = ("On the classic renderer a shader's value changes by compiling the shader again, so it follows the sound "
                   "slowly: at most twice a second, smoothed. Real reaction at every frame comes with the new renderer.")
+    SOUND_BANDS = ("Before sending: the six band levels can carry the outline of speech in the room. They leave the box only "
+                   "averaged over 200 ms, at most 5 times a second; the level and the beat up to 20 times a second.")
     SOUND_REMOTE = "a helper does not start listening to the room: switching the microphone on is done by the owner in the room (D96)"
 
-    def _sound_levels_view(self, v):
-        """What the page reads of one record: the levels only, rounded."""
-        if v is None:
-            return None
-        return {"fresh": v["fresh"], "capturing": v["capturing"] and v["fresh"], "idle": v["idle"], "age": round(v["age"], 2),
-                "db": round(v["rms_db"], 1), "level": round(v["level"], 3), "envelope": round(v["envelope"], 3),
-                "pulse": round(v["pulse"], 3), "bpm": round(v["bpm"], 1), "confidence": round(v["confidence"], 2),
-                "beats": v["beats"], "bands": [round(b, 3) for b in v["bands"]], "peak_db": round(v["peak_db"], 1),
-                "clipped": v["clipped"]}
+    def _sound_levels_view(self, v, device, client):
+        """What a device is given of one record (review M1 of #145): the bands only as the slow ones (the mean of 200
+        ms, changed at most 5 times a second), and none at all through the support tunnel."""
+        from . import soundout
+        tunnel = bool(self.support.is_remote(client) or (device and device.get("remote")))
+        return soundout.public(v, tunnel)
 
     def get_sound(self, body, device, client):
         """The page: what the Owner chose, the devices, the service's state, the meter, the shader mapping."""
@@ -2057,17 +2056,17 @@ class Api:
         cfg = self.sound.config()
         helper = self.sound.helper if self.sound.helper_at is not None and time.monotonic() - self.sound.helper_at < 3 else self.sound.status()
         devices = self.sound.devices()
-        out = {"config": cfg, "devices": devices, "helper": helper, "levels": self._sound_levels_view(self.sound.levels()),
+        out = {"config": cfg, "devices": devices, "helper": helper, "levels": self._sound_levels_view(self.sound.levels(), device, client),
                "bands": [{"n": i + 1, "name": b[2], "low": b[0], "high": b[1]} for i, b in enumerate(sound_mod.BANDS)],
                "gain": {"min": sound_mod.GAIN_MIN, "max": sound_mod.GAIN_MAX}, "shader": self.sound.shader_inputs(),
                "map_state": dict(self.sound.map_state), "osc": self.sound.osc_status(), "privacy": self.SOUND_PRIVACY,
-               "slow": self.SOUND_SLOW, "remote": bool(device and device.get("remote")),
+               "slow": self.SOUND_SLOW, "bands_warning": self.SOUND_BANDS, "remote": bool(device and device.get("remote")),
                "plugged": cfg["device"] == "" or cfg["device"] in {d["id"] for d in devices}}
         return out
 
     def sound_levels(self, body, device, client):
         """The meter alone, for a page that asks a few times a second."""
-        return {"levels": self._sound_levels_view(self.sound.levels())}
+        return {"levels": self._sound_levels_view(self.sound.levels(), device, client)}
 
     def set_sound(self, body, device, client):
         """{"on"?, "device"?, "gain_db"?, "osc_state"?, "osc_render"?}: the Owner's. Through remote support (D84, D96) a

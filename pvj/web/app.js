@@ -3424,7 +3424,7 @@
       bars.bands.forEach(function (b, i) { setBar(b, live ? (l.bands[i] || 0) : 0, ''); });
       bars.beat.className = 'chip' + (live && l.pulse > 0.3 ? ' chip-active' : '');
       bars.tempo.textContent = live && l.bpm > 0 ? 'About ' + Math.round(l.bpm) + ' BPM' + (l.confidence < 0.6 ? ' (not sure)' : '') : '';
-      bars.note.textContent = live ? '' : 'Nothing is being heard now: the meter moves while the box listens.';
+      bars.note.textContent = !live ? 'Nothing is being heard now: the meter moves while the box listens.' : l.bands_hidden ? 'Through remote support the bands are not shown.' : 'The bands are averaged over 200 ms.';
     }
     function meterLoop() {
       clearTimeout(soundMeterTimer);
@@ -3473,15 +3473,16 @@
         }));
         gain.addEventListener('change', function () { post({ gain_db: parseInt(gain.value, 10) }, 'Gain trim set.'); });
         body.appendChild(labelled('Gain trim', gain, 'Moves the levels up or down, not the sound itself. Raise it for a quiet input.'));
+        body.appendChild(h('div', { class: 'hint warn', id: 'soundbandwarn', text: d.bands_warning }));
         body.appendChild(toggle('soundoscstate', 'Send sound to the state targets', !!d.config.osc_state, function (v) { post({ osc_state: v }, v ? 'Sound goes to the state targets of OSC.' : 'Sound no longer goes to the state targets.'); },
-          'To the devices listed under OSC, "Send state back", while that is on. Under /nxlx/sound/, at most 20 times a second.'));
+          'To the devices listed under OSC, "Send state back", while that is on. Under /nxlx/sound/: the level and the beat up to 20 times a second, the bands at most 5.'));
         body.appendChild(toggle('soundoscrender', 'Send sound to the render nodes', !!d.config.osc_render, function (v) { post({ osc_render: v }, v ? 'Sound goes to the render nodes.' : 'Sound no longer goes to the render nodes.'); },
           'To the render nodes listed under Render nodes, on this box\'s own network only.'));
         var left = (d.osc && d.osc.left_out) || [];
         if ((d.config.osc_state || d.config.osc_render) && left.length) {
           body.appendChild(h('div', { class: 'hint warn', id: 'soundoscleft', text: 'Not sent to: ' + left.map(function (x) { return x.name + ' (' + x.why + ')'; }).join('; ') + '.' }));
         }
-        body.appendChild(h('div', { class: 'hint', id: 'soundvocoder', text: 'The values are not sound, but fast band levels can carry the outline of speech. They leave the box only to the devices you list here, on this box\'s own network.' }));
+        body.appendChild(h('div', { class: 'hint', id: 'soundvocoder', text: 'The values are not sound. Off the box they go to the paired Owner and Operator devices that open this page (through remote support without the bands) and, when you switch it on, over OSC to the devices you list, on this box\'s own network. The bands leave averaged over 200 ms, at most 5 times a second.' }));
       } else {
         body.appendChild(h('div', { class: 'hint', id: 'soundowner', text: 'The owner chooses the capture device and switches listening on.' }));
       }

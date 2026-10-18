@@ -56,6 +56,10 @@ TEMPO_TOLERANCE = 0.06
 BANDS = ((40, 120, "sub"), (120, 250, "bass"), (250, 500, "low mid"), (500, 2000, "mid"), (2000, 5000, "high mid"),
          (5000, 8000, "high"))
 MAX_BANDS = 8                   # places for bands in the file
+SLOW_SECONDS = 0.2              # the slow bands (for every reader off the box, review M1 of #145): the mean of this long,
+                                # changed at most 1 / SLOW_SECONDS = 5 times a second. Speech's syllables come 4 to 5 a
+                                # second; band levels that move at most 2.5 times a second carry whether someone speaks, not what.
+MAX_BACKLOG = 2.0               # seconds of sound waiting in arecord's pipe beyond which it is thrown away (review L5)
 
 
 def _bins(low, high):
@@ -144,6 +148,8 @@ class Analyzer:
         self.blocks = 0
         self.beats = 0
         self.t = 0.0                                        # the time of the stream, by its own samples
+        self.slow = [0.0] * len(BANDS)                       # the slow bands, held between changes
+        self._slow_sum, self._slow_n = [0.0] * len(BANDS), 0
         self.set_gain(gain_db)
         self._up = math.exp(-BLOCK_SECONDS / ATTACK)
         self._down = math.exp(-BLOCK_SECONDS / RELEASE)
@@ -198,8 +204,14 @@ class Analyzer:
             last = self.t
         pulse = max(0.0, 1.0 - (self.t - last) / PULSE_SECONDS) if last is not None else 0.0
         bpm, confidence = self.tempo()
+        units = [unit(b) for b in bands]
+        self._slow_sum = [a + b for a, b in zip(self._slow_sum, units)]
+        self._slow_n += 1
+        if self._slow_n * BLOCK_SECONDS >= SLOW_SECONDS - 1e-9:
+            self.slow = [x / self._slow_n for x in self._slow_sum]
+            self._slow_sum, self._slow_n = [0.0] * len(BANDS), 0
         return {"rms_db": level_db, "level": unit(level_db), "envelope": unit(db(self.env)), "onset": onset_strength,
-                "pulse": pulse, "bpm": bpm, "confidence": confidence, "beats": self.beats, "bands": [unit(b) for b in bands],
+                "pulse": pulse, "bpm": bpm, "confidence": confidence, "beats": self.beats, "bands": units, "slow_bands": list(self.slow),
                 "bands_db": bands, "peak_db": db(peak / FULL * g), "beat": beat, "onset_flag": onset, "clipped": clipped,
                 "blocks": self.blocks}
 
@@ -233,7 +245,7 @@ MAGIC = b"NXSD"
 VERSION = 1
 SIZE = 128
 F_CAPTURING, F_BEAT, F_ONSET, F_CLIPPED, F_IDLE = 1, 2, 4, 8, 16
-_HEAD = struct.Struct("<4sHHIIdIIfffffffIHH8ff16x")        # bytes 0 to 119
+_HEAD = struct.Struct("<4sHHIIdIIfffffffIHH8ff6H4x")       # bytes 0 to 119 (104 to 115: the slow bands, added in the reserved bytes)
 _TAIL = struct.Struct("<II")                                # the CRC-32 and the sequence number again
 assert _HEAD.size == 120 and _HEAD.size + _TAIL.size == SIZE
 STALE_SECONDS = 0.5             # values older than this mean the service is not delivering
@@ -242,6 +254,10 @@ STALE_SECONDS = 0.5             # values older than this mean the service is not
 def _f32(v, low, high):
     v = float(v)
     return low if v != v else min(high, max(low, v))
+
+
+def _u16(v):
+    return int(round(_f32(v, 0.0, 1.0) * 65535))
 
 
 def pack(values, seq, now, flags):
@@ -253,7 +269,8 @@ def pack(values, seq, now, flags):
                       _f32(values.get("pulse", 0.0), 0.0, 1.0), _f32(values.get("bpm", 0.0), 0.0, 400.0),
                       _f32(values.get("confidence", 0.0), 0.0, 1.0), values.get("beats", 0) & 0xFFFFFFFF, len(bands), 0,
                       *(bands + [0.0] * (MAX_BANDS - len(bands))),
-                      _f32(values.get("peak_db", FLOOR_DB), FLOOR_DB, GAIN_MAX))
+                      _f32(values.get("peak_db", FLOOR_DB), FLOOR_DB, GAIN_MAX),
+                      *(_u16(b) for b in (list(values.get("slow_bands", []))[:len(BANDS)] + [0.0] * len(BANDS))[:len(BANDS)]))
     return head + _TAIL.pack(zlib.crc32(head) & 0xFFFFFFFF, seq & 0xFFFFFFFF)
 
 
@@ -271,7 +288,7 @@ def unpack(data):
     n = min(f[16], MAX_BANDS)
     return {"seq": f[3], "flags": f[4], "time": f[5], "blocks": f[6], "rate": f[7], "rms_db": f[8], "level": f[9],
             "envelope": f[10], "onset": f[11], "pulse": f[12], "bpm": f[13], "confidence": f[14], "beats": f[15],
-            "bands": list(f[18:18 + n]), "peak_db": f[26],
+            "bands": list(f[18:18 + n]), "peak_db": f[26], "slow_bands": [x / 65535.0 for x in f[27:27 + len(BANDS)]],
             "capturing": bool(f[4] & F_CAPTURING), "beat": bool(f[4] & F_BEAT), "onset_flag": bool(f[4] & F_ONSET),
             "clipped": bool(f[4] & F_CLIPPED), "idle": bool(f[4] & F_IDLE)}
 
@@ -360,6 +377,32 @@ def alsa_name(device):
 
 def arecord_args(device, program="arecord"):
     return [program, "-q", "-D", alsa_name(device), "-t", "raw", "-f", "S16_LE", "-r", str(RATE), "-c", "1"]
+
+
+def _waiting(fd):
+    """Bytes waiting in arecord's pipe, or 0 where that cannot be asked."""
+    import fcntl
+    import termios
+    try:
+        return struct.unpack("i", fcntl.ioctl(fd, termios.FIONREAD, b"\0\0\0\0"))[0]
+    except OSError:
+        return 0
+
+
+def no_core_dumps():
+    """Review M2 of #145: a crash of this process or of arecord must never write their memory (capture buffers) to
+    disk. The core limit 0 is inherited by arecord (the unit says LimitCORE=0 as well), and this process is marked
+    not dumpable (prctl PR_SET_DUMPABLE 0; an exec resets that for arecord, whose limit stays 0). Returns what holds."""
+    import resource
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    try:
+        import ctypes
+        libc = ctypes.CDLL(None, use_errno=True)
+        libc.prctl(4, 0, 0, 0, 0)               # PR_SET_DUMPABLE, 0
+        dumpable = libc.prctl(3, 0, 0, 0, 0)    # PR_GET_DUMPABLE
+    except (OSError, AttributeError):
+        dumpable = None
+    return {"core": resource.getrlimit(resource.RLIMIT_CORE), "dumpable": dumpable}
 
 
 # --- the service ----------------------------------------------------------------------------------------------------------
@@ -456,10 +499,12 @@ class Service:
             self.fd = fd
         return self.fd
 
-    def publish(self, values, flags):
+    def publish(self, values, flags, at=None):
+        """Write one record. `at` is when the block's last sample was heard (review L5 of #145): a block read late, from
+        a backlog in the pipe, carries its own time and so looks stale to every reader. None: now."""
         self.seq = (self.seq + 1) & 0xFFFFFFFF
         try:
-            os.pwrite(self._open(), pack(values, self.seq, self._clock(), flags), 0)
+            os.pwrite(self._open(), pack(values, self.seq, self._clock() if at is None else at, flags), 0)
         except OSError as e:
             self._set("problem", "the levels file cannot be written: %s" % (e.strerror or e))
 
@@ -578,6 +623,14 @@ class Service:
                 if len(buf) < need:
                     continue
                 last = self._clock()
+                waiting = _waiting(fd)
+                if waiting > MAX_BACKLOG * RATE * 2:     # far behind: what waits is thrown away, never shown late
+                    os.read(fd, waiting - waiting % 2)
+                    analyzer.prev = None
+                    with self.lock:
+                        self.counts["dropped"] = self.counts.get("dropped", 0) + 1
+                    waiting = 0
+                at = last - waiting / (2.0 * RATE)       # when the last sample of this block was heard
                 samples = array.array("h")
                 samples.frombytes(bytes(buf))
                 buf.clear()
@@ -586,7 +639,7 @@ class Service:
                 v = analyzer.block(samples)
                 self.fails = 0
                 flags = F_CAPTURING | (F_BEAT if v["beat"] else 0) | (F_ONSET if v["onset_flag"] else 0) | (F_CLIPPED if v["clipped"] else 0)
-                self.publish(v, flags)
+                self.publish(v, flags, at)
                 with self.lock:
                     self.counts["blocks"] += 1
                     self.counts["beats"] += 1 if v["beat"] else 0
@@ -603,6 +656,7 @@ class Service:
 
 def main(argv=None):
     import pwd
+    no_core_dumps()
     from .netd import NetServer
     rundir = paths.sound_dir()
     os.makedirs(rundir, mode=0o750, exist_ok=True)

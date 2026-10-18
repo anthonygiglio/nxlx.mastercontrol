@@ -242,7 +242,11 @@ class LayoutTest(unittest.TestCase):
         bands = struct.unpack_from("<8f", raw, 68)
         self.assertEqual([round(b, 5) for b in bands], [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.0, 0.0])
         self.assertAlmostEqual(struct.unpack_from("<f", raw, 100)[0], -3.0)
-        self.assertEqual(raw[104:120], bytes(16))
+        self.assertEqual(raw[104:120], bytes(16), "no slow bands given: zeros")
+        slow = sound.pack(dict(self.values(), slow_bands=[0.0, 0.2, 0.4, 0.6, 0.8, 1.0]), 41, 1.0, 1)
+        self.assertEqual(struct.unpack_from("<6H", slow, 104), (0, 13107, 26214, 39321, 52428, 65535))
+        self.assertEqual(slow[116:120], bytes(4))
+        self.assertEqual([round(b, 4) for b in sound.unpack(slow)["slow_bands"]], [0.0, 0.2, 0.4, 0.6, 0.8, 1.0])
         import zlib
         self.assertEqual(struct.unpack_from("<II", raw, 120), (zlib.crc32(raw[:120]), 41))
 
@@ -250,7 +254,7 @@ class LayoutTest(unittest.TestCase):
         with open(os.path.join(REPO, "pvj", "SOUND.md")) as f:
             doc = f.read()
         for row in ("| 0 | 4 bytes | magic `NXSD` |", "| 8 | u32 | sequence number", "| 16 | f64 |", "| 32 | f32 | RMS level",
-                    "| 60 | u32 | beat count", "| 68 | 8 x f32 | band levels", "| 100 | f32 | peak, dB |", "| 120 | u32 | CRC-32",
+                    "| 60 | u32 | beat count", "| 68 | 8 x f32 | band levels", "| 100 | f32 | peak, dB |", "| 104 | 6 x u16 | slow bands", "| 120 | u32 | CRC-32",
                     "| 124 | u32 | sequence number again |"):
             self.assertIn(row, doc)
         for name in ("sub", "bass", "low mid", "mid", "high mid", "high"):
@@ -313,17 +317,20 @@ class DeviceTest(unittest.TestCase):
 class FakeChild:
     """arecord's stand-in: raw samples on stdout, words on stderr, and an end when told or when the samples run out."""
 
-    def __init__(self, samples=None, words=b"", forever=True):
+    def __init__(self, samples=None, words=b"", forever=True, pace=sound.BLOCK_SECONDS, burst=None):
         r, self._w = os.pipe()
         er, self._ew = os.pipe()
         self.stdout, self.stderr = os.fdopen(r, "rb", buffering=0), os.fdopen(er, "rb", buffering=0)
         self.terminated = False
         self._done = threading.Event()
         self.returncode = None
-        threading.Thread(target=self._feed, args=(samples, words, forever), daemon=True).start()
+        self.pace = pace
+        threading.Thread(target=self._feed, args=(samples, words, forever, burst), daemon=True).start()
 
-    def _feed(self, samples, words, forever):
+    def _feed(self, samples, words, forever, burst):
         try:
+            if burst is not None:
+                os.write(self._w, burst.tobytes())          # a backlog: this much waits at once (blocks while the pipe is full)
             data = samples.tobytes() if samples is not None else b""
             step = sound.BLOCK * 2
             while not self._done.is_set():
@@ -331,7 +338,7 @@ class FakeChild:
                     if self._done.is_set():
                         break
                     os.write(self._w, data[i:i + step])
-                    time.sleep(0.002)
+                    time.sleep(self.pace)
                 if not forever:
                     break
             if words:
@@ -519,7 +526,7 @@ class Clock:
 
 def record(**over):
     v = {"rms_db": -10.0, "level": 0.83, "envelope": 0.8, "onset": 0.2, "pulse": 0.25, "bpm": 124.0, "confidence": 0.75,
-         "beats": 5, "bands": [0.9, 0.8, 0.5, 0.4, 0.3, 0.2], "peak_db": -2.0, "blocks": 9}
+         "beats": 5, "bands": [0.9, 0.8, 0.5, 0.4, 0.3, 0.2], "slow_bands": [0.15, 0.25, 0.35, 0.45, 0.55, 0.65], "peak_db": -2.0, "blocks": 9}
     v.update(over)
     return v
 
@@ -535,14 +542,16 @@ class OscTest(unittest.TestCase):
     def test_the_bundle_carries_the_documented_addresses(self):
         got = parse_bundle(soundout.values_bundle(record()))
         self.assertEqual([a for a, _t, _v in got], ["/nxlx/sound/level", "/nxlx/sound/db", "/nxlx/sound/envelope", "/nxlx/sound/pulse",
-                                                    "/nxlx/sound/bpm"] + ["/nxlx/sound/band/%d" % n for n in range(1, 7)] + ["/nxlx/sound/bands"])
+                                                    "/nxlx/sound/bpm"], "no band in the bundle of 20 a second (review M1)")
+        got += parse_bundle(soundout.bands_bundle(record()))
+        self.assertEqual([a for a, _t, _v in got][5:], ["/nxlx/sound/band/%d" % n for n in range(1, 7)] + ["/nxlx/sound/bands"])
         by = {a: (t, v) for a, t, v in got}
         self.assertEqual(by["/nxlx/sound/bpm"][0], ",ff")
         self.assertAlmostEqual(by["/nxlx/sound/bpm"][1][0], 124.0)
         self.assertEqual(by["/nxlx/sound/bands"][0], ",ffffff")
-        self.assertAlmostEqual(by["/nxlx/sound/band/1"][1][0], 0.9, places=5)
+        self.assertAlmostEqual(by["/nxlx/sound/band/1"][1][0], 0.15, places=5, msg="the slow bands, never the fast ones")
         self.assertEqual(parse_bundle(soundout.beat_message(42)), [("/nxlx/sound/beat", ",i", [42])])
-        self.assertLess(len(soundout.values_bundle(record())), 600)
+        self.assertLess(len(soundout.values_bundle(record()) + soundout.bands_bundle(record())), 600)
         with open(os.path.join(REPO, "pvj", "SOUND.md")) as f:
             doc = f.read()
         for a in ("level", "db", "envelope", "pulse", "bpm", "band/<n>", "bands", "beat"):
@@ -571,7 +580,7 @@ class OscTest(unittest.TestCase):
                 got += 1
         except socket.timeout:
             pass
-        self.assertEqual(got, 5, "the burst, and nothing queued")
+        self.assertEqual(got, int(soundout.TARGET_BURST), "the burst, and nothing queued")
         out2 = soundout.Sound(FakeApi({}), socket_path="/nonexistent", levels_path="/nonexistent", clock=clock, log=lambda *_: None)
         sent = []
 
@@ -580,8 +589,8 @@ class OscTest(unittest.TestCase):
                 sent.append(where)
         for i in range(200):
             out2.send(Count(), data, target, 200.0 + i * 0.01)            # two seconds, a try every 10 ms
-        self.assertLessEqual(len(sent), 2 * 25)
-        self.assertGreaterEqual(len(sent), 2 * 20)
+        self.assertLessEqual(len(sent), int(soundout.TARGET_BURST + 2 * soundout.TARGET_RATE))
+        self.assertGreaterEqual(len(sent), int(2 * soundout.TARGET_RATE) - 1)
         big = b"x" * 1300
         n = len(sent)
         out2.send(Count(), big, target, 300.0)
@@ -592,18 +601,18 @@ class OscTest(unittest.TestCase):
         beat = soundout.beat_message(1)
         for _ in range(60):
             out3.send(Count(), beat, target, 400.0)
-        self.assertEqual(len(sent), 5)
+        self.assertEqual(len(sent), int(soundout.TARGET_BURST))
         for i in range(100):
             out3.send(Count(), beat, target, 400.0 + (i + 1) * 0.01)
-        self.assertLessEqual(len(sent), 25 + 1)
+        self.assertLessEqual(len(sent), int(soundout.TARGET_BURST + soundout.TARGET_RATE) + 1)
         # and every target together: 150 datagrams in any second, whatever the number of targets
         out4 = soundout.Sound(FakeApi({}), socket_path="/nonexistent", levels_path="/nonexistent", clock=clock, log=lambda *_: None)
         sent.clear()
         many = [("state", "t%d" % i, "127.0.0.%d" % (i + 1), 9000) for i in range(12)]
         for i in range(100):
             out4.send(Count(), beat, many, 500.0 + i * 0.01)
-        self.assertLessEqual(len(sent), 150)
-        self.assertGreaterEqual(len(sent), 120)
+        self.assertLessEqual(len(sent), int(soundout.ALL_BURST + soundout.ALL_RATE))
+        self.assertGreaterEqual(len(sent), int(soundout.ALL_RATE) - 12)
 
     def test_where_it_may_go(self):
         data = {"osc": {"feedback_on": True, "feedback": [{"name": "Tablet", "address": "192.168.0.40", "port": 9000},
@@ -936,6 +945,145 @@ class UnitTest(unittest.TestCase):
         with open(os.path.join(REPO, "image", "stage-pvj", "00-install-pvj", "00-packages-nr")) as f:
             self.assertIn("alsa-utils", f.read().split())
         self.assertTrue(os.access(os.path.join(REPO, "bin", "pvj-sound"), os.X_OK))
+
+
+# --- the review of #145 at 7ffce1c ------------------------------------------------------------------------------------------------
+class ReviewTest(unittest.TestCase):
+    def test_m1_the_slow_bands_are_the_mean_of_200_ms_and_change_at_most_five_times_a_second(self):
+        rnd = random.Random(5)
+        sig = array.array("h", [int(0.3 * 32767 * (rnd.random() * 2 - 1)) for _ in range(2 * sound.RATE)])
+        a = sound.Analyzer()
+        vs = run(sig, a)
+        n = int(round(sound.SLOW_SECONDS / sound.BLOCK_SECONDS))
+        changes = [i for i in range(1, len(vs)) if vs[i]["slow_bands"] != vs[i - 1]["slow_bands"]]
+        self.assertLessEqual(len(changes), int(2 / sound.SLOW_SECONDS) + 1)
+        for i in changes:
+            want = [sum(vs[j]["bands"][k] for j in range(i - n + 1, i + 1)) / n for k in range(6)]
+            self.assertEqual([round(x, 9) for x in vs[i]["slow_bands"]], [round(x, 9) for x in want])
+        self.assertTrue(all(b - a >= n for a, b in zip(changes, changes[1:])), "never two changes within 200 ms")
+
+    def test_m1_osc_sends_the_bands_slowly_and_the_level_fast(self):
+        out = soundout.Sound(FakeApi({}), socket_path="/nonexistent", levels_path="/nonexistent", log=lambda *_: None)
+        kinds = {"values": [], "bands": [], "beat": []}
+        t, beats = 0.0, 0
+        while t < 3.0:
+            if t - beats * 0.25 >= 0.25:
+                beats += 1
+            for d in out.plan(record(beats=beats), t):
+                first = parse_bundle(d)[0][0]
+                kinds["beat" if first.endswith("/beat") else "bands" if "/band" in first else "values"].append(t)
+            t += soundout.LOOK_EVERY
+        self.assertLessEqual(len(kinds["bands"]), int(3 / sound.SLOW_SECONDS) + 1, "bands at most 5 times a second")
+        self.assertGreaterEqual(len(kinds["values"]), 55, "the level about 20 times a second")
+        self.assertEqual(len(kinds["beat"]), beats, "every beat, at once")
+
+    def test_l3_a_target_is_sent_everything_without_a_drop_and_any_second_stays_under_the_cap(self):
+        clock = Clock()
+        out = soundout.Sound(FakeApi({}), socket_path="/nonexistent", levels_path="/nonexistent", clock=clock, log=lambda *_: None)
+        sent = []
+
+        class Count:
+            def sendto(self, d, where):
+                sent.append(t)
+        target = [("render", "Max", "127.0.0.1", 9)]
+        t, beats = 100.0, 0
+        while t < 106.0:
+            if (t - 100.0) / sound.BEAT_GAP >= beats:
+                beats += 1                              # beats as fast as the analysis may give them
+            for d in out.plan(record(beats=beats), t):
+                out.send(Count(), d, target, t)
+            t += soundout.LOOK_EVERY
+        self.assertEqual(out.stats["held"], 0, "nothing dropped in normal work")
+        for start in [100.0 + i * 0.1 for i in range(50)]:
+            self.assertLessEqual(sum(1 for x in sent if start <= x < start + 1.0), int(soundout.TARGET_RATE + soundout.TARGET_BURST))
+
+    def test_l4_where_it_may_go_is_worked_out_once_a_second_or_at_once_after_a_change(self):
+        out = soundout.Sound(FakeApi({}), socket_path="/nonexistent", levels_path="/nonexistent", log=lambda *_: None)
+        asked = []
+        out.targets = lambda cfg: asked.append(1) or []
+        cfg = dict(soundout.DEFAULT, on=True, osc_render=True)
+        t = 0.0
+        while t < 3.0:
+            out.current_targets(cfg, t)
+            t += soundout.LOOK_EVERY
+        self.assertLessEqual(len(asked), 4)
+        out.current_targets(cfg, 10.0)
+        out.current_targets(cfg, 10.01)
+        n = len(asked)
+        out.gen += 1
+        out.current_targets(cfg, 10.02)
+        self.assertEqual(len(asked), n + 1, "a change of the setting is taken at once")
+
+    def test_m2_no_core_dump_for_the_service_or_its_child(self):
+        code = "import json, resource; from pvj import sound; r = sound.no_core_dumps(); print(json.dumps([list(r['core']), r['dumpable']]))"
+        r = subprocess.run([sys.executable, "-c", code], cwd=REPO, capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        core, dumpable = json.loads(r.stdout)
+        self.assertEqual(core, [0, 0])
+        self.assertIn(dumpable, (0, None))
+        if sys.platform.startswith("linux"):
+            self.assertEqual(dumpable, 0)
+        self.assertEqual(load_units()["pvj-sound.service"]["LimitCORE"], ["0"])
+        with open(os.path.join(REPO, "pvj", "sound.py")) as f:
+            main = f.read().split("def main(")[1]
+        self.assertLess(main.index("no_core_dumps()"), main.index("Service("), "before anything is captured")
+
+    def test_m1_the_page_says_what_is_true(self):
+        with open(os.path.join(REPO, "pvj", "web", "app.js")) as f:
+            js = f.read()
+        self.assertNotIn("They leave the box only to the devices you list here", js)
+        self.assertIn("id: 'soundbandwarn', text: d.bands_warning", js)
+        self.assertLess(js.index("'soundbandwarn'"), js.index("toggle('soundoscstate'"), "the warning stands before the switch")
+
+
+class BacklogTest(ServiceBase):
+    def test_l5_a_block_read_late_carries_its_own_time_and_looks_stale(self):
+        self.make = lambda: FakeChild(sine(1000, 0.25, 1.0), burst=sine(1000, 0.25, 1.5))
+        got = []
+        real = self.svc.publish
+
+        def publish(values, flags, at=None):
+            got.append((time.monotonic(), at))
+            real(values, flags, at)
+        self.svc.publish = publish
+        self.svc.configure({"on": True, "device": DEVICE, "gain_db": 0.0})
+        self.assertTrue(wait_for(lambda: len([a for _n, a in got if a is not None]) > 120, 8))
+        late = [n - a for n, a in got if a is not None]
+        self.assertGreater(late[0], 1.0, "the first block of a 1.5 s backlog is more than a second old")
+        self.assertGreater(late[0], sound.STALE_SECONDS, "so every reader takes it as stale")
+        self.assertLess(late[-1], 0.2, "and once caught up, fresh again")
+
+    def test_l5_a_backlog_beyond_two_seconds_is_thrown_away(self):
+        self.make = lambda: FakeChild(sine(1000, 0.25, 1.0), burst=sine(1000, 0.25, 3.0))
+        self.svc.configure({"on": True, "device": DEVICE, "gain_db": 0.0})
+        self.assertTrue(wait_for(lambda: self.svc.status()["counts"].get("dropped", 0) >= 1, 8))
+
+
+class TunnelTest(RolesBase):
+    def setUp(self):
+        super().setUp()
+        self.sdir = tempfile.mkdtemp(prefix="pvj-sound-tun-")
+        self.addCleanup(shutil.rmtree, self.sdir, True)
+        self.api.sound = soundout.Sound(self.api, socket_path=os.path.join(self.sdir, "none.sock"),
+                                        levels_path=os.path.join(self.sdir, "levels"), proc=proc_dir(self), log=lambda *_: None)
+        sound.Service(os.path.join(self.sdir, "levels"), log=lambda *_: None).publish(record(), sound.F_CAPTURING)
+
+    def test_m1_off_the_box_the_bands_are_the_slow_ones_and_through_the_tunnel_none(self):
+        for path in ("/api/sound/levels", "/api/sound"):
+            st, d = self.h("GET", path, {}, self.operator)
+            self.assertEqual(st, 200, d)
+            self.assertEqual(d["levels"]["bands"], [0.15, 0.25, 0.35, 0.45, 0.55, 0.65], "the slow bands, never the 50 a second")
+        from tests.test_support import CFG
+        self.assertEqual(self.h("POST", "/api/support/config", dict(CFG, allowed=True), self.owner)[0], 200)
+        st, body = self.h("POST", "/api/support/start", {"confirm": "start"}, self.owner)
+        login = self.h("POST", "/api/support/login", {"code": body["code"]}, client=TUNNEL)[1]
+        dev = self.api.support.authenticate(login["token"])
+        for path in ("/api/sound/levels", "/api/sound"):
+            st, d = self.h("GET", path, {}, dev, TUNNEL)
+            self.assertEqual(st, 200, d)
+            self.assertEqual((d["levels"]["bands"], d["levels"]["bands_hidden"]), ([], True), "no band through the tunnel")
+            self.assertAlmostEqual(d["levels"]["level"], 0.83, places=2, msg="the level and the beat stay")
+        self.assertIn("averaged over 200 ms, at most 5 times a second", self.h("GET", "/api/sound", {}, self.owner)[1]["bands_warning"])
 
 
 if __name__ == "__main__":

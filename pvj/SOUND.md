@@ -72,7 +72,7 @@ Ten and twenty seconds of generated sound (a sine, a hum and noise, a burst ever
 | 6 | u16 | size of the record (128) |
 | 8 | u32 | sequence number (the same at offset 124) |
 | 12 | u32 | flags: 1 capturing, 2 a beat in this block, 4 an onset in this block, 8 clipped, 16 idle (no device or off) |
-| 16 | f64 | time of the block, CLOCK_MONOTONIC seconds (the same clock in every process of the box) |
+| 16 | f64 | when the block's last sample was heard, CLOCK_MONOTONIC seconds (the same clock in every process of the box); a block read late from a backlog in arecord's pipe carries its own, older time |
 | 24 | u32 | block count since the service started |
 | 28 | u32 | sample rate (16000) |
 | 32 | f32 | RMS level, dB (-90 to +24) |
@@ -87,7 +87,8 @@ Ten and twenty seconds of generated sound (a sine, a hum and noise, a burst ever
 | 66 | u16 | reserved (0) |
 | 68 | 8 x f32 | band levels, 0 to 1 (unused ones 0) |
 | 100 | f32 | peak, dB |
-| 104 | 16 bytes | reserved (0) |
+| 104 | 6 x u16 | slow bands: the mean of the last 200 ms of each band, changed at most 5 times a second, 0 to 65535 for 0 to 1 (what may leave the box) |
+| 116 | 4 bytes | reserved (0) |
 | 120 | u32 | CRC-32 (zlib's) of bytes 0 to 119 |
 | 124 | u32 | sequence number again |
 
@@ -95,7 +96,7 @@ Ten and twenty seconds of generated sound (a sine, a hum and noise, a burst ever
 
 ## OSC out (`/nxlx/sound/...`)
 
-Sent by the panel, never by the service, and only while the Owner's switch for it is on: "Send sound to the state targets" (the D82 targets, while OSC and "Send state back" are on, each held at every send to the rule and the address locks of D82) and "Send sound to the render nodes" (D94, each held to the same rule at every send). Every number is a float32 unless said. The values of one send are one OSC bundle (about 450 bytes); a beat is a message of its own.
+Sent by the panel, never by the service, and only while the Owner's switch for it is on: "Send sound to the state targets" (the D82 targets, while OSC and "Send state back" are on, each held at every send to the rule and the address locks of D82) and "Send sound to the render nodes" (D94, each held to the same rule at every send). Every number is a float32 unless said. The level, dB, the envelope, the pulse and the tempo are one bundle 20 times a second (about 170 bytes); the bands are a bundle of their own, the slow ones only, 5 times a second (about 230 bytes); a beat is a message of its own.
 
 | Address | Arguments | When |
 | --- | --- | --- |
@@ -104,11 +105,11 @@ Sent by the panel, never by the service, and only while the Owner's switch for i
 | `/nxlx/sound/envelope` | f 0 to 1 | every send |
 | `/nxlx/sound/pulse` | f 0 to 1 | every send |
 | `/nxlx/sound/bpm` | f BPM, f confidence | every send |
-| `/nxlx/sound/band/<n>` | f 0 to 1, n = 1 to 6 | every send |
-| `/nxlx/sound/bands` | 6 x f 0 to 1 | every send |
+| `/nxlx/sound/band/<n>` | f 0 to 1, n = 1 to 6 | 5 times a second: the mean of 200 ms |
+| `/nxlx/sound/bands` | 6 x f 0 to 1 | 5 times a second: the mean of 200 ms |
 | `/nxlx/sound/beat` | i the beat count | at once, at each beat |
 
-At most 20 sends a second to a target, plus the beats (the file is looked at every 10 ms while sound goes out, so a beat leaves within about 10 ms of the block it was heard in). Caps: per target 25 datagrams and 12,000 bytes in any second; for all targets together 150 and 72,000 (D82's buckets: a rate and a burst). What does not fit is dropped, never queued. Each socket has a time to live of 1. Add addresses, never rename one: a patch or a layout made from them would break.
+To a target: 20 values bundles, 5 bands bundles and the beats (at most 5.6 a second) each second, about 31 datagrams and 6,000 bytes. The file is looked at every 10 ms while sound goes out, so a beat leaves within about 10 ms of the block it was heard in; where the values may go is worked out again once a second, or at once after a change. Caps: per target 38 datagrams and 12,000 bytes in any second; for all targets together (4 state targets and 8 render nodes at most) 456 and 86,400 (D82's buckets: a rate and a burst). In normal work nothing drops. What does not fit is dropped, never queued. Each socket has a time to live of 1. Add addresses, never rename one: a patch or a layout made from them would break.
 
 ## The classic renderer's shaders: a slow envelope
 
@@ -119,7 +120,7 @@ On classic mpv a shader's value changes by writing a new shader text that mpv co
 | Route | Who | Remote support |
 | --- | --- | --- |
 | `GET /api/sound` | Operator | as the Operator; a session of the Owner's role sees what the Owner sees |
-| `GET /api/sound/levels` | Operator | the same |
+| `GET /api/sound/levels` | Operator | the same, without the bands |
 | `POST /api/sound` (on, device, gain, the two OSC switches) | Owner | the Owner's role only, and never to switch capture on, choose the device while it is on, or switch OSC sending on |
 | `POST /api/sound/map` (the shader input) | Operator | the Owner's role only (D80's rule for a support session) |
 
@@ -127,4 +128,10 @@ A Guest gets nothing of this.
 
 ## Privacy
 
-The values are not sound. But six band levels fifty times a second are close to what a channel vocoder carries, and someone determined could make speech in the room partly understandable from them. So the levels file is readable only by group `audio` (who is in it can already record the microphone), OSC is off by default, at most 20 sends a second, and only to devices the Owner listed on the box's own network, the meter goes only to paired Operators and Owners, and the diagnostics file carries the switches and never a value. Every buffer is bounded.
+The values are not sound. But six band levels fifty times a second are close to what a channel vocoder carries, and someone determined could make speech in the room partly understandable from them. So (the coordinator's decision after the review of #145):
+
+- **On the box** the levels file keeps 50 a second (pvj-render's phase 4 needs it). It is readable only by group `audio`, who can already record the microphone.
+- **Every reader off the box** (the page's meter on any device, OSC to the D82 targets and the D94 render nodes) gets the bands only as the slow ones: the mean of 200 ms, changed at most 5 times a second. Band levels that move at most 2.5 times a second are below the rate of syllables (about 4 to 5 a second): they carry whether someone speaks, not what. The level, the envelope and the beat may leave up to 20 times a second.
+- **Through the support tunnel** the meter has the level, the envelope and the beat, and no band at all.
+- The page says this in one line above the switches before the Owner switches sending on, and says plainly where the values go: to the paired Owner and Operator devices that open the page, and over OSC to the devices he lists on the box's own network.
+- OSC is off by default; the diagnostics file carries the switches and never a value; no core file is ever written for the service or arecord (`LimitCORE=0`, and the service marks itself not dumpable). Every buffer is bounded; a backlog of more than 2 s in arecord's pipe is thrown away, never shown late.

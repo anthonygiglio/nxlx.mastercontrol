@@ -42,6 +42,9 @@ InaccessiblePaths=-/var/lib/pvj -/etc/pvj -/run/pvj -/run/pvj-ndi -/run/pvj-sysd
 # Bounds: one block of samples, a small FFT and arecord. The analysis was measured at about 1.2 percent of a laptop
 # core (pvj/SOUND.md); this cap keeps a fault from taking more than a quarter of one Pi core from the player.
 MemoryMax=64M
+# A crash must never write its memory (capture buffers) to disk: no core file, for it or for arecord (review M2 of
+# #145). pvj/sound.py also marks itself not dumpable at start.
+LimitCORE=0
 TasksMax=16
 CPUQuota=25%
 ProtectKernelTunables=yes

@@ -137,7 +137,7 @@ The pad lights, the fade and Blackout come from the same picture of the box the 
 
 ## Sound values sent out (D96)
 
-With sound reactivity on and the Owner's switch for it, the box sends `/nxlx/sound/...` (the level, dB, the envelope, the beat pulse, the tempo, six bands, and a message at each beat) to the state targets above and to the render nodes below, at most 20 times a second, under caps of their own. The table and the rule are in [SOUND.md](SOUND.md#osc-out-nxlxsound). The values are levels, never sound.
+With sound reactivity on and the Owner's switch for it, the box sends `/nxlx/sound/...` (the level, dB, the envelope, the beat pulse, the tempo, six bands, and a message at each beat) to the state targets above and to the render nodes below, the level and the beat up to 20 times a second and the bands averaged over 200 ms at most 5 times a second, under caps of their own. The table and the rule are in [SOUND.md](SOUND.md#osc-out-nxlxsound). The values are levels, never sound.
 
 ## Cues sent to a render node (D94)
 

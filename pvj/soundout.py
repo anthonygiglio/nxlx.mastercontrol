@@ -141,13 +141,19 @@ def _helper_view(reply):
 
 # --- OSC out ---------------------------------------------------------------------------------------------------------------
 PREFIX = "/nxlx/sound/"
-SEND_EVERY = 0.05               # a send of the values: 20 a second
+SEND_EVERY = 0.05               # the level, the envelope, the pulse and the tempo: 20 a second
+BANDS_EVERY = sound_mod.SLOW_SECONDS    # the bands: the slow ones only, 5 a second at most (review M1 of #145)
 LOOK_EVERY = 0.01               # the file is looked at this often while sound goes out (for the beats)
 IDLE_LOOK = 1.0                 # and this often while nothing goes out
-TARGET_RATE, TARGET_BURST = 20.0, 5.0           # datagrams to one target: at most 25 in any second
+TARGETS_EVERY = 1.0             # where it may go is worked out again this often, or at once after a change (review L4)
+# The caps (review L3 of #145): what one target is sent is 20 values bundles, 5 bands bundles and at most 1 / BEAT_GAP
+# (5.6) beats a second, about 31 datagrams and 6,000 bytes; the rate holds that with room, so nothing drops in normal
+# work, and the burst bounds any second at 38 datagrams and 12,000 bytes. All targets (4 state targets and 8 render
+# nodes at most) together: 456 datagrams and 86,400 bytes in any second.
+TARGET_RATE, TARGET_BURST = 32.0, 6.0           # datagrams to one target: at most 38 in any second
 TARGET_BYTES, TARGET_BYTES_BURST = 9600.0, 2400.0   # bytes to one target: at most 12,000 in any second
-ALL_RATE, ALL_BURST = 120.0, 30.0               # all targets together: at most 150 datagrams ...
-ALL_BYTES, ALL_BYTES_BURST = 57600.0, 14400.0   # ... and 72,000 bytes in any second
+ALL_RATE, ALL_BURST = 384.0, 72.0               # all targets together: at most 456 datagrams ...
+ALL_BYTES, ALL_BYTES_BURST = 72000.0, 14400.0   # ... and 86,400 bytes in any second
 
 
 def _msg(address, *values):
@@ -168,14 +174,35 @@ def bundle(messages):
 
 
 def values_bundle(v):
-    """The bundle of every send (pvj/SOUND.md's table), from a record of the levels file."""
-    bands = list(v.get("bands", []))[:len(sound_mod.BANDS)]
+    """The bundle sent 20 times a second (pvj/SOUND.md's table): the level, dB, the envelope, the pulse, the tempo.
+    No band: those leave only in bands_bundle."""
+    return bundle([_msg(PREFIX + "level", v["level"]), _msg(PREFIX + "db", v["rms_db"]), _msg(PREFIX + "envelope", v["envelope"]),
+                   _msg(PREFIX + "pulse", v["pulse"]), _msg(PREFIX + "bpm", v["bpm"], v["confidence"])])
+
+
+def bands_bundle(v):
+    """The bands as they may leave the box: the slow ones (the mean of 200 ms, changed at most 5 times a second), never
+    the 50 a second of the file."""
+    bands = list(v.get("slow_bands", []))[:len(sound_mod.BANDS)]
     bands += [0.0] * (len(sound_mod.BANDS) - len(bands))
-    msgs = [_msg(PREFIX + "level", v["level"]), _msg(PREFIX + "db", v["rms_db"]), _msg(PREFIX + "envelope", v["envelope"]),
-            _msg(PREFIX + "pulse", v["pulse"]), _msg(PREFIX + "bpm", v["bpm"], v["confidence"])]
-    msgs += [_msg(PREFIX + "band/%d" % (i + 1), b) for i, b in enumerate(bands)]
+    msgs = [_msg(PREFIX + "band/%d" % (i + 1), b) for i, b in enumerate(bands)]
     msgs.append(_msg(PREFIX + "bands", *bands))
     return bundle(msgs)
+
+
+def public(v, tunnel=False):
+    """What any reader off the box is given of one record (the page's meter, review M1 of #145): the level, the
+    envelope, the beat and the tempo as they are, the bands only as the slow ones, and through the support tunnel no
+    band at all."""
+    if v is None:
+        return None
+    out = {"fresh": v["fresh"], "capturing": v["capturing"] and v["fresh"], "idle": v["idle"], "age": round(v["age"], 2),
+           "db": round(v["rms_db"], 1), "level": round(v["level"], 3), "envelope": round(v["envelope"], 3),
+           "pulse": round(v["pulse"], 3), "bpm": round(v["bpm"], 1), "confidence": round(v["confidence"], 2),
+           "beats": v["beats"], "peak_db": round(v["peak_db"], 1), "clipped": v["clipped"]}
+    out["bands"] = [] if tunnel else [round(b, 2) for b in v.get("slow_bands", [])]
+    out["bands_hidden"] = bool(tunnel)
+    return out
 
 
 def beat_message(count):
@@ -224,6 +251,9 @@ class Sound:
         self._map_sent = None               # (shader id, epoch, input, value)
         self._map_at = None
         self._last_beats = None
+        self._plan = {"next_send": 0.0, "next_bands": 0.0}
+        self._targets = None                # (when, gen, the list): where it may go, for TARGETS_EVERY
+        self.targets_asked = 0
 
     # -- the setting --
     def config(self):
@@ -312,30 +342,52 @@ class Sound:
             self._stop.set()
             self._thread = None
 
+    def plan(self, v, now):
+        """The datagrams of this look at the file: a beat at once, the values every SEND_EVERY, the slow bands every
+        BANDS_EVERY."""
+        msgs = []
+        if self._last_beats is not None and v["beats"] != self._last_beats:
+            msgs.append(beat_message(v["beats"]))
+            self.stats["beats"] += 1
+        self._last_beats = v["beats"]
+        if now >= self._plan["next_send"]:
+            msgs.append(values_bundle(v))
+            self._plan["next_send"] = now + SEND_EVERY
+        if now >= self._plan["next_bands"]:
+            msgs.append(bands_bundle(v))
+            self._plan["next_bands"] = now + BANDS_EVERY
+        return msgs
+
+    def current_targets(self, cfg, now):
+        """targets(), worked out again every TARGETS_EVERY or at once after a change of the setting."""
+        with self.lock:
+            gen = self.gen
+        held = self._targets
+        if held is None or held[1] != gen or now - held[0] >= TARGETS_EVERY or now < held[0]:
+            self.targets_asked += 1
+            held = self._targets = (now, gen, self.targets(cfg))
+        return held[2]
+
     def _loop(self, stop):
         sock = None
-        next_send = 0.0
+        cfg_at = None
         try:
             while not stop.is_set():
-                cfg = self.config()
+                now = self._clock()
+                with self.lock:
+                    gen = self.gen
+                if cfg_at is None or cfg_at[1] != gen or now - cfg_at[0] >= TARGETS_EVERY:
+                    cfg_at = (now, gen, self.config())
+                cfg = cfg_at[2]
                 v = self.levels()
                 live = v is not None and v["fresh"] and v["capturing"]
-                now = self._clock()
                 osc = cfg["osc_state"] or cfg["osc_render"]
                 if live and osc:
                     if sock is None:
                         sock = self._udp()
-                    targets = self.targets(cfg)
-                    msgs = []
-                    if self._last_beats is not None and v["beats"] != self._last_beats:
-                        msgs.append(beat_message(v["beats"]))
-                        self.stats["beats"] += 1
-                    if now >= next_send:
-                        msgs.append(values_bundle(v))
-                        next_send = now + SEND_EVERY
-                    for data in msgs:
+                    targets = self.current_targets(cfg, now)
+                    for data in self.plan(v, now):
                         self.send(sock, data, targets, now)
-                    self._last_beats = v["beats"]
                 elif sock is not None:
                     sock.close()
                     sock = None
