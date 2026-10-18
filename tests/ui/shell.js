@@ -773,9 +773,9 @@ async function stripText(pg, post, get) {
 const PLAY = ['play/pads', 'play/library', 'play/shaders'];
 const SHAPE = ['shape/effect', 'shape/picture', 'shape/sound', 'shape/mapping'];
 const MENUS = {
-  owner: PLAY.concat(SHAPE, ['room/scenes', 'room/walls', 'room/guests'], ['index', 'health', 'projectors', 'room', 'schedule', 'access', 'autostart', 'streams', 'ndi', 'render', 'ndisc', 'sync', 'midi', 'dmx', 'osc',
+  owner: PLAY.concat(SHAPE, ['room/scenes', 'room/walls', 'room/guests'], ['index', 'health', 'projectors', 'room', 'schedule', 'access', 'autostart', 'streams', 'ndi', 'render', 'soundin', 'ndisc', 'sync', 'midi', 'dmx', 'osc',
     'network', 'screen', 'updates', 'support', 'https', 'backup', 'look', 'about'].map((x) => 'setup/' + x)),
-  presenter: PLAY.concat(SHAPE, ['room/scenes', 'room/walls', 'room/guests'], ['index', 'health', 'projectors', 'room', 'schedule', 'access', 'autostart', 'streams', 'ndi', 'render', 'sync', 'midi', 'about'].map((x) => 'setup/' + x)),
+  presenter: PLAY.concat(SHAPE, ['room/scenes', 'room/walls', 'room/guests'], ['index', 'health', 'projectors', 'room', 'schedule', 'access', 'autostart', 'streams', 'ndi', 'render', 'soundin', 'sync', 'midi', 'about'].map((x) => 'setup/' + x)),
   guest: PLAY.concat(SHAPE, ['room/scenes', 'room/walls'], ['index', 'health', 'about'].map((x) => 'setup/' + x)),
 };
 // pages: { owner, presenter, guest }, each a page that has just been loaded. post(url, body): as the owner.
@@ -940,12 +940,12 @@ const ADDED = {
     // D62 (2026-10-11): the NDI input's page under Setup > Show tools; its sound switch and address form are the Owner's
     '#nav-ndi': 'setup/index', '#ndisoundnone': 'NDI® input', '#ndiaddress': 'NDI® input', '#ndiaddradd': 'NDI® input',
     '#ndigroupopen': 'NDI® input', '#ndidiscopen': 'NDI® input', '#nav-ndisc': 'setup/index',
-    '#nav-render': 'setup/index' }, TRANSITIONS),      // the groups and the discovery servers (2026-10-11), the Owner's      // (the key's Show and New are there only while the key lock is on)
+    '#nav-render': 'setup/index', '#nav-soundin': 'setup/index' }, TRANSITIONS),      // the groups and the discovery servers (2026-10-11), the Owner's      // (the key's Show and New are there only while the key lock is on)
   // D80, an Operator: the lock on guest controls and a guest link; the rows of Setup that are his now, the room's
   // set-up with a scene's mark, the mapping's own controls, a clip to upload
   presenter: Object.assign({ '#guestlock': 'People and codes', '#makeguestlink': 'People and codes', '#nav-schedule': 'setup/index', '#nav-autostart': 'setup/index',
     '#nav-midi': 'setup/index', '#roomsnoguests': 'Setup index > Room', '#mapedit': 'shape/mapping', '#uploadbtn': 'play/',
-    '#nav-ndi': 'setup/index', '#nav-render': 'setup/index' }, TRANSITIONS),      // D62 and D94 (the render nodes): an Operator sees the NDI page and chooses a source; the switch and the addresses are the Owner's
+    '#nav-ndi': 'setup/index', '#nav-render': 'setup/index', '#nav-soundin': 'setup/index' }, TRANSITIONS),      // D62 and D94 (the render nodes): an Operator sees the NDI page and chooses a source; the switch and the addresses are the Owner's
   // D80, a Guest while guest controls are open (the default): his card on Room > Scenes. Stop and Blackout are the
   // strip's own buttons, which were in the list before, disabled
   guest: Object.assign({ '#gvibes': 'room/scenes', '#gshow': 'room/scenes', '#gprojon': 'room/scenes', '#gprojoff': 'room/scenes' }, TRANSITIONS),

@@ -548,3 +548,7 @@ The unit denies 127.0.0.1 and allows the private ranges, and the box's own LAN a
 
 - **A thread waiting on a libmpv handle must let go before the handle is destroyed (2026-10-16, pvj-render).** The first build hung for good on quit and on SIGTERM: `mpv_terminate_destroy` was called while the log thread sat in `mpv_wait_event` on the same handle. The thread now stops on a flag and `mpv_wakeup`, is joined, and only then is the handle destroyed; the tests end the program both ways within 10 seconds.
 - **Read what drives the old player before replacing it (2026-10-16, pvj-render).** The brief said the PIN screen was an overlay; `pinscreen.py` writes its text with mpv's `show-text`. A renderer that took only `overlay-add` would have shown a blank PIN screen. Grep every command and property the code sends before deciding what the new program must answer.
+
+## A benchmark is a test with other inputs (2026-10-18, D96)
+
+The sound analysis passed its 45 tests, which fed it click tracks whose beats agree. The bounded benchmark fed it a hum, a tone and noise bursts, and the tempo divided by zero the first time an even number of intervals had two far-apart middles: in the service that would have ended the capture thread while its socket went on answering "capturing". Run a benchmark on the real code with messy input before writing its numbers down, and make a long-lived worker thread survive its own faults and say so.
