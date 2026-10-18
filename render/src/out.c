@@ -364,14 +364,21 @@ int out_present(void)
         if (bo_cur) gbm_surface_release_buffer(gsurf, bo_cur);
         bo_cur = bo_pending;
         bo_pending = NULL;
-        if (have_seq && app.cfg->every_vblank && last_seq > prev_seq + 1) app.missed += last_seq - prev_seq - 1;
+        // a picture goes out at every vblank, so a step of more than one is a vblank that had no new picture
+        if (have_seq && last_seq > prev_seq + 1) app.missed += last_seq - prev_seq - 1;
         prev_seq = last_seq;
         have_seq = 1;
     }
     if (drmModePageFlip(drm_fd, crtc_id, fb, DRM_MODE_PAGE_FLIP_EVENT, NULL)) {
-        LOG("drmModePageFlip failed (%s)", strerror(errno));
+        int e = errno;
+        LOG("drmModePageFlip failed (%s)", strerror(e));
         gbm_surface_release_buffer(gsurf, next);
-        return errno == EBUSY ? 0 : -1;
+        if (e != EBUSY) return -1;
+        // nothing queued, so nothing paces the next turn: wait a frame's time here
+        double t = 1.0 / (app.out_hz > 1 ? app.out_hz : 60.0);
+        struct timespec ts = { 0, (long)(t * 1e9) };
+        nanosleep(&ts, NULL);
+        return 0;
     }
     flip_pending = 1;
     bo_pending = next;

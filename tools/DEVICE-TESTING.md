@@ -585,17 +585,20 @@ patch)", port 7400, its picture `nxlx-render-node`.
 | RN7 | The same with Max left running and its patch closed (the sender gone, the machine there), and with the patch frozen (stop the world) | Back to the clip; for the frozen one, after the still time (10 s) and 3 more | Seconds; whether a still picture from Max ever counted as gone when it should not |
 | RN8 | A node by `.local` name instead of the address; then a node on another network (a Wi-Fi the box is not on) | The `.local` node takes cues; the other is refused when added and says why | The words |
 
-### pvj-render, the box's own renderer (D95): never run on a Pi; do these before anyone chooses it for a show
+### pvj-render, the box's own renderer (D95): do these before anyone chooses it for a show
 
-Only the spike ran on the Pi (two clips at 960 x 540 held for 10 minutes; 720 held 2 minutes with 3 misses; 1080 did
-not). pvj-render itself has run only headless, on a PC's software GPU. Before: the box updated to this release, and
-`ls -l /opt/pvj/current/render/pvj-render` shows the program (if not: `cat /opt/pvj/current/render/build.log`).
-Use one 1080p30 H.264 clip (the owner's own, or the spike's). Measuring: stop the player (`sudo systemctl stop
-pvj-player`), run as the display's account `/opt/pvj/current/render/pvj-render --socket=/tmp/r.sock --drm-device=/dev/dri/card1
---drm-connector=HDMI-A-1 --drm-mode=1920x1080@60.00 --detail=540 --fast --every-vblank`, load the clip over the socket
-(`echo '{"command":["loadfile","/path/clip.mp4"]}' | socat - /tmp/r.sock`, then `["set_property","loop-file","inf"]`),
-and read `["get_property","pvj-render"]` (missed-vblanks) and `["get_property","frame-drop-count"]` after each run.
-Start the player again afterwards.
+The first run on the test Pi 4 (2026-10-18, project-log/JOURNAL.md) found four faults, fixed since: the socket jammed
+(the process had run out of file descriptors: libmpv left a GL fence, a sync file on V3D, at every frame, and Mesa
+said `Export failed` at every frame after), a flip only on a new clip frame, and a switch back to classic that did
+not take. Before: the box updated to this release, and `ls -l /opt/pvj/current/render/pvj-render` shows the program
+(if not: `cat /opt/pvj/current/render/build.log`). Use one 1080p30 H.264 clip (the owner's own, or the spike's).
+Measuring: stop the player (`sudo systemctl stop pvj-player`), run as the display's account
+`/opt/pvj/current/render/pvj-render --socket=/tmp/r.sock --drm-device=/dev/dri/card1 --drm-connector=HDMI-A-1
+--drm-mode=1920x1080@60.00 --detail=540 --fast` (a picture goes out at every vblank; `--every-vblank` is still taken),
+load the clip over the socket (`echo '{"command":["loadfile","/path/clip.mp4"]}' | socat - /tmp/r.sock`, then
+`["set_property","loop-file","inf"]`), and read `["get_property","pvj-render"]` (flips, drawn, missed-vblanks,
+gl-fences, which must stay near 0) and `["get_property","frame-drop-count"]` after each run, and
+`journalctl -u pvj-player | grep -c "Export failed"` (must be 0). Start the player again afterwards.
 
 | # | Do | Look for | Send back |
 | --- | --- | --- | --- |
@@ -606,7 +609,7 @@ Start the player again afterwards.
 | R5 | With New: a mapping (one quad, then a 4 x 4 grid) on Mapping, editing and then shown | The surfaces where they are with classic, to the pixel at the corners; the outlines while editing; masks over it | A photo of each with classic and with New |
 | R6 | With New: Show PIN on the display, a join QR code, the test pattern's words, the logo overlay | The PIN screen's text and the QR code as with classic, sharp and in screen space (not warped by a mapping) | A photo of the PIN screen |
 | R7 | The fallback: with New chosen, `sudo mv /opt/pvj/current/render/pvj-render /tmp/` and Restart player; then put it back. Then `sudo pkill -x -SEGV pvj-render` twice within a minute | The first: classic draws and the page says "pvj-render is not built on this box" or why; the second: one restart, then classic, and the page says "ended twice in a row (signal 11)". A picture all the time but a few seconds | The page's words and `journalctl -u pvj-player -n 30` |
-| R8 | Classic again (the default) after R4 to R7 | Everything as before this release; no pvj-render running (`pgrep -x pvj-render` says nothing) | Yes or no |
+| R8 | Classic again (the default) after R4 to R7 | Classic draws within about 10 seconds with no restart by hand; the Renderer card says how pvj-render was ended (asked, SIGTERM or SIGKILL); everything as before this release; no pvj-render running (`pgrep -x pvj-render` says nothing) | Yes or no, and the card's words |
 
 ### Sound reactivity (D96): never run on a Pi or with a real audio input
 

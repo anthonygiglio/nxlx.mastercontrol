@@ -15,6 +15,12 @@ Who does what, as for the screen's mode (pvj/screenmode.py, D90):
   screenmode chose for mpv, waits for its socket to answer, and watches it. It falls back to classic mpv by itself
   (the same exec as before) when pvj-render is missing, does not start, or ends twice in a row, and writes what it
   did and why to REPORT in its own folder, which the panel reads as data from a less trusted account.
+* While pvj-render draws, the supervisor also reads WANTED every half second. When it no longer says what this run
+  was started with (the Owner chose classic, or another detail), the supervisor ends pvj-render itself: it asks it
+  to quit on its socket, then sends SIGTERM after QUIT_SECONDS, then SIGKILL after TERM_SECONDS more, writes how it
+  ended to REPORT (the page shows it), and ends the service, which systemd starts again with the new wish. The
+  panel's own quit on the socket is only the polite half: on the first Pi run a jammed pvj-render never heard it,
+  and the box stayed on the new renderer until the service was restarted by hand (2026-10-18).
 """
 
 import os
@@ -33,6 +39,9 @@ REPORT = paths.RENDERER_REPORT          # in the player's folder: the player wri
 START_SECONDS = 10.0                    # pvj-render must answer on its socket this soon after it is started
 HEALTHY_SECONDS = 600.0                 # an end after this long a run is not "in a row" with the one before
 STOP_SECONDS = 5.0                      # systemd's stop: this long for pvj-render to end before it is killed
+QUIT_SECONDS = 2.0                      # a switch: this long for pvj-render to end when asked on its socket, then SIGTERM
+TERM_SECONDS = 3.0                      # ... and this long after SIGTERM, then SIGKILL
+WATCH_SECONDS = 0.5                     # how often the supervisor reads WANTED while pvj-render draws
 SMALL_BOARDS = ("pi3", "pi4")           # where Automatic draws 540 lines inside (the spike of 2026-10-16, D95)
 
 
@@ -107,14 +116,16 @@ class Supervisor:
     the process (SystemExit) when pvj-render was asked to quit or systemd stops the service."""
 
     def __init__(self, cmd, socket_path, rundir, detail, log=print, spawn=None, clock=time.monotonic, sleep=time.sleep,
-                 ready=None, start_seconds=START_SECONDS, healthy_seconds=HEALTHY_SECONDS):
+                 ready=None, start_seconds=START_SECONDS, healthy_seconds=HEALTHY_SECONDS, wanted=None):
         self.cmd, self.socket_path, self.rundir, self.detail = list(cmd), socket_path, rundir, detail
         self.log, self.clock, self.sleep = log, clock, sleep
         self.spawn = spawn or (lambda argv: subprocess.Popen(argv, stdin=subprocess.DEVNULL, close_fds=True))
         self.ready = ready or self._ready
         self.start_seconds, self.healthy_seconds = start_seconds, healthy_seconds
+        self.wanted = wanted                # WANTED's path: a change of the wish ends this run (None: not watched)
         self.proc = None
         self.stopping = False
+        self.stop_at = None                 # when systemd's stop came (the clock), for the kill after STOP_SECONDS
 
     def _ready(self, proc):
         """True once pvj-render answers on its socket with its own pid."""
@@ -128,11 +139,60 @@ class Supervisor:
     def _stop(self, signum=None, frame=None):
         """systemd's stop (SIGTERM) or Ctrl-C: passed on to pvj-render, which ends cleanly."""
         self.stopping = True
+        if self.stop_at is None:
+            self.stop_at = self.clock()
         if self.proc is not None and self.proc.poll() is None:
             try:
                 self.proc.send_signal(signal.SIGTERM)
             except OSError:
                 pass
+
+    def _wish_changed(self):
+        """The wish in WANTED, if it is no longer this run's ({"use": "new", "detail": self.detail}); else None. A
+        missing or unreadable file is no change (the panel writes it whole, by a rename)."""
+        if not self.wanted:
+            return None
+        data = screenmode.read_json(self.wanted)
+        if not data:
+            return None
+        wish = clean(data)
+        return wish if wish != {"use": "new", "detail": self.detail} else None
+
+    def _ask_quit(self):
+        from .player import Ipc, PlayerError
+        try:
+            Ipc(self.socket_path, timeout=1.0).request("quit")
+            return True
+        except PlayerError:
+            return False
+
+    def _switch(self, wish):
+        """End pvj-render for a new wish whatever state it is in: asked on its socket, then SIGTERM, then SIGKILL.
+        Returns how it ended, in words for the page."""
+        self.log("pvj-player: renderer: the wish is now %s (%s); ending pvj-render" % (wish["use"], wish["detail"]))
+        heard = self._ask_quit()
+        how = None
+        for sig, seconds, words in ((None, QUIT_SECONDS, "it quit when asked"),
+                                    (signal.SIGTERM, TERM_SECONDS, "it did not quit within %d s when asked%s, so it was sent SIGTERM"
+                                     % (QUIT_SECONDS, "" if heard else " (its socket did not answer)")),
+                                    (signal.SIGKILL, 5.0, "it did not quit within %d s when asked%s nor %d s after SIGTERM, so it was killed (SIGKILL)"
+                                     % (QUIT_SECONDS, "" if heard else " (its socket did not answer)", TERM_SECONDS))):
+            if sig is not None and self.proc.poll() is None:
+                try:
+                    self.proc.send_signal(sig)
+                except OSError:
+                    pass
+            try:
+                self.proc.wait(seconds)
+                how = words
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        how = how or "it did not end even after SIGKILL"
+        self.log("pvj-player: renderer: switched from pvj-render: %s" % how)
+        write_report(self.rundir, {"chosen": wish["use"], "drawing": "classic" if wish["use"] == "classic" else "new",
+                                   "why": "", "detail": wish["detail"], "switched": how}, self.log)
+        return how
 
     def _end(self):
         if self.proc is None:
@@ -182,10 +242,21 @@ class Supervisor:
             self.log("pvj-player: renderer: pvj-render is drawing (pid %d)" % self.proc.pid)
             while True:
                 try:
-                    code = self.proc.wait(0.5)
+                    code = self.proc.wait(WATCH_SECONDS)
                     break
                 except subprocess.TimeoutExpired:
+                    pass
+                if self.stopping:
+                    if self.clock() - self.stop_at >= STOP_SECONDS:
+                        try:
+                            self.proc.kill()    # SIGTERM was not enough: killed, before systemd's own timeout
+                        except OSError:
+                            pass
                     continue
+                wish = self._wish_changed()
+                if wish is not None:
+                    self._switch(wish)
+                    raise SystemExit(0)         # systemd starts the service again, which reads the new wish
             if self.stopping:
                 raise SystemExit(0)
             if code == 0:
@@ -203,7 +274,8 @@ def serve(player, screen_args, detail, log, env=None):
     """Run pvj-render under a Supervisor in this process. Returns the reason to fall back to classic mpv; never
     returns while pvj-render draws."""
     board = hardware.detect_board().get("kind", "")
-    sup = Supervisor(command(player.socket_path, screen_args, detail, board, env), player.socket_path, player.rundir, detail, log=log)
+    sup = Supervisor(command(player.socket_path, screen_args, detail, board, env), player.socket_path, player.rundir, detail, log=log,
+                     wanted=wanted_path(env))
     signal.signal(signal.SIGTERM, sup._stop)
     signal.signal(signal.SIGINT, sup._stop)
     try:
@@ -232,6 +304,7 @@ def clean_report(data):
     return {"chosen": data.get("chosen") if data.get("chosen") in USES else None,
             "drawing": data.get("drawing") if data.get("drawing") in USES else None,
             "why": screenmode._WHY.sub("", data["why"])[:REPORT_WORDS] if isinstance(data.get("why"), str) else "",
+            "switched": screenmode._WHY.sub("", data["switched"])[:REPORT_WORDS] if isinstance(data.get("switched"), str) else "",
             "detail": clean({"detail": data.get("detail")})["detail"],
             "pid": pid if isinstance(pid, int) and not isinstance(pid, bool) else None,
             "boot": screenmode._WHY.sub("", data["boot"])[:64] if isinstance(data.get("boot"), str) else "",
@@ -318,6 +391,10 @@ class Renderer:
                "uses": list(USES), "details": list(DETAILS)}
         if saved["use"] == "new" and drawing == "classic":
             out["why"] = why or "the player has not started pvj-render yet"
+        rep = self.report()
+        if rep and rep["switched"]:
+            # how the player ended pvj-render at the last change of the wish (Supervisor._switch)
+            out["switched"], out["switched_at"] = rep["switched"], rep["at"]
         return out
 
     def brief(self):

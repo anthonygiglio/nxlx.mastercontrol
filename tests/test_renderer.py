@@ -22,26 +22,34 @@ from pvj import boxcare, renderer, screenmode
 from pvj.player import Ipc, Player, PlayerError
 
 # The stand-in: answers get_property pid with its own pid (and quit) on --socket=PATH, as pvj-render does. What it
-# does is read from STANDIN_MODE: "ok", "die:SECONDS:CODE" (answer, then end with CODE), "silent" (never answer),
-# "exit:CODE" (end at once), "quit-after:SECONDS" (end with 0 as if quit was asked).
+# does is read from STANDIN_MODE: "ok" (a quit ends it with 0), "die:SECONDS:CODE" (answer, then end with CODE),
+# "silent" (never answer), "exit:CODE" (end at once), "quit-after:SECONDS" (end with 0 as if quit was asked),
+# "term" (never takes a quit; SIGTERM ends it), "deaf" (answers the first question, then hears nothing more and
+# ignores SIGTERM: only SIGKILL ends it, as a jammed pvj-render on the first Pi run).
 STANDIN = textwrap.dedent('''\
-    import json, os, socket, sys, time
+    import json, os, signal, socket, sys, time
     path = [a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--socket=")][0]
     with open(os.environ["STANDIN_LOG"], "a") as f:
         f.write(json.dumps(sys.argv[1:]) + "\\n")
     mode = os.environ.get("STANDIN_MODE", "ok")
     if mode.startswith("exit:"):
         sys.exit(int(mode.split(":")[1]))
+    if mode == "deaf":
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.bind(path)
     s.listen(4)
     s.settimeout(0.1)
-    end = None
+    end, code, answered = None, 0, 0
     if mode.startswith("die:"):
         end = time.monotonic() + float(mode.split(":")[1]); code = int(mode.split(":")[2])
     if mode.startswith("quit-after:"):
         end = time.monotonic() + float(mode.split(":")[1]); code = 0
+    if mode == "deaf":
+        end = time.monotonic() + 120        # never outlives a broken test run by long
     while end is None or time.monotonic() < end:
+        if mode == "deaf" and answered:
+            time.sleep(0.1); continue
         try:
             c, _ = s.accept()
         except socket.timeout:
@@ -50,8 +58,13 @@ STANDIN = textwrap.dedent('''\
             c.close(); continue
         line = c.makefile().readline()
         req = json.loads(line)
+        if req.get("command") == ["quit"] and mode == "term":
+            c.close(); continue
         c.sendall((json.dumps({"request_id": req["request_id"], "error": "success", "data": os.getpid()}) + "\\n").encode())
         c.close()
+        answered += 1
+        if req.get("command") == ["quit"] and mode == "ok":
+            sys.exit(0)
     sys.exit(code)
 ''')
 
@@ -188,6 +201,108 @@ class SupervisorTest(Base):
         sup = self.supervisor("ok")
         sup.cmd[0] = os.path.join(self.dir, "nothing-here")
         self.assertIn("could not be started", sup.run())
+
+    def test_systemds_stop_kills_a_helper_that_ignores_sigterm(self):
+        sup = self.supervisor("deaf")
+        import threading
+        t = threading.Timer(1.5, sup._stop)
+        t.start()
+        self.addCleanup(t.cancel)
+        done = {}
+
+        def run():
+            try:
+                done["why"] = sup.run()
+            except SystemExit as e:
+                done["exit"] = e.code
+        r = threading.Thread(target=run, daemon=True)
+        start = time.monotonic()
+        r.start()
+        r.join(1.5 + renderer.STOP_SECONDS + 3)
+        if r.is_alive():
+            sup.proc.kill()
+            r.join(10)
+            self.fail("a helper that ignores SIGTERM was left running after systemd's stop")
+        self.assertEqual(done, {"exit": 0})
+        self.assertEqual(sup.proc.poll(), -signal.SIGKILL)
+        self.assertLess(time.monotonic() - start, 1.5 + renderer.STOP_SECONDS + 3, "never left to systemd's 90 seconds")
+
+
+class SwitchTest(Base):
+    """A change of the wish while pvj-render draws (the Owner chose classic again): the supervisor ends pvj-render
+    itself, asked first, then SIGTERM, then SIGKILL, and ends the service, whether or not pvj-render answers."""
+
+    def run_switch(self, mode, wish={"use": "classic", "detail": "auto"}):
+        import threading
+        state = os.path.join(self.dir, "state")
+        os.makedirs(state, exist_ok=True)
+        wanted = os.path.join(state, renderer.WANTED)
+        screenmode.write_json(wanted, {"use": "new", "detail": "auto"})
+        sup = self.supervisor(mode, wanted=wanted)
+        done = {}
+
+        def run():
+            try:
+                done["why"] = sup.run()
+            except SystemExit as e:
+                done["exit"] = e.code
+        t = threading.Thread(target=run, daemon=True)
+        t.start()
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and not any("is drawing" in line for line in self.lines):
+            time.sleep(0.05)
+        self.assertTrue(any("is drawing" in line for line in self.lines), self.lines)
+        time.sleep(0.5)
+        screenmode.write_json(wanted, wish)
+        start = time.monotonic()
+        t.join(renderer.WATCH_SECONDS + renderer.QUIT_SECONDS + renderer.TERM_SECONDS + 5)
+        took = time.monotonic() - start
+        if t.is_alive():
+            sup.stopping = True
+            sup._end()
+            t.join(10)
+            self.fail("the change of the wish did not end pvj-render (%s)" % self.lines)
+        return done, sup, took
+
+    def test_a_helper_that_never_answers_is_killed_and_the_service_ends(self):
+        done, sup, took = self.run_switch("deaf")
+        self.assertEqual(done, {"exit": 0}, "the service ends; systemd starts it again with the new wish")
+        self.assertEqual(sup.proc.poll(), -signal.SIGKILL)
+        self.assertGreaterEqual(took, renderer.QUIT_SECONDS + renderer.TERM_SECONDS - 0.5, "asked, then SIGTERM, first")
+        self.assertLess(took, renderer.WATCH_SECONDS + renderer.QUIT_SECONDS + renderer.TERM_SECONDS + 2)
+        rep = self.report()
+        self.assertEqual((rep["chosen"], rep["drawing"]), ("classic", "classic"))
+        self.assertIn("SIGKILL", rep["switched"])
+        self.assertIn("its socket did not answer", rep["switched"])
+        self.assertTrue(any("switched from pvj-render" in line for line in self.lines), self.lines)
+
+    def test_a_helper_that_takes_no_quit_gets_sigterm(self):
+        done, sup, took = self.run_switch("term")
+        self.assertEqual(done, {"exit": 0})
+        self.assertEqual(sup.proc.poll(), -signal.SIGTERM)
+        self.assertIn("SIGTERM", self.report()["switched"])
+        self.assertNotIn("SIGKILL", self.report()["switched"])
+
+    def test_a_helper_that_answers_is_asked_to_quit_and_nothing_more(self):
+        done, sup, took = self.run_switch("ok")
+        self.assertEqual(done, {"exit": 0})
+        self.assertEqual(sup.proc.poll(), 0)
+        self.assertLess(took, renderer.WATCH_SECONDS + renderer.QUIT_SECONDS)
+        self.assertEqual(self.report()["switched"], "it quit when asked")
+
+    def test_another_detail_is_a_change_too(self):
+        done, sup, took = self.run_switch("deaf", {"use": "new", "detail": 720})
+        self.assertEqual(done, {"exit": 0})
+        rep = self.report()
+        self.assertEqual((rep["chosen"], rep["detail"]), ("new", 720))
+
+    def test_the_same_wish_or_none_changes_nothing(self):
+        for wanted in (None, os.path.join(self.dir, "missing.json")):
+            sup = self.supervisor("quit-after:1.5", wanted=wanted)
+            with self.assertRaises(SystemExit):
+                sup.run()
+            self.assertEqual(sup.proc.poll(), 0, "it ran until it quit by itself")
+            self.assertEqual(self.report()["switched"], "")
 
 
 class ServeTest(Base):
@@ -334,6 +449,18 @@ class PanelTest(CareBase):
         st, out = self.h("GET", "/api/status", None, self.full_dev)
         self.assertEqual(st, 200, out)
         self.assertEqual(set(out["renderer"]), {"use", "drawing", "why"})
+
+    def test_the_page_says_how_the_last_switch_ended(self):
+        self.r("POST", "/api/renderer", {"use": "classic"})
+        os.makedirs(os.path.dirname(self.api.renderer.report_file), exist_ok=True)
+        renderer.write_report(os.path.dirname(self.api.renderer.report_file),
+                              {"chosen": "classic", "drawing": "classic", "why": "", "detail": "auto",
+                               "switched": "it did not quit within 2 s when asked <b>, so it was killed (SIGKILL)"})
+        st, body = self.r("GET", "/api/renderer")
+        self.assertEqual((st, body["drawing"]), (200, "classic"))
+        self.assertEqual(body["switched"], "it did not quit within 2 s when asked b, so it was killed (SIGKILL)")
+        self.assertIsInstance(body["switched_at"], int)
+        self.assertNotIn("why", body)
 
     def test_a_report_of_another_run_does_not_count(self):
         self.r("POST", "/api/renderer", {"use": "new"})
