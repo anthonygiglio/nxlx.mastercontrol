@@ -1878,3 +1878,4 @@ The owner's words (2026-10-18), on the list of sources proposed after D96: "All 
 - **Tests:** `tests/test_sound_sources.py` (20), the changed rows of `tests/test_sound.py` and a row in `tests/test_roles.py`; the release before (5a3a1c6) reading the section as off and keeping it. CI fetches that commit.
 - **Not run:** anything on a Pi or with a real multi-input card, Max/RNBO sending in, the meter on the Pi's player with a real clip and NDI sound. DEVICE-TESTING SS1 to SS6.
 
+**Addendum (review, 2026-10-18):** a change that would leave the microphone as the source while listening is on is refused through remote support, whatever field causes it (choosing it, or taking the source in use off the list so the microphone is the first left). The rule is checked on the result, not on the request.

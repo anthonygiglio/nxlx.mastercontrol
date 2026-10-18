@@ -366,6 +366,10 @@ class SourceRoutesTest(RolesBase):
         self.assertEqual(self.h("POST", "/api/sound", {"allowed": ["device", "box", "osc"]}, dev, TUNNEL)[0], 403)
         self.assertEqual(self.h("POST", "/api/sound", {"in_hosts": ["192.168.0.44"]}, dev, TUNNEL)[0], 403)
         self.assertEqual(self.h("POST", "/api/sound", {"channel": 2}, dev, TUNNEL)[0], 403, "not another input while listening")
+        st, body = self.h("POST", "/api/sound", {"allowed": ["device"]}, dev, TUNNEL)
+        self.assertEqual(st, 403, "taking the source in use off the list never falls back to the microphone (review of D97)")
+        self.assertIn("a helper does not start listening to the room", body["error"])
+        self.assertEqual(self.api.sound.config()["source"], "box")
         self.assertEqual(self.h("POST", "/api/sound", {"allowed": ["box"]}, dev, TUNNEL)[0], 200, "taking one off is allowed")
         self.assertEqual(self.h("GET", "/api/sound/levels", {}, dev, TUNNEL)[0], 200)
 

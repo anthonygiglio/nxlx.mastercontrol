@@ -2097,6 +2097,8 @@ class Api:
         if remote:
             if new["on"] and not cfg["on"]:
                 raise ApiError(403, self.SOUND_REMOTE)
+            if new["source"] == "device" != cfg["source"] and (cfg["on"] or new["on"]):
+                raise ApiError(403, "%s; take the source in use off the list only when another one that is not the microphone is left" % self.SOUND_REMOTE)
             if new["device"] != cfg["device"] and (cfg["on"] or new["on"]):
                 raise ApiError(403, "%s; the device is chosen while it is off" % self.SOUND_REMOTE)
             for key in ("osc_state", "osc_render"):
