@@ -15,6 +15,17 @@ The box listens to a capture device (a USB audio input, a line in) and turns wha
 | The service's socket | `/run/pvj-sound/sound.sock` | Answers the panel's account only: `status`, `configure`. |
 | The panel's side | `pvj/soundout.py`, `Api.get_sound` and the routes | The page, the meter, OSC out, the shader mapping, telling the service what the Owner chose. |
 
+## Sources (D97)
+
+| Source | What is heard | Bands | Who may choose it |
+| --- | --- | --- | --- |
+| Capture device | a USB input or a line in: the mix, or one input of a multi-input device | yes | allowed by the Owner; listening on is the Owner's |
+| The box's own sound | what the clip or the NDI stream plays, measured inside classic mpv (an `astats` audio filter; no copy of the sound) | no (0) | allowed by the Owner, switched by the Owner or an Operator |
+| NDI sound (advanced) | the same measurement, only while NDI plays (D87's one sound source) | no (0) | the same |
+| OSC in (advanced, Max/RNBO) | levels sent to the box under `/nxlx/sound/in/` from a render node or a listed address | as sent | the same |
+
+All of them end in the one levels file below, and the privacy rule holds for each: the bands leave the box only averaged over 200 ms, at most 5 times a second, none through the support tunnel. Details and what was rejected: D97.
+
 ## Why `arecord`
 
 `arecord` is ALSA's own tool (Debian's `alsa-utils`, in Raspberry Pi OS already; the installer adds it where the network allows). It is run as a child of the service:
