@@ -3,7 +3,7 @@
 # Journal
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
-\n
+
 ## 2026-10-19, the node on the Epson X27 (test D by measurement and a webcam; D90, D93, D98)
 
 - **Set-up (the owner):** an X27 on the network and on the node's HDMI; a Logitech Brio 500 on the node's USB, aimed at the screen. From today he calls the box a node. Automatic chose the projector's own 1024 x 768 at 60 Hz (D90). He could not stay, so test D was run by the coordinator: numbers from the player and the renderer, exact captures of the output, and webcam photos (kept outside the repository, on the owner's drive).
@@ -14,7 +14,7 @@ Newest entry first. One entry per working session: what was done, what merged, w
 - **A mistake, put right:** the run first sent `height_auto` to the shader settings, which the API does not take, so its "Automatic" round ran at 540 and the node was left at 720 by hand for a few minutes; "Use Automatic" is `{"action": "config", "height": "auto"}`. Set and checked in settings.json (height_auto true).
 - **Left as found:** Classic, the mix (crossfade, 2 s), Picture detail Automatic, the guard on, the player stopped.
 - **Not done:** an effect or the mapping over tide and bloom (A3's second half), Vibes for 20 minutes (A4), a slide, the test pattern's words (S11), and anything judged from where an audience stands.
-\n
+
 ## 2026-10-19, pvj-render phase 2 on the test Pi (D98, rows CF1 to CF8, R4)
 
 - **Deployed:** master 9e8eca0 (#148) with the owner's word ("Yes deploy"); 220 files matched, every service active. The box was switched to New for the run and back to Classic after it, with the mix as it was (crossfade, 2 s).
@@ -951,7 +951,7 @@ Branch `isf-leading-comments`, not merged. D66 has the decision. **Run on the de
 
 - The header's 8 KB was counted in characters, on master too: a header of 8,100 euro signs is 24 KB and passed. It is counted in bytes now, which is tighter than master. Test: `test_the_headers_limit_is_counted_in_bytes`.
 - D66 and SHADERS.md named one thing that is refused now and was not (a no-break space before the header). There are more, and both say so now: every other kind of Unicode blank space there, and more than 4 KB of plain blank space.
-- The 4 KB is counted after the byte order mark is dropped and Windows line ends are made `\n`, and SHADERS.md said "as the file's 32 KB is". The words were wrong, not the code; a test pins what is counted.
+- The 4 KB is counted after the byte order mark is dropped and Windows line ends are made ``, and SHADERS.md said "as the file's 32 KB is". The words were wrong, not the code; a test pins what is counted.
 - `tools/isf-survey.py`: where the translator refuses to look for the header, the survey fell back to the first comment of any kind, so it took a long credit for the header and reported no problem. It gives the translator's own words now, and for the description looks only for a comment that begins with `{`.
 - Which comment is the header is pinned character by character (`test_which_comment_is_the_header_is_decided_by_its_first_character_after_plain_blank_space`): `/* {` is the header, `/**{` and a no-break space before the brace make a plain comment. The docstring of `find_header` said the search stops at 4 KB; it reads a run of blank space or a comment that starts before that to its end, linear all the same, and says so now.
 - Master was merged in (#101).
@@ -2499,7 +2499,7 @@ Done:
 - Merged the screenshots (#19). Reran the browser test on master to catch the intermittent network-form failure; results in the next entry if any.
 - Built Autostart (legacy tab 1): `pvj/autostart.py`, `/api/autostart` (+ `/test`), System > Autostart card, settings schema 6, `pvj/AUTOSTART.md`, tests. See D18.
 - A test found a circular import that only shows when `pvj.api` is the first module loaded; fixed with a lazy import, and a test now imports each module first in a fresh interpreter.
-- Fixed a latent bug: legacy preset names were matched with `$`, so `startless\n` passed; now `fullmatch`.
+- Fixed a latent bug: legacy preset names were matched with `$`, so `startless` passed; now `fullmatch`.
 
 Not verified: never run through a real reboot or an mpv crash on a board.
 
@@ -2544,7 +2544,7 @@ Open:
 Done:
 - Merged the streams module (#14).
 - Added DMX over the network (Art-Net, sACN) and USB MIDI input: `pvj/dmx.py`, `pvj/midi.py`, `/api/dmx`, `/api/midi`, System cards, settings schema 5, `pvj/DMX.md`, `pvj/MIDI.md`, tests. See D17.
-- A test found a real bug: regexes ending in `$` accepted a trailing newline (`"/dev/snd/midiC1D0\n"`, `"09:00\n"`). All new validation now uses `fullmatch`. Lesson recorded.
+- A test found a real bug: regexes ending in `$` accepted a trailing newline (`"/dev/snd/midiC1D0"`, `"09:00"`). All new validation now uses `fullmatch`. Lesson recorded.
 - Independent read-only review (agent) found: no way to reach shutdown, files or other routes, but real defects, all fixed with tests: unlocked apply/stop could leak a second receiver; DMX pad and function channels fired on every value change; the per-source rate limit is defeated by forged sources (added global packet and command caps); turning the module off left the receiver running; a returning source was not a new baseline; a failed level was never retried; MIDI path checks (ASCII digits, character device, no links) and a non-OSError killing the reader.
 - Not fixed, by choice: sACN sequence numbers are ignored (documented).
 - Never run against a real console, network or USB controller.
