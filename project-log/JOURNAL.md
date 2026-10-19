@@ -4,6 +4,17 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-19, the node on the Epson X27 (test D by measurement and a webcam; D90, D93, D98)
+
+- **Set-up (the owner):** an X27 on the network and on the node's HDMI; a Logitech Brio 500 on the node's USB, aimed at the screen. From today he calls the box a node. Automatic chose the projector's own 1024 x 768 at 60 Hz (D90). He could not stay, so test D was run by the coordinator: numbers from the player and the renderer, exact captures of the output, and webcam photos (kept outside the repository, on the owner's drive).
+- **Shaders on Classic** (silk, lattice, grid, halftone, tide, bloom; 15 s each): 0 dropped frames at 540 and at 720 lines. GPU busy 22 to 25 percent at 540 and 33 to 36 at 720 for the four detail shaders; tide and bloom 31 to 32 at 540 and 50 to 52 at 720. All passes 7 to 11 ms at 540, 11 to 17 ms at 720.
+- **540 against 720, by the exact captures zoomed:** halftone's dot edges are a little crisper at 720; silk (soft bands) shows no difference. The webcam cannot tell them apart. On this projector 720 is close to its own 768 lines, so Automatic's choice of 720 (D93) fits and costs at most half the GPU.
+- **Crossfades on New (10 of 2 s at each detail):** auto 58.4 flips a second with 65 missed vblanks (about 6 a fade), 540 and 720 59.2 (about 3 a fade), output 58.6 (about 6). All done, none cut, `sound-held` 0, clips visible (capture not black). 200 fades of 0.5 s: 322 missed in all, open files 18 then 18, GL fences held 0, no "Export failed". At 1024 x 768 even output keeps up, unlike 1080p (#149).
+- **Webcam bursts** (a crossfade on Classic, a crossfade on New, a wipe on Classic): no black or flashed frame in any; the wipe's edge shows; the letterbox bars look grey on camera but the node's own pixels there are 0, 0, 0 (the projector's black level).
+- **A mistake, put right:** the run first sent `height_auto` to the shader settings, which the API does not take, so its "Automatic" round ran at 540 and the node was left at 720 by hand for a few minutes; "Use Automatic" is `{"action": "config", "height": "auto"}`. Set and checked in settings.json (height_auto true).
+- **Left as found:** Classic, the mix (crossfade, 2 s), Picture detail Automatic, the guard on, the player stopped.
+- **Not done:** an effect or the mapping over tide and bloom (A3's second half), Vibes for 20 minutes (A4), a slide, the test pattern's words (S11), and anything judged from where an audience stands.
+
 ## 2026-10-19, pvj-render phase 2 on the test Pi (D98, rows CF1 to CF8, R4)
 
 - **Deployed:** master 9e8eca0 (#148) with the owner's word ("Yes deploy"); 220 files matched, every service active. The box was switched to New for the run and back to Classic after it, with the mix as it was (crossfade, 2 s).
