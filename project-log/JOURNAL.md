@@ -4,7 +4,6 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
-
 ## 2026-10-19, the node on the Epson X27 (test D by measurement and a webcam; D90, D93, D98)
 
 - **Set-up (the owner):** an X27 on the network and on the node's HDMI; a Logitech Brio 500 on the node's USB, aimed at the screen. From today he calls the box a node. Automatic chose the projector's own 1024 x 768 at 60 Hz (D90). He could not stay, so test D was run by the coordinator: numbers from the player and the renderer, exact captures of the output, and webcam photos (kept outside the repository, on the owner's drive).
