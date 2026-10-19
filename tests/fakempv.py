@@ -38,6 +38,10 @@ class Unavailable(Exception):
     pass
 
 
+class NotFound(Exception):
+    pass
+
+
 class FakeMpv:
     def __init__(self, socket_path, size=(8, 4), lag=None):
         self.socket_path, self.size, self.lag = socket_path, size, lag
@@ -50,6 +54,10 @@ class FakeMpv:
         self.dies = False           # True: `quit` ends the process without an answer, as a player that goes at once
         self.scales = False         # True: overlay-add takes a size to draw at (mpv 0.38 on); False refuses it (0.37)
         self.video = (1920, 1080)   # the size of a clip's own picture
+        self.layers = False         # True: it answers as pvj-render with two video layers (D98): `pvj-crossfade` loads
+        #                             a clip as loadfile does and is written down as ("fade", kind, name); False: as
+        #                             mpv, "property not found" for `pvj-render` and "invalid parameter" for the command
+        self.fades = []             # the seconds of every crossfade asked
         self.counts = {"scaled": 0, "video stills": 0}     # overlays drawn at a size of their own, stills of the clip alone
         self._reset()
         self._stop = threading.Event()
@@ -128,6 +136,8 @@ class FakeMpv:
             return {"error": "success", "data": self._do(name, command[1:])}
         except Unavailable:
             return {"error": "property unavailable"}
+        except NotFound:
+            return {"error": "property not found"}
         except (IndexError, KeyError, TypeError, ValueError):
             return {"error": "invalid parameter"}
 
@@ -166,6 +176,16 @@ class FakeMpv:
             self.playlist, self.pos = [args[0]], 0
             self._now_plays(args[0])
             self.log.append(("load", self.kind(args[0]), os.path.basename(args[0])))
+            return None
+        if name == "pvj-crossfade":
+            if not self.layers:
+                raise ValueError("not one of mpv's commands")
+            self._wait("play")
+            self.fades.append(float(args[1]))
+            self.playlist, self.pos = [args[0]], 0
+            self.props["pause"] = False         # the renderer's incoming layer starts playing
+            self._now_plays(args[0])
+            self.log.append(("fade", self.kind(args[0]), os.path.basename(args[0])))
             return None
         if name == "stop":
             self.playlist, self.pos = [], -1
@@ -222,6 +242,10 @@ class FakeMpv:
     def _get(self, prop):
         if prop == "pid":
             return self.pid
+        if prop == "pvj-render":
+            if not self.layers:
+                raise NotFound()
+            return {"version": "0.2.0", "layers": 2, "fade": "off"}
         if prop == "path":
             path = self._path_before if time.monotonic() < self._path_at else self.path
             if path is None:

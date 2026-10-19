@@ -1,11 +1,15 @@
 // SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// pvj-render, phase 1 (project-log/DECISIONS.md, D95): the box's own renderer behind the socket the one mpv had.
+// pvj-render (project-log/DECISIONS.md, D95 and D98): the box's own renderer behind the socket the one mpv had.
 //
-//   the video layer   libmpv (render API) draws the clip, with its brightness, zoom, pan, rotation, flips and its
-//                     user shaders (effects, generators), into a texture at the internal size
-//   the final pass    scales that texture to the screen; with a mapping it is the mapping's own OUTPUT shader
+//   two video layers  two libmpv cores (render API), each drawing its clip, with its brightness, zoom, pan,
+//                     rotation, flips and its user shaders (effects, generators), into a texture at the internal
+//                     size. One is on the screen (the front: the socket speaks to it); the other is idle and costs
+//                     nothing, except while a crossfade runs: then it holds the outgoing clip (phase 2, D98)
+//   the compositor    while a crossfade runs, mixes the two textures by real opacity at the internal size, once a
+//                     vblank, and hands the mix to the final pass; otherwise there is no such pass
+//   the final pass    scales the picture to the screen; with a mapping it is the mapping's own OUTPUT shader
 //   the text layer    a second libmpv that plays nothing draws overlays and show-text at the screen's size, laid
 //                     over the final picture while something is on it
 //
@@ -119,9 +123,11 @@ typedef struct {
     int dirty;
     pthread_t events;
     int have_events;
+    int index;                  // 0 or 1 for a video layer, -1 for the text layer
+    int changed, seen;          // its end of a file and change of its output (event thread), and the count drawn for
 } Layer;
 
-static Layer video, text;
+static Layer video[LAYERS], text;
 
 // libmpv's GL fences. mpv 0.40 and 0.41 make a fence at the end of every mpv_render_context_render
 // (ra_gl_ctx_submit_frame, video/out/opengl/context.c) for a swap that never comes with the render API, so nothing
@@ -162,36 +168,93 @@ static void GL_APIENTRY count_delete_sync(GLsync s)
     real_delete_sync(s);
 }
 
+// libmpv's GL objects, counted the same way (phase 2, D98): a crossfade loads a clip into a core that was idle and
+// stops the other one, again and again in a show, and whatever libmpv makes for a clip and does not give back would
+// pile up. `gl-objects` in the pvj-render property is the number it holds now; a test runs many fades and looks.
+typedef void (GL_APIENTRYP GenFn)(GLsizei, GLuint *);
+typedef void (GL_APIENTRYP DelFn)(GLsizei, const GLuint *);
+static GenFn real_gen[4];
+static DelFn real_del[4];
+static const char *const GEN_NAMES[4] = { "glGenTextures", "glGenFramebuffers", "glGenRenderbuffers", "glGenBuffers" };
+static const char *const DEL_NAMES[4] = { "glDeleteTextures", "glDeleteFramebuffers", "glDeleteRenderbuffers", "glDeleteBuffers" };
+
+static void count_gen(int k, GLsizei n, GLuint *names)
+{
+    real_gen[k](n, names);
+    long made = 0;
+    for (GLsizei i = 0; i < n; i++) made += names[i] != 0;
+    __atomic_add_fetch(&app.gl_objects, made, __ATOMIC_RELAXED);
+}
+static void count_del(int k, GLsizei n, const GLuint *names)
+{
+    long gone = 0;
+    for (GLsizei i = 0; names && i < n; i++) gone += names[i] != 0;
+    __atomic_sub_fetch(&app.gl_objects, gone, __ATOMIC_RELAXED);
+    real_del[k](n, names);
+}
+static void GL_APIENTRY gen0(GLsizei n, GLuint *p) { count_gen(0, n, p); }
+static void GL_APIENTRY gen1(GLsizei n, GLuint *p) { count_gen(1, n, p); }
+static void GL_APIENTRY gen2(GLsizei n, GLuint *p) { count_gen(2, n, p); }
+static void GL_APIENTRY gen3(GLsizei n, GLuint *p) { count_gen(3, n, p); }
+static void GL_APIENTRY del0(GLsizei n, const GLuint *p) { count_del(0, n, p); }
+static void GL_APIENTRY del1(GLsizei n, const GLuint *p) { count_del(1, n, p); }
+static void GL_APIENTRY del2(GLsizei n, const GLuint *p) { count_del(2, n, p); }
+static void GL_APIENTRY del3(GLsizei n, const GLuint *p) { count_del(3, n, p); }
+static const GenFn GEN_WRAP[4] = { gen0, gen1, gen2, gen3 };
+static const DelFn DEL_WRAP[4] = { del0, del1, del2, del3 };
+
 static void *get_proc(void *ctx, const char *name)
 {
     (void)ctx;
     void *p = (void *)eglGetProcAddress(name);
     if (p && !strcmp(name, "glFenceSync")) { real_fence_sync = (FenceSyncFn)p; return (void *)count_fence_sync; }
     if (p && !strcmp(name, "glDeleteSync")) { real_delete_sync = (DeleteSyncFn)p; return (void *)count_delete_sync; }
+    for (int k = 0; p && k < 4; k++) {
+        if (!strcmp(name, GEN_NAMES[k])) { real_gen[k] = (GenFn)p; return (void *)GEN_WRAP[k]; }
+        if (!strcmp(name, DEL_NAMES[k])) { real_del[k] = (DelFn)p; return (void *)DEL_WRAP[k]; }
+    }
     return p;
 }
 static void on_update(void *ctx) { (void)ctx; wake_render(); }
 
 static volatile int events_stop;
-static int video_changed;               // goes up at the video layer's end of a file and change of its output
 
 static void *event_loop(void *arg)
 {
-    mpv_handle *h = arg;
+    Layer *l = arg;
+    mpv_handle *h = l->h;
+    int i = l->index;
     while (!events_stop) {
         mpv_event *ev = mpv_wait_event(h, 0.5);
         if (ev->event_id == MPV_EVENT_SHUTDOWN) break;
-        if (h == video.h && (ev->event_id == MPV_EVENT_VIDEO_RECONFIG || ev->event_id == MPV_EVENT_END_FILE
-                               || ev->event_id == MPV_EVENT_IDLE)) {
-            // libmpv asks for no new frame when its video ends (a Stop): the layer is drawn once more, which gives its
-            // empty picture. Before, the last picture stayed unless a late redraw of mpv's happened to come after.
-            __atomic_add_fetch(&video_changed, 1, __ATOMIC_RELEASE);
-            wake_render();
+        if (i >= 0) {
+            if (ev->event_id == MPV_EVENT_VIDEO_RECONFIG || ev->event_id == MPV_EVENT_END_FILE || ev->event_id == MPV_EVENT_IDLE) {
+                // libmpv asks for no new frame when its video ends (a Stop): the layer is drawn once more, which gives
+                // its empty picture. Before, the last picture stayed unless a late redraw of mpv's happened to come after.
+                __atomic_add_fetch(&l->changed, 1, __ATOMIC_RELEASE);
+                wake_render();
+            }
+            if (ev->event_id == MPV_EVENT_START_FILE) __atomic_add_fetch(&app.starts[i], 1, __ATOMIC_RELEASE);
+            if (ev->event_id == MPV_EVENT_PROPERTY_CHANGE) {
+                mpv_event_property *p = ev->data;
+                if (p && p->format == MPV_FORMAT_FLAG && p->data && !strcmp(p->name, "idle-active"))
+                    __atomic_store_n(&app.idle[i], *(int *)p->data, __ATOMIC_RELEASE);
+            }
+            if (ev->event_id == MPV_EVENT_PLAYBACK_RESTART) {
+                __atomic_store_n(&app.restart_of[i], __atomic_load_n(&app.starts[i], __ATOMIC_ACQUIRE), __ATOMIC_RELEASE);
+                wake_render();
+            }
+            if (ev->event_id == MPV_EVENT_END_FILE && ev->data
+                && ((mpv_event_end_file *)ev->data)->reason == MPV_END_FILE_REASON_ERROR) {
+                __atomic_store_n(&app.failed_of[i], __atomic_load_n(&app.starts[i], __ATOMIC_ACQUIRE), __ATOMIC_RELEASE);
+                wake_render();
+            }
         }
         if (ev->event_id == MPV_EVENT_LOG_MESSAGE) {
             mpv_event_log_message *m = ev->data;
             size_t n = strlen(m->text);
-            LOG("%s %s: %.*s", h == app.osd ? "text" : "video", m->prefix, (int)(n && m->text[n - 1] == '\n' ? n - 1 : n), m->text);
+            LOG("%s %s: %.*s", i < 0 ? "text" : i == 0 ? "video 0" : "video 1", m->prefix,
+                (int)(n && m->text[n - 1] == '\n' ? n - 1 : n), m->text);
         }
     }
     return NULL;
@@ -232,15 +295,19 @@ static int target(Layer *l, int w, int h)
     return 0;
 }
 
-static int layer_open(Layer *l, int is_text, const Cfg *c, int w, int h)
+static int layer_open(Layer *l, int index, const Cfg *c, int w, int h)
 {
+    int is_text = index < 0;
+    l->index = index;
     l->h = mpv_create();
     if (!l->h) return -1;
     // as classic mpv is started (pvj/player.py, mpv_command): media only, nothing a file can point elsewhere
     hard(l->h, "config", "no");
     set(l->h, "vo", "libmpv");
     set(l->h, "idle", "yes");
-    set(l->h, "force-window", "yes");
+    // force-window is turned on only once the render context exists (below): set here, the core tried to make its
+    // window before there was one ("No render context set") and raced the render context's creation
+    set(l->h, "force-window", "no");
     set(l->h, "keep-open", "no");
     set(l->h, "osd-level", "0");
     set(l->h, "terminal", "no");
@@ -268,6 +335,11 @@ static int layer_open(Layer *l, int is_text, const Cfg *c, int w, int h)
     }
     if (mpv_initialize(l->h) < 0) return -1;
     mpv_request_log_messages(l->h, c->verbose ? "info" : "warn");
+    if (!is_text) {
+        // the layer's idleness, kept by its event thread, so the renderer's own state never waits on the core
+        __atomic_store_n(&app.idle[index], 1, __ATOMIC_RELEASE);
+        mpv_observe_property(l->h, 0, "idle-active", MPV_FORMAT_FLAG);
+    }
     int adv = 0;
     mpv_opengl_init_params gl = { .get_proc_address = get_proc };
     mpv_render_param params[] = {
@@ -277,9 +349,10 @@ static int layer_open(Layer *l, int is_text, const Cfg *c, int w, int h)
         { 0 } };
     if (mpv_render_context_create(&l->rc, l->h, params) < 0) return -1;
     mpv_render_context_set_update_callback(l->rc, on_update, NULL);
+    mpv_set_property_string(l->h, "force-window", "yes");
     if (target(l, w, h)) return -1;
     l->dirty = 1;
-    if (pthread_create(&l->events, NULL, event_loop, l->h) == 0) l->have_events = 1;
+    if (pthread_create(&l->events, NULL, event_loop, l) == 0) l->have_events = 1;
     return 0;
 }
 
@@ -340,7 +413,26 @@ static const char *FS_OVER =
     "uniform sampler2D tex;\n"
     "void main() { pvj_out = texture(tex, pvj_pos); }\n";
 
-static GLuint vbo, vao, p_scale, p_over;
+// The compositor (D98): the two video layers mixed by real opacity, texel for texel at the internal size, into a
+// texture laid out as a layer's is, so the final pass reads it as it reads a layer.
+static const char *VS_SAME =
+    "#version 300 es\n"
+    "in vec2 pvj_vert;\n"
+    "out vec2 pvj_pos;\n"
+    "void main() { pvj_pos = pvj_vert * 0.5 + 0.5; gl_Position = vec4(pvj_vert, 0.0, 1.0); }\n";
+static const char *FS_MIX =
+    "#version 300 es\n"
+    "precision mediump float;\n"
+    "in vec2 pvj_pos;\n"
+    "out vec4 pvj_out;\n"
+    "uniform sampler2D outgoing;\n"
+    "uniform sampler2D incoming;\n"
+    "uniform float share;\n"
+    "void main() { pvj_out = vec4(mix(texture(outgoing, pvj_pos).rgb, texture(incoming, pvj_pos).rgb, share), 1.0); }\n";
+
+static GLuint vbo, vao, p_scale, p_over, p_mix;
+static GLint loc_share;
+static GLuint mix_tex, mix_fbo;
 static HookGL hook_gl;
 static int have_hook;
 
@@ -393,13 +485,31 @@ static void take_hook(void)
     pthread_mutex_unlock(&app.lock);
 }
 
-static void final_pass(int text_on)
+// One mix of the outgoing and the incoming layer at `share` (0: all outgoing, 1: all incoming), at the inside size.
+static void mix_pass(const Layer *outgoing, const Layer *incoming, float share)
+{
+    reset_gl();
+    glBindFramebuffer(GL_FRAMEBUFFER, mix_fbo);
+    glViewport(0, 0, app.in_w, app.in_h);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, outgoing->tex);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, incoming->tex);
+    glUseProgram(p_mix);
+    glUniform1f(loc_share, share);
+    quad();
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glActiveTexture(GL_TEXTURE0);
+}
+
+static void final_pass(GLuint picture, int text_on)
 {
     reset_gl();
     glBindFramebuffer(GL_FRAMEBUFFER, out_target());
     glViewport(0, 0, app.out_w, app.out_h);
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, video.tex);
+    glBindTexture(GL_TEXTURE_2D, picture);
     if (have_hook) {
         glUseProgram(hook_gl.prog);
         glUniform1i(hook_gl.loc_raw, 0);
@@ -496,25 +606,41 @@ int main(int argc, char **argv)
     glBindVertexArray(0);
     p_scale = gl_program(VS_PLAIN, FS_SCALE, err, sizeof err);
     p_over = gl_program(VS_PLAIN, FS_OVER, err, sizeof err);
-    if (!p_scale || !p_over) { LOG("%s", err); out_close(); return 2; }
+    p_mix = gl_program(VS_SAME, FS_MIX, err, sizeof err);
+    if (!p_scale || !p_over || !p_mix) { LOG("%s", err); out_close(); return 2; }
     glUseProgram(p_scale);
     glUniform1i(glGetUniformLocation(p_scale, "tex"), 0);
     glUseProgram(p_over);
     glUniform1i(glGetUniformLocation(p_over, "tex"), 0);
+    glUseProgram(p_mix);
+    glUniform1i(glGetUniformLocation(p_mix, "outgoing"), 0);
+    glUniform1i(glGetUniformLocation(p_mix, "incoming"), 1);
+    loc_share = glGetUniformLocation(p_mix, "share");
+    Layer mixer = { 0 };
+    if (target(&mixer, app.in_w, app.in_h)) { LOG("no texture for the crossfade"); out_close(); return 2; }
+    mix_tex = mixer.tex;
+    mix_fbo = mixer.fbo;
 
-    if (layer_open(&video, 0, &cfg, app.in_w, app.in_h) || layer_open(&text, 1, &cfg, app.out_w, app.out_h)) {
+    // Both video layers are started now; the second plays nothing until a crossfade loads it (an idle libmpv core
+    // decodes nothing and is not drawn: its cost is its threads asleep and a few megabytes).
+    if (layer_open(&video[0], 0, &cfg, app.in_w, app.in_h) || layer_open(&video[1], 1, &cfg, app.in_w, app.in_h)
+        || layer_open(&text, -1, &cfg, app.out_w, app.out_h)) {
         LOG("libmpv could not be started");
         layer_close(&text);
-        layer_close(&video);
+        layer_close(&video[1]);
+        layer_close(&video[0]);
         out_close();
         return 2;
     }
-    app.video = video.h;
+    app.layer[0] = video[0].h;
+    app.layer[1] = video[1].h;
+    app.front = 0;
     app.osd = text.h;
     if (ipc_open(cfg.socket_path, err, sizeof err)) {
         LOG("%s", err);
         layer_close(&text);
-        layer_close(&video);
+        layer_close(&video[1]);
+        layer_close(&video[0]);
         out_close();
         return 2;
     }
@@ -527,27 +653,63 @@ int main(int argc, char **argv)
     // rate (shaders, crossfades and overlays move between a clip's frames). out_present queues this flip and returns
     // once the one before it is done, so the next picture is drawn while this flip is pending, and the loop turns
     // once a vblank. In a turn the video layer converts at most one clip frame; with none new, its last one is used.
-    int failed = 0, text_was = 0, video_seen = 0;
+    //
+    // A crossfade (D98) is drawn here, once a vblank: the socket's thread has loaded the incoming clip into the idle
+    // layer and made it the front; this loop waits for that clip's first frame (FADE_WAITING, the outgoing picture
+    // alone), then mixes the two by the clock (FADE_RUNNING: the incoming share goes from 0 to 1 in a straight line
+    // over the fade's seconds, as D71's still was made more transparent in a straight line), and at the end stops
+    // the outgoing layer, which is idle and costs nothing again. Each layer converts at most one clip frame a turn.
+    int failed = 0, text_was = 0, was_front = 0;
     long presented = 0;
     while (!g_signal) {
         pthread_mutex_lock(&app.lock);
         int quit = app.quit, cap = app.capture_serial != app.capture_done_serial;
         int text_on = app.overlays != 0 || now_s() < app.text_until;
+        // one look at the whole fade: the layer, the phase and its clock are never from two different crossfades
+        int fi = app.front, phase = app.fade.phase, base = app.fade.base_starts;
+        double asked = app.fade.asked, t0 = app.fade.t0, len = app.fade.seconds;
         pthread_mutex_unlock(&app.lock);
         if (quit) break;
         if (app.hook_pending) take_hook();
-        uint64_t uv = mpv_render_context_update(video.rc);
-        if (uv & MPV_RENDER_UPDATE_FRAME) video.dirty = 1;
-        int vc = __atomic_load_n(&video_changed, __ATOMIC_ACQUIRE);
-        if (vc != video_seen) { video_seen = vc; video.dirty = 1; }
+        Layer *front = &video[fi], *back = &video[1 - fi];
+        if (fi != was_front) { front->dirty = 1; was_front = fi; }
+        for (int i = 0; i < LAYERS; i++) {
+            // every layer's update is taken at every turn (libmpv asks for that), whether or not it is drawn
+            uint64_t uv = mpv_render_context_update(video[i].rc);
+            if (uv & MPV_RENDER_UPDATE_FRAME) video[i].dirty = 1;
+            int vc = __atomic_load_n(&video[i].changed, __ATOMIC_ACQUIRE);
+            if (vc != video[i].seen) { video[i].seen = vc; video[i].dirty = 1; }
+        }
         uint64_t ut = mpv_render_context_update(text.rc);
         if (ut & MPV_RENDER_UPDATE_FRAME) text.dirty = 1;
         if (text_on && !text_was) text.dirty = 1;          // never a stale text for a frame
-        if (video.dirty) {
+        double now = now_s();
+        if (phase == FADE_WAITING) {
+            int restarted = __atomic_load_n(&app.restart_of[fi], __ATOMIC_ACQUIRE) > base;
+            int failed_load = __atomic_load_n(&app.failed_of[fi], __ATOMIC_ACQUIRE) > base;
+            if (restarted || failed_load || now - asked > FADE_FIRST_FRAME) {
+                // the incoming clip's first frame is ready (it is drawn below, in this turn), its load failed (the
+                // fade goes on to its empty picture, as a cut to it would), or it never came in time (as D71 did)
+                pthread_mutex_lock(&app.lock);
+                if (app.fade.phase == FADE_WAITING && app.front == fi) {
+                    app.fade.phase = phase = FADE_RUNNING;
+                    app.fade.t0 = t0 = now;
+                }
+                pthread_mutex_unlock(&app.lock);
+                front->dirty = 1;
+            }
+        }
+        if (front->dirty) {
             reset_gl();
-            layer_render(&video);
-            video.dirty = 0;
+            layer_render(front);
+            front->dirty = 0;
             app.drawn++;
+        }
+        if (phase != FADE_OFF && back->dirty) {
+            reset_gl();
+            layer_render(back);
+            back->dirty = 0;
+            app.back_drawn++;
         }
         if (text_on && text.dirty) {
             reset_gl();
@@ -555,7 +717,46 @@ int main(int argc, char **argv)
             text.dirty = 0;
         }
         text_was = text_on;
-        final_pass(text_on);
+        GLuint picture = front->tex;
+        if (phase != FADE_OFF) {
+            float share = 0.0f;
+            if (phase == FADE_RUNNING) {
+                double p = len > 0 ? (now - t0) / len : 1.0;
+                share = (float)(p < 0 ? 0 : p > 1 ? 1 : p);
+            }
+            if (share >= 1.0f) {
+                // the end: the incoming layer alone from this picture on; the outgoing one is stopped (async: this
+                // thread never waits on libmpv, which may be waiting on it). Under the lock, so the socket's thread,
+                // which loads the next crossfade into this layer only once the fade is off, queues its load after
+                // this stop in the same core.
+                pthread_mutex_lock(&app.lock);
+                if (app.fade.phase != FADE_OFF && app.front == fi) {
+                    app.fade.phase = FADE_OFF;
+                    app.fade.progress = 1.0;
+                    app.fades_done++;
+                    const char *stop[] = { "stop", NULL };
+                    mpv_command_async(back->h, 0, stop);
+                }
+                pthread_mutex_unlock(&app.lock);
+            } else {
+                // A new crossfade may have begun since the look above (the socket's thread made the other layer the
+                // front): then this turn's front is that fade's outgoing layer, which is what its first picture
+                // shows, and nothing of the old fade is mixed or written.
+                pthread_mutex_lock(&app.lock);
+                int same = app.front == fi && app.fade.phase != FADE_OFF;
+                if (same) app.fade.progress = share;
+                pthread_mutex_unlock(&app.lock);
+                if (!same) {
+                    picture = front->tex;
+                } else if (share <= 0.0f) {
+                    picture = back->tex;        // waiting for the incoming clip: the outgoing picture, with no mix
+                } else {
+                    mix_pass(back, front, share);
+                    picture = mix_tex;
+                }
+            }
+        }
+        final_pass(picture, text_on);
         if (cap) {
             pthread_mutex_lock(&app.lock);
             char *path = app.capture_path ? strdup(app.capture_path) : NULL;
@@ -570,7 +771,8 @@ int main(int argc, char **argv)
             pthread_mutex_unlock(&app.lock);
         }
         if (out_present()) { failed = 1; break; }
-        mpv_render_context_report_swap(video.rc);
+        mpv_render_context_report_swap(front->rc);
+        if (phase != FADE_OFF) mpv_render_context_report_swap(back->rc);
         if (text_on) mpv_render_context_report_swap(text.rc);
         presented++;
         if (cfg.frames > 0 && presented >= cfg.frames) break;
@@ -584,7 +786,8 @@ int main(int argc, char **argv)
     // window is done on the render thread): libmpv's queue for it is still served until they have all ended.
     double until = now_s() + 5.0;
     while (!ipc_finished() && now_s() < until) {
-        mpv_render_context_update(video.rc);
+        mpv_render_context_update(video[0].rc);
+        mpv_render_context_update(video[1].rc);
         mpv_render_context_update(text.rc);
         struct timespec ts = { 0, 10 * 1000 * 1000 };
         nanosleep(&ts, NULL);
@@ -599,9 +802,13 @@ int main(int argc, char **argv)
     ipc_close();
     if (have_hook) hookgl_free(&hook_gl);
     layer_close(&text);
-    layer_close(&video);
+    layer_close(&video[1]);
+    layer_close(&video[0]);
+    glDeleteFramebuffers(1, &mix_fbo);
+    glDeleteTextures(1, &mix_tex);
     out_close();
-    LOG("ended: %ld flips, %ld video frames drawn, %ld vblanks missed, %ld of libmpv's fences deleted%s", app.flips, app.drawn,
-        app.missed, app.fences_freed, failed ? ", the screen failed" : "");
+    LOG("ended: %ld flips, %ld video frames drawn (%ld on the second layer), %ld vblanks missed, %ld crossfades (%ld cut short), "
+        "%ld of libmpv's fences deleted%s", app.flips, app.drawn, app.back_drawn, app.missed, app.fades, app.fades_cut,
+        app.fences_freed, failed ? ", the screen failed" : "");
     return failed ? 3 : app.exit_code;
 }

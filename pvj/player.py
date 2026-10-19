@@ -314,13 +314,87 @@ class Player:
         proc.terminate()
         raise PlayerError("mpv did not become ready")
 
-    def play(self, paths, loop=True, audio_device=None, windowed=False, spawn=True, ending=None, image_seconds=None):
+    def play(self, paths, loop=True, audio_device=None, windowed=False, spawn=True, ending=None, image_seconds=None, fade=None):
         """Play `paths` (see _play). A shader source that was on is taken off first: it draws in place of the
-        picture, so it must never stay over a clip."""
+        picture, so it must never stay over a clip.
+
+        `fade`: seconds of a crossfade drawn by the renderer itself, where the player is pvj-render with two video
+        layers (`crossfades`, D98). Only from a clip to one clip: out of a generator or a live input, into a list,
+        on classic mpv, or when the renderer refuses, this is a cut (the plain load below), never a black screen.
+        Without `fade` nothing here differs from before."""
         with self._lock:
+            from_clip = self.fades_from_clip()
+            # a second guard: the panel asks fades_from_clip first and takes D71's still out of the others
+            self.fade_refused = "" if from_clip else "not from a plain clip (a generator or a live input)"
             self._end_source()
             self._pipe, self._pipe_gone = False, None
+            if fade is not None and from_clip and self._crossfade(paths, loop, ending, fade):
+                return None
             return self._play(paths, loop, audio_device, windowed, spawn, ending, image_seconds)
+
+    def fades_from_clip(self):
+        """True when what this side loaded last is a plain clip: no generator (its shader and carrier), no live
+        input's pipe. Only then does the renderer's crossfade apply (D98); out of the others a crossfade takes D71's
+        still on every player, which keeps D62's hand-over of the NDI pipe as it was. Asks the player nothing and
+        takes no lock (a status reads it; three plain fields, each set under the player's lock by whoever loads)."""
+        return not self._pipe and self._source is None and self._carrier is None
+
+    _layers_seen = None             # (pid, True or False): does that player process mix two video layers (D98)
+    fade_refused = ""               # why the last crossfade asked of the renderer became a cut, for the log
+
+    def crossfades(self, ask=True):
+        """True if the player that answers now is pvj-render with two video layers, which draws a crossfade itself
+        (D98). Asked once per player process (its pid, as the last word with it gave it): classic mpv answers
+        "property not found" and keeps D71's still. A player that does not answer is asked again next time. With
+        `ask` False, only what is known already (for a status, which asks the player nothing)."""
+        known, pid = self._layers_seen, self._seen_pid
+        if known is not None and known[0] == pid:
+            return known[1]
+        if not ask:
+            return False
+        try:
+            if pid is None:
+                pid = self._note_pid(self.ipc.request("get_property", "pid"))
+            state = self.ipc.request("get_property", "pvj-render")
+        except PlayerError as e:
+            if str(e).startswith("mpv: ") and pid is not None:
+                self._layers_seen = (pid, False)        # mpv's own refusal: this player has no layers
+            return False
+        layers = state.get("layers") if isinstance(state, dict) else None
+        ok = isinstance(layers, int) and not isinstance(layers, bool) and layers >= 2
+        self._layers_seen = (pid, ok)
+        return ok
+
+    def _crossfade(self, paths, loop, ending, seconds):
+        """The renderer's crossfade into one clip (D98): it loads the clip into its idle layer, which is what this
+        side speaks to from then on, and mixes the two pictures itself, once a vblank, from the clip's first frame.
+        True if it took it; False, with nothing changed, where it cannot or would not (then the caller cuts)."""
+        ending = ending or ("loop" if loop else "stop")
+        files = expand_media(paths)
+        if ending not in ENDINGS or len(files) != 1:
+            self.fade_refused = "the new renderer fades into one clip only"
+            return False
+        if not self.crossfades():
+            self.fade_refused = "the player does not draw two layers"
+            return False
+        self._undo_pipe_globals()
+        if getattr(self, "_pipe_globals", None):
+            # a live input's narrowing is still on: only a load into that same layer takes it back
+            self.fade_refused = "a live input's settings could not be taken back"
+            return False
+        path = files[0]
+        try:
+            self.ipc.request("pvj-crossfade", path, max(0.0, min(60.0, float(seconds))),
+                             "keep-open=%s,image-display-duration=inf" % ("yes" if ending == "hold" else "no"))
+        except PlayerError as e:
+            self.fade_refused = str(e)
+            return False
+        self.fade_refused = ""
+        self._wait_for_path(path)
+        self.ipc.request("set_property", "pause", False)
+        self.ipc.request("set_property", "loop-file", "inf" if ending == "loop" else "no")
+        self.ipc.request("set_property", "loop-playlist", "no")
+        return True
 
     def _play(self, paths, loop=True, audio_device=None, windowed=False, spawn=True, ending=None, image_seconds=None):
         """Play `paths` (a list plays as a playlist). `ending` says what happens at the end: "loop" (the clip, or the
