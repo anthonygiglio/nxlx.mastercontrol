@@ -4,6 +4,20 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-19, pvj-render phase 2 on the test Pi (D98, rows CF1 to CF8, R4)
+
+- **Deployed:** master 9e8eca0 (#148) with the owner's word ("Yes deploy"); 220 files matched, every service active. The box was switched to New for the run and back to Classic after it, with the mix as it was (crossfade, 2 s).
+- **Clips are visible:** the renderer's own capture of the screen (pvj-capture, 1920 x 1080) was a picture at every detail: mean brightness 45 to 47 at the start, 49 to 62 half way through a fade, 160 to 162 after (max 255). So the black clips seen in headless tests do not happen on the Pi's screen (R4).
+- **Crossfades, 10 of 2 s each in a 43 s window of the 1920 x 1080 at 60 output** (Lumia 1 and Lumia 2, 1080p30 H.264): all 10 ran to their end, none cut, `sound-held` 0.
+  - auto (540 lines on a Pi 4): 58.1 flips a second, 81 missed vblanks, so about 8 missed in each 2 s fade (of 120).
+  - 540: 58.1 a second, 82 missed.
+  - 720: 55.3 a second, 205 missed (about 20 a fade).
+  - output (1080): 45.2 a second, 638 missed (about 64 a fade, half the frames): not for fades on a Pi 4, as the spike said.
+- **200 fades of 0.5 s at auto in 232 s:** all done, none cut; open files 19 then 18, threads 34 then 35, libmpv GL objects 7 then 11, GL fences held 0, no "Export failed" in the player's journal. The #146 fault class did not come back.
+- **Temperature:** 50 to 54 C.
+- **Compared with classic:** D71's crossfade was 40 steps in 2 s over a frozen still; here both pictures move and the fade is drawn on almost every vblank (about 112 of 120 at auto).
+- **Open:** the missed vblanks during a fade at auto and 540 (a few a fade) are worth a look in phase 3, with the conversion of the second layer; GPU busy was not read in this run; a crossfade judged by eye (the owner); CF9 (out of a generator or NDI) and CF10 (Stop then crossfade) were not run.
+
 ## 2026-10-18, the review of #148 (pvj-render phase 2, D98 addendum)
 
 - **The review:** one Medium and four Lows, all fixed on `render-layers`. The Medium: a crossfade out of a generator or a live input became a cut on the new renderer, where classic and phase 1 fade from D71's still. Now the renderer's own crossfade is taken only from a plain clip (`Player.fades_from_clip`), and everything else goes D71's way as before; the status shows the still's reason in that case. The Lows: the outgoing clip keeps its last frame if it ends during a fade (`keep-open=yes` on it at the tap); a crossfade with nothing on the screen is a cut into the front layer; the render thread reads the fade's layer, phase and clock in one look; the leak test counts descriptors, threads and GL objects at rest and allows 2, and runs 30 fades each cut short by the next. The sound is handed over in order: incoming loaded silent, outgoing sound off and its output closed (bounded wait of 1 s, logged and counted as `sound-held` if not), then the incoming sound on.
