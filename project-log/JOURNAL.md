@@ -4,6 +4,21 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-20, the review of #152 (masks, D100 amendment)
+
+- **The review:** one Medium and one Low, both fixed on `mask-list`. Medium: a 995 KB PNG that says 16000 x 16000 made mpv use about 1.2 GB per copy. Now the PNG header is read first (8192 a side, 40 megapixels at most, in the single-picture path too), the masks combined at once are bounded (70 megapixels of their own, and 4 x 3840 x 2160 of the screen's: 8 masks at 1080, 4 at 4K), and mpv runs under a 2 GB address-space cap with 1 MB thread stacks and 2 malloc arenas. The 1.5 GB cap asked for did not let mpv start even one mask on this 16-core laptop; 2 GB with the smaller stacks fits every allowed case (the heaviest 2.7 s, about 1.05 GB resident). Low: `set_overlay` now holds the settings' lock from the read to the write, so two Adds at once both land.
+- **Tests:** 7 new (`SizeTest`: the header, both paths checked before mpv starts, the bounds, the cap seen by the child, the real mpv under the cap at 4K; `BudgetWorkerTest`; `ConcurrentAddTest`). 9 new breaks, each caught. Two older tests now write real PNGs (their 8-byte stand-ins have no header).
+- **Not done:** the cap on the Pi's own mpv (row MK10).
+
+## 2026-10-20, projector control on the node's X27 (D99, rows PX)
+
+- **Set-up:** the owner's X27 (192.168.0.211, his entry X27_001), switched from PJLink to PJLink and Epson control.
+- **Test** answered both protocols and suggested both.
+- **Through `POST /api/projector`**, all answered 200: mute 0.30 s, unmute 0.39 s, freeze, unfreeze, brightness 60 (read back 57), Eco light, the input to the same HDMI ("32"), identify. Webcam photos confirmed mute (black) and freeze.
+- **Put back and checked over Epson control:** PWR 01, MUTE OFF, FREEZE OFF, BRIGHT 125, LUMINANCE 00, CMODE 04, SOURCE 30.
+- **Not pressed:** power off (a cool-down with nobody in the room).
+- **Found:** the colour mode list shows bare codes 01 to 14, with only 04 known. Naming the modes and dropping the codes the projector refuses is a follow-up.
+
 ## 2026-10-20, the mask list: several PNGs combined into one overlay (`mask-list`, D100)
 
 - **The owner's words:** "build the mask list: several mask PNGs combined into one overlay, chosen and ordered in the panel." He chose combining after the node's measurement of 2026-10-19 (one mask, two overlays and two combined: 0 dropped frames each).

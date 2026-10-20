@@ -691,6 +691,7 @@ Before: the node on the projector (the X27 at 1024 x 768 is fine), a shader or a
 | MK6 | Change the screen mode (Setup > Screen output, D90 to D92) with masks on | The masks are drawn again at the new size after the player restarts, fitted and centred | Whether they lined up after the change |
 | MK7 | Delete a mask's PNG in the Library while it is on | The others stay; the line says "... is not in the media folder any more (left out)" and the list marks it "(not in the Library)"; nothing repeats in `journalctl -u pvj-web` | The words; the log's tail |
 | MK8 | With masks on, draw a mapping (Shape > Mapping) and move a surface | The masks stay where they are on the screen while the surface moves under them | A photo |
+| MK10 | The memory cap on the Pi (review of #152): 8 masks at 1920 x 1080, then 4 at 3840 x 2160 if the screen has the mode; then add a PNG that says 16000 x 16000 | Each combines (the cap is 2 GB of address space, 1 MB thread stacks); the big one is left out at once with "larger than a mask may be"; `free -m` shows no swap storm | The seconds, and anything in `journalctl -u pvj-web` |
 | MK9 | GPU and frames with 8 masks on over a shader: `vcgencmd` / the health page as in test D | The same cost as one mask (one overlay, as measured on 2026-10-19 with two) and 0 dropped frames | The numbers |
 
 ### What to send back
