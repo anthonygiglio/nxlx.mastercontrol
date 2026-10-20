@@ -4,6 +4,22 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-20, sources on the node, and the owner's quad (`sources-fix-src1`, D28 and D101)
+
+- **On the node** (master 12c6e33, the X27 at 1024 x 768, detail Automatic, 1080p H.264 clips):
+
+  | Sources | Flips a second | Missed in 30 s | pvj-render CPU | Whole box CPU |
+  | --- | --- | --- | --- | --- |
+  | 1 | 62.1 | 0 | 123% of one core | 33% |
+  | 2 | 62.1 | 23 | 295% | 75% |
+  | 4 | 37.5 | 784 | 402% | 100% (saturated) |
+  | 4 with the mapping | 34.6 | 872 | | |
+
+  Open files and threads stayed flat. The panel's warning showed for Sources 3 and 4. So 4 x 1080p is too heavy, as predicted; 720p clips are not measured yet. The flips read a little over 60 at 1 and 2 sources, most likely the probe's own timing (not checked).
+- **Seen there:** the owner's quad (Source 1, on top) was pure black and the triangle (Source 2) showed through it. The cause was the quad's perspective sign, there since D28 and on classic too: fixed here. Also fixed: sources 2 to N kept their letterbox under a mapping.
+- **Open:** a race on llvmpipe where a source read through the mapping shows a fixed value in about half of fresh processes (D101 addendum, row SO9). Its test is kept outside the default run (`PVJ_SOURCE_RACE=1`).
+- **Tests:** FacingTest and the stretch test break-checked; the pvj-render suite run 5 times, all OK.
+
 ## 2026-10-20, the review of #153 (sources, D101 amendment)
 
 - **The review:** no High or Medium; two Lows, fixed on `sources-surfaces`. Shows could offer Source 1 alone on a box with four sources (the state used only what was known of a new player process); it now asks once per process, and the card follows the strip. A sound file sent to Source 2 played black and silent; it is now refused in plain words.
