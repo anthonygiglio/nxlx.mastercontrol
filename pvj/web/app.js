@@ -1062,10 +1062,15 @@
       body.textContent = '';
       var live = can('live'), st = d.status || {};
       body.appendChild(h('div', { class: 'hint', id: 'overlaystatus', role: 'status', text: statusText(d) }));
-      if (d.masks.length) {
+      if (d.masks.length || d.choices.length) {         // with no mask yet it shows the picture chosen under Add, as before D100
         body.appendChild(h('button', { class: 'btn' + (d.on ? ' on' : ''), id: 'overlaytoggle', 'aria-pressed': d.on ? 'true' : 'false', disabled: !live,
           text: d.on ? 'Overlay is on. Turn off' : 'Show overlay',
-          onclick: function (e) { e.target.textContent = d.on ? 'Turning off...' : 'Combining...'; send({ on: !d.on }, e.target); } }));
+          onclick: function (e) {
+            var pick = document.getElementById('overlayfile');
+            var change = d.masks.length || !pick ? { on: !d.on } : { add: pick.value, on: true };
+            e.target.textContent = d.on ? 'Turning off...' : 'Combining...';
+            send(change, e.target);
+          } }));
       }
       var list = h('div', { class: 'list', id: 'overlaylist' });
       d.masks.forEach(function (m, i) {

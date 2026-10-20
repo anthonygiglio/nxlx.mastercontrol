@@ -289,7 +289,7 @@ function startServer(env) {          // env: more for the harness's environment 
       pic.data.fill(0);
       const bytes = Array.from(PNG.sync.write(pic));
       for (const name of ['mask-a.png', 'mask-b.png']) {
-        const st = await page.evaluate(async ([n, b]) => (await fetch('/api/media/upload?name=' + n, { method: 'POST', headers: { 'X-PVJ-Request': '1' }, body: new Uint8Array(b) })).status, [name, bytes]);
+        const st = await page.evaluate(async ([n, b]) => (await fetch('/api/media/upload?name=' + n, { method: 'POST', headers: { 'X-PVJ-Request': '1', 'Content-Type': 'application/octet-stream' }, body: new Uint8Array(b) })).status, [name, bytes]);
         assert.strictEqual(st, 200, 'upload ' + name);
       }
       await go(page, 'shape/picture');
