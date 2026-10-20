@@ -62,8 +62,7 @@ class OverlayApiTest(ServerBase):
         self.full = self.call("POST", "/api/pair", {"pin": self.pin, "name": "t"})[1]["token"]
         self.converted = []
 
-        with open(os.path.join(self.media, "logo.png"), "wb") as f:
-            f.write(overlay.PNG_MAGIC)
+        rgba_png(os.path.join(self.media, "logo.png"), 2, 2, (0, 0, 0, 255))      # a real one: its header is read (D100)
 
         def fake_convert(src, w, h, out, mpv_bin="mpv", timeout=30, cancelled=None):
             self.converted.append((os.path.basename(src), w, h))

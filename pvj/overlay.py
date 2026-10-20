@@ -24,6 +24,8 @@ Settings (no schema change, read with defaults everywhere): "overlay": {"on", "f
 
 import os
 import re
+import resource
+import struct
 import subprocess
 import tempfile
 import threading
@@ -38,6 +40,11 @@ MAX_WIDTH, MAX_HEIGHT = 3840, 2160      # several masks: the combined picture is
 FILE_RE = r"masks-(\d+)-(\d+)\.bgra(\.tmp)?"
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 TIMEOUT_ONE, TIMEOUT_EACH = 30, 10      # seconds for mpv: one picture, and more for each further mask
+MAX_PNG_SIDE, MAX_PNG_PIXELS = 8192, 40 * 1000 * 1000      # a mask's own size, read from its header before mpv sees it
+MAX_TOTAL_PIXELS = 70 * 1000 * 1000     # the masks combined at once, their own sizes added up
+MAX_SCREEN_PIXELS = 4 * 3840 * 2160     # and their count times the screen's pixels: 8 at 1920 x 1080, 4 at 3840 x 2160
+MPV_MEMORY = 2048 * 1024 * 1024         # address space for mpv while it converts (RLIMIT_AS); see the review of #152
+MPV_STACK = 1024 * 1024                 # and each of its threads' stacks (glibc takes a thread's from RLIMIT_STACK)
 
 
 class OverlayError(Exception):
@@ -97,12 +104,65 @@ def showing(cfg):
         return True
 
 
-def is_png(path):
+def png_size(path):
+    """(width, height) from a PNG's header, or None for a file that is not a PNG (or cannot be read)."""
     try:
         with open(path, "rb") as f:
-            return f.read(8) == PNG_MAGIC
+            head = f.read(24)
     except OSError:
-        return False
+        return None
+    if len(head) < 24 or head[:8] != PNG_MAGIC or head[12:16] != b"IHDR":
+        return None
+    return struct.unpack(">II", head[16:24])
+
+
+def png_problem(path, name=None):
+    """None for a PNG mpv may be given; else a plain line saying why it is left out. A small file can say it is
+    16000 x 16000, and mpv would then need gigabytes to decode it (the review of #152), so the header is read first."""
+    name = name or os.path.basename(path)
+    size = png_size(path)
+    if size is None:
+        return "%s is not a PNG picture" % name
+    w, h = size
+    if not (1 <= w <= MAX_PNG_SIDE and 1 <= h <= MAX_PNG_SIDE and w * h <= MAX_PNG_PIXELS):
+        return "%s is %d x %d, larger than a mask may be (%d a side, %d megapixels)" % (
+            name, w, h, MAX_PNG_SIDE, MAX_PNG_PIXELS // 1000000)
+    return None
+
+
+def is_png(path):
+    return png_size(path) is not None
+
+
+def _limit_memory():
+    """In the child, before mpv starts: at most MPV_MEMORY bytes of address space, so a picture that slips past the
+    header check makes mpv fail, not the box run out of memory."""
+    for kind, value in ((resource.RLIMIT_STACK, MPV_STACK), (resource.RLIMIT_AS, MPV_MEMORY)):
+        try:
+            resource.setrlimit(kind, (value, value))
+        except (ValueError, OSError):
+            pass
+
+
+def budget_problem(sizes, width, height):
+    """None if mpv may combine pictures of `sizes` [(w, h)] at width x height at once; else a plain line. mpv holds
+    every picture at once, at its own size and at the screen's (measured: 8 masks at 3840 x 2160 took 1.65 GB), so the
+    pictures together are bounded: MAX_TOTAL_PIXELS of their own and MAX_SCREEN_PIXELS of the screen's."""
+    if sum(w * h for w, h in sizes) > MAX_TOTAL_PIXELS:
+        return "the masks together are more than %d megapixels" % (MAX_TOTAL_PIXELS // 1000000)
+    if len(sizes) > 1 and len(sizes) * width * height > MAX_SCREEN_PIXELS:
+        return "at %d x %d at most %d masks are combined" % (width, height, max(1, MAX_SCREEN_PIXELS // (width * height)))
+    return None
+
+
+def _check_pictures(paths, width, height):
+    for p in paths:
+        problem = png_problem(p)
+        if problem:
+            raise OverlayError(problem)
+    problem = budget_problem([png_size(p) for p in paths], width, height)
+    if problem:
+        raise OverlayError(problem)
 
 
 # ---- turning PNGs into one raw picture -----------------------------------------------------------------------------
@@ -128,7 +188,10 @@ def _run(args, tmp, out_path, size_bytes, timeout, cancelled):
     """Run mpv; kill it when `cancelled()` says so or when it takes longer than `timeout`. Check and move the result."""
     with tempfile.TemporaryFile() as err:
         try:
-            p = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=err)
+            # the cap counts address space reserved, not used: glibc keeps up to 8 malloc arenas a core, so on a
+            # 16-core laptop mpv's scaler threads did not start under 1.5 GB; with 2 arenas they do (measured)
+            p = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=err,
+                                 preexec_fn=_limit_memory, env=dict(os.environ, MALLOC_ARENA_MAX="2"))
         except OSError as e:
             raise OverlayError("could not convert the picture: %s" % e)
         end = time.monotonic() + timeout
@@ -183,6 +246,7 @@ def convert(png_path, width, height, out_path, mpv_bin="mpv", timeout=TIMEOUT_ON
     `cancelled()` became true while mpv worked)."""
     if not (isinstance(width, int) and isinstance(height, int) and 16 <= width <= MAX_SIDE and 16 <= height <= MAX_SIDE):
         raise OverlayError("screen size out of range")
+    _check_pictures([png_path], width, height)
     size = "%d:%d" % (width, height)
     tmp = out_path + ".tmp"
     args = _start(mpv_bin, tmp) + ["--vf=lavfi=[%s,format=bgra]" % _fit(size), "--o=" + tmp, "--", png_path]
@@ -200,6 +264,7 @@ def combine(png_paths, width, height, out_path, mpv_bin="mpv", timeout=None, can
     if not (isinstance(width, int) and isinstance(height, int) and 16 <= width <= MAX_WIDTH and 16 <= height <= MAX_HEIGHT):
         raise OverlayError("several masks are combined for a screen of up to %d x %d; this one is %s x %s"
                            % (MAX_WIDTH, MAX_HEIGHT, width, height))
+    _check_pictures(png_paths, width, height)
     tmp = out_path + ".tmp"
     args = (_start(mpv_bin, tmp) + ["--lavfi-complex=" + graph(count, width, height), "--o=" + tmp]
             + ["--external-file=" + p for p in png_paths[1:]] + ["--", png_paths[0]])
@@ -344,14 +409,20 @@ class Masks:
         if size is None:
             self._set_status("error", "the player has no screen size yet; the masks are drawn when it has one", 0, gen)
             return
-        left_out, paths = [], []
+        left_out, paths, sizes = [], [], []
         for name, path in wanted:
+            problem = None if path is None else png_problem(path, name)
             if path is None:
                 left_out.append("%s is not in the media folder any more" % name)
-            elif not is_png(path):
-                left_out.append("%s is not a PNG picture" % name)
+            elif problem:
+                left_out.append(problem)
             else:
+                more = budget_problem(sizes + [png_size(path)], size[0], size[1])
+                if more:                    # the masks before it in the list are kept; this one and later ones go
+                    left_out.append("%s: %s" % (name, more))
+                    continue
                 paths.append(path)
+                sizes.append(png_size(path))
         note = "; ".join(left_out) + (" (left out)" if left_out else "")
         if not paths:
             self._commit(gen, None, None, "on" if left_out else "off", note or "no mask is switched on", 0)

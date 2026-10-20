@@ -2898,53 +2898,54 @@ class Api:
             if not isinstance(f, str) or i is None:
                 raise ApiError(404, "that picture is not in the list of masks")
             return i
+        # read to write under one take of the lock, so two changes at once (two Adds) both land (review of #152);
+        # resolve_media is a stat, cheap enough to do under it
         with self.settings.lock:
             cfg = dict(self.settings.data["overlay"])
-        masks = [dict(m) for m in overlay_mod.masks_of(cfg)]
-        on = bool(cfg.get("on"))
-        if "file" in body:
-            if body["file"] == "":
-                masks = masks[1:]
-            else:
-                f = png("file")
-                self.resolve_media(f)                                   # 404 for a file that is not there
-                rest = [m for m in masks if m["file"] != f]
-                masks = [{"file": f, "on": True}] + (rest[1:] if len(rest) == len(masks) else rest)
-        if "add" in body:
-            f = png("add")
-            if any(m["file"] == f for m in masks):
-                raise ApiError(409, "%s is in the list already" % f)
-            if len(masks) >= overlay_mod.MAX_MASKS:
-                raise bad("up to %d masks; remove one first" % overlay_mod.MAX_MASKS)
-            self.resolve_media(f)
-            masks.append({"file": f, "on": True})
-        if "remove" in body:
-            del masks[find("remove")]
-        if "mask" in body:
-            i = find("mask")
-            if "mask_on" not in body and "move" not in body:
-                raise bad("send mask_on or move with mask")
-            if "mask_on" in body:
-                if not isinstance(body["mask_on"], bool):
-                    raise bad("mask_on must be true or false")
-                masks[i]["on"] = body["mask_on"]
-            if "move" in body:
-                j = {"up": i - 1, "down": i + 1}.get(body["move"]) if isinstance(body["move"], str) else None
-                if j is None:
-                    raise bad("move must be up or down")
-                if 0 <= j < len(masks):
-                    masks[i], masks[j] = masks[j], masks[i]
-        if body.get("toggle") is True and "on" not in body:     # a controller's button (D75): the other state
-            body = dict(body, on=not on)
-        if "on" in body:
-            if not isinstance(body["on"], bool):
-                raise bad("on must be true or false")
-            if body["on"] and not masks:
-                raise bad("choose a picture first")
-            on = body["on"]
-        if not masks:
-            on = False                              # the last mask taken out: nothing is left to show
-        with self.settings.lock:
+            masks = [dict(m) for m in overlay_mod.masks_of(cfg)]
+            on = bool(cfg.get("on"))
+            if "file" in body:
+                if body["file"] == "":
+                    masks = masks[1:]
+                else:
+                    f = png("file")
+                    self.resolve_media(f)                                   # 404 for a file that is not there
+                    rest = [m for m in masks if m["file"] != f]
+                    masks = [{"file": f, "on": True}] + (rest[1:] if len(rest) == len(masks) else rest)
+            if "add" in body:
+                f = png("add")
+                if any(m["file"] == f for m in masks):
+                    raise ApiError(409, "%s is in the list already" % f)
+                if len(masks) >= overlay_mod.MAX_MASKS:
+                    raise bad("up to %d masks; remove one first" % overlay_mod.MAX_MASKS)
+                self.resolve_media(f)
+                masks.append({"file": f, "on": True})
+            if "remove" in body:
+                del masks[find("remove")]
+            if "mask" in body:
+                i = find("mask")
+                if "mask_on" not in body and "move" not in body:
+                    raise bad("send mask_on or move with mask")
+                if "mask_on" in body:
+                    if not isinstance(body["mask_on"], bool):
+                        raise bad("mask_on must be true or false")
+                    masks[i]["on"] = body["mask_on"]
+                if "move" in body:
+                    j = {"up": i - 1, "down": i + 1}.get(body["move"]) if isinstance(body["move"], str) else None
+                    if j is None:
+                        raise bad("move must be up or down")
+                    if 0 <= j < len(masks):
+                        masks[i], masks[j] = masks[j], masks[i]
+            if body.get("toggle") is True and "on" not in body:     # a controller's button (D75): the other state
+                body = dict(body, on=not on)
+            if "on" in body:
+                if not isinstance(body["on"], bool):
+                    raise bad("on must be true or false")
+                if body["on"] and not masks:
+                    raise bad("choose a picture first")
+                on = body["on"]
+            if not masks:
+                on = False                              # the last mask taken out: nothing is left to show
             self.settings.data["overlay"] = overlay_mod.stored(masks, on)
             self.settings.save()
         return self.apply_overlay()

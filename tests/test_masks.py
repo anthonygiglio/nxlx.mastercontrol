@@ -458,22 +458,155 @@ class RealCombineTest(unittest.TestCase):
         self.assertFalse(os.path.exists(self.path("o.bgra.tmp")))
 
 
+def header_only(path, w, h):
+    """A file that is only a PNG's signature and header saying w x h: a few bytes that claim a huge picture."""
+    body = struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0)
+    with open(path, "wb") as f:
+        f.write(overlay.PNG_MAGIC + struct.pack(">I", len(body)) + b"IHDR" + body
+                + struct.pack(">I", zlib.crc32(b"IHDR" + body) & 0xFFFFFFFF))
+
+
+def fake_mpv(folder, script):
+    """An "mpv" that runs `script` (sh), for what is asked of the child; $OUT is the file mpv was told to write."""
+    path = os.path.join(folder, "mpv")
+    with open(path, "w") as f:
+        f.write("#!/bin/sh\nfor a in \"$@\"; do case \"$a\" in --o=*) OUT=\"${a#--o=}\";; esac; done\n" + script + "\n")
+    os.chmod(path, 0o755)
+    return path
+
+
 class CancelTest(unittest.TestCase):
     def test_a_cancelled_build_kills_mpv_and_leaves_nothing(self):
-        d = tempfile.mkdtemp()
+        d, pics = tempfile.mkdtemp(), tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
-        slow = os.path.join(d, "mpv")
-        with open(slow, "w") as f:
-            f.write("#!/bin/sh\nfor a in \"$@\"; do case \"$a\" in --o=*) : > \"${a#--o=}\";; esac; done\nexec sleep 30\n")
-        os.chmod(slow, 0o755)
+        self.addCleanup(shutil.rmtree, pics, True)
+        a, b = os.path.join(pics, "a.png"), os.path.join(pics, "b.png")
+        png(a, 2, 2, lambda x, y: (0, 0, 0, 255))
+        png(b, 2, 2, lambda x, y: (0, 0, 0, 255))
+        slow = fake_mpv(d, ': > "$OUT"\nexec sleep 30')
         go = time.monotonic()
         with self.assertRaises(overlay.Cancelled):
-            overlay.combine(["/x/a.png", "/x/b.png"], 64, 64, os.path.join(d, "o.bgra"), slow,
-                            cancelled=lambda: time.monotonic() - go > 0.2)
+            overlay.combine([a, b], 64, 64, os.path.join(d, "o.bgra"), slow, cancelled=lambda: time.monotonic() - go > 0.2)
         self.assertLess(time.monotonic() - go, 5)
         self.assertEqual(sorted(os.listdir(d)), ["mpv"], "the half-written file is gone")
         with self.assertRaises(overlay.OverlayError):
-            overlay.combine(["/x/a.png"], 64, 64, os.path.join(d, "o.bgra"), slow, timeout=0.3)
+            overlay.combine([a], 64, 64, os.path.join(d, "o.bgra"), slow, timeout=0.3)
+
+
+class SizeTest(unittest.TestCase):
+    """The review of #152: a PNG of 1 MB can say 16000 x 16000, and mpv then needs gigabytes. The header is read
+    first, the masks together are bounded, and mpv runs with its memory capped."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.d, True)
+        self.ran = os.path.join(self.d, "ran")
+        self.mpv = fake_mpv(self.d, ': > "%s"\nexit 1' % self.ran)
+
+    def path(self, name):
+        return os.path.join(self.d, name)
+
+    def test_the_header_says_the_size(self):
+        header_only(self.path("huge.png"), 16000, 16000)
+        png(self.path("ok.png"), 3, 2, lambda x, y: (0, 0, 0, 255))
+        self.assertEqual(overlay.png_size(self.path("huge.png")), (16000, 16000))
+        self.assertEqual(overlay.png_size(self.path("ok.png")), (3, 2))
+        self.assertIsNone(overlay.png_problem(self.path("ok.png")))
+        self.assertIn("is 16000 x 16000, larger than a mask may be", overlay.png_problem(self.path("huge.png")))
+        for w, h in ((8193, 10), (10, 8193), (8000, 5001), (0, 10)):
+            header_only(self.path("x.png"), w, h)
+            self.assertIsNotNone(overlay.png_problem(self.path("x.png")), (w, h))
+        header_only(self.path("x.png"), 8192, 4882)             # 39.99 megapixels: allowed
+        self.assertIsNone(overlay.png_problem(self.path("x.png")))
+        with open(self.path("short.png"), "wb") as f:
+            f.write(overlay.PNG_MAGIC + b"\0\0\0\rIHD")
+        self.assertIn("is not a PNG picture", overlay.png_problem(self.path("short.png")))
+
+    def test_one_picture_and_several_are_checked_before_mpv_runs(self):
+        header_only(self.path("huge.png"), 16000, 16000)
+        png(self.path("ok.png"), 4, 4, lambda x, y: (0, 0, 0, 255))
+        for paths in ([self.path("huge.png")], [self.path("ok.png"), self.path("huge.png")]):
+            with self.assertRaises(overlay.OverlayError) as e:
+                overlay.combine(paths, 1920, 1080, self.path("o.bgra"), self.mpv)
+            self.assertIn("16000 x 16000", str(e.exception))
+        with self.assertRaises(overlay.OverlayError):
+            overlay.convert(self.path("huge.png"), 1920, 1080, self.path("o.bgra"), self.mpv)
+        self.assertFalse(os.path.exists(self.ran), "mpv was never started")
+
+    def test_the_masks_together_are_bounded(self):
+        for i in range(5):
+            header_only(self.path("k%d.png" % i), 3840, 2160)
+        four = [self.path("k%d.png" % i) for i in range(4)]
+        self.assertIsNone(overlay.budget_problem([(3840, 2160)] * 4, 3840, 2160))
+        self.assertIn("at most 4 masks", overlay.budget_problem([(3840, 2160)] * 5, 3840, 2160))
+        self.assertIsNone(overlay.budget_problem([(1920, 1080)] * 8, 1920, 1080))
+        self.assertIn("more than 70 megapixels", overlay.budget_problem([(8000, 5000), (6000, 6000)], 1920, 1080))
+        with self.assertRaises(overlay.OverlayError) as e:
+            overlay.combine(four + [self.path("k4.png")], 3840, 2160, self.path("o.bgra"), self.mpv)
+        self.assertIn("at most 4 masks", str(e.exception))
+        self.assertFalse(os.path.exists(self.ran))
+
+    def test_mpv_runs_with_its_memory_capped(self):
+        png(self.path("a.png"), 2, 2, lambda x, y: (0, 0, 0, 255))
+        said = self.path("limits")
+        mpv = fake_mpv(self.d, 'echo "$(ulimit -v) $(ulimit -s) $MALLOC_ARENA_MAX" > "%s"\nexit 1' % said)
+        with self.assertRaises(overlay.OverlayError):
+            overlay.combine([self.path("a.png")] * 2, 64, 64, self.path("o.bgra"), mpv)
+        with open(said) as f:
+            got = f.read().split()
+        self.assertEqual(got, [str(overlay.MPV_MEMORY // 1024), str(overlay.MPV_STACK // 1024), "2"])
+
+    @unittest.skipUnless(shutil.which("mpv"), "needs mpv")
+    def test_the_real_mpv_works_under_the_cap(self):
+        # the biggest work the bounds allow, on this machine's mpv: four masks of the screen's size at 3840 x 2160
+        for i in range(4):
+            png(self.path("k%d.png" % i), 64, 36, lambda x, y, i=i: (0, 0, 0, 255) if x == i else (0, 0, 0, 0))
+        out = overlay.combine([self.path("k%d.png" % i) for i in range(4)], 3840, 2160, self.path("o.bgra"))
+        self.assertEqual(os.path.getsize(out), 3840 * 2160 * 4)
+
+
+class BudgetWorkerTest(Base):
+    def test_a_huge_mask_and_masks_over_the_bounds_are_left_out(self):
+        header_only(os.path.join(self.media, "huge.png"), 16000, 16000)
+        self.post({"add": "m1.png"})
+        self.post({"add": "huge.png", "on": True})
+        body = self.settled()
+        self.assertEqual(self.fake.calls[-1][0], ["m1.png"])
+        self.assertIn("huge.png is 16000 x 16000, larger than a mask may be", body["status"]["message"])
+        self.assertFalse(self.api.masks.watch(), "never an error loop")
+        self.player.osd_size = lambda: (3840, 2160)
+        for i in range(2, 6):
+            self.post({"add": "m%d.png" % i})
+        body = self.settled()
+        self.assertEqual(self.fake.calls[-1], (["m1.png", "m2.png", "m3.png", "m4.png"], 3840, 2160))
+        self.assertIn("m5.png: at 3840 x 2160 at most 4 masks are combined", body["status"]["message"])
+
+
+class ConcurrentAddTest(Base):
+    def test_two_adds_at_once_both_land(self):
+        # the first Add is held inside its look at the media folder; the second comes meanwhile. With the read and
+        # the write under one take of the settings' lock, the second waits and both are in the list.
+        real, held = self.api.resolve_media, threading.Event()
+        first = []
+
+        def slow(name):
+            if not first:
+                first.append(name)
+                held.set()
+                time.sleep(0.5)
+            return real(name)
+        self.api.resolve_media = slow
+        out = []
+        a = threading.Thread(target=lambda: out.append(self.api.set_overlay({"add": "m1.png"}, None, "t")))
+        a.start()
+        self.assertTrue(held.wait(5))
+        b = threading.Thread(target=lambda: out.append(self.api.set_overlay({"add": "m2.png"}, None, "t")))
+        b.start()
+        a.join(10)
+        b.join(10)
+        self.assertEqual(len(out), 2)
+        self.assertEqual(sorted(m["file"] for m in self.settings.data["overlay"]["masks"]), ["m1.png", "m2.png"])
+        self.assertEqual(sorted(m["file"] for m in Settings(self.settings.path).load()["overlay"]["masks"]), ["m1.png", "m2.png"])
 
 
 if __name__ == "__main__":
