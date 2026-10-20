@@ -684,7 +684,7 @@ class BoxCare:
             out["recovery"] = {"usb": self.api.auth.usb_enabled()}      # the switch only: the code hashes stay on the box (D81)
         out["projectors"] = [dict({"id": p["id"], "name": p["name"], "host": p["host"], "port": p["port"],
                                    "password": p.get("password", "") if passwords else ""},
-                                  **{k: p[k] for k in ("details", "labels") if k in p})       # what it said it is; input labels
+                                  **{k: p[k] for k in ("details", "labels", "protocol") if k in p})       # what it said it is; input labels; Epson control (D99)
                              for p in out.get("projectors", [])]
         out["streams"] = [{"id": s["id"], "name": s["name"], "url": s["url"] if passwords else strip_login(s["url"])}
                           for s in out.get("streams", [])]

@@ -5,8 +5,11 @@ import ipaddress
 import json
 import os
 import re
+import shutil
 import socket
 import socketserver
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -14,7 +17,10 @@ import unittest
 from unittest import mock
 
 from pvj import osc, projector, scheduler
+from tests.test_roles import TUNNEL, RolesBase
 from tests.test_server import ServerBase
+
+REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 
 class FakeProjector:
@@ -1375,9 +1381,9 @@ class ApiTest(ServerBase):
         lines = []
         with mock.patch.object(self.api, "log", lines.append):
             self.assertEqual(self.post("/api/projector", {"id": "all", "action": "on", "background": True})[1], {"started": True})
-            self.assertTrue(wait_for(lambda: lines))
-        self.assertIn("projector on", lines[0])
-        self.assertIn("cannot reach", lines[0])
+            self.assertTrue(wait_for(lambda: [l for l in lines if "cannot reach" in l]))
+        failed = [l for l in lines if "cannot reach" in l]      # since D99 the change itself has a line of its own first
+        self.assertIn("projector on", failed[0])
 
     def test_roles(self):
         view = self.post("/api/devices/invite", {"name": "g", "role": "view"})[1]["token"]
@@ -1837,6 +1843,478 @@ class ScheduledProjectorTest(unittest.TestCase):
         while "e1" not in s.last and _t.monotonic() < end:
             _t.sleep(0.02)
         self.assertEqual((s.last["e1"]["ok"], s.last["e1"]["message"]), (False, "cannot reach the projector"))
+
+
+# --- Epson control, ESC/VP.net (D99) ------------------------------------------------------------------------------------
+class FakeEpson:
+    """An Epson projector's ESC/VP.net on 127.0.0.1, written from what an Epson X27 answered on 2026-10-19 (the
+    coordinator's reads, not our client): the 16 byte "ESC/VP.net" header, version 0x10, type 0x03, is answered by
+    16 bytes with the status at byte 14 (0x20 is OK); then a command ends with CR and every answer ends with ":";
+    a query is answered "KEY=value" before it, a set that was taken by ":" alone, a refusal by "ERR". In standby only
+    PWR, LAMP, ERR and SNO answer. BRIGHT 40 reads back as 36 (the X27 has steps). CMODE took 3.2 s; `cmode_wait`
+    stands in for it. CMODE 0C, 07 and 14 are refused, as on the X27.
+
+    `mode`: "ok"; "silent" (takes the connection and never answers); "short" (half a header, then closes); "deaf"
+    (the header is answered, commands never are); "long" (an answer that never ends: 300 bytes, no ":")."""
+
+    def __init__(self, status=0x20, mode="ok", modes=("01", "04", "05", "06"), cmode_wait=0.0):
+        self.status, self.mode, self.modes, self.cmode_wait = status, mode, set(modes), cmode_wait
+        self.v = {"PWR": "01", "LAMP": "25", "ERR": "00", "MUTE": "OFF", "SOURCE": "30", "FREEZE": "OFF", "LUMINANCE": "00",
+                  "BRIGHT": "125", "CMODE": "04", "SNO": "VU3K7601207", "CONTRAST": "125"}
+        self.received, self.done_at, self.connections = [], {}, 0
+        self.guard = threading.Lock()
+        outer = self
+
+        class Handler(socketserver.StreamRequestHandler):
+            def handle(self):
+                self.request.settimeout(10)
+                with outer.guard:
+                    outer.connections += 1
+                try:
+                    head = self.rfile.read(16)
+                    if outer.mode == "silent":
+                        time.sleep(3)
+                        return
+                    if outer.mode == "short":
+                        self.wfile.write(b"ESC/VP")
+                        return
+                    if len(head) < 16 or head[:10] != b"ESC/VP.net":
+                        return
+                    self.wfile.write(b"ESC/VP.net\x10\x03\x00\x00" + bytes([outer.status, 0]))
+                    if outer.status != 0x20:
+                        return
+                    while True:
+                        buf = b""
+                        while not buf.endswith(b"\r") and len(buf) < 200:
+                            c = self.rfile.read(1)
+                            if not c:
+                                return
+                            buf += c
+                        cmd = buf[:-1].decode("ascii", "replace")
+                        outer.received.append(cmd)
+                        if outer.mode == "deaf":
+                            continue
+                        if outer.mode == "long":
+                            self.wfile.write(b"PWR=" + b"1" * 300)
+                            continue
+                        self.wfile.write(outer.answer(cmd).encode())
+                        outer.done_at[cmd] = time.monotonic()
+                except OSError:
+                    pass
+
+        class Server(socketserver.ThreadingMixIn, socketserver.TCPServer):
+            daemon_threads = True
+            allow_reuse_address = True
+        self.server = Server(("127.0.0.1", 0), Handler)
+        self.port = self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def answer(self, cmd):
+        on = self.v["PWR"] == "01"
+        if cmd.endswith("?"):
+            key = cmd[:-1]
+            if key not in self.v or (not on and key not in ("PWR", "LAMP", "ERR", "SNO")):
+                return "ERR\r:"
+            return "%s=%s\r:" % (key, self.v[key])
+        key, _, val = cmd.partition(" ")
+        if key == "PWR" and val in ("ON", "OFF"):
+            self.v["PWR"] = "01" if val == "ON" else "04"
+            return ":"
+        if not on:
+            return "ERR\r:"
+        if key in ("MUTE", "FREEZE") and val in ("ON", "OFF"):
+            self.v[key] = val
+            return ":"
+        if key == "BRIGHT" and val.isdigit() and 0 <= int(val) <= 255:
+            self.v[key] = str(int(val) - int(val) % 6)
+            return ":"
+        if key == "LUMINANCE" and val in ("00", "01"):
+            self.v[key] = val
+            return ":"
+        if key == "CMODE" and val in self.modes:
+            time.sleep(self.cmode_wait)
+            self.v[key] = val
+            return ":"
+        return "ERR\r:"
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+class EscVpTest(unittest.TestCase):
+    def setUp(self):
+        LOOPBACK_OK.start()
+        self.addCleanup(LOOPBACK_OK.stop)
+        self.fake = FakeEpson()
+        self.addCleanup(self.fake.close)
+
+    def esc(self, fake=None, **kw):
+        return projector.EscVp("127.0.0.1", lock_port=4352, port=(fake or self.fake).port, **kw)
+
+    def test_the_status_in_one_connection(self):
+        st = projector.epson_status(self.esc())
+        self.assertEqual(self.fake.connections, 1)
+        self.assertEqual((st["ok"], st["power"], st["lamps"], st["mute"]), (True, "on", [{"hours": 25, "on": True}], {"picture": False, "sound": False}))
+        self.assertEqual(set(st["warnings"].values()), {"ok"})
+        self.assertEqual(st["picture"], {"freeze": False, "light": "normal", "brightness": 125, "colour_mode": "04"})
+        self.fake.v.update(PWR="04", ERR="04")
+        st = projector.epson_status(self.esc())
+        self.assertEqual((st["power"], st["warnings"]["temperature"], st["mute"]), ("off", "error", None))
+        self.assertNotIn("picture", st, "in standby the picture settings are not known")
+        for code, power in (("02", "warming up"), ("03", "cooling down"), ("09", "off")):
+            self.fake.v["PWR"] = code
+            self.assertEqual(projector.EpsonLink("127.0.0.1", port=self.fake.port).state(), power)
+
+    def test_each_set_and_what_it_reads_back(self):
+        e = self.esc()
+        for cmd, key, want in (("MUTE ON", "MUTE", "ON"), ("FREEZE ON", "FREEZE", "ON"), ("BRIGHT 40", "BRIGHT", "36"),
+                               ("LUMINANCE 01", "LUMINANCE", "01"), ("CMODE 06", "CMODE", "06"), ("FREEZE OFF", "FREEZE", "OFF")):
+            self.assertEqual(e.send(cmd), "OK")
+            self.assertEqual(e.query(key), want)
+        with self.assertRaises(projector.ProjectorError) as c:
+            e.send("CMODE 0C")
+        self.assertEqual(c.exception.code, "ERR")
+        self.assertIn("refused CMODE", str(c.exception))
+
+    def test_a_refusal_does_not_end_the_others(self):
+        a = self.esc().session(["DENSITY?", "PWR?", "VKEYST?", "BRIGHT?"])
+        self.assertIsInstance(a[0], projector.ProjectorError)
+        self.assertEqual((a[0].code, a[1], a[3]), ("ERR", "01", "125"))
+        self.assertIsInstance(a[2], projector.ProjectorError)
+
+    def test_a_slow_colour_mode_is_waited_for(self):
+        self.fake.cmode_wait = 1.2
+        self.assertEqual(self.esc(timeout=0.5, slow=3.0).send("CMODE 06"), "OK")          # a set of CMODE waits `slow`
+        self.fake.cmode_wait = 1.2
+        with self.assertRaises(projector.ProjectorError) as c:
+            self.esc(timeout=0.5, slow=0.6).send("CMODE 05")
+        self.assertEqual(c.exception.code, "unreachable")
+
+    def test_a_refused_connection_is_said_in_plain_words(self):
+        for status, words in ((0x41, "asks for a password"), (0x53, "busy with another Epson control"), (0x7E, "code 7E")):
+            f = FakeEpson(status=status)
+            self.addCleanup(f.close)
+            with self.assertRaises(projector.ProjectorError) as c:
+                self.esc(f).query("PWR")
+            self.assertIn(words, str(c.exception))
+            self.assertEqual(c.exception.code, "refused")
+
+    def test_a_projector_that_never_answers_costs_a_bounded_wait(self):
+        for mode in ("silent", "deaf"):
+            f = FakeEpson(mode=mode)
+            self.addCleanup(f.close)
+            start = time.monotonic()
+            with self.assertRaises(projector.ProjectorError) as c:
+                self.esc(f, timeout=0.4, connect_timeout=0.4).query("PWR")
+            self.assertEqual(c.exception.code, "unreachable", mode)
+            self.assertLess(time.monotonic() - start, 2.0, mode)
+        dead = socket.socket()
+        dead.bind(("127.0.0.1", 0))
+        port = dead.getsockname()[1]
+        dead.close()
+        with self.assertRaises(projector.ProjectorError) as c:
+            projector.EscVp("127.0.0.1", port=port).query("PWR")
+        self.assertIn("cannot reach", str(c.exception))
+
+    def test_cut_short_overlong_and_not_epson(self):
+        for mode, code in (("short", "odd"), ("long", "odd")):
+            f = FakeEpson(mode=mode)
+            self.addCleanup(f.close)
+            with self.assertRaises(projector.ProjectorError) as c:
+                self.esc(f, timeout=1.0).query("PWR")
+            self.assertEqual(c.exception.code, code, mode)
+        web = raw_server(self, lambda r, w: (r.read(16), w.write(b"HTTP/1.1 400 Bad Request\r\n\r\n")))
+        with self.assertRaises(projector.ProjectorError) as c:
+            projector.EscVp("127.0.0.1", port=web).query("PWR")
+        self.assertIn("does not answer like an Epson", str(c.exception))
+        odd = raw_server(self, lambda r, w: (r.read(16), w.write(b"ESC/VP.net\x10\x03\x00\x00\x20\x00"), r.read(5), w.write(b"LAMP=12\r:")))
+        with self.assertRaises(projector.ProjectorError) as c:
+            projector.EscVp("127.0.0.1", port=odd).query("PWR")           # the answer to another question
+        self.assertEqual(c.exception.code, "odd")
+        for bad in (["PWR?\rMUTE ON"], ["pwr?"], [], ["PWR?"] * 17, [5]):
+            with self.assertRaises(projector.ProjectorError):
+                self.esc().session(bad)
+
+    def test_only_private_addresses_and_nothing_sent_otherwise(self):
+        LOOPBACK_OK.stop()
+        try:
+            def never(*a, **kw):
+                raise AssertionError("connected")
+            for host in ("8.8.8.8", "127.0.0.1", "169.254.169.254"):
+                with self.assertRaises(projector.ProjectorError, msg=host):
+                    projector.EscVp(host, connect=never).query("PWR")
+        finally:
+            LOOPBACK_OK.start()
+
+    def test_one_command_at_a_time_with_its_pjlink(self):
+        pj = FakeProjector()
+        self.addCleanup(pj.close)
+        pj.power = "1"
+        self.fake.cmode_wait = 0.6
+        t = threading.Thread(target=lambda: projector.EscVp("127.0.0.1", lock_port=pj.port, port=self.fake.port).send("CMODE 06"))
+        t.start()
+        self.assertTrue(wait_for(lambda: "CMODE 06" in self.fake.received))
+        projector.PJLink("127.0.0.1", pj.port).state()
+        t.join()
+        self.assertGreaterEqual(pj.times[-1], self.fake.done_at["CMODE 06"], "PJLink waited for the Epson command")
+        self.assertEqual(projector._busy, {})
+
+    def test_epson_alone_power_mute_and_what_it_cannot(self):
+        link = projector.EpsonLink("127.0.0.1", port=self.fake.port)
+        link.power(False)
+        self.assertEqual((self.fake.v["PWR"], link.state()), ("04", "off"))
+        link.power(True)
+        link.mute(True)
+        self.assertEqual((self.fake.v["MUTE"], link.mute_state()), ("ON", {"picture": True, "sound": True}))
+        for f in (lambda: link.mute(True, "picture"), link.inputs, lambda: link.set_input("31")):
+            with self.assertRaises(projector.ProjectorError):
+                f()
+        self.assertEqual(link.lamps()[0]["hours"], 25)
+        self.assertEqual(link.identify()["info"], "serial VU3K7601207")
+
+
+class ProbeTest(unittest.TestCase):
+    def setUp(self):
+        LOOPBACK_OK.start()
+        self.addCleanup(LOOPBACK_OK.stop)
+        self.ep = FakeEpson()
+        self.addCleanup(self.ep.close)
+        p = mock.patch.object(projector, "ESCVP_PORT", self.ep.port)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_what_answers_and_whether_a_password_is_needed(self):
+        pj = FakeProjector()
+        self.addCleanup(pj.close)
+        found = projector.probe("127.0.0.1", pj.port)
+        self.assertEqual((found["suggest"], found["pjlink"]["password"], found["pjlink"]["model"], found["epson"]["serial"]),
+                         ("both", "none", "FP-1", "VU3K7601207"))
+        locked = FakeProjector("JBMIAProjectorLink")
+        self.addCleanup(locked.close)
+        for given, said in (("", "needed"), ("JBMIAProjectorLink", "right"), ("guess", "wrong")):
+            r = projector.probe("127.0.0.1", locked.port, given)["pjlink"]
+            self.assertEqual(r["password"], said, given)
+            self.assertNotIn("JBMIAProjectorLink", json.dumps(r))
+        self.ep.close()
+        found = projector.probe("127.0.0.1", pj.port, timeout=1.0)
+        self.assertEqual((found["suggest"], found["epson"]["ok"]), ("pjlink", False))
+        self.assertIn("cannot reach", found["epson"]["error"])
+
+
+class EpsonApiTest(ServerBase):
+    def setUp(self):
+        super().setUp()
+        self.full = self.call("POST", "/api/pair", {"pin": self.pin, "name": "t"})[1]["token"]
+        self.call("POST", "/api/modules/projector", {"enabled": True}, token=self.full)
+        self.addCleanup(self.api.projectors.stop, True)
+        self.pj = FakeProjector("pw1")
+        self.addCleanup(self.pj.close)
+        self.pj.power = "1"
+        self.ep = FakeEpson()
+        self.addCleanup(self.ep.close)
+        for p in (LOOPBACK_OK, mock.patch.object(projector, "ESCVP_PORT", self.ep.port)):
+            p.start()
+            self.addCleanup(p.stop)
+        self.lines = []
+        self.api.log = self.lines.append
+
+    def post(self, path, body, token=None):
+        return self.call("POST", path, body, token=token or self.full)
+
+    def add(self, protocol="both"):
+        st, body, _ = self.post("/api/projectors", {"add": {"name": "Main", "host": "127.0.0.1", "port": self.pj.port, "password": "pw1", "protocol": protocol}})
+        self.assertEqual(st, 200, body)
+        return body["projectors"][0]["id"]
+
+    def one(self):
+        return self.call("GET", "/api/projectors", token=self.full)[1]["projectors"][0]
+
+    def act(self, pid, action, **kw):
+        return self.post("/api/projector", dict({"id": pid, "action": action}, **kw))
+
+    def test_both_status_and_each_control(self):
+        pid = self.add()
+        self.assertEqual(self.one()["protocol"], "both")
+        self.assertTrue(wait_for(lambda: (self.one()["status"] or {}).get("picture"), 10))
+        pic = self.one()["status"]["picture"]
+        self.assertEqual((pic["brightness"], pic["light"], pic["colour_mode"], pic["freeze"]), (125, "normal", "04", False))
+        self.assertIn({"code": "04", "known": True}, pic["colour_modes"])
+        self.assertEqual(self.act(pid, "freeze")[0], 200)
+        self.assertEqual(self.ep.v["FREEZE"], "ON")
+        self.assertEqual(self.act(pid, "unfreeze")[0], 200)
+        self.assertEqual(self.act(pid, "brightness", value=200)[0], 200)
+        self.assertEqual(self.ep.v["BRIGHT"], "198")
+        self.assertEqual(self.act(pid, "light", value="eco")[0], 200)
+        self.assertEqual(self.ep.v["LUMINANCE"], "01")
+        self.assertEqual(self.act(pid, "colour_mode", value="06")[0], 200)
+        self.assertEqual(self.ep.v["CMODE"], "06")
+        st, body, _ = self.act(pid, "colour_mode", value="0C")
+        self.assertEqual(st, 502)
+        self.assertIn("does not have colour mode 0C", body["error"])
+        self.assertTrue(wait_for(lambda: (self.one()["status"] or {}).get("picture", {}).get("colour_mode") == "06", 10))
+        modes = {m["code"]: m["known"] for m in self.one()["status"]["picture"]["colour_modes"]}
+        self.assertNotIn("0C", modes, "a refused mode is not offered again")
+        self.assertTrue(modes["06"])
+        self.assertEqual(self.act(pid, "mute")[0], 200)                    # mutes go over PJLink when it has both
+        self.assertTrue(self.pj.video_mute and self.pj.audio_mute)
+        self.assertEqual(self.ep.v["MUTE"], "OFF")
+        self.assertEqual(self.act(pid, "off")[0], 200)
+        self.assertEqual(self.pj.power, "0")
+
+    def test_values_are_checked(self):
+        pid = self.add()
+        for action, value in (("brightness", 256), ("brightness", -1), ("brightness", "10"), ("brightness", True), ("light", "dim"),
+                              ("colour_mode", "ZZ"), ("colour_mode", "4"), ("colour_mode", 4)):
+            self.assertEqual(self.act(pid, action, value=value)[0], 400, (action, value))
+        self.assertEqual(self.act("all", "brightness", value=10)[0], 400)
+        self.assertEqual(self.act(pid, "on", value=1)[0], 400)
+        self.assertEqual(self.ep.received, [c for c in self.ep.received if c.endswith("?")], "nothing was set")
+
+    def test_pjlink_alone_has_no_freeze_and_is_stored_as_before(self):
+        st, body, _ = self.post("/api/projectors", {"add": {"name": "Old", "host": "127.0.0.1", "port": self.pj.port, "password": "pw1"}})
+        pid = body["projectors"][0]["id"]
+        self.assertNotIn("protocol", self.settings.data["projectors"][0], "PJLink is stored as before D99")
+        self.assertEqual(self.act(pid, "freeze")[0], 409)
+        self.assertEqual(self.post("/api/projectors", {"edit": {"id": pid, "protocol": "both"}})[0], 200)
+        self.assertEqual(self.settings.data["projectors"][0]["protocol"], "both")
+        self.assertEqual(self.act(pid, "freeze")[0], 200)
+        self.assertEqual(self.post("/api/projectors", {"edit": {"id": pid, "protocol": "pjlink"}})[0], 200)
+        self.assertNotIn("protocol", self.settings.data["projectors"][0])
+        self.assertEqual(self.post("/api/projectors", {"edit": {"id": pid, "protocol": "serial"}})[0], 400)
+
+    def test_epson_alone(self):
+        pid = self.add("epson")
+        self.assertTrue(wait_for(lambda: (self.one()["status"] or {}).get("ok"), 10))
+        st = self.one()["status"]
+        self.assertEqual((st["power"], st["lamps"][0]["hours"], st["picture"]["brightness"]), ("on", 25, 125))
+        self.assertEqual(self.act(pid, "mute")[0], 200)
+        self.assertEqual(self.ep.v["MUTE"], "ON")
+        self.assertEqual(self.act(pid, "off")[0], 200)
+        self.assertEqual(self.ep.v["PWR"], "04")
+        self.assertEqual(self.pj.received, [], "nothing went to PJLink")
+
+    def test_the_owners_test_says_what_answers_and_saves_nothing(self):
+        st, body, _ = self.post("/api/projectors", {"test": {"host": "127.0.0.1", "port": self.pj.port}})
+        self.assertEqual(st, 200)
+        t = body["test"]
+        self.assertEqual((t["pjlink"]["ok"], t["pjlink"]["password"], t["epson"]["ok"], t["suggest"]), (False, "needed", True, "epson"))
+        t = self.post("/api/projectors", {"test": {"host": "127.0.0.1", "port": self.pj.port, "password": "pw1"}})[1]["test"]
+        self.assertEqual((t["pjlink"]["password"], t["pjlink"]["maker"], t["suggest"]), ("right", "NXLX Test Works", "both"))
+        self.assertEqual(self.settings.data["projectors"], [])
+        pid = self.add()
+        self.assertEqual(self.post("/api/projectors", {"test": {"id": pid}})[1]["test"]["pjlink"]["password"], "right")
+        self.assertEqual(self.post("/api/projectors", {"test": {"host": "8.8.8.8"}})[0], 400)
+        self.assertEqual(self.post("/api/projectors", {"test": {"id": "nope"}})[0], 404)
+        live = self.post("/api/devices/invite", {"name": "op", "role": "live"})[1]["token"]
+        self.assertEqual(self.post("/api/projectors", {"test": {"host": "127.0.0.1"}}, token=live)[0], 403)
+
+    def test_the_password_is_never_answered_or_logged(self):
+        pid = self.add()
+        answers = [self.call("GET", "/api/projectors", token=self.full)[1],
+                   self.post("/api/projectors", {"test": {"host": "127.0.0.1", "port": self.pj.port, "password": "pw1"}})[1],
+                   self.post("/api/projectors", {"test": {"id": pid}})[1],
+                   self.post("/api/projectors", {"edit": {"id": pid, "name": "Wall"}})[1],
+                   self.act(pid, "brightness", value=90)[1], self.act(pid, "freeze")[1], self.act(pid, "on")[1],
+                   self.post("/api/projectors", {"test": {"host": "127.0.0.1", "port": self.pj.port, "password": "pw2"}})[1]]
+        self.assertTrue(any("brightness 90" in l for l in self.lines), self.lines)
+        self.assertTrue(any("freeze by device" in l for l in self.lines), self.lines)
+        for a in answers:
+            self.assertNotIn("pw1", json.dumps(a))
+            self.assertNotIn("pw2", json.dumps(a))
+        for line in self.lines:
+            self.assertNotIn("pw1", line)
+            self.assertNotIn("pw2", line)
+
+    def test_viewing_checks_often(self):
+        mon = self.api.projectors
+        mon.interval, mon.changing = 60.0, 0.3
+        self.add()
+        self.assertTrue(wait_for(lambda: (self.one()["status"] or {}).get("ok"), 10))
+        n = len(self.pj.received)
+        self.assertTrue(wait_for(lambda: len(self.pj.received) > n, 3), "while the list is read, every `changing` seconds")
+        mon._viewed = time.monotonic() - projector.VIEW_HOLD - 1     # nobody has looked for a while
+        time.sleep(0.5)
+        n = len(self.pj.received)
+        time.sleep(1.0)
+        self.assertEqual(len(self.pj.received), n, "back to every `interval` seconds")
+
+
+class EpsonRolesTest(RolesBase):
+    """Who may use the Epson controls (D99): the Owner and an Operator; a Guest none; remote support neither power
+    off nor a picture setting, and freeze, mute and power on as before."""
+
+    def session(self):
+        from tests.test_support import CFG
+        self.assertEqual(self.h("POST", "/api/support/config", dict(CFG, allowed=True), self.owner)[0], 200)
+        st, body = self.h("POST", "/api/support/start", {"confirm": "start"}, self.owner)
+        login = self.h("POST", "/api/support/login", {"code": body["code"]}, client=TUNNEL)[1]
+        return self.api.support.authenticate(login["token"])
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(self.api.projectors.stop, True)
+        self.ep = FakeEpson()
+        self.addCleanup(self.ep.close)
+        for p in (LOOPBACK_OK, mock.patch.object(projector, "ESCVP_PORT", self.ep.port)):
+            p.start()
+            self.addCleanup(p.stop)
+        st, body = self.h("POST", "/api/projectors", {"add": {"name": "Wall", "host": "127.0.0.1", "port": 9, "protocol": "epson"}}, self.owner)
+        self.assertEqual(st, 200, body)
+        self.pid = body["projectors"][0]["id"]
+
+    def test_owner_and_operator_use_them_a_guest_none(self):
+        for dev in (self.owner, self.operator):
+            self.assertEqual(self.h("POST", "/api/projector", {"id": self.pid, "action": "freeze"}, dev)[0], 200)
+            self.assertEqual(self.h("POST", "/api/projector", {"id": self.pid, "action": "brightness", "value": 60}, dev)[0], 200)
+            self.assertEqual(self.h("POST", "/api/projector", {"id": self.pid, "action": "light", "value": "eco"}, dev)[0], 200)
+        for body in ({"id": self.pid, "action": "freeze"}, {"id": self.pid, "action": "brightness", "value": 1}, {"id": self.pid, "action": "mute"}):
+            self.later()
+            self.assertEqual(self.h("POST", "/api/projector", body, self.guest)[0], 403, body)
+        self.assertEqual(self.h("POST", "/api/projectors", {"test": {"id": self.pid}}, self.operator)[0], 403)
+
+    def test_remote_support_neither_switches_off_nor_changes_the_picture(self):
+        dev = self.session()
+        for body in ({"action": "off"}, {"action": "brightness", "value": 10}, {"action": "light", "value": "eco"},
+                     {"action": "colour_mode", "value": "06"}, {"action": "off", "background": True}):
+            st, out = self.h("POST", "/api/projector", dict(body, id=self.pid), dev, TUNNEL)
+            self.assertEqual(st, 403, body)
+            self.assertIn("not through remote support", out["error"])
+        self.assertEqual((self.ep.v["PWR"], self.ep.v["BRIGHT"], self.ep.v["LUMINANCE"], self.ep.v["CMODE"]), ("01", "125", "00", "04"))
+        for action in ("freeze", "unfreeze", "mute", "unmute", "on"):
+            self.assertEqual(self.h("POST", "/api/projector", {"id": self.pid, "action": action}, dev, TUNNEL)[0], 200, action)
+        log = json.dumps(self.settings.data["support_log"])
+        self.assertIn("was refused a projector change that is made in the room", log, "written into the session's log")
+        self.assertIn("used /api/projector", log)
+
+
+class EpsonRollbackTest(unittest.TestCase):
+    def test_the_release_before_reads_an_epson_projector_and_keeps_it(self):
+        master = "6713348"                                       # master before D99 (D62's lesson: by its commit)
+        try:
+            subprocess.run(["git", "-C", REPO, "rev-parse", "--verify", "-q", master + "^{commit}"], check=True, capture_output=True)
+        except (OSError, subprocess.CalledProcessError):
+            self.skipTest("no %s here to read the older release from" % master)
+        from pvj.settings import Settings
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        path = os.path.join(d, "settings.json")
+        s = Settings(path)
+        s.load()
+        s.data["projectors"] = [dict(projector.validate({"name": "Wall", "host": "192.168.0.211", "protocol": "both", "password": "pw"}), id="0a0a0a0a")]
+        s.save()
+        old = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, old, True)
+        tar = subprocess.run(["git", "-C", REPO, "archive", master, "pvj"], check=True, capture_output=True).stdout
+        subprocess.run(["tar", "-x", "-C", old], input=tar, check=True)
+        script = ("import json, sys\nfrom pvj.settings import Settings\nfrom pvj import projector\ns = Settings(sys.argv[1])\ns.load()\n"
+                  "p = s.data['projectors'][0]\nl = projector.PJLink(p['host'], p['port'], p['password'])\n"
+                  "print(json.dumps([p['name'], l.port, projector.validate_edit(p, {'id': p['id'], 'name': 'Wall 2'})]))\ns.save()\n")
+        r = subprocess.run([sys.executable, "-c", script, path], cwd=old, capture_output=True, text=True, env=dict(os.environ, PYTHONPATH=old))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout.strip().splitlines()[-1]), ["Wall", 4352, {"name": "Wall 2"}], "the release before uses it as PJLink")
+        with open(path) as f:
+            self.assertEqual(json.load(f)["projectors"], s.data["projectors"], "and keeps the protocol for this release")
 
 
 if __name__ == "__main__":

@@ -3037,8 +3037,16 @@ class Api:
 
     # --- projectors (PJLink) -------------------------------------------------------
     def _pjlink(self, entry):
+        """The link for power, input and mutes: PJLink, or Epson control for a projector set to Epson alone (D99)."""
         from . import projector as projector_mod
+        if projector_mod.protocol_of(entry) == "epson":
+            return projector_mod.EpsonLink(entry["host"], lock_port=entry["port"])
         return projector_mod.PJLink(entry["host"], entry["port"], entry["password"])
+
+    def _escvp(self, entry):
+        """Epson control (ESC/VP.net) for the picture settings and freeze (D99); the same lock as its PJLink."""
+        from . import projector as projector_mod
+        return projector_mod.EscVp(entry["host"], lock_port=entry["port"])
 
     def log(self, line):
         print(line, flush=True)       # to the journal, like every other line of the panel service
@@ -3052,11 +3060,13 @@ class Api:
         last status the background check got (nothing is asked here)."""
         from . import projector as projector_mod
         enabled = self.registry.enabled("projector")
+        if enabled:
+            self.projectors.viewed()          # someone is looking: check every 10 seconds for a while (D99)
 
         def one(p):
             details, labels = p.get("details") or None, p.get("labels") or {}
             return {"id": p["id"], "name": p["name"], "host": p["host"], "port": p["port"], "has_password": bool(p["password"]),
-                    "details": details,
+                    "protocol": projector_mod.protocol_of(p), "details": details,
                     "inputs": [{"code": c, "name": projector_mod.input_name(c), "label": labels.get(c, "")}
                                for c in (details or {}).get("inputs") or []],
                     "status": self.projectors.status(p["id"]) if enabled else None}
@@ -3070,6 +3080,8 @@ class Api:
         starts over at the new address (nothing more goes to the old one); a new name changes nothing else."""
         from . import projector as projector_mod
         self._need_projectors()
+        if "test" in body:
+            return self._projector_test(body["test"], device, client)
         entry = change = retire = None
         if "add" in body or "edit" in body:
             try:
@@ -3106,6 +3118,8 @@ class Api:
                         raise ApiError(404, "no such projector")
                     cur = items[at[0]]
                     new = dict(cur, **change)
+                    if new.get("protocol") == "pjlink":
+                        del new["protocol"]       # PJLink is no key, as before D99
                     if (new["host"], new["port"]) != (cur["host"], cur["port"]):
                         if entry is None or (entry["host"], entry["port"]) != (new["host"], new["port"]):
                             raise ApiError(409, "that projector was changed from another device; try again")      # not the address that was checked
@@ -3135,7 +3149,7 @@ class Api:
                         labels[want["input"]] = label
                     items[at[0]] = dict(old, labels=labels)
                 else:
-                    raise bad("send add, edit, remove or label")
+                    raise bad("send add, edit, remove, label or test")
             except projector_mod.ProjectorError as e:
                 raise bad(str(e))
             self.settings.data["projectors"] = items
@@ -3147,21 +3161,84 @@ class Api:
             self.projectors.poke(body["edit"]["id"])      # a new password: the status says at once whether it is right
         return self.get_projectors({}, device, client)
 
+    def _projector_test(self, want, device, client):
+        """{"test": {host, port?, password?}} before a projector is added, or {"test": {"id"}} for one in the list
+        (its stored password is used): who answers there over PJLink and over Epson control, whether a password is
+        needed and whether the one given was right. Nothing is saved and nothing is changed on the projector; the
+        password is never in the answer or the journal. Bounded: both are asked at once, at most 20 seconds."""
+        from . import projector as projector_mod
+        if not isinstance(want, dict):
+            raise bad("test must be {host, port, password} or {id}")
+        if "id" in want:
+            p = next((x for x in self.settings.data["projectors"] if x["id"] == want["id"]), None)
+            if p is None:
+                raise ApiError(404, "no such projector")
+            host, port, password = p["host"], p["port"], p["password"]
+        else:
+            try:
+                clean = projector_mod.validate({k: want[k] for k in ("host", "port", "password") if k in want})
+            except projector_mod.ProjectorError as e:
+                raise bad(str(e))
+            host, port, password = clean["host"], clean["port"], clean["password"]
+        try:
+            found = projector_mod.probe(host, port, password)
+        except projector_mod.ProjectorError as e:
+            raise bad(str(e))
+        self.log("pvj-web: projector test at %s by device %s (%s) from %s: PJLink %s, Epson control %s"
+                 % (host, (device or {}).get("id"), (device or {}).get("role"), client,
+                    "answers" if found["pjlink"]["ok"] else "no", "answers" if found["epson"]["ok"] else "no"))
+        return {"test": found}
+
+    def _projector_change(self, targets, action, value, device, client):
+        """The journal line for a change (not a status check). A support login's is also in its session's log, by
+        Api.handle (Support.used), as for every route."""
+        names = ", ".join(p["name"] for p in targets)[:120]
+        said = action + ("" if value is None else " %s" % value)
+        self.log("pvj-web: projector %s: %s by device %s (%s) from %s" % (json.dumps(names), said, (device or {}).get("id"), (device or {}).get("role"), client))
+
+    # Through remote support (D84, D99): a helper does not switch a projector off (he cannot see the room, and someone
+    # there may be using it) and does not change its picture settings, which stay after the session.
+    PROJECTOR_REMOTE_DENY = ("off", "brightness", "light", "colour_mode")
+    PROJECTOR_EPSON = ("freeze", "unfreeze", "brightness", "light", "colour_mode")
+
     def projector_action(self, body, device, client):
         """{"id": projector id or "all", "action": one of PROJECTOR_ACTIONS, "background"?: bool}.
         "mute" and "unmute" are picture and sound together; "input" needs one projector and {"input": "31"}, a
         code from that projector's own list; "identify" reads the projector's details again.
         With "background" the commands are sent from a thread of their own and the answer is {"started": true}; OSC
         uses that, so an unplugged projector never delays the next cue."""
+        from . import projector as projector_mod
         self._need_projectors()
         action, pid = body.get("action"), body.get("id", "all")
         if action not in self.PROJECTOR_ACTIONS:
             raise bad("action must be one of: " + ", ".join(self.PROJECTOR_ACTIONS))
         if not isinstance(body.get("background", False), bool):
             raise bad("background must be true or false")
+        if action in self.PROJECTOR_REMOTE_DENY and (self.support.is_remote(client) or (isinstance(device, dict) and device.get("remote"))):
+            self.support.refused(device, "a projector change that is made in the room", detail=action)
+            raise ApiError(403, "switching a projector off and changing its picture settings are done by someone in the room, not through remote support")
         targets = [p for p in self.settings.data["projectors"] if pid == "all" or p["id"] == pid]
         if not targets:
             raise ApiError(404, "no such projector" if pid != "all" else "no projectors added")
+        value = body.get("value")
+        if action in self.PROJECTOR_EPSON:
+            if action not in ("freeze", "unfreeze") and pid == "all":
+                raise bad("choose one projector to change its picture")
+            if not any(projector_mod.epson(p) for p in targets):
+                raise ApiError(409, "freeze and the picture settings need Epson control: edit the projector and choose PJLink and Epson control")
+            targets = [p for p in targets if projector_mod.epson(p)]
+            if action == "brightness" and (isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 255):
+                raise bad("brightness is a whole number from 0 to 255")
+            if action == "light" and value not in ("normal", "eco"):
+                raise bad("light is normal or eco")
+            if action == "colour_mode":
+                cur = ((self.projectors.status(pid).get("picture") or {}).get("colour_mode"))
+                if not isinstance(value, str) or (value not in projector_mod.COLOUR_MODES and value != cur):
+                    raise bad("that is not a colour mode the box knows")
+            if action in ("brightness", "light", "colour_mode"):
+                action = (action, value)
+        elif "value" in body:
+            raise bad("value is only for brightness, light and colour_mode")
         if action == "input":
             if pid == "all":
                 raise bad("choose one projector to switch its input")
@@ -3171,7 +3248,10 @@ class Api:
             if not isinstance(body.get("input"), str) or body["input"] not in known:
                 raise bad("that is not one of this projector's inputs")
             action = ("input", body["input"])
-        self.room.supersede([p["id"] for p in targets], action)     # a scene's step of this kind still to come is dropped: this choice is newer
+        if body["action"] not in self.PROJECTOR_EPSON:
+            self.room.supersede([p["id"] for p in targets], action)     # a scene's step of this kind still to come is dropped: this choice is newer
+        if body["action"] not in ("state", "identify"):
+            self._projector_change(targets, body["action"], value if body["action"] in self.PROJECTOR_EPSON else body.get("input"), device, client)
         if body.get("background"):
             def run():
                 failed = [r["error"] for r in self._projector_run(targets, action).values() if not r["ok"]]
@@ -3186,7 +3266,29 @@ class Api:
 
     PROJECTOR_WAIT = 30.0     # a name lookup is the only unbounded step; nobody waits longer than this
     PROJECTOR_ACTIONS = ("on", "off", "mute", "unmute", "mute_picture", "unmute_picture", "mute_sound", "unmute_sound",
-                         "input", "identify", "state")
+                         "input", "identify", "state") + PROJECTOR_EPSON
+
+    def _projector_picture(self, p, what, value):
+        """Brightness (0 to 255; the projector keeps the nearest step it has, so it may read back a little
+        different), the light (normal or eco) or the colour mode, over Epson control. Raises ProjectorError."""
+        from . import projector as projector_mod
+        esc = self._escvp(p)
+        if what == "brightness":
+            esc.send("BRIGHT %d" % value)
+        elif what == "light":
+            esc.send("LUMINANCE %s" % ("01" if value == "eco" else "00"))
+        else:
+            if self.projectors.status(p["id"]).get("power") != "on":      # a refusal in standby would say nothing of the mode
+                raise projector_mod.ProjectorError("the projector must be on to change its colour mode", "ERR3")
+            try:
+                esc.send("CMODE %s" % value)
+            except projector_mod.ProjectorError as e:
+                if e.code == "ERR":
+                    self.projectors.mode_result(p["id"], value, False)
+                    raise projector_mod.ProjectorError("this projector does not have colour mode %s (it refused it); it is not offered again" % value, "ERR")
+                raise
+            self.projectors.mode_result(p["id"], value, True)
+        return {"ok": True}
 
     def _projector_run(self, targets, action):
         """Send `action` to every target at once; {id: {"ok", "power"?, "pending"?, "error"?}}."""
@@ -3199,6 +3301,11 @@ class Api:
                 if action in ("on", "off"):
                     link.power(action == "on")
                     results[p["id"]] = {"ok": True}
+                elif action in ("freeze", "unfreeze"):
+                    self._escvp(p).send("FREEZE ON" if action == "freeze" else "FREEZE OFF")
+                    results[p["id"]] = {"ok": True}
+                elif isinstance(action, tuple) and action[0] != "input":
+                    results[p["id"]] = self._projector_picture(p, action[0], action[1])
                 elif isinstance(action, tuple):                 # ("input", code); "pending": it is being retried
                     results[p["id"]] = dict(self.projectors.set_input(p, action[1]), ok=True)
                 elif action == "identify":
