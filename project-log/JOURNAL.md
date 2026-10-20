@@ -4,6 +4,11 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-20, the review of #153 (sources, D101 amendment)
+
+- **The review:** no High or Medium; two Lows, fixed on `sources-surfaces`. Shows could offer Source 1 alone on a box with four sources (the state used only what was known of a new player process); it now asks once per process, and the card follows the strip. A sound file sent to Source 2 played black and silent; it is now refused in plain words.
+- **Tests:** 2 new, each break-checked and caught. Local suites OK before the push.
+
 ## 2026-10-20, sources and surfaces, step 1 (`sources-surfaces`, D101)
 
 - **The owner's words:** "start sources and surfaces, step 1: more clip layers and a source per surface on the new renderer."
