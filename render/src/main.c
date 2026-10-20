@@ -6,7 +6,11 @@
 //   two video layers  two libmpv cores (render API), each drawing its clip, with its brightness, zoom, pan,
 //                     rotation, flips and its user shaders (effects, generators), into a texture at the internal
 //                     size. One is on the screen (the front: the socket speaks to it); the other is idle and costs
-//                     nothing, except while a crossfade runs: then it holds the outgoing clip (phase 2, D98)
+//                     nothing, except while a crossfade runs: then it holds the outgoing clip (phase 2, D98). These
+//                     two are source 1
+//   sources 2 to N    one libmpv core each (D101), playing a clip of its own, muted, into a texture of its own at
+//                     the internal size; idle until something is loaded into it, and then it costs nothing. The
+//                     mapping's final pass reads them by name (SOURCEk); without a mapping only source 1 is seen
 //   the compositor    while a crossfade runs, mixes the two textures by real opacity at the internal size, once a
 //                     vblank, and hands the mix to the final pass; otherwise there is no such pass
 //   the final pass    scales the picture to the screen; with a mapping it is the mapping's own OUTPUT shader
@@ -15,7 +19,7 @@
 //
 // Usage: pvj-render --socket=PATH [--drm-device=/dev/dri/cardN] [--drm-connector=NAME] [--drm-mode=WxH@R|N]
 //                   [--detail=LINES|output] [--hwdec=NAME] [--audio-device=NAME] [--fast] [--every-vblank]
-//                   [--headless=WxH] [--frames=N] [--verbose]
+//                   [--sources=N] [--headless=WxH] [--frames=N] [--verbose]
 #define _GNU_SOURCE
 #include "pvj.h"
 #include "json.h"
@@ -80,7 +84,7 @@ static int opt(const char *a, const char *name, const char **val)
 
 static int parse_args(int argc, char **argv, Cfg *c)
 {
-    *c = (Cfg){ .hwdec = "no", .detail = 0 };
+    *c = (Cfg){ .hwdec = "no", .detail = 0, .sources = 1 };
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i], *v;
         if (opt(a, "--socket", &v)) c->socket_path = v;
@@ -103,6 +107,11 @@ static int parse_args(int argc, char **argv, Cfg *c)
         else if (opt(a, "--headless", &v)) {
             if (sscanf(v, "%dx%d", &c->headless_w, &c->headless_h) != 2 || c->headless_w < 16 || c->headless_h < 16
                 || c->headless_w > 7680 || c->headless_h > 4320) { LOG("--headless=WxH"); return -1; }
+        } else if (opt(a, "--sources", &v)) {
+            char *e;
+            long k = strtol(v, &e, 10);
+            if (*e || k < 1 || k > MAX_SOURCES) { LOG("--sources is a number from 1 to %d", MAX_SOURCES); return -1; }
+            c->sources = (int)k;
         } else if (opt(a, "--frames", &v)) c->frames = atoi(v);
         else if (!strcmp(a, "--fast")) c->fast = 1;
         else if (!strcmp(a, "--every-vblank")) c->every_vblank = 1;
@@ -123,11 +132,11 @@ typedef struct {
     int dirty;
     pthread_t events;
     int have_events;
-    int index;                  // 0 or 1 for a video layer, -1 for the text layer
+    int index;                  // 0 or 1 for source 1's layers, k for source k (D101), -1 for the text layer
     int changed, seen;          // its end of a file and change of its output (event thread), and the count drawn for
 } Layer;
 
-static Layer video[LAYERS], text;
+static Layer video[MAX_LAYERS], text;
 
 // libmpv's GL fences. mpv 0.40 and 0.41 make a fence at the end of every mpv_render_context_render
 // (ra_gl_ctx_submit_frame, video/out/opengl/context.c) for a swap that never comes with the render API, so nothing
@@ -253,8 +262,11 @@ static void *event_loop(void *arg)
         if (ev->event_id == MPV_EVENT_LOG_MESSAGE) {
             mpv_event_log_message *m = ev->data;
             size_t n = strlen(m->text);
-            LOG("%s %s: %.*s", i < 0 ? "text" : i == 0 ? "video 0" : "video 1", m->prefix,
-                (int)(n && m->text[n - 1] == '\n' ? n - 1 : n), m->text);
+            char who[24];
+            if (i < 0) snprintf(who, sizeof who, "text");
+            else if (i < LAYERS) snprintf(who, sizeof who, "video %d", i);
+            else snprintf(who, sizeof who, "source %d", i);
+            LOG("%s %s: %.*s", who, m->prefix, (int)(n && m->text[n - 1] == '\n' ? n - 1 : n), m->text);
         }
     }
     return NULL;
@@ -331,7 +343,14 @@ static int layer_open(Layer *l, int index, const Cfg *c, int w, int h)
     } else {
         set(l->h, "hwdec", c->hwdec);
         if (c->fast) set(l->h, "profile", "fast");
-        if (c->audio_device) set(l->h, "audio-device", c->audio_device);
+        if (index >= LAYERS) {
+            // sources 2 to N have no sound (D101): no track is chosen, so no sound output is ever opened, and the
+            // socket may not set aid on them
+            set(l->h, "aid", "no");
+            set(l->h, "ao", "null");
+        } else if (c->audio_device) {
+            set(l->h, "audio-device", c->audio_device);
+        }
     }
     if (mpv_initialize(l->h) < 0) return -1;
     mpv_request_log_messages(l->h, c->verbose ? "info" : "warn");
@@ -523,6 +542,14 @@ static void final_pass(GLuint picture, int text_on)
             glUniform1i(hook_gl.tex_loc[i], 1 + i);
             glUniform2f(hook_gl.tex_size_loc[i], (float)hook_gl.tex_w[i], (float)hook_gl.tex_h[i]);
         }
+        // the other sources (D101), after the file's textures: at most 1 + 8 + 7 units, GLES 3's 16. A source this
+        // run does not have is read as source 1's picture (the panel never sends one; this keeps the pass whole).
+        for (int i = 0; i < hook_gl.nsrc; i++) {
+            int k = hook_gl.src[i];
+            glActiveTexture(GL_TEXTURE1 + hook_gl.ntex + i);
+            glBindTexture(GL_TEXTURE_2D, k <= app.nsources ? video[k].tex : picture);
+            glUniform1i(hook_gl.src_loc[i], 1 + hook_gl.ntex + i);
+        }
     } else {
         glUseProgram(p_scale);
     }
@@ -623,31 +650,32 @@ int main(int argc, char **argv)
 
     // Both video layers are started now; the second plays nothing until a crossfade loads it (an idle libmpv core
     // decodes nothing and is not drawn: its cost is its threads asleep and a few megabytes).
-    if (layer_open(&video[0], 0, &cfg, app.in_w, app.in_h) || layer_open(&video[1], 1, &cfg, app.in_w, app.in_h)
-        || layer_open(&text, -1, &cfg, app.out_w, app.out_h)) {
+    // Sources 2 to N (D101) are started now too, each idle until something is loaded into it.
+    app.nsources = cfg.sources;
+    int nlayers = LAYERS + app.nsources - 1, opened = 0;
+    int bad = 0;
+    for (int i = 0; i < nlayers && !bad; i++, opened++) bad = layer_open(&video[i], i, &cfg, app.in_w, app.in_h) != 0;
+    if (bad || layer_open(&text, -1, &cfg, app.out_w, app.out_h)) {
         LOG("libmpv could not be started");
         layer_close(&text);
-        layer_close(&video[1]);
-        layer_close(&video[0]);
+        for (int i = opened - 1; i >= 0; i--) layer_close(&video[i]);
         out_close();
         return 2;
     }
-    app.layer[0] = video[0].h;
-    app.layer[1] = video[1].h;
+    for (int i = 0; i < nlayers; i++) app.layer[i] = video[i].h;
     app.front = 0;
     app.osd = text.h;
     if (ipc_open(cfg.socket_path, err, sizeof err)) {
         LOG("%s", err);
         layer_close(&text);
-        layer_close(&video[1]);
-        layer_close(&video[0]);
+        for (int i = nlayers - 1; i >= 0; i--) layer_close(&video[i]);
         out_close();
         return 2;
     }
     pthread_t ipc;
     if (pthread_create(&ipc, NULL, ipc_thread, NULL)) { LOG("no socket thread"); return 2; }
-    LOG("drawing %dx%d inside, %dx%d at %.2f Hz out, hwdec %s, socket %s", app.in_w, app.in_h, app.out_w, app.out_h, app.out_hz,
-        cfg.hwdec, cfg.socket_path);
+    LOG("drawing %dx%d inside, %dx%d at %.2f Hz out, %d source%s, hwdec %s, socket %s", app.in_w, app.in_h, app.out_w, app.out_h,
+        app.out_hz, app.nsources, app.nsources == 1 ? "" : "s", cfg.hwdec, cfg.socket_path);
 
     // A picture goes out at every vblank, whether or not the clip has a new frame: the compositor runs at the output's
     // rate (shaders, crossfades and overlays move between a clip's frames). out_present queues this flip and returns
@@ -673,7 +701,7 @@ int main(int argc, char **argv)
         if (app.hook_pending) take_hook();
         Layer *front = &video[fi], *back = &video[1 - fi];
         if (fi != was_front) { front->dirty = 1; was_front = fi; }
-        for (int i = 0; i < LAYERS; i++) {
+        for (int i = 0; i < nlayers; i++) {
             // every layer's update is taken at every turn (libmpv asks for that), whether or not it is drawn
             uint64_t uv = mpv_render_context_update(video[i].rc);
             if (uv & MPV_RENDER_UPDATE_FRAME) video[i].dirty = 1;
@@ -704,12 +732,23 @@ int main(int argc, char **argv)
             layer_render(front);
             front->dirty = 0;
             app.drawn++;
+            __atomic_add_fetch(&app.layer_drawn[fi], 1, __ATOMIC_RELAXED);
         }
         if (phase != FADE_OFF && back->dirty) {
             reset_gl();
             layer_render(back);
             back->dirty = 0;
             app.back_drawn++;
+            __atomic_add_fetch(&app.layer_drawn[1 - fi], 1, __ATOMIC_RELAXED);
+        }
+        // Sources 2 to N (D101): each converts at most one clip frame a turn, and only a new one. An idle source
+        // has none (it is drawn once more as it goes idle, which gives its empty picture), so it costs nothing.
+        for (int i = LAYERS; i < nlayers; i++) {
+            if (!video[i].dirty) continue;
+            reset_gl();
+            layer_render(&video[i]);
+            video[i].dirty = 0;
+            __atomic_add_fetch(&app.layer_drawn[i], 1, __ATOMIC_RELAXED);
         }
         if (text_on && text.dirty) {
             reset_gl();
@@ -773,6 +812,8 @@ int main(int argc, char **argv)
         if (out_present()) { failed = 1; break; }
         mpv_render_context_report_swap(front->rc);
         if (phase != FADE_OFF) mpv_render_context_report_swap(back->rc);
+        for (int i = LAYERS; i < nlayers; i++)
+            if (!__atomic_load_n(&app.idle[i], __ATOMIC_ACQUIRE)) mpv_render_context_report_swap(video[i].rc);
         if (text_on) mpv_render_context_report_swap(text.rc);
         presented++;
         if (cfg.frames > 0 && presented >= cfg.frames) break;
@@ -786,8 +827,7 @@ int main(int argc, char **argv)
     // window is done on the render thread): libmpv's queue for it is still served until they have all ended.
     double until = now_s() + 5.0;
     while (!ipc_finished() && now_s() < until) {
-        mpv_render_context_update(video[0].rc);
-        mpv_render_context_update(video[1].rc);
+        for (int i = 0; i < nlayers; i++) mpv_render_context_update(video[i].rc);
         mpv_render_context_update(text.rc);
         struct timespec ts = { 0, 10 * 1000 * 1000 };
         nanosleep(&ts, NULL);
@@ -802,8 +842,7 @@ int main(int argc, char **argv)
     ipc_close();
     if (have_hook) hookgl_free(&hook_gl);
     layer_close(&text);
-    layer_close(&video[1]);
-    layer_close(&video[0]);
+    for (int i = nlayers - 1; i >= 0; i--) layer_close(&video[i]);
     glDeleteFramebuffers(1, &mix_fbo);
     glDeleteTextures(1, &mix_tex);
     out_close();
