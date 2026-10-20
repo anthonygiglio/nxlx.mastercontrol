@@ -264,6 +264,8 @@ class Api:
         self._care_busy = None    # "an import" or "a factory reset" while boxcare runs one (set and read under _import_lock)
         from . import mapper as mapper_mod
         self.mapper = mapper_mod.Engine(self)
+        from . import overlay as overlay_mod
+        self.masks = overlay_mod.Masks(self)                       # the masks over the video, combined in a worker (D100)
         from . import shaderlive as shaders_mod, vibes as vibes_mod
         self.shaders = shaders_mod.LiveEngine(self)                 # ISF shader sources (see shaders.py, shaderlive.py)
         self.vibes = vibes_mod.Vibes(self, self.shaders)            # the endless rotation; its thread starts on demand
@@ -2859,64 +2861,93 @@ class Api:
     # --- a picture over the video ---------------------------------------------------
     def apply_overlay(self):
         """Make the screen match settings["overlay"]. Called when it changes and when the player restarts (a restart
-        loses what was drawn). Returns the state. Raises ApiError when the picture cannot be shown."""
-        from . import overlay as overlay_mod
-        cfg = self.settings.data["overlay"]
-        player = self.player
-        try:
-            player.overlay_remove(overlay_mod.OVERLAY_ID)
-        except PlayerError:
-            pass
-        if not cfg["on"] or not cfg["file"]:
-            return self.overlay_state()
-        src = self.resolve_media(cfg["file"])
-        size = self._player_call(player.osd_size)
-        if size is None:
-            raise ApiError(503, "the player has no screen size yet")
-        out = paths.overlay_file(player.rundir)
-        try:
-            overlay_mod.convert(src, size[0], size[1], out, getattr(player, "mpv_bin", "mpv"))
-        except overlay_mod.OverlayError as e:
-            raise ApiError(409, str(e))
-        self._player_call(player.overlay_file, overlay_mod.OVERLAY_ID, out, size[0], size[1])
+        loses what was drawn). The masks are combined in a worker (pvj/overlay.py, D100): this returns at once with
+        the state, whose "status" says "combining" until the picture is on the screen."""
+        self.masks.apply()
         return self.overlay_state()
 
     def overlay_state(self):
+        from . import overlay as overlay_mod
         cfg = self.settings.data["overlay"]
-        return {"file": cfg["file"], "on": cfg["on"],
-                "choices": [n for n in self.media_list() if n.lower().endswith(".png")]}
+        choices = [n for n in self.media_list() if n.lower().endswith(".png")]
+        masks = [dict(m, missing=m["file"] not in choices) for m in overlay_mod.masks_of(cfg)]
+        return {"file": overlay_mod.first_on(masks), "on": bool(cfg.get("on")), "masks": masks,
+                "max": overlay_mod.MAX_MASKS, "status": dict(self.masks.status), "choices": choices}
 
     def get_overlay(self, body, device, client):
         return self.overlay_state()
 
     def set_overlay(self, body, device, client):
-        """{"on": bool, "file": "logo.png"}: a PNG from the media folder over the video, fitted to the screen."""
-        cfg = dict(self.settings.data["overlay"])
-        if "file" in body:
-            f = body["file"]
-            if f != "" and (not valid_name(f) or not f.lower().endswith(".png")):
+        """The masks over the video (D100): PNGs from the media folder, combined in their order, fitted to the screen.
+
+        {"add": "a.png"}, {"remove": "a.png"}, {"mask": "a.png", "mask_on": bool}, {"mask": "a.png", "move": "up" or
+        "down"}, and the whole overlay's {"on": bool} or {"toggle": true}. {"file": "logo.png"} is the one picture of
+        before: it becomes the first mask, on ("" takes the first mask out). Several may be sent together; they are
+        done in that order: file, add, remove, mask, on."""
+        from . import overlay as overlay_mod
+
+        def png(key):
+            f = body[key]
+            if not valid_name(f) or not f.lower().endswith(".png"):
                 raise bad("choose a PNG picture from the media folder")
-            cfg["file"] = f
+            return f
+
+        def find(key):
+            f = body[key]
+            i = next((i for i, m in enumerate(masks) if m["file"] == f), None)
+            if not isinstance(f, str) or i is None:
+                raise ApiError(404, "that picture is not in the list of masks")
+            return i
+        with self.settings.lock:
+            cfg = dict(self.settings.data["overlay"])
+        masks = [dict(m) for m in overlay_mod.masks_of(cfg)]
+        on = bool(cfg.get("on"))
+        if "file" in body:
+            if body["file"] == "":
+                masks = masks[1:]
+            else:
+                f = png("file")
+                self.resolve_media(f)                                   # 404 for a file that is not there
+                rest = [m for m in masks if m["file"] != f]
+                masks = [{"file": f, "on": True}] + (rest[1:] if len(rest) == len(masks) else rest)
+        if "add" in body:
+            f = png("add")
+            if any(m["file"] == f for m in masks):
+                raise ApiError(409, "%s is in the list already" % f)
+            if len(masks) >= overlay_mod.MAX_MASKS:
+                raise bad("up to %d masks; remove one first" % overlay_mod.MAX_MASKS)
+            self.resolve_media(f)
+            masks.append({"file": f, "on": True})
+        if "remove" in body:
+            del masks[find("remove")]
+        if "mask" in body:
+            i = find("mask")
+            if "mask_on" not in body and "move" not in body:
+                raise bad("send mask_on or move with mask")
+            if "mask_on" in body:
+                if not isinstance(body["mask_on"], bool):
+                    raise bad("mask_on must be true or false")
+                masks[i]["on"] = body["mask_on"]
+            if "move" in body:
+                j = {"up": i - 1, "down": i + 1}.get(body["move"]) if isinstance(body["move"], str) else None
+                if j is None:
+                    raise bad("move must be up or down")
+                if 0 <= j < len(masks):
+                    masks[i], masks[j] = masks[j], masks[i]
         if body.get("toggle") is True and "on" not in body:     # a controller's button (D75): the other state
-            body = dict(body, on=not cfg["on"])
+            body = dict(body, on=not on)
         if "on" in body:
             if not isinstance(body["on"], bool):
                 raise bad("on must be true or false")
-            cfg["on"] = body["on"]
-        if cfg["on"] and not cfg["file"]:
-            raise bad("choose a picture first")
-        previous = self.settings.data["overlay"]
+            if body["on"] and not masks:
+                raise bad("choose a picture first")
+            on = body["on"]
+        if not masks:
+            on = False                              # the last mask taken out: nothing is left to show
         with self.settings.lock:
-            self.settings.data["overlay"] = cfg
-        try:
-            state = self.apply_overlay()
-        except ApiError:
-            with self.settings.lock:
-                self.settings.data["overlay"] = previous
-            raise
-        with self.settings.lock:
+            self.settings.data["overlay"] = overlay_mod.stored(masks, on)
             self.settings.save()
-        return state
+        return self.apply_overlay()
 
     def get_health(self, body, device, client):
         out = self.health.report()

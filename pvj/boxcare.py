@@ -51,7 +51,7 @@ from urllib.parse import unquote
 from . import dmx as dmx_mod, midi as midi_mod, ndi as ndi_mod, osc as osc_mod, projector as projector_mod, streams as streams_mod
 from . import mapper as mapper_mod, scheduler as scheduler_mod, sync as sync_mod, themes as themes_mod
 from . import autostart as autostart_mod, room as room_mod, shaderlive as shaderlive_mod, shaders as shaders_mod
-from . import render as render_mod, transitions as transitions_mod
+from . import render as render_mod, transitions as transitions_mod, overlay as overlay_mod
 from .api import ApiError, MEDIA_EXTENSIONS, valid_name
 from .settings import SettingsError, default_control, default_settings, migrate
 
@@ -358,9 +358,23 @@ def check_overlay(v, care):
     if not isinstance(name, str):
         raise ValueError("file must be text")
     out = {"file": _media_name(name, "the picture", (".png",)), "on": _flag(v.get("on", False), "on")}
-    if out["on"] and not out["file"]:
+    if "masks" in v:                            # the list of masks (D100); a file from before has its one picture only
+        if not isinstance(v["masks"], list) or len(v["masks"]) > overlay_mod.MAX_MASKS:
+            raise ValueError("masks must be a list of up to %d" % overlay_mod.MAX_MASKS)
+        seen = set()
+        for m in v["masks"]:
+            if not isinstance(m, dict) or not isinstance(m.get("file"), str):
+                raise ValueError("a mask needs a file")
+            _media_name(m["file"], "a mask", (".png",))
+            _flag(m.get("on", True), "a mask's on")
+            if not m["file"] or m["file"] in seen:
+                raise ValueError("a mask is named twice or not at all")
+            seen.add(m["file"])
+        out["masks"] = v["masks"]
+    masks = overlay_mod.masks_of(out)
+    if out["on"] and not masks:
         raise ValueError("a picture that is on needs a file")
-    return out
+    return overlay_mod.stored(masks, out["on"])
 
 
 def _projector_details(v):

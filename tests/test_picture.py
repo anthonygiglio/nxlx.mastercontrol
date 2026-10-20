@@ -4,6 +4,7 @@ import os
 import shutil
 import struct
 import tempfile
+import time
 import unittest
 import zlib
 from unittest import mock
@@ -61,22 +62,35 @@ class OverlayApiTest(ServerBase):
         self.full = self.call("POST", "/api/pair", {"pin": self.pin, "name": "t"})[1]["token"]
         self.converted = []
 
-        def fake_convert(src, w, h, out, mpv_bin="mpv", timeout=30):
+        with open(os.path.join(self.media, "logo.png"), "wb") as f:
+            f.write(overlay.PNG_MAGIC)
+
+        def fake_convert(src, w, h, out, mpv_bin="mpv", timeout=30, cancelled=None):
             self.converted.append((os.path.basename(src), w, h))
             open(out, "wb").close()
             return out
         p = mock.patch("pvj.overlay.convert", fake_convert)
         p.start()
         self.addCleanup(p.stop)
+        self.addCleanup(self.settled)
 
     def post(self, body, token=None):
         return self.call("POST", "/api/overlay", body, token=token or self.full)
 
+    def settled(self):
+        """The masks are combined in a worker (D100): wait until it is done."""
+        end = time.monotonic() + 10
+        while time.monotonic() < end and (self.api.masks.busy() or self.api.masks.status["state"] == "combining"):
+            time.sleep(0.01)
+        return self.api.masks.status
+
     def test_on_converts_at_the_screen_size_and_draws_it_off_removes_it(self):
         st, body, _ = self.post({"file": "logo.png", "on": True})
         self.assertEqual((st, body["on"], body["choices"]), (200, True, ["logo.png"]))
+        self.assertEqual(self.settled()["state"], "on")
         self.assertEqual(self.converted, [("logo.png", 1920, 1080)])
-        self.assertIn(("overlay_file", overlay.OVERLAY_ID, os.path.join(self.rundir, "overlay.bgra"), 1920, 1080), self.player.calls)
+        drawn = [c for c in self.player.calls if c[0] == "overlay_file"]
+        self.assertEqual([(c[1], os.path.dirname(c[2]), c[3], c[4]) for c in drawn], [(overlay.OVERLAY_ID, self.rundir, 1920, 1080)])
         self.assertTrue(Settings(self.settings.path).load()["overlay"]["on"])
         st, body, _ = self.post({"on": False})
         self.assertEqual(self.player.calls[-1], ("overlay_remove", overlay.OVERLAY_ID))
@@ -87,11 +101,14 @@ class OverlayApiTest(ServerBase):
         self.assertEqual(self.post({"file": "missing.png", "on": True})[0], 404)
         self.assertFalse(self.settings.data["overlay"]["on"])                 # a failed attempt leaves it as it was
 
-    def test_a_failed_conversion_keeps_the_last_setting(self):
+    def test_a_failed_conversion_says_so_in_the_status(self):
+        # D100: the picture is made in a worker, so the request no longer waits for it; the status says what failed
         with mock.patch("pvj.overlay.convert", side_effect=overlay.OverlayError("the picture could not be read")):
             st, body, _ = self.post({"file": "logo.png", "on": True})
-        self.assertEqual((st, "could not be read" in body["error"]), (409, True))
-        self.assertFalse(self.settings.data["overlay"]["on"])
+            self.assertEqual(st, 200)
+            status = self.settled()
+        self.assertEqual((status["state"], "could not be read" in status["message"]), ("error", True))
+        self.assertNotIn("overlay_file", [c[0] for c in self.player.calls])
 
     def test_roles(self):
         view = self.call("POST", "/api/devices/invite", {"name": "g", "role": "view"}, token=self.full)[1]["token"]
@@ -111,8 +128,10 @@ class OverlayApiTest(ServerBase):
         self.player.ipc = Ipc
         a = autostart.Autostart(self.api, self.settings, log=lambda *_: None)
         a.tick()
+        self.settled()
         pid[0] = 2
         a.tick()
+        self.settled()
         self.assertEqual(len(self.converted), 2)
         self.player.ipc = real_ipc
 
