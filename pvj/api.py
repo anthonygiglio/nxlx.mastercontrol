@@ -1355,8 +1355,12 @@ class Api:
             raise bad("source must be 1 to %d" % mapper_mod.MAX_SOURCES)
         return k
 
+    def _source_count(self):
+        fn = getattr(self.player, "sources", None)        # a player of before D101 (or a stand-in) has Source 1 only
+        return self._player_call(fn) if fn is not None else 1
+
     def _need_source(self, k):
-        n = self._player_call(self.player.sources)
+        n = self._source_count()
         if n < 2:
             raise ApiError(409, "Source %d needs the New renderer (System > Renderer); classic mpv has Source 1 only" % k)
         if k > n:
@@ -1364,7 +1368,10 @@ class Api:
 
     def _source_rows(self):
         """The sources as the panel shows them: a clip by its file name only, never a path."""
-        rows = self._player_call(self.player.sources_state)
+        fn = getattr(self.player, "sources_state", None)
+        rows = self._player_call(fn) if fn is not None else [{"source": 1, "idle": not self._player_call(self.player.status).get("path"),
+                                                              "path": self._player_call(self.player.status).get("path"),
+                                                              "height": None, "pause": False}]
         return [dict(r, path=None, name=os.path.basename(r["path"]) if r.get("path") else None) for r in rows]
 
     def play_to_source(self, body, k, device, client):

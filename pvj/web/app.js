@@ -495,6 +495,9 @@
       if (!pad.file && !held && !src && !cue) return say(canOp() ? 'Empty pad. Tap "Edit pads" to assign a clip, a shader, an NDI source or a render cue.' : 'Empty pad.', true);
       if (src && !can('live')) return say(guestsLocked() ? LOCKED_TEXT : NDI_PAD_GUEST, true);     // never sent: the box refuses a guest an NDI pad (D80)
       if (cue && !can('live')) return say(guestsLocked() ? LOCKED_TEXT : RENDER_PAD_GUEST, true);     // never sent: the box refuses it to a guest (D94)
+      // Play to (D101): with another source chosen, the pad's clip goes there; the box refuses anything but a clip
+      // in plain words (a shader, an NDI source and a render cue play on Source 1 in this step)
+      if (S.playTo > 1 && canOp()) return playToSource({ pad: [bank, index] }, S.playTo, pad.label || pad.file || 'the pad');
       if (cue && !cue.show) return act('POST', '/api/play', { pad: [bank, index] }, function () { say('Cue sent to ' + padRenderName(cue) + ' (OSC has no reply).'); });
       if (canGuest()) return guestSend('/api/play', { pad: [bank, index] }, '', b);
       if (!can('live')) return say(guestsLocked() ? LOCKED_TEXT : 'This device can watch only.', true);
@@ -526,9 +529,88 @@
     if (b.textContent !== text) b.textContent = text;
     b.setAttribute('aria-label', fade === 'out' ? 'Fade in (the picture is faded out)' : fade === 'in' ? 'Fade in (fading in now)' : text);
   }
+  // ---- sources (D101) ----------------------------------------------------
+  // Sources 2 and up are clip layers of the New renderer beside the player's own picture (Source 1); the mapping
+  // chooses which one each surface shows. A play to one is a cut, with no sound.
+  function playToSource(body, k, what) {
+    return act('POST', '/api/play', Object.assign({ source: k }, body), function (r) {
+      say('Source ' + k + ' plays ' + (r.playing || what) + (r.warning ? ': ' + r.warning : '.'));
+      sourcesSeen(null);
+    });
+  }
+  // How many sources the box has (GET /api/sources), asked when the pads or the mapping are drawn; the pads are
+  // drawn again only when the number changes. A box without them (classic) has one, and no Play to is shown.
+  function sourcesSeen(data) {
+    if (data) {
+      var n = data.count || 1, was = S.sourceCount || 1;
+      S.sourceCount = n;
+      if (S.playTo > n) S.playTo = 1;
+      if (n !== was && document.getElementById('pads')) redrawPart('pads');
+      return;
+    }
+    if (!canOp()) return;
+    api('GET', '/api/sources').then(function (r) { if (r.ok) sourcesSeen(r.data); });
+  }
+  function playToRow() {
+    var n = S.sourceCount || 1;
+    if (!canOp() || n < 2) return null;
+    var choices = []; for (var k = 1; k <= n; k++) choices.push(k);
+    var pick = h('select', { class: 'text-input', id: 'playto', 'aria-label': 'Play the pads to' }, choices.map(function (k) {
+      return h('option', { value: String(k), text: 'Source ' + k + (k === 1 ? ' (the player)' : ''), selected: k === (S.playTo || 1) });
+    }));
+    pick.addEventListener('change', function () { S.playTo = +pick.value; });
+    return h('div', { class: 'row', id: 'playtorow' }, h('span', { class: 'k', text: 'Play to' }), pick,
+      h('span', { class: 'hint grow', text: 'Source 1 is what plays as always. A clip pad sent to another source shows on the surfaces that show it (Projection mapping).' }));
+  }
+  function sourcesCard() {
+    var body = h('div', { class: 'list', id: 'srclist' }, h('div', { class: 'hint', text: 'Loading...' }));
+    var card = h('div', { class: 'card', id: 'mapsources' }, h('div', { class: 'k', text: 'Sources' }), body);
+    var timer = null, chosen = {};          // the clip chosen for each source survives the strip's redraws
+    function load() {
+      clearTimeout(timer);
+      api('GET', '/api/sources').then(function (r) {
+        if (!card.isConnected && card.dataset.shown) return;            // the page was left: nothing more is asked
+        card.dataset.shown = '1';
+        if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'hint', text: r.data.error || 'Not available' })); return; }
+        sourcesSeen(r.data);
+        keepCursor(body, function () { fill(r.data); });
+        timer = setTimeout(function () { if (card.isConnected) load(); }, 4000);
+      });
+    }
+    function fill(d) {
+      body.textContent = '';
+      if (d.count < 2) {
+        body.appendChild(h('div', { class: 'hint', id: 'srcclassic', text: 'Sources 2 and up need the New renderer (Setup > Renderer). The classic player has Source 1 only: every surface shows it.' }));
+        return;
+      }
+      var clips = (S.media || []).filter(function (n) { return /\.(mp4|mkv|mov|avi|webm|m4v|mpg|mpeg|ts|wmv|png|jpe?g|gif|bmp|webp)$/i.test(n); });
+      d.sources.forEach(function (x) {
+        var k = x.source, what = x.idle ? 'nothing' : (x.name || 'something') + (x.height ? ' (' + x.height + 'p)' : '');
+        var row = h('div', { class: 'item', id: 'src-' + k }, h('span', { class: 'grow', id: 'srcnow-' + k, text: 'Source ' + k + ': ' + what + (k === 1 ? ' (the player: Play and Stop)' : '') }));
+        if (k > 1) {
+          var pick = h('select', { class: 'text-input', id: 'srcclip-' + k, 'aria-label': 'Clip for Source ' + k },
+            clips.map(function (n) { return h('option', { value: n, text: n, selected: n === chosen[k] }); }));
+          pick.addEventListener('change', function () { chosen[k] = pick.value; });
+          row.appendChild(h('span', { class: 'row' }, pick,
+            h('button', { class: 'btn small', id: 'srcplay-' + k, text: 'Play', disabled: !clips.length, onclick: function () {
+              playToSource({ file: pick.value }, k, pick.value).then(load);
+            } }),
+            h('button', { class: 'btn small', id: 'srcstop-' + k, text: 'Stop', disabled: x.idle, onclick: function () {
+              act('POST', '/api/sources', { source: k, action: 'stop' }, function () { say('Source ' + k + ' stopped.'); load(); });
+            } })));
+        }
+        body.appendChild(row);
+      });
+      if (d.warning) body.appendChild(h('div', { class: 'hint warn', id: 'srcwarn', role: 'status', text: 'A source plays a clip of more than 720 lines while two others play: ' + d.warning + '.' }));
+      body.appendChild(h('div', { class: 'hint', text: 'A surface shows the source chosen under Shows. Sources 2 and up have no sound and take a clip at a cut; the crossfade is Source 1\'s.' }));
+    }
+    load();
+    return card;
+  }
   function live() {
     var bank = S.banks[S.bank];
     var pads = h('div', { class: 'pads', id: 'pads' });
+    if (canOp() && !S.sourcesAsked) { S.sourcesAsked = true; sourcesSeen(null); }
     (bank ? bank.pads : []).forEach(function (p, i) { pads.appendChild(padButton(S.bank, i, p)); });
     // Play > Pads (D65, D72): the pads with their banks, the big Vibes button above them as it was on Live, how one
     // clip gives way to the next (transitionCard(), which was on Shape > Picture), and the snapshot. What Live also
@@ -542,6 +624,7 @@
         return h('button', { class: 'btn' + (i === S.bank ? ' on' : ''), text: b.name.replace('Bank ', 'Bank '), 'aria-pressed': i === S.bank ? 'true' : 'false',
           onclick: function () { S.bank = i; redrawPart('pads'); } });
       })),
+      playToRow(),
       pads,
       canOp() ? h('button', { class: 'btn small', text: S.editing ? 'Done editing' : 'Edit pads', onclick: function () { S.editing = !S.editing; redrawPart('pads'); } }) : null,
       transitionCard(),
@@ -1143,6 +1226,7 @@
       body.appendChild(h('div', { class: 'card' }, h('div', { class: 'k', text: 'Projection mapping (beta)' }), h('div', { class: 'hint', id: 'mapmsg', text: 'Off. Switch it on under Setup, Projection mapping (beta).' })));
       return card;
     }
+    if (canOp()) card.appendChild(sourcesCard());        // what each source plays (D101): the Operator's, as play
     var full = canOp(), d = null, canvas = null, drag = null, lastSend = 0, waiting = null;      // the mapping is the Operator's (D80)
     // Answers can arrive out of order (the first state read can land after a change already drawn): each request is
     // numbered, and an answer older than one already drawn is not drawn.
@@ -1360,7 +1444,7 @@
       var list = h('div', { class: 'list', id: 'maplist' });
       d.surfaces.forEach(function (x, i) {
         list.appendChild(h('div', { class: 'item map-entry' + (x.id === d.edit.selected ? ' on' : '') },
-          h('button', { class: 'linkish', text: x.name + ' (' + x.type + (x.type === 'grid' ? ' ' + x.cols + 'x' + x.rows : '') + ')' + (x.on ? '' : ', hidden'), 'aria-label': 'Choose ' + x.name,
+          h('button', { class: 'linkish', text: x.name + ' (' + x.type + (x.type === 'grid' ? ' ' + x.cols + 'x' + x.rows : '') + ')' + (x.source > 1 ? ', Source ' + x.source : '') + (x.on ? '' : ', hidden'), 'aria-label': 'Choose ' + x.name,
             onclick: function () { send({ action: 'edit', selected: x.id }); } }),
           h('span', { class: 'row' },
             h('button', { class: 'btn small', text: '↑', 'aria-label': 'Bring ' + x.name + ' forward', disabled: i === 0, onclick: function () { send({ action: 'order', id: x.id, dir: 'up' }); } }),
@@ -1394,6 +1478,18 @@
         var nm = h('input', { class: 'text-input', id: 'mapname', 'aria-label': 'Surface name', maxlength: 40, value: s.name });
         panel.appendChild(h('div', { class: 'row' }, nm, h('button', { class: 'btn small', id: 'maprename', text: 'Rename',
           onclick: function () { send({ action: 'rename', id: s.id, name: nm.value.trim() }); } })));
+        // What the surface shows (D101): Source 1, the player's picture, or on the New renderer another source.
+        // A source the box does not run now stays chosen (the mapping outlives a switch of the renderer) and is said.
+        var have = Math.max(1, d.sources || 1), mine = s.source || 1, choices = [];
+        for (var k = 1; k <= Math.max(have, mine); k++) choices.push(k);
+        var shows = h('select', { class: 'text-input', id: 'mapsource', 'aria-label': 'What ' + s.name + ' shows' }, choices.map(function (k) {
+          return h('option', { value: String(k), text: 'Source ' + k + (k === 1 ? ' (the player)' : ''), selected: k === mine });
+        }));
+        shows.addEventListener('change', function () { send({ action: 'source', id: s.id, source: +shows.value }); });
+        panel.appendChild(h('div', { class: 'row' }, h('span', { class: 'k', text: 'Shows' }), shows));
+        if (mine > have) panel.appendChild(h('div', { class: 'hint warn', id: 'mapsourcenote', role: 'status', text: 'Source ' + mine + ' needs the New renderer' +
+          (have > 1 ? ' with ' + mine + ' sources (it runs ' + have + ')' : '') + ': until then this surface shows Source 1.' }));
+        else if (have < 2) panel.appendChild(h('div', { class: 'hint', id: 'mapsourcenote', text: 'Sources 2 and up need the New renderer (Setup > Renderer).' }));
         if (s.type === 'grid') {
           var sizes = [1, 2, 3, 4, 5, 6, 7, 8];
           var cols = h('select', { class: 'text-input', id: 'mapcols', 'aria-label': 'Columns' }, sizes.map(function (v) { return h('option', { value: String(v), text: v + ' columns', selected: v === s.cols }); }));

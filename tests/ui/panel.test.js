@@ -2038,6 +2038,95 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.click(`.map-entry:has-text("${chosen.name}") >> button:has-text("Remove")`);
     await page.waitForFunction(() => document.querySelectorAll('.map-entry').length === 1);
     await page.waitForSelector('.map-entry:has-text("Quad")');
+    // Sources (D101). The harness's player is classic mpv: the chosen surface's Shows offers Source 1 alone and says
+    // what the others need; the strip says the same.
+    await page.waitForSelector('#mapsource');
+    assert.deepStrictEqual(await page.$$eval('#mapsource option', (os) => os.map((o) => o.value)), ['1'], 'classic: Source 1 only');
+    assert.match(await page.textContent('#mapsourcenote'), /need the New renderer/);
+    await page.waitForSelector('#mapsources #srcclassic');
+    // A box on the New renderer with four sources (its answers changed on the way, as the harness has no pvj-render):
+    // Shows offers Source 1 to 4, and a choice is the surface's own, kept by the box and shown in the list.
+    const withSources = (n) => async (route) => {
+      const res = await route.fetch();
+      const data = await res.json();
+      data.sources = n;
+      await route.fulfill({ response: res, json: data });
+    };
+    const four = withSources(4);
+    await page.route('**/api/mapper', four);
+    const quadId = (await get('/api/mapper')).surfaces[0].id;
+    await markMap();
+    await page.click('.map-entry:has-text("Quad") >> button.linkish');
+    await drawnAgain();
+    assert.deepStrictEqual(await page.$$eval('#mapsource option', (os) => os.map((o) => o.value)), ['1', '2', '3', '4'], 'four sources: Shows offers them all');
+    await markMap();
+    await page.selectOption('#mapsource', '3');
+    await drawnAgain();
+    assert.strictEqual((await get('/api/mapper')).surfaces[0].source, 3, 'the box keeps the surface on Source 3');
+    await page.waitForSelector('.map-entry:has-text("Source 3")');
+    assert.strictEqual(await page.inputValue('#mapsource'), '3');
+    // back on the classic answers: Source 3 stays chosen and the card says it needs the New renderer
+    await page.unroute('**/api/mapper', four);
+    await markMap();
+    await page.click('.map-entry:has-text("Quad") >> button.linkish');
+    await drawnAgain();
+    assert.strictEqual(await page.inputValue('#mapsource'), '3', 'a source the box does not run stays chosen');
+    assert.match(await page.textContent('#mapsourcenote'), /^Source 3 needs the New renderer: until then this surface shows Source 1\.$/);
+    await markMap();
+    await page.selectOption('#mapsource', '1');
+    await drawnAgain();
+    assert.strictEqual((await get('/api/mapper')).surfaces[0].source, undefined, 'Source 1 is stored as no key, as before D101');
+    assert.strictEqual(await post('/api/mapper', { action: 'source', id: quadId, source: 9 }), 400, 'the box refuses a source past 8');
+    // The Sources strip with four sources: what each plays, Play from the Library to a source, Stop, and the warning
+    // about load. The box's answers are made up here; what the panel sends is checked.
+    const sourcesAnswer = {
+      count: 4, cap: 4, warning: 'this may drop frames on this box; 720p clips are lighter',
+      sources: [{ source: 1, idle: false, name: 'intro.mkv', height: 180, pause: false }, { source: 2, idle: true, name: null, height: null, pause: false },
+        { source: 3, idle: false, name: 'big.mkv', height: 1080, pause: false }, { source: 4, idle: false, name: 'tunnel.mkv', height: 720, pause: false }],
+    };
+    const sent = [];
+    const sourcesRoute = async (route) => {
+      const req = route.request();
+      if (req.method() === 'POST') sent.push(JSON.parse(req.postData()));
+      await route.fulfill({ json: sourcesAnswer });
+    };
+    const playRoute = async (route) => {
+      const b = JSON.parse(route.request().postData());
+      if (!b.source) return route.continue();
+      sent.push(b);
+      await route.fulfill({ json: { playing: b.file || 'intro.mkv', source: b.source, warning: 'this may drop frames on this box; 720p clips are lighter' } });
+    };
+    await page.route('**/api/sources', sourcesRoute);
+    await page.route('**/api/play', playRoute);
+    await page.waitForSelector('#srcnow-3:text-is("Source 3: big.mkv (1080p)")', { timeout: 10000 });
+    assert.strictEqual(await page.textContent('#srcnow-2'), 'Source 2: nothing');
+    assert.match(await page.textContent('#srcwarn'), /this may drop frames on this box; 720p clips are lighter/);
+    assert.strictEqual(await page.isDisabled('#srcstop-2'), true, 'an idle source has nothing to stop');
+    await page.click('#srcstop-3');
+    await page.waitForFunction(() => /Source 3 stopped/.test(document.getElementById('msg').textContent));
+    await page.selectOption('#srcclip-2', 'tunnel.mkv');
+    await page.click('#srcplay-2');
+    await page.waitForFunction(() => /Source 2 plays tunnel\.mkv: this may drop frames on this box; 720p clips are lighter/.test(document.getElementById('msg').textContent));
+    assert.deepStrictEqual(sent.slice(0, 2), [{ source: 3, action: 'stop' }, { source: 2, file: 'tunnel.mkv' }]);
+    // The pads' Play to: Source 1 by default; with Source 2 chosen a pad's clip goes there
+    assert.strictEqual(await post('/api/pads', { bank: 0, index: 11, label: 'To a source', file: 'intro.mkv' }), 200);
+    await page.reload();
+    await go(page, 'play/pads');
+    await page.waitForSelector('#playto');
+    assert.strictEqual(await page.inputValue('#playto'), '1', 'the pads play to Source 1 unless another is chosen');
+    assert.deepStrictEqual(await page.$$eval('#playto option', (os) => os.map((o) => o.value)), ['1', '2', '3', '4']);
+    await page.selectOption('#playto', '2');
+    await page.click('#pads button[data-pad="11"]');
+    await page.waitForFunction(() => /Source 2 plays intro\.mkv: this may drop frames/.test(document.getElementById('msg').textContent));
+    assert.deepStrictEqual(sent[sent.length - 1], { source: 2, pad: [0, 11] });
+    await page.unroute('**/api/sources', sourcesRoute);
+    await page.unroute('**/api/play', playRoute);
+    assert.strictEqual(await post('/api/pads', { bank: 0, index: 11, label: '', file: '' }), 200);
+    // On the harness's classic player the box itself refuses a play to Source 2, in plain words
+    assert.strictEqual(await post('/api/play', { file: 'intro.mkv', source: 2 }), 409);
+    await page.reload();
+    await sys('Projection mapping');
+    await page.waitForSelector('.map-entry:has-text("Quad")');
     await page.click('#mapon');
     await page.waitForSelector('#mapstatus:has-text("Mapping is on")', { timeout: 20000 });
     if (shots) await page.screenshot({ path: path.join(shots, '7-mapper.png'), fullPage: true });
