@@ -89,6 +89,10 @@ inside; a short window keeps the strip.
 1280 x 800 is also inside the laptop range; it shows the strip with More still there (Fade folds at 1280, the 10 s
 buttons at 1440). It is a useful check, not a frame of its own.
 
+The widths are the panel's, not the window's. Measured in the design sandbox (D103) on Windows: Chrome draws a classic
+15 px scrollbar inside a 1440 window, so the panel is 1425 wide and the strip still shows More. On a Mac the scrollbars
+float over the page, so a 1440 window is a 1440 panel. A Figma frame has no scrollbar: 1440 there is the full strip.
+
 ## 3. The frame around every screen
 
 Built once by `render()` and `chrome()` in `app.js`:
