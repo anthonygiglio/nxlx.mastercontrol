@@ -17,7 +17,7 @@ Newest entry first. One entry per working session: what was done, what merged, w
 
   Open files and threads stayed flat. The panel's warning showed for Sources 3 and 4. So 4 x 1080p is too heavy, as predicted; 720p clips are not measured yet. The flips read a little over 60 at 1 and 2 sources, most likely the probe's own timing (not checked).
 - **Seen there:** the owner's quad (Source 1, on top) was pure black and the triangle (Source 2) showed through it. The cause was the quad's perspective sign, there since D28 and on classic too: fixed here. Also fixed: sources 2 to N kept their letterbox under a mapping.
-- **Open:** a race on llvmpipe where a source read through the mapping shows a fixed value in about half of fresh processes (D101 addendum, row SO9). Its test is kept outside the default run (`PVJ_SOURCE_RACE=1`).
+- **Traced:** in some fresh processes on llvmpipe a source showed black or dim through the mapping. It is not the final pass but libmpv's default scaling of a small upscaled picture; with `--fast`, as the Pi runs, 20 of 20 runs were right. The owner's mapping test runs with `--fast`; the reproducer without it is opt-in (`PVJ_SOURCE_RACE=1`). Row SO9 checks the Pi.
 - **Tests:** FacingTest and the stretch test break-checked; the pvj-render suite run 5 times, all OK.
 
 ## 2026-10-20, the review of #153 (sources, D101 amendment)
