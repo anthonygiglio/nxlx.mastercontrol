@@ -8,6 +8,7 @@ Newest entry first. One entry per working session: what was done, what merged, w
 
 - **The review:** no High or Medium; two Lows, fixed on `sources-surfaces`. Shows could offer Source 1 alone on a box with four sources (the state used only what was known of a new player process); it now asks once per process, and the card follows the strip. A sound file sent to Source 2 played black and silent; it is now refused in plain words.
 - **Tests:** 2 new, each break-checked and caught. Local suites OK before the push.
+- **CI on c01a978:** an idle source drew its empty picture 3 times on CI (2 here); now once until it plays (break-checked: 2 and 3 without the fix). The masks' rollback commit 1a6484b was not in CI's checkout: every rollback test's commit is now fetched in the test job and in the Debian whole-suite job.
 
 ## 2026-10-20, sources and surfaces, step 1 (`sources-surfaces`, D101)
 
