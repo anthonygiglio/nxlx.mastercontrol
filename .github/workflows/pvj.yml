@@ -337,6 +337,10 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Drive the real panel in a browser (CSP violations fail the test)
         run: NODE_PATH=/tmp/pw/node_modules node tests/ui/panel.test.js
+      - name: The design sandbox in each role (tools/sandbox, D103)
+        timeout-minutes: 10
+        if: ${{ !cancelled() }}
+        run: NODE_PATH=/tmp/pw/node_modules node tests/ui/sandbox.test.js
       - name: Take the cropped screenshots (docs/images/ui)
         continue-on-error: true   # documentation only: never blocks a merge
         if: ${{ !cancelled() }}   # also when the browser test failed: the pictures often show why

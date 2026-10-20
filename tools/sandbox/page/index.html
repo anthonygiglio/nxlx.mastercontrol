@@ -1,0 +1,48 @@
+<!doctype html>
+<!-- SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Design sandbox</title>
+<link rel="stylesheet" href="/sandbox.css">
+</head>
+<body>
+<main>
+  <h1>Design sandbox</h1>
+  <p class="hint">The real panel of nxlx.mastercontrol, on this computer only, with fake projectors and no node. Nothing here reaches a real box.</p>
+
+  <section aria-labelledby="sch">
+    <h2 id="sch">1. Scenario</h2>
+    <div class="row">
+      <label for="scenario">State of the box</label>
+      <select id="scenario"></select>
+      <button id="load" type="button">Load</button>
+    </div>
+    <p id="about" class="hint"></p>
+    <p id="status" role="status"></p>
+    <ul id="problems" class="hint"></ul>
+  </section>
+
+  <section aria-labelledby="roh">
+    <h2 id="roh">2. Who is looking</h2>
+    <div class="row" id="roles" role="group" aria-label="Role"></div>
+  </section>
+
+  <section aria-labelledby="wih">
+    <h2 id="wih">3. Width</h2>
+    <div class="row" id="widths" role="group" aria-label="Width"></div>
+  </section>
+
+  <section aria-labelledby="oph">
+    <h2 id="oph">4. Open the panel</h2>
+    <div class="row"><button id="open" type="button" class="pri">Open in a window</button></div>
+    <p class="hint">A window of exactly that size (a browser may round it). The address below loads this scenario first, so it gives the same page every time: use it for a capture.</p>
+    <p><a id="link" href="/">/</a></p>
+  </section>
+</main>
+<script src="/sandbox.js"></script>
+</body>
+</html>

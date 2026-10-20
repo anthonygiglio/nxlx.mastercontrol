@@ -1,0 +1,2 @@
+{"extends": "_base", "title": "Playing a pad", "about": "Pad 1 (Intro) plays on a loop; the transport strip has a clip, a time and a place in it.",
+ "steps": [{"path": "/api/play", "body": {"pad": [0, 0]}}]}

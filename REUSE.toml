@@ -20,6 +20,7 @@ path = [
   "image/stage-pvj/00-install-pvj/files/.gitkeep",
   "tools/panel-playground/*.json",
   "tools/theme-samples/*.json",
+  "tools/sandbox/scenarios/*.json",
   "tools/max/*.maxpat",
   "tests/ui/fixtures/*.json",
   "LICENSES/Apache-2.0.txt",
