@@ -21,6 +21,8 @@ import argparse
 import json
 import os
 import re
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -58,8 +60,31 @@ def scenarios(folder=SCENARIOS):
     return out
 
 
+class Busy(Exception):
+    """A scenario is being loaded: the next waits for the person to ask again (409), it does not queue."""
+
+
+def leftovers(folder):
+    """The pids of processes whose command line names `folder` (a box's mpv, or the box itself). Linux only; [] else."""
+    out = []
+    if not folder or not os.path.isdir("/proc"):
+        return out
+    want = folder.encode()
+    for p in os.listdir("/proc"):
+        if not p.isdigit() or int(p) == os.getpid():
+            continue
+        try:
+            with open("/proc/%s/cmdline" % p, "rb") as f:
+                if want in f.read():
+                    out.append(int(p))
+        except OSError:
+            pass
+    return out
+
+
 class Boxes:
-    """The one box process: started for a scenario, stopped before the next. Only one change at a time."""
+    """The one box process: started for a scenario, stopped before the next. One change at a time; a second one
+    asked meanwhile is refused (Busy)."""
 
     def __init__(self, first_port, folder=SCENARIOS):
         self.first_port, self.folder = first_port, folder
@@ -74,16 +99,34 @@ class Boxes:
         return {r: self.first_port + i for i, r in enumerate(box.ROLES)}
 
     def stop(self):
+        """Stop the box: its stdin closed (it stops itself, mpv first), then SIGTERM, then SIGKILL; and whatever is
+        still left of it afterwards (an mpv a killed box could not stop, its folder) is removed here."""
         p, self.proc = self.proc, None
-        if p and p.poll() is None:
-            p.terminate()
-            try:
-                p.wait(10)
-            except subprocess.TimeoutExpired:
-                p.kill()
-                p.wait(10)
-        if p and p.stdout:
-            p.stdout.close()
+        folder, self.folder_in_use = self.folder_in_use, None
+        if p:
+            for how in ("close", "terminate", "kill"):
+                if p.poll() is not None:
+                    break
+                if how == "close":
+                    try:
+                        p.stdin.close()
+                    except OSError:
+                        pass
+                else:
+                    getattr(p, how)()
+                try:
+                    p.wait(10)
+                except subprocess.TimeoutExpired:
+                    pass
+            if p.stdout:
+                p.stdout.close()
+        if folder and os.path.basename(folder).startswith("nxlx-sandbox-") and os.path.dirname(folder) == tempfile.gettempdir():
+            for pid in leftovers(folder):
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except OSError:
+                    pass
+            shutil.rmtree(folder, ignore_errors=True)
 
     def close(self):
         """The end of the sandbox: the box stopped, and its log removed unless a box failed (then it is said where)."""
@@ -97,6 +140,9 @@ class Boxes:
         except OSError:
             pass
 
+    def loading(self):
+        return self.lock.locked()
+
     def start(self, name):
         """Stop the box that runs, start one for `name`, and wait until it is ready. Returns the state."""
         if not NAME.fullmatch(name or ""):
@@ -105,30 +151,39 @@ class Boxes:
         if not os.path.isfile(path):
             raise ValueError("no such scenario")
         box.load_scenario(path)               # raises ScenarioError before anything is stopped
-        with self.lock:
+        if not self.lock.acquire(blocking=False):
+            raise Busy("a scenario is loading; ask again when it is ready")
+        try:
             self.stop()
             self.state = {"scenario": name, "ready": False, "player": None, "problems": [], "error": ""}
+            # its own session: a Ctrl+C in the terminal reaches this process only, which then stops the box in order
             proc = subprocess.Popen([sys.executable, os.path.join(HERE, "box.py"), path, str(self.first_port)],
-                                    stdout=subprocess.PIPE, stderr=self.log, stdin=subprocess.DEVNULL, text=True)
+                                    stdout=subprocess.PIPE, stderr=self.log, stdin=subprocess.PIPE, text=True,
+                                    start_new_session=True)
             self.proc = proc
-            line, timer = [None], threading.Timer(START_SECONDS, proc.kill)
+            timer = threading.Timer(START_SECONDS, proc.kill)
             timer.start()
+            said = {}
             try:
-                line[0] = proc.stdout.readline()
+                for _ in range(2):                    # {"folder"}, then {"ready", ...}
+                    try:
+                        said.update(json.loads(proc.stdout.readline() or "{}"))
+                    except ValueError:
+                        break
+                    if said.get("ready"):
+                        break
             finally:
                 timer.cancel()
-            try:
-                said = json.loads(line[0] or "{}")
-            except ValueError:
-                said = {}
+            self.folder_in_use = said.get("folder")
             if said.get("ready"):
                 self.state.update(ready=True, player=said.get("player"), problems=said.get("problems", []))
-                self.folder_in_use = said.get("folder")
             else:
                 self.state["error"] = "the box did not start (its log: %s)" % self.log.name
                 self.failed = True
                 self.stop()
             return dict(self.state)
+        finally:
+            self.lock.release()
 
 
 def make_handler(boxes, port):
@@ -159,6 +214,11 @@ def make_handler(boxes, port):
         def _json(self, status, payload):
             self._send(status, json.dumps(payload).encode(), "application/json")
 
+        def _cross_site(self):
+            # a browser says where a request comes from: a link or an <img> on another site is "cross-site". Absent
+            # (a script, an old browser), "none" (typed in the address bar) and "same-origin" are this page's own.
+            return (self.headers.get("Sec-Fetch-Site") or "").lower() == "cross-site"
+
         def _host_ok(self):
             # only this machine's own names for this port: a page that rebinds a name of its own to 127.0.0.1 is refused
             return (self.headers.get("Host") or "").lower() in names
@@ -179,13 +239,17 @@ def make_handler(boxes, port):
             if url.path == "/api/sandbox":
                 return self._json(200, self._summary())
             if url.path == "/open":
+                if self._cross_site():
+                    return self._json(403, {"error": "another site cannot load a scenario"})
                 q = parse_qs(url.query)
                 name, role = (q.get("scenario") or [""])[0], (q.get("role") or ["owner"])[0]
                 if role not in box.ROLES:
                     return self._json(400, {"error": "role is owner, operator, guest or nobody"})
-                if name and (name != boxes.state["scenario"] or not boxes.state["ready"]):
+                if name and (name != boxes.state["scenario"] or not boxes.state["ready"] or boxes.loading()):
                     try:
                         st = boxes.start(name)
+                    except Busy as e:
+                        return self._json(409, {"error": str(e)})
                     except (ValueError, box.ScenarioError) as e:
                         return self._json(404, {"error": str(e)})
                     if not st["ready"]:
@@ -198,7 +262,7 @@ def make_handler(boxes, port):
             if not self._host_ok():
                 return self._json(421, {"error": "this sandbox answers at 127.0.0.1 or localhost only"})
             origin = (self.headers.get("Origin") or "").lower()
-            if self.headers.get("X-Sandbox-Request") != "1" or (origin and urlsplit(origin).netloc not in names):
+            if self.headers.get("X-Sandbox-Request") != "1" or (origin and urlsplit(origin).netloc not in names) or self._cross_site():
                 return self._json(403, {"error": "not from the sandbox's own page"})
             if urlsplit(self.path).path != "/api/sandbox/scenario":
                 return self._json(404, {"error": "not found"})
@@ -215,6 +279,8 @@ def make_handler(boxes, port):
             name = body.get("scenario") if isinstance(body, dict) else None
             try:
                 st = boxes.start(name if isinstance(name, str) else "")
+            except Busy as e:
+                return self._json(409, {"error": str(e)})
             except (ValueError, box.ScenarioError) as e:
                 return self._json(404, {"error": str(e)})
             return self._json(200 if st["ready"] else 503, self._summary())
@@ -226,25 +292,27 @@ def main(argv=None):
     ap.add_argument("--port", type=int, default=8700, help="the switcher's port; the panel takes the next four")
     ap.add_argument("--scenario", default="idle", help="the scenario to start with (a file in tools/sandbox/scenarios)")
     a = ap.parse_args(argv)
-    import signal
 
     def stopped(*_):
         raise KeyboardInterrupt
-    # stopped by SIGTERM (a kill, a session that ends) as by Ctrl+C: the box is stopped with it
+    # Stopped by SIGTERM (a kill, a session that ends) as by Ctrl+C: the box is stopped with it. SIGINT is set here
+    # too: a process started in the background by a shell script inherits it ignored, and Python keeps that.
     signal.signal(signal.SIGTERM, stopped)
+    signal.signal(signal.SIGINT, stopped)
+    httpd = ThreadingHTTPServer(("127.0.0.1", a.port), None)     # the port first: if it is taken, nothing is made
     boxes = Boxes(a.port + 1)
-    httpd = ThreadingHTTPServer(("127.0.0.1", a.port), make_handler(boxes, a.port))
-    st = boxes.start(a.scenario)
-    p = boxes.ports()
-    print("Design sandbox: http://127.0.0.1:%d/" % a.port)
-    print("  scenario %s%s" % (a.scenario, "" if st["ready"] else ": " + st["error"]))
-    print("  the panel: Owner %d, Operator %d, Guest %d, not paired %d (all on 127.0.0.1)" % (p["owner"], p["operator"], p["guest"], p["nobody"]))
-    if st.get("player") is False:
-        print("  no mpv on this machine: the panel says the player is not running, and nothing plays")
-    for line in st.get("problems", []):
-        print("  scenario step refused: " + line)
-    print("Stop with Ctrl+C.", flush=True)
+    httpd.RequestHandlerClass = make_handler(boxes, a.port)
     try:
+        st = boxes.start(a.scenario)
+        p = boxes.ports()
+        print("Design sandbox: http://127.0.0.1:%d/" % a.port)
+        print("  scenario %s%s" % (a.scenario, "" if st["ready"] else ": " + st["error"]))
+        print("  the panel: Owner %d, Operator %d, Guest %d, not paired %d (all on 127.0.0.1)" % (p["owner"], p["operator"], p["guest"], p["nobody"]))
+        if st.get("player") is False:
+            print("  no mpv on this machine: the panel says the player is not running, and nothing plays")
+        for line in st.get("problems", []):
+            print("  scenario step refused: " + line)
+        print("Stop with Ctrl+C.", flush=True)
         httpd.serve_forever()
     except KeyboardInterrupt:
         pass

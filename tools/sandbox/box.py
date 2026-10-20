@@ -124,30 +124,118 @@ def rgba_png(w, h, rgba):
             + chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b""))
 
 
+def loopback_only():
+    """Hold every socket this process makes to this machine (the review of #155): a bind to every address ("",
+    0.0.0.0, ::) is made on loopback instead, and a bind, connect or send to any other address is refused. So what the
+    panel opens when the Owner switches OSC, DMX or Boxes in step on listens on 127.0.0.1, a leader's broadcast goes
+    nowhere, and nothing reaches the network a node would be on. Unix sockets (the player's) are left as they are."""
+    import errno
+    import socket as so
+
+    def host_of(address):
+        return address[0] if isinstance(address, tuple) and address else None
+
+    def loop(host):
+        if host in ("localhost",):
+            return True
+        try:
+            return ipaddress.ip_address(str(host).split("%")[0]).is_loopback
+        except ValueError:
+            return False
+
+    def refuse(what, host):
+        raise OSError(errno.EADDRNOTAVAIL, "the design sandbox keeps to this machine: no %s to %s" % (what, host))
+
+    real_bind, real_connect, real_connect_ex, real_sendto = so.socket.bind, so.socket.connect, so.socket.connect_ex, so.socket.sendto
+
+    def bind(self, address):
+        host = host_of(address)
+        if host is not None and host in ("", "0.0.0.0", "::"):
+            address = ("::1" if self.family == so.AF_INET6 else "127.0.0.1",) + tuple(address[1:])
+        elif host is not None and not loop(host):
+            refuse("bind", host)
+        return real_bind(self, address)
+
+    def connect(self, address):
+        host = host_of(address)
+        if host is not None and not loop(host):
+            refuse("connection", host)
+        return real_connect(self, address)
+
+    def connect_ex(self, address):
+        host = host_of(address)
+        if host is not None and not loop(host):
+            return errno.EADDRNOTAVAIL
+        return real_connect_ex(self, address)
+
+    def sendto(self, data, *rest):
+        host = host_of(rest[-1]) if rest else None
+        if host is not None and not loop(host):
+            refuse("message", host)
+        return real_sendto(self, data, *rest)
+    so.socket.bind, so.socket.connect, so.socket.connect_ex, so.socket.sendto = bind, connect, connect_ex, sendto
+
+
+def private_env(tmp):
+    """The box's environment: every PVJ_ variable of the shell it was started from taken out (PVJ_ALLOWED_HOSTS would
+    widen the Host check), and each folder or file the panel reads from one put inside the box's own folder, so
+    nothing of this computer's USB sticks, update results or helper sockets is read (the review of #155)."""
+    for k in [k for k in os.environ if k.startswith("PVJ_")]:
+        del os.environ[k]
+    folders = {"PVJ_RUNTIME_DIR": "runtime", "PVJ_USB_BASE": "usb", "PVJ_SYSD_DIR": "sysd", "PVJ_SUPPORTD_DIR": "supportd",
+               "PVJ_SOUND_DIR": "sound", "PVJ_NETD_DIR": "netd", "PVJ_NDI_CONFIG_DIR": "ndi-config", "PVJ_NDI_PIPE_DIR": "ndi-pipe"}
+    for k, rel in folders.items():                       # folders the panel looks in: there, and empty
+        path = os.path.join(tmp, rel)
+        os.makedirs(path, mode=0o700, exist_ok=True)
+        os.environ[k] = path
+    names = {"PVJ_USB_DIR": "usb-newest", "PVJ_USB_LINK": "usb-link", "PVJ_UPDATE_RESULT": "update-result.json",
+             "PVJ_UPDATE_LOCK": "update.lock"}
+    for k, rel in names.items():                         # a link, a file: a name inside the folder, not made
+        os.environ[k] = os.path.join(tmp, rel)
+
+
 def main(scenario_path, first_port):
     sc = load_scenario(scenario_path)
     import signal
-    # serve.py stops a box with SIGTERM: turned into a normal exit, so mpv is stopped and the folder removed
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-    # The panel prints some of its log lines to stdout ("guest controls locked by ..."); serve.py reads this box's
-    # stdout for its one ready line. So the box's own print goes to stderr (serve.py's log), and the line to stdout.
+    stop = threading.Event()
+    # serve.py stops a box with SIGTERM, or by closing its stdin (also when serve.py itself dies, however it dies).
+    # Either sets `stop`; the cleanup then runs once, in the main thread, with nothing to interrupt it. Ctrl+C in the
+    # terminal reaches serve.py, which stops the box: the box itself does not act on SIGINT (the review of #155).
+    signal.signal(signal.SIGTERM, lambda *_: stop.set())
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+    def parent_gone():
+        try:
+            sys.stdin.read()
+        except (OSError, ValueError):
+            pass
+        stop.set()
+    threading.Thread(target=parent_gone, daemon=True).start()
+    # serve.py reads this box's stdout for two lines: where the box lives, and that it is ready. The panel prints some
+    # log lines to stdout ("guest controls locked by ...") and a program it runs inherits the stdout of the process:
+    # so the real stdout is kept for those two lines alone and every other writer gets stderr (serve.py's log).
     global READY_OUT
-    READY_OUT, sys.stdout = sys.stdout, sys.stderr
+    READY_OUT = os.fdopen(os.dup(1), "w")
+    os.dup2(2, 1)
+    sys.stdout = sys.stderr
     tmp = tempfile.mkdtemp(prefix="nxlx-sandbox-")
+    print(json.dumps({"folder": tmp}), file=READY_OUT, flush=True)
     try:
-        run(sc, tmp, first_port)
+        private_env(tmp)
+        loopback_only()
+        run(sc, tmp, first_port, stop)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def run(sc, tmp, first_port):
+def run(sc, tmp, first_port, stop):
     media = os.path.join(tmp, "video")
     rundir = os.path.join(tmp, "run")
     os.makedirs(media)
     os.makedirs(rundir, mode=0o700)
     os.environ.update(PVJ_STATE_DIR=tmp, PVJ_MEDIA_DIR=media, PVJ_DEV_SPAWN="1")
 
-    from pvj import server
+    from pvj import server, capture
     from pvj.player import Player
     from tests.test_server import make_test_video
 
@@ -166,10 +254,28 @@ def run(sc, tmp, first_port):
 
     mpv = "mpv" if has_mpv else os.path.join(tmp, "no-such-mpv")
     player = Player(mpv_bin=mpv, extra_args=["--vo=null", "--ao=null"], rundir=rundir)
-    api, auth, _ = server.build(os.environ, player=player)
+    servers, fakes = {}, []
+    try:                                       # from here on, whatever happens, mpv is stopped and the ports closed
+        api, auth, _ = server.build(os.environ, player=player)
+        api.capture = capture.Capture(rundir, mpv, lister=lambda: [])     # no webcam or capture stick of this computer
+        serve_box(sc, tmp, first_port, stop, api, auth, rundir, has_mpv, servers, fakes)
+    finally:
+        for httpd in servers.values():
+            httpd.shutdown()
+            httpd.server_close()
+        for f in fakes:
+            f.close()
+        player.stop()
 
-    # What the browser test's harness puts behind the panel (tests/ui/harness.py), without its MIDI and delivery fakes.
-    from pvj import screenmode, projector, overlay
+
+def serve_box(sc, tmp, first_port, stop, api, auth, rundir, has_mpv, servers, fakes):
+    from pvj import server, screenmode, projector, overlay, midi as midi_mod
+
+    # What the browser test's harness puts behind the panel (tests/ui/harness.py), without its delivery fake; MIDI
+    # sees no controller at all (a real one plugged into this computer is not read).
+    api.midi.stop()
+    api.midi = midi_mod.MidiHub(api, api.settings, lister=lambda: [], scan_interval=3600)
+    api.midi.apply()
     from tests.test_screenmode import MONITOR, connected
     report = screenmode.decide({"mode": "auto"}, screenmode.parse_help(MONITOR), "", connected(), "sandbox")
     screenmode.write_json(os.path.join(rundir, screenmode.REPORT), dict(report, pid=None, boot="sandbox", at=0))
@@ -200,14 +306,15 @@ def run(sc, tmp, first_port):
             setattr(overlay, fn, waited)
 
     from tests.test_projector import FakeProjector
-    fakes, silent = [], []
+    with_fakes, silent = [], []
     for p in sc.get("projectors", []):
         if p.get("state") == "silent":
             silent.append(p)
             continue
         f = FakeProjector(slow=p.get("state") in ("warming", "cooling"), lamps=(1234,), name=p["name"])
         f.power, f.errors = POWER[p.get("state", "off")], p.get("errors", "000000")
-        fakes.append((p, f))
+        fakes.append(f)
+        with_fakes.append((p, f))
 
     # One device per role, paired by the box's own code. Their tokens never leave this process.
     tokens = {"owner": auth.pair(auth.current_pin, "Owner (sandbox)", client="sandbox")[0],
@@ -237,30 +344,22 @@ def run(sc, tmp, first_port):
                 pass
         return Handler
 
-    servers = {}
     for i, role in enumerate(ROLES):
         httpd = server.PvjServer(("127.0.0.1", first_port + i), handler_for(role))
         servers[role] = httpd
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
 
-    problems = setup(sc, first_port, fakes, silent)
+    problems = setup(sc, first_port, with_fakes, silent)
     if sc.get("guests_locked"):
         problems += call(first_port, "owner", "POST", "/api/guests", {"locked": True})
     if sc.get("offline_after") is not None:
-        threading.Timer(sc["offline_after"], offline.set).start()
+        t = threading.Timer(sc["offline_after"], offline.set)
+        t.daemon = True
+        t.start()
     print(json.dumps({"ready": True, "ports": {r: first_port + i for i, r in enumerate(ROLES)}, "player": has_mpv,
                       "problems": problems, "folder": tmp}), file=READY_OUT, flush=True)
-    try:
-        while True:
-            time.sleep(3600)
-    except KeyboardInterrupt:
+    while not stop.wait(1):            # (a wait with a deadline, so the signal handler always gets its turn)
         pass
-    finally:
-        for httpd in servers.values():
-            httpd.shutdown()
-        for _p, f in fakes:
-            f.close()
-        player.stop()
 
 
 def request(first_port, role, method, path, body=None):
@@ -308,6 +407,7 @@ def resolve(first_port, value):
 
 
 def setup(sc, first_port, fakes, silent):
+    """Put the scenario in place through the box's own routes. `fakes`: [(the scenario's projector, its fake)]."""
     problems = []
     for mod, on in sc.get("modules", {}).items():
         problems += call(first_port, "owner", "POST", "/api/modules/" + mod, {"enabled": on})

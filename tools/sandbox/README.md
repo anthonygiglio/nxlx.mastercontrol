@@ -20,12 +20,23 @@ a window". Stop it with Ctrl+C.
   picture and no sound anywhere); without it the panel says the player is not running.
 - The panel is on the next four ports: Owner 8701, Operator 8702, Guest 8703, not paired 8704. You can open those
   directly too, side by side: each port is its own device, so no cookie or pairing is needed.
-- Everything listens on 127.0.0.1 only. Nothing reaches a real node, projector or network: the projectors are fakes on
-  this computer, the network is a fake, and the node's address is never used.
+- Everything listens on 127.0.0.1 only, the panel's own listeners too: in the box every socket is held to this machine
+  (a listener on every address is put on 127.0.0.1, and a connection or a message to any other address is refused). So
+  switching OSC, DMX or Boxes in step on in the sandbox opens nothing to the network, and a leader's broadcast goes
+  nowhere. The projectors are fakes on this computer, the network is a fake, and no address of a node is used.
+- The box reads nothing of this computer's own: the `PVJ_` variables of your shell are not passed on, a webcam or a MIDI
+  controller plugged in is not seen, and USB sticks, update results and helper sockets are looked for in the box's own
+  folder (empty).
+- Stop it with Ctrl+C (or a kill): the box, its player and its folder go with it. Only one scenario loads at a time; a
+  second one asked meanwhile is refused until the first is ready.
+- Each role's port acts as that role for anything on this computer that connects to it: that is what it is for. Keep
+  it to your own computer (it cannot be reached from another one).
 
 **For a capture** (Figma, a screenshot), use the address under "Open the panel":
 `http://127.0.0.1:8700/open?scenario=playing&role=guest`. It loads that scenario if another one is running, then goes
-to that role's port, so the same address always gives the same page.
+to that role's port, so the same address always gives the same page. Typed in the address bar or opened from the
+switcher it works; a link or a picture on another website cannot use it (the browser says where it came from, and a
+request from another site is refused).
 
 ## What each part is
 
@@ -58,5 +69,6 @@ says so. Check a new one with `python3 -m unittest tests.test_sandbox` (every sc
 
 ## Not covered
 
-MIDI controllers, DMX, OSC senders, NDI sources, render nodes and sound input have no fakes here, so their pages show
-their empty or not-set-up states. The remote support banner and HTTPS are not shown.
+MIDI controllers, DMX desks, OSC senders, NDI sources, render nodes and sound input have no fakes here, so their pages
+show their empty or not-set-up states (OSC and DMX can be switched on: they listen on 127.0.0.1, and nothing sends to
+them). The remote support banner and HTTPS are not shown.

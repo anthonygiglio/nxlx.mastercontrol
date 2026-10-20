@@ -9,14 +9,33 @@ const path = require('path');
 const assert = require('assert');
 
 const ROOT = path.join(__dirname, '..', '..');
-const PORT = 20000 + Math.floor(Math.random() * 30000);
+const net = require('net');
+let PORT = 0;
+
+// Five free ports in a row on 127.0.0.1 (the switcher and the panel's four), found by trying them (the review of #155).
+function free(port) {
+  return new Promise((resolve) => {
+    const s = net.createServer();
+    s.once('error', () => resolve(false));
+    s.listen(port, '127.0.0.1', () => s.close(() => resolve(true)));
+  });
+}
+async function freePorts() {
+  for (let i = 0; i < 50; i++) {
+    const first = 20000 + Math.floor(Math.random() * 30000);
+    let ok = true;
+    for (let p = first; p < first + 5 && ok; p++) ok = await free(p);
+    if (ok) return first;
+  }
+  throw new Error('no five free ports in a row');
+}
 
 function startSandbox() {
   return new Promise((resolve, reject) => {
     const proc = spawn('python3', [path.join(ROOT, 'tools', 'sandbox', 'serve.py'), '--port', String(PORT), '--scenario', 'playing'],
       { cwd: ROOT, stdio: ['ignore', 'pipe', 'inherit'] });
     let out = '';
-    const timer = setTimeout(() => reject(new Error('the sandbox did not start in 180 s: ' + out)), 180000);
+    const timer = setTimeout(() => { proc.kill('SIGTERM'); reject(new Error('the sandbox did not start in 180 s: ' + out)); }, 180000);
     proc.stdout.on('data', (d) => {
       out += d;
       if (out.includes('Stop with Ctrl+C.')) { clearTimeout(timer); resolve(proc); }
@@ -32,6 +51,7 @@ function watch(page, problems, where) {
 }
 
 (async () => {
+  PORT = await freePorts();
   const sandbox = await startSandbox();
   const browser = await chromium.launch();
   const problems = [];

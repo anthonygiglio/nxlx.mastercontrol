@@ -2031,4 +2031,21 @@ The owner's words (2026-10-18), on the list of sources proposed after D96: "All 
 
 **Rejected.** A wrapper page with the panel in a frame (needs the panel's policy changed). Rebuilding the box in-process between scenarios (the panel's background threads, the health monitor, the projector monitor and the scheduler, would outlive it). The fake mpv of `tests/fakempv.py` as the default player (the harness, and so the browser test, uses a real headless mpv; the sandbox shows what that shows). A cookie per role (cookies do not keep ports apart).
 
-**Cost and limits.** No fakes for MIDI, DMX, OSC, NDI, render nodes or sound input: their pages show their empty states. Without mpv nothing plays. A GET of `/open` changes which scenario runs. Any page in the same browser could cause that, which is acceptable for a tool on 127.0.0.1 holding only fake data; it is said in the README. A role's port gives that role to anything on this computer that connects to it, which is the point of the tool. The box's own CSRF and Host checks still stand in front of every POST of the panel. Not run on the owner's Mac.
+**Cost and limits.** No fakes for MIDI, DMX, OSC, NDI, render nodes or sound input: their pages show their empty states. Without mpv nothing plays. A GET of `/open` changes which scenario runs (it is how a capture address works); since the review below, the browser's word `Sec-Fetch-Site: cross-site` refuses it from another site. A role's port gives that role to anything on this computer that connects to it, which is the point of the tool. The box's own CSRF and Host checks still stand in front of every POST of the panel. Not run on the owner's Mac.
+
+**Amended after the review of #155 (2026-10-20, the same branch).** An independent read-only review found two Mediums and four Lows; each is fixed with a test that fails without its fix (the break-checks in the journal).
+
+- **Ctrl+C left mpv running, every time** (Medium). The box was in the switcher's process group, so it got the terminal's SIGINT itself and then the switcher's SIGTERM, and the second signal cut its own cleanup short. Mpv runs in a session of its own, so nothing stopped it. Now:
+  - the box runs in a session of its own and does not act on SIGINT;
+  - SIGTERM only sets an event, and the cleanup runs once in the main thread;
+  - the box stops when its stdin closes, which happens however the switcher ends, even when it is killed;
+  - the cleanup's try begins as soon as the player exists;
+  - the switcher stops a box in order: stdin closed, then SIGTERM, then SIGKILL. After that it removes any process that names the box's own folder (checked to be a `nxlx-sandbox-*` folder in the temp folder), and the folder itself.
+  - The switcher also sets its own SIGINT, because a script that starts it in the background hands it SIGINT ignored.
+- **The box listened on 0.0.0.0 once OSC, DMX or Boxes in step was switched on** (Medium), and a leader's broadcast would reach the network a node is on. `box.loopback_only()` now holds every socket of the box process to this machine. A bind to every address is put on loopback, and a bind, connect or send to any other address is refused. One place for every listener, the ones of later decisions too, instead of a patch per module. A test switches OSC and DMX on through the Owner's port and reads the box's sockets from /proc.
+- **Any web page could restart the sandbox** with a picture pointing at `/open` (Low): refused when the browser says cross-site.
+- **The box read some of the computer's own things** (Low): the shell's `PVJ_` variables (PVJ_ALLOWED_HOSTS widened the Host check), the webcam list, a plugged-in MIDI controller, USB sticks and update results. Now the `PVJ_` variables are cleared, each folder and file the panel reads from one is inside the box's folder, the capture list is empty and MIDI sees no controller.
+- **A taken port left an empty log** (Low): the port is bound before anything is made.
+- **Two loads at once both answered as the winner** (Low): a second load while one runs is refused (409).
+- Also fixed: other writers to the box's stdout (a program it runs) can no longer spoil or block its two-line handshake. The real stdout is kept for those lines (`os.dup`), and fd 1 is stderr. The tests use their own temporary folder and free ports.
+

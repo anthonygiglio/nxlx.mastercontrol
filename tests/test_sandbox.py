@@ -141,9 +141,16 @@ class FakeBoxes:
     def ports(self):
         return {r: self.first_port + i for i, r in enumerate(box.ROLES)}
 
+    busy = False
+
+    def loading(self):
+        return self.busy
+
     def start(self, name):
         if not serve.NAME.fullmatch(name or "") or not os.path.isfile(os.path.join(self.folder, name + ".json")):
             raise ValueError("no such scenario")
+        if self.busy:
+            raise serve.Busy("a scenario is loading")
         self.asked.append(name)
         self.state = dict(self.state, scenario=name)
         return dict(self.state)
@@ -235,6 +242,26 @@ class SwitcherTest(unittest.TestCase):
         st, _h, _b = self.ask("GET", "/open?scenario=../x&role=owner")
         self.assertEqual(st, 404)
 
+    def test_another_site_cannot_load_a_scenario(self):
+        # the review of #155: an <img src=".../open?scenario=network-error"> on any page restarted the box
+        st, _h, _b = self.ask("GET", "/open?scenario=network-error&role=owner", headers={"Sec-Fetch-Site": "cross-site"})
+        self.assertEqual(st, 403)
+        st, _h, _b = self.post({"scenario": "idle"}, **{"Sec-Fetch-Site": "cross-site"})
+        self.assertEqual(st, 403)
+        self.assertEqual(self.boxes.asked, [])
+        for site in ("none", "same-origin", None):          # typed in the address bar, the switcher's own page, a script
+            st, _h, _b = self.ask("GET", "/open?scenario=playing&role=owner", headers={"Sec-Fetch-Site": site} if site else None)
+            self.assertEqual(st, 303, site)
+
+    def test_a_second_load_while_one_loads_is_refused(self):
+        # the review of #155: two loads at once both answered 200, one of them with the other's scenario
+        self.boxes.busy = True
+        st, _h, body = self.post({"scenario": "vibes"})
+        self.assertEqual(st, 409)
+        st, _h, _b = self.ask("GET", "/open?scenario=idle&role=owner")
+        self.assertEqual(st, 409)
+        self.assertEqual(self.boxes.asked, [])
+
     def test_summary_lists_scenarios_and_ports(self):
         st, _h, body = self.ask("GET", "/api/sandbox")
         d = json.loads(body)
@@ -248,8 +275,8 @@ class SwitcherTest(unittest.TestCase):
             with open(os.path.join(SANDBOX, fn), encoding="utf-8") as f:
                 src += f.read()
         import re
-        self.assertNotIn("0.0.0.0", src)
-        self.assertNotIn('("", ', src)
+        # (the sandbox's own sockets; what pvj opens inside a box is held by box.loopback_only, and
+        # BoxKeepsToThisMachineTest reads the box's sockets)
         binds = re.findall(r'(?:Server|bind)\(\(([^,]+),', src)       # every address a socket of the sandbox is given
         self.assertTrue(binds)
         self.assertEqual(set(binds), {'"127.0.0.1"'})
@@ -324,42 +351,227 @@ class EveryScenarioTest(unittest.TestCase):
             self.assertEqual(left(), [])
 
 
-class WholeSandboxTest(unittest.TestCase):
-    """serve.py itself, stopped as a session manager or `kill` stops it (SIGTERM): its box goes with it."""
+def own_tmp(test):
+    """A temporary folder of the test's own, given to a sandbox as its TMPDIR: what is left in it is that sandbox's."""
+    d = tempfile.mkdtemp()
+    test.addCleanup(shutil.rmtree, d, True)
+    return d
 
-    def test_sigterm_stops_the_box(self):
-        import signal
+
+def holders(folder):
+    """The command lines of the processes that name `folder` (a box, its mpv). Linux only."""
+    out = []
+    want = folder.encode()
+    for p in os.listdir("/proc"):
+        if not p.isdigit():
+            continue
+        try:
+            with open("/proc/%s/cmdline" % p, "rb") as f:
+                line = f.read()
+        except OSError:
+            continue
+        if want in line:
+            out.append(line.replace(b"\0", b" ").decode(errors="replace")[:160])
+    return out
+
+
+@unittest.skipUnless(os.path.isdir("/proc"), "looks for processes in /proc")
+class WholeSandboxTest(unittest.TestCase):
+    """serve.py itself, stopped every way a person or a system stops it: nothing of its box is left, mpv included.
+    The review of #155 found mpv left by every Ctrl+C (the box got the signal too, and the second one cut its own
+    cleanup short), and by a kill of serve.py."""
+
+    def run_sandbox(self, scenario="playing"):
         import subprocess
         import time
-        first = free_ports(5)
-        tmp = tempfile.gettempdir()
-        before = set(os.listdir(tmp))
-        proc = subprocess.Popen([sys.executable, os.path.join(SANDBOX, "serve.py"), "--port", str(first), "--scenario", "idle"],
-                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-        try:
-            deadline = time.time() + 120
-            out = ""
-            while "Stop with" not in out and time.time() < deadline:
-                line = proc.stdout.readline()
-                if not line:
-                    break
-                out += line
-            self.assertIn("Stop with", out)
-            new = [d for d in set(os.listdir(tmp)) - before if d.startswith("nxlx-sandbox-") and os.path.isdir(os.path.join(tmp, d))]
-            self.assertEqual(len(new), 1)                    # the running box's folder
-            proc.send_signal(signal.SIGTERM)
-            proc.wait(30)
-        finally:
-            if proc.poll() is None:
-                proc.kill()
-            proc.stdout.close()
-        left = []
-        for _ in range(50):
-            left = [d for d in set(os.listdir(tmp)) - before if d.startswith("nxlx-sandbox-")]
-            if not left:
+        tmp = own_tmp(self)
+        env = dict(os.environ, TMPDIR=tmp)
+        proc = subprocess.Popen([sys.executable, os.path.join(SANDBOX, "serve.py"), "--port", str(free_ports(5)), "--scenario", scenario],
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, env=env, start_new_session=True)
+        self.addCleanup(lambda: proc.poll() is None and proc.kill())
+        self.addCleanup(proc.stdout.close)
+        deadline, out = time.time() + 120, ""
+        while "Stop with" not in out and time.time() < deadline:
+            line = proc.stdout.readline()
+            if not line:
+                break
+            out += line
+        self.assertIn("Stop with", out)
+        # the running box's folder (beside it the box's own pvj-t-* of tests/tmpguard.py, which it removes at exit)
+        folders = [os.path.join(tmp, d) for d in os.listdir(tmp) if d.startswith("nxlx-sandbox-") and os.path.isdir(os.path.join(tmp, d))]
+        self.assertEqual(len(folders), 1)
+        if shutil.which("mpv"):
+            self.assertTrue(any("mpv" in c for c in holders(folders[0])), "the box's mpv runs")
+        return proc, tmp, folders[0]
+
+    def gone(self, tmp, folder, also_log=True):
+        import time
+        for _ in range(100):
+            if not holders(folder) and not os.path.exists(folder):
                 break
             time.sleep(0.1)
-        self.assertEqual(left, [])                           # no folder, and no log (nothing failed)
+        self.assertEqual(holders(folder), [])                 # no box, no mpv
+        self.assertFalse(os.path.exists(folder))
+        for _ in range(50):                                   # the box's pvj-t-* goes with its last breath
+            if not os.listdir(tmp) or not also_log:
+                break
+            time.sleep(0.1)
+        if also_log:
+            self.assertEqual(os.listdir(tmp), [])             # and no log (nothing failed), nothing else
+        else:
+            self.assertEqual([d for d in os.listdir(tmp) if not d.endswith(".log")], [])
+
+    def test_ctrl_c_in_the_terminal(self):
+        import signal
+        proc, tmp, folder = self.run_sandbox()
+        os.killpg(proc.pid, signal.SIGINT)                    # what a terminal sends: to the whole group
+        proc.wait(60)
+        self.gone(tmp, folder)
+
+    def test_sigterm(self):
+        import signal
+        proc, tmp, folder = self.run_sandbox()
+        proc.send_signal(signal.SIGTERM)
+        proc.wait(60)
+        self.gone(tmp, folder)
+
+    def test_sigterm_to_the_group(self):
+        import signal
+        proc, tmp, folder = self.run_sandbox()
+        os.killpg(proc.pid, signal.SIGTERM)                   # `timeout` does this
+        proc.wait(60)
+        self.gone(tmp, folder)
+
+    def test_a_killed_switcher_takes_its_box_with_it(self):
+        import signal
+        proc, tmp, folder = self.run_sandbox()
+        os.kill(proc.pid, signal.SIGKILL)                     # nothing of serve.py runs: the box sees its stdin close
+        proc.wait(60)
+        self.gone(tmp, folder, also_log=False)                # (the log is serve.py's, which had no chance to remove it)
+
+    def test_a_taken_port_makes_nothing(self):
+        import subprocess
+        tmp = own_tmp(self)
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        s.listen(1)
+        self.addCleanup(s.close)
+        r = subprocess.run([sys.executable, os.path.join(SANDBOX, "serve.py"), "--port", str(s.getsockname()[1])],
+                           capture_output=True, text=True, timeout=60, env=dict(os.environ, TMPDIR=tmp))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(os.listdir(tmp), [])                 # no log, no box folder
+
+
+class GuardTest(unittest.TestCase):
+    """box.loopback_only(), in a process of its own (it changes the socket class of the process it runs in)."""
+
+    def test_sockets_keep_to_this_machine(self):
+        import subprocess
+        code = (
+            "import sys, socket; sys.path.insert(0, %r); import box; box.loopback_only()\n"
+            "out = []\n"
+            "s = socket.socket(); s.bind(('', 0)); out.append(s.getsockname()[0]); s.close()\n"
+            "s = socket.socket(); s.bind(('0.0.0.0', 0)); out.append(s.getsockname()[0]); s.close()\n"
+            "u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\n"
+            "for where in [('192.168.1.255', 9), ('255.255.255.255', 9), ('8.8.8.8', 53), ('example.com', 80)]:\n"
+            "    try: u.sendto(b'x', where); out.append('sent')\n"
+            "    except OSError: out.append('refused')\n"
+            "u.sendto(b'x', ('127.0.0.1', 9)); out.append('loopback sent')\n"
+            "c = socket.socket()\n"
+            "try: c.connect(('10.0.0.1', 80)); out.append('connected')\n"
+            "except OSError: out.append('refused')\n"
+            "out.append(str(c.connect_ex(('192.168.0.169', 80)) != 0))\n"
+            "try: socket.socket().bind(('192.168.1.9', 0)); out.append('bound')\n"
+            "except OSError: out.append('refused')\n"
+            "print(' '.join(out))\n") % SANDBOX
+        r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.stdout.split(), ["127.0.0.1", "127.0.0.1", "refused", "refused", "refused", "refused",
+                                            "loopback", "sent", "refused", "True", "refused"], r.stderr)
+
+
+def inet_sockets(pid):
+    """[(protocol, address)] of every TCP and UDP socket the process `pid` holds (Linux /proc)."""
+    inodes = set()
+    for fd in os.listdir("/proc/%d/fd" % pid):
+        try:
+            link = os.readlink("/proc/%d/fd/%s" % (pid, fd))
+        except OSError:
+            continue
+        if link.startswith("socket:["):
+            inodes.add(link[8:-1])
+    out = []
+    for proto in ("tcp", "udp", "tcp6", "udp6"):
+        try:
+            with open("/proc/%d/net/%s" % (pid, proto)) as f:
+                lines = f.read().split("\n")[1:]
+        except OSError:
+            continue
+        for line in lines:
+            cols = line.split()
+            if len(cols) > 9 and cols[9] in inodes:
+                hexaddr = cols[1].split(":")[0]
+                raw = bytes.fromhex(hexaddr)
+                if len(raw) == 4:
+                    addr = socket.inet_ntop(socket.AF_INET, raw[::-1])
+                else:
+                    addr = socket.inet_ntop(socket.AF_INET6, b"".join(raw[i:i + 4][::-1] for i in range(0, 16, 4)))
+                out.append((proto, addr))
+    return out
+
+
+@unittest.skipUnless(os.path.isdir("/proc"), "reads sockets from /proc")
+class BoxKeepsToThisMachineTest(unittest.TestCase):
+    """The review of #155: OSC, DMX and Boxes in step, switched on from the Owner's port, listened on 0.0.0.0."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp()
+        cls.old = os.environ.get("TMPDIR")
+        os.environ["TMPDIR"] = cls.tmp
+        tempfile.tempdir = None
+        os.environ["PVJ_ALLOWED_HOSTS"] = "evil.example"       # from the developer's shell: must not reach the box
+        cls.boxes = serve.Boxes(free_ports(4))
+        cls.st = cls.boxes.start("idle")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.boxes.close()
+        del os.environ["PVJ_ALLOWED_HOSTS"]
+        if cls.old is None:
+            del os.environ["TMPDIR"]
+        else:
+            os.environ["TMPDIR"] = cls.old
+        tempfile.tempdir = None
+        shutil.rmtree(cls.tmp, True)
+
+    def post(self, path, body, host=None):
+        c = http.client.HTTPConnection("127.0.0.1", self.boxes.ports()["owner"], timeout=30)
+        h = {"Content-Type": "application/json", "X-PVJ-Request": "1"}
+        if host:
+            h["Host"] = host
+        c.request("POST", path, json.dumps(body).encode(), h)
+        r = c.getresponse()
+        out = (r.status, r.read())
+        c.close()
+        return out
+
+    def test_listeners_switched_on_listen_on_loopback(self):
+        self.assertTrue(self.st["ready"], self.st["error"])
+        for path, body in (("/api/modules/control-dmx", {"enabled": True}), ("/api/dmx", {"enabled": True}),
+                           ("/api/osc", {"enabled": True})):
+            st, out = self.post(path, body)
+            self.assertEqual(st, 200, (path, out[:200]))
+        import time
+        time.sleep(1)
+        socks = inet_sockets(self.boxes.proc.pid)
+        self.assertTrue([s for s in socks if s[0].startswith("udp")], socks)        # OSC and DMX are listening
+        wide = [s for s in socks if not s[1].startswith("127.") and s[1] != "::1"]
+        self.assertEqual(wide, [])
+
+    def test_the_shells_pvj_variables_do_not_reach_the_box(self):
+        # with PVJ_ALLOWED_HOSTS from the shell, the panel would take this Host as its own
+        st, _out = self.post("/api/osc", {"enabled": True}, host="evil.example")
+        self.assertNotEqual(st, 200)
 
 
 if __name__ == "__main__":
