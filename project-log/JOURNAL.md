@@ -4,6 +4,20 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-19, the review of #151 (projector control, D99 amendment)
+
+- **The review:** two Mediums and two Lows, all fixed on `projector-control`. Medium: through remote support a projector could still be switched off by a Room group, an off-scene, or a scene or schedule entry set up to do it; now refused on every route, and the schedule's own run is unchanged. Medium: one Epson session had no overall limit, so a slow device could hold the shared lock for about a minute; now one deadline of 2 x 5 + 8 seconds. Low: Test's threads could change its answer after it was returned; now each fills its own and the route copies. Low: more than 8 extra handshake headers are refused.
+- **Tests:** 6 new (`RemoteOffTest`: groups and scenes, a scene changed to switch off, schedule entries; a slow device and the lock; too many headers; Test's late thread). 7 new breaks, each caught; the 14 earlier breaks run again, each caught. Local suites OK before the push.
+
+## 2026-10-19, projector control over IP: Epson control beside PJLink (`projector-control`, D99)
+
+- **The owner's words:** "run some tests to see what is possible, then configure the panel to have control." The coordinator had tried both protocols on the X27 by hand first.
+- **Found first:** the brief asked for a new `pvj/projector.py`, which already existed with PJLink (D27, D37, D40, D80, D84). It was extended, not rebuilt; where the brief differed from those decisions (a guest's power buttons, the address rule), the decisions stand and D99 says so.
+- **Built:** a protocol per projector (PJLink, PJLink and Epson control, Epson control only); `EscVp` and `EpsonLink` in `pvj/projector.py`, under the same private-address check and the same per-projector lock as PJLink; freeze, brightness, Eco and the colour mode in `POST /api/projector`; Test in `POST /api/projectors`; checks every 10 s while the page is open; Mute (black) and Freeze as big buttons, a brightness slider, an Eco switch and a colour mode list on the row; Control and Test in the add and edit forms. Remote support may no longer switch a projector off or change its picture settings. No settings schema change; PJLink is stored as before.
+- **Read from the real X27 (read-only, queries only):** Epson control's whole status in one connection in 0.05 s (on, lamp 26 h, mute off, source 30, freeze off, Eco off, brightness 125, colour mode 04, serial VU3K7601207); `ERR?` answered ERR (the coordinator's earlier read had it working); Test found PJLink ("EPSON X27", name EBE3E94D, no password) and Epson control, best choice both. Nothing was set.
+- **Tests:** 21 new in `tests/test_projector.py` (fake ESC/VP.net projector written from the X27's answers; the handshake and its refusals, ERR, silence, cut-off, overlong and wrong answers, the shared lock, the slow colour mode, status and every control, Epson alone, Test with and without a password, the roles and remote support, the password never answered or logged, checks while viewed, the rollback to 6713348), and new refused guest forms in `tests/test_roles.py`. 14 breaks on purpose, each caught. `tests.test_projector`, `tests.test_roles`, `tests.test_server`, `tests.test_boxcare`, `tests.test_support`: OK here (WSL).
+- **Not done:** "Blackout also mutes the projectors" (a follow-up: it would touch Blackout's timing); the same remote-support rule for Room groups and scenes that switch off; any button pressed against a real projector (rows PX1 to PX8); the browser test was not run here (CI's panel-ui runs it).
+
 ## 2026-10-19, the node on the Epson X27 (test D by measurement and a webcam; D90, D93, D98)
 
 - **Set-up (the owner):** an X27 on the network and on the node's HDMI; a Logitech Brio 500 on the node's USB, aimed at the screen. From today he calls the box a node. Automatic chose the projector's own 1024 x 768 at 60 Hz (D90). He could not stay, so test D was run by the coordinator: numbers from the player and the renderer, exact captures of the output, and webcam photos (kept outside the repository, on the owner's drive).

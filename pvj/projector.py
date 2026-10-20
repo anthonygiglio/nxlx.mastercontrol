@@ -11,6 +11,11 @@ Commands used, all class 1 (PJLink Specifications 1.04, chapter 4): power on and
 the input (INPT) from the projector's own list (INST), picture and sound mute apart or together (AVMT), the warnings
 (ERST), the lamp hours (LAMP), and who the projector is (NAME, INF1, INF2, INFO, CLSS).
 
+Epson projectors also speak Epson's own control, ESC/VP.net on TCP 3629 (D99): freeze, brightness, the Eco light
+setting and the colour mode, which PJLink class 1 has not. A projector is set to "pjlink", "epson" or "both"; with
+"both", PJLink does power, input and mutes and Epson control the picture settings. Both go through the same
+private-address check and the same one-command-at-a-time lock per projector.
+
 A Monitor asks each projector for its state now and then in the background, one small thread per projector with
 its own stop signal, so the panel shows on, off, warming up or cooling down without asking; the same thread
 retries an input change that the projector refused as "unavailable" (it does that while warming up).
@@ -46,7 +51,43 @@ PRIVATE = [ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192
 REFUSED = {ipaddress.ip_address("169.254.169.254"), ipaddress.ip_address("fd00:ec2::254")}     # the cloud metadata service (x86 in a VM), IPv4 and IPv6
 _HOST = re.compile(r"[A-Za-z0-9.-]{1,253}|[0-9A-Fa-f:.]{2,45}")
 _INPUT = re.compile(r"[1-5][1-9]")
-SOFT = ("ERR1", "ERR2", "ERR3", "ERR4", "odd")     # an answer, but no usable value: a detail that is simply not known (yet)
+SOFT = ("ERR1", "ERR2", "ERR3", "ERR4", "ERR", "odd")     # an answer, but no usable value: a detail that is simply not known (yet)
+
+# Epson ESC/VP.net (D99): Epson's own control on TCP 3629, beside PJLink. It reaches what PJLink class 1 cannot:
+# freeze, brightness, the light source's Eco setting and the colour mode. Measured on an Epson X27 (2026-10-19).
+PROTOCOLS = ("pjlink", "epson", "both")
+PROTOCOL_NAMES = {"pjlink": "PJLink", "epson": "Epson control", "both": "PJLink and Epson control"}
+ESCVP_PORT = 3629
+ESCVP_HELLO = b"ESC/VP.net\x10\x03\x00\x00\x00\x00"       # "connect", version 1.0, no headers
+ESCVP_REFUSED = {
+    0x40: "the projector did not understand the Epson control request",
+    0x41: "the projector asks for a password for Epson control, which this box cannot send; use PJLink, or switch the projector's Epson control password off",
+    0x43: "the projector refused the Epson control password",
+    0x45: "the projector does not allow Epson control from this box right now",
+    0x53: "the projector is busy with another Epson control connection",
+    0x55: "the projector does not speak this version of Epson control"}
+EPSON_POWER = {"00": "off", "01": "on", "02": "warming up", "03": "cooling down", "04": "off", "05": "off", "09": "off"}
+# ERR? answers, from Epson's ESC/VP21 list for business projectors, into the six PJLink warning names (only 00 was
+# seen on a real projector). Anything else is "other".
+EPSON_ERRORS = {"01": "fan", "03": "lamp", "04": "temperature", "06": "lamp", "07": "cover", "08": "filter", "0C": "fan", "0D": "filter"}
+# The colour modes the panel may try, as Epson's codes. Treated as opaque: the names differ by model, so the panel
+# shows the code. A code the projector refuses ("ERR": 07, 0C and 14 on the X27) is not offered again until the
+# panel restarts; one it reports as in use, or takes, is marked as known to work.
+COLOUR_MODES = ("01", "02", "03", "04", "05", "06", "07", "08", "0C", "14")
+EPSON_SLOW = 8.0                 # seconds for an answer to a power or colour mode change (CMODE 06 took 3.2 s on the X27)
+VIEW_HOLD = 30.0                 # seconds after the panel last read the list during which the projectors are checked often
+_ESC_COMMAND = re.compile(r"[A-Z]{2,10}(\?| [0-9A-Z]{1,4})")
+_ESC_VALUE = re.compile(r"[0-9A-Za-z][0-9A-Za-z ._-]{0,31}")
+
+
+def protocol_of(entry):
+    """How the box talks to this projector. An entry saved before D99 has no protocol: it is PJLink."""
+    p = entry.get("protocol", "pjlink")
+    return p if p in PROTOCOLS else "pjlink"
+
+
+def epson(entry):
+    return protocol_of(entry) in ("epson", "both")
 
 
 class ProjectorError(Exception):
@@ -120,10 +161,16 @@ def validate(entry):
     password = entry.get("password", "")
     if not isinstance(password, str) or len(password) > 32 or re.search(r"[^\x21-\x7e]", password):
         raise ProjectorError("the password may have up to 32 plain characters")
-    return {"id": uuid.uuid4().hex[:8], "name": name.strip(), "host": host, "port": port, "password": password}
+    protocol = entry.get("protocol", "pjlink")
+    if protocol not in PROTOCOLS:
+        raise ProjectorError("protocol must be pjlink, epson or both")
+    out = {"id": uuid.uuid4().hex[:8], "name": name.strip(), "host": host, "port": port, "password": password}
+    if protocol != "pjlink":
+        out["protocol"] = protocol         # PJLink is kept as no key at all, as every entry saved before D99
+    return out
 
 
-EDITABLE = ("name", "host", "port", "password")
+EDITABLE = ("name", "host", "port", "password", "protocol")
 
 
 def validate_edit(old, change):
@@ -134,11 +181,11 @@ def validate_edit(old, change):
         raise ProjectorError("edit must be {id, name, host, port, password}")
     sent = [k for k in EDITABLE if k in change]
     if not sent:
-        raise ProjectorError("nothing to change: send a name, host, port or password")
-    merged = {k: old[k] for k in EDITABLE}
+        raise ProjectorError("nothing to change: send a name, host, port, password or protocol")
+    merged = {k: old[k] if k in old else protocol_of(old) for k in EDITABLE}      # only the protocol may be missing (before D99)
     merged.update({k: change[k] for k in sent})
     clean = validate(merged)
-    return {k: clean[k] for k in sent}
+    return {k: clean.get(k, "pjlink") for k in sent}      # {"protocol": "pjlink"} is a change: the API then drops the key
 
 
 def _read_line(sock, limit, deadline):
@@ -347,6 +394,326 @@ class PJLink:
         return out
 
 
+def _read_exact(sock, n, deadline):
+    """Exactly n bytes before `deadline`, or ProjectorError."""
+    buf = b""
+    while len(buf) < n:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise socket.timeout("timed out")
+        sock.settimeout(left)
+        c = sock.recv(n - len(buf))
+        if not c:
+            raise ProjectorError("the projector closed the Epson control connection", "unreachable" if not buf else "odd")
+        buf += c
+    return buf
+
+
+def _read_answer(sock, limit, deadline):
+    """One ESC/VP.net answer: everything before the ":" that ends it, bounded by `limit` bytes and by `deadline`.
+    Read a byte at a time, so nothing after the ":" is taken from the next answer."""
+    buf = b""
+    while True:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise socket.timeout("timed out")
+        sock.settimeout(left)
+        c = sock.recv(1)
+        if not c:
+            if buf:
+                raise ProjectorError("unexpected answer from the projector", "odd")
+            raise ProjectorError("the projector did not answer: it closed the connection", "unreachable")
+        if c == b":":
+            return buf.decode("ascii", "replace").strip()
+        buf += c
+        if len(buf) > limit:
+            raise ProjectorError("unexpected answer from the projector", "odd")
+
+
+def _parse_answer(cmd, text):
+    """The value of a query ("PWR?" answered "PWR=01" is "01"), "" for a set that was taken, or a ProjectorError
+    (returned, not raised, so one refusal does not end the others asked on the same connection)."""
+    if text == "ERR":
+        if cmd.endswith("?"):
+            return ProjectorError("the projector would not say %s now" % cmd[:-1], "ERR")
+        return ProjectorError("the projector refused %s: it may be warming up, cooling down, showing its menu, "
+                              "or not have that setting" % cmd.split()[0], "ERR")
+    if cmd.endswith("?"):
+        key, _, value = text.partition("=")
+        if key != cmd[:-1] or not _ESC_VALUE.fullmatch(value):
+            return ProjectorError("unexpected answer from the projector", "odd")
+        return value
+    return "" if text == "" else ProjectorError("unexpected answer from the projector", "odd")
+
+
+class EscVp:
+    """Epson ESC/VP.net on TCP 3629: the 16 byte "connect" header and its 16 byte answer, then commands that end
+    with a carriage return, each answered by text ending in ":"; "ERR" means refused. Several commands may share
+    one connection (session), each with its own bounded wait. The connect is bounded by `connect_timeout`, each
+    answer by `timeout` (EPSON_SLOW for a power or colour mode change), and the whole session, from the connect to
+    the last answer, by one deadline of 2 x timeout plus one slow allowance: a device that answers each question
+    just inside its own limit cannot hold the projector's lock for longer than that. One command at a time per projector: the
+    same lock as its PJLink commands (`lock_port` is its PJLink port), so the two never talk to it at once.
+    `cancel` (a threading.Event), once set, means nothing more is sent."""
+
+    MAX = 16                         # commands in one session
+    SLOW = ("PWR", "CMODE", "LUMINANCE")
+
+    def __init__(self, host, lock_port=PORT, port=None, timeout=5.0, connect_timeout=3.0, slow=EPSON_SLOW,
+                 connect=socket.create_connection, resolve=socket.getaddrinfo):
+        self.host, self.lock_port = host, lock_port
+        self.port = port if port is not None else ESCVP_PORT       # read when made, so a test can point it at a fake
+        self.timeout, self.connect_timeout, self.slow = timeout, connect_timeout, slow
+        self._connect, self._resolve = connect, resolve
+        self.cancel = None
+
+    def _stopped(self):
+        if self.cancel is not None and self.cancel.is_set():
+            raise ProjectorError("stopped", "stopped")
+
+    def session(self, commands):
+        """Send each of `commands` ("PWR?", "MUTE ON") on one connection: a list with, for each, the value of a
+        query, "" for a set that was taken, or a ProjectorError for one that was refused or answered oddly.
+        Raises ProjectorError when there is no connection or no answer at all."""
+        if not 1 <= len(commands) <= self.MAX or not all(isinstance(c, str) and _ESC_COMMAND.fullmatch(c) for c in commands):
+            raise ProjectorError("not an Epson control command", "odd")
+        self._stopped()
+        addr = private_address(self.host, self._resolve)        # checked again at every use: a name may change
+        key = (addr, self.lock_port)
+        slot = _take(key, time.monotonic() + 2 * self.timeout)
+        if slot is None:
+            raise ProjectorError("the projector is busy with another command", "busy")
+        try:
+            return self._session(addr, commands)
+        finally:
+            slot[0].release()
+            _drop(key, slot)
+
+    def session_limit(self):
+        """Seconds one session may take in all, from the connect to its last answer (review of #151)."""
+        return 2 * self.timeout + self.slow
+
+    def _session(self, addr, commands):
+        end = time.monotonic() + self.session_limit()
+        try:
+            self._stopped()
+            s = self._connect((addr, self.port), timeout=min(self.connect_timeout, self.session_limit()))
+        except OSError as e:
+            raise ProjectorError("cannot reach the projector's Epson control at %s: %s" % (self.host, getattr(e, "strerror", None) or e), "unreachable")
+        out = []
+        try:
+            s.sendall(ESCVP_HELLO)
+            reply = _read_exact(s, 16, min(end, time.monotonic() + self.timeout))
+            if reply[:10] != b"ESC/VP.net" or reply[11] != 0x03:
+                raise ProjectorError("that does not answer like an Epson projector (ESC/VP.net)", "odd")
+            if reply[14] != 0x20:
+                raise ProjectorError(ESCVP_REFUSED.get(reply[14], "the projector refused the Epson control connection (code %02X)" % reply[14]), "refused")
+            if reply[15] > 8:                                   # more than any projector sends: it would read out of step
+                raise ProjectorError("that does not answer like an Epson projector (ESC/VP.net)", "odd")
+            if reply[15]:                                       # headers the projector added: 18 bytes each, not used
+                _read_exact(s, 18 * reply[15], min(end, time.monotonic() + self.timeout))
+            for cmd in commands:
+                self._stopped()
+                s.sendall((cmd + "\r").encode("ascii"))
+                wait = self.slow if not cmd.endswith("?") and cmd.split()[0] in self.SLOW else self.timeout
+                out.append(_parse_answer(cmd, _read_answer(s, 128, min(end, time.monotonic() + wait))))
+        except (OSError, socket.timeout) as e:
+            raise ProjectorError("the projector did not answer: %s" % e, "unreachable")
+        finally:
+            s.close()
+        return out
+
+    def query(self, key):
+        v = self.session([key + "?"])[0]
+        if isinstance(v, ProjectorError):
+            raise v
+        return v
+
+    def send(self, cmd):
+        v = self.session([cmd])[0]
+        if isinstance(v, ProjectorError):
+            raise v
+        return "OK"
+
+
+def _value(v, pattern):
+    return v if isinstance(v, str) and re.fullmatch(pattern, v) else None
+
+
+def epson_picture(answers):
+    """{"freeze", "brightness", "light", "colour_mode"} from the answers to PICTURE_QUERIES; None for each not known."""
+    freeze, light, bright, cmode = answers
+    b = _value(bright, r"[0-9]{1,3}")
+    return {"freeze": {"ON": True, "OFF": False}.get(freeze if isinstance(freeze, str) else None),
+            "light": {"00": "normal", "01": "eco"}.get(light if isinstance(light, str) else None),
+            "brightness": int(b) if b is not None and int(b) <= 255 else None,
+            "colour_mode": _value(cmode, r"[0-9A-F]{2}")}
+
+
+def epson_warnings(answer):
+    """ERR?'s two digits in PJLink's shape ({"fan": "ok", ...}): 00 is none; any other is an error under its name."""
+    err = _value(answer, r"[0-9A-F]{2}")
+    if err is None:
+        return None
+    return {k: ("error" if err != "00" and EPSON_ERRORS.get(err, "other") == k else "ok") for k in WARNINGS}
+
+
+PICTURE_QUERIES = ["FREEZE?", "LUMINANCE?", "BRIGHT?", "CMODE?"]
+STATUS_QUERIES = ["PWR?", "LAMP?", "ERR?", "MUTE?", "SOURCE?"] + PICTURE_QUERIES
+
+
+def epson_status(esc):
+    """The whole status over Epson control alone, in one connection, in the Monitor's shape. In standby a projector
+    refuses most of these; only the power state decides whether it "answers"."""
+    a = esc.session(STATUS_QUERIES)
+    power = EPSON_POWER.get(a[0]) if isinstance(a[0], str) else None
+    if power is None:
+        raise a[0] if isinstance(a[0], ProjectorError) else ProjectorError("unexpected answer from the projector", "odd")
+    st = {"ok": True, "checked": int(time.time()), "power": power, "input": None, "mute": None}
+    lamp = _value(a[1], r"[0-9]{1,5}")
+    st["lamps"] = [{"hours": int(lamp), "on": power == "on"}] if lamp is not None else None
+    st["warnings"] = epson_warnings(a[2])
+    if power == "on":
+        mute = {"ON": True, "OFF": False}.get(a[3] if isinstance(a[3], str) else None)
+        st["mute"] = None if mute is None else {"picture": mute, "sound": mute}
+        st["source"] = _value(a[4], r"[0-9A-F]{2}")
+        st["picture"] = epson_picture(a[5:])
+    return st
+
+
+class EpsonLink:
+    """A projector reached over Epson control alone, with the methods of PJLink that the Monitor, the API and the
+    room call. What only PJLink has (its input list, input changes, separate picture and sound mutes) is refused
+    as "not known" (ERR1), so a status check or a room scene carries on without it."""
+
+    NO_INPUTS = "inputs are chosen over PJLink: set this projector to PJLink and Epson control"
+
+    def __init__(self, host, lock_port=PORT, **kw):
+        self.esc = EscVp(host, lock_port=lock_port, **kw)
+
+    @property
+    def cancel(self):
+        return self.esc.cancel
+
+    @cancel.setter
+    def cancel(self, event):
+        self.esc.cancel = event
+
+    def power(self, on):
+        return self.esc.send("PWR ON" if on else "PWR OFF")
+
+    def state(self):
+        return EPSON_POWER.get(self.esc.query("PWR"), "unknown")
+
+    def mute(self, on, what="both"):
+        if what != "both":
+            raise ProjectorError("over Epson control this projector mutes the picture and the sound together", "ERR2")
+        return self.esc.send("MUTE ON" if on else "MUTE OFF")
+
+    def mute_state(self):
+        v = {"ON": True, "OFF": False}.get(self.esc.query("MUTE"))
+        if v is None:
+            raise ProjectorError("unexpected answer from the projector", "odd")
+        return {"picture": v, "sound": v}
+
+    def input(self):
+        raise ProjectorError(self.NO_INPUTS, "ERR1")
+
+    def set_input(self, code):
+        raise ProjectorError(self.NO_INPUTS, "ERR1")
+
+    def inputs(self):
+        raise ProjectorError(self.NO_INPUTS, "ERR1")
+
+    def lamps(self):
+        v = _value(self.esc.query("LAMP"), r"[0-9]{1,5}")
+        if v is None:
+            raise ProjectorError("unexpected answer from the projector", "odd")
+        return [{"hours": int(v), "on": False}]
+
+    def warnings(self):
+        w = epson_warnings(self.esc.query("ERR"))
+        if w is None:
+            raise ProjectorError("unexpected answer from the projector", "odd")
+        return w
+
+    def identify(self):
+        """What Epson control says of who it is: only a serial number (the X27 refuses PRODUCT?)."""
+        a = self.esc.session(["SNO?"])[0]
+        serial = clean_text(a, 32) if isinstance(a, str) else None
+        return {"class": None, "name": None, "maker": "Epson", "model": None, "info": "serial " + serial if serial else None, "inputs": None}
+
+
+def probe(host, port=PORT, password="", timeout=5.0, connect=socket.create_connection, resolve=socket.getaddrinfo, wait=None):
+    """What answers at `host`, for the Owner's Test before a projector is added: {"pjlink": {...}, "epson": {...},
+    "suggest": a protocol or None}. Both are asked at once, each bounded; nothing is changed on the projector and
+    the password is never in the answer (only whether one is needed and whether the one given was right)."""
+    private_address(host, resolve)                              # a public address raises here, before anything is sent
+    done = {}                   # filled by each thread with its own answer, as its last step
+
+    def pj():
+        r = {"ok": False}
+        try:
+            _pj(r)
+        finally:
+            done["pjlink"] = r
+
+    def _pj(r):
+        link = PJLink(host, port, "", timeout=timeout, connect=connect, resolve=resolve)
+        try:
+            try:
+                r["power"], r["password"] = link.state(), "none"
+            except ProjectorError as e:
+                if str(e) != "this projector needs a password" or not password:
+                    raise
+                link.password = password
+                r["power"], r["password"] = link.state(), "right"
+            r["ok"] = True
+            got = link.identify()
+            r.update({k: got.get(k) for k in ("maker", "model", "name")})
+        except ProjectorError as e:
+            if r.get("ok"):
+                return                                          # it answered; a detail it would not give is just not known
+            r["error"] = str(e)
+            if e.code == "ERRA":
+                r["password"] = "wrong"
+            elif str(e) == "this projector needs a password":
+                r["password"] = "needed"
+
+    def ep():
+        r = {"ok": False}
+        try:
+            _ep(r)
+        finally:
+            done["epson"] = r
+
+    def _ep(r):
+        esc = EscVp(host, lock_port=port, timeout=timeout, connect=connect, resolve=resolve)
+        try:
+            a = esc.session(["PWR?", "SNO?"])
+            if not isinstance(a[0], str) or a[0] not in EPSON_POWER:
+                raise a[0] if isinstance(a[0], ProjectorError) else ProjectorError("unexpected answer from the projector", "odd")
+            r.update(ok=True, power=EPSON_POWER[a[0]], serial=clean_text(a[1], 32) if isinstance(a[1], str) else None)
+        except ProjectorError as e:
+            r["error"] = str(e)
+    threads = [threading.Thread(target=f, daemon=True) for f in (pj, ep)]
+    for t in threads:
+        t.start()
+    end = time.monotonic() + (4 * timeout if wait is None else wait)
+    for t in threads:
+        t.join(max(0.0, end - time.monotonic()))
+    out = {}
+    for k in ("pjlink", "epson"):               # a copy, taken now: a thread still running changes nothing in the answer
+        r = done.get(k)
+        out[k] = dict(r) if r is not None else {"ok": False, "error": "the projector did not answer in time"}
+        if not out[k]["ok"] and "error" not in out[k]:
+            out[k]["error"] = "the projector did not answer"
+    pj_ok = out["pjlink"]["ok"] or out["pjlink"].get("password") in ("needed", "wrong")      # it is there; the password is for the person to fix
+    ep_ok = out["epson"]["ok"]
+    out["suggest"] = "both" if pj_ok and ep_ok else "pjlink" if pj_ok else "epson" if ep_ok else None
+    return out
+
+
 class _Worker:
     def __init__(self, pid):
         self.pid = pid
@@ -357,6 +724,7 @@ class _Worker:
         self.identify = False                 # read the details at the next turn
         self.pending = None                   # {"input", "until", "next"}: an input change being retried
         self.asked_inputs = False             # asked for the input list since it was last seen switched on
+        self.last = None                      # time.monotonic() of the last status check that was made
 
 
 class Monitor:
@@ -380,6 +748,8 @@ class Monitor:
         self._status = {}        # projector id -> the last answer
         self._notice = {}        # projector id -> {"ok", "text"}: how the last input change ended
         self._input_locks = {}   # projector id -> Lock: one input change at a time, the user's or the retry's
+        self._modes = {}         # projector id -> {colour mode code: True (seen in use or taken) or False (refused)}
+        self._viewed = None      # time.monotonic() when the panel last read the list (viewed())
         self._closed = False
 
     def _entries(self):
@@ -395,6 +765,12 @@ class Monitor:
         if w is not None:
             link.cancel = w.stop                  # switched off or removed: not one more command
         return link
+
+    def _esc(self, entry, w=None):
+        esc = self.api._escvp(entry)
+        if w is not None:
+            esc.cancel = w.stop
+        return esc
 
     def _new_worker(self, pid, index, entry):
         """With self.lock held."""
@@ -436,6 +812,7 @@ class Monitor:
         w.wake.set()
         self._status.pop(w.pid, None)
         self._notice.pop(w.pid, None)
+        self._modes.pop(w.pid, None)
         self._leaving.append(w)
 
     def retire(self, pid):
@@ -452,6 +829,7 @@ class Monitor:
                 self._retire(w)
             self._status.pop(pid, None)
             self._notice.pop(pid, None)
+            self._modes.pop(pid, None)
 
     def stop(self, final=False):
         """Stop every worker. `final`: the panel is closing, start none again."""
@@ -467,9 +845,18 @@ class Monitor:
 
     # -- what the panel reads --
     def status(self, pid):
-        """The last answer, plus "pending_input", "notice" and "waiting" (no thread is free for it yet)."""
+        """The last answer, plus "pending_input", "notice" and "waiting" (no thread is free for it yet). With
+        Epson control and the projector on, "picture" also holds "colour_modes": [{"code", "known"}], the modes the
+        panel may offer (not those the projector refused); known is True for one it was seen using or took."""
         with self.lock:
             st = dict(self._status.get(pid) or {})
+            if isinstance(st.get("picture"), dict):
+                seen = self._modes.get(pid) or {}
+                codes = [c for c in COLOUR_MODES if seen.get(c) is not False]
+                cur = st["picture"].get("colour_mode")
+                if cur and cur not in codes:
+                    codes.append(cur)
+                st["picture"] = dict(st["picture"], colour_modes=[{"code": c, "known": seen.get(c) is True or c == cur} for c in codes])
             w = self._workers.get(pid)
             st["pending_input"] = w.pending["input"] if w and w.pending else None
             st["notice"] = self._notice.get(pid)
@@ -484,6 +871,26 @@ class Monitor:
                 if pid in ("all", w.pid):
                     w.due = 0.0
                     w.wake.set()
+
+    def viewed(self):
+        """The panel is showing the projectors: check each one every `changing` seconds (10) instead of every
+        `interval` (45) while it does, and for VIEW_HOLD seconds after it last asked. Asks nothing itself."""
+        now = time.monotonic()
+        with self.lock:
+            self._viewed = now
+            for w in self._workers.values():
+                if w.last is not None and w.due != float("inf") and w.due > w.last + self.changing:
+                    w.due = max(now, w.last + self.changing)
+                    w.wake.set()
+
+    def _watched(self):
+        return self._viewed is not None and time.monotonic() - self._viewed < VIEW_HOLD
+
+    def mode_result(self, pid, code, took):
+        """A colour mode change was answered: `took` True (it is known to work) or False (refused, not offered again)."""
+        with self.lock:
+            if pid in self._workers:
+                self._modes.setdefault(pid, {})[code] = bool(took)
 
     def health(self):
         """For the Health card: [{"id", "name", "state", "text"}] from the last answers; asks nothing."""
@@ -650,13 +1057,24 @@ class Monitor:
                     return None
                 raise
         st = {"ok": True, "checked": int(time.time()), "input": None, "mute": None}
+        proto = protocol_of(entry)
         try:
-            st["power"] = link.state()
-            st["warnings"] = ask(link.warnings)
-            st["lamps"] = ask(link.lamps)
-            if st["power"] == "on":                 # in standby these two are "unavailable" by the standard
-                st["input"] = ask(link.input)
-                st["mute"] = ask(link.mute_state)
+            if proto == "epson":                    # everything over Epson control, in one connection
+                st = epson_status(self._esc(entry, w))
+            else:
+                st["power"] = link.state()
+                st["warnings"] = ask(link.warnings)
+                st["lamps"] = ask(link.lamps)
+                if st["power"] == "on":                 # in standby these two are "unavailable" by the standard
+                    st["input"] = ask(link.input)
+                    st["mute"] = ask(link.mute_state)
+                if proto == "both" and st["power"] == "on":
+                    try:                            # the picture settings; PJLink alone says whether it answers
+                        st["picture"] = epson_picture(self._esc(entry, w).session(PICTURE_QUERIES))
+                    except ProjectorError as e:
+                        if e.code == "stopped":
+                            raise
+                        st["picture_error"] = str(e)
         except ProjectorError as e:
             if e.code in ("busy", "stopped"):       # the last answer stands
                 return None
@@ -667,6 +1085,9 @@ class Monitor:
             if w.stop.is_set():
                 return None
             self._status[w.pid] = st
+            cur = (st.get("picture") or {}).get("colour_mode")
+            if cur:
+                self._modes.setdefault(w.pid, {})[cur] = True       # in use: the projector has it
         return st
 
     def _run(self, w):
@@ -717,8 +1138,10 @@ class Monitor:
                     w.due = float("inf")
                 st = self._poll(w, entry)
                 with self.lock:
+                    w.last = time.monotonic()
                     if w.due == float("inf"):       # else poke() asked for another check meanwhile: keep that
-                        w.due = time.monotonic() + (self.changing if (st or {}).get("power") in ("warming up", "cooling down") else self.interval)
+                        often = (st or {}).get("power") in ("warming up", "cooling down") or self._watched()
+                        w.due = time.monotonic() + (self.changing if often else self.interval)
                     if st is None or not st["ok"]:
                         pass                        # nothing learnt this time: ask for the input list neither again nor anew
                     elif st["power"] != "on":

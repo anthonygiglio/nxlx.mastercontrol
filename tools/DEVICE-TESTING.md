@@ -662,6 +662,21 @@ Setup > Sound reactivity, as the Owner. Under "Advanced: sources and levels sent
 | SS5 | Source: levels sent in over OSC; from Max/RNBO on a render node send `/nxlx/sound/in/level` and `/nxlx/sound/in/beat` on a metronome | The meter and the Beat chip follow what Max sends; from a machine that is neither a node nor listed, nothing | Whether a sender not listed changed anything |
 | SS6 | As an Operator: switch between the allowed sources; through a remote support session try to switch to the capture device | The Operator switches; the session is refused with words, and listening is never switched on by either | The words |
 
+### Projector control: Epson control beside PJLink (D99): never pressed against a real projector from the panel
+
+Before: the X27 (or an X39) on the network and on, its network control on; Projectors on under Setup. Write down anything the panel says in red.
+
+| Row | Do | Expect | Send back |
+| --- | --- | --- | --- |
+| PX1 | Setup > Projectors > + Add a projector: the X27's address, then **Test** | "PJLink answers: EPSON EPSON X27. Epson control answers (serial ...). Best choice: PJLink and Epson control." and Control set to that | The words; how long Test took |
+| PX2 | Add it, wait for On | The row says On, the input, lamp hours; under it Mute (black), Freeze, Brightness, Eco light, Colour mode | Whether the brightness and the mode match the projector's own menu |
+| PX3 | Mute (black), then Unmute; Freeze, then Unfreeze, with a clip playing | The wall goes black and comes back; the wall's picture stops while the box plays on, then follows again; the buttons change their words within a few seconds | How long each took, as you saw it |
+| PX4 | Move Brightness to about 40 and let go; then back to 125 | The wall dims, then is as before; the number may move a little (the projector's own steps) | The number it settled on |
+| PX5 | Eco light on, then off | The wall dims a little and the fan is quieter; back after | Whether you saw or heard a difference |
+| PX6 | Colour mode: choose 06, then a mode marked "not tried yet", then back to 04 | 06 changes the colours in about 3 seconds; a mode the projector does not have says so in red and goes from the list | Which modes it took and which it refused, and what each looked like |
+| PX7 | Turn off: the question, then Turn off | "Turn off Main? It needs about a minute to cool..."; then Cooling down..., then Turn on | How long it cooled |
+| PX8 | Through a remote support session: open Projectors | Turn off is "On (switched off in the room)", no All off, no picture settings; Mute and Freeze work | That a helper could not switch it off |
+
 ### What to send back
 
 The output of checks 1 to 7 and 13, the `journalctl` tail for anything that failed, and a note of what you saw on screen. Say clearly what you did **not** test.

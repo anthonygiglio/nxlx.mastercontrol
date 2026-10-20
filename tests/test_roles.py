@@ -253,7 +253,9 @@ GUEST_BODIES = {
     ("POST", "/api/effects/preset"): ([{"name": "Soft"}], [{"name": "Soft", "values": {}}]),
     ("POST", "/api/projector"): (
         [{"id": "all", "action": "on"}, {"id": "0e0e0e0e", "action": "input", "input": "31"}],
-        [{"action": a} for a in ("mute", "unmute", "mute_picture", "unmute_picture", "mute_sound", "unmute_sound", "identify", "state")]
+        [{"action": a} for a in ("mute", "unmute", "mute_picture", "unmute_picture", "mute_sound", "unmute_sound", "identify", "state",
+                                 "freeze", "unfreeze")]
+        + [{"action": "brightness", "value": 10}, {"action": "light", "value": "eco"}, {"action": "colour_mode", "value": "04"}]      # Epson control (D99)
         + [{"action": "on", "background": True}, {}]),
     ("POST", "/api/room/group"): (
         [{"group": "all", "action": "on"}, {"group": GROUP, "action": "input", "input": "31"}, {"number": 0, "action": "on"}],

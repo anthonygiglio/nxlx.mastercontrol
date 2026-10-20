@@ -1493,7 +1493,7 @@ function startServer(env) {          // env: more for the harness's environment 
     // More: the secondary actions in plain words, Remove last
     await page.click('.proj-entry .morebtn');
     assert.deepStrictEqual(await page.$$eval('.proj-entry .moreacts button', (bs) => bs.map((b) => b.textContent)),
-      ['Blank the picture', 'Mute the sound', 'Name the inputs', 'Check now', 'Read details again', 'Edit', 'Remove'], 'what is under More, in order');
+      ['Blank the picture', 'Mute the sound', 'Name the inputs', 'Check now', 'Read details again', 'Test', 'Edit', 'Remove'], 'what is under More, in order');
     // Name the inputs: one row per input, one Save names; naming an input that is not in use does not switch to it
     await page.click('.proj-namebtn');
     await page.waitForSelector('#projnames');
