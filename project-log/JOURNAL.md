@@ -4,6 +4,12 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-20, CI: the release before D100 is fetched for its rollback test (`ci-fetch-d100`)
+
+- **Found:** master has failed `test (3.9)` and `test (3.12)` since the merge of #152: `tests.test_masks.RollbackTest` runs `git archive 1a6484b`, and the unit-test job's shallow checkout has no such commit. The job fetches each older release a rollback test reads (one step per release); #152 added none for 1a6484b. Every pull request opened since fails the same test.
+- **Fixed:** one more fetch step, beside the others.
+- **Seen:** the unit tests took 1720 s of the step's 1800 s limit on 3.12 (3382 tests). The next few minutes of tests will reach it.
+
 ## 2026-10-20, the review of #152 (masks, D100 amendment)
 
 - **The review:** one Medium and one Low, both fixed on `mask-list`. Medium: a 995 KB PNG that says 16000 x 16000 made mpv use about 1.2 GB per copy. Now the PNG header is read first (8192 a side, 40 megapixels at most, in the single-picture path too), the masks combined at once are bounded (70 megapixels of their own, and 4 x 3840 x 2160 of the screen's: 8 masks at 1080, 4 at 4K), and mpv runs under a 2 GB address-space cap with 1 MB thread stacks and 2 malloc arenas. The 1.5 GB cap asked for did not let mpv start even one mask on this 16-core laptop; 2 GB with the smaller stacks fits every allowed case (the heaviest 2.7 s, about 1.05 GB resident). Low: `set_overlay` now holds the settings' lock from the read to the write, so two Adds at once both land.

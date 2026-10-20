@@ -52,6 +52,8 @@ jobs:
         run: git fetch --depth=1 origin 9ca9cbf71bce6258813c18b3d4c87fd8cda46397
       - name: The release before D97 (sound sources), for the rollback test of tests/test_sound_sources.py
         run: git fetch --depth=1 origin 5a3a1c6c593cb387706afa488c5eeb79923860e3
+      - name: The release before D100 (the mask list), for the rollback test of tests/test_masks.py
+        run: git fetch --depth=1 origin 1a6484b835f0494b0e80ec7972f9b9d272478d01
       - name: Install mpv
         timeout-minutes: 10   # usually half a minute; see the note at the top of this file
         run: tools/ci-apt.sh mpv
