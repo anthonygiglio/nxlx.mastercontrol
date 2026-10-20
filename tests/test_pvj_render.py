@@ -454,6 +454,25 @@ class TextLayerTest(Base):
         self.assertTrue(self.r.wait(lambda: near(self.r.pixel(25, 20), RED)), self.r.stderr())
         self.assertFalse(self.r("get_property", "pvj-render")["text-layer"])
 
+    @unittest.skipUnless(shutil.which("mpv"), "needs mpv to combine the masks")
+    def test_masks_combined_into_one_picture_are_drawn_as_the_overlay(self):
+        # D100: the panel's combined masks (pvj/overlay.py) go to pvj-render as one overlay-add, as to classic mpv
+        from pvj import overlay
+        from tests.test_masks import png as rgba_png
+        first, second = os.path.join(self.tmp, "m1.png"), os.path.join(self.tmp, "m2.png")
+        rgba_png(first, W, H, lambda x, y: (0, 0, 0, 255) if x < W // 2 else (0, 0, 0, 0))                      # black left half
+        rgba_png(second, W, H, lambda x, y: (255, 0, 255, 255) if y >= H // 2 and x < W // 4 else (0, 0, 0, 0))  # magenta, over it
+        out = overlay.combine([first, second], W, H, os.path.join(self.tmp, "masks.bgra"))
+        self.r.load(self.picture)
+        self.r("overlay-add", overlay.OVERLAY_ID, 0, 0, out, 0, "bgra", W, H, W * 4)
+        self.assertTrue(self.r.wait(lambda: near(self.r.pixel(W // 4, H // 4), BLACK)), self.r.stderr())
+        self.assertColour(self.r.pixel(W // 8, 3 * H // 4), MAGENTA, "the later mask over the earlier one")
+        self.assertColour(self.r.pixel(3 * W // 8, 3 * H // 4), BLACK, "the first mask where the second is clear")
+        self.assertColour(self.r.pixel(3 * W // 4, H // 4), GREEN, "the video where both are clear")
+        self.assertColour(self.r.pixel(3 * W // 4, 3 * H // 4), WHITE, "the video")
+        self.r("overlay-remove", overlay.OVERLAY_ID)
+        self.assertTrue(self.r.wait(lambda: near(self.r.pixel(W // 4, H // 4), RED)), self.r.stderr())
+
     def test_an_overlay_over_a_mapping_stays_in_screen_space(self):
         surfaces = MappingTest.surface(self, [[0, 0], [W / 2, 0], [W / 2, H], [0, H]])
         lw, lh, values = mapper.warp_table(surfaces, W, H)
