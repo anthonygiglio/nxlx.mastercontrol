@@ -1,0 +1,2 @@
+{"extends": "_base", "title": "A projector in trouble", "about": "The main wall reports a temperature error and a filter warning; the back wall does not answer at all.",
+ "projectors": [{"name": "Main wall", "state": "on", "errors": "002010"}, {"name": "Back wall", "state": "silent"}]}

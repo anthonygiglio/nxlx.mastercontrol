@@ -1,0 +1,2 @@
+{"extends": "_base", "title": "Projectors warming and cooling", "about": "The back wall is warming up and a side wall is cooling down: their buttons say so and wait.",
+ "projectors": [{"name": "Main wall", "state": "on"}, {"name": "Back wall", "state": "warming"}, {"name": "Side wall", "state": "cooling"}]}
