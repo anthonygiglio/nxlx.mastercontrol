@@ -694,6 +694,21 @@ Before: the node on the projector (the X27 at 1024 x 768 is fine), a shader or a
 | MK10 | The memory cap on the Pi (review of #152): 8 masks at 1920 x 1080, then 4 at 3840 x 2160 if the screen has the mode; then add a PNG that says 16000 x 16000 | Each combines (the cap is 2 GB of address space, 1 MB thread stacks); the big one is left out at once with "larger than a mask may be"; `free -m` shows no swap storm | The seconds, and anything in `journalctl -u pvj-web` |
 | MK9 | GPU and frames with 8 masks on over a shader: `vcgencmd` / the health page as in test D | The same cost as one mask (one overlay, as measured on 2026-10-19 with two) and 0 dropped frames | The numbers |
 
+### Sources and surfaces, step 1 (D101): never run on a Pi
+
+Everything of D101 ran on a software GPU in a 320 x 180 headless window. Before: the node on the X27, Setup > Renderer on **New** (its card says 4 sources on a Pi 4), four clips of the owner's at **720p30** and two at **1080p30** in the Library, each of a clearly different picture. Read `["get_property","pvj-render"]` (`flips`, `missed-vblanks`, `gl-fences`, `gl-objects`) and `["get_property","pvj-sources"]` (each source's `drawn`, `path`, `idle`) over the socket as in R1, before and after each run; CPU with `top` (per core); the GPU's busy share as in R1. The webcam aimed at the wall for SO3 and SO4.
+
+| # | Do | Look for | Send back |
+| --- | --- | --- | --- |
+| SO1 | Four sources at 720p, the X27 at **1024 x 768**: a clip on Source 1 from a pad, and on Sources 2, 3 and 4 from the Sources strip on Shape > Mapping; 2 minutes | `flips` up by about 60 a second, `missed-vblanks` up by few; each source's `drawn` up by about 30 a second; no line "Export failed" | Flips and missed vblanks a second, CPU per core, the GPU's share, the temperature at the end |
+| SO2 | The same with the output at **1920 x 1080** (Setup > Screen output) | As SO1. The decode measure says 4 at 720p fit with some room | As SO1 |
+| SO3 | Two quads side by side, the left on Source 1 and the right on Source 2 (Shows), with two different clips; then **Edit on the display**, then off | Each quad shows its own clip; their shared edge soft, no line of the wrong picture, no step every 4 pixels; the editing view shows the same | Webcam photos of the edge, shown and while editing |
+| SO4 | A crossfade on Source 1 (Mix on Crossfade, 2 s, a pad) while Sources 2 to 4 play, 10 times | Source 1 fades as in CF1; the quads on Sources 2 to 4 go on moving without a stutter; `fades-done` up by 10 | Missed vblanks during the 10 fades; anything that stuttered |
+| SO5 | A 1080p clip to Source 2 while Sources 3 and 4 play | The panel says "this may drop frames on this box; 720p clips are lighter"; whether it does drop (`missed-vblanks`, the clip's own `frame-drop-count` cannot be read on a source: watch it) | The words; missed vblanks a second with it |
+| SO6 | The fd and GL counts over many loads: pvj-render run by hand as in R1 with `--sources=4`; `ls /proc/$(pgrep -x pvj-render)/fd \| wc -l`; then 300 loads round Sources 2 to 4 (`for i in $(seq 100); do for k in 2 3 4; do echo '{"command":["pvj-source",'$k',"loadfile","/path/a.mp4"]}' \| socat - /tmp/r.sock; sleep 0.5; done; done`), stop them all, and count again | The descriptor count as before (within a few), `gl-fences` near 0, `gl-objects` no higher than after the first 30 loads, the thread count (`ls /proc/PID/task \| wc -l`) as before | The counts before and after |
+| SO7 | Blackout with Sources 2 to 4 on surfaces; then Stop (the transport) | Blackout: every surface black at once; Stop: Source 1's surfaces black, the others play on (each stops with its own Stop in the strip) | Anything that stayed lit under Blackout |
+| SO8 | The switch back to classic (Setup > Renderer: Classic) with surfaces on Sources 2 and 3 | Classic draws within about 10 s; every surface shows Source 1; the card says Source 2 and 3 "need the New renderer"; switching New on again brings the sources back as surfaces of 2 and 3 (their clips must be played again) | Yes or no, and the card's words |
+
 ### What to send back
 
 The output of checks 1 to 7 and 13, the `journalctl` tail for anything that failed, and a note of what you saw on screen. Say clearly what you did **not** test.

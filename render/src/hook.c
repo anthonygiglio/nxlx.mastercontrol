@@ -10,7 +10,11 @@
 // video layer (drawn at the internal size) to the screen: HOOKED_size is the output's size, as on mpv's OUTPUT stage,
 // and HOOKED_tex reads the layer, so the mapping's screen pixels mean what they meant. Mapping and scaling are one pass.
 //
-// Only what the mapping uses is taken: HOOK OUTPUT (once), BIND HOOKED and BIND of a texture of the same file, DESC;
+// Sources (D101): `//!BIND SOURCEk` (k from 2 to 8) names another source's picture, which pvj-render supplies at the
+// internal size as SOURCEk_raw, read with SOURCEk_tex(pos) as HOOKED_tex reads source 1. The file names the source by
+// that word only; nothing of the file's text becomes a name in the program but what is on these fixed lists.
+//
+// Only what the mapping uses is taken: HOOK OUTPUT (once), BIND HOOKED, BIND SOURCEk and BIND of a texture of the same file, DESC;
 // TEXTURE with SIZE, FORMAT (rgba16f, rgba32f, rgba8), FILTER and BORDER. A file with a hook on any other stage, or
 // with any other directive, is not this pass: it is handed to libmpv, which runs it on the video layer (effects and
 // generators). A file that looks like ours and is damaged is refused.
@@ -46,7 +50,17 @@ struct Hook {
     HookTex tex[MAX_TEX];
     int nbind;
     char bind[MAX_TEX][64];
+    int nsrc;                   // BIND SOURCEk (D101): the other sources' pictures, supplied by pvj-render
+    int src[MAX_SOURCES];
 };
+
+// "SOURCE2" to "SOURCE8" (MAX_SOURCES): k, else 0. Source 1 is HOOKED.
+static int source_name(const char *s)
+{
+    if (strncmp(s, "SOURCE", 6) || !s[6] || s[7]) return 0;
+    int k = s[6] - '0';
+    return k >= 2 && k <= MAX_SOURCES ? k : 0;
+}
 
 void hook_free(Hook *h)
 {
@@ -181,7 +195,7 @@ int hook_load(const char *path, Hook **out, char *err, size_t n)
             if (!strcmp(word, "HOOK")) is_hook = 1;
             else if (!strcmp(word, "TEXTURE")) {
                 is_tex = 1;
-                if (!valid_name(rest)) { snprintf(err, n, "a texture's name is not allowed"); goto bad; }
+                if (!valid_name(rest) || !strncmp(rest, "SOURCE", 6)) { snprintf(err, n, "a texture's name is not allowed"); goto bad; }
                 snprintf(t.name, sizeof t.name, "%.60s", rest);
             } else if (!strcmp(word, "SIZE")) {
                 char extra;
@@ -202,8 +216,13 @@ int hook_load(const char *path, Hook **out, char *err, size_t n)
                 else if (!strcmp(rest, "MIRROR")) t.mirror = 1;
                 else if (strcmp(rest, "CLAMP")) { snprintf(err, n, "BORDER is CLAMP, REPEAT or MIRROR"); goto bad; }
             } else if (!strcmp(word, "BIND")) {
+                int k = source_name(rest);
                 if (!strcmp(rest, "HOOKED")) {}
-                else if (!valid_name(rest) || h->nbind == MAX_TEX) { snprintf(err, n, "a BIND names no texture of the file"); goto bad; }
+                else if (k) {
+                    int seen = 0;
+                    for (int i = 0; i < h->nsrc; i++) seen |= h->src[i] == k;
+                    if (!seen) h->src[h->nsrc++] = k;           // at most MAX_SOURCES - 1 different ones
+                } else if (!valid_name(rest) || h->nbind == MAX_TEX) { snprintf(err, n, "a BIND names no texture of the file"); goto bad; }
                 else snprintf(h->bind[h->nbind++], sizeof h->bind[0], "%.60s", rest);
             }
             l = eol < blocks[b].body ? eol + 1 : blocks[b].body;
@@ -330,6 +349,14 @@ int hookgl_build(const Hook *h, HookGL *g, char *err, size_t n)
         snprintf(line, sizeof line, "uniform sampler2D %s;\nuniform vec2 %s_size;\n", h->tex[i].name, h->tex[i].name);
         buf_str(&fs, line);
     }
+    for (int i = 0; i < h->nsrc; i++) {
+        char line[200];
+        // the mixing stage for a surface's source (D101): "normal" over the surface's black, by the source's opacity
+        snprintf(line, sizeof line, "uniform sampler2D SOURCE%d_raw;\nuniform float SOURCE%d_opacity;\n"
+                 "#define SOURCE%d_tex(pos) vec4(texture(SOURCE%d_raw, pos).rgb * SOURCE%d_opacity, 1.0)\n",
+                 h->src[i], h->src[i], h->src[i], h->src[i], h->src[i]);
+        buf_str(&fs, line);
+    }
     buf_str(&fs, "#line 1\n");
     buf_str(&fs, h->body);
     buf_str(&fs, "\nvoid main() { pvj_out = hook(); }\n");
@@ -366,6 +393,15 @@ int hookgl_build(const Hook *h, HookGL *g, char *err, size_t n)
         g->tex_size_loc[i] = glGetUniformLocation(g->prog, sz);
         g->tex_w[i] = t->w;
         g->tex_h[i] = t->h;
+    }
+    g->nsrc = h->nsrc;
+    for (int i = 0; i < h->nsrc; i++) {
+        char name[32];
+        snprintf(name, sizeof name, "SOURCE%d_raw", h->src[i]);
+        g->src[i] = h->src[i];
+        g->src_loc[i] = glGetUniformLocation(g->prog, name);
+        snprintf(name, sizeof name, "SOURCE%d_opacity", h->src[i]);
+        g->src_opacity_loc[i] = glGetUniformLocation(g->prog, name);
     }
     return 0;
 }

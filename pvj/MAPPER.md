@@ -18,6 +18,24 @@ Up to 16 surfaces and 64 cells in all. The first surface in the list is drawn on
 
 Each surface shows a part of the picture: its **picture corners** (0 to 1 across the picture). A new surface shows the whole picture; move its picture corners to show only a piece, for example the left half on the left wall and the right half on the right wall.
 
+## Sources: what each surface shows (D101)
+
+On the **New renderer** (Setup > Renderer) the box plays more than one clip at once: **Source 1** is the player's own picture, as always (the pads, the Library, Stop and the crossfade), and **Sources 2 and up** are clips played beside it, each on a layer of its own. In the chosen surface's panel, **Shows** picks the source the surface takes its piece from (its picture corners pick the piece, as before). So the left wall can show one clip and the right wall another.
+
+- **How many.** A Pi 4 has 4 sources, a Pi 3 has 2, other boxes 4 by default and up to 8 (the Owner can choose fewer or more under the cap, `POST /api/renderer {"sources"}`). Measured on the owner's Pi 4 (2026-10-20), software H.264 decode alone, 300 frames, no drawing:
+
+  | Source | 1 stream | 2 at once | 4 at once | 6 at once |
+  | --- | --- | --- | --- | --- |
+  | 1080p | 83 fps | 44 fps each | 22 each | |
+  | 720p | 161 | 88 each | 44 each | 30 each |
+  | 540p | 229 | 137 each | 67 each | 46 each |
+
+  With room left for drawing, a Pi 4 carries about 2 sources at 1080p, 4 at 720p and 6 at 540p. So 4 is what it carries at 720p, and an idle source costs nothing (no decode, no conversion). When a clip of more than 720 lines goes to a source while two others play, the panel says "this may drop frames on this box; 720p clips are lighter". Prefer 720p clips for sources 2 and up.
+- **Playing to a source.** The **Sources** strip on this page shows what each source plays, with a clip from the Library and Play for each of Sources 2 and up, and Stop. On Play > Pads, **Play to** sends the pads' clips to the chosen source (Source 1 unless another is chosen). Only clips go to Sources 2 and up in this step: a shader, an NDI source, a render cue, a stream or a slideshow is refused there with plain words; choose Source 1 for those. Playing to a source is the Owner's and an Operator's, as a play is.
+- **What they share.** Sources 2 and up have no sound, take a clip at a cut (the crossfade is Source 1's), and have no effects. The Mix level (Opacity, Blackout, the fades) reaches every source; Stop is Source 1's (each source has its own Stop in the strip).
+- **On classic mpv** only Source 1 exists: a surface set to another source is drawn from Source 1, the card says it needs the New renderer, and the shader is byte for byte what it was before D101. The choice is kept, so it comes back on the New renderer.
+- **How it is drawn.** The show table already holds two layers per cell (the top surface and the one under it, with their edge distances); its second texture's two spare channels now hold each layer's source. The final pass reads the source of each layer at the nearest table cell (an index is never blended: half way between 1 and 3 is not 2), and the picture of that source at its point, then blends the two layers by their edge distances as before. So an edge between two surfaces on different sources is the same soft blend as between two surfaces on one. pvj-render supplies the other sources' pictures by name (`//!BIND SOURCE2` to `SOURCE8` in the generated file, read with `SOURCEk_tex`); nothing of a surface's name or any other text goes into the shader. While editing, the direct shader reads each surface's source the same way.
+
 ## Lining up
 
 1. Play something to line up with: **Test pattern**, on the same screen under the mapping card, is ideal.
@@ -68,13 +86,15 @@ While a mapping is shown the player uses 8-bit buffers between its GPU passes (w
 
 ## API
 
-- `GET /api/mapper` (view): `{"enabled", "on", "screen": [w, h], "surfaces", "sets", "edit": {"on", "selected", "corner", "target"}, "status": {"state": "off|building|on|editing|error", "message"}, "limits"}`.
-- `POST /api/mapper` (full), one action at a time: `add` (`type`), `remove`, `order` (`dir` up or down), `show` (`on`), `rename` (`name`), `move` (`corner` or -1 for all, `target` screen or picture, `dx`, `dy`; picture moves are in screen pixels too), `place` (`corner`, `target`, `x`, `y`), `grid` (`cols`, `rows`), `set` (`surfaces`), `edit` (`on`, `selected`, `corner`, `target`), `on` (`on`), `save`, `load`, `delete` (`name`). Answers the state.
+- `GET /api/mapper` (view): `{"enabled", "on", "screen": [w, h], "surfaces", "sets", "edit": {"on", "selected", "corner", "target"}, "status": {"state": "off|building|on|editing|error", "message"}, "sources" (how many the player has now: 1 on classic), "limits"}`.
+- `POST /api/mapper` (the Operator's, D80), one action at a time: `add` (`type`), `remove`, `order` (`dir` up or down), `show` (`on`), `rename` (`name`), `source` (`source` 1 to 8, D101), `move` (`corner` or -1 for all, `target` screen or picture, `dx`, `dy`; picture moves are in screen pixels too), `place` (`corner`, `target`, `x`, `y`), `grid` (`cols`, `rows`), `set` (`surfaces`), `edit` (`on`, `selected`, `corner`, `target`), `on` (`on`), `save`, `load`, `delete` (`name`). Answers the state.
 
-A surface is `{"id", "type": "quad|triangle|grid", "name", "on", "vertices": [[x, y], ...], "tex": [[u, v], ...], "cols"?, "rows"?}`; screen corners in pixels, clockwise from the top left; a grid's points row by row.
+A surface is `{"id", "type": "quad|triangle|grid", "name", "on", "vertices": [[x, y], ...], "tex": [[u, v], ...], "cols"?, "rows"?, "source"?}`; screen corners in pixels, clockwise from the top left; a grid's points row by row; `source` 2 to 8 (no key is Source 1).
+- `GET /api/sources` (the Operator's): `{"count", "cap", "sources": [{"source", "idle", "name", "height", "pause"}], "warning"}`; `POST /api/sources` `{"source": 2 to N, "action": "stop"}`; a play to a source is `POST /api/play` with `"source"` beside `"file"` or `"pad"`.
 
 ## Not verified
 
 - Only on one Pi 4 with a monitor; not with a projector, and not by the owner at the screen (all checks were screenshots of the player's output).
+- Sources (D101) only on a software GPU in a headless window, never on a Pi: rows SO1 to SO8 in tools/DEVICE-TESTING.md.
 - Not on a Pi 5 or x86. The Pi 3 is not supported.
 - Importing ofxPiMapper's saved `mappersetting*.xml` files is not built yet.

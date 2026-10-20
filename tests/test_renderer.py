@@ -114,12 +114,12 @@ class ChoiceTest(Base):
     def test_the_arguments_are_the_screens_and_the_detail(self):
         screen = ["--drm-device=/dev/dri/card1", "--drm-connector=HDMI-A-1", "--drm-mode=1920x1080@60.00"]
         self.assertEqual(renderer.command("/run/s", screen, "auto", "pi4", self.env),
-                         [self.standin, "--socket=/run/s"] + screen + ["--detail=540", "--fast"])
+                         [self.standin, "--socket=/run/s"] + screen + ["--detail=540", "--fast", "--sources=4"])
         self.assertEqual(renderer.command("/run/s", screen[2:], "auto", "x86", self.env),
-                         [self.standin, "--socket=/run/s", "--drm-mode=1920x1080@60.00", "--detail=output"])
-        self.assertEqual(renderer.command("/run/s", [], 720, "pi5", self.env)[-1], "--detail=720")
+                         [self.standin, "--socket=/run/s", "--drm-mode=1920x1080@60.00", "--detail=output", "--sources=4"])
+        self.assertEqual(renderer.command("/run/s", [], 720, "pi5", self.env)[-2], "--detail=720")
         self.assertEqual(renderer.command("/run/s", ["--vo=gpu", "--drm-mode=3"], "output", "pi3", self.env),
-                         [self.standin, "--socket=/run/s", "--drm-mode=3", "--detail=output", "--fast"])
+                         [self.standin, "--socket=/run/s", "--drm-mode=3", "--detail=output", "--fast", "--sources=2"])
 
     def chosen(self, wish, extra=("--vo=gpu", "--gpu-context=drm"), windowed=False, env=None):
         state = os.path.join(self.dir, "state")
@@ -344,7 +344,7 @@ class ServeTest(Base):
         self.assertIn("--drm-mode=1920x1080@60.00", args)
         self.assertEqual((rep["chosen"], rep["drawing"]), ("new", "classic"))
         self.assertEqual(rep["why"], "pvj-render did not start (exit 2)")
-        self.assertEqual(self.runs()[0][-3:], ["--drm-mode=1920x1080@60.00", "--detail=540", "--fast"])
+        self.assertEqual(self.runs()[0][-4:], ["--drm-mode=1920x1080@60.00", "--detail=540", "--fast", "--sources=4"])
 
     def test_classic_chosen_starts_no_renderer(self):
         args, rep = self.serve("ok", {"use": "classic"})

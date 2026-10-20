@@ -1197,5 +1197,420 @@ class PlayerFadeTest(FadeBase):
         self.assertEqual(self.r("get_property", "playlist-count"), 2)
 
 
+# ---- sources (D101) ---------------------------------------------------------------------------------------------------
+SHOW = "keep-open=no,image-display-duration=inf"     # a picture on a source stays until something else comes
+
+
+def halves(left, right):
+    """Two quads: the left half of the screen showing source `left`, the right half showing source `right`, each with
+    the whole picture of its source."""
+    def quad(sid, x0, source):
+        s = {"id": sid, "type": "quad", "name": sid, "on": True, "vertices": [[x0, 0], [x0 + W / 2, 0], [x0 + W / 2, H], [x0, H]],
+             "tex": [[0, 0], [1, 0], [1, 1], [0, 1]]}
+        if source != 1:
+            s["source"] = source
+        return s
+    return mapper.validate_mapping({"surfaces": [quad("aaaaaaa1", 0, left), quad("aaaaaaa2", W / 2, right)]})
+
+
+class SourcesBase(FadeBase):
+    ARGS = ("--sources=4",)
+
+    def setUp(self):
+        super().setUp()
+        self.green = os.path.join(self.tmp, "green.png")
+        png(self.green, W, H, lambda x, y: GREEN)
+
+    def sources(self):
+        return self.r("get_property", "pvj-sources")
+
+    def source(self, k):
+        return self.sources()[k - 1]
+
+    def to(self, k, path, flag="replace", opts=SHOW):
+        """Load `path` on source k and wait until it plays there and has drawn a frame."""
+        drawn = self.source(k)["drawn"]
+        self.r("pvj-source", k, "loadfile", path, flag, opts)
+        self.assertTrue(self.r.wait(lambda: self.source(k)["path"] == path and self.source(k)["drawn"] > drawn, 10),
+                        "source %d did not take %s: %s\n%s" % (k, path, self.sources(), self.r.stderr()))
+        time.sleep(0.2)
+
+    def map(self, text):
+        path = os.path.join(self.tmp, "map-%d.glsl" % time.monotonic_ns())
+        with open(path, "w") as f:
+            f.write(text)
+        self.r("set_property", "glsl-shaders", [path])
+        self.assertEqual(self.st()["mapping"], "on", self.r.stderr())
+
+    def show_halves(self, left, right, available=4):
+        table = mapper.warp_table(halves(left, right), W, H, with_sources=True)
+        self.map(mapper.warp_shader(*table, available=available))
+
+    def halves_are(self, left, right, shot=None):
+        shot = shot or self.r.capture()
+        for x in (W // 8, W // 4, 3 * W // 8 - 4):
+            for y in (H // 4, 3 * H // 4):
+                self.assertColour(self.r.pixel(x, y, shot), left, "left half, %d,%d" % (x, y))
+        for x in (W // 2 + 4, 5 * W // 8, 7 * W // 8):
+            for y in (H // 4, 3 * H // 4):
+                self.assertColour(self.r.pixel(x, y, shot), right, "right half, %d,%d" % (x, y))
+
+
+class SourcesTest(SourcesBase):
+    def test_what_it_says_of_its_sources(self):
+        st = self.st()
+        self.assertEqual((st["sources"], st["layers"], st["front"]), (4, 2, 0))
+        got = self.sources()
+        self.assertEqual([s["source"] for s in got], [1, 2, 3, 4])
+        # Sources 2 to 4 are drawn once (their empty picture), then never while idle (CI drew them three times before
+        # an idle source stopped drawing, the review of #153). Source 1 is the phase 1 and 2 front layer, left as it
+        # was: its start-up draws vary (2 here, 3 on CI's llvmpipe), so it is judged by no new draw after start-up.
+        self.assertTrue(all(s["idle"] is True and s["path"] is None and s["loads"] == 0 for s in got), got)
+        self.assertEqual([s["drawn"] for s in got[1:]], [1, 1, 1], got)
+        time.sleep(0.5)
+        first = self.sources()[0]["drawn"]
+        time.sleep(1.0)
+        now = self.sources()
+        self.assertEqual(now[0]["drawn"], first, "idle source 1 drew again after start-up: %s" % now)
+        self.assertEqual([s["drawn"] for s in now[1:]], [1, 1, 1], "an idle source drew again")
+
+    def test_several_sources_play_different_clips_and_source_1_is_unchanged(self):
+        r = self.r
+        clips = {}
+        for k, colour in ((2, "red"), (3, "green"), (4, "blue")):
+            clips[k] = os.path.join(self.tmp, "%s.mp4" % colour)
+            make_clip(self, clips[k], 3, "color=c=%s" % colour)
+        r("set_property", "loop-file", "inf")
+        r.load(self.picture)                        # source 1, through the plain commands, as always
+        for k in (2, 3, 4):
+            self.to(k, clips[k], opts="keep-open=no")
+            r("pvj-source", k, "set_property", "loop-file", "inf")
+        before = self.sources()
+        time.sleep(1.5)
+        after = self.sources()
+        for k in (2, 3, 4):
+            s = after[k - 1]
+            self.assertEqual((s["path"], s["idle"], s["height"]), (clips[k], False, 180), s)
+            self.assertGreater(s["drawn"] - before[k - 1]["drawn"], 20, "source %d moves: %s" % (k, s))
+            self.assertLess(s["drawn"] - before[k - 1]["drawn"], 60, "each clip frame converted once: %s" % s)
+            self.assertEqual(r("pvj-source", k, "get_property", "loop-file"), "inf")
+        # every plain command still means source 1
+        self.assertEqual(r("get_property", "path"), self.picture)
+        self.assertEqual(after[0]["path"], self.picture)
+        self.assertEqual(r("get_property", "playlist-count"), 1)
+        self.assertQuadrants()                      # no mapping: the screen shows source 1 alone
+        st = self.st()
+        self.assertEqual((st["fades"], st["front"]), (0, 0))
+        # the panel's level reaches every source; a source's own pause is its own
+        r("set_property", "brightness", -50)
+        self.assertEqual([r("pvj-source", k, "get_property", "brightness") for k in (2, 3, 4)], [-50] * 3)
+        r("pvj-source", 3, "set_property", "pause", True)
+        self.assertIs(r("pvj-source", 3, "get_property", "pause"), True)
+        self.assertIs(r("get_property", "pause"), False)
+        self.assertIs(r("pvj-source", 2, "get_property", "pause"), False)
+
+    def test_a_surface_on_source_2_shows_source_2s_picture(self):
+        r = self.r
+        r.load(self.red)
+        self.to(2, self.blue)
+        self.to(3, self.green)
+        self.show_halves(1, 2)
+        self.halves_are(RED, BLUE)
+        self.show_halves(3, 1)
+        self.halves_are(GREEN, RED)
+        self.show_halves(2, 3)
+        self.halves_are(BLUE, GREEN)
+        # the editing shader (direct, per cell) too
+        self.map(mapper.shader(halves(1, 2), available=4))
+        self.halves_are(RED, BLUE)
+        # a source this run does not have is drawn from source 1, as the panel would send it (available=4 here,
+        # source 2 asked of a player with 1)
+        self.show_halves(2, 3, available=1)
+        self.halves_are(RED, RED)
+        # all on source 1: the shader is the one it always was
+        table = mapper.warp_table(halves(1, 1), W, H, with_sources=True)
+        self.assertEqual(mapper.warp_shader(*table, available=4), mapper.warp_shader(*table[:3]))
+
+    def test_the_edge_between_two_sources_is_a_blend_not_a_step_of_the_table(self):
+        r = self.r
+        r.load(self.red)
+        self.to(2, self.blue)
+        self.show_halves(1, 2)
+        shot = r.capture()
+        y = H // 2
+        row = [self.r.pixel(x, y, shot) for x in range(W // 2 - 12, W // 2 + 12)]
+        for px in row:
+            # every pixel across the edge is red, blue, or a mix of them: never black or the wrong picture
+            self.assertLess(px[1], 40, row)
+            self.assertGreater(px[0] + px[2], 200, "a dark gap at the edge: %s" % (row,))
+        self.assertTrue(near(row[0], RED) and near(row[-1], BLUE), row)
+
+    def test_a_sources_opacity_changes_its_share_of_the_picture_and_only_normal_is_a_blend(self):
+        r = self.r
+        r.load(self.red)
+        self.to(2, self.blue)
+        self.show_halves(1, 2)
+        self.halves_are(RED, BLUE)
+        self.assertEqual((self.source(2)["opacity"], self.source(2)["blend"]), (1.0, "normal"))
+        self.assertEqual((self.source(1)["opacity"], self.source(1)["blend"]), (1.0, "normal"), "source 1 is the program")
+        r("pvj-source", 2, "set_property", "opacity", 0.5)
+        self.assertEqual(r("pvj-source", 2, "get_property", "opacity"), 0.5)
+        self.assertEqual(self.source(2)["opacity"], 0.5)
+        self.assertTrue(r.wait(lambda: near(r.pixel(3 * W // 4, H // 2), (0, 0, 128), 20)), r.pixel(3 * W // 4, H // 2))
+        self.assertColour(r.pixel(W // 4, H // 2), RED, "source 1 at its own level")
+        r("pvj-source", 2, "set_property", "opacity", 0)
+        self.assertTrue(r.wait(lambda: near(r.pixel(3 * W // 4, H // 2), BLACK, 10)), r.pixel(3 * W // 4, H // 2))
+        r("pvj-source", 2, "set_property", "blend", "normal")
+        self.assertEqual(r("pvj-source", 2, "get_property", "blend"), "normal")
+        for name, value in (("blend", "add"), ("blend", "screen"), ("blend", 1), ("blend", ""), ("opacity", 1.5),
+                            ("opacity", -0.1), ("opacity", "1"), ("opacity", True)):
+            with self.assertRaises(PlayerError, msg=(name, value)) as e:
+                r("pvj-source", 2, "set_property", name, value)
+            self.assertEqual(str(e.exception), "mpv: invalid parameter", (name, value))
+        r("pvj-source", 2, "set_property", "opacity", 1)
+        self.assertTrue(r.wait(lambda: near(r.pixel(3 * W // 4, H // 2), BLUE)), r.pixel(3 * W // 4, H // 2))
+
+    def test_a_stop_on_a_source_makes_it_idle_and_its_surface_black(self):
+        r = self.r
+        r.load(self.red)
+        self.to(2, self.blue)
+        self.show_halves(1, 2)
+        self.halves_are(RED, BLUE)
+        r("pvj-source", 2, "stop")
+        self.assertTrue(r.wait(lambda: self.source(2)["idle"] is True), self.sources())
+        self.assertTrue(r.wait(lambda: near(r.pixel(3 * W // 4, H // 2), BLACK)), r.pixel(3 * W // 4, H // 2))
+        self.assertColour(r.pixel(W // 4, H // 2), RED, "source 1 plays on")
+        self.assertIs(r("get_property", "idle-active"), False)
+        # the plain Stop is source 1's alone
+        self.to(2, self.blue)
+        r("stop")
+        self.assertTrue(r.wait(lambda: r("get_property", "idle-active") is True))
+        self.assertIs(self.source(2)["idle"], False)
+        self.assertTrue(r.wait(lambda: near(r.pixel(W // 4, H // 2), BLACK) and near(r.pixel(3 * W // 4, H // 2), BLUE)))
+
+    def test_a_blackout_darkens_every_source(self):
+        r = self.r
+        r.load(self.red)
+        self.to(2, self.blue)
+        self.show_halves(1, 2)
+        r("set_property", "brightness", -100)
+        self.assertTrue(r.wait(lambda: near(r.pixel(W // 4, H // 2), BLACK, 60) and near(r.pixel(3 * W // 4, H // 2), BLACK, 60)),
+                        (r.pixel(W // 4, H // 2), r.pixel(3 * W // 4, H // 2)))
+        self.to(3, self.green)                      # a source loaded under the Blackout comes in dark
+        self.show_halves(1, 3)
+        self.assertTrue(r.wait(lambda: near(r.pixel(3 * W // 4, H // 2), BLACK, 60)), r.pixel(3 * W // 4, H // 2))
+        r("set_property", "brightness", 0)
+        self.assertTrue(r.wait(lambda: near(r.pixel(3 * W // 4, H // 2), GREEN)), r.pixel(3 * W // 4, H // 2))
+
+    def test_what_is_not_a_source_command_is_refused_with_mpvs_words(self):
+        r = self.r
+        p = self.blue
+        for cmd in (("pvj-source",), ("pvj-source", 2), ("pvj-source", 1, "stop"), ("pvj-source", 5, "stop"),
+                    ("pvj-source", 0, "stop"), ("pvj-source", "2", "stop"), ("pvj-source", 2.0, "stop"), ("pvj-source", True, "stop"),
+                    ("pvj-source", 2, "loadfile"), ("pvj-source", 2, "loadfile", ""), ("pvj-source", 2, "loadfile", 7),
+                    ("pvj-source", 2, "loadfile", p, "nonsense"), ("pvj-source", 2, "loadfile", p, "insert-next"),
+                    ("pvj-source", 2, "loadfile", p, "replace", "script=/tmp/x.lua"), ("pvj-source", 2, "loadfile", p, "replace", "aid=auto"),
+                    ("pvj-source", 2, "loadfile", p, "replace", "pause=yes"), ("pvj-source", 2, "loadfile", p, "replace", SHOW, "x"),
+                    ("pvj-source", 2, "stop", "now"), ("pvj-source", 2, "run", "/bin/sh"), ("pvj-source", 2, "seek", 1),
+                    ("pvj-source", 2, "set_property", "pause"), ("pvj-source", 2, "get_property"), ("pvj-source", 2, "quit")):
+            with self.assertRaises(PlayerError, msg=str(cmd)) as e:
+                r(*cmd)
+            self.assertEqual(str(e.exception), "mpv: invalid parameter", cmd)
+        for name in ("aid", "volume", "audio-device", "glsl-shaders", "script-opts", "input-ipc-server", "vf", "keep-open"):
+            with self.assertRaises(PlayerError) as e:
+                r("pvj-source", 2, "set_property", name, "x")
+            self.assertEqual(str(e.exception), "mpv: property not found", name)
+        for name in ("stream-open-filename", "playlist", "mpv-version", "pvj-render"):
+            with self.assertRaises(PlayerError) as e:
+                r("pvj-source", 2, "get_property", name)
+            self.assertEqual(str(e.exception), "mpv: property not found", name)
+        self.assertTrue(all(s["idle"] for s in self.sources()[1:]), "nothing was loaded")
+        self.assertIsNone(r.proc.poll())
+
+    def test_a_source_has_no_sound(self):
+        self.r.close()
+        self.r = r = Renderer("--sources=2", "--audio-device=alsa/null")
+        clip = os.path.join(self.tmp, "tone.mp4")
+        make_clip_with_sound(self, clip, 3)
+        self.to(2, clip, opts="keep-open=no")
+        self.assertIn(r("pvj-source", 2, "get_property", "aid"), (False, "no"))
+        with self.assertRaises(PlayerError):
+            r("pvj-source", 2, "get_property", "current-ao")       # no sound output was opened
+        r.load(clip)                                                # source 1 has its sound, as always
+        self.assertTrue(r.wait(lambda: FadeEdgesTest.output(r) == "alsa", 5), r.stderr())
+
+
+class SourceCountTest(Base):
+    def test_one_source_by_default_and_no_more_than_eight(self):
+        st = self.r("get_property", "pvj-render")
+        self.assertEqual(st["sources"], 1)
+        self.assertEqual(len(self.r("get_property", "pvj-sources")), 1)
+        with self.assertRaises(PlayerError) as e:
+            self.r("pvj-source", 2, "stop")
+        self.assertEqual(str(e.exception), "mpv: invalid parameter")
+        for bad in ("--sources=0", "--sources=9", "--sources=two", "--sources="):
+            run = subprocess.run([BIN, "--socket=" + os.path.join(self.tmp, "x.sock"), "--headless=64x64", bad],
+                                 stdin=subprocess.DEVNULL, capture_output=True, timeout=20)
+            self.assertEqual(run.returncode, 64, bad)
+        r8 = Renderer("--sources=8")
+        self.addCleanup(r8.close)
+        self.assertEqual(r8("get_property", "pvj-render")["sources"], 8)
+        self.assertEqual([s["source"] for s in r8("get_property", "pvj-sources")], list(range(1, 9)))
+
+
+class IdleSourcesTest(SourcesBase):
+    """Sources that play nothing cost nothing: no frame converted, and the output keeps its rate."""
+
+    def test_idle_sources_draw_nothing_and_cost_no_flips(self):
+        r = self.r
+        clip = os.path.join(self.tmp, "clip.mp4")
+        make_clip(self, clip, 4)
+        r("set_property", "loop-file", "inf")
+        r.load(clip)
+        a, t0 = self.sources(), time.monotonic()
+        s0 = self.st()
+        time.sleep(2.0)
+        b, t1 = self.sources(), time.monotonic()
+        s1 = self.st()
+        for k in (2, 3, 4):
+            self.assertEqual(b[k - 1]["drawn"], a[k - 1]["drawn"], "idle source %d converted frames: %s" % (k, b))
+            self.assertEqual(b[k - 1]["drawn"], 1, "only its empty picture as it started")
+        flips = (s1["flips"] - s0["flips"]) / (t1 - t0)
+        self.assertGreater(flips, 0.85 * 60, "flips a second with three idle sources: %.1f" % flips)
+        self.assertLessEqual(flips, 62)
+        # and a source that stops is idle again: one more picture (its empty one), then nothing
+        self.to(2, self.blue)
+        r("pvj-source", 2, "stop")
+        self.assertTrue(r.wait(lambda: self.source(2)["idle"] is True))
+        time.sleep(0.5)
+        n = self.source(2)["drawn"]
+        time.sleep(1.0)
+        self.assertEqual(self.source(2)["drawn"], n, "a stopped source goes on converting")
+
+
+class SourceFadeTest(SourcesBase):
+    def test_a_crossfade_on_source_1_while_source_2_plays(self):
+        r = self.r
+        clip = os.path.join(self.tmp, "s2.mp4")
+        make_clip(self, clip, 3)
+        self.to(2, clip, opts="keep-open=no")
+        r("pvj-source", 2, "set_property", "loop-file", "inf")
+        r.load(self.red)
+        self.show_halves(1, 2)
+        self.fade(self.blue, 1.5)
+        self.assertTrue(r.wait(lambda: self.st()["fade"] == "running", 10, 0.02), self.st())
+        d0 = self.source(2)["drawn"]
+        time.sleep(0.6)
+        self.assertGreater(self.source(2)["drawn"], d0 + 8, "source 2 moved during the fade")
+        st = self.settled()
+        self.assertEqual((st["fades"], st["fades-done"], st["front"]), (1, 1, 1))
+        self.assertTrue(r.wait(lambda: near(r.pixel(W // 4, H // 2), BLUE)), r.pixel(W // 4, H // 2))
+        self.assertEqual(self.source(2)["path"], clip)
+        self.assertEqual(r("get_property", "path"), self.blue)
+        self.assertEqual(self.sources()[0]["path"], self.blue, "pvj-sources follows source 1's front")
+        self.assertIs(self.source(2)["idle"], False)
+
+
+class PlayerSourcesTest(SourcesBase):
+    """pvj/player.py's side through the real pvj-render: Player.sources, play_to, stop_source, sources_state."""
+
+    def player(self):
+        from pvj.player import Player
+        p = Player(rundir=self.tmp)
+        p.socket_path = self.r.sock
+        p.ipc = Ipc(self.r.sock, timeout=10.0)
+        return p
+
+    def test_a_player_plays_to_a_source_and_stops_it(self):
+        p = self.player()
+        self.assertEqual(p.sources(), 4)
+        self.assertIs(p.crossfades(), True, "source 1 still fades")
+        p.play([self.red], spawn=False)
+        p.play_to(2, [self.blue], "loop")
+        self.assertEqual(self.r("pvj-source", 2, "get_property", "path"), self.blue)
+        self.assertEqual(self.r("pvj-source", 2, "get_property", "loop-file"), "inf")
+        self.assertIs(self.r("pvj-source", 2, "get_property", "pause"), False)
+        p.play_to(3, [self.green, self.picture], "loop")
+        self.assertEqual(self.r("pvj-source", 3, "get_property", "playlist-count"), 2)
+        self.assertEqual(self.r("pvj-source", 3, "get_property", "loop-playlist"), "inf")
+        self.assertTrue(self.r.wait(lambda: self.source(2)["height"] == H and self.source(3)["path"] == self.green), self.sources())
+        rows = p.sources_state()
+        self.assertEqual([(r["source"], r["path"], r["idle"]) for r in rows],
+                         [(1, self.red, False), (2, self.blue, False), (3, self.green, False), (4, None, True)])
+        self.assertEqual(self.r("get_property", "path"), self.red, "source 1 unchanged")
+        self.show_halves(1, 2)
+        self.halves_are(RED, BLUE)
+        p.stop_source(2)
+        self.assertTrue(self.r.wait(lambda: self.source(2)["idle"] is True))
+        for bad in (1, 5, 0, True):
+            # the player says so itself, before anything is asked of the renderer
+            with self.assertRaisesRegex(PlayerError, "this player has no source"):
+                p.play_to(bad, [self.blue])
+        with self.assertRaises(PlayerError):
+            p.play_to(2, [self.blue], "sideways")
+
+
+class ManySourceLoadsTest(SourcesBase):
+    """Loads to sources 2 to 4 all night leave no file descriptor, thread, GL fence or GL object behind (judged as
+    ManyFadesTest is: SLACK for descriptors and threads, GL_BAND over the warm-up's highest for libmpv's pool).
+    Bounded by LIMIT."""
+    LIMIT = 300.0
+    SLACK = 2
+    GL_BAND = 4
+
+    def counts(self):
+        """At rest: sources 2 to 4 stopped and idle (a clip's decoder threads come and go as it plays and ends), the
+        socket's client threads gone."""
+        for k in (2, 3, 4):
+            self.r("pvj-source", k, "stop")
+        self.assertTrue(self.r.wait(lambda: all(s["idle"] for s in self.sources()[1:]), 10), self.sources())
+        time.sleep(0.6)
+        pid = self.r.proc.pid
+        st = self.st()
+        return {"fds": fd_count(pid), "threads": thread_count(pid), "gl-objects": st["gl-objects"], "fences": st["gl-fences"]}
+
+    def run_loads(self, a, b, n, deadline):
+        for i in range(n):
+            self.assertLess(time.monotonic(), deadline, "the bounded run of loads took too long")
+            k = 2 + i % 3
+            path = a if (i // 3) % 2 == 0 else b
+            loads = self.source(k)["loads"]
+            self.r("pvj-source", k, "loadfile", path, "replace", "keep-open=no")
+            self.assertTrue(self.r.wait(lambda: self.source(k)["loads"] > loads and self.source(k)["path"] == path, 10, 0.01),
+                            "load %d: %s\n%s" % (i, self.sources(), self.r.stderr()))
+            if i % 10 == 9:
+                self.r("pvj-source", k, "stop")
+
+    def same(self, now, then, what, gl):
+        for k in ("fds", "threads"):
+            self.assertLessEqual(now[k], then[k] + self.SLACK, "%s: %s piled up: %s, at the start %s" % (what, k, now, then))
+        self.assertLessEqual(now["gl-objects"], gl + self.GL_BAND, "%s: GL objects piled up: %s, at most %d" % (what, now, gl + self.GL_BAND))
+        self.assertLessEqual(now["fences"], 4, now)
+
+    def test_many_loads_to_sources_2_to_4_leave_nothing_behind(self):
+        r = self.r
+        deadline = time.monotonic() + self.LIMIT
+        a, b = os.path.join(self.tmp, "a.mp4"), os.path.join(self.tmp, "b.mp4")
+        make_clip(self, a, 2)
+        make_clip(self, b, 2, "color=c=blue")
+        r.load(self.red)
+        self.show_halves(2, 3)
+        warm = []
+        for _ in range(3):
+            self.run_loads(a, b, 30, deadline)
+            warm.append(self.counts())
+        peak = max(w["gl-objects"] for w in warm)
+        start = warm[-1]
+        later = []
+        for n in range(4):
+            self.run_loads(a, b, 45, deadline)
+            later.append(self.counts())
+            self.same(later[-1], start, "%d loads to sources 2 to 4" % (90 + 45 * (n + 1)), peak)
+        self.assertNotIn("Export failed", r.stderr())
+        self.assertIsNone(r.proc.poll())
+        print("\n%d loads to sources 2 to 4: warm-up %s, then %s" % (sum(s["loads"] for s in self.sources()),
+                                                                     [w for w in warm], [c for c in later]))
+
+
 if __name__ == "__main__":
     unittest.main()

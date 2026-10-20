@@ -1343,7 +1343,128 @@ class Api:
         self._start_list(paths[:PRESET_MAX_FILES], ending, self._shuffle_flag(body))
         return {"playing": name, "files": len(paths[:PRESET_MAX_FILES])}
 
+    # ---- sources 2 to N (D101) ------------------------------------------------------------------------------------
+    SOURCE_ONLY_CLIPS = ("only clips play to Source 2 and up for now; %s plays on Source 1: choose Source 1 under "
+                         "Play to, or a clip")
+
+    def _source_target(self, body):
+        """The source a play names (1 to 8), 1 without the key."""
+        from . import mapper as mapper_mod
+        k = body.get("source", 1)
+        if isinstance(k, bool) or not isinstance(k, int) or not 1 <= k <= mapper_mod.MAX_SOURCES:
+            raise bad("source must be 1 to %d" % mapper_mod.MAX_SOURCES)
+        return k
+
+    def _source_count(self):
+        fn = getattr(self.player, "sources", None)        # a player of before D101 (or a stand-in) has Source 1 only
+        return self._player_call(fn) if fn is not None else 1
+
+    def _need_source(self, k):
+        n = self._source_count()
+        if n < 2:
+            raise ApiError(409, "Source %d needs the New renderer (System > Renderer); classic mpv has Source 1 only" % k)
+        if k > n:
+            raise ApiError(409, "this box runs %d sources; Source %d is not one of them" % (n, k))
+
+    def _source_rows(self):
+        """The sources as the panel shows them: a clip by its file name only, never a path."""
+        fn = getattr(self.player, "sources_state", None)
+        rows = self._player_call(fn) if fn is not None else [{"source": 1, "idle": not self._player_call(self.player.status).get("path"),
+                                                              "path": self._player_call(self.player.status).get("path"),
+                                                              "height": None, "pause": False}]
+        return [dict(r, path=None, name=os.path.basename(r["path"]) if r.get("path") else None) for r in rows]
+
+    def play_to_source(self, body, k, device, client):
+        """A clip, by name or by a clip pad, played on source k (2 to N): a cut, with no sound, and nothing else on the
+        screen changes (source 1 plays on). The Owner's and an Operator's (a Guest's play form has no "source").
+        Anything but a clip (a shader, an NDI source, a render cue, a stream, a slideshow, the capture input) is
+        refused with plain words: in this step those play on Source 1 only."""
+        for kind, words in (("preset", "a preset"), ("stream", "a stream"), ("slideshow", "a slideshow"),
+                            ("capture", "the capture input"), ("ndi", "an NDI source"), ("usb_drive", "a USB drive's list"),
+                            ("usb", "a clip from a USB drive")):
+            if kind in body:
+                raise ApiError(409, self.SOURCE_ONLY_CLIPS % words)
+        if "pad" in body:
+            pad = body["pad"]
+            if not (isinstance(pad, list) and len(pad) == 2 and all(isinstance(x, int) and not isinstance(x, bool) for x in pad)):
+                raise bad("pad must be [bank, index]")
+            banks = self.settings.data["pads"]["banks"]
+            if not (0 <= pad[0] < len(banks) and 0 <= pad[1] < 12):
+                raise bad("no such pad")
+            held = banks[pad[0]]["pads"][pad[1]]
+            for test, words in ((self.pad_shader, "this pad's shader"), (self.pad_ndi, "this pad's NDI source"),
+                                (self.pad_render, "this pad's render cue")):
+                if test(held):
+                    raise ApiError(409, self.SOURCE_ONLY_CLIPS % words)
+            name = held.get("file")
+            if not name:
+                raise bad("pad is empty")
+            if "ending" not in body and "loop" not in body:
+                body = dict(body, ending=held.get("ending", "loop"))
+        else:
+            name = body.get("file")
+        path = self.resolve_media(name)
+        if not path.lower().endswith(PLAYLIST_EXTENSIONS):
+            # a sound file plays on a source with no sound track and no picture: black and silent (review of #153)
+            raise ApiError(409, self.SOURCE_ONLY_CLIPS % "a sound file")
+        ending = self._ending(body, "loop")
+        if ending == "next":
+            ending = "stop"
+        self._need_source(k)
+        self._player_call(self.player.play_to, k, [path], ending)
+        self.log("pvj-web: source %d plays %s, by device %s (%s, from %s)"
+                 % (k, json.dumps(name), (device or {}).get("id"), (device or {}).get("role"), client))
+        out = {"playing": name, "source": k}
+        warning = self._source_warning(k)
+        if warning:
+            out["warning"] = warning
+        return out
+
+    def _source_warning(self, k, wait=1.0):
+        """The warning about load (renderer.source_warning), once the clip's height is known (at most `wait` s)."""
+        from . import renderer as renderer_mod
+        if self.board.get("kind") not in renderer_mod.SMALL_BOARDS:
+            return None
+        deadline = time.monotonic() + wait
+        while True:
+            rows = self._player_call(self.player.sources_state)
+            mine = [r for r in rows if r["source"] == k]
+            if (mine and mine[0]["height"]) or time.monotonic() >= deadline:
+                return renderer_mod.source_warning(rows, k, self.board.get("kind"))
+            time.sleep(0.1)
+
+    def get_sources(self, body, device, client):
+        """{"count", "cap", "sources": [{"source", "idle", "name", "height", "pause"}], "warning"}: what each source
+        plays (D101). On classic mpv: one source."""
+        from . import renderer as renderer_mod
+        rows = self._source_rows()
+        warning = None
+        for r in rows:
+            if r["source"] > 1 and not r["idle"]:
+                warning = warning or renderer_mod.source_warning(rows, r["source"], self.board.get("kind"))
+        return {"count": len(rows), "cap": renderer_mod.source_cap(self.board.get("kind")),
+                "sources": [{k: r[k] for k in ("source", "idle", "name", "height", "pause")} for r in rows],
+                "warning": warning}
+
+    def set_sources(self, body, device, client):
+        """{"source": 2 to N, "action": "stop"}: that source stops and is idle (D101). Source 1 stops with the
+        panel's own Stop, as always. The Owner's and an Operator's."""
+        if set(body) != {"source", "action"} or body.get("action") != "stop":
+            raise bad("send source and action: stop")
+        k = self._source_target(body)
+        if k == 1:
+            raise bad("Source 1 stops with Stop")
+        self._need_source(k)
+        self._player_call(self.player.stop_source, k)
+        self.log("pvj-web: source %d stopped, by device %s (%s, from %s)" % (k, (device or {}).get("id"), (device or {}).get("role"), client))
+        return self.get_sources({}, device, client)
+
     def play(self, body, device, client):
+        if "source" in body:
+            k = self._source_target(body)
+            if k != 1:
+                return self.play_to_source(body, k, device, client)
+            body = {key: v for key, v in body.items() if key != "source"}     # Source 1: the play it always was
         if "preset" in body:
             return self.play_preset(body, body["preset"])
         if "stream" in body:
@@ -2207,10 +2328,11 @@ class Api:
         return self.renderer.state()
 
     def set_renderer(self, body, device, client):
-        """{"use": "classic" | "new", "detail": "auto" | 540 | 720 | "output"}: saved, and the player restarts for a change."""
-        if "use" not in body or not set(body) <= {"use", "detail"}:
-            raise bad("send use (classic or new) and, if you like, detail")
-        return self._renderer_call(self.renderer.choose, body["use"], body.get("detail"))
+        """{"use": "classic" | "new", "detail": "auto" | 540 | 720 | "output", "sources": "auto" | 1 to the board's cap}:
+        saved, and the player restarts for a change. Leaving detail or sources out keeps them as they are."""
+        if "use" not in body or not set(body) <= {"use", "detail", "sources"}:
+            raise bad("send use (classic or new) and, if you like, detail and sources")
+        return self._renderer_call(self.renderer.choose, body["use"], body.get("detail"), body.get("sources"))
 
     def confirm_screen(self, body, device, client):
         return self._screen_call(self.screen.confirm)
@@ -4939,6 +5061,8 @@ class Api:
             ("POST", "/api/osc/key"): ("full", self.osc_key),
             ("POST", "/api/osc/feedback"): ("full", self.osc_feedback),
             ("POST", "/api/play"): ("live", self.play),
+            ("GET", "/api/sources"): ("live", self.get_sources),          # sources 2 to N (D101): the Operator's, as play
+            ("POST", "/api/sources"): ("live", self.set_sources),
             ("GET", "/api/render"): ("live", self.get_render),            # render nodes (D94): seen by the Operator,
             ("POST", "/api/render"): ("full", self.set_render),           # kept by the Owner,
             ("POST", "/api/render/cue"): ("live", self.render_cue),       # and cued by hand by the Operator

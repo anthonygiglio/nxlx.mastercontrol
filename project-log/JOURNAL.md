@@ -4,6 +4,32 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-20, the review of #153 (sources, D101 amendment)
+
+- **The review:** no High or Medium; two Lows, fixed on `sources-surfaces`. Shows could offer Source 1 alone on a box with four sources (the state used only what was known of a new player process); it now asks once per process, and the card follows the strip. A sound file sent to Source 2 played black and silent; it is now refused in plain words.
+- **Tests:** 2 new, each break-checked and caught. Local suites OK before the push.
+- **CI on c01a978:** an idle source drew its empty picture 3 times on CI (2 here); now once until it plays (break-checked: 2 and 3 without the fix). The masks' rollback commit 1a6484b was not in CI's checkout: every rollback test's commit is now fetched in the test job and in the Debian whole-suite job.
+
+## 2026-10-20, sources and surfaces, step 1 (`sources-surfaces`, D101)
+
+- **The owner's words:** "start sources and surfaces, step 1: more clip layers and a source per surface on the new renderer."
+- **Found first:** the mapping's two-layer show table (D58) had two spare channels in its second texture, and pvj-render's own reader of the mapping file (D95) could take a new BIND without anything of mpv's. So the source per surface rides in the table that exists, and pvj-render supplies the other pictures by name.
+- **Built:** pvj-render `--sources=N` (1 to 8): sources 2 to N are one libmpv core each, muted, idle until loaded, with `pvj-source` (loadfile, stop, a short set and get list) and `get_property pvj-sources`; every older command still means source 1. `//!BIND SOURCEk` in the mapping file. A surface's `"source"` (no key for 1), the table's source per layer read at the nearest cell, both shaders, classic byte for byte as before. The renderer's number of sources per board (a Pi 4 has 4). `POST /api/play` with `"source"`, `GET`/`POST /api/sources`, the warning about 1080p clips. The panel: Shows on the chosen surface, the Sources strip on the mapping page, Play to above the pads.
+- **Chosen:** a shader, NDI or a render cue sent to Source 2 and up is refused in plain words rather than played on Source 1; the level (opacity, Blackout) reaches every source; Stop stays Source 1's.
+- **The owner's note, the same day:** a mixing stage for later A/B decks, a manual crossfader and blend modes. Each source now has an opacity and a blend (normal only; the others refused), set and read over the socket and read once a frame; the crossfade of D98 is that stage with the opacity moved by the clock, its tests unchanged. D101 says how decks build on it.
+- **Tests:** `tests/test_pvj_render.py` 64 tests, OK with `PVJ_RENDER_TEST=1` and no skips (sources, the capture per source, opacity, idle cost, stop, refusals, sound, 270 loads with descriptors 9, threads 110 and GL objects 27 flat, a crossfade on source 1 while source 2 plays); `tests/test_sources.py` (new, 21); the related suites (mapper, mapping mode, player, layers, transitions, server, roles, masks, renderer, settings, boxcare: 565 tests) OK.
+- **Break-checks (21), each caught:** a load on source 2 going to source 1; the final pass reading source 1 for SOURCEk; sources keeping their sound; sources converted at every vblank; the level not reaching sources; any name settable on a source; source numbers not bounded; a descriptor leaked per load; BIND SOURCEk not taken; source 1 stored as a key; a source the player lacks not drawn from source 1; the layer under taking the top's source; the editing shader reading source 1 everywhere; the engine never asking the player's sources; a shader pad going to a source; a guest playing to a source; the warning needing three others; `play_to` not looping; `play_to` taking any number (first not caught, see LESSONS; caught after the test asked for the player's own words); the opacity not reaching the final pass.
+- **Not run here:** `tests/ui/panel.test.js` (its Chromium needs libnss3 and libnspr4, which this WSL has not; CI runs it on the push).
+- **Not done:** anything on the Pi, a real GPU or the X27 (rows SO1 to SO8); a crossfade, effects and sound on sources 2 to N; shaders as sources (step 2); the full sources panel (step 3).
+
+## 2026-10-20, the mask list on the node (D100, rows MK)
+
+- **On the node at 1024 x 768 (the X27):** 3 test masks combined in 1.1 s on the Pi; switching one or moving one up took 0.8 s.
+- **Under nxlx-grid:** 0 dropped frames; the GPU at 39 percent with the masks against 35 percent without.
+- **A classic crossfade:** the masks stayed on during and after it (seen by webcam).
+- **Afterwards:** the overlay was put back off, and the test PNGs deleted through `POST /api/media/delete`.
+- **Found:** the owner's old overlay `logo.png` is missing from the media folder (the overlay was off, so nothing showed it). He may want to upload it again.
+
 ## 2026-10-20, the review of #152 (masks, D100 amendment)
 
 - **The review:** one Medium and one Low, both fixed on `mask-list`. Medium: a 995 KB PNG that says 16000 x 16000 made mpv use about 1.2 GB per copy. Now the PNG header is read first (8192 a side, 40 megapixels at most, in the single-picture path too), the masks combined at once are bounded (70 megapixels of their own, and 4 x 3840 x 2160 of the screen's: 8 masks at 1080, 4 at 4K), and mpv runs under a 2 GB address-space cap with 1 MB thread stacks and 2 malloc arenas. The 1.5 GB cap asked for did not let mpv start even one mask on this 16-core laptop; 2 GB with the smaller stacks fits every allowed case (the heaviest 2.7 s, about 1.05 GB resident). Low: `set_overlay` now holds the settings' lock from the read to the write, so two Adds at once both land.

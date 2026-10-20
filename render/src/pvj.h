@@ -13,13 +13,20 @@
 #include <GLES3/gl3.h>
 #include <mpv/client.h>
 
-#define PVJ_VERSION "0.2.0"
+#define PVJ_VERSION "0.3.0"
 #define MAX_SHADERS 16
-#define LAYERS 2                    // video layers (phase 2, D98): the one on screen and the one a crossfade comes in on
+#define LAYERS 2                    // source 1's video layers (phase 2, D98): the one on screen and the one a crossfade comes in on
+#define MAX_SOURCES 8               // sources (D101): source 1 is LAYERS layers, each other source one layer
+#define MAX_LAYERS (LAYERS + MAX_SOURCES - 1)   // every video layer: 0 and 1 are source 1's, layer k (2 to 8) is source k
 #define FADE_MAX_SECONDS 60.0
 #define FADE_FIRST_FRAME 10.0       // seconds a crossfade waits for its clip's first frame, then fades anyway (as D71)
 
 enum { FADE_OFF, FADE_WAITING, FADE_RUNNING };
+// The mixing stage (D101): how a layer is laid over what is under it. Only "normal" (an alpha mix by the layer's
+// opacity) is built; the others (add, screen, multiply, difference, lighten, darken) are a line each in the stage's
+// shaders when they come, and are refused until then.
+enum { BLEND_NORMAL, BLENDS };
+extern const char *const BLEND_NAMES[BLENDS];
 
 typedef struct Hook Hook;
 
@@ -33,6 +40,7 @@ typedef struct {
     int fast;                       // mpv's cheap scalers in the video layer (a Pi)
     int every_vblank;               // accepted for old command lines: a picture goes out at every vblank anyway
     int frames;                     // > 0: end after this many presented frames (tests)
+    int sources;                    // sources 1 to N (D101): 1 by default, at most MAX_SOURCES
     int verbose;
 } Cfg;
 
@@ -41,7 +49,8 @@ typedef struct {
     int out_w, out_h, in_w, in_h;
     double out_hz;
     pid_t pid;
-    mpv_handle *layer[LAYERS], *osd;
+    mpv_handle *layer[MAX_LAYERS], *osd;
+    int nsources;                   // sources 1 to nsources; layers 0 to nsources are open (source k > 1 is layer k)
     int screen_open;
     // which video layer the socket speaks to and the screen shows (the other is idle, or fading out); changed by the
     // socket's thread under app.lock and layer_lock, read anywhere with an atomic load (front_layer, front_handle)
@@ -83,8 +92,15 @@ typedef struct {
     // per video layer, kept by its event thread (atomics): files started so far, and which of those starts the last
     // playback restart (a first frame ready, after a load or a seek) and the last failed load belong to. libmpv sends
     // a layer's events in order, so what an older file of that layer said is never taken for the incoming clip's.
-    int starts[LAYERS], restart_of[LAYERS], failed_of[LAYERS];
-    int idle[LAYERS];               // the layer's idle-active, as observed by its event thread (atomics)
+    int starts[MAX_LAYERS], restart_of[MAX_LAYERS], failed_of[MAX_LAYERS];
+    int idle[MAX_LAYERS];           // the layer's idle-active, as observed by its event thread (atomics)
+    long layer_drawn[MAX_LAYERS];   // frames each layer converted (atomics: the render thread adds, the socket reads)
+    long source_loads[MAX_LAYERS];  // loads asked of source k > 1 (pvj-source k loadfile), by its index
+    // each source's mix (D101): its opacity (0 to 1) and blend, by layer index (source k > 1 is layer k; source 1's
+    // is its own picture, the program, at 1 and normal). Set by the socket's threads under app.lock and read once a
+    // frame in the render loop's one look under it, so a frame never mixes two settings.
+    float opacity[MAX_LAYERS];
+    int blend[MAX_LAYERS];
 
     // counters
     long flips, missed, drawn, back_drawn;  // drawn: frames of the front layer converted; back_drawn: of the other
@@ -118,6 +134,12 @@ typedef struct {
     GLuint tex[8];
     GLint tex_loc[8], tex_size_loc[8];
     int tex_w[8], tex_h[8];
+    // the other sources' pictures the pass reads (D101): `//!BIND SOURCEk`, k from 2 to MAX_SOURCES; pvj-render
+    // supplies each as SOURCEk_raw (with SOURCEk_tex(pos), as HOOKED_tex), never the file
+    int nsrc;
+    int src[MAX_SOURCES];
+    GLint src_loc[MAX_SOURCES];
+    GLint src_opacity_loc[MAX_SOURCES];     // SOURCEk_opacity: the source's mix, set every frame
 } HookGL;
 int hookgl_build(const Hook *h, HookGL *g, char *err, size_t n);
 void hookgl_free(HookGL *g);

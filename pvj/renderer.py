@@ -8,7 +8,8 @@ that talks to the player changes: the switch is which program the player's servi
 Who does what, as for the screen's mode (pvj/screenmode.py, D90):
 
 * The panel owns the setting (`renderer` in the settings: {"use": "classic"|"new", "detail": "auto"|540|720|"output"},
-  read with defaults, no schema change). The player may not read settings.json, so the panel writes the wish alone to
+  and since D101 an optional "sources": 1 to 8, read with defaults, no schema change; no key is this board's own
+  number). The player may not read settings.json, so the panel writes the wish alone to
   WANTED in the state folder, at its start and on a change, and restarts the player for a change (`Renderer`).
 * The player's service (`pvj-player serve`, the display's account) reads WANTED just before it would become mpv. With
   "new" it stays a small supervisor instead (`serve`): it starts pvj-render with the screen's arguments that
@@ -43,6 +44,29 @@ QUIT_SECONDS = 2.0                      # a switch: this long for pvj-render to 
 TERM_SECONDS = 3.0                      # ... and this long after SIGTERM, then SIGKILL
 WATCH_SECONDS = 0.5                     # how often the supervisor reads WANTED while pvj-render draws
 SMALL_BOARDS = ("pi3", "pi4")           # where Automatic draws 540 lines inside (the spike of 2026-10-16, D95)
+# Sources (D101): clip layers beside the player's own picture, which the mapping shows per surface. A board takes at
+# most its cap, and without a choice gets its default. Measured on the owner's Pi 4 (2026-10-20), software H.264
+# decode alone: 1080p 83 fps for one stream, 44 each for two, 22 each for four; 720p 161, 88, 44; 540p 229, 137, 67,
+# and 46 each for six. With room left for drawing, a Pi 4 carries about 2 at 1080p, 4 at 720p, 6 at 540p. So a Pi 4
+# has 4: that is what it carries at 720p, an idle source costs nothing, and the panel warns when a 1080p clip goes
+# to a source while two others play. A Pi 3 (not measured, about half a Pi 4) has 2. Other boards: 4 by default, 8
+# at most (the renderer's own bound).
+SOURCES_MAX = 8
+SOURCE_CAP = {"pi3": 2, "pi4": 4}
+SOURCE_DEFAULT = {"pi3": 2, "pi4": 4}
+SOURCES_OTHER = 4
+
+
+def source_cap(board_kind):
+    return SOURCE_CAP.get(board_kind, SOURCES_MAX)
+
+
+def sources_for(board_kind, chosen=None):
+    """The sources pvj-render is started with on this board: the Owner's number, or the board's default, never over
+    its cap."""
+    n = chosen if isinstance(chosen, int) and not isinstance(chosen, bool) and 1 <= chosen <= SOURCES_MAX else \
+        SOURCE_DEFAULT.get(board_kind, SOURCES_OTHER)
+    return min(n, source_cap(board_kind))
 
 
 def binary(env=None):
@@ -56,14 +80,38 @@ def available(env=None):
     return os.path.isfile(path) and os.access(path, os.X_OK)
 
 
+HEAVY_LINES = 720                       # a clip taller than this is "1080p" for the warning below
+WARN_TEXT = "this may drop frames on this box; 720p clips are lighter"
+
+
+def source_warning(rows, target, board_kind):
+    """The panel's warning (D101) when a clip of more than 720 lines plays on source `target` while two or more other
+    sources play, on a board whose numbers say that is past what it decodes (a Pi 3 or 4); else None. `rows`:
+    Player.sources_state()."""
+    if board_kind not in SMALL_BOARDS:
+        return None
+    mine = [r for r in rows if r.get("source") == target]
+    others = [r for r in rows if r.get("source") != target and not r.get("idle")]
+    height = mine[0].get("height") if mine else None
+    if isinstance(height, int) and height > HEAVY_LINES and len(others) >= 2:
+        return WARN_TEXT
+    return None
+
+
 def clean(data):
-    """{"use", "detail"} from a settings section or the wanted file; anything else is the default."""
+    """{"use", "detail"} from a settings section or the wanted file; anything else is the default. "sources" (D101)
+    only when it is a number from 1 to SOURCES_MAX: no key is the board's own number, so a file without it is as
+    before."""
     data = data if isinstance(data, dict) else {}
     use = data.get("use") if data.get("use") in USES else DEFAULT["use"]
     detail = data.get("detail")
     if isinstance(detail, bool) or detail not in DETAILS:
         detail = DEFAULT["detail"]
-    return {"use": use, "detail": detail}
+    out = {"use": use, "detail": detail}
+    n = data.get("sources")
+    if isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= SOURCES_MAX:
+        out["sources"] = n
+    return out
 
 
 def wanted_path(env=None):
@@ -77,14 +125,15 @@ def detail_arg(detail, board_kind):
     return "--detail=%s" % detail
 
 
-def command(socket_path, screen_args, detail, board_kind, env=None):
-    """pvj-render's argv: the socket, the screen's arguments as screenmode chose them for mpv, the detail, and mpv's
-    cheap scalers on a Pi (as classic's --profile=fast)."""
+def command(socket_path, screen_args, detail, board_kind, env=None, sources=None):
+    """pvj-render's argv: the socket, the screen's arguments as screenmode chose them for mpv, the detail, mpv's
+    cheap scalers on a Pi (as classic's --profile=fast), and the number of sources (D101)."""
     args = [binary(env), "--socket=" + socket_path]
     args += [a for a in screen_args if a.startswith(("--drm-device=", "--drm-connector=", "--drm-mode="))]
     args.append(detail_arg(detail, board_kind))
     if board_kind in SMALL_BOARDS:
         args.append("--fast")
+    args.append("--sources=%d" % sources_for(board_kind, sources))
     return args
 
 
@@ -116,8 +165,9 @@ class Supervisor:
     the process (SystemExit) when pvj-render was asked to quit or systemd stops the service."""
 
     def __init__(self, cmd, socket_path, rundir, detail, log=print, spawn=None, clock=time.monotonic, sleep=time.sleep,
-                 ready=None, start_seconds=START_SECONDS, healthy_seconds=HEALTHY_SECONDS, wanted=None):
+                 ready=None, start_seconds=START_SECONDS, healthy_seconds=HEALTHY_SECONDS, wanted=None, sources=None):
         self.cmd, self.socket_path, self.rundir, self.detail = list(cmd), socket_path, rundir, detail
+        self.sources = sources              # the Owner's number of sources this run was started with (None: the board's)
         self.log, self.clock, self.sleep = log, clock, sleep
         self.spawn = spawn or (lambda argv: subprocess.Popen(argv, stdin=subprocess.DEVNULL, close_fds=True))
         self.ready = ready or self._ready
@@ -156,7 +206,10 @@ class Supervisor:
         if not data:
             return None
         wish = clean(data)
-        return wish if wish != {"use": "new", "detail": self.detail} else None
+        mine = {"use": "new", "detail": self.detail}
+        if self.sources is not None:
+            mine["sources"] = self.sources
+        return wish if wish != mine else None
 
     def _ask_quit(self):
         from .player import Ipc, PlayerError
@@ -274,8 +327,9 @@ def serve(player, screen_args, detail, log, env=None):
     """Run pvj-render under a Supervisor in this process. Returns the reason to fall back to classic mpv; never
     returns while pvj-render draws."""
     board = hardware.detect_board().get("kind", "")
-    sup = Supervisor(command(player.socket_path, screen_args, detail, board, env), player.socket_path, player.rundir, detail, log=log,
-                     wanted=wanted_path(env))
+    sources = clean(screenmode.read_json(wanted_path(env))).get("sources")
+    sup = Supervisor(command(player.socket_path, screen_args, detail, board, env, sources), player.socket_path, player.rundir, detail,
+                     log=log, wanted=wanted_path(env), sources=sources)
     signal.signal(signal.SIGTERM, sup._stop)
     signal.signal(signal.SIGINT, sup._stop)
     try:
@@ -384,11 +438,22 @@ class Renderer:
         except (OSError, ValueError, IndexError):
             return True
 
+    def board(self):
+        board = getattr(self.api, "board", None)
+        return board.get("kind", "") if isinstance(board, dict) else hardware.detect_board().get("kind", "")
+
+    def sources(self):
+        """What the page says of sources (D101): the Owner's number or None (the board's own), this board's default
+        and cap, and the number pvj-render is started with."""
+        kind = self.board()
+        chosen = self.saved().get("sources")
+        return {"chosen": chosen, "default": sources_for(kind), "cap": source_cap(kind), "starts": sources_for(kind, chosen)}
+
     def state(self):
         saved = self.saved()
         drawing, why = self.drawing()
         out = {"use": saved["use"], "detail": saved["detail"], "drawing": drawing, "available": available(self.env),
-               "uses": list(USES), "details": list(DETAILS)}
+               "uses": list(USES), "details": list(DETAILS), "sources": self.sources()}
         if saved["use"] == "new" and drawing == "classic":
             out["why"] = why or "the player has not started pvj-render yet"
         rep = self.report()
@@ -401,17 +466,28 @@ class Renderer:
         s = self.state()
         return {"use": s["use"], "drawing": s["drawing"], "why": s.get("why", "")}
 
-    def choose(self, use, detail=None):
+    def choose(self, use, detail=None, sources=None):
+        """`sources` (D101): None keeps the number as it is, "auto" is the board's own, 1 to the board's cap a
+        number of the Owner's."""
         if use not in USES:
             raise RendererError(400, "use must be classic or new")
         detail = self.saved()["detail"] if detail is None else detail
         if isinstance(detail, bool) or detail not in DETAILS:
             raise RendererError(400, "detail must be auto, 540, 720 or output")
+        cap = source_cap(self.board())
+        if sources is None:
+            sources = self.saved().get("sources")
+        elif sources == "auto":
+            sources = None
+        elif isinstance(sources, bool) or not isinstance(sources, int) or not 1 <= sources <= cap:
+            raise RendererError(400, "sources must be auto or 1 to %d on this box" % cap)
         if use == "new" and not available(self.env):
             raise RendererError(409, "pvj-render is not built on this box")
         before = self.saved()
         with self.settings.lock:
             self.settings.data["renderer"] = {"use": use, "detail": detail}
+            if sources is not None:
+                self.settings.data["renderer"]["sources"] = sources
             self.settings.save()
         try:
             self._write()

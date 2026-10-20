@@ -15,6 +15,11 @@ Surfaces, like ofxPiMapper's:
 
 A surface list is validated here (never trusted), turned into matrices here, and written into the shader as
 constants, so the shader holds no loops over data and no user text. The first surface in the list is drawn on top.
+
+Sources (D101): a surface shows source 1 (the player's picture, as always) or, on the new renderer, another source:
+another clip layer of pvj-render's (`"source": 2` to 8; no key is source 1, so a file without it is as before). The
+generated shader names such a source with `//!BIND SOURCEk` and reads it with SOURCEk_tex, which pvj-render supplies.
+Classic mpv has source 1 only: there every surface is drawn from source 1, and the shader is byte for byte what it was.
 """
 
 import math
@@ -32,6 +37,7 @@ MAX_CELLS = 64            # all cells of all surfaces (a quad or triangle is one
 MAX_GRID = 8              # columns and rows of a grid surface
 MAX_COORD = 16384.0
 MAX_SETS = 8              # saved mappings
+MAX_SOURCES = 8           # a surface's source: 1 to this (D101); how many the player has is the player's to say
 NAME = re.compile(r"[A-Za-z0-9 _.\-]{1,40}")
 TYPES = {"quad": 4, "triangle": 3, "grid": None}
 UNIT_QUAD = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
@@ -150,6 +156,9 @@ def validate_surface(s):
     if not isinstance(on, bool):
         raise MapperError("on must be true or false")
     out = {"id": sid, "type": kind, "name": name.strip() or kind.title(), "on": on}
+    source = s.get("source", 1)
+    if isinstance(source, bool) or not isinstance(source, int) or not 1 <= source <= MAX_SOURCES:
+        raise MapperError("a surface's source is 1 to %d" % MAX_SOURCES)
     if kind == "grid":
         cols, rows = s.get("cols"), s.get("rows")
         for v, what in ((cols, "cols"), (rows, "rows")):
@@ -179,7 +188,25 @@ def validate_surface(s):
         if turn is not None and t != turn:     # a cell turned over: the grid folds over itself
             raise MapperError("surface %s: the grid folds over itself; move a point back" % out["name"])
         turn = t
+    if source != 1:
+        out["source"] = source        # source 1 is no key: a mapping that uses no other source is stored as before
     return out
+
+
+def source_of(s):
+    """The source a surface shows (D101): 1 unless it says another."""
+    return s.get("source", 1)
+
+
+def shown_source(s, available):
+    """The source a surface is drawn from on a player with `available` sources: its own, or source 1 where the player
+    has no such source (classic mpv has only source 1)."""
+    k = source_of(s)
+    return k if 1 < k <= available else 1
+
+
+def _source_binds(used):
+    return ["//!BIND SOURCE%d" % k for k in used]
 
 
 def validate_mapping(m):
@@ -312,34 +339,40 @@ def surface_maps(s):
     return [(scr, _cell_maps(scr, tex, s["type"] == "grid")) for scr, tex in cells(s)]
 
 
-def shader(surfaces, edit=None):
+def shader(surfaces, edit=None, available=1):
     """A direct shader: every pixel tests the cells in turn (the first surface on top). Exact, changes show at once,
     but it costs per cell: on a Pi 4 at 1080p one quad is free and a 4x4 grid drops frames. Used while editing, with
-    `edit` = {"selected": id, "corner": n} drawing the outlines."""
+    `edit` = {"selected": id, "corner": n} drawing the outlines. `available`: the sources the player has (D101); a
+    surface on another source reads it (pickK), and with none the text is what it always was."""
     body = _outline_code(surfaces, edit.get("selected"), edit.get("corner")) if edit else []
+    used = sorted({shown_source(s, available) for s in surfaces if s["on"]} - {1})
     for s in surfaces:
         if not s["on"]:
             continue
+        k = shown_source(s, available)
+        pick = "pick" if k == 1 else "pick%d" % k
         for scr, cm in surface_maps(s):
             if cm[0] == "bilinear":
                 # in units of 1024 pixels, so the quadratic stays well inside 32-bit float precision
                 pts = ", ".join("vec2(%s, %s)" % (_f(x / 1024.0), _f(y / 1024.0)) for x, y in cm[1])
                 tq = cm[2]
                 body.append("    u = ibl(p / 1024.0, %s);\n"
-                            "    if (u.x >= 0.0 && u.y >= 0.0 && u.x <= 1.0 && u.y <= 1.0) return pick(mix(mix(vec2(%s, %s), vec2(%s, %s), u.x), mix(vec2(%s, %s), vec2(%s, %s), u.x), u.y));"
-                            % (pts, _f(tq[0][0]), _f(tq[0][1]), _f(tq[1][0]), _f(tq[1][1]), _f(tq[3][0]), _f(tq[3][1]), _f(tq[2][0]), _f(tq[2][1])))
+                            "    if (u.x >= 0.0 && u.y >= 0.0 && u.x <= 1.0 && u.y <= 1.0) return %s(mix(mix(vec2(%s, %s), vec2(%s, %s), u.x), mix(vec2(%s, %s), vec2(%s, %s), u.x), u.y));"
+                            % (pts, pick, _f(tq[0][0]), _f(tq[0][1]), _f(tq[1][0]), _f(tq[1][1]), _f(tq[3][0]), _f(tq[3][1]), _f(tq[2][0]), _f(tq[2][1])))
                 continue
             inside = ("u.x >= 0.0 && u.y >= 0.0 && u.x + u.y <= 1.0" if cm[0] == "affine" else
                       "q.z > 0.0 && u.x >= 0.0 && u.y >= 0.0 && u.x <= 1.0 && u.y <= 1.0")
             body.append("    q = %s * vec3(p, 1.0); u = q.xy / q.z;\n"
-                        "    if (%s) { t = %s * vec3(u, 1.0); return pick(t.xy / t.z); }" % (_mat3(cm[1]), inside, _mat3(cm[2])))
+                        "    if (%s) { t = %s * vec3(u, 1.0); return %s(t.xy / t.z); }" % (_mat3(cm[1]), inside, _mat3(cm[2]), pick))
     return "\n".join([
         "// nxlx.mastercontrol projection mapping, direct (generated; do not edit)",
         "//!HOOK OUTPUT",
         "//!BIND HOOKED",
+    ] + _source_binds(used) + [
         "//!DESC nxlx mapper (editing)",
         "",
         "vec4 pick(vec2 t) { return vec4(HOOKED_tex(clamp(t, vec2(0.0), vec2(1.0))).rgb, 1.0); }",
+    ] + ["vec4 pick%d(vec2 t) { return vec4(SOURCE%d_tex(clamp(t, vec2(0.0), vec2(1.0))).rgb, 1.0); }" % (k, k) for k in used] + [
         "float cr(vec2 a, vec2 b) { return a.x * b.y - a.y * b.x; }",
         "vec2 ibl(vec2 p, vec2 a, vec2 b, vec2 c, vec2 d) {",
         "    vec2 e = b - a; vec2 f = d - a; vec2 g = a - b + c - d; vec2 h = p - a;",
@@ -427,8 +460,10 @@ def _uv_at(p, cellmaps):
     return best
 
 
-def warp_table(surfaces, width, height, step=TABLE_STEP, stop=None):
-    """(table width, table height, [uA, vA, dA, dB, uB, vB] per cell, row by row from the top).
+def warp_table(surfaces, width, height, step=TABLE_STEP, stop=None, with_sources=False):
+    """(table width, table height, [uA, vA, dA, dB, uB, vB] per cell, row by row from the top), and with
+    `with_sources` a fourth item: [sA, sB] per cell, the source each of the two layers shows (D101; 1 where there is
+    no surface).
 
     Each table cell holds two layers: A, the top surface at (or within a few pixels of) that screen point, and B, the
     surface under it. For each: where on the picture the point comes from, and how far the point is inside (+) or
@@ -548,6 +583,13 @@ def warp_table(surfaces, width, height, step=TABLE_STEP, stop=None):
              for scr, cm in m] for m in maps]
     boxes = [(min(x for x, _ in pl) - EDGE, max(x for x, _ in pl) + EDGE, min(y for _, y in pl) - EDGE, max(y for _, y in pl) + EDGE)
              for pl in polys]
+    src = None
+    if with_sources:
+        kinds = [source_of(s) for s in live]
+        src = [1] * (n * 2)
+        for k in range(n):
+            if owner[k] >= 0:
+                src[2 * k] = src[2 * k + 1] = kinds[owner[k]]
     for count, k in enumerate(band):
         if stop is not None and count % 256 == 0 and stop():
             return None
@@ -566,24 +608,38 @@ def warp_table(surfaces, width, height, step=TABLE_STEP, stop=None):
             uv = _uv_at(p, near[si])
             if uv is None:
                 continue
-            layers.append((d, uv))
+            layers.append((d, uv, si))
             if len(layers) == 2:
                 break
         o = k * 6
         if not layers:
             continue
-        (da, uva) = layers[0]
-        (db, uvb) = layers[1] if len(layers) > 1 else (-EDGE, uva)
+        (da, uva, sa) = layers[0]
+        (db, uvb, sb) = layers[1] if len(layers) > 1 else (-EDGE, uva, sa)
         out[o:o + 6] = (uva[0], uva[1], da, db, uvb[0], uvb[1])
+        if src is not None:
+            src[2 * k], src[2 * k + 1] = kinds[sa], kinds[sb]
+    if with_sources:
+        return lw, lh, out, src
     return lw, lh, out
 
 
-def warp_shader(lw, lh, values):
+def warp_shader(lw, lh, values, sources=None, available=1):
     """The show shader: the two-layer table as two half-float textures filtered by the GPU, then two reads of the
     picture per pixel, blended by the layers' edge distances. mpv takes texture data as 32-bit floats (half floats were
     refused). Measured on a Pi 4 playing 1080p H.264: at 1920x1080 no dropped frames, even with a 64-cell grid; at
     2560x1440 about 3 a second (the GPU is at its limit there; even one table read and one picture read cost 1.4).
-    Skipping the second picture read inside a surface with a branch was slower, so there is none."""
+    Skipping the second picture read inside a surface with a branch was slower, so there is none.
+
+    `sources` (warp_table's fourth item) and `available` (the sources the player has, D101): where a surface shows
+    another source the player has, the second texture's two spare channels carry each layer's source, read at the
+    nearest table cell (an index must not be blended: half way between 1 and 3 is not 2), and each layer reads its
+    own source. Where none does (classic mpv, or every surface on source 1) the text is the one it always was."""
+    if sources is not None:
+        shown = [k if 1 < k <= available else 1 for k in sources]
+        used = sorted(set(shown) - {1})
+        if used:
+            return _warp_shader_sources(lw, lh, values, shown, used)
     a, b = [], []
     for k in range(0, len(values), 6):
         a += values[k:k + 4]
@@ -617,6 +673,56 @@ def warp_shader(lw, lh, values):
         "    vec4 b = texture(PVJWARPB, HOOKED_pos);",
         "    float kb = clamp(a.w + 0.5, 0.0, 1.0);",
         "    vec3 under = HOOKED_tex(clamp(b.xy, vec2(0.0), vec2(1.0))).rgb * kb;",
+        "    return vec4(mix(under, top, ka), 1.0);",
+        "}",
+        "",
+    ])
+
+
+def _warp_shader_sources(lw, lh, values, shown, used):
+    """warp_shader for a table whose surfaces show more than source 1 (D101): the same two textures, with the second's
+    spare channels holding the two layers' sources, and one read of the right source per layer."""
+    a, b = [], []
+    for k in range(0, len(values), 6):
+        c = k // 6
+        a += values[k:k + 4]
+        b += (values[k + 4], values[k + 5], float(shown[2 * c]), float(shown[2 * c + 1]))
+    pick = ["vec3 src(float n, vec2 t) {", "    t = clamp(t, vec2(0.0), vec2(1.0));"]
+    for k in used:
+        pick.append("    if (n > %d.5 && n < %d.5) return SOURCE%d_tex(t).rgb;" % (k - 1, k, k))
+    pick += ["    return HOOKED_tex(t).rgb;", "}"]
+    return "\n".join([
+        "// nxlx.mastercontrol projection mapping, with sources (generated; do not edit)",
+        "//!TEXTURE PVJWARPA",
+        "//!SIZE %d %d" % (lw, lh),
+        "//!FORMAT rgba16f",
+        "//!FILTER LINEAR",
+        "//!BORDER CLAMP",
+        struct.pack("<%df" % len(a), *a).hex(),
+        "",
+        "//!TEXTURE PVJWARPB",
+        "//!SIZE %d %d" % (lw, lh),
+        "//!FORMAT rgba16f",
+        "//!FILTER LINEAR",
+        "//!BORDER CLAMP",
+        struct.pack("<%df" % len(b), *b).hex(),
+        "",
+        "//!HOOK OUTPUT",
+        "//!BIND HOOKED",
+        "//!BIND PVJWARPA",
+        "//!BIND PVJWARPB",
+    ] + _source_binds(used) + [
+        "//!DESC nxlx mapper (sources)",
+        "",
+    ] + pick + [
+        "vec4 hook() {",
+        "    vec4 a = texture(PVJWARPA, HOOKED_pos);",
+        "    vec4 b = texture(PVJWARPB, HOOKED_pos);",
+        "    vec2 n = texelFetch(PVJWARPB, ivec2(clamp(HOOKED_pos * PVJWARPB_size, vec2(0.0), PVJWARPB_size - 1.0)), 0).zw;",
+        "    float ka = clamp(a.z + 0.5, 0.0, 1.0);",
+        "    float kb = clamp(a.w + 0.5, 0.0, 1.0);",
+        "    vec3 top = src(n.x, a.xy);",
+        "    vec3 under = src(n.y, b.xy) * kb;",
         "    return vec4(mix(under, top, ka), 1.0);",
         "}",
         "",
@@ -754,6 +860,18 @@ class Engine:
         """The surfaces placed for the current screen."""
         return self.placed()[0]
 
+    def sources(self, ask=True):
+        """How many sources the player has (D101): 1 on classic mpv, or when the player does not say. Asked once per
+        player process (Player.sources); with `ask` False only what is known already (a status asks nothing)."""
+        fn = getattr(self.api.player, "sources", None)
+        if fn is None:
+            return 1
+        try:
+            n = fn(ask=ask)
+        except Exception:
+            return 1
+        return n if isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= MAX_SOURCES else 1
+
     def state(self):
         cfg = self.settings.data["mapper"]
         with self._lock:
@@ -769,7 +887,12 @@ class Engine:
         return {"enabled": self.enabled(), "on": cfg["on"], "screen": list(size), "surfaces": surfaces,
                 "sets": sorted(cfg["sets"]), "edit": dict(self.edit), "status": status, "controllers": self.remote_state(),
                 "made_at": list(made) if made else None, "reshaped": reshaped,
-                "limits": {"surfaces": MAX_SURFACES, "cells": MAX_CELLS, "grid": MAX_GRID, "sets": MAX_SETS}}
+                # D101: the sources this player has now (1 on classic), and the most a surface may name. Asked of
+                # the player once per player process (Player.sources keeps the answer by its pid): with only what
+                # was known, a page opened after a restart offered Source 1 alone on a box that runs four.
+                "sources": self.sources(),
+                "limits": {"surfaces": MAX_SURFACES, "cells": MAX_CELLS, "grid": MAX_GRID, "sets": MAX_SETS,
+                           "sources": MAX_SOURCES}}
 
     # -- from a controller: mapping mode (D75) --
     # The owner, 2026-10-10: "the controller can handle corner or point nudges once in that mode". Every change of the
@@ -1102,19 +1225,20 @@ class Engine:
             self._set_status("error", "the saved mapping does not fit this screen: %s" % e, gen)
             return
         editing = self.edit["on"] and self.enabled()
+        available = self.sources() if any(source_of(s) != 1 for s in surfaces) else 1
         try:
             if not surfaces or not (cfg["on"] or editing):
                 self._commit(gen, None, "off", "" if self.enabled() else "the module is off")
                 return
             if editing:
-                self._commit(gen, self._write(shader(surfaces, self.edit)), "editing")
+                self._commit(gen, self._write(shader(surfaces, self.edit, available)), "editing")
                 return
         except Exception as e:
             self._set_status("error", "could not write the mapping: %s" % e, gen)
             return
         self._set_status("building", "", gen)
         with self._lock:
-            self._job = (gen, surfaces, self.screen())
+            self._job = (gen, surfaces, self.screen(), available)
             start = not self._building
             self._building = True
         if start:
@@ -1129,12 +1253,12 @@ class Engine:
                 if job is None:
                     self._building = False
                     return
-            gen, surfaces, size = job
+            gen, surfaces, size, available = job
             try:
-                table = warp_table(surfaces, size[0], size[1], stop=lambda: gen != self._gen)
+                table = warp_table(surfaces, size[0], size[1], stop=lambda: gen != self._gen, with_sources=available > 1)
                 if table is None:
                     continue                     # overtaken
-                self._commit(gen, self._write(warp_shader(*table)), "on")
+                self._commit(gen, self._write(warp_shader(*table, available=available)), "on")
             except Exception as e:
                 self._set_status("error", "could not build the mapping: %s" % e, gen)
                 self.log("pvj-web: mapper: %s" % e)
@@ -1191,6 +1315,17 @@ class Engine:
                 s["on"] = body["on"]
             elif action == "rename":
                 need(body.get("id"))["name"] = body.get("name")
+            elif action == "source":
+                # D101: what the surface shows. Any of 1 to MAX_SOURCES is kept (a mapping outlives a switch of the
+                # renderer); one the player does not have is drawn from source 1, and the page says so.
+                s = need(body.get("id"))
+                k = body.get("source")
+                if isinstance(k, bool) or not isinstance(k, int) or not 1 <= k <= MAX_SOURCES:
+                    raise MapperError("source must be 1 to %d" % MAX_SOURCES)
+                if k == 1:
+                    s.pop("source", None)
+                else:
+                    s["source"] = k
             elif action in ("move", "place"):
                 s = need(body.get("id"))
                 target = body.get("target", "screen")
