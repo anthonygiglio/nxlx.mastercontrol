@@ -1463,7 +1463,7 @@ class OwnersMappingTest(SourcesBase):
     def test_the_owners_quad_is_drawn_on_top_and_each_shows_its_whole_source(self):
         r = self.r
         narrow = os.path.join(self.tmp, "green43.png")
-        png(narrow, 160, 120, lambda x, y: GREEN)          # 4:3 in a 16:9 window: letterboxed unless stretched
+        png(narrow, 240, 180, lambda x, y: GREEN)          # 4:3 in a 16:9 window: letterboxed unless stretched
         r("set_property", "keepaspect", False)               # what Player.set_mapping_mode does with a mapping on
         r.load(self.red)
         self.to(2, narrow)
@@ -1472,8 +1472,15 @@ class OwnersMappingTest(SourcesBase):
             for kind, text in (("show", mapper.warp_shader(*mapper.warp_table(surfaces, W, H, with_sources=True), available=4)),
                                ("edit", mapper.shader(surfaces, available=4))):
                 self.map(text)
-                time.sleep(0.3)
-                shot = r.capture()
+                # the picture as it settles (a capture right after a change of the mapping can still be the frame
+                # before it); the last one is judged
+                shot = None
+
+                def settled():
+                    nonlocal shot
+                    shot = r.capture()
+                    return all(near(self.at(shot, x, y), c) for (x, y), c in zip(((120, 600), (450, 560), (600, 400)), want))
+                r.wait(settled, 5, 0.2)
                 got = (self.at(shot, 120, 600), self.at(shot, 450, 560), self.at(shot, 600, 400))
                 for g, w, where in zip(got, want, ("the quad alone", "the quad over the triangle", "the triangle alone")):
                     self.assertColour(g, w, "quad on %d, triangle on %d, %s, %s" % (quad, tri, kind, where))
@@ -1482,7 +1489,7 @@ class OwnersMappingTest(SourcesBase):
         whole = mapper.validate_mapping({"surfaces": [{"id": "aaaaaaa3", "type": "quad", "name": "All", "on": True, "source": 2,
                                                        "vertices": [[0, 0], [W, 0], [W, H], [0, H]], "tex": [[0, 0], [1, 0], [1, 1], [0, 1]]}]})
         self.map(mapper.warp_shader(*mapper.warp_table(whole, W, H, with_sources=True), available=4))
-        time.sleep(0.3)
+        r.wait(lambda: near(r.pixel(W // 30, H // 2), GREEN), 5, 0.2)
         shot = r.capture()
         for x in (W // 30, W // 2, W - W // 30):
             self.assertColour(r.pixel(x, H // 2, shot), GREEN, "source 2 across the whole surface, x %d" % x)
