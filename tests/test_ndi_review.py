@@ -126,10 +126,10 @@ class RollbackRunsInCi(unittest.TestCase):
     """Low b: the rollback tests read master's code from git and skipped where the checkout had no origin/master."""
 
     def test_the_python_job_fetches_master(self):
-        y = read(".github", "workflows", "pvj.yml")
-        job = y[y.index("python: ['3.9', '3.12']"):]
-        job = job[:job.index("\n  ", job.index("run: python"))] if "run: python" in job else job
-        self.assertRegex(job, r"git fetch --depth=1 origin \+?master:refs/remotes/origin/master")
+        # The unit tests' job alone (D104): the whole file to its end also held the Debian job's fetch of master.
+        from tests.test_ci_shard import job
+        self.assertRegex(job(read(".github", "workflows", "pvj.yml"), "unit"),
+                         r"git fetch --depth=1 origin \+?master:refs/remotes/origin/master")
 
 
 class WholeGroup(unittest.TestCase):
