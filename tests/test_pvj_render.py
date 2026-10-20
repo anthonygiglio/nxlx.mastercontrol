@@ -454,15 +454,27 @@ class TextLayerTest(Base):
         self.assertTrue(self.r.wait(lambda: near(self.r.pixel(25, 20), RED)), self.r.stderr())
         self.assertFalse(self.r("get_property", "pvj-render")["text-layer"])
 
-    @unittest.skipUnless(shutil.which("mpv"), "needs mpv to combine the masks")
     def test_masks_combined_into_one_picture_are_drawn_as_the_overlay(self):
-        # D100: the panel's combined masks (pvj/overlay.py) go to pvj-render as one overlay-add, as to classic mpv
+        # D100: the panel's combined masks (pvj/overlay.py) go to pvj-render as one overlay-add, as to classic mpv.
+        # The picture is combined here in plain Python by the same rule as overlay.combine (premultiplied, a later
+        # mask "over" an earlier one), so this needs no mpv program: the CI job has libmpv only. mpv's own combining
+        # is tested in tests/test_masks.py.
         from pvj import overlay
-        from tests.test_masks import png as rgba_png
-        first, second = os.path.join(self.tmp, "m1.png"), os.path.join(self.tmp, "m2.png")
-        rgba_png(first, W, H, lambda x, y: (0, 0, 0, 255) if x < W // 2 else (0, 0, 0, 0))                      # black left half
-        rgba_png(second, W, H, lambda x, y: (255, 0, 255, 255) if y >= H // 2 and x < W // 4 else (0, 0, 0, 0))  # magenta, over it
-        out = overlay.combine([first, second], W, H, os.path.join(self.tmp, "masks.bgra"))
+        masks = [lambda x, y: (0, 0, 0, 255) if x < W // 2 else (0, 0, 0, 0),                          # black left half
+                 lambda x, y: (255, 0, 255, 255) if y >= H // 2 and x < W // 4 else (0, 0, 0, 0)]      # magenta, over it
+        pixels = bytearray()
+        for y in range(H):
+            for x in range(W):
+                b = g = r = a = 0                                   # premultiplied B, G, R, A of what is below
+                for mask in masks:
+                    sr, sg, sb, sa = mask(x, y)
+                    sr, sg, sb = sr * sa // 255, sg * sa // 255, sb * sa // 255
+                    keep = 255 - sa
+                    b, g, r, a = sb + b * keep // 255, sg + g * keep // 255, sr + r * keep // 255, sa + a * keep // 255
+                pixels += bytes((b, g, r, a))
+        out = os.path.join(self.tmp, "masks.bgra")
+        with open(out, "wb") as f:
+            f.write(pixels)
         self.r.load(self.picture)
         self.r("overlay-add", overlay.OVERLAY_ID, 0, 0, out, 0, "bgra", W, H, W * 4)
         self.assertTrue(self.r.wait(lambda: near(self.r.pixel(W // 4, H // 4), BLACK)), self.r.stderr())
