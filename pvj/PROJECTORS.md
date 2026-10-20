@@ -1,6 +1,6 @@
 <!-- SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
      SPDX-License-Identifier: Apache-2.0 -->
-# Projector control (PJLink)
+# Projector control (PJLink and Epson control)
 
 The old panel had Beamer On and Beamer Off buttons. This does the same over the network with **PJLink**, the standard most network projectors speak (Epson, Panasonic, NEC, Sony, Hitachi, Christie, Optoma, Canon, BenQ and others). It is usually switched off in the projector's own network menu; switch it on there and note the password, if any.
 
@@ -31,6 +31,34 @@ Switching on takes the projector a minute or so to warm up, and switching off st
 
 **Lamp hours and warnings** are also on Setup > Health, one line per projector: the lamp hours and the projector's own warnings and errors (fan, lamp, temperature, cover, filter, other). A projector that does not answer shows as "?" there, not as a fault, since it may simply be switched off at the wall. A projector that reports an error makes the box's overall health "bad", a warning "warn".
 
+## Epson control (D99)
+
+Epson projectors also speak Epson's own network control, **ESC/VP.net** on TCP port 3629. It reaches what PJLink class 1 cannot: **freeze**, **brightness**, the **Eco** light setting and the **colour mode**. On the projector it is usually on when network control is on; there is no password for it on the X27 (one that asks for a password is refused with words: use PJLink, or switch that password off on the projector).
+
+**Control** is chosen per projector when it is added or edited:
+
+- **PJLink** (the default, and what every projector added before D99 is): as above.
+- **PJLink and Epson control**: PJLink does power, the input and the mutes; Epson control adds freeze and the picture settings. The best choice for an Epson.
+- **Epson control only**: power, A/V mute (picture and sound together), freeze, the picture settings, lamp hours and errors, all over Epson control. Inputs are chosen over PJLink only, so this projector has no input list; the row says so.
+
+**Test** (in the add form, and under More for a projector in the list; the Owner's) asks the address over PJLink and over Epson control at the same time and says what it found: "PJLink answers: EPSON EPSON X27. Epson control answers (serial VU3K7601207). Best choice: PJLink and Epson control." It says whether PJLink asks for a password and whether the one typed is right; it never shows the password. It changes nothing on the projector and saves nothing. In the add form it also sets Control to the best choice.
+
+**On the projector's row**, while it is on:
+
+- **Mute (black)** and **Unmute**: picture and sound together, the projector's own A/V mute. On the X27 that is a black screen (its own black glows a little; that is normal). It is a big button beside Freeze; the separate picture and sound mutes stay under More.
+- **Freeze** and **Unfreeze** (Epson control): the picture on the wall stops; what the box plays goes on.
+- **Brightness** 0 to 255 (Epson's scale; 125 is the middle): sent when the slider is let go. The projector keeps its nearest step, so the number may read back a little different (40 read back as 36 on the X27).
+- **Eco light**: a switch, normal or Eco.
+- **Colour mode**: Epson numbers its modes, and the names differ by model, so the panel shows the number ("Mode 04 (in use)"). It offers a short list of Epson's numbers (01 to 08, 0C, 14) and the one in use. A mode the projector refuses is not offered again (until the panel restarts); one it was seen in, or took, is marked as known. On the X27, 04 and 06 work and 07, 0C and 14 are refused. A change of colour mode takes the X27 about 3 seconds.
+
+The status line says "frozen" while the picture is frozen.
+
+**Who.** The Owner adds, edits, tests and removes projectors. The Owner and an Operator use power, the input, the mutes, freeze, brightness, Eco and the colour mode. A Guest does not see the Projectors page; while guest controls are open he can switch them on, choose an input and switch them off with a second tap, as D80 says, and nothing of Epson control. **Through remote support** a helper may switch a projector on, mute it and freeze it, but not switch it off and not change brightness, Eco or the colour mode: those are done by someone in the room (D84, D99). The panel then shows "On (switched off in the room)" in place of Turn off, no All off, and no picture settings. Every change from the panel is a line in the journal with the projector, the action, the device and its address; a support login's is also in its session's log.
+
+**Status.** With Epson control the background check asks freeze, Eco, brightness and the colour mode in one Epson connection after the PJLink questions (or everything in one Epson connection, for Epson control only). While someone has the Projectors page open the box checks every 10 seconds instead of every 45, and for 30 seconds after the page was last read. If Epson control does not answer while PJLink does, the row says "Picture settings not read" and why, and PJLink's status stays.
+
+**Safety, the same as PJLink's.** The same private-address check before every command; the same lock, so PJLink and Epson control never talk to one projector at the same moment; the connect waits at most 3 seconds and each answer at most 5 (8 for power and the colour mode); an answer is at most 128 bytes, and one that never ends, is cut off, or answers another question, is refused. Epson control has no password on the wire here, so keep the show network private, as for PJLink.
+
 ## Schedule and OSC
 
 - The weekly schedule can switch every projector on or off (`projector_on`, `projector_off`), and can run a legacy start script such as `startlessonce05` (`preset`).
@@ -53,18 +81,22 @@ Switching on takes the projector a minute or so to warm up, and switching off st
 
 ## API
 
-- `GET /api/projectors` (view): `{"enabled", "projectors": [{"id", "name", "host", "port", "has_password", "details", "inputs", "status"}]}`. Nothing is asked of a projector here.
+- `GET /api/projectors` (view): `{"enabled", "projectors": [{"id", "name", "host", "port", "has_password", "protocol", "details", "inputs", "status"}]}`. Nothing is asked of a projector here; reading it makes the background check every 10 seconds for the next 30 seconds. `protocol` is `pjlink`, `epson` or `both` (D99).
   - `details`: `null` until read, then `{"name", "maker", "model", "info", "class", "inputs": ["11", "31"], "read": time}`; a value the projector has never given is `null`.
   - `inputs`: `[{"code": "31", "name": "Digital 1", "label": "Matrix"}]`.
   - `status` (`null` while the module is off). Before the first check it is only `{"pending_input": null, "notice": null, "waiting": false}`, with no `ok`; `waiting` is true while no thread is free for this projector. After a check: `{"ok", "checked": time, "power": "off|on|warming up|cooling down", "input", "mute": {"picture", "sound"}, "lamps": [{"hours", "on"}], "warnings": {"fan": "ok|warning|error", "lamp", "temperature", "cover", "filter", "other"}, "pending_input", "notice": {"ok", "text"}, "waiting"}`, or `{"ok": false, "checked", "error", "pending_input", "notice", "waiting"}`. `input` and `mute` are `null` unless the projector is on; `lamps` or `warnings` are `null` if the projector would not say. `pending_input` is an input change being retried, `notice` how the last retried one ended.
-- `POST /api/projectors` (full): `{"add": {"name", "host", "port"?, "password"?}}`, `{"edit": {"id", "name"?, "host"?, "port"?, "password"?}}`, `{"remove": id}` or `{"label": {"id", "input": "31", "label": "Matrix"}}` (up to 24 characters; empty removes it; nothing is sent to the projector). Adding a projector that is already in the list gives 409.
+  - With Epson control and the projector on: `"picture": {"freeze", "brightness": 0-255, "light": "normal|eco", "colour_mode": "04", "colour_modes": [{"code", "known"}]}` (a value the projector would not give is `null`), or `"picture_error"` when Epson control did not answer and PJLink did. With Epson control only, also `"source"`, Epson's own source code (30 is HDMI on the X27).
+- `POST /api/projectors` (full): `{"add": {"name", "host", "port"?, "password"?}}`, `{"edit": {"id", "name"?, "host"?, "port"?, "password"?}}`, `{"remove": id}` or `{"label": {"id", "input": "31", "label": "Matrix"}}` (up to 24 characters; empty removes it; nothing is sent to the projector). Adding a projector that is already in the list gives 409. `add` and `edit` take `"protocol"` (`pjlink`, the default, `epson` or `both`); PJLink is stored as no key at all, as before D99.
+  - `{"test": {"host", "port"?, "password"?}}` or `{"test": {"id"}}` (the stored password is used): `{"test": {"pjlink": {"ok", "power", "password": "none|right|needed|wrong", "maker", "model", "name", "error"?}, "epson": {"ok", "power", "serial", "error"?}, "suggest": "both|pjlink|epson|null"}}`. Nothing is saved or changed, and the password is never in the answer or the journal. At most about 20 seconds.
   - `edit` changes only the fields that are sent, each checked as for `add` (400 for a public address, a name DNS cannot encode, a bad port, name or password; 404 for an unknown id; 409 if the new address and port are another entry's). No `password` field keeps the stored password; `"password": ""` removes it. A new `host` or `port` keeps `labels`, removes `details` and the status, and restarts the background check at the new address. The limit of 8 is not involved. The answer is the list, as for `GET`, without passwords.
-- `POST /api/projector` (live): `{"id": id or "all", "action": "on|off|mute|unmute|mute_picture|unmute_picture|mute_sound|unmute_sound|input|identify|state", "background"?: true}`. `mute` and `unmute` are picture and sound together, as before. `input` needs one projector and `"input": "31"`, a code from that projector's list (409 if the list is not known yet). `identify` is Refresh details. With `background` the answer is `{"started": true}` at once. Answers `{"results": {id: {"ok", "power"?, "pending"?, "error"?}}}`; `pending: true` means the input change is being retried in the background. A single projector that does not answer gives 502 with the reason.
+- `POST /api/projector` (live): `{"id": id or "all", "action": "on|off|mute|unmute|mute_picture|unmute_picture|mute_sound|unmute_sound|input|identify|state|freeze|unfreeze|brightness|light|colour_mode", "value"?, "background"?: true}`. With Epson control (D99): `freeze` and `unfreeze` (one projector or all of those with Epson control), and for one projector `brightness` with `"value": 0-255`, `light` with `"normal"` or `"eco"`, `colour_mode` with a code from the list (the projector must be on). 409 for a projector without Epson control, 400 for a bad value. Through remote support `off`, `brightness`, `light` and `colour_mode` are refused (403). `mute` and `unmute` are picture and sound together, as before. `input` needs one projector and `"input": "31"`, a code from that projector's list (409 if the list is not known yet). `identify` is Refresh details. With `background` the answer is `{"started": true}` at once. Answers `{"results": {id: {"ok", "power"?, "pending"?, "error"?}}}`; `pending: true` means the input change is being retried in the background. A single projector that does not answer gives 502 with the reason.
 - `GET /api/health` (view) has `"projectors": [{"id", "name", "state": "ok|warn|bad|unknown", "text"}]`.
 
 ## Not verified on real hardware
 
-**No real projector has been tested.** Not one command of this has been sent to a real projector, of any make. Everything here was checked against the published standard ("PJLink Specifications", version 1.04, JBMIA, 2013-12-10, the class 1 document) and tested against a fake projector in `tests/test_projector.py` that was written from that document, not from the client. What a real projector does where the standard leaves room is unknown until one is tried, in particular:
+**An Epson X27 (serial VU3K7601207) was tried on 2026-10-19**, by hand, with the commands of both protocols (see D99 for what it answered): PJLink class 1 without a password (power, input list, lamp hours, warnings, A/V mute about 0.3 s), and Epson control (power, mute, freeze, brightness, Eco, colour mode 06; colour modes 07, 0C and 14 refused). The box's own clients then read it once, read-only: Epson control's status in one connection in 0.05 s, and Test found both. On that day the X27 answered `ERR?` with ERR, so its errors over Epson control are not known; with PJLink and Epson control, PJLink's warnings are used. The panel's buttons have not been pressed against it, and no other projector has been tried.
+
+Before that, everything here was checked against the published standard ("PJLink Specifications", version 1.04, JBMIA, 2013-12-10, the class 1 document) and tested against a fake projector in `tests/test_projector.py` that was written from that document, not from the client. What a real projector does where the standard leaves room is unknown until one is tried, in particular:
 
 - which questions it answers in standby (the standard lets it answer "unavailable"; the box then shows what it has and asks again when the projector is on);
 - how long it stays "unavailable" after power-on, and so whether 90 seconds of retrying an input change is enough;

@@ -2198,7 +2198,7 @@ class EpsonApiTest(ServerBase):
         st, body, _ = self.post("/api/projectors", {"test": {"host": "127.0.0.1", "port": self.pj.port}})
         self.assertEqual(st, 200)
         t = body["test"]
-        self.assertEqual((t["pjlink"]["ok"], t["pjlink"]["password"], t["epson"]["ok"], t["suggest"]), (False, "needed", True, "epson"))
+        self.assertEqual((t["pjlink"]["ok"], t["pjlink"]["password"], t["epson"]["ok"], t["suggest"]), (False, "needed", True, "both"))
         t = self.post("/api/projectors", {"test": {"host": "127.0.0.1", "port": self.pj.port, "password": "pw1"}})[1]["test"]
         self.assertEqual((t["pjlink"]["password"], t["pjlink"]["maker"], t["suggest"]), ("right", "NXLX Test Works", "both"))
         self.assertEqual(self.settings.data["projectors"], [])

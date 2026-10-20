@@ -684,7 +684,8 @@ def probe(host, port=PORT, password="", timeout=5.0, connect=socket.create_conne
     for r in out.values():
         if not r["ok"] and "error" not in r:
             r["error"] = "the projector did not answer in time"
-    pj_ok, ep_ok = out["pjlink"]["ok"], out["epson"]["ok"]
+    pj_ok = out["pjlink"]["ok"] or out["pjlink"].get("password") in ("needed", "wrong")      # it is there; the password is for the person to fix
+    ep_ok = out["epson"]["ok"]
     out["suggest"] = "both" if pj_ok and ep_ok else "pjlink" if pj_ok else "epson" if ep_ok else None
     return out
 

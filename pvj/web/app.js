@@ -1647,7 +1647,7 @@
         blurb: 'Whether the box is well: its power supply, temperature, the player and the helpers it needs, and each projector\'s own warnings.',
         body: function () { return [healthCard()]; } },
       { id: 'projectors', group: 'everyday', name: 'Projectors', role: 'live', module: 'projector', url: '/api/projectors',
-        blurb: 'Switch the projectors on the network on and off, choose their input, mute them, and see their state, lamp hours and warnings. Not yet tried on a real projector.',
+        blurb: 'Switch the projectors on the network on and off, choose their input, mute them, and see their state, lamp hours and warnings. On an Epson also freeze, brightness, Eco and the colour mode.',
         confirmOff: function (ask) { ask('The box stops checking the projectors. They stay as they are.'); },
         body: function () { return [projectorsCard(full)]; } },
       // (what staff had on this page before D65 is the Room area's screens. The groups and the scenes are set up here,
@@ -4733,7 +4733,28 @@
   }
 
   // ---- projectors (PJLink) ---------------------------------------------
-  var projForm = { name: '', host: '', port: '4352', password: '' };  // survives redraws
+  var projForm = { name: '', host: '', port: '4352', password: '', protocol: 'pjlink' };  // survives redraws
+  var projFound = '';  // what the last Test of the add form found, in words
+  // How the box talks to a projector (D99): PJLink, which most have, and Epson's own control, which adds freeze,
+  // brightness, Eco and the colour mode on an Epson.
+  var PJ_PROTOS = [['pjlink', 'PJLink'], ['both', 'PJLink and Epson control'], ['epson', 'Epson control only']];
+  var PJ_PROTO_NAME = { pjlink: 'PJLink', both: 'PJLink and Epson control', epson: 'Epson control only' };
+  function projEpson(p) { return p.protocol === 'epson' || p.protocol === 'both'; }
+  // What a Test found, in words (the box never sends the password back, only whether it was needed and right).
+  function projFoundText(t) {
+    var pj = t.pjlink || {}, ep = t.epson || {}, out = [];
+    if (pj.ok) out.push('PJLink answers' + (pj.maker || pj.model ? ': ' + [pj.maker, pj.model].filter(Boolean).join(' ') : '') + '.' + (pj.password === 'right' ? ' The password is right.' : ''));
+    else if (pj.password === 'needed') out.push('PJLink answers, but the projector asks for a password. Type it and test again.');
+    else if (pj.password === 'wrong') out.push('PJLink answers, but the password is wrong.');
+    else out.push('PJLink does not answer (' + (pj.error || 'no answer') + ').');
+    if (ep.ok) out.push('Epson control answers' + (ep.serial ? ' (serial ' + ep.serial + ')' : '') + '.');
+    else out.push('Epson control does not answer (' + (ep.error || 'no answer') + ').');
+    out.push(t.suggest ? 'Best choice: ' + PJ_PROTO_NAME[t.suggest] + '.' : 'Nothing answered. Check the address, that the projector has power, and that network control is on in its menu.');
+    return out.join(' ');
+  }
+  function protoSelect(id, value) {
+    return h('select', { class: 'text-input', id: id }, PJ_PROTOS.map(function (x) { return h('option', { value: x[0], text: x[1], selected: value === x[0] }); }));
+  }
   // The projector whose inputs are being named, with what was typed: { id, texts: { code: text } }; null when none.
   var projNaming = null;
   // The projector being edited, in place of its row: { id, name, host, port, password, clear, error }; null when none.
@@ -4762,6 +4783,7 @@
       var t = PJ_POWER[st.power] || st.power;
       if (st.input) t += ' · input ' + inputText(p, st.input);
       if (st.mute && (st.mute.picture || st.mute.sound)) t += ' · ' + (st.mute.picture && st.mute.sound ? 'picture and sound' : st.mute.picture ? 'picture' : 'sound') + ' muted';
+      if (st.picture && st.picture.freeze) t += ' · frozen';
       if (st.lamps && st.lamps.length) t += ' · lamp ' + st.lamps.map(function (l) { return l.hours; }).join(', ') + ' h';
       return t;
     }
@@ -4781,11 +4803,11 @@
     }
     function where(p) { return p.host + (p.port !== 4352 ? ':' + p.port : ''); }
     function keep() {  // what is being typed, copied from the page before it is rebuilt (an input event can be lost)
-      [['projname', 'name'], ['projhost', 'host'], ['projport', 'port'], ['projpw', 'password']].forEach(function (f) {
+      [['projname', 'name'], ['projhost', 'host'], ['projport', 'port'], ['projpw', 'password'], ['projproto', 'protocol']].forEach(function (f) {
         var el = document.getElementById(f[0]);
         if (el && body.contains(el)) projForm[f[1]] = el.value;
       });
-      if (projEdit) [['projeditname', 'name'], ['projedithost', 'host'], ['projeditport', 'port'], ['projeditpw', 'password']].forEach(function (f) {
+      if (projEdit) [['projeditname', 'name'], ['projedithost', 'host'], ['projeditport', 'port'], ['projeditpw', 'password'], ['projeditproto', 'protocol']].forEach(function (f) {
         var el = document.getElementById(f[0]);
         if (el && body.contains(el) && !el.disabled) projEdit[f[1]] = el.value;
       });
@@ -4816,13 +4838,15 @@
       var port = h('input', { class: 'text-input mono', id: ids + 'port', type: 'number', min: 1, max: 65535, value: e.port });
       var pw = h('input', { class: 'text-input mono', id: ids + 'pw', type: 'password', autocomplete: 'new-password', disabled: e.clear });
       pw.value = e.clear ? '' : e.password;      // the property, not an attribute: a typed password never becomes page HTML
+      var proto = protoSelect(ids + 'proto', e.protocol);
       var err = h('div', { class: 'msg err', id: ids + 'err', role: 'alert', text: e.error || '' });
       var moved = h('div', { class: 'hint', id: ids + 'moved', text: 'A new address or port: the box asks the projector at the new one who it is. The names you gave its inputs are kept.' +
         (p.has_password ? ' The stored password is then used at the new address. If the password belongs to the old projector only, remove it or type the new one.' : '') });
-      function read() { e.name = name.value; e.host = host.value; e.port = port.value; if (!e.clear) e.password = pw.value; }
+      function read() { e.name = name.value; e.host = host.value; e.port = port.value; e.protocol = proto.value; if (!e.clear) e.password = pw.value; }
       function change() {           // what would be sent
         var out = { id: p.id }, n = parseInt(e.port, 10);
         if (e.name.trim() !== p.name) out.name = e.name;
+        if (e.protocol !== p.protocol) out.protocol = e.protocol;
         if (e.host.trim() !== p.host) out.host = e.host.trim();
         if (String(n) !== String(p.port)) out.port = n;
         if (e.clear) out.password = ''; else if (e.password) out.password = e.password;
@@ -4849,7 +4873,8 @@
         moved.hidden = out.host === undefined && out.port === undefined;
         if (e.error) { e.error = ''; err.textContent = ''; }
       }
-      [name, host, port, pw].forEach(function (el) { el.addEventListener('input', fresh); });
+      [name, host, port, pw, proto].forEach(function (el) { el.addEventListener('input', fresh); });
+      proto.addEventListener('change', fresh);
       var first = change();
       save.disabled = Object.keys(first).length < 2;
       moved.hidden = first.host === undefined && first.port === undefined;
@@ -4865,6 +4890,8 @@
         h('div', { class: 'hint', id: ids + 'pwhint', text: e.clear ? 'The password will be removed when you save.' :
           p.has_password ? 'A password is set. Type a new one to change it, or leave empty to keep it.' : 'No password is set. Type one if the projector asks for it.' }),
         clear ? h('label', { class: 'rot between' }, h('span', { text: 'Remove the password' }), clear) : null,
+        h('label', { class: 'field', for: ids + 'proto', text: 'Control' }), proto,
+        h('div', { class: 'hint', text: 'Epson control adds freeze, brightness, Eco and the colour mode on an Epson. Test in More says which the projector answers.' }),
         h('div', { class: 'row' }, save,
           h('button', { class: 'btn grow', id: ids + 'cancel', text: 'Cancel', onclick: function () { projEdit = null; draw(JSON.parse(shown), true); } })),
         err);
@@ -4894,10 +4921,52 @@
       if (!st.ok) return h('button', { class: 'btn proj-power proj-retry', id: id, text: 'Try again', 'aria-label': 'Try ' + p.name + ' again', onclick: function () { run(p.id, 'state', 'Check now'); } });
       if (st.power === 'warming up') return still('Warming up...');
       if (st.power === 'cooling down') return still('Cooling down...');
+      if (st.power === 'on' && S.remote) return still('On (switched off in the room)');      // D99: never through remote support
       if (st.power === 'on') return h('button', { class: 'btn proj-power', id: id, text: 'Turn off', 'aria-label': 'Turn off ' + p.name, onclick: function (e) {
         confirmRow('Turn off ' + p.name + '? It needs about a minute to cool before it can come on again.', 'Turn off', 'Keep it on', function () { run(p.id, 'off', 'Turn off'); }, e.currentTarget);
       } });
       return h('button', { class: 'btn on proj-power', id: id, text: 'Turn on', 'aria-label': 'Turn on ' + p.name, onclick: function () { run(p.id, 'on', 'Turn on'); } });
+    }
+    // The big buttons of a projector that is on: Mute (picture and sound, a hardware black) and, with Epson control,
+    // Freeze. Each says what it will do, and is drawn pressed while the projector says it is so.
+    function bigButtons(p) {
+      var st = p.status || {}, mute = st.mute || {}, pic = st.picture || {}, muted = !!(mute.picture || mute.sound), row = [];
+      row.push(h('button', { class: 'btn grow proj-mute' + (muted ? ' on' : ''), id: 'projmute-' + p.id, 'aria-pressed': muted ? 'true' : 'false',
+        text: muted ? 'Unmute' : 'Mute (black)', 'aria-label': (muted ? 'Unmute ' : 'Mute ') + p.name,
+        onclick: function () { run(p.id, muted ? 'unmute' : 'mute', muted ? 'Unmute' : 'Mute'); } }));
+      if (projEpson(p)) row.push(h('button', { class: 'btn grow proj-freeze' + (pic.freeze ? ' on' : ''), id: 'projfreeze-' + p.id, 'aria-pressed': pic.freeze ? 'true' : 'false',
+        text: pic.freeze ? 'Unfreeze' : 'Freeze', 'aria-label': (pic.freeze ? 'Unfreeze ' : 'Freeze ') + p.name,
+        onclick: function () { run(p.id, pic.freeze ? 'unfreeze' : 'freeze', pic.freeze ? 'Unfreeze' : 'Freeze'); } }));
+      return h('div', { class: 'row proj-big' }, row);
+    }
+    // Brightness, Eco and the colour mode over Epson control. Not through remote support (they stay after it).
+    function pictureBlock(p) {
+      var st = p.status || {}, pic = st.picture;
+      if (!pic) return st.picture_error ? h('div', { class: 'hint warn proj-picerr', text: 'Picture settings not read: ' + st.picture_error + '.' }) : null;
+      if (S.remote) return h('div', { class: 'hint', text: 'Brightness, Eco and the colour mode are changed by someone in the room, not through remote support.' });
+      var out = [];
+      if (pic.brightness !== null && pic.brightness !== undefined) {
+        var bval = h('span', { class: 'k', text: String(pic.brightness) });
+        var bright = h('input', { id: 'projbright-' + p.id, type: 'range', min: 0, max: 255, step: 1, value: pic.brightness });
+        bright.addEventListener('input', function () { bval.textContent = bright.value; });
+        bright.addEventListener('change', function () { run(p.id, 'brightness', 'Brightness ' + bright.value, { value: +bright.value }); });
+        out.push(h('div', { class: 'fieldwrap proj-bright' }, h('label', { class: 'field', for: bright.id }, 'Brightness ', bval), bright,
+          h('div', { class: 'hint', text: 'Sent when you let go. The projector keeps its nearest step, so the number may change a little.' })));
+      }
+      if (pic.light) out.push(toggle('projeco-' + p.id, 'Eco light', pic.light === 'eco', function (v) {
+        run(p.id, 'light', v ? 'Eco on' : 'Eco off', { value: v ? 'eco' : 'normal' });
+      }, 'Dimmer and quieter, and the lamp lasts longer.'));
+      var modes = pic.colour_modes || [];
+      if (pic.colour_mode && modes.length) {
+        var sel = h('select', { class: 'text-input proj-cmode', id: 'projcmode-' + p.id, onchange: function () {
+          if (sel.value && sel.value !== pic.colour_mode) run(p.id, 'colour_mode', 'Colour mode ' + sel.value, { value: sel.value });
+        } }, modes.map(function (m) {
+          return h('option', { value: m.code, selected: m.code === pic.colour_mode,
+            text: 'Mode ' + m.code + (m.code === pic.colour_mode ? ' (in use)' : m.known ? '' : ' (not tried yet)') });
+        }));
+        out.push(labelled('Colour mode', sel, 'Epson numbers its colour modes, and the names differ by model: try one and look at the wall. A mode the projector does not have is refused and not offered again.'));
+      }
+      return out.length ? h('div', { class: 'list sp proj-picture' }, out) : null;
     }
     // "Name the inputs": one row per input with a text field and Show, one Save names. Its own panel, so that
     // naming an input never switches the projector to it.
@@ -4948,7 +5017,7 @@
         h('button', { class: 'btn grow', id: 'projallon', text: 'All on', onclick: function (e) {
           confirmRow('Turn on all ' + n + ' projectors?', 'Turn all on', 'Not now', function () { run('all', 'on', 'All on'); }, e.currentTarget);
         } }),
-        h('button', { class: 'btn grow', id: 'projalloff', text: 'All off', onclick: function (e) {
+        S.remote ? null : h('button', { class: 'btn grow', id: 'projalloff', text: 'All off', onclick: function (e) {
           confirmRow('Turn off all ' + n + ' projectors? They need about a minute to cool before they can come on again.', 'Turn all off', 'Keep them on', function () { run('all', 'off', 'All off'); }, e.currentTarget);
         } })));
       var list = h('div', { class: 'list sp splitlist', id: 'projlist' });
@@ -4956,7 +5025,13 @@
         var st = p.status || {}, mute = st.mute || {}, warn = warningText(p), silent = st.ok === false;
         if (full && projEdit && projEdit.id === p.id) return list.appendChild(editForm(p));
         var below = [];
-        if (live && !silent) {
+        if (live && !silent && st.power === 'on') {
+          below.push(bigButtons(p));
+          if (projEpson(p)) below.push(pictureBlock(p));
+        }
+        if (live && !silent && p.protocol === 'epson') {
+          below.push(h('div', { class: 'hint proj-noinputs', text: 'Inputs are chosen over PJLink. To choose them here, edit the projector and set Control to PJLink and Epson control.' }));
+        } else if (live && !silent) {
           if (p.inputs.length) {
             var sel = h('select', { class: 'text-input proj-input', id: 'projinput-' + p.id, onchange: function () {
               if (sel.value) run(p.id, 'input', 'Input ' + inputText(p, sel.value), { input: sel.value });
@@ -4979,9 +5054,16 @@
           } }) : null,
           h('button', { class: 'btn', text: 'Check now', 'aria-label': 'Check ' + p.name, onclick: function () { run(p.id, 'state', 'Check now'); } }),
           h('button', { class: 'btn', text: 'Read details again', 'aria-label': 'Read the details of ' + p.name + ' again', onclick: function () { run(p.id, 'identify', 'Read details again'); } }),
+          full ? h('button', { class: 'btn proj-testbtn', text: 'Test', 'aria-label': 'Test which control ' + p.name + ' answers', onclick: function () {
+            states[p.id] = 'Testing PJLink and Epson control...'; redraw();
+            api('POST', '/api/projectors', { test: { id: p.id } }).then(function (r) {
+              states[p.id] = r.ok ? projFoundText(r.data.test) : (r.data.error || 'Could not test it') + '.';
+              say(states[p.id], !r.ok); load(true);
+            });
+          } }) : null,
           full ? h('button', { class: 'btn proj-editbtn', text: 'Edit', 'aria-label': 'Edit ' + p.name, onclick: function () {
             keep();
-            projEdit = { id: p.id, name: p.name, host: p.host, port: String(p.port), password: '', clear: false, error: '' };
+            projEdit = { id: p.id, name: p.name, host: p.host, port: String(p.port), password: '', protocol: p.protocol || 'pjlink', clear: false, error: '' };
             moreOpen = null;
             draw(JSON.parse(shown), true);
             var first = document.getElementById('projeditname');
@@ -4994,7 +5076,7 @@
           } }) : null];
         var who = detailsText(p);
         var entry = listRow({ cls: 'proj-entry', data: p.id, name: p.name, key: 'proj-' + p.id, redraw: redraw,
-          sub: (who ? who + ' · ' : '') + where(p) + (p.has_password ? ' · password set' : ''), subCls: 'proj-details',
+          sub: (who ? who + ' · ' : '') + where(p) + (p.has_password ? ' · password set' : '') + (p.protocol && p.protocol !== 'pjlink' ? ' · ' + PJ_PROTO_NAME[p.protocol] : ''), subCls: 'proj-details',
           state: h('div', { class: 'state proj-status' }, statusText(p), warn ? h('span', { class: 'proj-warn', text: ' · ' + warn }) : null),
           problem: silent ? 'Not answering at ' + where(p) + '. Is it plugged in at the wall, and is PJLink switched on in its network menu?' + (st.error ? ' (The box says: ' + st.error + '.)' : '') : '',
           note: [st.pending_input ? 'Switching to ' + inputText(p, st.pending_input) + ' when the projector is ready (up to 90 seconds).' : (st.notice ? st.notice.text : ''), states[p.id]].filter(Boolean).join(' '),
@@ -5013,17 +5095,33 @@
         host.addEventListener('input', function () { projForm.host = host.value; });
         port.addEventListener('input', function () { projForm.port = port.value; });
         pw.addEventListener('input', function () { projForm.password = pw.value; });
+        var proto = protoSelect('projproto', projForm.protocol);
+        proto.addEventListener('change', function () { projForm.protocol = proto.value; });
+        var found = h('div', { class: 'msg inmsg', id: 'projfound', role: 'status', text: projFound });
+        var test = h('button', { class: 'btn grow', id: 'projtest', text: 'Test', onclick: function () {
+          keep();
+          test.disabled = true;
+          found.textContent = projFound = 'Asking the projector over PJLink and Epson control...';
+          api('POST', '/api/projectors', { test: { host: projForm.host, port: parseInt(projForm.port || '4352', 10), password: projForm.password } }).then(function (r) {
+            test.disabled = false;
+            projFound = r.ok ? projFoundText(r.data.test) : (r.data.error || 'Could not test that address') + '.';
+            found.textContent = projFound;
+            if (r.ok && r.data.test.suggest) { projForm.protocol = r.data.test.suggest; proto.value = r.data.test.suggest; }
+          });
+        } });
         return h('div', { class: 'addform', id: 'projform' }, h('div', { class: 'field', text: 'Add a projector' }),
           labelled('Name', name, 'What people in the room call it.'),
           labelled('Address', host, 'The projector\'s IP address, from its network menu. Only a private address (such as 192.168.x.x) is taken.'),
           labelled('Port', port, '4352 unless it was changed on the projector.'),
           labelled('PJLink password', pw, 'Only if the projector asks for one. It is kept on the box and never shown again.'),
+          labelled('Control', proto, 'PJLink works with most projectors. Epson control adds freeze, brightness, Eco and the colour mode on an Epson. Test finds out which the projector answers, and picks the best.'),
+          h('div', { class: 'row' }, test), found,
           h('div', { class: 'row' },
             h('button', { class: 'btn on pri grow', id: 'projadd', text: 'Add', onclick: function () {
               keep();
-              api('POST', '/api/projectors', { add: { name: projForm.name || projForm.host, host: projForm.host, port: parseInt(projForm.port || '4352', 10), password: projForm.password } }).then(function (r) {
+              api('POST', '/api/projectors', { add: { name: projForm.name || projForm.host, host: projForm.host, port: parseInt(projForm.port || '4352', 10), password: projForm.password, protocol: projForm.protocol } }).then(function (r) {
                 if (!r.ok) return sayAt(err, r.data.error || 'Could not add the projector. Check the address.', true);
-                projForm = { name: '', host: '', port: '4352', password: '' }; addOpen.proj = false; say('Projector added. The box is asking it who it is.'); draw(r.data, true); load();
+                projForm = { name: '', host: '', port: '4352', password: '', protocol: 'pjlink' }; projFound = ''; addOpen.proj = false; say('Projector added. The box is asking it who it is.'); draw(r.data, true); load();
               });
             } }),
             cancel ? h('button', { class: 'btn grow', id: 'projcancel', text: 'Cancel', onclick: function () { keep(); cancel(); } }) : null),
