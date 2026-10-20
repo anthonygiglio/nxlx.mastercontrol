@@ -2084,16 +2084,16 @@ function startServer(env) {          // env: more for the harness's environment 
       sources: [{ source: 1, idle: false, name: 'intro.mkv', height: 180, pause: false }, { source: 2, idle: true, name: null, height: null, pause: false },
         { source: 3, idle: false, name: 'big.mkv', height: 1080, pause: false }, { source: 4, idle: false, name: 'tunnel.mkv', height: 720, pause: false }],
     };
-    const sent = [];
+    const srcSent = [];
     const sourcesRoute = async (route) => {
       const req = route.request();
-      if (req.method() === 'POST') sent.push(JSON.parse(req.postData()));
+      if (req.method() === 'POST') srcSent.push(JSON.parse(req.postData()));
       await route.fulfill({ json: sourcesAnswer });
     };
     const playRoute = async (route) => {
       const b = JSON.parse(route.request().postData());
       if (!b.source) return route.continue();
-      sent.push(b);
+      srcSent.push(b);
       await route.fulfill({ json: { playing: b.file || 'intro.mkv', source: b.source, warning: 'this may drop frames on this box; 720p clips are lighter' } });
     };
     await page.route('**/api/sources', sourcesRoute);
@@ -2107,7 +2107,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.selectOption('#srcclip-2', 'tunnel.mkv');
     await page.click('#srcplay-2');
     await page.waitForFunction(() => /Source 2 plays tunnel\.mkv: this may drop frames on this box; 720p clips are lighter/.test(document.getElementById('msg').textContent));
-    assert.deepStrictEqual(sent.slice(0, 2), [{ source: 3, action: 'stop' }, { source: 2, file: 'tunnel.mkv' }]);
+    assert.deepStrictEqual(srcSent.slice(0, 2), [{ source: 3, action: 'stop' }, { source: 2, file: 'tunnel.mkv' }]);
     // The pads' Play to: Source 1 by default; with Source 2 chosen a pad's clip goes there
     assert.strictEqual(await post('/api/pads', { bank: 0, index: 11, label: 'To a source', file: 'intro.mkv' }), 200);
     await page.reload();
@@ -2118,7 +2118,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.selectOption('#playto', '2');
     await page.click('#pads button[data-pad="11"]');
     await page.waitForFunction(() => /Source 2 plays intro\.mkv: this may drop frames/.test(document.getElementById('msg').textContent));
-    assert.deepStrictEqual(sent[sent.length - 1], { source: 2, pad: [0, 11] });
+    assert.deepStrictEqual(srcSent[srcSent.length - 1], { source: 2, pad: [0, 11] });
     await page.unroute('**/api/sources', sourcesRoute);
     await page.unroute('**/api/play', playRoute);
     assert.strictEqual(await post('/api/pads', { bank: 0, index: 11, label: '', file: '' }), 200);
