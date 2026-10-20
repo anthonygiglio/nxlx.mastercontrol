@@ -4,6 +4,23 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-20, sources and surfaces, step 1 (`sources-surfaces`, D101)
+
+- **The owner's words:** "start sources and surfaces, step 1: more clip layers and a source per surface on the new renderer."
+- **Found first:** the mapping's two-layer show table (D58) had two spare channels in its second texture, and pvj-render's own reader of the mapping file (D95) could take a new BIND without anything of mpv's. So the source per surface rides in the table that exists, and pvj-render supplies the other pictures by name.
+- **Built:** pvj-render `--sources=N` (1 to 8): sources 2 to N are one libmpv core each, muted, idle until loaded, with `pvj-source` (loadfile, stop, a short set and get list) and `get_property pvj-sources`; every older command still means source 1. `//!BIND SOURCEk` in the mapping file. A surface's `"source"` (no key for 1), the table's source per layer read at the nearest cell, both shaders, classic byte for byte as before. The renderer's number of sources per board (a Pi 4 has 4). `POST /api/play` with `"source"`, `GET`/`POST /api/sources`, the warning about 1080p clips. The panel: Shows on the chosen surface, the Sources strip on the mapping page, Play to above the pads.
+- **Chosen:** a shader, NDI or a render cue sent to Source 2 and up is refused in plain words rather than played on Source 1; the level (opacity, Blackout) reaches every source; Stop stays Source 1's.
+- **Tests and break-checks:** listed in D101; the results are below.
+- **Not done:** anything on the Pi, a real GPU or the X27 (rows SO1 to SO8); a crossfade, effects and sound on sources 2 to N; shaders as sources (step 2); the full sources panel (step 3).
+
+## 2026-10-20, the mask list on the node (D100, rows MK)
+
+- **On the node at 1024 x 768 (the X27):** 3 test masks combined in 1.1 s on the Pi; switching one or moving one up took 0.8 s.
+- **Under nxlx-grid:** 0 dropped frames; the GPU at 39 percent with the masks against 35 percent without.
+- **A classic crossfade:** the masks stayed on during and after it (seen by webcam).
+- **Afterwards:** the overlay was put back off, and the test PNGs deleted through `POST /api/media/delete`.
+- **Found:** the owner's old overlay `logo.png` is missing from the media folder (the overlay was off, so nothing showed it). He may want to upload it again.
+
 ## 2026-10-20, the review of #152 (masks, D100 amendment)
 
 - **The review:** one Medium and one Low, both fixed on `mask-list`. Medium: a 995 KB PNG that says 16000 x 16000 made mpv use about 1.2 GB per copy. Now the PNG header is read first (8192 a side, 40 megapixels at most, in the single-picture path too), the masks combined at once are bounded (70 megapixels of their own, and 4 x 3840 x 2160 of the screen's: 8 masks at 1080, 4 at 4K), and mpv runs under a 2 GB address-space cap with 1 MB thread stacks and 2 malloc arenas. The 1.5 GB cap asked for did not let mpv start even one mask on this 16-core laptop; 2 GB with the smaller stacks fits every allowed case (the heaviest 2.7 s, about 1.05 GB resident). Low: `set_overlay` now holds the settings' lock from the read to the write, so two Adds at once both land.

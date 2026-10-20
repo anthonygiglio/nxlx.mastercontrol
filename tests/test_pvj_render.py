@@ -1477,6 +1477,44 @@ class SourceFadeTest(SourcesBase):
         self.assertIs(self.source(2)["idle"], False)
 
 
+class PlayerSourcesTest(SourcesBase):
+    """pvj/player.py's side through the real pvj-render: Player.sources, play_to, stop_source, sources_state."""
+
+    def player(self):
+        from pvj.player import Player
+        p = Player(rundir=self.tmp)
+        p.socket_path = self.r.sock
+        p.ipc = Ipc(self.r.sock, timeout=10.0)
+        return p
+
+    def test_a_player_plays_to_a_source_and_stops_it(self):
+        p = self.player()
+        self.assertEqual(p.sources(), 4)
+        self.assertIs(p.crossfades(), True, "source 1 still fades")
+        p.play([self.red], spawn=False)
+        p.play_to(2, [self.blue], "loop")
+        self.assertEqual(self.r("pvj-source", 2, "get_property", "path"), self.blue)
+        self.assertEqual(self.r("pvj-source", 2, "get_property", "loop-file"), "inf")
+        self.assertIs(self.r("pvj-source", 2, "get_property", "pause"), False)
+        p.play_to(3, [self.green, self.picture], "loop")
+        self.assertEqual(self.r("pvj-source", 3, "get_property", "playlist-count"), 2)
+        self.assertEqual(self.r("pvj-source", 3, "get_property", "loop-playlist"), "inf")
+        self.assertTrue(self.r.wait(lambda: self.source(2)["height"] == H and self.source(3)["path"] == self.green), self.sources())
+        rows = p.sources_state()
+        self.assertEqual([(r["source"], r["path"], r["idle"]) for r in rows],
+                         [(1, self.red, False), (2, self.blue, False), (3, self.green, False), (4, None, True)])
+        self.assertEqual(self.r("get_property", "path"), self.red, "source 1 unchanged")
+        self.show_halves(1, 2)
+        self.halves_are(RED, BLUE)
+        p.stop_source(2)
+        self.assertTrue(self.r.wait(lambda: self.source(2)["idle"] is True))
+        for bad in (1, 5, 0, True):
+            with self.assertRaises(PlayerError):
+                p.play_to(bad, [self.blue])
+        with self.assertRaises(PlayerError):
+            p.play_to(2, [self.blue], "sideways")
+
+
 class ManySourceLoadsTest(SourcesBase):
     """Loads to sources 2 to 4 all night leave no file descriptor, thread, GL fence or GL object behind (judged as
     ManyFadesTest is: SLACK for descriptors and threads, GL_BAND over the warm-up's highest for libmpv's pool).
