@@ -122,9 +122,11 @@ static const char *const FADE_KEYS[] = { "keep-open", "image-display-duration", 
 static const char *const SOURCE_SET[] = { "pause", "loop-file", "loop-playlist", "speed", "brightness", NULL };
 static const char *const SOURCE_GET[] = { "path", "pause", "idle-active", "time-pos", "duration", "width", "height",
                                           "playlist-count", "playlist-pos", "loop-file", "loop-playlist", "speed",
-                                          "brightness", "aid", "current-ao", NULL };
-// Names set on source 1 that reach the other sources too: the picture's level.
-static const char *const TO_SOURCES[] = { "brightness", NULL };
+                                          "brightness", "aid", "current-ao", "keepaspect", "fbo-format", NULL };
+// Names set on source 1 that reach the other sources too: the picture's level, and the mapping's stretch of the
+// picture to the whole frame with its 8-bit buffers (Player.set_mapping_mode). Without keepaspect a source's picture
+// was letterboxed inside its texture, so a surface showed black bars where the picture's edge should be.
+static const char *const TO_SOURCES[] = { "brightness", "keepaspect", "fbo-format", NULL };
 
 // Keys loadfile's options may hold (the pipe's, set with the load on mpv 0.38 and later).
 static const char *const LOAD_KEYS[] = {
