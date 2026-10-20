@@ -10,6 +10,7 @@ Newest entry first. One entry per working session: what was done, what merged, w
 - **Measured:** per module from master's run 39384981398 (its log lines are stamped): no single cause, the ten slowest modules about half. The GPU shader steps after the unit tests took another 14 minutes of the same 45-minute job.
 - **Built:** `tools/ci-shard.py`, the `unit` job in three parts per Python, the `shaders-gpu` job, and `test (3.9)` and `test (3.12)` as checks over them, so the ruleset's required names stay. `tests/test_ci_shard.py` (new, 10 tests).
 - **The review:** no High or Medium; three Lows. Fixed: the two checks over the parts cancelled each other on a failure (now `fail-fast: false`), and `tests/test_ndi_review.py` looked at the whole file from the unit job on, so the Debian job's fetch of master passed it; it now reads the unit job alone (break-checked: it fails with the unit job's fetch removed). Not taken: "test_000_tmp tests only discover"; its `test_named_modules_leave_nothing` runs named modules.
+- **CI on 2f8647f:** each part took 8.5 to 11 minutes (the one step had taken 25 to 29). Part 3 failed on both Pythons: the new `tests/test_ci_shard.py` did not `import tests` at its top, which `test_lockrank` asks of every module; now it does. Part 2 failed once on 3.12 on the known NDI PipeReuseTest flake (passed in the other three runs).
 - **Not done:** no test was made faster. The Debian job's whole suite for information already times out (2,104 s, exit 124); a follow-up.
 
 ## 2026-10-20, the review of #153 (sources, D101 amendment)

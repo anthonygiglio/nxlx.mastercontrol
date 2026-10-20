@@ -9,6 +9,8 @@ import re
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 
+import tests                                    # noqa: F401  the temp folder and the lock checker (tests/__init__.py)
+
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _spec = importlib.util.spec_from_file_location("ci_shard", os.path.join(REPO, "tools", "ci-shard.py"))
 shard = importlib.util.module_from_spec(_spec)
