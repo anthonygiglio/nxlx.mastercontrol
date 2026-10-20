@@ -116,6 +116,7 @@ class OverlayApiTest(ServerBase):
 
     def test_a_restarted_player_gets_the_overlay_back(self):
         self.post({"file": "logo.png", "on": True})
+        self.settled()                      # the post's own build is done before counting (it runs in a worker)
         self.converted.clear()
         pid = [1]
         real_ipc = self.player.ipc
