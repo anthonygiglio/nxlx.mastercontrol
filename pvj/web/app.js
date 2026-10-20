@@ -546,6 +546,7 @@
       S.sourceCount = n;
       if (S.playTo > n) S.playTo = 1;
       if (n !== was && document.getElementById('pads')) redrawPart('pads');
+      if (S.mapSources) S.mapSources(n);         // the mapping card's Shows follows too (review of #153)
       return;
     }
     if (!canOp()) return;
@@ -1341,6 +1342,11 @@
     // Every answer rebuilds the card, and one can arrive while a name is being typed or the canvas is being moved
     // with the arrow keys: the control in use keeps the cursor, and a field what was typed into it.
     function draw(data) { keepCursor(body, function () { build(data); }); }
+    // the Sources strip learns the box's number of sources every few seconds: Shows is drawn again when it differs
+    S.mapSources = function (n) {
+      if (!body.isConnected) { S.mapSources = null; return; }
+      if (d && d.sources !== n && !drag) { d.sources = n; draw(d); }
+    };
     // The screen as a desk (the owner, 2026-10-10: room to design the layout, and a place for what each surface
     // will get later). The display is drawn at its own aspect, as large as the room above the strip allows, with
     // what acts on the whole display under it: Mapping on, Edit on the display, Screen or Picture corners, Test

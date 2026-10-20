@@ -1404,6 +1404,9 @@ class Api:
         else:
             name = body.get("file")
         path = self.resolve_media(name)
+        if not path.lower().endswith(PLAYLIST_EXTENSIONS):
+            # a sound file plays on a source with no sound track and no picture: black and silent (review of #153)
+            raise ApiError(409, self.SOURCE_ONLY_CLIPS % "a sound file")
         ending = self._ending(body, "loop")
         if ending == "next":
             ending = "stop"

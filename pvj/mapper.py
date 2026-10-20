@@ -887,8 +887,10 @@ class Engine:
         return {"enabled": self.enabled(), "on": cfg["on"], "screen": list(size), "surfaces": surfaces,
                 "sets": sorted(cfg["sets"]), "edit": dict(self.edit), "status": status, "controllers": self.remote_state(),
                 "made_at": list(made) if made else None, "reshaped": reshaped,
-                # D101: the sources this player has now (1 on classic), and the most a surface may name
-                "sources": self.sources(ask=False),
+                # D101: the sources this player has now (1 on classic), and the most a surface may name. Asked of
+                # the player once per player process (Player.sources keeps the answer by its pid): with only what
+                # was known, a page opened after a restart offered Source 1 alone on a box that runs four.
+                "sources": self.sources(),
                 "limits": {"surfaces": MAX_SURFACES, "cells": MAX_CELLS, "grid": MAX_GRID, "sets": MAX_SETS,
                            "sources": MAX_SOURCES}}
 

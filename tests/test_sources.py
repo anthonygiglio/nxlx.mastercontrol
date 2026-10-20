@@ -304,6 +304,19 @@ class PlayToSourceTest(ApiBase):
         self.assertEqual((self.src.to, self.player.plays), ([], []), "nothing was played anywhere")
         self.assertEqual(self.post("/api/play", {"pad": [0, 5], "source": 2}), (400, {"error": "pad is empty"}))
 
+    def test_a_sound_file_is_not_a_clip_for_a_source(self):
+        # review of #153: it played with no sound track and no picture, black and silent, while the answer said it played
+        open(os.path.join(self.media, "song.mp3"), "w").close()
+        st, out = self.post("/api/play", {"file": "song.mp3", "source": 2})
+        self.assertEqual(st, 409)
+        self.assertEqual(out["error"], "only clips play to Source 2 and up for now; a sound file plays on Source 1: choose Source 1 under Play to, or a clip")
+        with self.settings.lock:
+            self.settings.data["pads"]["banks"][0]["pads"][6] = {"label": "Song", "file": "song.mp3", "ending": "loop"}
+        self.assertEqual(self.post("/api/play", {"pad": [0, 6], "source": 3})[0], 409)
+        self.assertEqual(self.src.to, [])
+        self.assertEqual(self.post("/api/play", {"file": "b.mov", "source": 2})[0], 200, "a video still goes")
+        self.assertEqual(self.post("/api/play", {"file": "song.mp3"})[0], 200, "Source 1 plays it as before")
+
     def test_bad_sources_and_sources_the_player_does_not_have(self):
         for k in (0, 9, -1, True, "2", 2.5, None):
             st, out = self.post("/api/play", {"file": "a.mp4", "source": k})
@@ -456,6 +469,17 @@ class EngineTest(ServerBase):
                     return text
             time.sleep(0.05)
         self.fail("no shader was given to the player: %s" % self.player.calls[-5:])
+
+    def test_the_state_asks_the_player_once_per_process(self):
+        # review of #153: with only what was known (ask=False) a new player process said 1 until something else asked
+        asked = []
+
+        def sources(ask=True):
+            asked.append(ask)
+            return 4 if ask else 1
+        self.player.sources = sources
+        self.assertEqual(self.api.mapper.state()["sources"], 4)
+        self.assertIn(True, asked)
 
     def test_classic_gets_the_shader_of_before_and_the_new_renderer_the_sources(self):
         self.api.mapper.apply()
