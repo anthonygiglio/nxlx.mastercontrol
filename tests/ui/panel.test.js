@@ -280,6 +280,46 @@ function startServer(env) {          // env: more for the harness's environment 
       const wide = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       assert(wide <= 1, what + ': ' + wide + ' px wider than the phone');
     }
+    // Masks (D100): two PNGs in the Library are added to the overlay's list on Shape > Picture at phone width, one is
+    // moved up, one switched off and taken out with the question in place. The harness's player draws to no screen,
+    // so the status line says what the box says about it; it must say something.
+    {
+      const { PNG } = require('pngjs');
+      const pic = new PNG({ width: 4, height: 4 });
+      pic.data.fill(0);
+      const bytes = Array.from(PNG.sync.write(pic));
+      for (const name of ['mask-a.png', 'mask-b.png']) {
+        const st = await page.evaluate(async ([n, b]) => (await fetch('/api/media/upload?name=' + n, { method: 'POST', headers: { 'X-PVJ-Request': '1' }, body: new Uint8Array(b) })).status, [name, bytes]);
+        assert.strictEqual(st, 200, 'upload ' + name);
+      }
+      await go(page, 'shape/picture');
+      await page.waitForSelector('#overlayadd');
+      await page.selectOption('#overlayfile', 'mask-a.png');
+      await page.click('#overlayadd');
+      await page.waitForSelector('#overlaylist .maskrow:has-text("1. mask-a.png")');
+      await page.waitForFunction(() => { const s = document.getElementById('overlaystatus'); return s && s.textContent.length > 3; });
+      await page.selectOption('#overlayfile', 'mask-b.png');
+      await page.click('#overlayadd');
+      await page.waitForSelector('#overlaylist .maskrow:has-text("2. mask-b.png")');
+      await fitsCard('#overlaycard', 'Masks');
+      await fitsPhone('Masks');
+      await page.click('.maskrow:has-text("mask-b.png") .maskup');
+      await page.waitForSelector('#overlaylist .maskrow:has-text("1. mask-b.png")');
+      await page.click('.maskrow:has-text("mask-a.png") .maskswitch');
+      await page.waitForSelector('.maskrow:has-text("mask-a.png") .maskswitch[aria-checked="false"]');
+      await page.click('.maskrow:has-text("mask-a.png") .maskremove');
+      await page.waitForSelector('#confirmrow:has-text("Take mask-a.png out of the masks?")');
+      await page.click('#confirmyes');
+      await page.waitForFunction(() => !/mask-a\.png/.test(document.getElementById('overlaylist').textContent));
+      const masks = await page.evaluate(() => fetch('/api/overlay').then((r) => r.json()));
+      assert.deepStrictEqual(masks.masks.map((m) => m.file), ['mask-b.png']);
+      assert.strictEqual(masks.on, true, 'the first one added was shown');
+      await page.evaluate(async () => {          // and the box as it was for the rest of the test
+        const h = { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' };
+        await fetch('/api/overlay', { method: 'POST', headers: h, body: JSON.stringify({ remove: 'mask-b.png' }) });
+        for (const n of ['mask-a.png', 'mask-b.png']) await fetch('/api/media/delete', { method: 'POST', headers: h, body: JSON.stringify({ name: n }) });
+      });
+    }
     // The same two checks for any page of any device (the owner's, a presenter's, a guest's), at any width.
     const fitsOn = async (pg, what) => {
       const bad = await pg.evaluate(() => {

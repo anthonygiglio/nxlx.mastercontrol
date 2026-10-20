@@ -31,7 +31,7 @@ Save a finished set-up under a name (up to 8). A saved mapping keeps its place i
 
 **The picture** is the whole frame of the clip, stretched to the screen while a mapping is shown (so a 4:3 clip fills the width too; choose picture corners to keep its shape). This is needed because the mapping is in screen pixels: with the usual letterboxing, every surface moved into the clip's own area (seen on the Pi with a 720x576 clip). The Mix sliders for size and position still move the picture under the mapping.
 
-**Masks**: use the overlay picture on the same screen (a PNG, black where no light should fall, transparent elsewhere). It is drawn over the mapped picture, in screen space.
+**Masks**: add them under Overlay pictures on Shape > Picture (PNGs, black where no light should fall, transparent elsewhere). Up to 8 can be in the list, each switched on or off and moved up or down; the box combines the ones that are on, in order (a later one over an earlier one), into one picture at the screen's size (D100, pvj/overlay.py). It is drawn over the mapped picture, in screen space: a mask stays where it is on the screen whatever the surfaces do.
 
 ## From a controller: mapping mode
 

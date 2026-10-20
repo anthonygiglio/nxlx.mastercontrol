@@ -1035,27 +1035,84 @@
           onclick: function () { act('POST', '/api/control', { action: 'mute', value: !pl.muted }, function () { poll(); setTimeout(function () { redrawPart('sound'); }, 200); }); } }))];
   }
 
-  // A picture over the video: a PNG from the media folder (logo, watermark, mask), fitted to the screen.
+  // Pictures over the video (D100): a list of PNGs from the media folder (logo, watermark, masks), each with its own
+  // switch and place in the order; the box combines the ones that are on into one picture at the screen's size (a
+  // later one over an earlier one) and draws it over the video, in screen space (over a mapping too). The whole
+  // overlay has its own switch. The combining runs on the box in the background: the line under the title says
+  // "Combining..." until the picture is on the screen, and asks again until then.
   function overlayCard() {
     var body = h('div', { class: 'list', id: 'overlaybody' }, h('div', { class: 'k', text: 'Loading...' }));
-    var card = h('div', { class: 'card', id: 'overlaycard' }, h('div', { class: 'k sent', text: 'Overlay picture (logo or mask over the video)' }), body);
-    function draw(d) {
-      body.textContent = '';
-      if (!d.choices.length) { body.appendChild(h('div', { class: 'k', id: 'overlaynone', text: 'Upload a PNG (transparent where the video should show) in the Library (under Play) to use it here.' })); return; }
-      var sel = h('select', { class: 'text-input', id: 'overlayfile', 'aria-label': 'Overlay picture', disabled: !can('live') },
-        d.choices.map(function (n) { return h('option', { value: n, text: n, selected: n === d.file }); }));
-      body.appendChild(sel);
-      body.appendChild(h('button', { class: 'btn' + (d.on ? ' on' : ''), id: 'overlaytoggle', 'aria-pressed': d.on ? 'true' : 'false', disabled: !can('live'),
-        text: d.on ? 'Overlay is on. Turn off' : 'Show overlay',
-        onclick: function (e) {
-          e.target.disabled = true; e.target.textContent = d.on ? 'Turning off...' : 'Preparing the picture...';
-          act('POST', '/api/overlay', { file: sel.value, on: !d.on }, function (data) { say(''); draw(data); }).then(function (r) { if (!r.ok) draw(d); });
-        } }));
+    var card = h('div', { class: 'card', id: 'overlaycard' }, h('div', { class: 'k sent', text: 'Overlay pictures (logos or masks over the video)' }), body);
+    var timer = null;
+    function send(change, control) {
+      if (control) control.disabled = true;
+      return act('POST', '/api/overlay', change, function (data) { say(''); draw(data); }).then(function (r) { if (!r.ok) load(); return r; });
     }
-    api('GET', '/api/overlay').then(function (r) {
-      if (!document.getElementById('overlaycard')) return;
-      if (r.ok) draw(r.data); else { body.textContent = ''; body.appendChild(h('div', { class: 'k', text: r.data.error || 'Not available' })); }
-    });
+    function statusText(d) {
+      var st = d.status || {}, n = st.count || 0;
+      if (st.state === 'combining') return 'Combining...';
+      if (st.state === 'error') return st.message || 'The masks could not be combined';
+      if (!d.on) return d.masks.length ? 'The overlay is off' : 'No masks yet';
+      var line = st.state === 'on' && n ? (n === 1 ? '1 mask on' : n + ' masks on') : 'Nothing is shown';
+      return st.message ? line + ': ' + st.message : line;
+    }
+    function draw(d) {
+      clearTimeout(timer);
+      if (asking(card)) { timer = setTimeout(load, 1000); return; }    // a question is open in the card: keep it
+      body.textContent = '';
+      var live = can('live'), st = d.status || {};
+      body.appendChild(h('div', { class: 'hint', id: 'overlaystatus', role: 'status', text: statusText(d) }));
+      if (d.masks.length) {
+        body.appendChild(h('button', { class: 'btn' + (d.on ? ' on' : ''), id: 'overlaytoggle', 'aria-pressed': d.on ? 'true' : 'false', disabled: !live,
+          text: d.on ? 'Overlay is on. Turn off' : 'Show overlay',
+          onclick: function (e) { e.target.textContent = d.on ? 'Turning off...' : 'Combining...'; send({ on: !d.on }, e.target); } }));
+      }
+      var list = h('div', { class: 'list', id: 'overlaylist' });
+      d.masks.forEach(function (m, i) {
+        var sw = h('button', { class: 'switch maskswitch', role: 'switch', 'aria-checked': m.on ? 'true' : 'false', 'aria-label': 'Mask ' + m.file, disabled: !live,
+          onclick: function () { send({ mask: m.file, mask_on: !m.on }, sw); } });
+        var remove = h('button', { class: 'btn small maskremove', text: 'Remove', 'aria-label': 'Remove ' + m.file, disabled: !live, onclick: function () {
+          confirmRow('Take ' + m.file + ' out of the masks? The picture stays in the Library.', 'Remove', 'Keep', function () { send({ remove: m.file }); }, remove);
+        } });
+        list.appendChild(h('div', { class: 'item maskrow' },
+          h('span', { text: (i + 1) + '. ' + m.file + (m.missing ? ' (not in the Library)' : '') }),
+          h('div', { class: 'row' },
+            h('span', { class: 'switchlabel', text: m.on ? 'On' : 'Off' }), sw,
+            h('button', { class: 'btn small maskup', text: '↑', 'aria-label': 'Move ' + m.file + ' up', disabled: !live || i === 0,
+              onclick: function (e) { send({ mask: m.file, move: 'up' }, e.target); } }),
+            h('button', { class: 'btn small maskdown', text: '↓', 'aria-label': 'Move ' + m.file + ' down', disabled: !live || i === d.masks.length - 1,
+              onclick: function (e) { send({ mask: m.file, move: 'down' }, e.target); } }),
+            remove)));
+      });
+      body.appendChild(list);
+      var free = d.choices.filter(function (n) { return !d.masks.some(function (m) { return m.file === n; }); });
+      if (!d.choices.length) {
+        body.appendChild(h('div', { class: 'k', id: 'overlaynone', text: 'Upload a PNG (transparent where the video should show) in the Library (under Play) to use it here.' }));
+      } else if (d.masks.length >= d.max) {
+        body.appendChild(h('div', { class: 'hint', id: 'overlayfull', text: 'Up to ' + d.max + ' masks. Remove one to add another.' }));
+      } else if (free.length) {
+        var sel = h('select', { class: 'text-input grow', id: 'overlayfile', 'aria-label': 'Picture to add', disabled: !live },
+          free.map(function (n) { return h('option', { value: n, text: n }); }));
+        body.appendChild(h('div', { class: 'row' }, sel,
+          h('button', { class: 'btn', id: 'overlayadd', text: d.masks.length ? 'Add' : 'Add and show', disabled: !live, onclick: function (e) {
+            var change = { add: sel.value };
+            if (!d.masks.length) change.on = true;          // the first picture: show it, as the one picture of before did
+            send(change, e.target);
+          } })));
+      }
+      if (d.masks.length > 1) body.appendChild(h('div', { class: 'hint', text: 'Later masks are drawn over earlier ones. They stay in place on the screen, over a mapping too.' }));
+      if (st.state === 'combining') timer = setTimeout(load, 700);
+    }
+    // Asked again only while this card is on the page (a redraw of the page makes a new one, which asks for itself).
+    function load(first) {
+      clearTimeout(timer);
+      if (!first && document.getElementById('overlaycard') !== card) return;
+      api('GET', '/api/overlay').then(function (r) {
+        if (document.getElementById('overlaycard') !== card) return;
+        if (r.ok) draw(r.data); else { body.textContent = ''; body.appendChild(h('div', { class: 'k', text: r.data.error || 'Not available' })); }
+      });
+    }
+    load(true);
     return card;
   }
 
@@ -1237,7 +1294,7 @@
       // moved to fit, each way on its own, so shapes are squeezed. Said until the mapping is next changed.
       if (d.reshaped && d.made_at) stage.appendChild(h('div', { class: 'hint warn', id: 'mapreshaped', role: 'status',
         text: 'This mapping was made on a ' + d.made_at[0] + ' x ' + d.made_at[1] + ' screen, another shape than this one (' + d.screen[0] + ' x ' + d.screen[1] + '). Its corners were moved to fit, so shapes may be squeezed: check each surface on the screen.' }));
-      stage.appendChild(h('div', { class: 'hint', text: 'Masks: use the overlay picture on Shape > Picture (a PNG, black where no light should fall). Map at 1920x1080 or less on a Pi 4; at 2560x1440 it drops frames.' }));
+      stage.appendChild(h('div', { class: 'hint', text: 'Masks: add them under Overlay pictures on Shape > Picture (PNGs, black where no light should fall). Several can be on at once; the box combines them into one picture, in screen space, over the mapping. Map at 1920x1080 or less on a Pi 4; at 2560x1440 it drops frames.' }));
       // the owner's switch for mapping mode (D75): in the stage, with the other controls that act on the whole mapping.
       // The mapping is an Operator's since D80; this switch stays the Owner's (the box refuses it to anyone else), so
       // an Operator reads how it stands and has nothing to press
