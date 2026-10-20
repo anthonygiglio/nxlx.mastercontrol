@@ -84,6 +84,11 @@ ROWS = {
     ("GET", "/api/schedule"): KINDS["read"],
     ("GET", "/api/preview.jpg"): KINDS["read"],
     ("POST", "/api/play"): KINDS["guest"],
+    # Sources (D101): what each plays, and a Stop of one, are running the room as a play is, the Operator's. A play to a
+    # source is /api/play with "source", which no guest form has. New since D80, so no controller and no support
+    # session below full gains them; a support session of the Owner's role may (D84: it ends with what is played).
+    ("GET", "/api/sources"): KINDS["op"],
+    ("POST", "/api/sources"): KINDS["op"],
     # Render nodes (D94): seeing them and cueing one by hand are running the room, the Operator's; keeping the list (where
     # the box sends) is the Owner's and, by D84, a support session of his role's, as the OSC state targets. Controllers, a
     # scene and the schedule reach a cue only through a pad, on /api/play, as before.
@@ -232,7 +237,8 @@ GUEST_BODIES = {
         [{"stream": "x"}, {"preset": "p"}, {"usb": "STICK/a.mp4"}, {"usb_drive": "STICK"}, {"capture": "/dev/video0"},
          {"slideshow": {"source": "media"}}, {"pad": [0, 0], "file": "a.mp4"}, {"file": "a.mp4", "ending": "next"},
          {"pad": [0, 0], "stream": "x"}, {"file": ["a.mp4"]}, {},
-         {"ndi": "x"}, {"pad": [0, 0], "ndi": "x"}]),      # an NDI source is a network source, refused to a guest like a stream (D80)
+         {"ndi": "x"}, {"pad": [0, 0], "ndi": "x"},       # an NDI source is a network source, refused to a guest like a stream (D80)
+         {"file": "a.mp4", "source": 2}, {"pad": [0, 0], "source": 2}, {"file": "a.mp4", "source": 1}]),   # sources: the Operator's (D101)
     ("POST", "/api/control"): (
         [{"action": "next"}, {"action": "prev"}, {"action": "stop"}],
         [{"action": a, "value": v} for a, v in (("volume", 130), ("opacity", 0), ("size", 10), ("position", 5), ("rotate", 90),

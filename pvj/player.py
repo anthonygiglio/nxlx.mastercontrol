@@ -365,6 +365,100 @@ class Player:
         self._layers_seen = (pid, ok)
         return ok
 
+    # ---- sources 2 to N (D101) -----------------------------------------------------------------------------------------
+    # pvj-render plays other clips beside the player's own picture (source 1), each on a source of its own, which the
+    # mapping shows on the surfaces that name it. Everything else in this class is source 1, as before.
+    MAX_SOURCES = 8
+    _sources_seen = None            # (pid, n): how many sources that player process has
+
+    def sources(self, ask=True):
+        """How many sources the player has: pvj-render's `sources`, 1 on classic mpv (which answers "property not
+        found") or a player that does not say. Asked once per player process, as `crossfades`; with `ask` False only
+        what is known already."""
+        known, pid = self._sources_seen, self._seen_pid
+        if known is not None and known[0] == pid:
+            return known[1]
+        if not ask:
+            return 1
+        try:
+            if pid is None:
+                pid = self._note_pid(self.ipc.request("get_property", "pid"))
+            state = self.ipc.request("get_property", "pvj-render")
+        except PlayerError as e:
+            if str(e).startswith("mpv: ") and pid is not None:
+                self._sources_seen = (pid, 1)
+            return 1
+        n = state.get("sources") if isinstance(state, dict) else None
+        if isinstance(n, bool) or not isinstance(n, int) or not 1 <= n <= self.MAX_SOURCES:
+            n = 1
+        self._sources_seen = (pid, n)
+        return n
+
+    def _source_ok(self, source):
+        if isinstance(source, bool) or not isinstance(source, int) or not 2 <= source <= self.sources():
+            raise PlayerError("this player has no source %s (it has %d)" % (source, self.sources()))
+
+    def play_to(self, source, paths, ending="loop", image_seconds=None):
+        """Play `paths` on source `source` (2 to N). A cut: the crossfade is source 1's alone in this step. `ending`
+        as for play ("hold" keeps the last frame). The source plays with no sound."""
+        if ending not in ENDINGS:
+            raise PlayerError("ending must be one of " + ", ".join(ENDINGS))
+        self._source_ok(source)
+        files = expand_media(paths)
+        if not files:
+            raise PlayerError("no playable files found")
+        single = len(files) == 1
+        shows = "inf" if single or image_seconds is None else max(0.1, min(3600.0, float(image_seconds)))
+        opts = "keep-open=%s,image-display-duration=%s" % ("yes" if ending == "hold" else "no", shows)
+        first = True
+        for f in files:
+            self.ipc.request("pvj-source", source, "loadfile", f, "replace" if first else "append", opts)
+            first = False
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            try:
+                if self.ipc.request("pvj-source", source, "get_property", "path") == files[0]:
+                    break
+            except PlayerError:
+                pass
+            time.sleep(0.05)
+        looping = ending == "loop"
+        self.ipc.request("pvj-source", source, "set_property", "pause", False)
+        self.ipc.request("pvj-source", source, "set_property", "loop-file", "inf" if (looping and single) else "no")
+        self.ipc.request("pvj-source", source, "set_property", "loop-playlist", "inf" if (looping and not single) else "no")
+
+    def stop_source(self, source):
+        """Stop source `source` (2 to N): it is idle, and costs nothing again."""
+        self._source_ok(source)
+        self.ipc.request("pvj-source", source, "stop")
+
+    def sources_state(self):
+        """[{"source", "idle", "path", "height", "pause", "drawn"}] for sources 1 to N; on classic mpv, or a player
+        that does not answer, the one source the status knows of. Asks the player."""
+        if self.sources() > 1:
+            try:
+                rows = self.ipc.request("get_property", "pvj-sources")
+            except PlayerError:
+                rows = None
+            if isinstance(rows, list):
+                out = []
+                for r in rows[:self.MAX_SOURCES]:
+                    if not isinstance(r, dict):
+                        continue
+                    h = r.get("height")
+                    out.append({"source": r.get("source") if isinstance(r.get("source"), int) else len(out) + 1,
+                                "idle": r.get("idle") is True, "path": r.get("path") if isinstance(r.get("path"), str) else None,
+                                "height": h if isinstance(h, int) and not isinstance(h, bool) else None,
+                                "pause": r.get("pause") is True,
+                                "drawn": r.get("drawn") if isinstance(r.get("drawn"), int) else 0})
+                return out
+        try:
+            path = self.ipc.request("get_property", "path")
+        except PlayerError:
+            path = None
+        return [{"source": 1, "idle": path is None, "path": path if isinstance(path, str) else None, "height": None,
+                 "pause": False, "drawn": 0}]
+
     def _crossfade(self, paths, loop, ending, seconds):
         """The renderer's crossfade into one clip (D98): it loads the clip into its idle layer, which is what this
         side speaks to from then on, and mixes the two pictures itself, once a vblank, from the clip's first frame.

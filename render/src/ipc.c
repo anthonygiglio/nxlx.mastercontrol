@@ -122,7 +122,7 @@ static const char *const FADE_KEYS[] = { "keep-open", "image-display-duration", 
 static const char *const SOURCE_SET[] = { "pause", "loop-file", "loop-playlist", "speed", "brightness", NULL };
 static const char *const SOURCE_GET[] = { "path", "pause", "idle-active", "time-pos", "duration", "width", "height",
                                           "playlist-count", "playlist-pos", "loop-file", "loop-playlist", "speed",
-                                          "brightness", NULL };
+                                          "brightness", "aid", "current-ao", NULL };
 // Names set on source 1 that reach the other sources too: the picture's level.
 static const char *const TO_SOURCES[] = { "brightness", NULL };
 
