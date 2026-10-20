@@ -1262,13 +1262,17 @@ class SourcesTest(SourcesBase):
         self.assertEqual((st["sources"], st["layers"], st["front"]), (4, 2, 0))
         got = self.sources()
         self.assertEqual([s["source"] for s in got], [1, 2, 3, 4])
-        # source 1's layer is drawn once or twice as it starts; sources 2 to 4 once (their empty picture), then never
-        # while idle (CI drew them three times before an idle source stopped drawing, the review of #153)
+        # Sources 2 to 4 are drawn once (their empty picture), then never while idle (CI drew them three times before
+        # an idle source stopped drawing, the review of #153). Source 1 is the phase 1 and 2 front layer, left as it
+        # was: its start-up draws vary (2 here, 3 on CI's llvmpipe), so it is judged by no new draw after start-up.
         self.assertTrue(all(s["idle"] is True and s["path"] is None and s["loads"] == 0 for s in got), got)
-        self.assertLessEqual(got[0]["drawn"], 2, got)
         self.assertEqual([s["drawn"] for s in got[1:]], [1, 1, 1], got)
+        time.sleep(0.5)
+        first = self.sources()[0]["drawn"]
         time.sleep(1.0)
-        self.assertEqual([s["drawn"] for s in self.sources()[1:]], [1, 1, 1], "an idle source drew again")
+        now = self.sources()
+        self.assertEqual(now[0]["drawn"], first, "idle source 1 drew again after start-up: %s" % now)
+        self.assertEqual([s["drawn"] for s in now[1:]], [1, 1, 1], "an idle source drew again")
 
     def test_several_sources_play_different_clips_and_source_1_is_unchanged(self):
         r = self.r
