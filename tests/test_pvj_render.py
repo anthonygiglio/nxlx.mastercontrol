@@ -1262,8 +1262,13 @@ class SourcesTest(SourcesBase):
         self.assertEqual((st["sources"], st["layers"], st["front"]), (4, 2, 0))
         got = self.sources()
         self.assertEqual([s["source"] for s in got], [1, 2, 3, 4])
-        # each layer is drawn once or twice as it starts (its empty picture), then never while idle
-        self.assertTrue(all(s["idle"] is True and s["path"] is None and s["drawn"] <= 2 and s["loads"] == 0 for s in got), got)
+        # source 1's layer is drawn once or twice as it starts; sources 2 to 4 once (their empty picture), then never
+        # while idle (CI drew them three times before an idle source stopped drawing, the review of #153)
+        self.assertTrue(all(s["idle"] is True and s["path"] is None and s["loads"] == 0 for s in got), got)
+        self.assertLessEqual(got[0]["drawn"], 2, got)
+        self.assertEqual([s["drawn"] for s in got[1:]], [1, 1, 1], got)
+        time.sleep(1.0)
+        self.assertEqual([s["drawn"] for s in self.sources()[1:]], [1, 1, 1], "an idle source drew again")
 
     def test_several_sources_play_different_clips_and_source_1_is_unchanged(self):
         r = self.r
@@ -1465,7 +1470,7 @@ class IdleSourcesTest(SourcesBase):
         s1 = self.st()
         for k in (2, 3, 4):
             self.assertEqual(b[k - 1]["drawn"], a[k - 1]["drawn"], "idle source %d converted frames: %s" % (k, b))
-            self.assertLessEqual(b[k - 1]["drawn"], 2, "only its empty picture as it started")
+            self.assertEqual(b[k - 1]["drawn"], 1, "only its empty picture as it started")
         flips = (s1["flips"] - s0["flips"]) / (t1 - t0)
         self.assertGreater(flips, 0.85 * 60, "flips a second with three idle sources: %.1f" % flips)
         self.assertLessEqual(flips, 62)

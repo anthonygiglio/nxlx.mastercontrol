@@ -533,7 +533,8 @@ static void mix_pass(const Layer *outgoing, const Layer *incoming, float share, 
     glActiveTexture(GL_TEXTURE0);
 }
 
-static float frame_opacity[MAX_LAYERS];     // each source's opacity for this frame (one look under app.lock)
+static float frame_opacity[MAX_LAYERS];
+static int idle_drawn[MAX_LAYERS];         // render thread: source k's empty picture is drawn since it went idle     // each source's opacity for this frame (one look under app.lock)
 
 static void final_pass(GLuint picture, int text_on)
 {
@@ -760,11 +761,18 @@ int main(int argc, char **argv)
         }
         // Sources 2 to N (D101): each converts at most one clip frame a turn, and only a new one. An idle source
         // has none (it is drawn once more as it goes idle, which gives its empty picture), so it costs nothing.
+        // An idle source is drawn once (its empty picture) and then not again until it plays: a core's start and
+        // stop send more than one event that asks for a new picture (CI's llvmpipe drew an idle source three times,
+        // the review of #153). What asked stays asked (dirty), so a clip's first frame that comes before its
+        // idle-active is seen to fall is drawn as soon as it is.
         for (int i = LAYERS; i < nlayers; i++) {
-            if (!video[i].dirty) continue;
+            int idle = __atomic_load_n(&app.idle[i], __ATOMIC_ACQUIRE);
+            if (!idle) idle_drawn[i] = 0;
+            if (!video[i].dirty || (idle && idle_drawn[i])) continue;
             reset_gl();
             layer_render(&video[i]);
             video[i].dirty = 0;
+            if (idle) idle_drawn[i] = 1;
             __atomic_add_fetch(&app.layer_drawn[i], 1, __ATOMIC_RELAXED);
         }
         if (text_on && text.dirty) {
