@@ -4,6 +4,7 @@
 tests/test_transitions_gpu.py, which CI's effects-gpu jobs run."""
 import os
 import struct
+import time
 import unittest
 import zlib
 
@@ -389,6 +390,32 @@ class Crossfade(Base):
         self.assertEqual(self.tr.last["ended"], "done")
         self.assertEqual((self.tr.running, self.tr.given_up), (None, ""))
         self.assertEqual(self.left(), [], "the still's files are gone")
+
+    def test_the_masks_stay_on_during_and_after_a_crossfade(self):
+        # D100: the masks are overlay 10, the still is 63; a crossfade never takes the masks off nor draws over their slot
+        from pvj import overlay as overlay_mod
+        self.assertNotEqual(T.OVERLAY_ID, overlay_mod.OVERLAY_ID)
+        from tests.test_masks import png as rgba_png
+        rgba_png(os.path.join(self.media, "frame.png"), 2, 2, lambda x, y: (0, 0, 0, 255))
+
+        def combine(paths, w, h, out, mpv_bin="mpv", timeout=None, cancelled=None):
+            with open(out, "wb") as f:
+                f.write(b"\0" * 16)
+            return out
+        self.api.masks.combine = combine
+        self.api.set_overlay({"add": "frame.png", "on": True}, None, "t")
+        end = time.monotonic() + 10
+        while self.api.masks.busy() and time.monotonic() < end:
+            time.sleep(0.01)
+        self.assertEqual(self.api.masks.status["state"], "on")
+        self.assertEqual(self.play(), {"playing": "a.mp4"})
+        self.assertEqual(self.play("b.mov"), {"playing": "b.mov"})
+        ids = [c[1] for c in self.player.calls if c[0] in ("overlay", "overlay_part", "overlay_remove")]
+        self.assertTrue(ids and set(ids) == {T.OVERLAY_ID}, ids)
+        self.assertEqual([c[1] for c in self.player.calls if c[0] == "overlay_file"], [overlay_mod.OVERLAY_ID], "drawn once, never again")
+        self.assertEqual(self.tr.last["ended"], "done")
+        self.assertEqual(self.api.masks.status["state"], "on")
+        self.assertFalse(self.api.masks.watch(), "nothing to build again after the crossfade")
 
     def test_the_still_is_the_screen_itself_blue_first(self):
         self.play()

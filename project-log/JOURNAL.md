@@ -4,6 +4,30 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-20, the review of #152 (masks, D100 amendment)
+
+- **The review:** one Medium and one Low, both fixed on `mask-list`. Medium: a 995 KB PNG that says 16000 x 16000 made mpv use about 1.2 GB per copy. Now the PNG header is read first (8192 a side, 40 megapixels at most, in the single-picture path too), the masks combined at once are bounded (70 megapixels of their own, and 4 x 3840 x 2160 of the screen's: 8 masks at 1080, 4 at 4K), and mpv runs under a 2 GB address-space cap with 1 MB thread stacks and 2 malloc arenas. The 1.5 GB cap asked for did not let mpv start even one mask on this 16-core laptop; 2 GB with the smaller stacks fits every allowed case (the heaviest 2.7 s, about 1.05 GB resident). Low: `set_overlay` now holds the settings' lock from the read to the write, so two Adds at once both land.
+- **Tests:** 7 new (`SizeTest`: the header, both paths checked before mpv starts, the bounds, the cap seen by the child, the real mpv under the cap at 4K; `BudgetWorkerTest`; `ConcurrentAddTest`). 9 new breaks, each caught. Two older tests now write real PNGs (their 8-byte stand-ins have no header).
+- **Not done:** the cap on the Pi's own mpv (row MK10).
+
+## 2026-10-20, projector control on the node's X27 (D99, rows PX)
+
+- **Set-up:** the owner's X27 (192.168.0.211, his entry X27_001), switched from PJLink to PJLink and Epson control.
+- **Test** answered both protocols and suggested both.
+- **Through `POST /api/projector`**, all answered 200: mute 0.30 s, unmute 0.39 s, freeze, unfreeze, brightness 60 (read back 57), Eco light, the input to the same HDMI ("32"), identify. Webcam photos confirmed mute (black) and freeze.
+- **Put back and checked over Epson control:** PWR 01, MUTE OFF, FREEZE OFF, BRIGHT 125, LUMINANCE 00, CMODE 04, SOURCE 30.
+- **Not pressed:** power off (a cool-down with nobody in the room).
+- **Found:** the colour mode list shows bare codes 01 to 14, with only 04 known. Naming the modes and dropping the codes the projector refuses is a follow-up.
+
+## 2026-10-20, the mask list: several PNGs combined into one overlay (`mask-list`, D100)
+
+- **The owner's words:** "build the mask list: several mask PNGs combined into one overlay, chosen and ordered in the panel." He chose combining after the node's measurement of 2026-10-19 (one mask, two overlays and two combined: 0 dropped frames each).
+- **Found first:** the overlay of `pvj/overlay.py` (slot 10), its route and card, and MAPPER.md's word on masks; the crossfade's still is slot 63 and the pairing codes 1 to 4. No numpy and no ffmpeg on the node (install/ and the image's lists), so mpv combines, with one `--lavfi-complex` graph.
+- **Built:** a list of up to 8 masks in `"overlay"` with no schema change ("file" kept as the first mask that is on, for the release before); a worker that combines in the background, stops an overtaken build, uses fresh file names and cleans old ones; a rebuild on a new screen size and on a replaced or deleted file, with no error loop; the route's add, remove, on/off, up/down and whole switch; the card's list at phone width; the mapping hint and MAPPER.md.
+- **Measured here (laptop, WSL):** 1024 x 768: 0.13, 0.25, 0.44 s for 1, 4, 8 masks; 1920 x 1080: 0.18, 0.40, 0.74 s. Expected on a Pi 4: about 1 s for one, 3 to 5 s for 8 at 1080 (not measured).
+- **Tests:** `tests/test_masks.py` (new: what is stored, the release before run from git against the new file, the route, roles, the worker, real mpv's order and alpha with 2 and 8 masks, a killed mpv on cancel), a crossfade with masks on in `tests/test_transitions.py`, the combined picture on pvj-render in `tests/test_pvj_render.py`, the card in `tests/ui/panel.test.js`; `tests/test_picture.py` changed where the answer is now the status.
+- **Not done:** anything on the node or the projector (rows MK1 to MK9); thumbnails (no route for them).
+
 ## 2026-10-19, the review of #151 (projector control, D99 amendment)
 
 - **The review:** two Mediums and two Lows, all fixed on `projector-control`. Medium: through remote support a projector could still be switched off by a Room group, an off-scene, or a scene or schedule entry set up to do it; now refused on every route, and the schedule's own run is unchanged. Medium: one Epson session had no overall limit, so a slow device could hold the shared lock for about a minute; now one deadline of 2 x 5 + 8 seconds. Low: Test's threads could change its answer after it was returned; now each fills its own and the route copies. Low: more than 8 extra handshake headers are refused.

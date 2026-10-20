@@ -26,6 +26,7 @@ one thread, for an inversion to show; the interleaving that would hang is not ne
 | 3     | shaders.engine       | one shader shown at a time; held while the GPU looks at it (seconds)                   |
 | 4     | effects.engine       | the same for the effect over the picture                                               |
 | 5     | mapper.apply         | the newest mapping and its switch into the player, together                            |
+| 5a    | masks.apply          | the newest combined masks and their draw into the player, together (D100)              |
 | 6     | capture              | a live input from its pipe to its helper's start (a second or more)                    |
 | 6a    | ndi                  | the same for the NDI input: from the helper's "open" (seconds) to the pipe's loading   |
 | 7     | transitions.holding  | one still is taken at a time, from the freeze to the overlay (the screenshot's time)   |
@@ -37,7 +38,7 @@ one thread, for an inversion to show; the interleaving that would hang is not ne
 | 12    | fader.lock           | the fader's token and label; nothing at all is done while it is held                   |
 | 13    | shaderlive.cfg       | the shaders' settings                                                                  |
 | 14    | pinscreen            | what is drawn of the pairing codes                                                     |
-| 15    | leaves               | vibes.state, shaderlive.queue, mapper.state, player.pid, ndi.ticket: a few fields each, never held over a call |
+| 15    | leaves               | vibes.state, shaderlive.queue, mapper.state, masks.state, player.pid, ndi.ticket: a few fields each, never held over a call |
 
 Not in the order, because their holders never call into these paths while holding them (read, not checked by the
 machine): the settings' lock, the MIDI, DMX, OSC and sync managers' own locks, the OSC state sender's lock (pvj/oscfeedback.py: flags and counters, never held over a look at the box or a send), the render bridge's lock (pvj/render.py, D94: its counters and the record of a shown picture, never held over a lookup, a send or a play), the Room's `lock` ("never held while
@@ -51,10 +52,10 @@ waiters. Whoever makes one of those takings wait must give the lock a place here
 """
 import threading
 
-ORDER = ("room.order", "vibes.work", "shaders.engine", "effects.engine", "mapper.apply", "capture", "ndi",
+ORDER = ("room.order", "vibes.work", "shaders.engine", "effects.engine", "mapper.apply", "masks.apply", "capture", "ndi",
          "transitions.holding", "player", "speed.hold", "transitions.io", "transitions.mark", "fader.stepping", "fader.lock", "shaderlive.cfg",
-         "pinscreen", "recovery", "vibes.state", "shaderlive.queue", "mapper.state", "player.pid", "ndi.ticket")
-LEAVES = ("vibes.state", "shaderlive.queue", "mapper.state", "player.pid", "ndi.ticket")       # share the last place: none is held with another
+         "pinscreen", "recovery", "vibes.state", "shaderlive.queue", "mapper.state", "masks.state", "player.pid", "ndi.ticket")
+LEAVES = ("vibes.state", "shaderlive.queue", "mapper.state", "masks.state", "player.pid", "ndi.ticket")       # share the last place: none is held with another
 
 
 def plain(name, reentrant=False):

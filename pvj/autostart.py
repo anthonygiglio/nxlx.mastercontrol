@@ -223,6 +223,12 @@ class Autostart:
             ensure = getattr(self.api, "ensure_audio", None)
             if ensure:
                 ensure()        # a screen switched on late, or a sound device plugged in later
+        masks = getattr(self.api, "masks", None)
+        if masks is not None and pid is not None and pid == self.seen_pid:
+            try:                            # the screen's size changed, or a mask's file was replaced or deleted (D100)
+                masks.watch()
+            except Exception as e:
+                self.log("pvj-web: masks: %s" % e)
         if self._level_owed and pid is not None and pid == self.seen_pid:
             self._restore_level()           # it did not land when the player was first seen
         if self.settings.data["autostart"].get("mode") != "usb":

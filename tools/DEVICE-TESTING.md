@@ -677,6 +677,23 @@ Before: the X27 (or an X39) on the network and on, its network control on; Proje
 | PX7 | Turn off: the question, then Turn off | "Turn off Main? It needs about a minute to cool..."; then Cooling down..., then Turn on | How long it cooled |
 | PX8 | Through a remote support session: open Projectors | Turn off is "On (switched off in the room)", no All off, no picture settings; Mute and Freeze work | That a helper could not switch it off |
 
+### Masks: several PNGs combined into one overlay (D100): never run on a Pi
+
+Before: the node on the projector (the X27 at 1024 x 768 is fine), a shader or a clip playing, and three or more test masks in the Library (PNGs, black where no light should fall, transparent elsewhere; at least one with a soft edge). The webcam aimed at the wall for MK1 and MK4.
+
+| Row | Do | Expect | Send back |
+| --- | --- | --- | --- |
+| MK1 | Shape > Picture > Overlay pictures: add one mask ("Add and show"), then a second and a third | The line says Combining..., then "1 mask on", "2 masks on", "3 masks on"; on the wall each new mask appears with the earlier ones still there; soft edges stay soft | A webcam photo with three on; anything that looked wrong at an edge |
+| MK2 | Time a change: add or switch a mask with 8 in the list, at 1024 x 768 and at 1920 x 1080 (`journalctl -u pvj-web` has no timing; use a stopwatch from the tap to the wall) | About 1 s or less for one mask; this branch's estimate is 2 to 5 s for 8 at 1080 on a Pi 4 (0.44 s and 0.74 s on a laptop) | The seconds, per size and count |
+| MK3 | Move a mask up and down; switch one off and on; Remove one (the question, then Remove) | The order on the wall follows the list (a later one over an earlier one); off takes it off the wall at once after combining; Remove asks first and leaves the file in the Library | Whether the order matched |
+| MK4 | With 3 masks on, play crossfades between two clips (Classic), 10 of 2 s | The masks stay on the wall during and after every fade; no flash of the wall without masks | Webcam burst of one fade; any frame without the masks |
+| MK5 | The same as MK1 and MK4 with Setup > Renderer on New (pvj-render), then back to Classic | The same picture on the wall; crossfades keep the masks | Any difference between the two renderers |
+| MK6 | Change the screen mode (Setup > Screen output, D90 to D92) with masks on | The masks are drawn again at the new size after the player restarts, fitted and centred | Whether they lined up after the change |
+| MK7 | Delete a mask's PNG in the Library while it is on | The others stay; the line says "... is not in the media folder any more (left out)" and the list marks it "(not in the Library)"; nothing repeats in `journalctl -u pvj-web` | The words; the log's tail |
+| MK8 | With masks on, draw a mapping (Shape > Mapping) and move a surface | The masks stay where they are on the screen while the surface moves under them | A photo |
+| MK10 | The memory cap on the Pi (review of #152): 8 masks at 1920 x 1080, then 4 at 3840 x 2160 if the screen has the mode; then add a PNG that says 16000 x 16000 | Each combines (the cap is 2 GB of address space, 1 MB thread stacks); the big one is left out at once with "larger than a mask may be"; `free -m` shows no swap storm | The seconds, and anything in `journalctl -u pvj-web` |
+| MK9 | GPU and frames with 8 masks on over a shader: `vcgencmd` / the health page as in test D | The same cost as one mask (one overlay, as measured on 2026-10-19 with two) and 0 dropped frames | The numbers |
+
 ### What to send back
 
 The output of checks 1 to 7 and 13, the `journalctl` tail for anything that failed, and a note of what you saw on screen. Say clearly what you did **not** test.

@@ -45,7 +45,7 @@ Smaller and quicker where the player can scale an overlay (D89; mpv 0.38 on draw
 as `dw` and `dh`; asked once per player process, and a player that refuses gets everything above as it was):
 * The still is of the clip at its own size ("video") when that is smaller than the screen and is what the screen
   shows: no mapping, no generator, the picture not turned, moved or enlarged past the screen, and nothing of the
-  panel's drawn over it (the logo, overlay 10). The effect, a flip and the brightness are in such a still; the
+  panel's drawn over it (the logo or the masks, overlay 10). The effect, a flip and the brightness are in such a still; the
   bars beside a clip of another shape are not, so there the new clip shows at once. It is laid over the clip's
   place on the screen (`osd-dimensions`). Otherwise it is of the window, as before. The player's screenshot of the
   clip costs less than one of the window (it does not read the screen back; see D89 for the Pi's figures).
@@ -576,11 +576,12 @@ class Transitions:
 
     def _drawn_over(self):
         """True when something of the panel's own may be drawn over the clip besides the still: the picture over
-        the video (pvj/overlay.py, overlay 10, a logo). A still of the clip alone would leave it out. (The access
-        codes and the player's on-screen text make a transition dip before this is asked: `hold`.) When unsure, yes."""
+        the video (pvj/overlay.py, overlay 10: the masks combined, D100). A still of the clip alone would leave them out.
+        (The access codes and the player's on-screen text make a transition dip before this is asked: `hold`.) When
+        unsure, yes."""
+        from . import overlay as overlay_mod
         try:
-            cfg = self.api.settings.data["overlay"]
-            return bool(cfg.get("on") and cfg.get("file"))
+            return overlay_mod.showing(self.api.settings.data["overlay"])
         except Exception:
             return True
 
