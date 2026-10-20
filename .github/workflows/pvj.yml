@@ -16,17 +16,22 @@ permissions:
 # tools/ci-apt.sh, which gives a slow mirror 90 seconds a step and tries three times, because the ten minutes ran out
 # about ten times in three days.
 jobs:
-  test:
+  unit:
+    # The unit tests, in three parts side by side (D104). As one step they took 1,731 of its 1,800 seconds on
+    # 2026-10-20 (3,349 tests, Python 3.9), and that job 43.5 of its 45 minutes: one slow runner and every PR failed.
+    # tools/ci-shard.py puts every tests/test_*.py in exactly one part, made even by the seconds each module took.
+    name: unit (${{ matrix.python }}, part ${{ matrix.part }} of 3)
     runs-on: ubuntu-latest
-    # A whole job takes about 22 minutes. One once sat in the unit tests for 35 until it was cancelled, and a
-    # cancelled job keeps no log; so the job has an end, and the unit tests have an earlier one that says where.
-    timeout-minutes: 45
+    # A part takes about ten minutes. One once sat in the unit tests for 35 until it was cancelled, and a cancelled
+    # job keeps no log; so the job has an end, and the unit tests have an earlier one that says where.
+    timeout-minutes: 30
     strategy:
-      # Each Python gives its own answer. Without this a failure on one cancelled the other mid-step, and a
-      # cancelled job keeps no log: half the evidence of a failure that comes and goes was thrown away.
+      # Each Python and each part gives its own answer. Without this a failure on one cancelled the others mid-step,
+      # and a cancelled job keeps no log: half the evidence of a failure that comes and goes was thrown away.
       fail-fast: false
       matrix:
         python: ['3.9', '3.12']
+        part: [1, 2, 3]       # the 3 of the step below and of the job's name; tests/test_ci_shard.py holds them together
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -63,12 +68,36 @@ jobs:
       - name: Install mpv
         timeout-minutes: 10   # usually half a minute; see the note at the top of this file
         run: tools/ci-apt.sh mpv
-      - name: Unit tests (real mpv, headless)
-        # About eighteen minutes on master by 2026-10-11 (2,400 tests); with the NDI input's tests (real pipes, measured
-        # waits) it is past twenty, so the limit here is thirty. After that, SIGABRT: faulthandler prints every thread's
-        # stack and the step fails (the job's own limit above is 45). The 25 slowest tests are printed at the end,
-        # so what makes the suite long is seen (on Python 3.12 only: 3.9's unittest has no --durations).
-        run: timeout -s ABRT 1800 python -X faulthandler -m unittest discover -s tests -t . -v ${{ matrix.python == '3.12' && '--durations 25' || '' }}
+      - name: Unit tests, this part (real mpv, headless)
+        # About ten minutes a part (the whole suite was 25 to 29 on 2026-10-20), so the limit here is twenty. After
+        # that, SIGABRT: faulthandler prints every thread's stack and the step fails (the job's own limit above is 30).
+        # The 25 slowest tests of the part are printed at the end, so what makes it long is seen (on Python 3.12 only:
+        # 3.9's unittest has no --durations). Named modules import the tests package, which gives the run its own temp
+        # folder before any test makes a file (D69; tests/test_000_tmp.py runs this way too). A part with no module
+        # would make unittest look for tests in the whole checkout, so it fails instead.
+        run: |
+          modules="$(python tools/ci-shard.py ${{ matrix.part }} 3)"
+          test -n "$modules" || { echo "::error::part ${{ matrix.part }} of 3 has no test module"; exit 1; }
+          timeout -s ABRT 1200 python -X faulthandler -m unittest -v ${{ matrix.python == '3.12' && '--durations 25' || '' }} $modules
+
+  shaders-gpu:
+    # The shader steps on a software GPU, which ran after the unit tests in one job until D104: about fourteen
+    # minutes, now beside the parts instead of after them.
+    name: shaders-gpu (${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30       # about fifteen
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.9', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install mpv
+        timeout-minutes: 10   # usually half a minute; see the note at the top of this file
+        run: tools/ci-apt.sh mpv
       - name: Shaders on a real mpv with a software GPU (xvfb, Mesa; a skip here is a failure)
         run: |
           tools/ci-apt.sh xvfb xauth libegl1 libgles2 libgl1-mesa-dri
@@ -78,9 +107,28 @@ jobs:
       - name: The same on desktop OpenGL 3.1 with GLSL 1.40, the context mpv makes on a Raspberry Pi 4
         run: MESA_GL_VERSION_OVERRIDE=3.1 MESA_GLSL_VERSION_OVERRIDE=140 PVJ_GPU_TEST=1 PVJ_GPU_ONLY=desktop xvfb-run -a -s "-screen 0 1280x720x24" python -m tests.test_shaderlive_gpu
 
+  test:
+    # The checks "test (3.9)" and "test (3.12)" are required by name by the ruleset "Protect master". Since D104 they
+    # do no testing of their own: each is green only when every part of the unit tests and both shader jobs passed
+    # (both Pythons: a part that failed on one Python makes both red). `always()` makes them run, and fail, when a
+    # part failed or was cancelled; a check that is skipped would count as passed.
+    name: test (${{ matrix.python }})
+    needs: [unit, shaders-gpu]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      matrix:
+        python: ['3.9', '3.12']
+    steps:
+      - name: Every part of the unit tests and both shader jobs passed
+        run: |
+          echo "unit tests (all parts): ${{ needs.unit.result }}; shaders on a software GPU: ${{ needs['shaders-gpu'].result }}"
+          test "${{ needs.unit.result }}" = success && test "${{ needs['shaders-gpu'].result }}" = success
+
   effects-gpu:
     # Effects (ISF filters over the playing picture) on a real mpv that draws: jobs of their own, so their answer does
-    # not wait for the long test job. Three ways of drawing: OpenGL ES, desktop OpenGL, and desktop OpenGL 3.1 with
+    # not wait for the long unit tests. Three ways of drawing: OpenGL ES, desktop OpenGL, and desktop OpenGL 3.1 with
     # GLSL 1.40, the context mpv makes on a Raspberry Pi 4. A software GPU: nothing here says how fast a board is.
     runs-on: ubuntu-latest
     timeout-minutes: 30       # about ten
@@ -168,7 +216,7 @@ jobs:
             "mpv v0.40."*|"mpv 0.40."*) echo "the Pi's release of mpv" ;;
             *) echo "::error::this job is for mpv 0.40.x (the Pi, Debian 13) and apt gave: $said"; exit 1 ;;
           esac
-      - name: The releases the rollback tests read (the same list as the test job's; each test finds its commit whatever master's depth)
+      - name: The releases the rollback tests read (the same list as the unit job's, which tests/test_ci_shard.py holds; each test finds its commit whatever master's depth)
         run: |
           git config --global --add safe.directory "$PWD"
           for c in b62f203a5c45fc0c20386a8ab476ad3d7b511736 b7864886e53e850f6df057c6e12ad144fd077935 106d77ffaa9f5ee213ae1fd4eecb15d5804a3cc5 \

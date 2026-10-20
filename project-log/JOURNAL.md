@@ -4,6 +4,13 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-20, CI's unit tests in three parts (`ci-test-split`, D104)
+
+- **The task:** the unit-test jobs used 1,535 to 1,731 of their 1,800 seconds; split or speed up, raise the limit only as a last resort. Started after #153 merged (it changed the same workflow).
+- **Measured:** per module from master's run 39384981398 (its log lines are stamped): no single cause, the ten slowest modules about half. The GPU shader steps after the unit tests took another 14 minutes of the same 45-minute job.
+- **Built:** `tools/ci-shard.py`, the `unit` job in three parts per Python, the `shaders-gpu` job, and `test (3.9)` and `test (3.12)` as checks over them, so the ruleset's required names stay. `tests/test_ci_shard.py` (new, 10 tests).
+- **Not done:** no test was made faster. The Debian job's whole suite for information already times out (2,104 s, exit 124); a follow-up.
+
 ## 2026-10-20, the review of #153 (sources, D101 amendment)
 
 - **The review:** no High or Medium; two Lows, fixed on `sources-surfaces`. Shows could offer Source 1 alone on a box with four sources (the state used only what was known of a new player process); it now asks once per process, and the card follows the strip. A sound file sent to Source 2 played black and silent; it is now refused in plain words.
