@@ -4,6 +4,11 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-19, the review of #151 (projector control, D99 amendment)
+
+- **The review:** two Mediums and two Lows, all fixed on `projector-control`. Medium: through remote support a projector could still be switched off by a Room group, an off-scene, or a scene or schedule entry set up to do it; now refused on every route, and the schedule's own run is unchanged. Medium: one Epson session had no overall limit, so a slow device could hold the shared lock for about a minute; now one deadline of 2 x 5 + 8 seconds. Low: Test's threads could change its answer after it was returned; now each fills its own and the route copies. Low: more than 8 extra handshake headers are refused.
+- **Tests:** 6 new (`RemoteOffTest`: groups and scenes, a scene changed to switch off, schedule entries; a slow device and the lock; too many headers; Test's late thread). 7 new breaks, each caught; the 14 earlier breaks run again, each caught. Local suites OK before the push.
+
 ## 2026-10-19, projector control over IP: Epson control beside PJLink (`projector-control`, D99)
 
 - **The owner's words:** "run some tests to see what is possible, then configure the panel to have control." The coordinator had tried both protocols on the X27 by hand first.
