@@ -2343,6 +2343,7 @@ class RemoteOffTest(EpsonRolesBase):
         with self.settings.lock:
             self.settings.data["modules"]["enabled"]["scheduler"] = True
             self.settings.save()
+        self.api.scheduler = scheduler.Scheduler(self.api, self.settings, self.api.registry, log=lambda *_: None)      # never started: nothing runs
         self.dev = self.session()
 
     def remote(self, path, body):
