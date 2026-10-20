@@ -1440,6 +1440,54 @@ class SourcesTest(SourcesBase):
         self.assertTrue(r.wait(lambda: FadeEdgesTest.output(r) == "alsa", 5), r.stderr())
 
 
+class OwnersMappingTest(SourcesBase):
+    """The owner's mapping on the node (2026-10-20), at this window's size: a quad on top and a triangle under it.
+    Its quad was never drawn (its perspective map's w was negative over the whole quad, on classic too), and a source's
+    picture kept its letterbox under a mapping (the stretch reached source 1 only)."""
+
+    def owners(self, quad, tri):
+        sx, sy = W / 1024.0, H / 768.0
+        q = {"id": "aaaaaaa1", "type": "quad", "name": "Quad.01", "on": True,
+             "vertices": [[x * sx, y * sy] for x, y in ((38, 412), (324, 368), (667, 629), (70, 722))], "tex": [[0, 0], [1, 0], [1, 1], [0, 1]]}
+        t = {"id": "aaaaaaa2", "type": "triangle", "name": "Triangle", "on": True,
+             "vertices": [[x * sx, y * sy] for x, y in ((286, 606), (542, 222), (798, 606))], "tex": [[0, 1], [0.5, 0], [1, 1]]}
+        if quad != 1:
+            q["source"] = quad
+        if tri != 1:
+            t["source"] = tri
+        return mapper.validate_mapping({"surfaces": [q, t]})
+
+    def at(self, shot, x, y):
+        return self.r.pixel(int(x * W / 1024.0), int(y * H / 768.0), shot)
+
+    def test_the_owners_quad_is_drawn_on_top_and_each_shows_its_whole_source(self):
+        r = self.r
+        narrow = os.path.join(self.tmp, "green43.png")
+        png(narrow, 160, 120, lambda x, y: GREEN)          # 4:3 in a 16:9 window: letterboxed unless stretched
+        r("set_property", "keepaspect", False)               # what Player.set_mapping_mode does with a mapping on
+        r.load(self.red)
+        self.to(2, narrow)
+        for quad, tri, want in ((1, 1, (RED, RED, RED)), (1, 2, (RED, RED, GREEN)), (2, 1, (GREEN, GREEN, RED))):
+            surfaces = self.owners(quad, tri)
+            for kind, text in (("show", mapper.warp_shader(*mapper.warp_table(surfaces, W, H, with_sources=True), available=4)),
+                               ("edit", mapper.shader(surfaces, available=4))):
+                self.map(text)
+                time.sleep(0.3)
+                shot = r.capture()
+                got = (self.at(shot, 120, 600), self.at(shot, 450, 560), self.at(shot, 600, 400))
+                for g, w, where in zip(got, want, ("the quad alone", "the quad over the triangle", "the triangle alone")):
+                    self.assertColour(g, w, "quad on %d, triangle on %d, %s, %s" % (quad, tri, kind, where))
+                self.assertColour(self.at(shot, 950, 100), BLACK, "outside both")
+        # a source's whole picture reaches the surface's edges: stretched as source 1's is, not letterboxed
+        whole = mapper.validate_mapping({"surfaces": [{"id": "aaaaaaa3", "type": "quad", "name": "All", "on": True, "source": 2,
+                                                       "vertices": [[0, 0], [W, 0], [W, H], [0, H]], "tex": [[0, 0], [1, 0], [1, 1], [0, 1]]}]})
+        self.map(mapper.warp_shader(*mapper.warp_table(whole, W, H, with_sources=True), available=4))
+        time.sleep(0.3)
+        shot = r.capture()
+        for x in (W // 30, W // 2, W - W // 30):
+            self.assertColour(r.pixel(x, H // 2, shot), GREEN, "source 2 across the whole surface, x %d" % x)
+
+
 class SourceCountTest(Base):
     def test_one_source_by_default_and_no_more_than_eight(self):
         st = self.r("get_property", "pvj-render")

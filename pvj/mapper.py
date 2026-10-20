@@ -302,6 +302,17 @@ def inv_bilinear(p, q):
     return None if best is None else (best[1], best[2])
 
 
+def _facing(h, pts):
+    """The same projective map with its w positive inside the polygon `pts`. homography() fixes h[8] at 1, which is
+    w at the screen's origin: when the quad's horizon line runs between the origin and the quad, w is negative over
+    the whole quad, and both the table (`w <= 0`) and the direct shader (`q.z > 0.0`) skipped every point of it. The
+    owner's quad on the node, (38, 412) (324, 368) (667, 629) (70, 722), was never drawn (2026-10-20). A map and its
+    negative are the same map, so only the sign changes; a quad that was drawn keeps its numbers."""
+    cx = sum(x for x, _ in pts) / len(pts)
+    cy = sum(y for _, y in pts) / len(pts)
+    return [-v for v in h] if h[6] * cx + h[7] * cy + h[8] < 0 else h
+
+
 def _cell_maps(scr, tex, bilinear=False):
     """How one cell maps screen to picture: ("persp", to_unit, to_tex), ("affine", to_unit, to_tex), or
     ("bilinear", screen quad, texture quad). Grid cells are bilinear, so that neighbouring cells agree along the edge
@@ -309,7 +320,7 @@ def _cell_maps(scr, tex, bilinear=False):
     if bilinear:
         return ("bilinear", [tuple(p) for p in scr], [tuple(p) for p in tex])
     if len(scr) == 4:
-        return ("persp", homography(scr, UNIT_QUAD), homography(UNIT_QUAD, tex))
+        return ("persp", _facing(homography(scr, UNIT_QUAD), scr), homography(UNIT_QUAD, tex))
     return ("affine", affine(scr, UNIT_TRI), affine(UNIT_TRI, tex))
 
 
