@@ -78,8 +78,8 @@ class StoredTest(unittest.TestCase):
     def test_an_import_takes_the_list_and_refuses_a_bad_one(self):
         good = {"file": "", "on": True, "masks": [{"file": "a.png", "on": True}, {"file": "b.png", "on": False}]}
         self.assertEqual(boxcare.check_overlay(good, None), overlay.stored(good["masks"], True))
-        self.assertEqual(boxcare.check_overlay({"file": "logo.png", "on": True}, None),
-                         {"file": "logo.png", "on": True, "masks": [{"file": "logo.png", "on": True}]})
+        self.assertEqual(boxcare.check_overlay({"file": "logo.png", "on": True}, None), {"file": "logo.png", "on": True},
+                         "a file from before comes in as it was")
         for bad in ({"on": True, "masks": [{"file": "a.mp4", "on": True}]}, {"on": True, "masks": [{"file": "../a.png"}]},
                     {"masks": [{"file": "a.png"}, {"file": "a.png"}]}, {"masks": [{"file": "a.png", "on": "yes"}]},
                     {"masks": [{"file": "m%d.png" % i} for i in range(9)]}, {"masks": "a.png"}, {"on": True, "masks": []}):

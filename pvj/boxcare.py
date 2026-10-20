@@ -374,7 +374,8 @@ def check_overlay(v, care):
     masks = overlay_mod.masks_of(out)
     if out["on"] and not masks:
         raise ValueError("a picture that is on needs a file")
-    return overlay_mod.stored(masks, out["on"])
+    # a file from before D100 comes in as it was (its one picture is read as the first mask: overlay.masks_of)
+    return overlay_mod.stored(masks, out["on"]) if "masks" in out else out
 
 
 def _projector_details(v):
