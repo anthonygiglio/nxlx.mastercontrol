@@ -25,6 +25,7 @@ What the box does in a scene is a short list of existing API actions (BOX below)
 """
 
 import copy
+import json
 import re
 import threading
 import time
@@ -802,6 +803,14 @@ class Room:
                 at = [i for i, x in enumerate(items) if x["id"] == item.get("id")]
                 if item.get("id") and not at:
                     raise ApiError(404, "no such %s" % key)
+                if key == "scene" and isinstance(item.get("groups"), list):
+                    # D99: through remote support a scene may not gain a group that it switches off (it could then
+                    # be run by the schedule, or by someone in the room who does not expect it)
+                    def offs(s):
+                        return {json.dumps(r.get("group"), sort_keys=True) for r in s.get("groups") or []
+                                if isinstance(r, dict) and r.get("power") == "off"}
+                    if offs(item) - (offs(items[at[0]]) if at else set()):
+                        self.api.refuse_remote_off(device, client, "a scene changed to switch projectors off")
                 if at:
                     items[at[0]] = item
                 elif len(items) >= (MAX_GROUPS if key == "group" else MAX_SCENES):
@@ -873,6 +882,8 @@ class Room:
         it is going."""
         self._need()
         scene = self._pick(self.config()["scenes"], body, "scene", "scene")
+        if any(r.get("power") == "off" for r in scene.get("groups", [])):
+            self.api.refuse_remote_off(device, client, "a scene that switches projectors off")      # D99
         job = self.start_scene(scene, client)
         return {"started": True, "scene": scene["id"], "name": scene["name"], "box": job["box"]}
 
@@ -883,6 +894,8 @@ class Room:
         action = body.get("action")
         if not isinstance(action, str) or action not in GROUP_ACTIONS:
             raise bad("action must be one of: " + ", ".join(GROUP_ACTIONS))
+        if action == "off":
+            self.api.refuse_remote_off(device, client, "a group switched off")      # D99
         number = body.get("number")
         if (body.get("group") == ALL or (number == 0 and isinstance(number, int) and not isinstance(number, bool))
                 or ("group" not in body and number is None and str(body.get("name", "")).strip().lower() == ALL)):

@@ -450,7 +450,9 @@ class EscVp:
     """Epson ESC/VP.net on TCP 3629: the 16 byte "connect" header and its 16 byte answer, then commands that end
     with a carriage return, each answered by text ending in ":"; "ERR" means refused. Several commands may share
     one connection (session), each with its own bounded wait. The connect is bounded by `connect_timeout`, each
-    answer by `timeout` (EPSON_SLOW for a power or colour mode change). One command at a time per projector: the
+    answer by `timeout` (EPSON_SLOW for a power or colour mode change), and the whole session, from the connect to
+    the last answer, by one deadline of 2 x timeout plus one slow allowance: a device that answers each question
+    just inside its own limit cannot hold the projector's lock for longer than that. One command at a time per projector: the
     same lock as its PJLink commands (`lock_port` is its PJLink port), so the two never talk to it at once.
     `cancel` (a threading.Event), once set, means nothing more is sent."""
 
@@ -487,27 +489,34 @@ class EscVp:
             slot[0].release()
             _drop(key, slot)
 
+    def session_limit(self):
+        """Seconds one session may take in all, from the connect to its last answer (review of #151)."""
+        return 2 * self.timeout + self.slow
+
     def _session(self, addr, commands):
+        end = time.monotonic() + self.session_limit()
         try:
             self._stopped()
-            s = self._connect((addr, self.port), timeout=self.connect_timeout)
+            s = self._connect((addr, self.port), timeout=min(self.connect_timeout, self.session_limit()))
         except OSError as e:
             raise ProjectorError("cannot reach the projector's Epson control at %s: %s" % (self.host, getattr(e, "strerror", None) or e), "unreachable")
         out = []
         try:
             s.sendall(ESCVP_HELLO)
-            reply = _read_exact(s, 16, time.monotonic() + self.timeout)
+            reply = _read_exact(s, 16, min(end, time.monotonic() + self.timeout))
             if reply[:10] != b"ESC/VP.net" or reply[11] != 0x03:
                 raise ProjectorError("that does not answer like an Epson projector (ESC/VP.net)", "odd")
             if reply[14] != 0x20:
                 raise ProjectorError(ESCVP_REFUSED.get(reply[14], "the projector refused the Epson control connection (code %02X)" % reply[14]), "refused")
+            if reply[15] > 8:                                   # more than any projector sends: it would read out of step
+                raise ProjectorError("that does not answer like an Epson projector (ESC/VP.net)", "odd")
             if reply[15]:                                       # headers the projector added: 18 bytes each, not used
-                _read_exact(s, 18 * min(reply[15], 8), time.monotonic() + self.timeout)
+                _read_exact(s, 18 * reply[15], min(end, time.monotonic() + self.timeout))
             for cmd in commands:
                 self._stopped()
                 s.sendall((cmd + "\r").encode("ascii"))
                 wait = self.slow if not cmd.endswith("?") and cmd.split()[0] in self.SLOW else self.timeout
-                out.append(_parse_answer(cmd, _read_answer(s, 128, time.monotonic() + wait)))
+                out.append(_parse_answer(cmd, _read_answer(s, 128, min(end, time.monotonic() + wait))))
         except (OSError, socket.timeout) as e:
             raise ProjectorError("the projector did not answer: %s" % e, "unreachable")
         finally:
@@ -635,15 +644,21 @@ class EpsonLink:
         return {"class": None, "name": None, "maker": "Epson", "model": None, "info": "serial " + serial if serial else None, "inputs": None}
 
 
-def probe(host, port=PORT, password="", timeout=5.0, connect=socket.create_connection, resolve=socket.getaddrinfo):
+def probe(host, port=PORT, password="", timeout=5.0, connect=socket.create_connection, resolve=socket.getaddrinfo, wait=None):
     """What answers at `host`, for the Owner's Test before a projector is added: {"pjlink": {...}, "epson": {...},
     "suggest": a protocol or None}. Both are asked at once, each bounded; nothing is changed on the projector and
     the password is never in the answer (only whether one is needed and whether the one given was right)."""
     private_address(host, resolve)                              # a public address raises here, before anything is sent
-    out = {"pjlink": {"ok": False}, "epson": {"ok": False}}
+    done = {}                   # filled by each thread with its own answer, as its last step
 
     def pj():
-        r = out["pjlink"]
+        r = {"ok": False}
+        try:
+            _pj(r)
+        finally:
+            done["pjlink"] = r
+
+    def _pj(r):
         link = PJLink(host, port, "", timeout=timeout, connect=connect, resolve=resolve)
         try:
             try:
@@ -666,7 +681,13 @@ def probe(host, port=PORT, password="", timeout=5.0, connect=socket.create_conne
                 r["password"] = "needed"
 
     def ep():
-        r = out["epson"]
+        r = {"ok": False}
+        try:
+            _ep(r)
+        finally:
+            done["epson"] = r
+
+    def _ep(r):
         esc = EscVp(host, lock_port=port, timeout=timeout, connect=connect, resolve=resolve)
         try:
             a = esc.session(["PWR?", "SNO?"])
@@ -678,12 +699,15 @@ def probe(host, port=PORT, password="", timeout=5.0, connect=socket.create_conne
     threads = [threading.Thread(target=f, daemon=True) for f in (pj, ep)]
     for t in threads:
         t.start()
-    end = time.monotonic() + 4 * timeout
+    end = time.monotonic() + (4 * timeout if wait is None else wait)
     for t in threads:
         t.join(max(0.0, end - time.monotonic()))
-    for r in out.values():
-        if not r["ok"] and "error" not in r:
-            r["error"] = "the projector did not answer in time"
+    out = {}
+    for k in ("pjlink", "epson"):               # a copy, taken now: a thread still running changes nothing in the answer
+        r = done.get(k)
+        out[k] = dict(r) if r is not None else {"ok": False, "error": "the projector did not answer in time"}
+        if not out[k]["ok"] and "error" not in out[k]:
+            out[k]["error"] = "the projector did not answer"
     pj_ok = out["pjlink"]["ok"] or out["pjlink"].get("password") in ("needed", "wrong")      # it is there; the password is for the person to fix
     ep_ok = out["epson"]["ok"]
     out["suggest"] = "both" if pj_ok and ep_ok else "pjlink" if pj_ok else "epson" if ep_ok else None

@@ -17,7 +17,7 @@ import unittest
 from unittest import mock
 
 from pvj import osc, projector, scheduler
-from tests.test_roles import TUNNEL, RolesBase
+from tests.test_roles import LAN, TUNNEL, RolesBase
 from tests.test_server import ServerBase
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -1857,8 +1857,8 @@ class FakeEpson:
     `mode`: "ok"; "silent" (takes the connection and never answers); "short" (half a header, then closes); "deaf"
     (the header is answered, commands never are); "long" (an answer that never ends: 300 bytes, no ":")."""
 
-    def __init__(self, status=0x20, mode="ok", modes=("01", "04", "05", "06"), cmode_wait=0.0):
-        self.status, self.mode, self.modes, self.cmode_wait = status, mode, set(modes), cmode_wait
+    def __init__(self, status=0x20, mode="ok", modes=("01", "04", "05", "06"), cmode_wait=0.0, drip=0.0):
+        self.status, self.mode, self.modes, self.cmode_wait, self.drip = status, mode, set(modes), cmode_wait, drip
         self.v = {"PWR": "01", "LAMP": "25", "ERR": "00", "MUTE": "OFF", "SOURCE": "30", "FREEZE": "OFF", "LUMINANCE": "00",
                   "BRIGHT": "125", "CMODE": "04", "SNO": "VU3K7601207", "CONTRAST": "125"}
         self.received, self.done_at, self.connections = [], {}, 0
@@ -1897,6 +1897,7 @@ class FakeEpson:
                         if outer.mode == "long":
                             self.wfile.write(b"PWR=" + b"1" * 300)
                             continue
+                        time.sleep(outer.drip)              # each answer just inside its own limit
                         self.wfile.write(outer.answer(cmd).encode())
                         outer.done_at[cmd] = time.monotonic()
                 except OSError:
@@ -2047,6 +2048,38 @@ class EscVpTest(unittest.TestCase):
         finally:
             LOOPBACK_OK.start()
 
+    def test_a_slow_device_holds_the_lock_no_longer_than_the_session_limit(self):
+        """Review of #151: each answer just inside its own 0.4 s, nine of them: the session ends at its own limit
+        (2 x 0.4 + 0.4), and a PJLink command to the same projector then gets through."""
+        pj = FakeProjector()
+        self.addCleanup(pj.close)
+        drip = FakeEpson(drip=0.3)
+        self.addCleanup(drip.close)
+        esc = projector.EscVp("127.0.0.1", lock_port=pj.port, port=drip.port, timeout=0.4, slow=0.4)
+        self.assertAlmostEqual(esc.session_limit(), 1.2)
+        failed, start = [], time.monotonic()
+
+        def status():
+            try:
+                projector.epson_status(esc)
+            except projector.ProjectorError as e:
+                failed.append(e.code)
+        t = threading.Thread(target=status)
+        t.start()
+        self.assertTrue(wait_for(lambda: drip.received))
+        self.assertEqual(projector.PJLink("127.0.0.1", pj.port).state(), "off")       # waits for the lock, then goes
+        took = pj.times[-1] - start
+        t.join()
+        self.assertEqual(failed, ["unreachable"])
+        self.assertLess(took, 1.2 + 0.4, "the lock was held about the session's limit, not nine answers' worth (2.7 s)")
+        self.assertEqual(projector._busy, {})
+
+    def test_more_headers_than_any_projector_sends_are_refused(self):
+        many = raw_server(self, lambda r, w: (r.read(16), w.write(b"ESC/VP.net\x10\x03\x00\x00\x20\x09"), time.sleep(2)))
+        with self.assertRaises(projector.ProjectorError) as c:
+            projector.EscVp("127.0.0.1", port=many, timeout=1.0).query("PWR")
+        self.assertEqual(c.exception.code, "odd")
+
     def test_one_command_at_a_time_with_its_pjlink(self):
         pj = FakeProjector()
         self.addCleanup(pj.close)
@@ -2096,6 +2129,17 @@ class ProbeTest(unittest.TestCase):
             r = projector.probe("127.0.0.1", locked.port, given)["pjlink"]
             self.assertEqual(r["password"], said, given)
             self.assertNotIn("JBMIAProjectorLink", json.dumps(r))
+        real = projector.PJLink.state
+
+        def late(link):
+            time.sleep(0.8)
+            return real(link)
+        with mock.patch.object(projector.PJLink, "state", late):
+            found = projector.probe("127.0.0.1", pj.port, wait=0.3)
+            frozen = json.dumps(found, sort_keys=True)
+            self.assertEqual(found["pjlink"], {"ok": False, "error": "the projector did not answer in time"})
+            time.sleep(1.5)                                   # the late thread ends now: the answer given is not changed
+        self.assertEqual(json.dumps(found, sort_keys=True), frozen)
         self.ep.close()
         found = projector.probe("127.0.0.1", pj.port, timeout=1.0)
         self.assertEqual((found["suggest"], found["epson"]["ok"]), ("pjlink", False))
@@ -2240,7 +2284,7 @@ class EpsonApiTest(ServerBase):
         self.assertEqual(len(self.pj.received), n, "back to every `interval` seconds")
 
 
-class EpsonRolesTest(RolesBase):
+class EpsonRolesBase(RolesBase):
     """Who may use the Epson controls (D99): the Owner and an Operator; a Guest none; remote support neither power
     off nor a picture setting, and freeze, mute and power on as before."""
 
@@ -2263,6 +2307,8 @@ class EpsonRolesTest(RolesBase):
         self.assertEqual(st, 200, body)
         self.pid = body["projectors"][0]["id"]
 
+
+class EpsonRolesTest(EpsonRolesBase):
     def test_owner_and_operator_use_them_a_guest_none(self):
         for dev in (self.owner, self.operator):
             self.assertEqual(self.h("POST", "/api/projector", {"id": self.pid, "action": "freeze"}, dev)[0], 200)
@@ -2286,6 +2332,75 @@ class EpsonRolesTest(RolesBase):
         log = json.dumps(self.settings.data["support_log"])
         self.assertIn("was refused a projector change that is made in the room", log, "written into the session's log")
         self.assertIn("used /api/projector", log)
+
+
+class RemoteOffTest(EpsonRolesBase):
+    """Review of #151: through remote support no route switches a projector off: a group, a scene, a scene changed
+    to do it, a schedule entry added or changed to do it. The owner's own plan still runs at its time."""
+
+    def setUp(self):
+        super().setUp()
+        with self.settings.lock:
+            self.settings.data["modules"]["enabled"]["scheduler"] = True
+            self.settings.save()
+        self.dev = self.session()
+
+    def remote(self, path, body):
+        return self.h("POST", path, body, self.dev, TUNNEL)
+
+    def still_on(self):
+        time.sleep(0.5)
+        return self.ep.v["PWR"] == "01"
+
+    def test_a_group_or_a_scene_that_switches_off(self):
+        for path, body in (("/api/room/group", {"group": "all", "action": "off"}), ("/api/room/group", {"number": 0, "action": "off"}),
+                           ("/api/room/scene", {"name": "Good night"})):
+            st, out = self.remote(path, body)
+            self.assertEqual(st, 403, (path, body, out))
+            self.assertIn("not through remote support", out["error"])
+        self.assertTrue(self.still_on())
+        self.assertEqual(self.remote("/api/room/group", {"group": "all", "action": "on"})[0], 200, "on is allowed")
+        self.assertEqual(self.remote("/api/room/scene", {"name": "Show"})[0], 200, "a scene that switches nothing off is allowed")
+        self.assertIn("a group switched off", json.dumps(self.settings.data["support_log"]))
+        self.assertEqual(self.h("POST", "/api/room/group", {"group": "all", "action": "off"}, self.owner)[0], 200, "in the room it works")
+        self.assertTrue(wait_for(lambda: self.ep.v["PWR"] == "04", 10))
+
+    def scene(self, name):
+        return next(s for s in self.settings.data["room"]["scenes"] if s["name"] == name)
+
+    def test_a_scene_changed_to_switch_off(self):
+        show = json.loads(json.dumps(self.scene("Show")))
+        show["groups"][0]["power"] = "off"
+        self.assertEqual(self.remote("/api/room", {"scene": show})[0], 403)
+        self.assertEqual(self.remote("/api/room", {"scene": dict(show, id=None)})[0], 403, "nor a new scene that does")
+        night = dict(self.scene("Good night"), name="Late night")
+        self.assertEqual(self.remote("/api/room", {"scene": night})[0], 200, "a scene that already switched off may be renamed")
+        show["groups"][0]["power"] = "on"
+        self.assertEqual(self.remote("/api/room", {"scene": dict(show, name="Show 2")})[0], 200)
+        self.assertEqual(self.h("POST", "/api/room", {"scene": dict(show, groups=[dict(show["groups"][0], power="off")])}, self.owner)[0], 200)
+
+    def entries(self):
+        return json.loads(json.dumps(self.settings.data["schedule"]["entries"]))
+
+    def test_a_schedule_entry_that_switches_off(self):
+        sched = lambda entries, dev=None: self.h("POST", "/api/schedule", {"enabled": True, "entries": entries}, dev or self.dev, TUNNEL if dev is None else LAN)
+        off = {"time": "23:00", "days": [0, 1, 2, 3, 4, 5, 6], "action": "projector_off"}
+        night = {"time": "23:30", "days": [5], "action": "scene", "scene": self.scene("Good night")["id"]}
+        play = {"time": "18:00", "days": [0], "action": "stop"}
+        for entries in ([off], [night], [play, off]):
+            st, out = sched(entries)
+            self.assertEqual(st, 403, entries)
+            self.assertIn("not through remote support", out["error"])
+        self.assertEqual(sched([play])[0], 200, "an entry that switches nothing off may be added")
+        self.assertEqual(sched(self.entries() + [off], self.owner)[0], 200, "the owner plans an off in the room")
+        kept = self.entries()
+        self.assertEqual(sched(kept + [dict(play, time="19:00")])[0], 200, "the owner's off may stay as it is")
+        changed = self.entries()
+        for e in changed:
+            if e["action"] == "projector_off":
+                e["time"] = "23:59"
+        self.assertEqual(sched(changed)[0], 403, "but not be moved")
+        self.assertEqual(sched([e for e in self.entries() if e["action"] != "projector_off"])[0], 200, "or it may be removed")
 
 
 class EpsonRollbackTest(unittest.TestCase):

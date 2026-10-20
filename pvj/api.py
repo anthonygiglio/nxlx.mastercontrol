@@ -3196,6 +3196,18 @@ class Api:
         said = action + ("" if value is None else " %s" % value)
         self.log("pvj-web: projector %s: %s by device %s (%s) from %s" % (json.dumps(names), said, (device or {}).get("id"), (device or {}).get("role"), client))
 
+    REMOTE_OFF = "switching projectors off is done by someone in the room, not through remote support"
+
+    def through_support(self, device, client):
+        return bool(self.support.is_remote(client) or (isinstance(device, dict) and device.get("remote")))
+
+    def refuse_remote_off(self, device, client, what):
+        """D99: a projector is never switched off through remote support, by any route: a group, a scene, a scene
+        changed to do it, a schedule entry added or changed to do it. What the owner planned runs as before."""
+        if self.through_support(device, client):
+            self.support.refused(device, what, detail="off")
+            raise ApiError(403, self.REMOTE_OFF)
+
     # Through remote support (D84, D99): a helper does not switch a projector off (he cannot see the room, and someone
     # there may be using it) and does not change its picture settings, which stay after the session.
     PROJECTOR_REMOTE_DENY = ("off", "brightness", "light", "colour_mode")
@@ -3214,7 +3226,7 @@ class Api:
             raise bad("action must be one of: " + ", ".join(self.PROJECTOR_ACTIONS))
         if not isinstance(body.get("background", False), bool):
             raise bad("background must be true or false")
-        if action in self.PROJECTOR_REMOTE_DENY and (self.support.is_remote(client) or (isinstance(device, dict) and device.get("remote"))):
+        if action in self.PROJECTOR_REMOTE_DENY and self.through_support(device, client):
             self.support.refused(device, "a projector change that is made in the room", detail=action)
             raise ApiError(403, "switching a projector off and changing its picture settings are done by someone in the room, not through remote support")
         targets = [p for p in self.settings.data["projectors"] if pid == "all" or p["id"] == pid]
@@ -4752,6 +4764,19 @@ class Api:
             clean = scheduler_mod.validate(body)
         except scheduler_mod.ScheduleError as e:
             raise bad(str(e))
+        if self.through_support(device, client):
+            # D99: a helper may remove or keep an entry that switches projectors off, but not add or change one.
+            # What the owner planned keeps running at its time.
+            scenes = {s["id"]: s for s in ((self.settings.data.get("room") or {}).get("scenes") or []) if isinstance(s, dict)}
+
+            def off(e):
+                if e.get("action") == "projector_off":
+                    return True
+                s = scenes.get(e.get("scene")) if e.get("action") == "scene" else None
+                return bool(s) and any(isinstance(r, dict) and r.get("power") == "off" for r in s.get("groups") or [])
+            had = {json.dumps(e, sort_keys=True) for e in (self.settings.data.get("schedule") or {}).get("entries") or []}
+            if any(off(e) and json.dumps(e, sort_keys=True) not in had for e in clean.get("entries") or []):
+                self.refuse_remote_off(device, client, "a schedule entry that switches projectors off")
         with self.settings.lock:
             self.settings.data["schedule"] = clean
             self.settings.save()
