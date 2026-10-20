@@ -4,6 +4,14 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-20, the panel inventory (`panel-design`, D102)
+
+- **The brief:** the owner's panel design brief (a sandbox, a Figma file that matches the panel, ranked proposals). Step 1 is the inventory.
+- **Found first:** `tests/ui/harness.py` already serves the real panel with mpv, four fake PJLink projectors, fake Wi-Fi and a fake screen report, so the sandbox builds on it. The sources-surfaces work (D101) is a local branch of seven commits, not pushed, no pull request; its panel part is 98 lines of `app.js`. The Figma file "Signal UI kit" has one page now (Start here, with the token sheet and 14 text styles); the components and screens pages that the memory notes of 2026-10-05 describe are not in it.
+- **Written:** `pvj/PANEL.md` (not `pvj/web`, as the brief said: every file there is served by the panel and copied to the node), from the code: roles, widths and frames, the frame around every screen, the shared patterns, Play, Shape, Room and Setup card by card, Projectors, the mask list and the Mapping card in full, what D101 adds, the tokens of Darkstage, Signal and Signal light, accessibility facts, the routes by role.
+- **Noted for the proposals:** a mapping surface's Remove and a saved mapping's Delete do not ask first; a Room wall's Off does not ask while All off and the Projectors page do; the mapping canvas's colours are fixed in the script.
+- **Not run:** the browser test on this laptop (Chromium needs libnspr4 and libnss3 in WSL; Playwright's own installer does not know Ubuntu 26.04).
+
 ## 2026-10-20, the review of #152 (masks, D100 amendment)
 
 - **The review:** one Medium and one Low, both fixed on `mask-list`. Medium: a 995 KB PNG that says 16000 x 16000 made mpv use about 1.2 GB per copy. Now the PNG header is read first (8192 a side, 40 megapixels at most, in the single-picture path too), the masks combined at once are bounded (70 megapixels of their own, and 4 x 3840 x 2160 of the screen's: 8 masks at 1080, 4 at 4K), and mpv runs under a 2 GB address-space cap with 1 MB thread stacks and 2 malloc arenas. The 1.5 GB cap asked for did not let mpv start even one mask on this 16-core laptop; 2 GB with the smaller stacks fits every allowed case (the heaviest 2.7 s, about 1.05 GB resident). Low: `set_overlay` now holds the settings' lock from the read to the write, so two Adds at once both land.
