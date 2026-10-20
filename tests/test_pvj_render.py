@@ -1336,6 +1336,31 @@ class SourcesTest(SourcesBase):
             self.assertGreater(px[0] + px[2], 200, "a dark gap at the edge: %s" % (row,))
         self.assertTrue(near(row[0], RED) and near(row[-1], BLUE), row)
 
+    def test_a_sources_opacity_changes_its_share_of_the_picture_and_only_normal_is_a_blend(self):
+        r = self.r
+        r.load(self.red)
+        self.to(2, self.blue)
+        self.show_halves(1, 2)
+        self.halves_are(RED, BLUE)
+        self.assertEqual((self.source(2)["opacity"], self.source(2)["blend"]), (1.0, "normal"))
+        self.assertEqual((self.source(1)["opacity"], self.source(1)["blend"]), (1.0, "normal"), "source 1 is the program")
+        r("pvj-source", 2, "set_property", "opacity", 0.5)
+        self.assertEqual(r("pvj-source", 2, "get_property", "opacity"), 0.5)
+        self.assertEqual(self.source(2)["opacity"], 0.5)
+        self.assertTrue(r.wait(lambda: near(r.pixel(3 * W // 4, H // 2), (0, 0, 128), 20)), r.pixel(3 * W // 4, H // 2))
+        self.assertColour(r.pixel(W // 4, H // 2), RED, "source 1 at its own level")
+        r("pvj-source", 2, "set_property", "opacity", 0)
+        self.assertTrue(r.wait(lambda: near(r.pixel(3 * W // 4, H // 2), BLACK, 10)), r.pixel(3 * W // 4, H // 2))
+        r("pvj-source", 2, "set_property", "blend", "normal")
+        self.assertEqual(r("pvj-source", 2, "get_property", "blend"), "normal")
+        for name, value in (("blend", "add"), ("blend", "screen"), ("blend", 1), ("blend", ""), ("opacity", 1.5),
+                            ("opacity", -0.1), ("opacity", "1"), ("opacity", True)):
+            with self.assertRaises(PlayerError, msg=(name, value)) as e:
+                r("pvj-source", 2, "set_property", name, value)
+            self.assertEqual(str(e.exception), "mpv: invalid parameter", (name, value))
+        r("pvj-source", 2, "set_property", "opacity", 1)
+        self.assertTrue(r.wait(lambda: near(r.pixel(3 * W // 4, H // 2), BLUE)), r.pixel(3 * W // 4, H // 2))
+
     def test_a_stop_on_a_source_makes_it_idle_and_its_surface_black(self):
         r = self.r
         r.load(self.red)
@@ -1509,7 +1534,8 @@ class PlayerSourcesTest(SourcesBase):
         p.stop_source(2)
         self.assertTrue(self.r.wait(lambda: self.source(2)["idle"] is True))
         for bad in (1, 5, 0, True):
-            with self.assertRaises(PlayerError):
+            # the player says so itself, before anything is asked of the renderer
+            with self.assertRaisesRegex(PlayerError, "this player has no source"):
                 p.play_to(bad, [self.blue])
         with self.assertRaises(PlayerError):
             p.play_to(2, [self.blue], "sideways")

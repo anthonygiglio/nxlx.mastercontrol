@@ -39,6 +39,7 @@
 #include <mpv/render_gl.h>
 
 App app = { .lock = PTHREAD_MUTEX_INITIALIZER, .cond = PTHREAD_COND_INITIALIZER, .wake_fd = { -1, -1 } };
+const char *const BLEND_NAMES[BLENDS] = { "normal" };
 static volatile sig_atomic_t g_signal;
 
 double now_s(void)
@@ -439,6 +440,10 @@ static const char *VS_SAME =
     "in vec2 pvj_vert;\n"
     "out vec2 pvj_pos;\n"
     "void main() { pvj_pos = pvj_vert * 0.5 + 0.5; gl_Position = vec4(pvj_vert, 0.0, 1.0); }\n";
+// The mixing stage (D101): a layer laid over a base by the layer's opacity and blend. The crossfade of D98 is this
+// stage with the incoming layer's opacity moved by the clock (0 to 1 over the fade's seconds) over the outgoing one;
+// a manual A/B crossfader is the same stage with the opacity set from outside. Blend 0 is normal (an alpha mix);
+// the others are a line each here when they come.
 static const char *FS_MIX =
     "#version 300 es\n"
     "precision mediump float;\n"
@@ -447,10 +452,15 @@ static const char *FS_MIX =
     "uniform sampler2D outgoing;\n"
     "uniform sampler2D incoming;\n"
     "uniform float share;\n"
-    "void main() { pvj_out = vec4(mix(texture(outgoing, pvj_pos).rgb, texture(incoming, pvj_pos).rgb, share), 1.0); }\n";
+    "uniform int blend;\n"
+    "void main() {\n"
+    "  vec3 base = texture(outgoing, pvj_pos).rgb, layer = texture(incoming, pvj_pos).rgb;\n"
+    "  vec3 c = layer;\n"                  /* blend 0, normal; e.g. add: if (blend == 1) c = min(base + layer, 1.0) */
+    "  pvj_out = vec4(mix(base, c, share), 1.0);\n"
+    "}\n";
 
 static GLuint vbo, vao, p_scale, p_over, p_mix;
-static GLint loc_share;
+static GLint loc_share, loc_blend;
 static GLuint mix_tex, mix_fbo;
 static HookGL hook_gl;
 static int have_hook;
@@ -505,7 +515,7 @@ static void take_hook(void)
 }
 
 // One mix of the outgoing and the incoming layer at `share` (0: all outgoing, 1: all incoming), at the inside size.
-static void mix_pass(const Layer *outgoing, const Layer *incoming, float share)
+static void mix_pass(const Layer *outgoing, const Layer *incoming, float share, int blend)
 {
     reset_gl();
     glBindFramebuffer(GL_FRAMEBUFFER, mix_fbo);
@@ -516,11 +526,14 @@ static void mix_pass(const Layer *outgoing, const Layer *incoming, float share)
     glBindTexture(GL_TEXTURE_2D, incoming->tex);
     glUseProgram(p_mix);
     glUniform1f(loc_share, share);
+    glUniform1i(loc_blend, blend);
     quad();
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, 0);
     glActiveTexture(GL_TEXTURE0);
 }
+
+static float frame_opacity[MAX_LAYERS];     // each source's opacity for this frame (one look under app.lock)
 
 static void final_pass(GLuint picture, int text_on)
 {
@@ -549,6 +562,7 @@ static void final_pass(GLuint picture, int text_on)
             glActiveTexture(GL_TEXTURE1 + hook_gl.ntex + i);
             glBindTexture(GL_TEXTURE_2D, k <= app.nsources ? video[k].tex : picture);
             glUniform1i(hook_gl.src_loc[i], 1 + hook_gl.ntex + i);
+            glUniform1f(hook_gl.src_opacity_loc[i], k <= app.nsources ? frame_opacity[k] : 1.0f);
         }
     } else {
         glUseProgram(p_scale);
@@ -643,6 +657,7 @@ int main(int argc, char **argv)
     glUniform1i(glGetUniformLocation(p_mix, "outgoing"), 0);
     glUniform1i(glGetUniformLocation(p_mix, "incoming"), 1);
     loc_share = glGetUniformLocation(p_mix, "share");
+    loc_blend = glGetUniformLocation(p_mix, "blend");
     Layer mixer = { 0 };
     if (target(&mixer, app.in_w, app.in_h)) { LOG("no texture for the crossfade"); out_close(); return 2; }
     mix_tex = mixer.tex;
@@ -652,6 +667,7 @@ int main(int argc, char **argv)
     // decodes nothing and is not drawn: its cost is its threads asleep and a few megabytes).
     // Sources 2 to N (D101) are started now too, each idle until something is loaded into it.
     app.nsources = cfg.sources;
+    for (int i = 0; i < MAX_LAYERS; i++) { app.opacity[i] = 1.0f; app.blend[i] = BLEND_NORMAL; }
     int nlayers = LAYERS + app.nsources - 1, opened = 0;
     int bad = 0;
     for (int i = 0; i < nlayers && !bad; i++, opened++) bad = layer_open(&video[i], i, &cfg, app.in_w, app.in_h) != 0;
@@ -696,6 +712,7 @@ int main(int argc, char **argv)
         // one look at the whole fade: the layer, the phase and its clock are never from two different crossfades
         int fi = app.front, phase = app.fade.phase, base = app.fade.base_starts;
         double asked = app.fade.asked, t0 = app.fade.t0, len = app.fade.seconds;
+        memcpy(frame_opacity, app.opacity, sizeof frame_opacity);     // the sources' mix, read once for this frame
         pthread_mutex_unlock(&app.lock);
         if (quit) break;
         if (app.hook_pending) take_hook();
@@ -790,7 +807,7 @@ int main(int argc, char **argv)
                 } else if (share <= 0.0f) {
                     picture = back->tex;        // waiting for the incoming clip: the outgoing picture, with no mix
                 } else {
-                    mix_pass(back, front, share);
+                    mix_pass(back, front, share, BLEND_NORMAL);     // the incoming layer at the clock's opacity
                     picture = mix_tex;
                 }
             }

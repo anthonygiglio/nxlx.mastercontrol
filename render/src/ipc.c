@@ -480,6 +480,33 @@ static void source_command(int fd, const mpv_node *id, const mpv_node *cmd)
         const char *stop[] = { "stop", NULL };
         int r = mpv_command(h, stop);
         reply(fd, id, r < 0 ? mpv_error_string(r) : "success", NULL);
+    } else if (!strcmp(what, "set_property") && nargs == 5 && arg_str(cmd, 3) && !strcmp(arg_str(cmd, 3), "opacity")) {
+        // the source's mix (D101): read by the render loop once a frame
+        const mpv_node *v = arg(cmd, 4);
+        double o = is_num(v) ? num(v) : -1;
+        if (!(o >= 0.0 && o <= 1.0)) { reply(fd, id, "invalid parameter", NULL); return; }
+        pthread_mutex_lock(&app.lock);
+        app.opacity[k] = (float)o;
+        pthread_mutex_unlock(&app.lock);
+        wake_render();
+        reply(fd, id, "success", NULL);
+    } else if (!strcmp(what, "set_property") && nargs == 5 && arg_str(cmd, 3) && !strcmp(arg_str(cmd, 3), "blend")) {
+        const char *b = arg_str(cmd, 4);
+        int found = -1;
+        for (int i = 0; b && i < BLENDS; i++) if (!strcmp(b, BLEND_NAMES[i])) found = i;
+        if (found < 0) { reply(fd, id, "invalid parameter", NULL); return; }
+        pthread_mutex_lock(&app.lock);
+        app.blend[k] = found;
+        pthread_mutex_unlock(&app.lock);
+        reply(fd, id, "success", NULL);
+    } else if (!strcmp(what, "get_property") && nargs == 4 && arg_str(cmd, 3)
+               && (!strcmp(arg_str(cmd, 3), "opacity") || !strcmp(arg_str(cmd, 3), "blend"))) {
+        pthread_mutex_lock(&app.lock);
+        double o = app.opacity[k];
+        int b = app.blend[k];
+        pthread_mutex_unlock(&app.lock);
+        mpv_node d = !strcmp(arg_str(cmd, 3), "opacity") ? node_dbl(o) : node_str(BLEND_NAMES[b]);
+        reply(fd, id, "success", &d);
     } else if (!strcmp(what, "set_property") && nargs == 5 && arg_str(cmd, 3)) {
         if (!in_list(SOURCE_SET, arg_str(cmd, 3))) {
             LOG("ipc: pvj-source set_property %s is not on the list", arg_str(cmd, 3));
@@ -505,8 +532,14 @@ static void source_command(int fd, const mpv_node *id, const mpv_node *cmd)
 // time anything.
 static void sources_property(int fd, const mpv_node *id)
 {
-    static const char *const keys[] = { "source", "idle", "path", "drawn", "height", "pause", "loads" };
-    mpv_node maps[MAX_SOURCES], vals[MAX_SOURCES][7];
+    static const char *const keys[] = { "source", "idle", "path", "drawn", "height", "pause", "loads", "opacity", "blend" };
+    mpv_node maps[MAX_SOURCES], vals[MAX_SOURCES][9];
+    float opacity[MAX_LAYERS];
+    int blend[MAX_LAYERS];
+    pthread_mutex_lock(&app.lock);
+    memcpy(opacity, app.opacity, sizeof opacity);
+    memcpy(blend, app.blend, sizeof blend);
+    pthread_mutex_unlock(&app.lock);
     mpv_node_list lists[MAX_SOURCES];
     char *paths[MAX_SOURCES] = { 0 };
     int ns = app.nsources;
@@ -531,7 +564,9 @@ static void sources_property(int fd, const mpv_node *id)
         v[5] = (mpv_node){ .format = MPV_FORMAT_FLAG };
         v[5].u.flag = pause;
         v[6] = node_int(s == 1 ? 0 : __atomic_load_n(&app.source_loads[li], __ATOMIC_RELAXED));
-        lists[s - 1] = (mpv_node_list){ .num = 7, .values = v, .keys = (char **)keys };
+        v[7] = node_dbl(s == 1 ? 1.0 : opacity[li]);         // source 1 is the program: its level is the Mix's
+        v[8] = node_str(BLEND_NAMES[s == 1 ? BLEND_NORMAL : blend[li]]);
+        lists[s - 1] = (mpv_node_list){ .num = 9, .values = v, .keys = (char **)keys };
         maps[s - 1].format = MPV_FORMAT_NODE_MAP;
         maps[s - 1].u.list = &lists[s - 1];
     }

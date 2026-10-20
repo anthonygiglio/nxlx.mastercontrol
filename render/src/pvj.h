@@ -22,6 +22,11 @@
 #define FADE_FIRST_FRAME 10.0       // seconds a crossfade waits for its clip's first frame, then fades anyway (as D71)
 
 enum { FADE_OFF, FADE_WAITING, FADE_RUNNING };
+// The mixing stage (D101): how a layer is laid over what is under it. Only "normal" (an alpha mix by the layer's
+// opacity) is built; the others (add, screen, multiply, difference, lighten, darken) are a line each in the stage's
+// shaders when they come, and are refused until then.
+enum { BLEND_NORMAL, BLENDS };
+extern const char *const BLEND_NAMES[BLENDS];
 
 typedef struct Hook Hook;
 
@@ -91,6 +96,11 @@ typedef struct {
     int idle[MAX_LAYERS];           // the layer's idle-active, as observed by its event thread (atomics)
     long layer_drawn[MAX_LAYERS];   // frames each layer converted (atomics: the render thread adds, the socket reads)
     long source_loads[MAX_LAYERS];  // loads asked of source k > 1 (pvj-source k loadfile), by its index
+    // each source's mix (D101): its opacity (0 to 1) and blend, by layer index (source k > 1 is layer k; source 1's
+    // is its own picture, the program, at 1 and normal). Set by the socket's threads under app.lock and read once a
+    // frame in the render loop's one look under it, so a frame never mixes two settings.
+    float opacity[MAX_LAYERS];
+    int blend[MAX_LAYERS];
 
     // counters
     long flips, missed, drawn, back_drawn;  // drawn: frames of the front layer converted; back_drawn: of the other
@@ -129,6 +139,7 @@ typedef struct {
     int nsrc;
     int src[MAX_SOURCES];
     GLint src_loc[MAX_SOURCES];
+    GLint src_opacity_loc[MAX_SOURCES];     // SOURCEk_opacity: the source's mix, set every frame
 } HookGL;
 int hookgl_build(const Hook *h, HookGL *g, char *err, size_t n);
 void hookgl_free(HookGL *g);

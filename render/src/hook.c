@@ -351,8 +351,10 @@ int hookgl_build(const Hook *h, HookGL *g, char *err, size_t n)
     }
     for (int i = 0; i < h->nsrc; i++) {
         char line[200];
-        snprintf(line, sizeof line, "uniform sampler2D SOURCE%d_raw;\n#define SOURCE%d_tex(pos) texture(SOURCE%d_raw, pos)\n",
-                 h->src[i], h->src[i], h->src[i]);
+        // the mixing stage for a surface's source (D101): "normal" over the surface's black, by the source's opacity
+        snprintf(line, sizeof line, "uniform sampler2D SOURCE%d_raw;\nuniform float SOURCE%d_opacity;\n"
+                 "#define SOURCE%d_tex(pos) vec4(texture(SOURCE%d_raw, pos).rgb * SOURCE%d_opacity, 1.0)\n",
+                 h->src[i], h->src[i], h->src[i], h->src[i], h->src[i]);
         buf_str(&fs, line);
     }
     buf_str(&fs, "#line 1\n");
@@ -398,6 +400,8 @@ int hookgl_build(const Hook *h, HookGL *g, char *err, size_t n)
         snprintf(name, sizeof name, "SOURCE%d_raw", h->src[i]);
         g->src[i] = h->src[i];
         g->src_loc[i] = glGetUniformLocation(g->prog, name);
+        snprintf(name, sizeof name, "SOURCE%d_opacity", h->src[i]);
+        g->src_opacity_loc[i] = glGetUniformLocation(g->prog, name);
     }
     return 0;
 }
