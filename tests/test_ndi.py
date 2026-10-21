@@ -2146,7 +2146,15 @@ class OldPlayer:
     bytes still in the pipe), and at the end of the stream it goes at once (`stays` False) or holds its end of the
     pipe open until leave() (a player with frames left to show, or one that has not yet acted on the end). What it
     read before the first end and what it read after it are kept apart: the second is what a later source wrote
-    into this reader's stream."""
+    into this reader's stream.
+
+    `gone` is set in the same step as the reader's end of the pipe is closed, under LETTING_GO. A test that wraps
+    the helper's look at the pipe in that lock (PipeReuseTest.service) can then take `gone` for what the pipe
+    itself said: closed and `gone` are one. Without it the helper could see the pipe without a reader between the
+    close and the set, answer, and the test read `gone` as not set while the reader had in fact let go before the
+    look (CI's busy runners, 2026-10-21, and 1 run in 40 here on two cores under load)."""
+
+    LETTING_GO = threading.Lock()
 
     def __init__(self, fifo, stays=True, reads=True):
         self.fifo, self.stays, self.reads = fifo, stays, reads
@@ -2178,10 +2186,11 @@ class OldPlayer:
                 else:
                     time.sleep(0.002)                             # no writer yet: a player waits here
         finally:
-            os.close(fd)
-            self.gone.set()
+            with OldPlayer.LETTING_GO:
+                os.close(fd)
+                self.gone.set()
 
-    wake = False                                                  # True: a reader that takes "no writer" as the end even before a first byte
+    wake = False                                                 # True: a reader that takes "no writer" as the end even before a first byte
 
     def leave(self):
         self._leave.set()
@@ -2219,6 +2228,12 @@ class PipeReuseTest(unittest.TestCase):
 
     def service(self, **kw):
         s = ndi.Service(self.dir, "x", loader=lambda path: self.lib, problem=lambda path: None, log=self.said.append, first_frame=2.0, **kw)
+        looks = s._pipe_free
+
+        def look():                                                  # never between a player's close and its `gone`
+            with OldPlayer.LETTING_GO:
+                return looks()
+        s._pipe_free = look
         self.addCleanup(s.close)
         s.handle({"cmd": "configure", "on": True, "addresses": []})
         return s
@@ -2300,6 +2315,7 @@ class PipeReuseTest(unittest.TestCase):
                 for _ in range(3):
                     self.lib.frames.put(frame(self.B[0], self.B[1], fill=self.B[2]))
                     time.sleep(0.03)
+        sent_all(self)                                               # A's last frame is not taken for B's first
         threading.Thread(target=send, daemon=True).start()
         self.assertTrue(self.s.handle({"cmd": "open", "id": self.idb})["ok"])
         self.assertTrue(late and late[0].gone.is_set(), "the helper answered with the late reader of the load before on the pipe")
