@@ -21,7 +21,7 @@ jobs:
     # 2026-10-20 (3,349 tests, Python 3.9), and that job 43.5 of its 45 minutes: one slow runner and every PR failed.
     # tools/ci-shard.py puts every tests/test_*.py in exactly one part, made even by the seconds each module took.
     name: unit (${{ matrix.python }}, part ${{ matrix.part }} of 3)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # A part takes about ten minutes. One once sat in the unit tests for 35 until it was cancelled, and a cancelled
     # job keeps no log; so the job has an end, and the unit tests have an earlier one that says where.
     timeout-minutes: 30
@@ -84,7 +84,7 @@ jobs:
     # The shader steps on a software GPU, which ran after the unit tests in one job until D104: about fourteen
     # minutes, now beside the parts instead of after them.
     name: shaders-gpu (${{ matrix.python }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30       # about fifteen
     strategy:
       fail-fast: false
@@ -115,7 +115,7 @@ jobs:
     name: test (${{ matrix.python }})
     needs: [unit, shaders-gpu]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     strategy:
       fail-fast: false        # each check gives its own answer, not "cancelled" because the other failed
@@ -131,7 +131,7 @@ jobs:
     # Effects (ISF filters over the playing picture) on a real mpv that draws: jobs of their own, so their answer does
     # not wait for the long unit tests. Three ways of drawing: OpenGL ES, desktop OpenGL, and desktop OpenGL 3.1 with
     # GLSL 1.40, the context mpv makes on a Raspberry Pi 4. A software GPU: nothing here says how fast a board is.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30       # about ten
     strategy:
       fail-fast: false
@@ -156,7 +156,7 @@ jobs:
         run: env ${{ matrix.env }} PVJ_GPU_TEST=1 xvfb-run -a -s "-screen 0 1280x720x24" python -m tests.test_effects_gpu
 
   shellcheck:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -167,7 +167,7 @@ jobs:
     # The installer run for real, as root, under the runner's systemd: who owns what in /run/pvj after an upgrade
     # over an old shared folder, restarts, a crash and a reinstall (D45). The runner is thrown away afterwards.
     # Not a test of a Raspberry Pi: no display, and not the box's systemd.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25       # about ten since the NDI hand-over steps (each looks at mpv for ten seconds)
     steps:
       - uses: actions/checkout@v4
@@ -188,7 +188,7 @@ jobs:
     # pipe, the panel's real Api, and a real mpv started by the real Player (tests/test_ndi_mpv.py). The container is
     # x86_64, not a Pi: the same mpv release, not the same processor, GPU or sound.
     name: "ndi-mpv (Debian 13, the Pi's mpv)"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container: debian:trixie
     timeout-minutes: 60
     env:
@@ -322,7 +322,7 @@ jobs:
     # and its libmpv of mpv 0.40, the release the Pi runs; the job fails on another). x86_64 both times: the same
     # source and the same libmpv release, not the Pi's processor, GPU or screen. A skip here is a failure.
     name: pvj-render (${{ matrix.where }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -387,7 +387,7 @@ jobs:
           exit "${code:-0}"
 
   panel-ui:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30       # about seven
     steps:
       - uses: actions/checkout@v4
