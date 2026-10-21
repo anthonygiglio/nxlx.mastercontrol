@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   php-lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: shivammathur/setup-php@v2
@@ -24,7 +24,7 @@ jobs:
           exit $fail
 
   python-compile:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Compile new Python 3 code (strict)
@@ -35,7 +35,7 @@ jobs:
         run: git ls-files '*.py' | grep -v '^pvj/' | xargs -r python3 -m py_compile
 
   shellcheck:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: ShellCheck new scripts (strict)
@@ -47,7 +47,7 @@ jobs:
         run: git ls-files '*.sh' | grep -v -E '^(pvj|install)/' | xargs -r shellcheck --severity=error
 
   links:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4

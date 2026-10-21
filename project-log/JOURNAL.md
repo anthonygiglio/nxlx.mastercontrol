@@ -4,6 +4,12 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-21, CI pinned to Ubuntu 24.04
+
+- **What broke:** GitHub moved `ubuntu-latest` to Ubuntu 26.04 (runner image 20261012). On it, actions/setup-python has no Python 3.9 ("The version '3.9' with architecture 'x64' was not found for Ubuntu 26.04"), Playwright refuses chromium ("Playwright does not support chromium on ubuntu26.04-x64"), and one unit part ran out of disk ("No space left on device"). Every PR failed, a journal-only one (#159) included.
+- **The fix:** every GitHub-hosted job runs on `ubuntu-24.04` instead of `ubuntu-latest` (supported by GitHub until 2029). The self-hosted device job is unchanged. No check name changes, so the "Protect master" ruleset is untouched.
+- **Later:** move to 26.04 on purpose, once Playwright supports it and the Python matrix is reviewed (3.9 is not available there; the Pi's Debian 13 has 3.13). A dated follow-up, not urgent while 24.04 is supported.
+
 ## 2026-10-20, CI's unit tests in three parts (`ci-test-split`, D104)
 
 - **The task:** the unit-test jobs used 1,535 to 1,731 of their 1,800 seconds; split or speed up, raise the limit only as a last resort. Started after #153 merged (it changed the same workflow).
