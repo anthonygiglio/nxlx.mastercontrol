@@ -504,5 +504,26 @@ class AutostartHookTest(unittest.TestCase):
         self.assertEqual(calls, ["mapper"])
 
 
+
+class FacingTest(unittest.TestCase):
+    """A quad whose horizon line runs between the screen's origin and the quad (the owner's, 2026-10-20) is drawn."""
+    OWNERS = [[38, 412], [324, 368], [667, 629], [70, 722]]
+
+    def test_the_owners_quad_is_in_the_table_and_the_direct_shader(self):
+        s = M.validate_surface({"id": "aaaaaaa1", "type": "quad", "name": "Quad.01", "on": True, "vertices": self.OWNERS,
+                                     "tex": [[0, 0], [1, 0], [1, 1], [0, 1]]})
+        (scr, cm), = M.surface_maps(s)
+        uv, inside = M.cell_uv(cm, (120.0, 600.0))
+        self.assertTrue(inside, uv)
+        a = cm[1]
+        self.assertGreater(a[6] * 120 + a[7] * 600 + a[8], 0, "w is positive inside the quad")
+        lw, lh, values = M.warp_table([s], 1024, 768)
+        k = (600 // 4) * lw + 120 // 4
+        self.assertEqual(values[6 * k + 2], M.EDGE, "the table holds the quad at (120, 600)")
+
+    def test_a_quad_that_was_drawn_keeps_its_numbers(self):
+        q = [[100, 100], [900, 120], [880, 700], [120, 680]]
+        self.assertEqual(M._cell_maps(q, M.UNIT_QUAD)[1], M.homography(q, M.UNIT_QUAD))
+
 if __name__ == "__main__":
     unittest.main()
