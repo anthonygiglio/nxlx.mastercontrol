@@ -4,6 +4,23 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-21, sources and the mapping fix on the node (D101, #158; rows SO1 to SO9)
+
+- **#158 on the Pi (2026-10-20, deployed e645760 with the owner's word):** the owner's own mapping on the X27 at 1024 x 768, its quad on source 1 and triangle on source 2, then both on source 1. The quad shows on top again in the node's capture and on the webcam; before #158 it was pure black (the quad sign, D28). Two sources plus the mapping: 63.6 flips a second, 17 missed vblanks in 30 s, the box 75 percent busy. The projector was on about 2 minutes.
+- **720p copies for the sources test (2026-10-21):** Lumia 1, Lumia 2, CRT and Oscilloscope Spirals were scaled to 1280 x 720 on the coordinator's PC (ffmpeg, libx264 slow, CRF 20, at most 10 Mbit/s, sound kept) and added to the node's library as "<name> 720p.mp4" (6 to 26 MB each). The originals are untouched. A first try at CRF 18 without a cap made CRT 121 MB, larger than its 1080p original: noisy pictures need a bitrate cap, or the decode test is unfair.
+- **Sources at 720p on the X27 (1024 x 768, New renderer, detail auto, 4 sources):**
+
+| Sources | Flips a second | Missed vblanks in 30 s | pvj-render CPU (of one core) | Whole box |
+| --- | --- | --- | --- | --- |
+| 1 | 61.9 | 0 | 49 % | 14 % |
+| 2 | 62.1 | 0 | 108 % | 29 % |
+| 4 | 61.0 | 59 | 297 % | 76 % |
+| 4 plus the owner's mapping | 60.6 | 72 | 297 % | 76 % |
+
+  Against the same test with the 1080p originals (2026-10-20): 4 sources were 37.5 flips a second with 784 missed and the box saturated. So D101's cap of 4 on a Pi 4 holds with 720p clips, and the panel's warning above 720 lines is the right line. Open files and threads stayed flat. The projector was on about 4 minutes and is off.
+- **Seen once:** right after the projector warmed up, the screen line said "1024 x 768 at 60 Hz did not start on this screen, so the screen's own mode is used"; the picture still drew. Probably the projector reporting its modes late while warming. Worth a look if it repeats (S-rows).
+- **CI:** #157 split the unit tests into three parts (about 10 minutes each). One pvj-render run failed once on TextLayerTest.test_show_text_is_drawn_and_goes ("no text on the picture") and passed on the rerun: the older text-layer start fault, to fix if it repeats.
+
 ## 2026-10-21, CI pinned to Ubuntu 24.04
 
 - **What broke:** GitHub moved `ubuntu-latest` to Ubuntu 26.04 (runner image 20261012). On it, actions/setup-python has no Python 3.9 ("The version '3.9' with architecture 'x64' was not found for Ubuntu 26.04") and Playwright refuses chromium ("Playwright does not support chromium on ubuntu26.04-x64"). Every PR failed, a journal-only one (#159) included. (A "No space left on device" line in the logs is a test simulating a full disk on purpose, not a real one.)
