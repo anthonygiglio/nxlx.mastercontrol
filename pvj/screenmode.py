@@ -17,8 +17,10 @@ compare them; /sys/class/drm has the sizes only), reads what is wanted from WANT
 the panel, which owns the settings; the player may not read settings.json), and passes one `--drm-mode` that is in
 that list. What it chose and why is in REPORT, in its own folder, for the panel. The panel never opens the display
 (its unit has no access to /dev/dri). It writes WANTED, restarts the player for a change, and looks that the new
-player has a screen at all: one whose mode was in the list and still did not come up is started once more with no
-`--drm-mode` (the screen's own mode, as before D90), and the page says so.
+player has a screen at all: one whose mode was in the list and still did not come up is tried once more with the same
+arguments when the screen has kept still for a few seconds (a projector warming up says it is connected before it
+takes a mode), and if that fails too it is started with no `--drm-mode` (the screen's own mode, as before D90), and
+the page says so.
 
 mpv 0.40 (video/out/drm_common.c): a `WxH@R` that matches no mode exactly is an error, not a fallback (R is compared
 to 0.01 Hz: `round(R * 100)` against the mode's own rate, `clock * 1000 / htotal / vtotal`, times 100), and with
@@ -46,6 +48,8 @@ NEAR = 0.2                              # 59.94, 59.95 and 60.00 are all "60 Hz"
 KEEP_SECONDS = 15                       # a mode chosen by hand goes back by itself this long after it is on the screen
 START_SECONDS = 45                      # and anyway this long after the tap, if the new player never comes up with it
 SCREEN_GRACE = 6.0                      # a new player has this long to open its screen before it counts as failed
+SETTLE_SECONDS = 4.0                    # a mode that gave no screen is tried once more after the screen has been still this long
+SETTLE_MAX = 30.0                       # ... or this long after it failed, if the screen never keeps still
 HELP_TIMEOUT = 8                        # seconds for `mpv --drm-mode=help`
 MAX_MODES = 64                          # kept of a screen's list (a real one has 20 to 40)
 MAX_FILE = 64 * 1024                    # bytes read of WANTED or REPORT
@@ -443,8 +447,9 @@ class Screen:
     pvj/locks.py's order)."""
 
     def __init__(self, api, settings, state_dir, player_dir, log=print, clock=time.monotonic, boot=boot_id,
-                 timer=None, keep=KEEP_SECONDS):
+                 timer=None, keep=KEEP_SECONDS, connectors=None):
         self.api, self.settings, self.log = api, settings, log
+        self._connectors = connectors or hardware.drm_connectors
         self.wanted_file = os.path.join(state_dir, WANTED)
         self.report_file = os.path.join(player_dir, REPORT)
         self._clock, self._boot, self.keep = clock, boot, keep
@@ -460,6 +465,12 @@ class Screen:
         self.note = ""               # the last thing that happened by itself, for the page
         self._said = set()           # reasons already written to the log
         self._checked = {}           # pid -> when it was first seen with a mode (the look that it has a screen)
+        # A mode that gave no screen is tried once more, with the same arguments, once the screen has settled: a
+        # projector warming up says it is connected before it can take a mode (the X27, 2026-10-21). Only a second
+        # failure bars the arguments for the boot (D92). `_retried` holds (boot, arguments) tried twice already;
+        # `_retry` the one waiting: {"pid", "mode", "since", "sig", "still", "again"}.
+        self._retried = set()
+        self._retry = None
         self._report_cache = (None, None)
 
     # -- the setting ----------------------------------------------------------
@@ -669,7 +680,12 @@ class Screen:
         if did:
             self._arm(self.keep)
         if not rep.get("arg"):
+            with self._step:
+                self._retry = None              # a player given no mode: no second try waits any more
             return did
+        waiting = self._settle(pid, rep)
+        if waiting:
+            return waiting
         with self._step:                       # one thread claims the look at this player (L2)
             first = self._checked.setdefault(pid, self._clock())
             if len(self._checked) > 16:
@@ -684,6 +700,7 @@ class Screen:
                     self._checked[pid] = first
             return did
         if seen:
+            self._started(pid)
             return did
         failed = rep.get("used")
         self.log("pvj-web: screen output: the player was given %s and has no screen" % text_words(failed))
@@ -692,6 +709,23 @@ class Screen:
         if p is not None and rep.get("trial"):
             self.revert("%s did not start on this screen, so it went back." % text_words(p["mode"]))
             return "reverted"
+        key = (self._boot(), tuple(screen_args(rep)))
+        with self._step:
+            first_failure = key not in self._retried
+            if first_failure:
+                if len(self._retried) > 16:
+                    self._retried.clear()
+                self._retried.add(key)
+                now = self._clock()
+                self._retry = {"pid": pid, "mode": failed, "since": now, "sig": self._signature(rep), "still": now, "again": False}
+            else:
+                self._retry = None
+        if first_failure:
+            # not barred yet: the screen may still be waking up (a projector says it is connected before it takes a
+            # mode); the same arguments are tried once more when it keeps still (_settle)
+            self.note = "%s did not start yet; it is tried once more when the screen keeps still." % text_words(failed)
+            self.log("pvj-web: screen output: %s gave no screen; trying it once more when the screen keeps still" % text_words(failed))
+            return "waiting"
         try:
             # the arguments it was given, not the mode alone, kept beside this boot's earlier ones (D92): a different
             # set is tried, none of these again, so two sets that alternate cost one try each
@@ -703,6 +737,54 @@ class Screen:
         self.note = "%s did not start on this screen; the player was started with the screen's own mode." % text_words(failed)
         self._restart("%s gave no screen" % text_words(failed))
         return "own mode"
+
+    def _signature(self, rep):
+        """(status, modes) of the report's screen as the kernel shows it now, or None."""
+        try:
+            for c in self._connectors():
+                if c.get("connector") == rep.get("connector") and (rep.get("card") is None or c.get("card") == rep["card"]):
+                    return (c.get("status"), tuple(c.get("modes") or ()))
+        except Exception:
+            pass
+        return None
+
+    def _settle(self, pid, rep):
+        """While a mode that gave no screen waits for its second try: "waiting" until the screen has been connected and
+        unchanged (its status and its list of modes) for SETTLE_SECONDS, or SETTLE_MAX has passed; then the player is
+        restarted with the same arguments ("again"). None when nothing waits for this player."""
+        with self._step:
+            r = self._retry
+            if r is None or r["again"] or r["pid"] != pid:
+                return None
+            now, sig = self._clock(), self._signature(rep)
+            if sig != r["sig"]:
+                r["sig"], r["still"] = sig, now
+            settled = sig is not None and sig[0] == "connected" and now - r["still"] >= SETTLE_SECONDS
+            if not settled and now - r["since"] < SETTLE_MAX:
+                return "waiting"
+            r["again"] = True
+        self._restart("trying %s once more, now that the screen %s" % (
+            text_words(r["mode"]), "has settled" if settled else "has had %d seconds" % SETTLE_MAX))
+        return "again"
+
+    def _started(self, pid):
+        """A player with a mode has its screen: if it is the second try of a mode, say so."""
+        with self._step:
+            r = self._retry
+            if r is None or r["pid"] == pid:
+                return
+            self._retry = None
+        self.note = "%s started on the second try." % text_words(r["mode"])
+        self.log("pvj-web: screen output: %s started on the second try" % text_words(r["mode"]))
+
+    def _waiting_words(self):
+        with self._step:
+            r = dict(self._retry) if self._retry else None
+        if r is None:
+            return ""
+        if r["again"]:
+            return "%s is being tried once more, now that the screen has settled" % text_words(r["mode"])
+        return "%s did not start yet; it is tried once more when the screen keeps still" % text_words(r["mode"])
 
     def pattern_words(self, on):
         """The mode in words over the test pattern (on), or the words taken off (off). Not over a code or the PIN
@@ -758,6 +840,9 @@ class Screen:
         asked = p["mode"] if p else self.saved()
         if not rep:
             return {"asked": asked, "used": None, "why": "the player has not said which mode it uses"}
+        waiting = self._waiting_words()
+        if waiting:                             # given a mode and no screen yet: nothing is in use, and why
+            return {"asked": asked, "used": None, "why": waiting}
         return {"asked": asked, "used": rep["used"], "why": rep["why"] or ("" if rep["used"] else rep.get("auto_why") or "")}
 
     def state(self):
@@ -776,9 +861,10 @@ class Screen:
                 continue
             modes.append({"mode": m["text"], "width": m["width"], "height": m["height"], "hz": m["hz"], "words": words(m)})
         live = self._sysfs_signature()
+        waiting = self._waiting_words()
         return {"saved": self.saved(), "pending": pend, "note": self.note,
-                "used": (rep or {}).get("used"), "asked": (rep or {}).get("asked", self.saved()),
-                "why": (rep or {}).get("why", "" if rep else "the player has not said which mode it uses"),
+                "used": None if waiting else (rep or {}).get("used"), "asked": (rep or {}).get("asked", self.saved()),
+                "why": waiting or (rep or {}).get("why", "" if rep else "the player has not said which mode it uses"),
                 "auto_why": (rep or {}).get("auto_why", ""),
                 "automatic": (rep or {}).get("automatic"), "own": (rep or {}).get("own"),
                 "connector": (rep or {}).get("connector"), "modes": modes, "display": self.display(),

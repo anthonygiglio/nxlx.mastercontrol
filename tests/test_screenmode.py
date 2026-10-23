@@ -467,6 +467,8 @@ class ScreenTest(unittest.TestCase):
         def quit(self):
             self.quits += 1
             self.pid += 1
+            if hasattr(self, "next_vo"):                    # the next player's screen (a projector that woke up)
+                self.vo = self.next_vo
             self.test.player_started()
 
     def setUp(self):
@@ -491,7 +493,8 @@ class ScreenTest(unittest.TestCase):
         self.api.access_on_screen = lambda: False
         self.api.is_test_pattern = lambda path: isinstance(path, str) and path.startswith(S.PATTERN_PREFIX)
         self.screen = S.Screen(self.api, self.settings, self.state, self.pdir, log=self.lines.append,
-                               clock=lambda: self.now[0], boot=lambda: self.boot, timer=self.timer)
+                               clock=lambda: self.now[0], boot=lambda: self.boot, timer=self.timer,
+                               connectors=lambda: self.layout)
         self.player_started()
 
     def timer(self, seconds, fn):
@@ -684,13 +687,20 @@ class ScreenTest(unittest.TestCase):
         self.screen._clock = meeting_clock
         quits = []
         self.api.player.quit = lambda: quits.append(1)
-        threads = [threading.Thread(target=self.screen.tick, args=(pid,), name="look%d" % i, daemon=True) for i in range(2)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join(5)
-        self.assertEqual(len(quits), 1, "one restart, not two")
-        self.assertEqual(sum("has no screen" in line for line in self.lines), 1, "and one look")
+
+        def both_look():
+            threads = [threading.Thread(target=self.screen.tick, args=(pid,), name="look%d" % i, daemon=True) for i in range(2)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(5)
+        both_look()
+        self.assertEqual(sum("has no screen" in line for line in self.lines), 1, "one look")
+        self.assertEqual(len(quits), 0, "the first failure waits for the screen to settle")
+        self.later(S.SETTLE_SECONDS)
+        both_look()
+        self.assertEqual(len(quits), 1, "one second try, not two")
+        self.assertEqual(sum("has no screen" in line for line in self.lines), 1, "and still one look")
         self.assertEqual([n for n in os.listdir(self.state) if n.endswith(".tmp")], [], "no temp file left")
 
     def test_two_threads_writing_the_wanted_file_at_once_both_succeed(self):
@@ -746,25 +756,90 @@ class ScreenTest(unittest.TestCase):
             self.screen.choose("1280x720@60.00")
         self.assertEqual(self.api.player.quits, 1)
 
-    def test_a_mode_that_gives_no_screen_is_started_again_with_the_screens_own(self):
+    def test_a_mode_that_gives_no_screen_twice_is_started_again_with_the_screens_own(self):
         self.api.player.vo = ""
         self.assertIsNone(self.screen.tick())                   # first sight
         self.later(S.SCREEN_GRACE - 1)
         self.assertIsNone(self.screen.tick(), "it is given time")
         self.later(1)
+        self.assertEqual(self.screen.tick(), "waiting", "the first failure is not a verdict: the screen may be waking up")
+        self.assertNotIn("skip", self.wanted(), "nothing barred yet")
+        self.later(S.SETTLE_SECONDS)
+        self.assertEqual(self.screen.tick(), "again")
+        self.assertEqual(self.api.player.quits, 1)
+        self.assertEqual(S.screen_args(self.screen.report()), DecideTest.PI_ARGS, "the same arguments once more")
+        self.assertIsNone(self.screen.tick())                   # the second player, first sight
+        self.later(S.SCREEN_GRACE)
         self.assertEqual(self.screen.tick(), "own mode")
         self.assertEqual(self.wanted(), {"mode": "auto", "skip": [{"mode": "1920x1080@60.00", "boot": BOOT, "args": DecideTest.PI_ARGS}]})
-        self.assertEqual(self.api.player.quits, 1)
+        self.assertEqual(self.api.player.quits, 2)
         rep = self.screen.report()
         self.assertEqual((rep["used"], rep["arg"]), (None, None))
         self.assertIn("did not start on this screen", rep["why"])
         self.assertIn("did not start on this screen; the player was started with the screen's own mode", self.screen.note)
         self.later(60)
         self.assertIsNone(self.screen.tick(), "a player with no --drm-mode is not restarted")
+        self.assertEqual(self.api.player.quits, 2, "no loop")
+
+    def test_a_projector_that_wakes_up_late_gets_its_mode_on_the_second_try(self):
+        """The X27 (2026-10-21): just after it came on, the mode did not start and the box fell back to the screen's own
+        mode for the whole boot, though the mode was fine a moment later. A fake that fails the first try only."""
+        self.api.player.vo = ""                                 # the first player: the projector is still warming up
+        self.api.player.next_vo = "gpu"                         # the next one has its screen
+        self.screen.tick()
+        self.later(S.SCREEN_GRACE)
+        self.assertEqual(self.screen.tick(), "waiting")
+        brief = self.screen.brief()
+        self.assertEqual(brief["used"], None, "no screen: nothing is in use, the status must not say the mode is")
+        self.assertIn("1920 x 1080 at 60 Hz did not start yet; it is tried once more when the screen keeps still", brief["why"])
+        self.assertEqual(self.screen.state()["used"], None)
+        # the projector settles: its list of modes appears, then changes once more, then keeps still
+        for modes in (["1024x768"], ["1920x1080", "1024x768"]):
+            self.layout = [dict(self.layout[0], modes=modes)] + self.layout[1:]
+            self.later(S.SETTLE_SECONDS - 1)
+            self.assertEqual(self.screen.tick(), "waiting", "the screen is still changing")
+        self.assertEqual(self.api.player.quits, 0)
+        self.later(S.SETTLE_SECONDS)
+        self.assertEqual(self.screen.tick(), "again")
+        self.assertEqual(self.api.player.quits, 1)
+        self.assertIn("is being tried once more", self.screen.brief()["why"])
+        self.screen.tick()
+        self.later(S.SCREEN_GRACE)
+        self.assertIsNone(self.screen.tick(), "the second player has its screen")
+        self.assertNotIn("skip", self.wanted(), "the mode is not barred for the boot")
+        brief = self.screen.brief()
+        self.assertEqual((brief["used"], brief["why"]), ("1920x1080@60.00", ""), "the status says what is true now")
+        self.assertEqual(self.screen.note, "1920 x 1080 at 60 Hz started on the second try.")
+        self.later(60)
+        self.assertIsNone(self.screen.tick())
         self.assertEqual(self.api.player.quits, 1, "no loop")
 
-    def give_no_screen_until_restarted(self):
+    def test_a_screen_that_never_keeps_still_is_tried_again_after_settle_max(self):
         self.api.player.vo = ""
+        self.screen.tick()
+        self.later(S.SCREEN_GRACE)
+        self.assertEqual(self.screen.tick(), "waiting")
+        start = self.now[0]
+        n = 0
+        while self.now[0] - start < S.SETTLE_MAX - 1:
+            n += 1
+            self.layout = [dict(self.layout[0], status="disconnected" if n % 2 else "connected")] + self.layout[1:]
+            self.later(1)
+            self.assertEqual(self.screen.tick(), "waiting")
+        self.later(1)
+        self.assertEqual(self.screen.tick(), "again", "a bound: it is tried once more anyway")
+
+    def give_no_screen_until_restarted(self):
+        """A player that never gets a screen: the first look waits for the screen to settle and tries the same
+        arguments once more; the second gives the verdict."""
+        self.api.player.vo = ""
+        self.screen.tick()
+        self.later(S.SCREEN_GRACE)
+        did = self.screen.tick()
+        if did != "waiting":
+            return did
+        self.later(S.SETTLE_SECONDS)
+        self.assertEqual(self.screen.tick(), "again")
         self.screen.tick()
         self.later(S.SCREEN_GRACE)
         return self.screen.tick()
@@ -785,12 +860,12 @@ class ScreenTest(unittest.TestCase):
         quits = self.api.player.quits
         self.assertEqual(self.give_no_screen_until_restarted(), "own mode", "these give no screen either")
         self.assertEqual([s["args"] for s in self.wanted()["skip"]], [first, DecideTest.PI_ARGS], "both kept")
-        self.assertEqual(self.api.player.quits, quits + 1)
+        self.assertEqual(self.api.player.quits, quits + 2, "the second try and the restart with the screen's own mode")
         self.api.player.quit()                                      # any later start of the player in this boot
         self.assertEqual((self.screen.report()["arg"], self.screen.report()["used"]), (None, None), "the same arguments stay barred")
         self.later(60)
         self.assertIsNone(self.screen.tick())
-        self.assertEqual(self.api.player.quits, quits + 2, "no loop")
+        self.assertEqual(self.api.player.quits, quits + 3, "no loop")
 
     def test_two_sets_that_alternate_cost_one_dark_start_each_and_a_new_boot_clears_them(self):
         """The review of #141 (Low): the card flaps between starts (a second output), so the arguments go A, B, A."""
@@ -822,7 +897,7 @@ class ScreenTest(unittest.TestCase):
         self.assertEqual(self.screen.report()["arg"], None)
         self.later(60)
         self.assertIsNone(self.screen.tick())
-        self.assertEqual(self.api.player.quits, 3, "two by the test, one by the look: no loop")
+        self.assertEqual(self.api.player.quits, 4, "two by the test, two by the look (the second try, then its own mode): no loop")
 
     def test_a_tried_mode_that_gives_no_screen_goes_back(self):
         self.screen.choose("1280x720@60.00")
