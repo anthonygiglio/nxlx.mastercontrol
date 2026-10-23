@@ -1525,8 +1525,11 @@ class OwnersMappingTest(OwnersMappingBase):
         for k in (2, 3, 4):
             self.assertIs(r("pvj-source", k, "get_property", "keepaspect"), False, "source %d keeps its letterbox" % k)
             self.assertEqual(r("pvj-source", k, "get_property", "fbo-format"), "rgba8")
-        r("set_property", "keepaspect", True)                # and back, with the mapping off
+        r("set_property", "keepaspect", True)                # and back, with the mapping off (Player.set_mapping_mode
+        r("set_property", "fbo-format", "auto")              # sets both)
         self.assertEqual([r("pvj-source", k, "get_property", "keepaspect") for k in (2, 3, 4)], [True] * 3)
+        self.assertEqual([r("pvj-source", k, "get_property", "fbo-format") for k in (2, 3, 4)], ["auto"] * 3,
+                         "the sources' buffers go back to mpv's own with the mapping off")
         with self.assertRaises(PlayerError) as e:
             r("pvj-source", 2, "set_property", "keepaspect", False)
         self.assertEqual(str(e.exception), "mpv: property not found", "read only on a source: it follows source 1")
