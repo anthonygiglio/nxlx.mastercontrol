@@ -365,8 +365,11 @@ jobs:
               *) echo "::error::this job is for mpv 0.40.x (the Pi, Debian 13) and apt gave libmpv-dev $v"; exit 1 ;;
             esac
           fi
-      - name: Build pvj-render (every warning an error)
-        run: make -C render WERROR=1
+      - name: Build pvj-render (every warning an error; as the box builds it, then with the tests' hooks for the tests)
+        run: |
+          make -C render WERROR=1
+          make -C render clean
+          make -C render WERROR=1 TEST_HOOKS=1
       - name: An account without privileges for the tests (in a container the job is root)
         if: matrix.container != ''
         run: |

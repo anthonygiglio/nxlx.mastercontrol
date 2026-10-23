@@ -117,7 +117,11 @@ static int parse_args(int argc, char **argv, Cfg *c)
         else if (!strcmp(a, "--fast")) c->fast = 1;
         else if (!strcmp(a, "--every-vblank")) c->every_vblank = 1;
         else if (!strcmp(a, "--verbose")) c->verbose = 1;
+#ifdef PVJ_RENDER_TEST_HOOKS
+        else if (!strcmp(a, "--version")) { printf("pvj-render %s (with test hooks)\n", PVJ_VERSION); exit(0); }
+#else
         else if (!strcmp(a, "--version")) { printf("pvj-render %s\n", PVJ_VERSION); exit(0); }
+#endif
         else { LOG("unknown argument: %s", a); return -1; }
     }
     if (!c->socket_path) { LOG("--socket=PATH is needed"); return -1; }
@@ -308,8 +312,10 @@ static int target(Layer *l, int w, int h)
     return 0;
 }
 
-// For the tests only: PVJ_RENDER_TEST_SLOW_START=<ms> waits that long after the text core's mpv_initialize, as a
-// loaded machine may, so that the core is surely idle before anything else is done to it (tests/test_pvj_render.py).
+#ifdef PVJ_RENDER_TEST_HOOKS
+// For the tests only, and only in a build made with `make TEST_HOOKS=1` (CI; the box's own build has none):
+// PVJ_RENDER_TEST_SLOW_START=<ms> waits that long after the text core's mpv_initialize, as a loaded machine may, so
+// that the core is surely idle before anything else is done to it (tests/test_pvj_render.py).
 static void slow_start(void)
 {
     const char *v = getenv("PVJ_RENDER_TEST_SLOW_START");
@@ -318,6 +324,7 @@ static void slow_start(void)
     struct timespec t = { ms / 1000, (ms % 1000) * 1000000L };
     nanosleep(&t, NULL);
 }
+#endif
 
 static int layer_render_context(Layer *l)
 {
@@ -339,6 +346,8 @@ static int layer_open(Layer *l, int index, const Cfg *c, int w, int h)
     l->index = index;
     l->h = mpv_create();
     if (!l->h) return -1;
+    // first, so that what goes wrong while the core starts (the text core's window is made then) reaches the journal
+    mpv_request_log_messages(l->h, c->verbose ? "info" : "warn");
     // as classic mpv is started (pvj/player.py, mpv_command): media only, nothing a file can point elsewhere
     hard(l->h, "config", "no");
     set(l->h, "vo", "libmpv");
@@ -373,6 +382,10 @@ static int layer_open(Layer *l, int index, const Cfg *c, int w, int h)
         // worked only when the core happened to go idle after that: in about 1 start in 30 it had no window at all
         // and drew no text and no overlay for the life of the process (CI, 2026-10-21). So here the render context
         // is made first and the window is wanted from the start.
+        // Made before mpv_initialize, the render context finds mpv's paths not yet set (config=no sets the shader
+        // cache's folder to none only then), and would write compiled shaders to ~/.cache/mpv (the review of #162).
+        hard(l->h, "gpu-shader-cache", "no");
+        if (hard_failed) return -1;
         set(l->h, "force-window", "yes");
         if (layer_render_context(l)) return -1;
     } else {
@@ -388,8 +401,9 @@ static int layer_open(Layer *l, int index, const Cfg *c, int w, int h)
         }
     }
     if (mpv_initialize(l->h) < 0) return -1;
+#ifdef PVJ_RENDER_TEST_HOOKS
     if (is_text) slow_start();
-    mpv_request_log_messages(l->h, c->verbose ? "info" : "warn");
+#endif
     if (!is_text) {
         // the layer's idleness, kept by its event thread, so the renderer's own state never waits on the core
         __atomic_store_n(&app.idle[index], 1, __ATOMIC_RELEASE);
