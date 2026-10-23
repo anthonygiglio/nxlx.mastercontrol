@@ -814,6 +814,57 @@ class ScreenTest(unittest.TestCase):
         self.assertIsNone(self.screen.tick())
         self.assertEqual(self.api.player.quits, 1, "no loop")
 
+    def warm_up(self):
+        """A player whose first start meets a projector still warming up: no screen, the wait, the second try."""
+        self.api.player.vo, self.api.player.next_vo = "", "gpu"
+        self.screen.tick()
+        self.later(S.SCREEN_GRACE)
+        self.assertEqual(self.screen.tick(), "waiting")
+        self.later(S.SETTLE_SECONDS)
+        self.assertEqual(self.screen.tick(), "again")
+        self.screen.tick()
+        self.later(S.SCREEN_GRACE)
+        self.assertIsNone(self.screen.tick())
+
+    def test_the_first_failure_says_it_once_and_puts_nothing_stale_on_the_page(self):
+        # the review of #164 (Low 4): the status says why; the note is for results only
+        self.screen.note = ""
+        self.api.player.vo = ""
+        self.screen.tick()
+        self.later(S.SCREEN_GRACE)
+        self.assertEqual(self.screen.tick(), "waiting")
+        st = self.screen.state()
+        self.assertIn("did not start yet", st["why"])
+        self.assertEqual(st["note"], "", "not the same sentence twice")
+
+    def test_a_mode_chosen_during_the_wait_is_not_spoken_of_as_the_one_that_waited(self):
+        # the review of #164 (Medium 1): 1920 x 1080 fails at boot, the wait starts, the Owner tries 2560 x 1440
+        self.api.player.vo, self.api.player.next_vo = "", "gpu"
+        self.screen.tick()
+        self.later(S.SCREEN_GRACE)
+        self.assertEqual(self.screen.tick(), "waiting")
+        self.screen.choose("2560x1440@74.97")
+        self.assertEqual(self.screen.report()["used"], "2560x1440@74.97")
+        self.assertNotIn("1920 x 1080", self.screen.brief()["why"], "the status speaks of what is tried now")
+        self.assertEqual(self.screen.state()["used"], "2560x1440@74.97")
+        self.later(S.SCREEN_GRACE)
+        self.screen.tick()
+        self.assertNotIn("second try", self.screen.note, "the mode that came up is not the one that waited")
+        self.later(S.SETTLE_MAX)
+        self.screen.tick()
+        self.assertEqual(self.api.player.quits, 1, "no second try of 1920 x 1080 behind the Owner's back")
+
+    def test_a_second_warm_up_in_the_same_boot_gets_its_own_second_try(self):
+        # the review of #164 (Medium 2): the X27 is switched off and on again between shows
+        self.warm_up()
+        self.assertEqual(self.api.player.quits, 1)
+        self.api.player.vo = ""                                 # a later start meets the projector warming up again
+        self.api.player.quit()
+        self.warm_up()
+        self.assertEqual(self.api.player.quits, 3, "the restart, and one second try")
+        self.assertNotIn("skip", self.wanted(), "a good second try never bars the mode")
+        self.assertEqual(self.screen.note, "1920 x 1080 at 60 Hz started on the second try.")
+
     def test_a_screen_that_never_keeps_still_is_tried_again_after_settle_max(self):
         self.api.player.vo = ""
         self.screen.tick()
@@ -827,7 +878,11 @@ class ScreenTest(unittest.TestCase):
             self.later(1)
             self.assertEqual(self.screen.tick(), "waiting")
         self.later(1)
+        self.layout = connected()                               # as it is when the player starts again
         self.assertEqual(self.screen.tick(), "again", "a bound: it is tried once more anyway")
+        why = self.screen.brief()["why"]                        # the review of #164 (Low 3): it timed out, it did not settle
+        self.assertIn("after 30 seconds in which the screen did not keep still", why)
+        self.assertNotIn("settled", why)
 
     def give_no_screen_until_restarted(self):
         """A player that never gets a screen: the first look waits for the screen to settle and tries the same

@@ -433,6 +433,10 @@ def clean_report(data):
             "boot": text(data.get("boot"), 64), "at": data.get("at") if isinstance(data.get("at"), int) else None}
 
 
+def _again_words(r):
+    return "now that the screen has settled" if r["settled"] else "after %d seconds in which the screen did not keep still" % SETTLE_MAX
+
+
 class ScreenError(Exception):
     def __init__(self, status, message):
         super().__init__(message)
@@ -540,6 +544,7 @@ class Screen:
         """After an import or a factory reset: WANTED follows the settings, and the player is restarted if what it
         was asked for changed."""
         self._end_pending()
+        self._drop_retry()
         have = self._wanted()
         if have.get("mode") == self.saved() and "trial" not in have:
             return
@@ -569,6 +574,7 @@ class Screen:
             with self._lock:
                 self.pending = None
             raise ScreenError(500, "could not write the choice: %s" % (e.strerror or e))
+        self._drop_retry()                      # a second try of the mode before no longer waits: another is tried now
         self.note = ""
         self._arm(START_SECONDS)
         self._restart("trying %s" % text_words(mode))
@@ -637,6 +643,7 @@ class Screen:
             if self._timer is not None:
                 self._timer.cancel()
                 self._timer = None
+            self._retry = None                  # under _step already (see _drop_retry)
             try:
                 self._write({"mode": p["previous"]})
             except OSError as e:
@@ -700,7 +707,7 @@ class Screen:
                     self._checked[pid] = first
             return did
         if seen:
-            self._started(pid)
+            self._started(pid, rep)
             return did
         failed = rep.get("used")
         self.log("pvj-web: screen output: the player was given %s and has no screen" % text_words(failed))
@@ -717,13 +724,14 @@ class Screen:
                     self._retried.clear()
                 self._retried.add(key)
                 now = self._clock()
-                self._retry = {"pid": pid, "mode": failed, "since": now, "sig": self._signature(rep), "still": now, "again": False}
+                self._retry = {"pid": pid, "mode": failed, "key": key[1], "since": now, "sig": self._signature(rep),
+                               "still": now, "again": False, "settled": False}
             else:
                 self._retry = None
         if first_failure:
             # not barred yet: the screen may still be waking up (a projector says it is connected before it takes a
-            # mode); the same arguments are tried once more when it keeps still (_settle)
-            self.note = "%s did not start yet; it is tried once more when the screen keeps still." % text_words(failed)
+            # mode); the same arguments are tried once more when it keeps still (_settle). The status says so (why);
+            # the page's note is kept for results only, so the same sentence is not on the page twice.
             self.log("pvj-web: screen output: %s gave no screen; trying it once more when the screen keeps still" % text_words(failed))
             return "waiting"
         try:
@@ -762,28 +770,36 @@ class Screen:
             settled = sig is not None and sig[0] == "connected" and now - r["still"] >= SETTLE_SECONDS
             if not settled and now - r["since"] < SETTLE_MAX:
                 return "waiting"
-            r["again"] = True
-        self._restart("trying %s once more, now that the screen %s" % (
-            text_words(r["mode"]), "has settled" if settled else "has had %d seconds" % SETTLE_MAX))
+            r["again"], r["settled"] = True, settled
+        self._restart("trying %s once more, %s" % (text_words(r["mode"]), _again_words(r)))
         return "again"
 
-    def _started(self, pid):
-        """A player with a mode has its screen: if it is the second try of a mode, say so."""
+    def _started(self, pid, rep):
+        """A player with a mode has its screen: if it is the second try of those very arguments, say so, and let a
+        later failure of them in this boot (the projector switched off and on again) have its own second try."""
         with self._step:
             r = self._retry
             if r is None or r["pid"] == pid:
                 return
             self._retry = None
+            if r["key"] != tuple(screen_args(rep)):
+                return                          # another mode is on now: nothing to say of the one that waited
+            self._retried.discard((self._boot(), r["key"]))
         self.note = "%s started on the second try." % text_words(r["mode"])
         self.log("pvj-web: screen output: %s started on the second try" % text_words(r["mode"]))
 
-    def _waiting_words(self):
+    def _drop_retry(self):
+        with self._step:
+            self._retry = None
+
+    def _waiting_words(self, rep):
+        """What the status says while a second try waits or runs, for the arguments of the player that is on."""
         with self._step:
             r = dict(self._retry) if self._retry else None
-        if r is None:
+        if r is None or not rep or r["key"] != tuple(screen_args(rep)):
             return ""
         if r["again"]:
-            return "%s is being tried once more, now that the screen has settled" % text_words(r["mode"])
+            return "%s is being tried once more, %s" % (text_words(r["mode"]), _again_words(r))
         return "%s did not start yet; it is tried once more when the screen keeps still" % text_words(r["mode"])
 
     def pattern_words(self, on):
@@ -840,7 +856,7 @@ class Screen:
         asked = p["mode"] if p else self.saved()
         if not rep:
             return {"asked": asked, "used": None, "why": "the player has not said which mode it uses"}
-        waiting = self._waiting_words()
+        waiting = self._waiting_words(rep)
         if waiting:                             # given a mode and no screen yet: nothing is in use, and why
             return {"asked": asked, "used": None, "why": waiting}
         return {"asked": asked, "used": rep["used"], "why": rep["why"] or ("" if rep["used"] else rep.get("auto_why") or "")}
@@ -861,7 +877,7 @@ class Screen:
                 continue
             modes.append({"mode": m["text"], "width": m["width"], "height": m["height"], "hz": m["hz"], "words": words(m)})
         live = self._sysfs_signature()
-        waiting = self._waiting_words()
+        waiting = self._waiting_words(rep)
         return {"saved": self.saved(), "pending": pend, "note": self.note,
                 "used": None if waiting else (rep or {}).get("used"), "asked": (rep or {}).get("asked", self.saved()),
                 "why": waiting or (rep or {}).get("why", "" if rep else "the player has not said which mode it uses"),
