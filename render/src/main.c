@@ -368,6 +368,11 @@ static int layer_open(Layer *l, int index, const Cfg *c, int w, int h)
     hard(l->h, "ytdl", "no");
     hard(l->h, "load-scripts", "no");
     hard(l->h, "load-auto-profiles", "no");
+    // No compiled shaders on disk, on every core: config=no does not stop mpv's shader cache everywhere. On 0.37 the
+    // "cache" folder is not one that config=no clears (options/path.c), so every core wrote $XDG_CACHE_HOME/mpv; on
+    // 0.40 and 0.41 it is cleared only by mpv_initialize, and the text core's render context is made before that.
+    // The option (a flag) is in 0.37, 0.40 and 0.41 alike (the review of #162, and its CI on 0.37).
+    hard(l->h, "gpu-shader-cache", "no");
     if (hard_failed) return -1;
     if (is_text) {
         // plays nothing: only its on-screen layer, over a clear background
@@ -381,11 +386,7 @@ static int layer_open(Layer *l, int index, const Cfg *c, int w, int h)
         // acts on a force-window turned on later while idle. Turned on after the render context, the text layer
         // worked only when the core happened to go idle after that: in about 1 start in 30 it had no window at all
         // and drew no text and no overlay for the life of the process (CI, 2026-10-21). So here the render context
-        // is made first and the window is wanted from the start.
-        // Made before mpv_initialize, the render context finds mpv's paths not yet set (config=no sets the shader
-        // cache's folder to none only then), and would write compiled shaders to ~/.cache/mpv (the review of #162).
-        hard(l->h, "gpu-shader-cache", "no");
-        if (hard_failed) return -1;
+        // is made first and the window is wanted from the start (gpu-shader-cache=no above keeps it off the disk).
         set(l->h, "force-window", "yes");
         if (layer_render_context(l)) return -1;
     } else {
