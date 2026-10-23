@@ -12,6 +12,12 @@ Newest entry first. One entry per working session: what was done, what merged, w
 - **The review of #164 (two Medium, two Low), mended in the same PR:** a mode chosen during the wait was spoken of as the one that waited (the second try is now tied to its arguments and dropped by a choice, an import or a going back); a second warm-up in the same boot went straight to the skip (a good second try now clears its mark); the words said "settled" after a time-out (they now say which); and the first failure put the same sentence on the page twice (the note is now for results only). A test for each, each failing on the reviewed head. Cost, plainly: a mode that truly cannot start now costs one more dark start, about 4 to 30 seconds more, once per boot per set of arguments.
 - **Not tested:** the Pi and the X27. Whether the X27 really settles in its sysfs modes is not known; SETTLE_MAX bounds the wait either way.
 
+## 2026-10-23, classic frozen and the gates for the New renderer (D105)
+
+- **Decided (D105):** classic mpv gets fixes only; new picture features go to pvj-render only; pvj-render becomes the default on a Pi 4 and up after five gates (soak, fallback, everyday parity, decoding, real use).
+- **The owner's words:** "I would rather you and the agents work through all bugs and issues to ensure the system runs smoothly and efficiently." He will connect a spare monitor or TV to the test node for the soak, and gave a standing yes for deploys of reviewed, green master to the test node during this push.
+- **Next:** the bug sweep, then gates 1 and 2, then phase 3.
+
 ## 2026-10-21, sources and the mapping fix on the node (D101, #158; rows SO1 to SO9)
 
 - **#158 on the Pi (2026-10-20, deployed e645760 with the owner's word):** the owner's own mapping on the X27 at 1024 x 768, its quad on source 1 and triangle on source 2, then both on source 1. The quad shows on top again in the node's capture and on the webcam; before #158 it was pure black (the quad sign, D28). Two sources plus the mapping: 63.6 flips a second, 17 missed vblanks in 30 s, the box 75 percent busy. The projector was on about 2 minutes.
