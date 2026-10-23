@@ -86,10 +86,10 @@ def _end_all():
 class Renderer:
     """One pvj-render process in its own folder."""
 
-    def __init__(self, *args):
+    def __init__(self, *args, env=None):
         self.dir = tempfile.mkdtemp(prefix="pvj-render-")
         self.sock = os.path.join(self.dir, "mpv.sock")
-        env = dict(os.environ, LIBGL_ALWAYS_SOFTWARE="1")
+        env = dict(os.environ, LIBGL_ALWAYS_SOFTWARE="1", **(env or {}))
         self.log = open(os.path.join(self.dir, "stderr.txt"), "w+")
         self.proc = subprocess.Popen([BIN, "--socket=" + self.sock, "--headless=%dx%d" % (W, H)] + list(args),
                                      stdin=subprocess.DEVNULL, stdout=self.log, stderr=self.log, env=env,
@@ -512,6 +512,23 @@ class TextLayerTest(Base):
         self.assertTrue(n, "no text on the picture (is a font installed?)\n" + self.r.stderr())
         self.r("show-text", "", 1)
         self.assertTrue(self.r.wait(lambda: changed() < 20), self.r.stderr())
+
+    def test_the_text_layer_works_after_a_slow_start(self):
+        # The text core plays nothing, so it gets its window (and its on-screen layer) only as it first goes idle; mpv
+        # before 0.41 (CI's Debian 13 and Ubuntu jobs, the Pi) never acts on a force-window turned on later. Before the
+        # fix the window was turned on after the core could already be idle, and about 1 start in 30 drew no text at
+        # all (CI, 2026-10-21). The wait below makes such a start certain: the core is idle before anything else.
+        r = Renderer(env={"PVJ_RENDER_TEST_SLOW_START": "500"})
+        self.addCleanup(r.close)
+        r("set_property", "image-display-duration", "inf")
+        r.load(self.picture)
+        base = r.capture()
+        r("show-text", "PIN 1234 PIN 1234", 8000)
+
+        def changed():
+            shot = r.capture()
+            return sum(1 for i in range(0, len(base[2]), 3) if not near(base[2][i:i + 3], shot[2][i:i + 3], 30))
+        self.assertTrue(r.wait(lambda: changed() > 200), "no text after a slow start\n" + r.stderr())
 
 
 def make_clip(case, path, seconds=3, source="testsrc2"):

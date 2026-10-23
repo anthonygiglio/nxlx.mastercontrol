@@ -4,6 +4,14 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-23, bug sweep 1 (D105): the text layer that sometimes had no window
+
+- **The fault:** CI's Debian 13 job failed once on TextLayerTest.test_show_text_is_drawn_and_goes ("no text on the picture", 2026-10-21). The text core of pvj-render (the second libmpv that plays nothing and draws overlays and show-text) needs a window to have an on-screen layer. mpv makes that window as the core first goes idle, a moment after `mpv_initialize`. mpv 0.41 also acts on a `force-window` turned on later; mpv 0.40 (Debian 13, the Pi) and 0.37 (Ubuntu 24.04) never do. #148 turned `force-window` on after the render context, so on those versions the text layer worked only when the core went idle after that; otherwise that process drew no text and no overlay for its whole life.
+- **How it was found:** the local mpv is 0.41, where the fault cannot happen (0 of 140 runs under load). mpv's sources (0.40 against 0.41) showed the difference: 0.41 added `handle_force_window` to the option-change callback. A libmpv 0.41 built here with that one line taken out failed the test the CI way 1 of 30 runs and 1 of 120 under load (two cores, three CPU hogs); a probe in the failing run showed the text core's `vo-configured` still "no" 300 ms after `force-window` was turned on.
+- **The fix (render/src/main.c):** the text core's render context is made before `mpv_initialize`, and its `force-window` is on from the start, so its window is made as it first goes idle, on every mpv. The video cores are unchanged (they get their window when a clip loads).
+- **The test:** `test_the_text_layer_works_after_a_slow_start` starts pvj-render with `PVJ_RENDER_TEST_SLOW_START=500` (a test-only wait after the text core's `mpv_initialize`, so the core is surely idle first). Break-check on the 0.40-like libmpv: without the fix it fails 3 of 3, with it passes 3 of 3; on stock 0.41 both pass (so CI's Debian and Ubuntu jobs are the ones that guard it). Stress with the fix: 0 failures in 120 runs of the show-text test on two cores under three CPU hogs with the 0.40-like libmpv (master: 1 in 120 the same way).
+- **Not tested:** the real mpv 0.40 and 0.37 (CI runs them), and the Pi. On the Pi the same start race can leave a New-renderer start with no masks and no PIN text until pvj-render restarts; not seen there, and not claimed.
+
 ## 2026-10-21, sources and the mapping fix on the node (D101, #158; rows SO1 to SO9)
 
 - **#158 on the Pi (2026-10-20, deployed e645760 with the owner's word):** the owner's own mapping on the X27 at 1024 x 768, its quad on source 1 and triangle on source 2, then both on source 1. The quad shows on top again in the node's capture and on the webcam; before #158 it was pure black (the quad sign, D28). Two sources plus the mapping: 63.6 flips a second, 17 missed vblanks in 30 s, the box 75 percent busy. The projector was on about 2 minutes.
