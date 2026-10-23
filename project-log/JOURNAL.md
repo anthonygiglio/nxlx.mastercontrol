@@ -13,6 +13,12 @@ Newest entry first. One entry per working session: what was done, what merged, w
 - **The review of #162, mended in the same PR:** (Medium) made before `mpv_initialize`, the text core's render context found mpv's paths not yet set, so `config=no` no longer turned its shader cache off, and it wrote compiled shaders to `$XDG_CACHE_HOME/mpv` (on the Pi, the player account's ~/.cache on the SD card): the text core now has `gpu-shader-cache=no`, and `test_no_shader_cache_is_written` runs pvj-render with an empty cache folder and finds no `mpv` there (it found one without the option). (Low) `mpv_request_log_messages` now comes right after `mpv_create` on every core, so an error while the text core's window is made reaches the journal. (Low) the slow-start hook is compiled only with `make TEST_HOOKS=1`: CI builds the box's way first (every warning an error), then with the hooks for the tests; the box's own build (install.sh's `make`) has none, `pvj-render --version` says "(with test hooks)" when it has them, and under PVJ_RENDER_TEST=1 the slow-start test fails on a build without them rather than passing without judging.
 - **Not tested:** the real mpv 0.40 and 0.37 (CI runs them), and the Pi. On the Pi the same start race can leave a New-renderer start with no masks and no PIN text until pvj-render restarts; not seen there, and not claimed.
 
+## 2026-10-23, classic frozen and the gates for the New renderer (D105)
+
+- **Decided (D105):** classic mpv gets fixes only; new picture features go to pvj-render only; pvj-render becomes the default on a Pi 4 and up after five gates (soak, fallback, everyday parity, decoding, real use).
+- **The owner's words:** "I would rather you and the agents work through all bugs and issues to ensure the system runs smoothly and efficiently." He will connect a spare monitor or TV to the test node for the soak, and gave a standing yes for deploys of reviewed, green master to the test node during this push.
+- **Next:** the bug sweep, then gates 1 and 2, then phase 3.
+
 ## 2026-10-21, sources and the mapping fix on the node (D101, #158; rows SO1 to SO9)
 
 - **#158 on the Pi (2026-10-20, deployed e645760 with the owner's word):** the owner's own mapping on the X27 at 1024 x 768, its quad on source 1 and triangle on source 2, then both on source 1. The quad shows on top again in the node's capture and on the webcam; before #158 it was pure black (the quad sign, D28). Two sources plus the mapping: 63.6 flips a second, 17 missed vblanks in 30 s, the box 75 percent busy. The projector was on about 2 minutes.
