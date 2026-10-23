@@ -4,6 +4,12 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-23, bug sweep 2 (D105): the Pi's mpv job without its whole suite
+
+- **What was wrong:** the ndi-mpv job's last step, the whole suite on mpv 0.40 "for information", timed out on every run: 12 of 12 runs read were stopped at 2,100 s (1,053 and 1,205 tests done in the two logs counted, no failure among them). It decided nothing and kept a required check waiting about 35 minutes more.
+- **Done:** the step and the rollback list only it used are removed; the job's limit is 35 minutes (about sixteen without it). `tests/test_ci_shard.py`: the old check that the two lists match is replaced by one that the job runs no whole suite (break-check: master's workflow fails it). DECISIONS: an addendum to D104.
+- **Not done:** no new step for the remaining real-mpv modules on 0.40 (masks, picture, player, server, sound sources, sync, system info). That would be a new deciding gate never run there; a candidate for later if a 0.40-only fault is suspected in one of them.
+
 ## 2026-10-21, sources and the mapping fix on the node (D101, #158; rows SO1 to SO9)
 
 - **#158 on the Pi (2026-10-20, deployed e645760 with the owner's word):** the owner's own mapping on the X27 at 1024 x 768, its quad on source 1 and triangle on source 2, then both on source 1. The quad shows on top again in the node's capture and on the webcam; before #158 it was pure black (the quad sign, D28). Two sources plus the mapping: 63.6 flips a second, 17 missed vblanks in 30 s, the box 75 percent busy. The projector was on about 2 minutes.
