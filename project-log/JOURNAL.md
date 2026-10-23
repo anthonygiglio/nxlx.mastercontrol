@@ -4,6 +4,12 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-23, bug sweep 4 (D105): three small findings of the review of #158
+
+- **(a) The sources' buffers back to mpv's own:** `OwnersMappingTest.test_the_mappings_stretch_and_buffers_reach_every_source` now also sets `fbo-format` back to "auto" (as `Player.set_mapping_mode` does with the mapping off) and asks sources 2 to 4 for it. Break-check: with `fbo-format` taken out of pvj-render's list of properties sent on to the sources, it fails.
+- **(b) A quad whose horizon passes through the screen's origin:** `mapper.homography` fixed h[8] at 1, but h[8] is w at the origin, so for such a quad the solve was singular and said "the corners are in a line", which they were not (seen with (400, 200) (700, 400) (1000, 800) (700, 550), whose vanishing points are both on y = x). It now tries h[8] = 1 first, exactly as before, and only when that is singular fixes another entry and divides by the largest; a "solution" that sends a corner to infinity (corners truly in a line) is still refused with the same words. Every quad that worked keeps its numbers: 400 random convex quads give the same floats both ways in a test, and 300 random mappings of one to three quads (random textures) give byte-identical direct shaders and warp tables against master's mapper.
+- **(c) The number of sources on the panel:** the renderer card (System > Screen output, full access only, as `/api/renderer` is) has a "Sources (new only)" choice: Automatic (the board's default) or 1 to the board's cap, sent with "Use this" as `sources` and applied with the same confirm and restart as the renderer and its detail. Panel test: the choices, the words, and the body sent (answered in the test, so the harness's player is not restarted).
+
 ## 2026-10-21, sources and the mapping fix on the node (D101, #158; rows SO1 to SO9)
 
 - **#158 on the Pi (2026-10-20, deployed e645760 with the owner's word):** the owner's own mapping on the X27 at 1024 x 768, its quad on source 1 and triangle on source 2, then both on source 1. The quad shows on top again in the node's capture and on the webcam; before #158 it was pure black (the quad sign, D28). Two sources plus the mapping: 63.6 flips a second, 17 missed vblanks in 30 s, the box 75 percent busy. The projector was on about 2 minutes.
