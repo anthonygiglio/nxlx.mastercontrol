@@ -579,6 +579,10 @@ The NDI PipeReuseTest failed on CI's busy runners for weeks, called a "known fla
 
 The black or dim source looked like a timing fault for days: it came in about half of fresh processes and then stayed for the life of the process. It was a table built once per process from memory nobody had cleared. Switching one option at a time (the scaler, then its radius) showed the pattern: only 6-tap kernels failed, 4 and 8 never. That pointed at the one place where 6 is padded to 8. When a fault is "per process, about half the time, then forever", suspect a value computed once from uninitialised data before suspecting threads, and vary sizes and options before timings.
 
+## A step "for information" that nobody reads is only a cost (2026-10-23)
+
+The ndi-mpv job's whole suite ran with continue-on-error for eleven days. It never once finished, its log was never read, and every PR waited 35 minutes for it, because a green check hid it. A step that may fail without failing the job needs an owner who reads it and a date to decide; without both, remove it or make it decide.
+
 ## A flake that never happens here may be a version that is not here (2026-10-23)
 
 The text-layer flake could not be made to happen on this PC in 140 runs under load, because its mpv is 0.41 and the fault is in 0.40 and older: there a `force-window` turned on while idle does nothing, and 0.41 quietly fixed that. Reading mpv's sources of the two versions side by side found it, and a libmpv built here with the one changed line taken out failed the CI way. When a flake shows on one CI job only, list what that job has that this machine has not (Debian's mpv 0.40, Ubuntu 24.04's 0.37) before stressing timing, and when the difference is a library, diff its versions.

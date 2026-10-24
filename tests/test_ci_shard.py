@@ -88,15 +88,20 @@ class Workflow(unittest.TestCase):
         self.assertNotIn("discover", self.unit, "a part runs its own modules, not the whole suite")
         self.assertIn("fail-fast: false", self.unit)
 
-    def test_the_unit_job_fetches_every_rollback_commit_the_pis_mpv_job_does(self):
-        # Two lists of the same commits: a rollback test that finds its commit missing fails (master after #152).
-        ndi = job(self.y, "ndi-mpv")
-        ndi = ndi[ndi.index("- name: The releases the rollback tests read"):]
-        ndi = ndi[:ndi.index("\n      - name:")]
-        self.assertGreater(len(fetched(ndi)), 10)
-        self.assertEqual(fetched(self.unit), fetched(ndi))
+    def test_the_unit_job_fetches_the_rollback_commits_and_master_before_its_part(self):
+        # a rollback test that finds its commit missing fails (master after #152)
+        self.assertGreater(len(fetched(self.unit)), 10)
         self.assertRegex(self.unit, r"git fetch --depth=1 origin \+master:refs/remotes/origin/master")
         self.assertLess(self.unit.index("origin/master"), self.unit.index("python tools/ci-shard.py"))
+
+    def test_the_pis_mpv_job_runs_no_whole_suite(self):
+        # Its whole suite "for information" never finished (12 of 12 runs stopped at 2,100 s a third of the way) and
+        # made a required check 35 minutes longer (2026-10-23). The unit parts run every module; that job runs named
+        # steps, so it needs no list of rollback commits either.
+        ndi = job(self.y, "ndi-mpv")
+        self.assertNotIn("discover", ndi)
+        self.assertNotIn("The releases the rollback tests read", ndi)
+        self.assertNotIn("continue-on-error", ndi)
 
     def test_the_required_checks_wait_for_every_part_and_fail_when_one_did_not_pass(self):
         gate = job(self.y, "test")

@@ -187,10 +187,14 @@ jobs:
     # No systemd here (that stays in real-install): the helper's real code with the stand-in for NDI's library, a real
     # pipe, the panel's real Api, and a real mpv started by the real Player (tests/test_ndi_mpv.py). The container is
     # x86_64, not a Pi: the same mpv release, not the same processor, GPU or sound.
+    # Until 2026-10-23 a last step ran the whole suite here "for information". It never finished: in 12 of 12 runs
+    # read it was stopped at its 2,100 seconds a third of the way through (1,053 and 1,205 of about 3,350 tests), it
+    # decided nothing, and it made this required check about 35 minutes longer. The unit parts run every module; the
+    # steps here run what the Pi's mpv must be judged on. A new test that needs the Pi's mpv gets a step of its own.
     name: "ndi-mpv (Debian 13, the Pi's mpv)"
     runs-on: ubuntu-24.04
     container: debian:trixie
-    timeout-minutes: 60
+    timeout-minutes: 35       # about sixteen
     env:
       DEBIAN_FRONTEND: noninteractive
     steps:
@@ -217,17 +221,6 @@ jobs:
             "mpv v0.40."*|"mpv 0.40."*) echo "the Pi's release of mpv" ;;
             *) echo "::error::this job is for mpv 0.40.x (the Pi, Debian 13) and apt gave: $said"; exit 1 ;;
           esac
-      - name: The releases the rollback tests read (the same list as the unit job's, which tests/test_ci_shard.py holds; each test finds its commit whatever master's depth)
-        run: |
-          git config --global --add safe.directory "$PWD"
-          for c in b62f203a5c45fc0c20386a8ab476ad3d7b511736 b7864886e53e850f6df057c6e12ad144fd077935 106d77ffaa9f5ee213ae1fd4eecb15d5804a3cc5 \
-                   f36f8f0d040a35a6ecc72fb8a1001273b7f7ba0d 33e7eb419eb1b26b08618dd54b3e1481d4b60f0e 0648db6b014db99ee890fc931353ea861fe41d7f \
-                   1ed58bcbb5acf8b1b4122b40c3f480b186957f8d 9ca9cbf71bce6258813c18b3d4c87fd8cda46397 5a3a1c6c593cb387706afa488c5eeb79923860e3 \
-                   6e0145b6ffe8a9df68804f149055d1acca949470 6713348485e7790a2383f91381e37e57cec812fe 1a6484b835f0494b0e80ec7972f9b9d272478d01 \
-                   06d10674578b3178a6783845160279aa31f96311; do
-            git fetch --depth=1 origin "$c"
-          done
-          git fetch --depth=1 origin +master:refs/remotes/origin/master
       - name: An account without privileges for the tests (in a container the job is root, and tests of refusals need not to be)
         run: |
           useradd --create-home ci
@@ -301,18 +294,6 @@ jobs:
           fi
           grep -E "^SYNC " /tmp/stuck/out.txt | cut -c1-400 || true
           exit "$bad"
-      - name: The whole suite on this mpv, for information (it may fail for reasons of the container; its result does not decide the job until a run was read)
-        # First run 2026-10-12 (Python 3.13, mpv 0.40, no rollback commits fetched): it did not finish. After 35 minutes
-        # it stood in a test server's shutdown, with 2,751 tests passed, 6 errors and 2 failures whose names were not
-        # printed. So it runs with -v now, to name them; it still does not decide the job.
-        continue-on-error: true
-        timeout-minutes: 40
-        run: |
-          start="$(date +%s)"
-          code=0
-          su ci -c "timeout -s ABRT 2100 python3 -X faulthandler -m unittest discover -s tests -t . -v" || code=$?
-          echo "THE WHOLE SUITE ON $(mpv --version | head -n 1): exit $code after $(( $(date +%s) - start )) seconds"
-          exit "$code"
 
   pvj-render:
     # The box's own renderer (render/, D95): built with every warning an error, then run for real, headless (EGL
