@@ -270,7 +270,7 @@ class Numbers(Repo):
     def test_a_number_in_decisions_md_is_taken(self):
         self.journal()
         self.write("decisions/D2-again.md", "## D2. Again (2026-10-24)\n")
-        bad = self.assertRefused("D2 is already taken on master (project-log/DECISIONS.md). Take the next free "
+        bad = self.assertRefused("D2 is already taken on the base branch (project-log/DECISIONS.md). Take the next free "
                                  "number, D4")
         self.assertTrue(any("D2 is used more than once" in b for b in bad))
 
@@ -286,7 +286,7 @@ class Numbers(Repo):
         self.assertEqual(plog.tree_problems(self.root, TODAY), [])
         bad = plog.diff_problems(self.root, "master")
         self.assertEqual(len(bad), 1, bad)
-        self.assertIn("project-log/decisions/D4-mine.md: D4 is already taken on master "
+        self.assertIn("project-log/decisions/D4-mine.md: D4 is already taken on the base branch "
                       "(project-log/decisions/D4-theirs.md). Take the next free number, D5", bad[0])
 
     def test_two_files_of_one_number_are_refused_on_the_tree_alone(self):
@@ -409,7 +409,136 @@ class Starting(Repo):
         plog.main(["p", "new", "journal"], root=self.root, today=TODAY, out=io.StringIO())
         err = io.StringIO()
         self.assertEqual(plog.main(["p", "new", "journal"], root=self.root, today=TODAY, out=io.StringIO(), err=err), 2)
-        self.assertIn("is there already: add to it", err.getvalue())
+        self.assertIn("is there already: this branch started it, so add to it", err.getvalue())
+
+
+class Renumbering(Repo):
+    """Two pull requests took D4 and both merged: master has D4 twice, and the fix moves one to D5."""
+
+    def setUp(self):
+        super().setUp()
+        git(self.root, "checkout", "-q", "master")
+        self.write("decisions/D4-one.md", "## D4. One (2026-10-24)\n")
+        self.write("decisions/D4-two.md", "## D4. Two (2026-10-24)\n")
+        self.commit("both merged")
+        git(self.root, "checkout", "-q", "-B", "work")
+        self.journal()
+
+    def test_moving_one_to_the_next_number_under_the_same_name_passes(self):
+        self.assertRefused("D4 is used more than once")
+        git(self.root, "mv", "project-log/decisions/D4-two.md", "project-log/decisions/D5-two.md")
+        self.write("decisions/D5-two.md", "## D5. Two (2026-10-24)\n")
+        self.assertGood()
+        self.commit()
+        self.assertGood()
+
+    def test_deleting_it_alone_or_under_another_name_is_refused(self):
+        os.remove(self.path("decisions/D4-two.md"))
+        self.assertRefused("project-log/decisions/D4-two.md was deleted. It was written by an earlier")
+        self.write("decisions/D5-other.md", "## D5. Two (2026-10-24)\n")
+        self.assertRefused("project-log/decisions/D4-two.md was deleted. It was written by an earlier")
+
+    def test_a_number_the_base_has_once_is_not_moved(self):
+        os.remove(self.path("decisions/D3-earlier.md"))
+        self.write("decisions/D6-earlier.md", "## D6. An earlier decision (2026-10-23)\nWhy: three.\n")
+        self.assertRefused("project-log/decisions/D3-earlier.md was deleted. It was written by an earlier")
+
+
+class BranchFromBeforeD107(Repo):
+    """A branch left master before the pointers came; master then took another old-style entry and the pointers."""
+    POINTERS = False
+
+    def setUp(self):
+        super().setUp()
+        git(self.root, "checkout", "-q", "master")
+        self.write("JOURNAL.md", HEAD + OLD["JOURNAL.md"].replace("## 2026-10-02", "## 2026-10-03, another old "
+                                                                  "pull request\n\n- three\n\n## 2026-10-02"), head=False)
+        self.commit("an old-style entry")
+        for name in OLD:
+            self.write(name, with_pointer(self.text(name)), head=False)
+        self.commit("D107")
+        git(self.root, "checkout", "-q", "work")
+
+    def test_its_own_entry_in_the_old_file_is_refused_with_the_words_for_moving_it(self):
+        self.journal()
+        self.write("JOURNAL.md", HEAD + OLD["JOURNAL.md"].replace("## 2026-10-02", "## 2026-10-24, mine\n\n- m\n\n"
+                                                                  "## 2026-10-02"), head=False)
+        bad = self.assertRefused("project-log/JOURNAL.md was edited. Since D107 it is history")
+        self.assertTrue(any('"An open pull request from before D107" in project-log/README.md' in b for b in bad))
+        self.assertFalse(any("LESSONS.md" in b or "DECISIONS.md" in b for b in bad), bad)   # untouched: not flagged
+        self.assertFalse(any("Only the pointer" in b for b in bad), bad)
+
+    def test_in_the_middle_of_merging_master_the_base_branchs_files_pass(self):
+        self.journal()
+        self.commit()
+        git(self.root, "merge", "-q", "--no-commit", "--no-ff", "master")
+        self.assertGood()
+        git(self.root, "commit", "-q", "-m", "merged")
+        self.assertGood()
+
+    def test_after_merging_master_and_moving_the_entry_it_passes(self):
+        self.write("JOURNAL.md", HEAD + OLD["JOURNAL.md"].replace("## 2026-10-02", "## 2026-10-24, mine\n\n- m\n\n"
+                                                                  "## 2026-10-02"), head=False)
+        self.commit("old style")
+        subprocess.run(("git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "merge", "-q", "master"),
+                       cwd=self.root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)  # it conflicts
+        git(self.root, "checkout", "master", "--", "project-log/JOURNAL.md", "project-log/LESSONS.md",
+            "project-log/DECISIONS.md")
+        self.journal()
+        self.assertGood()
+
+
+class EarlierName(Repo):
+    def test_new_says_an_earlier_pull_request_wrote_the_file_and_gives_a_name(self):
+        git(self.root, "checkout", "-q", "master")
+        self.write("journal/2026-10-24-work.md", "## 2026-10-24, an earlier work branch\n\n- done\n")
+        self.commit("earlier")
+        git(self.root, "update-ref", "refs/remotes/origin/master", "master")
+        git(self.root, "checkout", "-q", "work")
+        for merged in (False, True):
+            if merged:
+                git(self.root, "merge", "-q", "master")
+            err = io.StringIO()
+            self.assertEqual(plog.main(["p", "new", "journal"], root=self.root, today=TODAY, out=io.StringIO(),
+                                       err=err), 2)
+            self.assertIn("an earlier pull request wrote it. Give a NAME of your own, e.g. "
+                          "`python3 tools/project-log.py new journal work-2`", err.getvalue())
+        self.assertEqual(plog.main(["p", "new", "journal", "work-2"], root=self.root, today=TODAY,
+                                   out=io.StringIO()), 0)
+
+
+class Hostile(Repo):
+    @unittest.skipIf(os.name == "nt", "a carriage return in a file name")
+    def test_a_name_with_a_carriage_return_cannot_forge_an_annotation(self):
+        self.journal()
+        name = "2026-10-24-x\r::error::forged.md"
+        self.write("journal/" + name, "## 2026-10-24, x\n")
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}):
+            self.assertEqual(plog.main(["p", "check", "--base", "master"], root=self.root, today=TODAY, out=out), 1)
+        text = out.getvalue()
+        self.assertNotIn("\r", text)
+        self.assertIn(repr("project-log/journal/" + name), text)
+        lines = text.splitlines()
+        self.assertFalse([l for l in lines if l.startswith("::error::forged")], lines)
+        self.assertEqual(len([l for l in lines if l.startswith("::error::")]), len(lines) - 1, lines)
+
+    def test_a_control_character_in_any_problem_is_never_printed(self):
+        out = io.StringIO()
+        with mock.patch.object(plog, "tree_problems", return_value=["a\rb\x1b[2Jc\nd"]), \
+                mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}):
+            plog.main(["p", "check"], root=self.root, today=TODAY, out=out)
+        self.assertEqual(out.getvalue().splitlines()[0], "::error::a b [2Jc d")
+
+    def test_a_file_that_is_not_utf8_is_said_in_words(self):
+        self.journal()
+        os.makedirs(self.path("lessons"))
+        with open(self.path("lessons/2026-10-24-work.md"), "wb") as f:
+            f.write(HEAD.encode() + b"## A lesson (2026-10-24)\n\nCaf\xe9, in Latin-1.\n")
+        bad = self.assertRefused("project-log/lessons/2026-10-24-work.md: it is not UTF-8 text")
+        self.assertEqual(len(bad), 1, bad)
+        for what in ("lessons", "journal", "decisions"):
+            self.assertEqual(plog.main(["p", what], root=self.root, out=io.StringIO()), 0, what)
 
 
 class TheRealLog(unittest.TestCase):
@@ -426,16 +555,18 @@ class TheRealLog(unittest.TestCase):
             self.assertEqual(len(plog.POINTER.findall(text)), 1, name)
             self.assertIn("D107", plog.POINTER.search(text).group(0), name)
 
-    def test_the_printed_journal_and_decisions_hold_every_old_entry_unchanged(self):
+    def test_the_printed_journal_and_decisions_hold_every_old_entry_byte_for_byte(self):
         for name, printed in (("JOURNAL.md", plog.print_journal(REPO)),
                               ("DECISIONS.md", plog.print_decisions(REPO)[0])):
             with open(os.path.join(REPO, "project-log", name), encoding="utf-8") as f:
-                old = plog.sections(plog.body(f.read()))[1]
-            joined = "\n".join(printed)
+                raw = f.read()
+            old = plog.sections(plog.body(raw))[1]
+            joined = plog.joined(printed)
             self.assertGreater(len(old), 100, name)
             for head, text in old:
-                # Every byte of every entry, but for the blank lines at its end (the printing makes them one).
-                self.assertIn(text.rstrip("\n") + "\n", joined, "%s: %s" % (name, head))
+                self.assertIn(text, joined, "%s: %s" % (name, head))
+            if name == "JOURNAL.md":                # the old entries all together: the file's own bytes
+                self.assertIn(raw[raw.index("\n## ") + 1:].rstrip("\n"), joined, name)
 
     def test_d107_is_a_file_and_the_number_greps(self):
         found = subprocess.run(["grep", "-rl", "D107", os.path.join(REPO, "project-log")], stdout=subprocess.PIPE,
@@ -448,6 +579,9 @@ class Workflow(unittest.TestCase):
         with open(os.path.join(REPO, ".github", "workflows", "project-log.yml"), encoding="utf-8") as f:
             y = f.read()
         self.assertIn("types: [opened, synchronize, reopened, labeled, unlabeled]", y)
+        self.assertIn("  push:\n    branches: [master]\n", y)  # a number taken twice shows red on master at once
+        self.assertIn("if: github.event_name == 'push'\n        run: python3 tools/project-log.py check\n", y)
+        self.assertIn("if: github.event_name == 'pull_request'", y)
         self.assertIn("\n    name: project-log\n", y)           # the check's name, for the ruleset
         self.assertIn("fetch-depth: 2", y)                       # HEAD^1, master's tip under GitHub's test merge
         self.assertIn("python3 tools/project-log.py check --base HEAD^1 $NO_JOURNAL", y)
