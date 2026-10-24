@@ -513,6 +513,7 @@ def translate_native(parsed, values=None, controls=None):
     values = S.clean_values(parsed, values)
     c = L.clean_fx_controls(controls)
     lines = ["//!PVJ 1", "//!KIND filter", "//!CLOCK %d" % (1 if parsed.get("clock") else 0), "//!LINE %d" % parsed["line"]]
+    lines += S.native_passes(parsed)
     lines += S.native_inputs(parsed, values)
     lines += ["//!CONTROL amount %s" % S._f(c["amount"]), "//!CONTROL speed %s" % S._f(c["speed"]), "//!CODE", parsed["code"], ""]
     return "\n".join(lines)
@@ -1017,11 +1018,14 @@ class Effects(S.Engine):
 
     # -- the library --
     def read(self, data):
-        return S.parse(data, S.FILTER)
+        return S.parse(data, S.FILTER, passes=S.player_native(self.api.player))
 
     def check_upload(self, data):
         parsed = self.read(data)
-        translate(parsed)
+        if parsed.get("targets") or parsed.get("plan", [None]) != [None]:
+            translate_native(parsed)
+        else:
+            translate(parsed)
         e = estimate(parsed)
         if not e["sure"]:
             raise ShaderError("%s. The box takes a filter only when its work for one pixel can be counted from its text" % e["why"])
