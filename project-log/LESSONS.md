@@ -4,6 +4,10 @@
 
 Append new lessons at the bottom. Format: what happened, what we do now.
 
+<!-- log-fragments: pointer -->
+**Since 2026-10-24 (D107) a new lesson goes in a file of its own in [lessons/](lessons/), one file a pull request. This file is the history before that and is not edited again.** Read every lesson as one, this file first and then the new ones, oldest first, with `python3 tools/project-log.py lessons`. How to write one: [README.md](README.md).
+<!-- /log-fragments: pointer -->
+
 - **An archive extractor stripped `../evil` as if it were a top folder.** Found by a test. Validate the raw member name before stripping anything.
 - **A rotation of 45 degrees was accepted, then the panel reported "player down".** Validate values at the API (only 0, 90, 180, 270), not only in the player.
 - **The server dropped connections on unexpected exceptions.** Added a catch-all 500, and made responses tolerate a client that vanished.
