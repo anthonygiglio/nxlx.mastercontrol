@@ -768,6 +768,40 @@ Uploads of ISF files with PASSES (a feedback trail effect and a two-pass blur; a
 | FX20 | Projection mapping > Sources on the New renderer, from a phone and a laptop: an effect on Source 2 (On, its amount, Off), a shader played to Source 3 from its Shader row | The quads change as the card says; the rows fit at 390 px | Yes or no, and a screenshot if a row overruns |
 | FX21 | With a shader on Source 2, Shaders > Picture detail to another height; then upload a new version of that shader (replace) | Source 2's shader drawn again each time, at the new detail and from the new file, with its values | Yes or no |
 
+### Run on the test node, 2026-10-24 (FX11 to FX21, SK1)
+
+One projector session on the owner's test Pi 4 with the X27. The script was `nxlx_shared/scripts/phase3_session.py`, run by the coordinator. The results are in `measurements/2026-10-25-phase3/run-20261024-160437/` (results.json, session.log, pixel captures, webcam photos).
+
+**The setup.** The New renderer, detail auto, at the mapping's 1024 x 768 screen, with a 2 x 2 mapping of quads on Sources 1 to 4. The clips were 720p H.264, decoded in software. Effects worked at 720 x 540 and generators at 960 x 720 (Automatic). The projector was on 62.0 minutes and is now in standby. Everything was put back as found.
+
+**What was not read.** The GPU's share: the run has no GPU counter. FX1 to FX10 and SK2 were not part of this session. FX20 ran through the API only, not on a phone or a laptop, so the rows were not seen at 390 px.
+
+| # | Result | Numbers |
+| --- | --- | --- |
+| FX11 | Ran. Every slot "on", no effect dropped a run. Effects on all four sources cost about a quarter of the frame rate | 4 clips plain: 58.3 flips/s, 207 missed in 122 s, pvj-render 297% of one core, the box 79%. fx-grade on all 4: **42.7 flips/s**, 2115 missed in 122 s, pvj-render 312%, the box 83%, 78.9 passes/s, each slot about 30 runs/s |
+| FX12 | Ran. A chain of 3 on Source 2 and fx-grade on Sources 1, 3, 4 | **32.3 flips/s**, 1715 missed in 62 s, pvj-render 323%, the box 87%, 121.8 passes/s; no drops in any slot (slots 2 and 3 at about 31 runs/s) |
+| FX13 | Passed | Capture mean 86.2 before, **0.0 under Blackout**, 52.6 after Fade in |
+| FX14 | Passed | The Stop left no chain on Source 2; the clip played again plain |
+| SK1 | Passed for 44 minutes (not the 2 hours of the row) | **RSS flat at 586 to 589 MB** (about 875 MB and climbing before #169); 58.8 to 58.9 flips/s, about 1.2 missed vblanks/s (328 to 371 per 5 minutes); fds 24 to 26, threads 83 to 86, GL objects 26; 58 to 60 C; the box 78 to 80%, pvj-render 296 to 299% of one core; memory available about 2.97 GB |
+| FX15 | Ran. Slot 1 "on" (not "8-bit"), no drops | A feedback trail over a 720p clip: **55.2 flips/s**, 299 missed in 62 s, 46.5 passes/s, pvj-render 313% |
+| FX16 | Ran. No program was refused; a few drops | A two-pass blur generator: **59.4 flips/s at 540** (720 x 540, 8 drops in 47 s) and **59.2 at 720** (960 x 720, 11 drops) |
+| FX17 | Passed | Classic listed each upload with passes as "it draws in several passes (PASSES), which is not supported on classic mpv (the New renderer draws it: System > Screen output)" |
+| FX18 | Ran | One shader (nxlx-silk) on Source 2 at 960 x 720, a 720p clip on Source 1: **59.4 flips/s**, 39 missed in 62 s, 10 drops |
+| FX19 | Ran, and did not hold | Shaders on Sources 2 to 4 (silk, bars, tiles) at 960 x 720: **50.5 flips/s**, 867 missed in 92 s, **545 to 570 drops per shader** in 92 s (about one run in five); pvj-render only 51% of one core, the box 15% |
+| FX20 | Passed through the API (the calls the Sources card makes) | Effect on, amount 0.4, off, a shader to Source 3: every call 200, the state as sent |
+| FX21 | Passed | Source 2's shader was built again on the change of Picture detail and on the replaced upload, with its value (level 0.8) kept |
+| Budget | **Not proven** | All 11 chain slots took the large float-buffer effect with no refusal: at 720 x 540 the 11 programs stay under 192 MB. Proving the refusal needs a larger working size or a larger buffer |
+
+**What it means.**
+- **Effects or shaders on all four sources at once cost a quarter to almost half the frame rate on a Pi 4.** Four effects took 58.3 down to 42.7; a chain of 3 plus three effects took it to 32.3; three generators on Sources 2 to 4 took it to 50.5 and dropped about one run in five. One program on one source costs little: FX15, FX16 and FX18 held 55 to 59.
+- **Most likely GPU-bound, not proven.** With four clips decoding, the CPU sat at 79% of the box and rose only to 83 to 87% with the effects, while the frame rate fell by a quarter to a half. In FX19 the CPU was at 15% of the box and the shaders still dropped about one run in five (545 drops against 2450 runs on Sources 3 and 4). Nothing measured the GPU itself, so this is read from the CPU staying flat, not from a GPU counter.
+- **For D108's spike.** The program pass draws the whole picture every frame, where an effect here ran about 30 times a second. So expect it to cost at least what one effect costs, not less. Two decks decode two clips, not four, which leaves the CPU room; the GPU is the limit to measure. The spike should therefore measure, at 540 and at 720:
+  - deck B decoding while deck A crossfades and the program pass runs, as planned;
+  - the same with one effect on each deck.
+
+  Skipping the pass when nothing changed matters more than the design said.
+- **For the effects' cost estimate.** It judges one program alone (light, medium, heavy), and every program here was light enough alone. What lost frames was several at once. So a warning needs a box-wide count. One option is the passes a second the renderer already reports (`fx-passes-per-second`), weighted by each program's area. The box would warn as D101's source warning does. From this one run, about 80 passes a second of a light effect at 720 x 540 (four fx-grade) already cost a quarter of the frames on a Pi 4; a threshold needs more than one run to set.
+
 ### What to send back
 
 The output of checks 1 to 7 and 13, the `journalctl` tail for anything that failed, and a note of what you saw on screen. Say clearly what you did **not** test.
