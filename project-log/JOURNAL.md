@@ -4,6 +4,14 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-23, bug sweep 3 (D105): the screen-mode warning after a projector warms up
+
+- **The fault (seen 2026-10-21 on the X27):** "1024 x 768 at 60 Hz did not start on this screen, so the screen's own mode is used", `used` null, and then the picture drew fine. That sentence is written by the player's `decide` when this boot's skips hold the arguments. The skip came from the panel's look: the player given the mode had no screen after 6 s, so the mode was barred for the boot after one failure. The projector, still warming, said it was connected before it could take a mode.
+- **Done (pvj/screenmode.py):** the first failure of a set of arguments waits for the screen to keep still (connected, its status and modes unchanged for 4 s; at most 30 s) and tries the same arguments once more; only a second failure bars them. The status is `used` null with "did not start yet; it is tried once more when the screen keeps still" while it waits, and the page's note says when the second try worked. D90 to D92's choices are unchanged. DECISIONS: an addendum to D90 and D92.
+- **Tests:** a fake player that fails the first try only (`test_a_projector_that_wakes_up_late_gets_its_mode_on_the_second_try`), a screen that never keeps still, a mode that fails twice, and the two-thread look; the existing tests that expected a verdict at the first failure now go through the second try. With the second try taken out six tests fail. `tests.test_screenmode tests.test_renderer tests.test_transport`: OK.
+- **The review of #164 (two Medium, two Low), mended in the same PR:** a mode chosen during the wait was spoken of as the one that waited (the second try is now tied to its arguments and dropped by a choice, an import or a going back); a second warm-up in the same boot went straight to the skip (a good second try now clears its mark); the words said "settled" after a time-out (they now say which); and the first failure put the same sentence on the page twice (the note is now for results only). A test for each, each failing on the reviewed head. Cost, plainly: a mode that truly cannot start now costs one more dark start, about 4 to 30 seconds more, once per boot per set of arguments.
+- **Not tested:** the Pi and the X27. Whether the X27 really settles in its sysfs modes is not known; SETTLE_MAX bounds the wait either way.
+
 ## 2026-10-23, bug sweep 4 (D105): three small findings of the review of #158
 
 - **(a) The sources' buffers back to mpv's own:** `OwnersMappingTest.test_the_mappings_stretch_and_buffers_reach_every_source` now also sets `fbo-format` back to "auto" (as `Player.set_mapping_mode` does with the mapping off) and asks sources 2 to 4 for it. Break-check: with `fbo-format` taken out of pvj-render's list of properties sent on to the sources, it fails.
