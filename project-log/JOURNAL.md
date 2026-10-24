@@ -4,6 +4,12 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-24, two findings of the 2-hour soak on the Pi (D105 gate 1, D106)
+
+- **Memory:** sources 2 to N and the text core get a small demuxer cache (32 MiB ahead, 16 behind) instead of mpv's 150 and 50; source 1 keeps mpv's own (streams and NDI need it, and the player sets it). The soak had grown from 340 to about 875 MB in an hour with 4 sources at 720p.
+- **Re-arm:** choosing New again while the report says classic took over restarts the player, which tries pvj-render again.
+- **Tests:** `SourcesTest.test_sources_2_to_n_have_a_small_demuxer_cache_and_source_1_mpvs_own`, `PanelTest.test_choosing_new_again_after_a_fall_back_tries_pvj_render_again`; both break-checked. **To measure on the Pi:** row SK1.
+
 ## 2026-10-24, the review of #168 (D106 step b), fixed on its branch
 
 - **Medium:** Stop and Off send a clear for every slot asked, so an effect whose load had no word (a slow build) comes off too. **Medium:** an idle source (and source 1 with nothing on) runs no effect over its black.

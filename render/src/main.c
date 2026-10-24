@@ -147,6 +147,8 @@ typedef struct {
 } Layer;
 
 static Layer video[MAX_LAYERS], text;
+#define SMALL_CACHE "32MiB"
+#define SMALL_BACK "16MiB"
 
 // libmpv's GL fences. mpv 0.40 and 0.41 make a fence at the end of every mpv_render_context_render
 // (ra_gl_ctx_submit_frame, video/out/opengl/context.c) for a swap that never comes with the render API, so nothing
@@ -381,6 +383,15 @@ static int layer_open(Layer *l, int index, const Cfg *c, int w, int h)
     // The option (a flag) is in 0.37, 0.40 and 0.41 alike (the review of #162, and its CI on 0.37).
     hard(l->h, "gpu-shader-cache", "no");
     if (hard_failed) return -1;
+    // A small demuxer cache on the cores that play only local clips or nothing (the review of the 2-hour soak, D106):
+    // mpv's default holds about 150 MiB ahead and 50 MiB behind per core, and with 4 sources at 720p looping the
+    // process grew from 340 to about 875 MB in its first hour on the Pi. Sources 2 to N play clips from the media
+    // folder only (D101: never a stream or a live input's pipe), and the text core plays nothing. Source 1's two
+    // layers keep mpv's own: they play streams and NDI, and the player sets their cache itself (Player.PIPE_DEFAULTS).
+    if (is_text || index >= LAYERS) {
+        set(l->h, "demuxer-max-bytes", SMALL_CACHE);
+        set(l->h, "demuxer-max-back-bytes", SMALL_BACK);
+    }
     if (is_text) {
         // plays nothing: only its on-screen layer, over a clear background
         set(l->h, "ao", "null");
