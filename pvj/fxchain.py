@@ -108,8 +108,12 @@ class Chains:
             native = bool(self.api.player.native_chains())
         except Exception:
             native = False
-        return {"available": native and fx.enabled(), "chains": rows,
-                "slots": {s: list(self.api.player.chain_slots(s)) for s in range(1, (self.api.player.sources() if native else 1) + 1)}
+        # available: a chain can be used at all (an effect with Effects on, a shader as a source with Shaders on);
+        # "effects" and "shaders" say which (the review of #171: a generator plays with Effects off)
+        effects, shaders = fx.enabled(), self.api.shaders.enabled()
+        return {"available": native and (effects or shaders), "effects": native and effects, "shaders": native and shaders,
+                "chains": rows,
+                "slots": {s: list(self.api.player.chain_slots(s, True)) for s in range(1, (self.api.player.sources() if native else 1) + 1)}
                 if native else {}}
 
     def put(self, body):
@@ -162,7 +166,9 @@ class Chains:
     def put_generator(self, source, sid, preset=None, values=None, controls=None):
         """The generator `sid` as the whole picture of source `source` (2 to N), in slot 0, in place of its clip: the
         source's clip stops, the shader draws at the height Picture detail gives it (D93), with the preset named, else
-        the one called default, else the file's own values. Its effects (slots 1 to 3) stay on over it."""
+        the one called default, else the file's own values. Its effects (slots 1 to 3) stay on over it. The clip stops
+        only once the renderer has taken the shader (or not said in time, a slow build): a refusal leaves the clip
+        playing, never a black source (the review of #171)."""
         eng = self.api.shaders
         eng._need()
         source, _ = self._place({"source": source, "slot": 0}, generator=True)
@@ -185,16 +191,19 @@ class Chains:
         with self._lock:
             out = self._write(text)
             try:
-                self.api.player.stop_source_clip(source)        # the clip under it goes: the shader is the picture
                 verdict, message = self.api.player.chain_put(source, 0, out)
             except PlayerError as e:
                 self._seen()
                 self._cleanup()
                 raise ApiError(503, str(e))
-            if verdict == "refused":
+            if verdict not in ("ok", "unknown"):
                 self._seen()
                 self._cleanup()
-                raise ApiError(422, "the player refused %s: %s" % (sid, message))
+                raise ApiError(422, "the player refused %s: %s. What source %d played stays on." % (sid, message, source))
+            try:
+                self.api.player.stop_source_clip(source)        # the clip under it goes: the shader is the picture
+            except PlayerError as e:
+                self.api.log("pvj-web: source %d: its clip did not stop under the shader: %s" % (source, e))
             self.on[(source, 0)] = {"id": sid, "values": start, "controls": ctl, "preset": name, "path": out, "generator": True}
             self._cleanup()
         self.api.log("pvj-web: shader %s on source %d" % (sid, source))
@@ -228,9 +237,13 @@ class Chains:
 
     def generator_of(self, source):
         """The id of the shader that is source `source`'s picture, or None (as the player's record says it now)."""
+        return self.generators().get(source)
+
+    def generators(self):
+        """{source: shader id} of every source whose picture is a shader, from one look at the player's record (the
+        sources' rows ask once a request, not once a row: the review of #171)."""
         with self._lock:
-            r = self._seen().get((source, 0))
-        return r["id"] if r else None
+            return {s: r["id"] for (s, k), r in self._seen().items() if k == 0}
 
     def values(self, body):
         """{"source", "slot", "values"?, "controls"?}: new values for the effect in that slot, set while it plays."""

@@ -1375,9 +1375,10 @@ class Api:
                                                               "path": self._player_call(self.player.status).get("path"),
                                                               "height": None, "pause": False}]
         chains = getattr(self, "chains", None)
+        gens = chains.generators() if chains is not None else {}           # one look a request (the review of #171)
         out = []
         for r in rows:
-            shader = chains.generator_of(r["source"]) if chains is not None and r["source"] > 1 else None
+            shader = gens.get(r["source"]) if r["source"] > 1 else None
             # a shader that is a source's picture (D106 step d) is said by its name, as a clip is
             out.append(dict(r, path=None, name=shader or (os.path.basename(r["path"]) if r.get("path") else None),
                             idle=r["idle"] and not shader, shader=shader))
@@ -1386,8 +1387,9 @@ class Api:
     def play_to_source(self, body, k, device, client):
         """A clip, by name or by a clip pad, played on source k (2 to N): a cut, with no sound, and nothing else on the
         screen changes (source 1 plays on). The Owner's and an Operator's (a Guest's play form has no "source").
-        Anything but a clip (a shader, an NDI source, a render cue, a stream, a slideshow, the capture input) is
-        refused with plain words: in this step those play on Source 1 only."""
+        On the New renderer a shader, by name or by a shader pad, plays there too, as the source's picture (D106
+        step d). Anything else (an NDI source, a render cue, a stream, a slideshow, the capture input, and a shader
+        on classic) is refused with plain words: those play on Source 1 only."""
         for kind, words in (("preset", "a preset"), ("stream", "a stream"), ("slideshow", "a slideshow"),
                             ("capture", "the capture input"), ("ndi", "an NDI source"), ("usb_drive", "a USB drive's list"),
                             ("usb", "a clip from a USB drive")):
@@ -1412,9 +1414,27 @@ class Api:
                 raise bad("no such pad")
             held = banks[pad[0]]["pads"][pad[1]]
             if self.pad_shader(held) and native:
-                # a shader pad to Source 2 and up (D106 step d): the shader is that source's picture
+                # a shader pad to Source 2 and up (D106 step d): the shader is that source's picture. A pad whose
+                # preset is gone plays with the shader's own start and says so, as on Source 1 (_play_shader_pad)
                 self._need_source(k)
-                out = chains.put_generator(k, held.get("shader"), held.get("preset"))
+                sid, preset = self.pad_shader(held)
+                note = None
+                self.shaders._need()
+                try:
+                    self.shaders._path(sid)
+                except ApiError as e:
+                    if e.status != 404:
+                        raise
+                    raise ApiError(404, "this pad's shader, %s, is not on the box any more (deleted or renamed): choose another for the pad" % sid)
+                if preset is not None:
+                    try:
+                        preset = self._shader_preset(sid, preset)
+                    except ApiError:
+                        note = "this pad's preset, %s, is gone: the shader starts as it does by itself. Choose a preset for the pad again" % preset
+                        preset = None
+                out = chains.put_generator(k, sid, preset)
+                if note:
+                    out = dict(out, note=note)
                 self.log("pvj-web: source %d plays the shader of pad %s, by device %s (%s, from %s)"
                          % (k, pad, (device or {}).get("id"), (device or {}).get("role"), client))
                 return out
@@ -1437,9 +1457,16 @@ class Api:
         if ending == "next":
             ending = "stop"
         self._need_source(k)
-        if chains is not None and chains.generator_of(k):
-            self._player_call(self.player.chain_clear, k, 0)        # a clip takes the shader's place (D106 step d)
-        self._player_call(self.player.play_to, k, [path], ending)
+        if chains is not None:
+            # a clip takes the shader's place (D106 step d): the clip loads first and the shader comes off after it,
+            # so a cut never shows black between them, under the chains' lock so no shader goes on in between
+            with chains._lock:
+                had = (k, 0) in chains._seen()
+                self._player_call(self.player.play_to, k, [path], ending)
+                if had:
+                    self._player_call(self.player.chain_clear, k, 0)
+        else:
+            self._player_call(self.player.play_to, k, [path], ending)
         self.log("pvj-web: source %d plays %s, by device %s (%s, from %s)"
                  % (k, json.dumps(name), (device or {}).get("id"), (device or {}).get("role"), client))
         out = {"playing": name, "source": k}

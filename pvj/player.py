@@ -464,7 +464,7 @@ class Player:
         if isinstance(source, bool) or not isinstance(source, int) or not 1 <= source <= self.sources():
             raise PlayerError("this player has no source %s (it has %d)" % (source, self.sources()))
         if isinstance(slot, bool) or not isinstance(slot, int) or slot not in self.chain_slots(source, True):
-            raise PlayerError("source %d has no slot %s for an effect (it has %s)" % (source, slot, ", ".join(map(str, self.chain_slots(source)))))
+            raise PlayerError("source %d has no slot %s for an effect (it has %s)" % (source, slot, ", ".join(map(str, self.chain_slots(source, True)))))
         if not self.native_chains():
             raise PlayerError("a chain of effects needs the New renderer")
 

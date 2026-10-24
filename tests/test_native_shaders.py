@@ -952,7 +952,7 @@ class ChainApiTest(unittest.TestCase):
         st = chains.state()
         self.assertTrue(st["available"])
         self.assertEqual(st["slots"][1], [2, 3])
-        self.assertEqual(st["slots"][2], [1, 2, 3])
+        self.assertEqual(st["slots"][2], [0, 1, 2, 3])                  # slot 0: a shader as the source (step d)
         out = chains.api_post({"source": 2, "slot": 1, "id": "fx-grade.fs"}, None, None)
         self.assertTrue(out["ok"])
         slot = [s for s in self.r("get_property", "pvj-shaders") if s["source"] == 2 and s["slot"] == 1][0]
@@ -1284,6 +1284,40 @@ class GeneratorSourceApiTest(unittest.TestCase):
         from pvj.api import ApiError
         with self.assertRaises(ApiError):
             self.api.chains.api_post({"source": 1, "slot": 0, "values": {"sheen": 0.5}}, dev, "t")
+
+    def source2(self):
+        return [r for r in self.player.sources_state() if r["source"] == 2][0]
+
+    def test_a_refused_shader_leaves_the_clip_playing_and_a_taken_one_stops_it(self):
+        """The review of #171: the clip stops only once the shader is taken; a refusal never leaves the source black."""
+        from pvj.api import ApiError
+        dev = {"id": "t", "role": "full"}
+        png(os.path.join(self.server.media, "blue.png"), W, H, lambda x, y: BLUE)
+        self.api.play({"file": "blue.png", "source": 2}, dev, "t")
+        self.assertTrue(self.r.wait(lambda: not self.source2()["idle"], 3))
+        self.api.shaders.upload("broken.fs", "/*{}*/\nvoid main() { gl_FragColor = vec4(nonsense, 1.0); }\n")
+        with self.assertRaises(ApiError) as e:
+            self.api.play({"shader": "broken.fs", "source": 2}, dev, "t")
+        self.assertEqual(e.exception.status, 422)
+        self.assertIn("stays on", e.exception.message)
+        time.sleep(0.3)
+        row = self.source2()
+        self.assertFalse(row["idle"], row)                                  # the clip plays on
+        self.assertTrue(row["path"].endswith("blue.png"), row)
+        self.assertEqual({r["source"]: r for r in self.api.get_sources({}, dev, "t")["sources"]}[2]["name"], "blue.png")
+        out = self.api.play({"shader": "nxlx-silk.fs", "source": 2}, dev, "t")
+        self.assertTrue(out["ok"], out)
+        self.assertTrue(self.r.wait(lambda: self.source2()["idle"], 3))        # taken: the clip under it stopped
+        self.assertEqual(self.slot(2, 0)["state"], "on")
+
+    def test_a_shader_pad_whose_preset_is_gone_plays_with_a_note(self):
+        dev = {"id": "t", "role": "full"}
+        banks = self.api.settings.data["pads"]["banks"]
+        banks[0]["pads"][1] = {"label": "silk", "file": "", "shader": "nxlx-silk.fs", "preset": "long gone"}
+        out = self.api.play({"pad": [0, 1], "source": 2}, dev, "t")
+        self.assertTrue(out["ok"], out)
+        self.assertIn("long gone", out["note"])
+        self.assertEqual(self.slot(2, 0)["state"], "on")
 
     def test_on_classic_a_shader_to_a_source_is_refused_as_before(self):
         from pvj.api import ApiError

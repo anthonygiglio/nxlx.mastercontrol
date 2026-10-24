@@ -4,6 +4,12 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-24, the review of #171 (D106 step d), fixed on its branch
+
+- **Medium:** the source's clip stops only once the shader is taken; a refused shader leaves the clip playing. **Low:** a clip in a shader's place loads before the shader comes off, under the chains' lock; a shader pad's deleted preset plays with a note on Sources 2 and up; the sources' rows look once a request; slot 0 in the chains' state, `available` with Effects off; the panel's words.
+- **Tests:** a refused shader keeps the clip, a taken one stops it; a pad with a preset that is gone. **Break-checks (4, each caught):** the clip stopped before the shader is taken; the clip never stopped; a gone preset passed on; slot 0 left out of the state.
+- **For (e):** generators on Sources 2 to N rebuilt on an upload or a Picture detail change.
+
 ## 2026-10-24, pvj-render phase 3, step d (D106): a generator as a source
 
 - **Built:** a generator in slot 0 of any source; on sources 2 to N it is the source's picture, its clip layer idle. A shader pad or a shader by name played to Source 2 and up on the New renderer (D101 refused it), its values through the chains' API, a clip in its place, the Stop. Version 0.7.0.
