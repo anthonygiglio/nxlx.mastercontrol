@@ -568,16 +568,83 @@
     var body = h('div', { class: 'list', id: 'srclist' }, h('div', { class: 'hint', text: 'Loading...' }));
     var card = h('div', { class: 'card', id: 'mapsources' }, h('div', { class: 'k', text: 'Sources' }), body);
     var timer = null, chosen = {};          // the clip chosen for each source survives the strip's redraws
+    // The New renderer's chains (D106 step e): what each source's effect slots hold, and the libraries to choose
+    // from, asked with the strip. On classic, or a player without chains, `chain.available` is false and the strip
+    // is as it was.
+    var chain = null, lib = { effects: null, shaders: null };
+    function libraries() {
+      if (lib.effects) return Promise.resolve();
+      // (with the Shaders module off both answer with an error, and nothing is offered)
+      return Promise.all([api('GET', '/api/effects'), api('GET', '/api/shaders')]).then(function (rs) {
+        lib.effects = rs[0] && rs[0].ok ? (rs[0].data.effects || []).filter(function (x) { return !x.error; }) : [];
+        lib.shaders = rs[1] && rs[1].ok ? (rs[1].data.shaders || []).filter(function (x) { return !x.error; }) : [];
+      });
+    }
     function load() {
       clearTimeout(timer);
-      api('GET', '/api/sources').then(function (r) {
+      Promise.all([api('GET', '/api/sources'), api('GET', '/api/effects/chain')]).then(function (rs) {
+        var r = rs[0];
         if (!card.isConnected && card.dataset.shown) return;            // the page was left: nothing more is asked
         card.dataset.shown = '1';
         if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'hint', text: r.data.error || 'Not available' })); return; }
+        chain = rs[1] && rs[1].ok && rs[1].data.available ? rs[1].data : null;
         sourcesSeen(r.data);
-        keepCursor(body, function () { fill(r.data); });
+        (chain ? libraries() : Promise.resolve()).then(function () {
+          keepCursor(body, function () { fill(r.data); });
+        });
         timer = setTimeout(function () { if (card.isConnected) load(); }, 4000);
       });
+    }
+    // One effect slot of a source: the effect in it (or a choice of one), On, Off, and its amount while it is on.
+    function slotRow(k, slot) {
+      var on = (chain.chains || []).filter(function (c) { return c.source === k && c.slot === slot; })[0];
+      var id = 'srcfx-' + k + '-' + slot;
+      var pick = h('select', { class: 'text-input', id: id, 'aria-label': 'Effect ' + slot + ' of Source ' + k },
+        lib.effects.map(function (e) { return h('option', { value: e.id, text: e.name || e.id, selected: on ? on.id === e.id : e.id === chosen[id] }); }));
+      pick.addEventListener('change', function () { chosen[id] = pick.value; });
+      var row = h('span', { class: 'row', id: id + '-row' }, h('span', { class: 'k', text: slot === 1 ? 'Effect' : 'Effect ' + slot }), pick,
+        h('button', { class: 'btn small', id: 'srcfxon-' + k + '-' + slot, text: on ? 'Change' : 'On', disabled: !lib.effects.length, onclick: function () {
+          act('POST', '/api/effects/chain', { source: k, slot: slot, id: pick.value }, function () { say('Source ' + k + ': ' + pick.value + ' is on.'); load(); });
+        } }),
+        h('button', { class: 'btn small', id: 'srcfxoff-' + k + '-' + slot, text: 'Off', disabled: !on, onclick: function () {
+          act('POST', '/api/effects/chain', { source: k, slot: slot, off: true }, function () { say('Source ' + k + ': the effect is off.'); load(); });
+        } }));
+      if (on) {
+        var amt = h('input', { type: 'range', min: '0', max: '1', step: '0.01', id: 'srcfxamt-' + k + '-' + slot, 'aria-label': 'Amount of effect ' + slot + ' of Source ' + k,
+          value: String(on.controls && typeof on.controls.amount === 'number' ? on.controls.amount : 1) });
+        amt.addEventListener('change', function () { act('POST', '/api/effects/chain', { source: k, slot: slot, controls: { amount: +amt.value } }); });
+        row.appendChild(amt);
+      }
+      return row;
+    }
+    // What a source may hold beside its clip on the New renderer: a shader as its picture (Sources 2 and up), one
+    // effect, and (advanced, the owner's to see: D74 had one effect) two more after it. The box says which slots a
+    // source has (slot 0 is the shader that is its picture, never an effect) and whether Effects and Shaders are on.
+    function chainRows(k, x) {
+      var out = [], slots = (chain.slots && chain.slots[k]) || [];
+      var gen = (chain.chains || []).filter(function (c) { return c.source === k && c.slot === 0; })[0];
+      if (slots.indexOf(0) >= 0 && chain.shaders !== false && lib.shaders.length) {
+        var pid = 'srcshader-' + k, playing = gen ? gen.id : x.shader;
+        var sp = h('select', { class: 'text-input', id: pid, 'aria-label': 'Shader for Source ' + k },
+          lib.shaders.map(function (s) { return h('option', { value: s.id, text: s.name || s.id, selected: playing ? playing === s.id : s.id === chosen[pid] }); }));
+        sp.addEventListener('change', function () { chosen[pid] = sp.value; });
+        out.push(h('span', { class: 'row', id: pid + '-row' }, h('span', { class: 'k', text: 'Shader' }), sp,
+          h('button', { class: 'btn small', id: 'srcshaderplay-' + k, text: 'Play', onclick: function () {
+            playToSource({ shader: sp.value }, k, sp.value).then(load);
+          } })));
+      }
+      if (chain.effects === false) return out;            // Effects off: a shader may still be a source's picture
+      if (slots.indexOf(1) >= 0) out.push(slotRow(k, 1));
+      var after = slots.filter(function (s) { return s >= 2; });
+      if (!after.length) return out;
+      var more = h('details', { class: 'srcmore', id: 'srcmore-' + k },
+        h('summary', { text: k > 1 ? 'More effects (advanced)' : 'More effects after the Effect (advanced)' }),
+        h('div', { class: 'hint', text: k > 1 ? 'Effects run in order: Effect, then 2, then 3, each over what the one before made.'
+          : 'Source 1\'s first effect is the one under Effect. These run after it, in order.' }));
+      after.forEach(function (s) { more.appendChild(slotRow(k, s)); });
+      if ((chain.chains || []).some(function (c) { return c.source === k && c.slot >= 2; })) more.open = true;
+      out.push(more);
+      return out;
     }
     function fill(d) {
       body.textContent = '';
@@ -601,6 +668,7 @@
               act('POST', '/api/sources', { source: k, action: 'stop' }, function () { say('Source ' + k + ' stopped.'); load(); });
             } })));
         }
+        if (chain) chainRows(k, x).forEach(function (el) { row.appendChild(el); });
         body.appendChild(row);
       });
       if (d.warning) body.appendChild(h('div', { class: 'hint warn', id: 'srcwarn', role: 'status', text: 'A source plays a clip of more than 720 lines while two others play: ' + d.warning + '.' }));

@@ -1233,23 +1233,27 @@ class Engine:
         with os.fdopen(fd, "rb") as f:
             return f.read(MAX_SOURCE + 1)
 
-    def _parsed(self, path):
-        """(parsed, source bytes hash) of a file, remembered until the file changes. Raises ShaderError."""
+    def _parsed(self, path, native=None):
+        """(parsed, source bytes hash) of a file, remembered until the file changes. Raises ShaderError. `native`:
+        whether the player runs programs (passes are taken then), as the caller asked it once for the whole play;
+        None asks now (the review of #170: asked twice, a play could parse for one player and write for another)."""
+        if native is None:
+            native = bool(self.native())
         try:
             st = os.stat(path)
             hit = self._cache.get(path)
             # what a file is depends on the player too (passes on the New renderer only, D106 step c)
-            if hit is None or hit[0] != (st.st_mtime_ns, st.st_size, self.native()):
+            if hit is None or hit[0] != (st.st_mtime_ns, st.st_size, native):
                 data = self._read(path)
                 try:
-                    result = (self.read(data), hashlib.sha256(data).hexdigest())
+                    result = (self.read(data, native), hashlib.sha256(data).hexdigest())
                 except ShaderError as e:
                     result = e
                 except Exception as e:      # one file that trips the parser must not take the whole list down
                     result = ShaderError("the file could not be checked (%s)" % type(e).__name__)
                 if len(self._cache) > 4 * MAX_UPLOADS:
                     self._cache.clear()
-                hit = self._cache[path] = ((st.st_mtime_ns, st.st_size, self.native()), result)
+                hit = self._cache[path] = ((st.st_mtime_ns, st.st_size, native), result)
         except OSError as e:
             raise ShaderError("cannot read the file: %s" % (e.strerror or e))
         if isinstance(hit[1], ShaderError):
@@ -1482,7 +1486,7 @@ class Engine:
 
     NOW = object()          # for `mark`: the level's mark is taken when the shader is shown, not handed in
 
-    def show(self, sid, values=None, hue=0.0, offset=0.0, epoch=None, cut=True, controls=None, preset=None, mark=NOW, alive=None):
+    def show(self, sid, values=None, hue=0.0, offset=0.0, epoch=None, cut=True, controls=None, preset=None, mark=NOW, alive=None, native=None):
         """Put a shader on the screen. With `epoch`, only if nothing else was played since (None is returned then).
         `cut` (a preview from the panel) sets the picture's opacity like any other play; a rotation that fades by
         itself passes False. `controls` are speed, hue and brightness (see clean_controls); `preset` is only the
@@ -1496,10 +1500,10 @@ class Engine:
         if not self.enabled():
             raise ApiError(409, "turn on the Shaders and Vibes module in System first")
         path, _ = self._path(sid)
-        native = self.native()
+        native = bool(self.native()) if native is None else bool(native)    # a caller that parsed already hands in its answer
         with self._lock:
             try:
-                parsed, digest = self._parsed(path)
+                parsed, digest = self._parsed(path, native)
                 cfg = self.config()
                 size = render_size(self.screen(), self.height_for(sid, cfg))
                 carrier = carrier_url(self.screen(), cfg.get("clock", CLOCKS[0]) == "carrier")
@@ -1713,9 +1717,11 @@ class Engine:
                     pass
         return {"name": name, "size": len(data)}
 
-    def read(self, data):
+    def read(self, data, native=None):
         """A file's text, parsed as the kind this library holds; on the New renderer with its passes (D106 step c)."""
-        return parse(data, passes=True) if self.native() else parse(data)      # classic: the call it always was
+        if native is None:
+            native = self.native()
+        return parse(data, passes=True) if native else parse(data)      # classic: the call it always was
 
     def check_upload(self, data):
         """Raise ShaderError unless this file's text can be shown."""
@@ -1796,6 +1802,8 @@ class Engine:
         action = body.get("action")
         if action == "upload":
             self.upload(body.get("name"), body.get("source"), body.get("replace", False))
+            if body.get("replace"):
+                self.sources_again(body.get("name"))
         elif action == "delete":
             self.delete(body.get("id"))
         elif action == "vibes":
@@ -1816,6 +1824,14 @@ class Engine:
         else:
             raise ApiError(400, "action must be upload, delete, vibes or config")
         return self.state()
+
+    def sources_again(self, sid=None):
+        """A generator that plays as a source 2 to N (D106 step d) is built again when its file is replaced, or when
+        Picture detail changes (all of them): Source 1's shader is this engine's own, those are the chains'."""
+        chains = getattr(self.api, "chains", None)
+        if chains is None or self.KIND != GENERATOR:
+            return []
+        return chains.rebuild_generators(sid)
 
     @staticmethod
     def _config_keys(cfg, body):

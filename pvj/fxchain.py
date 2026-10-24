@@ -235,6 +235,28 @@ class Chains:
             r.update(values=vals, controls=ctl, preset=None)
             return {"ok": True, "source": source, "id": r["id"], "values": vals, "controls": ctl}
 
+    def rebuild_generators(self, sid=None):
+        """Build again the shaders that are the picture of Sources 2 to N (all of them, or those of `sid`), with the
+        values and controls they have: after an upload that replaces the file, or a change of Picture detail (the
+        review of #171; Source 1's shader is the engine's). One the renderer refuses now leaves the one before it on,
+        and the log says so. Returns the sources built again."""
+        player = self.api.player
+        if not getattr(player, "native_chains", lambda: False)():
+            return []
+        with self._lock:
+            todo = [(s, dict(r)) for (s, k), r in sorted(self._seen().items()) if k == 0 and (sid is None or r["id"] == sid)]
+        done = []
+        for s, r in todo:
+            try:
+                self.put_generator(s, r["id"], values=r["values"], controls=r["controls"])
+                with self._lock:
+                    if (s, 0) in self.on:
+                        self.on[(s, 0)]["preset"] = r["preset"]          # the same preset, built again
+                done.append(s)
+            except ApiError as e:
+                self.api.log("pvj-web: source %d: %s could not be built again: %s" % (s, r["id"], e.message))
+        return done
+
     def generator_of(self, source):
         """The id of the shader that is source `source`'s picture, or None (as the player's record says it now)."""
         return self.generators().get(source)

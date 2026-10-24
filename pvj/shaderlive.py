@@ -1686,8 +1686,9 @@ class LiveEngine(S.Engine):
         if vibes and not queued:
             vibes.yield_screen()                    # the operator chose a shader: the rotation ends
         path, _ = self._path(sid)
+        native = bool(self.native())                # asked once for the whole play (the review of #170)
         try:
-            parsed = self._parsed(path)[0]
+            parsed = self._parsed(path, native)[0]
             start, stored, name = self.start_values(parsed, self.config(), sid, preset)
             if values is not None:
                 start = dict(start, **S.clean_values(parsed, values))
@@ -1699,7 +1700,7 @@ class LiveEngine(S.Engine):
             if same and stored is None:
                 stored = on["controls"]
             result = self.show(sid, start, hue=on["hue"] if same else 0.0, offset=self.time_of(on)[0] if same else 0.0,
-                               controls=S.clean_controls(controls, stored), preset=name, epoch=epoch, mark=mark)
+                               controls=S.clean_controls(controls, stored), preset=name, epoch=epoch, mark=mark, native=native)
         except ShaderError as e:
             raise ApiError(422, "%s: %s" % (sid, e))
         if result is None:
@@ -1999,6 +2000,8 @@ class LiveEngine(S.Engine):
             on = self.on_screen()
             if "faster" in body and on:             # the limit applies to what is on now, not only to the next shader
                 self.changer.submit(on, controls={"speed": on["controls"]["speed"]})
+            if "height" in body:
+                self.sources_again()                # Sources 2 to N draw at the new detail too (D106 step e)
         else:
             return super().api_set(body, device, client)
         return self.state()

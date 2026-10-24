@@ -883,6 +883,10 @@ def estimate(parsed):
     if "_estimate" not in parsed:
         try:
             reads, rounds = measure(parsed)
+            # a shader of several passes (D106 step c) runs its whole text once a pass, a buffer's reads included:
+            # its work is the count times the passes (the review of #170)
+            passes = len(parsed.get("plan") or [None])
+            reads, rounds = min(BIG, reads * passes), min(BIG, rounds * passes)
             weight = "light" if reads <= 2 and rounds <= 4 else ("medium" if reads <= 12 and rounds <= 16 else "heavy")
             parsed["_estimate"] = {"reads": reads, "rounds": rounds, "weight": weight, "sure": True, "why": None}
         except ShaderError as e:
@@ -1017,8 +1021,10 @@ class Effects(S.Engine):
             return False
 
     # -- the library --
-    def read(self, data):
-        return S.parse(data, S.FILTER, passes=True) if S.player_native(self.api.player) else S.parse(data, S.FILTER)
+    def read(self, data, native=None):
+        if native is None:
+            native = S.player_native(self.api.player)
+        return S.parse(data, S.FILTER, passes=True) if native else S.parse(data, S.FILTER)
 
     def check_upload(self, data):
         parsed = self.read(data)
@@ -1396,7 +1402,7 @@ class Effects(S.Engine):
         under it stays on the screen either way, and a pair the GPU refused is not sent to it again: see _key)."""
         self._need()
         path, _ = self._path(sid)
-        native = S.player_native(self.api.player)       # the New renderer runs the effect itself (D106)
+        native = bool(S.player_native(self.api.player))      # the New renderer runs the effect itself (D106), asked once
         if gen is None:
             self._gen += 1                              # by hand: newer than every wish that waits
         with self._lock:
@@ -1406,7 +1412,7 @@ class Effects(S.Engine):
             if not ok:
                 raise ApiError(409, why)
             try:
-                parsed, digest = self._parsed(path)
+                parsed, digest = self._parsed(path, native)
                 cfg = self._live().config()
                 start, stored, name = self.start(parsed, cfg, sid, preset)
                 if values is not None:

@@ -2119,8 +2119,32 @@ function startServer(env) {          // env: more for the harness's environment 
       const b = JSON.parse(route.request().postData());
       if (!b.source) return route.continue();
       srcSent.push(b);
-      await route.fulfill({ json: { playing: b.file || 'intro.mkv', source: b.source, warning: 'this may drop frames on this box; 720p clips are lighter' } });
+      await route.fulfill({ json: { playing: b.file || b.shader || 'intro.mkv', source: b.source, warning: 'this may drop frames on this box; 720p clips are lighter' } });
     };
+    // The harness's player is classic: no chain controls in the strip until the box says it runs chains (D106 step e)
+    await page.waitForSelector('#srcclassic', { timeout: 10000 });
+    assert.strictEqual(await page.$('[id^="srcfx-"]'), null, 'no chain controls on a player without chains');
+    // The chains of the New renderer (D106 step e), made up as the sources are: an effect on Source 3, one after
+    // Source 1's own effect, the libraries to choose from; what the panel sends is checked
+    const chainAnswer = {
+      available: true, effects: true, shaders: true, slots: { 1: [2, 3], 2: [0, 1, 2, 3], 3: [0, 1, 2, 3], 4: [0, 1, 2, 3] },
+      chains: [{ source: 3, slot: 1, id: 'fx-grade.fs', kind: 'effect', values: {}, controls: { amount: 0.5, speed: 1 }, preset: null },
+        { source: 4, slot: 0, id: 'nxlx-tide.fs', kind: 'shader', values: {}, controls: { speed: 1, hue: 0, brightness: 1 }, preset: null },
+        { source: 1, slot: 2, id: 'fx-ring.fs', kind: 'effect', values: {}, controls: { amount: 1, speed: 1 }, preset: null }],
+    };
+    const chainSent = [];
+    const chainRoute = async (route) => {
+      const req = route.request();
+      if (req.method() === 'POST') { chainSent.push(JSON.parse(req.postData())); return route.fulfill({ json: { ok: true } }); }
+      await route.fulfill({ json: chainAnswer });
+    };
+    const fxLibRoute = async (route) => (route.request().method() === 'GET'
+      ? route.fulfill({ json: { effects: [{ id: 'fx-grade.fs', name: 'Grade' }, { id: 'fx-ring.fs', name: 'Ring' }] } }) : route.continue());
+    const shLibRoute = async (route) => (route.request().method() === 'GET'
+      ? route.fulfill({ json: { shaders: [{ id: 'nxlx-silk.fs', name: 'Silk' }, { id: 'nxlx-tide.fs', name: 'Tide' }] } }) : route.continue());
+    await page.route('**/api/effects/chain', chainRoute);
+    await page.route('**/api/effects', fxLibRoute);
+    await page.route('**/api/shaders', shLibRoute);
     await page.route('**/api/sources', sourcesRoute);
     await page.route('**/api/play', playRoute);
     await page.waitForSelector('#srcnow-3:text-is("Source 3: big.mkv (1080p)")', { timeout: 10000 });
@@ -2133,6 +2157,35 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.click('#srcplay-2');
     await page.waitForFunction(() => /Source 2 plays tunnel\.mkv: this may drop frames on this box; 720p clips are lighter/.test(document.getElementById('msg').textContent));
     assert.deepStrictEqual(srcSent.slice(0, 2), [{ source: 3, action: 'stop' }, { source: 2, file: 'tunnel.mkv' }]);
+    // each source's effect: what is on, its amount, Off, another one On; the advanced slots after it; a shader to a source
+    await page.waitForSelector('#srcfx-3-1', { timeout: 10000 });
+    assert.strictEqual(await page.inputValue('#srcfx-3-1'), 'fx-grade.fs');
+    assert.strictEqual(await page.inputValue('#srcfxamt-3-1'), '0.5');
+    assert.strictEqual(await page.isDisabled('#srcfxoff-2-1'), true, 'nothing on: nothing to take off');
+    assert.strictEqual(await page.$('#srcfx-1-1'), null, "Source 1's own effect stays under Effect");
+    assert.strictEqual(await page.$eval('#srcmore-1', (d) => d.open), true, 'the advanced slots are open where one is on');
+    assert.strictEqual(await page.$eval('#srcmore-2', (d) => d.open), false, 'and closed where none is');
+    assert.strictEqual(await page.inputValue('#srcfx-1-2'), 'fx-ring.fs');
+    assert.strictEqual(await page.inputValue('#srcshader-4'), 'nxlx-tide.fs', "slot 0 is the source's shader, shown in the Shader row");
+    assert.strictEqual(await page.$('#srcfx-4-0'), null, 'and never as an effect slot');
+    assert.strictEqual(await page.$('#srcshader-1'), null, "Source 1's shader stays the Shaders screen's");
+    await page.click('#srcfxoff-3-1');
+    await page.waitForFunction(() => /Source 3: the effect is off/.test(document.getElementById('msg').textContent));
+    await page.selectOption('#srcfx-2-1', 'fx-ring.fs');
+    await page.click('#srcfxon-2-1');
+    await page.waitForFunction(() => /Source 2: fx-ring\.fs is on/.test(document.getElementById('msg').textContent));
+    await page.$eval('#srcfxamt-1-2', (e) => { e.value = '0.25'; e.dispatchEvent(new Event('change')); });
+    await page.waitForFunction(() => true);
+    await page.selectOption('#srcshader-2', 'nxlx-tide.fs');
+    await page.click('#srcshaderplay-2');
+    await page.waitForFunction(() => /Source 2 plays nxlx-tide\.fs/.test(document.getElementById('msg').textContent));
+    await page.waitForFunction(() => true);
+    assert.deepStrictEqual(chainSent.slice(0, 3), [{ source: 3, slot: 1, off: true }, { source: 2, slot: 1, id: 'fx-ring.fs' },
+      { source: 1, slot: 2, controls: { amount: 0.25 } }]);
+    assert.deepStrictEqual(srcSent[srcSent.length - 1], { source: 2, shader: 'nxlx-tide.fs' });
+    await page.unroute('**/api/effects/chain', chainRoute);
+    await page.unroute('**/api/effects', fxLibRoute);
+    await page.unroute('**/api/shaders', shLibRoute);
     // The pads' Play to: Source 1 by default; with Source 2 chosen a pad's clip goes there
     assert.strictEqual(await post('/api/pads', { bank: 0, index: 11, label: 'To a source', file: 'intro.mkv' }), 200);
     await page.reload();

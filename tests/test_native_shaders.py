@@ -1037,6 +1037,14 @@ BIG_FX = ("/*{\"INPUTS\": [{\"NAME\": \"inputImage\", \"TYPE\": \"image\"}], \"P
 
 
 class PassParseTest(unittest.TestCase):
+    def test_the_cost_of_an_effect_counts_every_pass(self):
+        """The review of #170, built in step e: a filter of two passes runs its text twice, its reads with it."""
+        from pvj import effects as E
+        one = E.estimate(S.parse(INVERT, S.FILTER))
+        two = E.estimate(S.parse(INVERT.replace('"image"}]}*/', '"image"}], "PASSES": [{"TARGET": "buf"}, {}]}*/'), S.FILTER, passes=True))
+        self.assertGreater(one["reads"], 0)
+        self.assertEqual((two["reads"], two["rounds"]), (2 * one["reads"], 2 * one["rounds"]))
+
     """What the panel takes of PASSES on the New renderer, and what classic still refuses."""
 
     def test_the_program_file_and_classic(self):
@@ -1318,6 +1326,38 @@ class GeneratorSourceApiTest(unittest.TestCase):
         self.assertTrue(out["ok"], out)
         self.assertIn("long gone", out["note"])
         self.assertEqual(self.slot(2, 0)["state"], "on")
+
+    def test_a_replaced_upload_and_a_change_of_picture_detail_build_source_2_again(self):
+        """The review of #171, built in step e: Sources 2 to N follow their shader's file and Picture detail."""
+        dev = {"id": "t", "role": "full"}
+        self.api.shaders.upload("mine.fs", FLAT)
+        self.api.play({"shader": "mine.fs", "source": 2}, dev, "t")
+        self.api.chains.api_post({"source": 2, "slot": 0, "values": {"level": 0.75}}, dev, "t")
+        first = self.api.chains.on[(2, 0)]["path"]
+        self.api.shaders.api_set({"action": "upload", "name": "mine.fs", "source": FLAT.replace("0.25", "0.5"), "replace": True}, dev, "t")
+        again = self.api.chains.on[(2, 0)]
+        self.assertNotEqual(again["path"], first)                           # built again from the new file
+        self.assertEqual(again["values"]["level"], 0.75)                    # with the value it had
+        self.assertEqual((self.slot(2, 0)["state"], self.slot(2, 0)["path"]), ("on", again["path"]))
+        heights = [h for h in S.heights_for(self.api.shaders.board()) if h != self.api.shaders.height_for("mine.fs")]
+        self.api.shaders.api_set({"action": "config", "height": heights[0]}, dev, "t")
+        third = self.api.chains.on[(2, 0)]["path"]
+        self.assertNotEqual(third, again["path"])                            # and again at the new detail
+        self.assertEqual(self.slot(2, 0)["path"], third)
+        # another shader's upload leaves it as it is
+        self.api.shaders.upload("other.fs", FLAT)
+        self.api.shaders.api_set({"action": "upload", "name": "other.fs", "source": FLAT, "replace": True}, dev, "t")
+        self.assertEqual(self.api.chains.on[(2, 0)]["path"], third)
+
+    def test_a_play_asks_once_whether_the_player_runs_programs(self):
+        """The review of #170, built in step e: the parse and the text of one play from one answer."""
+        eng, calls = self.api.shaders, []
+        real = eng.native
+        eng.native = lambda: calls.append(1) or real()
+        self.addCleanup(lambda: setattr(eng, "native", real))
+        eng._cache.clear()
+        eng.play("nxlx-silk.fs")
+        self.assertEqual(len(calls), 1, calls)
 
     def test_on_classic_a_shader_to_a_source_is_refused_as_before(self):
         from pvj.api import ApiError

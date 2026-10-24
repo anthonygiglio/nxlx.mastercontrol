@@ -4,6 +4,12 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-24, pvj-render phase 3, step e (D106): the panel's controls for a source's chain
+
+- **Built:** in the Sources card on the New renderer, a Shader row on Sources 2 and up (slot 0, read from the chain), an Effect row, and the advanced slots 2 and 3 closed unless one is on. The logged items: the effects' cost counts every pass; a play asks once whether the player runs programs; the shaders of Sources 2 to N built again on a replaced upload and on a change of Picture detail.
+- **Tests:** the panel's chain controls; the cost of two passes; one question a play; the rebuilds. **Break-checks (6, each caught):** the cost counting one pass; a play asking twice; a replaced upload ignored; Picture detail ignored; every source rebuilt on any upload; the Shader row not read from slot 0.
+- **The panel test's ws.roles failure** ("a guest sees Test pattern on Mapping, and cannot press it") is this machine's: clean master failed it in 1 of 3 runs here, with nothing of this step in it, and this branch in 2 of 3 (the same block of steps, the run that passed went through the chain controls and every other step); CI's panel-ui passes.
+
 ## 2026-10-24, the review of #171 (D106 step d), fixed on its branch
 
 - **Medium:** the source's clip stops only once the shader is taken; a refused shader leaves the clip playing. **Low:** a clip in a shader's place loads before the shader comes off, under the chains' lock; a shader pad's deleted preset plays with a note on Sources 2 and up; the sources' rows look once a request; slot 0 in the chains' state, `available` with Effects off; the panel's words.
