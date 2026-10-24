@@ -240,7 +240,8 @@ class LevelTest(NativeBase):
         self.assertEqual(max(shot[2]), 0, "an inverting effect undid the Blackout")
         self.r("set_property", "brightness", 0)
         self.r.wait(lambda: self.r.pixel(5, 5) != (0, 0, 0), 5)
-        self.assertGreater(min(self.r.pixel(5, 5)), 200)            # the gradient's dark corner, inverted
+        want = tuple(255 - c for c in gradient(5, 5))
+        self.assertTrue(all(abs(a - b) <= 2 for a, b in zip(self.r.pixel(5, 5), want)), (self.r.pixel(5, 5), want))   # inverted
         # off again: the layers have the level back, as before
         self.r("set_property", "brightness", -100)
         self.r("pvj-shader", "clear", 1, 1)
@@ -273,7 +274,9 @@ class ValuesTest(NativeBase):
         self.assertGreater(s["runs"], runs)
         after = (fd_count(self.r.pid), thread_count(self.r.pid), self.r("get_property", "pvj-render")["fx-gl-objects"],
                  self.r("get_property", "pvj-render")["gl-objects"])
-        self.assertEqual(start, after)
+        self.assertEqual((start[0], start[2]), (after[0], after[2]), (start, after))      # descriptors, the programs' GL objects
+        self.assertLessEqual(abs(start[1] - after[1]), 2, (start, after))               # libmpv's threads and GL objects: a pool
+        self.assertLessEqual(abs(start[3] - after[3]), 2, (start, after))
 
     def test_time_never_jumps_and_speed_zero_stands(self):
         self.carrier()
@@ -297,6 +300,21 @@ class ValuesTest(NativeBase):
         self.r("pvj-shader", "set", 1, 0, {"@offset": 50.0})
         self.assertTrue(self.r.wait(lambda: self.slot(0)["time"] == 50.0, 3))
         self.assertTrue(self.r.wait(lambda: abs(self.r.pixel(5, 5)[0] - 128) <= 1, 3), self.r.pixel(5, 5))
+
+    def test_an_effects_time_stands_while_its_clip_is_paused(self):
+        self.picture()
+        moving = INVERT.replace("vec4(1.0 - c.rgb, 1.0)", "vec4(fract(TIME / 100.0), c.g, 0.0, 1.0)")
+        self.r("pvj-shader", "load", 1, 1, self.effect(moving))
+        self.assertTrue(self.r.wait(lambda: self.slot(1)["time"] > 0.2, 3))
+        self.r("set_property", "pause", True)
+        time.sleep(0.3)
+        a = self.slot(1)["time"]
+        time.sleep(1.5)
+        self.assertEqual(self.slot(1)["time"], a)
+        self.r("set_property", "pause", False)
+        # it goes on from where it stood: not from where the clock would have taken it meanwhile
+        self.assertTrue(self.r.wait(lambda: self.slot(1)["time"] > a, 3))
+        self.assertLess(self.slot(1)["time"], a + 0.6)
 
     def test_constants_when_the_code_needs_them(self):
         self.carrier()
@@ -346,8 +364,10 @@ class ManyLoadsTest(NativeBase):
                 counts.append((fd_count(self.r.pid), thread_count(self.r.pid), st["fx-gl-objects"], st["gl-objects"]))
         self.assertEqual(counts[-1][2], 0, counts)                  # every program, texture and framebuffer given back
         for c in counts[1:]:
-            self.assertEqual(c[:3], counts[0][:3], counts)
-            self.assertLessEqual(abs(c[3] - counts[0][3]), 2, counts)   # libmpv's own, untouched by this
+            self.assertEqual((c[0], c[2]), (counts[0][0], counts[0][2]), counts)
+            # libmpv's own threads and GL objects, untouched by this: a pool that moves by one or two (as D98 found)
+            self.assertLessEqual(abs(c[1] - counts[0][1]), 2, counts)
+            self.assertLessEqual(abs(c[3] - counts[0][3]), 2, counts)
 
 
 class ClassicTest(unittest.TestCase):

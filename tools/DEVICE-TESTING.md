@@ -710,6 +710,23 @@ Everything of D101 ran on a software GPU in a 320 x 180 headless window. Before:
 | SO8 | The switch back to classic (Setup > Renderer: Classic) with surfaces on Sources 2 and 3 | Classic draws within about 10 s; every surface shows Source 1; the card says Source 2 and 3 "need the New renderer"; switching New on again brings the sources back as surfaces of 2 and 3 (their clips must be played again) | Yes or no, and the card's words |
 | SO9 | The source race (D101, open): the owner's mapping with the quad on Source 1 and the triangle on Source 2 (pictures of different colours), then change the mapping three times (edit on and off, Shows on each surface); `pvj-capture` after each | The triangle shows Source 2's picture every time, never black or a dim fixed colour that does not change when Source 2 plays something else | The captures, and whether a dim or black surface came back after loading another clip to Source 2 |
 
+### pvj-render phase 3, step a (D106): the renderer's own generators and effects, never run on a Pi
+
+Everything of D106 ran on a software GPU in a 320 x 180 headless window. Before: the node on a monitor or TV (not the X27 unless it must be), Setup > Renderer on **New**, Picture detail on Automatic. Read `["get_property","pvj-render"]` (`flips`, `missed-vblanks`, `fx-gl-objects`, `gl-objects`) and `["get_property","pvj-shaders"]` (each slot's `state`, `runs`, `drops`, `rebuilds`, `width`, `height`) over the socket as in R1; the GPU's busy share as in R1; CPU with `top`.
+
+| # | Do | Look for | Send back |
+| --- | --- | --- | --- |
+| FX1 | Every bundled shader for 20 s each through Vibes (or the Shaders page), at the box's Automatic heights | Each slot 0 `state` "on" (never "constants" for a bundled shader), `runs` up by about 30 a second, `drops` about 0, the picture as on classic | Per shader: `drops` a second, missed vblanks a second, the GPU's share; any that did not compile (the panel says the GPU's words) |
+| FX2 | The same 6 that dropped at 720 on classic (drift, nebula, ridgelines, simplex-noise, aurora, lantern) at 540 | As FX1 | As FX1, beside classic's numbers in D93 |
+| FX3 | The light shaders at **720** (Automatic gives them 720 at 1080p): bars, silk, tiles, stars for 60 s each | `drops` and missed vblanks near 0; the GPU's share against classic's (at most 52 percent there) | The GPU's share and drops at 720 on New; whether 720 should stay the New renderer's Automatic height for them |
+| FX4 | Move a value fast: a MIDI knob or the Shaders page's slider on nxlx-silk for 30 s | The picture follows the knob smoothly (classic: five steps a second), `rebuilds` 0, no stutter | Whether it is smooth; missed vblanks during the 30 s |
+| FX5 | An effect over a 720p clip (fx-grade, then isf-rgb-invert), 60 s each | `runs` about the clip's frame rate, the picture as on classic, no stutter | Missed vblanks, the GPU's share, the CPU |
+| FX6 | An effect over a generator (fx-kaleido over nxlx-drift at 540) | As classic's pair; `drops` near 0 | As FX5; whether the effects' floor took the effect off |
+| FX7 | Blackout and Fade out with an effect on (isf-rgb-invert over a clip), then with a generator | Black at once under Blackout (never the inverted white), the fade smooth, the level back as it was | Anything lit under Blackout |
+| FX8 | A crossfade out of a generator into a clip (Mix on Crossfade, 2 s) | D71's still is the generator's picture (not black, not the carrier's colours), then the clip | Yes or no; a photo if it is wrong |
+| FX9 | The panel's preview (the Live page's snapshot) with a generator and with an effect on | The snapshot shows the shader and the effect, at the screen's size; how long it takes | The time of one preview at 1920 x 1080 |
+| FX10 | 200 changes of shader through Vibes' Next (a controller or the page) and 500 value changes; then the counts | `fx-gl-objects` back to what it was with the same shader on, descriptors and threads as before (`ls /proc/PID/fd \| wc -l`, `/task`) | The counts before and after |
+
 ### What to send back
 
 The output of checks 1 to 7 and 13, the `journalctl` tail for anything that failed, and a note of what you saw on screen. Say clearly what you did **not** test.

@@ -586,3 +586,7 @@ The ndi-mpv job's whole suite ran with continue-on-error for eleven days. It nev
 ## A flake that never happens here may be a version that is not here (2026-10-23)
 
 The text-layer flake could not be made to happen on this PC in 140 runs under load, because its mpv is 0.41 and the fault is in 0.40 and older: there a `force-window` turned on while idle does nothing, and 0.41 quietly fixed that. Reading mpv's sources of the two versions side by side found it, and a libmpv built here with the one changed line taken out failed the CI way. When a flake shows on one CI job only, list what that job has that this machine has not (Debian's mpv 0.40, Ubuntu 24.04's 0.37) before stressing timing, and when the difference is a library, diff its versions.
+
+## mpv keeps a user shader by its file's path (2026-10-24, D106)
+
+The first comparison of pvj-render's own programs with libmpv's drawing said every shader but the first was 40 to 130 levels apart. Every libmpv text had been written to the same file, and mpv compiles a user shader once per path and draws the old one when the file changes under the same name: every capture was of the first shader. The panel never meets it (each text it writes has a new name, which is why it does so), but a test or a tool that rewrites one file will. Give each text a new file, and before trusting a comparison check that its reference changed at all (the measurement now also prints how far the reference moved from the picture before it).
