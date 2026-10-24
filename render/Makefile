@@ -3,6 +3,8 @@
 #
 # pvj-render: make            (the program, here)
 #             make WERROR=1   (every warning is an error: CI)
+#             make TEST_HOOKS=1 (the tests' hooks, PVJ_RENDER_TEST_*: CI; never the box's own build. make clean
+#                              first when switching, as the objects do not know which build they were)
 #             make clean
 # Needs a C11 compiler, make, pkg-config and the headers of libmpv, EGL, GLES, GBM and libdrm
 # (Debian and Ubuntu: gcc make pkg-config libmpv-dev libegl-dev libgles-dev libgbm-dev libdrm-dev).
@@ -15,6 +17,10 @@ WARN = -Wall -Wextra -Wshadow -Wformat=2 -Wno-unused-parameter
 ifeq ($(WERROR),1)
 WARN += -Werror
 endif
+DEFS =
+ifeq ($(TEST_HOOKS),1)
+DEFS += -DPVJ_RENDER_TEST_HOOKS
+endif
 HARDEN = -fstack-protector-strong -D_FORTIFY_SOURCE=2 -fPIE
 LDHARDEN = -pie -Wl,-z,relro,-z,now
 
@@ -25,7 +31,7 @@ pvj-render: $(OBJ)
 	$(CC) $(LDFLAGS) $(LDHARDEN) -o $@ $(OBJ) $$($(PKG_CONFIG) --libs $(PKGS)) -lpthread -lm
 
 src/%.o: src/%.c src/pvj.h src/json.h
-	$(CC) -std=c11 $(CFLAGS) $(WARN) $(HARDEN) $$($(PKG_CONFIG) --cflags $(PKGS)) -c -o $@ $<
+	$(CC) -std=c11 $(CFLAGS) $(DEFS) $(WARN) $(HARDEN) $$($(PKG_CONFIG) --cflags $(PKGS)) -c -o $@ $<
 
 clean:
 	rm -f pvj-render $(OBJ)
