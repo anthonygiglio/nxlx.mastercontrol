@@ -1686,8 +1686,9 @@ class LiveEngine(S.Engine):
         if vibes and not queued:
             vibes.yield_screen()                    # the operator chose a shader: the rotation ends
         path, _ = self._path(sid)
+        native = bool(self.native())                # asked once for the whole play (the review of #170)
         try:
-            parsed = self._parsed(path)[0]
+            parsed = self._parsed(path, native)[0]
             start, stored, name = self.start_values(parsed, self.config(), sid, preset)
             if values is not None:
                 start = dict(start, **S.clean_values(parsed, values))
@@ -1699,7 +1700,7 @@ class LiveEngine(S.Engine):
             if same and stored is None:
                 stored = on["controls"]
             result = self.show(sid, start, hue=on["hue"] if same else 0.0, offset=self.time_of(on)[0] if same else 0.0,
-                               controls=S.clean_controls(controls, stored), preset=name, epoch=epoch, mark=mark)
+                               controls=S.clean_controls(controls, stored), preset=name, epoch=epoch, mark=mark, native=native)
         except ShaderError as e:
             raise ApiError(422, "%s: %s" % (sid, e))
         if result is None:
@@ -1988,6 +1989,7 @@ class LiveEngine(S.Engine):
             # and the write of an earlier one's second step was overwritten by it, and the later choice was lost.
             with self._cfg:
                 cfg = self.config()
+                detail = (cfg.get("height"), cfg.get(HEIGHT_AUTO))
                 self._config_keys(cfg, body)
                 for key in ("guard", "clock", "faster"):
                     if key in body:
@@ -1996,9 +1998,13 @@ class LiveEngine(S.Engine):
                     cfg[HEIGHT_AUTO] = auto             # false: a height chosen by hand, which Automatic never overrides
                 self._save(cfg)
                 self.tune_set(None, cfg["dwell"], cfg["vary"])      # dwell and variation belong to the active set
+                moved = (cfg.get("height"), cfg.get(HEIGHT_AUTO)) != detail
             on = self.on_screen()
             if "faster" in body and on:             # the limit applies to what is on now, not only to the next shader
                 self.changer.submit(on, controls={"speed": on["controls"]["speed"]})
+            if moved:
+                # Sources 2 to N draw at the new detail too (D106 step e); the same detail again builds nothing
+                return self.with_sources(self.state(), self.sources_again())
         else:
             return super().api_set(body, device, client)
         return self.state()

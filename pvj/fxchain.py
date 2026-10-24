@@ -163,12 +163,16 @@ class Chains:
         return {"ok": True, "source": source, "slot": slot, "id": sid}
 
     # -- a generator as a source (D106 step d) --
-    def put_generator(self, source, sid, preset=None, values=None, controls=None):
+    def put_generator(self, source, sid, preset=None, values=None, controls=None, expect=None):
         """The generator `sid` as the whole picture of source `source` (2 to N), in slot 0, in place of its clip: the
         source's clip stops, the shader draws at the height Picture detail gives it (D93), with the preset named, else
         the one called default, else the file's own values. Its effects (slots 1 to 3) stay on over it. The clip stops
         only once the renderer has taken the shader (or not said in time, a slow build): a refusal leaves the clip
-        playing, never a black source (the review of #171)."""
+        playing, never a black source (the review of #171).
+
+        `expect` (a rebuild, rebuild_generators): the program file the source held when the rebuild was asked. If
+        anything else came to the source since (a Stop, a clip, another shader), the rebuild leaves it be and None is
+        returned; and a value the file no longer takes (an input that is gone or changed) is dropped, not refused."""
         eng = self.api.shaders
         eng._need()
         source, _ = self._place({"source": source, "slot": 0}, generator=True)
@@ -178,7 +182,16 @@ class Chains:
         try:
             parsed, _digest = eng._parsed(path)
             start, stored, name = eng.start_values(parsed, eng.config(), sid, preset)
-            if values is not None:
+            if values is not None and expect is not None:
+                kept = {}
+                for n, v in values.items():
+                    try:
+                        kept.update(S.clean_values(parsed, {n: v}))
+                    except ShaderError:
+                        pass                    # the new file has no such input, or not of that kind: it starts as the file says
+                start = dict(start, **kept)
+                name = None if values else name
+            elif values is not None:
                 start = dict(start, **S.clean_values(parsed, values))
                 name = None if values else name
             events = {i["name"] for i in parsed["inputs"] if i["type"] == "event"}
@@ -189,6 +202,8 @@ class Chains:
         except ShaderError as e:
             raise ApiError(422, "%s: %s" % (sid, e))
         with self._lock:
+            if expect is not None and self._seen().get((source, 0), {}).get("path") != expect:
+                return None                     # something else came to the source since the rebuild was asked: it stands
             out = self._write(text)
             try:
                 verdict, message = self.api.player.chain_put(source, 0, out)
@@ -234,6 +249,33 @@ class Chains:
                 raise ApiError(409, "no shader plays on source %d" % source)
             r.update(values=vals, controls=ctl, preset=None)
             return {"ok": True, "source": source, "id": r["id"], "values": vals, "controls": ctl}
+
+    def rebuild_generators(self, sid=None):
+        """Build again the shaders that are the picture of Sources 2 to N (all of them, or those of `sid`), with the
+        values and controls they have: after an upload that replaces the file, or a change of Picture detail (the
+        review of #171; Source 1's shader is the engine's). One the renderer refuses now leaves the one before it on,
+        and the log says so. A source that took something else while this ran (a Stop, a clip, another shader) is
+        left as it is (the review of #172). Returns {"rebuilt": [sources], "not_rebuilt": [{"source", "id", "why"}]}."""
+        out = {"rebuilt": [], "not_rebuilt": []}
+        player = self.api.player
+        if not getattr(player, "native_chains", lambda: False)():
+            return out
+        with self._lock:
+            todo = [(s, dict(r)) for (s, k), r in sorted(self._seen().items()) if k == 0 and (sid is None or r["id"] == sid)]
+        for s, r in todo:
+            try:
+                put = self.put_generator(s, r["id"], values=r["values"], controls=r["controls"], expect=r["path"])
+            except ApiError as e:
+                self.api.log("pvj-web: source %d: %s could not be built again: %s" % (s, r["id"], e.message))
+                out["not_rebuilt"].append({"source": s, "id": r["id"], "why": e.message})
+                continue
+            if put is None:
+                continue                        # the source took something else meanwhile
+            with self._lock:
+                if (s, 0) in self.on and r["preset"] is not None and self.on[(s, 0)]["values"] == r["values"]:
+                    self.on[(s, 0)]["preset"] = r["preset"]          # the same preset, built again
+            out["rebuilt"].append(s)
+        return out
 
     def generator_of(self, source):
         """The id of the shader that is source `source`'s picture, or None (as the player's record says it now)."""

@@ -761,6 +761,13 @@ Uploads of ISF files with PASSES (a feedback trail effect and a two-pass blur; a
 | FX18 | A mapping of two quads, the right on Source 2; a shader pad played to Source 2 (Play to) while a 720p clip plays on Source 1 | The right quad shows the shader, the left the clip; no stutter | Missed vblanks, the GPU's share, `fx-passes-per-second` |
 | FX19 | Three shaders on Sources 2 to 4 at once (Automatic heights) | Each quad its shader; how many hold | The same numbers |
 
+### pvj-render phase 3, step e (D106): the chain controls in the Sources card, never run on a Pi
+
+| # | Do | Look for | Send back |
+| --- | --- | --- | --- |
+| FX20 | Projection mapping > Sources on the New renderer, from a phone and a laptop: an effect on Source 2 (On, its amount, Off), a shader played to Source 3 from its Shader row | The quads change as the card says; the rows fit at 390 px | Yes or no, and a screenshot if a row overruns |
+| FX21 | With a shader on Source 2, Shaders > Picture detail to another height; then upload a new version of that shader (replace) | Source 2's shader drawn again each time, at the new detail and from the new file, with its values | Yes or no |
+
 ### What to send back
 
 The output of checks 1 to 7 and 13, the `journalctl` tail for anything that failed, and a note of what you saw on screen. Say clearly what you did **not** test.
