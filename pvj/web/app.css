@@ -866,6 +866,11 @@ main.ws:focus, .deskcol:focus { outline: none; }
 /* D84: the two lists of what support can and cannot do, and what a past session changed */
 #supportreach ul, ul.supportdid { padding-left: 20px; margin: 0; } #supportreach li, ul.supportdid li { margin: 2px 0; overflow-wrap: anywhere; }
 
+/* The Sources card's chain rows (D106 step e): a choice keeps a usable width and the row wraps under it at 390 px
+   (the review of #172: the advanced row's choice was squeezed to 20 px and the row ran past the card) */
+#mapsources .row { flex-wrap: wrap; min-width: 0; }
+#mapsources .row > select { flex: 1 1 12em; min-width: 9em; max-width: 100%; }
+#mapsources .row > input[type=range] { flex: 1 1 8em; min-width: 6em; }
 /* ==== STYLE: signal ==================================================================================================
    Everything from here to the end of the file belongs to the style "signal" (D54) and applies only while the root
    element carries data-style="signal", which the server writes for a theme that names that style. The look above is
@@ -1441,8 +1446,3 @@ html[data-style="signal"] .tp #black.flash { background: var(--st-problem, var(-
   html[data-style="signal"] .btn.flash { border-style: solid; animation: fadeflash .5s steps(1, end) infinite; }
   html[data-style="signal"] .tp #black.flash { animation: blackflash .5s steps(1, end) infinite; }      /* (its keyframes are with fadeflash's, above the style blocks: a keyframes rule has no style of its own) */
 }
-/* The Sources card's chain rows (D106 step e): a choice keeps a usable width and the row wraps under it at 390 px
-   (the review of #172: the advanced row's choice was squeezed to 20 px and the row ran past the card) */
-#mapsources .row { flex-wrap: wrap; min-width: 0; }
-#mapsources .row > select { flex: 1 1 12em; min-width: 9em; max-width: 100%; }
-#mapsources .row > input[type=range] { flex: 1 1 8em; min-width: 6em; }
