@@ -569,6 +569,20 @@ class EngineTest(NativeBase):
         self.player.clear()
         self.assertTrue(self.r.wait(lambda: self.slot(0)["state"] == "off" and self.slot(1)["state"] == "off", 3))
 
+    def test_a_shader_of_several_passes_is_taken_and_played_on_the_new_renderer(self):
+        # an upload with PASSES: refused on classic, taken here (the library parses with passes on the New renderer)
+        self.api.shaders.upload("feedback.fs", FEEDBACK)
+        rows = {r["id"]: r for r in self.api.shaders.library()}
+        self.assertFalse(rows["feedback.fs"].get("error"), rows["feedback.fs"])
+        out = self.api.shaders.play("feedback.fs")
+        self.assertTrue(out.get("ok"), out)
+        self.assertEqual(self.slot(0)["state"], "on")
+        a = self.r.pixel(10, 10)[0]
+        self.assertTrue(self.r.wait(lambda: self.r.pixel(10, 10)[0] > a + 20, 3))
+        self.api.effects.upload("twice.fs", INVERT_TWICE)
+        put = self.api.effects.put("twice.fs")
+        self.assertTrue(put["ok"], put)
+
     def test_a_refused_generator_leaves_black_never_the_carrier(self):
         broken = "/*{}*/\nvoid main() { gl_FragColor = vec4(nonsense, 1.0); }\n"
         self.api.shaders.upload("broken.fs", broken)
@@ -1084,6 +1098,13 @@ class PassTest(NativeBase):
         got = self.r.pixel(5, 5)
         want = tuple(255 - c for c in gradient(5, 5))
         self.assertTrue(all(abs(a - b) <= 2 for a, b in zip(got, want)), (got, want))
+
+    def test_every_pass_is_counted(self):
+        self.carrier()
+        self.r("pvj-shader", "load", 1, 0, self.generator(FEEDBACK))
+        time.sleep(2.5)
+        rate = self.r("get_property", "pvj-render")["fx-passes-per-second"]
+        self.assertTrue(30 <= rate <= 70, rate)          # two passes a run, about 30 runs a second
 
     def test_buffers_too_large_are_refused_and_loads_leave_nothing(self):
         self.carrier()

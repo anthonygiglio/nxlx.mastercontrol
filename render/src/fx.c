@@ -870,7 +870,7 @@ static void fx_draw(FxGL *f, GLuint src, double dt)
     glActiveTexture(GL_TEXTURE0);
     glUseProgram(0);
     f->frames++;
-    __atomic_add_fetch(&app.fx_passes, 1, __ATOMIC_RELAXED);      // passes drawn (the property gives them a second)
+    __atomic_add_fetch(&app.fx_passes, f->src->npasses, __ATOMIC_RELAXED);    // passes drawn (the property gives them a second)
 }
 
 // A program with constants whose values moved: built again with them (at most every FX_REBUILD_GAP).
