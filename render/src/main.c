@@ -117,7 +117,11 @@ static int parse_args(int argc, char **argv, Cfg *c)
         else if (!strcmp(a, "--fast")) c->fast = 1;
         else if (!strcmp(a, "--every-vblank")) c->every_vblank = 1;
         else if (!strcmp(a, "--verbose")) c->verbose = 1;
+#ifdef PVJ_RENDER_TEST_HOOKS
+        else if (!strcmp(a, "--version")) { printf("pvj-render %s (with test hooks)\n", PVJ_VERSION); exit(0); }
+#else
         else if (!strcmp(a, "--version")) { printf("pvj-render %s\n", PVJ_VERSION); exit(0); }
+#endif
         else { LOG("unknown argument: %s", a); return -1; }
     }
     if (!c->socket_path) { LOG("--socket=PATH is needed"); return -1; }
@@ -308,18 +312,49 @@ static int target(Layer *l, int w, int h)
     return 0;
 }
 
+#ifdef PVJ_RENDER_TEST_HOOKS
+// For the tests only, and only in a build made with `make TEST_HOOKS=1` (CI; the box's own build has none):
+// PVJ_RENDER_TEST_SLOW_START=<ms> waits that long after the text core's mpv_initialize, as a loaded machine may, so
+// that the core is surely idle before anything else is done to it (tests/test_pvj_render.py).
+static void slow_start(void)
+{
+    const char *v = getenv("PVJ_RENDER_TEST_SLOW_START");
+    long ms = v ? strtol(v, NULL, 10) : 0;
+    if (ms <= 0 || ms > 5000) return;
+    struct timespec t = { ms / 1000, (ms % 1000) * 1000000L };
+    nanosleep(&t, NULL);
+}
+#endif
+
+static int layer_render_context(Layer *l)
+{
+    int adv = 0;
+    mpv_opengl_init_params gl = { .get_proc_address = get_proc };
+    mpv_render_param params[] = {
+        { MPV_RENDER_PARAM_API_TYPE, (void *)MPV_RENDER_API_TYPE_OPENGL },
+        { MPV_RENDER_PARAM_OPENGL_INIT_PARAMS, &gl },
+        { MPV_RENDER_PARAM_ADVANCED_CONTROL, &adv },
+        { 0 } };
+    if (mpv_render_context_create(&l->rc, l->h, params) < 0) return -1;
+    mpv_render_context_set_update_callback(l->rc, on_update, NULL);
+    return 0;
+}
+
 static int layer_open(Layer *l, int index, const Cfg *c, int w, int h)
 {
     int is_text = index < 0;
     l->index = index;
     l->h = mpv_create();
     if (!l->h) return -1;
+    // first, so that what goes wrong while the core starts (the text core's window is made then) reaches the journal
+    mpv_request_log_messages(l->h, c->verbose ? "info" : "warn");
     // as classic mpv is started (pvj/player.py, mpv_command): media only, nothing a file can point elsewhere
     hard(l->h, "config", "no");
     set(l->h, "vo", "libmpv");
     set(l->h, "idle", "yes");
-    // force-window is turned on only once the render context exists (below): set here, the core tried to make its
-    // window before there was one ("No render context set") and raced the render context's creation
+    // A video core's force-window is turned on only once its render context exists (below): set before, the core
+    // tried to make its window before there was one ("No render context set") and raced the render context's
+    // creation. The text core is different (below).
     set(l->h, "force-window", "no");
     set(l->h, "keep-open", "no");
     set(l->h, "osd-level", "0");
@@ -333,6 +368,11 @@ static int layer_open(Layer *l, int index, const Cfg *c, int w, int h)
     hard(l->h, "ytdl", "no");
     hard(l->h, "load-scripts", "no");
     hard(l->h, "load-auto-profiles", "no");
+    // No compiled shaders on disk, on every core: config=no does not stop mpv's shader cache everywhere. On 0.37 the
+    // "cache" folder is not one that config=no clears (options/path.c), so every core wrote $XDG_CACHE_HOME/mpv; on
+    // 0.40 and 0.41 it is cleared only by mpv_initialize, and the text core's render context is made before that.
+    // The option (a flag) is in 0.37, 0.40 and 0.41 alike (the review of #162, and its CI on 0.37).
+    hard(l->h, "gpu-shader-cache", "no");
     if (hard_failed) return -1;
     if (is_text) {
         // plays nothing: only its on-screen layer, over a clear background
@@ -341,6 +381,14 @@ static int layer_open(Layer *l, int index, const Cfg *c, int w, int h)
         // a clear background: mpv 0.38 on calls the colour background-color; 0.37 (Ubuntu 24.04) calls it background
         if (mpv_set_option_string(l->h, "background-color", "#00000000") < 0) set(l->h, "background", "#00000000");
         set(l->h, "osd-bar", "no");
+        // The text core plays nothing, so its window (and with it the on-screen layer) is made only when the core
+        // first goes idle, a moment after mpv_initialize; mpv before 0.41 (the Pi's 0.40, Ubuntu 24.04's 0.37) never
+        // acts on a force-window turned on later while idle. Turned on after the render context, the text layer
+        // worked only when the core happened to go idle after that: in about 1 start in 30 it had no window at all
+        // and drew no text and no overlay for the life of the process (CI, 2026-10-21). So here the render context
+        // is made first and the window is wanted from the start (gpu-shader-cache=no above keeps it off the disk).
+        set(l->h, "force-window", "yes");
+        if (layer_render_context(l)) return -1;
     } else {
         set(l->h, "hwdec", c->hwdec);
         if (c->fast) {
@@ -370,22 +418,18 @@ static int layer_open(Layer *l, int index, const Cfg *c, int w, int h)
         }
     }
     if (mpv_initialize(l->h) < 0) return -1;
-    mpv_request_log_messages(l->h, c->verbose ? "info" : "warn");
+#ifdef PVJ_RENDER_TEST_HOOKS
+    if (is_text) slow_start();
+#endif
     if (!is_text) {
         // the layer's idleness, kept by its event thread, so the renderer's own state never waits on the core
         __atomic_store_n(&app.idle[index], 1, __ATOMIC_RELEASE);
         mpv_observe_property(l->h, 0, "idle-active", MPV_FORMAT_FLAG);
     }
-    int adv = 0;
-    mpv_opengl_init_params gl = { .get_proc_address = get_proc };
-    mpv_render_param params[] = {
-        { MPV_RENDER_PARAM_API_TYPE, (void *)MPV_RENDER_API_TYPE_OPENGL },
-        { MPV_RENDER_PARAM_OPENGL_INIT_PARAMS, &gl },
-        { MPV_RENDER_PARAM_ADVANCED_CONTROL, &adv },
-        { 0 } };
-    if (mpv_render_context_create(&l->rc, l->h, params) < 0) return -1;
-    mpv_render_context_set_update_callback(l->rc, on_update, NULL);
-    mpv_set_property_string(l->h, "force-window", "yes");
+    if (!is_text) {
+        if (layer_render_context(l)) return -1;
+        mpv_set_property_string(l->h, "force-window", "yes");
+    }
     if (target(l, w, h)) return -1;
     l->dirty = 1;
     if (pthread_create(&l->events, NULL, event_loop, l) == 0) l->have_events = 1;
