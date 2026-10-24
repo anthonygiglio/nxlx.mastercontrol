@@ -61,6 +61,46 @@ class GeometryTest(unittest.TestCase):
             self.assertAlmostEqual(M.apply(h, p)[0], q[0], places=9)
             self.assertAlmostEqual(M.apply(h, p)[1], q[1], places=9)
 
+    HORIZON_AT_ORIGIN = [(400, 200), (700, 400), (1000, 800), (700, 550)]     # both vanishing points are on y = x
+
+    def test_a_quad_whose_horizon_passes_through_the_screens_origin(self):
+        # The review of #158: with h[8] fixed at 1 the solve was singular for this quad (w is 0 at the screen's
+        # origin), and it said the corners were in a line, which they are not.
+        q = self.HORIZON_AT_ORIGIN
+        h = M.homography(q, M.UNIT_QUAD)
+        for p, u in zip(q, M.UNIT_QUAD):
+            self.assertAlmostEqual(M.apply(h, p)[0], u[0], places=9)
+            self.assertAlmostEqual(M.apply(h, p)[1], u[1], places=9)
+        self.assertAlmostEqual(h[8], 0.0, places=12, msg="w is 0 at the origin")
+        surfaces = M.validate_mapping({"surfaces": [dict(quad([list(p) for p in q]), id="aaaaaaa1", name="Horizon", on=True)]})
+        uv = exact(surfaces, (700, 487.5))                      # the middle of the quad
+        self.assertIsNotNone(uv, "the quad is drawn")
+        self.assertTrue(0 < uv[0] < 1 and 0 < uv[1] < 1, uv)
+
+    def test_every_other_quad_keeps_its_numbers(self):
+        # h[8] = 1 is still tried first, so a quad that was drawn before gets the very same numbers, and so the same
+        # shader: the old solve, written out here, against random quads both ways
+        import random
+        rnd = random.Random(20261023)
+        n = 0
+        while n < 400:
+            q = [(rnd.uniform(-200, W + 200), rnd.uniform(-200, H + 200)) for _ in range(4)]
+            if not M._convex(q):
+                continue
+            for src, dst in ((q, M.UNIT_QUAD), (M.UNIT_QUAD, q)):
+                a, b = [], []
+                for (x, y), (u, v) in zip(src, dst):
+                    a.append([x, y, 1, 0, 0, 0, -u * x, -u * y]); b.append(u)
+                    a.append([0, 0, 0, x, y, 1, -v * x, -v * y]); b.append(v)
+                self.assertEqual(M.homography(src, dst), M._solve(a, b) + [1.0])
+            n += 1
+
+    def test_corners_in_a_line_are_still_refused(self):
+        for bad in ([(0, 0), (100, 0), (200, 0), (50, 100)], [(10, 10), (10, 10), (300, 40), (20, 300)]):
+            with self.assertRaises(M.MapperError) as e:
+                M.homography(bad, M.UNIT_QUAD)
+            self.assertIn("in a line", str(e.exception))
+
     def test_affine_maps_the_corners(self):
         src = [(0, 100), (50, 0), (100, 100)]
         a = M.affine(src, M.UNIT_TRI)
