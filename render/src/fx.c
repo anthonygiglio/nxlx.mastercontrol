@@ -109,6 +109,16 @@ void fx_prog_free(FxProg *p)
 int fx_prog_kind(const FxProg *p) { return p->kind; }
 const char *fx_prog_path(const FxProg *p) { return p->path; }
 
+// A buffer's name: it never reaches GLSL (the code reads pvj_t<i>), so a plain identifier is enough (the review of #170).
+static int fx_plain_ident(const char *s)
+{
+    size_t n = strlen(s);
+    if (n == 0 || n > FX_NAME - 1 || !isalpha((unsigned char)s[0])) return 0;
+    for (size_t i = 0; i < n; i++)
+        if (!(isalnum((unsigned char)s[i]) || s[i] == '_')) return 0;
+    return 1;
+}
+
 static int fx_name_ok(const char *s)
 {
     size_t n = strlen(s);
@@ -218,7 +228,7 @@ int fx_read(const char *path, FxProg **out, char *err, size_t n)
                 char name[FX_NAME], ws[24], hs[24];
                 int pers = -1, fl = -1, used = 0;
                 if (sscanf(d + 7, "%40s %d %d %23s %23s %n", name, &pers, &fl, ws, hs, &used) != 5 || d[7 + used]
-                    || (pers != 0 && pers != 1) || (fl != 0 && fl != 1) || !fx_name_ok(name)) {
+                    || (pers != 0 && pers != 1) || (fl != 0 && fl != 1) || !fx_plain_ident(name)) {
                     snprintf(err, n, "a TARGET line is not a name, two switches and two sizes");
                     goto bad;
                 }
@@ -363,7 +373,8 @@ typedef struct {
     int ntargets;
     GLuint ttex[FX_TARGETS][2], tfbo[FX_TARGETS][2];
     int tcur[FX_TARGETS], tw[FX_TARGETS], th[FX_TARGETS];
-    GLint u_t[FX_TARGETS], u_tsz[FX_TARGETS], u_pass, u_final;
+    GLint u_t[FX_TARGETS], u_tsz[FX_TARGETS], u_pass, u_final, u_srcsz;
+    double tbytes;                      // what its buffers take (counted in fx_buffer_total)
     int float_low;                      // a FLOAT buffer is 8-bit here: this GPU cannot draw into half floats
 } FxGL;
 
@@ -480,8 +491,11 @@ static GLuint fx_program(const FxProg *p, const FxValue *vals, int constants, ch
               "vec4 pvj_at(vec2 p) { return vec4(texture(pvj_src, clamp(p, vec2(0.0), vec2(1.0))).rgb, 1.0); }\n"
               "vec4 pvj_img_this() { return pvj_at(pvj_pos); }\n"
               "vec4 pvj_img_norm(vec2 q) { return pvj_at(vec2(q.x, 1.0 - q.y)); }\n"
-              "vec4 pvj_img_px(vec2 q) { return pvj_at(vec2(q.x, RENDERSIZE.y - q.y) / RENDERSIZE); }\n"
-              "vec2 pvj_img_size() { return RENDERSIZE; }\n");
+              // the picture's own size, not the pass's (a pass into a smaller buffer has its own RENDERSIZE): the
+              // review of #170
+              "uniform vec2 pvj_src_sz;\n"
+              "vec4 pvj_img_px(vec2 q) { return pvj_at(vec2(q.x, pvj_src_sz.y - q.y) / pvj_src_sz); }\n"
+              "vec2 pvj_img_size() { return pvj_src_sz; }\n");
     }
     for (int i = 0; i < p->ninputs; i++) input_decl(&b, &vals[i], constants);
     gf(&b, "#line %d\n", p->line);
@@ -541,6 +555,7 @@ static void fx_locations(FxGL *f, const FxProg *p)
     f->u_amount = glGetUniformLocation(f->prog, "pvj_amount");
     f->u_pass = glGetUniformLocation(f->prog, "PASSINDEX");
     f->u_final = glGetUniformLocation(f->prog, "pvj_final");
+    f->u_srcsz = glGetUniformLocation(f->prog, "pvj_src_sz");
     for (int i = 0; i < p->ntargets; i++) {
         char name[32];
         snprintf(name, sizeof name, "pvj_t%d", i);
@@ -574,6 +589,10 @@ static void fx_target(FxGL *f, int w, int h)
 }
 
 // A program's buffers: freed, or made (cleared) at the sizes its file names, relative to the drawing's (base) size.
+#define FX_ALL_BUFFER_BYTES (192.0 * 1048576)     // every program's buffers together, on the whole box
+#define FX_RUN_AREA 4.0                              // a run's passes together: at most this many times the drawing's area
+static double fx_buffer_total;          // bytes of every program's buffers now (render thread)
+
 static void fx_targets_free(FxGL *f)
 {
     for (int i = 0; i < f->ntargets; i++)
@@ -583,6 +602,8 @@ static void fx_targets_free(FxGL *f)
             f->tfbo[i][j] = f->ttex[i][j] = 0;
         }
     f->ntargets = 0;
+    fx_buffer_total -= f->tbytes;
+    f->tbytes = 0;
 }
 
 static int target_side(char k, float v, int bw, int bh)
@@ -592,17 +613,65 @@ static int target_side(char k, float v, int bw, int bh)
     return n < 1 ? 1 : n > 4096 ? 4096 : n;
 }
 
-static int fx_targets_make(FxGL *f, const FxProg *p, int bw, int bh, char *err, size_t n)
+// Two textures of one buffer, in half floats or 8 bits; 0 when the GPU can draw into them.
+static int target_pair(FxGL *f, int i, int w, int h, int fl)
+{
+    for (int j = 0; j < 2; j++) {
+        glGenTextures(1, &f->ttex[i][j]);
+        glBindTexture(GL_TEXTURE_2D, f->ttex[i][j]);
+        glTexImage2D(GL_TEXTURE_2D, 0, fl ? GL_RGBA16F : GL_RGBA8, w, h, 0, GL_RGBA, fl ? GL_HALF_FLOAT : GL_UNSIGNED_BYTE, NULL);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glGenFramebuffers(1, &f->tfbo[i][j]);
+        glBindFramebuffer(GL_FRAMEBUFFER, f->tfbo[i][j]);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, f->ttex[i][j], 0);
+        count_gl(2);
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) return -1;
+        glClearColor(0, 0, 0, 0);
+        glClear(GL_COLOR_BUFFER_BIT);
+    }
+    return 0;
+}
+
+static void target_pair_free(FxGL *f, int i)
+{
+    for (int j = 0; j < 2; j++) {
+        if (f->tfbo[i][j]) { glDeleteFramebuffers(1, &f->tfbo[i][j]); count_gl(-1); }
+        if (f->ttex[i][j]) { glDeleteTextures(1, &f->ttex[i][j]); count_gl(-1); }
+        f->tfbo[i][j] = f->ttex[i][j] = 0;
+    }
+}
+
+// `replacing`: the bytes of the buffers this program takes the place of (freed once it is built).
+static int fx_targets_make(FxGL *f, const FxProg *p, int bw, int bh, double replacing, char *err, size_t n)
 {
     if (float_targets < 0) {
         const char *ext = (const char *)glGetString(GL_EXTENSIONS);
         float_targets = ext && (strstr(ext, "GL_EXT_color_buffer_float") || strstr(ext, "GL_EXT_color_buffer_half_float"));
     }
-    double bytes = 0;
+    double bytes = 0, area = (double)bw * bh;
     for (int i = 0; i < p->ntargets; i++)
         bytes += 2.0 * target_side(p->tgt[i].wk, p->tgt[i].wv, bw, bh) * target_side(p->tgt[i].hk, p->tgt[i].hv, bw, bh)
                  * (p->tgt[i].isfloat && float_targets ? 8 : 4);
     if (bytes > FX_BUFFER_BYTES) { snprintf(err, n, "its buffers would take %.0f MB (at most %u)", bytes / 1048576.0, FX_BUFFER_BYTES >> 20); return -1; }
+    // the box's whole budget (the review of #170): every slot's programs together, this one in place of its old one
+    if (fx_buffer_total - replacing + bytes > FX_ALL_BUFFER_BYTES) {
+        snprintf(err, n, "the buffers of every program on the box would take %.0f MB together (at most %.0f): take an effect or a shader off first",
+                 (fx_buffer_total - replacing + bytes) / 1048576.0, FX_ALL_BUFFER_BYTES / 1048576.0);
+        return -1;
+    }
+    // what one run draws: every pass's area together (a buffer of twice the width is four of the picture's)
+    double run = 0;
+    for (int k = 0; k < p->npasses; k++) {
+        int t = p->pass[k];
+        run += t < 0 ? area : (double)target_side(p->tgt[t].wk, p->tgt[t].wv, bw, bh) * target_side(p->tgt[t].hk, p->tgt[t].hv, bw, bh);
+    }
+    if (run > FX_RUN_AREA * area + 0.5) {
+        snprintf(err, n, "its passes would draw %.1f times the picture's area every run (at most %.0f)", run / area, FX_RUN_AREA);
+        return -1;
+    }
     f->float_low = 0;
     for (int i = 0; i < p->ntargets; i++) {
         int w = target_side(p->tgt[i].wk, p->tgt[i].wv, bw, bh), h = target_side(p->tgt[i].hk, p->tgt[i].hv, bw, bh);
@@ -611,28 +680,20 @@ static int fx_targets_make(FxGL *f, const FxProg *p, int bw, int bh, char *err, 
         f->tw[i] = w;
         f->th[i] = h;
         f->tcur[i] = 0;
-        for (int j = 0; j < 2; j++) {
-            glGenTextures(1, &f->ttex[i][j]);
-            glBindTexture(GL_TEXTURE_2D, f->ttex[i][j]);
-            glTexImage2D(GL_TEXTURE_2D, 0, fl ? GL_RGBA16F : GL_RGBA8, w, h, 0, GL_RGBA, fl ? GL_HALF_FLOAT : GL_UNSIGNED_BYTE, NULL);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-            glGenFramebuffers(1, &f->tfbo[i][j]);
-            glBindFramebuffer(GL_FRAMEBUFFER, f->tfbo[i][j]);
-            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, f->ttex[i][j], 0);
-            count_gl(2);
-            f->ntargets = i + 1;
-            if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        f->ntargets = i + 1;
+        if (target_pair(f, i, w, h, fl)) {
+            target_pair_free(f, i);
+            // a half-float buffer this GPU cannot draw into after all: once more in 8 bits, and the state says so
+            if (!fl || target_pair(f, i, w, h, 0)) {
                 snprintf(err, n, "the GPU cannot draw into the buffer %s", p->tgt[i].name);
                 fx_targets_free(f);
                 return -1;
             }
-            glClearColor(0, 0, 0, 0);
-            glClear(GL_COLOR_BUFFER_BIT);
+            f->float_low = 1;
         }
     }
+    f->tbytes = bytes;
+    fx_buffer_total += bytes;
     return 0;
 }
 
@@ -684,7 +745,7 @@ static int fx_build(int s, int k, FxProg *p, char *err, size_t n)
     // program before it running with its own
     FxGL fresh = { 0 };
     int bw = p->kind == FX_GENERATOR ? p->w : app.in_w, bh = p->kind == FX_GENERATOR ? p->h : app.in_h;
-    if (fx_targets_make(&fresh, p, bw, bh, err, n)) { glDeleteProgram(prog); count_gl(-1); return -1; }
+    if (fx_targets_make(&fresh, p, bw, bh, f->tbytes, err, n)) { glDeleteProgram(prog); count_gl(-1); return -1; }
     fx_targets_free(f);
     GLuint keep_tex = f->tex, keep_fbo = f->fbo;
     int keep_w = f->w, keep_h = f->h;
@@ -697,6 +758,7 @@ static int fx_build(int s, int k, FxProg *p, char *err, size_t n)
     f->h = keep_h;
     f->ntargets = fresh.ntargets;
     f->float_low = fresh.float_low;
+    f->tbytes = fresh.tbytes;
     memcpy(f->ttex, fresh.ttex, sizeof f->ttex);
     memcpy(f->tfbo, fresh.tfbo, sizeof f->tfbo);
     memcpy(f->tcur, fresh.tcur, sizeof f->tcur);
@@ -815,6 +877,7 @@ static void fx_uniforms(FxGL *f, double dt)
     } else {
         glUniform1i(f->u_src, 0);
         glUniform1f(f->u_amount, f->ctl[FXC_AMOUNT]);
+        glUniform2f(f->u_srcsz, (float)f->w, (float)f->h);      // the picture it filters is at its own output size
     }
     for (int i = 0; !f->constants && i < f->src->ninputs; i++) {
         const FxValue *v = &f->val[i];
@@ -897,7 +960,7 @@ static void fx_rebuild(int s, int k, double now)
     fx_locations(f, f->src);
     pthread_mutex_lock(&app.lock);
     app.fx[s][k].rebuilds++;
-    snprintf(app.fx[s][k].state, sizeof app.fx[s][k].state, "constants");
+    snprintf(app.fx[s][k].state, sizeof app.fx[s][k].state, "constants%s", f->float_low ? "; its FLOAT buffers are 8-bit on this GPU" : "");
     pthread_mutex_unlock(&app.lock);
 }
 

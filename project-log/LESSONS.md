@@ -594,3 +594,11 @@ The first comparison of pvj-render's own programs with libmpv's drawing said eve
 ## Two changes of one property in a row can leave libmpv's still picture at the first (2026-10-24, D106)
 
 Giving source 1's layers their brightness back just before a program was cleared, and then the panel's new level just after, left the still picture at the first value in about one change in three, while `get_property brightness` said the second; forcing more renders did not help. With the layers set once, after the clear, it never happened. It was not traced inside libmpv. When the order of two writes to libmpv is a choice, make one write, and judge it by the picture, not by what the property says.
+
+## A name that changes meaning per pass changes every reader of it (2026-10-24, D106)
+
+Giving each pass its own RENDERSIZE was right for the pass, and quietly wrong for the effect's reads of its picture, which had been written in terms of RENDERSIZE when there was one pass. When a value becomes per-pass (or per-anything), search for every place that read it as one value, and give those that meant the old thing a name of their own.
+
+## A break-check restored within the same second can leave the broken bytecode behind (2026-10-24, D106)
+
+A break-check wrote `if False:` over `if extra:` in pvj/shaders.py, ran its test, and put the file back from a copy, all within one second. Python checks a module's cached bytecode by the source's modification time in whole seconds and its size; the two lines are the same length, so the next run used the broken bytecode and two tests failed on code that was right. After a break-check that restores a Python file, remove its `__pycache__` (or touch the file a second later) before trusting the next run.

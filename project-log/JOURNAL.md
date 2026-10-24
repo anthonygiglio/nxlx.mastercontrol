@@ -4,6 +4,12 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-24, the review of #170 (D106 step c), fixed on its branch
+
+- **Medium:** IMG_SIZE and IMG_PIXEL of the picture use its own size in a smaller pass; every program's buffers together at most 192 MB. **Low:** GLSL's reserved words refused by the panel too; nothing on the last pass, one size a buffer; a run at most 4 pictures' area; a half-float buffer retried in 8 bits.
+- **Tests:** the picture's own size, the box-wide cap, a fresh buffer each run, classic's listing. **Break-checks (6, each caught):** the picture's size; the box-wide cap; a slot's own buffers given back; a non-persistent buffer cleared; the run's area; nothing on the last pass.
+- **For (e):** the cost estimate times passes; `native()` read once.
+
 ## 2026-10-24, pvj-render phase 3, step c (D106): persistent and feedback passes
 
 - **Built:** ISF PASSES, TARGET, PERSISTENT (and PERSISTENT_BUFFERS), FLOAT and pass sizes, for generators and effects, on the New renderer only (classic's refusal says the New renderer draws it). Two textures a buffer, swapped after each pass; half floats where the GPU draws into them; a 64 MB cap a program. Version 0.6.0.

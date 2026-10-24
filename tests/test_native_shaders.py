@@ -583,6 +583,12 @@ class EngineTest(NativeBase):
         put = self.api.effects.put("twice.fs")
         self.assertTrue(put["ok"], put)
 
+    def test_classic_lists_a_shader_of_several_passes_as_refused(self):
+        self.api.shaders.upload("feedback2.fs", FEEDBACK)
+        self.player._native_seen = (self.player._seen_pid, False)        # the player is classic now
+        rows = {r["id"]: r for r in self.api.shaders.library()}
+        self.assertIn("New renderer", rows["feedback2.fs"]["error"])
+
     def test_a_refused_generator_leaves_black_never_the_carrier(self):
         broken = "/*{}*/\nvoid main() { gl_FragColor = vec4(nonsense, 1.0); }\n"
         self.api.shaders.upload("broken.fs", broken)
@@ -1012,6 +1018,24 @@ INVERT_TWICE = ("/*{\"INPUTS\": [{\"NAME\": \"inputImage\", \"TYPE\": \"image\"}
                 "}\n")
 
 
+# the picture's own size seen from a pass at half its size (the review of #170: ISF's IMG_SIZE is the picture's)
+SRC_SIZE = ("/*{\"INPUTS\": [{\"NAME\": \"inputImage\", \"TYPE\": \"image\"}],\n"
+            " \"PASSES\": [{\"TARGET\": \"small\", \"WIDTH\": \"$WIDTH/2\", \"HEIGHT\": \"$HEIGHT/2\"}, {}]}*/\n"
+            "void main() {\n"
+            "    if (PASSINDEX == 0) { gl_FragColor = vec4(IMG_SIZE(inputImage).x / 1000.0, RENDERSIZE.x / 1000.0, 0.0, 1.0); }\n"
+            "    else { gl_FragColor = vec4(IMG_THIS_PIXEL(small).rg, 0.0, 1.0); }\n"
+            "}\n")
+# a buffer that is not persistent, read before it is drawn: black every run, so it never grows
+FRESH = ("/*{\"PASSES\": [{\"TARGET\": \"t\"}, {}]}*/\n"
+         "void main() {\n"
+         "    if (PASSINDEX == 0) { gl_FragColor = vec4(IMG_THIS_PIXEL(t).r + 0.1, 0.0, 0.0, 1.0); }\n"
+         "    else { gl_FragColor = IMG_THIS_PIXEL(t); }\n"
+         "}\n")
+# a buffer of the picture's size in half floats: about 33 MB at 1920 x 1080 (two textures)
+BIG_FX = ("/*{\"INPUTS\": [{\"NAME\": \"inputImage\", \"TYPE\": \"image\"}], \"PASSES\": [{\"TARGET\": \"b\", \"FLOAT\": true}, {}]}*/\n"
+          "void main() { if (PASSINDEX == 0) { gl_FragColor = IMG_THIS_PIXEL(inputImage); } else { gl_FragColor = IMG_THIS_PIXEL(b); } }\n")
+
+
 class PassParseTest(unittest.TestCase):
     """What the panel takes of PASSES on the New renderer, and what classic still refuses."""
 
@@ -1043,11 +1067,44 @@ class PassParseTest(unittest.TestCase):
             "a buffer read as a texture": FEEDBACK.replace("IMG_THIS_PIXEL(acc); gl_FragColor", "texture(acc, vec2(0.0)); gl_FragColor"),
             "an unknown key": FEEDBACK.replace('"PERSISTENT": true', '"PERSISTENT": true, "BLEND": 1'),
             "another picture": FEEDBACK.replace("IMG_THIS_PIXEL(acc); gl_FragColor", "IMG_THIS_PIXEL(other); gl_FragColor"),
+            "a size on the last pass": FEEDBACK.replace(', {}]', ', {"WIDTH": 100}]'),
+            "FLOAT on the last pass": FEEDBACK.replace(', {}]', ', {"FLOAT": true}]'),
+            "one buffer at two sizes": FEEDBACK.replace('[{"TARGET": "acc", "PERSISTENT": true}, {}]',
+                                                        '[{"TARGET": "acc", "WIDTH": "$WIDTH/2"}, {"TARGET": "acc", "WIDTH": "$WIDTH"}, {}]'),
+            "a run of more than 4 pictures": HALF.replace('"WIDTH": "$WIDTH/2", "HEIGHT": "$HEIGHT/2"', '"WIDTH": "$WIDTH*2", "HEIGHT": "$HEIGHT*2"'),
+            "a buffer named as GLSL reserves": FEEDBACK.replace('"TARGET": "acc"', '"TARGET": "dvec2"').replace("(acc)", "(dvec2)"),
+            "an input named as GLSL reserves": FEEDBACK.replace('\"NAME\": \"rise\"', '\"NAME\": \"image2D\"').replace("+ rise", "+ image2D"),
         }
         for what, text in bad.items():
             with self.subTest(what):
                 with self.assertRaises(S.ShaderError):
                     S.parse(text, passes=True)
+
+
+class BufferBudgetTest(NativeBase):
+    """The review of #170: every program's buffers together on the box, at most 192 MB."""
+    ARGS = ("--headless=1920x1080", "--sources=4")
+
+    def test_the_box_wide_cap_and_a_slot_given_back(self):
+        prog = self.effect(BIG_FX)          # about 33 MB at 1920 x 1080
+        placed = []
+        refused = None
+        for s, k in ((1, 1), (1, 2), (1, 3), (2, 1), (2, 2), (2, 3), (3, 1)):
+            try:
+                self.r("pvj-shader", "load", s, k, prog)
+                placed.append((s, k))
+            except PlayerError as e:
+                refused = (s, k, str(e))
+                break
+        self.assertEqual(len(placed), 6, (placed, refused))          # 6 of 31.6 MiB fit in 192, a seventh does not
+        self.assertIn("every program on the box", refused[2])
+        # a slot that already holds one takes another in its place (its own buffers count as given back)
+        self.r("pvj-shader", "load", 1, 1, prog)
+        self.r("pvj-shader", "clear", *placed[0])
+        self.r("pvj-shader", "load", refused[0], refused[1], prog)       # room again
+        for s, k in placed[1:] + [refused[:2]]:
+            self.r("pvj-shader", "clear", s, k)
+        self.assertEqual(self.r("get_property", "pvj-render")["fx-gl-objects"], 0)
 
 
 class PassTest(NativeBase):
@@ -1098,6 +1155,23 @@ class PassTest(NativeBase):
         got = self.r.pixel(5, 5)
         want = tuple(255 - c for c in gradient(5, 5))
         self.assertTrue(all(abs(a - b) <= 2 for a, b in zip(got, want)), (got, want))
+
+    def test_a_buffer_that_is_not_persistent_starts_each_run_black(self):
+        self.carrier()
+        self.r("pvj-shader", "load", 1, 0, self.generator(FRESH))
+        time.sleep(0.5)
+        a = self.red()
+        time.sleep(1.0)
+        self.assertLessEqual(abs(self.red() - a), 1)
+        self.assertLessEqual(abs(a - 26), 2, a)          # 0.1 over black, every run
+
+    def test_a_filter_sees_its_pictures_own_size_from_a_smaller_pass(self):
+        self.picture()
+        self.r("pvj-shader", "load", 1, 1, self.effect(SRC_SIZE))
+        time.sleep(0.3)
+        got = self.r.pixel(10, 10)
+        want = (round(W / 1000 * 255), round(W / 2 / 1000 * 255))     # IMG_SIZE: the picture's; RENDERSIZE: the pass's
+        self.assertTrue(abs(got[0] - want[0]) <= 2 and abs(got[1] - want[1]) <= 2, (got, want))
 
     def test_every_pass_is_counted(self):
         self.carrier()

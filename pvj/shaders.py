@@ -88,6 +88,10 @@ output filter sizeof cast namespace using main hook frame random input_size targ
 texture texture2D radians degrees sin cos tan asin acos atan pow exp log exp2 log2 sqrt inversesqrt abs sign floor
 ceil fract mod min max clamp mix step smoothstep length distance dot cross normalize reflect refract
 TIME TIMEDELTA DATE FRAMEINDEX PASSINDEX RENDERSIZE isf_FragNormCoord vv_FragNormCoord
+mat2x2 mat2x3 mat2x4 mat3x2 mat3x3 mat3x4 mat4x2 mat4x3 mat4x4 sampler2DShadow samplerCubeShadow sampler2DArray
+sampler2DArrayShadow isampler2D isampler3D isamplerCube isampler2DArray usampler2D usampler3D usamplerCube usampler2DArray
+coherent restrict readonly writeonly resource atomic_uint hvec2 hvec3 hvec4 dvec2 dvec3 dvec4 fvec2 fvec3 fvec4
+sampler3DRect image1D image2D image3D imageCube
 IMG_PIXEL IMG_NORM_PIXEL IMG_THIS_PIXEL IMG_THIS_NORM_PIXEL IMG_SIZE
 """.split())
 RESERVED_LOWER = frozenset(w.lower() for w in RESERVED)
@@ -472,6 +476,9 @@ def _passes(passes, persistent):
         if name is None or name == "":
             if not last:
                 raise ShaderError("pass %d draws into no TARGET: only the last pass draws the picture itself" % (n + 1))
+            extra = next((k for k in ("WIDTH", "HEIGHT", "FLOAT", "PERSISTENT") if k in p), None)
+            if extra:
+                raise ShaderError("the last pass draws the picture itself, so it has no %s" % extra)
             plan.append(None)
             continue
         if last:
@@ -487,6 +494,9 @@ def _passes(passes, persistent):
                             "w": _pass_size(p.get("WIDTH"), "WIDTH", "WIDTH of pass %d" % (n + 1)),
                             "h": _pass_size(p.get("HEIGHT"), "HEIGHT", "HEIGHT of pass %d" % (n + 1))})
         t = targets[index[name]]
+        for axis in ("WIDTH", "HEIGHT"):
+            if axis in p and _pass_size(p[axis], axis, "%s of pass %d" % (axis, n + 1)) != t[axis[0].lower()]:
+                raise ShaderError("pass %d draws into %s at another %s than an earlier pass" % (n + 1, _text(name, 32), axis))
         if "PERSISTENT" in p:
             t["persistent"] = t["persistent"] or _flag(p["PERSISTENT"], "PERSISTENT of pass %d" % (n + 1))
         if "FLOAT" in p:
@@ -495,6 +505,12 @@ def _passes(passes, persistent):
     for name in keep:
         if name in index:
             targets[index[name]]["persistent"] = True
+    # what one run draws, as a share of the picture's area (a size in pixels is judged by the renderer, which knows
+    # the picture's size): at most 4 (the review of #170)
+    share = lambda s: float(s[1:]) if s[0] in "wh" else 0.0
+    run = 1.0 + sum(share(targets[k]["w"]) * share(targets[k]["h"]) for k in plan if k is not None)
+    if run > 4.0 + 1e-6:
+        raise ShaderError("its passes would draw %.1f times the picture's area every frame (at most 4)" % run)
     return targets, plan
 
 
