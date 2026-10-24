@@ -89,10 +89,10 @@ class NativeBase(unittest.TestCase):
         return path
 
     def generator(self, source, size=(W, H), **kw):
-        return self.write(S.translate_native(S.parse(source), size, **kw))
+        return self.write(S.translate_native(S.parse(source, passes=True), size, **kw))
 
     def effect(self, source, **kw):
-        return self.write(E.translate_native(S.parse(source, S.FILTER), **kw))
+        return self.write(E.translate_native(S.parse(source, S.FILTER, passes=True), **kw))
 
     def slot(self, k):
         return self.r("get_property", "pvj-shaders")[k]
@@ -569,6 +569,26 @@ class EngineTest(NativeBase):
         self.player.clear()
         self.assertTrue(self.r.wait(lambda: self.slot(0)["state"] == "off" and self.slot(1)["state"] == "off", 3))
 
+    def test_a_shader_of_several_passes_is_taken_and_played_on_the_new_renderer(self):
+        # an upload with PASSES: refused on classic, taken here (the library parses with passes on the New renderer)
+        self.api.shaders.upload("feedback.fs", FEEDBACK)
+        rows = {r["id"]: r for r in self.api.shaders.library()}
+        self.assertFalse(rows["feedback.fs"].get("error"), rows["feedback.fs"])
+        out = self.api.shaders.play("feedback.fs")
+        self.assertTrue(out.get("ok"), out)
+        self.assertEqual(self.slot(0)["state"], "on")
+        a = self.r.pixel(10, 10)[0]
+        self.assertTrue(self.r.wait(lambda: self.r.pixel(10, 10)[0] > a + 20, 3))
+        self.api.effects.upload("twice.fs", INVERT_TWICE)
+        put = self.api.effects.put("twice.fs")
+        self.assertTrue(put["ok"], put)
+
+    def test_classic_lists_a_shader_of_several_passes_as_refused(self):
+        self.api.shaders.upload("feedback2.fs", FEEDBACK)
+        self.player._native_seen = (self.player._seen_pid, False)        # the player is classic now
+        rows = {r["id"]: r for r in self.api.shaders.library()}
+        self.assertIn("New renderer", rows["feedback2.fs"]["error"])
+
     def test_a_refused_generator_leaves_black_never_the_carrier(self):
         broken = "/*{}*/\nvoid main() { gl_FragColor = vec4(nonsense, 1.0); }\n"
         self.api.shaders.upload("broken.fs", broken)
@@ -971,6 +991,206 @@ class ChainApiTest(unittest.TestCase):
             self.api.chains.api_post({"source": 2, "slot": 1, "id": "fx-grade.fs"}, None, None)
         self.assertEqual(e.exception.status, 409)
         self.assertFalse(self.api.chains.state()["available"])
+
+
+# Step c: passes and buffers (D106). FEEDBACK adds 0.02 of red to its persistent buffer at every run and shows it.
+FEEDBACK = ("/*{\"INPUTS\": [{\"NAME\": \"rise\", \"TYPE\": \"float\", \"DEFAULT\": 0.02}],\n"
+            " \"PASSES\": [{\"TARGET\": \"acc\", \"PERSISTENT\": true}, {}]}*/\n"
+            "void main() {\n"
+            "    if (PASSINDEX == 0) { vec4 a = IMG_THIS_PIXEL(acc); gl_FragColor = vec4(min(a.r + rise, 1.0), 0.0, 0.0, 1.0); }\n"
+            "    else { gl_FragColor = IMG_THIS_PIXEL(acc); }\n"
+            "}\n")
+# HALF: its first pass draws at half the width and says the size it was given; FLOATS: a value above 1 kept by a FLOAT buffer
+HALF = ("/*{\"PASSES\": [{\"TARGET\": \"small\", \"WIDTH\": \"$WIDTH/2\", \"HEIGHT\": \"$HEIGHT/2\"}, {}]}*/\n"
+        "void main() {\n"
+        "    if (PASSINDEX == 0) { gl_FragColor = vec4(RENDERSIZE.x / 1000.0, RENDERSIZE.y / 1000.0, 0.0, 1.0); }\n"
+        "    else { vec4 h = IMG_NORM_PIXEL(small, isf_FragNormCoord); gl_FragColor = vec4(h.rg, IMG_SIZE(small).x / 1000.0, 1.0); }\n"
+        "}\n")
+FLOATS = ("/*{\"PASSES\": [{\"TARGET\": \"big\", \"FLOAT\": true}, {}]}*/\n"
+          "void main() {\n"
+          "    if (PASSINDEX == 0) { gl_FragColor = vec4(2.0, 0.0, 0.0, 1.0); }\n"
+          "    else { gl_FragColor = vec4(IMG_THIS_PIXEL(big).r / 4.0, 0.0, 0.0, 1.0); }\n"
+          "}\n")
+INVERT_TWICE = ("/*{\"INPUTS\": [{\"NAME\": \"inputImage\", \"TYPE\": \"image\"}], \"PASSES\": [{\"TARGET\": \"buf\"}, {}]}*/\n"
+                "void main() {\n"
+                "    if (PASSINDEX == 0) { gl_FragColor = vec4(1.0 - IMG_THIS_PIXEL(inputImage).rgb, 1.0); }\n"
+                "    else { gl_FragColor = vec4(IMG_THIS_PIXEL(buf).rgb, 1.0); }\n"
+                "}\n")
+
+
+# the picture's own size seen from a pass at half its size (the review of #170: ISF's IMG_SIZE is the picture's)
+SRC_SIZE = ("/*{\"INPUTS\": [{\"NAME\": \"inputImage\", \"TYPE\": \"image\"}],\n"
+            " \"PASSES\": [{\"TARGET\": \"small\", \"WIDTH\": \"$WIDTH/2\", \"HEIGHT\": \"$HEIGHT/2\"}, {}]}*/\n"
+            "void main() {\n"
+            "    if (PASSINDEX == 0) { gl_FragColor = vec4(IMG_SIZE(inputImage).x / 1000.0, RENDERSIZE.x / 1000.0, 0.0, 1.0); }\n"
+            "    else { gl_FragColor = vec4(IMG_THIS_PIXEL(small).rg, 0.0, 1.0); }\n"
+            "}\n")
+# a buffer that is not persistent, read before it is drawn: black every run, so it never grows
+FRESH = ("/*{\"PASSES\": [{\"TARGET\": \"t\"}, {}]}*/\n"
+         "void main() {\n"
+         "    if (PASSINDEX == 0) { gl_FragColor = vec4(IMG_THIS_PIXEL(t).r + 0.1, 0.0, 0.0, 1.0); }\n"
+         "    else { gl_FragColor = IMG_THIS_PIXEL(t); }\n"
+         "}\n")
+# a buffer of the picture's size in half floats: about 33 MB at 1920 x 1080 (two textures)
+BIG_FX = ("/*{\"INPUTS\": [{\"NAME\": \"inputImage\", \"TYPE\": \"image\"}], \"PASSES\": [{\"TARGET\": \"b\", \"FLOAT\": true}, {}]}*/\n"
+          "void main() { if (PASSINDEX == 0) { gl_FragColor = IMG_THIS_PIXEL(inputImage); } else { gl_FragColor = IMG_THIS_PIXEL(b); } }\n")
+
+
+class PassParseTest(unittest.TestCase):
+    """What the panel takes of PASSES on the New renderer, and what classic still refuses."""
+
+    def test_the_program_file_and_classic(self):
+        p = S.parse(FEEDBACK, passes=True)
+        self.assertEqual(p["targets"], [{"name": "acc", "persistent": True, "float": False, "w": "w1", "h": "h1"}])
+        self.assertEqual(p["plan"], [0, None])
+        self.assertIn("pvj_t0_this()", p["code"])
+        text = S.translate_native(p, (W, H))
+        self.assertIn("//!TARGET acc 1 0 w1 h1\n//!PASS 0\n//!PASS -\n", text)
+        self.assertEqual(S.parse(HALF, passes=True)["targets"][0]["w"], "w0.5")
+        with self.assertRaises(S.ShaderError) as e:
+            S.parse(FEEDBACK)
+        self.assertIn("New renderer", str(e.exception))
+        self.assertEqual(S.parse(FLAT, passes=True)["plan"], [None])        # one pass: nothing more in the file
+        self.assertNotIn("//!PASS", S.translate_native(S.parse(FLAT, passes=True), (W, H)))
+        fx = S.parse(INVERT_TWICE, S.FILTER, passes=True)
+        self.assertIn("//!PASS 0", E.translate_native(fx))
+
+    def test_what_is_refused(self):
+        bad = {
+            "the last pass into a buffer": FEEDBACK.replace(', {}]', ', {"TARGET": "x"}]'),
+            "a pass before the last without one": FEEDBACK.replace('[{"TARGET": "acc", "PERSISTENT": true}, {}]', '[{}, {}]'),
+            "five passes": FEEDBACK.replace(', {}]', ', {"TARGET": "b"}, {"TARGET": "c"}, {"TARGET": "d"}, {}]'),
+            "a size of words": HALF.replace("$WIDTH/2", "$WIDTH/2 + 1"),
+            "a size too small": HALF.replace("$WIDTH/2", "$WIDTH/64"),
+            "a buffer called as an input": FEEDBACK.replace('"TARGET": "acc"', '"TARGET": "rise"'),
+            "a buffer named as the language": FEEDBACK.replace('"TARGET": "acc"', '"TARGET": "float"').replace("(acc)", "(float)"),
+            "a buffer read as a texture": FEEDBACK.replace("IMG_THIS_PIXEL(acc); gl_FragColor", "texture(acc, vec2(0.0)); gl_FragColor"),
+            "an unknown key": FEEDBACK.replace('"PERSISTENT": true', '"PERSISTENT": true, "BLEND": 1'),
+            "another picture": FEEDBACK.replace("IMG_THIS_PIXEL(acc); gl_FragColor", "IMG_THIS_PIXEL(other); gl_FragColor"),
+            "a size on the last pass": FEEDBACK.replace(', {}]', ', {"WIDTH": 100}]'),
+            "FLOAT on the last pass": FEEDBACK.replace(', {}]', ', {"FLOAT": true}]'),
+            "one buffer at two sizes": FEEDBACK.replace('[{"TARGET": "acc", "PERSISTENT": true}, {}]',
+                                                        '[{"TARGET": "acc", "WIDTH": "$WIDTH/2"}, {"TARGET": "acc", "WIDTH": "$WIDTH"}, {}]'),
+            "a run of more than 4 pictures": HALF.replace('"WIDTH": "$WIDTH/2", "HEIGHT": "$HEIGHT/2"', '"WIDTH": "$WIDTH*2", "HEIGHT": "$HEIGHT*2"'),
+            "a buffer named as GLSL reserves": FEEDBACK.replace('"TARGET": "acc"', '"TARGET": "dvec2"').replace("(acc)", "(dvec2)"),
+            "an input named as GLSL reserves": FEEDBACK.replace('\"NAME\": \"rise\"', '\"NAME\": \"image2D\"').replace("+ rise", "+ image2D"),
+        }
+        for what, text in bad.items():
+            with self.subTest(what):
+                with self.assertRaises(S.ShaderError):
+                    S.parse(text, passes=True)
+
+
+class BufferBudgetTest(NativeBase):
+    """The review of #170: every program's buffers together on the box, at most 192 MB."""
+    ARGS = ("--headless=1920x1080", "--sources=4")
+
+    def test_the_box_wide_cap_and_a_slot_given_back(self):
+        prog = self.effect(BIG_FX)          # about 33 MB at 1920 x 1080
+        placed = []
+        refused = None
+        for s, k in ((1, 1), (1, 2), (1, 3), (2, 1), (2, 2), (2, 3), (3, 1)):
+            try:
+                self.r("pvj-shader", "load", s, k, prog)
+                placed.append((s, k))
+            except PlayerError as e:
+                refused = (s, k, str(e))
+                break
+        self.assertEqual(len(placed), 6, (placed, refused))          # 6 of 31.6 MiB fit in 192, a seventh does not
+        self.assertIn("every program on the box", refused[2])
+        # a slot that already holds one takes another in its place (its own buffers count as given back)
+        self.r("pvj-shader", "load", 1, 1, prog)
+        self.r("pvj-shader", "clear", *placed[0])
+        self.r("pvj-shader", "load", refused[0], refused[1], prog)       # room again
+        for s, k in placed[1:] + [refused[:2]]:
+            self.r("pvj-shader", "clear", s, k)
+        self.assertEqual(self.r("get_property", "pvj-render")["fx-gl-objects"], 0)
+
+
+class PassTest(NativeBase):
+    """Persistent and feedback passes in pvj-render (D106 step c)."""
+
+    def red(self):
+        return self.r.pixel(10, 10)[0]
+
+    def test_a_feedback_buffer_grows_keeps_through_values_and_starts_over_on_a_load(self):
+        self.carrier()
+        prog = self.generator(FEEDBACK)
+        self.r("pvj-shader", "load", 1, 0, prog)
+        a = self.red()
+        self.assertTrue(self.r.wait(lambda: self.red() > a + 20, 3), (a, self.red()))
+        b = self.red()
+        self.assertTrue(self.r.wait(lambda: self.red() > b, 3))            # it goes on growing, frame by frame
+        self.r("pvj-shader", "set", 1, 0, {"rise": 0.001})               # a value: the buffer keeps what it holds
+        time.sleep(0.2)
+        c = self.red()
+        self.assertGreaterEqual(c, b)
+        self.r("pvj-shader", "set", 1, 0, {"rise": 0.02})
+        self.assertTrue(self.r.wait(lambda: self.red() == 255, 5))
+        self.r("pvj-shader", "load", 1, 0, prog)                         # a load: the buffer starts black again
+        self.assertLess(self.red(), 128)
+        self.assertEqual(self.slot(0)["state"], "on")
+
+    def test_a_pass_draws_at_its_own_size(self):
+        self.carrier()
+        self.r("pvj-shader", "load", 1, 0, self.generator(HALF))
+        time.sleep(0.3)
+        got = self.r.pixel(10, 10)
+        want = (round(W / 2 / 1000 * 255), round(H / 2 / 1000 * 255), round(W / 2 / 1000 * 255))
+        self.assertTrue(all(abs(g - w) <= 2 for g, w in zip(got, want)), (got, want))
+
+    def test_a_float_buffer_keeps_values_above_one(self):
+        self.carrier()
+        self.r("pvj-shader", "load", 1, 0, self.generator(FLOATS))
+        time.sleep(0.3)
+        state = self.slot(0)["state"]
+        want = 64 if "8-bit" in state else 128                   # 2 / 4 kept, or 1 / 4 where the GPU has no float buffers
+        self.assertLessEqual(abs(self.red() - want), 2, (self.red(), state))
+        print("\n  a FLOAT buffer here: %s" % ("8-bit (no half floats)" if "8-bit" in state else "half float"))
+
+    def test_an_effect_of_two_passes(self):
+        self.picture()
+        self.r("pvj-shader", "load", 1, 1, self.effect(INVERT_TWICE))
+        time.sleep(0.3)
+        got = self.r.pixel(5, 5)
+        want = tuple(255 - c for c in gradient(5, 5))
+        self.assertTrue(all(abs(a - b) <= 2 for a, b in zip(got, want)), (got, want))
+
+    def test_a_buffer_that_is_not_persistent_starts_each_run_black(self):
+        self.carrier()
+        self.r("pvj-shader", "load", 1, 0, self.generator(FRESH))
+        time.sleep(0.5)
+        a = self.red()
+        time.sleep(1.0)
+        self.assertLessEqual(abs(self.red() - a), 1)
+        self.assertLessEqual(abs(a - 26), 2, a)          # 0.1 over black, every run
+
+    def test_a_filter_sees_its_pictures_own_size_from_a_smaller_pass(self):
+        self.picture()
+        self.r("pvj-shader", "load", 1, 1, self.effect(SRC_SIZE))
+        time.sleep(0.3)
+        got = self.r.pixel(10, 10)
+        want = (round(W / 1000 * 255), round(W / 2 / 1000 * 255))     # IMG_SIZE: the picture's; RENDERSIZE: the pass's
+        self.assertTrue(abs(got[0] - want[0]) <= 2 and abs(got[1] - want[1]) <= 2, (got, want))
+
+    def test_every_pass_is_counted(self):
+        self.carrier()
+        self.r("pvj-shader", "load", 1, 0, self.generator(FEEDBACK))
+        time.sleep(2.5)
+        rate = self.r("get_property", "pvj-render")["fx-passes-per-second"]
+        self.assertTrue(30 <= rate <= 70, rate)          # two passes a run, about 30 runs a second
+
+    def test_buffers_too_large_are_refused_and_loads_leave_nothing(self):
+        self.carrier()
+        huge = FEEDBACK.replace('"PERSISTENT": true', '"PERSISTENT": true, "WIDTH": 4096, "HEIGHT": 4096')
+        with self.assertRaises(PlayerError) as e:
+            self.r("pvj-shader", "load", 1, 0, self.generator(huge))
+        self.assertIn("MB", str(e.exception))
+        progs = [self.generator(FEEDBACK), self.generator(HALF), self.generator(FLOATS)]
+        for i in range(60):
+            self.r("pvj-shader", "load", 1, 0, progs[i % 3])
+        self.r("pvj-shader", "clear", 1, 0)
+        self.assertEqual(self.r("get_property", "pvj-render")["fx-gl-objects"], 0)
 
 
 if __name__ == "__main__":

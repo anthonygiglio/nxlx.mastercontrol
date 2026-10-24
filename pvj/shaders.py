@@ -88,6 +88,10 @@ output filter sizeof cast namespace using main hook frame random input_size targ
 texture texture2D radians degrees sin cos tan asin acos atan pow exp log exp2 log2 sqrt inversesqrt abs sign floor
 ceil fract mod min max clamp mix step smoothstep length distance dot cross normalize reflect refract
 TIME TIMEDELTA DATE FRAMEINDEX PASSINDEX RENDERSIZE isf_FragNormCoord vv_FragNormCoord
+mat2x2 mat2x3 mat2x4 mat3x2 mat3x3 mat3x4 mat4x2 mat4x3 mat4x4 sampler2DShadow samplerCubeShadow sampler2DArray
+sampler2DArrayShadow isampler2D isampler3D isamplerCube isampler2DArray usampler2D usampler3D usamplerCube usampler2DArray
+coherent restrict readonly writeonly resource atomic_uint hvec2 hvec3 hvec4 dvec2 dvec3 dvec4 fvec2 fvec3 fvec4
+sampler3DRect image1D image2D image3D imageCube
 IMG_PIXEL IMG_NORM_PIXEL IMG_THIS_PIXEL IMG_THIS_NORM_PIXEL IMG_SIZE
 """.split())
 RESERVED_LOWER = frozenset(w.lower() for w in RESERVED)
@@ -405,8 +409,128 @@ def find_header(source):
     raise ShaderError("more than %d KB of blank space and comments stand before the JSON header" % (MAX_LEADING // 1024))
 
 
-def parse(source, kind=GENERATOR):
-    """An ISF file from untrusted text: {"description", "credit", "cost", "inputs", "body", "line", "kind"}. `body` is
+# ---- passes and buffers (D106 step c: the New renderer only) ------------------------------------------------------------
+MAX_PASSES = 4
+MAX_TARGETS = 4
+_PASS_KEYS = frozenset(("TARGET", "PERSISTENT", "FLOAT", "WIDTH", "HEIGHT", "DESCRIPTION"))
+_SIZE = re.compile(r"\$(WIDTH|HEIGHT)(?:\s*([*/])\s*([0-9]+(?:\.[0-9]+)?))?")
+_NEW_ONLY = " on classic mpv (the New renderer draws it: System > Screen output)"
+
+
+def _flag(v, what):
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)) and v in (0, 1):
+        return bool(v)
+    if isinstance(v, str) and v in _BOOL_TEXT:
+        return _BOOL_TEXT[v]
+    raise ShaderError("%s must be true or false" % what)
+
+
+def _pass_size(v, axis, what):
+    """A pass's WIDTH or HEIGHT: a whole number of pixels, or $WIDTH or $HEIGHT, times or divided by a number. As
+    the program file writes it: "p<pixels>", or "w<factor>" / "h<factor>" of the drawing's own width or height."""
+    if v is None:
+        return "w1" if axis == "WIDTH" else "h1"
+    if not isinstance(v, bool) and isinstance(v, (int, float)):
+        n = _num(v, what, 4096)
+        if n != int(n) or not 1 <= n <= 4096:
+            raise ShaderError("%s must be a whole number of pixels from 1 to 4096" % what)
+        return "p%d" % n
+    if isinstance(v, str):
+        m = _SIZE.fullmatch(v.replace(" ", ""))
+        if m:
+            factor = 1.0
+            if m.group(2):
+                x = float(m.group(3))
+                if not 0.0 < x <= 16.0:
+                    raise ShaderError("%s: the number must be above 0 and at most 16" % what)
+                factor = x if m.group(2) == "*" else 1.0 / x
+            if not 1.0 / 16 <= factor <= 4.0:
+                raise ShaderError("%s must be between a sixteenth and four times the drawing's size" % what)
+            return "%s%s" % ("w" if m.group(1) == "WIDTH" else "h", _f(factor, 9))
+        try:
+            return _pass_size(float(v), axis, what)
+        except ValueError:
+            pass
+    raise ShaderError("%s must be a number of pixels, or $WIDTH or $HEIGHT times or divided by a number" % what)
+
+
+def _passes(passes, persistent):
+    """(targets, plan) of an ISF file's PASSES (and ISF 1's PERSISTENT_BUFFERS): targets [{"name", "persistent",
+    "float", "w", "h"}], plan the target index each pass draws into (None: the picture itself, the last pass)."""
+    if not isinstance(passes, list) or not 1 <= len(passes) <= MAX_PASSES or not all(isinstance(p, dict) for p in passes):
+        raise ShaderError("PASSES must be a list of 1 to %d objects" % MAX_PASSES)
+    keep = set()
+    if persistent:
+        if not isinstance(persistent, list) or not all(isinstance(n, str) for n in persistent):
+            raise ShaderError("PERSISTENT_BUFFERS must be a list of names")
+        keep = set(persistent)
+    targets, plan, index = [], [], {}
+    for n, p in enumerate(passes):
+        extra = sorted(k for k in p if k not in _PASS_KEYS)
+        if extra:
+            raise ShaderError("pass %d has %s, which is not supported" % (n + 1, _text(str(extra[0]), 20)))
+        name = p.get("TARGET")
+        last = n == len(passes) - 1
+        if name is None or name == "":
+            if not last:
+                raise ShaderError("pass %d draws into no TARGET: only the last pass draws the picture itself" % (n + 1))
+            extra = next((k for k in ("WIDTH", "HEIGHT", "FLOAT", "PERSISTENT") if k in p), None)
+            if extra:
+                raise ShaderError("the last pass draws the picture itself, so it has no %s" % extra)
+            plan.append(None)
+            continue
+        if last:
+            raise ShaderError("the last pass draws into a TARGET (%s): the last pass must draw the picture itself" % _text(str(name), 32))
+        if not isinstance(name, str) or not INPUT_NAME.fullmatch(name) or name.lower() in RESERVED_LOWER or _OWN.fullmatch(name) \
+                or name.lower().startswith(("gl_", "pvj_", "isf_", "hooked")) or "__" in name or name == IMAGE:
+            raise ShaderError("pass %d's TARGET must be a plain name of 1 to 32 letters, digits or _ that is not the language's or the player's" % (n + 1))
+        if name not in index:
+            if len(targets) == MAX_TARGETS:
+                raise ShaderError("more than %d buffers (TARGET)" % MAX_TARGETS)
+            index[name] = len(targets)
+            targets.append({"name": name, "persistent": False, "float": False,
+                            "w": _pass_size(p.get("WIDTH"), "WIDTH", "WIDTH of pass %d" % (n + 1)),
+                            "h": _pass_size(p.get("HEIGHT"), "HEIGHT", "HEIGHT of pass %d" % (n + 1))})
+        t = targets[index[name]]
+        for axis in ("WIDTH", "HEIGHT"):
+            if axis in p and _pass_size(p[axis], axis, "%s of pass %d" % (axis, n + 1)) != t[axis[0].lower()]:
+                raise ShaderError("pass %d draws into %s at another %s than an earlier pass" % (n + 1, _text(name, 32), axis))
+        if "PERSISTENT" in p:
+            t["persistent"] = t["persistent"] or _flag(p["PERSISTENT"], "PERSISTENT of pass %d" % (n + 1))
+        if "FLOAT" in p:
+            t["float"] = t["float"] or _flag(p["FLOAT"], "FLOAT of pass %d" % (n + 1))
+        plan.append(index[name])
+    for name in keep:
+        if name in index:
+            targets[index[name]]["persistent"] = True
+    # what one run draws, as a share of the picture's area (a size in pixels is judged by the renderer, which knows
+    # the picture's size): at most 4 (the review of #170)
+    share = lambda s: float(s[1:]) if s[0] in "wh" else 0.0
+    run = 1.0 + sum(share(targets[k]["w"]) * share(targets[k]["h"]) for k in plan if k is not None)
+    if run > 4.0 + 1e-6:
+        raise ShaderError("its passes would draw %.1f times the picture's area every frame (at most 4)" % run)
+    return targets, plan
+
+
+def _target_calls(text, targets, keep=True):
+    """`text` with every IMG_ call on a buffer exchanged for the renderer's own function (pvj_t<i>_...), or (with
+    `keep` false, to see what is left) for nothing. Line breaks inside a call are kept."""
+    for i, t in enumerate(targets):
+        n = re.escape(t["name"])
+        for pattern, new in ((r"\bIMG_THIS_(?:NORM_)?PIXEL(\s*)\((\s*)%s(\s*)\)" % n, "pvj_t%d_this()" % i),
+                             (r"\bIMG_NORM_PIXEL(\s*)\((\s*)%s(\s*)," % n, "pvj_t%d_norm(" % i),
+                             (r"\bIMG_PIXEL(\s*)\((\s*)%s(\s*)," % n, "pvj_t%d_px(" % i),
+                             (r"\bIMG_SIZE(\s*)\((\s*)%s(\s*)\)" % n, "pvj_t%d_size()" % i)):
+            text = re.sub(pattern, lambda m, new=new: (new if keep else " ") + "\n" * "".join(m.groups()).count("\n"), text)
+    return text
+
+
+def parse(source, kind=GENERATOR, passes=False):
+    """An ISF file from untrusted text: {"description", "credit", "cost", "inputs", "body", "line", "kind"}. With
+    `passes` (the New renderer, D106 step c), PASSES and persistent buffers are taken too: "targets" and "plan" say
+    them. Without, they are refused, as classic mpv cannot draw them. `body` is
     the shader code after the JSON comment and `line` the line of the file it starts on. `kind` is what the caller
     will use it as: a generator (no picture input, no IMG_ call) or a filter (exactly one picture input, inputImage,
     read with the IMG_ calls on that input only). Raises ShaderError."""
@@ -443,16 +567,19 @@ def parse(source, kind=GENERATOR):
         raise ShaderError("the JSON header at the top cannot be read")
     if not isinstance(head, dict):
         raise ShaderError("the JSON header must be an object")
-    passes = head.get("PASSES")
-    if passes:
-        if not isinstance(passes, list) or len(passes) > 1 or not isinstance(passes[0], dict):
-            raise ShaderError("it draws in several passes (PASSES), which is not supported")
-        if passes[0].get("PERSISTENT") or passes[0].get("TARGET") or passes[0].get("FLOAT"):
-            raise ShaderError("it keeps a picture between frames (a persistent buffer), which is not supported")
-        if passes[0]:
-            raise ShaderError("it sets its own drawing size (PASSES), which is not supported")
-    if head.get("PERSISTENT_BUFFERS"):
-        raise ShaderError("it keeps a picture between frames (a persistent buffer), which is not supported")
+    targets, plan = [], [None]
+    if passes and (head.get("PASSES") or head.get("PERSISTENT_BUFFERS")):
+        targets, plan = _passes(head.get("PASSES") or [{}], head.get("PERSISTENT_BUFFERS"))
+    passes_in = head.get("PASSES") if not passes else None
+    if passes_in:
+        if not isinstance(passes_in, list) or len(passes_in) > 1 or not isinstance(passes_in[0], dict):
+            raise ShaderError("it draws in several passes (PASSES), which is not supported" + _NEW_ONLY)
+        if passes_in[0].get("PERSISTENT") or passes_in[0].get("TARGET") or passes_in[0].get("FLOAT"):
+            raise ShaderError("it keeps a picture between frames (a persistent buffer), which is not supported" + _NEW_ONLY)
+        if passes_in[0]:
+            raise ShaderError("it sets its own drawing size (PASSES), which is not supported" + _NEW_ONLY)
+    if head.get("PERSISTENT_BUFFERS") and not passes:
+        raise ShaderError("it keeps a picture between frames (a persistent buffer), which is not supported" + _NEW_ONLY)
     if head.get("IMPORTED"):
         raise ShaderError("it loads pictures from other files (IMPORTED), which is not supported")
     inputs = head.get("INPUTS", [])
@@ -486,6 +613,16 @@ def parse(source, kind=GENERATOR):
             raise ShaderError("#%s %s is not allowed: the name belongs to the shader language or the player" % (m.group(1), word))
     if _GLOBAL_IO.search(body):
         raise ShaderError("the code declares its own uniform, varying, in or out, which the player cannot fill")
+    names = {i["name"] for i in clean}
+    hit = next((t["name"] for t in targets if t["name"] in names), None)
+    if hit:
+        raise ShaderError("a buffer (TARGET) and an input are both called %s" % hit)
+    whole = body
+    body = _target_calls(body, targets, keep=False)       # what is left once the buffers' reads are taken out
+    for t in targets:
+        if re.search(r"\b%s\b" % re.escape(t["name"]), body):
+            raise ShaderError("the buffer %s may only be read with IMG_PIXEL, IMG_NORM_PIXEL, IMG_THIS_PIXEL, IMG_THIS_NORM_PIXEL and IMG_SIZE"
+                              % t["name"])
     if kind == FILTER:
         if _HOST_NAMES.search(body):
             raise ShaderError("it uses %s, a name of the program it was written in (ISF version 1), which the player does not have"
@@ -511,8 +648,9 @@ def parse(source, kind=GENERATOR):
         raise ShaderError("the name %s is used by the player; rename it" % own.group(0))
     if len(_MAIN.findall(body)) != 1:
         raise ShaderError("the code must have exactly one void main()")
-    # The code as the player will get it, made once per file: comments gone, ISF's names exchanged for ours.
-    code = re.sub(r"\bgl_FragColor\b", "pvj_color", body)
+    # The code as the player will get it, made once per file: comments gone, ISF's names exchanged for ours (and, on
+    # the New renderer, the buffers' reads for its own functions).
+    code = re.sub(r"\bgl_FragColor\b", "pvj_color", _target_calls(whole, targets))
     code = re.sub(r"\bgl_FragCoord\b", "pvj_coord", code)
     code = re.sub(r"\b%s\b" % _RENAMED, "pvj_u_" + _RENAMED, code)
     for i in clean:
@@ -524,7 +662,8 @@ def parse(source, kind=GENERATOR):
     cats = head.get("CATEGORIES")
     cats = [c for c in (_text(c, 40) for c in (cats if isinstance(cats, list) else [])[:16]) if c]
     out = {"description": _text(head.get("DESCRIPTION")), "credit": _text(head.get("CREDIT")), "cost": _text(head.get("COST")),
-           "categories": cats, "inputs": clean, "body": body, "code": code, "line": source.count("\n", 0, end + 2) + 1, "kind": kind}
+           "categories": cats, "inputs": clean, "body": body, "code": code, "line": source.count("\n", 0, end + 2) + 1, "kind": kind,
+           "targets": targets, "plan": plan}
     if kind == FILTER:
         # Flash safety (see SHADERS.md): a filter that reads the clock moves by itself, and one whose own words say
         # strobe or flash is made to; both are kept at their own pace unless the box's "faster" opt-in is on.
@@ -769,6 +908,15 @@ def native_inputs(parsed, values):
     return out
 
 
+def native_passes(parsed):
+    """The program file's TARGET and PASS lines (D106 step c); none for a shader of one pass."""
+    targets, plan = parsed.get("targets") or [], parsed.get("plan") or [None]
+    if not targets and plan == [None]:
+        return []
+    lines = ["//!TARGET %s %d %d %s %s" % (t["name"], t["persistent"], t["float"], t["w"], t["h"]) for t in targets]
+    return lines + ["//!PASS %s" % ("-" if k is None else k) for k in plan]
+
+
 def translate_native(parsed, size, values=None, hue=0.0, offset=0.0, speed=1.0, gain=1.0):
     """The New renderer's program file for a parsed ISF generator drawn at `size`: the counterpart of translate(),
     with the values as first values of uniforms and TIME the renderer's own clock from `offset` at `speed`."""
@@ -783,6 +931,7 @@ def translate_native(parsed, size, values=None, hue=0.0, offset=0.0, speed=1.0, 
     if speed < SPEED_MIN or gain < GAIN_MIN:
         raise ShaderError("speed and brightness cannot be below 0")
     lines = ["//!PVJ 1", "//!KIND generator", "//!SIZE %d %d" % (width, height), "//!LINE %d" % parsed["line"]]
+    lines += native_passes(parsed)
     lines += native_inputs(parsed, values)
     lines += ["//!CONTROL speed %s" % _f(speed), "//!CONTROL hue %s" % _f(hue), "//!CONTROL gain %s" % _f(gain),
               "//!CONTROL offset %s" % _f(offset, 10), "//!CODE", parsed["code"], ""]
@@ -1089,7 +1238,8 @@ class Engine:
         try:
             st = os.stat(path)
             hit = self._cache.get(path)
-            if hit is None or hit[0] != (st.st_mtime_ns, st.st_size):
+            # what a file is depends on the player too (passes on the New renderer only, D106 step c)
+            if hit is None or hit[0] != (st.st_mtime_ns, st.st_size, self.native()):
                 data = self._read(path)
                 try:
                     result = (self.read(data), hashlib.sha256(data).hexdigest())
@@ -1099,7 +1249,7 @@ class Engine:
                     result = ShaderError("the file could not be checked (%s)" % type(e).__name__)
                 if len(self._cache) > 4 * MAX_UPLOADS:
                     self._cache.clear()
-                hit = self._cache[path] = ((st.st_mtime_ns, st.st_size), result)
+                hit = self._cache[path] = ((st.st_mtime_ns, st.st_size, self.native()), result)
         except OSError as e:
             raise ShaderError("cannot read the file: %s" % (e.strerror or e))
         if isinstance(hit[1], ShaderError):
@@ -1564,12 +1714,16 @@ class Engine:
         return {"name": name, "size": len(data)}
 
     def read(self, data):
-        """A file's text, parsed as the kind this library holds."""
-        return parse(data)
+        """A file's text, parsed as the kind this library holds; on the New renderer with its passes (D106 step c)."""
+        return parse(data, passes=True) if self.native() else parse(data)      # classic: the call it always was
 
     def check_upload(self, data):
         """Raise ShaderError unless this file's text can be shown."""
-        translate(self.read(data), (1280, 720))
+        parsed = self.read(data)
+        if parsed.get("targets") or parsed.get("plan", [None]) != [None]:
+            translate_native(parsed, (1280, 720))
+        else:
+            translate(parsed, (1280, 720))
 
     def delete(self, sid):
         path, source = self._path(sid)
