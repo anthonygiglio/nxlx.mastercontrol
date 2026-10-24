@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """pvj-render (render/, D95) run for real, headless: EGL without a surface on Mesa's software GPU, no screen.
 
-The program is built first (`make -C render`). Without it these tests are skipped, except where PVJ_RENDER_TEST=1
+The program is built first (`make -C render TEST_HOOKS=1`; a build without the hooks skips the one test that needs
+them, and fails it where PVJ_RENDER_TEST=1). Without it these tests are skipped, except where PVJ_RENDER_TEST=1
 (the CI job pvj-render), where a missing program, a missing clip maker or a missing font is a failure: there a skip
 would judge nothing. Every question goes through pvj.player.Ipc, the panel's own client, so what is tested is what the
 panel will meet. The pictures are read back with pvj-render's own `pvj-capture` (the final picture as it would go to
@@ -86,10 +87,10 @@ def _end_all():
 class Renderer:
     """One pvj-render process in its own folder."""
 
-    def __init__(self, *args):
+    def __init__(self, *args, env=None):
         self.dir = tempfile.mkdtemp(prefix="pvj-render-")
         self.sock = os.path.join(self.dir, "mpv.sock")
-        env = dict(os.environ, LIBGL_ALWAYS_SOFTWARE="1")
+        env = dict(os.environ, LIBGL_ALWAYS_SOFTWARE="1", **(env or {}))
         self.log = open(os.path.join(self.dir, "stderr.txt"), "w+")
         self.proc = subprocess.Popen([BIN, "--socket=" + self.sock, "--headless=%dx%d" % (W, H)] + list(args),
                                      stdin=subprocess.DEVNULL, stdout=self.log, stderr=self.log, env=env,
@@ -512,6 +513,49 @@ class TextLayerTest(Base):
         self.assertTrue(n, "no text on the picture (is a font installed?)\n" + self.r.stderr())
         self.r("show-text", "", 1)
         self.assertTrue(self.r.wait(lambda: changed() < 20), self.r.stderr())
+
+    def test_the_text_layer_works_after_a_slow_start(self):
+        # The text core plays nothing, so it gets its window (and its on-screen layer) only as it first goes idle; mpv
+        # before 0.41 (CI's Debian 13 and Ubuntu jobs, the Pi) never acts on a force-window turned on later. Before the
+        # fix the window was turned on after the core could already be idle, and about 1 start in 30 drew no text at
+        # all (CI, 2026-10-21). The wait below makes such a start certain: the core is idle before anything else.
+        hooks = "with test hooks" in subprocess.run([BIN, "--version"], capture_output=True, text=True, timeout=10).stdout
+        if not hooks:
+            if STRICT:
+                self.fail("PVJ_RENDER_TEST=1 and pvj-render was built without its test hooks: make -C render TEST_HOOKS=1")
+            self.skipTest("pvj-render was built without its test hooks (make -C render clean; make -C render TEST_HOOKS=1)")
+        r = Renderer(env={"PVJ_RENDER_TEST_SLOW_START": "500"})
+        self.addCleanup(r.close)
+        r("set_property", "image-display-duration", "inf")
+        r.load(self.picture)
+        base = r.capture()
+        r("show-text", "PIN 1234 PIN 1234", 8000)
+
+        def changed():
+            shot = r.capture()
+            return sum(1 for i in range(0, len(base[2]), 3) if not near(base[2][i:i + 3], shot[2][i:i + 3], 30))
+        self.assertTrue(r.wait(lambda: changed() > 200), "no text after a slow start\n" + r.stderr())
+
+    def test_no_shader_cache_is_written(self):
+        # config=no is the hardening: nothing on disk of mpv's own. The text core's render context is made before
+        # mpv_initialize, where mpv's paths are not set yet, so without gpu-shader-cache=no it wrote compiled shaders
+        # to $XDG_CACHE_HOME/mpv (the review of #162).
+        cache = tempfile.mkdtemp(prefix="pvj-render-cache-")
+        self.addCleanup(shutil.rmtree, cache, True)
+        r = Renderer(env={"XDG_CACHE_HOME": cache, "HOME": cache})
+        self.addCleanup(r.close)
+        r("set_property", "image-display-duration", "inf")
+        r.load(self.picture)
+        base = r.capture()
+        r("show-text", "PIN 1234 PIN 1234", 8000)
+
+        def changed():
+            shot = r.capture()
+            return sum(1 for i in range(0, len(base[2]), 3) if not near(base[2][i:i + 3], shot[2][i:i + 3], 30))
+        self.assertTrue(r.wait(lambda: changed() > 200), "the text layer drew (so its shaders were made)\n" + r.stderr())
+        r.close()
+        # (Mesa may keep a cache of its own there; only mpv's is the question)
+        self.assertFalse(os.path.exists(os.path.join(cache, "mpv")), os.listdir(cache))
 
 
 def make_clip(case, path, seconds=3, source="testsrc2"):
@@ -1523,8 +1567,11 @@ class OwnersMappingTest(OwnersMappingBase):
         for k in (2, 3, 4):
             self.assertIs(r("pvj-source", k, "get_property", "keepaspect"), False, "source %d keeps its letterbox" % k)
             self.assertEqual(r("pvj-source", k, "get_property", "fbo-format"), "rgba8")
-        r("set_property", "keepaspect", True)                # and back, with the mapping off
+        r("set_property", "keepaspect", True)                # and back, with the mapping off (Player.set_mapping_mode
+        r("set_property", "fbo-format", "auto")              # sets both)
         self.assertEqual([r("pvj-source", k, "get_property", "keepaspect") for k in (2, 3, 4)], [True] * 3)
+        self.assertEqual([r("pvj-source", k, "get_property", "fbo-format") for k in (2, 3, 4)], ["auto"] * 3,
+                         "the sources' buffers go back to mpv's own with the mapping off")
         with self.assertRaises(PlayerError) as e:
             r("pvj-source", 2, "set_property", "keepaspect", False)
         self.assertEqual(str(e.exception), "mpv: property not found", "read only on a source: it follows source 1")

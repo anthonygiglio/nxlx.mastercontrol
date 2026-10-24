@@ -68,12 +68,35 @@ def _solve(a, b):
 
 
 def homography(src, dst):
-    """The 3x3 matrix (row-major, 9 floats, h[8] = 1) that maps the four points `src` to the four points `dst`."""
-    a, b = [], []
+    """The 3x3 matrix (row-major, 9 floats) that maps the four points `src` to the four points `dst`.
+
+    The matrix is known up to a factor, so one entry is fixed and the other eight solved for. h[8] = 1 first: that is
+    every map drawn until 2026-10-23, number for number. But h[8] is w at the screen's origin, and a quad whose horizon
+    line passes exactly through the origin has h[8] = 0, which no factor makes 1: the solve was singular there and said
+    "the corners are in a line", which they were not (the review of #158). Then another entry is fixed instead, and
+    the matrix is divided by its largest entry. Only corners that are truly in a line or on top of each other leave
+    every choice singular."""
+    rows = []
     for (x, y), (u, v) in zip(src, dst):
-        a.append([x, y, 1, 0, 0, 0, -u * x, -u * y]); b.append(u)
-        a.append([0, 0, 0, x, y, 1, -v * x, -v * y]); b.append(v)
-    return _solve(a, b) + [1.0]
+        rows.append([x, y, 1, 0, 0, 0, -u * x, -u * y, -u])
+        rows.append([0, 0, 0, x, y, 1, -v * x, -v * y, -v])
+    for k in (8, 6, 7, 2, 5, 0, 1, 3, 4):
+        a = [[row[j] for j in range(9) if j != k] for row in rows]
+        try:
+            rest = _solve(a, [-row[k] for row in rows])
+        except MapperError:
+            continue
+        h = rest[:k] + [1.0] + rest[k:]
+        if k == 8:
+            return h
+        top = max(h, key=abs)
+        h = [c / top for c in h]
+        # With h[8] free, corners in a line can give a "solution" that sends some of them to infinity (w = 0), where
+        # every equation holds as 0 = 0. A real map has w away from 0 at every corner.
+        if all(abs(h[6] * x + h[7] * y + h[8]) > 1e-9 * (abs(x) + abs(y) + 1) for x, y in src):
+            return h
+        break
+    raise MapperError("the corners are in a line or on top of each other")
 
 
 def affine(src, dst):

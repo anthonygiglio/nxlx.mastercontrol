@@ -3316,8 +3316,19 @@
       }));
       body.appendChild(labelled('Renderer', use, 'Classic is the player as it always was. New is the box\'s own renderer, a first step towards layers and live visuals; if it fails to start the box goes back to classic by itself.'));
       body.appendChild(labelled('Picture detail inside (new only)', detail, 'The new renderer draws the clip at this size and scales it to the screen once.'));
+      // sources (D101): how many clips the new renderer can play side by side for the mapping's surfaces, up to the board's cap
+      var src = d.sources || null, sources = null;
+      if (src && src.cap >= 1) {
+        var counts = [];
+        for (var n = 1; n <= src.cap; n++) counts.push(n);
+        sources = h('select', { class: 'text-input', id: 'rendersources' },
+          [h('option', { value: 'auto', text: 'Automatic: ' + src['default'] + ' on this box', selected: src.chosen === null })].concat(
+            counts.map(function (n) { return h('option', { value: String(n), text: n + (n === 1 ? ' source' : ' sources'), selected: src.chosen === n }); })));
+        body.appendChild(labelled('Sources (new only)', sources, 'Clips the new renderer can play at once, one per source, for the mapping\'s surfaces. A source with nothing loaded costs nothing; each one that plays costs decoding. Up to ' + src.cap + ' on this box.'));
+      }
       var go = h('button', { class: 'btn on pri grow', id: 'renderapply', text: 'Use this', onclick: function (e) {
         var want = { use: use.value, detail: /^\d+$/.test(detail.value) ? parseInt(detail.value, 10) : detail.value };
+        if (sources) want.sources = sources.value === 'auto' ? 'auto' : parseInt(sources.value, 10);
         confirmRow('The player restarts and the screen goes dark for a few seconds.', 'Restart with it', 'Cancel', function () {
           sayAt(out, 'Restarting the player...');
           api('POST', '/api/renderer', want).then(function (r) {

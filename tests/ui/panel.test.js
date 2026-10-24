@@ -486,6 +486,31 @@ function startServer(env) {          // env: more for the harness's environment 
     assert.strictEqual(await page.textContent('#renderline'), 'Drawing now: Classic (mpv).');
     assert.strictEqual(await page.$eval('#renderuse', (s) => s.value), 'classic');
     assert.strictEqual(await page.$eval('#renderdetail', (s) => s.value), 'auto');
+    // Sources (D101): the Owner chooses how many, up to the board's cap, beside the renderer (the review of #158)
+    {
+      const st = (await page.evaluate(() => fetch('/api/renderer').then((r) => r.json()))).sources;
+      assert.strictEqual(await page.$eval('#rendersources', (s) => s.value), 'auto', 'no number chosen: Automatic');
+      assert.deepStrictEqual(await page.$$eval('#rendersources option', (os) => os.map((o) => o.value)),
+        ['auto'].concat(Array.from({ length: st.cap }, (_, i) => String(i + 1))), 'Automatic, then 1 to the cap');
+      assert.strictEqual(await page.textContent('#rendersources option[value="auto"]'), 'Automatic: ' + st.default + ' on this box');
+      assert.match(await page.textContent('#rendersourceswrap'), new RegExp('Up to ' + st.cap + ' on this box'));
+      // what Use this sends, answered here so that the harness's player is not restarted
+      let sent = null;
+      const now = await page.evaluate(() => fetch('/api/renderer').then((r) => r.json()));
+      await page.route('**/api/renderer', (route) => {
+        if (route.request().method() !== 'POST') return route.fallback();
+        sent = JSON.parse(route.request().postData());
+        const after = Object.assign({}, now, { sources: Object.assign({}, now.sources, { chosen: sent.sources, starts: sent.sources }) });
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(after) });
+      });
+      await page.selectOption('#rendersources', '2');
+      await page.click('#renderapply');
+      await page.waitForSelector('#confirmrow:has-text("The player restarts")');
+      await page.click('#confirmyes');
+      await page.waitForFunction(() => document.getElementById('rendersources') && document.getElementById('rendersources').value === '2');
+      assert.deepStrictEqual(sent, { use: 'classic', detail: 'auto', sources: 2 }, 'the number goes with the renderer and its detail');
+      await page.unroute('**/api/renderer');
+    }
     await onPage('Screen output');
     await sysIndex();
     // Network: switch the module on, preview, apply, watch the countdown, confirm
