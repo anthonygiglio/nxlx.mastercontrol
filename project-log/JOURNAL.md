@@ -4,6 +4,12 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-24, the review of #168 (D106 step b), fixed on its branch
+
+- **Medium:** Stop and Off send a clear for every slot asked, so an effect whose load had no word (a slow build) comes off too. **Medium:** an idle source (and source 1 with nothing on) runs no effect over its black.
+- **Low:** passes a second in the property; the level set once a source (no doubled Blackout); the chains' record read under the lock; chains only with four slots a source; the level kept only when mpv took it. One re-run trigger (what the effect read last) instead of two.
+- **Tests:** `ChainSlowBuildTest`, the idle source, an effect cleared before another, each source's level with a program on source 1, the passes a second. **Break-checks (6, each caught):** the clear sent whatever the record holds; an idle source; source 1 idle; the re-run trigger; the passes a second; source 2's level apart from source 1's.
+
 ## 2026-10-24, pvj-render phase 3, step b (D106): a chain of up to three effects on any source
 
 - **Built:** four slots a source in pvj-render (0 a generator, source 1's only until step d; 1 to 3 effects in order), the chain of a source 2 to N read by the mapping where its texture was, each source's level after its effects (`SOURCEk_level`), and `pvj/fxchain.py` with `GET` and `POST /api/effects/chain` (source 1's slots 2 and 3, every slot of sources 2 to N; the Owner's and an Operator's). A source's Stop takes its chain off. The panel offers no chain yet (step e, the coordinator's answer). Version 0.5.0.

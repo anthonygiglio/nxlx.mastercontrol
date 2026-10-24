@@ -682,6 +682,7 @@ static void fx_draw(FxGL *f, GLuint src, double dt)
     fx_quad();
     glUseProgram(0);
     f->frames++;
+    __atomic_add_fetch(&app.fx_passes, 1, __ATOMIC_RELAXED);      // passes drawn (the property gives them a second)
 }
 
 // A program with constants whose values moved: built again with them (at most every FX_REBUILD_GAP).
@@ -782,7 +783,6 @@ GLuint fx_source(int s, GLuint picture, int fresh, int paused, double now)
         eff->last_frame = now;
         if (!still) eff->time += dt * eff->ctl[FXC_SPEED];
         if (eff->ctl[FXC_AMOUNT] <= 0.0f) {
-            if (eff->out != pic) new_pic = 1;   // what comes after it now reads another picture
             eff->out = pic;                     // amount 0: the picture as it is, and nothing drawn
         } else {
             double since = now - eff->last_run;
@@ -807,6 +807,8 @@ GLuint fx_source(int s, GLuint picture, int fresh, int paused, double now)
     }
     return pic;
 }
+
+int fx_has_generator(int s) { return gl[s][0].on; }
 
 void fx_free_all(void)
 {

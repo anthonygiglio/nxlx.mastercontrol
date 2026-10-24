@@ -36,7 +36,7 @@ import tests        # the run's own temp folder (tests/__init__.py)
 from pvj import effects as E, paths, shaders as S
 from pvj.player import Player, PlayerError, is_program
 from pvj.transitions import read_still
-from tests.test_pvj_render import (BIN, BLUE, GREEN, H, RED, STRICT, W, Renderer, SourcesBase, fd_count, need_program, png,
+from tests.test_pvj_render import (BIN, BLACK, BLUE, GREEN, H, RED, STRICT, W, Renderer, SourcesBase, fd_count, need_program, png,
                                    thread_count)
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -787,6 +787,58 @@ class ChainTest(SourcesBase):
         r("pvj-shader", "clear", 2, 1)                  # off: the layer has its level back
         self.assertTrue(r.wait(lambda: near_px(r.pixel(3 * W // 4, H // 4), (0, 0, 128), 3), 3), r.pixel(3 * W // 4, H // 4))
 
+    def test_an_idle_source_shows_black_under_its_effect(self):
+        # the review of #168: an invert over an idle source's black lit its surface white
+        r = self.r
+        r.load(self.green)
+        self.to(2, self.blue)
+        self.show_halves(1, 2)
+        r("pvj-shader", "load", 2, 1, self.effect(INVERT))
+        r("pvj-shader", "load", 1, 1, self.effect(INVERT))
+        self.assertTrue(r.wait(lambda: near_px(r.pixel(3 * W // 4, H // 4), (255, 255, 0)), 3))
+        r("pvj-source", 2, "stop")
+        self.assertTrue(r.wait(lambda: near_px(r.pixel(3 * W // 4, H // 4), BLACK), 3), r.pixel(3 * W // 4, H // 4))
+        r("stop")                                       # source 1 with nothing on: black too, its effect still loaded
+        self.assertTrue(r.wait(lambda: near_px(r.pixel(W // 4, H // 4), BLACK), 3), r.pixel(W // 4, H // 4))
+        self.assertEqual(self.slot(1, 1)["state"], "on")
+
+    def test_an_effect_runs_again_when_the_one_before_it_goes(self):
+        # the only trigger then is what the effect read last: no picture is new and no value moved
+        r = self.r
+        r.load(self.green)
+        self.to(2, self.blue)
+        self.show_halves(1, 2)
+        r("pvj-shader", "load", 2, 1, self.effect(RED_ON))
+        r("pvj-shader", "load", 2, 2, self.effect(INVERT))
+        self.assertTrue(r.wait(lambda: near_px(r.pixel(3 * W // 4, H // 4), (0, 255, 0)), 3))
+        r("pvj-shader", "clear", 2, 1)
+        self.assertTrue(r.wait(lambda: near_px(r.pixel(3 * W // 4, H // 4), (255, 255, 0)), 3), r.pixel(3 * W // 4, H // 4))
+
+    def test_each_sources_level_with_a_program_on_source_1(self):
+        r = self.r
+        r.load(self.green)
+        self.to(2, self.blue)
+        self.show_halves(1, 2)
+        r("pvj-shader", "load", 1, 1, self.effect(INVERT))
+        r("pvj-shader", "load", 2, 1, self.effect(INVERT))
+        r("set_property", "brightness", -100)
+        self.assertTrue(r.wait(lambda: max(r.capture()[2]) == 0, 3), "an invert undid the Blackout somewhere")
+        r("set_property", "brightness", 0)
+        self.assertTrue(r.wait(lambda: near_px(r.pixel(W // 4, H // 4), (255, 0, 255)), 3))
+        r("pvj-source", 2, "set_property", "brightness", -50)
+        self.assertTrue(r.wait(lambda: near_px(r.pixel(3 * W // 4, H // 4), (128, 128, 0), 3), 3), r.pixel(3 * W // 4, H // 4))
+        self.assertTrue(near_px(r.pixel(W // 4, H // 4), (255, 0, 255)), "source 2's own level reached source 1")
+        self.assertEqual(r("get_property", "brightness"), 0)
+
+    def test_the_passes_a_second(self):
+        r = self.r
+        self.assertEqual(r("get_property", "pvj-render")["fx-passes-per-second"], 0)
+        self.to(2, self.blue)
+        r("pvj-shader", "load", 1, 0, self.write(S.translate_native(S.parse(CLOCK), (W, H))))
+        time.sleep(2.5)
+        rate = r("get_property", "pvj-render")["fx-passes-per-second"]
+        self.assertTrue(15 <= rate <= 35, rate)         # one generator at the 30-a-second cap
+
     def test_what_a_chain_refuses(self):
         r = self.r
         for what, cmd in {"a generator on source 2": ["load", 2, 0, self.write(S.translate_native(S.parse(FLAT), (W, H)))],
@@ -819,6 +871,42 @@ class ChainTest(SourcesBase):
 
 def near_px(got, want, tol=3):
     return all(abs(a - b) <= tol for a, b in zip(got, want))
+
+
+class ChainSlowBuildTest(unittest.TestCase):
+    """The review of #168: after a load that had no word (a slow build), Stop and Off still take the effect off."""
+
+    def setUp(self):
+        need_program(self)
+        if "with test hooks" not in subprocess.run([BIN, "--version"], capture_output=True, text=True).stdout:
+            if STRICT:
+                self.fail("PVJ_RENDER_TEST=1 and pvj-render was built without its test hooks: make -C render TEST_HOOKS=1")
+            self.skipTest("pvj-render was built without its test hooks")
+        self.tmp = tempfile.mkdtemp(prefix="pvj-native-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.r = Renderer("--sources=4", env={"PVJ_RENDER_TEST_SLOW_BUILD": "4000"})
+        self.addCleanup(lambda: self.r.close())
+        d = tempfile.mkdtemp(prefix="pvj-native-run-")
+        self.addCleanup(shutil.rmtree, d, True)
+        os.symlink(self.r.sock, os.path.join(d, paths.PLAYER_SOCKET))
+        self.player = Player(rundir=d)
+
+    def slot(self, s, k):
+        return [x for x in self.r("get_property", "pvj-shaders") if x["source"] == s and x["slot"] == k][0]
+
+    def test_stop_takes_off_an_effect_whose_load_had_no_word(self):
+        prog = os.path.join(self.tmp, "e.prog")
+        with open(prog, "w") as fh:
+            fh.write(E.translate_native(S.parse(INVERT, S.FILTER)))
+        self.assertEqual(self.player.chain_put(2, 1, prog)[0], "unknown")
+        self.assertTrue(self.r.wait(lambda: self.slot(2, 1)["path"] == prog, 6))       # the renderer took it after all
+        self.player.stop_source(2)
+        self.assertTrue(self.r.wait(lambda: self.slot(2, 1)["state"] == "off", 3), self.slot(2, 1))
+        # and Off, likewise, says it was on
+        self.assertEqual(self.player.chain_put(2, 2, prog)[0], "unknown")
+        self.assertTrue(self.r.wait(lambda: self.slot(2, 2)["path"] == prog, 6))
+        self.assertTrue(self.player.chain_clear(2, 2))
+        self.assertEqual(self.slot(2, 2)["state"], "off")
 
 
 class ChainApiTest(unittest.TestCase):

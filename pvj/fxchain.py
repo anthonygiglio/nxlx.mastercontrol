@@ -85,7 +85,8 @@ class Chains:
     def _place(self, body):
         player = self.api.player
         source, slot = body.get("source"), body.get("slot")
-        if not S.player_native(player):
+        chains = getattr(player, "native_chains", None)
+        if not (chains() if chains else False):
             raise ApiError(409, "a chain of effects needs the New renderer (System > Screen output)")
         n = player.sources() if hasattr(player, "sources") else 1
         if isinstance(source, bool) or not isinstance(source, int) or not 1 <= source <= n:
@@ -103,7 +104,7 @@ class Chains:
             rows = [{"source": s, "slot": k, "id": r["id"], "values": r["values"], "controls": r["controls"], "preset": r["preset"]}
                     for (s, k), r in sorted(self._seen().items())]
         try:
-            native = S.player_native(self.api.player)
+            native = bool(self.api.player.native_chains())
         except Exception:
             native = False
         return {"available": native and fx.enabled(), "chains": rows,

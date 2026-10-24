@@ -142,6 +142,8 @@ typedef struct {
     double fx_fps;
     long fx_drops;                  // generator frames that came late (always added to frame-drop-count: it only rises)
     int level_resync;               // the render thread turned a program on or off: the next client syncs the level
+    long fx_passes;                 // the programs' passes drawn so far (atomics)
+    double fx_passes_rate;          // ... a second, over the last second (the render thread, under app.lock)
     long fx_gl;                     // GL objects of the programs (atomics)
     int paused[MAX_LAYERS];         // each layer's pause, as observed (atomics)
     // a screenshot while a program is on: the renderer's own picture of source 1, not libmpv's layer. The render
@@ -210,6 +212,7 @@ int fx_set_value(FxSlot *s, const char *name, const mpv_node *v);
 void fx_init(void);
 void fx_take(void);
 GLuint fx_source(int s, GLuint picture, int fresh, int paused, double now);
+int fx_has_generator(int s);
 void fx_free_all(void);
 
 // pictures to files (still.c): rows of RGB, top row first

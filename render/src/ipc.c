@@ -454,6 +454,14 @@ static void forward_front(int fd, const mpv_node *id, const mpv_node *cmd, int e
 // here is a cut: the crossfade (D98) is source 1's alone in this step. The source plays with no sound (aid=no from
 // its start, and aid is on no list). A source's core is its own: nothing here takes layer_lock, and the render
 // thread is never waited on.
+static int source_level_native(int s)
+{
+    pthread_mutex_lock(&app.lock);
+    int on = app.level_native[s];
+    pthread_mutex_unlock(&app.lock);
+    return on;
+}
+
 static void source_command(int fd, const mpv_node *id, const mpv_node *cmd)
 {
     int nargs = cmd->u.list->num;
@@ -515,15 +523,19 @@ static void source_command(int fd, const mpv_node *id, const mpv_node *cmd)
         // the source's own level (D101), kept (D106): while it has a program on, the renderer draws it after them
         pthread_mutex_lock(&layer_lock);
         pthread_mutex_lock(&app.lock);
-        app.level[k - 1] = num(arg(cmd, 4));
         int native = app.level_native[k - 1];
         pthread_mutex_unlock(&app.lock);
         int r = native ? 0 : mpv_set_property(h, "brightness", MPV_FORMAT_NODE, (void *)arg(cmd, 4));
+        if (r >= 0) {                       // kept only when mpv took it (a refused value changes nothing)
+            pthread_mutex_lock(&app.lock);
+            app.level[k - 1] = num(arg(cmd, 4));
+            pthread_mutex_unlock(&app.lock);
+        }
         pthread_mutex_unlock(&layer_lock);
         wake_render();
         reply(fd, id, r < 0 ? mpv_error_string(r) : "success", NULL);
     } else if (!strcmp(what, "get_property") && nargs == 4 && arg_str(cmd, 3) && !strcmp(arg_str(cmd, 3), "brightness")
-               && app.level_native[k - 1]) {
+               && source_level_native(k - 1)) {
         pthread_mutex_lock(&app.lock);
         mpv_node d = node_dbl(app.level[k - 1]);
         pthread_mutex_unlock(&app.lock);
@@ -974,6 +986,7 @@ static void get_property(int fd, const mpv_node *id, const char *name)
         long flips = app.flips, missed = app.missed, drawn = app.drawn, fences = app.fences, freed = app.fences_freed;
         long back = app.back_drawn, fades = app.fades, done = app.fades_done, cut = app.fades_cut;
         long nothing = app.fades_from_nothing, held = app.sound_held;
+        double passes_rate = app.fx_passes_rate;
         int osd = app.overlays != 0 || now_s() < app.text_until;
         int phase = app.fade.phase, front = app.front;
         double progress = app.fade.progress, seconds = app.fade.seconds;
@@ -985,18 +998,19 @@ static void get_property(int fd, const mpv_node *id, const char *name)
                                             "gl-fences", "gl-fences-freed", "layers", "front", "fade", "fade-progress",
                                             "fade-seconds", "fades", "fades-done", "fades-cut", "back-drawn", "gl-objects",
                                             "back-idle", "fades-from-nothing", "sound-held", "sources", "shaders", "fx-fps",
-                                            "fx-gl-objects" };
-        mpv_node vals[31] = { node_str(PVJ_VERSION), node_int(app.in_w), node_int(app.in_h), node_int(app.out_w), node_int(app.out_h),
+                                            "fx-gl-objects", "fx-passes", "fx-passes-per-second" };
+        mpv_node vals[33] = { node_str(PVJ_VERSION), node_int(app.in_w), node_int(app.in_h), node_int(app.out_w), node_int(app.out_h),
                               node_dbl(app.out_hz), node_int(flips), node_int(drawn), node_int(missed), node_str(state),
                               { .format = MPV_FORMAT_FLAG }, node_str(app.cfg->hwdec), node_int(fences), node_int(freed),
                               node_int(LAYERS), node_int(front), node_str(PHASES[phase]), node_dbl(progress), node_dbl(seconds),
                               node_int(fades), node_int(done), node_int(cut), node_int(back),
                               node_int(__atomic_load_n(&app.gl_objects, __ATOMIC_RELAXED)), { .format = MPV_FORMAT_FLAG },
                               node_int(nothing), node_int(held), node_int(app.nsources), node_int(FX_SLOTS),
-                              node_int((int64_t)app.fx_fps), node_int(__atomic_load_n(&app.fx_gl, __ATOMIC_RELAXED)) };
+                              node_int((int64_t)app.fx_fps), node_int(__atomic_load_n(&app.fx_gl, __ATOMIC_RELAXED)),
+                              node_int(__atomic_load_n(&app.fx_passes, __ATOMIC_RELAXED)), node_dbl(passes_rate) };
         vals[10].u.flag = osd;
         vals[24].u.flag = back_idle;
-        mpv_node_list list = { .num = 31, .values = vals, .keys = (char **)keys };
+        mpv_node_list list = { .num = 33, .values = vals, .keys = (char **)keys };
         d.format = MPV_FORMAT_NODE_MAP;
         d.u.list = &list;
         reply(fd, id, "success", &d);
@@ -1058,22 +1072,22 @@ static void set_level(int fd, const mpv_node *id, const mpv_node *v)
     pthread_mutex_lock(&layer_lock);
     pthread_mutex_lock(&app.lock);
     int native[MAX_SOURCES];
-    for (int s = 0; s < app.nsources; s++) {
-        app.level[s] = num(v);              // the panel's level reaches every source (D101)
-        native[s] = app.level_native[s];
-    }
+    for (int s = 0; s < app.nsources; s++) native[s] = app.level_native[s];
     pthread_mutex_unlock(&app.lock);
-    int r;
+    // Each source's layers get the level unless the source has a program on (its layers then keep 0 and the
+    // renderer draws the level): set once, so a Blackout is never drawn twice for a moment (the review of #168).
+    int r = 0;
     if (!native[0]) {
-        // as before: source 1's two layers, and (set_both) every other source
-        r = set_both("brightness", v);
-        double zero = 0.0;
-        for (int s = 1; s < app.nsources; s++)
-            if (native[s]) mpv_set_property(app.layer[s + 1], "brightness", MPV_FORMAT_DOUBLE, &zero);
-    } else {
-        r = 0;
+        int f = front_layer();
+        r = mpv_set_property(app.layer[f], "brightness", MPV_FORMAT_NODE, (void *)v);
+        if (r >= 0) mpv_set_property(app.layer[1 - f], "brightness", MPV_FORMAT_NODE, (void *)v);
+    }
+    if (r >= 0) {
         for (int s = 1; s < app.nsources; s++)
             if (!native[s]) mpv_set_property(app.layer[s + 1], "brightness", MPV_FORMAT_NODE, (void *)v);
+        pthread_mutex_lock(&app.lock);
+        for (int s = 0; s < app.nsources; s++) app.level[s] = num(v);     // the panel's level reaches every source (D101)
+        pthread_mutex_unlock(&app.lock);
     }
     pthread_mutex_unlock(&layer_lock);
     wake_render();

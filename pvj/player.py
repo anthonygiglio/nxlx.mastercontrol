@@ -457,7 +457,7 @@ class Player:
             raise PlayerError("this player has no source %s (it has %d)" % (source, self.sources()))
         if isinstance(slot, bool) or not isinstance(slot, int) or slot not in self.chain_slots(source):
             raise PlayerError("source %d has no slot %s for an effect (it has %s)" % (source, slot, ", ".join(map(str, self.chain_slots(source)))))
-        if not self.native_shaders():
+        if not self.native_chains():
             raise PlayerError("a chain of effects needs the New renderer")
 
     def _chain_alive(self):
@@ -509,24 +509,32 @@ class Player:
             return True
 
     def chain_clear(self, source, slot=None):
-        """Take the effect in `slot` of `source` off (every slot of it without `slot`). True if one was on."""
+        """Take the effect in `slot` of `source` off (every slot of it without `slot`). True if one was on, as this
+        side knew it or as the renderer said. The clear is sent for every slot asked whatever this side's record
+        holds: after a load that had no word (a slow build) the renderer may hold an effect this side does not know
+        of, and Stop and Off must take it off all the same (the review of #168)."""
         with self._lock:
             self._chain_alive()
             slots = [slot] if slot is not None else list(self.chain_slots(source))
+            try:
+                rows = self.ipc.request("get_property", "pvj-shaders")
+                there = {(r.get("source"), r.get("slot")) for r in rows if isinstance(r, dict) and r.get("state") not in (None, "off")}
+            except (PlayerError, TypeError, AttributeError):
+                there = set()
             had = False
             for k in slots:
-                if self._chain.pop((source, k), None) is not None:
-                    had = True
-                    try:
-                        self.ipc.request("pvj-shader", "clear", source, k)
-                    except PlayerError:
-                        pass
+                had = (self._chain.pop((source, k), None) is not None) or ((source, k) in there) or had
+                try:
+                    self.ipc.request("pvj-shader", "clear", source, k)
+                except PlayerError:
+                    pass
             return had
 
     def chain_state(self):
         """{(source, slot): path} of the effects in the chains now (the player's own record; asks nothing)."""
-        self._chain_alive()
-        return {k: v[0] for k, v in self._chain.items()}
+        with self._lock:
+            self._chain_alive()
+            return {k: v[0] for k, v in self._chain.items()}
 
     def sources_state(self):
         """[{"source", "idle", "path", "height", "pause", "drawn"}] for sources 1 to N; on classic mpv, or a player
@@ -998,8 +1006,8 @@ class Player:
             finally:
                 self._end_source()      # also when the player is down: the screen has changed hands either way
                 self._end_effect(why)
-                if self._chain:
-                    self.chain_clear(1)     # source 1's chain (D106 step b) comes off with its effect
+                if self.native_chains():
+                    self.chain_clear(1)     # source 1's chain (D106 step b) comes off with its effect (never asked of classic)
             self.ipc.request("set_property", "loop-file", "no")
             self.ipc.request("set_property", "loop-playlist", "no")
 
@@ -1247,7 +1255,17 @@ class Player:
         n = state.get("shaders") if isinstance(state, dict) else None
         ok = isinstance(n, int) and not isinstance(n, bool) and n >= 2
         self._native_seen = (pid, ok)
+        self._native_slots = (pid, n if ok else 0)
         return ok
+
+    _native_slots = None            # (pid, slots a source that player process has)
+
+    def native_chains(self):
+        """True if the player runs a chain of effects on any source (D106 step b: pvj-render with 4 slots a source)."""
+        if not self.native_shaders():
+            return False
+        known = self._native_slots
+        return bool(known and known[0] == self._seen_pid and known[1] >= 4)
 
     def _native_slot(self, slot, path):
         """Slot `slot` of source 1 holds the program file `path` (None or an mpv shader: nothing). A refusal is not

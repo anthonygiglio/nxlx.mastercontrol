@@ -971,8 +971,10 @@ int main(int argc, char **argv)
                 __atomic_add_fetch(&app.layer_drawn[i], 1, __ATOMIC_RELAXED);
                 drew = 1;
             }
-            // the source's own programs (D106): its effects over its clip
-            source_tex[i] = fx_source(i - 1, video[i].tex, drew, __atomic_load_n(&app.paused[i], __ATOMIC_ACQUIRE), now_s());
+            // the source's own programs (D106): its effects over its clip. An idle source shows its black and runs
+            // none of them (an invert over black would light its surface white: the review of #168)
+            source_tex[i] = idle ? video[i].tex
+                                 : fx_source(i - 1, video[i].tex, drew, __atomic_load_n(&app.paused[i], __ATOMIC_ACQUIRE), now_s());
         }
         if (text_on && text.dirty) {
             reset_gl();
@@ -1021,7 +1023,10 @@ int main(int argc, char **argv)
             }
         }
         // the renderer's own programs on source 1 (D106): a generator in place of the picture, an effect over it
-        picture = fx_source(0, picture, fresh, __atomic_load_n(&app.paused[fi], __ATOMIC_ACQUIRE), now);
+        // source 1 with nothing to show (its clip ended, a Stop) runs no effect over black either, unless a
+        // generator is its picture (the carrier plays under it)
+        if (!(__atomic_load_n(&app.idle[fi], __ATOMIC_ACQUIRE) && phase == FADE_OFF && !fx_has_generator(0)))
+            picture = fx_source(0, picture, fresh, __atomic_load_n(&app.paused[fi], __ATOMIC_ACQUIRE), now);
         final_pass(picture, text_on, level);
         shot_finish();                                      // a readback started a frame ago (D106)
         if (shot) native_shot(picture, text_on, level);
@@ -1037,6 +1042,19 @@ int main(int argc, char **argv)
             app.capture_done_serial = serial;
             pthread_cond_broadcast(&app.cond);
             pthread_mutex_unlock(&app.lock);
+        }
+        {   // the programs' passes a second, over about a second (D106: for the panel and the guard of step e)
+            static double rate_t0;
+            static long rate_n0;
+            double t = now_s();
+            if (t - rate_t0 >= 1.0) {
+                long nn = __atomic_load_n(&app.fx_passes, __ATOMIC_RELAXED);
+                pthread_mutex_lock(&app.lock);
+                app.fx_passes_rate = rate_t0 > 0 ? (nn - rate_n0) / (t - rate_t0) : 0;
+                pthread_mutex_unlock(&app.lock);
+                rate_t0 = t;
+                rate_n0 = nn;
+            }
         }
         if (out_present()) { failed = 1; break; }
         mpv_render_context_report_swap(front->rc);
