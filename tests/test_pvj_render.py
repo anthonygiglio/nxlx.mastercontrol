@@ -1526,10 +1526,8 @@ class OwnersMappingBase(SourcesBase):
 
 
 class OwnersMappingTest(OwnersMappingBase):
-    # Started with --fast, as the Pi starts pvj-render (renderer.command): mpv's cheap scalers. Without it, on llvmpipe,
-    # libmpv's default scaling of a small picture that is scaled up is sometimes drawn black or dim into the source's
-    # texture for the life of the process (D101's addendum, open; SourceRaceTest below reproduces it). With --fast it
-    # did not happen in 20 of 20 runs.
+    # Started with --fast, as the Pi starts pvj-render (renderer.command): mpv's cheap scalers. The same mapping
+    # without --fast, the way other boards draw, is SourceScalerTest below.
     ARGS = ("--sources=4", "--fast")
 
     def test_the_owners_mapping_shows_each_surfaces_source(self):
@@ -1576,36 +1574,37 @@ class OwnersMappingTest(OwnersMappingBase):
         self.assertEqual(str(e.exception), "mpv: property not found", "read only on a source: it follows source 1")
 
 
-# The fault of D101's addendum, kept to reproduce it and not run by default: without --fast, on llvmpipe, libmpv's
-# default scaling of a small upscaled picture is drawn black or dim into a source in about a third to a half of fresh
-# processes (for whoever traces it inside libmpv). PVJ_SOURCE_RACE=1 python3 -m unittest tests.test_pvj_render.SourceRaceTest.
-# Without the variable the class does not exist, so nothing is collected or skipped.
-if os.environ.get("PVJ_SOURCE_RACE") == "1":
-    class SourceRaceTest(OwnersMappingBase):
-        def test_the_owners_mapping_with_the_triangle_on_source_2_after_changes_of_the_mapping(self):
-            narrow = os.path.join(self.tmp, "green43.png")
-            png(narrow, 160, 120, lambda x, y: GREEN)
-            self.r("set_property", "keepaspect", False)
-            self.r.load(self.red)
-            self.to(2, narrow)
-            self.check(1, 1, (RED, RED, RED))
-            self.check(1, 2, (RED, RED, GREEN))         # here: source 2 reads black or a fixed part of green
-            self.check(2, 1, (GREEN, GREEN, RED))
+class SourceScalerTest(OwnersMappingBase):
+    # The fault of D101's addendum, without --fast (how a PC or a Pi 5 draws): mpv up to 0.41 left the padding of its
+    # 6-tap scaler table uninitialised, and on llvmpipe a small upscaled picture was drawn black or dim into a source in
+    # about half of fresh processes (6 to 7 of 10 runs here). pvj-render now gives every core scalers of 8 taps or
+    # more (render/src/main.c, layer_open); with them 0 of 30. Until 2026-10-23 an opt-in reproducer (PVJ_SOURCE_RACE=1).
+    ARGS = ("--sources=4",)
 
-        def test_a_sources_whole_picture_is_stretched_as_source_1s(self):
-            r = self.r
-            narrow = os.path.join(self.tmp, "green43.png")
-            png(narrow, 160, 120, lambda x, y: GREEN)
-            r("set_property", "keepaspect", False)
-            r.load(self.red)
-            self.to(2, narrow)
-            whole = mapper.validate_mapping({"surfaces": [{"id": "aaaaaaa3", "type": "quad", "name": "All", "on": True, "source": 2,
-                                                           "vertices": [[0, 0], [W, 0], [W, H], [0, H]], "tex": [[0, 0], [1, 0], [1, 1], [0, 1]]}]})
-            self.map(mapper.warp_shader(*mapper.warp_table(whole, W, H, with_sources=True), available=4))
-            r.wait(lambda: near(r.pixel(W // 30, H // 2), GREEN), 5, 0.2)
-            shot = r.capture()
-            for x in (W // 30, W // 2, W - W // 30):
-                self.assertColour(r.pixel(x, H // 2, shot), GREEN, "source 2 across the whole surface, x %d" % x)
+    def test_the_owners_mapping_with_the_triangle_on_source_2_after_changes_of_the_mapping(self):
+        narrow = os.path.join(self.tmp, "green43.png")
+        png(narrow, 160, 120, lambda x, y: GREEN)
+        self.r("set_property", "keepaspect", False)
+        self.r.load(self.red)
+        self.to(2, narrow)
+        self.check(1, 1, (RED, RED, RED))
+        self.check(1, 2, (RED, RED, GREEN))             # here: source 2 read black or a fixed part of green
+        self.check(2, 1, (GREEN, GREEN, RED))
+
+    def test_a_sources_whole_picture_is_stretched_as_source_1s(self):
+        r = self.r
+        narrow = os.path.join(self.tmp, "green43.png")
+        png(narrow, 160, 120, lambda x, y: GREEN)
+        r("set_property", "keepaspect", False)
+        r.load(self.red)
+        self.to(2, narrow)
+        whole = mapper.validate_mapping({"surfaces": [{"id": "aaaaaaa3", "type": "quad", "name": "All", "on": True, "source": 2,
+                                                       "vertices": [[0, 0], [W, 0], [W, H], [0, H]], "tex": [[0, 0], [1, 0], [1, 1], [0, 1]]}]})
+        self.map(mapper.warp_shader(*mapper.warp_table(whole, W, H, with_sources=True), available=4))
+        r.wait(lambda: near(r.pixel(W // 30, H // 2), GREEN), 5, 0.2)
+        shot = r.capture()
+        for x in (W // 30, W // 2, W - W // 30):
+            self.assertColour(r.pixel(x, H // 2, shot), GREEN, "source 2 across the whole surface, x %d" % x)
 
 
 class SourceCountTest(Base):
