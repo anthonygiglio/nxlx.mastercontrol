@@ -4,6 +4,12 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-23, bug sweep 2 (D105): the Pi's mpv job without its whole suite
+
+- **What was wrong:** the ndi-mpv job's last step, the whole suite on mpv 0.40 "for information", timed out on every run: 12 of 12 runs read were stopped at 2,100 s (1,053 and 1,205 tests done in the two logs counted, no failure among them). It decided nothing and kept a required check waiting about 35 minutes more.
+- **Done:** the step and the rollback list only it used are removed; the job's limit is 35 minutes (about sixteen without it). `tests/test_ci_shard.py`: the old check that the two lists match is replaced by one that the job runs no whole suite (break-check: master's workflow fails it). DECISIONS: an addendum to D104.
+- **Not done:** no new step for the remaining real-mpv modules on 0.40 (masks, picture, player, server, sound sources, sync, system info). That would be a new deciding gate never run there; a candidate for later if a 0.40-only fault is suspected in one of them.
+
 ## 2026-10-23, bug sweep 5 (D105): the black or dim source without --fast, found in mpv
 
 - **Cause:** mpv's scaler table. For 6-tap kernels (the default lanczos when scaling up) each row of weights is padded to 8 and the padding is left uninitialised; llvmpipe's filtering mixes it in, and a source stays black or dim for the life of the process. Found by switching one option at a time (only 6-tap kernels failed), then confirmed with a libmpv built here with the table zeroed (0 of 10 bad, against 7 of 10). Upstream fixed it after 0.41 (mpv 72d43dc9c, issue #18540); no released mpv has the fix yet.
