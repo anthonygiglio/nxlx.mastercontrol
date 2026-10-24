@@ -13,7 +13,7 @@
 #include <GLES3/gl3.h>
 #include <mpv/client.h>
 
-#define PVJ_VERSION "0.3.0"
+#define PVJ_VERSION "0.4.0"
 #define MAX_SHADERS 16
 #define LAYERS 2                    // source 1's video layers (phase 2, D98): the one on screen and the one a crossfade comes in on
 #define MAX_SOURCES 8               // sources (D101): source 1 is LAYERS layers, each other source one layer
@@ -30,6 +30,32 @@ extern const char *const BLEND_NAMES[BLENDS];
 
 typedef struct Hook Hook;
 
+// The renderer's own shader programs (D106, fx.c): ISF generators and effects with their inputs as uniforms.
+#define FX_SLOTS 2                  // source 1's: 0 the generator, 1 the effect (phase 3, step a)
+#define FX_MAX_INPUTS 24
+#define FX_NAME 41                  // an input's name: 32 letters, and the panel's pvj_in_ before it
+enum { FX_GENERATOR, FX_FILTER };
+enum { FXT_FLOAT, FXT_BOOL, FXT_LONG, FXT_COLOR, FXT_POINT, FXT_N };
+enum { FXC_SPEED, FXC_HUE, FXC_GAIN, FXC_AMOUNT, FXC_OFFSET, FXC_N };
+typedef struct { char name[FX_NAME]; int type; float v[4]; } FxValue;
+typedef struct FxProg FxProg;
+// One slot as the socket's threads and the render thread share it (under app.lock).
+typedef struct {
+    FxProg *pending;                // a load the render thread has not taken yet
+    int pending_clear;
+    long asked, answered;           // loads and clears asked; the last the render thread has answered
+    char answer[480];               // its answer: empty when it was done, else why not
+    int on, constants, kind, ninputs;
+    FxValue val[FX_MAX_INPUTS];     // the values now: the socket sets them, the render thread copies them each frame
+    float ctl[FXC_N];
+    long values_serial;
+    int reset_time;                 // the offset was set: TIME starts again from it
+    // the render thread's word
+    double time;
+    long runs, drops, rebuilds;
+    char state[160];
+} FxSlot;
+
 typedef struct {
     const char *socket_path;
     const char *drm_device, *drm_connector, *drm_mode;
@@ -41,6 +67,7 @@ typedef struct {
     int every_vblank;               // accepted for old command lines: a picture goes out at every vblank anyway
     int frames;                     // > 0: end after this many presented frames (tests)
     int sources;                    // sources 1 to N (D101): 1 by default, at most MAX_SOURCES
+    int fx_fps;                     // a generator, and an effect that reads the clock, run at most this often (D106)
     int verbose;
 } Cfg;
 
@@ -102,6 +129,25 @@ typedef struct {
     float opacity[MAX_LAYERS];
     int blend[MAX_LAYERS];
 
+    // source 1's own programs (D106): the slots, and the level. While a program is on, source 1's level (the
+    // panel's `brightness`) is drawn by the renderer after the programs, so an effect that adds light cannot undo a
+    // Blackout; libmpv's own brightness on source 1's layers is then held at 0.
+    FxSlot fx[FX_SLOTS];
+    int native1;                    // a program is on (the render thread says, under app.lock)
+    int level_native;               // the socket's side: source 1's layers have brightness 0, the level is drawn here
+    double level;                   // brightness as last set on the socket, -100 to 100
+    double fx_fps;
+    long fx_drops;                  // generator frames that came late (added to frame-drop-count while one is on)
+    long fx_gl;                     // GL objects of the programs (atomics)
+    int paused[LAYERS];             // source 1's layers' pause, as observed (atomics)
+    // a screenshot while a program is on: the renderer's own picture of source 1, not libmpv's layer
+    struct {
+        char *path;
+        int kind;                   // 0: video (source 1's picture at the inside size), 1: window (the screen's size, text)
+        int jpeg, quality;
+        int serial, done_serial, result;
+    } shot;
+
     // counters
     long flips, missed, drawn, back_drawn;  // drawn: frames of the front layer converted; back_drawn: of the other
     long fences, fences_freed;      // GL fences libmpv made and has not deleted yet; the ones it left that we deleted
@@ -129,7 +175,7 @@ int hook_load(const char *path, Hook **out, char *err, size_t n);   // 1: ours, 
 void hook_free(Hook *h);
 typedef struct {
     GLuint prog;
-    GLint loc_raw, loc_size, loc_pt, loc_target, loc_input;
+    GLint loc_raw, loc_size, loc_pt, loc_target, loc_input, loc_level;
     int ntex;
     GLuint tex[8];
     GLint tex_loc[8], tex_size_loc[8];
@@ -144,6 +190,24 @@ typedef struct {
 int hookgl_build(const Hook *h, HookGL *g, char *err, size_t n);
 void hookgl_free(HookGL *g);
 GLuint gl_program(const char *vs, const char *fs, char *err, size_t n);
+
+// the passes' shared GL state (main.c)
+void gl_reset(void);
+
+// the renderer's own programs (fx.c)
+int fx_read(const char *path, FxProg **out, char *err, size_t n);
+void fx_prog_free(FxProg *p);
+int fx_prog_kind(const FxProg *p);
+int fx_set_value(FxSlot *s, const char *name, const mpv_node *v);
+void fx_init(void);
+void fx_take(void);
+GLuint fx_source1(GLuint picture, int fresh, int paused, double now);
+void fx_size(int k, int *w, int *h);
+void fx_free_all(void);
+
+// pictures to files (still.c): rows of RGB, top row first
+int still_png(int fd, const unsigned char *rgb, int w, int h);
+int still_jpeg(int fd, const unsigned char *rgb, int w, int h, int quality);
 
 // the output (out.c)
 int out_open(const Cfg *cfg, char *err, size_t n);

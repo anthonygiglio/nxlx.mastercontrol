@@ -19,7 +19,7 @@
 //
 // Usage: pvj-render --socket=PATH [--drm-device=/dev/dri/cardN] [--drm-connector=NAME] [--drm-mode=WxH@R|N]
 //                   [--detail=LINES|output] [--hwdec=NAME] [--audio-device=NAME] [--fast] [--every-vblank]
-//                   [--sources=N] [--headless=WxH] [--frames=N] [--verbose]
+//                   [--sources=N] [--fx-fps=N] [--headless=WxH] [--frames=N] [--verbose]
 #define _GNU_SOURCE
 #include "pvj.h"
 #include "json.h"
@@ -85,7 +85,7 @@ static int opt(const char *a, const char *name, const char **val)
 
 static int parse_args(int argc, char **argv, Cfg *c)
 {
-    *c = (Cfg){ .hwdec = "no", .detail = 0, .sources = 1 };
+    *c = (Cfg){ .hwdec = "no", .detail = 0, .sources = 1, .fx_fps = 30 };
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i], *v;
         if (opt(a, "--socket", &v)) c->socket_path = v;
@@ -113,6 +113,11 @@ static int parse_args(int argc, char **argv, Cfg *c)
             long k = strtol(v, &e, 10);
             if (*e || k < 1 || k > MAX_SOURCES) { LOG("--sources is a number from 1 to %d", MAX_SOURCES); return -1; }
             c->sources = (int)k;
+        } else if (opt(a, "--fx-fps", &v)) {
+            char *e;
+            long k = strtol(v, &e, 10);
+            if (*e || k < 1 || k > 240) { LOG("--fx-fps is a number from 1 to 240"); return -1; }
+            c->fx_fps = (int)k;
         } else if (opt(a, "--frames", &v)) c->frames = atoi(v);
         else if (!strcmp(a, "--fast")) c->fast = 1;
         else if (!strcmp(a, "--every-vblank")) c->every_vblank = 1;
@@ -253,6 +258,8 @@ static void *event_loop(void *arg)
                 mpv_event_property *p = ev->data;
                 if (p && p->format == MPV_FORMAT_FLAG && p->data && !strcmp(p->name, "idle-active"))
                     __atomic_store_n(&app.idle[i], *(int *)p->data, __ATOMIC_RELEASE);
+                if (p && p->format == MPV_FORMAT_FLAG && p->data && !strcmp(p->name, "pause") && i < LAYERS)
+                    __atomic_store_n(&app.paused[i], *(int *)p->data, __ATOMIC_RELEASE);
             }
             if (ev->event_id == MPV_EVENT_PLAYBACK_RESTART) {
                 __atomic_store_n(&app.restart_of[i], __atomic_load_n(&app.starts[i], __ATOMIC_ACQUIRE), __ATOMIC_RELEASE);
@@ -425,6 +432,7 @@ static int layer_open(Layer *l, int index, const Cfg *c, int w, int h)
         // the layer's idleness, kept by its event thread, so the renderer's own state never waits on the core
         __atomic_store_n(&app.idle[index], 1, __ATOMIC_RELEASE);
         mpv_observe_property(l->h, 0, "idle-active", MPV_FORMAT_FLAG);
+        if (index < LAYERS) mpv_observe_property(l->h, 0, "pause", MPV_FORMAT_FLAG);     // an effect's clock (D106)
     }
     if (!is_text) {
         if (layer_render_context(l)) return -1;
@@ -483,7 +491,8 @@ static const char *FS_SCALE =
     "in vec2 pvj_pos;\n"
     "out vec4 pvj_out;\n"
     "uniform sampler2D tex;\n"
-    "void main() { pvj_out = vec4(texture(tex, pvj_pos).rgb, 1.0); }\n";
+    "uniform float pvj_level;\n"         /* source 1's level while a program of the renderer's is on (D106), else 0 */
+    "void main() { pvj_out = vec4(clamp(texture(tex, pvj_pos).rgb + pvj_level, 0.0, 1.0), 1.0); }\n";
 // the text layer is premultiplied (mpv draws its on-screen layer that way): laid over with ONE, ONE_MINUS_SRC_ALPHA
 static const char *FS_OVER =
     "#version 300 es\n"
@@ -520,7 +529,7 @@ static const char *FS_MIX =
     "}\n";
 
 static GLuint vbo, vao, p_scale, p_over, p_mix;
-static GLint loc_share, loc_blend;
+static GLint loc_share, loc_blend, loc_scale_level;
 static GLuint mix_tex, mix_fbo;
 static HookGL hook_gl;
 static int have_hook;
@@ -531,6 +540,9 @@ static void quad(void)
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     glBindVertexArray(0);
 }
+
+static void reset_gl(void);
+void gl_reset(void) { reset_gl(); }
 
 static void reset_gl(void)
 {
@@ -596,7 +608,7 @@ static void mix_pass(const Layer *outgoing, const Layer *incoming, float share, 
 static float frame_opacity[MAX_LAYERS];
 static int idle_drawn[MAX_LAYERS];         // render thread: source k's empty picture is drawn since it went idle     // each source's opacity for this frame (one look under app.lock)
 
-static void final_pass(GLuint picture, int text_on)
+static void final_pass(GLuint picture, int text_on, float level)
 {
     reset_gl();
     glBindFramebuffer(GL_FRAMEBUFFER, out_target());
@@ -606,6 +618,7 @@ static void final_pass(GLuint picture, int text_on)
     if (have_hook) {
         glUseProgram(hook_gl.prog);
         glUniform1i(hook_gl.loc_raw, 0);
+        glUniform1f(hook_gl.loc_level, level);
         glUniform2f(hook_gl.loc_size, (float)app.out_w, (float)app.out_h);
         glUniform2f(hook_gl.loc_pt, 1.0f / app.out_w, 1.0f / app.out_h);
         glUniform2f(hook_gl.loc_target, (float)app.out_w, (float)app.out_h);
@@ -627,6 +640,7 @@ static void final_pass(GLuint picture, int text_on)
         }
     } else {
         glUseProgram(p_scale);
+        glUniform1f(loc_scale_level, level);
     }
     quad();
     if (text_on) {
@@ -671,6 +685,71 @@ static int write_capture(const char *path)
     return ok ? 0 : -1;
 }
 
+// A screenshot while a program of the renderer's is on (D106): libmpv's layer then holds only the generator's blank
+// carrier, or a clip without its effect, so the picture is the renderer's own: source 1 as the programs left it, with
+// the level, scaled to the screen's size with the text over it ("window", as mpv's window screenshot has the OSD) or
+// at the inside size ("video"). PNG or JPEG by the file's ending, as mpv chooses; written over a file that is there,
+// never through a link.
+static void native_shot(GLuint picture, int text_on, float level)
+{
+    pthread_mutex_lock(&app.lock);
+    char *path = app.shot.path ? strdup(app.shot.path) : NULL;
+    int kind = app.shot.kind, jpeg = app.shot.jpeg, quality = app.shot.quality, serial = app.shot.serial;
+    pthread_mutex_unlock(&app.lock);
+    int w = kind ? app.out_w : app.in_w, h = kind ? app.out_h : app.in_h, r = -1;
+    GLuint tex = 0, fbo = 0;
+    unsigned char *px = NULL, *rgb = NULL;
+    if (!path) goto done;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    glGenFramebuffers(1, &fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) goto done;
+    reset_gl();
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glViewport(0, 0, w, h);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, picture);
+    glUseProgram(p_scale);
+    glUniform1f(loc_scale_level, level);
+    quad();
+    if (kind && text_on) {
+        glBindTexture(GL_TEXTURE_2D, text.tex);
+        glUseProgram(p_over);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+        quad();
+        glDisable(GL_BLEND);
+    }
+    px = malloc((size_t)w * (size_t)h * 4);
+    rgb = malloc((size_t)w * (size_t)h * 3);
+    if (!px || !rgb) goto done;
+    glPixelStorei(GL_PACK_ALIGNMENT, 4);
+    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, px);
+    for (int y = 0; y < h; y++) {               // top row first: the pass drew the picture's top at the last GL row
+        const unsigned char *s = px + (size_t)(h - 1 - y) * (size_t)w * 4;
+        unsigned char *d = rgb + (size_t)y * (size_t)w * 3;
+        for (int x = 0; x < w; x++) { d[x * 3] = s[x * 4]; d[x * 3 + 1] = s[x * 4 + 1]; d[x * 3 + 2] = s[x * 4 + 2]; }
+    }
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0640);
+    if (fd < 0) { LOG("screenshot: %s: %s", path, strerror(errno)); goto done; }
+    r = jpeg ? still_jpeg(fd, rgb, w, h, quality) : still_png(fd, rgb, w, h);
+    if (close(fd)) r = -1;
+done:
+    free(px);
+    free(rgb);
+    free(path);
+    if (fbo) glDeleteFramebuffers(1, &fbo);
+    if (tex) glDeleteTextures(1, &tex);
+    pthread_mutex_lock(&app.lock);
+    app.shot.result = r;
+    app.shot.done_serial = serial;
+    pthread_cond_broadcast(&app.cond);
+    pthread_mutex_unlock(&app.lock);
+}
+
 /* ---- main ---------------------------------------------------------------------------------------------------------- */
 int main(int argc, char **argv)
 {
@@ -712,6 +791,7 @@ int main(int argc, char **argv)
     if (!p_scale || !p_over || !p_mix) { LOG("%s", err); out_close(); return 2; }
     glUseProgram(p_scale);
     glUniform1i(glGetUniformLocation(p_scale, "tex"), 0);
+    loc_scale_level = glGetUniformLocation(p_scale, "pvj_level");
     glUseProgram(p_over);
     glUniform1i(glGetUniformLocation(p_over, "tex"), 0);
     glUseProgram(p_mix);
@@ -723,6 +803,8 @@ int main(int argc, char **argv)
     if (target(&mixer, app.in_w, app.in_h)) { LOG("no texture for the crossfade"); out_close(); return 2; }
     mix_tex = mixer.tex;
     mix_fbo = mixer.fbo;
+    app.fx_fps = cfg.fx_fps;
+    fx_init();
 
     // Both video layers are started now; the second plays nothing until a crossfade loads it (an idle libmpv core
     // decodes nothing and is not drawn: its cost is its threads asleep and a few megabytes).
@@ -774,11 +856,15 @@ int main(int argc, char **argv)
         int fi = app.front, phase = app.fade.phase, base = app.fade.base_starts;
         double asked = app.fade.asked, t0 = app.fade.t0, len = app.fade.seconds;
         memcpy(frame_opacity, app.opacity, sizeof frame_opacity);     // the sources' mix, read once for this frame
+        float level = app.native1 ? (float)(app.level / 100.0) : 0.0f;
+        int shot = app.shot.serial != app.shot.done_serial;
         pthread_mutex_unlock(&app.lock);
         if (quit) break;
         if (app.hook_pending) take_hook();
+        fx_take();
         Layer *front = &video[fi], *back = &video[1 - fi];
-        if (fi != was_front) { front->dirty = 1; was_front = fi; }
+        int fresh = 0;                                      // source 1's picture is new this frame (D106)
+        if (fi != was_front) { front->dirty = 1; was_front = fi; fresh = 1; }
         for (int i = 0; i < nlayers; i++) {
             // every layer's update is taken at every turn (libmpv asks for that), whether or not it is drawn
             uint64_t uv = mpv_render_context_update(video[i].rc);
@@ -809,6 +895,7 @@ int main(int argc, char **argv)
             reset_gl();
             layer_render(front);
             front->dirty = 0;
+            fresh = 1;
             app.drawn++;
             __atomic_add_fetch(&app.layer_drawn[fi], 1, __ATOMIC_RELAXED);
         }
@@ -816,6 +903,7 @@ int main(int argc, char **argv)
             reset_gl();
             layer_render(back);
             back->dirty = 0;
+            fresh = 1;
             app.back_drawn++;
             __atomic_add_fetch(&app.layer_drawn[1 - fi], 1, __ATOMIC_RELAXED);
         }
@@ -877,10 +965,14 @@ int main(int argc, char **argv)
                 } else {
                     mix_pass(back, front, share, BLEND_NORMAL);     // the incoming layer at the clock's opacity
                     picture = mix_tex;
+                    fresh = 1;
                 }
             }
         }
-        final_pass(picture, text_on);
+        // the renderer's own programs on source 1 (D106): a generator in place of the picture, an effect over it
+        picture = fx_source1(picture, fresh, __atomic_load_n(&app.paused[fi], __ATOMIC_ACQUIRE), now);
+        final_pass(picture, text_on, level);
+        if (shot) native_shot(picture, text_on, level);
         if (cap) {
             pthread_mutex_lock(&app.lock);
             char *path = app.capture_path ? strdup(app.capture_path) : NULL;
@@ -926,6 +1018,7 @@ int main(int argc, char **argv)
     pthread_join(ipc, NULL);
     ipc_close();
     if (have_hook) hookgl_free(&hook_gl);
+    fx_free_all();
     layer_close(&text);
     for (int i = nlayers - 1; i >= 0; i--) layer_close(&video[i]);
     glDeleteFramebuffers(1, &mix_fbo);
