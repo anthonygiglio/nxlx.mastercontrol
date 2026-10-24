@@ -12,6 +12,13 @@ Newest entry first. One entry per working session: what was done, what merged, w
 - **The review of #164 (two Medium, two Low), mended in the same PR:** a mode chosen during the wait was spoken of as the one that waited (the second try is now tied to its arguments and dropped by a choice, an import or a going back); a second warm-up in the same boot went straight to the skip (a good second try now clears its mark); the words said "settled" after a time-out (they now say which); and the first failure put the same sentence on the page twice (the note is now for results only). A test for each, each failing on the reviewed head. Cost, plainly: a mode that truly cannot start now costs one more dark start, about 4 to 30 seconds more, once per boot per set of arguments.
 - **Not tested:** the Pi and the X27. Whether the X27 really settles in its sysfs modes is not known; SETTLE_MAX bounds the wait either way.
 
+## 2026-10-23, bug sweep 5 (D105): the black or dim source without --fast, found in mpv
+
+- **Cause:** mpv's scaler table. For 6-tap kernels (the default lanczos when scaling up) each row of weights is padded to 8 and the padding is left uninitialised; llvmpipe's filtering mixes it in, and a source stays black or dim for the life of the process. Found by switching one option at a time (only 6-tap kernels failed), then confirmed with a libmpv built here with the table zeroed (0 of 10 bad, against 7 of 10). Upstream fixed it after 0.41 (mpv 72d43dc9c, issue #18540); no released mpv has the fix yet.
+- **Workaround (render/src/main.c):** without `--fast`, every video core and source gets lanczos of radius 4 for `scale`, `cscale` and `dscale` (8 taps, never 6). The Pi's `--fast` is unchanged. To be dropped once the box's mpv is 0.42 or later (D101's addendum says so).
+- **Test:** the old opt-in reproducer is the regular `SourceScalerTest` now, without `--fast`. Here: 0 failures in 30 runs with the workaround, 4 in 10 with master's scalers. On CI the break-check is statistical (about half of runs fail without it). `tests.test_pvj_render tests.test_renderer`: OK (100 tests).
+- **Not tested:** a real GPU (a PC or a Pi 5) without `--fast`, and the Pi (unchanged). D98's black clip in a fresh process is likely the same cause; not verified.
+
 ## 2026-10-23, classic frozen and the gates for the New renderer (D105)
 
 - **Decided (D105):** classic mpv gets fixes only; new picture features go to pvj-render only; pvj-render becomes the default on a Pi 4 and up after five gates (soak, fallback, everyday parity, decoding, real use).
