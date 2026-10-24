@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+# SPDX-License-Identifier: Apache-2.0
+name: Project log
+
+# The log is one new file per pull request (D107, project-log/README.md). This check fails a pull request that
+# edits the three old files, edits or deletes a log file of an earlier pull request, adds a file with a bad name or
+# date, gives a new decision a number master already has, or adds no journal file. The label "no-journal" lets a
+# trivial change through without one; adding or removing a label runs the check again (it takes seconds).
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  project-log:
+    name: project-log
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      # A pull request's run is on GitHub's test merge of it into master: HEAD^1 is master's tip, so the check sees
+      # what the pull request changes and what master already has (its decision numbers). Two commits are enough.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: The log's files, and what this pull request changed in them (tools/project-log.py check)
+        env:
+          NO_JOURNAL: ${{ contains(github.event.pull_request.labels.*.name, 'no-journal') && '--no-journal-ok' || '' }}
+        run: python3 tools/project-log.py check --base HEAD^1 $NO_JOURNAL

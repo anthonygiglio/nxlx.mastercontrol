@@ -4,7 +4,7 @@
 
 Read first: [HANDOFF.md](HANDOFF.md), then [project-log/](project-log/README.md). The decisions, lessons and open items are there.
 
-- Log as you go: a lasting decision goes in `project-log/DECISIONS.md`, a surprise in `LESSONS.md`, and add a dated entry to `JOURNAL.md` at the end of a session. Do it in the same pull request as the change.
+- Log as you go, in the same pull request as the change, always in new files of your own (D107): a dated journal entry in `project-log/journal/` (every pull request; a trivial one may have the label `no-journal`), a surprise in `project-log/lessons/`, a lasting decision or an addendum to one in `project-log/decisions/`. `python3 tools/project-log.py new journal` (or `new lesson`, `new decision NAME`, `new addendum D106`) starts the file; `python3 tools/project-log.py check --base origin/master` checks it. Never edit `JOURNAL.md`, `LESSONS.md` or `DECISIONS.md`: they are history. The how is in [project-log/README.md](project-log/README.md).
 - Write plain text with no em dashes (use commas, semicolons or new sentences).
 - New code is Apache-2.0 with an SPDX header ("NXLX.Systems and contributors"). Never edit `LICENSE.md` or `AUTHORS.md`.
 - One pull request per finished branch; short comment, merge when checks are green. Do not rewrite history.

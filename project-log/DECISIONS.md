@@ -4,6 +4,10 @@
 
 Newest at the bottom. Format: **what**, **why**, **cost / rules out**. Never rewrite an entry; add a new one that supersedes it.
 
+<!-- log-fragments: pointer -->
+**Since 2026-10-24 (D107) a new decision goes in a file of its own in [decisions/](decisions/), `DN-name.md`, from D107 on, and an addendum to any decision, an old one too, is a file of its own there, `DN-addendum-YYYY-MM-DD-name.md`. This file is the history before that and is not edited again.** Read every decision with its addenda joined with `python3 tools/project-log.py decisions`, or one with `python3 tools/project-log.py decisions D106`; `grep -r D106 project-log` finds them all. The next free number: `python3 tools/project-log.py next`. How to write one: [README.md](README.md).
+<!-- /log-fragments: pointer -->
+
 ## D1. Python 3 (standard library only) replaces PHP for the new core
 Why: the legacy PHP had serious security problems and targets an old OS; a small stdlib-only service installs anywhere and has nothing to keep patched. Cost: a rewrite; legacy PHP and docs stay in the tree until feature parity.
 

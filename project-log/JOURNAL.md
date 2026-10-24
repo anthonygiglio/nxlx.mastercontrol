@@ -4,6 +4,10 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+<!-- log-fragments: pointer -->
+**Since 2026-10-24 (D107) a new entry goes in a file of its own in [journal/](journal/), one file a pull request. This file is the history before that and is not edited again.** Read the whole journal as one, newest first, with `python3 tools/project-log.py journal`. How to write an entry: [README.md](README.md).
+<!-- /log-fragments: pointer -->
+
 ## 2026-10-24, the review of #171 (D106 step d), fixed on its branch
 
 - **Medium:** the source's clip stops only once the shader is taken; a refused shader leaves the clip playing. **Low:** a clip in a shader's place loads before the shader comes off, under the chains' lock; a shader pad's deleted preset plays with a note on Sources 2 and up; the sources' rows look once a request; slot 0 in the chains' state, `available` with Effects off; the panel's words.
