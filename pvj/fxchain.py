@@ -82,7 +82,7 @@ class Chains:
             del self.on[key]
         return self.on
 
-    def _place(self, body):
+    def _place(self, body, generator=False):
         player = self.api.player
         source, slot = body.get("source"), body.get("slot")
         chains = getattr(player, "native_chains", None)
@@ -91,7 +91,7 @@ class Chains:
         n = player.sources() if hasattr(player, "sources") else 1
         if isinstance(source, bool) or not isinstance(source, int) or not 1 <= source <= n:
             raise ApiError(400, "source must be 1 to %d" % n)
-        slots = player.chain_slots(source)
+        slots = player.chain_slots(source, generator)
         if isinstance(slot, bool) or not isinstance(slot, int) or slot not in slots:
             raise ApiError(400, "slot must be %s on source %d%s" % (" or ".join(map(str, slots)), source,
                                                                      " (slot 1 is the effect under Effects)" if source == 1 else ""))
@@ -101,7 +101,8 @@ class Chains:
     def state(self):
         fx = self.api.effects
         with self._lock:
-            rows = [{"source": s, "slot": k, "id": r["id"], "values": r["values"], "controls": r["controls"], "preset": r["preset"]}
+            rows = [{"source": s, "slot": k, "id": r["id"], "values": r["values"], "controls": r["controls"], "preset": r["preset"],
+                     "kind": "shader" if k == 0 else "effect"}
                     for (s, k), r in sorted(self._seen().items())]
         try:
             native = bool(self.api.player.native_chains())
@@ -157,8 +158,84 @@ class Chains:
         self.api.log("pvj-web: effect %s on source %d, slot %d" % (sid, source, slot))
         return {"ok": True, "source": source, "slot": slot, "id": sid}
 
+    # -- a generator as a source (D106 step d) --
+    def put_generator(self, source, sid, preset=None, values=None, controls=None):
+        """The generator `sid` as the whole picture of source `source` (2 to N), in slot 0, in place of its clip: the
+        source's clip stops, the shader draws at the height Picture detail gives it (D93), with the preset named, else
+        the one called default, else the file's own values. Its effects (slots 1 to 3) stay on over it."""
+        eng = self.api.shaders
+        eng._need()
+        source, _ = self._place({"source": source, "slot": 0}, generator=True)
+        if not isinstance(sid, str):
+            raise ApiError(400, "shader must be a shader's name")
+        path, _ = eng._path(sid)
+        try:
+            parsed, _digest = eng._parsed(path)
+            start, stored, name = eng.start_values(parsed, eng.config(), sid, preset)
+            if values is not None:
+                start = dict(start, **S.clean_values(parsed, values))
+                name = None if values else name
+            events = {i["name"] for i in parsed["inputs"] if i["type"] == "event"}
+            start = {n: v for n, v in start.items() if n not in events}
+            ctl = eng.limit(parsed, S.clean_controls(controls, S.clean_controls(stored)))
+            size = S.render_size(eng.screen(), eng.height_for(sid))
+            text = S.translate_native(parsed, size, start, ctl["hue"], 0.0, speed=ctl["speed"], gain=ctl["brightness"])
+        except ShaderError as e:
+            raise ApiError(422, "%s: %s" % (sid, e))
+        with self._lock:
+            out = self._write(text)
+            try:
+                self.api.player.stop_source_clip(source)        # the clip under it goes: the shader is the picture
+                verdict, message = self.api.player.chain_put(source, 0, out)
+            except PlayerError as e:
+                self._seen()
+                self._cleanup()
+                raise ApiError(503, str(e))
+            if verdict == "refused":
+                self._seen()
+                self._cleanup()
+                raise ApiError(422, "the player refused %s: %s" % (sid, message))
+            self.on[(source, 0)] = {"id": sid, "values": start, "controls": ctl, "preset": name, "path": out, "generator": True}
+            self._cleanup()
+        self.api.log("pvj-web: shader %s on source %d" % (sid, source))
+        return {"ok": True, "source": source, "slot": 0, "id": sid, "playing": sid}
+
+    def generator_values(self, source, values=None, controls=None):
+        """New values or controls (speed, hue, brightness) for the generator of source `source`, set while it plays."""
+        eng = self.api.shaders
+        eng._need()
+        self._place({"source": source, "slot": 0}, generator=True)
+        with self._lock:
+            r = self._seen().get((source, 0))
+            if r is None:
+                raise ApiError(409, "no shader plays on source %d" % source)
+            try:
+                parsed, _digest = eng._parsed(eng._path(r["id"])[0])
+                vals = dict(r["values"], **S.clean_values(parsed, values))
+                ctl = eng.limit(parsed, S.clean_controls(controls, r["controls"]))
+            except ShaderError as e:
+                raise ApiError(400, str(e))
+            send = S.native_send(parsed, vals, {})
+            send.update({"@speed": ctl["speed"], "@hue": ctl["hue"], "@gain": ctl["brightness"]})
+            try:
+                done = self.api.player.chain_values(source, 0, send, r["path"])
+            except PlayerError as e:
+                raise ApiError(503, str(e))
+            if not done:
+                raise ApiError(409, "no shader plays on source %d" % source)
+            r.update(values=vals, controls=ctl, preset=None)
+            return {"ok": True, "source": source, "id": r["id"], "values": vals, "controls": ctl}
+
+    def generator_of(self, source):
+        """The id of the shader that is source `source`'s picture, or None (as the player's record says it now)."""
+        with self._lock:
+            r = self._seen().get((source, 0))
+        return r["id"] if r else None
+
     def values(self, body):
         """{"source", "slot", "values"?, "controls"?}: new values for the effect in that slot, set while it plays."""
+        if body.get("slot") == 0:
+            return self.generator_values(body.get("source"), body.get("values"), body.get("controls"))
         fx = self.api.effects
         fx._need()
         source, slot = self._place(body)
@@ -192,7 +269,7 @@ class Chains:
         if slot is None:
             self._place(dict(body, slot=player.chain_slots(source)[0] if isinstance(source, int) and not isinstance(source, bool) else None))
         else:
-            self._place(body)
+            self._place(body, generator=True)
         with self._lock:
             try:
                 had = player.chain_clear(source, slot)
@@ -210,6 +287,8 @@ class Chains:
             raise ApiError(400, "send an object")
         if body.get("off") is True:
             return self.off(body)
+        if "shader" in body:
+            return self.put_generator(body.get("source"), body["shader"], body.get("preset"), body.get("values"), body.get("controls"))
         if "id" in body:
             return self.put(body)
         if "values" in body or "controls" in body:

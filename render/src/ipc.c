@@ -695,8 +695,8 @@ static void set_shaders(int fd, const mpv_node *id, const mpv_node *val)
 // ["pvj-shader", "clear", SOURCE, SLOT]
 // ["pvj-shader", "set", SOURCE, SLOT, {NAME: VALUE, ...}]   inputs by name, and @speed, @hue, @gain, @amount, @offset;
 //                                              all of one set are taken in one frame. Nothing is built again.
-// SOURCE is 1 to the number of sources; slot 0 (a generator) is source 1's only (generators as sources: step d),
-// slots 1 to 3 are a source's effects, run in that order (step b).
+// SOURCE is 1 to the number of sources; slot 0 is a source's generator (step d: on sources 2 to N it is the source's
+// whole picture, its clip layer idle), slots 1 to 3 are its effects, run in that order (step b).
 static int fx_answered_s, fx_answered_k;
 static long fx_wait_for;
 static int fx_answered(void) { return app.fx[fx_answered_s][fx_answered_k].answered >= fx_wait_for; }
@@ -742,7 +742,7 @@ static void shader_command(int fd, const mpv_node *id, const mpv_node *cmd)
     const char *what = arg_str(cmd, 1);
     const mpv_node *src = arg(cmd, 2), *slot = arg(cmd, 3);
     if (!what || !src || !slot || src->format != MPV_FORMAT_INT64 || slot->format != MPV_FORMAT_INT64 || src->u.int64 < 1
-        || src->u.int64 > app.nsources || slot->u.int64 < 0 || slot->u.int64 >= FX_SLOTS || (slot->u.int64 == 0 && src->u.int64 != 1)) {
+        || src->u.int64 > app.nsources || slot->u.int64 < 0 || slot->u.int64 >= FX_SLOTS) {
         reply(fd, id, "invalid parameter", NULL);
         return;
     }

@@ -1193,5 +1193,104 @@ class PassTest(NativeBase):
         self.assertEqual(self.r("get_property", "pvj-render")["fx-gl-objects"], 0)
 
 
+class GeneratorSourceTest(SourcesBase):
+    """Step d: a generator as the whole picture of a source 2 to N (D106)."""
+
+    def setUp(self):
+        super().setUp()
+        self.n = 0
+
+    write = NativeBase.write
+    effect = NativeBase.effect
+
+    def slot(self, source, k):
+        return [s for s in self.r("get_property", "pvj-shaders") if s["source"] == source and s["slot"] == k][0]
+
+    def test_a_generator_is_a_sources_picture_with_its_effects_and_level(self):
+        r = self.r
+        r.load(self.green)
+        self.show_halves(1, 2)
+        right = (3 * W // 4, H // 4)
+        self.assertTrue(r.wait(lambda: near_px(r.pixel(*right), BLACK), 3))         # source 2 idle: black
+        gen = self.write(S.translate_native(S.parse(FLAT, passes=True), (W, H)))
+        r("pvj-shader", "load", 2, 0, gen)
+        self.assertTrue(r.wait(lambda: near_px(r.pixel(*right), (64, 128, 0)), 3), r.pixel(*right))
+        self.assertTrue(near_px(r.pixel(W // 4, H // 4), GREEN), "source 1 changed")
+        self.assertTrue(self.sources()[1]["idle"], "the clip layer under the generator plays nothing")
+        r("pvj-shader", "set", 2, 0, {"level": 1.0})
+        self.assertTrue(r.wait(lambda: near_px(r.pixel(*right), (255, 128, 0)), 3))
+        r("pvj-shader", "load", 2, 1, self.effect(INVERT))                          # an effect over it
+        self.assertTrue(r.wait(lambda: near_px(r.pixel(*right), (0, 127, 255)), 3), r.pixel(*right))
+        r("set_property", "brightness", -100)                                       # the Blackout reaches it
+        self.assertTrue(r.wait(lambda: max(r.capture()[2]) == 0, 3))
+        r("set_property", "brightness", 0)
+        r("pvj-shader", "clear", 2, 0)
+        r("pvj-shader", "clear", 2, 1)
+        self.assertTrue(r.wait(lambda: near_px(r.pixel(*right), BLACK), 3))
+
+
+class GeneratorSourceApiTest(unittest.TestCase):
+    """A shader pad, or a shader by name, played to Source 2 (the API, pvj/fxchain.py), on the real program."""
+
+    def setUp(self):
+        need_program(self)
+        from tests.test_server import ServerBase
+        self.server = ServerBase("run")
+        self.server.setUp()
+        self.addCleanup(self.server.doCleanups)
+        self.r = Renderer("--sources=4")
+        self.addCleanup(lambda: self.r.close())
+        os.symlink(self.r.sock, os.path.join(self.server.rundir, paths.PLAYER_SOCKET))
+        self.api = self.server.api
+        self.player = Player(rundir=self.server.rundir)
+        self.api.player = self.player
+        self.api.registry.set_enabled("shaders", True)
+        self.api.log = lambda *_: None
+        self.player.ipc.request("set_property", "image-display-duration", "inf")
+
+    def slot(self, s, k):
+        return [x for x in self.r("get_property", "pvj-shaders") if x["source"] == s and x["slot"] == k][0]
+
+    def test_a_shader_to_source_2_its_values_a_clip_in_its_place_and_stop(self):
+        dev = {"id": "t", "role": "full"}
+        out = self.api.play({"shader": "nxlx-silk.fs", "source": 2}, dev, "t")
+        self.assertTrue(out["ok"], out)
+        self.assertEqual(self.slot(2, 0)["state"], "on")
+        self.assertEqual(self.slot(2, 0)["kind"], "generator")
+        rows = {r["source"]: r for r in self.api.get_sources({}, dev, "t")["sources"]}
+        self.assertEqual((rows[2]["shader"], rows[2]["name"], rows[2]["idle"]), ("nxlx-silk.fs", "nxlx-silk.fs", False))
+        path = self.api.chains.on[(2, 0)]["path"]
+        out = self.api.chains.api_post({"source": 2, "slot": 0, "values": {"sheen": 0.9}, "controls": {"hue": 90.0}}, dev, "t")
+        self.assertEqual(out["values"]["sheen"], 0.9)
+        self.assertEqual(self.api.chains.on[(2, 0)]["path"], path)          # a value, not a build
+        self.assertEqual(self.slot(2, 0)["rebuilds"], 0)
+        # a clip played to source 2 takes the shader's place
+        clip = os.path.join(self.server.media, "blue.png")
+        png(clip, W, H, lambda x, y: BLUE)
+        self.api.play({"file": "blue.png", "source": 2}, dev, "t")
+        self.assertTrue(self.r.wait(lambda: self.slot(2, 0)["state"] == "off", 3))
+        self.assertIsNone(self.api.chains.generator_of(2))
+        # a shader pad to source 2, then its Stop
+        banks = self.api.settings.data["pads"]["banks"]
+        banks[0]["pads"][0] = {"label": "silk", "file": "", "shader": "nxlx-silk.fs"}
+        out = self.api.play({"pad": [0, 0], "source": 2}, dev, "t")
+        self.assertTrue(out["ok"], out)
+        self.assertEqual(self.slot(2, 0)["state"], "on")
+        self.api.set_sources({"source": 2, "action": "stop"}, dev, "t")
+        self.assertTrue(self.r.wait(lambda: self.slot(2, 0)["state"] == "off", 3))
+        self.assertEqual(self.api.chains.state()["chains"], [])
+        # source 1's generator stays the shader engine's: slot 0 of source 1 is not the chain's
+        from pvj.api import ApiError
+        with self.assertRaises(ApiError):
+            self.api.chains.api_post({"source": 1, "slot": 0, "values": {"sheen": 0.5}}, dev, "t")
+
+    def test_on_classic_a_shader_to_a_source_is_refused_as_before(self):
+        from pvj.api import ApiError
+        self.player._native_seen = (self.player._seen_pid or self.player._note_pid(self.player.ipc.request("get_property", "pid")), False)
+        with self.assertRaises(ApiError) as e:
+            self.api.play({"shader": "nxlx-silk.fs", "source": 2}, {"id": "t", "role": "full"}, "t")
+        self.assertEqual(e.exception.status, 409)
+
+
 if __name__ == "__main__":
     unittest.main()
