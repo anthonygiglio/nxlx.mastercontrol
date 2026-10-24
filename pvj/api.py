@@ -1374,18 +1374,37 @@ class Api:
         rows = self._player_call(fn) if fn is not None else [{"source": 1, "idle": not self._player_call(self.player.status).get("path"),
                                                               "path": self._player_call(self.player.status).get("path"),
                                                               "height": None, "pause": False}]
-        return [dict(r, path=None, name=os.path.basename(r["path"]) if r.get("path") else None) for r in rows]
+        chains = getattr(self, "chains", None)
+        gens = chains.generators() if chains is not None else {}           # one look a request (the review of #171)
+        out = []
+        for r in rows:
+            shader = gens.get(r["source"]) if r["source"] > 1 else None
+            # a shader that is a source's picture (D106 step d) is said by its name, as a clip is
+            out.append(dict(r, path=None, name=shader or (os.path.basename(r["path"]) if r.get("path") else None),
+                            idle=r["idle"] and not shader, shader=shader))
+        return out
 
     def play_to_source(self, body, k, device, client):
         """A clip, by name or by a clip pad, played on source k (2 to N): a cut, with no sound, and nothing else on the
         screen changes (source 1 plays on). The Owner's and an Operator's (a Guest's play form has no "source").
-        Anything but a clip (a shader, an NDI source, a render cue, a stream, a slideshow, the capture input) is
-        refused with plain words: in this step those play on Source 1 only."""
+        On the New renderer a shader, by name or by a shader pad, plays there too, as the source's picture (D106
+        step d). Anything else (an NDI source, a render cue, a stream, a slideshow, the capture input, and a shader
+        on classic) is refused with plain words: those play on Source 1 only."""
         for kind, words in (("preset", "a preset"), ("stream", "a stream"), ("slideshow", "a slideshow"),
                             ("capture", "the capture input"), ("ndi", "an NDI source"), ("usb_drive", "a USB drive's list"),
                             ("usb", "a clip from a USB drive")):
             if kind in body:
                 raise ApiError(409, self.SOURCE_ONLY_CLIPS % words)
+        chains = getattr(self, "chains", None)
+        native = chains is not None and bool(getattr(self.player, "native_chains", lambda: False)())
+        if "shader" in body:
+            if not native:
+                raise ApiError(409, self.SOURCE_ONLY_CLIPS % "a shader")
+            self._need_source(k)
+            out = chains.put_generator(k, body["shader"], body.get("shader_preset"))
+            self.log("pvj-web: source %d plays the shader %s, by device %s (%s, from %s)"
+                     % (k, json.dumps(body["shader"]), (device or {}).get("id"), (device or {}).get("role"), client))
+            return out
         if "pad" in body:
             pad = body["pad"]
             if not (isinstance(pad, list) and len(pad) == 2 and all(isinstance(x, int) and not isinstance(x, bool) for x in pad)):
@@ -1394,6 +1413,31 @@ class Api:
             if not (0 <= pad[0] < len(banks) and 0 <= pad[1] < 12):
                 raise bad("no such pad")
             held = banks[pad[0]]["pads"][pad[1]]
+            if self.pad_shader(held) and native:
+                # a shader pad to Source 2 and up (D106 step d): the shader is that source's picture. A pad whose
+                # preset is gone plays with the shader's own start and says so, as on Source 1 (_play_shader_pad)
+                self._need_source(k)
+                sid, preset = self.pad_shader(held)
+                note = None
+                self.shaders._need()
+                try:
+                    self.shaders._path(sid)
+                except ApiError as e:
+                    if e.status != 404:
+                        raise
+                    raise ApiError(404, "this pad's shader, %s, is not on the box any more (deleted or renamed): choose another for the pad" % sid)
+                if preset is not None:
+                    try:
+                        preset = self._shader_preset(sid, preset)
+                    except ApiError:
+                        note = "this pad's preset, %s, is gone: the shader starts as it does by itself. Choose a preset for the pad again" % preset
+                        preset = None
+                out = chains.put_generator(k, sid, preset)
+                if note:
+                    out = dict(out, note=note)
+                self.log("pvj-web: source %d plays the shader of pad %s, by device %s (%s, from %s)"
+                         % (k, pad, (device or {}).get("id"), (device or {}).get("role"), client))
+                return out
             for test, words in ((self.pad_shader, "this pad's shader"), (self.pad_ndi, "this pad's NDI source"),
                                 (self.pad_render, "this pad's render cue")):
                 if test(held):
@@ -1413,7 +1457,16 @@ class Api:
         if ending == "next":
             ending = "stop"
         self._need_source(k)
-        self._player_call(self.player.play_to, k, [path], ending)
+        if chains is not None:
+            # a clip takes the shader's place (D106 step d): the clip loads first and the shader comes off after it,
+            # so a cut never shows black between them, under the chains' lock so no shader goes on in between
+            with chains._lock:
+                had = (k, 0) in chains._seen()
+                self._player_call(self.player.play_to, k, [path], ending)
+                if had:
+                    self._player_call(self.player.chain_clear, k, 0)
+        else:
+            self._player_call(self.player.play_to, k, [path], ending)
         self.log("pvj-web: source %d plays %s, by device %s (%s, from %s)"
                  % (k, json.dumps(name), (device or {}).get("id"), (device or {}).get("role"), client))
         out = {"playing": name, "source": k}
@@ -1445,7 +1498,9 @@ class Api:
             if r["source"] > 1 and not r["idle"]:
                 warning = warning or renderer_mod.source_warning(rows, r["source"], self.board.get("kind"))
         return {"count": len(rows), "cap": renderer_mod.source_cap(self.board.get("kind")),
-                "sources": [{k: r[k] for k in ("source", "idle", "name", "height", "pause")} for r in rows],
+                # "shader" only where a shader is a source's picture (D106 step d): every other row is as it was
+                "sources": [dict({k: r[k] for k in ("source", "idle", "name", "height", "pause")}, **({"shader": r["shader"]} if r.get("shader") else {}))
+                            for r in rows],
                 "warning": warning}
 
     def set_sources(self, body, device, client):

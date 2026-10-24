@@ -754,6 +754,13 @@ Uploads of ISF files with PASSES (a feedback trail effect and a two-pass blur; a
 | FX16 | A two-pass blur generator at 540 and at 720 lines | As on a desktop host; the slot's `width` and `height` | As FX15 |
 | FX17 | The same uploads on classic | Refused in words that say the New renderer draws them | The words |
 
+### pvj-render phase 3, step d (D106): a generator as a source, never run on a Pi
+
+| # | Do | Look for | Send back |
+| --- | --- | --- | --- |
+| FX18 | A mapping of two quads, the right on Source 2; a shader pad played to Source 2 (Play to) while a 720p clip plays on Source 1 | The right quad shows the shader, the left the clip; no stutter | Missed vblanks, the GPU's share, `fx-passes-per-second` |
+| FX19 | Three shaders on Sources 2 to 4 at once (Automatic heights) | Each quad its shader; how many hold | The same numbers |
+
 ### What to send back
 
 The output of checks 1 to 7 and 13, the `journalctl` tail for anything that failed, and a note of what you saw on screen. Say clearly what you did **not** test.

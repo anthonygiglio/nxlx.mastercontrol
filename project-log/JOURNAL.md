@@ -4,6 +4,18 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-24, the review of #171 (D106 step d), fixed on its branch
+
+- **Medium:** the source's clip stops only once the shader is taken; a refused shader leaves the clip playing. **Low:** a clip in a shader's place loads before the shader comes off, under the chains' lock; a shader pad's deleted preset plays with a note on Sources 2 and up; the sources' rows look once a request; slot 0 in the chains' state, `available` with Effects off; the panel's words.
+- **Tests:** a refused shader keeps the clip, a taken one stops it; a pad with a preset that is gone. **Break-checks (4, each caught):** the clip stopped before the shader is taken; the clip never stopped; a gone preset passed on; slot 0 left out of the state.
+- **For (e):** generators on Sources 2 to N rebuilt on an upload or a Picture detail change.
+
+## 2026-10-24, pvj-render phase 3, step d (D106): a generator as a source
+
+- **Built:** a generator in slot 0 of any source; on sources 2 to N it is the source's picture, its clip layer idle. A shader pad or a shader by name played to Source 2 and up on the New renderer (D101 refused it), its values through the chains' API, a clip in its place, the Stop. Version 0.7.0.
+- **Not built:** a generator in each of source 1's two layers for D98's crossfade: step (f) of D106's plan, after (e) (the coordinator's word; D71's still already works out of a native generator).
+- **Tests:** `GeneratorSourceTest`, `GeneratorSourceApiTest`. **Break-checks (5, each caught):** the generator as an idle source's picture; slot 0 open on source 2; a clip in the shader's place; a shader pad to a source; a source's Stop taking its shader off.
+
 ## 2026-10-24, the review of #170 (D106 step c), fixed on its branch
 
 - **Medium:** IMG_SIZE and IMG_PIXEL of the picture use its own size in a smaller pass; every program's buffers together at most 192 MB. **Low:** GLSL's reserved words refused by the panel too; nothing on the last pass, one size a buffer; a run at most 4 pictures' area; a half-float buffer retried in 8 bits.

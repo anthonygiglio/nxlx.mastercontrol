@@ -495,8 +495,9 @@
       if (!pad.file && !held && !src && !cue) return say(canOp() ? 'Empty pad. Tap "Edit pads" to assign a clip, a shader, an NDI source or a render cue.' : 'Empty pad.', true);
       if (src && !can('live')) return say(guestsLocked() ? LOCKED_TEXT : NDI_PAD_GUEST, true);     // never sent: the box refuses a guest an NDI pad (D80)
       if (cue && !can('live')) return say(guestsLocked() ? LOCKED_TEXT : RENDER_PAD_GUEST, true);     // never sent: the box refuses it to a guest (D94)
-      // Play to (D101): with another source chosen, the pad's clip goes there; the box refuses anything but a clip
-      // in plain words (a shader, an NDI source and a render cue play on Source 1 in this step)
+      // Play to (D101): with another source chosen, the pad's clip goes there, and on the New renderer a shader pad's
+      // shader (D106 step d); the box refuses anything else in plain words (an NDI source and a render cue play on
+      // Source 1, and a shader too on classic)
       if (S.playTo > 1 && canOp()) return playToSource({ pad: [bank, index] }, S.playTo, pad.label || pad.file || 'the pad');
       if (cue && !cue.show) return act('POST', '/api/play', { pad: [bank, index] }, function () { say('Cue sent to ' + padRenderName(cue) + ' (OSC has no reply).'); });
       if (canGuest()) return guestSend('/api/play', { pad: [bank, index] }, '', b);
@@ -561,7 +562,7 @@
     }));
     pick.addEventListener('change', function () { S.playTo = +pick.value; });
     return h('div', { class: 'row', id: 'playtorow' }, h('span', { class: 'k', text: 'Play to' }), pick,
-      h('span', { class: 'hint grow', text: 'Source 1 is what plays as always. A clip pad sent to another source shows on the surfaces that show it (Projection mapping).' }));
+      h('span', { class: 'hint grow', text: 'Source 1 is what plays as always. A clip pad sent to another source (or a shader pad, on the New renderer) shows on the surfaces that show it (Projection mapping).' }));
   }
   function sourcesCard() {
     var body = h('div', { class: 'list', id: 'srclist' }, h('div', { class: 'hint', text: 'Loading...' }));
@@ -603,7 +604,7 @@
         body.appendChild(row);
       });
       if (d.warning) body.appendChild(h('div', { class: 'hint warn', id: 'srcwarn', role: 'status', text: 'A source plays a clip of more than 720 lines while two others play: ' + d.warning + '.' }));
-      body.appendChild(h('div', { class: 'hint', text: 'A surface shows the source chosen under Shows. Sources 2 and up have no sound and take a clip at a cut; the crossfade is Source 1\'s.' }));
+      body.appendChild(h('div', { class: 'hint', text: 'A surface shows the source chosen under Shows. Sources 2 and up have no sound and take a clip (or a shader, on the New renderer) at a cut; the crossfade is Source 1\'s.' }));
     }
     load();
     return card;

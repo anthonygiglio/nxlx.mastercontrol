@@ -984,7 +984,8 @@ int main(int argc, char **argv)
             }
             // the source's own programs (D106): its effects over its clip. An idle source shows its black and runs
             // none of them (an invert over black would light its surface white: the review of #168)
-            source_tex[i] = idle ? video[i].tex
+            // A generator in slot 0 is the source's picture (D106 step d): its clip layer is idle under it
+            source_tex[i] = idle && !fx_has_generator(i - 1) ? video[i].tex
                                  : fx_source(i - 1, video[i].tex, drew, __atomic_load_n(&app.paused[i], __ATOMIC_ACQUIRE), now_s());
         }
         if (text_on && text.dirty) {

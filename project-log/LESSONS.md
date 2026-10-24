@@ -602,3 +602,7 @@ Giving each pass its own RENDERSIZE was right for the pass, and quietly wrong fo
 ## A break-check restored within the same second can leave the broken bytecode behind (2026-10-24, D106)
 
 A break-check wrote `if False:` over `if extra:` in pvj/shaders.py, ran its test, and put the file back from a copy, all within one second. Python checks a module's cached bytecode by the source's modification time in whole seconds and its size; the two lines are the same length, so the next run used the broken bytecode and two tests failed on code that was right. After a break-check that restores a Python file, remove its `__pycache__` (or touch the file a second later) before trusting the next run.
+
+## Give up the old thing only once the new one is taken (2026-10-24, D106)
+
+Putting a shader on a source stopped the source's clip first, then asked the renderer for the shader. Every refusal (the GPU, a budget, a cap) then left nothing: a black source where a clip had played. When one thing replaces another and the replacement can be refused, ask for the new one first and let the old go only on its "yes"; and test the refusal's aftermath, not only the refusal's words, since no test noticed the clip had gone.

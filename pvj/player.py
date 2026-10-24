@@ -437,6 +437,11 @@ class Player:
         self.ipc.request("pvj-source", source, "set_property", "loop-file", "inf" if (looping and single) else "no")
         self.ipc.request("pvj-source", source, "set_property", "loop-playlist", "inf" if (looping and not single) else "no")
 
+    def stop_source_clip(self, source):
+        """Stop source `source`'s clip only (2 to N): a generator is about to be its picture (D106 step d)."""
+        self._source_ok(source)
+        self.ipc.request("pvj-source", source, "stop")
+
     def stop_source(self, source):
         """Stop source `source` (2 to N): it is idle, and costs nothing again. Its effects come off with it, as an
         effect comes off source 1 with Stop (D74, D106)."""
@@ -447,16 +452,19 @@ class Player:
     # ---- the chains of effects (D106 step b) -------------------------------------------------------------------------
     CHAIN_SLOTS = 3
 
-    def chain_slots(self, source):
+    def chain_slots(self, source, generator=False):
         """The slots a chain may use on `source`: 2 and 3 on source 1 (slot 1 is the effect of pvj/effects.py), 1 to 3
-        on sources 2 to N."""
-        return (2, 3) if source == 1 else (1, 2, 3)
+        on sources 2 to N; with `generator`, slot 0 too on sources 2 to N (D106 step d: source 1's generator is the
+        shader engine's own)."""
+        if source == 1:
+            return (2, 3)
+        return (0, 1, 2, 3) if generator else (1, 2, 3)
 
     def _chain_ok(self, source, slot):
         if isinstance(source, bool) or not isinstance(source, int) or not 1 <= source <= self.sources():
             raise PlayerError("this player has no source %s (it has %d)" % (source, self.sources()))
-        if isinstance(slot, bool) or not isinstance(slot, int) or slot not in self.chain_slots(source):
-            raise PlayerError("source %d has no slot %s for an effect (it has %s)" % (source, slot, ", ".join(map(str, self.chain_slots(source)))))
+        if isinstance(slot, bool) or not isinstance(slot, int) or slot not in self.chain_slots(source, True):
+            raise PlayerError("source %d has no slot %s for an effect (it has %s)" % (source, slot, ", ".join(map(str, self.chain_slots(source, True)))))
         if not self.native_chains():
             raise PlayerError("a chain of effects needs the New renderer")
 
@@ -515,7 +523,7 @@ class Player:
         of, and Stop and Off must take it off all the same (the review of #168)."""
         with self._lock:
             self._chain_alive()
-            slots = [slot] if slot is not None else list(self.chain_slots(source))
+            slots = [slot] if slot is not None else list(self.chain_slots(source, True))
             try:
                 rows = self.ipc.request("get_property", "pvj-shaders")
                 there = {(r.get("source"), r.get("slot")) for r in rows if isinstance(r, dict) and r.get("state") not in (None, "off")}

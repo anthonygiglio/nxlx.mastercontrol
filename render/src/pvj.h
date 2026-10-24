@@ -13,7 +13,7 @@
 #include <GLES3/gl3.h>
 #include <mpv/client.h>
 
-#define PVJ_VERSION "0.6.0"
+#define PVJ_VERSION "0.7.0"
 #define MAX_SHADERS 16
 #define LAYERS 2                    // source 1's video layers (phase 2, D98): the one on screen and the one a crossfade comes in on
 #define MAX_SOURCES 8               // sources (D101): source 1 is LAYERS layers, each other source one layer
