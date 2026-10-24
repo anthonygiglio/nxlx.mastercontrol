@@ -578,3 +578,7 @@ The NDI PipeReuseTest failed on CI's busy runners for weeks, called a "known fla
 ## "Half of fresh processes" can be uninitialised memory, not a race (2026-10-23)
 
 The black or dim source looked like a timing fault for days: it came in about half of fresh processes and then stayed for the life of the process. It was a table built once per process from memory nobody had cleared. Switching one option at a time (the scaler, then its radius) showed the pattern: only 6-tap kernels failed, 4 and 8 never. That pointed at the one place where 6 is padded to 8. When a fault is "per process, about half the time, then forever", suspect a value computed once from uninitialised data before suspecting threads, and vary sizes and options before timings.
+
+## A step "for information" that nobody reads is only a cost (2026-10-23)
+
+The ndi-mpv job's whole suite ran with continue-on-error for eleven days. It never once finished, its log was never read, and every PR waited 35 minutes for it, because a green check hid it. A step that may fail without failing the job needs an owner who reads it and a date to decide; without both, remove it or make it decide.
