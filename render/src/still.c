@@ -29,7 +29,7 @@ typedef struct {
 
 static void put(Out *o, const void *data, size_t n)
 {
-    if (o->failed) return;
+    if (o->failed || n == 0) return;
     if (o->len + n > o->cap) {
         size_t cap = o->cap ? o->cap : 65536;
         while (cap < o->len + n) cap *= 2;

@@ -670,17 +670,29 @@ static long fx_wait_for;
 static int fx_answered(void) { return app.fx[fx_answered_k].answered >= fx_wait_for; }
 
 // Source 1's level goes with whether a program is on: while one is, its layers' own brightness is 0 and the renderer
-// draws the level after the programs; otherwise the layers have the level, as before (under layer_lock).
+// draws the level after the programs; otherwise the layers have the level, as before (under layer_lock). The order
+// keeps the level from ever being absent (the review of #167). The render thread draws the level while a program is
+// on OR while the layers still have 0 (`level_native`, main.c). A program that comes on is drawn with the level at
+// once (for a moment the layers have it too: darker, never lighter), and the layers get 0 after. A program that goes
+// off: the render thread goes on drawing the level until the layers have it back, and only then is level_native
+// cleared (again a moment of both, never of none).
 static void level_sync(void)
 {
     pthread_mutex_lock(&app.lock);
     int want = app.native1, had = app.level_native;
     double level = app.level;
-    app.level_native = want;
+    if (want) app.level_native = 1;
+    app.level_resync = 0;
     pthread_mutex_unlock(&app.lock);
     if (want == had) return;
     double v = want ? 0.0 : level;
     for (int i = 0; i < LAYERS; i++) mpv_set_property(app.layer[i], "brightness", MPV_FORMAT_DOUBLE, &v);
+    if (!want) {
+        pthread_mutex_lock(&app.lock);
+        app.level_native = 0;
+        pthread_mutex_unlock(&app.lock);
+    }
+    wake_render();
 }
 
 static pthread_mutex_t fx_lock = PTHREAD_MUTEX_INITIALIZER;     // one load or clear at a time (it waits on the render thread)
@@ -767,21 +779,21 @@ static void shader_command(int fd, const mpv_node *id, const mpv_node *cmd)
 // get_property pvj-shaders: one map a slot of source 1.
 static void shaders_property(int fd, const mpv_node *id)
 {
-    static const char *const keys[] = { "source", "slot", "kind", "state", "time", "runs", "drops", "inputs", "rebuilds", "width", "height" };
+    static const char *const keys[] = { "source", "slot", "kind", "state", "time", "runs", "drops", "inputs", "rebuilds", "width", "height", "path" };
     enum { NK = sizeof keys / sizeof keys[0] };
     mpv_node vals[FX_SLOTS][NK];
     mpv_node_list lists[FX_SLOTS];
     mpv_node items[FX_SLOTS];
-    char states[FX_SLOTS][160];
+    char states[FX_SLOTS][160], paths[FX_SLOTS][1024];
     pthread_mutex_lock(&app.lock);
     for (int k = 0; k < FX_SLOTS; k++) {
         const FxSlot *s = &app.fx[k];
         snprintf(states[k], sizeof states[k], "%s", s->on ? s->state : "off");
-        int w = 0, h = 0;
-        fx_size(k, &w, &h);             // a plain read of two numbers the render thread sets with the program
+        snprintf(paths[k], sizeof paths[k], "%s", s->on ? s->path : "");
+        int w = s->w, h = s->h;
         mpv_node v[NK] = { node_int(1), node_int(k), node_str(!s->on ? "" : s->kind == FX_GENERATOR ? "generator" : "filter"),
                            node_str(states[k]), node_dbl(s->time), node_int(s->runs), node_int(s->drops), node_int(s->on ? s->ninputs : 0),
-                           node_int(s->rebuilds), node_int(s->on ? w : 0), node_int(s->on ? h : 0) };
+                           node_int(s->rebuilds), node_int(s->on ? w : 0), node_int(s->on ? h : 0), node_str(paths[k]) };
         memcpy(vals[k], v, sizeof v);
         lists[k] = (mpv_node_list){ .num = NK, .values = vals[k], .keys = (char **)keys };
         items[k].format = MPV_FORMAT_NODE_MAP;
@@ -794,8 +806,35 @@ static void shaders_property(int fd, const mpv_node *id)
     reply(fd, id, "success", &d);
 }
 
-// screenshot-to-file while a program is on: the renderer's own picture (main.c, native_shot)
-static int shot_taken(void) { return app.shot.done_serial == app.shot.serial; }
+// screenshot-to-file while a program is on: the renderer's own picture. The render thread reads it back (main.c,
+// native_shot); this client's thread encodes it and writes the file, so the screen never waits for an encoder (the
+// review of #167). One screenshot at a time: two clients never take each other's picture.
+static pthread_mutex_t shot_lock = PTHREAD_MUTEX_INITIALIZER;
+static int shot_want;
+static int shot_taken(void) { return app.shot.done_serial == shot_want; }
+
+// The file the panel names (and has made, in its own folder): written over, never through a link, never a FIFO or a
+// device (opened without waiting, checked to be a regular file, then emptied).
+static int shot_write(const char *path, const unsigned char *rgba, int w, int h, int jpeg, int quality)
+{
+    unsigned char *rgb = malloc((size_t)w * (size_t)h * 3);
+    if (!rgb) return -1;
+    for (int y = 0; y < h; y++) {               // top row first: the pass drew the picture's top at the last GL row
+        const unsigned char *s = rgba + (size_t)(h - 1 - y) * (size_t)w * 4;
+        unsigned char *d = rgb + (size_t)y * (size_t)w * 3;
+        for (int x = 0; x < w; x++) { d[x * 3] = s[x * 4]; d[x * 3 + 1] = s[x * 4 + 1]; d[x * 3 + 2] = s[x * 4 + 2]; }
+    }
+    int r = -1;
+    int fd = open(path, O_WRONLY | O_CREAT | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC, 0640);
+    struct stat st;
+    if (fd < 0) LOG("screenshot: %s: %s", path, strerror(errno));
+    else if (fstat(fd, &st) || !S_ISREG(st.st_mode)) LOG("screenshot: %s is not a file", path);
+    else if (ftruncate(fd, 0)) LOG("screenshot: %s: %s", path, strerror(errno));
+    else r = jpeg ? still_jpeg(fd, rgb, w, h, quality) : still_png(fd, rgb, w, h);
+    if (fd >= 0 && close(fd)) r = -1;
+    free(rgb);
+    return r;
+}
 
 static int native_screenshot(int fd, const mpv_node *id, const char *path, const char *kind)
 {
@@ -809,20 +848,22 @@ static int native_screenshot(int fd, const mpv_node *id, const char *path, const
     if ((!jpeg && !png) || n > 4000) { reply(fd, id, "invalid parameter", NULL); return 1; }
     int64_t q = 90;
     if (mpv_get_property(front_handle(), "screenshot-jpeg-quality", MPV_FORMAT_INT64, &q) < 0) q = 90;
+    pthread_mutex_lock(&shot_lock);
     pthread_mutex_lock(&app.lock);
-    free(app.shot.path);
-    app.shot.path = strdup(path);
     app.shot.kind = strcmp(kind, "video") != 0;
-    app.shot.jpeg = jpeg;
-    app.shot.quality = (int)q;
-    app.shot.serial++;
+    shot_want = ++app.shot.serial;
     pthread_mutex_unlock(&app.lock);
     wake_render();
     pthread_mutex_lock(&app.lock);
     int done = wait_render(shot_taken, 5.0);
-    int result = app.shot.result;
+    unsigned char *rgba = done ? app.shot.rgba : NULL;
+    int w = app.shot.w, h = app.shot.h;
+    if (done) app.shot.rgba = NULL;
     pthread_mutex_unlock(&app.lock);
-    reply(fd, id, done && result == 0 ? "success" : "error running command", NULL);
+    int r = rgba ? shot_write(path, rgba, w, h, jpeg, (int)q) : -1;
+    free(rgba);
+    pthread_mutex_unlock(&shot_lock);
+    reply(fd, id, r == 0 ? "success" : "error running command", NULL);
     return 1;
 }
 
@@ -882,7 +923,7 @@ static void get_property(int fd, const mpv_node *id, const char *name)
     pthread_mutex_lock(&app.lock);
     int level_native = app.level_native;
     double level = app.level;
-    long fx_drops = app.native1 ? app.fx_drops : 0;
+    long fx_drops = app.fx_drops;      // a total that only rises: no jump as programs go on and off
     pthread_mutex_unlock(&app.lock);
     if (level_native && !strcmp(name, "brightness")) { d = node_dbl(level); reply(fd, id, "success", &d); return; }
     if (fx_drops && !strcmp(name, "frame-drop-count")) {
@@ -1003,6 +1044,12 @@ static void set_level(int fd, const mpv_node *id, const mpv_node *v)
 
 static void handle(int fd, const char *line, size_t len)
 {
+    // a program came on or went off after its client stopped waiting (a slow build): the level follows it now
+    if (__atomic_load_n(&app.level_resync, __ATOMIC_ACQUIRE)) {
+        pthread_mutex_lock(&layer_lock);
+        level_sync();
+        pthread_mutex_unlock(&layer_lock);
+    }
     mpv_node req;
     if (json_parse(line, len, &req) || req.format != MPV_FORMAT_NODE_MAP) {
         if (req.format != MPV_FORMAT_NONE) json_free(&req);

@@ -688,18 +688,65 @@ static int write_capture(const char *path)
 // A screenshot while a program of the renderer's is on (D106): libmpv's layer then holds only the generator's blank
 // carrier, or a clip without its effect, so the picture is the renderer's own: source 1 as the programs left it, with
 // the level, scaled to the screen's size with the text over it ("window", as mpv's window screenshot has the OSD) or
-// at the inside size ("video"). PNG or JPEG by the file's ending, as mpv chooses; written over a file that is there,
-// never through a link.
+// at the inside size ("video"). This thread draws it and starts reading it into a pixel buffer; the next frame maps
+// the buffer (by then the GPU has written it) and hands the pixels to the client's thread, which encodes them
+// (ipc.c, native_screenshot). Nothing here waits for an encoder or a file (the review of #167).
+static struct { int serial, w, h; GLuint tex, fbo, pbo; } shot_read;      // a readback on its way (serial > 0)
+
+static void shot_hand(int serial, unsigned char *rgba, int w, int h)
+{
+    pthread_mutex_lock(&app.lock);
+    if (app.shot.serial == serial) {
+        free(app.shot.rgba);
+        app.shot.rgba = rgba;
+        app.shot.w = w;
+        app.shot.h = h;
+        app.shot.done_serial = serial;
+        rgba = NULL;
+    }
+    pthread_cond_broadcast(&app.cond);
+    pthread_mutex_unlock(&app.lock);
+    free(rgba);                         // asked for again meanwhile: this one is nobody's
+}
+
+static void shot_free(void)
+{
+    if (shot_read.pbo) glDeleteBuffers(1, &shot_read.pbo);
+    if (shot_read.fbo) glDeleteFramebuffers(1, &shot_read.fbo);
+    if (shot_read.tex) glDeleteTextures(1, &shot_read.tex);
+    memset(&shot_read, 0, sizeof shot_read);
+}
+
+// The readback started a frame before: its pixels, mapped now.
+static void shot_finish(void)
+{
+    if (!shot_read.serial) return;
+    size_t n = (size_t)shot_read.w * (size_t)shot_read.h * 4;
+    unsigned char *rgba = malloc(n);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, shot_read.pbo);
+    void *mapped = rgba ? glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, (GLsizeiptr)n, GL_MAP_READ_BIT) : NULL;
+    if (mapped) {
+        memcpy(rgba, mapped, n);
+        glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+    } else {
+        free(rgba);
+        rgba = NULL;
+    }
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    int serial = shot_read.serial, w = shot_read.w, h = shot_read.h;
+    shot_free();
+    shot_hand(serial, rgba, w, h);
+}
+
 static void native_shot(GLuint picture, int text_on, float level)
 {
     pthread_mutex_lock(&app.lock);
-    char *path = app.shot.path ? strdup(app.shot.path) : NULL;
-    int kind = app.shot.kind, jpeg = app.shot.jpeg, quality = app.shot.quality, serial = app.shot.serial;
+    int kind = app.shot.kind, serial = app.shot.serial;
     pthread_mutex_unlock(&app.lock);
-    int w = kind ? app.out_w : app.in_w, h = kind ? app.out_h : app.in_h, r = -1;
+    if (shot_read.serial == serial || app.shot.done_serial == serial) return;      // on its way, or handed over
+    shot_free();
+    int w = kind ? app.out_w : app.in_w, h = kind ? app.out_h : app.in_h;
     GLuint tex = 0, fbo = 0;
-    unsigned char *px = NULL, *rgb = NULL;
-    if (!path) goto done;
     glGenTextures(1, &tex);
     glBindTexture(GL_TEXTURE_2D, tex);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
@@ -723,31 +770,25 @@ static void native_shot(GLuint picture, int text_on, float level)
         quad();
         glDisable(GL_BLEND);
     }
-    px = malloc((size_t)w * (size_t)h * 4);
-    rgb = malloc((size_t)w * (size_t)h * 3);
-    if (!px || !rgb) goto done;
+    // the read goes into a pixel buffer and returns at once; the next frame maps it (shot_finish)
+    GLuint pbo = 0;
+    glGenBuffers(1, &pbo);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, pbo);
+    glBufferData(GL_PIXEL_PACK_BUFFER, (GLsizeiptr)w * h * 4, NULL, GL_STREAM_READ);
     glPixelStorei(GL_PACK_ALIGNMENT, 4);
-    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, px);
-    for (int y = 0; y < h; y++) {               // top row first: the pass drew the picture's top at the last GL row
-        const unsigned char *s = px + (size_t)(h - 1 - y) * (size_t)w * 4;
-        unsigned char *d = rgb + (size_t)y * (size_t)w * 3;
-        for (int x = 0; x < w; x++) { d[x * 3] = s[x * 4]; d[x * 3 + 1] = s[x * 4 + 1]; d[x * 3 + 2] = s[x * 4 + 2]; }
-    }
-    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0640);
-    if (fd < 0) { LOG("screenshot: %s: %s", path, strerror(errno)); goto done; }
-    r = jpeg ? still_jpeg(fd, rgb, w, h, quality) : still_png(fd, rgb, w, h);
-    if (close(fd)) r = -1;
+    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    shot_read.serial = serial;
+    shot_read.w = w;
+    shot_read.h = h;
+    shot_read.tex = tex;
+    shot_read.fbo = fbo;
+    shot_read.pbo = pbo;
+    return;
 done:
-    free(px);
-    free(rgb);
-    free(path);
     if (fbo) glDeleteFramebuffers(1, &fbo);
     if (tex) glDeleteTextures(1, &tex);
-    pthread_mutex_lock(&app.lock);
-    app.shot.result = r;
-    app.shot.done_serial = serial;
-    pthread_cond_broadcast(&app.cond);
-    pthread_mutex_unlock(&app.lock);
+    shot_hand(serial, NULL, w, h);
 }
 
 /* ---- main ---------------------------------------------------------------------------------------------------------- */
@@ -856,7 +897,8 @@ int main(int argc, char **argv)
         int fi = app.front, phase = app.fade.phase, base = app.fade.base_starts;
         double asked = app.fade.asked, t0 = app.fade.t0, len = app.fade.seconds;
         memcpy(frame_opacity, app.opacity, sizeof frame_opacity);     // the sources' mix, read once for this frame
-        float level = app.native1 ? (float)(app.level / 100.0) : 0.0f;
+        // while a program is on, or while source 1's layers still have brightness 0 (ipc.c, level_sync)
+        float level = app.native1 || app.level_native ? (float)(app.level / 100.0) : 0.0f;
         int shot = app.shot.serial != app.shot.done_serial;
         pthread_mutex_unlock(&app.lock);
         if (quit) break;
@@ -972,6 +1014,7 @@ int main(int argc, char **argv)
         // the renderer's own programs on source 1 (D106): a generator in place of the picture, an effect over it
         picture = fx_source1(picture, fresh, __atomic_load_n(&app.paused[fi], __ATOMIC_ACQUIRE), now);
         final_pass(picture, text_on, level);
+        shot_finish();                                      // a readback started a frame ago (D106)
         if (shot) native_shot(picture, text_on, level);
         if (cap) {
             pthread_mutex_lock(&app.lock);
@@ -1019,6 +1062,7 @@ int main(int argc, char **argv)
     ipc_close();
     if (have_hook) hookgl_free(&hook_gl);
     fx_free_all();
+    shot_free();
     layer_close(&text);
     for (int i = nlayers - 1; i >= 0; i--) layer_close(&video[i]);
     glDeleteFramebuffers(1, &mix_fbo);

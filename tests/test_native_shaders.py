@@ -226,8 +226,10 @@ class LevelTest(NativeBase):
             with self.subTest(brightness=b):
                 self.r("pvj-shader", "clear", 1, 1)
                 self.r("set_property", "brightness", b)
+                time.sleep(0.4)                         # libmpv redraws a still picture for a new level a moment later
                 a = self.steady()
                 self.r("pvj-shader", "load", 1, 1, prog)
+                time.sleep(0.4)
                 n = self.steady()
                 self.assertLessEqual(channel_diff(a, n)["max"], 1, b)
                 self.assertEqual(self.r("get_property", "brightness"), b)     # what the panel reads back
@@ -431,6 +433,9 @@ class RefusalTest(NativeBase):
             "no size": good.replace("//!SIZE 320 180\n", ""),
             "a size too large": good.replace("//!SIZE 320 180", "//!SIZE 9000 180"),
             "an unknown directive": good.replace("//!LINE", "//!PASS 1\n//!LINE"),
+            "an empty LINE": good.replace("//!LINE 3", "//!LINE "),
+            "a GLSL word as a name": good.replace("//!INPUT float level", "//!INPUT float sampler2D"),
+            "another GLSL word": good.replace("//!INPUT float level", "//!INPUT float discard"),
         }
         for what, text in bad.items():
             with self.subTest(what):
@@ -449,7 +454,7 @@ class RefusalTest(NativeBase):
         self.carrier()
         self.r("pvj-shader", "load", 1, 0, self.write(good))
         for what, values in {"an unknown name": {"nothing": 1.0}, "a word": {"level": "high"}, "a list for a float": {"level": [1.0]},
-                             "two for a colour": {"tint": [1.0, 0.0]}, "2 for a bool": {"lit": 2}, "a control": {"@volume": 1.0},
+                             "two for a colour": {"tint": [1.0, 0.0]}, "2 for a bool": {"lit": 2}, "a control": {"@volume": 1.0}, "a whole number too large": {"level": 10 ** 12},
                              "half of it good": {"level": 0.5, "nothing": 1.0}}.items():
             with self.subTest(what):
                 with self.assertRaises(PlayerError):
@@ -575,6 +580,144 @@ class EngineTest(NativeBase):
         # nothing to go back to: the engine stops the screen (D73), and the renderer's slot is cleared with it
         self.assertTrue(self.r.wait(lambda: self.slot(0)["state"] == "off", 3))
         self.assertEqual(max(self.steady()[2]), 0)
+
+
+class ShotPaceTest(NativeBase):
+    """The review of #167 (High): a screenshot is encoded on the client's thread, never on the render thread, so the
+    screen does not stall while the panel's preview or a crossfade's still is taken."""
+    ARGS = ("--headless=1920x1080",)
+
+    def flips(self):
+        # headless, the renderer is paced by a clock and counts no missed vblanks (out.c counts them from the
+        # screen's own sequence): a stall shows as flips that did not happen
+        return self.r("get_property", "pvj-render")["flips"]
+
+    def test_screenshots_do_not_stall_the_screen(self):
+        self.carrier()
+        self.r("pvj-shader", "load", 1, 0, self.generator(FLAT, size=(1920, 1080)))
+        time.sleep(1.0)
+        a, t = self.flips(), time.monotonic()
+        time.sleep(3.0)
+        quiet = (self.flips() - a) / (time.monotonic() - t)
+        a, t, n = self.flips(), time.monotonic(), 0
+        while time.monotonic() - t < 3.0:
+            for ext in ("jpg", "png"):
+                path = os.path.join(self.tmp, "shot.%s" % ext)
+                open(path, "w").close()
+                self.r("screenshot-to-file", path, "window")
+                n += 1
+        busy = (self.flips() - a) / (time.monotonic() - t)
+        print("\n  flips a second at 1920 x 1080: %.1f quiet, %.1f during %d screenshots" % (quiet, busy, n))
+        self.assertGreater(n, 4)
+        # encoding a 1080p JPEG took 139 to 273 ms on this kind of machine: on the render thread that was 8 to 16
+        # vblanks without a picture each; with only the readback there, the rate stays near the quiet one
+        self.assertGreater(busy, quiet - 4.0, (quiet, busy, n))
+
+    def test_two_screenshots_at_once_each_get_their_picture(self):
+        import threading
+        self.carrier()
+        self.r("pvj-shader", "load", 1, 0, self.generator(FLAT, size=(320, 180)))
+        paths = [os.path.join(self.tmp, "a.png"), os.path.join(self.tmp, "b.jpg")]
+        errors = []
+
+        def take(path):
+            try:
+                ipc = __import__("pvj.player", fromlist=["Ipc"]).Ipc(self.r.sock, timeout=10.0)
+                for _ in range(5):
+                    open(path, "w").close()
+                    ipc.request("screenshot-to-file", path, "window")
+                    with open(path, "rb") as fh:
+                        head = fh.read(8)
+                    if head[:2] not in (b"\x89P", b"\xff\xd8"):
+                        errors.append((path, head))
+            except Exception as e:
+                errors.append((path, e))
+        threads = [threading.Thread(target=take, args=(p,)) for p in paths]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join(60)
+        self.assertEqual(errors, [])
+
+    def test_a_screenshot_into_a_fifo_is_refused_at_once(self):
+        self.carrier()
+        self.r("pvj-shader", "load", 1, 0, self.generator(FLAT))
+        fifo = os.path.join(self.tmp, "pipe.png")
+        os.mkfifo(fifo)
+        t = time.monotonic()
+        with self.assertRaises(PlayerError):
+            self.r("screenshot-to-file", fifo, "window")
+        self.assertLess(time.monotonic() - t, 3.0)
+
+
+class SlowBuildTest(NativeBase):
+    """The review of #167 (Medium): a build slower than the panel's usual wait is never taken for a refusal, and a
+    load that had no word is found again by its path, so values reach the program the renderer shows."""
+
+    def setUp(self):
+        need_program(self)
+        if "with test hooks" not in subprocess.run([BIN, "--version"], capture_output=True, text=True).stdout:
+            if STRICT:
+                self.fail("PVJ_RENDER_TEST=1 and pvj-render was built without its test hooks: make -C render TEST_HOOKS=1")
+            self.skipTest("pvj-render was built without its test hooks")
+        self.tmp = tempfile.mkdtemp(prefix="pvj-native-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.n = 0
+
+    def player_for(self, ms):
+        self.r = Renderer(env={"PVJ_RENDER_TEST_SLOW_BUILD": str(ms)})
+        self.addCleanup(lambda: self.r.close())
+        self.r("set_property", "image-display-duration", "inf")
+        d = tempfile.mkdtemp(prefix="pvj-native-run-", dir=self.tmp)
+        os.symlink(self.r.sock, os.path.join(d, paths.PLAYER_SOCKET))
+        return Player(rundir=d)
+
+    def test_a_build_slower_than_two_seconds_is_taken(self):
+        p = self.player_for(2500)                       # longer than the panel's usual 2 s, shorter than the renderer's 3 s
+        prog = self.generator(FLAT)
+        epoch = p.play_source(prog, S.carrier_url((W, H), False))
+        self.assertEqual(p.native_verdict(prog), ("ok", ""))
+        self.assertTrue(p.native_values(0, {"level": 1.0}, epoch=epoch))
+        self.assertTrue(self.r.wait(lambda: self.r.pixel(10, 10)[0] >= 254, 3))
+
+    def test_a_build_slower_than_the_renderers_wait_is_no_refusal(self):
+        p = self.player_for(4000)
+        prog = self.generator(FLAT)
+        epoch = p.play_source(prog, S.carrier_url((W, H), False))
+        verdict = p.native_verdict(prog)
+        self.assertEqual(verdict[0], "unknown", verdict)            # never "refused": the GPU said nothing
+        self.assertIsNone(p._native_loaded[0])
+        self.assertTrue(self.r.wait(lambda: self.slot(0)["path"] == prog, 5))     # the renderer shows it after all
+        t = time.monotonic()
+        self.assertTrue(p.native_values(0, {"level": 1.0}, epoch=epoch))
+        self.assertLess(time.monotonic() - t, 1.5, "the program was built again instead of found by its path")
+        self.assertTrue(self.r.wait(lambda: self.r.pixel(10, 10)[0] >= 254, 3))
+
+
+class CapTest(NativeBase):
+    """The review of #167 (Medium): the 30-a-second cap holds while values move."""
+
+    def rate(self, slot, send):
+        a, t, i = self.slot(slot)["runs"], time.monotonic(), 0
+        while time.monotonic() - t < 2.0:
+            send(i)
+            i += 1
+            time.sleep(0.02)                            # 50 sets a second
+        return (self.slot(slot)["runs"] - a) / (time.monotonic() - t), i / (time.monotonic() - t)
+
+    def test_a_generator_and_an_effect_hold_the_cap_while_values_move(self):
+        self.carrier()
+        self.r("pvj-shader", "load", 1, 0, self.generator(FLAT))
+        runs, sets = self.rate(0, lambda i: self.r("pvj-shader", "set", 1, 0, {"level": (i % 100) / 100.0}))
+        self.assertGreater(sets, 35)
+        self.assertLess(runs, 33, (runs, sets))
+        self.r("pvj-shader", "clear", 1, 0)
+        self.picture()
+        self.r("pvj-shader", "load", 1, 1, self.effect(INVERT))
+        runs, sets = self.rate(1, lambda i: self.r("pvj-shader", "set", 1, 1, {"@amount": 0.5 + (i % 50) / 100.0}))
+        self.assertGreater(sets, 35)
+        self.assertLess(runs, 33, (runs, sets))
+        self.assertGreater(runs, 10, "the values never landed")
 
 
 if __name__ == "__main__":

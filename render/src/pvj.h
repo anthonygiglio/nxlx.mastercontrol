@@ -53,6 +53,8 @@ typedef struct {
     // the render thread's word
     double time;
     long runs, drops, rebuilds;
+    int w, h;                       // the drawing size of its program
+    char path[1024];                // the file it was built from (the panel tells a slow build from a refusal by it)
     char state[160];
 } FxSlot;
 
@@ -137,15 +139,18 @@ typedef struct {
     int level_native;               // the socket's side: source 1's layers have brightness 0, the level is drawn here
     double level;                   // brightness as last set on the socket, -100 to 100
     double fx_fps;
-    long fx_drops;                  // generator frames that came late (added to frame-drop-count while one is on)
+    long fx_drops;                  // generator frames that came late (always added to frame-drop-count: it only rises)
+    int level_resync;               // the render thread turned a program on or off: the next client syncs the level
     long fx_gl;                     // GL objects of the programs (atomics)
     int paused[LAYERS];             // source 1's layers' pause, as observed (atomics)
-    // a screenshot while a program is on: the renderer's own picture of source 1, not libmpv's layer
+    // a screenshot while a program is on: the renderer's own picture of source 1, not libmpv's layer. The render
+    // thread only reads the pixels back (into a pixel buffer, mapped on the next frame); the client's thread that
+    // asked encodes them and writes the file, so the screen never waits for an encoder (the review of #167).
     struct {
-        char *path;
         int kind;                   // 0: video (source 1's picture at the inside size), 1: window (the screen's size, text)
-        int jpeg, quality;
-        int serial, done_serial, result;
+        int serial, done_serial;
+        unsigned char *rgba;        // the pixels (GL's rows, bottom first), handed over with done_serial; NULL: failed
+        int w, h;
     } shot;
 
     // counters
@@ -196,13 +201,13 @@ void gl_reset(void);
 
 // the renderer's own programs (fx.c)
 int fx_read(const char *path, FxProg **out, char *err, size_t n);
+const char *fx_prog_path(const FxProg *p);
 void fx_prog_free(FxProg *p);
 int fx_prog_kind(const FxProg *p);
 int fx_set_value(FxSlot *s, const char *name, const mpv_node *v);
 void fx_init(void);
 void fx_take(void);
 GLuint fx_source1(GLuint picture, int fresh, int paused, double now);
-void fx_size(int k, int *w, int *h);
 void fx_free_all(void);
 
 // pictures to files (still.c): rows of RGB, top row first

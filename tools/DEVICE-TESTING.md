@@ -724,7 +724,7 @@ Everything of D106 ran on a software GPU in a 320 x 180 headless window. Before:
 | FX6 | An effect over a generator (fx-kaleido over nxlx-drift at 540) | As classic's pair; `drops` near 0 | As FX5; whether the effects' floor took the effect off |
 | FX7 | Blackout and Fade out with an effect on (isf-rgb-invert over a clip), then with a generator | Black at once under Blackout (never the inverted white), the fade smooth, the level back as it was | Anything lit under Blackout |
 | FX8 | A crossfade out of a generator into a clip (Mix on Crossfade, 2 s) | D71's still is the generator's picture (not black, not the carrier's colours), then the clip | Yes or no; a photo if it is wrong |
-| FX9 | The panel's preview (the Live page's snapshot) with a generator and with an effect on | The snapshot shows the shader and the effect, at the screen's size; how long it takes | The time of one preview at 1920 x 1080 |
+| FX9 | The panel's preview (the Live page's snapshot) with a generator and with an effect on, watched for a minute (a preview every 3 s) | The snapshot shows the shader and the effect, at the screen's size; no stutter on the screen as each preview is taken | The time of one preview at 1920 x 1080; `missed-vblanks` during the minute against a minute without the Live page open |
 | FX10 | 200 changes of shader through Vibes' Next (a controller or the page) and 500 value changes; then the counts | `fx-gl-objects` back to what it was with the same shader on, descriptors and threads as before (`ls /proc/PID/fd \| wc -l`, `/task`) | The counts before and after |
 
 ### What to send back

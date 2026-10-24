@@ -53,6 +53,7 @@
 #define FX_DT_MAX 1.0                   // a frame counts for at most this many seconds of TIME (after a stall)
 
 struct FxProg {
+    char path[1024];
     int kind, w, h, clock, line;
     int ninputs;
     FxValue in[FX_MAX_INPUTS];
@@ -68,8 +69,21 @@ static const int TYPE_COUNT[FXT_N] = { 1, 1, 1, 4, 2 };
 // this list is the second line.
 static const char *const TAKEN[] = {
     "TIME", "TIMEDELTA", "FRAMEINDEX", "DATE", "RENDERSIZE", "PASSINDEX", "isf_FragNormCoord", "vv_FragNormCoord",
-    "main", "hook", "texture", "float", "int", "bool", "vec2", "vec3", "vec4", "mat3", "uniform", "const", "in", "out",
-    "true", "false", "return", "if", "else", "for", "while", "void", "precision", "highp", "mediump", "lowp", NULL };
+    "main", "hook", "texture",
+    // GLSL ES 3.00's keywords and the words it reserves (its specification, 3.6)
+    "attribute", "const", "uniform", "varying", "layout", "centroid", "flat", "smooth", "break", "continue", "do", "for",
+    "while", "switch", "case", "default", "if", "else", "in", "out", "inout", "float", "int", "void", "bool", "true",
+    "false", "invariant", "discard", "return", "mat2", "mat3", "mat4", "mat2x2", "mat2x3", "mat2x4", "mat3x2", "mat3x3",
+    "mat3x4", "mat4x2", "mat4x3", "mat4x4", "vec2", "vec3", "vec4", "ivec2", "ivec3", "ivec4", "bvec2", "bvec3", "bvec4",
+    "uint", "uvec2", "uvec3", "uvec4", "lowp", "mediump", "highp", "precision", "sampler2D", "sampler3D", "samplerCube",
+    "sampler2DShadow", "samplerCubeShadow", "sampler2DArray", "sampler2DArrayShadow", "isampler2D", "isampler3D",
+    "isamplerCube", "isampler2DArray", "usampler2D", "usampler3D", "usamplerCube", "usampler2DArray", "struct",
+    "coherent", "volatile", "restrict", "readonly", "writeonly", "resource", "atomic_uint", "noperspective", "patch",
+    "sample", "subroutine", "common", "partition", "active", "asm", "class", "union", "enum", "typedef", "template",
+    "this", "goto", "inline", "noinline", "public", "static", "extern", "external", "interface", "long", "short",
+    "double", "half", "fixed", "unsigned", "superp", "input", "output", "hvec2", "hvec3", "hvec4", "dvec2", "dvec3",
+    "dvec4", "fvec2", "fvec3", "fvec4", "sampler3DRect", "filter", "image1D", "image2D", "image3D", "imageCube",
+    "sizeof", "cast", "namespace", "using", NULL };
 
 void fx_prog_free(FxProg *p)
 {
@@ -79,6 +93,7 @@ void fx_prog_free(FxProg *p)
 }
 
 int fx_prog_kind(const FxProg *p) { return p->kind; }
+const char *fx_prog_path(const FxProg *p) { return p->path; }
 
 static int fx_name_ok(const char *s)
 {
@@ -144,6 +159,7 @@ int fx_read(const char *path, FxProg **out, char *err, size_t n)
     if (!p) { free(text); snprintf(err, n, "out of memory"); return -1; }
     p->kind = -1;
     p->clock = 1;
+    snprintf(p->path, sizeof p->path, "%s", path);
     p->ctl[FXC_SPEED] = 1.0f;
     p->ctl[FXC_GAIN] = 1.0f;
     p->ctl[FXC_AMOUNT] = 1.0f;
@@ -170,7 +186,7 @@ int fx_read(const char *path, FxProg **out, char *err, size_t n)
             else if (!strncmp(d, "LINE ", 5)) {
                 char *e;
                 long v = strtol(d + 5, &e, 10);
-                if (*e || v < 0 || v > 100000) { snprintf(err, n, "LINE is a whole number"); goto bad; }
+                if (!d[5] || *e || v < 0 || v > 100000) { snprintf(err, n, "LINE is a whole number"); goto bad; }
                 p->line = (int)v;
             } else if (!strncmp(d, "CONTROL ", 8)) {
                 char name[16];
@@ -182,9 +198,9 @@ int fx_read(const char *path, FxProg **out, char *err, size_t n)
                 if (k < 0 || numbers(d + 8 + used, &v, 1)) { snprintf(err, n, "a CONTROL is not one of speed, hue, gain, amount, offset with a number"); goto bad; }
                 p->ctl[k] = v;
             } else if (!strncmp(d, "INPUT ", 6)) {
-                char type[16], name[64];
+                char type[16], name[FX_NAME];
                 int used = 0;
-                if (sscanf(d + 6, "%15s %63s %n", type, name, &used) != 2 || !used) { snprintf(err, n, "an INPUT line is not read"); goto bad; }
+                if (sscanf(d + 6, "%15s %40s %n", type, name, &used) != 2 || !used) { snprintf(err, n, "an INPUT line is not read"); goto bad; }
                 int t = -1;
                 for (int i = 0; i < FXT_N; i++) if (!strcmp(TYPE_NAMES[i], type)) t = i;
                 if (t < 0) { snprintf(err, n, "an INPUT has a type that is not float, bool, long, color or point2D"); goto bad; }
@@ -238,7 +254,7 @@ int fx_set_value(FxSlot *s, const char *name, const mpv_node *v)
         for (int k = 0; k < FXC_N; k++) {
             if (strcmp(name + 1, CONTROL_NAMES[k])) continue;
             if (v->format != MPV_FORMAT_INT64 && v->format != MPV_FORMAT_DOUBLE) return -1;
-            double x = v->format == MPV_FORMAT_INT64 ? (double)v->u.int64 : v->u.double_;
+            double x = v->format == MPV_FORMAT_INT64 ? (double)v->u.int64 : v->u.double_;      // bounded below, as every value
             if (!isfinite(x) || fabs(x) > 1e9) return -1;
             s->ctl[k] = (float)x;
             if (k == FXC_OFFSET) s->reset_time = 1;
@@ -253,7 +269,7 @@ int fx_set_value(FxSlot *s, const char *name, const mpv_node *v)
         int want = TYPE_COUNT[in->type];
         if (want == 1) {
             if (v->format == MPV_FORMAT_FLAG && in->type == FXT_BOOL) got[0] = v->u.flag ? 1.0f : 0.0f;
-            else if (v->format == MPV_FORMAT_INT64) got[0] = (float)v->u.int64;
+            else if (v->format == MPV_FORMAT_INT64 && v->u.int64 >= -1000000000LL && v->u.int64 <= 1000000000LL) got[0] = (float)v->u.int64;
             else if (v->format == MPV_FORMAT_DOUBLE && isfinite(v->u.double_) && fabs(v->u.double_) <= 1e9) got[0] = (float)v->u.double_;
             else return -1;
             if (in->type == FXT_BOOL && got[0] != 0 && got[0] != 1) return -1;
@@ -262,7 +278,7 @@ int fx_set_value(FxSlot *s, const char *name, const mpv_node *v)
             if (v->format != MPV_FORMAT_NODE_ARRAY || v->u.list->num != want) return -1;
             for (int k = 0; k < want; k++) {
                 const mpv_node *e = &v->u.list->values[k];
-                double x = e->format == MPV_FORMAT_INT64 ? (double)e->u.int64 : e->format == MPV_FORMAT_DOUBLE ? e->u.double_ : NAN;
+                double x = e->format == MPV_FORMAT_INT64 ? (double)e->u.int64 : e->format == MPV_FORMAT_DOUBLE ? e->u.double_ : NAN;   // bounded below
                 if (!isfinite(x) || fabs(x) > 1e9) return -1;
                 got[k] = (float)x;
             }
@@ -484,13 +500,32 @@ static void fx_off(FxGL *f)
 
 // Build `p` into slot `k` (render thread). On success the slot runs it from its own start (TIME from its offset);
 // on failure the program that ran before runs on, untouched.
+#ifdef PVJ_RENDER_TEST_HOOKS
+// For the tests only, in a build made with `make TEST_HOOKS=1`: PVJ_RENDER_TEST_SLOW_BUILD=<ms> makes every build
+// of a program take that much longer, as a slow GPU's compiler may (tests/test_native_shaders.py, SlowBuildTest).
+static void slow_build(void)
+{
+    const char *v = getenv("PVJ_RENDER_TEST_SLOW_BUILD");
+    long ms = v ? strtol(v, NULL, 10) : 0;
+    if (ms <= 0 || ms > 10000) return;
+    struct timespec t = { ms / 1000, (ms % 1000) * 1000000L };
+    nanosleep(&t, NULL);
+}
+#endif
+
 static int fx_build(int k, FxProg *p, char *err, size_t n)
 {
+#ifdef PVJ_RENDER_TEST_HOOKS
+    slow_build();
+#endif
     char err2[sizeof ((FxSlot *)0)->answer] = "";
     int constants = 0;
     GLuint prog = fx_program(p, p->in, 0, err2, sizeof err2);
     if (!prog) {
-        // the code cannot take its inputs as uniforms: its values written in, as classic does
+        // The code cannot take its inputs as uniforms (a uniform in a constant expression, an array sized by one):
+        // its values written in, as classic does. Tried only when the compiler said so, so a program with a plain
+        // mistake is compiled once (the review of #167).
+        if (!strstr(err2, "constant") && !strstr(err2, "array size")) { snprintf(err, n, "%s", err2); return -1; }
         prog = fx_program(p, p->in, 1, err, n);
         if (!prog) return -1;
         constants = 1;
@@ -565,7 +600,12 @@ void fx_take(void)
             snprintf(s->answer, sizeof s->answer, "%s", err);
         }
         s->answered = asked;
+        int was = app.native1;
         app.native1 = gl[0].on || gl[1].on;
+        if (was != app.native1) app.level_resync = 1;       // whoever asks next brings the layers' level along
+        s->w = gl[k].w;
+        s->h = gl[k].h;
+        if (ok) snprintf(s->path, sizeof s->path, "%s", gl[k].on ? fx_prog_path(gl[k].src) : "");
         pthread_cond_broadcast(&app.cond);
         pthread_mutex_unlock(&app.lock);
     }
@@ -697,7 +737,8 @@ GLuint fx_source1(GLuint picture, int fresh, int paused, double now)
         gen->last_frame = now;
         gen->time += dt * gen->ctl[FXC_SPEED];
         double since = now - gen->last_run;
-        if (gen->last_run <= 0 || since >= period - slack || gen->dirty) {
+        // a value that moved waits for the next run (the review of #167: at 48 sets a second it ran 48.5 times)
+        if (gen->last_run <= 0 || since >= period - slack) {
             if (gen->last_run > 0 && since > 1.5 * period) {
                 long lost = (long)(since / period + 0.5) - 1;
                 pthread_mutex_lock(&app.lock);
@@ -727,8 +768,11 @@ GLuint fx_source1(GLuint picture, int fresh, int paused, double now)
             eff->out = pic;                     // amount 0: the picture as it is, and nothing drawn
         } else {
             double since = now - eff->last_run;
-            int due = eff->clock && (eff->last_run <= 0 || since >= period - slack) && !(paused && !gen->on);
-            if (new_pic || eff->dirty || due || eff->out != eff->tex || eff->last_run <= 0) {
+            int slot_due = eff->last_run <= 0 || since >= period - slack;
+            int due = eff->clock && slot_due && !(paused && !gen->on);
+            // a new picture runs it at once; a value that moved waits for the next run at the cap (coalesced with the
+            // picture's when one comes first)
+            if (new_pic || (eff->dirty && slot_due) || due || eff->out != eff->tex || eff->last_run <= 0) {
                 fx_draw(eff, pic, eff->last_run > 0 ? since * eff->ctl[FXC_SPEED] : 0);
                 eff->last_run = now;
                 eff->dirty = 0;
@@ -743,9 +787,6 @@ GLuint fx_source1(GLuint picture, int fresh, int paused, double now)
     }
     return pic;
 }
-
-// Whether slot k's program reads the clock, and its size (for the state).
-void fx_size(int k, int *w, int *h) { *w = gl[k].w; *h = gl[k].h; }
 
 void fx_free_all(void)
 {

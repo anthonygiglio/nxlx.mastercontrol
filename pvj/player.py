@@ -104,12 +104,15 @@ class Ipc:
         self.patient_until = 0.0    # time.monotonic() until which a request waits START_WAIT (Player._spawn sets it)
         self._id = 0
 
-    def request(self, *command):
+    def request(self, *command, wait=None):
+        """One command and its answer. `wait`: seconds to wait for it instead of the usual timeout (a request the
+        player itself answers only after a bounded wait of its own, such as pvj-render's build of a program)."""
         self._id += 1
         rid = self._id
         payload = json.dumps({"command": list(command), "request_id": rid}).encode() + b"\n"
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        wait = max(self.timeout, START_WAIT) if time.monotonic() < getattr(self, "patient_until", 0.0) else self.timeout
+        wait = wait if wait is not None else (
+            max(self.timeout, START_WAIT) if time.monotonic() < getattr(self, "patient_until", 0.0) else self.timeout)
         s.settimeout(wait)
         try:
             s.connect(self.path)
@@ -1129,6 +1132,9 @@ class Player:
 
     # ---- the New renderer's own programs (D106) --------------------------------------------------------------------
     _native_seen = None             # (pid, True or False): does that player process run programs of its own
+    # pvj-render answers a load once it has built the program, waiting at most 3 seconds for its render thread
+    # (ipc.c, shader_command): the panel waits longer than that, so that only the renderer's own word ends it
+    NATIVE_LOAD_WAIT = 6.0
 
     def native_shaders(self, ask=True):
         """True if the player that answers now is pvj-render with programs of its own (its `shaders`), which run a
@@ -1169,10 +1175,19 @@ class Player:
         if len(self._native_verdicts) > 32:
             self._native_verdicts.clear()
         try:
-            self.ipc.request("pvj-shader", "load", 1, slot, want)
+            self.ipc.request("pvj-shader", "load", 1, slot, want, wait=self.NATIVE_LOAD_WAIT)
         except PlayerError as e:
             message = str(e)
-            self._native_verdicts[want] = ("refused", message[5:] if message.startswith("mpv: ") else message)
+            message = message[5:] if message.startswith("mpv: ") else message
+            if message.startswith("the GPU refused") or message == "invalid parameter":
+                # the renderer's own refusal: the program that was there runs on, as the slot's record says
+                self._native_verdicts[want] = ("refused", message)
+            else:
+                # no word (a slow build, no reply): the renderer may yet show it, or not. Nothing is said to be
+                # refused, and the slot is held to be unknown, so the next push or value loads it again (the
+                # review of #167: a value sent under the old program's names reached the new one)
+                self._native_verdicts[want] = ("unknown", message)
+                self._native_loaded[slot] = None
             return
         self._native_loaded[slot] = (want, pid)
         self._native_verdicts[want] = ("ok", "")
@@ -1197,6 +1212,19 @@ class Player:
                     return False
                 path = self._effect
             have = self._native_loaded[slot]
+            if not have or have[1] != self._seen_pid:
+                # not known to be there (its load had no word, a slow build): the renderer says what the slot holds
+                # now; if it is not that program, it is loaded again first
+                try:
+                    rows = self.ipc.request("get_property", "pvj-shaders")
+                    there = next((r.get("path") for r in rows if isinstance(r, dict) and r.get("source") == 1 and r.get("slot") == slot), None)
+                except (PlayerError, TypeError, AttributeError):
+                    there = None
+                if there == path:
+                    self._native_loaded[slot] = (path, self._seen_pid)
+                else:
+                    self._native_slot(slot, path)
+                have = self._native_loaded[slot]
             if not have or have[0] != path or have[1] != self._seen_pid:
                 return False
             self.ipc.request("pvj-shader", "set", 1, slot, values)

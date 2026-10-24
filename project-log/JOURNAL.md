@@ -4,6 +4,13 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
+## 2026-10-24, the review of #167 (D106 step a), fixed on its branch
+
+- **High:** screenshots no longer encode on the render thread: it reads the picture into a pixel buffer, maps it on the next frame and hands it to the client's thread, which encodes and writes. Headless at 1920 x 1080: 15.4 flips a second during screenshots with the reviewed build, 60.0 now.
+- **Medium:** the panel waits 6 s for a load (the renderer 3 s); only the renderer's refusal counts as one; a load with no word leaves the slot unknown, found again by its path (`pvj-shaders` gives it) before values are sent. **Medium:** the 30-a-second cap holds while values move (48 runs a second before, under 33 now).
+- **Low and nits:** frame-drop-count's total always added; the level drawn by the renderer until the layers have it back (a first try, the layers' level put back before the clear, left libmpv's still picture at the old level about one change in three, so it was dropped) and resynced after a late build; one screenshot at a time; the screenshot's file opened without waiting and checked; constants tried only on a constant-expression error; whole numbers bounded; GLSL's reserved words refused as names; an empty LINE refused.
+- **Break-checks (10, each caught):** the stall test against the reviewed build; the load's longer wait; "no word is no refusal"; the slot found by its path; the generator's and the effect's cap; one screenshot at a time (also against the reviewed build); a FIFO; whole numbers; an empty LINE. Not held by a test: the level's order (a one-frame window), frame-drop-count's total, the single compile of a refused program.
+
 ## 2026-10-24, pvj-render phase 3, step a (D106): generators and effects run by the renderer, values set every frame
 
 - **The plan first:** D106 was sent to the coordinator before any code and approved with two answers: up to 3 effects per source in the renderer but one in the panel until step (e), and no lower drawing height for light generators (D93's Automatic height stands; its cost on the New renderer is a device row). D74's "one effect at a time" was checked: a scope choice of the first version (SHADERS.md, the journal's "Left out"), not the owner's word.

@@ -590,3 +590,7 @@ The text-layer flake could not be made to happen on this PC in 140 runs under lo
 ## mpv keeps a user shader by its file's path (2026-10-24, D106)
 
 The first comparison of pvj-render's own programs with libmpv's drawing said every shader but the first was 40 to 130 levels apart. Every libmpv text had been written to the same file, and mpv compiles a user shader once per path and draws the old one when the file changes under the same name: every capture was of the first shader. The panel never meets it (each text it writes has a new name, which is why it does so), but a test or a tool that rewrites one file will. Give each text a new file, and before trusting a comparison check that its reference changed at all (the measurement now also prints how far the reference moved from the picture before it).
+
+## Two changes of one property in a row can leave libmpv's still picture at the first (2026-10-24, D106)
+
+Giving source 1's layers their brightness back just before a program was cleared, and then the panel's new level just after, left the still picture at the first value in about one change in three, while `get_property brightness` said the second; forcing more renders did not help. With the layers set once, after the clear, it never happened. It was not traced inside libmpv. When the order of two writes to libmpv is a choice, make one write, and judge it by the picture, not by what the property says.
