@@ -609,9 +609,11 @@ class ShotPaceTest(NativeBase):
         busy = (self.flips() - a) / (time.monotonic() - t)
         print("\n  flips a second at 1920 x 1080: %.1f quiet, %.1f during %d screenshots" % (quiet, busy, n))
         self.assertGreater(n, 4)
-        # encoding a 1080p JPEG took 139 to 273 ms on this kind of machine: on the render thread that was 8 to 16
-        # vblanks without a picture each; with only the readback there, the rate stays near the quiet one
-        self.assertGreater(busy, quiet - 4.0, (quiet, busy, n))
+        # Encoding a 1080p JPEG took 139 to 273 ms on this kind of machine: on the render thread that was 8 to 16
+        # vblanks without a picture each, and the rate fell to a quarter of the quiet one (15.4 of 60 here). With
+        # only the readback there it stays near the quiet rate. Judged against the quiet rate of the same run, since
+        # a CI runner's software GPU draws 1080p at about 30 a second, not 60.
+        self.assertGreater(busy, 0.7 * quiet, (quiet, busy, n))
 
     def test_two_screenshots_at_once_each_get_their_picture(self):
         import threading
@@ -668,7 +670,8 @@ class SlowBuildTest(NativeBase):
         self.r = Renderer(env={"PVJ_RENDER_TEST_SLOW_BUILD": str(ms)})
         self.addCleanup(lambda: self.r.close())
         self.r("set_property", "image-display-duration", "inf")
-        d = tempfile.mkdtemp(prefix="pvj-native-run-", dir=self.tmp)
+        d = tempfile.mkdtemp(prefix="pvj-native-run-")
+        self.addCleanup(shutil.rmtree, d, True)
         os.symlink(self.r.sock, os.path.join(d, paths.PLAYER_SOCKET))
         return Player(rundir=d)
 
