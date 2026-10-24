@@ -1471,6 +1471,16 @@ class SourcesTest(SourcesBase):
         self.assertTrue(all(s["idle"] for s in self.sources()[1:]), "nothing was loaded")
         self.assertIsNone(r.proc.poll())
 
+    def test_sources_2_to_n_have_a_small_demuxer_cache_and_source_1_mpvs_own(self):
+        # the 2-hour soak on the Pi (2026-10-24): 4 sources at 720p looping grew the process from 340 to about 875 MB
+        # in an hour, mpv's default cache (150 MiB ahead, 50 behind) on each core. Sources 2 to N play local clips only.
+        mib = 1024 * 1024
+        for k in (2, 3, 4):
+            self.assertEqual(self.r("pvj-source", k, "get_property", "demuxer-max-bytes"), 32 * mib, k)
+            self.assertEqual(self.r("pvj-source", k, "get_property", "demuxer-max-back-bytes"), 16 * mib, k)
+        # source 1 keeps mpv's own: it plays streams and NDI, and the player sets its cache for those (PIPE_DEFAULTS)
+        self.assertEqual(self.r("get_property", "demuxer-max-bytes"), 150 * mib)
+
     def test_a_source_has_no_sound(self):
         self.r.close()
         self.r = r = Renderer("--sources=2", "--audio-device=alsa/null")

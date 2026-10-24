@@ -422,6 +422,30 @@ class PanelTest(CareBase):
         st, body = self.r("POST", "/api/renderer", {"use": "classic"})
         self.assertEqual((st, body["use"], body["detail"], len(self.quits)), (200, "classic", 720, 2))
 
+    def test_choosing_new_again_after_a_fall_back_tries_pvj_render_again(self):
+        self.r("POST", "/api/renderer", {"use": "new", "detail": 720})
+        self.assertEqual(len(self.quits), 1)
+        os.makedirs(os.path.dirname(self.api.renderer.report_file), exist_ok=True)
+        renderer.write_report(os.path.dirname(self.api.renderer.report_file),
+                              {"chosen": "new", "drawing": "classic", "why": "pvj-render ended twice in a row (exit 3)", "detail": 720})
+        pid = screenmode.read_json(self.api.renderer.report_file)["pid"]
+        real = self.api.player.ipc.request
+        with mock.patch.object(self.api.player.ipc, "request", lambda *a: pid if a == ("get_property", "pid") else real(*a)):
+            st, body = self.r("POST", "/api/renderer", {"use": "new", "detail": 720})
+            self.assertEqual((st, body["drawing"]), (200, "classic"))
+            self.assertEqual(len(self.quits), 2, "the same choice again re-arms New: the player restarts and tries pvj-render")
+            # drawing New already (a report of New): the same again restarts nothing
+            renderer.write_report(os.path.dirname(self.api.renderer.report_file),
+                                  {"chosen": "new", "drawing": "new", "why": "", "detail": 720})
+            pid2 = screenmode.read_json(self.api.renderer.report_file)["pid"]
+        with mock.patch.object(self.api.player.ipc, "request", lambda *a: pid2 if a == ("get_property", "pid") else real(*a)):
+            self.r("POST", "/api/renderer", {"use": "new", "detail": 720})
+            self.assertEqual(len(self.quits), 2)
+            self.r("POST", "/api/renderer", {"use": "classic", "detail": 720})
+            self.assertEqual(len(self.quits), 3)
+            self.r("POST", "/api/renderer", {"use": "classic", "detail": 720})
+            self.assertEqual(len(self.quits), 3, "classic again restarts nothing")
+
     def test_bad_bodies_are_refused_and_nothing_changes(self):
         for body in ({}, {"use": "fast"}, {"use": "new", "detail": 1080}, {"use": "new", "detail": True},
                      {"use": "new", "detail": "540"}, {"use": "new", "x": 1}):

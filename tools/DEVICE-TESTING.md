@@ -737,6 +737,12 @@ As the step a rows, with `--sources=4` (the renderer card's 4 sources) and a map
 | FX12 | Three effects on Source 2 (fx-grade, isf-rgb-invert, fx-vignette) while Sources 1, 3 and 4 play | The order shows (the vignette dark at the edges after the invert); no stutter | As FX11 |
 | FX13 | Blackout, then Fade in, with an inverting effect on Source 3 | Source 3's quad black under Blackout (never white), and up with the others | Anything lit under Blackout |
 | FX14 | Stop on Source 2 in the Sources strip with its chain on; then play a clip to it again | The chain is off with the Stop; the new clip plays plain | Yes or no |
+### The 2-hour soak's memory, again (D106's soak findings)
+
+| # | Do | Look for | Send back |
+| --- | --- | --- | --- |
+| SK1 | The soak of 2026-10-24 again: 4 sources at 720p looping, the mapping on, 2 hours; `ps -o rss= -p $(pgrep -x pvj-render)` every 10 minutes | Resident memory flat after the first minutes, well under the 875 MB of before (about 150 MB less a source 2 to 4) | The readings |
+| SK2 | Make pvj-render end twice in a row (`sudo kill -9` it twice within a minute), so classic draws; then System > Screen output, New, Use this | The player restarts and New draws again; the card says New | Yes or no |
 
 ### What to send back
 
