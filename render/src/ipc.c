@@ -510,6 +510,24 @@ static void source_command(int fd, const mpv_node *id, const mpv_node *cmd)
         pthread_mutex_unlock(&app.lock);
         mpv_node d = !strcmp(arg_str(cmd, 3), "opacity") ? node_dbl(o) : node_str(BLEND_NAMES[b]);
         reply(fd, id, "success", &d);
+    } else if (!strcmp(what, "set_property") && nargs == 5 && arg_str(cmd, 3) && !strcmp(arg_str(cmd, 3), "brightness")
+               && is_num(arg(cmd, 4)) && num(arg(cmd, 4)) >= -100 && num(arg(cmd, 4)) <= 100) {
+        // the source's own level (D101), kept (D106): while it has a program on, the renderer draws it after them
+        pthread_mutex_lock(&layer_lock);
+        pthread_mutex_lock(&app.lock);
+        app.level[k - 1] = num(arg(cmd, 4));
+        int native = app.level_native[k - 1];
+        pthread_mutex_unlock(&app.lock);
+        int r = native ? 0 : mpv_set_property(h, "brightness", MPV_FORMAT_NODE, (void *)arg(cmd, 4));
+        pthread_mutex_unlock(&layer_lock);
+        wake_render();
+        reply(fd, id, r < 0 ? mpv_error_string(r) : "success", NULL);
+    } else if (!strcmp(what, "get_property") && nargs == 4 && arg_str(cmd, 3) && !strcmp(arg_str(cmd, 3), "brightness")
+               && app.level_native[k - 1]) {
+        pthread_mutex_lock(&app.lock);
+        mpv_node d = node_dbl(app.level[k - 1]);
+        pthread_mutex_unlock(&app.lock);
+        reply(fd, id, "success", &d);
     } else if (!strcmp(what, "set_property") && nargs == 5 && arg_str(cmd, 3)) {
         if (!in_list(SOURCE_SET, arg_str(cmd, 3))) {
             LOG("ipc: pvj-source set_property %s is not on the list", arg_str(cmd, 3));
@@ -664,32 +682,40 @@ static void set_shaders(int fd, const mpv_node *id, const mpv_node *val)
 // ["pvj-shader", "clear", SOURCE, SLOT]
 // ["pvj-shader", "set", SOURCE, SLOT, {NAME: VALUE, ...}]   inputs by name, and @speed, @hue, @gain, @amount, @offset;
 //                                              all of one set are taken in one frame. Nothing is built again.
-// SOURCE is 1 in this step: the other sources' chains are step b.
-static int fx_answered_k;
+// SOURCE is 1 to the number of sources; slot 0 (a generator) is source 1's only (generators as sources: step d),
+// slots 1 to 3 are a source's effects, run in that order (step b).
+static int fx_answered_s, fx_answered_k;
 static long fx_wait_for;
-static int fx_answered(void) { return app.fx[fx_answered_k].answered >= fx_wait_for; }
+static int fx_answered(void) { return app.fx[fx_answered_s][fx_answered_k].answered >= fx_wait_for; }
 
-// Source 1's level goes with whether a program is on: while one is, its layers' own brightness is 0 and the renderer
-// draws the level after the programs; otherwise the layers have the level, as before (under layer_lock). The order
-// keeps the level from ever being absent (the review of #167). The render thread draws the level while a program is
-// on OR while the layers still have 0 (`level_native`, main.c). A program that comes on is drawn with the level at
-// once (for a moment the layers have it too: darker, never lighter), and the layers get 0 after. A program that goes
-// off: the render thread goes on drawing the level until the layers have it back, and only then is level_native
-// cleared (again a moment of both, never of none).
-static void level_sync(void)
+// The video layers of source index s: source 1's two, or source k's one (layer k).
+static int source_layers(int s, int *first)
+{
+    *first = s == 0 ? 0 : s + 1;
+    return s == 0 ? LAYERS : 1;
+}
+
+// A source's level goes with whether it has a program on: while it has, its layers' own brightness is 0 and the
+// renderer draws the level after the programs; otherwise the layers have the level, as before (under layer_lock). The
+// order keeps the level from ever being absent (the review of #167). The render thread draws a source's level while it
+// has a program on OR while its layers still have 0 (`level_native`, main.c). A program that comes on is drawn with
+// the level at once (for a moment the layers have it too: darker, never lighter), and the layers get 0 after. A
+// program that goes off: the render thread goes on drawing the level until the layers have it back, and only then is
+// level_native cleared (again a moment of both, never of none).
+static void level_sync(int s)
 {
     pthread_mutex_lock(&app.lock);
-    int want = app.native1, had = app.level_native;
-    double level = app.level;
-    if (want) app.level_native = 1;
-    app.level_resync = 0;
+    int want = app.native[s], had = app.level_native[s];
+    double level = app.level[s];
+    if (want) app.level_native[s] = 1;
     pthread_mutex_unlock(&app.lock);
     if (want == had) return;
     double v = want ? 0.0 : level;
-    for (int i = 0; i < LAYERS; i++) mpv_set_property(app.layer[i], "brightness", MPV_FORMAT_DOUBLE, &v);
+    int first, n = source_layers(s, &first);
+    for (int i = first; i < first + n; i++) mpv_set_property(app.layer[i], "brightness", MPV_FORMAT_DOUBLE, &v);
     if (!want) {
         pthread_mutex_lock(&app.lock);
-        app.level_native = 0;
+        app.level_native[s] = 0;
         pthread_mutex_unlock(&app.lock);
     }
     wake_render();
@@ -702,12 +728,12 @@ static void shader_command(int fd, const mpv_node *id, const mpv_node *cmd)
     int nargs = cmd->u.list->num;
     const char *what = arg_str(cmd, 1);
     const mpv_node *src = arg(cmd, 2), *slot = arg(cmd, 3);
-    if (!what || !src || !slot || src->format != MPV_FORMAT_INT64 || slot->format != MPV_FORMAT_INT64 || src->u.int64 != 1
-        || slot->u.int64 < 0 || slot->u.int64 >= FX_SLOTS) {
+    if (!what || !src || !slot || src->format != MPV_FORMAT_INT64 || slot->format != MPV_FORMAT_INT64 || src->u.int64 < 1
+        || src->u.int64 > app.nsources || slot->u.int64 < 0 || slot->u.int64 >= FX_SLOTS || (slot->u.int64 == 0 && src->u.int64 != 1)) {
         reply(fd, id, "invalid parameter", NULL);
         return;
     }
-    int k = (int)slot->u.int64;
+    int si = (int)src->u.int64 - 1, k = (int)slot->u.int64;
     if (!strcmp(what, "set") && nargs == 5) {
         const mpv_node *m = arg(cmd, 4);
         if (m->format != MPV_FORMAT_NODE_MAP || m->u.list->num < 1 || m->u.list->num > FX_MAX_INPUTS + FXC_N) {
@@ -715,7 +741,7 @@ static void shader_command(int fd, const mpv_node *id, const mpv_node *cmd)
             return;
         }
         pthread_mutex_lock(&app.lock);
-        FxSlot *s = &app.fx[k];
+        FxSlot *s = &app.fx[si][k];
         // all or nothing: checked on a copy first
         FxSlot copy;
         memcpy(copy.val, s->val, sizeof copy.val);
@@ -754,7 +780,7 @@ static void shader_command(int fd, const mpv_node *id, const mpv_node *cmd)
     }
     pthread_mutex_lock(&fx_lock);
     pthread_mutex_lock(&app.lock);
-    FxSlot *s = &app.fx[k];
+    FxSlot *s = &app.fx[si][k];
     fx_prog_free(s->pending);
     s->pending = p;
     s->pending_clear = p == NULL;
@@ -762,6 +788,7 @@ static void shader_command(int fd, const mpv_node *id, const mpv_node *cmd)
     pthread_mutex_unlock(&app.lock);
     wake_render();
     pthread_mutex_lock(&app.lock);
+    fx_answered_s = si;
     fx_answered_k = k;
     fx_wait_for = mine;
     int done = wait_render(fx_answered, 3.0);
@@ -769,38 +796,41 @@ static void shader_command(int fd, const mpv_node *id, const mpv_node *cmd)
     memcpy(answer, s->answer, sizeof answer);
     pthread_mutex_unlock(&app.lock);
     pthread_mutex_lock(&layer_lock);
-    level_sync();
+    level_sync(si);
     pthread_mutex_unlock(&layer_lock);
     pthread_mutex_unlock(&fx_lock);
     if (!done) reply(fd, id, "the renderer did not build the program in time", NULL);
     else reply(fd, id, answer[0] ? answer : "success", NULL);
 }
 
-// get_property pvj-shaders: one map a slot of source 1.
+// get_property pvj-shaders: one map a slot, source 1's first (slots 0 to 3), then each other source's.
 static void shaders_property(int fd, const mpv_node *id)
 {
     static const char *const keys[] = { "source", "slot", "kind", "state", "time", "runs", "drops", "inputs", "rebuilds", "width", "height", "path" };
     enum { NK = sizeof keys / sizeof keys[0] };
-    mpv_node vals[FX_SLOTS][NK];
-    mpv_node_list lists[FX_SLOTS];
-    mpv_node items[FX_SLOTS];
-    char states[FX_SLOTS][160], paths[FX_SLOTS][1024];
+    enum { NI = MAX_SOURCES * FX_SLOTS };
+    static __thread mpv_node vals[NI][NK];
+    static __thread mpv_node_list lists[NI];
+    static __thread mpv_node items[NI];
+    static __thread char states[NI][160], paths[NI][1024];
+    int ni = app.nsources * FX_SLOTS;
     pthread_mutex_lock(&app.lock);
-    for (int k = 0; k < FX_SLOTS; k++) {
-        const FxSlot *s = &app.fx[k];
-        snprintf(states[k], sizeof states[k], "%s", s->on ? s->state : "off");
-        snprintf(paths[k], sizeof paths[k], "%s", s->on ? s->path : "");
+    for (int i = 0; i < ni; i++) {
+        int si = i / FX_SLOTS, k = i % FX_SLOTS;
+        const FxSlot *s = &app.fx[si][k];
+        snprintf(states[i], sizeof states[i], "%s", s->on ? s->state : "off");
+        snprintf(paths[i], sizeof paths[i], "%s", s->on ? s->path : "");
         int w = s->w, h = s->h;
-        mpv_node v[NK] = { node_int(1), node_int(k), node_str(!s->on ? "" : s->kind == FX_GENERATOR ? "generator" : "filter"),
-                           node_str(states[k]), node_dbl(s->time), node_int(s->runs), node_int(s->drops), node_int(s->on ? s->ninputs : 0),
-                           node_int(s->rebuilds), node_int(s->on ? w : 0), node_int(s->on ? h : 0), node_str(paths[k]) };
-        memcpy(vals[k], v, sizeof v);
-        lists[k] = (mpv_node_list){ .num = NK, .values = vals[k], .keys = (char **)keys };
-        items[k].format = MPV_FORMAT_NODE_MAP;
-        items[k].u.list = &lists[k];
+        mpv_node v[NK] = { node_int(si + 1), node_int(k), node_str(!s->on ? "" : s->kind == FX_GENERATOR ? "generator" : "filter"),
+                           node_str(states[i]), node_dbl(s->time), node_int(s->runs), node_int(s->drops), node_int(s->on ? s->ninputs : 0),
+                           node_int(s->rebuilds), node_int(s->on ? w : 0), node_int(s->on ? h : 0), node_str(paths[i]) };
+        memcpy(vals[i], v, sizeof v);
+        lists[i] = (mpv_node_list){ .num = NK, .values = vals[i], .keys = (char **)keys };
+        items[i].format = MPV_FORMAT_NODE_MAP;
+        items[i].u.list = &lists[i];
     }
     pthread_mutex_unlock(&app.lock);
-    mpv_node_list list = { .num = FX_SLOTS, .values = items };
+    mpv_node_list list = { .num = ni, .values = items };
     mpv_node d = { .format = MPV_FORMAT_NODE_ARRAY };
     d.u.list = &list;
     reply(fd, id, "success", &d);
@@ -839,7 +869,7 @@ static int shot_write(const char *path, const unsigned char *rgba, int w, int h,
 static int native_screenshot(int fd, const mpv_node *id, const char *path, const char *kind)
 {
     pthread_mutex_lock(&app.lock);
-    int on = app.native1;
+    int on = app.native[0];
     pthread_mutex_unlock(&app.lock);
     if (!on) return 0;
     size_t n = strlen(path);
@@ -921,8 +951,8 @@ static void get_property(int fd, const mpv_node *id, const char *name)
     if (!strcmp(name, "pvj-sources")) { sources_property(fd, id); return; }
     if (!strcmp(name, "pvj-shaders")) { shaders_property(fd, id); return; }
     pthread_mutex_lock(&app.lock);
-    int level_native = app.level_native;
-    double level = app.level;
+    int level_native = app.level_native[0];
+    double level = app.level[0];
     long fx_drops = app.fx_drops;      // a total that only rises: no jump as programs go on and off
     pthread_mutex_unlock(&app.lock);
     if (level_native && !strcmp(name, "brightness")) { d = node_dbl(level); reply(fd, id, "success", &d); return; }
@@ -1027,15 +1057,23 @@ static void set_level(int fd, const mpv_node *id, const mpv_node *v)
     }
     pthread_mutex_lock(&layer_lock);
     pthread_mutex_lock(&app.lock);
-    app.level = num(v);
-    int native = app.level_native;
+    int native[MAX_SOURCES];
+    for (int s = 0; s < app.nsources; s++) {
+        app.level[s] = num(v);              // the panel's level reaches every source (D101)
+        native[s] = app.level_native[s];
+    }
     pthread_mutex_unlock(&app.lock);
     int r;
-    if (!native) {
+    if (!native[0]) {
+        // as before: source 1's two layers, and (set_both) every other source
         r = set_both("brightness", v);
+        double zero = 0.0;
+        for (int s = 1; s < app.nsources; s++)
+            if (native[s]) mpv_set_property(app.layer[s + 1], "brightness", MPV_FORMAT_DOUBLE, &zero);
     } else {
         r = 0;
-        for (int k = LAYERS; k < LAYERS + app.nsources - 1; k++) mpv_set_property(app.layer[k], "brightness", MPV_FORMAT_NODE, (void *)v);
+        for (int s = 1; s < app.nsources; s++)
+            if (!native[s]) mpv_set_property(app.layer[s + 1], "brightness", MPV_FORMAT_NODE, (void *)v);
     }
     pthread_mutex_unlock(&layer_lock);
     wake_render();
@@ -1045,9 +1083,9 @@ static void set_level(int fd, const mpv_node *id, const mpv_node *v)
 static void handle(int fd, const char *line, size_t len)
 {
     // a program came on or went off after its client stopped waiting (a slow build): the level follows it now
-    if (__atomic_load_n(&app.level_resync, __ATOMIC_ACQUIRE)) {
+    if (__atomic_exchange_n(&app.level_resync, 0, __ATOMIC_ACQ_REL)) {
         pthread_mutex_lock(&layer_lock);
-        level_sync();
+        for (int s = 0; s < app.nsources; s++) level_sync(s);
         pthread_mutex_unlock(&layer_lock);
     }
     mpv_node req;

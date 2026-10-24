@@ -36,7 +36,8 @@ import tests        # the run's own temp folder (tests/__init__.py)
 from pvj import effects as E, paths, shaders as S
 from pvj.player import Player, PlayerError, is_program
 from pvj.transitions import read_still
-from tests.test_pvj_render import BIN, H, STRICT, W, Renderer, fd_count, need_program, png, thread_count
+from tests.test_pvj_render import (BIN, BLUE, GREEN, H, RED, STRICT, W, Renderer, SourcesBase, fd_count, need_program, png,
+                                   thread_count)
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 GENERATORS = sorted(glob.glob(os.path.join(REPO, "pvj", "shaders.d", "*.fs")) + glob.glob(os.path.join(REPO, "pvj", "shaders.d", "*", "*.fs")))
@@ -721,6 +722,167 @@ class CapTest(NativeBase):
         self.assertGreater(sets, 35)
         self.assertLess(runs, 33, (runs, sets))
         self.assertGreater(runs, 10, "the values never landed")
+# Two effects whose order shows: RED_ON sets red to 1, INVERT inverts. RED_ON then INVERT: red 0; the other way: red 1.
+RED_ON = INVERT.replace("vec4(1.0 - c.rgb, 1.0)", "vec4(1.0, c.g, c.b, 1.0)")
+
+
+class ChainTest(SourcesBase):
+    """Step b: up to three effects in order over any source (D106)."""
+
+    def setUp(self):
+        super().setUp()
+        self.n = 0
+        self.blue = os.path.join(self.tmp, "blue.png")
+        png(self.blue, W, H, lambda x, y: BLUE)
+
+    write = NativeBase.write
+    effect = NativeBase.effect
+
+    def slot(self, source, k):
+        return [s for s in self.r("get_property", "pvj-shaders") if s["source"] == source and s["slot"] == k][0]
+
+    def test_an_effect_on_source_2_and_a_chain_in_its_order(self):
+        r = self.r
+        r.load(self.green)                              # source 1: green
+        self.to(2, self.blue)                           # source 2: blue
+        self.show_halves(1, 2)
+        self.halves_are(GREEN, BLUE)
+        r("pvj-shader", "load", 2, 1, self.effect(INVERT))
+        self.assertTrue(r.wait(lambda: near_px(r.pixel(3 * W // 4, H // 4), (255, 255, 0)), 3), r.pixel(3 * W // 4, H // 4))
+        self.halves_are(GREEN, (255, 255, 0))           # source 1 untouched
+        # a second effect after it: red set to 1 after the invert
+        r("pvj-shader", "load", 2, 2, self.effect(RED_ON))
+        self.assertTrue(r.wait(lambda: near_px(r.pixel(3 * W // 4, H // 4), (255, 255, 0)), 3))
+        # the other order: red on first, then the invert takes it to 0
+        r("pvj-shader", "load", 2, 1, self.effect(RED_ON))
+        r("pvj-shader", "load", 2, 2, self.effect(INVERT))
+        self.assertTrue(r.wait(lambda: near_px(r.pixel(3 * W // 4, H // 4), (0, 255, 0)), 3), r.pixel(3 * W // 4, H // 4))
+        # a third, and one at amount 0 in the middle passes the picture on as it is
+        r("pvj-shader", "load", 2, 3, self.effect(INVERT))
+        self.assertTrue(r.wait(lambda: near_px(r.pixel(3 * W // 4, H // 4), (255, 0, 255)), 3))
+        r("pvj-shader", "set", 2, 2, {"@amount": 0.0})
+        self.assertTrue(r.wait(lambda: near_px(r.pixel(3 * W // 4, H // 4), (0, 255, 0)), 3), r.pixel(3 * W // 4, H // 4))
+        # source 1's own chain: its effect and one after it
+        r("pvj-shader", "load", 1, 1, self.effect(INVERT))
+        r("pvj-shader", "load", 1, 2, self.effect(RED_ON))
+        self.assertTrue(r.wait(lambda: near_px(r.pixel(W // 4, H // 4), (255, 0, 255)), 3), r.pixel(W // 4, H // 4))
+        for k in (1, 2, 3):
+            r("pvj-shader", "clear", 2, k)
+        self.assertTrue(r.wait(lambda: near_px(r.pixel(3 * W // 4, H // 4), BLUE), 3))
+
+    def test_each_sources_level_is_drawn_after_its_effects(self):
+        r = self.r
+        r.load(self.green)
+        self.to(2, self.blue)
+        self.show_halves(1, 2)
+        r("pvj-shader", "load", 2, 1, self.effect(INVERT))
+        r("set_property", "brightness", -100)            # Blackout: every source, under an effect that adds light
+        self.assertTrue(r.wait(lambda: max(r.capture()[2]) == 0, 3), "an inverting effect on source 2 undid the Blackout")
+        self.assertEqual(r("pvj-source", 2, "get_property", "brightness"), -100)
+        r("set_property", "brightness", 0)
+        self.assertTrue(r.wait(lambda: near_px(r.pixel(3 * W // 4, H // 4), (255, 255, 0)), 3))
+        r("pvj-source", 2, "set_property", "brightness", -50)        # a source's own level, after its effect too
+        self.assertTrue(r.wait(lambda: near_px(r.pixel(3 * W // 4, H // 4), (128, 128, 0), 3), 3), r.pixel(3 * W // 4, H // 4))
+        self.assertEqual(r("pvj-source", 2, "get_property", "brightness"), -50)
+        r("pvj-shader", "clear", 2, 1)                  # off: the layer has its level back
+        self.assertTrue(r.wait(lambda: near_px(r.pixel(3 * W // 4, H // 4), (0, 0, 128), 3), 3), r.pixel(3 * W // 4, H // 4))
+
+    def test_what_a_chain_refuses(self):
+        r = self.r
+        for what, cmd in {"a generator on source 2": ["load", 2, 0, self.write(S.translate_native(S.parse(FLAT), (W, H)))],
+                          "source 5 of 4": ["load", 5, 1, self.effect(INVERT)], "source 0": ["load", 0, 1, self.effect(INVERT)],
+                          "slot 4": ["load", 2, 4, self.effect(INVERT)], "a set on an empty slot": ["set", 3, 1, {"@amount": 0.5}]}.items():
+            with self.subTest(what):
+                with self.assertRaises(PlayerError):
+                    r("pvj-shader", *cmd)
+
+    def test_many_chain_loads_leave_nothing_behind(self):
+        r = self.r
+        self.to(2, self.blue)
+        a, b = self.effect(INVERT), self.effect(RED_ON)
+        counts = []
+        for i in range(150):
+            src, k = 2 + i % 3, 1 + i % 3
+            r("pvj-shader", "load", src, k, a if i % 2 else b)
+            if i % 5 == 4:
+                for s in (2, 3, 4):
+                    for kk in (1, 2, 3):
+                        r("pvj-shader", "clear", s, kk)
+                if i % 50 == 49:
+                    time.sleep(0.3)
+                    st = r("get_property", "pvj-render")
+                    counts.append((fd_count(r.pid), st["fx-gl-objects"], thread_count(r.pid)))
+        self.assertEqual([c[:2] for c in counts], [counts[0][:2]] * len(counts), counts)
+        self.assertEqual(counts[-1][1], 0)
+        self.assertLessEqual(max(c[2] for c in counts) - min(c[2] for c in counts), 2, counts)
+
+
+def near_px(got, want, tol=3):
+    return all(abs(a - b) <= tol for a, b in zip(got, want))
+
+
+class ChainApiTest(unittest.TestCase):
+    """The API of the chains (pvj/fxchain.py) on the real program through the real Player, with four sources."""
+
+    def setUp(self):
+        need_program(self)
+        from tests.test_server import ServerBase
+        self.server = ServerBase("run")
+        self.server.setUp()
+        self.addCleanup(self.server.doCleanups)
+        self.r = Renderer("--sources=4")
+        self.addCleanup(lambda: self.r.close())
+        os.symlink(self.r.sock, os.path.join(self.server.rundir, paths.PLAYER_SOCKET))
+        self.api = self.server.api
+        self.player = Player(rundir=self.server.rundir)
+        self.api.player = self.player
+        self.api.registry.set_enabled("shaders", True)
+        self.api.log = lambda *_: None
+
+    def test_put_values_off_and_a_sources_stop(self):
+        chains = self.api.chains
+        st = chains.state()
+        self.assertTrue(st["available"])
+        self.assertEqual(st["slots"][1], [2, 3])
+        self.assertEqual(st["slots"][2], [1, 2, 3])
+        out = chains.api_post({"source": 2, "slot": 1, "id": "fx-grade.fs"}, None, None)
+        self.assertTrue(out["ok"])
+        slot = [s for s in self.r("get_property", "pvj-shaders") if s["source"] == 2 and s["slot"] == 1][0]
+        self.assertEqual(slot["state"], "on")
+        path = chains.on[(2, 1)]["path"]
+        self.assertTrue(is_program(path))
+        out = chains.api_post({"source": 2, "slot": 1, "controls": {"amount": 0.25}}, None, None)
+        self.assertEqual(out["controls"]["amount"], 0.25)
+        self.assertEqual(chains.on[(2, 1)]["path"], path)                  # no new file: a value, not a build
+        self.assertEqual([r["id"] for r in chains.state()["chains"]], ["fx-grade.fs"])
+        chains.api_post({"source": 1, "slot": 2, "id": "fx-grade.fs"}, None, None)
+        from pvj.api import ApiError
+        for body in ({"source": 1, "slot": 1, "id": "fx-grade.fs"}, {"source": 5, "slot": 1, "id": "fx-grade.fs"},
+                     {"source": 2, "slot": 0, "id": "fx-grade.fs"}, {"source": 2, "slot": True, "id": "fx-grade.fs"},
+                     {"source": 2, "slot": 1, "id": "nxlx-silk.fs"}, {"source": 2, "slot": 1, "id": "fx-grade.fs", "values": {"nope": 1}},
+                     {"source": 3, "slot": 1, "controls": {"amount": 0.5}}, {"source": 2}):
+            with self.subTest(body=body):
+                with self.assertRaises(ApiError):
+                    chains.api_post(body, None, None)
+        # a source's Stop takes its chain off; source 1's Stop takes source 1's
+        self.player.stop_source(2)
+        self.assertEqual([r["source"] for r in chains.state()["chains"]], [1])
+        self.assertTrue(self.r.wait(lambda: [s for s in self.r("get_property", "pvj-shaders") if s["source"] == 2 and s["slot"] == 1][0]["state"] == "off", 3))
+        self.player.clear()
+        self.assertEqual(chains.state()["chains"], [])
+        out = chains.api_post({"source": 3, "slot": 2, "id": "fx-grade.fs"}, None, None)
+        self.assertEqual(chains.api_post({"source": 3, "off": True}, None, None)["was_on"], True)
+        self.assertEqual(chains.state()["chains"], [])
+        # no program file is left behind in the panel's folder
+        self.assertEqual([n for n in os.listdir(self.server.rundir) if n.startswith("nxlx-chain")], [])
+
+    def test_classic_has_no_chain(self):
+        from pvj.api import ApiError
+        self.player._native_seen = (self.player._seen_pid or self.player._note_pid(self.player.ipc.request("get_property", "pid")), False)
+        with self.assertRaises(ApiError) as e:
+            self.api.chains.api_post({"source": 2, "slot": 1, "id": "fx-grade.fs"}, None, None)
+        self.assertEqual(e.exception.status, 409)
+        self.assertFalse(self.api.chains.state()["available"])
 
 
 if __name__ == "__main__":

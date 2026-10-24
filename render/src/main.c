@@ -258,7 +258,7 @@ static void *event_loop(void *arg)
                 mpv_event_property *p = ev->data;
                 if (p && p->format == MPV_FORMAT_FLAG && p->data && !strcmp(p->name, "idle-active"))
                     __atomic_store_n(&app.idle[i], *(int *)p->data, __ATOMIC_RELEASE);
-                if (p && p->format == MPV_FORMAT_FLAG && p->data && !strcmp(p->name, "pause") && i < LAYERS)
+                if (p && p->format == MPV_FORMAT_FLAG && p->data && !strcmp(p->name, "pause"))
                     __atomic_store_n(&app.paused[i], *(int *)p->data, __ATOMIC_RELEASE);
             }
             if (ev->event_id == MPV_EVENT_PLAYBACK_RESTART) {
@@ -432,7 +432,7 @@ static int layer_open(Layer *l, int index, const Cfg *c, int w, int h)
         // the layer's idleness, kept by its event thread, so the renderer's own state never waits on the core
         __atomic_store_n(&app.idle[index], 1, __ATOMIC_RELEASE);
         mpv_observe_property(l->h, 0, "idle-active", MPV_FORMAT_FLAG);
-        if (index < LAYERS) mpv_observe_property(l->h, 0, "pause", MPV_FORMAT_FLAG);     // an effect's clock (D106)
+        mpv_observe_property(l->h, 0, "pause", MPV_FORMAT_FLAG);     // an effect's clock (D106)
     }
     if (!is_text) {
         if (layer_render_context(l)) return -1;
@@ -606,6 +606,8 @@ static void mix_pass(const Layer *outgoing, const Layer *incoming, float share, 
 }
 
 static float frame_opacity[MAX_LAYERS];
+static float frame_level[MAX_SOURCES];     // each source's level while it has a program on (D106), else 0
+static GLuint source_tex[MAX_LAYERS];      // each source k > 1's picture after its programs (D106), this frame
 static int idle_drawn[MAX_LAYERS];         // render thread: source k's empty picture is drawn since it went idle     // each source's opacity for this frame (one look under app.lock)
 
 static void final_pass(GLuint picture, int text_on, float level)
@@ -634,9 +636,10 @@ static void final_pass(GLuint picture, int text_on, float level)
         for (int i = 0; i < hook_gl.nsrc; i++) {
             int k = hook_gl.src[i];
             glActiveTexture(GL_TEXTURE1 + hook_gl.ntex + i);
-            glBindTexture(GL_TEXTURE_2D, k <= app.nsources ? video[k].tex : picture);
+            glBindTexture(GL_TEXTURE_2D, k <= app.nsources ? source_tex[k] : picture);
             glUniform1i(hook_gl.src_loc[i], 1 + hook_gl.ntex + i);
             glUniform1f(hook_gl.src_opacity_loc[i], k <= app.nsources ? frame_opacity[k] : 1.0f);
+            glUniform1f(hook_gl.src_level_loc[i], k <= app.nsources ? frame_level[k - 1] : level);
         }
     } else {
         glUseProgram(p_scale);
@@ -897,8 +900,10 @@ int main(int argc, char **argv)
         int fi = app.front, phase = app.fade.phase, base = app.fade.base_starts;
         double asked = app.fade.asked, t0 = app.fade.t0, len = app.fade.seconds;
         memcpy(frame_opacity, app.opacity, sizeof frame_opacity);     // the sources' mix, read once for this frame
-        // while a program is on, or while source 1's layers still have brightness 0 (ipc.c, level_sync)
-        float level = app.native1 || app.level_native ? (float)(app.level / 100.0) : 0.0f;
+        // each source's level: while it has a program on, or while its layers still have brightness 0 (ipc.c, level_sync)
+        for (int s = 0; s < MAX_SOURCES; s++)
+            frame_level[s] = app.native[s] || app.level_native[s] ? (float)(app.level[s] / 100.0) : 0.0f;
+        float level = frame_level[0];
         int shot = app.shot.serial != app.shot.done_serial;
         pthread_mutex_unlock(&app.lock);
         if (quit) break;
@@ -956,14 +961,18 @@ int main(int argc, char **argv)
         // the review of #153). What asked stays asked (dirty), so a clip's first frame that comes before its
         // idle-active is seen to fall is drawn as soon as it is.
         for (int i = LAYERS; i < nlayers; i++) {
-            int idle = __atomic_load_n(&app.idle[i], __ATOMIC_ACQUIRE);
+            int idle = __atomic_load_n(&app.idle[i], __ATOMIC_ACQUIRE), drew = 0;
             if (!idle) idle_drawn[i] = 0;
-            if (!video[i].dirty || (idle && idle_drawn[i])) continue;
-            reset_gl();
-            layer_render(&video[i]);
-            video[i].dirty = 0;
-            if (idle) idle_drawn[i] = 1;
-            __atomic_add_fetch(&app.layer_drawn[i], 1, __ATOMIC_RELAXED);
+            if (video[i].dirty && !(idle && idle_drawn[i])) {
+                reset_gl();
+                layer_render(&video[i]);
+                video[i].dirty = 0;
+                if (idle) idle_drawn[i] = 1;
+                __atomic_add_fetch(&app.layer_drawn[i], 1, __ATOMIC_RELAXED);
+                drew = 1;
+            }
+            // the source's own programs (D106): its effects over its clip
+            source_tex[i] = fx_source(i - 1, video[i].tex, drew, __atomic_load_n(&app.paused[i], __ATOMIC_ACQUIRE), now_s());
         }
         if (text_on && text.dirty) {
             reset_gl();
@@ -1012,7 +1021,7 @@ int main(int argc, char **argv)
             }
         }
         // the renderer's own programs on source 1 (D106): a generator in place of the picture, an effect over it
-        picture = fx_source1(picture, fresh, __atomic_load_n(&app.paused[fi], __ATOMIC_ACQUIRE), now);
+        picture = fx_source(0, picture, fresh, __atomic_load_n(&app.paused[fi], __ATOMIC_ACQUIRE), now);
         final_pass(picture, text_on, level);
         shot_finish();                                      // a readback started a frame ago (D106)
         if (shot) native_shot(picture, text_on, level);

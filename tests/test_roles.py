@@ -89,6 +89,8 @@ ROWS = {
     # session below full gains them; a support session of the Owner's role may (D84: it ends with what is played).
     ("GET", "/api/sources"): KINDS["op"],
     ("POST", "/api/sources"): KINDS["op"],
+    ("GET", "/api/effects/chain"): KINDS["op"],
+    ("POST", "/api/effects/chain"): KINDS["op"],
     # Render nodes (D94): seeing them and cueing one by hand are running the room, the Operator's; keeping the list (where
     # the box sends) is the Owner's and, by D84, a support session of his role's, as the OSC state targets. Controllers, a
     # scene and the schedule reach a cue only through a pad, on /api/play, as before.
