@@ -22,7 +22,8 @@ PATH]` (slot 0 the generator, 1 the effect; the answer comes once the program is
 and the program before it runs on), `["pvj-shader", "set", 1, SLOT, {NAME: VALUE, "@speed": ..., "@hue": ...,
 "@gain": ..., "@amount": ..., "@offset": ...}]` (all of one set in one frame) and `["pvj-shader", "clear", 1, SLOT]`;
 `get_property pvj-shaders` says each slot's state, TIME, runs, late frames and builds. A generator runs at most
-`--fx-fps` times a second (30), an effect when its picture or its values change (or its clock is due). While a program
+`--fx-fps` times a second (30), an effect when its picture or its values change (or its clock is due). Step b gives every source three effect slots (1 to 3, run in order; `pvj-shader` takes SOURCE 1 to the run's number of
+sources, and a generator stays source 1's slot 0). While a program
 is on, source 1's brightness is drawn after it (libmpv's own is held at 0) and a screenshot is the renderer's own
 picture (PNG or JPEG by the file's ending, `src/still.c`).
 

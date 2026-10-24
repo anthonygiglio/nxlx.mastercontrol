@@ -303,9 +303,10 @@ typedef struct {
     FxValue val[FX_MAX_INPUTS];         // this frame's copy
     float ctl[FXC_N];
     GLuint out;                         // the texture the last run left (an effect at amount 0: its picture)
+    GLuint last_in;                     // the texture its last run read: another one (the chain changed before it) runs it again
 } FxGL;
 
-static FxGL gl[FX_SLOTS];
+static FxGL gl[MAX_SOURCES][FX_SLOTS];      // by source index (0 is source 1) and slot
 static GLuint fx_vao, fx_vbo;
 
 static const char *FX_VS =
@@ -498,8 +499,6 @@ static void fx_off(FxGL *f)
     memset(f, 0, sizeof *f);
 }
 
-// Build `p` into slot `k` (render thread). On success the slot runs it from its own start (TIME from its offset);
-// on failure the program that ran before runs on, untouched.
 #ifdef PVJ_RENDER_TEST_HOOKS
 // For the tests only, in a build made with `make TEST_HOOKS=1`: PVJ_RENDER_TEST_SLOW_BUILD=<ms> makes every build
 // of a program take that much longer, as a slow GPU's compiler may (tests/test_native_shaders.py, SlowBuildTest).
@@ -513,7 +512,9 @@ static void slow_build(void)
 }
 #endif
 
-static int fx_build(int k, FxProg *p, char *err, size_t n)
+// Build `p` into slot `k` of source index `s` (render thread). On success the slot runs it from its own start (TIME
+// from its offset); on failure the program that ran before runs on, untouched.
+static int fx_build(int s, int k, FxProg *p, char *err, size_t n)
 {
 #ifdef PVJ_RENDER_TEST_HOOKS
     slow_build();
@@ -529,9 +530,9 @@ static int fx_build(int k, FxProg *p, char *err, size_t n)
         prog = fx_program(p, p->in, 1, err, n);
         if (!prog) return -1;
         constants = 1;
-        LOG("program in slot %d: built with its values as constants (%s)", k, err2);
+        LOG("program in source %d slot %d: built with its values as constants (%s)", s + 1, k, err2);
     }
-    FxGL *f = &gl[k];
+    FxGL *f = &gl[s][k];
     GLuint keep_tex = f->tex, keep_fbo = f->fbo;
     int keep_w = f->w, keep_h = f->h;
     if (f->prog) { glDeleteProgram(f->prog); count_gl(-1); }
@@ -557,58 +558,71 @@ static int fx_build(int k, FxProg *p, char *err, size_t n)
     return 0;
 }
 
-// The pending loads and clears of the slots, built now (render thread, once a frame).
+static int source_on(int s)
+{
+    for (int k = 0; k < FX_SLOTS; k++)
+        if (gl[s][k].on) return 1;
+    return 0;
+}
+
+// The pending loads and clears of every slot, built now (render thread, once a frame).
 void fx_take(void)
 {
-    for (int k = 0; k < FX_SLOTS; k++) {
-        pthread_mutex_lock(&app.lock);
-        FxSlot *s = &app.fx[k];
-        FxProg *p = s->pending;
-        int clear = s->pending_clear;
-        long asked = s->asked;
-        int any = p || clear;
-        s->pending = NULL;
-        s->pending_clear = 0;
-        pthread_mutex_unlock(&app.lock);
-        if (!any) continue;
-        char err[sizeof s->answer] = "";
-        int ok = 1;
-        if (clear) fx_off(&gl[k]);
-        else if (fx_build(k, p, err, sizeof err)) { ok = 0; fx_prog_free(p); LOG("program in slot %d refused: %s", k, err); }
-        pthread_mutex_lock(&app.lock);
-        if (ok) {
-            s->on = gl[k].on;
-            s->constants = gl[k].constants;
-            if (s->on) {
-                s->kind = gl[k].kind;
-                s->ninputs = gl[k].src->ninputs;
-                memcpy(s->val, gl[k].src->in, sizeof s->val);
-                memcpy(s->ctl, gl[k].src->ctl, sizeof s->ctl);
-                s->values_serial++;
-                gl[k].seen_values = s->values_serial;
-                s->reset_time = 0;
-                s->runs = 0;
-                s->drops = 0;
-                s->rebuilds = 0;
-                s->time = gl[k].time;
-            } else {
-                s->ninputs = 0;
+    for (int s = 0; s < app.nsources; s++)
+        for (int k = 0; k < FX_SLOTS; k++) {
+            pthread_mutex_lock(&app.lock);
+            FxSlot *sl = &app.fx[s][k];
+            FxProg *p = sl->pending;
+            int clear = sl->pending_clear;
+            long asked = sl->asked;
+            int any = p || clear;
+            sl->pending = NULL;
+            sl->pending_clear = 0;
+            pthread_mutex_unlock(&app.lock);
+            if (!any) continue;
+            char err[sizeof sl->answer] = "";
+            int ok = 1;
+            FxGL *f = &gl[s][k];
+            if (clear) fx_off(f);
+            else if (fx_build(s, k, p, err, sizeof err)) {
+                ok = 0;
+                fx_prog_free(p);
+                LOG("program in source %d slot %d refused: %s", s + 1, k, err);
             }
-            snprintf(s->state, sizeof s->state, "%s", s->on ? (s->constants ? "constants" : "on") : "off");
-            s->answer[0] = 0;
-        } else {
-            snprintf(s->answer, sizeof s->answer, "%s", err);
+            pthread_mutex_lock(&app.lock);
+            if (ok) {
+                sl->on = f->on;
+                sl->constants = f->constants;
+                if (sl->on) {
+                    sl->kind = f->kind;
+                    sl->ninputs = f->src->ninputs;
+                    memcpy(sl->val, f->src->in, sizeof sl->val);
+                    memcpy(sl->ctl, f->src->ctl, sizeof sl->ctl);
+                    sl->values_serial++;
+                    f->seen_values = sl->values_serial;
+                    sl->reset_time = 0;
+                    sl->runs = 0;
+                    sl->drops = 0;
+                    sl->rebuilds = 0;
+                    sl->time = f->time;
+                } else {
+                    sl->ninputs = 0;
+                }
+                snprintf(sl->state, sizeof sl->state, "%s", sl->on ? (sl->constants ? "constants" : "on") : "off");
+                sl->answer[0] = 0;
+            } else {
+                snprintf(sl->answer, sizeof sl->answer, "%s", err);
+            }
+            sl->answered = asked;
+            int was = app.native[s];
+            app.native[s] = source_on(s);
+            if (was != app.native[s]) app.level_resync = 1;     // whoever asks next brings the layers' level along
+            sl->w = f->w;
+            sl->h = f->h;
+            if (ok) snprintf(sl->path, sizeof sl->path, "%s", f->on ? fx_prog_path(f->src) : "");
+            pthread_cond_broadcast(&app.cond);
+            pthread_mutex_unlock(&app.lock);
         }
-        s->answered = asked;
-        int was = app.native1;
-        app.native1 = gl[0].on || gl[1].on;
-        if (was != app.native1) app.level_resync = 1;       // whoever asks next brings the layers' level along
-        s->w = gl[k].w;
-        s->h = gl[k].h;
-        if (ok) snprintf(s->path, sizeof s->path, "%s", gl[k].on ? fx_prog_path(gl[k].src) : "");
-        pthread_cond_broadcast(&app.cond);
-        pthread_mutex_unlock(&app.lock);
-    }
 }
 
 static void hue_matrix(float degrees, float m[9])
@@ -668,20 +682,21 @@ static void fx_draw(FxGL *f, GLuint src, double dt)
     fx_quad();
     glUseProgram(0);
     f->frames++;
+    __atomic_add_fetch(&app.fx_passes, 1, __ATOMIC_RELAXED);      // passes drawn (the property gives them a second)
 }
 
 // A program with constants whose values moved: built again with them (at most every FX_REBUILD_GAP).
-static void fx_rebuild(int k, double now)
+static void fx_rebuild(int s, int k, double now)
 {
-    FxGL *f = &gl[k];
+    FxGL *f = &gl[s][k];
     if (now - f->last_build < FX_REBUILD_GAP) return;
     char err[300] = "";
     GLuint prog = fx_program(f->src, f->val, 1, err, sizeof err);
     f->last_build = now;
     if (!prog) {
-        LOG("program in slot %d: the new values were refused: %s", k, err);
+        LOG("program in source %d slot %d: the new values were refused: %s", s + 1, k, err);
         pthread_mutex_lock(&app.lock);
-        snprintf(app.fx[k].state, sizeof app.fx[k].state, "constants; the last values were refused");
+        snprintf(app.fx[s][k].state, sizeof app.fx[s][k].state, "constants; the last values were refused");
         pthread_mutex_unlock(&app.lock);
         f->rebuild = 0;
         return;
@@ -693,44 +708,44 @@ static void fx_rebuild(int k, double now)
     f->dirty = 1;
     fx_locations(f, f->src);
     pthread_mutex_lock(&app.lock);
-    app.fx[k].rebuilds++;
-    snprintf(app.fx[k].state, sizeof app.fx[k].state, "constants");
+    app.fx[s][k].rebuilds++;
+    snprintf(app.fx[s][k].state, sizeof app.fx[s][k].state, "constants");
     pthread_mutex_unlock(&app.lock);
 }
 
-// Source 1's picture after its programs (render thread, once a frame): `picture` is what the layers made (the front
-// layer, or the crossfade's mix), `fresh` whether it is new this frame, `paused` whether the front clip stands still.
-// Returns the texture to show.
-GLuint fx_source1(GLuint picture, int fresh, int paused, double now)
+// One source's picture after its programs (render thread, once a frame): `s` is the source's index (0 is source 1),
+// `picture` what its layers made (source 1: the front layer, or the crossfade's mix), `fresh` whether it is new this
+// frame, `paused` whether its clip stands still. The generator (slot 0) replaces the picture; the effects (slots 1 to
+// FX_SLOTS - 1) run in their order, each over what the one before left. Returns the texture to show.
+GLuint fx_source(int s, GLuint picture, int fresh, int paused, double now)
 {
-    if (!gl[0].on && !gl[1].on) return picture;
-    // this frame's values, in one look per slot
-    long serial[FX_SLOTS];
-    int reset[FX_SLOTS];
-    for (int k = 0; k < FX_SLOTS; k++) {
-        if (!gl[k].on) continue;
+    if (!source_on(s)) return picture;
+    FxGL *slots = gl[s];
+    for (int k = 0; k < FX_SLOTS; k++) {        // this frame's values, in one look per slot
+        FxGL *f = &slots[k];
+        if (!f->on) continue;
         pthread_mutex_lock(&app.lock);
-        FxSlot *s = &app.fx[k];
-        serial[k] = s->values_serial;
-        reset[k] = s->reset_time;
-        s->reset_time = 0;
-        if (serial[k] != gl[k].seen_values) {
-            memcpy(gl[k].val, s->val, sizeof gl[k].val);
-            memcpy(gl[k].ctl, s->ctl, sizeof gl[k].ctl);
+        FxSlot *sl = &app.fx[s][k];
+        long serial = sl->values_serial;
+        int reset = sl->reset_time;
+        sl->reset_time = 0;
+        if (serial != f->seen_values) {
+            memcpy(f->val, sl->val, sizeof f->val);
+            memcpy(f->ctl, sl->ctl, sizeof f->ctl);
         }
         pthread_mutex_unlock(&app.lock);
-        if (serial[k] != gl[k].seen_values) {
-            gl[k].seen_values = serial[k];
-            gl[k].dirty = 1;
-            gl[k].rebuild = gl[k].constants;
+        if (serial != f->seen_values) {
+            f->seen_values = serial;
+            f->dirty = 1;
+            f->rebuild = f->constants;
         }
-        if (reset[k]) gl[k].time = gl[k].ctl[FXC_OFFSET];
-        if (gl[k].rebuild) fx_rebuild(k, now);
+        if (reset) f->time = f->ctl[FXC_OFFSET];
+        if (f->rebuild) fx_rebuild(s, k, now);
     }
     double period = 1.0 / app.fx_fps, slack = app.out_hz > 0 ? 0.25 / app.out_hz : 0.004;
     GLuint pic = picture;
     int new_pic = fresh;
-    FxGL *gen = &gl[0], *eff = &gl[1];
+    FxGL *gen = &slots[0];
     if (gen->on) {
         double dt = gen->last_frame > 0 ? now - gen->last_frame : 0;
         if (dt > FX_DT_MAX) dt = FX_DT_MAX;
@@ -742,8 +757,8 @@ GLuint fx_source1(GLuint picture, int fresh, int paused, double now)
             if (gen->last_run > 0 && since > 1.5 * period) {
                 long lost = (long)(since / period + 0.5) - 1;
                 pthread_mutex_lock(&app.lock);
-                app.fx[0].drops += lost;
-                app.fx_drops += lost;
+                app.fx[s][0].drops += lost;
+                if (s == 0) app.fx_drops += lost;
                 pthread_mutex_unlock(&app.lock);
             }
             fx_draw(gen, 0, gen->last_run > 0 ? since * gen->ctl[FXC_SPEED] : 0);
@@ -751,35 +766,40 @@ GLuint fx_source1(GLuint picture, int fresh, int paused, double now)
             gen->dirty = 0;
             new_pic = 1;
             pthread_mutex_lock(&app.lock);
-            app.fx[0].runs++;
-            app.fx[0].time = gen->time;
+            app.fx[s][0].runs++;
+            app.fx[s][0].time = gen->time;
             pthread_mutex_unlock(&app.lock);
         }
         pic = gen->tex;
     }
-    if (eff->on) {
+    // over a clip that stands still, an effect's TIME stands still too (as it did on classic, counted from the clip's
+    // frames); over a generator it runs with the clock
+    int still = paused && !gen->on;
+    for (int k = 1; k < FX_SLOTS; k++) {
+        FxGL *eff = &slots[k];
+        if (!eff->on) continue;
         double dt = eff->last_frame > 0 ? now - eff->last_frame : 0;
         if (dt > FX_DT_MAX) dt = FX_DT_MAX;
         eff->last_frame = now;
-        // over a clip that stands still, an effect's TIME stands still too (as it did on classic, counted from the
-        // clip's frames); over a generator it runs with the clock
-        if (!(paused && !gen->on)) eff->time += dt * eff->ctl[FXC_SPEED];
+        if (!still) eff->time += dt * eff->ctl[FXC_SPEED];
         if (eff->ctl[FXC_AMOUNT] <= 0.0f) {
             eff->out = pic;                     // amount 0: the picture as it is, and nothing drawn
         } else {
             double since = now - eff->last_run;
             int slot_due = eff->last_run <= 0 || since >= period - slack;
-            int due = eff->clock && slot_due && !(paused && !gen->on);
-            // a new picture runs it at once; a value that moved waits for the next run at the cap (coalesced with the
-            // picture's when one comes first)
-            if (new_pic || (eff->dirty && slot_due) || due || eff->out != eff->tex || eff->last_run <= 0) {
+            int due = eff->clock && slot_due && !still;
+            // a new picture runs it at once (or another picture before it in the chain); a value that moved waits for
+            // the next run at the cap (coalesced with the picture's when one comes first)
+            if (new_pic || (eff->dirty && slot_due) || due || eff->out != eff->tex || eff->last_run <= 0 || eff->last_in != pic) {
                 fx_draw(eff, pic, eff->last_run > 0 ? since * eff->ctl[FXC_SPEED] : 0);
+                eff->last_in = pic;
                 eff->last_run = now;
                 eff->dirty = 0;
                 eff->out = eff->tex;
+                new_pic = 1;                    // the next effect in the chain reads a new picture
                 pthread_mutex_lock(&app.lock);
-                app.fx[1].runs++;
-                app.fx[1].time = eff->time;
+                app.fx[s][k].runs++;
+                app.fx[s][k].time = eff->time;
                 pthread_mutex_unlock(&app.lock);
             }
         }
@@ -788,9 +808,12 @@ GLuint fx_source1(GLuint picture, int fresh, int paused, double now)
     return pic;
 }
 
+int fx_has_generator(int s) { return gl[s][0].on; }
+
 void fx_free_all(void)
 {
-    for (int k = 0; k < FX_SLOTS; k++) fx_off(&gl[k]);
+    for (int s = 0; s < MAX_SOURCES; s++)
+        for (int k = 0; k < FX_SLOTS; k++) fx_off(&gl[s][k]);
     if (fx_vbo) glDeleteBuffers(1, &fx_vbo);
     if (fx_vao) glDeleteVertexArrays(1, &fx_vao);
     fx_vbo = fx_vao = 0;

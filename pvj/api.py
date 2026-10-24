@@ -271,6 +271,8 @@ class Api:
         self.vibes = vibes_mod.Vibes(self, self.shaders)            # the endless rotation; its thread starts on demand
         from . import effects as effects_mod
         self.effects = effects_mod.Effects(self)                    # ISF filters over what plays (see effects.py)
+        from . import fxchain
+        self.chains = fxchain.Chains(self)                          # chains of effects on the New renderer (D106 step b)
         from . import health as health_mod
         self.health = health_mod.Health(self, getattr(player, "rundir", paths.WEB_DIR))     # checks start in server.build
         from . import sync as sync_mod
@@ -5133,6 +5135,9 @@ class Api:
             ("POST", "/api/effects/presets"): ("live", self.effects.api_presets),
             ("POST", "/api/effects/library"): ("live", self.effects.api_library),
             ("POST", "/api/effects/config"): ("live", self.effects.api_config),
+            # chains of effects on any source (D106 step b): the Owner's and an Operator's, as the sources are (D101)
+            ("GET", "/api/effects/chain"): ("live", self.chains.api_get),
+            ("POST", "/api/effects/chain"): ("live", self.chains.api_post),
             ("GET", "/api/projectors"): ("view", self.get_projectors),
             ("POST", "/api/projectors"): ("full", self.set_projectors),
             ("POST", "/api/projector"): ("live", self.projector_action),

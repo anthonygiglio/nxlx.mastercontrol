@@ -200,6 +200,9 @@ class Player:
         # what pvj-render said of each program file it was given.
         self._native_loaded = [None, None]
         self._native_verdicts = {}
+        # The chains of effects (D106 step b): {(source, slot): (path, the player's pid)}, for source 1's slots 2 and 3
+        # (slot 1 is the effects engine's own effect, above) and slots 1 to 3 of sources 2 to N.
+        self._chain = {}
 
     # --- lifecycle -------------------------------------------------------
     def is_running(self):
@@ -435,9 +438,103 @@ class Player:
         self.ipc.request("pvj-source", source, "set_property", "loop-playlist", "inf" if (looping and not single) else "no")
 
     def stop_source(self, source):
-        """Stop source `source` (2 to N): it is idle, and costs nothing again."""
+        """Stop source `source` (2 to N): it is idle, and costs nothing again. Its effects come off with it, as an
+        effect comes off source 1 with Stop (D74, D106)."""
         self._source_ok(source)
         self.ipc.request("pvj-source", source, "stop")
+        self.chain_clear(source)
+
+    # ---- the chains of effects (D106 step b) -------------------------------------------------------------------------
+    CHAIN_SLOTS = 3
+
+    def chain_slots(self, source):
+        """The slots a chain may use on `source`: 2 and 3 on source 1 (slot 1 is the effect of pvj/effects.py), 1 to 3
+        on sources 2 to N."""
+        return (2, 3) if source == 1 else (1, 2, 3)
+
+    def _chain_ok(self, source, slot):
+        if isinstance(source, bool) or not isinstance(source, int) or not 1 <= source <= self.sources():
+            raise PlayerError("this player has no source %s (it has %d)" % (source, self.sources()))
+        if isinstance(slot, bool) or not isinstance(slot, int) or slot not in self.chain_slots(source):
+            raise PlayerError("source %d has no slot %s for an effect (it has %s)" % (source, slot, ", ".join(map(str, self.chain_slots(source)))))
+        if not self.native_chains():
+            raise PlayerError("a chain of effects needs the New renderer")
+
+    def _chain_alive(self):
+        """Forget what a player process that is gone held (its successor holds nothing)."""
+        pid = self._seen_pid
+        for key in [k for k, v in self._chain.items() if v[1] != pid]:
+            del self._chain[key]
+
+    def chain_put(self, source, slot, path):
+        """Put the effect's program file `path` in `slot` of `source`. Returns ("ok" | "refused", message): a program
+        the GPU refuses leaves the one that was there on."""
+        with self._lock:
+            self._chain_ok(source, slot)
+            self._note_pid(self.ipc.request("get_property", "pid"))
+            self._chain_alive()
+            try:
+                self.ipc.request("pvj-shader", "load", source, slot, path, wait=self.NATIVE_LOAD_WAIT)
+            except PlayerError as e:
+                message = str(e)
+                message = message[5:] if message.startswith("mpv: ") else message
+                if message.startswith("the GPU refused") or message == "invalid parameter":
+                    return "refused", message
+                # no word (a slow build): not a refusal; the slot is found again by its path (chain_values)
+                self._chain.pop((source, slot), None)
+                return "unknown", message
+            self._chain[(source, slot)] = (path, self._seen_pid)
+            return "ok", ""
+
+    def _chain_there(self, source, slot, path):
+        """Whether pvj-render says `slot` of `source` holds the program file `path` (after a load that had no word)."""
+        try:
+            rows = self.ipc.request("get_property", "pvj-shaders")
+            return any(isinstance(r, dict) and r.get("source") == source and r.get("slot") == slot and r.get("path") == path for r in rows)
+        except (PlayerError, TypeError):
+            return False
+
+    def chain_values(self, source, slot, values, path=None):
+        """New values for the effect in `slot` of `source`, set while it plays (nothing compiled); with `path`, only
+        while that program is the one there. True if it was done."""
+        with self._lock:
+            self._chain_ok(source, slot)
+            self._chain_alive()
+            have = self._chain.get((source, slot))
+            if have is None and path is not None and self._chain_there(source, slot, path):
+                have = self._chain[(source, slot)] = (path, self._seen_pid)
+            if have is None or (path is not None and have[0] != path):
+                return False
+            self.ipc.request("pvj-shader", "set", source, slot, values)
+            return True
+
+    def chain_clear(self, source, slot=None):
+        """Take the effect in `slot` of `source` off (every slot of it without `slot`). True if one was on, as this
+        side knew it or as the renderer said. The clear is sent for every slot asked whatever this side's record
+        holds: after a load that had no word (a slow build) the renderer may hold an effect this side does not know
+        of, and Stop and Off must take it off all the same (the review of #168)."""
+        with self._lock:
+            self._chain_alive()
+            slots = [slot] if slot is not None else list(self.chain_slots(source))
+            try:
+                rows = self.ipc.request("get_property", "pvj-shaders")
+                there = {(r.get("source"), r.get("slot")) for r in rows if isinstance(r, dict) and r.get("state") not in (None, "off")}
+            except (PlayerError, TypeError, AttributeError):
+                there = set()
+            had = False
+            for k in slots:
+                had = (self._chain.pop((source, k), None) is not None) or ((source, k) in there) or had
+                try:
+                    self.ipc.request("pvj-shader", "clear", source, k)
+                except PlayerError:
+                    pass
+            return had
+
+    def chain_state(self):
+        """{(source, slot): path} of the effects in the chains now (the player's own record; asks nothing)."""
+        with self._lock:
+            self._chain_alive()
+            return {k: v[0] for k, v in self._chain.items()}
 
     def sources_state(self):
         """[{"source", "idle", "path", "height", "pause", "drawn"}] for sources 1 to N; on classic mpv, or a player
@@ -909,6 +1006,8 @@ class Player:
             finally:
                 self._end_source()      # also when the player is down: the screen has changed hands either way
                 self._end_effect(why)
+                if self.native_chains():
+                    self.chain_clear(1)     # source 1's chain (D106 step b) comes off with its effect (never asked of classic)
             self.ipc.request("set_property", "loop-file", "no")
             self.ipc.request("set_property", "loop-playlist", "no")
 
@@ -1156,7 +1255,17 @@ class Player:
         n = state.get("shaders") if isinstance(state, dict) else None
         ok = isinstance(n, int) and not isinstance(n, bool) and n >= 2
         self._native_seen = (pid, ok)
+        self._native_slots = (pid, n if ok else 0)
         return ok
+
+    _native_slots = None            # (pid, slots a source that player process has)
+
+    def native_chains(self):
+        """True if the player runs a chain of effects on any source (D106 step b: pvj-render with 4 slots a source)."""
+        if not self.native_shaders():
+            return False
+        known = self._native_slots
+        return bool(known and known[0] == self._seen_pid and known[1] >= 4)
 
     def _native_slot(self, slot, path):
         """Slot `slot` of source 1 holds the program file `path` (None or an mpv shader: nothing). A refusal is not

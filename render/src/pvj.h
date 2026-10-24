@@ -13,7 +13,7 @@
 #include <GLES3/gl3.h>
 #include <mpv/client.h>
 
-#define PVJ_VERSION "0.4.0"
+#define PVJ_VERSION "0.5.0"
 #define MAX_SHADERS 16
 #define LAYERS 2                    // source 1's video layers (phase 2, D98): the one on screen and the one a crossfade comes in on
 #define MAX_SOURCES 8               // sources (D101): source 1 is LAYERS layers, each other source one layer
@@ -31,7 +31,7 @@ extern const char *const BLEND_NAMES[BLENDS];
 typedef struct Hook Hook;
 
 // The renderer's own shader programs (D106, fx.c): ISF generators and effects with their inputs as uniforms.
-#define FX_SLOTS 2                  // source 1's: 0 the generator, 1 the effect (phase 3, step a)
+#define FX_SLOTS 4                  // per source: 0 the generator (source 1 only, until step d), 1 to 3 its effects in order (D106)
 #define FX_MAX_INPUTS 24
 #define FX_NAME 41                  // an input's name: 32 letters, and the panel's pvj_in_ before it
 enum { FX_GENERATOR, FX_FILTER };
@@ -134,15 +134,18 @@ typedef struct {
     // source 1's own programs (D106): the slots, and the level. While a program is on, source 1's level (the
     // panel's `brightness`) is drawn by the renderer after the programs, so an effect that adds light cannot undo a
     // Blackout; libmpv's own brightness on source 1's layers is then held at 0.
-    FxSlot fx[FX_SLOTS];
-    int native1;                    // a program is on (the render thread says, under app.lock)
-    int level_native;               // the socket's side: source 1's layers have brightness 0, the level is drawn here
-    double level;                   // brightness as last set on the socket, -100 to 100
+    FxSlot fx[MAX_SOURCES][FX_SLOTS];   // by source index (0 is source 1) and slot
+    int native[MAX_SOURCES];        // the source has a program on (the render thread says, under app.lock)
+    int level_native[MAX_SOURCES];  // the socket's side: the source's layers have brightness 0, its level is drawn here
+    double level[MAX_SOURCES];      // each source's brightness as last set on the socket, -100 to 100 (D101: the panel's
+                                    // level reaches every source; a source's own lasts until the next change of it)
     double fx_fps;
     long fx_drops;                  // generator frames that came late (always added to frame-drop-count: it only rises)
     int level_resync;               // the render thread turned a program on or off: the next client syncs the level
+    long fx_passes;                 // the programs' passes drawn so far (atomics)
+    double fx_passes_rate;          // ... a second, over the last second (the render thread, under app.lock)
     long fx_gl;                     // GL objects of the programs (atomics)
-    int paused[LAYERS];             // source 1's layers' pause, as observed (atomics)
+    int paused[MAX_LAYERS];         // each layer's pause, as observed (atomics)
     // a screenshot while a program is on: the renderer's own picture of source 1, not libmpv's layer. The render
     // thread only reads the pixels back (into a pixel buffer, mapped on the next frame); the client's thread that
     // asked encodes them and writes the file, so the screen never waits for an encoder (the review of #167).
@@ -191,6 +194,7 @@ typedef struct {
     int src[MAX_SOURCES];
     GLint src_loc[MAX_SOURCES];
     GLint src_opacity_loc[MAX_SOURCES];     // SOURCEk_opacity: the source's mix, set every frame
+    GLint src_level_loc[MAX_SOURCES];       // SOURCEk_level: its level while it has a program on (D106), else 0
 } HookGL;
 int hookgl_build(const Hook *h, HookGL *g, char *err, size_t n);
 void hookgl_free(HookGL *g);
@@ -207,7 +211,8 @@ int fx_prog_kind(const FxProg *p);
 int fx_set_value(FxSlot *s, const char *name, const mpv_node *v);
 void fx_init(void);
 void fx_take(void);
-GLuint fx_source1(GLuint picture, int fresh, int paused, double now);
+GLuint fx_source(int s, GLuint picture, int fresh, int paused, double now);
+int fx_has_generator(int s);
 void fx_free_all(void);
 
 // pictures to files (still.c): rows of RGB, top row first

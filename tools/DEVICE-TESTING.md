@@ -727,6 +727,17 @@ Everything of D106 ran on a software GPU in a 320 x 180 headless window. Before:
 | FX9 | The panel's preview (the Live page's snapshot) with a generator and with an effect on, watched for a minute (a preview every 3 s) | The snapshot shows the shader and the effect, at the screen's size; no stutter on the screen as each preview is taken | The time of one preview at 1920 x 1080; `missed-vblanks` during the minute against a minute without the Live page open |
 | FX10 | 200 changes of shader through Vibes' Next (a controller or the page) and 500 value changes; then the counts | `fx-gl-objects` back to what it was with the same shader on, descriptors and threads as before (`ls /proc/PID/fd \| wc -l`, `/task`) | The counts before and after |
 
+### pvj-render phase 3, step b (D106): chains of effects, never run on a Pi
+
+As the step a rows, with `--sources=4` (the renderer card's 4 sources) and a mapping of four quads, one a source. The chain is put on with `POST /api/effects/chain` (`curl` with the Owner's token, or the browser's console), as the panel has no control for it before step e.
+
+| # | Do | Look for | Send back |
+| --- | --- | --- | --- |
+| FX11 | Four 720p clips on Sources 1 to 4, one effect on each (fx-grade), 2 minutes | Every quad shows its clip graded; no stutter | Missed vblanks a second, the GPU's share, the CPU, against the same four clips with no effect |
+| FX12 | Three effects on Source 2 (fx-grade, isf-rgb-invert, fx-vignette) while Sources 1, 3 and 4 play | The order shows (the vignette dark at the edges after the invert); no stutter | As FX11 |
+| FX13 | Blackout, then Fade in, with an inverting effect on Source 3 | Source 3's quad black under Blackout (never white), and up with the others | Anything lit under Blackout |
+| FX14 | Stop on Source 2 in the Sources strip with its chain on; then play a clip to it again | The chain is off with the Stop; the new clip plays plain | Yes or no |
+
 ### What to send back
 
 The output of checks 1 to 7 and 13, the `journalctl` tail for anything that failed, and a note of what you saw on screen. Say clearly what you did **not** test.
