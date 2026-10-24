@@ -1,0 +1,561 @@
+# SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+# SPDX-License-Identifier: Apache-2.0
+"""The New renderer's own shader programs (D106, phase 3 step a): generators and effects run by pvj-render itself,
+with their inputs as uniforms set every frame, run for real (headless, Mesa's software GPU) like tests/test_pvj_render.
+
+What is held here:
+* the program file the panel writes (pvj/shaders.py and pvj/effects.py, translate_native) and what pvj-render's
+  reader refuses;
+* every bundled generator and effect drawn by pvj-render's own program against the same shader drawn by libmpv inside
+  the same pvj-render (the path the New renderer had before), by the pixels, within the tolerance below;
+* the level after the programs (the panel's brightness, a Blackout under an effect that adds light);
+* values that move without a build, many times, with nothing growing; TIME that does not jump;
+* a code that cannot take its inputs as uniforms, built with constants; refusals; the rate cap;
+* the screenshots the panel takes (the crossfade's still, the preview), written by the renderer itself;
+* the panel's engines (shaders.LiveEngine, effects.Effects) on the real program through the real Player.
+
+The pixel tolerance, and why. Both paths compute the same code in the same precision on the same GPU; what differs is
+where the 8-bit roundings fall (libmpv keeps 8-bit buffers between its passes and dithers its output, the renderer has
+one 8-bit target) and the order of the float operations. Measured over all 47 generators and 37 effects at 320 x 180
+on a smooth picture (2026-10-23): every generator within 2 levels everywhere (the 99th percentile 1), every effect
+within 3 at the 99th percentile and on average under 0.5. The exception is an effect that is a step of its input (a
+threshold, a quantizing, a dot's edge: isf-duotone, isf-posterize, isf-rgb-halftone): a pixel that sits on a step goes
+one way or the other on the smallest difference, and isf-rgb-halftone, whose dots are all edge, had 1.9 percent of its
+channels more than 3 apart. So: the 99th percentile at most 3, the mean at most 0.6 and at most 0.5 percent of the
+channels more than 3 apart; for those three, the 99th percentile at most 8 and at most 3 percent apart.
+"""
+import glob
+import os
+import shutil
+import subprocess
+import tempfile
+import time
+import unittest
+
+import tests        # the run's own temp folder (tests/__init__.py)
+from pvj import effects as E, paths, shaders as S
+from pvj.player import Player, PlayerError, is_program
+from pvj.transitions import read_still
+from tests.test_pvj_render import BIN, H, STRICT, W, Renderer, fd_count, need_program, png, thread_count
+
+REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+GENERATORS = sorted(glob.glob(os.path.join(REPO, "pvj", "shaders.d", "*.fs")) + glob.glob(os.path.join(REPO, "pvj", "shaders.d", "*", "*.fs")))
+EFFECTS = sorted(glob.glob(os.path.join(REPO, "pvj", "effects.d", "*.fs")) + glob.glob(os.path.join(REPO, "pvj", "effects.d", "*", "*.fs")))
+P99, MEAN, OFF_SHARE = 3, 0.6, 0.005
+STEPS = {"isf-duotone.fs", "isf-posterize.fs", "isf-rgb-halftone.fs"}     # effects that are a step of their input (above)
+
+FLAT = "/*{\"INPUTS\": [{\"NAME\": \"level\", \"TYPE\": \"float\", \"DEFAULT\": 0.25},\n" \
+       " {\"NAME\": \"lit\", \"TYPE\": \"bool\", \"DEFAULT\": true},\n" \
+       " {\"NAME\": \"tint\", \"TYPE\": \"color\", \"DEFAULT\": [1.0, 0.5, 0.0, 1.0]}]}*/\n" \
+       "void main() { gl_FragColor = vec4(level, lit ? 0.5 : 0.0, tint.b, 1.0); }\n"
+# TIME as a colour: red is TIME / 100, so 1/255 of red is 0.39 s
+CLOCK = "/*{}*/\nvoid main() { gl_FragColor = vec4(fract(TIME / 100.0), 0.0, 0.0, 1.0); }\n"
+# an input in a constant expression: GLSL takes no uniform there, so this one is built with constants
+CONST = "/*{\"INPUTS\": [{\"NAME\": \"level\", \"TYPE\": \"float\", \"DEFAULT\": 0.25}]}*/\n" \
+        "const float k = level * 2.0;\nvoid main() { gl_FragColor = vec4(k, 0.0, 0.0, 1.0); }\n"
+INVERT = "/*{\"INPUTS\": [{\"NAME\": \"inputImage\", \"TYPE\": \"image\"}]}*/\n" \
+         "void main() { vec4 c = IMG_THIS_PIXEL(inputImage); gl_FragColor = vec4(1.0 - c.rgb, 1.0); }\n"
+
+
+def channel_diff(a, b):
+    d = sorted(abs(x - y) for x, y in zip(a[2], b[2]))
+    n = len(d)
+    return {"max": d[-1], "p99": d[int(n * 0.99)], "mean": sum(d) / n, "off": sum(1 for x in d if x > P99) / n}
+
+
+def gradient(x, y):
+    """A smooth picture with every channel moving (a clip's picture is smooth almost everywhere)."""
+    return ((x * 255) // (W - 1), (y * 255) // (H - 1), ((W - 1 - x + y) * 255) // (W + H - 2))
+
+
+class NativeBase(unittest.TestCase):
+    ARGS = ()
+
+    def setUp(self):
+        need_program(self)
+        self.tmp = tempfile.mkdtemp(prefix="pvj-native-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.r = Renderer(*self.ARGS)
+        self.addCleanup(lambda: self.r.close())
+        self.r("set_property", "image-display-duration", "inf")
+        self.n = 0
+
+    def write(self, text, ext=".prog"):
+        self.n += 1
+        path = os.path.join(self.tmp, "p%d%s" % (self.n, ext))
+        with open(path, "w") as f:
+            f.write(text)
+        return path
+
+    def generator(self, source, size=(W, H), **kw):
+        return self.write(S.translate_native(S.parse(source), size, **kw))
+
+    def effect(self, source, **kw):
+        return self.write(E.translate_native(S.parse(source, S.FILTER), **kw))
+
+    def slot(self, k):
+        return self.r("get_property", "pvj-shaders")[k]
+
+    def steady(self, before=None, seconds=8.0):
+        """A capture once two in a row are the same (and differ from `before`, when given)."""
+        last = self.r.capture()
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            time.sleep(0.15)
+            cur = self.r.capture()
+            if cur[2] == last[2] and (before is None or cur[2] != before[2]):
+                return cur
+            last = cur
+        return last
+
+    def carrier(self):
+        self.r("set_property", "fbo-format", "rgba8")          # as Player._apply_fbo sets it under a generator
+        self.r("loadfile", S.carrier_url((W, H), False), "replace")
+        self.r.wait(lambda: self.r.playing() is not None)
+
+    def picture(self):
+        pic = os.path.join(self.tmp, "gradient.png")
+        png(pic, W, H, gradient)
+        self.r.load(pic)
+        return pic
+
+    def assertNear(self, a, b, what):
+        d = channel_diff(a, b)
+        p99, off = (8, 0.03) if what in STEPS else (P99, OFF_SHARE)
+        self.assertTrue(d["p99"] <= p99 and d["mean"] <= MEAN and d["off"] <= off, "%s: %s" % (what, d))
+        return d
+
+
+class ProgramFileTest(unittest.TestCase):
+    """What the panel writes; no renderer needed."""
+
+    def test_a_generator_file(self):
+        text = S.translate_native(S.parse(FLAT), (320, 180), {"level": 0.75}, hue=10.0, offset=2.0, speed=0.5, gain=1.5)
+        lines = text.split("\n")
+        self.assertEqual(lines[:4], ["//!PVJ 1", "//!KIND generator", "//!SIZE 320 180", "//!LINE 3"])
+        self.assertIn("//!INPUT float level 0.75", lines)
+        self.assertIn("//!INPUT bool lit 1", lines)
+        self.assertIn("//!INPUT color tint 1.0 0.5 0.0 1.0", lines)
+        for c in ("//!CONTROL speed 0.5", "//!CONTROL hue 10.0", "//!CONTROL gain 1.5", "//!CONTROL offset 2.0"):
+            self.assertIn(c, lines)
+        code = text.split("//!CODE\n", 1)[1]
+        self.assertIn("void pvj_main()", code)
+        self.assertNotIn("//!", code)
+        self.assertNotIn("const float level", text)            # a uniform in the renderer, never a constant here
+
+    def test_an_effect_file(self):
+        text = E.translate_native(S.parse(INVERT, S.FILTER), controls={"amount": 0.5, "speed": 2.0})
+        self.assertTrue(text.startswith("//!PVJ 1\n//!KIND filter\n//!CLOCK 0\n"))
+        self.assertIn("//!CONTROL amount 0.5", text)
+        self.assertIn("pvj_img_this()", text)
+
+    def test_values_by_the_name_in_the_code(self):
+        parsed = S.parse(FLAT.replace("\"lit\"", "\"time\"").replace("lit ?", "time ?"))
+        self.assertEqual(S.native_values(parsed, {"time": True, "level": 1}), {"pvj_in_time": True, "level": 1.0})
+        sent = S.native_send(parsed, {"level": 0.5}, {})
+        self.assertEqual(sent, {"level": 0.5, "pvj_in_time": True, "tint": [1.0, 0.5, 0.0, 1.0]})
+
+    def test_a_program_is_told_from_an_mpv_shader(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        a, b = os.path.join(d, "a"), os.path.join(d, "b")
+        with open(a, "w") as f:
+            f.write(S.BLACK_NATIVE)
+        with open(b, "w") as f:
+            f.write(S.BLACK)
+        self.assertTrue(is_program(a) and S.is_program(a))
+        self.assertFalse(is_program(b) or is_program(os.path.join(d, "none")) or is_program(None))
+
+
+class ParityTest(NativeBase):
+    """Every bundled shader, drawn by pvj-render's own program and by libmpv in the same process (D106's parity)."""
+
+    def mpv_shot(self, text):
+        self.r("set_property", "glsl-shaders", [])
+        base = self.steady()
+        self.r("set_property", "glsl-shaders", [self.write(text, ".glsl")])     # a new file each time: mpv keeps compiled files by name
+        shot = self.steady(base)
+        self.r("set_property", "glsl-shaders", [])
+        return shot
+
+    def test_every_generator(self):
+        self.carrier()
+        worst = []
+        for f in GENERATORS:
+            with self.subTest(shader=os.path.basename(f)):
+                parsed = S.parse(open(f, encoding="utf-8").read())
+                self.r("pvj-shader", "clear", 1, 0)
+                a = self.mpv_shot(S.translate(parsed, (W, H), speed=0.0, offset=2.5, desc="nxlx shader %d" % self.n))
+                self.r("pvj-shader", "load", 1, 0, self.write(S.translate_native(parsed, (W, H), speed=0.0, offset=2.5)))
+                b = self.steady()
+                self.assertEqual(self.slot(0)["state"], "on")
+                worst.append((self.assertNear(a, b, os.path.basename(f))["p99"], os.path.basename(f)))
+        self.assertEqual(len(worst), len(GENERATORS))
+        print("\n  generators, native against libmpv: worst p99 %s" % (max(worst),))
+
+    def test_every_effect(self):
+        self.picture()
+        worst = []
+        for f in EFFECTS:
+            with self.subTest(effect=os.path.basename(f)):
+                parsed = S.parse(open(f, encoding="utf-8").read(), S.FILTER)
+                self.r("pvj-shader", "clear", 1, 1)
+                text = E.translate(parsed, controls={"speed": 0.0}, picture={"matrix": "rgb", "levels": "full", "fps": 30},
+                                   desc="nxlx effect %d" % self.n)
+                self.r("set_property", "glsl-shaders", [self.write(text, ".glsl")])
+                # an effect at its defaults may leave the picture as it is (a gamma of 1): wait for the build, then for
+                # two captures alike
+                time.sleep(0.5)
+                a = self.steady()
+                self.r("set_property", "glsl-shaders", [])
+                self.r("pvj-shader", "load", 1, 1, self.write(E.translate_native(parsed, controls={"speed": 0.0})))
+                b = self.steady()
+                self.assertEqual(self.slot(1)["state"], "on")
+                worst.append((self.assertNear(a, b, os.path.basename(f))["p99"], os.path.basename(f)))
+        self.assertEqual(len(worst), len(EFFECTS))
+        print("\n  effects, native against libmpv: worst p99 %s" % (max(worst),))
+
+
+class LevelTest(NativeBase):
+    """The panel's level (brightness) after the programs (D106)."""
+
+    def test_the_level_is_mpvs_within_a_level(self):
+        self.picture()
+        prog = self.effect(INVERT, controls={"amount": 0.0})         # on, and drawing nothing: only the level moves
+        for b in (-100, -60, -25, -5, 0, 5, 25, 60, 100):
+            with self.subTest(brightness=b):
+                self.r("pvj-shader", "clear", 1, 1)
+                self.r("set_property", "brightness", b)
+                a = self.steady()
+                self.r("pvj-shader", "load", 1, 1, prog)
+                n = self.steady()
+                self.assertLessEqual(channel_diff(a, n)["max"], 1, b)
+                self.assertEqual(self.r("get_property", "brightness"), b)     # what the panel reads back
+
+    def test_a_blackout_holds_under_an_effect_that_adds_light(self):
+        self.picture()
+        self.r("pvj-shader", "load", 1, 1, self.effect(INVERT))
+        self.r("set_property", "brightness", -100)
+        shot = self.steady()
+        self.assertEqual(max(shot[2]), 0, "an inverting effect undid the Blackout")
+        self.r("set_property", "brightness", 0)
+        self.r.wait(lambda: self.r.pixel(5, 5) != (0, 0, 0), 5)
+        self.assertGreater(min(self.r.pixel(5, 5)), 200)            # the gradient's dark corner, inverted
+        # off again: the layers have the level back, as before
+        self.r("set_property", "brightness", -100)
+        self.r("pvj-shader", "clear", 1, 1)
+        self.assertEqual(max(self.steady()[2]), 0)
+        self.assertEqual(self.r("get_property", "brightness"), -100)
+
+
+class ValuesTest(NativeBase):
+    def test_values_move_without_a_build_and_nothing_grows(self):
+        self.carrier()
+        self.r("pvj-shader", "load", 1, 0, self.generator(FLAT))
+        self.r.wait(lambda: self.r.pixel(10, 10)[0] in range(60, 70), 5)
+        self.assertEqual(self.r.pixel(10, 10)[:2], (64, 128))
+        for v in (0.0, 1.0, 0.5):
+            self.r("pvj-shader", "set", 1, 0, {"level": v, "lit": v > 0.6})
+            want = (round(v * 255), 128 if v > 0.6 else 0)
+            self.assertTrue(self.r.wait(lambda: abs(self.r.pixel(10, 10)[0] - want[0]) <= 1 and self.r.pixel(10, 10)[1] in (want[1], want[1] - 1, want[1] + 1), 3),
+                            (v, self.r.pixel(10, 10)))
+        self.r("pvj-shader", "set", 1, 0, {"tint": [0.0, 0.0, 1.0, 1.0]})
+        self.assertTrue(self.r.wait(lambda: self.r.pixel(10, 10)[2] >= 254, 3))
+        start = (fd_count(self.r.pid), thread_count(self.r.pid), self.r("get_property", "pvj-render")["fx-gl-objects"],
+                 self.r("get_property", "pvj-render")["gl-objects"])
+        runs = self.slot(0)["runs"]
+        for i in range(2000):
+            self.r("pvj-shader", "set", 1, 0, {"level": (i % 256) / 255.0, "@hue": float(i % 360)})
+        self.r("pvj-shader", "set", 1, 0, {"level": 0.2, "@hue": 0.0})
+        self.assertTrue(self.r.wait(lambda: abs(self.r.pixel(10, 10)[0] - 51) <= 1, 3))
+        s = self.slot(0)
+        self.assertEqual((s["state"], s["rebuilds"]), ("on", 0))
+        self.assertGreater(s["runs"], runs)
+        after = (fd_count(self.r.pid), thread_count(self.r.pid), self.r("get_property", "pvj-render")["fx-gl-objects"],
+                 self.r("get_property", "pvj-render")["gl-objects"])
+        self.assertEqual(start, after)
+
+    def test_time_never_jumps_and_speed_zero_stands(self):
+        self.carrier()
+        self.r("pvj-shader", "load", 1, 0, self.generator(CLOCK, offset=10.0))
+        t0 = self.slot(0)["time"]
+        self.assertGreaterEqual(t0, 10.0)
+        last = t0
+        for speed in (2.0, 0.5, 4.0, 1.0):
+            self.r("pvj-shader", "set", 1, 0, {"@speed": speed})
+            for _ in range(5):
+                time.sleep(0.1)
+                t = self.slot(0)["time"]
+                self.assertGreaterEqual(t, last)
+                self.assertLess(t - last, 0.1 * 4 * 3 + 0.5, (speed, last, t))     # never more than the pace allows
+                last = t
+        self.r("pvj-shader", "set", 1, 0, {"@speed": 0.0})
+        time.sleep(0.2)
+        a = self.slot(0)["time"]
+        time.sleep(0.5)
+        self.assertEqual(self.slot(0)["time"], a)
+        self.r("pvj-shader", "set", 1, 0, {"@offset": 50.0})
+        self.assertTrue(self.r.wait(lambda: self.slot(0)["time"] == 50.0, 3))
+        self.assertTrue(self.r.wait(lambda: abs(self.r.pixel(5, 5)[0] - 128) <= 1, 3), self.r.pixel(5, 5))
+
+    def test_constants_when_the_code_needs_them(self):
+        self.carrier()
+        self.r("pvj-shader", "load", 1, 0, self.generator(CONST))
+        self.assertEqual(self.slot(0)["state"], "constants")
+        self.assertTrue(self.r.wait(lambda: abs(self.r.pixel(5, 5)[0] - 128) <= 1, 3))
+        self.r("pvj-shader", "set", 1, 0, {"level": 0.1})
+        self.assertTrue(self.r.wait(lambda: abs(self.r.pixel(5, 5)[0] - 51) <= 1, 3), self.r.pixel(5, 5))
+        self.assertGreaterEqual(self.slot(0)["rebuilds"], 1)
+
+    def test_a_generator_runs_at_its_rate_and_an_effect_only_on_a_change(self):
+        self.carrier()
+        self.r("pvj-shader", "load", 1, 0, self.generator(CLOCK))
+        a, t = self.slot(0)["runs"], time.monotonic()
+        time.sleep(2.0)
+        rate = (self.slot(0)["runs"] - a) / (time.monotonic() - t)
+        self.assertLess(rate, 33, rate)                 # 30 a second at most (--fx-fps), on a 60 Hz clock
+        self.assertGreater(rate, 15, rate)
+        self.r("pvj-shader", "clear", 1, 0)
+        self.picture()
+        self.r("pvj-shader", "load", 1, 1, self.effect(INVERT))
+        time.sleep(0.5)
+        a = self.slot(1)["runs"]
+        time.sleep(1.0)
+        self.assertLessEqual(self.slot(1)["runs"] - a, 1, "an effect without a clock over a still picture ran again")
+        self.r("pvj-shader", "set", 1, 1, {"@amount": 0.5})
+        self.assertTrue(self.r.wait(lambda: self.slot(1)["runs"] > a, 2))
+
+
+class ManyLoadsTest(NativeBase):
+    def test_loads_and_clears_leave_nothing_behind(self):
+        self.picture()
+        gen, eff = self.generator(FLAT), self.effect(INVERT)
+        counts = []
+        for i in range(260):
+            self.r("pvj-shader", "load", 1, i % 2, gen if i % 2 == 0 else eff)
+            if i % 3 == 0:
+                self.r("pvj-shader", "set", 1, i % 2, {"level": 0.5} if i % 2 == 0 else {"@amount": 0.5})
+            if i % 4 == 3:
+                self.r("pvj-shader", "clear", 1, 0)
+                self.r("pvj-shader", "clear", 1, 1)
+            if i in (59, 119, 179, 259):
+                self.r("pvj-shader", "clear", 1, 0)
+                self.r("pvj-shader", "clear", 1, 1)
+                time.sleep(0.3)
+                st = self.r("get_property", "pvj-render")
+                counts.append((fd_count(self.r.pid), thread_count(self.r.pid), st["fx-gl-objects"], st["gl-objects"]))
+        self.assertEqual(counts[-1][2], 0, counts)                  # every program, texture and framebuffer given back
+        for c in counts[1:]:
+            self.assertEqual(c[:3], counts[0][:3], counts)
+            self.assertLessEqual(abs(c[3] - counts[0][3]), 2, counts)   # libmpv's own, untouched by this
+
+
+class ClassicTest(unittest.TestCase):
+    """Classic mpv (D105): the shader list it is sent is what it was, and it is never sent a program or a pvj-shader."""
+
+    class Recorder:
+        def __init__(self):
+            self.sent = []
+
+        def request(self, *command):
+            self.sent.append(command)
+            if command[:2] == ("get_property", "pid"):
+                return 4242
+            if command[:2] == ("get_property", "pvj-render"):
+                raise PlayerError("mpv: property not found")
+            if command[:2] == ("get_property", "path"):
+                return "av://carrier"
+            return None
+
+    def test_classic_gets_the_list_it_always_got(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        p = Player(rundir=d)
+        p.ipc = self.Recorder()
+        src, fx, mapping = (os.path.join(d, n) for n in ("src.glsl", "fx.glsl", "map.glsl"))
+        for path, text in ((src, S.BLACK), (fx, S.BLACK), (mapping, S.BLACK)):
+            with open(path, "w") as f:
+                f.write(text)
+        p._source, p._source_pid, p._carrier = src, 4242, "av://carrier"
+        p._effect, p._effect_pid = fx, 4242
+        p._seen_pid = 4242
+        p.set_shaders([mapping])
+        lists = [c[2] for c in p.ipc.sent if c[:2] == ("set_property", "glsl-shaders")]
+        self.assertEqual(lists, [[src, fx, mapping]])
+        self.assertFalse(p.native_shaders())
+        self.assertFalse(any(c[0] == "pvj-shader" for c in p.ipc.sent))
+        # a program file that reached a classic player (a fallback in between) is never put in its list
+        prog = os.path.join(d, "prog")
+        with open(prog, "w") as f:
+            f.write(S.BLACK_NATIVE)
+        p._source = prog
+        p.set_shaders([mapping])
+        self.assertEqual([c[2] for c in p.ipc.sent if c[:2] == ("set_property", "glsl-shaders")][-1], [fx, mapping])
+        self.assertFalse(any(c[0] == "pvj-shader" for c in p.ipc.sent))
+
+
+class RefusalTest(NativeBase):
+    def test_what_the_reader_and_the_socket_refuse(self):
+        good = S.translate_native(S.parse(FLAT), (W, H))
+        link = os.path.join(self.tmp, "link.prog")
+        os.symlink(self.write(good), link)
+        bad = {
+            "no head": good.replace("//!PVJ 1", "//!PVJ 2"),
+            "two kinds": good.replace("//!KIND generator", "//!KIND sometimes"),
+            "a name": good.replace("//!INPUT float level", "//!INPUT float gl_level"),
+            "a wrapper's name": good.replace("//!INPUT float level", "//!INPUT float TIME"),
+            "a value": good.replace("//!INPUT float level 0.25", "//!INPUT float level nan"),
+            "too many numbers": good.replace("//!INPUT float level 0.25", "//!INPUT float level 0.25 1"),
+            "a directive in the code": good + "//!HOOK MAIN\n",
+            "a backslash": good + "#define A \\\n",
+            "no size": good.replace("//!SIZE 320 180\n", ""),
+            "a size too large": good.replace("//!SIZE 320 180", "//!SIZE 9000 180"),
+            "an unknown directive": good.replace("//!LINE", "//!PASS 1\n//!LINE"),
+        }
+        for what, text in bad.items():
+            with self.subTest(what):
+                with self.assertRaises(PlayerError):
+                    self.r("pvj-shader", "load", 1, 0, self.write(text))
+        big = self.write(good + "//" + "x" * (70 * 1024) + "\n")
+        for what, cmd in {"a link": ["load", 1, 0, link], "too large": ["load", 1, 0, big],
+                          "an effect in the generator's slot": ["load", 1, 0, self.effect(INVERT)],
+                          "a generator in the effect's slot": ["load", 1, 1, self.write(good)],
+                          "source 2": ["load", 2, 0, self.write(good)], "slot 2": ["load", 1, 2, self.write(good)],
+                          "a relative path": ["load", 1, 0, "p1.prog"], "a word": ["reload", 1, 0, "/x"]}.items():
+            with self.subTest(what):
+                with self.assertRaises(PlayerError):
+                    self.r("pvj-shader", *cmd)
+        self.assertEqual(self.slot(0)["state"], "off")
+        self.carrier()
+        self.r("pvj-shader", "load", 1, 0, self.write(good))
+        for what, values in {"an unknown name": {"nothing": 1.0}, "a word": {"level": "high"}, "a list for a float": {"level": [1.0]},
+                             "two for a colour": {"tint": [1.0, 0.0]}, "2 for a bool": {"lit": 2}, "a control": {"@volume": 1.0},
+                             "half of it good": {"level": 0.5, "nothing": 1.0}}.items():
+            with self.subTest(what):
+                with self.assertRaises(PlayerError):
+                    self.r("pvj-shader", "set", 1, 0, values)
+        time.sleep(0.3)
+        self.assertEqual(self.r.pixel(10, 10)[0], 64)            # all or nothing: "half of it good" moved nothing
+
+    def test_a_refused_program_leaves_the_one_before_on(self):
+        self.carrier()
+        self.r("pvj-shader", "load", 1, 0, self.generator(FLAT))
+        self.r.wait(lambda: self.r.pixel(10, 10)[0] == 64, 3)
+        broken = S.translate_native(S.parse(FLAT), (W, H)).replace("vec4(level", "vec4(nonsense")
+        with self.assertRaises(PlayerError) as e:
+            self.r("pvj-shader", "load", 1, 0, self.write(broken))
+        self.assertIn("nonsense", str(e.exception))
+        self.assertIn("GPU refused", str(e.exception))
+        time.sleep(0.3)
+        self.assertEqual(self.slot(0)["state"], "on")
+        self.assertEqual(self.r.pixel(10, 10)[0], 64)
+
+
+class StillTest(NativeBase):
+    """The panel's screenshots while a program is on: the renderer's own picture, not libmpv's carrier."""
+
+    def test_the_crossfades_still_and_the_preview(self):
+        self.carrier()
+        self.r("pvj-shader", "load", 1, 0, self.generator(FLAT))
+        self.r.wait(lambda: self.r.pixel(10, 10)[0] == 64, 3)
+        path = os.path.join(self.tmp, "still.png")
+        open(path, "w").close()                         # the panel makes the file; the player writes over it
+        self.r("screenshot-to-file", path, "window")
+        w, h, px = read_still(path, (W, H))             # the crossfade's own reader (pvj/transitions.py)
+        self.assertEqual((w, h), (W, H))
+        self.assertTrue(all(abs(a - b) <= 1 for a, b in zip(px[0:3], (0, 128, 64))), tuple(px[0:3]))   # BGRA of FLAT's (64, 128, 0)
+        jpg = os.path.join(self.tmp, "preview.jpg")
+        self.r("screenshot-to-file", jpg, "window")
+        with open(jpg, "rb") as f:
+            data = f.read()
+        self.assertTrue(data.startswith(b"\xff\xd8") and data.endswith(b"\xff\xd9"))
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            if STRICT:
+                self.fail("PVJ_RENDER_TEST=1 and no ffmpeg to read the JPEG back")
+            self.skipTest("no ffmpeg to read the JPEG back")
+        raw = subprocess.run([ffmpeg, "-v", "error", "-i", jpg, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True, check=True).stdout
+        self.assertEqual(len(raw), W * H * 3)
+        mean = [sum(raw[c::3]) / (W * H) for c in range(3)]
+        for got, want in zip(mean, (64, 128, 0)):
+            self.assertLess(abs(got - want), 3, mean)
+        self.r("pvj-shader", "clear", 1, 0)
+        self.r("screenshot-to-file", path, "window")    # with nothing on, libmpv's own screenshot as before
+        self.assertTrue(os.path.getsize(path) > 0)
+        self.r("pvj-shader", "load", 1, 0, self.generator(FLAT))
+        with self.assertRaises(PlayerError):            # a file ending the renderer does not write
+            self.r("screenshot-to-file", os.path.join(self.tmp, "still.bmp"), "window")
+
+
+class EngineTest(NativeBase):
+    """The panel's own engines on the real program, through the real Player (pvj/shaders.py, pvj/effects.py)."""
+
+    def setUp(self):
+        need_program(self)
+        from tests.test_server import ServerBase
+        self.server = ServerBase("run")
+        self.server.setUp()
+        self.addCleanup(self.server.doCleanups)
+        rundir = self.server.rundir
+        self.tmp = tempfile.mkdtemp(prefix="pvj-native-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.r = Renderer()
+        self.addCleanup(lambda: self.r.close())
+        os.symlink(self.r.sock, os.path.join(rundir, paths.PLAYER_SOCKET))
+        self.n = 0
+        self.api = self.server.api
+        self.player = Player(rundir=rundir)
+        self.api.player = self.player
+        self.api.registry.set_enabled("shaders", True)
+        self.api.shaders.log = self.api.effects.log = lambda *_: None
+        self.player.ipc.request("set_property", "image-display-duration", "inf")
+
+    def test_a_generator_and_its_values_and_an_effect_over_it(self):
+        self.assertTrue(self.player.native_shaders())
+        out = self.api.shaders.play("nxlx-silk.fs")
+        self.assertTrue(out.get("ok"), out)
+        p = self.api.shaders.playing
+        self.assertTrue(p["native"] and is_program(p["path"]) and p["anchor"] is None)
+        self.assertEqual(self.player.ipc.request("get_property", "glsl-shaders"), [])     # nothing in libmpv's list
+        self.assertEqual(self.slot(0)["state"], "on")
+        self.assertEqual(self.player.native_verdict(p["path"]), ("ok", ""))
+        before = self.steady()
+        runs = self.slot(0)["runs"]
+        for v in (0.1, 0.9, 0.3):
+            self.api.shaders.change({"values": {"sheen": v}, "controls": {"hue": 120.0}})
+        self.assertTrue(self.r.wait(lambda: not self.api.shaders.changer.pending(), 3))
+        time.sleep(0.3)
+        self.assertEqual(self.api.shaders.playing["path"], p["path"])      # no new text
+        self.assertEqual(self.slot(0)["rebuilds"], 0)
+        self.assertGreater(self.slot(0)["runs"], runs)
+        self.assertNotEqual(self.r.capture()[2], before[2])
+        # an effect over it, run by the renderer too, and its amount moved without a build
+        put = self.api.effects.put("fx-grade.fs")
+        self.assertTrue(put["ok"], put)
+        on = self.api.effects.on
+        self.assertTrue(on["native"])
+        self.assertEqual(self.slot(1)["state"], "on")
+        self.api.effects.change({"controls": {"amount": 0.0}})
+        self.assertTrue(self.r.wait(lambda: self.api.effects.on["controls"]["amount"] == 0.0, 3))
+        self.assertEqual(self.api.effects.on["path"], on["path"])         # no new text
+        self.assertEqual(self.slot(1)["rebuilds"], 0)
+        # Stop takes both off, in the renderer too
+        self.player.clear()
+        self.assertTrue(self.r.wait(lambda: self.slot(0)["state"] == "off" and self.slot(1)["state"] == "off", 3))
+
+    def test_a_refused_generator_leaves_black_never_the_carrier(self):
+        broken = "/*{}*/\nvoid main() { gl_FragColor = vec4(nonsense, 1.0); }\n"
+        self.api.shaders.upload("broken.fs", broken)
+        from pvj.api import ApiError
+        with self.assertRaises(ApiError) as e:
+            self.api.shaders.play("broken.fs")
+        self.assertEqual(e.exception.status, 422)
+        self.assertIn("nonsense", e.exception.message)          # the GPU's own words, from the renderer's answer
+        self.assertIn("The screen is black", e.exception.message)
+        # nothing to go back to: the engine stops the screen (D73), and the renderer's slot is cleared with it
+        self.assertTrue(self.r.wait(lambda: self.slot(0)["state"] == "off", 3))
+        self.assertEqual(max(self.steady()[2]), 0)
+
+
+if __name__ == "__main__":
+    unittest.main()

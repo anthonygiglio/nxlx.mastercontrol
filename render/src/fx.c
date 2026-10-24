@@ -283,6 +283,7 @@ typedef struct {
     double time, last_run, last_frame, last_build;
     long frames, seen_values;
     int dirty;                          // values moved since the last run
+    int rebuild;                        // a program with constants: its values moved since it was built
     FxValue val[FX_MAX_INPUTS];         // this frame's copy
     float ctl[FXC_N];
     GLuint out;                         // the texture the last run left (an effect at amount 0: its picture)
@@ -553,6 +554,8 @@ void fx_take(void)
                 s->reset_time = 0;
                 s->runs = 0;
                 s->drops = 0;
+                s->rebuilds = 0;
+                s->time = gl[k].time;
             } else {
                 s->ninputs = 0;
             }
@@ -640,12 +643,14 @@ static void fx_rebuild(int k, double now)
         pthread_mutex_lock(&app.lock);
         snprintf(app.fx[k].state, sizeof app.fx[k].state, "constants; the last values were refused");
         pthread_mutex_unlock(&app.lock);
-        f->dirty = 0;
+        f->rebuild = 0;
         return;
     }
     glDeleteProgram(f->prog);
     count_gl(-1);
     f->prog = prog;
+    f->rebuild = 0;
+    f->dirty = 1;
     fx_locations(f, f->src);
     pthread_mutex_lock(&app.lock);
     app.fx[k].rebuilds++;
@@ -677,9 +682,10 @@ GLuint fx_source1(GLuint picture, int fresh, int paused, double now)
         if (serial[k] != gl[k].seen_values) {
             gl[k].seen_values = serial[k];
             gl[k].dirty = 1;
+            gl[k].rebuild = gl[k].constants;
         }
         if (reset[k]) gl[k].time = gl[k].ctl[FXC_OFFSET];
-        if (gl[k].dirty && gl[k].constants) fx_rebuild(k, now);
+        if (gl[k].rebuild) fx_rebuild(k, now);
     }
     double period = 1.0 / app.fx_fps, slack = app.out_hz > 0 ? 0.25 / app.out_hz : 0.004;
     GLuint pic = picture;

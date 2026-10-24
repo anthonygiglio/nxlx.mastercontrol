@@ -504,6 +504,20 @@ def _block(parsed, values, c, pic, desc, plane, t, cap=None):
     return lines
 
 
+def translate_native(parsed, values=None, controls=None):
+    """The New renderer's program file for a parsed ISF filter (D106): the counterpart of translate(). The renderer
+    gives it the picture in RGB at its inside size, so nothing of the picture is in the file: no colour conversion,
+    no frame rate, no working size. Amount and speed are controls it sets while it plays."""
+    if parsed.get("kind") != S.FILTER:
+        raise ShaderError("this is a generator, not a filter of the playing picture: it is played under Shaders")
+    values = S.clean_values(parsed, values)
+    c = L.clean_fx_controls(controls)
+    lines = ["//!PVJ 1", "//!KIND filter", "//!CLOCK %d" % (1 if parsed.get("clock") else 0), "//!LINE %d" % parsed["line"]]
+    lines += S.native_inputs(parsed, values)
+    lines += ["//!CONTROL amount %s" % S._f(c["amount"]), "//!CONTROL speed %s" % S._f(c["speed"]), "//!CODE", parsed["code"], ""]
+    return "\n".join(lines)
+
+
 def translate(parsed, values=None, controls=None, picture=None, desc="nxlx effect", today=None, lines=None):
     """The mpv user shader for a parsed ISF filter: `values` replace the inputs' defaults, `controls` are amount (the
     mix with the picture as it is; under a cap it is done at the working size, so between 0 and 1 the whole picture,
@@ -1332,7 +1346,14 @@ class Effects(S.Engine):
             self._lock.release()
 
     # -- putting one on, changing it, taking it off --
-    def compose(self, parsed, state, desc):
+    def apply_gap(self):
+        """Seconds between two changes applied (shaderlive.Changer): a compile on classic, a value on the New renderer."""
+        p = self.on
+        return L.NATIVE_GAP if p and p.get("native") else L.APPLY_GAP
+
+    def compose(self, parsed, state, desc, native=False):
+        if native:
+            return translate_native(parsed, dict(state["values"], **state.get("held", {})), state["controls"])
         work = state.get("work") or {}
         return translate(parsed, dict(state["values"], **state.get("held", {})), state["controls"], state["picture"], desc, lines=work.get("lines"))
 
@@ -1371,6 +1392,7 @@ class Effects(S.Engine):
         under it stays on the screen either way, and a pair the GPU refused is not sent to it again: see _key)."""
         self._need()
         path, _ = self._path(sid)
+        native = S.player_native(self.api.player)       # the New renderer runs the effect itself (D106)
         if gen is None:
             self._gen += 1                              # by hand: newer than every wish that waits
         with self._lock:
@@ -1393,7 +1415,7 @@ class Effects(S.Engine):
                          "picture": self.picture() or clean_picture()}
                 state.update(clip=self.size, under=self.under, pair=self.pair, work=self.work(sid, state["controls"], cfg))
                 desc = "nxlx effect %d %d" % (os.getpid(), self._serial + 1)
-                text = self.compose(parsed, state, desc)
+                text = self.compose(parsed, state, desc, native)
                 key = self._key(parsed, digest, state)
             except ShaderError as e:
                 raise ApiError(422, "%s: %s" % (sid, e))
@@ -1410,7 +1432,7 @@ class Effects(S.Engine):
             except OSError as e:
                 raise ApiError(500, "could not write the effect: %s" % (e.strerror or e))
             tap = None
-            if key not in self._checked and key[-1] and self._gpu_output():       # at amount 0 no pass is drawn: nothing to wait for
+            if key not in self._checked and key[-1] and self._gpu_output() and not native:     # at amount 0 no pass is drawn: nothing to wait for
                 try:
                     tap = self._tap(player.socket_path)
                 except OSError:
@@ -1435,12 +1457,15 @@ class Effects(S.Engine):
                     self.on = None
                     self._cleanup(set())
                     return None
-                verdict, message = self._watch(tap, desc) if tap else ("unknown", "")
+                if native:
+                    verdict, message = player.native_verdict(out) or ("unknown", "")     # the renderer's own answer
+                else:
+                    verdict, message = self._watch(tap, desc) if tap else ("unknown", "")
             finally:
                 if tap:
                     tap.close()
             if verdict == "refused":
-                back = before if before and os.path.exists(before["path"]) else None
+                back = before if before and os.path.exists(before["path"]) and bool(before.get("native")) == native else None
                 try:
                     if not (back and player.swap_effect(back["path"], new)):
                         back = None
@@ -1470,7 +1495,7 @@ class Effects(S.Engine):
             self.error = None                           # an effect is on: whatever went wrong before it is over
             self.on = {"id": sid, "values": state["values"], "held": state["held"], "controls": state["controls"], "picture": state["picture"],
                        "clip": state["clip"], "work": state["work"], "under": state["under"], "pair": state["pair"],
-                       "path": out, "desc": desc, "epoch": new, "digest": digest, "preset": name,
+                       "path": out, "desc": desc, "epoch": new, "digest": digest, "preset": name, "native": native,
                        "checked": True if (verdict == "ok" or key in self._checked) else None}
             self.recent, self.last, self._shed = sid, None, None
             self._switched = self._clock()
@@ -1555,6 +1580,25 @@ class Effects(S.Engine):
             if job.get("gen") == self._gen and self.changer.queued() is None:
                 self._intent = None                     # carried out, or it could not be: the player's word counts again
 
+    def _native_adjust(self, p, parsed, state, job):
+        """adjust() on the New renderer (D106): the values, the amount and the speed are set on the program that plays;
+        nothing is written or compiled. Called under the engine's lock."""
+        c = state["controls"]
+        send = S.native_send(parsed, state["values"], state["held"])
+        send.update({"@amount": c["amount"], "@speed": c["speed"]})
+        try:
+            done = self.api.player.native_values(1, send, serial=p["epoch"])
+        except Exception as e:
+            raise ApiError(503, str(e))
+        if not done:
+            return False
+        preset = p.get("preset") if not job["values"] and not job["controls"] else job.get("preset")
+        if self.error and self.error["id"] == p["id"]:
+            self.error = None
+        self.on = dict(p, values=state["values"], held=state["held"], controls=state["controls"], picture=state["picture"],
+                       clip=state["clip"], work=state["work"], under=state["under"], pair=state["pair"], preset=preset)
+        return bool(state["held"])
+
     def adjust(self, job):
         """The worker's call (see shaderlive.Changer): new values or controls for the effect that is on, the release
         of a pressed event (None), or the regular look ("anchor"): has another kind of picture started under the
@@ -1596,6 +1640,13 @@ class Effects(S.Engine):
                     # by what is under it at this look, not at the put: unknown (no picture now) is not "a shader"
                     if self._floor(dict(p, under=self.under if seen else None)):
                         return False
+                    if p.get("native"):
+                        # the New renderer's program takes any picture as it is (D106): no new text for another kind
+                        # of picture; what the panel says of the picture follows it
+                        if (state["picture"], state["clip"], state["under"], state["pair"]) != (p["picture"], p.get("clip"), p.get("under"), p.get("pair")) and self.on is p:
+                            self.on = dict(p, picture=state["picture"], clip=state["clip"], under=state["under"], pair=state["pair"])
+                        if state["controls"] == p["controls"]:
+                            return bool(p.get("held"))
                     # a frame rate that only wobbles, or that no line of this filter uses, is no reason for a new text
                     steady = steady_picture(state["picture"], p["picture"], parsed.get("clock"), self.estimated)
                     if steady == p["picture"] and state["controls"] == p["controls"] and state["work"] == p.get("work"):
@@ -1608,6 +1659,8 @@ class Effects(S.Engine):
                         if (known, state["clip"], state["under"], state["pair"]) != (p["picture"], p.get("clip"), p.get("under"), p.get("pair")) and self.on is p:
                             self.on = dict(p, picture=known, clip=state["clip"], under=state["under"], pair=state["pair"])
                         return bool(p.get("held"))
+                if p.get("native"):
+                    return self._native_adjust(p, parsed, state, job)
                 desc = "nxlx effect %d %d" % (os.getpid(), self._serial + 1)
                 text = self.compose(parsed, state, desc)
                 key = self._key(parsed, digest, state)

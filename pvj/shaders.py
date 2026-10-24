@@ -726,6 +726,99 @@ def translate(parsed, size, values=None, hue=0.0, offset=0.0, desc="nxlx shader"
     return "\n".join(lines)
 
 
+# ---- the New renderer's own programs (D106) --------------------------------------------------------------------------
+# pvj-render runs a generator or an effect itself, with its inputs as uniforms that are set while it plays: a value
+# that moves is never compiled again. The file it reads is not an mpv user shader but a "program file" (render/src/fx.c
+# says what it takes): the same checked code as translate() writes, the inputs with their first values, and the
+# controls. Nothing of the ISF file but the code reaches it, and the code is the one parse() made.
+PROGRAM_HEAD = "//!PVJ 1\n"
+_NATIVE_TYPES = {"float": "float", "bool": "bool", "event": "bool", "long": "long", "color": "color", "point2D": "point2D"}
+
+
+def native_value(i, v):
+    """One input's value as the program file and pvj-shader set carry it (bool, int, float or a list of floats)."""
+    if i["type"] in ("bool", "event"):
+        return bool(v)
+    if i["type"] == "long":
+        return int(v)
+    if i["type"] == "float":
+        return float(v)
+    return [float(c) for c in v]
+
+
+def native_values(parsed, values):
+    """{name in the code: value} for every input named in `values` (checked values), for pvj-shader set."""
+    kinds = {i["name"]: i for i in parsed["inputs"]}
+    return {ident(n): native_value(kinds[n], v) for n, v in values.items() if n in kinds}
+
+
+def native_inputs(parsed, values):
+    """The program file's INPUT lines: every input with the value given, else its DEFAULT."""
+    out = []
+    for i in parsed["inputs"]:
+        v = native_value(i, values.get(i["name"], i["default"]))
+        if isinstance(v, bool):
+            text = "1" if v else "0"
+        elif isinstance(v, int):
+            text = "%d" % v
+        elif isinstance(v, float):
+            text = _f(v, 9)
+        else:
+            text = " ".join(_f(c, 9) for c in v)
+        out.append("//!INPUT %s %s %s" % (_NATIVE_TYPES[i["type"]], ident(i["name"]), text))
+    return out
+
+
+def translate_native(parsed, size, values=None, hue=0.0, offset=0.0, speed=1.0, gain=1.0):
+    """The New renderer's program file for a parsed ISF generator drawn at `size`: the counterpart of translate(),
+    with the values as first values of uniforms and TIME the renderer's own clock from `offset` at `speed`."""
+    if parsed.get("kind", GENERATOR) != GENERATOR:
+        raise ShaderError("this is a filter of the playing picture, not a generator: it is put on under Effects")
+    width, height = int(size[0]), int(size[1])
+    if not (16 <= width <= 4096 and 16 <= height <= 4096):
+        raise ShaderError("bad drawing size")
+    values = clean_values(parsed, values)
+    hue, offset = _num(hue, "hue", 360.0), _num(offset, "offset", 1e9)
+    speed, gain = _num(speed, "speed", SPEED_MAX), _num(gain, "brightness", GAIN_MAX)
+    if speed < SPEED_MIN or gain < GAIN_MIN:
+        raise ShaderError("speed and brightness cannot be below 0")
+    lines = ["//!PVJ 1", "//!KIND generator", "//!SIZE %d %d" % (width, height), "//!LINE %d" % parsed["line"]]
+    lines += native_inputs(parsed, values)
+    lines += ["//!CONTROL speed %s" % _f(speed), "//!CONTROL hue %s" % _f(hue), "//!CONTROL gain %s" % _f(gain),
+              "//!CONTROL offset %s" % _f(offset, 10), "//!CODE", parsed["code"], ""]
+    return "\n".join(lines)
+
+
+# What stands in on the New renderer when a generator is refused and there is none to go back to (BLACK, above).
+BLACK_NATIVE = "\n".join(["//!PVJ 1", "//!KIND generator", "//!SIZE 16 16", "//!LINE 1", "//!CODE",
+                          "void pvj_main() { pvj_color = vec4(0.0, 0.0, 0.0, 1.0); }", ""])
+
+
+def player_native(player):
+    """True when `player` runs programs of its own (the New renderer, D106). Asked once per player process."""
+    ask = getattr(player, "native_shaders", None)
+    try:
+        return bool(ask()) if ask else False
+    except Exception:
+        return False
+
+
+def native_send(parsed, values, held):
+    """Every input's value for pvj-shader set: the value given or held down, else its DEFAULT (an event that is not
+    held is let go). By the name the code knows it by."""
+    merged = dict(values, **held)
+    return native_values(parsed, {i["name"]: merged.get(i["name"], i["default"]) for i in parsed["inputs"]})
+
+
+def is_program(path):
+    """Whether the file at `path` is one of the New renderer's program files (and not an mpv user shader)."""
+    try:
+        with open(path, "rb") as f:
+            return f.read(len(PROGRAM_HEAD)) == PROGRAM_HEAD.encode()
+    except OSError:
+        return False
+
+
 # ---- the carrier -------------------------------------------------------------------------------------------------------
 def usable(screen):
     """The screen's size as whole numbers, or 1920 x 1080 for one that is no size at all (a player without a window
@@ -1159,10 +1252,18 @@ class Engine:
             return 0
         return int(round(t * CARRIER_FPS)) % FRAME_WRAP
 
-    def compose(self, parsed, size, state, desc):
+    def native(self):
+        """True when the player runs programs of its own (the New renderer, D106): a generator is then its program
+        file, with values that move without a new text. Asked of the player once per process."""
+        return player_native(self.api.player)
+
+    def compose(self, parsed, size, state, desc, native=False):
         """The player's text for a shader in this state: {"values", "hue", "offset", "controls", "anchor"} (and any
-        events that are held down, in "held")."""
+        events that are held down, in "held"). With `native`, the New renderer's program file (D106)."""
         c = state["controls"]
+        if native:
+            return translate_native(parsed, size, dict(state["values"], **state.get("held", {})), turn(state["hue"], c["hue"]),
+                                    state["offset"], speed=c["speed"], gain=c["brightness"])
         return translate(parsed, size, dict(state["values"], **state.get("held", {})), turn(state["hue"], c["hue"]), state["offset"],
                          desc, speed=c["speed"], gain=c["brightness"], anchor=state["anchor"])
 
@@ -1245,6 +1346,7 @@ class Engine:
         if not self.enabled():
             raise ApiError(409, "turn on the Shaders and Vibes module in System first")
         path, _ = self._path(sid)
+        native = self.native()
         with self._lock:
             try:
                 parsed, digest = self._parsed(path)
@@ -1257,8 +1359,9 @@ class Engine:
                 state = {"values": {n: v for n, v in clean.items() if n not in events},        # an event is never kept
                          "held": {n: True for n in clean if n in events and clean[n]},
                          "hue": _num(hue, "hue", 360.0), "offset": _num(offset, "offset", 1e9), "controls": self.limit(parsed, clean_controls(controls)),
-                         "anchor": self.frame_now(carrier) if cfg.get("clock", CLOCKS[0]) == "carrier" else None}
-                text = self.compose(parsed, size, state, desc)
+                         # on the New renderer TIME is its own clock (D106): no anchor in the carrier's frames
+                         "anchor": self.frame_now(carrier) if cfg.get("clock", CLOCKS[0]) == "carrier" and not native else None}
+                text = self.compose(parsed, size, state, desc, native)
                 clean, key = state["values"], (digest, shape_of(parsed, clean))
             except ShaderError as e:
                 raise ApiError(422, "%s: %s" % (sid, e))
@@ -1269,7 +1372,7 @@ class Engine:
             except OSError as e:
                 raise ApiError(500, "could not write the shader: %s" % (e.strerror or e))
             tap = None
-            if key not in self._checked and self._gpu_output():
+            if key not in self._checked and self._gpu_output() and not native:
                 try:
                     tap = self._tap(player.socket_path)
                 except OSError:
@@ -1303,15 +1406,20 @@ class Engine:
                 if new is None:                         # something else was played meanwhile: it keeps the screen
                     self._cleanup({before["path"]} if before else set())
                     return None
-                verdict, message = self._watch(tap, desc) if tap else ("unknown", "")
+                if native:
+                    # the New renderer answers the load itself, once it has built the program (D106)
+                    verdict, message = player.native_verdict(out) or ("unknown", "")
+                else:
+                    verdict, message = self._watch(tap, desc) if tap else ("unknown", "")
             finally:
                 if tap:
                     tap.close()
             if verdict == "refused":
-                back = before if before and before["carrier"] == carrier and os.path.exists(before["path"]) else None
+                back = before if (before and before["carrier"] == carrier and os.path.exists(before["path"])
+                                  and bool(before.get("native")) == native) else None
                 keep = back["path"] if back else None
                 try:
-                    keep = keep or self._write(BLACK)       # nothing to go back to: black, never the bare carrier
+                    keep = keep or self._write(BLACK_NATIVE if native else BLACK)  # nothing to go back to: black, never the bare carrier
                     player.swap_source(keep, new)
                 except (PlayerError, OSError):
                     pass
@@ -1329,7 +1437,7 @@ class Engine:
                 self.error = None
             self.playing = {"id": sid, "values": clean, "hue": state["hue"], "offset": state["offset"], "controls": state["controls"],
                             "anchor": state["anchor"], "path": out, "carrier": carrier, "epoch": new, "desc": desc,
-                            "digest": digest, "size": size, "preset": preset, "held": state["held"],
+                            "digest": digest, "size": size, "preset": preset, "held": state["held"], "native": native,
                             "checked": True if (verdict == "ok" or key in self._checked) else None}
             self._cleanup({out})
             fx = getattr(self.api, "effects", None)
