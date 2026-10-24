@@ -1018,7 +1018,7 @@ class Effects(S.Engine):
 
     # -- the library --
     def read(self, data):
-        return S.parse(data, S.FILTER, passes=S.player_native(self.api.player))
+        return S.parse(data, S.FILTER, passes=True) if S.player_native(self.api.player) else S.parse(data, S.FILTER)
 
     def check_upload(self, data):
         parsed = self.read(data)

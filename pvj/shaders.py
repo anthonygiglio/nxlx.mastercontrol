@@ -1699,7 +1699,7 @@ class Engine:
 
     def read(self, data):
         """A file's text, parsed as the kind this library holds; on the New renderer with its passes (D106 step c)."""
-        return parse(data, passes=self.native())
+        return parse(data, passes=True) if self.native() else parse(data)      # classic: the call it always was
 
     def check_upload(self, data):
         """Raise ShaderError unless this file's text can be shown."""

@@ -744,6 +744,16 @@ As the step a rows, with `--sources=4` (the renderer card's 4 sources) and a map
 | SK1 | The soak of 2026-10-24 again: 4 sources at 720p looping, the mapping on, 2 hours; `ps -o rss= -p $(pgrep -x pvj-render)` every 10 minutes | Resident memory flat after the first minutes, well under the 875 MB of before (about 150 MB less a source 2 to 4) | The readings |
 | SK2 | Make pvj-render end twice in a row (`sudo kill -9` it twice within a minute), so classic draws; then System > Screen output, New, Use this | The player restarts and New draws again; the card says New | Yes or no |
 
+### pvj-render phase 3, step c (D106): passes and buffers, never run on a Pi
+
+Uploads of ISF files with PASSES (a feedback trail effect and a two-pass blur; any from the ISF library that uses PERSISTENT), on the New renderer.
+
+| # | Do | Look for | Send back |
+| --- | --- | --- | --- |
+| FX15 | A feedback trail effect over a 720p clip for 60 s | Trails that build and fade as on a desktop ISF host; no stutter; `pvj-shaders` slot 1 "on" (not "8-bit") | Missed vblanks, the GPU's share, `fx-passes-per-second` |
+| FX16 | A two-pass blur generator at 540 and at 720 lines | As on a desktop host; the slot's `width` and `height` | As FX15 |
+| FX17 | The same uploads on classic | Refused in words that say the New renderer draws them | The words |
+
 ### What to send back
 
 The output of checks 1 to 7 and 13, the `journalctl` tail for anything that failed, and a note of what you saw on screen. Say clearly what you did **not** test.
