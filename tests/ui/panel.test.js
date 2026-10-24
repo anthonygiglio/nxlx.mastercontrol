@@ -2133,9 +2133,11 @@ function startServer(env) {          // env: more for the harness's environment 
         { source: 1, slot: 2, id: 'fx-ring.fs', kind: 'effect', values: {}, controls: { amount: 1, speed: 1 }, preset: null }],
     };
     const chainSent = [];
+    let chainGets = 0;
     const chainRoute = async (route) => {
       const req = route.request();
       if (req.method() === 'POST') { chainSent.push(JSON.parse(req.postData())); return route.fulfill({ json: { ok: true } }); }
+      chainGets += 1;
       await route.fulfill({ json: chainAnswer });
     };
     const fxLibRoute = async (route) => (route.request().method() === 'GET'
@@ -2174,15 +2176,59 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.selectOption('#srcfx-2-1', 'fx-ring.fs');
     await page.click('#srcfxon-2-1');
     await page.waitForFunction(() => /Source 2: fx-ring\.fs is on/.test(document.getElementById('msg').textContent));
+    const sentSoFar = async (n, what) => {             // what the panel sent, waited for (never a fixed pause)
+      for (let i = 0; i < 100 && chainSent.length < n; i++) await page.waitForTimeout(50);
+      assert(chainSent.length >= n, what);
+    };
     await page.$eval('#srcfxamt-1-2', (e) => { e.value = '0.25'; e.dispatchEvent(new Event('change')); });
-    await page.waitForFunction(() => true);
+    await sentSoFar(3, 'the amount was sent');
     await page.selectOption('#srcshader-2', 'nxlx-tide.fs');
     await page.click('#srcshaderplay-2');
     await page.waitForFunction(() => /Source 2 plays nxlx-tide\.fs/.test(document.getElementById('msg').textContent));
-    await page.waitForFunction(() => true);
+    for (let i = 0; i < 100 && srcSent[srcSent.length - 1].shader !== 'nxlx-tide.fs'; i++) await page.waitForTimeout(50);
     assert.deepStrictEqual(chainSent.slice(0, 3), [{ source: 3, slot: 1, off: true }, { source: 2, slot: 1, id: 'fx-ring.fs' },
       { source: 1, slot: 2, controls: { amount: 0.25 } }]);
     assert.deepStrictEqual(srcSent[srcSent.length - 1], { source: 2, shader: 'nxlx-tide.fs' });
+    // The review of #172: what is opened and chosen by hand outlives the strip's redraw every 4 s, and an amount in
+    // the hand is not taken out of it
+    await page.click('#srcmore-2 > summary');
+    assert.strictEqual(await page.$eval('#srcmore-2', (d) => d.open), true);
+    await page.click('#srcmore-1 > summary');
+    assert.strictEqual(await page.$eval('#srcmore-1', (d) => d.open), false, 'closed by hand where one is on');
+    await page.selectOption('#srcfx-2-2', 'fx-grade.fs');
+    await page.selectOption('#srcfx-3-1', 'fx-ring.fs');            // another than the one on, not yet put on
+    const twoRedraws = async () => {                    // the strip draws again every 4 s: two of them, waited for
+      const from = chainGets, el = await page.$('#srcmore-2');
+      for (let i = 0; i < 240 && (chainGets < from + 2 || await el.evaluate((e) => e.isConnected)); i++) await page.waitForTimeout(50);
+      assert(chainGets >= from + 2, 'the strip asked the box again (more than 4 s)');
+    };
+    await twoRedraws();
+    assert.strictEqual(await page.$eval('#srcmore-2', (d) => d.open), true, 'opened by hand: still open after the redraws');
+    assert.strictEqual(await page.$eval('#srcmore-1', (d) => d.open), false, 'closed by hand: still closed');
+    assert.strictEqual(await page.inputValue('#srcfx-2-2'), 'fx-grade.fs', 'the effect chosen stays chosen');
+    const amtBefore = await page.$('#srcfxamt-3-1');
+    await page.$eval('#srcfxamt-3-1', (e) => { e.value = '0.8'; e.dispatchEvent(new Event('input')); });     // in the hand
+    const held = chainGets;
+    for (let i = 0; i < 240 && chainGets < held + 2; i++) await page.waitForTimeout(50);
+    assert(chainGets >= held + 2, 'the strip asked the box again while the amount was held');
+    assert.strictEqual(await amtBefore.evaluate((e) => e.isConnected && e.value), '0.8', 'the amount in the hand was not drawn over');
+    await page.$eval('#srcfxamt-3-1', (e) => { e.dispatchEvent(new Event('change')); });                      // let go
+    await sentSoFar(4, 'the amount let go was sent');
+    for (let i = 0; i < 200 && (await amtBefore.evaluate((e) => e.isConnected)); i++) await page.waitForTimeout(50);
+    assert.strictEqual(await page.inputValue('#srcfx-3-1'), 'fx-ring.fs', 'the choice made beside the slider stays too');
+    // the chain rows at the three widths of the panel brief (D102): nothing runs past the card, a choice stays usable
+    const wasSize = page.viewportSize();
+    for (const width of [390, 820, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      const drawnAt = chainGets;
+      for (let i = 0; i < 200 && chainGets < drawnAt + 1; i++) await page.waitForTimeout(50);
+      await page.waitForTimeout(100);
+      const over = await page.$$eval('#mapsources *', (els) => { const card = document.getElementById('mapsources').getBoundingClientRect();
+        return els.filter((e) => { const r = e.getBoundingClientRect(); return r.width && (r.right > card.right + 1 || r.left < card.left - 1 || (e.matches('select') && r.width < 120)); })
+          .map((e) => (e.id || e.tagName) + ': ' + Math.round(e.getBoundingClientRect().width) + ' px'); });
+      assert.deepStrictEqual(over, [], 'the Sources card\'s chain rows fit at ' + width + ' px');
+    }
+    await page.setViewportSize(wasSize);
     await page.unroute('**/api/effects/chain', chainRoute);
     await page.unroute('**/api/effects', fxLibRoute);
     await page.unroute('**/api/shaders', shLibRoute);

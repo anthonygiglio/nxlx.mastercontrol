@@ -1989,6 +1989,7 @@ class LiveEngine(S.Engine):
             # and the write of an earlier one's second step was overwritten by it, and the later choice was lost.
             with self._cfg:
                 cfg = self.config()
+                detail = (cfg.get("height"), cfg.get(HEIGHT_AUTO))
                 self._config_keys(cfg, body)
                 for key in ("guard", "clock", "faster"):
                     if key in body:
@@ -1997,11 +1998,13 @@ class LiveEngine(S.Engine):
                     cfg[HEIGHT_AUTO] = auto             # false: a height chosen by hand, which Automatic never overrides
                 self._save(cfg)
                 self.tune_set(None, cfg["dwell"], cfg["vary"])      # dwell and variation belong to the active set
+                moved = (cfg.get("height"), cfg.get(HEIGHT_AUTO)) != detail
             on = self.on_screen()
             if "faster" in body and on:             # the limit applies to what is on now, not only to the next shader
                 self.changer.submit(on, controls={"speed": on["controls"]["speed"]})
-            if "height" in body:
-                self.sources_again()                # Sources 2 to N draw at the new detail too (D106 step e)
+            if moved:
+                # Sources 2 to N draw at the new detail too (D106 step e); the same detail again builds nothing
+                return self.with_sources(self.state(), self.sources_again())
         else:
             return super().api_set(body, device, client)
         return self.state()

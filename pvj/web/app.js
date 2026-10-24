@@ -571,40 +571,52 @@
     // The New renderer's chains (D106 step e): what each source's effect slots hold, and the libraries to choose
     // from, asked with the strip. On classic, or a player without chains, `chain.available` is false and the strip
     // is as it was.
-    var chain = null, lib = { effects: null, shaders: null };
+    // `opened`: the advanced sections opened or closed by hand, kept over the redraws; `sliding`: an amount being
+    // dragged, which a redraw would take out of the hand (the strip waits for its release)
+    var chain = null, lib = { effects: null, shaders: null, at: 0 }, opened = {}, sliding = null;
     function libraries() {
-      if (lib.effects) return Promise.resolve();
-      // (with the Shaders module off both answer with an error, and nothing is offered)
+      // Asked again after a minute, and sooner (10 s) when the chain names something the lists do not have: an
+      // upload since. (With the Shaders module off both answer with an error, and nothing is offered.)
+      var age = Date.now() - lib.at;
+      var missing = lib.effects && (chain.chains || []).some(function (c) {
+        return !(c.slot === 0 ? lib.shaders : lib.effects).some(function (x) { return x.id === c.id; }); });
+      if (lib.effects && age < 60000 && !(missing && age > 10000)) return Promise.resolve();
       return Promise.all([api('GET', '/api/effects'), api('GET', '/api/shaders')]).then(function (rs) {
         lib.effects = rs[0] && rs[0].ok ? (rs[0].data.effects || []).filter(function (x) { return !x.error; }) : [];
         lib.shaders = rs[1] && rs[1].ok ? (rs[1].data.shaders || []).filter(function (x) { return !x.error; }) : [];
+        lib.at = Date.now();
       });
     }
     function load() {
       clearTimeout(timer);
-      Promise.all([api('GET', '/api/sources'), api('GET', '/api/effects/chain')]).then(function (rs) {
-        var r = rs[0];
+      api('GET', '/api/sources').then(function (r) {
         if (!card.isConnected && card.dataset.shown) return;            // the page was left: nothing more is asked
         card.dataset.shown = '1';
         if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'hint', text: r.data.error || 'Not available' })); return; }
-        chain = rs[1] && rs[1].ok && rs[1].data.available ? rs[1].data : null;
-        sourcesSeen(r.data);
-        (chain ? libraries() : Promise.resolve()).then(function () {
-          keepCursor(body, function () { fill(r.data); });
-        });
         timer = setTimeout(function () { if (card.isConnected) load(); }, 4000);
+        // the chains only where there are sources to hold them: classic (one source) is asked nothing more
+        (r.data.count >= 2 ? api('GET', '/api/effects/chain') : Promise.resolve(null)).then(function (c) {
+          chain = c && c.ok && c.data.available ? c.data : null;
+          sourcesSeen(r.data);
+          (chain ? libraries() : Promise.resolve()).then(function () {
+            if (sliding && sliding.isConnected) return;                 // an amount in the hand: drawn again next time
+            sliding = null;
+            keepCursor(body, function () { fill(r.data); });
+          });
+        });
       });
     }
     // One effect slot of a source: the effect in it (or a choice of one), On, Off, and its amount while it is on.
     function slotRow(k, slot) {
       var on = (chain.chains || []).filter(function (c) { return c.source === k && c.slot === slot; })[0];
       var id = 'srcfx-' + k + '-' + slot;
+      // the one chosen by hand stays chosen over the redraws until it is put on (or another is)
       var pick = h('select', { class: 'text-input', id: id, 'aria-label': 'Effect ' + slot + ' of Source ' + k },
-        lib.effects.map(function (e) { return h('option', { value: e.id, text: e.name || e.id, selected: on ? on.id === e.id : e.id === chosen[id] }); }));
+        lib.effects.map(function (e) { return h('option', { value: e.id, text: e.name || e.id, selected: chosen[id] ? chosen[id] === e.id : !!on && on.id === e.id }); }));
       pick.addEventListener('change', function () { chosen[id] = pick.value; });
       var row = h('span', { class: 'row', id: id + '-row' }, h('span', { class: 'k', text: slot === 1 ? 'Effect' : 'Effect ' + slot }), pick,
         h('button', { class: 'btn small', id: 'srcfxon-' + k + '-' + slot, text: on ? 'Change' : 'On', disabled: !lib.effects.length, onclick: function () {
-          act('POST', '/api/effects/chain', { source: k, slot: slot, id: pick.value }, function () { say('Source ' + k + ': ' + pick.value + ' is on.'); load(); });
+          act('POST', '/api/effects/chain', { source: k, slot: slot, id: pick.value }, function () { delete chosen[id]; say('Source ' + k + ': ' + pick.value + ' is on.'); load(); });
         } }),
         h('button', { class: 'btn small', id: 'srcfxoff-' + k + '-' + slot, text: 'Off', disabled: !on, onclick: function () {
           act('POST', '/api/effects/chain', { source: k, slot: slot, off: true }, function () { say('Source ' + k + ': the effect is off.'); load(); });
@@ -612,7 +624,8 @@
       if (on) {
         var amt = h('input', { type: 'range', min: '0', max: '1', step: '0.01', id: 'srcfxamt-' + k + '-' + slot, 'aria-label': 'Amount of effect ' + slot + ' of Source ' + k,
           value: String(on.controls && typeof on.controls.amount === 'number' ? on.controls.amount : 1) });
-        amt.addEventListener('change', function () { act('POST', '/api/effects/chain', { source: k, slot: slot, controls: { amount: +amt.value } }); });
+        amt.addEventListener('input', function () { sliding = amt; });
+        amt.addEventListener('change', function () { sliding = null; act('POST', '/api/effects/chain', { source: k, slot: slot, controls: { amount: +amt.value } }); });
         row.appendChild(amt);
       }
       return row;
@@ -626,23 +639,26 @@
       if (slots.indexOf(0) >= 0 && chain.shaders !== false && lib.shaders.length) {
         var pid = 'srcshader-' + k, playing = gen ? gen.id : x.shader;
         var sp = h('select', { class: 'text-input', id: pid, 'aria-label': 'Shader for Source ' + k },
-          lib.shaders.map(function (s) { return h('option', { value: s.id, text: s.name || s.id, selected: playing ? playing === s.id : s.id === chosen[pid] }); }));
+          lib.shaders.map(function (s) { return h('option', { value: s.id, text: s.name || s.id, selected: chosen[pid] ? chosen[pid] === s.id : playing === s.id }); }));
         sp.addEventListener('change', function () { chosen[pid] = sp.value; });
         out.push(h('span', { class: 'row', id: pid + '-row' }, h('span', { class: 'k', text: 'Shader' }), sp,
           h('button', { class: 'btn small', id: 'srcshaderplay-' + k, text: 'Play', onclick: function () {
-            playToSource({ shader: sp.value }, k, sp.value).then(load);
+            var want = sp.value;
+            playToSource({ shader: want }, k, want).then(function () { if (chosen[pid] === want) delete chosen[pid]; load(); });
           } })));
       }
       if (chain.effects === false) return out;            // Effects off: a shader may still be a source's picture
       if (slots.indexOf(1) >= 0) out.push(slotRow(k, 1));
       var after = slots.filter(function (s) { return s >= 2; });
       if (!after.length) return out;
-      var more = h('details', { class: 'srcmore', id: 'srcmore-' + k },
-        h('summary', { text: k > 1 ? 'More effects (advanced)' : 'More effects after the Effect (advanced)' }),
+      var summary = h('summary', { text: k > 1 ? 'More effects (advanced)' : 'More effects after the Effect (advanced)' });
+      var more = h('details', { class: 'srcmore', id: 'srcmore-' + k }, summary,
         h('div', { class: 'hint', text: k > 1 ? 'Effects run in order: Effect, then 2, then 3, each over what the one before made.'
           : 'Source 1\'s first effect is the one under Effect. These run after it, in order.' }));
       after.forEach(function (s) { more.appendChild(slotRow(k, s)); });
-      if ((chain.chains || []).some(function (c) { return c.source === k && c.slot >= 2; })) more.open = true;
+      // open where one of them is on, or as it was left by hand (kept over the strip's redraws: the review of #172)
+      more.open = k in opened ? opened[k] : (chain.chains || []).some(function (c) { return c.source === k && c.slot >= 2; });
+      summary.addEventListener('click', function () { opened[k] = !more.open; });
       out.push(more);
       return out;
     }

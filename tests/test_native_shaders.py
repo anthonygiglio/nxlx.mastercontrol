@@ -1037,15 +1037,28 @@ BIG_FX = ("/*{\"INPUTS\": [{\"NAME\": \"inputImage\", \"TYPE\": \"image\"}], \"P
 
 
 class PassParseTest(unittest.TestCase):
-    def test_the_cost_of_an_effect_counts_every_pass(self):
-        """The review of #170, built in step e: a filter of two passes runs its text twice, its reads with it."""
-        from pvj import effects as E
-        one = E.estimate(S.parse(INVERT, S.FILTER))
-        two = E.estimate(S.parse(INVERT.replace('"image"}]}*/', '"image"}], "PASSES": [{"TARGET": "buf"}, {}]}*/'), S.FILTER, passes=True))
-        self.assertGreater(one["reads"], 0)
-        self.assertEqual((two["reads"], two["rounds"]), (2 * one["reads"], 2 * one["rounds"]))
-
     """What the panel takes of PASSES on the New renderer, and what classic still refuses."""
+
+    def test_the_weight_of_an_effect_counts_every_pass_and_the_limit_does_not(self):
+        """The reviews of #170 and #172: a filter of two passes draws twice, so its weight takes the count times the
+        passes; the count itself, which already sums both PASSINDEX branches, is what the upload's limit judges."""
+        from pvj import effects as E
+        two_reads = INVERT.replace("vec4 c = IMG_THIS_PIXEL(inputImage);", "vec4 c = 0.5 * (IMG_THIS_PIXEL(inputImage) + IMG_NORM_PIXEL(inputImage, isf_FragNormCoord));")
+        one = E.estimate(S.parse(two_reads, S.FILTER))
+        two = E.estimate(S.parse(two_reads.replace('"image"}]}*/', '"image"}], "PASSES": [{"TARGET": "buf"}, {}]}*/'), S.FILTER, passes=True))
+        self.assertEqual((one["reads"], one["weight"]), (2, "light"))
+        self.assertEqual((two["reads"], two["weight"]), (2, "medium"))
+        # a separable blur of 17 taps in two passes (each reads the picture: a buffer's reads are not counted yet,
+        # D106): 34 reads, under the limit, heavy by its weight
+        blur = ('/*{"INPUTS": [{"NAME": "inputImage", "TYPE": "image"}], "PASSES": [{"TARGET": "h"}, {}]}*/\n'
+                "void main() {\n    vec4 s = vec4(0.0);\n    if (PASSINDEX == 0) {\n"
+                "        for (int i = -8; i <= 8; i++) { s += IMG_NORM_PIXEL(inputImage, isf_FragNormCoord + vec2(float(i) / RENDERSIZE.x, 0.0)); }\n"
+                "    } else {\n"
+                "        for (int i = -8; i <= 8; i++) { s += IMG_NORM_PIXEL(inputImage, isf_FragNormCoord + vec2(0.0, float(i) / RENDERSIZE.y)); }\n"
+                "    }\n    gl_FragColor = s / 17.0;\n}\n")
+        e = E.estimate(S.parse(blur, S.FILTER, passes=True))
+        self.assertEqual((e["sure"], e["reads"], e["weight"]), (True, 34, "heavy"))
+        self.assertLessEqual(e["reads"], E.MAX_READS)
 
     def test_the_program_file_and_classic(self):
         p = S.parse(FEEDBACK, passes=True)
@@ -1348,6 +1361,86 @@ class GeneratorSourceApiTest(unittest.TestCase):
         self.api.shaders.upload("other.fs", FLAT)
         self.api.shaders.api_set({"action": "upload", "name": "other.fs", "source": FLAT, "replace": True}, dev, "t")
         self.assertEqual(self.api.chains.on[(2, 0)]["path"], third)
+
+    def race(self, other):
+        """mine.fs on source 2, then a rebuild with `other` landing between its look at the sources and its build."""
+        self.api.play({"shader": "mine.fs", "source": 2}, {"id": "t", "role": "full"}, "t")
+        eng, fired = self.api.shaders, []
+        real = eng._parsed
+
+        def hook(path, native=None):
+            if not fired and path.endswith("mine.fs"):
+                fired.append(1)
+                other()
+            return real(path, native)
+        eng._parsed = hook
+        try:
+            out = self.api.chains.rebuild_generators()
+        finally:
+            eng._parsed = real
+        time.sleep(0.3)
+        return out, [r for r in self.player.sources_state() if r["source"] == 2][0]
+
+    def test_a_rebuild_leaves_what_came_to_the_source_meanwhile(self):
+        """The review of #172: a Stop, a clip or another shader that lands while a rebuild runs is never undone."""
+        dev = {"id": "t", "role": "full"}
+        self.api.shaders.upload("mine.fs", FLAT)
+        png(os.path.join(self.server.media, "blue.png"), W, H, lambda x, y: BLUE)
+        with self.subTest("a Stop"):
+            out, row = self.race(lambda: self.api.set_sources({"source": 2, "action": "stop"}, dev, "t"))
+            self.assertEqual((out["rebuilt"], self.api.chains.generator_of(2), self.slot(2, 0)["state"], row["idle"]), ([], None, "off", True))
+        with self.subTest("a clip"):
+            out, row = self.race(lambda: self.api.play({"file": "blue.png", "source": 2}, dev, "t"))
+            self.assertEqual((out["rebuilt"], self.api.chains.generator_of(2), row["idle"]), ([], None, False))
+            self.assertTrue(row["path"].endswith("blue.png"), row)
+        with self.subTest("another shader"):
+            out, row = self.race(lambda: self.api.play({"shader": "nxlx-silk.fs", "source": 2}, dev, "t"))
+            self.assertEqual((out["rebuilt"], self.api.chains.generator_of(2), self.slot(2, 0)["state"]), ([], "nxlx-silk.fs", "on"))
+
+    def test_a_rebuild_drops_a_value_the_new_file_has_no_input_for_and_says_what_it_could_not_build(self):
+        dev = {"id": "t", "role": "full"}
+        self.api.shaders.upload("mine.fs", FLAT)
+        self.api.play({"shader": "mine.fs", "source": 2}, dev, "t")
+        self.api.chains.api_post({"source": 2, "slot": 0, "values": {"lit": False, "level": 0.75}}, dev, "t")
+        first = self.api.chains.on[(2, 0)]["path"]
+        no_lit = FLAT.replace(" {\"NAME\": \"lit\", \"TYPE\": \"bool\", \"DEFAULT\": true},\n", "").replace("lit ? 0.5 : 0.0", "0.5")
+        out = self.api.shaders.api_set({"action": "upload", "name": "mine.fs", "source": no_lit, "replace": True}, dev, "t")
+        again = self.api.chains.on[(2, 0)]
+        self.assertNotEqual(again["path"], first)
+        self.assertNotIn("lit", again["values"])
+        self.assertEqual(again["values"]["level"], 0.75)
+        self.assertNotIn("sources_not_rebuilt", out)
+        # a new file the GPU refuses: the one before stays on, and the answer says so
+        broken = FLAT.replace("vec4(level,", "vec4(no_such_fn(level),")
+        out = self.api.shaders.api_set({"action": "upload", "name": "mine.fs", "source": broken, "replace": True}, dev, "t")
+        self.assertEqual([(x["source"], x["id"]) for x in out["sources_not_rebuilt"]], [(2, "mine.fs")])
+        self.assertIn("no_such_fn", out["sources_not_rebuilt"][0]["why"])
+        self.assertEqual(self.api.chains.on[(2, 0)]["path"], again["path"])
+        self.assertEqual((self.slot(2, 0)["state"], self.slot(2, 0)["path"]), ("on", again["path"]))
+
+    def test_the_same_picture_detail_again_builds_nothing(self):
+        dev = {"id": "t", "role": "full"}
+        self.api.play({"shader": "nxlx-silk.fs", "source": 3}, dev, "t")
+        heights = [h for h in S.heights_for(self.api.shaders.board()) if h != self.api.shaders.height_for("nxlx-silk.fs")]
+        self.api.shaders.api_set({"action": "config", "height": heights[0]}, dev, "t")
+        built = self.api.chains.on[(3, 0)]["path"]
+        self.api.shaders.api_set({"action": "config", "height": heights[0]}, dev, "t")
+        self.assertEqual(self.api.chains.on[(3, 0)]["path"], built)
+
+    def test_an_effect_put_on_asks_once_whether_the_player_runs_programs(self):
+        """The review of #172: the effects' put, as the shaders' play (reverting it was caught by nothing)."""
+        png(os.path.join(self.server.media, "blue.png"), W, H, lambda x, y: BLUE)
+        self.api.play({"file": "blue.png"}, {"id": "t", "role": "full"}, "t")
+        time.sleep(0.5)
+        fx, calls = self.api.effects, []
+        fx.upload("inv.fs", INVERT)
+        real = fx.native
+        fx.native = lambda: calls.append(1) or real()
+        self.addCleanup(lambda: setattr(fx, "native", real))
+        fx._cache.clear()
+        out = fx.put("inv.fs")
+        self.assertTrue(out and out.get("ok", True), out)
+        self.assertEqual(len(calls), 1, calls)
 
     def test_a_play_asks_once_whether_the_player_runs_programs(self):
         """The review of #170, built in step e: the parse and the text of one play from one answer."""

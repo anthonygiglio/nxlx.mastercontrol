@@ -1800,10 +1800,11 @@ class Engine:
         "height"?}."""
         self._need()
         action = body.get("action")
+        again = None
         if action == "upload":
             self.upload(body.get("name"), body.get("source"), body.get("replace", False))
             if body.get("replace"):
-                self.sources_again(body.get("name"))
+                again = self.sources_again(body.get("name"))
         elif action == "delete":
             self.delete(body.get("id"))
         elif action == "vibes":
@@ -1823,14 +1824,21 @@ class Engine:
             self._save(cfg)
         else:
             raise ApiError(400, "action must be upload, delete, vibes or config")
-        return self.state()
+        return self.with_sources(self.state(), again)
+
+    @staticmethod
+    def with_sources(state, again):
+        """The answer of a change, with the sources whose shader could not be built again (sources_again), if any."""
+        if again and again.get("not_rebuilt"):
+            return dict(state, sources_not_rebuilt=again["not_rebuilt"])
+        return state
 
     def sources_again(self, sid=None):
         """A generator that plays as a source 2 to N (D106 step d) is built again when its file is replaced, or when
         Picture detail changes (all of them): Source 1's shader is this engine's own, those are the chains'."""
         chains = getattr(self.api, "chains", None)
         if chains is None or self.KIND != GENERATOR:
-            return []
+            return {"rebuilt": [], "not_rebuilt": []}
         return chains.rebuild_generators(sid)
 
     @staticmethod

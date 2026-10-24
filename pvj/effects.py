@@ -883,11 +883,13 @@ def estimate(parsed):
     if "_estimate" not in parsed:
         try:
             reads, rounds = measure(parsed)
-            # a shader of several passes (D106 step c) runs its whole text once a pass, a buffer's reads included:
-            # its work is the count times the passes (the review of #170)
+            # A shader of several passes (D106 step c) runs its text once a pass. The count already sums every
+            # branch, the PASSINDEX ones too, so it is the upload's limit as it stands (a two-pass blur of 17 taps
+            # counts 34, not 68: the review of #172); the weight, which says what it costs a frame, takes it times
+            # the passes, as each pass draws its whole area
             passes = len(parsed.get("plan") or [None])
-            reads, rounds = min(BIG, reads * passes), min(BIG, rounds * passes)
-            weight = "light" if reads <= 2 and rounds <= 4 else ("medium" if reads <= 12 and rounds <= 16 else "heavy")
+            wr, wn = min(BIG, reads * passes), min(BIG, rounds * passes)
+            weight = "light" if wr <= 2 and wn <= 4 else ("medium" if wr <= 12 and wn <= 16 else "heavy")
             parsed["_estimate"] = {"reads": reads, "rounds": rounds, "weight": weight, "sure": True, "why": None}
         except ShaderError as e:
             parsed["_estimate"] = {"reads": 0, "rounds": 0, "weight": "heavy", "sure": False, "why": str(e)}
@@ -1402,7 +1404,7 @@ class Effects(S.Engine):
         under it stays on the screen either way, and a pair the GPU refused is not sent to it again: see _key)."""
         self._need()
         path, _ = self._path(sid)
-        native = bool(S.player_native(self.api.player))      # the New renderer runs the effect itself (D106), asked once
+        native = bool(self.native())                # the New renderer runs the effect itself (D106), asked once a play
         if gen is None:
             self._gen += 1                              # by hand: newer than every wish that waits
         with self._lock:
