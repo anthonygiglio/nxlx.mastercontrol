@@ -1471,7 +1471,9 @@ class Api:
             if r["source"] > 1 and not r["idle"]:
                 warning = warning or renderer_mod.source_warning(rows, r["source"], self.board.get("kind"))
         return {"count": len(rows), "cap": renderer_mod.source_cap(self.board.get("kind")),
-                "sources": [dict({k: r[k] for k in ("source", "idle", "name", "height", "pause")}, shader=r.get("shader")) for r in rows],
+                # "shader" only where a shader is a source's picture (D106 step d): every other row is as it was
+                "sources": [dict({k: r[k] for k in ("source", "idle", "name", "height", "pause")}, **({"shader": r["shader"]} if r.get("shader") else {}))
+                            for r in rows],
                 "warning": warning}
 
     def set_sources(self, body, device, client):

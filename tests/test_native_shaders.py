@@ -861,7 +861,7 @@ class ChainTest(SourcesBase):
 
     def test_what_a_chain_refuses(self):
         r = self.r
-        for what, cmd in {"a generator on source 2": ["load", 2, 0, self.write(S.translate_native(S.parse(FLAT), (W, H)))],
+        for what, cmd in {"an effect in a source's generator slot": ["load", 2, 0, self.effect(INVERT)],
                           "source 5 of 4": ["load", 5, 1, self.effect(INVERT)], "source 0": ["load", 0, 1, self.effect(INVERT)],
                           "slot 4": ["load", 2, 4, self.effect(INVERT)], "a set on an empty slot": ["set", 3, 1, {"@amount": 0.5}]}.items():
             with self.subTest(what):
@@ -1259,6 +1259,7 @@ class GeneratorSourceApiTest(unittest.TestCase):
         self.assertEqual(self.slot(2, 0)["kind"], "generator")
         rows = {r["source"]: r for r in self.api.get_sources({}, dev, "t")["sources"]}
         self.assertEqual((rows[2]["shader"], rows[2]["name"], rows[2]["idle"]), ("nxlx-silk.fs", "nxlx-silk.fs", False))
+        self.assertNotIn("shader", rows[3])                                 # a row with no shader is as it was
         path = self.api.chains.on[(2, 0)]["path"]
         out = self.api.chains.api_post({"source": 2, "slot": 0, "values": {"sheen": 0.9}, "controls": {"hue": 90.0}}, dev, "t")
         self.assertEqual(out["values"]["sheen"], 0.9)
