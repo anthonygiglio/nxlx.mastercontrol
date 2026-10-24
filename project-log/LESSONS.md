@@ -575,6 +575,10 @@ The unit step used 1,731 of its 1,800 seconds and its job 43.5 of 45 minutes, an
 
 The NDI PipeReuseTest failed on CI's busy runners for weeks, called a "known flake". Its fake player closed the pipe and set `gone` a statement later; the helper, looking at the pipe from another thread, could see the close and answer before the set, and the test then said the helper had answered too early. The product was right: the pipe itself said the reader had gone. A check inside the helper's look, run on two cores under load, caught the window in the run that failed, and a 50 ms pause between close and set made it fail 5 of 5. What we do now: when a test thread reports a state change with a flag, make the change and the flag one step under a lock the observing side also takes, or check the real state (the pipe, the socket, the process) rather than the flag; and to prove a timing flake, widen the suspected window on purpose and see it fail every time.
 
+## "Half of fresh processes" can be uninitialised memory, not a race (2026-10-23)
+
+The black or dim source looked like a timing fault for days: it came in about half of fresh processes and then stayed for the life of the process. It was a table built once per process from memory nobody had cleared. Switching one option at a time (the scaler, then its radius) showed the pattern: only 6-tap kernels failed, 4 and 8 never. That pointed at the one place where 6 is padded to 8. When a fault is "per process, about half the time, then forever", suspect a value computed once from uninitialised data before suspecting threads, and vary sizes and options before timings.
+
 ## A step "for information" that nobody reads is only a cost (2026-10-23)
 
 The ndi-mpv job's whole suite ran with continue-on-error for eleven days. It never once finished, its log was never read, and every PR waited 35 minutes for it, because a green check hid it. A step that may fail without failing the job needs an owner who reads it and a date to decide; without both, remove it or make it decide.
