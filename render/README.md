@@ -16,6 +16,16 @@ both layers; a load, a stop, a step in the list or another crossfade ends a fade
 Mix's Crossfade from one clip to another (`Player.play(..., fade=seconds)`); everything else is a cut, as before.
 Classic's crossfade steps a still 20 times a second; this one moves at the screen's rate, with both pictures moving.
 
+Phase 3 (D106) runs generators and effects itself, with their inputs as uniforms: a value that moves is set, never
+compiled. The panel writes a program file (`src/fx.c` says what it holds) and sends `["pvj-shader", "load", 1, SLOT,
+PATH]` (slot 0 the generator, 1 the effect; the answer comes once the program is built, or says what the GPU refused,
+and the program before it runs on), `["pvj-shader", "set", 1, SLOT, {NAME: VALUE, "@speed": ..., "@hue": ...,
+"@gain": ..., "@amount": ..., "@offset": ...}]` (all of one set in one frame) and `["pvj-shader", "clear", 1, SLOT]`;
+`get_property pvj-shaders` says each slot's state, TIME, runs, late frames and builds. A generator runs at most
+`--fx-fps` times a second (30), an effect when its picture or its values change (or its clock is due). While a program
+is on, source 1's brightness is drawn after it (libmpv's own is held at 0) and a screenshot is the renderer's own
+picture (PNG or JPEG by the file's ending, `src/still.c`).
+
 **Licence:** GPL-3.0-or-later (this folder only; `LICENSE`). It links libmpv, which is GPLv2 or later as Debian
 builds it. The rest of nxlx.mastercontrol is Apache-2.0 and only starts this program and talks to it over a socket.
 

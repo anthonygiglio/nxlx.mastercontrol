@@ -304,7 +304,7 @@ jobs:
     # source and the same libmpv release, not the Pi's processor, GPU or screen. A skip here is a failure.
     name: pvj-render (${{ matrix.where }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -368,6 +368,19 @@ jobs:
             exit 1
           fi
           grep -q -E "^Ran [1-9]" /tmp/render.txt || { echo "::error::no test ran"; exit 1; }
+          exit "${code:-0}"
+      - name: pvj-render's own shader programs (D106), against libmpv's drawing of every bundled shader (a skip is a failure)
+        timeout-minutes: 12
+        run: |
+          run="PVJ_RENDER_TEST=1 LIBGL_ALWAYS_SOFTWARE=1 python3 -X faulthandler -m unittest -v tests.test_native_shaders"
+          if [ -n "${{ matrix.container }}" ]; then su ci -c "$run" > /tmp/native.txt 2>&1 || code=$?
+          else sh -c "$run" > /tmp/native.txt 2>&1 || code=$?; fi
+          cat /tmp/native.txt
+          if grep -q -E "skipped|OK \(skipped" /tmp/native.txt; then
+            echo "::error::a test of pvj-render's programs was skipped: it judges nothing here"
+            exit 1
+          fi
+          grep -q -E "^Ran [1-9]" /tmp/native.txt || { echo "::error::no test ran"; exit 1; }
           exit "${code:-0}"
 
   panel-ui:

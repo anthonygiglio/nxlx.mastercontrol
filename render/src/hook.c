@@ -342,8 +342,12 @@ int hookgl_build(const Hook *h, HookGL *g, char *err, size_t n)
             "uniform vec2 input_size;\n"
             "#define HOOKED_pos pvj_pos\n"
             "#define HOOKED_mul 1.0\n"
-            "#define HOOKED_tex(pos) texture(HOOKED_raw, pos)\n"
-            "#define HOOKED_texOff(off) texture(HOOKED_raw, pvj_pos + HOOKED_pt * vec2(off))\n");
+            // source 1's level while a program of the renderer's is on (D106), else 0: clamp() of a texel then
+            // changes nothing, so a mapping draws exactly as before
+            "uniform float pvj_level;\n"
+            "vec4 pvj_lv(vec4 c) { return vec4(clamp(c.rgb + pvj_level, 0.0, 1.0), c.a); }\n"
+            "#define HOOKED_tex(pos) pvj_lv(texture(HOOKED_raw, pos))\n"
+            "#define HOOKED_texOff(off) pvj_lv(texture(HOOKED_raw, pvj_pos + HOOKED_pt * vec2(off)))\n");
     for (int i = 0; i < h->ntex; i++) {
         char line[200];
         snprintf(line, sizeof line, "uniform sampler2D %s;\nuniform vec2 %s_size;\n", h->tex[i].name, h->tex[i].name);
@@ -365,6 +369,7 @@ int hookgl_build(const Hook *h, HookGL *g, char *err, size_t n)
     buf_free(&fs);
     if (!g->prog) return -1;
     g->loc_raw = glGetUniformLocation(g->prog, "HOOKED_raw");
+    g->loc_level = glGetUniformLocation(g->prog, "pvj_level");
     g->loc_size = glGetUniformLocation(g->prog, "HOOKED_size");
     g->loc_pt = glGetUniformLocation(g->prog, "HOOKED_pt");
     g->loc_target = glGetUniformLocation(g->prog, "target_size");

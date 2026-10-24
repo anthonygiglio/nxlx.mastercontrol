@@ -104,12 +104,15 @@ class Ipc:
         self.patient_until = 0.0    # time.monotonic() until which a request waits START_WAIT (Player._spawn sets it)
         self._id = 0
 
-    def request(self, *command):
+    def request(self, *command, wait=None):
+        """One command and its answer. `wait`: seconds to wait for it instead of the usual timeout (a request the
+        player itself answers only after a bounded wait of its own, such as pvj-render's build of a program)."""
         self._id += 1
         rid = self._id
         payload = json.dumps({"command": list(command), "request_id": rid}).encode() + b"\n"
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        wait = max(self.timeout, START_WAIT) if time.monotonic() < getattr(self, "patient_until", 0.0) else self.timeout
+        wait = wait if wait is not None else (
+            max(self.timeout, START_WAIT) if time.monotonic() < getattr(self, "patient_until", 0.0) else self.timeout)
         s.settimeout(wait)
         try:
             s.connect(self.path)
@@ -193,6 +196,10 @@ class Player:
         self._seen_pid = None       # the mpv last heard from: another one is a new player, with nothing on its screen
         self._new_expected = False  # the panel ended the player (quit): the next new one is that restart, already counted
         self._pid_lock = locks.make("player.pid")       # a leaf: the look at the pid and the count are one step
+        # The New renderer's own programs (D106): what each of source 1's slots holds (path, the player's pid), and
+        # what pvj-render said of each program file it was given.
+        self._native_loaded = [None, None]
+        self._native_verdicts = {}
 
     # --- lifecycle -------------------------------------------------------
     def is_running(self):
@@ -936,6 +943,8 @@ class Player:
         screen (a still of the window costs no more then)."""
         if self._mapping_mode or self._source is not None:
             return None
+        if self._effect is not None and is_program(self._effect):
+            return None             # the New renderer's own effect (D106): its still is of its own picture, the window
         try:
             box = self.ipc.request("get_property", "osd-dimensions")
             try:
@@ -1110,11 +1119,116 @@ class Player:
         the picture), the effect (a filter of the picture), the projection mapping (the last stage). The source and
         the effect hook the same stage, and there the order of this list is the order they run in (seen on a real
         mpv in CI, tests/test_pair_gpu.py: the other way round the generator draws over what the effect made). So
-        an effect over a source filters the source's picture."""
+        an effect over a source filters the source's picture.
+        On the New renderer (D106) a source or an effect may be one of its own program files instead: those go to
+        its slots (0 the generator, 1 the effect) and never into the list; classic mpv is never given one."""
         self._check_source()
         self._check_effect()
-        self.ipc.request("set_property", "glsl-shaders", ([self._source] if self._source else []) + ([self._effect] if self._effect else [])
-                         + self._mapping_shaders)
+        mine = [p if p and not is_program(p) else None for p in (self._source, self._effect)]
+        self.ipc.request("set_property", "glsl-shaders", [p for p in mine if p] + self._mapping_shaders)
+        if self.native_shaders():
+            self._native_slot(0, self._source)
+            self._native_slot(1, self._effect)
+
+    # ---- the New renderer's own programs (D106) --------------------------------------------------------------------
+    _native_seen = None             # (pid, True or False): does that player process run programs of its own
+    # pvj-render answers a load once it has built the program, waiting at most 3 seconds for its render thread
+    # (ipc.c, shader_command): the panel waits longer than that, so that only the renderer's own word ends it
+    NATIVE_LOAD_WAIT = 6.0
+
+    def native_shaders(self, ask=True):
+        """True if the player that answers now is pvj-render with programs of its own (its `shaders`), which run a
+        generator or an effect with values set while it plays. Asked once per player process, as `crossfades`;
+        classic mpv answers "property not found". With `ask` False, only what is known already."""
+        known, pid = self._native_seen, self._seen_pid
+        if known is not None and known[0] == pid:
+            return known[1]
+        if not ask:
+            return False
+        try:
+            if pid is None:
+                pid = self._note_pid(self.ipc.request("get_property", "pid"))
+            state = self.ipc.request("get_property", "pvj-render")
+        except PlayerError as e:
+            if str(e).startswith("mpv: ") and pid is not None:
+                self._native_seen = (pid, False)
+            return False
+        n = state.get("shaders") if isinstance(state, dict) else None
+        ok = isinstance(n, int) and not isinstance(n, bool) and n >= 2
+        self._native_seen = (pid, ok)
+        return ok
+
+    def _native_slot(self, slot, path):
+        """Slot `slot` of source 1 holds the program file `path` (None or an mpv shader: nothing). A refusal is not
+        raised: it is written down for native_verdict, and the program that was there runs on (the engines then go
+        back to it or to black, as with classic's refusals)."""
+        want = path if path and is_program(path) else None
+        pid, have = self._seen_pid, self._native_loaded[slot]
+        if have is not None and have[1] != pid:
+            have = self._native_loaded[slot] = None         # another player process: it holds nothing
+        if (have[0] if have else None) == want:
+            return
+        if want is None:
+            self.ipc.request("pvj-shader", "clear", 1, slot)
+            self._native_loaded[slot] = None
+            return
+        if len(self._native_verdicts) > 32:
+            self._native_verdicts.clear()
+        try:
+            self.ipc.request("pvj-shader", "load", 1, slot, want, wait=self.NATIVE_LOAD_WAIT)
+        except PlayerError as e:
+            message = str(e)
+            message = message[5:] if message.startswith("mpv: ") else message
+            if message.startswith("the GPU refused") or message == "invalid parameter":
+                # the renderer's own refusal: the program that was there runs on, as the slot's record says
+                self._native_verdicts[want] = ("refused", message)
+            else:
+                # no word (a slow build, no reply): the renderer may yet show it, or not. Nothing is said to be
+                # refused, and the slot is held to be unknown, so the next push or value loads it again (the
+                # review of #167: a value sent under the old program's names reached the new one)
+                self._native_verdicts[want] = ("unknown", message)
+                self._native_loaded[slot] = None
+            return
+        self._native_loaded[slot] = (want, pid)
+        self._native_verdicts[want] = ("ok", "")
+
+    def native_verdict(self, path):
+        """("ok" | "refused", message) of pvj-render about the program file `path`, or None if it was never given one."""
+        return self._native_verdicts.get(path)
+
+    def native_values(self, slot, values, epoch=None, serial=None):
+        """New values for the program in slot `slot` (0 the generator, 1 the effect), set while it plays: nothing is
+        compiled. Only while `epoch` (the generator's) or `serial` (the effect's) is still current and that program
+        is what the slot holds. True if it was done."""
+        with self._lock:
+            if slot == 0:
+                self._check_source()
+                if epoch != self.source_epoch or self._source is None:
+                    return False
+                path = self._source
+            else:
+                self._check_effect()
+                if serial != self.effect_serial or self._effect is None:
+                    return False
+                path = self._effect
+            have = self._native_loaded[slot]
+            if not have or have[1] != self._seen_pid:
+                # not known to be there (its load had no word, a slow build): the renderer says what the slot holds
+                # now; if it is not that program, it is loaded again first
+                try:
+                    rows = self.ipc.request("get_property", "pvj-shaders")
+                    there = next((r.get("path") for r in rows if isinstance(r, dict) and r.get("source") == 1 and r.get("slot") == slot), None)
+                except (PlayerError, TypeError, AttributeError):
+                    there = None
+                if there == path:
+                    self._native_loaded[slot] = (path, self._seen_pid)
+                else:
+                    self._native_slot(slot, path)
+                have = self._native_loaded[slot]
+            if not have or have[0] != path or have[1] != self._seen_pid:
+                return False
+            self.ipc.request("pvj-shader", "set", 1, slot, values)
+            return True
 
     # --- the effect layer (pvj/effects.py) ------------------------------------
     @property
@@ -1370,6 +1484,18 @@ class Player:
         if not isinstance(items, list):
             return []
         return [i["filename"] for i in items[:limit] if isinstance(i, dict) and isinstance(i.get("filename"), str)]
+
+
+PROGRAM_HEAD = b"//!PVJ 1\n"
+
+
+def is_program(path):
+    """Whether `path` is one of the New renderer's program files (D106; pvj/shaders.py writes them), not an mpv shader."""
+    try:
+        with open(path, "rb") as f:
+            return f.read(len(PROGRAM_HEAD)) == PROGRAM_HEAD
+    except (OSError, TypeError):
+        return False
 
 
 def _alive(pid):

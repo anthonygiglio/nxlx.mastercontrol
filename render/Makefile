@@ -24,7 +24,7 @@ endif
 HARDEN = -fstack-protector-strong -D_FORTIFY_SOURCE=2 -fPIE
 LDHARDEN = -pie -Wl,-z,relro,-z,now
 
-SRC = src/main.c src/out.c src/ipc.c src/hook.c src/json.c
+SRC = src/main.c src/out.c src/ipc.c src/hook.c src/json.c src/fx.c src/still.c
 OBJ = $(SRC:.c=.o)
 
 pvj-render: $(OBJ)
