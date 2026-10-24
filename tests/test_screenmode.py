@@ -1037,7 +1037,7 @@ class PatternTest(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("mpv"), "no mpv here (CI has it)")
 class RealMpvTest(unittest.TestCase):
-    """The texts against a real mpv (CI: Ubuntu's 0.37; the ndi-mpv job's whole suite: Debian's 0.40, the Pi's)."""
+    """The texts against a real mpv (CI: Ubuntu's 0.37; the ndi-mpv job's own step: Debian's 0.40, the Pi's)."""
 
     def mpv(self, *args):
         return subprocess.run(["mpv", "--no-config", "--vo=null", "--ao=null", "--frames=2", "--msg-level=all=error"] + list(args),
