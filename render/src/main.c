@@ -343,7 +343,23 @@ static int layer_open(Layer *l, int index, const Cfg *c, int w, int h)
         set(l->h, "osd-bar", "no");
     } else {
         set(l->h, "hwdec", c->hwdec);
-        if (c->fast) set(l->h, "profile", "fast");
+        if (c->fast) {
+            set(l->h, "profile", "fast");           // a Pi: mpv's cheap scalers, bilinear (no table of weights)
+        } else {
+            // mpv up to 0.41 leaves the padding of its scaler table uninitialised when a kernel has 6 taps (rows of 6
+            // weights padded to 8; video/out/gpu/video.c, reinit_scaler), which the default lanczos of radius 3 has
+            // when it scales up. A GPU that filters the table arithmetically (llvmpipe) then mixes that garbage into
+            // the weights, and the picture is black or dim for the life of the process (D101's addendum). Fixed
+            // upstream after 0.41 (mpv 72d43dc9c, issue #18540). Until the box's mpv is 0.42: every scaler is a
+            // lanczos of radius 4, 8 taps up and 8 or more down, never 6 (mpv's sizes are 2, 4, 6, then multiples of
+            // 4). Explicit, so it holds on 0.37 too, whose defaults differ; the socket cannot change them.
+            set(l->h, "scale", "lanczos");
+            set(l->h, "scale-radius", "4");
+            set(l->h, "cscale", "lanczos");
+            set(l->h, "cscale-radius", "4");
+            set(l->h, "dscale", "lanczos");
+            set(l->h, "dscale-radius", "4");
+        }
         if (index >= LAYERS) {
             // sources 2 to N have no sound (D101): no track is chosen, so no sound output is ever opened, and the
             // socket may not set aid on them
