@@ -2696,7 +2696,7 @@ function startServer(env) {          // env: more for the harness's environment 
     // the big button on Pads, open the page from the link next to it, choose one shader by hand (which ends the
     // rotation), move a slider, change the settings, add and remove a file. The harness player draws nothing
     // (--vo=null), so this checks the panel and the API, not the picture; that is tests/test_shaders_gpu.py.
-    const BUNDLED_SHADERS = 40;         // the files in pvj/shaders.d (named one by one in tests/test_shaders.py)
+    const BUNDLED_SHADERS = 39;         // the files in pvj/shaders.d (named one by one in tests/test_shaders.py)
     await go(page, 'play/pads');
     await page.waitForSelector('.pads');
     assert.strictEqual(await page.locator('#vibes').count(), 0, 'no Vibes button while the module is off');
