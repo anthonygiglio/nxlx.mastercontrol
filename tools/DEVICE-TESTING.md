@@ -811,6 +811,19 @@ One projector session on the owner's test Pi 4 with the X27. The script was `nxl
 | SK3 | **Failed, before this fix** | Classic took over and said why, but its socket stayed owner-only (mode 600), so every panel call got "Permission denied" and New chosen again did nothing. To be run again on the fix |
 | SK3 | Passed on master 331e6b6, 2026-10-30 | Killed twice: classic in 0.8 s and said why; socket mode 660; Stop in the panel answered 200; New chosen again answered 200 and was drawing in 3.1 s. Run by `nxlx_shared/scripts/sk3_check.py` |
 
+### The render thread at real-time priority (fix 1 of the playback measurements, 2026-10-30): not yet run on a node
+
+Everything of this ran on a WSL kernel, never on a Pi. Before: the node on a release with this change (the unit is rewritten by the installer or an update, then `sudo systemctl daemon-reload` and Restart player), Setup > Renderer on **New**, 4 sources at 720p30 playing and the mapping on, 1920 x 1080 at 60 Hz. The numbers to beat come from a scratch build in 20 s windows: 40.7 flips a second as shipped, 45.3 with this change, no flip longer than 2 vblanks.
+
+| Row | What to do | What should happen | What it would mean if not |
+|---|---|---|---|
+| RT1 | `cat /proc/sys/kernel/sched_rt_runtime_us /proc/sys/kernel/sched_rt_period_us; systemctl show pvj-player -p LimitRTPRIO; journalctl -b -u pvj-player --no-pager \| grep "render thread"` | `950000` and `1000000`; `LimitRTPRIO=1`; one line, "the render thread runs at real-time priority 1 (SCHED_RR)", for each start of pvj-render | `-1` as the first number: the kernel's throttle is off and a runaway real-time thread could hold a core; do not ship until that is settled. "stays at normal priority" with a reason: the unit was not reloaded, or the limit did not reach pvj-render |
+| RT2 | `ps -L -o tid,cls,rtprio,pri,pcpu,comm -p $(pgrep -x pvj-render)` while 4 clips play | Exactly one thread with class `RR` and rtprio `1`: the one whose tid equals the pid. Every other thread `TS` (or `B`) | A second real-time thread (a decoder, the socket's thread): the flag that keeps children at normal priority did not hold |
+| RT3 | `grep Cap /proc/$(pgrep -x pvj-render)/status` | `CapEff` and `CapPrm` all zeros: the right came from the limit, not from a capability | Any capability set: the unit grew a right it should not have |
+| RT4 | `q() { echo '{"command":["get_property","pvj-render"]}' \| sudo socat - /run/pvj/player/player.sock; }; q; sleep 20; q`; take `flips` from each (R1 names the fields) and divide the difference by 20 | About 45 flips a second (the scratch build reached 45.3; as shipped 40.7), and the picture unchanged: the mapped quad and triangle where they were, black round them | Not above 40.7: the change did nothing on this build. A picture that differs (a black edge, a stale strip) is a bug in the clear: report it |
+| RT5 | During RT4, open the panel from a laptop and click around; `uptime` | The panel answers as usual; the load average is that of 4 decoders, not higher than before the change | A panel that stalls for seconds: the throttle is not holding; stop the player and report the RT1 numbers |
+| RT6 | Setup > Renderer: **Classic**, play a clip; `ps -L -o tid,cls,rtprio,comm -p $(pgrep -x mpv)` | Every mpv thread `TS`: classic uses none of the limit | An `RR` thread under mpv |
+
 ### What to send back
 
 The output of checks 1 to 7 and 13, the `journalctl` tail for anything that failed, and a note of what you saw on screen. Say clearly what you did **not** test.

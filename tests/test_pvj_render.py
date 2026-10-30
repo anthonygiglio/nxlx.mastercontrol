@@ -12,6 +12,7 @@ the screen) and judged by their pixels.
 import atexit
 import json
 import os
+import resource
 import shutil
 import signal
 import socket
@@ -87,14 +88,19 @@ def _end_all():
 class Renderer:
     """One pvj-render process in its own folder."""
 
-    def __init__(self, *args, env=None):
+    def __init__(self, *args, env=None, no_realtime=False):
         self.dir = tempfile.mkdtemp(prefix="pvj-render-")
         self.sock = os.path.join(self.dir, "mpv.sock")
         env = dict(os.environ, LIBGL_ALWAYS_SOFTWARE="1", **(env or {}))
         self.log = open(os.path.join(self.dir, "stderr.txt"), "w+")
+
+        def child():
+            _die_with_parent()
+            if no_realtime:         # as on a box whose unit has no LimitRTPRIO: the limit is 0 (a limit can always be lowered)
+                resource.setrlimit(resource.RLIMIT_RTPRIO, (0, 0))
         self.proc = subprocess.Popen([BIN, "--socket=" + self.sock, "--headless=%dx%d" % (W, H)] + list(args),
                                      stdin=subprocess.DEVNULL, stdout=self.log, stderr=self.log, env=env,
-                                     preexec_fn=_die_with_parent)
+                                     preexec_fn=child)
         LIVE.add(self)
         self.ipc = Ipc(self.sock, timeout=10.0)
         deadline = time.monotonic() + 20
@@ -691,6 +697,48 @@ class PaceTest(Base):
         self.assertLessEqual(flips, 62)
         self.assertGreater(drawn, 20, "the clip's frames are drawn")
         self.assertLess(drawn, 36, "each clip frame converted once, not at every vblank: %.1f" % drawn)
+
+
+class PriorityTest(unittest.TestCase):
+    """The render thread asks for SCHED_RR 1, once, and only that thread. Without the right (a desktop, CI, a unit
+    without LimitRTPRIO) it is said once and the program runs as before."""
+
+    def run_renderer(self, **kw):
+        need_program(self)
+        r = Renderer(**kw)
+        self.addCleanup(r.close)
+        return r
+
+    @staticmethod
+    def policies(r):
+        """{thread id: scheduling policy, priority} of every thread of the process."""
+        out = {}
+        for tid in os.listdir("/proc/%d/task" % r.proc.pid):
+            tid = int(tid)
+            out[tid] = (os.sched_getscheduler(tid) & ~0x40000000, os.sched_getparam(tid).sched_priority)      # without RESET_ON_FORK
+        return out
+
+    def test_without_the_right_it_is_said_once_and_it_runs_as_before(self):
+        r = self.run_renderer(no_realtime=True)
+        self.assertEqual(r("get_property", "pid"), r.pid)
+        r.wait(lambda: "normal priority" in r.stderr(), 5)        # the socket answers a moment before the render thread's loop
+        log = r.stderr()
+        self.assertEqual(log.count("stays at normal priority"), 1, log)
+        self.assertNotIn("real-time priority 1", log)
+        self.assertEqual({v for v in self.policies(r).values() if v[0] in (os.SCHED_RR, os.SCHED_FIFO)}, set())
+
+    def test_with_the_right_only_the_render_thread_is_real_time(self):
+        hard = resource.getrlimit(resource.RLIMIT_RTPRIO)[1]
+        if hard != resource.RLIM_INFINITY and hard < 1 and os.geteuid() != 0:
+            self.skipTest("this account may not ask for real-time priority (as a unit with LimitRTPRIO=1 may)")
+        r = self.run_renderer()
+        r.wait(lambda: "priority" in r.stderr(), 5)
+        log = r.stderr()
+        self.assertEqual(log.count("real-time priority 1"), 1, log)
+        self.assertNotIn("stays at normal priority", log)
+        got = self.policies(r)
+        self.assertEqual(got[r.proc.pid], (os.SCHED_RR, 1))
+        self.assertEqual({t for t, v in got.items() if v[0] in (os.SCHED_RR, os.SCHED_FIFO)}, {r.proc.pid}, "only the render thread: " + str(got))
 
 
 class FenceTest(Base):

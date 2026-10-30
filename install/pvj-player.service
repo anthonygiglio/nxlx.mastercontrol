@@ -25,6 +25,11 @@ UMask=0007
 EnvironmentFile=-/etc/pvj/pvj.env
 Environment=PVJ_RUNTIME_DIR=/run/pvj/player
 ExecStart=@PVJ_DIR@/bin/pvj-player serve
+# The most real-time priority a process of this unit may ask for: 1, the lowest. It grants nothing by itself and needs
+# no capability; only pvj-render's render thread asks (SCHED_RR 1, render/src/main.c), and mpv never does. The kernel
+# holds a real-time thread that never yields to 95% of its core (sched_rt_runtime_us), so the panel keeps its share.
+# This unit has no sandbox keys (no RestrictRealtime, SystemCallFilter or CapabilityBoundingSet), so nothing else changes.
+LimitRTPRIO=1
 # A crashed or wedged player comes back on its own, mid-gig.
 Restart=always
 RestartSec=1
