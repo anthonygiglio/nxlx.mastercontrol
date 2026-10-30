@@ -364,7 +364,8 @@ jobs:
           run="PVJ_RENDER_TEST=1 LIBGL_ALWAYS_SOFTWARE=1 python3 -X faulthandler -m unittest -v tests.test_pvj_render tests.test_renderer"
           if [ -n "${{ matrix.container }}" ]; then prlimit --rtprio=1:1 --pid $$     # as LimitRTPRIO=1 in pvj-player.service
           else sudo prlimit --rtprio=1:1 --pid $$; fi
-          if [ -n "${{ matrix.container }}" ]; then su ci -c "$run" > /tmp/render.txt 2>&1 || code=$?
+          echo "real-time limit: $(ulimit -r)"
+          if [ -n "${{ matrix.container }}" ]; then setpriv --reuid=ci --regid=ci --clear-groups env HOME=/home/ci sh -c "$run" > /tmp/render.txt 2>&1 || code=$?     # su would drop the limit
           else sh -c "$run" > /tmp/render.txt 2>&1 || code=$?; fi
           cat /tmp/render.txt
           if grep -q -E "skipped|OK \(skipped" /tmp/render.txt; then
