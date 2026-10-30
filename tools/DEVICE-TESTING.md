@@ -742,6 +742,7 @@ As the step a rows, with `--sources=4` (the renderer card's 4 sources) and a map
 | # | Do | Look for | Send back |
 | --- | --- | --- | --- |
 | SK1 | The soak of 2026-10-24 again: 4 sources at 720p looping, the mapping on, 2 hours; `ps -o rss= -p $(pgrep -x pvj-render)` every 10 minutes | Resident memory flat after the first minutes, well under the 875 MB of before (about 150 MB less a source 2 to 4) | The readings |
+| SK2 | New drawing, a clip on source 1: `SIGKILL` to pvj-render twice in a row, then Stop in the panel, then choose New again | Classic takes over and says why; the panel still stops it (no "Permission denied"); New chosen again draws within a few seconds | Yes or no |
 | SK2 | Make pvj-render end twice in a row (`sudo kill -9` it twice within a minute), so classic draws; then System > Screen output, New, Use this | The player restarts and New draws again; the card says New | Yes or no |
 
 ### pvj-render phase 3, step c (D106): passes and buffers, never run on a Pi
@@ -790,6 +791,14 @@ One projector session on the owner's test Pi 4 with the X27. The script was `nxl
 | FX19 | Ran, and did not hold | Shaders on Sources 2 to 4 (silk, bars, tiles) at 960 x 720: **50.5 flips/s**, 867 missed in 92 s, **545 to 570 drops per shader** in 92 s (about one run in five); pvj-render only 51% of one core, the box 15% |
 | FX20 | Passed through the API (the calls the Sources card makes) | Effect on, amount 0.4, off, a shader to Source 3: every call 200, the state as sent |
 | FX21 | Passed | Source 2's shader was built again on the change of Picture detail and on the replaced upload, with its value (level 0.8) kept |
+
+### The overnight soak on the test node, 2026-10-30 (SK2)
+
+10 hours on New: 4 sources at 720p in software, the mapping on, an output of 1920 x 1080 at 60 Hz, 1199 crossfades on source 1, all with a dongle at the real HDMI. Results in `measurements/2026-10-29-soak` on the HP.
+
+| Row | Result | What was measured |
+|---|---|---|
+| SK2 | **Failed, before this fix** | Classic took over and said why, but its socket stayed owner-only (mode 600), so every panel call got "Permission denied" and New chosen again did nothing. To be run again on the fix |
 | Budget | **Not proven** | All 11 chain slots took the large float-buffer effect with no refusal: at 720 x 540 the 11 programs stay under 192 MB. Proving the refusal needs a larger working size or a larger buffer |
 
 **What it means.**

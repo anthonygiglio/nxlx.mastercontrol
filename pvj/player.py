@@ -292,6 +292,10 @@ class Player:
             why = renderer.serve(self, screen, detail, log)
         if why:
             renderer.fallback(self.rundir, detail, why, log)
+            # pvj-render killed leaves its socket behind: the opener below would take that old file for mpv's and open
+            # it, and mpv's own new one would stay owner-only, out of the panel's reach (the soak of 2026-10-30)
+            if os.path.exists(self.socket_path):
+                os.unlink(self.socket_path)
         # mpv creates its socket owner-only (0600) whatever the umask, so the web panel (another user, same
         # group) could not reach it. A short-lived helper waits for the NEW socket and opens it to the group.
         detach_socket_opener(self.socket_path)

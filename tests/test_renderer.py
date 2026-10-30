@@ -308,7 +308,7 @@ class SwitchTest(Base):
 class ServeTest(Base):
     """Player.serve with the wish for new: the supervisor, then, on a failure, the exec of classic mpv as before."""
 
-    def serve(self, mode, wish):
+    def serve(self, mode, wish, opener=lambda path: None):
         os.environ["STANDIN_MODE"], os.environ["STANDIN_LOG"] = mode, self.calls
         self.addCleanup(os.environ.pop, "STANDIN_MODE", None)
         self.addCleanup(os.environ.pop, "STANDIN_LOG", None)
@@ -328,7 +328,7 @@ class ServeTest(Base):
             raise Exec()
         with mock.patch.object(screenmode, "prepare", lambda *a, **k: ["--drm-mode=1920x1080@60.00"]), \
                 mock.patch.object(renderer.paths, "state_dir", lambda e=None: state), \
-                mock.patch("pvj.player.detach_socket_opener", lambda path: None), \
+                mock.patch("pvj.player.detach_socket_opener", opener), \
                 mock.patch("os.execvp", execvp), \
                 mock.patch.object(renderer, "START_SECONDS", 3.0), \
                 mock.patch.object(renderer.hardware, "detect_board", lambda: {"kind": "pi4"}):
@@ -345,6 +345,22 @@ class ServeTest(Base):
         self.assertEqual((rep["chosen"], rep["drawing"]), ("new", "classic"))
         self.assertEqual(rep["why"], "pvj-render did not start (exit 2)")
         self.assertEqual(self.runs()[0][-4:], ["--drm-mode=1920x1080@60.00", "--detail=540", "--fast", "--sources=4"])
+
+    def test_a_killed_renderers_socket_is_gone_before_classic_mpv_starts(self):
+        # the opener takes whatever is at the name for mpv's socket: an old file left there would be opened instead of
+        # mpv's, and the panel would be shut out of classic mpv (the soak of 2026-10-30)
+        real, seen = renderer.serve, []
+
+        def leaves_its_socket(player, *a, **k):
+            why = real(player, *a, **k)
+            with open(player.socket_path, "w"):
+                pass
+            return why
+        with mock.patch.object(renderer, "serve", leaves_its_socket):
+            args, rep = self.serve("exit:2", {"use": "new"}, lambda path: seen.append(os.path.exists(path)))
+        self.assertEqual(args[0], "mpv")
+        self.assertEqual(rep["drawing"], "classic")
+        self.assertEqual(seen, [False], "the old socket is removed before the opener starts")
 
     def test_classic_chosen_starts_no_renderer(self):
         args, rep = self.serve("ok", {"use": "classic"})
