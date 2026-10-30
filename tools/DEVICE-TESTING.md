@@ -565,8 +565,8 @@ What is not known is whether 720 lines look better than 540 on the room's own sc
 | A1 | On the projector at its own Automatic mode (D90), play nxlx-silk, nxlx-lattice, nxlx-grid and nxlx-halftone, each under Automatic (720 lines) and then with Picture detail at 540 lines by hand, from where the audience stands | Fine lines, dots and edges: sharper at 720, or no difference you would notice | For each: 720 better, the same, or 540 better. If the same everywhere, 540 for all would leave the GPU more room |
 | A2 | The same four on the 1440p monitor set to 1920 x 1080 | As A1, close up | As A1 |
 | A3 | nxlx-tide and nxlx-bloom under Automatic (720 lines; the GPU was 87 to 90 percent busy there) with an effect on over them, then with the mapping on | The load line beside the shader on the Shaders page; dropped frames in Setup > Health | Dropped frames a second for each. If they drop, these two may need 540 the way two effects got it in D58 |
-| A4 | Vibes on Ambient under Automatic for 20 minutes | No shader marked "Too heavy on this box"; nxlx-drift and nxlx-nebula now come round too, at 540 lines | Any shader marked, with its rate |
-| A5 | nxlx-drift and nxlx-nebula at 540 lines (the GPU was 97 percent busy) | Their slow clouds: smooth, or an occasional hitch | Whether they look smooth |
+| A4 | Vibes on Ambient under Automatic for 20 minutes | No shader marked "Too heavy on this box"; nxlx-nebula now comes round too, at 540 lines | Any shader marked, with its rate |
+| A5 | nxlx-nebula at 540 lines (the GPU was 96 percent busy) | Its slow clouds: smooth, or an occasional hitch | Whether it looks smooth |
 
 ### Render nodes (D94): never run with a real render node
 
@@ -717,11 +717,11 @@ Everything of D106 ran on a software GPU in a 320 x 180 headless window. Before:
 | # | Do | Look for | Send back |
 | --- | --- | --- | --- |
 | FX1 | Every bundled shader for 20 s each through Vibes (or the Shaders page), at the box's Automatic heights | Each slot 0 `state` "on" (never "constants" for a bundled shader), `runs` up by about 30 a second, `drops` about 0, the picture as on classic | Per shader: `drops` a second, missed vblanks a second, the GPU's share; any that did not compile (the panel says the GPU's words) |
-| FX2 | The same 6 that dropped at 720 on classic (drift, nebula, ridgelines, simplex-noise, aurora, lantern) at 540 | As FX1 | As FX1, beside classic's numbers in D93 |
+| FX2 | The 5 of the 6 that dropped at 720 on classic that are still here (nebula, ridgelines, simplex-noise, aurora, lantern; nxlx-drift is gone) at 540 | As FX1 | As FX1, beside classic's numbers in D93 |
 | FX3 | The light shaders at **720** (Automatic gives them 720 at 1080p): bars, silk, tiles, stars for 60 s each | `drops` and missed vblanks near 0; the GPU's share against classic's (at most 52 percent there) | The GPU's share and drops at 720 on New; whether 720 should stay the New renderer's Automatic height for them |
 | FX4 | Move a value fast: a MIDI knob or the Shaders page's slider on nxlx-silk for 30 s | The picture follows the knob smoothly (classic: five steps a second), `rebuilds` 0, no stutter | Whether it is smooth; missed vblanks during the 30 s |
 | FX5 | An effect over a 720p clip (fx-grade, then isf-rgb-invert), 60 s each | `runs` about the clip's frame rate, the picture as on classic, no stutter | Missed vblanks, the GPU's share, the CPU |
-| FX6 | An effect over a generator (fx-kaleido over nxlx-drift at 540) | As classic's pair; `drops` near 0 | As FX5; whether the effects' floor took the effect off |
+| FX6 | An effect over a generator (fx-kaleido over nxlx-nebula at 540) | As classic's pair; `drops` near 0 | As FX5; whether the effects' floor took the effect off |
 | FX7 | Blackout and Fade out with an effect on (isf-rgb-invert over a clip), then with a generator | Black at once under Blackout (never the inverted white), the fade smooth, the level back as it was | Anything lit under Blackout |
 | FX8 | A crossfade out of a generator into a clip (Mix on Crossfade, 2 s) | D71's still is the generator's picture (not black, not the carrier's colours), then the clip | Yes or no; a photo if it is wrong |
 | FX9 | The panel's preview (the Live page's snapshot) with a generator and with an effect on, watched for a minute (a preview every 3 s) | The snapshot shows the shader and the effect, at the screen's size; no stutter on the screen as each preview is taken | The time of one preview at 1920 x 1080; `missed-vblanks` during the minute against a minute without the Live page open |
@@ -742,6 +742,7 @@ As the step a rows, with `--sources=4` (the renderer card's 4 sources) and a map
 | # | Do | Look for | Send back |
 | --- | --- | --- | --- |
 | SK1 | The soak of 2026-10-24 again: 4 sources at 720p looping, the mapping on, 2 hours; `ps -o rss= -p $(pgrep -x pvj-render)` every 10 minutes | Resident memory flat after the first minutes, well under the 875 MB of before (about 150 MB less a source 2 to 4) | The readings |
+| SK3 | New drawing, a clip on source 1: `SIGKILL` to pvj-render twice in a row, then Stop in the panel, then choose New again | Classic takes over and says why; the panel still stops it (no "Permission denied"); New chosen again draws within a few seconds | Yes or no |
 | SK2 | Make pvj-render end twice in a row (`sudo kill -9` it twice within a minute), so classic draws; then System > Screen output, New, Use this | The player restarts and New draws again; the card says New | Yes or no |
 
 ### pvj-render phase 3, step c (D106): passes and buffers, never run on a Pi
@@ -767,6 +768,47 @@ Uploads of ISF files with PASSES (a feedback trail effect and a two-pass blur; a
 | --- | --- | --- | --- |
 | FX20 | Projection mapping > Sources on the New renderer, from a phone and a laptop: an effect on Source 2 (On, its amount, Off), a shader played to Source 3 from its Shader row | The quads change as the card says; the rows fit at 390 px | Yes or no, and a screenshot if a row overruns |
 | FX21 | With a shader on Source 2, Shaders > Picture detail to another height; then upload a new version of that shader (replace) | Source 2's shader drawn again each time, at the new detail and from the new file, with its values | Yes or no |
+
+### Run on the test node, 2026-10-24 (FX11 to FX21, SK1)
+
+One projector session on the owner's test Pi 4 with the X27. The script was `nxlx_shared/scripts/phase3_session.py`, run by the coordinator. The results are in `measurements/2026-10-25-phase3/run-20261024-160437/` (results.json, session.log, pixel captures, webcam photos).
+
+**The setup.** The New renderer, detail auto, at the mapping's 1024 x 768 screen, with a 2 x 2 mapping of quads on Sources 1 to 4. The clips were 720p H.264, decoded in software. Effects worked at 720 x 540 and generators at 960 x 720 (Automatic). The projector was on 62.0 minutes and is now in standby. Everything was put back as found.
+
+**What was not read.** The GPU's share: the run has no GPU counter. FX1 to FX10 and SK2 were not part of this session. FX20 ran through the API only, not on a phone or a laptop, so the rows were not seen at 390 px.
+
+| # | Result | Numbers |
+| --- | --- | --- |
+| FX11 | Ran. Every slot "on", no effect dropped a run. Effects on all four sources cost about a quarter of the frame rate | 4 clips plain: 58.3 flips/s, 207 missed in 122 s, pvj-render 297% of one core, the box 79%. fx-grade on all 4: **42.7 flips/s**, 2115 missed in 122 s, pvj-render 312%, the box 83%, 78.9 passes/s, each slot about 30 runs/s |
+| FX12 | Ran. A chain of 3 on Source 2 and fx-grade on Sources 1, 3, 4 | **32.3 flips/s**, 1715 missed in 62 s, pvj-render 323%, the box 87%, 121.8 passes/s; no drops in any slot (slots 2 and 3 at about 31 runs/s) |
+| FX13 | Passed | Capture mean 86.2 before, **0.0 under Blackout**, 52.6 after Fade in |
+| FX14 | Passed | The Stop left no chain on Source 2; the clip played again plain |
+| SK1 | Passed for 44 minutes (not the 2 hours of the row) | **RSS flat at 586 to 589 MB** (about 875 MB and climbing before #169); 58.8 to 58.9 flips/s, about 1.2 missed vblanks/s (328 to 371 per 5 minutes); fds 24 to 26, threads 83 to 86, GL objects 26; 58 to 60 C; the box 78 to 80%, pvj-render 296 to 299% of one core; memory available about 2.97 GB |
+| FX15 | Ran. Slot 1 "on" (not "8-bit"), no drops | A feedback trail over a 720p clip: **55.2 flips/s**, 299 missed in 62 s, 46.5 passes/s, pvj-render 313% |
+| FX16 | Ran. No program was refused; a few drops | A two-pass blur generator: **59.4 flips/s at 540** (720 x 540, 8 drops in 47 s) and **59.2 at 720** (960 x 720, 11 drops) |
+| FX17 | Passed | Classic listed each upload with passes as "it draws in several passes (PASSES), which is not supported on classic mpv (the New renderer draws it: System > Screen output)" |
+| FX18 | Ran | One shader (nxlx-silk) on Source 2 at 960 x 720, a 720p clip on Source 1: **59.4 flips/s**, 39 missed in 62 s, 10 drops |
+| FX19 | Ran, and did not hold | Shaders on Sources 2 to 4 (silk, bars, tiles) at 960 x 720: **50.5 flips/s**, 867 missed in 92 s, **545 to 570 drops per shader** in 92 s (about one run in five); pvj-render only 51% of one core, the box 15% |
+| FX20 | Passed through the API (the calls the Sources card makes) | Effect on, amount 0.4, off, a shader to Source 3: every call 200, the state as sent |
+| FX21 | Passed | Source 2's shader was built again on the change of Picture detail and on the replaced upload, with its value (level 0.8) kept |
+
+**What it means.**
+- **Effects or shaders on all four sources at once cost a quarter to almost half the frame rate on a Pi 4.** Four effects took 58.3 down to 42.7; a chain of 3 plus three effects took it to 32.3; three generators on Sources 2 to 4 took it to 50.5 and dropped about one run in five. One program on one source costs little: FX15, FX16 and FX18 held 55 to 59.
+- **Most likely GPU-bound, not proven.** With four clips decoding, the CPU sat at 79% of the box and rose only to 83 to 87% with the effects, while the frame rate fell by a quarter to a half. In FX19 the CPU was at 15% of the box and the shaders still dropped about one run in five (545 drops against 2450 runs on Sources 3 and 4). Nothing measured the GPU itself, so this is read from the CPU staying flat, not from a GPU counter.
+- **For D108's spike.** The program pass draws the whole picture every frame, where an effect here ran about 30 times a second. So expect it to cost at least what one effect costs, not less. Two decks decode two clips, not four, which leaves the CPU room; the GPU is the limit to measure. The spike should therefore measure, at 540 and at 720:
+  - deck B decoding while deck A crossfades and the program pass runs, as planned;
+  - the same with one effect on each deck.
+
+  Skipping the pass when nothing changed matters more than the design said.
+- **For the effects' cost estimate.** It judges one program alone (light, medium, heavy), and every program here was light enough alone. What lost frames was several at once. So a warning needs a box-wide count. One option is the passes a second the renderer already reports (`fx-passes-per-second`), weighted by each program's area. The box would warn as D101's source warning does. From this one run, about 80 passes a second of a light effect at 720 x 540 (four fx-grade) already cost a quarter of the frames on a Pi 4; a threshold needs more than one run to set.
+
+### The overnight soak on the test node, 2026-10-30 (SK3)
+
+10 hours on New: 4 sources at 720p in software, the mapping on, an output of 1920 x 1080 at 60 Hz, 1199 crossfades on source 1, all with a dongle at the real HDMI. Results in `measurements/2026-10-29-soak` on the HP.
+
+| Row | Result | What was measured |
+|---|---|---|
+| SK3 | **Failed, before this fix** | Classic took over and said why, but its socket stayed owner-only (mode 600), so every panel call got "Permission denied" and New chosen again did nothing. To be run again on the fix |
 
 ### What to send back
 
