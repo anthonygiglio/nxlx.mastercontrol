@@ -190,7 +190,7 @@ class BoardTest(Live):
         self.assertNotIn("height", boxcare.check_shaders({"dwell": 60}, None))                # and none is made up for it
 
     def test_every_bundled_shader_says_how_heavy_it_is_and_what_was_measured(self):
-        """All 47, each with the class and the numbers a Pi 4 measured at the box's output (PI4, 1920 x 1080 on
+        """All 46, each with the class and the numbers a Pi 4 measured at the box's output (PI4, 1920 x 1080 on
         2026-10-16; PI4_1440, 2560 x 1440 on 2026-10-05), named one by one in tests/test_shaders.py."""
         own = ["nxlx-%s.fs" % n for n in FIRST_TEN + AMBIENT + PERFORMANCE]
         for screen, table, medium, heavy, output in (((1920, 1080), L.PI4, MEDIUM + PACK_MEDIUM, HEAVY + PACK_HEAVY, [1920, 1080]),
@@ -239,15 +239,15 @@ class BoardTest(Live):
 
     def test_a_box_set_up_by_the_first_version_keeps_its_list(self):
         """Its uploads were in the rotation and stay; what was switched off stays off; the shaders heavy at the box's
-        output go (none at 1920 x 1080, drift and nebula at 2560 x 1440)."""
+        output go (none at 1920 x 1080, nebula at 2560 x 1440)."""
         self.engine.upload("mine.fs", GOOD)
         self.settings.data["shaders"] = {"dwell": 45, "vary": False, "height": 540, "disabled": ["nxlx-silk.fs"]}
         self.player.osd_size = lambda: (2560, 1440)
-        self.assertEqual(({"nxlx-nebula.fs", "nxlx-drift.fs"}) & set(self.engine.vibes_ids()), set())
+        self.assertEqual(({"nxlx-nebula.fs"}) & set(self.engine.vibes_ids()), set())
         self.player.osd_size = lambda: (1920, 1080)
         ids = self.engine.vibes_ids()
         self.assertIn("mine.fs", ids)
-        self.assertLessEqual({"nxlx-nebula.fs", "nxlx-drift.fs"}, set(ids))
+        self.assertLessEqual({"nxlx-nebula.fs"}, set(ids))
         self.assertEqual(({"nxlx-silk.fs"} | {"nxlx-%s.fs" % n for n in PERFORMANCE}) & set(ids), set())
         self.engine.api_set({"action": "config", "dwell": 50}, None, "t")          # the first save makes the list a real set
         saved = self.settings.data["shaders"]
@@ -319,13 +319,13 @@ class AutoDetailTest(Live):
         rows = {s["id"]: s for s in st["shaders"]}
         self.assertEqual(sorted(sid for sid, s in rows.items() if s["lines"] == 540), sorted(AUTO_540))
         self.assertEqual(sorted(sid for sid, s in rows.items() if s["lines"] == 720), sorted(set(L.PI4) - set(AUTO_540)))
-        self.assertEqual(len(AUTO_540), 6)                            # 41 of the 47 at 720 lines
+        self.assertEqual(len(AUTO_540), 5)                            # 41 of the 46 at 720 lines
         self.assertEqual((self.drawn("nxlx-silk.fs"), self.engine.state()["render"]["height"]), (720, 720))
-        self.assertEqual((self.drawn("nxlx-drift.fs"), self.engine.state()["render"]["height"]), (540, 540))
+        self.assertEqual((self.drawn("nxlx-nebula.fs"), self.engine.state()["render"]["height"]), (540, 540))
         self.assertEqual(self.drawn("isf-ridgelines.fs"), 540)
         self.engine.upload("mine.fs", GOOD)                           # nobody measured it: the careful height
         self.assertEqual((self.row("mine.fs")["lines"], self.drawn("mine.fs")), (540, 540))
-        # the guard and Vibes: nothing is heavy at this output, so the default Ambient has all 25 calm shaders
+        # the guard and Vibes: nothing is heavy at this output, so the default Ambient has all 24 calm shaders
         self.assertEqual(sorted(self.engine.vibes_ids()), sorted("nxlx-%s.fs" % n for n in FIRST_TEN + AMBIENT))
 
     def test_at_a_larger_output_the_older_classes_decide(self):
@@ -336,7 +336,7 @@ class AutoDetailTest(Live):
         for sid, (weight, _, _) in L.PI4_1440.items():               # light at 720, medium and heavy at 540 (the guard decides there)
             self.assertEqual((rows[sid]["weight"], rows[sid]["lines"]), (weight, 720 if weight == "light" else 540), sid)
         self.assertEqual(self.drawn("nxlx-tide.fs"), 540)             # medium at 1440p, at 720 lines at 1080p
-        self.assertEqual(sorted(self.engine.vibes_ids()), sorted("nxlx-%s.fs" % n for n in ROTATION_1440))     # drift and nebula out
+        self.assertEqual(sorted(self.engine.vibes_ids()), sorted("nxlx-%s.fs" % n for n in ROTATION_1440))     # nebula out
         self.player.osd_size = lambda: (1920, 1080)
         self.assertEqual(self.drawn("nxlx-tide.fs"), 720)
 
@@ -347,11 +347,11 @@ class AutoDetailTest(Live):
             saved = self.settings.data["shaders"]
             self.assertEqual((saved["height"], saved[L.HEIGHT_AUTO]), (height, False))
             self.assertEqual({s["lines"] for s in st["shaders"]}, {height})
-            self.assertEqual((self.drawn("nxlx-silk.fs"), self.drawn("nxlx-drift.fs")), (height, height))
+            self.assertEqual((self.drawn("nxlx-silk.fs"), self.drawn("nxlx-nebula.fs")), (height, height))
         st = self.engine.api_set({"action": "config", "height": "auto"}, None, "t")
         saved = self.settings.data["shaders"]
         self.assertEqual((st["config"]["height"], saved["height"], saved[L.HEIGHT_AUTO]), ("auto", 540, True))     # an older release reads 540
-        self.assertEqual((self.drawn("nxlx-silk.fs"), self.drawn("nxlx-drift.fs")), (720, 540))
+        self.assertEqual((self.drawn("nxlx-silk.fs"), self.drawn("nxlx-nebula.fs")), (720, 540))
         self.engine.api_set({"action": "config", "dwell": 60}, None, "t")        # another change keeps the choice
         self.assertEqual(self.engine.state()["config"]["height"], "auto")
         for bad in ("Auto", "full", True, None, 1080):
@@ -374,7 +374,7 @@ class AutoDetailTest(Live):
             self.settings.data["shaders"] = {"dwell": 45, "vary": True, "height": height, "disabled": []}
             st = self.engine.state()
             self.assertEqual((st["config"]["height"], st["config"]["height_kept"]), (height, True))
-            self.assertEqual((self.drawn("nxlx-silk.fs"), self.drawn("nxlx-drift.fs")), (height, height))
+            self.assertEqual((self.drawn("nxlx-silk.fs"), self.drawn("nxlx-nebula.fs")), (height, height))
         self.engine.api_set({"action": "config", "dwell": 50}, None, "t")        # a save by this release does not make it a choice
         self.assertNotIn(L.HEIGHT_AUTO, self.settings.data["shaders"])
         self.assertTrue(self.engine.state()["config"]["height_kept"])
@@ -430,22 +430,22 @@ class AutoDetailTest(Live):
         self.assertEqual(json.loads(run.stdout.strip().splitlines()[-1]), [540, 540])
 
     def test_a_heavy_mark_under_automatic_belongs_to_the_shaders_own_height(self):
-        self.engine.note_heavy("nxlx-drift.fs", {"drops_per_second": 2.0})
+        self.engine.note_heavy("nxlx-nebula.fs", {"drops_per_second": 2.0})
         self.engine.note_heavy("nxlx-silk.fs", {"drops_per_second": 1.0})
         marks = self.settings.data["shaders"]["heavy"]
-        self.assertEqual((marks["nxlx-drift.fs"]["height"], marks["nxlx-silk.fs"]["height"]), (540, 720))
-        self.assertEqual({"nxlx-drift.fs", "nxlx-silk.fs"} & set(self.engine.vibes_ids()), set())
-        self.settings.data["shaders"]["heavy"]["nxlx-drift.fs"]["height"] = 720     # made at 720 by hand before: drift is at 540 now
-        self.assertIn("nxlx-drift.fs", self.engine.vibes_ids())
-        self.assertIsNone(self.row("nxlx-drift.fs")["heavy"])
+        self.assertEqual((marks["nxlx-nebula.fs"]["height"], marks["nxlx-silk.fs"]["height"]), (540, 720))
+        self.assertEqual({"nxlx-nebula.fs", "nxlx-silk.fs"} & set(self.engine.vibes_ids()), set())
+        self.settings.data["shaders"]["heavy"]["nxlx-nebula.fs"]["height"] = 720     # made at 720 by hand before: nebula is at 540 now
+        self.assertIn("nxlx-nebula.fs", self.engine.vibes_ids())
+        self.assertIsNone(self.row("nxlx-nebula.fs")["heavy"])
         self.assertIsNotNone(self.row("nxlx-silk.fs")["heavy"])
 
     def test_a_computed_set_judges_each_shader_at_the_height_it_will_be_drawn_at(self):
         """The review of #142: "not heavy" at 1080p is only true where the shader held. A box with 720 lines kept
-        would put drift and nebula in Ambient at 720, where they drop about 10 frames a second."""
+        would put nebula in Ambient at 720, where it drops about 10 frames a second."""
         calm = {"nxlx-%s.fs" % n for n in FIRST_TEN + AMBIENT}
-        dropped_at_720 = {"nxlx-drift.fs", "nxlx-nebula.fs", "nxlx-aurora.fs", "nxlx-lantern.fs"}
-        self.assertEqual(set(self.engine.vibes_ids()), calm)                     # Automatic: those four at 540, where they hold
+        dropped_at_720 = {"nxlx-nebula.fs", "nxlx-aurora.fs", "nxlx-lantern.fs"}
+        self.assertEqual(set(self.engine.vibes_ids()), calm)                     # Automatic: those three at 540, where they hold
         self.settings.data["shaders"] = {"dwell": 180, "vary": True, "height": 720, "disabled": []}      # kept 720
         self.assertEqual(set(self.engine.vibes_ids()), calm - dropped_at_720)
         self.assertEqual({s["id"] for s in self.engine.state()["shaders"] if s["vibes"]}, calm - dropped_at_720)
@@ -479,7 +479,7 @@ class AutoDetailTest(Live):
     def test_the_rule(self):
         self.assertEqual([L.auto_lines(sid, L.PI4) for sid in ("nxlx-silk.fs", "nxlx-aurora.fs", "mine.fs")], [720, 540, 540])
         self.assertEqual(L.auto_lines("nxlx-silk.fs", L.PI4, (360, 540)), 540)     # 720 not offered: never above what is
-        self.assertEqual([L.auto_lines(sid, L.PI4_1440) for sid in ("nxlx-silk.fs", "nxlx-tide.fs", "nxlx-drift.fs")], [720, 540, 540])
+        self.assertEqual([L.auto_lines(sid, L.PI4_1440) for sid in ("nxlx-silk.fs", "nxlx-tide.fs", "nxlx-nebula.fs")], [720, 540, 540])
         self.assertEqual(sorted(sid for sid in L.PI4 if L.auto_lines(sid, L.PI4) == 540), sorted(AUTO_540))
 
 
@@ -1206,6 +1206,26 @@ class SetsTest(Live):
         st = self.engine.api_set({"action": "vibes", "id": "nxlx-silk.fs", "on": False}, None, "t")      # the first edit writes both
         self.assertEqual([(e["id"], e["name"], len(e["shaders"])) for e in self.settings.data["shaders"]["sets"]],
                          [("00000000", "Ambient", IN_VIBES - 1), ("00000001", "Show", len(PERFORMANCE))])
+
+    def test_a_setting_that_names_a_shader_the_box_no_longer_has_is_passed_over(self):
+        """nxlx-drift.fs was removed from the bundle. A set, a list, a mark or a pad of a box set up before names it
+        still: nothing crashes, the rest is kept and saved, and the name is a shader that is not there, as any other."""
+        gone = "nxlx-drift.fs"
+        self.add("Gig", [gone, "nxlx-prism.fs", "nxlx-tide.fs"])
+        self.settings.data["shaders"].update({"disabled": [gone], "included": [gone], "heavy": {gone: {"height": 540, "output": [1920, 1080]}},
+                                              "presets": {gone: [{"name": "default", "values": {}}]}})
+        st = self.engine.state()                                      # the page still loads, and the shader is not in it
+        self.assertNotIn(gone, [s["id"] for s in st["shaders"]])
+        self.assertNotIn(gone, self.engine.vibes_ids())
+        self.engine.api_set({"action": "config", "dwell": 61}, None, "t")          # a save of anything else is not refused
+        self.assertEqual(self.engine.config()["dwell"], 61)
+        self.vibes.start("Gig")
+        self.assertEqual(set(self.rounds(4)), {"nxlx-prism.fs", "nxlx-tide.fs"})     # the set goes on with what is there
+        with self.assertRaises(ApiError) as c:                        # a tap on a pad or a saved show that plays it is a plain 404
+            self.engine.play(gone)
+        self.assertEqual(c.exception.status, 404)
+        saved = json.loads(json.dumps(self.settings.data["shaders"]))
+        self.assertEqual(boxcare.check_shaders(saved, None)["disabled"], [gone])    # a settings file made before is taken as it is
 
     def test_sets_are_checked(self):
         show = self.add("Gig", ["nxlx-prism.fs"])

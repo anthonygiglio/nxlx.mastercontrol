@@ -565,8 +565,8 @@ What is not known is whether 720 lines look better than 540 on the room's own sc
 | A1 | On the projector at its own Automatic mode (D90), play nxlx-silk, nxlx-lattice, nxlx-grid and nxlx-halftone, each under Automatic (720 lines) and then with Picture detail at 540 lines by hand, from where the audience stands | Fine lines, dots and edges: sharper at 720, or no difference you would notice | For each: 720 better, the same, or 540 better. If the same everywhere, 540 for all would leave the GPU more room |
 | A2 | The same four on the 1440p monitor set to 1920 x 1080 | As A1, close up | As A1 |
 | A3 | nxlx-tide and nxlx-bloom under Automatic (720 lines; the GPU was 87 to 90 percent busy there) with an effect on over them, then with the mapping on | The load line beside the shader on the Shaders page; dropped frames in Setup > Health | Dropped frames a second for each. If they drop, these two may need 540 the way two effects got it in D58 |
-| A4 | Vibes on Ambient under Automatic for 20 minutes | No shader marked "Too heavy on this box"; nxlx-drift and nxlx-nebula now come round too, at 540 lines | Any shader marked, with its rate |
-| A5 | nxlx-drift and nxlx-nebula at 540 lines (the GPU was 97 percent busy) | Their slow clouds: smooth, or an occasional hitch | Whether they look smooth |
+| A4 | Vibes on Ambient under Automatic for 20 minutes | No shader marked "Too heavy on this box"; nxlx-nebula now comes round too, at 540 lines | Any shader marked, with its rate |
+| A5 | nxlx-nebula at 540 lines (the GPU was 96 percent busy) | Its slow clouds: smooth, or an occasional hitch | Whether it looks smooth |
 
 ### Render nodes (D94): never run with a real render node
 
@@ -717,11 +717,11 @@ Everything of D106 ran on a software GPU in a 320 x 180 headless window. Before:
 | # | Do | Look for | Send back |
 | --- | --- | --- | --- |
 | FX1 | Every bundled shader for 20 s each through Vibes (or the Shaders page), at the box's Automatic heights | Each slot 0 `state` "on" (never "constants" for a bundled shader), `runs` up by about 30 a second, `drops` about 0, the picture as on classic | Per shader: `drops` a second, missed vblanks a second, the GPU's share; any that did not compile (the panel says the GPU's words) |
-| FX2 | The same 6 that dropped at 720 on classic (drift, nebula, ridgelines, simplex-noise, aurora, lantern) at 540 | As FX1 | As FX1, beside classic's numbers in D93 |
+| FX2 | The 5 of the 6 that dropped at 720 on classic that are still here (nebula, ridgelines, simplex-noise, aurora, lantern; nxlx-drift is gone) at 540 | As FX1 | As FX1, beside classic's numbers in D93 |
 | FX3 | The light shaders at **720** (Automatic gives them 720 at 1080p): bars, silk, tiles, stars for 60 s each | `drops` and missed vblanks near 0; the GPU's share against classic's (at most 52 percent there) | The GPU's share and drops at 720 on New; whether 720 should stay the New renderer's Automatic height for them |
 | FX4 | Move a value fast: a MIDI knob or the Shaders page's slider on nxlx-silk for 30 s | The picture follows the knob smoothly (classic: five steps a second), `rebuilds` 0, no stutter | Whether it is smooth; missed vblanks during the 30 s |
 | FX5 | An effect over a 720p clip (fx-grade, then isf-rgb-invert), 60 s each | `runs` about the clip's frame rate, the picture as on classic, no stutter | Missed vblanks, the GPU's share, the CPU |
-| FX6 | An effect over a generator (fx-kaleido over nxlx-drift at 540) | As classic's pair; `drops` near 0 | As FX5; whether the effects' floor took the effect off |
+| FX6 | An effect over a generator (fx-kaleido over nxlx-nebula at 540) | As classic's pair; `drops` near 0 | As FX5; whether the effects' floor took the effect off |
 | FX7 | Blackout and Fade out with an effect on (isf-rgb-invert over a clip), then with a generator | Black at once under Blackout (never the inverted white), the fade smooth, the level back as it was | Anything lit under Blackout |
 | FX8 | A crossfade out of a generator into a clip (Mix on Crossfade, 2 s) | D71's still is the generator's picture (not black, not the carrier's colours), then the clip | Yes or no; a photo if it is wrong |
 | FX9 | The panel's preview (the Live page's snapshot) with a generator and with an effect on, watched for a minute (a preview every 3 s) | The snapshot shows the shader and the effect, at the screen's size; no stutter on the screen as each preview is taken | The time of one preview at 1920 x 1080; `missed-vblanks` during the minute against a minute without the Live page open |
