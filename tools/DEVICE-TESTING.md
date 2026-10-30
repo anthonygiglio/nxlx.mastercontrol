@@ -792,15 +792,6 @@ One projector session on the owner's test Pi 4 with the X27. The script was `nxl
 | FX20 | Passed through the API (the calls the Sources card makes) | Effect on, amount 0.4, off, a shader to Source 3: every call 200, the state as sent |
 | FX21 | Passed | Source 2's shader was built again on the change of Picture detail and on the replaced upload, with its value (level 0.8) kept |
 
-
-### The overnight soak on the test node, 2026-10-30 (SK3)
-
-10 hours on New: 4 sources at 720p in software, the mapping on, an output of 1920 x 1080 at 60 Hz, 1199 crossfades on source 1, all with a dongle at the real HDMI. Results in `measurements/2026-10-29-soak` on the HP.
-
-| Row | Result | What was measured |
-|---|---|---|
-| SK3 | **Failed, before this fix** | Classic took over and said why, but its socket stayed owner-only (mode 600), so every panel call got "Permission denied" and New chosen again did nothing. To be run again on the fix |
-
 **What it means.**
 - **Effects or shaders on all four sources at once cost a quarter to almost half the frame rate on a Pi 4.** Four effects took 58.3 down to 42.7; a chain of 3 plus three effects took it to 32.3; three generators on Sources 2 to 4 took it to 50.5 and dropped about one run in five. One program on one source costs little: FX15, FX16 and FX18 held 55 to 59.
 - **Most likely GPU-bound, not proven.** With four clips decoding, the CPU sat at 79% of the box and rose only to 83 to 87% with the effects, while the frame rate fell by a quarter to a half. In FX19 the CPU was at 15% of the box and the shaders still dropped about one run in five (545 drops against 2450 runs on Sources 3 and 4). Nothing measured the GPU itself, so this is read from the CPU staying flat, not from a GPU counter.
@@ -810,6 +801,14 @@ One projector session on the owner's test Pi 4 with the X27. The script was `nxl
 
   Skipping the pass when nothing changed matters more than the design said.
 - **For the effects' cost estimate.** It judges one program alone (light, medium, heavy), and every program here was light enough alone. What lost frames was several at once. So a warning needs a box-wide count. One option is the passes a second the renderer already reports (`fx-passes-per-second`), weighted by each program's area. The box would warn as D101's source warning does. From this one run, about 80 passes a second of a light effect at 720 x 540 (four fx-grade) already cost a quarter of the frames on a Pi 4; a threshold needs more than one run to set.
+
+### The overnight soak on the test node, 2026-10-30 (SK3)
+
+10 hours on New: 4 sources at 720p in software, the mapping on, an output of 1920 x 1080 at 60 Hz, 1199 crossfades on source 1, all with a dongle at the real HDMI. Results in `measurements/2026-10-29-soak` on the HP.
+
+| Row | Result | What was measured |
+|---|---|---|
+| SK3 | **Failed, before this fix** | Classic took over and said why, but its socket stayed owner-only (mode 600), so every panel call got "Permission denied" and New chosen again did nothing. To be run again on the fix |
 
 ### What to send back
 
