@@ -728,8 +728,8 @@ class PriorityTest(unittest.TestCase):
         self.assertEqual({v for v in self.policies(r).values() if v[0] in (os.SCHED_RR, os.SCHED_FIFO)}, set())
 
     def test_with_the_right_only_the_render_thread_is_real_time(self):
-        hard = resource.getrlimit(resource.RLIMIT_RTPRIO)[1]
-        if hard != resource.RLIM_INFINITY and hard < 1 and os.geteuid() != 0:
+        soft = resource.getrlimit(resource.RLIMIT_RTPRIO)[0]
+        if soft != resource.RLIM_INFINITY and soft < 1 and os.geteuid() != 0:
             self.skipTest("this account may not ask for real-time priority (as a unit with LimitRTPRIO=1 may)")
         r = self.run_renderer()
         r.wait(lambda: "priority" in r.stderr(), 5)
