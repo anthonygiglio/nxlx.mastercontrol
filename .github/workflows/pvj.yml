@@ -313,7 +313,9 @@ jobs:
             container: ''
           - where: Debian 13, the Pi's mpv
             container: debian:trixie
-    container: ${{ matrix.container }}
+    container:
+      image: ${{ matrix.container }}
+      options: --ulimit rtprio=1:1       # as LimitRTPRIO=1 in pvj-player.service, for the test of the render thread's priority
     env:
       DEBIAN_FRONTEND: noninteractive
       PKGS: gcc make pkg-config libc6-dev libmpv-dev libegl-dev libgles-dev libgbm-dev libdrm-dev libgl1-mesa-dri libegl-mesa0 ffmpeg fonts-dejavu-core python3 git ca-certificates
@@ -360,6 +362,7 @@ jobs:
         timeout-minutes: 15
         run: |
           run="PVJ_RENDER_TEST=1 LIBGL_ALWAYS_SOFTWARE=1 python3 -X faulthandler -m unittest -v tests.test_pvj_render tests.test_renderer"
+          [ -n "${{ matrix.container }}" ] || sudo prlimit --rtprio=1:1 --pid $$     # as LimitRTPRIO=1 in pvj-player.service
           if [ -n "${{ matrix.container }}" ]; then su ci -c "$run" > /tmp/render.txt 2>&1 || code=$?
           else sh -c "$run" > /tmp/render.txt 2>&1 || code=$?; fi
           cat /tmp/render.txt
