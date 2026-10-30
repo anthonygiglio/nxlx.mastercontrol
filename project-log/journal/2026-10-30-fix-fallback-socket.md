@@ -9,5 +9,5 @@
 - **A false alarm:** the soak's `fades_done` of 10 is a count for each 5 minutes, not a total: 10 crossfades in 5 minutes is exactly one every 30 s.
 - **The bug:** the check at the end killed pvj-render twice. Classic took over and said why, as it should, but the panel was shut out of it: `ipc error: [Errno 13] Permission denied` on every call, and New chosen again answered 200 and did nothing. On the node `player.sock` was mode 600.
 - **Why:** `Player.serve` removes the old socket at its start, before pvj-render runs. A killed pvj-render leaves its own there, and the opener, which waits for a socket at that name, opened that old file at once. mpv then made a new one, owner-only.
-- **The fix:** the fallback removes the old socket before the opener starts. A test in `tests/test_renderer.py`, and row SK2. To be run again on the node once deployed.
+- **The fix:** the fallback removes the old socket before the opener starts. A test in `tests/test_renderer.py`, and row SK3. To be run again on the node once deployed.
 - **Put back:** `pvj-player` restarted by hand on the node, New drawing again.
