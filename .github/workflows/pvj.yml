@@ -313,7 +313,9 @@ jobs:
             container: ''
           - where: Debian 13, the Pi's mpv
             container: debian:trixie
-    container: ${{ matrix.container }}
+    container:
+      image: ${{ matrix.container }}
+      options: --cap-add=SYS_RESOURCE    # for the prlimit below; docker exec, which runs the steps, does not take --ulimit
     env:
       DEBIAN_FRONTEND: noninteractive
       PKGS: gcc make pkg-config libc6-dev libmpv-dev libegl-dev libgles-dev libgbm-dev libdrm-dev libgl1-mesa-dri libegl-mesa0 ffmpeg fonts-dejavu-core python3 git ca-certificates
@@ -360,7 +362,10 @@ jobs:
         timeout-minutes: 15
         run: |
           run="PVJ_RENDER_TEST=1 LIBGL_ALWAYS_SOFTWARE=1 python3 -X faulthandler -m unittest -v tests.test_pvj_render tests.test_renderer"
-          if [ -n "${{ matrix.container }}" ]; then su ci -c "$run" > /tmp/render.txt 2>&1 || code=$?
+          if [ -n "${{ matrix.container }}" ]; then prlimit --rtprio=1:1 --pid $$     # as LimitRTPRIO=1 in pvj-player.service
+          else sudo prlimit --rtprio=1:1 --pid $$; fi
+          echo "real-time limit: $(ulimit -r)"
+          if [ -n "${{ matrix.container }}" ]; then setpriv --reuid=ci --regid=ci --clear-groups env HOME=/home/ci sh -c "$run" > /tmp/render.txt 2>&1 || code=$?     # su would drop the limit
           else sh -c "$run" > /tmp/render.txt 2>&1 || code=$?; fi
           cat /tmp/render.txt
           if grep -q -E "skipped|OK \(skipped" /tmp/render.txt; then

@@ -136,6 +136,19 @@ class PlayerUnitTest(unittest.TestCase):
         self.assertEqual(load_units()["pvj-player.service"]["Group"], ["pvj"])
         self.assertEqual(load_units()["pvj-web.service"]["Group"], ["pvj"])
 
+    def test_player_may_ask_for_real_time_priority_1_and_has_no_capability_for_it(self):
+        # pvj-render's render thread asks for SCHED_RR 1 (render/src/main.c). The resource limit alone lets an
+        # unprivileged account do that, so the unit grows no capability, and no other unit gets the limit.
+        player = load_units()["pvj-player.service"]
+        self.assertEqual(player["LimitRTPRIO"], ["1"])
+        for key in ("AmbientCapabilities", "CapabilityBoundingSet", "CapabilityAmbient", "LimitRTTIME", "CPUSchedulingPolicy",
+                    "CPUSchedulingPriority", "RestrictRealtime"):
+            self.assertNotIn(key, player, key)
+        for name, keys in load_units().items():
+            if name != "pvj-player.service":
+                self.assertNotIn("LimitRTPRIO", keys, name)
+                self.assertNotIn("CAP_SYS_NICE", " ".join(words(keys, "AmbientCapabilities", "CapabilityBoundingSet")), name)
+
 
 def runtime_folders(units):
     """{folder name under /run: {(unit, user, mode, preserve)}} for every RuntimeDirectory= in the units."""

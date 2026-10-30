@@ -27,6 +27,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <math.h>
+#include <sched.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -626,6 +627,10 @@ static void final_pass(GLuint picture, int text_on, float level)
     reset_gl();
     glBindFramebuffer(GL_FRAMEBUFFER, out_target());
     glViewport(0, 0, app.out_w, app.out_h);
+    // Both final passes (the plain scale and the mapping's shader) draw the whole target, so the clear changes no pixel;
+    // it tells the GPU the old frame need not be loaded into the tiles first (measured on the Pi 4, 4 sources: 40.7 to 44.9 flips a second).
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, picture);
     if (have_hook) {
@@ -805,6 +810,21 @@ done:
     shot_hand(serial, NULL, w, h);
 }
 
+// The render thread (the one that calls this) asks for SCHED_RR at priority 1, once, before its loop. With four decoders
+// busy it waited for a core and the turn's worst stage took 82 to 91 ms; at real-time priority no flip was longer than
+// 2 vblanks (a scratch build on the Pi 4, 20 s windows). Only this thread: on Linux pid 0 is the calling thread, and
+// RESET_ON_FORK keeps any thread or child it starts later at normal priority. It is allowed by the unit's
+// LimitRTPRIO=1 (install/pvj-player.service), no capability. Without that (a desktop, CI, an older unit) it is said
+// once and the program runs as it always did; this never stops it from starting.
+static void realtime_priority(void)
+{
+    struct sched_param sp = { .sched_priority = 1 };
+    if (sched_setscheduler(0, SCHED_RR | SCHED_RESET_ON_FORK, &sp))
+        LOG("the render thread stays at normal priority: %s", strerror(errno));
+    else
+        LOG("the render thread runs at real-time priority 1 (SCHED_RR)");
+}
+
 /* ---- main ---------------------------------------------------------------------------------------------------------- */
 int main(int argc, char **argv)
 {
@@ -901,6 +921,7 @@ int main(int argc, char **argv)
     // alone), then mixes the two by the clock (FADE_RUNNING: the incoming share goes from 0 to 1 in a straight line
     // over the fade's seconds, as D71's still was made more transparent in a straight line), and at the end stops
     // the outgoing layer, which is idle and costs nothing again. Each layer converts at most one clip frame a turn.
+    realtime_priority();
     int failed = 0, text_was = 0, was_front = 0;
     long presented = 0;
     while (!g_signal) {
