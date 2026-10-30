@@ -809,6 +809,7 @@ One projector session on the owner's test Pi 4 with the X27. The script was `nxl
 | Row | Result | What was measured |
 |---|---|---|
 | SK3 | **Failed, before this fix** | Classic took over and said why, but its socket stayed owner-only (mode 600), so every panel call got "Permission denied" and New chosen again did nothing. To be run again on the fix |
+| SK3 | Passed on master 331e6b6, 2026-10-30 | Killed twice: classic in 0.8 s and said why; socket mode 660; Stop in the panel answered 200; New chosen again answered 200 and was drawing in 3.1 s. Run by `nxlx_shared/scripts/sk3_check.py` |
 
 ### What to send back
 
