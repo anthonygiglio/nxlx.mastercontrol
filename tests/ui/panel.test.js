@@ -3262,7 +3262,7 @@ function startServer(env) {          // env: more for the harness's environment 
     // Automatic picture detail (D93) is offered on a Pi 4 only, and this box is not one: its answer is given what a
     // Pi 4's says, first under Automatic, then with a height an earlier version saved. The tap is answered here too.
     {
-      const auto = { lines: 720, other: 540, lower: { 'nxlx-drift.fs': 540, 'nxlx-nebula.fs': 540 }, output: [1920, 1080] }, render0 = (await get('/api/shaders')).render;
+      const auto = { lines: 720, other: 540, lower: { 'nxlx-aurora.fs': 540, 'nxlx-nebula.fs': 540 }, output: [1920, 1080] }, render0 = (await get('/api/shaders')).render;
       let mode = 'auto', sent = null, last = null;
       await page.route('**/api/shaders', async (route) => {
         if (route.request().method() === 'POST') {
@@ -3283,7 +3283,7 @@ function startServer(env) {          // env: more for the harness's environment 
       assert.deepStrictEqual(await page.$$eval('#shaderheight option', (os) => os.map((o) => o.value)), ['auto'].concat(render0.heights.map(String)), 'Automatic first, then the heights');
       assert.strictEqual(await page.textContent('#shaderheight option[value="auto"]'), 'Automatic (usual here)');
       assert.strictEqual(await page.inputValue('#shaderheight'), 'auto');
-      assert.strictEqual(await page.textContent('#detailhint'), 'Automatic draws each shader at the most lines it kept up at on a Pi 4 with a 1920 x 1080 screen: 720 lines, 540 for 2 heavier ones (Drift, Nebula), and 540 for a shader you add.');
+      assert.strictEqual(await page.textContent('#detailhint'), 'Automatic draws each shader at the most lines it kept up at on a Pi 4 with a 1920 x 1080 screen: 720 lines, 540 for 2 heavier ones (Aurora, Nebula), and 540 for a shader you add.');
       assert.strictEqual(await page.locator('#detailhigh').count(), 0, 'nothing more is said under Automatic');
       // dropping frames under Automatic: the page says that a number is for every shader before anyone chooses one
       await page.waitForSelector('#shaderload[data-load="heavy"]', { timeout: 20000 });

@@ -89,7 +89,6 @@ PI4_OUTPUT = (1920, 1080)       # the output PI4 was measured at: it counts up t
 PI4_1440_OUTPUT = (2560, 1440)
 PI4 = {
     "nxlx-aurora.fs": ("medium", (22.6, 0.0), (34.2, 2.59)),
-    "nxlx-drift.fs": ("medium", (29.8, 0.0), (47.0, 10.07)),
     "nxlx-ember.fs": ("light", (16.4, 0.0), (23.2, 0.0)),
     "nxlx-horizon.fs": ("light", (15.4, 0.0), (21.6, 0.0)),
     "nxlx-lattice.fs": ("light", (14.9, 0.0), (20.5, 0.0)),
@@ -138,7 +137,6 @@ PI4 = {
 }
 PI4_1440 = {
     "nxlx-aurora.fs": ("medium", (12.9, 0.0), (22.8, 4.87)),
-    "nxlx-drift.fs": ("heavy", (20.1, 2.01), (35.7, 10.55)),
     "nxlx-ember.fs": ("light", (6.5, 0.0), (11.4, 0.39)),
     "nxlx-horizon.fs": ("light", (5.5, 0.0), (9.4, 0.0)),
     "nxlx-lattice.fs": ("light", (4.9, 0.0), (8.3, 0.0)),
@@ -1194,7 +1192,7 @@ class LiveEngine(S.Engine):
     def too_heavy(self, sid, cost, cfg, table, auto):
         """Whether a computed set leaves a shader out (D93). On a measured board (AUTO_BOARDS): when it did not hold
         at the height it will be drawn at here (height_for: its own under Automatic, else the box's one height), by
-        the table for the output; so a box with 720 lines kept leaves out nxlx-drift, nxlx-nebula, nxlx-aurora and
+        the table for the output; so a box with 720 lines kept leaves out nxlx-nebula, nxlx-aurora and
         nxlx-lantern at 1080p, and Automatic lets them in at 540. Elsewhere, and for a shader nobody measured: when
         its class is heavy."""
         if self.board() in AUTO_BOARDS:

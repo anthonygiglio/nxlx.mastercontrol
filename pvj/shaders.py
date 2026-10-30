@@ -156,7 +156,7 @@ def heights_for(board):
 
 
 def default_height(board):
-    """The one height for every shader: 540 lines on a Pi 4 (all 47 bundled shaders keep up there at a 1920 x 1080
+    """The one height for every shader: 540 lines on a Pi 4 (all 46 bundled shaders keep up there at a 1920 x 1080
     output; the Pi 4's own default is Automatic, which draws most of them at 720: shaderlive, D93) and on a board that
     is unknown or weaker; 720 on a Pi 5 and x86, which is a guess until someone measures them."""
     return 720 if board in ("pi5", "x86") else DEFAULT_HEIGHT
