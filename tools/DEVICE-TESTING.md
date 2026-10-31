@@ -897,6 +897,17 @@ Before: the node on a release with this change (the helper and the panel both ne
 | NS5 | Press a source that is on the list but sends no picture (switch the sender off after the list was read, or a sound-only sender) while another source plays | 409 with the reason on the page, and the screen goes black as a failed press always did; the old picture does not stay frozen | The old picture stands for ever after a failed press |
 | NS6 | Press the source that is already on the screen, and press the other source twice quickly | Each ends on the source of the last press; no frozen picture; `journalctl -u pvj-ndi` has no "did not hand the new source over" line | A hand-over lost to a second press |
 
+Results, 2026-10-31, test node on master with D113, mpv 0.40.0 (measurements/2026-10-31-ndi-gap):
+
+| Row | Result | Seen |
+|---|---|---|
+| NS1 | Passed | 21 of 21. Longest time with no new frame 0.25 s, range 0.20 to 0.32. The old picture holds, then about 0.10 to 0.20 s of black, then the new one: old frame to new frame 0.33 s or 0.47 s by source |
+| NS2 | Passed | First switch 0.82 s; from the second about 0.45 s |
+| NS3 | Passed, not listened to | Written with a 440 Hz sender of ours. Sound after every switch, nothing dropped, avsync about 0, no switch slower than the first |
+| NS4 | Passed | Reopened with sound by itself 1.52 s after the tone began |
+| NS5 | Passed, not as written | 409 after 6.3 s with the reason on the page. The old picture holds for those 6 s, black for about 0.6 s, then the old source returns by itself |
+| NS6 | Passed | Each ended on the last press; no "did not hand the new source over" line in 25 minutes |
+
 ### What to send back
 
 The output of checks 1 to 7 and 13, the `journalctl` tail for anything that failed, and a note of what you saw on screen. Say clearly what you did **not** test.
