@@ -79,7 +79,7 @@ class FlywheelTest(unittest.TestCase):
         before = c.beats(at=1.5)
         f.t = 601.5                                         # ten minutes with nothing said
         st = c.status()
-        self.assertEqual((st["state"], st["source"], st["held"]), ("running", "tap", True), "kept, and says whose it was")
+        self.assertEqual((st["state"], st["source"], st["held"]), ("running", "tap", False), "kept, and says whose it was")
         self.assertAlmostEqual(st["age"], 600.0, places=2)
         self.assertAlmostEqual(c.beats(), before + 1200.0, places=6)
         self.assertEqual(c.bpm(), 120.0)
@@ -148,17 +148,24 @@ class SourcesTest(unittest.TestCase):
         f.t = 4.9
         c.sound(100.0, 0.9, 2)                              # sound keeps talking
         self.assertEqual(c.source(), "link")
-        f.t = 5.1                                           # link (5 s) is quiet; tap (30 s) is next
+        f.t = 5.1                                           # link (5 s) is quiet; the hand is next
         self.assertEqual((c.source(), c.bpm()), ("tap", 90.0))
-        f.t = 31.0                                          # tap quiet; osc quiet since 5 s; sound spoke at 4.9
+        f.t = 31.0
         c.sound(105.0, 0.9, 3)
-        self.assertEqual((c.source(), c.bpm()), ("sound", 105.0))
-        f.t = 40.0                                          # now everybody is quiet: the last tempo runs on, held
+        self.assertEqual((c.source(), c.bpm()), ("tap", 90.0), "sound never takes over from the hand")
+        f.t = 4000.0
         st = c.status()
-        self.assertEqual((st["state"], st["source"], st["held"], st["bpm"]), ("running", "sound", True, 105.0))
-        self.assertAlmostEqual(st["age"], 9.0, places=2)
+        self.assertEqual((st["source"], st["steering"], st["held"], st["bpm"]), ("tap", "tap", False, 90.0))
+        self.assertEqual(st["age"], 4000.0, "the age of the last tap is still shown")
+        self.assertIsNone(st["limits"]["hold"]["tap"])
+        c.clear()
+        c.sound(105.0, 0.9, 4)
+        c.osc_bpm(120.0)
+        f.t = 4010.0                                        # the machines: osc quiet after 5 s, sound after 3 s
+        st = c.status()
+        self.assertEqual((st["state"], st["source"], st["held"], st["bpm"]), ("running", "osc", True, 120.0))
+        self.assertAlmostEqual(st["age"], 10.0, places=2)
         self.assertEqual(st["steering"], None)
-        self.assertEqual(st["ages"]["tap"], 40.0)
 
     def test_sound_is_believed_only_at_half_confidence_or_more(self):
         c, f = make(0.0)
@@ -285,6 +292,16 @@ class TapTest(unittest.TestCase):
         r = self.taps(c, f, [11.5 + 0.5 * i for i in range(8)])
         self.assertAlmostEqual(r["bpm"], 120.0, places=6, msg="the last eight only")
 
+    def test_a_first_tap_with_no_tempo_anywhere_sets_nothing(self):
+        c, f = make(0.0)
+        r = c.tap()
+        self.assertEqual((r["taps"], r["bpm"], r["steers"]), (1, None, False))
+        st = c.status()
+        self.assertEqual((st["state"], st["source"], st["bpm"], st["ages"]["tap"]), ("none", None, None, None))
+        self.assertIsNone(c.reading())
+        f.t = 0.5
+        self.assertEqual(c.tap()["bpm"], 120.0, "the tempo needs the second tap")
+
     def test_a_pause_over_two_seconds_starts_a_new_count(self):
         c, f = make(0.0)
         self.taps(c, f, [0.0, 0.5])
@@ -373,6 +390,87 @@ class OddInputTest(unittest.TestCase):
 
 
 # --- the consumer: the levels the panel, OSC out and the shader input are given ----------------------------------------------
+def beat_messages(out, v, now):
+    return [m for m in out.plan(v, now) if not m.startswith(b"#bundle")]
+
+
+class BeatMessageTest(unittest.TestCase):
+    """What `plan` sends as /nxlx/sound/beat across hand-overs, a clear and a nudge."""
+    def setUp(self):
+        self.f = Fake(1000.0)
+        self.dir = tempfile.mkdtemp(prefix="pvj-clock-beats-")
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        self.path = os.path.join(self.dir, "levels")
+        self.out = soundout.Sound(FakeApi({}), socket_path="/nonexistent", levels_path=self.path, clock=self.f, log=lambda *_: None)
+        self.out.status = lambda: {}
+        self.n = 0
+
+    def write(self, beats):
+        with open(self.path, "wb") as fh:
+            fh.write(sound.pack(record(beats=beats), 7, time.monotonic(), sound.F_CAPTURING))
+
+    def look(self):
+        self.n += 1
+        return beat_messages(self.out, self.out.levels(), 100.0 * self.n)
+
+    def test_sound_to_tap_is_a_silent_resync_then_the_clocks_own_beats(self):
+        self.write(5)
+        self.assertEqual(self.look(), [])
+        self.write(6)
+        self.assertEqual(self.look(), [soundout.beat_message(6)], "sound's own beat, as before")
+        self.out.clock.set_bpm(120.0)
+        self.assertEqual(self.look(), [], "who supplies the count changed: no message")
+        self.f.t += 0.25
+        self.assertEqual(self.look(), [])
+        self.f.t += 0.25
+        self.assertEqual(self.look(), [soundout.beat_message(1)])
+
+    def test_clear_gives_the_count_back_to_sound_silently(self):
+        self.out.clock.set_bpm(120.0)
+        self.write(40)
+        self.assertEqual(self.look(), [])
+        self.f.t += 0.5
+        self.assertEqual(self.look(), [soundout.beat_message(1)])
+        self.out.clock.clear()
+        self.assertEqual(self.look(), [], "the count jumps from 1 to 40 and nothing is sent")
+        self.write(41)
+        self.assertEqual(self.look(), [soundout.beat_message(41)])
+
+    def test_a_count_that_went_down_is_silent(self):
+        self.write(500)
+        self.look()
+        self.write(3)                                       # the service started again
+        self.assertEqual(self.look(), [])
+        self.write(4)
+        self.assertEqual(self.look(), [soundout.beat_message(4)])
+
+    def test_a_backwards_nudge_never_beats_twice_for_one_beat(self):
+        self.out.clock.set_bpm(120.0)
+        self.assertEqual(self.look(), [])
+        self.f.t += 0.55                                    # position 1.1
+        self.assertEqual(self.look(), [soundout.beat_message(1)])
+        self.out.clock.nudge(-0.25)                         # 0.85: the count is 0 again
+        self.assertEqual(self.look(), [])
+        self.f.t += 0.2                                     # 1.25: past beat 1 a second time
+        self.assertEqual(self.look(), [], "the same beat is not sent twice")
+        self.f.t += 0.5                                     # 2.25
+        self.assertEqual(self.look(), [soundout.beat_message(2)])
+
+    def test_a_backwards_nudge_at_the_origin_does_not_wrap_the_count(self):
+        self.out.clock.set_bpm(120.0)
+        self.assertEqual(self.look(), [])
+        self.out.clock.nudge(-0.25)                         # position -0.25
+        self.assertEqual(self.out.clock.beat_count(), 0)
+        self.assertEqual(self.out.clock.reading()["beat_count"], 0)
+        self.assertEqual(self.out.clock.status()["beat_count"], 0)
+        self.assertEqual(self.look(), [])
+        sent = []
+        for _ in range(6):
+            self.f.t += 0.25
+            sent += self.look()
+        self.assertEqual(sent, [soundout.beat_message(1), soundout.beat_message(2)], "one for each beat, none for 2147483647")
+
+
 class ConsumerTest(unittest.TestCase):
     def setUp(self):
         self.f = Fake(1000.0)
@@ -447,17 +545,27 @@ class ConsumerTest(unittest.TestCase):
         self.assertNotIn("clock", got)
         self.assertEqual(got["bpm"], 124.0)
 
-    def test_a_tap_goes_stale_and_sound_takes_over_again(self):
+    def test_the_hand_holds_until_clear_and_then_sound_is_given_back(self):
         self.write()
         self.out.clock.set_bpm(100.0)
         self.assertTrue(self.out.levels()["clock"])
-        self.f.t += clk.HOLD["tap"] + 1.0
+        self.f.t += 3600.0
+        self.write()
+        got = self.out.levels()
+        self.assertTrue(got["clock"], "an hour later sound still does not take over")
+        self.assertEqual(got["bpm"], 100.0)
+        self.out.clock.clear()
+        self.write()
+        self.assertNotIn("clock", self.out.levels())
+        self.assertEqual(self.out.clock.source(), "sound")
+
+    def test_with_sound_alone_when_the_music_stops_the_beat_stops(self):
         self.write()
         self.out.levels()
-        self.f.t += 0.1
-        got = self.out.levels()
-        self.assertNotIn("clock", got, "tap is quiet and the sound is believed again")
-        self.assertEqual(self.out.clock.source(), "sound")
+        self.assertEqual(self.out.clock.state(), "running", "the clock follows sound to be able to hand over")
+        os.remove(self.path)
+        self.f.t += 10.0
+        self.assertIsNone(self.out.levels(), "but the consumers are given nothing: as before")
 
     def test_a_tap_that_went_quiet_with_no_sound_keeps_the_beat(self):
         self.out.clock.set_bpm(100.0)
@@ -553,13 +661,13 @@ class ClockRoutesTest(RolesBase):
         self.assertEqual((c["bpm"], c["taps"]), (100.0, 0), "nothing changed")
 
     def test_controllers_may_only_tap(self):
-        for device in (midi.MIDI_DEVICE, osc.OSC_DEVICE, dmx.DMX_DEVICE):
+        for device in (midi.MIDI_DEVICE, osc.OSC_DEVICE):
             self.f.t += 0.5
             st, d = self.api.handle("POST", "/api/clock/tap", {}, device, device["id"])
             self.assertEqual(st, 200, device)
             self.assertEqual(self.api.handle("POST", "/api/clock", {"bpm": 100}, device, device["id"])[0], 403, device)
             self.assertEqual(self.api.handle("GET", "/api/clock", {}, device, device["id"])[0], 403, device)
-        self.assertEqual(self.api.sound.clock.status()["taps"], 3, "three taps, one from each")
+        self.assertEqual(self.api.sound.clock.status()["taps"], 2, "two taps, one from each")
 
     def test_a_tap_does_not_switch_listening_on_or_save_anything(self):
         before = self.settings.data.get("sound")
@@ -590,33 +698,14 @@ class ControllerActionTest(unittest.TestCase):
         (a, parsed), = osc.parse_packet(_osc_message("/pvj/clock/tap"))
         self.assertEqual(osc.translate(a, parsed, None), actions.press("clock_tap"), "no argument is a press")
 
-    def test_dmx_taps_each_time_the_tenth_channel_moves_up_to_128_or_more(self):
+    def test_dmx_has_no_clock_channel(self):
+        self.assertFalse(hasattr(dmx, "CLOCK_CHANNEL"))
         rec, t = Recorder(), [100.0]
         m = dmx.DmxMapper(rec, start=1, clock=lambda: t[0])
-
-        def frame(tenth, ninth=0):
+        for tenth in (0, 255, 0, 255):
             t[0] += 0.1
-            return m.frame(bytes([0] * 8 + [ninth, tenth]))
-        self.assertEqual(frame(255), 0, "the first frame is a baseline: a console at rest taps nothing")
-        self.assertEqual(rec.calls, [])
-        frame(0)
-        frame(127)
-        self.assertEqual(rec.calls, [])
-        frame(128)
-        self.assertEqual(rec.calls, [("/api/clock/tap", {})])
-        frame(255)
-        frame(200)
-        self.assertEqual(len(rec.calls), 1, "held up: one tap")
-        frame(0)
-        frame(255)
-        self.assertEqual(len(rec.calls), 2)
-        rec2 = Recorder()
-        m2 = dmx.DmxMapper(rec2, start=1, clock=lambda: t[0])
-        m2.frame(bytes([0] * 9))
-        t[0] += 0.1
-        self.assertEqual(m2.frame(bytes([0] * 8 + [120])), 1, "a console that sends nine channels still has the Vibes channel")
-        self.assertEqual(rec2.calls, [("/api/vibes", {"on": True})])
-        self.assertEqual(dmx.CLOCK_CHANNEL, dmx.VIBES_CHANNEL + 1)
+            m.frame(bytes([0] * 9 + [tenth]))
+        self.assertEqual(rec.calls, [], "a neighbouring fixture's tenth channel taps nothing")
 
 
 def _osc_message(address, *args):

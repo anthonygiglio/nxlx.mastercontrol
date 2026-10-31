@@ -250,6 +250,8 @@ def _udp():
     return sock
 
 
+CLOCK_BACK = 4              # the clock's count may step back this far (a phase nudge) without the next beat counting twice
+
 # What the levels are while the box clock stands in for sound that is not there (no device, or none heard).
 QUIET = {"seq": 0, "flags": 0, "time": 0.0, "blocks": 0, "rate": 0, "rms_db": sound_mod.FLOOR_DB, "level": 0.0, "envelope": 0.0,
          "onset": 0.0, "pulse": 0.0, "bpm": 0.0, "confidence": 0.0, "beats": 0, "bands": [], "peak_db": sound_mod.FLOOR_DB,
@@ -298,6 +300,7 @@ class Sound:
         self._map_sent = None               # (shader id, epoch, input, value)
         self._map_at = None
         self._last_beats = None
+        self._last_src = False
         self._feeder, self._feed_stop = None, threading.Event()
         self.feed_why, self.meter_why = "", None
         self._in_latest, self._in_at, self._in_hosts = None, 0.0, None
@@ -427,10 +430,17 @@ class Sound:
         """The datagrams of this look at the file: a beat at once, the values every SEND_EVERY, the slow bands every
         BANDS_EVERY."""
         msgs = []
-        if self._last_beats is not None and v["beats"] != self._last_beats:
-            msgs.append(beat_message(v["beats"]))
+        src, n = bool(v.get("clock")), v["beats"]
+        if self._last_beats is None or src != self._last_src:
+            self._last_beats = n                    # who supplies the count changed: a silent resync, no message
+        elif n > self._last_beats:
+            msgs.append(beat_message(n))
             self.stats["beats"] += 1
-        self._last_beats = v["beats"]
+            self._last_beats = n
+        elif n < self._last_beats and not (src and self._last_beats - n <= CLOCK_BACK):
+            self._last_beats = n                    # a count that went down (the service started again): silent resync
+        # (a small step back of the clock's own count, a nudge, keeps the highest sent: it must not beat twice)
+        self._last_src = src
         if now >= self._plan["next_send"]:
             msgs.append(values_bundle(v))
             self._plan["next_send"] = now + SEND_EVERY

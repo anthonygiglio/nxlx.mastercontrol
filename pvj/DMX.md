@@ -21,7 +21,6 @@ Eight channels starting at the start address you choose (1 to 505), and an optio
 | 7 | Pad | 0 to 5 idle; each pad owns six values: 6 to 11 is pad 1, 12 to 17 is pad 2, up to pad 36 (216 to 221). Bank A is pads 1 to 12, B 13 to 24, C 25 to 36. A pad plays when the channel moves onto a different pad |
 | 8 | Function | 50 to 99 stop, 100 to 149 pause, 150 to 199 resume, 200 to 255 fade out (2 s). 0 to 49 does nothing. Each action fires once when the channel moves into its range, not on every value inside it |
 | 9 (optional) | Vibes | 50 to 99 stop Vibes, 100 to 149 start Vibes, 150 to 199 next shader. 0 to 49 and 200 to 255 do nothing. Each fires once when the channel moves into its range. Needs the Shaders and Vibes module (see [SHADERS.md](SHADERS.md)); while that is off the channel does nothing and the log says so once |
-| 10 (optional) | Clock tap | One tap on the box clock (D116) each time the channel moves up to 128 or more; 0 to 127 does nothing. It sets the beat at once and, from the second tap within 2 s, the average tempo. Read only if the console sends ten channels; with start address 504 or more there is no tenth |
 
 The first eight channels are where they always were. The fixed map had no free place (channel 8's ranges are all taken), so Vibes got a ninth channel instead of moving anything. It is read only if the console sends it: a universe that ends at the eighth channel works as before, and with start address 505 there is no ninth channel. To go to the next shader twice, move the channel out of the 150 to 199 range and back.
 

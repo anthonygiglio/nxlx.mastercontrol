@@ -17,9 +17,14 @@ Sources, most trusted first (SOURCES):
     osc     /nxlx/sound/in/beat and /bpm (pvj/soundout.py)
     sound   pvj-sound's tempo and beats, only at a confidence of SOUND_MIN_CONFIDENCE or more
 
-Each source's last word stays in charge for its own time (HOLD). A source that has gone quiet hands over to the next
-fresh one. When nobody is fresh the clock keeps the last good tempo running and says which source steered it last and
-how old its word is ("held").
+Each source's last word stays in charge for its own time (HOLD). A machine (osc, link, sound) that has gone quiet hands
+over to the next fresh one. The hand wins: a tap or a tempo set by number holds until `clear`, and sound never takes over
+from it (the status still shows how old the last tap is). When nobody is fresh the clock keeps the last good tempo running
+and says which source steered it last and how old its word is ("held").
+
+What reaches the consumers (pvj/soundout.py) is the clock under tap or OSC only. With sound alone nothing is changed:
+the beat is the service's own, so when the music stops the beat stops, as it always did. The clock follows sound
+internally so that it can hand over, but it is not what the pulse, the meter or OSC out are given in that case.
 """
 
 import math
@@ -37,7 +42,7 @@ NUDGE_MAX = 0.5                     # the largest phase nudge by hand, in beats
 PULSE_SECONDS = 0.15                # the pulse is 1 at a beat and falls to 0 in this long (as pvj-sound's)
 SOURCES = ("link", "tap", "osc", "sound")
 FOLLOWED = ("link", "tap", "osc")    # the sources whose clock the beat pulse follows; sound is followed as it always was
-HOLD = {"link": 5.0, "tap": 30.0, "osc": 5.0, "sound": 3.0}     # seconds a word stays in charge
+HOLD = {"link": 5.0, "tap": math.inf, "osc": 5.0, "sound": 3.0}     # seconds a word stays in charge; the hand holds until clear
 OSC_BPM_HOLD = 5.0                  # an OSC /bpm this young is not overruled by the tempo of OSC beats
 COUNT_WRAP = 2 ** 31                # the beat count sent over OSC is an int32
 
@@ -264,7 +269,7 @@ class Clock:
     def beat_count(self, at=None):
         """The whole beats since the origin, kept inside an int32 for OSC. 0 with no tempo."""
         b = self.beats(at)
-        return 0 if b is None else int(math.floor(b)) % COUNT_WRAP
+        return 0 if b is None else max(0, int(math.floor(b))) % COUNT_WRAP
 
     def next_beat(self, at=None):
         """The time of the next beat after `at`, or None with no tempo."""
@@ -289,7 +294,7 @@ class Clock:
                 return None
             p = self._pos(t)
             return {"source": self._steer or self._last, "bpm": self._bpm, "pulse": self._pulse(p),
-                    "beat_count": int(math.floor(p)) % COUNT_WRAP}
+                    "beat_count": max(0, int(math.floor(p))) % COUNT_WRAP}
 
     def source(self, at=None):
         """The source in charge, or the one that was last when all are quiet; None before any."""
@@ -318,9 +323,9 @@ class Clock:
             return {"state": "running" if run else "none", "bpm": round(self._bpm, 2) if run else None,
                     "source": last, "steering": self._steer, "held": run and self._steer is None,
                     "age": ages[last] if last else None, "ages": ages,
-                    "beats": round(p, 3) if run else None, "beat_count": int(math.floor(p)) % COUNT_WRAP if run else 0,
+                    "beats": round(p, 3) if run else None, "beat_count": max(0, int(math.floor(p))) % COUNT_WRAP if run else 0,
                     "bar_position": round(p % BAR_BEATS, 3) if run else None, "bar_beats": BAR_BEATS,
                     "next_beat_in": round((math.floor(p) + 1.0 - p) * 60.0 / self._bpm, 3) if run else None,
                     "pulse": round(self._pulse(p), 3) if run else 0.0, "taps": len(self._taps), "sound_hits": self._sound_hits,
                     "limits": {"bpm_min": BPM_MIN, "bpm_max": BPM_MAX, "tap_pause": TAP_PAUSE, "tap_max": TAP_MAX,
-                               "sound_min_confidence": SOUND_MIN_CONFIDENCE, "nudge_max": NUDGE_MAX, "hold": dict(HOLD)}}
+                               "sound_min_confidence": SOUND_MIN_CONFIDENCE, "nudge_max": NUDGE_MAX, "hold": {s: (None if math.isinf(h) else h) for s, h in HOLD.items()}}}
