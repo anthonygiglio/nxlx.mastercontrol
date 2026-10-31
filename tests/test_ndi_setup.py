@@ -791,6 +791,7 @@ class RollbackTest(unittest.TestCase):
         real = os.path.isdir
         with mock.patch("os.path.isdir", lambda path: True if path == "/run/systemd/system" else real(path)):
             u._systemd_restart()
+        # In this order on purpose of what it costs: the helper before the panel is why an update can restart it twice (D110).
         self.assertEqual(ran, [["systemctl", "try-restart", "pvj-netd.service"], ["systemctl", "try-restart", "pvj-ndi.service"],
                                ["systemctl", "restart", "pvj-player.service", "pvj-web.service"]])
         self.assertEqual([c for c in ran if "pvj-ndi.service" in c], [["systemctl", "try-restart", "pvj-ndi.service"]])      # alone in its call

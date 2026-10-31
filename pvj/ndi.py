@@ -275,6 +275,13 @@ MAX_DISCOVERY = 4                         # NDI Discovery Servers this box asks 
 DISCOVERY_PORT = 5959                     # the server's default port (NDI's documentation); left out of what is stored when not typed
 CONFIG_NAME = "ndi-config.v1.json"        # the library's configuration file, looked for in $NDI_CONFIG_DIR
 CONFIG_MAX = 4096
+# How pictures travel, in the library's configuration file: reliable UDP (NDI's QUIC) off for what this box receives,
+# so the library uses TCP. Measured on the test node on 2026-10-31 (D110): with the library's default, senders of NDI
+# 5.6, 6.1 and 6.1.1 on Windows, NDI's own Test Patterns among them, closed the QUIC connection a few milliseconds
+# after opening it, again and again, and the first picture took from tens of milliseconds to over 7 seconds (the 409
+# "sent no picture in 6 seconds" on a live switch). With this key: about 40 ms, every time. The cost is TCP on a lossy
+# link such as Wi-Fi, which was not run. To put it back: make this {} (D110 says what else).
+CONFIG_TRANSPORT = {"rudp": {"recv": {"enable": False}}}
 
 
 def clean_discovery(text):
@@ -307,9 +314,13 @@ def saved_discovery(section):
 
 
 def config_text(discovery):
-    """The library's configuration file as this box writes it: the discovery servers and nothing else. The key is
-    NDI's own, ndi.networks.discovery, one text of addresses joined by commas (each with ":port" or without)."""
-    return json.dumps({"ndi": {"networks": {"discovery": ",".join(discovery)}}} if discovery else {"ndi": {}}, sort_keys=True) + "\n"
+    """The library's configuration file as this box writes it: how pictures travel (CONFIG_TRANSPORT) and the discovery
+    servers. The discovery key is NDI's own, ndi.networks.discovery, one text of addresses joined by commas (each with
+    ":port" or without)."""
+    section = dict(CONFIG_TRANSPORT)
+    if discovery:
+        section["networks"] = {"discovery": ",".join(discovery)}
+    return json.dumps({"ndi": section}, sort_keys=True) + "\n"
 
 
 def config_discovery(folder):
@@ -325,6 +336,20 @@ def config_discovery(folder):
         return items if validate_saved({"addresses": [], "discovery": items})["discovery"] == items else []
     except (OSError, ValueError, KeyError, TypeError, NdiError):
         return []
+
+
+def config_transport(folder):
+    """What the configuration file of `folder` says of how pictures travel (the keys of CONFIG_TRANSPORT), or None
+    when there is no file or it cannot be read. Compared with what the library was started with (Service._load)."""
+    try:
+        with open(os.path.join(folder, CONFIG_NAME), "rb") as f:
+            raw = f.read(CONFIG_MAX + 1)
+        if len(raw) > CONFIG_MAX:
+            return None
+        section = json.loads(raw.decode("utf-8"))["ndi"]
+        return {k: section[k] for k in ("rudp",) if k in section}
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
 
 
 def clean_group(text):
@@ -1888,6 +1913,7 @@ class Service:
         # library reads it. None until then.
         self.config_dir = os.environ.get("NDI_CONFIG_DIR") or ""
         self.discovery = None
+        self.transport = None                      # how pictures travel in that same file, read at that same moment (config_transport)
         self.sound = True                          # play a source's sound with its picture (the panel says; D62)
         # The box's one sound source (D87): the id of an allowed source whose sound is played under every NDI
         # picture, or "" for each picture's own sound. Its connection (a SoundFeed) is this Service's, not a
@@ -1909,8 +1935,9 @@ class Service:
         if self.lib is None:
             try:
                 loaded_with = config_discovery(self.config_dir) if self.config_dir else []
+                travels = config_transport(self.config_dir) if self.config_dir else None
                 self.lib = self._loader(self.lib_path)
-                self.discovery = loaded_with
+                self.discovery, self.transport = loaded_with, travels
                 self.version, self.lib_error = self.lib.version(), ""
                 self.log("pvj-ndi: loaded the NDI runtime (%s)" % self.version)
             except NdiError as e:
@@ -1966,18 +1993,23 @@ class Service:
                 if self.lib is not None and self.on_unload is not None:
                     self.log("pvj-ndi: the NDI input was switched off; starting again without the NDI runtime")
                     self.on_unload()
-            elif (self.lib is not None and self.on_unload is not None and discovery != self.discovery
-                    and self.config_dir and config_discovery(self.config_dir) == discovery):
-                # The discovery servers changed, and the file says what the panel asks. The library reads its file
-                # once, when it starts: so this process ends (after this answer) and a new one loads the library
-                # with the new file. A source on the screen ends with it (black), and the panel's watch shows it
-                # again once the new process has found the sender (Input.tick; a test holds that it does).
+            elif (self.lib is not None and self.on_unload is not None and self.config_dir
+                    and ((discovery != self.discovery and config_discovery(self.config_dir) == discovery)
+                         or config_transport(self.config_dir) not in (None, self.transport))):
+                # The discovery servers changed and the file says what the panel asks, or the file says another way
+                # for pictures to travel than the library was started with. The library reads its file once, when
+                # it starts: so this process ends (after this answer) and a new one loads the library with the new
+                # file. A source on the screen ends with it (black), and the panel's watch shows it again once the
+                # new process has found the sender (Input.tick; a test holds that it does).
+                # The second is the road of an update: the updater starts this helper again BEFORE the panel (update.py,
+                # _systemd_restart), and the old panel, still up for a moment, can load the library with the old
+                # file. The new panel then writes the new file, and only this look makes the library read it (D110).
                 # Where the file does not say what is asked (a box whose NDI set-up was not refreshed), nothing is
                 # restarted and the status says which servers are really in force.
                 self._close_receiver()
                 self._close_feed()
                 self._close_finder()
-                self.log("pvj-ndi: the discovery servers changed; starting again to read them")
+                self.log("pvj-ndi: the library's configuration file changed; starting again to read it")
                 self.on_unload()
                 return dict(self.status(), restarting=True)
             elif self._load() is not None and (self._finder is None or addresses != self.addresses or groups != self.groups):

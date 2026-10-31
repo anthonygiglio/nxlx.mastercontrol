@@ -28,8 +28,8 @@ RuntimeDirectoryMode=0750
 Environment=PVJ_NDI_DIR=/run/pvj-ndi
 # The runtime keeps its settings under $HOME/.ndi unless told otherwise. It is told a folder that it can read and
 # cannot write: /run/pvj-ndi-config, which root makes for the panel's account (tmpfiles, pvj/ndisetup.py). The
-# panel writes one file there, ndi-config.v1.json, with the discovery servers the Owner chose and nothing else
-# (pvj/ndi.py: config_text); with no file the runtime uses its own defaults. Its home is the small private /tmp
+# panel writes one file there, ndi-config.v1.json, with the discovery servers the Owner chose and how pictures travel
+# (pvj/ndi.py: config_text, D110); with no file the runtime uses its own defaults. Its home is the small private /tmp
 # below, so anything it writes there is bounded, is seen by nobody else and is gone at the next start.
 Environment=HOME=/tmp
 Environment=NDI_CONFIG_DIR=/run/pvj-ndi-config
