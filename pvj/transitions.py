@@ -63,6 +63,7 @@ somebody saves the transition or its duration or imports a settings file, which 
 A wipe or a slide (class Move) is the same still, of which a smaller and smaller part is drawn: no byte of it is
 changed, so a step costs the panel one command and the player a copy of the part that is still to be seen.
 """
+import json
 import os
 import re
 import struct
@@ -99,6 +100,8 @@ HALF_WINDOW = 1280 * 720
 HALF_ANY = 1920 * 1080
 MISSES = 2                      # stills of the clip in a row not of the clip's size or shape, and the player gets stills of the window
 STILL_NAME = r"transition-\d+\.(?:png|bgra)(?:\.tmp)?"
+FROZEN_FILE = "transition-frozen.json"       # D112: what a hold froze, for a panel that starts after this one died
+FROZEN_NAME = r"transition-frozen\.json(?:\.tmp)?"
 
 
 def named(mix):
@@ -474,6 +477,8 @@ class Transitions:
                     else:
                         place, half = (0, 0, size[0], size[1]), HALF_WINDOW
                 froze = inherited or player.ipc.request("get_property", "pause") is not True
+                if froze and not inherited:
+                    self._mark_frozen(player, pid)      # before the freeze: a panel that dies from here on is found out at its next start
                 player.pause(True)              # the outgoing picture stands still from the tap on (see the top)
                 if froze:
                     with self._mark:
@@ -705,9 +710,39 @@ class Transitions:
             self._thaw()
         return 0
 
+    def _frozen_path(self):
+        return os.path.join(self.api.player.rundir, FROZEN_FILE)
+
+    def _mark_frozen(self, player, pid):
+        """D112: leave a small record in the runtime folder that this hold is about to freeze the clip: the player's
+        process and what it plays. Written by a rename, so a record is whole or absent. It goes when the hold's freeze
+        ends (`_unmark_frozen`); `tidy` reads one that a panel that died left. Never raises: a record that cannot be
+        written leaves the freeze as it was before the record existed."""
+        try:
+            try:
+                path = player.ipc.request("get_property", "path")
+            except Exception:
+                path = None
+            body = json.dumps({"player": pid, "path": path if isinstance(path, str) else None}).encode()
+            name = self._frozen_path()
+            fd = os.open(name + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o660)
+            with os.fdopen(fd, "wb") as f:
+                f.write(body)
+            os.replace(name + ".tmp", name)
+        except Exception:
+            pass
+
+    def _unmark_frozen(self):
+        for name in (self._frozen_path(), self._frozen_path() + ".tmp"):
+            try:
+                os.unlink(name)
+            except OSError:
+                pass
+
     def _thaw(self):
         with self._mark:
             self._paused = False
+        self._unmark_frozen()
         try:
             self.api.player.pause(False)
         except Exception:
@@ -739,6 +774,7 @@ class Transitions:
         with self._mark:
             if token and token == self._held:
                 self._paused = False            # the new clip plays (a load unfreezes): nothing to thaw any more
+                self._unmark_frozen()
             if not token or token != self._token or self._still is None:
                 return
             name = self.running
@@ -931,5 +967,42 @@ class Transitions:
             pass
         rundir = getattr(player, "rundir", None)
         if rundir:
+            self._thaw_left_frozen(player, rundir)
             paths.remove_leftovers(rundir, STILL_NAME)
+            paths.remove_leftovers(rundir, FROZEN_NAME)
             paths.remove_leftovers(rundir, re.escape("overlay-%d.bgra" % OVERLAY_ID))
+
+    def _thaw_left_frozen(self, player, rundir):
+        """D112: a record of a freeze that an earlier panel process made and did not end. The clip is thawed only if
+        it is still the one that process froze: the same player process, still paused, and still the same file. A
+        player that was restarted, or a clip loaded since (a load unfreezes), or a clip that is not paused leaves
+        nothing to do, and a pause that an operator made later is not ours. The record goes either way. Never raises."""
+        name = os.path.join(rundir, FROZEN_FILE)
+        try:
+            fd = os.open(name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            with os.fdopen(fd, "rb") as f:
+                record = json.loads(f.read(4096).decode())
+        except (OSError, ValueError):
+            return
+        finally:
+            self._unmark_frozen_in(rundir)
+        try:
+            if not isinstance(record, dict) or not isinstance(record.get("player"), int):
+                return
+            ipc = player.ipc
+            if ipc.request("get_property", "pid") != record["player"] or ipc.request("get_property", "pause") is not True:
+                return
+            if record.get("path") is not None and ipc.request("get_property", "path") != record["path"]:
+                return
+            player.pause(False)
+            self.log("pvj-web: transitions: the clip an earlier panel froze for a transition plays again")
+        except Exception:
+            pass
+
+    @staticmethod
+    def _unmark_frozen_in(rundir):
+        for n in (FROZEN_FILE, FROZEN_FILE + ".tmp"):
+            try:
+                os.unlink(os.path.join(rundir, n))
+            except OSError:
+                pass

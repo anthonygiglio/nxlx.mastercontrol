@@ -1039,6 +1039,137 @@ class Moves(Base):
         self.assertEqual(self.left(), [])
 
 
+class Died(BaseException):
+    """The panel process ending in the middle of a hold: nothing in the panel catches it, as nothing catches a kill."""
+
+
+class FrozenByAPanelThatDied(Base):
+    """D112: a panel that dies between freezing the outgoing clip and loading the new one leaves a record, and the
+    next panel to start thaws that clip and only that clip."""
+
+    def record(self):
+        return os.path.join(self.rundir, T.FROZEN_FILE)
+
+    def die_at_the_still(self):
+        """The panel's play, killed while the player takes the still: the clip is frozen, the new one not loaded."""
+        real, real_pause = self.player.still, self.player.pause
+        self.seen_record = None
+
+        def pause(value=None):
+            if value and self.seen_record is None:
+                self.seen_record = os.path.exists(self.record())    # looked at as the freeze is asked for
+            return real_pause(value)
+
+        def still(path, kind="window"):
+            raise Died()
+        self.player.still, self.player.pause = still, pause
+        with self.assertRaises(Died):
+            self.play()
+        self.player.still, self.player.pause = real, real_pause
+
+    def next_panel(self):
+        self.tr = self.api.transitions = T.Transitions(self.api, clock=lambda: self.now[0], sleep=self.sleep, thread=False, log=self.lines.append)
+        del self.player.calls[:]
+        self.tr.tidy()
+
+    def test_a_panel_that_dies_with_the_outgoing_clip_frozen_leaves_a_record_and_the_next_panel_thaws_it(self):
+        self.die_at_the_still()
+        self.assertTrue(self.seen_record, "the record is written before the freeze")
+        self.assertTrue(self.player.props["pause"], "the clip is frozen and nobody is left to thaw it")
+        self.assertTrue(os.path.exists(self.record()))
+        self.next_panel()
+        self.assertFalse(self.player.props["pause"], "a frozen picture on the screen after a crash")
+        self.assertIn(("pause", False), self.player.calls)
+        self.assertEqual(self.left(), [])
+
+    def test_a_hold_that_ends_well_leaves_no_record_and_a_freeze_after_it_is_the_operators(self):
+        self.play()
+        self.assertFalse(os.path.exists(self.record()))
+        self.player.props["pause"] = True               # Freeze, after the new clip loaded
+        self.next_panel()
+        self.assertTrue(self.player.props["pause"], "the operator's freeze is not the fix's to undo")
+
+    def test_a_hold_that_fails_or_is_abandoned_removes_its_record(self):
+        from pvj.api import ApiError
+        self.player.fail = {"play"}
+        with self.assertRaises(ApiError):
+            self.play()
+        self.assertEqual(self.left(), [])
+        self.assertFalse(self.player.props["pause"])
+
+    def test_a_clip_the_operator_froze_before_the_play_gets_no_record_and_stays_frozen_for_the_next_panel(self):
+        self.player.props["pause"] = True
+        self.die_at_the_still()
+        self.assertFalse(self.seen_record, "this hold froze nothing")
+        self.next_panel()
+        self.assertTrue(self.player.props["pause"])
+
+    def test_an_operator_freeze_made_after_the_new_clip_loaded_is_left_alone_even_if_the_record_stayed(self):
+        self.player.path = "a.mp4"
+        self.die_at_the_still()
+        self.player.path = "b.mp4"                      # a load unfreezes and changes the clip; the record was not yet removed
+        self.player.props["pause"] = True               # the operator froze the new clip
+        self.next_panel()
+        self.assertTrue(self.player.props["pause"])
+        self.assertEqual(self.left(), [])
+
+    def test_a_restarted_player_has_nothing_to_thaw(self):
+        self.die_at_the_still()
+        self.player.props["pid"] = 9999                 # the player process was started anew
+        self.player.props["pause"] = True               # an operator's freeze on the new process
+        self.next_panel()
+        self.assertTrue(self.player.props["pause"])
+        self.assertNotIn(("pause", False), self.player.calls)
+        self.assertEqual(self.left(), [])
+
+    def test_a_record_for_a_clip_that_is_not_frozen_is_only_removed(self):
+        self.die_at_the_still()                         # died after the record but, say, before the freeze took
+        self.player.props["pause"] = False
+        self.next_panel()
+        self.assertNotIn(("pause", False), self.player.calls)
+        self.assertEqual(self.left(), [])
+
+    def test_a_record_of_an_older_run_with_a_different_clip_is_removed_and_the_clip_left_alone(self):
+        self.player.path = "old.mp4"
+        self.die_at_the_still()
+        self.player.path = "new.mp4"
+        self.player.props["pause"] = True
+        self.next_panel()
+        self.assertTrue(self.player.props["pause"])
+        self.assertEqual(self.left(), [])
+
+    def test_a_record_that_is_not_ours_to_read_is_removed_and_nothing_is_thawed(self):
+        self.player.props["pause"] = True
+        for body in (b"", b"not json", b"[1]", b'{"player": "4242"}', b"\xff\xfe"):
+            with open(self.record(), "wb") as f:
+                f.write(body)
+            self.next_panel()
+            self.assertTrue(self.player.props["pause"], body)
+            self.assertEqual(self.left(), [], body)
+
+    def test_a_link_in_place_of_the_record_is_not_followed(self):
+        target = os.path.join(self.rundir, "elsewhere")
+        with open(target, "w") as f:
+            f.write('{"player": 4242, "path": null}')
+        os.symlink(target, self.record())
+        self.player.props["pause"] = True
+        self.tr.tidy()
+        self.assertTrue(self.player.props["pause"])
+        self.assertTrue(os.path.exists(target), "only the panel's own files are removed")
+
+    def test_a_player_that_cannot_be_asked_leaves_the_record_removed_and_does_not_stop_the_start(self):
+        self.die_at_the_still()
+        self.player.fail = {"ipc"}
+        self.next_panel()
+        self.assertEqual(self.left(), [])
+
+    def test_a_record_left_by_a_crash_before_the_freeze_took_is_swept_by_the_pattern(self):
+        for n in (T.FROZEN_FILE + ".tmp",):
+            open(os.path.join(self.rundir, n), "w").close()
+        self.next_panel()
+        self.assertEqual(self.left(), [])
+
+
 class Settings(Base):
     def setUp(self):
         super().setUp()
