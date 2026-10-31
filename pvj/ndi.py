@@ -2029,7 +2029,9 @@ class Service:
             return {"ok": False, "error": str(e)}
         with self.lock:
             if not on:
+                self.waiting = None
                 self._close_receiver()
+                self._drop_held()
                 self._close_feed()
                 self._close_finder()
                 # "Off" means no NDI code running. A library cannot be unloaded from a process, so the process ends
@@ -2242,10 +2244,11 @@ class Service:
                  or (waiting is None and held is not None and now - held[1] > self.open_budget() + HANDOVER_SECONDS))
         if stale and self.lock.acquire(blocking=False):
             try:
-                self.log("pvj-ndi: the panel did not hand the new source over in time; it is closed, and what was kept of the picture before")
-                self.waiting = None
-                self._close_receiver()
-                self._drop_held()
+                if self.waiting is waiting and self.held is held:   # a hand-over that came meanwhile is not undone
+                    self.log("pvj-ndi: the panel did not hand the new source over in time; it is closed, and what was kept of the picture before")
+                    self.waiting = None
+                    self._close_receiver()
+                    self._drop_held()
             finally:
                 self.lock.release()
 
