@@ -1445,6 +1445,13 @@ class Engine:
         mine = re.compile(re.escape(desc) + r"(?![0-9])")
         return [x for x in ((p or {}).get("fresh") or []) if isinstance(x, dict) and mine.search(str(x.get("desc", "")))]
 
+    def _frozen(self):
+        """True when the clip is paused (the player is asked; a player that cannot say is not taken for frozen)."""
+        try:
+            return self.api.player.ipc.request("get_property", "pause") is True
+        except Exception:
+            return False
+
     def _watch(self, tap, desc):
         """Wait until the player has drawn a frame with the shader called `desc` or has complained.
         ("ok" | "refused" | "unknown", message)."""
@@ -1462,6 +1469,12 @@ class Engine:
             # drawn. A GPU that reports no times at all gives "unknown" after a second, never "ok".
             drawn = any(isinstance(x.get(k), (int, float)) and x[k] > 0 for x in mine for k in ("avg", "last"))
             if mine and not drawn:
+                if self._frozen():
+                    # mpv reads no pass time over a frozen clip (seen on a real mpv: the pass is listed with no time
+                    # however often the picture is drawn), and the player has drawn it once already (Player.redraw_paused).
+                    # Waiting a second for a time that cannot come only holds the request; a refusal is in the log
+                    # by now and is read below. The answer is "unknown", as for a GPU that reports no times.
+                    break
                 listed = self._clock() if listed is None else listed
                 if self._clock() - listed >= 1.0:
                     break

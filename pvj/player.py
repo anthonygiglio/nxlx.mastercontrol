@@ -1273,6 +1273,25 @@ class Player:
         if self.native_shaders():
             self._native_slot(0, self._source)
             self._native_slot(1, self._effect)
+        else:
+            self.redraw_paused()
+
+    def redraw_paused(self):
+        """Classic mpv only. Over a clip that stands still mpv answers a new shader list by redrawing its cached picture
+        ("redraw cached frame"), which never runs the user shaders: an effect that went on, changed or came off was
+        not on the screen until the clip played again (seen on a real mpv 0.41 with the probe of this fix; the
+        journal's item 2 of "Found" in the effects run saw it on the Pi's 0.40). An exact seek of nothing makes the
+        player decode the frame it shows once more and draw it through the new list, the position unchanged. A clip
+        that cannot seek (a picture, a live input) has nothing to redraw and the refusal is ignored: its next frame
+        is drawn with the list. The New renderer draws its own programs whenever they change and never comes here.
+        mpv reads a pass's time when the frame after it is drawn, so the panel's look for a first drawn pass (shaders
+        `_watch`) asks for one more draw when the pass is listed with no time."""
+        try:
+            if self.ipc.request("get_property", "pause") is not True:
+                return
+            self.ipc.request("seek", 0, "relative+exact")
+        except PlayerError:
+            pass
 
     # ---- the New renderer's own programs (D106) --------------------------------------------------------------------
     _native_seen = None             # (pid, True or False): does that player process run programs of its own

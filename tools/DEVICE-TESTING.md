@@ -908,6 +908,16 @@ Results, 2026-10-31, test node on master with D113, mpv 0.40.0 (measurements/202
 | NS5 | Passed, not as written | 409 after 6.3 s with the reason on the page. The old picture holds for those 6 s, black for about 0.6 s, then the old source returns by itself |
 | NS6 | Passed | Each ended on the last press; no "did not hand the new source over" line in 25 minutes |
 
+### An effect over a paused clip on classic mpv (D115): not yet looked at on a node
+
+Before: a node running classic mpv (not pvj-render), a clip from the library, the screen watched by eye or by the HDMI dongle. The unit tests prove the order of the commands and a real mpv on a software GPU proves the shown frame passes through the effect (its pass list); nobody has seen a Pi's screen.
+
+| Row | What to do | What should happen | What it would mean if not |
+|---|---|---|---|
+| PC1 | Play a clip, press Pause, put an effect on (an invert is the plainest), then take it off | The screen shows the effect within a frame or two of the press, and the plain picture within the same time of Off; the panel answers at once, not after 4 s | The seek did not redraw on this mpv or this GPU (0.40, V3D) |
+| PC2 | Same, with the effect on: move an amount or a value slider while paused | The frozen picture follows the slider; the clip does not creep forward or back (watch the time) | The seek moves the clip on this file type, or redraws too slowly for a slider |
+| PC3 | Same with a long 1080p clip paused deep in it (a few seconds past a keyframe), and with a still picture and an NDI source | The 1080p redraw takes under about a quarter of a second; the picture and the NDI source take the effect at their next frame without an error on the page | A long GOP makes the exact seek too slow on a Pi 4, or a source that cannot seek is upset by it |
+
 ### What to send back
 
 The output of checks 1 to 7 and 13, the `journalctl` tail for anything that failed, and a note of what you saw on screen. Say clearly what you did **not** test.
