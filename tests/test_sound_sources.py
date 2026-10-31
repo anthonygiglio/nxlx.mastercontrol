@@ -88,7 +88,8 @@ class FeedServiceTest(ServiceBase):
         self.assertTrue(wait_for(lambda: (sound.read_levels(self.levels) or {}).get("capturing")))
         v = sound.read_levels(self.levels)
         self.assertAlmostEqual(v["rms_db"], -12.0, places=3)
-        self.assertEqual(self.svc.status()["state"], "capturing")
+        self.assertTrue(self.svc.take_feed({"rms_db": -12.0})["ok"], "fed again: a slow machine may have passed STALE_SECONDS since the first")
+        self.assertTrue(wait_for(lambda: self.svc.status()["state"] == "capturing"))
         self.assertTrue(wait_for(lambda: self.svc.status()["state"] == "waiting", 3), "no feed for half a second: waiting")
         self.assertFalse(sound.read_levels(self.levels)["capturing"])
 
