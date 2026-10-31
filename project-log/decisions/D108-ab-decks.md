@@ -47,8 +47,9 @@ Where surfaces read it from is decided below: a surface may choose Program. With
   - the curve belongs to the blend, so the panel needs no second control for it.
 - **Cut buttons:** "A", "B" and "Centre" set the value at once.
 - **Fade** moves the same value by the renderer's clock, as D98's crossfade is moved, and it goes **in either direction**, not only to B. It has **its own duration** in the settings (2 s at first), not the Mix's, since the two fades are different gestures.
-  - **The rule (the owner's word: "make the deck Fade button allow the user to fade between A and B, not just to B").** The one Fade button fades from whichever side the mix is on toward the other side. If the crossfader is nearer A (below 0.5), Fade goes to B. If it is nearer B (above 0.5), Fade goes to A.
-  - **From the Centre (exactly 0.5): Fade goes to B.** That is the simplest rule: a tie goes to B, the same way a fresh fade always went to B before.
+  - **The rule (the owner's word, 2026-10-31: part way, the transition goes "towards whichever deck it is closest to").** With the crossfader part way, Fade finishes the move to the nearer deck: below 0.5 it goes to A, above 0.5 to B.
+  - **At an end, Fade crosses over.** At A (exactly 0) it goes to B, and at B (exactly 1) it goes to A, so the button always does something (his word of 30 October: "fade between A and B, not just to B").
+  - **From the Centre (exactly 0.5): Fade goes to B.** That is the simplest rule: a tie goes to B.
   - The button's label says where it will go ("Fade to B" or "Fade to A") and changes as the fader moves, so a performer never has to guess.
   - **The duration is the whole fade, wherever it starts.** A fade from the Centre takes the set time, not half of it. This is the simplest to say and to hear; a fade at constant speed would be the other way and is not planned.
   - **Pressing Fade while a fade runs stops it where it is.** The hand wins, as under the live rules. Pressing again then starts a fade by the same rule from the new position.
