@@ -47,6 +47,8 @@ STOP_SECONDS = 5.0                      # systemd's stop: this long for pvj-rend
 QUIT_SECONDS = 2.0                      # a switch: this long for pvj-render to end when asked on its socket, then SIGTERM
 TERM_SECONDS = 3.0                      # ... and this long after SIGTERM, then SIGKILL
 WATCH_SECONDS = 0.5                     # how often the supervisor reads WANTED while pvj-render draws
+FINAL_POLL_SECONDS = 0.2                # the final pass's look at pvj-render: a jammed one must not hold up the watch (D108)
+FINAL_ASK_SECONDS = 1.0                 # ... and a change of it, asked only of a pvj-render that has just answered
 SMALL_BOARDS = ("pi3", "pi4")           # where Automatic draws 540 lines inside (the spike of 2026-10-16, D95)
 # Sources (D101): clip layers beside the player's own picture, which the mapping shows per surface. A board takes at
 # most its cap, and without a choice gets its default. Measured on the owner's Pi 4 (2026-10-20), software H.264
@@ -340,7 +342,7 @@ class Supervisor:
         self.final_now = ("full", "")
         self.final_watch = any(a.startswith("--final=") for a in self.cmd)
         self.final_rule = {"final": "full"} if "--final=auto" in self.cmd else None
-        self.final_ipc = Ipc(self.socket_path, timeout=1.0)
+        self.final_ipc = Ipc(self.socket_path, timeout=FINAL_POLL_SECONDS)
 
     def _final_say(self, final, why):
         if (final, why) != self.final_now:
@@ -374,7 +376,7 @@ class Supervisor:
             if self.final_rule["final"] != before:
                 self.log("pvj-player: renderer: the final pass goes to %s (%s)" % (self.final_rule["final"], words or "the load is lighter"))
                 try:
-                    self.final_ipc.request("pvj-final", self.final_rule["final"])
+                    self.final_ipc.request("pvj-final", self.final_rule["final"], wait=FINAL_ASK_SECONDS)
                 except PlayerError as e:
                     self.log("pvj-player: renderer: the final pass stays as it is (%s)" % e)
                     self.final_rule, self.final_watch = None, False

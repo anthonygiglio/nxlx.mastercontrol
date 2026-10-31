@@ -237,6 +237,9 @@ int out_open(const Cfg *cfg, char *err, size_t n);
 GLuint out_target(void);
 void out_draw_size(int *w, int *h); // the size this frame's final pass draws at, in the top left of out_target (D108)
 int out_final_usable(void);         // the final pass may change size at run time
+#ifdef PVJ_RENDER_TEST_HOOKS
+void out_test_refuse(void);
+#endif
 int out_present(void);
 void out_wait(double seconds);
 void out_close(void);

@@ -1780,6 +1780,21 @@ class FinalPassTest(unittest.TestCase):
                              ((w - 12, h - 12), WHITE), ((12, 12), RED), ((11 * w // 20, 11 * h // 20), WHITE)):
             self.assertTrue(near(at(x, y), want), "screen point %d,%d: %s" % (x, y, at(x, y)))
 
+    def test_a_refusal_at_run_time_is_for_good(self):
+        r = self.start("--final=auto")
+        r.load(self.picture)
+        r("pvj-final", 720)
+        self.lines(r, 720)
+        r("pvj-test-refuse")
+        self.lines(r, 0)
+        self.assertEqual(r("get_property", "pvj-render")["final-why"], "the display refused the scaled frame")
+        for ask in (720, "full"):
+            with self.assertRaises(PlayerError, msg=ask):
+                r("pvj-final", ask)
+        time.sleep(0.3)
+        self.assertEqual(r("get_property", "pvj-render")["final-lines"], 0, "the small frame did not come back")
+        self.quads(r)
+
     def test_720_from_the_start(self):
         r = self.start("--final=720")
         r.load(self.picture)

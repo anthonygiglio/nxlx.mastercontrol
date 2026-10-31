@@ -3703,3 +3703,34 @@ class WrongSizeStillTest(Base):
         self.assertEqual(self.tr.fallback(), "")
         self.player.still = real
         self.assertTrue(self.tr.hold("wipe-from-left"), "the next one is a wipe")
+
+    def wrong_still(self):
+        real = self.player.still
+
+        def small(path):
+            real(path)
+            with open(path, "wb") as f:
+                f.write(png(1, 1, b"\x10\x20\x30"))
+        self.player.still = small
+        self.addCleanup(setattr, self.player, "still", real)
+        return real
+
+    def test_stills_of_the_wrong_size_in_a_row_give_up_with_a_reason(self):
+        self.wrong_still()
+        for n in range(T.SLOW_IN_A_ROW):
+            self.assertEqual(self.tr.given_up, "", n)
+            self.assertEqual(self.tr.hold("wipe-from-left"), 0)
+        self.assertIn("%d stills in a row were not of the screen's size" % T.SLOW_IN_A_ROW, self.tr.fallback())
+        self.assertIn("were not of the screen's size", self.api.status({}, None, "t")["mix"]["fallback"])
+
+    def test_a_good_still_clears_the_count(self):
+        real = self.wrong_still()
+        small = self.player.still
+        for _ in range(3):
+            self.player.still = small
+            self.assertEqual(self.tr.hold("wipe-from-left"), 0)
+            self.assertEqual(self.tr.given_up, "")
+            self.player.still = real
+            self.assertTrue(self.tr.hold("wipe-from-left"))
+            self.tr.end()
+        self.assertEqual(self.tr.given_up, "")

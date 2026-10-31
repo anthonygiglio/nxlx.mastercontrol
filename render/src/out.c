@@ -278,7 +278,7 @@ static void headless_final(const Cfg *cfg)
         small_h = FINAL_LINES;
         small_w = ((int)lround((double)app.out_w * small_h / app.out_h)) & ~1;
         plane_h = app.out_h;
-        plane_ok = 1;
+        __atomic_store_n(&plane_ok, 1, __ATOMIC_RELEASE);
         return;
     }
 #endif
@@ -326,7 +326,12 @@ int out_open(const Cfg *cfg, char *err, size_t n)
 
 GLuint out_target(void) { return headless ? h_fbo : 0; }
 
-int out_final_usable(void) { return plane_ok; }
+int out_final_usable(void) { return __atomic_load_n(&plane_ok, __ATOMIC_ACQUIRE); }
+
+#ifdef PVJ_RENDER_TEST_HOOKS
+// Tests only: the kernel's refusal of a scaled frame at run time, which no headless run can meet.
+void out_test_refuse(void) { final_refused("the display refused the scaled frame"); }
+#endif
 
 // The size of this frame's final pass. Taken once a frame, at its top: the frame and its plane rectangle always agree.
 void out_draw_size(int *w, int *h)
@@ -412,7 +417,7 @@ static void scaler_open(uint32_t fb)
         return;
     }
     plane_h = app.out_h;
-    plane_ok = 1;
+    __atomic_store_n(&plane_ok, 1, __ATOMIC_RELEASE);
     LOG("the display's plane %u can scale %d x %d to %d x %d", plane_id, small_w, small_h, app.out_w, app.out_h);
 }
 
@@ -515,7 +520,8 @@ int out_present(void)
         LOG("%s failed (%s)", atomic ? "the display's atomic commit" : "drmModePageFlip", strerror(e));
         gbm_surface_release_buffer(gsurf, next);
         if (atomic && e != EBUSY && draw_h != app.out_h) {
-            // the kernel took the test and not the frame: nothing went out, and the next frame is at the output's size
+            // the kernel took the test and not the frame: nothing went out, and the next frame is at the output's size.
+            // plane_ok stays: that next frame is the atomic commit back to the whole buffer. final_why keeps it there.
             final_refused("the display refused the scaled frame");
             return 0;
         }

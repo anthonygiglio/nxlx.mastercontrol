@@ -1111,13 +1111,19 @@ static void set_level(int fd, const mpv_node *id, const mpv_node *v)
 
 // ["pvj-final", "full" | 720]: the size of the final pass from the next frame on (D108); the supervisor's rule asks it
 // (pvj/renderer.py). Nothing else changes: the screen's size, the surfaces and the sizes this socket reports stay.
-// Refused where the scaler cannot be used: pvj-render reports why (final-why).
+// Refused where the scaler cannot be used: pvj-render reports why (final-why). The look at final_why and the store are
+// one step under app.lock, as final_refused writes it there before it clears the wish: a word that comes after a refusal
+// never brings the small frame back, so "said once, then full for good" holds.
 static void final_command(int fd, const mpv_node *id, const mpv_node *v)
 {
     int full = v->format == MPV_FORMAT_STRING && !strcmp(v->u.string, "full");
     int small = v->format == MPV_FORMAT_INT64 && v->u.int64 == FINAL_LINES;
     if ((!full && !small) || !out_final_usable()) { reply(fd, id, "invalid parameter", NULL); return; }
-    __atomic_store_n(&app.final_want, full ? 0 : FINAL_LINES, __ATOMIC_RELEASE);
+    pthread_mutex_lock(&app.lock);
+    int refused = app.final_why[0] != 0;
+    if (!refused) __atomic_store_n(&app.final_want, full ? 0 : FINAL_LINES, __ATOMIC_RELEASE);
+    pthread_mutex_unlock(&app.lock);
+    if (refused) { reply(fd, id, "invalid parameter", NULL); return; }
     wake_render();
     reply(fd, id, "success", NULL);
 }
@@ -1282,6 +1288,9 @@ static void handle(int fd, const char *line, size_t len)
         app.capture_buffer = 1;
         pthread_mutex_unlock(&app.lock);
         capture(fd, id, arg_str(cmd, 1));
+    } else if (!strcmp(name, "pvj-test-refuse") && nargs == 1) {
+        out_test_refuse();
+        reply(fd, id, "success", NULL);
 #endif
     } else if (!strcmp(name, "pvj-final") && nargs == 2) {
         final_command(fd, id, arg(cmd, 1));

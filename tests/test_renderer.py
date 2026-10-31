@@ -193,7 +193,7 @@ class FakeRender:
         self.state = {"missed-vblanks": 0, "load": 5, "output-fps": 60.0, "final-lines": 0, "final-why": ""}
         self.asked, self.refuse, self.down = [], False, False
 
-    def request(self, *command):
+    def request(self, *command, wait=None):
         if self.down:
             raise PlayerError("no reply from mpv")
         if command[0] == "pvj-final":
@@ -247,6 +247,18 @@ class FinalWatchTest(Base):
         self.tick(sup, fake, now, 10, 30)
         self.assertFalse(sup.final_watch)
         self.assertEqual(self.report()["final_why"], "pvj-render did not take the change")
+
+    def test_the_poll_is_short_so_a_jammed_renderer_holds_nothing_up(self):
+        sup = renderer.Supervisor(["pvj-render", "--final=auto"], self.sock, self.dir, "auto")
+        sup._final_begin()
+        self.assertEqual(sup.final_ipc.timeout, 0.2)
+        asked = []
+        fake = FakeRender()
+        fake.request = lambda *c, wait=None: (asked.append((c[0], wait)), {"missed-vblanks": 900, "load": 5, "output-fps": 60.0, "final-lines": 0, "final-why": ""})[1]
+        sup.final_ipc, sup.clock = fake, lambda: 10.0
+        sup.final_rule = {"final": "full", "t0": 0.0, "m0": 0}
+        sup._final_tick()
+        self.assertEqual(asked, [("get_property", None), ("pvj-final", renderer.FINAL_ASK_SECONDS)])
 
     def test_a_silent_renderer_is_not_this_watchs_business(self):
         sup, fake, now = self.watched()

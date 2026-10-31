@@ -3379,6 +3379,14 @@
     var body = h('div', { class: 'list sp', id: 'renderbody' }, h('div', { class: 'state', text: 'Loading...' }));
     var card = h('div', { class: 'card', id: 'rendercard' }, h('h2', { text: 'Renderer' }), body);
     var out = h('div', { class: 'msg inmsg', id: 'rendermsg', role: 'status' });
+    // Choices not applied yet survive a redraw, as autoForm's do: the look a few seconds after Use this redraws the card,
+    // and it must not put back a select the Owner has just changed.
+    var form = {};
+    function kept(select, key) {
+      if (form[key] !== undefined) select.value = form[key];
+      select.addEventListener('change', function () { form[key] = select.value; });
+      return select;
+    }
     function refresh() {
       api('GET', '/api/renderer').then(function (r) {
         if (!document.getElementById('rendercard') || asking(card)) return;
@@ -3400,6 +3408,8 @@
       var detail = h('select', { class: 'text-input', id: 'renderdetail' }, d.details.map(function (v) {
         return h('option', { value: String(v), text: DETAIL_NAMES[v] || String(v), selected: v === d.detail });
       }));
+      kept(use, 'use');
+      kept(detail, 'detail');
       body.appendChild(labelled('Renderer', use, 'Classic is the player as it always was. New is the box\'s own renderer, a first step towards layers and live visuals; if it fails to start the box goes back to classic by itself.'));
       body.appendChild(labelled('Picture detail inside (new only)', detail, 'The new renderer draws the clip at this size and scales it to the screen once.'));
       // sources (D101): how many clips the new renderer can play side by side for the mapping's surfaces, up to the board's cap
@@ -3410,6 +3420,7 @@
         sources = h('select', { class: 'text-input', id: 'rendersources' },
           [h('option', { value: 'auto', text: 'Automatic: ' + src['default'] + ' on this box', selected: src.chosen === null })].concat(
             counts.map(function (n) { return h('option', { value: String(n), text: n + (n === 1 ? ' source' : ' sources'), selected: src.chosen === n }); })));
+        kept(sources, 'sources');
         body.appendChild(labelled('Sources (new only)', sources, 'Clips the new renderer can play at once, one per source, for the mapping\'s surfaces. A source with nothing loaded costs nothing; each one that plays costs decoding. Up to ' + src.cap + ' on this box.'));
       }
       // the final pass (D108): drawn at the screen's size, or at 720 lines with the display's scaler bringing it up
@@ -3418,6 +3429,7 @@
         final_ = h('select', { class: 'text-input', id: 'renderfinal' }, d.finals.map(function (v) {
           return h('option', { value: String(v), text: FINAL_NAMES[v] || String(v), selected: v === d.final });
         }));
+        kept(final_, 'final');
         body.appendChild(labelled('Final picture (new only)', final_, 'Drawing the final picture at 720 lines leaves the graphics chip more room and steadier motion at 4 sources with the mapping on. Mapped edges and on-screen text get a little softer, and thin lines in a squeezed mapped area can break into dashes, so Automatic does it only while the box is busy, and goes back when the load is lighter.'));
         if (d.final_now) {
           var small = d.final_now.final === 720;
@@ -3433,7 +3445,7 @@
           sayAt(out, 'Restarting the player...');
           api('POST', '/api/renderer', want).then(function (r) {
             if (!r.ok) sayAt(out, (r.data.error || 'Could not change it') + '. Nothing was changed.', true);
-            else { sayAt(out, 'Saved. The player is restarting.'); draw(r.data); setTimeout(refresh, 6000); }
+            else { form = {}; sayAt(out, 'Saved. The player is restarting.'); draw(r.data); setTimeout(refresh, 6000); }
           });
         }, e.currentTarget);
       } });
