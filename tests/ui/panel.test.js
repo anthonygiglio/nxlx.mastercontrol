@@ -508,7 +508,25 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.waitForSelector('#confirmrow:has-text("The player restarts")');
       await page.click('#confirmyes');
       await page.waitForFunction(() => document.getElementById('rendersources') && document.getElementById('rendersources').value === '2');
-      assert.deepStrictEqual(sent, { use: 'classic', detail: 'auto', sources: 2 }, 'the number goes with the renderer and its detail');
+      assert.deepStrictEqual(sent, { use: 'classic', detail: 'auto', final: 'auto', sources: 2 }, 'the number goes with the renderer and its detail');
+      await page.unroute('**/api/renderer');
+      // The final pass (D108): the Owner's choice beside the detail, and in plain words what it draws at now
+      assert.strictEqual(await page.$eval('#renderfinal', (s) => s.value), 'auto');
+      assert.deepStrictEqual(await page.$$eval('#renderfinal option', (os) => os.map((o) => o.value)), ['auto', 'full', '720']);
+      assert.strictEqual(await page.$('#renderfinalnow'), null, 'classic draws: no word about a final pass');
+      await page.route('**/api/renderer', (route) => {
+        if (route.request().method() !== 'POST') return route.fulfill({ status: 200, contentType: 'application/json',
+          body: JSON.stringify(Object.assign({}, now, { final: 'auto', final_now: { final: 720, why: 'the box was busy: 21 in 100 frames came late with a load of 5' } })) });
+        sent = JSON.parse(route.request().postData());
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(Object.assign({}, now, { final: sent.final, final_now: { final: 'full', why: 'the display\'s primary plane was not found' } })) });
+      });
+      await page.selectOption('#renderfinal', '720');
+      await page.click('#renderapply');
+      await page.waitForSelector('#confirmrow:has-text("The player restarts")');
+      await page.click('#confirmyes');
+      await page.waitForSelector('#renderfinalnow');
+      assert.strictEqual(sent.final, 720, 'a number goes as a number');
+      assert.strictEqual(await page.textContent('#renderfinalnow'), 'Final picture now: the screen\'s own size: the display\'s primary plane was not found.');
       await page.unroute('**/api/renderer');
     }
     await onPage('Screen output');

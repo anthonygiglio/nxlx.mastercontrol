@@ -5,6 +5,7 @@ class with a fake mpv behind its IPC. Each test is a finding of the review of th
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 from pvj.player import Player, PlayerError
 import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
@@ -147,3 +148,34 @@ class LayersTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StillKindTest(unittest.TestCase):
+    """A still of the window (D108): on pvj-render the final picture at the screen's size, on classic mpv as it was."""
+
+    def asked(self, renderer):
+        p = Player.__new__(Player)
+        calls = []
+
+        def request(*command, **kw):
+            calls.append(command)
+            if command[:2] == ("get_property", "pid"):
+                return 7
+            if command[:2] == ("get_property", "pvj-render"):
+                if renderer:
+                    return {"layers": 2}
+                raise PlayerError("mpv: property not found")
+            return None
+        p.ipc = mock.Mock(request=request)
+        p._seen_pid, p._layers_seen = None, None
+        p._note_pid = lambda pid: pid
+        p._set = lambda *a: None
+        p.still("/tmp/x.png")
+        p.still("/tmp/y.png", "video")
+        return [c for c in calls if c[0] == "screenshot-to-file"]
+
+    def test_pvj_render_is_asked_for_the_screen(self):
+        self.assertEqual(self.asked(True), [("screenshot-to-file", "/tmp/x.png", "pvj-screen"), ("screenshot-to-file", "/tmp/y.png", "video")])
+
+    def test_classic_mpv_is_asked_as_it_always_was(self):
+        self.assertEqual(self.asked(False), [("screenshot-to-file", "/tmp/x.png", "window"), ("screenshot-to-file", "/tmp/y.png", "video")])

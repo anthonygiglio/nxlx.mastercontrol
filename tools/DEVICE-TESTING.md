@@ -824,6 +824,25 @@ Everything of this ran on a WSL kernel, never on a Pi. Before: the node on a rel
 | RT5 | During RT4, open the panel from a laptop and click around; `uptime` | The panel answers as usual; the load average is that of 4 decoders, not higher than before the change | A panel that stalls for seconds: the throttle is not holding; stop the player and report the RT1 numbers |
 | RT6 | Setup > Renderer: **Classic**, play a clip; `ps -L -o tid,cls,rtprio,comm -p $(pgrep -x mpv)` | Every mpv thread `TS`: classic uses none of the limit | An `RR` thread under mpv |
 
+**RT1 and RT4, on the shipped build, 2026-10-30 (the test node, 1920 x 1080 at 60 Hz):**
+
+| Row | Result | What was measured |
+|---|---|---|
+| RT1 | Passed | 45.6 to 46.2 flips a second over 12 minutes, counters only, 4 sources at 720p, mapping on, 1080p60. Read today: `950000` and `1000000`; `LimitRTPRIO=1`; 34 lines "real-time priority 1" and none "stays at normal priority" this boot. Those flips are also what RT4 asks for: above the 40.7 of before, and the picture was not looked at |
+
+### The display scaler (D108): counters on the test node, the picture not yet
+
+Numbers and what they do not show are in D108. Before: the node on a release with this change, New, mapped surfaces on, 4 clips of 720p ready, a screen or the dongle on the HDMI. `q()` is RT4's. Setup > Screen output, renderer card, is where **Final picture** is chosen.
+
+| Row | What to do | What should happen | What it would mean if not |
+|---|---|---|---|
+| RT7 | Final picture **720 lines**. Play 4 clips with the mapping on; `q; sleep 20; q`, then watch 60 s of the dongle's capture | About 60 flips a second, `final-lines` 720, `missed-vblanks` hardly moving. At HDMI no more than a few gaps over 2 vblanks a minute. The picture fills the screen with nothing of the unused buffer at any edge | A stale strip at the right or bottom edge: the plane shows more than the corner. Flips below 60: the build differs from the node's measurement |
+| RT8 | Final picture **Automatic**. One clip, mapping off; capture while running `pvj-final 720` and `pvj-final full` on the socket every second for 30 s | No flash, no black frame, no frame out of step, and no visible jump of the picture at a switch | A flash or a dropped frame is a bug in the commit. A small jump is the sub-pixel shift of the scaler README (+0.4 px): report it, it is not chased here |
+| RT9 | Automatic. Start 4 clips with the mapping on and wait 10 s; stop one source and wait 60 s; capture a wipe in the middle of a switch | The card's line goes to 720 lines with the reason, then follows the rule of D108. No change to the mapped surfaces' place on the screen at either size | Surfaces that move at a switch: HOOKED_size or the viewport is wrong |
+| RT10 | At 720 lines look at the owner's mapping with thin lines, on the projector and on a monitor, against **The screen's own size** | Softer edges, and thin lines in squeezed areas may break into dashes. Judge whether Automatic is acceptable for a show | The owner may want the setting left at full for fine mapped work. The edge of a surface may differ from the scratch build's picture (D108, the warp table) |
+| RT11 | At 720 lines put the logo, the masks and a text up; `GET /api/mapper` | Masks and the logo where they are at full size; `screen` is the output's | An overlay out of place: something read the draw size |
+| RT12 | Unplug the screen and plug in a 720-line one or lower, or set a mode of 720 lines or fewer | The card says "the output has no more than 720 lines", the box plays at the screen's own size, no restart loop | A failed start: the refusal must never stop pvj-render |
+
 ### What to send back
 
 The output of checks 1 to 7 and 13, the `journalctl` tail for anything that failed, and a note of what you saw on screen. Say clearly what you did **not** test.

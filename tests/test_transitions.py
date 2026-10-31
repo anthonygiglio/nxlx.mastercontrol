@@ -3668,3 +3668,38 @@ class ScaledRealPlayer(ServerBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReadStillSizeTest(unittest.TestCase):
+    """A still of the wrong size is a cut that once (D108's review of the fault as shipped: the window still fell to
+    libmpv's 960 x 540 between two 1080p pictures and gave transitions up for five minutes)."""
+
+    def test_the_wrong_size_is_its_own_refusal(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "s.png")
+            with open(path, "wb") as f:
+                f.write(png(4, 2, b"\x10\x20\x30"))
+            with self.assertRaises(T.WrongSize):
+                T.read_still(path, (8, 4))
+            with open(path, "wb") as f:
+                f.write(b"nothing of the kind")
+            with self.assertRaises(T.StillError) as e:
+                T.read_still(path, (8, 4))
+            self.assertNotIsInstance(e.exception, T.WrongSize)
+
+
+class WrongSizeStillTest(Base):
+    def test_a_still_of_the_wrong_size_is_a_cut_and_gives_nothing_up(self):
+        real = self.player.still
+
+        def small(path):
+            real(path)
+            with open(path, "wb") as f:
+                f.write(png(1, 1, b"\x10\x20\x30"))
+        self.player.still = small
+        self.assertEqual(self.tr.hold("wipe-from-left"), 0, "a cut this once")
+        self.assertEqual(self.tr.given_up, "", "nothing about the box in one still's size")
+        self.assertEqual(self.tr.fallback(), "")
+        self.player.still = real
+        self.assertTrue(self.tr.hold("wipe-from-left"), "the next one is a wipe")

@@ -21,7 +21,9 @@
 #define FADE_MAX_SECONDS 60.0
 #define FADE_FIRST_FRAME 10.0       // seconds a crossfade waits for its clip's first frame, then fades anyway (as D71)
 
+#define FINAL_LINES 720             // the size the final pass draws at while the display's scaler brings it to the output (D108)
 enum { FADE_OFF, FADE_WAITING, FADE_RUNNING };
+enum { FINAL_OFF, FINAL_AUTO, FINAL_720 };
 // The mixing stage (D101): how a layer is laid over what is under it. Only "normal" (an alpha mix by the layer's
 // opacity) is built; the others (add, screen, multiply, difference, lighten, darken) are a line each in the stage's
 // shaders when they come, and are refused until then.
@@ -70,6 +72,7 @@ typedef struct {
     int frames;                     // > 0: end after this many presented frames (tests)
     int sources;                    // sources 1 to N (D101): 1 by default, at most MAX_SOURCES
     int fx_fps;                     // a generator, and an effect that reads the clock, run at most this often (D106)
+    int final_mode;                 // --final (D108): FINAL_OFF, FINAL_AUTO or FINAL_720
     int verbose;
 } Cfg;
 
@@ -104,9 +107,18 @@ typedef struct {
     uint64_t overlays;              // bit n: overlay n is on
     double text_until;              // monotonic seconds
 
+    // the final pass's size (D108). final_want: the lines asked (0: the output's own), set by the socket's thread or
+    // at the start, taken by the render thread at the top of a frame (atomics). final_lines: what the frame on its way
+    // to the screen was drawn at (atomics). final_why: why the scaler cannot be used, in words, under app.lock; empty
+    // while it can. out_w and out_h never change: they are the screen, whichever way the final pass draws.
+    int final_want, final_lines;
+    long final_switches;
+    char final_why[160];
+
     // a capture of the final picture, asked by the socket thread
     char *capture_path;
     int capture_serial, capture_done_serial, capture_result;
+    int capture_buffer;             // tests only: the buffer as it goes out, not the picture at the screen's size
 
     // the crossfade (D98): the front layer is the incoming clip from the command on; the other one fades out under it
     struct {
@@ -150,7 +162,8 @@ typedef struct {
     // thread only reads the pixels back (into a pixel buffer, mapped on the next frame); the client's thread that
     // asked encodes them and writes the file, so the screen never waits for an encoder (the review of #167).
     struct {
-        int kind;                   // 0: video (source 1's picture at the inside size), 1: window (the screen's size, text)
+        int kind;                   // 0: video (source 1's picture at the inside size), 1: window (the screen's size, text),
+                                    // 2: the whole final picture at the screen's size, mapping and text in it (a transition's still)
         int serial, done_serial;
         unsigned char *rgba;        // the pixels (GL's rows, bottom first), handed over with done_serial; NULL: failed
         int w, h;
@@ -222,6 +235,8 @@ int still_jpeg(int fd, const unsigned char *rgb, int w, int h, int quality);
 // the output (out.c)
 int out_open(const Cfg *cfg, char *err, size_t n);
 GLuint out_target(void);
+void out_draw_size(int *w, int *h); // the size this frame's final pass draws at, in the top left of out_target (D108)
+int out_final_usable(void);         // the final pass may change size at run time
 int out_present(void);
 void out_wait(double seconds);
 void out_close(void);

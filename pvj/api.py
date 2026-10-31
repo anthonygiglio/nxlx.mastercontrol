@@ -2385,11 +2385,12 @@ class Api:
         return self.renderer.state()
 
     def set_renderer(self, body, device, client):
-        """{"use": "classic" | "new", "detail": "auto" | 540 | 720 | "output", "sources": "auto" | 1 to the board's cap}:
-        saved, and the player restarts for a change. Leaving detail or sources out keeps them as they are."""
-        if "use" not in body or not set(body) <= {"use", "detail", "sources"}:
-            raise bad("send use (classic or new) and, if you like, detail and sources")
-        return self._renderer_call(self.renderer.choose, body["use"], body.get("detail"), body.get("sources"))
+        """{"use": "classic" | "new", "detail": "auto" | 540 | 720 | "output", "sources": "auto" | 1 to the board's cap,
+        "final": "auto" | "full" | 720}: saved, and the player restarts for a change. Leaving detail, sources or final
+        out keeps them as they are."""
+        if "use" not in body or not set(body) <= {"use", "detail", "sources", "final"}:
+            raise bad("send use (classic or new) and, if you like, detail, sources and final")
+        return self._renderer_call(self.renderer.choose, body["use"], body.get("detail"), body.get("sources"), body.get("final"))
 
     def confirm_screen(self, body, device, client):
         return self._screen_call(self.screen.confirm)

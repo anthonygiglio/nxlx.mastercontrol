@@ -1042,7 +1042,10 @@ class Player:
         self._set("screenshot-high-bit-depth", False)
         self._set("screenshot-png-compression", 0)
         self._set("screenshot-png-filter", 0)
-        self.ipc.request("screenshot-to-file", path, "video" if kind == "video" else "window")
+        # pvj-render's libmpv draws the window at the inside size with no mapping in it, so "window" there would not be the
+        # screen: it is asked for the final picture at the screen's size instead, whatever size the final pass draws (D108).
+        window = "pvj-screen" if self.crossfades() else "window"
+        self.ipc.request("screenshot-to-file", path, "video" if kind == "video" else window)
 
     def video_place(self, screen):
         """Where the clip's own picture lies on a screen of `screen` (width, height), when a still of it at its own

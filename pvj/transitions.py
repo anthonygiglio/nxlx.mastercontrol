@@ -34,6 +34,7 @@ What that costs, and the rules that follow:
   second, a clip that drops more than MAX_DROPS frames a second under the steps: the box uses the dip to black
   from then on, and says so in `GET /api/status` (mix.fallback) and under the panel's picker, until the transition
   is chosen again (the panel's "Try again" does that) or RETRY seconds have passed, when it tries again by itself.
+  A still that is not of the size asked for is a cut that once and gives nothing up (`WrongSize`).
   "Too slow to take the still" is SLOW_IN_A_ROW stills in a row over SLOW seconds each, or one still that took
   over HOPELESS seconds: a single slow still (a preview snapshot at the same moment, a heavy
   decode, a busy card) is used, and the blend starts late that once. The still's time is the screenshot and its
@@ -118,6 +119,11 @@ class StillError(Exception):
     pass
 
 
+class WrongSize(StillError):
+    """This one still is not of the size asked for: it says nothing of how the box copes, so it is a cut this once and
+    no reason to give up."""
+
+
 class Gone(Exception):
     """The player a still was given to is not there any more (it stopped, or it is another process)."""
 
@@ -160,7 +166,7 @@ def read_still(path, size, half=None, within=False):
                 bpp = {2: 3, 6: 4}.get(ctype, 0) if depth == 8 else 0
                 fits = 0 < w <= size[0] and 0 < h <= size[1] if within else (w, h) == tuple(size)
                 if not fits or not bpp:
-                    raise StillError("the still is not an 8-bit picture of the screen's size")
+                    raise WrongSize("the still is not an 8-bit picture of the screen's size")
             elif kind == b"IDAT":
                 if not bpp:
                     raise StillError("the still has no header")
@@ -516,7 +522,8 @@ class Transitions:
                         # a still of the clip that failed or is not what was expected (the player refused that kind
                         # of screenshot, or the clip changed hands): a cut, never a give-up; the window's next
                         self._clip_missed(pid)
-                    elif not gone and not moved:    # a player that went away, or a picture that changed hands, is not a box that is too slow
+                    elif not gone and not moved and not isinstance(e, WrongSize):
+                        # a player that went away, a picture that changed hands, or one still of another size is not a box that is too slow
                         self._give_up("the still failed (%s)" % (str(e) or type(e).__name__)[:80])
                 if "no reply" in str(e):
                     self._once_more()

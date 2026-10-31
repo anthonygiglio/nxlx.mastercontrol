@@ -3374,6 +3374,7 @@
   // ---- the renderer (D95) -----------------------------------------------
   var RENDERER_NAMES = { classic: 'Classic (mpv)', 'new': 'New (pvj-render)' };
   var DETAIL_NAMES = { auto: 'Automatic (540 lines on a Pi 3 or 4, else the screen\'s own)', 540: '540 lines', 720: '720 lines', output: 'The screen\'s own size' };
+  var FINAL_NAMES = { auto: 'Automatic (720 lines when a Pi 3 or 4 is busy, else the screen\'s own)', full: 'The screen\'s own size', 720: '720 lines, scaled by the display' };
   function rendererCard() {
     var body = h('div', { class: 'list sp', id: 'renderbody' }, h('div', { class: 'state', text: 'Loading...' }));
     var card = h('div', { class: 'card', id: 'rendercard' }, h('h2', { text: 'Renderer' }), body);
@@ -3411,8 +3412,22 @@
             counts.map(function (n) { return h('option', { value: String(n), text: n + (n === 1 ? ' source' : ' sources'), selected: src.chosen === n }); })));
         body.appendChild(labelled('Sources (new only)', sources, 'Clips the new renderer can play at once, one per source, for the mapping\'s surfaces. A source with nothing loaded costs nothing; each one that plays costs decoding. Up to ' + src.cap + ' on this box.'));
       }
+      // the final pass (D108): drawn at the screen's size, or at 720 lines with the display's scaler bringing it up
+      var final_ = null;
+      if (d.finals) {
+        final_ = h('select', { class: 'text-input', id: 'renderfinal' }, d.finals.map(function (v) {
+          return h('option', { value: String(v), text: FINAL_NAMES[v] || String(v), selected: v === d.final });
+        }));
+        body.appendChild(labelled('Final picture (new only)', final_, 'Drawing the final picture at 720 lines leaves the graphics chip more room and steadier motion at 4 sources with the mapping on. Mapped edges and on-screen text get a little softer, and thin lines in a squeezed mapped area can break into dashes, so Automatic does it only while the box is busy, and goes back when the load is lighter.'));
+        if (d.final_now) {
+          var small = d.final_now.final === 720;
+          body.appendChild(h('div', { class: 'hint', id: 'renderfinalnow', role: 'status',
+            text: 'Final picture now: ' + (small ? '720 lines, scaled to the screen by the display' : 'the screen\'s own size') + (d.final_now.why ? ': ' + d.final_now.why : '') + '.' }));
+        }
+      }
       var go = h('button', { class: 'btn on pri grow', id: 'renderapply', text: 'Use this', onclick: function (e) {
         var want = { use: use.value, detail: /^\d+$/.test(detail.value) ? parseInt(detail.value, 10) : detail.value };
+        if (final_) want.final = /^\d+$/.test(final_.value) ? parseInt(final_.value, 10) : final_.value;
         if (sources) want.sources = sources.value === 'auto' ? 'auto' : parseInt(sources.value, 10);
         confirmRow('The player restarts and the screen goes dark for a few seconds.', 'Restart with it', 'Cancel', function () {
           sayAt(out, 'Restarting the player...');
