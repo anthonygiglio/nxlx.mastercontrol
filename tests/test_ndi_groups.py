@@ -17,8 +17,6 @@ from pvj import ndi, ndisetup, paths
 from tests.test_ndi_pads import MASTER, REPO, PadBase
 from tests.test_roles import CONTROLLER_DEVICES, TUNNEL
 
-TCP = {"rudp": {"recv": {"enable": False}}}     # D110, written out: a change of the constant must show here
-
 
 class Names(unittest.TestCase):
     def test_a_group_is_kept_as_typed_and_has_no_comma(self):
@@ -80,8 +78,8 @@ class ConfigFile(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.dir, True)
 
     def test_the_file_is_ndis_own_key_and_nothing_else(self):
-        self.assertEqual(json.loads(ndi.config_text(["10.0.0.2:5959", "10.0.0.3"])), {"ndi": dict(TCP, networks={"discovery": "10.0.0.2:5959,10.0.0.3"})})
-        self.assertEqual(json.loads(ndi.config_text([])), {"ndi": TCP})
+        self.assertEqual(json.loads(ndi.config_text(["10.0.0.2:5959", "10.0.0.3"])), {"ndi": dict(ndi.CONFIG_TRANSPORT, networks={"discovery": "10.0.0.2:5959,10.0.0.3"})})
+        self.assertEqual(json.loads(ndi.config_text([])), {"ndi": ndi.CONFIG_TRANSPORT})
 
     def test_pictures_do_not_travel_by_reliable_udp_with_or_without_a_server(self):
         # NDI's own key, spelled out here and not taken from the constant: D110, the 409 on a live switch.
@@ -99,7 +97,7 @@ class ConfigFile(unittest.TestCase):
         self.assertEqual(i.write_config(), ["10.0.0.2:5959"])
         path = os.path.join(self.dir, ndi.CONFIG_NAME)
         with open(path) as f:
-            self.assertEqual(json.load(f), {"ndi": dict(TCP, networks={"discovery": "10.0.0.2:5959"})})
+            self.assertEqual(json.load(f), {"ndi": dict(ndi.CONFIG_TRANSPORT, networks={"discovery": "10.0.0.2:5959"})})
         self.assertEqual(os.stat(path).st_mode & 0o777, 0o644)
         self.assertEqual(os.listdir(self.dir), [ndi.CONFIG_NAME])                  # no temporary file is left
         self.assertEqual(ndi.config_discovery(self.dir), ["10.0.0.2:5959"])
@@ -132,7 +130,7 @@ class ConfigFile(unittest.TestCase):
     def test_how_pictures_travel_is_read_back_from_the_file(self):
         path = os.path.join(self.dir, ndi.CONFIG_NAME)
         self.assertIsNone(ndi.config_transport(self.dir), "no file")
-        for text, said in ((ndi.config_text(["10.0.0.2"]), TCP), ('{"ndi": {}}\n', {}), ('{"ndi": {"networks": {"discovery": "10.0.0.2"}}}\n', {}),
+        for text, said in ((ndi.config_text(["10.0.0.2"]), ndi.CONFIG_TRANSPORT), ('{"ndi": {}}\n', {}), ('{"ndi": {"networks": {"discovery": "10.0.0.2"}}}\n', {}),
                            ("{", None), ("[]", None), ("x" * 9000, None)):
             with open(path, "w") as f:
                 f.write(text)
@@ -219,7 +217,7 @@ class Scope(PadBase):
         st, out = self.set({"action": "add_discovery", "server": "10.0.0.2:5959"})
         self.assertEqual((st, out["discovery"]), (200, ["10.0.0.2:5959"]))
         with open(os.path.join(self.confdir, ndi.CONFIG_NAME)) as f:
-            self.assertEqual(json.load(f), {"ndi": dict(TCP, networks={"discovery": "10.0.0.2:5959"})})
+            self.assertEqual(json.load(f), {"ndi": dict(ndi.CONFIG_TRANSPORT, networks={"discovery": "10.0.0.2:5959"})})
         self.assertEqual(self.restarts, [1], "the library reads its file once: the helper must start again")
         self.assertEqual(out["discovery_now"], [], "and until it has, the page is told the old servers are in force")
         # the new process: the library is loaded with the file as it is now
@@ -247,12 +245,26 @@ class Scope(PadBase):
         self.assertTrue(self.api.ndi.sync().get("restarting"), "the new panel wrote the new file: the library must read it")
         self.assertEqual(self.restarts, [1])
         with open(path) as f:
-            self.assertEqual(json.load(f), {"ndi": TCP})
+            self.assertEqual(json.load(f), {"ndi": ndi.CONFIG_TRANSPORT})
         # the new process reads the file, and nothing goes round again
         self.service.lib, self.service.configured = None, False
         self.assertIs(self.api.ndi.sync()["ok"], True)
         self.api.ndi.sync()
-        self.assertEqual((self.service.transport, self.restarts), (TCP, [1]))
+        self.assertEqual((self.service.transport, self.restarts), (ndi.CONFIG_TRANSPORT, [1]))
+
+    def test_a_helper_that_started_with_no_file_starts_again_once_for_the_file(self):
+        path = os.path.join(self.confdir, ndi.CONFIG_NAME)
+        if os.path.exists(path):
+            os.unlink(path)
+        self.service.lib, self.service.configured = None, False
+        self.service.configure({"on": True, "addresses": [], "sound": False})
+        self.assertEqual((self.service.transport, self.restarts), (None, []))
+        self.assertTrue(self.api.ndi.sync().get("restarting"))
+        self.assertEqual(self.restarts, [1])
+        self.service.lib, self.service.configured = None, False       # the new process
+        for _ in range(3):
+            self.assertIs(self.api.ndi.sync()["ok"], True)
+        self.assertEqual((self.service.transport, self.restarts), (ndi.CONFIG_TRANSPORT, [1]))
 
     def test_a_file_that_cannot_be_read_restarts_nothing(self):
         self.api.ndi.config_dir = None                   # the panel writes nothing here
