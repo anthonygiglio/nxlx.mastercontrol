@@ -507,6 +507,7 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.click('#renderapply');
       await page.waitForSelector('#confirmrow:has-text("The player restarts")');
       await page.click('#confirmyes');
+      await page.waitForSelector('#rendermsg:has-text("Saved")');       // the answer has drawn: the select below was already 2 before it came
       await page.waitForFunction(() => document.getElementById('rendersources') && document.getElementById('rendersources').value === '2');
       assert.deepStrictEqual(sent, { use: 'classic', detail: 'auto', final: 'auto', sources: 2 }, 'the number goes with the renderer and its detail');
       await page.unroute('**/api/renderer');
