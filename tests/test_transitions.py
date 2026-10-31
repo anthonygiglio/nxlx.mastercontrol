@@ -1072,6 +1072,26 @@ class FrozenByAPanelThatDied(Base):
         del self.player.calls[:]
         self.tr.tidy()
 
+    def test_the_same_file_still_playing_is_thawed(self):
+        self.player.path = "a.mp4"
+        self.die_at_the_still()
+        self.next_panel()
+        self.assertIn(("pause", False), self.player.calls)
+        self.assertFalse(os.path.exists(self.record()))
+
+    def test_a_thaw_the_player_did_not_answer_keeps_the_record_for_the_next_panel(self):
+        self.die_at_the_still()
+        real = self.player.pause
+
+        def pause(value=None):
+            raise OSError("no reply")
+        self.player.pause = pause
+        self.tr._thaw()
+        self.player.pause = real
+        self.assertTrue(os.path.exists(self.record()))
+        self.next_panel()
+        self.assertIn(("pause", False), self.player.calls)
+
     def test_a_panel_that_dies_with_the_outgoing_clip_frozen_leaves_a_record_and_the_next_panel_thaws_it(self):
         self.die_at_the_still()
         self.assertTrue(self.seen_record, "the record is written before the freeze")

@@ -742,11 +742,12 @@ class Transitions:
     def _thaw(self):
         with self._mark:
             self._paused = False
-        self._unmark_frozen()
+        # The record goes only once the player has answered: until then the clip may still be frozen, and the next panel must know.
         try:
             self.api.player.pause(False)
         except Exception:
-            pass
+            return
+        self._unmark_frozen()
 
     def _newer_up(self, token):
         with self._mark:
