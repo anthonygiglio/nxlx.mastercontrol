@@ -406,18 +406,20 @@ class Api:
         mix = self.settings.data["mix"]
         out = {"transition": transitions_mod.named(mix), "duration": mix["duration"]}
         why = self.transitions.fallback() if out["transition"] in transitions_mod.STYLES else ""      # asks the player nothing
-        if why and out["transition"] == "crossfade" and self._layered_fade(ask=False):
-            why = ""                    # the new renderer's crossfade takes no still, so nothing of the still's gives it up
+        if why and self._layered_fade(ask=False, kind=out["transition"]):
+            why = ""                    # the new renderer's own takes no still, so nothing of the still's gives it up
         if why:
             out["fallback"] = why
         return out
 
-    def _layered_fade(self, ask=True):
-        """True where the player is pvj-render with two video layers, which draws a crossfade itself (D98), and what
-        plays is a plain clip (out of a generator or a live input a crossfade takes D71's still, on that player too).
-        Asked of the player once per process (Player.crossfades); a player without these questions is classic. So
-        the status shows the still's reason for giving up whenever the still is what a crossfade would use."""
-        probe, plain = getattr(self.player, "crossfades", None), getattr(self.player, "fades_from_clip", None)
+    def _layered_fade(self, ask=True, kind="crossfade"):
+        """True where the player is pvj-render with two video layers, which draws the transition `kind` itself (D98 a
+        crossfade, D111 a wipe or a slide), and what plays is a plain clip (out of a generator or a live input it
+        takes D71's still, on that player too). Asked of the player once per process (Player.crossfades, Player.moves);
+        a player without these questions is classic. So the status shows the still's reason for giving up whenever
+        the still is what the transition would use."""
+        probe = getattr(self.player, "crossfades" if kind == "crossfade" else "moves", None)
+        plain = getattr(self.player, "fades_from_clip", None)
         if probe is None or plain is None:
             return False
         try:
@@ -1593,13 +1595,14 @@ class Api:
         # that is dark (Blackout, a picture faded out) has nothing to blend from, as the dip skips itself there.
         # Where the box cannot do one it dips; where the still itself fails, time has passed already and the clip
         # is cut to. Whether anything is loaded in the player is the still's own first question.
-        # On pvj-render with two video layers (D98) a crossfade from a plain clip is the renderer's own: no still, no
-        # freeze, both pictures move, and the box never gives up on it for a slow still. Out of a generator or a live
-        # input, and for wipes and slides, D71's still as on classic (it works on pvj-render too; _layered_fade).
+        # On pvj-render with two video layers (D98) a crossfade from a plain clip is the renderer's own, and on one that
+        # says so (D111) a wipe or a slide too: no still, no freeze, both pictures play, and the box never gives up on it
+        # for a slow still. Out of a generator or a live input, D71's still as on classic (it works on pvj-render too;
+        # _layered_fade).
         blend = layered = False
         if kind in transitions_mod.STYLES:
             if playing and not self.mix["blackout"] and self.mix["opacity"] > 0 and not faded_out:
-                if kind == "crossfade" and self._layered_fade():
+                if self._layered_fade(kind=kind):
                     layered = True
                 elif self.transitions.look() or self.access_on_screen():
                     kind = "dip"
@@ -1628,11 +1631,11 @@ class Api:
                         self.transitions.abandon(token)
                         return False
                     if layered:
-                        # the renderer's crossfade over the Mix's duration; a cut where it cannot or would not
-                        self._player_call(self.player.play, [path], loop, None, False, self.spawn, ending, None, transition["duration"])
+                        # the renderer's own over the Mix's duration; a cut where it cannot or would not
+                        self._player_call(self.player.play, [path], loop, None, False, self.spawn, ending, None, transition["duration"], kind)
                         refused = getattr(self.player, "fade_refused", "")
                         if refused and isinstance(refused, str):
-                            self.log("pvj-web: no crossfade on the new renderer, a cut instead: %s" % refused)
+                            self.log("pvj-web: no %s on the new renderer, a cut instead: %s" % (kind, refused))
                     else:
                         self._player_call(self.player.play, [path], loop, None, False, self.spawn, ending)
                 # This clip plays now, so a live input that was on the screen is not shown any more and its helper

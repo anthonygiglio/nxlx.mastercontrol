@@ -1254,6 +1254,258 @@ class FadeEdgesTest(FadeBase):
             return None
 
 
+class MoveBase(FadeBase):
+    """The wipes and the slides drawn by the renderer (D111): ["pvj-crossfade", URL, SECONDS, OPTIONS, MOVE]."""
+    OPTS = "keep-open=no,image-display-duration=inf"
+
+    def setUp(self):
+        super().setUp()
+        self.magenta = os.path.join(self.tmp, "magenta.png")
+        png(self.magenta, W, H, lambda x, y: MAGENTA)
+
+    def move(self, path, seconds, name):
+        return self.r("pvj-crossfade", path, seconds, self.OPTS, name)
+
+    def at(self, low, high=0.95):
+        self.assertTrue(self.r.wait(lambda: self.st()["fade"] == "running" and low < self.st()["fade-progress"] < high, 15, 0.02), self.st())
+
+
+class MoveTest(MoveBase):
+    def test_it_says_it_draws_them(self):
+        self.assertIs(self.st()["moves"], True)
+
+    def test_every_wipe_and_slide_lies_where_the_panels_still_had_it(self):
+        """The panel's own class Move says where the old picture's part is at a moment; the picture must agree in
+        all eight, at two moments, and on both sides of the edge: the part that is left shows what the old
+        picture shows there (standing in a wipe, moved in a slide) and the rest is the incoming picture, unmoved."""
+        from pvj import transitions as T
+        r = self.r
+        self.assertEqual(len(T.WIPES + T.SLIDES), 8)
+        for name in T.WIPES + T.SLIDES:
+            r.load(self.picture)
+            self.assertQuadrants()
+            self.move(self.magenta, 3.0, name)
+            for moment in (0.2, 0.55):
+                self.at(moment)
+                a = self.st()["fade-progress"]
+                shot = r.capture()
+                b = self.st()
+                self.assertEqual(b["fade"], "running", name)
+                self.assertEqual(b["fade-kind"], name)
+                parts = [self.old_part(T.BLENDS[name](), p) for p in (a, b["fade-progress"])]
+                checked = 0
+                for y in range(2, H, 7):
+                    for x in range(2, W, 7):
+                        want = [self.expected(part, x, y) for part in parts]
+                        if want[0] != want[1]:
+                            continue                # the edge passed here between the two looks
+                        checked += 1
+                        self.assertColour(r.pixel(x, y, shot), want[0], "%s at %.2f, pixel %d,%d" % (name, a, x, y))
+                self.assertGreater(checked, 400, name)
+
+    @staticmethod
+    def old_part(move, progress):
+        """Where the old picture's part is drawn, and which of its pixels: (x, y, width, height, first column, first row)."""
+        x, y, offset, pw, ph = move.step(W, H, None, progress)
+        return x, y, pw, ph, (offset // 4) % W, (offset // 4) // W
+
+    @staticmethod
+    def expected(part, x, y):
+        px, py, pw, ph, sx, sy = part
+        inside = px <= x < px + pw and py <= y < py + ph
+        return quadrants(x - px + sx, y - py + sy) if inside else MAGENTA
+
+    def test_a_slide_leaves_the_new_picture_where_it_is(self):
+        """A slide is not a push (D71, D111): the old picture moves off, the new one stands. The point read is in the
+        new picture's left half, just inside the edge; moved along with the old picture it would show the right half."""
+        r = self.r
+        r.load(self.blue)
+        self.move(self.picture, 6.0, "slide-left")
+        self.at(0.56, 0.85)
+        self.assertColour(r.pixel(147, H // 4), RED, "the new picture's own place")
+
+    def test_a_transition_of_two_seconds_is_a_picture_a_vblank_for_two_seconds(self):
+        r = self.r
+        r.load(self.picture)
+        self.move(self.magenta, 2.0, "wipe-from-left")
+        self.assertTrue(r.wait(lambda: self.st()["fade"] == "running", 10, 0.01))
+        began = time.monotonic()
+        st = self.settled()
+        took = time.monotonic() - began
+        self.assertAlmostEqual(took, 2.0, delta=0.4)
+        self.assertEqual((st["fades-done"], st["fades-cut"], st["front"]), (1, 0, 1))
+        self.assertGreater(st["fade-steps"], 0.85 * 60 * 2, st)
+        self.assertLessEqual(st["fade-steps"], 124, st)
+        self.assertColour(self.centre(), MAGENTA, "after")
+        self.assertColour(r.pixel(4, 4), MAGENTA, "after, the edge of the picture")
+
+    def test_no_seconds_is_a_cut_through_the_layers(self):
+        self.r.load(self.picture)
+        self.move(self.magenta, 0, "slide-up")
+        st = self.settled(5)
+        self.assertEqual((st["fades-done"], st["front"]), (1, 1))
+        self.assertColour(self.centre(), MAGENTA, "after")
+
+    def test_nothing_on_the_screen_is_a_cut_as_for_the_crossfade(self):
+        self.move(self.magenta, 2.0, "wipe-from-top")
+        st = self.settled(1)
+        self.assertEqual((st["fades"], st["fades-from-nothing"]), (0, 1))
+        self.assertTrue(self.r.wait(lambda: near(self.centre(), MAGENTA)), self.centre())
+
+    def test_a_crossfade_after_a_wipe_is_a_mix_again(self):
+        r = self.r
+        r.load(self.red)
+        self.move(self.magenta, 0.2, "wipe-from-left")
+        self.settled()
+        self.fade(self.blue, 3.0)
+        self.at(0.3, 0.7)
+        self.assertEqual(self.st()["fade-kind"], "crossfade")
+        for x in (10, W // 2, W - 10):
+            px = r.pixel(x, H // 2)
+            self.assertTrue(px[0] > 50 and px[2] > 50 and px[1] < 40, "not a mix at column %d: %s" % (x, px))
+
+    def test_a_blackout_darkens_both_sides_of_the_edge(self):
+        r = self.r
+        r.load(self.red)
+        self.move(self.blue, 6.0, "slide-left")
+        self.at(0.2, 0.6)
+        self.assertColour(r.pixel(10, H // 2), RED, "the old picture")
+        self.assertColour(r.pixel(W - 10, H // 2), BLUE, "the new picture")
+        r("set_property", "brightness", -100)
+        time.sleep(0.3)
+        shot = r.capture()
+        st = self.st()
+        self.assertEqual(st["fade"], "running", "a Blackout does not end it; it darkens both")
+        self.assertLess(st["fade-progress"], 0.85, st)
+        for x in (10, W // 2, W - 10):
+            self.assertTrue(near(r.pixel(x, H // 2, shot), BLACK, 60), "pixel %d: %s" % (x, r.pixel(x, H // 2, shot)))
+        r("set_property", "brightness", 0)
+        self.settled()
+        self.assertColour(self.centre(), BLUE, "after")
+
+    def test_the_flip_stays_on_the_picture_and_the_way_stays_the_screens(self):
+        r = self.r
+        r.load(self.picture)
+        r("vf", "add", "@pvjfliph:hflip")
+        self.assertTrue(r.wait(lambda: near(r.pixel(W // 4, H // 4), GREEN)), "flipped")
+        self.move(self.magenta, 3.0, "wipe-from-left")
+        self.at(0.2, 0.6)
+        shot = r.capture()
+        self.assertColour(r.pixel(4, H // 4, shot), MAGENTA, "from the screen's left, flipped or not")
+        self.assertColour(r.pixel(W - 10, H // 4, shot), RED, "the outgoing picture, flipped")
+        r("vf", "remove", "@pvjfliph")
+
+    def test_a_load_a_stop_or_a_new_transition_ends_it(self):
+        r = self.r
+        r.load(self.red)
+        self.move(self.blue, 10.0, "wipe-from-right")
+        self.at(0.0)
+        r("loadfile", self.picture, "replace")
+        st = self.st()
+        self.assertEqual((st["fade"], st["fades-cut"]), ("off", 1))
+        self.assertTrue(r.wait(lambda: r.playing() == self.picture))
+        time.sleep(0.4)
+        self.assertQuadrants()
+        self.move(self.red, 10.0, "slide-down")
+        self.at(0.0)
+        self.move(self.blue, 0.2, "wipe-from-top")
+        st = self.settled()
+        self.assertEqual((st["fades"], st["fades-cut"], st["fades-done"]), (3, 2, 1))
+        self.assertColour(self.centre(), BLUE, "the newest")
+        self.move(self.red, 10.0, "slide-right")
+        self.at(0.0)
+        r("stop")
+        self.assertEqual(self.st()["fade"], "off")
+        self.assertTrue(r.wait(lambda: r("get_property", "idle-active") is True))
+        self.assertTrue(r.wait(lambda: near(self.centre(), BLACK)), "a Stop is black, both layers: %s" % (self.centre(),))
+
+    def test_what_is_not_a_move_is_refused_with_mpvs_words(self):
+        r = self.r
+        r.load(self.red)
+        for word in ("", "crossfade", "wipe", "wipe-from-left ", "slide-LEFT", 3, True):
+            with self.assertRaises(PlayerError, msg=str(word)) as e:
+                r("pvj-crossfade", self.blue, 2, self.OPTS, word)
+            self.assertEqual(str(e.exception), "mpv: invalid parameter", word)
+        with self.assertRaises(PlayerError):
+            r("pvj-crossfade", self.blue, 2, "pause=yes", "wipe-from-left")
+        with self.assertRaises(PlayerError):
+            r("pvj-crossfade", self.blue, 2, self.OPTS, "wipe-from-left", "extra")
+        st = self.st()
+        self.assertEqual((st["fades"], st["fade"], st["front"]), (0, "off", 0), "nothing happened")
+        self.assertEqual(r("get_property", "path"), self.red)
+
+    def test_the_mapping_draws_the_transition_as_it_draws_a_picture(self):
+        """The cut is in the inside picture, before the final pass, so a mapped surface shows it warped with the
+        picture and nothing moves outside the surfaces."""
+        r = self.r
+        surfaces = mapper.validate_mapping({"surfaces": [{"id": "a1b2c3d4", "type": "quad", "name": "Left", "on": True,
+                                                          "vertices": [[0, 0], [W / 2, 0], [W / 2, H], [0, H]],
+                                                          "tex": [[0, 0], [1, 0], [1, 1], [0, 1]]}]})
+        lw, lh, values = mapper.warp_table(surfaces, W, H)
+        path = os.path.join(self.tmp, "map.glsl")
+        with open(path, "w") as f:
+            f.write(mapper.warp_shader(lw, lh, values))
+        r.load(self.red)
+        r("set_property", "glsl-shaders", [path])
+        self.assertEqual(self.st()["mapping"], "on", r.stderr())
+        self.move(self.blue, 6.0, "wipe-from-left")
+        self.at(0.2, 0.7)
+        shot = r.capture()
+        self.assertColour(r.pixel(4, H // 2, shot), BLUE, "the left of the surface")
+        self.assertColour(r.pixel(W // 2 - 4, H // 2, shot), RED, "the right of the surface")
+        self.assertColour(r.pixel(3 * W // 4, H // 2, shot), BLACK, "outside the surface")
+        self.settled()
+        self.assertColour(r.pixel(W // 2 - 4, H // 2), BLUE, "after")
+        r("set_property", "glsl-shaders", [])
+
+
+class MovePaceTest(MoveBase):
+    """Both clips play through it, and a picture goes out at every vblank, as during a crossfade (FadePaceTest)."""
+
+    def test_flips_and_frames(self):
+        r = self.r
+        a, b = os.path.join(self.tmp, "a.mp4"), os.path.join(self.tmp, "b.mp4")
+        make_clip(self, a, 6)
+        shutil.copy(a, b)
+        r("set_property", "loop-file", "inf")
+        r.load(a)
+        time.sleep(0.5)
+        self.move(b, 4.0, "slide-left")
+        self.assertTrue(r.wait(lambda: self.st()["fade"] == "running", 10, 0.02), r.stderr())
+        s0, t0 = self.st(), time.monotonic()
+        time.sleep(2.0)
+        s1, t1 = self.st(), time.monotonic()
+        self.assertEqual(s1["fade"], "running", "the measure is inside the transition")
+        dt = t1 - t0
+        flips = (s1["flips"] - s0["flips"]) / dt
+        self.assertGreater(flips, 0.85 * 60, "flips a second: %.1f\n%s" % (flips, r.stderr()))
+        self.assertLessEqual(flips, 62)
+        self.assertGreater((s1["fade-steps"] - s0["fade-steps"]) / dt, 0.85 * 60)
+        for name, rate in (("incoming", (s1["drawn"] - s0["drawn"]) / dt), ("outgoing", (s1["back-drawn"] - s0["back-drawn"]) / dt)):
+            self.assertGreater(rate, 20, "%s frames a second: %.1f" % (name, rate))
+            self.assertLess(rate, 36, "%s: %.1f" % (name, rate))
+        st = self.settled()
+        self.assertTrue(r.wait(lambda: self.st()["back-idle"] is True, 5), "the outgoing clip was not stopped: %s" % self.st())
+        self.assertEqual(st["fades-done"], 1)
+
+
+class ManyMovesTest(MoveBase):
+    def test_sixty_in_a_row_leave_nothing_behind(self):
+        r = self.r
+        from pvj import transitions as T
+        names = T.WIPES + T.SLIDES
+        r.load(self.red)
+        for n in range(60):
+            self.move(self.blue if n % 2 == 0 else self.red, 0.04, names[n % 8])
+            self.settled()
+            if n == 19:
+                fds, objects = fd_count(r.proc.pid), self.st()["gl-objects"]
+        self.assertEqual(self.st()["fades-done"], 60)
+        self.assertLessEqual(fd_count(r.proc.pid), fds + 2)
+        self.assertLessEqual(self.st()["gl-objects"], objects + 8, "libmpv's GL objects grew")
+        self.assertColour(self.centre(), RED, "the last one's picture")
+
+
 class PlayerFadeTest(FadeBase):
     """pvj/player.py's crossfade through the real pvj-render: Player.play(..., fade=seconds)."""
 
@@ -1279,6 +1531,19 @@ class PlayerFadeTest(FadeBase):
         self.assertColour(self.centre(), BLUE, "after")
         status = p.status()
         self.assertEqual((status["path"], status["playlist_count"]), (self.blue, 1))
+
+    def test_a_player_sends_a_wipe_and_a_slide_through_the_layers(self):
+        p = self.player()
+        self.assertIs(p.moves(ask=False), False, "nothing known yet, nothing asked")
+        self.assertIs(p.moves(), True)
+        p.play([self.red], spawn=False)
+        p.play([self.blue], spawn=False, fade=0.3, style="slide-up")
+        self.assertEqual(p.fade_refused, "")
+        st = self.settled()
+        self.assertEqual((st["fades"], st["fades-done"], st["fade-kind"]), (1, 1, "slide-up"))
+        p.play([self.red], spawn=False, fade=0.3)
+        st = self.settled()
+        self.assertEqual((st["fades-done"], st["fade-kind"]), (2, "crossfade"))
 
     def test_a_list_is_a_cut(self):
         p = self.player()
@@ -1714,6 +1979,22 @@ class FinalPassTest(unittest.TestCase):
                              ((3 * W_ // 4, 3 * H_ // 4), WHITE), ((W_ - 8, H_ - 8), WHITE), ((8, H_ - 8), BLUE),
                              ((9 * W_ // 20, 9 * H_ // 20), RED), ((11 * W_ // 20, 11 * H_ // 20), WHITE)):
             self.assertTrue(near(r.pixel(x, y, shot), want), "pixel %d,%d: %s" % (x, y, r.pixel(x, y, shot)))
+
+    def test_a_wipe_at_720_lines_is_the_same_at_the_screens_size(self):
+        """The cut is made at the inside size, so the final pass's size changes nothing of it (D108, D111)."""
+        r = self.start("--final=720")
+        self.lines(r, 720)
+        blue = os.path.join(self.tmp, "blue.png")
+        png(blue, W, H, lambda x, y: BLUE)
+        r.load(self.picture)
+        r("pvj-crossfade", blue, 4.0, "keep-open=no,image-display-duration=inf", "wipe-from-left")
+        look = lambda: r("get_property", "pvj-render")
+        self.assertTrue(r.wait(lambda: look()["fade"] == "running" and 0.15 < look()["fade-progress"] < 0.45, 10, 0.02), look())
+        shot = r.capture()
+        self.assertEqual(shot[:2], (self.FW, self.FH))
+        self.assertTrue(near(r.pixel(8, self.FH // 4, shot), BLUE), r.pixel(8, self.FH // 4, shot))
+        self.assertTrue(near(r.pixel(3 * self.FW // 4, self.FH // 4, shot), GREEN), r.pixel(3 * self.FW // 4, self.FH // 4, shot))
+        self.assertTrue(near(r.pixel(3 * self.FW // 4, 3 * self.FH // 4, shot), WHITE), "the picture's own place")
 
     def test_no_plane_says_why_and_stays_at_the_outputs_size(self):
         r = self.start("--final=auto", test_final=False)

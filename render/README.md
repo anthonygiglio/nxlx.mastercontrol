@@ -16,6 +16,14 @@ both layers; a load, a stop, a step in the list or another crossfade ends a fade
 Mix's Crossfade from one clip to another (`Player.play(..., fade=seconds)`); everything else is a cut, as before.
 Classic's crossfade steps a still 20 times a second; this one moves at the screen's rate, with both pictures moving.
 
+The wipes and the slides (D111) are the same stage. `["pvj-crossfade", URL, SECONDS, OPTIONS, MOVE]`, MOVE one of the
+panel's eight names (`wipe-from-left`, `-right`, `-top`, `-bottom`, `slide-left`, `-right`, `-up`, `-down`): the same
+layers, clock, sound and ends, and the picture of a vblank is cut along an edge at the internal size instead of mixed.
+A slide moves the outgoing picture off and uncovers the incoming one, which stays where it is, as the panel's still
+does. Two scissored draws, so a pixel reads one texture where the mix reads two. The final pass, the effects and the
+level run on the result as on a crossfade's mix. `moves` in the `pvj-render` property says a renderer draws them,
+`fade-kind` which one runs or ran last, `fade-steps` how many pictures it drew.
+
 Phase 3 (D106) runs generators and effects itself, with their inputs as uniforms: a value that moves is set, never
 compiled. The panel writes a program file (`src/fx.c` says what it holds) and sends `["pvj-shader", "load", 1, SLOT,
 PATH]` (slot 0 the generator, 1 the effect; the answer comes once the program is built, or says what the GPU refused,

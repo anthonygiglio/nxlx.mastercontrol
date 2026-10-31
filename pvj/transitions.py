@@ -3,8 +3,9 @@
 """Transitions between clips that blend two pictures: the crossfade, the wipes and the slides (D71).
 
 On pvj-render with two video layers (D98) the crossfade is not done here: Api.play hands it to the renderer
-(Player.play with `fade`), which mixes both moving pictures itself once a vblank. Everything below is classic mpv's
-crossfade, and the wipes and slides on both players.
+(Player.play with `fade`), which mixes both moving pictures itself once a vblank; since D111 the wipes and the slides
+go the same way (`style`, where the renderer's `moves` says so), with the edge where class Move below has it. Everything
+below is classic mpv's transitions, and pvj-render's out of a generator or a live input, or from before D111.
 
 The player shows one picture at a time, so the outgoing picture cannot go on moving under the incoming one. What
 is built: a still of the SCREEN as it is at the moment of the play is laid over everything as the player's own
@@ -236,7 +237,9 @@ class Crossfade:
 
 
 class Move:
-    """A wipe or a slide: the still is not changed, a smaller and smaller part of it is drawn. The still's bytes are
+    """A wipe or a slide: the still is not changed, a smaller and smaller part of it is drawn. pvj-render's own draws
+    the same geometry at the inside size (`move_pass` in render/src/main.c, MOVE_LIST; a test holds the two together).
+    The still's bytes are
     written to a file once; `step` gives (x, y, offset, width, height) for Player.overlay_part: draw `width` x
     `height` pixels of the file, beginning `offset` bytes into it, at x, y. The rows keep the still's own length in
     the file (the stride), which is how a part that begins in the middle of a row is read. Nothing is rewritten

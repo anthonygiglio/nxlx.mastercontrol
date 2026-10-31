@@ -12,7 +12,8 @@
 //                     the internal size; idle until something is loaded into it, and then it costs nothing. The
 //                     mapping's final pass reads them by name (SOURCEk); without a mapping only source 1 is seen
 //   the compositor    while a crossfade runs, mixes the two textures by real opacity at the internal size, once a
-//                     vblank, and hands the mix to the final pass; otherwise there is no such pass
+//                     vblank, and hands the mix to the final pass; a wipe or a slide is the same stage with the
+//                     picture cut along an edge instead of mixed (D111); otherwise there is no such pass
 //   the final pass    scales the picture to the screen; with a mapping it is the mapping's own OUTPUT shader. It may
 //                     draw at 720 lines and leave the rest to the display's scaler (D108); the screen's size stays
 //   the text layer    a second libmpv that plays nothing draws overlays and show-text at the screen's size, laid
@@ -42,6 +43,9 @@
 
 App app = { .lock = PTHREAD_MUTEX_INITIALIZER, .cond = PTHREAD_COND_INITIALIZER, .wake_fd = { -1, -1 } };
 const char *const BLEND_NAMES[BLENDS] = { "normal" };
+const Move MOVE_LIST[MOVES] = {
+    { "wipe-from-left", 0, 1, 0 }, { "wipe-from-right", 0, 0, 0 }, { "wipe-from-top", 1, 1, 0 }, { "wipe-from-bottom", 1, 0, 0 },
+    { "slide-left", 0, 0, 1 }, { "slide-right", 0, 1, 1 }, { "slide-up", 1, 0, 1 }, { "slide-down", 1, 1, 1 } };
 static volatile sig_atomic_t g_signal;
 
 double now_s(void)
@@ -544,9 +548,23 @@ static const char *FS_MIX =
     "  vec3 c = layer;\n"                  /* blend 0, normal; e.g. add: if (blend == 1) c = min(base + layer, 1.0) */
     "  pvj_out = vec4(mix(base, c, share), 1.0);\n"
     "}\n";
+// A wipe or a slide (D111): one layer's part of the picture, read where it lies now (`shift`, in parts of the picture).
+static const char *VS_MOVE =
+    "#version 300 es\n"
+    "in vec2 pvj_vert;\n"
+    "out vec2 pvj_pos;\n"
+    "uniform vec2 shift;\n"
+    "void main() { pvj_pos = pvj_vert * 0.5 + 0.5 + shift; gl_Position = vec4(pvj_vert, 0.0, 1.0); }\n";
+static const char *FS_MOVE =
+    "#version 300 es\n"
+    "precision mediump float;\n"
+    "in highp vec2 pvj_pos;\n"            /* highp: a moving picture must land on its texels, whatever the GPU's mediump is */
+    "out vec4 pvj_out;\n"
+    "uniform sampler2D tex;\n"
+    "void main() { pvj_out = vec4(texture(tex, pvj_pos).rgb, 1.0); }\n";
 
-static GLuint vbo, vao, p_scale, p_over, p_mix;
-static GLint loc_share, loc_blend, loc_scale_level;
+static GLuint vbo, vao, p_scale, p_over, p_mix, p_move;
+static GLint loc_share, loc_blend, loc_scale_level, loc_shift;
 static GLuint mix_tex, mix_fbo;
 static HookGL hook_gl;
 static int have_hook;
@@ -620,6 +638,34 @@ static void mix_pass(const Layer *outgoing, const Layer *incoming, float share, 
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, 0);
     glActiveTexture(GL_TEXTURE0);
+}
+
+// One moment of a wipe or a slide at `share` (0: all outgoing, 1: all incoming), at the inside size. The edge lies
+// where the panel's still had it (transitions.Move.gone): that share of the columns or rows, rounded, no softness. Two
+// scissored draws, one from each layer, so a pixel reads one texture where the mix reads two; the texture's last
+// picture need not be read in first, so that is said (the same saving as the final pass's, D106 and D108).
+static void move_pass(const Move *m, const Layer *outgoing, const Layer *incoming, float share)
+{
+    static const GLenum colour = GL_COLOR_ATTACHMENT0;
+    int size = m->axis ? app.in_h : app.in_w;
+    int n = (int)lround(share * size), edge = m->low ? n : size - n;
+    float shift = m->shift ? (float)(m->low ? -n : n) / (float)size : 0.0f;
+    reset_gl();
+    glBindFramebuffer(GL_FRAMEBUFFER, mix_fbo);
+    glInvalidateFramebuffer(GL_FRAMEBUFFER, 1, &colour);
+    glViewport(0, 0, app.in_w, app.in_h);
+    glEnable(GL_SCISSOR_TEST);
+    glUseProgram(p_move);
+    for (int side = 0; side < 2; side++) {                  // 0: from column or row 0 to the edge; 1: the rest
+        int from = side ? edge : 0, to = side ? size : edge, in = side == (m->low ? 0 : 1);
+        if (to <= from) continue;
+        if (m->axis) glScissor(0, from, app.in_w, to - from);
+        else glScissor(from, 0, to - from, app.in_h);
+        glBindTexture(GL_TEXTURE_2D, in ? incoming->tex : outgoing->tex);
+        glUniform2f(loc_shift, in || m->axis ? 0.0f : shift, in || !m->axis ? 0.0f : shift);
+        quad();
+    }
+    glDisable(GL_SCISSOR_TEST);
 }
 
 static float frame_opacity[MAX_LAYERS];
@@ -908,7 +954,8 @@ int main(int argc, char **argv)
     p_scale = gl_program(VS_PLAIN, FS_SCALE, err, sizeof err);
     p_over = gl_program(VS_PLAIN, FS_OVER, err, sizeof err);
     p_mix = gl_program(VS_SAME, FS_MIX, err, sizeof err);
-    if (!p_scale || !p_over || !p_mix) { LOG("%s", err); out_close(); return 2; }
+    p_move = gl_program(VS_MOVE, FS_MOVE, err, sizeof err);
+    if (!p_scale || !p_over || !p_mix || !p_move) { LOG("%s", err); out_close(); return 2; }
     glUseProgram(p_scale);
     glUniform1i(glGetUniformLocation(p_scale, "tex"), 0);
     loc_scale_level = glGetUniformLocation(p_scale, "pvj_level");
@@ -919,6 +966,9 @@ int main(int argc, char **argv)
     glUniform1i(glGetUniformLocation(p_mix, "incoming"), 1);
     loc_share = glGetUniformLocation(p_mix, "share");
     loc_blend = glGetUniformLocation(p_mix, "blend");
+    glUseProgram(p_move);
+    glUniform1i(glGetUniformLocation(p_move, "tex"), 0);
+    loc_shift = glGetUniformLocation(p_move, "shift");
     Layer mixer = { 0 };
     if (target(&mixer, app.in_w, app.in_h)) { LOG("no texture for the crossfade"); out_close(); return 2; }
     mix_tex = mixer.tex;
@@ -966,6 +1016,8 @@ int main(int argc, char **argv)
     // alone), then mixes the two by the clock (FADE_RUNNING: the incoming share goes from 0 to 1 in a straight line
     // over the fade's seconds, as D71's still was made more transparent in a straight line), and at the end stops
     // the outgoing layer, which is idle and costs nothing again. Each layer converts at most one clip frame a turn.
+    // A wipe or a slide (D111) is all of that with one difference: the picture of a turn is cut along an edge where
+    // the share lies, not mixed.
     realtime_priority();
     int failed = 0, text_was = 0, was_front = 0;
     long presented = 0;
@@ -976,6 +1028,7 @@ int main(int argc, char **argv)
         // one look at the whole fade: the layer, the phase and its clock are never from two different crossfades
         int fi = app.front, phase = app.fade.phase, base = app.fade.base_starts;
         double asked = app.fade.asked, t0 = app.fade.t0, len = app.fade.seconds;
+        const Move *move = app.fade.move;
         memcpy(frame_opacity, app.opacity, sizeof frame_opacity);     // the sources' mix, read once for this frame
         // each source's level: while it has a program on, or while its layers still have brightness 0 (ipc.c, level_sync)
         for (int s = 0; s < MAX_SOURCES; s++)
@@ -1087,14 +1140,18 @@ int main(int argc, char **argv)
                 // shows, and nothing of the old fade is mixed or written.
                 pthread_mutex_lock(&app.lock);
                 int same = app.front == fi && app.fade.phase != FADE_OFF;
-                if (same) app.fade.progress = share;
+                if (same) {
+                    app.fade.progress = share;
+                    if (share > 0.0f) app.fade.steps++;
+                }
                 pthread_mutex_unlock(&app.lock);
                 if (!same) {
                     picture = front->tex;
                 } else if (share <= 0.0f) {
                     picture = back->tex;        // waiting for the incoming clip: the outgoing picture, with no mix
                 } else {
-                    mix_pass(back, front, share, BLEND_NORMAL);     // the incoming layer at the clock's opacity
+                    if (move) move_pass(move, back, front, share);  // the edge where the clock says
+                    else mix_pass(back, front, share, BLEND_NORMAL);    // the incoming layer at the clock's opacity
                     picture = mix_tex;
                     fresh = 1;
                 }
