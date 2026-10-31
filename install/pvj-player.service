@@ -24,6 +24,9 @@ RuntimeDirectoryMode=0750
 UMask=0007
 EnvironmentFile=-/etc/pvj/pvj.env
 Environment=PVJ_RUNTIME_DIR=/run/pvj/player
+# Two malloc arenas, not one per decoder thread (D114). Measured on a Pi 4 with four sources: 396 MB at 2 hours and flat,
+# against 793 MB and climbing, for the same CPU and flips. pvj.env can set another value: an EnvironmentFile wins.
+Environment=MALLOC_ARENA_MAX=2
 ExecStart=@PVJ_DIR@/bin/pvj-player serve
 # The most real-time priority a process of this unit may ask for: 1, the lowest. It grants nothing by itself and needs
 # no capability; only pvj-render's render thread asks (SCHED_RR 1, render/src/main.c), and mpv never does. The kernel
