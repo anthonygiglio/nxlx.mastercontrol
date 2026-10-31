@@ -58,6 +58,8 @@ class FakeMpv:
         #                             a clip as loadfile does and is written down as ("fade", kind, name); False: as
         #                             mpv, "property not found" for `pvj-render` and "invalid parameter" for the command
         self.fades = []             # the seconds of every crossfade asked
+        self.moves = False          # True, with `layers`: it says it draws the wipes and slides too (D111)
+        self.fade_styles = []       # the fifth word of every `pvj-crossfade` (None: a crossfade)
         self.counts = {"scaled": 0, "video stills": 0}     # overlays drawn at a size of their own, stills of the clip alone
         self._reset()
         self._stop = threading.Event()
@@ -180,8 +182,11 @@ class FakeMpv:
         if name == "pvj-crossfade":
             if not self.layers:
                 raise ValueError("not one of mpv's commands")
+            if len(args) == 4 and not self.moves:
+                raise ValueError("invalid parameter")   # a renderer from before D111
             self._wait("play")
             self.fades.append(float(args[1]))
+            self.fade_styles.append(args[3] if len(args) == 4 else None)
             self.playlist, self.pos = [args[0]], 0
             self.props["pause"] = False         # the renderer's incoming layer starts playing
             self._now_plays(args[0])
@@ -245,7 +250,7 @@ class FakeMpv:
         if prop == "pvj-render":
             if not self.layers:
                 raise NotFound()
-            return {"version": "0.2.0", "layers": 2, "fade": "off"}
+            return dict({"version": "0.2.0", "layers": 2, "fade": "off"}, **({"moves": True} if self.moves else {}))
         if prop == "path":
             path = self._path_before if time.monotonic() < self._path_at else self.path
             if path is None:

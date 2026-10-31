@@ -252,6 +252,28 @@ class LevelTest(NativeBase):
         self.assertEqual(self.r("get_property", "brightness"), -100)
 
 
+class MoveEffectTest(NativeBase):
+    """D74 and D111: an effect stays on through a wipe, over both sides of the edge, and a Blackout holds under it."""
+
+    def test_an_effect_stays_on_over_both_pictures(self):
+        a, b = os.path.join(self.tmp, "a.png"), os.path.join(self.tmp, "b.png")
+        png(a, W, H, lambda x, y: RED)
+        png(b, W, H, lambda x, y: BLUE)
+        self.r.load(a)
+        self.r("pvj-shader", "load", 1, 1, self.effect(INVERT))
+        self.assertTrue(self.r.wait(lambda: self.r.pixel(5, 5)[1] > 200, 5), self.r.pixel(5, 5))
+        self.r("pvj-crossfade", b, 6.0, "keep-open=no,image-display-duration=inf", "wipe-from-left")
+        look = lambda: self.r("get_property", "pvj-render")
+        self.assertTrue(self.r.wait(lambda: look()["fade"] == "running" and 0.2 < look()["fade-progress"] < 0.7, 10, 0.02), look())
+        shot = self.r.capture()
+        self.assertTrue(all(abs(p - q) <= 40 for p, q in zip(self.r.pixel(4, H // 2, shot), (255, 255, 0))), "new, inverted: %s" % (self.r.pixel(4, H // 2, shot),))
+        self.assertTrue(all(abs(p - q) <= 40 for p, q in zip(self.r.pixel(W - 4, H // 2, shot), (0, 255, 255))), "old, inverted: %s" % (self.r.pixel(W - 4, H // 2, shot),))
+        self.r("set_property", "brightness", -100)
+        self.assertEqual(max(self.steady()[2]), 0, "an inverting effect undid the Blackout during the wipe")
+        self.assertEqual(look()["fade"], "running")
+        self.r("set_property", "brightness", 0)
+
+
 class ValuesTest(NativeBase):
     def test_values_move_without_a_build_and_nothing_grows(self):
         self.carrier()

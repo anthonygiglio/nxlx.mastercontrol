@@ -632,6 +632,19 @@ before and after each run; the GPU's busy share as in R1.
 | CF9 | Out of a generator (a shader pad) into A1, and out of the NDI input into A1, both with Crossfade | D71's crossfade as on classic: the generator's or the NDI picture stands still and melts into A1; for NDI the next NDI source still opens (D62) | Whether both looked as on classic |
 | CF10 | Stop, then play A1 with Crossfade | A1 is there at once, as a cut (no rise from black); `fades-from-nothing` up by 1 | Yes or no |
 
+### pvj-render's own wipes and slides (D111)
+
+Everything of D111 but the rows marked below ran on a software GPU in a headless window first. Before: New chosen, the same two clips on A1 and A2, a wipe or a slide chosen under the pads, duration 2 s. `fade-kind` and `fade-steps` in `["get_property","pvj-render"]` say which one ran and how many pictures it drew; `mix.fallback` in `GET /api/status` must stay empty.
+
+| # | Do | Look for | Send back |
+| --- | --- | --- | --- |
+| MW1 | Each of the four wipes and four slides from A1 to A2, by eye at the output | The edge comes from the side the button names, straight, with no softness; the outgoing clip goes on playing; a slide uncovers A2, which does not move; no freeze before it, no flash at its end | Yes or no, and any that runs the wrong way |
+| MW2 | 4 sources of 720p clips, mapping on, final Automatic, then final full: the same transitions | `fade-steps` about 120 in 2 s, the clip drops no more than a crossfade does at this load, no line "transitions given up", `mix.fallback` empty | Steps, drops, flips, missed vblanks, GPU share at each |
+| MW3 | A mapping with a turned surface and a wipe | The wipe runs along the surface, warped with the picture, and nothing moves outside the surfaces. The Owner decides whether this is what he wants: the still ran across the whole screen | Yes or no |
+| MW4 | During a slide: Blackout, then the same with Stop, then a pad, then an effect on through it | Blackout: black at once and both pictures come back with the transition still running if it has not ended. Stop: black. A pad: the first ends and the pad's clip comes in. Effect: on both pictures | Yes or no for each |
+| MW5 | Out of a shader pad into A1, and out of the NDI input into A1, with a wipe | The still's wipe, as on classic: the old picture stands | Yes or no |
+| MW6 | A logo or a mask on, a slide | The logo or mask stays where it is, over both pictures | Yes or no |
+
 ### Sound reactivity (D96): never run on a Pi or with a real audio input
 
 Before: the box updated to this release; `systemctl status pvj-sound` says active; `arecord --version` answers (if

@@ -313,6 +313,10 @@ static void end_fade(void)
 // device, one player on it at a time), and the render thread mixes the two from the incoming clip's first frame on,
 // over SECONDS, then stops the outgoing one. OPTIONS: "keep-open=..,image-display-duration=.." for the incoming clip.
 //
+// ["pvj-crossfade", URL, SECONDS, OPTIONS, MOVE]: all of that, and the picture is a wipe or a slide (MOVE_LIST, the
+// panel's names, D111) instead of a mix: the same layers, the same clock, the same ends. The property's `moves` says so;
+// a renderer before this one refuses the fifth word.
+//
 // With nothing loaded on the screen (after a Stop, at power-up) there is nothing to fade from: the clip is loaded into
 // the front layer as a loadfile would load it, which is a cut, as D71 starts the clip "as with a cut" there.
 //
@@ -350,9 +354,13 @@ static void crossfade(int fd, const mpv_node *id, const mpv_node *cmd)
     int nargs = cmd->u.list->num;
     const char *url = arg_str(cmd, 1);
     const mpv_node *secs = arg(cmd, 2);
-    const char *opts = nargs == 4 ? arg_str(cmd, 3) : NULL;
+    const char *opts = nargs >= 4 ? arg_str(cmd, 3) : NULL;
+    const char *word = nargs == 5 ? arg_str(cmd, 4) : NULL;
+    const Move *move = NULL;
+    for (int i = 0; word && i < MOVES; i++) if (!strcmp(word, MOVE_LIST[i].name)) move = &MOVE_LIST[i];
     double s = is_num(secs) ? num(secs) : -1;
-    if (!url || !*url || strlen(url) > 4096 || !(s >= 0 && s <= FADE_MAX_SECONDS) || (nargs == 4 && (!opts || !options_ok(opts, FADE_KEYS)))) {
+    if (!url || !*url || strlen(url) > 4096 || !(s >= 0 && s <= FADE_MAX_SECONDS) || (nargs >= 4 && (!opts || !options_ok(opts, FADE_KEYS)))
+        || (nargs == 5 && !move)) {
         reply(fd, id, "invalid parameter", NULL);
         return;
     }
@@ -418,6 +426,8 @@ static void crossfade(int fd, const mpv_node *id, const mpv_node *cmd)
     app.fade.asked = now_s();
     app.fade.progress = 0.0;
     app.fade.base_starts = base;
+    app.fade.move = move;
+    app.fade.steps = 0;
     app.fades++;
     __atomic_store_n(&app.front, in, __ATOMIC_RELEASE);
     pthread_mutex_unlock(&app.lock);
@@ -994,6 +1004,8 @@ static void get_property(int fd, const mpv_node *id, const char *name)
         int osd = app.overlays != 0 || now_s() < app.text_until;
         int phase = app.fade.phase, front = app.front;
         double progress = app.fade.progress, seconds = app.fade.seconds;
+        const char *kind = app.fade.move ? app.fade.move->name : "crossfade";   // a constant: it may be read after the lock
+        long steps = app.fade.steps;
         int back_idle = __atomic_load_n(&app.idle[1 - front], __ATOMIC_ACQUIRE);      // nothing loaded: it costs nothing
         // how much the box is drawing (D108): the sources that play, their programs, and the mapping
         long load = app.hook_state[0] == 'o' && app.hook_state[1] == 'n';
@@ -1011,8 +1023,8 @@ static void get_property(int fd, const mpv_node *id, const char *name)
                                             "fade-seconds", "fades", "fades-done", "fades-cut", "back-drawn", "gl-objects",
                                             "back-idle", "fades-from-nothing", "sound-held", "sources", "shaders", "fx-fps",
                                             "fx-gl-objects", "fx-passes", "fx-passes-per-second", "load", "final-lines",
-                                            "final-switches", "final-why" };
-        mpv_node vals[37] = { node_str(PVJ_VERSION), node_int(app.in_w), node_int(app.in_h), node_int(app.out_w), node_int(app.out_h),
+                                            "final-switches", "final-why", "moves", "fade-kind", "fade-steps" };
+        mpv_node vals[40] = { node_str(PVJ_VERSION), node_int(app.in_w), node_int(app.in_h), node_int(app.out_w), node_int(app.out_h),
                               node_dbl(app.out_hz), node_int(flips), node_int(drawn), node_int(missed), node_str(state),
                               { .format = MPV_FORMAT_FLAG }, node_str(app.cfg->hwdec), node_int(fences), node_int(freed),
                               node_int(LAYERS), node_int(front), node_str(PHASES[phase]), node_dbl(progress), node_dbl(seconds),
@@ -1022,10 +1034,12 @@ static void get_property(int fd, const mpv_node *id, const char *name)
                               node_int((int64_t)app.fx_fps), node_int(__atomic_load_n(&app.fx_gl, __ATOMIC_RELAXED)),
                               node_int(__atomic_load_n(&app.fx_passes, __ATOMIC_RELAXED)), node_dbl(passes_rate), node_int(load),
                               node_int(__atomic_load_n(&app.final_lines, __ATOMIC_ACQUIRE)),
-                              node_int(__atomic_load_n(&app.final_switches, __ATOMIC_RELAXED)), node_str(final_why) };
+                              node_int(__atomic_load_n(&app.final_switches, __ATOMIC_RELAXED)), node_str(final_why),
+                              { .format = MPV_FORMAT_FLAG }, node_str(kind), node_int(steps) };
         vals[10].u.flag = osd;
         vals[24].u.flag = back_idle;
-        mpv_node_list list = { .num = 37, .values = vals, .keys = (char **)keys };
+        vals[37].u.flag = 1;                // wipes and slides are drawn here (D111): the panel asks this once per process
+        mpv_node_list list = { .num = 40, .values = vals, .keys = (char **)keys };
         d.format = MPV_FORMAT_NODE_MAP;
         d.u.list = &list;
         reply(fd, id, "success", &d);
@@ -1187,7 +1201,7 @@ static void handle(int fd, const char *line, size_t len)
         shader_command(fd, id, cmd);
     } else if (!strcmp(name, "pvj-source") && nargs >= 3) {
         source_command(fd, id, cmd);
-    } else if (!strcmp(name, "pvj-crossfade") && (nargs == 3 || nargs == 4)) {
+    } else if (!strcmp(name, "pvj-crossfade") && nargs >= 3 && nargs <= 5) {
         crossfade(fd, id, cmd);
     } else if ((!strcmp(name, "stop") || !strcmp(name, "playlist-shuffle")) && nargs == 1) {
         forward_front(fd, id, cmd, !strcmp(name, "stop"));

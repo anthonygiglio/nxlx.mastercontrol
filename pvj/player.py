@@ -328,13 +328,14 @@ class Player:
         proc.terminate()
         raise PlayerError("mpv did not become ready")
 
-    def play(self, paths, loop=True, audio_device=None, windowed=False, spawn=True, ending=None, image_seconds=None, fade=None):
+    def play(self, paths, loop=True, audio_device=None, windowed=False, spawn=True, ending=None, image_seconds=None, fade=None, style="crossfade"):
         """Play `paths` (see _play). A shader source that was on is taken off first: it draws in place of the
         picture, so it must never stay over a clip.
 
         `fade`: seconds of a crossfade drawn by the renderer itself, where the player is pvj-render with two video
         layers (`crossfades`, D98). Only from a clip to one clip: out of a generator or a live input, into a list,
         on classic mpv, or when the renderer refuses, this is a cut (the plain load below), never a black screen.
+        `style`: "crossfade", or a wipe's or a slide's name, which the renderer draws the same way (`moves`, D111).
         Without `fade` nothing here differs from before."""
         with self._lock:
             from_clip = self.fades_from_clip()
@@ -342,7 +343,7 @@ class Player:
             self.fade_refused = "" if from_clip else "not from a plain clip (a generator or a live input)"
             self._end_source()
             self._pipe, self._pipe_gone = False, None
-            if fade is not None and from_clip and self._crossfade(paths, loop, ending, fade):
+            if fade is not None and from_clip and self._crossfade(paths, loop, ending, fade, style):
                 return None
             return self._play(paths, loop, audio_device, windowed, spawn, ending, image_seconds)
 
@@ -354,6 +355,7 @@ class Player:
         return not self._pipe and self._source is None and self._carrier is None
 
     _layers_seen = None             # (pid, True or False): does that player process mix two video layers (D98)
+    _moves_seen = None              # (pid, True or False): does that player process draw the wipes and slides (D111)
     fade_refused = ""               # why the last crossfade asked of the renderer became a cut, for the log
 
     def crossfades(self, ask=True):
@@ -377,6 +379,27 @@ class Player:
         layers = state.get("layers") if isinstance(state, dict) else None
         ok = isinstance(layers, int) and not isinstance(layers, bool) and layers >= 2
         self._layers_seen = (pid, ok)
+        return ok
+
+    def moves(self, ask=True):
+        """True if the player that answers now draws the wipes and the slides itself, as the same stage as the crossfade
+        (D111): pvj-render's `moves`. Asked once per player process, as `crossfades`; classic mpv and a pvj-render from
+        before that keep D71's still. With `ask` False, only what is known already."""
+        known, pid = self._moves_seen, self._seen_pid
+        if known is not None and known[0] == pid:
+            return known[1]
+        if not ask:
+            return False
+        try:
+            if pid is None:
+                pid = self._note_pid(self.ipc.request("get_property", "pid"))
+            state = self.ipc.request("get_property", "pvj-render")
+        except PlayerError as e:
+            if str(e).startswith("mpv: ") and pid is not None:
+                self._moves_seen = (pid, False)
+            return False
+        ok = isinstance(state, dict) and state.get("moves") is True
+        self._moves_seen = (pid, ok)
         return ok
 
     # ---- sources 2 to N (D101) -----------------------------------------------------------------------------------------
@@ -575,16 +598,17 @@ class Player:
         return [{"source": 1, "idle": path is None, "path": path if isinstance(path, str) else None, "height": None,
                  "pause": False, "drawn": 0}]
 
-    def _crossfade(self, paths, loop, ending, seconds):
-        """The renderer's crossfade into one clip (D98): it loads the clip into its idle layer, which is what this
-        side speaks to from then on, and mixes the two pictures itself, once a vblank, from the clip's first frame.
-        True if it took it; False, with nothing changed, where it cannot or would not (then the caller cuts)."""
+    def _crossfade(self, paths, loop, ending, seconds, style="crossfade"):
+        """The renderer's crossfade into one clip (D98), or its wipe or slide (D111): it loads the clip into its idle
+        layer, which is what this side speaks to from then on, and draws the two pictures itself, once a vblank, from
+        the clip's first frame. True if it took it; False, with nothing changed, where it cannot or would not (then the
+        caller cuts)."""
         ending = ending or ("loop" if loop else "stop")
         files = expand_media(paths)
         if ending not in ENDINGS or len(files) != 1:
             self.fade_refused = "the new renderer fades into one clip only"
             return False
-        if not self.crossfades():
+        if not (self.crossfades() if style == "crossfade" else self.moves()):
             self.fade_refused = "the player does not draw two layers"
             return False
         self._undo_pipe_globals()
@@ -593,9 +617,11 @@ class Player:
             self.fade_refused = "a live input's settings could not be taken back"
             return False
         path = files[0]
+        words = [path, max(0.0, min(60.0, float(seconds))), "keep-open=%s,image-display-duration=inf" % ("yes" if ending == "hold" else "no")]
+        if style != "crossfade":
+            words.append(style)
         try:
-            self.ipc.request("pvj-crossfade", path, max(0.0, min(60.0, float(seconds))),
-                             "keep-open=%s,image-display-duration=inf" % ("yes" if ending == "hold" else "no"))
+            self.ipc.request("pvj-crossfade", *words)
         except PlayerError as e:
             self.fade_refused = str(e)
             return False

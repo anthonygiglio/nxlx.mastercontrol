@@ -13,7 +13,7 @@
 #include <GLES3/gl3.h>
 #include <mpv/client.h>
 
-#define PVJ_VERSION "0.7.0"
+#define PVJ_VERSION "0.8.0"
 #define MAX_SHADERS 16
 #define LAYERS 2                    // source 1's video layers (phase 2, D98): the one on screen and the one a crossfade comes in on
 #define MAX_SOURCES 8               // sources (D101): source 1 is LAYERS layers, each other source one layer
@@ -29,6 +29,13 @@ enum { FINAL_OFF, FINAL_AUTO, FINAL_720 };
 // shaders when they come, and are refused until then.
 enum { BLEND_NORMAL, BLENDS };
 extern const char *const BLEND_NAMES[BLENDS];
+// The wipes and the slides (D111): the mixing stage's other way of laying the incoming layer over the outgoing one.
+// By the panel's names (pvj/transitions.py). `axis`: 0 the edge runs across the columns, 1 across the rows; `low`: the
+// incoming picture is on the side of column 0 or of the top row; `shift`: the outgoing picture moves away (a slide)
+// instead of standing where it is and being cut (a wipe).
+#define MOVES 8
+typedef struct { const char *name; int axis, low, shift; } Move;
+extern const Move MOVE_LIST[MOVES];
 
 typedef struct Hook Hook;
 
@@ -120,12 +127,15 @@ typedef struct {
     int capture_serial, capture_done_serial, capture_result;
     int capture_buffer;             // tests only: the buffer as it goes out, not the picture at the screen's size
 
-    // the crossfade (D98): the front layer is the incoming clip from the command on; the other one fades out under it
+    // the crossfade (D98) and the wipes and slides (D111): the front layer is the incoming clip from the command on; the
+    // other one goes out under it
     struct {
         int phase;                  // FADE_OFF, FADE_WAITING (for the incoming clip's first frame), FADE_RUNNING
         double seconds, asked, t0;  // its length; when it was asked; when it began to move (monotonic seconds)
         double progress;            // 0 to 1, the incoming layer's share of the picture (render thread writes it)
         int base_starts;            // the incoming layer's count of started files before its load (see Layer)
+        const Move *move;           // a wipe or a slide; NULL: the crossfade's mix
+        long steps;                 // pictures drawn with both layers in them, in this transition or the last
     } fade;
     long fades, fades_done, fades_cut;  // crossfades asked; run to their end; ended early (a load, a stop, a new fade)
     long fades_from_nothing;        // crossfades asked with nothing on the screen: loaded as a cut instead

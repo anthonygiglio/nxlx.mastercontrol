@@ -2638,6 +2638,91 @@ class LayeredCrossfade(ServerBase):
         self.assertNotIn("screenshot-to-file", self.mpv.commands)
         self.assertTrue(any("a cut instead" in line and "error running command" in line for line in self.lines), self.lines)
 
+    def test_on_the_new_renderer_every_wipe_and_slide_is_the_renderers_with_no_still(self):
+        self.mpv.layers = self.mpv.moves = True
+        names = T.WIPES + T.SLIDES
+        self.assertEqual(len(names), 8)
+        for n, name in enumerate(names):
+            self.settings.data["mix"] = T.stored(name, 1.5)
+            asked = len(self.mpv.commands)
+            clip = ("b.mov", "a.mp4")[n % 2]
+            self.assertEqual(self.api.play({"file": clip}, None, "t"), {"playing": clip})
+            self.assertEqual(self.mpv.log[-1], ("fade", "file", clip))
+            self.assertEqual(self.mpv.fade_styles[-1], name, "the panel's name goes to the renderer unchanged")
+            self.assertEqual(self.mpv.fades[-1], 1.5, "the Mix's own duration")
+            sent = self.mpv.commands[asked:]
+            for word in ("screenshot-to-file", "overlay-add", "loadfile"):
+                self.assertNotIn(word, sent, "the still's way was taken: %s" % sent)
+            self.assertEqual(sent.count("set_property pause"), 1, "nothing froze the old clip: %s" % sent)
+        self.assertIsNone(self.api.transitions.running)
+        self.assertEqual(self.lines, [])
+        self.assertEqual(self.mpv.commands.count("get_property pvj-render"), 1, "asked once per player process")
+
+    def test_a_crossfade_sends_what_it_always_sent(self):
+        self.mpv.layers = self.mpv.moves = True
+        self.api.play({"file": "b.mov"}, None, "t")
+        self.assertEqual(self.mpv.fade_styles, [None], "no fifth word")
+
+    def test_a_renderer_from_before_keeps_the_still_for_a_wipe_and_its_own_crossfade(self):
+        self.mpv.layers = True          # two layers, and no `moves`
+        self.settings.data["mix"] = T.stored("slide-left", 0.2)
+        self.still_crossfade()
+        self.settings.data["mix"] = T.stored("crossfade", 0.2)
+        self.api.play({"file": "a.mp4"}, None, "t")
+        self.assertEqual(self.mpv.log[-1], ("fade", "file", "a.mp4"))
+
+    def test_on_classic_mpv_a_wipe_is_the_still_as_before(self):
+        self.settings.data["mix"] = T.stored("wipe-from-top", 0.2)
+        self.still_crossfade()
+        self.assertNotIn("pvj-crossfade", self.mpv.commands)
+        self.api.play({"file": "a.mp4"}, None, "t")
+        self.wait_still_gone()
+        self.assertEqual(self.mpv.commands.count("get_property pvj-render"), 2, "classic's answer is remembered: "
+                         "the question about layers, as Player.still asks it, and the one about moves, once each")
+
+    def test_out_of_a_generator_on_the_new_renderer_a_slide_is_d71s_still(self):
+        self.mpv.layers = self.mpv.moves = True
+        sid = self.api.shaders.library()[0]["id"]
+        self.assertTrue(self.api.shaders.show(sid)["ok"])
+        self.settings.data["mix"] = T.stored("slide-right", 0.2)
+        self.still_crossfade()
+        self.assertIsNone(self.api.player.source_shader)
+
+    def test_out_of_a_live_input_on_the_new_renderer_a_wipe_is_d71s_still(self):
+        self.mpv.layers = self.mpv.moves = True
+        self.live_input()
+        self.settings.data["mix"] = T.stored("wipe-from-bottom", 0.2)
+        self.still_crossfade()
+        self.assertFalse(self.player.pipe_playing)
+
+    def test_when_the_renderer_refuses_a_wipe_it_is_a_cut_never_black(self):
+        self.mpv.layers = self.mpv.moves = True
+        self.settings.data["mix"] = T.stored("wipe-from-left", 1.0)
+        self.mpv.fail.add("pvj-crossfade")
+        self.assertEqual(self.api.play({"file": "b.mov"}, None, "t"), {"playing": "b.mov"})
+        self.assertEqual(self.mpv.log[-1], ("load", "file", "b.mov"), "cut to the clip")
+        self.assertNotIn("screenshot-to-file", self.mpv.commands)
+        self.assertTrue(any("no wipe-from-left on the new renderer, a cut instead" in line for line in self.lines), self.lines)
+
+    def test_a_wipe_from_a_dark_screen_is_a_cut_as_a_crossfade_is(self):
+        self.mpv.layers = self.mpv.moves = True
+        self.settings.data["mix"] = T.stored("slide-up", 1.0)
+        self.api.blackout({"on": True}, None, "t")
+        self.api.play({"file": "b.mov"}, None, "t")
+        self.assertEqual(self.mpv.log[-1], ("load", "file", "b.mov"))
+        self.assertEqual(self.mpv.fades, [])
+
+    def test_a_box_that_gave_up_on_stills_still_draws_the_renderers_wipe(self):
+        self.mpv.layers = self.mpv.moves = True
+        self.settings.data["mix"] = T.stored("wipe-from-left", 1.0)
+        self.api.play({"file": "b.mov"}, None, "t")
+        self.api.transitions._give_up("the clip dropped 30 frames in 2.0 seconds")
+        self.assertNotIn("fallback", self.api._mix_settings(), "nothing of a still gives this up")
+        self.api.play({"file": "a.mp4"}, None, "t")
+        self.assertEqual(self.mpv.log[-1], ("fade", "file", "a.mp4"), "no dip")
+        self.player._source = "/x/generator.glsl"
+        self.assertIn("fallback", self.api._mix_settings(), "out of a generator the still's reason applies")
+
     def still_crossfade(self):
         """The play went D71's way: a still of the window, the clip loaded under it, the still faded away."""
         asked = len(self.mpv.commands)
