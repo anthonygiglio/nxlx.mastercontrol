@@ -1445,10 +1445,17 @@ class Engine:
         mine = re.compile(re.escape(desc) + r"(?![0-9])")
         return [x for x in ((p or {}).get("fresh") or []) if isinstance(x, dict) and mine.search(str(x.get("desc", "")))]
 
+    def _frozen(self):
+        """True when the clip is paused (the player is asked; a player that cannot say is not taken for frozen)."""
+        try:
+            return self.api.player.ipc.request("get_property", "pause") is True
+        except Exception:
+            return False
+
     def _watch(self, tap, desc):
         """Wait until the player has drawn a frame with the shader called `desc` or has complained.
         ("ok" | "refused" | "unknown", message)."""
-        lines, drawn, listed = [], False, None
+        lines, drawn, listed, settle = [], False, None, 0.2
         player = self.api.player       # a generator and an effect together: only what names this shader is its own (see about)
         both = bool(getattr(player, "source_shader", None) and getattr(player, "effect_shader", None))
         deadline = self._clock() + VERIFY_SECONDS
@@ -1462,10 +1469,17 @@ class Engine:
             # drawn. A GPU that reports no times at all gives "unknown" after a second, never "ok".
             drawn = any(isinstance(x.get(k), (int, float)) and x[k] > 0 for x in mine for k in ("avg", "last"))
             if mine and not drawn:
+                if self._frozen():
+                    # mpv reads no pass time over a frozen clip (seen on a real mpv: the pass is listed with no time
+                    # however often the picture is drawn), and the player has drawn it once already (Player.redraw_paused).
+                    # Waiting a second for a time that cannot come only holds the request; half a second is kept for a
+                    # refusal still on its way to the log. The answer is "unknown", as for a GPU that reports no times.
+                    settle = 0.5
+                    break
                 listed = self._clock() if listed is None else listed
                 if self._clock() - listed >= 1.0:
                     break
-        lines += tap.drain(0.2)
+        lines += tap.drain(settle)
         message = shader_errors(about(lines, desc, both))
         if message:
             return "refused", message

@@ -3053,6 +3053,49 @@ class PlayerLayerTest(unittest.TestCase):
         self.p.ipc = self.mpv
         self.p.play(["/media/a.mp4"])
 
+    def test_a_paused_clip_is_drawn_again_when_its_effect_goes_on_changes_and_comes_off(self):
+        """Classic mpv answers a new shader list over a paused clip by redrawing its cached picture, which runs no user
+        shader: the effect was not on the screen until the clip played again (and the panel waited its 4 seconds for
+        a pass that could not come). Each change of the list is followed by an exact seek of nothing, which draws the
+        picture through the list; a playing clip needs none."""
+        def moves(since):
+            return [c for c in self.mpv.commands[since:] if c[0] in ("set_property", "seek") and c[1:2] != ("pause",)]
+        self.mpv.props["pause"] = True
+        n = len(self.mpv.commands)
+        s = self.p.put_effect("/e1.glsl")
+        self.assertEqual(moves(n)[-2:], [("set_property", "glsl-shaders", ["/e1.glsl"]), ("seek", 0, "relative+exact")])
+        n = len(self.mpv.commands)
+        self.assertTrue(self.p.swap_effect("/e2.glsl", s))
+        self.assertEqual(moves(n)[-2:], [("set_property", "glsl-shaders", ["/e2.glsl"]), ("seek", 0, "relative+exact")])
+        n = len(self.mpv.commands)
+        self.assertTrue(self.p.clear_effect(s))
+        self.assertEqual(moves(n)[-2:], [("set_property", "glsl-shaders", []), ("seek", 0, "relative+exact")])
+        # a clip that plays draws the next frame with the list: nothing to redraw
+        self.mpv.props["pause"] = False
+        n = len(self.mpv.commands)
+        self.p.put_effect("/e3.glsl")
+        self.assertFalse([c for c in self.mpv.commands[n:] if c[0] == "seek"])
+
+    def test_a_paused_generator_is_not_sought_its_clock_would_move(self):
+        self.p._source, self.p._source_pid, self.p._carrier = "/source.glsl", self.mpv.pid, "av://carrier"
+        self.mpv.props["pause"] = True
+        n = len(self.mpv.commands)
+        self.p.put_effect("/e1.glsl")
+        self.assertFalse([c for c in self.mpv.commands[n:] if c[0] == "seek"])
+
+    def test_a_paused_picture_or_live_input_that_cannot_seek_still_takes_the_effect(self):
+        real = self.mpv.request
+
+        def refuse(*command):
+            if command[0] == "seek":
+                raise PlayerError("mpv: error running command")
+            return real(*command)
+        self.mpv.request = refuse
+        self.mpv.props["pause"] = True
+        self.assertEqual(self.p.put_effect("/e1.glsl"), 1)
+        self.assertEqual(self.mpv.props["glsl-shaders"], ["/e1.glsl"])
+        self.assertTrue(self.p.clear_effect(1))
+
     def test_the_order_is_source_effect_mapping_and_each_layer_leaves_the_others(self):
         self.p.set_shaders(["/m.glsl"])
         s = self.p.put_effect("/e1.glsl")
