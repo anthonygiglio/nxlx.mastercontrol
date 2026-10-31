@@ -884,6 +884,19 @@ Numbers and what they do not show are in D108. Before: the node on a release wit
 
 Also seen: 54 switches on static pictures and 60 on a playing clip showed no black frame beyond the clip's own loop seam. With 4 sources and the mapping on, a wipe or a slide ran choppy (26 to 33 of 60 steps) and the box's guard gave up, the same at full and at 720 (D108 says this already); no black frame in the captures. Not shown: the projector or a monitor, masks other than one PNG, the wipe in the middle of a switch made by the rule rather than the socket, a Pi 3.
 
+### The gap when one NDI source is switched to another (D113): not yet run on a node
+
+Before: the node on a release with this change (the helper and the panel both new), two NDI senders on the network, one 1920x1080@60 and one 1280x720@30 as in `measurements/2026-10-31-ndi-switch`, the HDMI dongle watching the screen. The unit tests prove the order of the calls and the waits with a stand-in for NDI's library and a stand-in for the player; none of this has been run against the real library, mpv 0.40 or a screen.
+
+| Row | What to do | What should happen | What it would mean if not |
+|---|---|---|---|
+| NS1 | The same 21 switches as before (A and B in turn, 16 s apart, through the panel), sound off (the default) | The longest time with no new frame at the dongle is shorter than the 0.83 s median of 2026-10-31, and the old picture is on the screen until the new one's first frame | The rest is mpv letting go and loading, or mpv shows black when its pipe stands still |
+| NS2 | The same, with sound switched on (Setup > NDI), both senders without sound | The first switch to each is as long as before; from the second on about half a second shorter | The wait for sound is still being paid, or a source without sound is not remembered |
+| NS3 | Sound on, a sender that has sound (NDI Tools Test Patterns with sound, or a Mac): switch to it, away, to it again | Sound plays after every switch, in step with the picture (`avsync` as before); no switch is slower than the first | A source with sound was taken for one without, or sound starts late |
+| NS4 | Sound on: a sender without sound is switched to twice (it is now remembered as silent), then start its sound | Within a second or two the panel opens it again by itself and the sound plays; the next switch to it plays sound at once | Sound that turns up late is lost, or the source stays labelled as silent |
+| NS5 | Press a source that is on the list but sends no picture (switch the sender off after the list was read, or a sound-only sender) while another source plays | 409 with the reason on the page, and the screen goes black as a failed press always did; the old picture does not stay frozen | The old picture stands for ever after a failed press |
+| NS6 | Press the source that is already on the screen, and press the other source twice quickly | Each ends on the source of the last press; no frozen picture; `journalctl -u pvj-ndi` has no "did not hand the new source over" line | A hand-over lost to a second press |
+
 ### What to send back
 
 The output of checks 1 to 7 and 13, the `journalctl` tail for anything that failed, and a note of what you saw on screen. Say clearly what you did **not** test.

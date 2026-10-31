@@ -97,6 +97,16 @@ AUDIO_HEADROOM_DB = 20
 AUDIO_GAIN = 10 ** (-AUDIO_HEADROOM_DB / 20.0)
 AUDIO_ABSURD = 1000.0                     # a sample 60 dB over reference is not sound: the block is played as silence
 AUDIO_WAIT = 0.5                          # after the first picture: how long sound may take to show that there is some
+# A source that sent no sound within AUDIO_WAIT on its last open is remembered as one without (Service.no_sound), and
+# the next open of it waits only this long for sound: half a second of every switch to a picture sender with no sound
+# was spent just so (the gap measured on the node, 2026-10-31: 0.83 s median, of which 0.5 s this wait). A source that
+# starts to send sound after all ends its stream as "changed" and is opened again with sound, as late sound always
+# did, and is forgotten as silent at once. Sources that send sound are never made to wait: the wait ends at the first block.
+AUDIO_WAIT_SILENT = 0.1
+NO_SOUND_SECONDS = 600.0                  # how long "this source had no sound" is believed; then it is given the whole AUDIO_WAIT again
+# A picture waiting for the panel to let go of the pipe (open, then handover) that the panel never hands over is given
+# up after this long, and what was held from the source before goes with it: a frozen old picture never stays for good.
+HANDOVER_SECONDS = 10.0
 AUDIO_QUEUE_SECONDS = 1.0                 # sound waiting for the player; beyond it the oldest is dropped, never kept
 AUDIO_QUEUE_BLOCKS = 256                  # and never more blocks than this, however short a sender makes them
 AUDIO_WINDOW = 0.3                        # sound this far behind the clock is a gap: silence is put in, never a wait
@@ -1023,8 +1033,10 @@ class Receiver:
     falls behind (a gap) the count starts again at the clock, and when it runs ahead a block is dropped."""
 
     def __init__(self, lib, source, fifo, log=print, clock=time.monotonic, pipe_wait=PIPE_OPEN_SECONDS, join_wait=3.0,
-                 sound=False, audio_wait=AUDIO_WAIT, feed=None, outside=False):
+                 sound=False, audio_wait=AUDIO_WAIT, feed=None, outside=False, on_late_sound=None):
         self.lib, self.source, self.fifo, self.log, self._clock, self._pipe_wait = lib, source, fifo, log, clock, pipe_wait
+        self._on_late_sound = on_late_sound        # called (once) when sound starts under a picture that was opened without it
+        self._frozen = threading.Event()           # the connection is let go of, the pipe is kept: the last picture stands (freeze)
         self._join_wait = join_wait
         self.sound = bool(sound) and bool(getattr(lib, "has_audio", False))
         # The sound is another sender's (the box's one sound source, a SoundFeed): this connection is then never
@@ -1147,6 +1159,25 @@ class Receiver:
             except Exception:
                 return False
 
+    def freeze(self):
+        """Let go of the source's connection and keep the pipe: the writer goes on holding it (and, with sound, goes
+        on writing the last picture again and silence), so the player keeps the last picture on the screen until the
+        stream is closed. For the switch to another source: the old picture stands while the new one connects, and
+        goes when the player is told to let go (Service.open, then Service.handover). Returns False, and does nothing,
+        for a receiver that is over or takes its sound from the box's sound source (that feed hands blocks to the
+        receiver; such a receiver is simply closed by the caller, as it always was)."""
+        with self._cond:
+            if self._stop.is_set() or self.outside or self.state != "playing":
+                return False                       # nothing of it is on the screen (or it is over): nothing to keep
+            self._frozen.set()
+            self._cond.notify_all()
+            threads = [t for t in self._threads if t.name in ("ndi-capture", "ndi-audio")]
+        # The connection is really given back before the caller goes on to connect to the next source (at most
+        # a quarter of a second for a call into the library that is waiting for a picture): one connection at a time.
+        for t in threads:
+            t.join(timeout=1.0)
+        return True
+
     def hold(self):
         """Before start: the writer does not open the pipe until go(). The pipe is the same pipe for every source,
         so whoever reads it now may be the player still on the source before; the Service says when it has seen
@@ -1187,7 +1218,7 @@ class Receiver:
     def _capture(self):
         spare, lost = None, False
         try:
-            while not self._stop.is_set():
+            while not self._stop.is_set() and not self._frozen.is_set():
                 began = time.monotonic()
                 f = self.lib.recv_capture(self._handle, 250)
                 if f is not None and f.kind == "lost":
@@ -1239,7 +1270,7 @@ class Receiver:
     def _capture_audio(self):
         """The sound's thread. A block that cannot be read is counted and left out; it never ends the picture."""
         try:
-            while not self._stop.is_set():
+            while not self._stop.is_set() and not self._frozen.is_set():
                 began = time.monotonic()
                 a = self.lib.recv_audio(self._handle, 250)
                 if a is AUDIO_LOST:
@@ -1303,6 +1334,11 @@ class Receiver:
             if self.audio is None:
                 if self.container is not None:     # the pipe already carries bare frames: start again, with sound
                     self._end("changed", "the sound source started to send sound" if self.outside else "the source started to send sound")
+                    if self._on_late_sound is not None and not self.outside:
+                        try:
+                            self._on_late_sound()      # the source has sound: it is not to be waited for as one without
+                        except Exception:
+                            pass
                     return None
                 self.audio = {"rate": rate, "channels": channels, "played": planes}
                 self._audio_seen.set()
@@ -1928,6 +1964,14 @@ class Service:
         # (starting up, a weak link, a sleeping display) looks the same. It goes when the source sends a picture,
         # when the sender leaves the list, and by itself after SOUND_ONLY_SECONDS.
         self.sound_only = {}
+        # Sources that sent no sound within the whole AUDIO_WAIT on their last open: {id: the clock then}. Their next
+        # open waits only AUDIO_WAIT_SILENT for sound (see there). Advice, as sound_only is; it is never a lock.
+        self.no_sound = {}
+        # The switch from one source to another is two calls (open, then handover), so that the picture before stays
+        # on the screen while the new source connects: `held` is the old receiver with its connection given back and
+        # its pipe kept (Receiver.freeze), with the clock it was frozen; `waiting` is the new receiver that has its
+        # first picture and is held until the panel has had the player let go (handover), with the clock it began to wait.
+        self.held, self.waiting = None, None
         self._finder, self._sources, self._sources_at, self._cut = None, [], None, False
         self.receiver = None
 
@@ -2188,7 +2232,25 @@ class Service:
                 return False
         return True
 
+    def _give_up_stale_handover(self):
+        """A new source that the panel never handed over (it fell, or lost the press), and the old picture kept
+        for it, are not kept for ever: past HANDOVER_SECONDS both are closed, and the player is given the end of
+        its stream. Never waits: an open or a hand-over in progress holds the lock and is left alone."""
+        waiting, held = self.waiting, self.held
+        now = self._clock()
+        stale = ((waiting is not None and now - waiting[1] > HANDOVER_SECONDS)
+                 or (waiting is None and held is not None and now - held[1] > self.open_budget() + HANDOVER_SECONDS))
+        if stale and self.lock.acquire(blocking=False):
+            try:
+                self.log("pvj-ndi: the panel did not hand the new source over in time; it is closed, and what was kept of the picture before")
+                self.waiting = None
+                self._close_receiver()
+                self._drop_held()
+            finally:
+                self.lock.release()
+
     def status(self):
+        self._give_up_stale_handover()
         with self._recv_lock:
             r = self.receiver
         if r is not None and r.state in ENDED and self.lock.acquire(blocking=False):
@@ -2245,7 +2307,32 @@ class Service:
             r.close()
         self._remove_pipe()
 
+    def _drop_held(self):
+        """End the stream that was kept for the picture on the screen (open): its writer closes the pipe."""
+        held, self.held = self.held, None
+        if held is not None:
+            held[0].close()
+
     def open(self, message):
+        """Connect to a source and wait for its first picture, with the pipe still the one the picture before is
+        on: that picture stays on the screen meanwhile. The answer says the source is ready; the panel then has the
+        player let go of the pipe and asks for `handover`, which lets the writer through. When the open fails, what
+        was kept of the picture before is closed here (the pipe ends: the player gets the end of its stream), and
+        the panel has the player let go, as it always did after a failed press."""
+        with self.lock:
+            reply = self._open(message)
+            if reply.get("ok") is True and message.get("split") is not True:
+                # A caller that does not split the switch (a desk, a script) gets it all in one: the hand-over follows
+                # at once, as the open always did. The panel splits (Input.open).
+                handed = self.handover({"id": message.get("id")})
+                reply = reply if handed.get("ok") is True else handed
+            if reply.get("ok") is not True:
+                self.waiting = None
+                self._drop_held()
+                self._remove_pipe()
+            return reply
+
+    def _open(self, message):
         sid = message.get("id")
         if not isinstance(sid, str) or not _ID.fullmatch(sid):
             return {"ok": False, "error": "no such source"}
@@ -2257,7 +2344,18 @@ class Service:
             match = [s for s in self.sources() if s["id"] == sid]
             if not match:
                 return {"ok": False, "error": "that source is not on the network now"}
-            self._close_receiver()
+            self._drop_held()
+            self.waiting = None
+            with self._recv_lock:
+                old = self.receiver
+            if old is not None and old.freeze():
+                # What is on the screen stays there while the new source connects: the old connection is given back
+                # and its writer keeps the pipe. The panel has the player let go after this open (handover closes it).
+                with self._recv_lock:
+                    self.receiver = None
+                self.held = (old, self._clock())
+            else:
+                self._close_receiver()
             try:
                 st = os.lstat(self.fifo)
             except FileNotFoundError:
@@ -2310,8 +2408,17 @@ class Service:
             more = {"feed": self._want_feed(), "outside": True}
         else:
             self._close_feed()
+            if self.sound:
+                more = {"on_late_sound": lambda: self.no_sound.pop(sid, None)}
+                said = self.no_sound.get(sid)
+                if said is not None and self._clock() - said < NO_SOUND_SECONDS:
+                    more["audio_wait"] = AUDIO_WAIT_SILENT       # it had no sound last time: a short look, not the whole wait
+        with self._recv_lock:
+            left, self.receiver = self.receiver, None
+        if left is not None:
+            left.close()                       # a try that was dropped without being closed must not go on taking frames
         r = self._receiver(self.lib, row, self.fifo, log=self.log, sound=self.sound, **more)
-        r.hold()                               # the writer waits until the pipe was seen without a reader (below)
+        r.hold()                            # the writer waits until the pipe was seen without a reader (below)
         try:
             r.start()
         except NdiError as e:
@@ -2323,6 +2430,16 @@ class Service:
         r.first.wait(wait)
         if r.format:
             r.decide()                         # a moment for sound to show itself; then the pipe's form is fixed
+            if r.sound and not r.outside and r.state not in ENDED:
+                # What the wait found, for the next open of this source: no sound in the time (the source is then
+                # opened as bare frames), or sound (it is waited for in full again, which costs nothing: the wait
+                # ends at the first block).
+                with self._find_lock:
+                    if r.audio is None:
+                        if len(self.no_sound) < MAX_SOURCES or sid in self.no_sound:
+                            self.no_sound[sid] = self._clock()
+                    else:
+                        self.no_sound.pop(sid, None)
         st = r.status()
         if st["state"] in ENDED or not r.format:
             only = not r.format and st["state"] not in ENDED and r.heard()
@@ -2341,6 +2458,34 @@ class Service:
         with self._find_lock:
             self.sound_only.pop(sid, None)         # it has a picture after all
         self.log("pvj-ndi: %s is %d x %d at %s" % ((row["name"],) + r.format))
+        self.waiting = (r, self._clock())          # the panel has the player let go, then asks for the hand-over
+        return {"ok": True, "playing": st}
+
+    def let_go(self):
+        """The player did not let go of the pipe when it was told to: close only what was kept of the picture before
+        (its writer closes the pipe, and the end of the stream is what ends a player stuck on it). The new source,
+        opened and waiting for the hand-over, is left as it is."""
+        with self.lock:
+            self._drop_held()
+            self._remove_pipe()
+        return {"ok": True}
+
+    def handover(self, message):
+        """The second half of an open: the panel has had the player let go of the pipe. The stream kept for the
+        picture before is closed, the pipe is seen without a reader, and the new source's writer is let through."""
+        sid = message.get("id")
+        with self.lock:
+            with self._recv_lock:
+                r = self.receiver
+            waiting, self.waiting = self.waiting, None
+            if r is None or waiting is None or waiting[0] is not r or not isinstance(sid, str) or r.source["id"] != sid:
+                self._drop_held()
+                return {"ok": False, "error": "that source was let go of before it could be shown"}
+            row, st = r.source, r.status()
+            self._drop_held()
+            return self._hand_over(r, row, st)
+
+    def _hand_over(self, r, row, st):
         try:
             clear = self._clear_pipe(r)
         except OSError as e:
@@ -2360,7 +2505,9 @@ class Service:
 
     def close(self):
         with self.lock:
+            self.waiting = None
             self._close_receiver()
+            self._drop_held()
             self._close_feed()
         return {"ok": True}
 
@@ -2374,6 +2521,10 @@ class Service:
             return self.configure(message)
         if cmd == "open":
             return self.open(message)
+        if cmd == "handover":
+            return self.handover(message)
+        if cmd == "letgo":
+            return self.let_go()
         if cmd == "close":
             return self.close()
         return {"ok": False, "error": "unknown command"}
@@ -2800,14 +2951,14 @@ class Input:
         return {"id": sid, "name": row[0]["name"], "from": row[0]["from"], "state": said["state"] if mine else ("away" if sound else "off"),
                 "arriving": bool(mine and said.get("arriving") is True)}
 
-    def open(self, sid):
+    def open(self, sid, split=False):
         """Ask the helper for a source's first frame. Returns {"id", "name", "width", "height", "fps", "container",
         "audio"} or NdiError. "container" says what the pipe will carry: "raw" frames, or "matroska" with sound."""
         if not isinstance(sid, str) or not _ID.fullmatch(sid):
             raise NdiError("no such source")
         if not self.setup:
             raise NdiError(NOT_SET_UP)
-        reply = self.client.request({"cmd": "open", "id": sid}, timeout=FIRST_FRAME_SECONDS + OPEN_WAIT_EXTRA)
+        reply = self.client.request({"cmd": "open", "id": sid, "split": bool(split)}, timeout=FIRST_FRAME_SECONDS + OPEN_WAIT_EXTRA)
         if reply.get("ok") is not True:
             raise NdiError(_text(reply.get("error")) or "the source could not be opened")
         p = _playing(reply.get("playing"))
@@ -2820,6 +2971,21 @@ class Input:
             p["container"] = "raw"
         self.ended = None
         return p
+
+    def let_go(self):
+        """Have the helper close what it kept of the picture before, and nothing else (the player did not let go)."""
+        try:
+            self.client.request({"cmd": "letgo"}, timeout=PIPE_CLEAR_SECONDS + OPEN_WAIT_EXTRA)
+        except NdiError:
+            pass
+
+    def handover(self, p):
+        """The second half of `open`, after the player was told to let go of the pipe: the helper closes what it kept
+        of the picture before and lets the new source's writer through. Raises NdiError in words if it cannot (the
+        helper has then closed the source)."""
+        reply = self.client.request({"cmd": "handover", "id": p["id"]}, timeout=PIPE_CLEAR_SECONDS + OPEN_WAIT_EXTRA)
+        if reply.get("ok") is not True:
+            raise NdiError(_text(reply.get("error")) or "the source could not be shown")
 
     def check_pipe(self):
         """Before the player is told to read it: the path is a pipe, not a link or a file, the pipe owner's (root on
