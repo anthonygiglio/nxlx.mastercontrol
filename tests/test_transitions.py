@@ -2723,6 +2723,24 @@ class LayeredCrossfade(ServerBase):
         self.player._source = "/x/generator.glsl"
         self.assertIn("fallback", self.api._mix_settings(), "out of a generator the still's reason applies")
 
+    def test_one_question_of_the_renderer_answers_for_the_crossfade_and_the_wipe(self):
+        self.mpv.layers = self.mpv.moves = True
+        self.settings.data["mix"] = T.stored("wipe-from-left", 1.0)
+        self.assertIs(self.player.crossfades(), True)
+        self.assertIs(self.player.moves(ask=False), True, "noted with the layers, with no question of its own")
+        self.assertEqual(self.mpv.commands.count("get_property pvj-render"), 1)
+        self.api.transitions._give_up("the clip dropped 30 frames in 2.0 seconds")
+        self.assertNotIn("fallback", self.api._mix_settings(), "the status asks the player nothing, and shows no still's reason")
+        self.assertEqual(self.mpv.commands.count("get_property pvj-render"), 1)
+
+    def test_a_renderer_without_wipes_noted_with_its_layers_keeps_the_stills_reason(self):
+        self.mpv.layers = True          # two layers, and no `moves`
+        self.settings.data["mix"] = T.stored("wipe-from-left", 1.0)
+        self.assertIs(self.player.crossfades(), True)
+        self.assertIs(self.player.moves(ask=False), False)
+        self.api.transitions._give_up("the clip dropped 30 frames in 2.0 seconds")
+        self.assertIn("fallback", self.api._mix_settings())
+
     def still_crossfade(self):
         """The play went D71's way: a still of the window, the clip loaded under it, the still faded away."""
         asked = len(self.mpv.commands)

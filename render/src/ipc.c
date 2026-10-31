@@ -378,6 +378,8 @@ static void crossfade(int fd, const mpv_node *id, const mpv_node *cmd)
         if (r >= 0) r = mpv_command(O, load);
         pthread_mutex_lock(&app.lock);
         if (r >= 0) app.fades_from_nothing++;
+        app.fade.move = move;           // `fade-kind` says this cut's kind, not the last transition that ran
+        app.fade.steps = 0;
         pthread_mutex_unlock(&app.lock);
         pthread_mutex_unlock(&layer_lock);
         reply(fd, id, r < 0 ? mpv_error_string(r) : "success", NULL);
