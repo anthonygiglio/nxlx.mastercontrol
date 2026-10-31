@@ -3375,16 +3375,16 @@
   var RENDERER_NAMES = { classic: 'Classic (mpv)', 'new': 'New (pvj-render)' };
   var DETAIL_NAMES = { auto: 'Automatic (540 lines on a Pi 3 or 4, else the screen\'s own)', 540: '540 lines', 720: '720 lines', output: 'The screen\'s own size' };
   var FINAL_NAMES = { auto: 'Automatic (720 lines when a Pi 3 or 4 is busy, else the screen\'s own)', full: 'The screen\'s own size', 720: '720 lines, scaled by the display' };
+  // Choices not applied yet survive a redraw, as autoForm's do: the look a few seconds after Use this redraws the card,
+  // and a new status can build the page and this card again, and neither may put back a select the Owner has just changed.
+  var renderForm = {};
   function rendererCard() {
     var body = h('div', { class: 'list sp', id: 'renderbody' }, h('div', { class: 'state', text: 'Loading...' }));
     var card = h('div', { class: 'card', id: 'rendercard' }, h('h2', { text: 'Renderer' }), body);
     var out = h('div', { class: 'msg inmsg', id: 'rendermsg', role: 'status' });
-    // Choices not applied yet survive a redraw, as autoForm's do: the look a few seconds after Use this redraws the card,
-    // and it must not put back a select the Owner has just changed.
-    var form = {};
     function kept(select, key) {
-      if (form[key] !== undefined) select.value = form[key];
-      select.addEventListener('change', function () { form[key] = select.value; });
+      if (renderForm[key] !== undefined) select.value = renderForm[key];
+      select.addEventListener('change', function () { renderForm[key] = select.value; });
       return select;
     }
     function refresh() {
@@ -3445,7 +3445,7 @@
           sayAt(out, 'Restarting the player...');
           api('POST', '/api/renderer', want).then(function (r) {
             if (!r.ok) sayAt(out, (r.data.error || 'Could not change it') + '. Nothing was changed.', true);
-            else { form = {}; sayAt(out, 'Saved. The player is restarting.'); draw(r.data); setTimeout(refresh, 6000); }
+            else { renderForm = {}; sayAt(out, 'Saved. The player is restarting.'); draw(r.data); setTimeout(refresh, 6000); }
           });
         }, e.currentTarget);
       } });
