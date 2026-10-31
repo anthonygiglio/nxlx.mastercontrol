@@ -107,6 +107,23 @@ Ten and twenty seconds of generated sound (a sine, a hum and noise, a burst ever
 
 **How to read it:** `pread` the 128 bytes; take them only if the magic, the version and the size are right, the two sequence numbers are equal and the CRC matches; otherwise read again (a write was half done) and, after a second miss, keep the last good values. Values older than 0.5 s by the time field mean the service is not delivering; flag 16 means it is idle on purpose.
 
+## The box clock (D116, `pvj/clock.py`)
+
+One tempo and one beat position for the box, kept by itself between beats like a flywheel. Sound alone only has single onsets and a rough tempo; the clock runs on through a gap in what feeds it. It is plain Python with no thread of its own: the panel's once-a-second tick moves it on, and so does every look at the levels.
+
+| Source | What feeds it | How far it is trusted | Stays in charge for |
+| --- | --- | --- | --- |
+| `link` | nothing yet (a later change adds Ableton Link) | most | 5 s |
+| `tap` | taps, or a tempo typed in | sets the tempo and the phase at once | 30 s |
+| `osc` | `/nxlx/sound/in/bpm` and `/nxlx/sound/in/beat` | the tempo at once; a beat sets the phase at once | 5 s |
+| `sound` | this service's tempo and beats | only at a confidence of 0.5 or more (`SOUND_MIN_CONFIDENCE`), and then only the tempo and a gentle push of the phase: a hit more than 0.3 beat from the grid is ignored, a nearer one moves the phase by 15 percent of its distance | 3 s |
+
+The first of these with a word younger than its time is in charge. When it goes quiet the next takes over, and the beat position carries on from where it was, never a jump. When all are quiet the last good tempo keeps running, and the status says which source steered it last and how old its word is (`held`). Taps: 2 to 8 are averaged, a pause over 2 s starts a new count, a tempo outside 30 to 300 BPM is refused. A tempo can also be set by number and the phase nudged by up to half a beat. The clock is empty after a restart; the tempo is not saved.
+
+**What follows it.** While a tap or OSC is in charge, the levels record that the meter, OSC out and the shader input read has the clock's pulse (1 at a beat, 0 after 0.15 s), tempo (confidence 1) and beat count in place of the service's. This works with no sound device: the levels are then zero and nothing is heard. With no tap or OSC clock, the values are the service's, exactly as before. The levels file and its layout are not touched, and the privacy rules below hold unchanged: the clock adds only a tempo and a beat. The Owner's switch for sound reactivity still has to be on for the shader input and OSC out to run, and OSC beats and tempos reach the clock only through the source "Levels sent in over OSC" from the addresses the Owner listed (the user chooses the audio source, h30).
+
+Routes: `GET /api/clock` (status), `POST /api/clock` (one of `{"bpm": 30 to 300}`, `{"nudge": -0.5 to 0.5}`, `{"clear": true}`) and `POST /api/clock/tap`. The Owner and an Operator may use all three; a Guest none; a support session may look and may not change. The tap is also an action, `clock_tap`, for MIDI, OSC (`/pvj/clock/tap`) and DMX (the optional tenth channel). Why not a new beat tracker: D116.
+
 ## OSC out (`/nxlx/sound/...`)
 
 Sent by the panel, never by the service, and only while the Owner's switch for it is on: "Send sound to the state targets" (the D82 targets, while OSC and "Send state back" are on, each held at every send to the rule and the address locks of D82) and "Send sound to the render nodes" (D94, each held to the same rule at every send). Every number is a float32 unless said. The level, dB, the envelope, the pulse and the tempo are one bundle 20 times a second (about 170 bytes); the bands are a bundle of their own, the slow ones only, 5 times a second (about 230 bytes); a beat is a message of its own.
@@ -136,6 +153,9 @@ On classic mpv a shader's value changes by writing a new shader text that mpv co
 | `GET /api/sound/levels` | Operator | the same, without the bands |
 | `POST /api/sound` (on, device, gain, the two OSC switches) | Owner | the Owner's role only, and never to switch capture on, choose the device while it is on, or switch OSC sending on |
 | `POST /api/sound/map` (the shader input) | Operator | the Owner's role only (D80's rule for a support session) |
+
+| `GET /api/clock` | Operator | as the Operator; a session of the Owner's role sees it |
+| `POST /api/clock`, `POST /api/clock/tap` (D116) | Operator | none: a helper through remote support may look and not change |
 
 A Guest gets nothing of this.
 

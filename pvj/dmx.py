@@ -13,8 +13,8 @@ Deliberate limits, as for OSC:
   fires from it, so a console that happens to be sitting at zero cannot black out the screen.
 * If the signal stops, the box holds its last state.
 * Level channels are applied at most 20 times a second each; the next frame carries the change on.
-* Only play, stop, pause, fade, blackout, opacity, size, position, speed, volume and the shader rotation (Vibes
-  start, stop and next, on an optional ninth channel) are reachable.
+* Only play, stop, pause, fade, blackout, opacity, size, position, speed, volume, the shader rotation (Vibes
+  start, stop and next, on an optional ninth channel) and a tap on the box clock (an optional tenth) are reachable.
 """
 
 import socket
@@ -29,6 +29,7 @@ SACN_PORT = 5568
 PROTOCOLS = ("artnet", "sacn")
 CHANNELS = 8
 VIBES_CHANNEL = 8        # index of the optional ninth channel; a console that sends only eight is not affected
+CLOCK_CHANNEL = 9        # and of the optional tenth: a tap on the box clock (D116) each time it moves up to 128 or more
 DMX_DEVICE = {"id": "dmx", "name": "DMX", "role": "live"}
 MIN_INTERVAL = 0.05
 PAD_STEP = 6            # each pad owns six values on the pad channel: 6-11 is pad 1, 12-17 pad 2, ...
@@ -105,14 +106,14 @@ class DmxMapper:
         self.do, self.start, self._clock = do, start, clock
         self.applied = None      # last values acted on
         self.last_frame = 0.0
-        self.last_time = [0.0] * (CHANNELS + 1)
+        self.last_time = [0.0] * (CHANNELS + 2)
         self.seen = None         # the eight raw values of the latest frame, for the panel
 
     def frame(self, dmx):
         i = self.start - 1
         if len(dmx) < i + CHANNELS:
             return 0
-        values = list(dmx[i:i + CHANNELS + 1])            # the ninth is the Vibes channel, if the universe has it
+        values = list(dmx[i:i + CHANNELS + 2])            # the ninth is the Vibes channel, the tenth the clock tap, if the universe has them
         self.seen = values
         now = self._clock()
         if self.applied is not None and now - self.last_frame > STALE_SECONDS:
@@ -173,6 +174,8 @@ class DmxMapper:
             if zone is None or zone == vibes_of(old):       # only when the channel moves into a new zone
                 return False
             return self.do("/api/vibes", {"next": True} if zone == "next" else {"on": zone == "start"})
+        if ch == CLOCK_CHANNEL:
+            return self.do("/api/clock/tap", {}) if v >= 128 and old < 128 else False
         return False
 
 

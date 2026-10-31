@@ -105,6 +105,11 @@ ROWS = {
     ("POST", "/api/sound"): KINDS["owner"],
     ("POST", "/api/sound/map"): KINDS["op"],
     ("POST", "/api/sound/source"): KINDS["op"],      # D97: between the allowed sources, the Owner and an Operator
+    # The box clock (D116): seen and set by the Owner and an Operator. The tap is a press a controller may make (LEGACY_LIVE);
+    # a support session passes the gate and the handler refuses it any change (tests/test_clock.py).
+    ("GET", "/api/clock"): KINDS["op"],
+    ("POST", "/api/clock"): KINDS["op"],
+    ("POST", "/api/clock/tap"): KINDS["live"],
     ("POST", "/api/control"): KINDS["guest"],
     ("POST", "/api/blackout"): KINDS["guest"],
     ("POST", "/api/vibes"): KINDS["guest"],

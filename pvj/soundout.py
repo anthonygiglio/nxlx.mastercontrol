@@ -20,6 +20,7 @@ import struct
 import threading
 import time
 
+from . import clock as clock_mod
 from . import oscfeedback as fb
 from . import paths
 from . import sound as sound_mod
@@ -249,6 +250,12 @@ def _udp():
     return sock
 
 
+# What the levels are while the box clock stands in for sound that is not there (no device, or none heard).
+QUIET = {"seq": 0, "flags": 0, "time": 0.0, "blocks": 0, "rate": 0, "rms_db": sound_mod.FLOOR_DB, "level": 0.0, "envelope": 0.0,
+         "onset": 0.0, "pulse": 0.0, "bpm": 0.0, "confidence": 0.0, "beats": 0, "bands": [], "peak_db": sound_mod.FLOOR_DB,
+         "slow_bands": [0.0] * len(sound_mod.BANDS), "capturing": False, "beat": False, "onset_flag": False, "clipped": False,
+         "idle": True, "fresh": True, "age": 0.0}
+
 # --- the fed sources (D97) ----------------------------------------------------------------------------------------------------
 METER_LABEL = "pvjsound"
 # A filter that passes the sound through unchanged and leaves its RMS and peak level per audio frame as metadata.
@@ -275,6 +282,7 @@ class Sound:
         self.levels_path = levels_path or paths.sound_levels()
         self.proc = proc
         self._clock, self.log, self._udp = clock, log, udp
+        self.clock = clock_mod.Clock(now=clock)      # the box clock (D116): tap, OSC and the sound's tempo, kept by itself
         self.lock = threading.Lock()        # not in the order of pvj/locks.py: never held over a call out
         self.gen = 1
         self.helper = {"running": False}
@@ -356,15 +364,38 @@ class Sound:
                 self.push()
         self.ensure()
         self.ensure_feeder()
+        try:
+            self.clock.tick(self._clock())      # the box clock hands over from a source gone quiet (D116)
+            self.levels()                       # and hears pvj-sound even while nobody looks at the meter
+        except Exception as e:
+            self.log("pvj-web: box clock tick: %s" % e)
 
     def levels(self):
         """The last record of the levels file, with "fresh" (younger than STALE_SECONDS), or None."""
         v = sound_mod.read_levels(self.levels_path)
-        if v is None:
-            return None
-        v["age"] = max(0.0, time.monotonic() - v["time"])
-        v["fresh"] = v["age"] <= sound_mod.STALE_SECONDS
-        return v
+        if v is not None:
+            v["age"] = max(0.0, time.monotonic() - v["time"])
+            v["fresh"] = v["age"] <= sound_mod.STALE_SECONDS
+        live = v is not None and v["fresh"] and v["capturing"]
+        if live:
+            self.clock.sound(v["bpm"], v["confidence"], v["beats"], at=v["time"])      # the clock's own rules decide how far it is believed
+        return self.follow_clock(v, live)
+
+    @staticmethod
+    def live(v):
+        """Whether the sending thread has something to send: sound that is being heard now, or the box clock's beat."""
+        return v is not None and v["fresh"] and (v["capturing"] or bool(v.get("clock")))
+
+    def follow_clock(self, v, live):
+        """The beat pulse, the tempo and the beat count of a record are the box clock's while a tap or OSC steers it, so
+        what follows the beat follows the clock, with or without a sound device (D116). Otherwise the record is returned
+        as it is, untouched. Without live sound the record is a quiet one: the levels are zero and nothing is heard."""
+        got = self.clock.reading(self._clock())
+        if got is None or got["source"] not in clock_mod.FOLLOWED:
+            return v
+        out = dict(v) if live else dict(QUIET, time=self._clock())
+        out.update(pulse=got["pulse"], bpm=got["bpm"], confidence=1.0, beats=got["beat_count"], clock=True)
+        return out
 
     def devices(self):
         return sound_mod.capture_devices(self.proc)
@@ -430,7 +461,7 @@ class Sound:
                     cfg_at = (now, gen, self.config())
                 cfg = cfg_at[2]
                 v = self.levels()
-                live = v is not None and v["fresh"] and v["capturing"]
+                live = self.live(v)
                 osc = cfg["osc_state"] or cfg["osc_render"]
                 if live and osc:
                     if sock is None:
@@ -806,8 +837,10 @@ class Sound:
                     latest["envelope"] = min(1.0, max(0.0, float(nums[0])))
                 elif name == "beat":
                     latest["beat"] = True
+                    self.clock.osc_beat(now)
                 elif name == "bpm" and nums:
                     latest["bpm"] = min(400.0, max(0.0, float(nums[0])))
+                    self.clock.osc_bpm(nums[0], now)
                 elif name == "bands" and nums:
                     latest["bands"] = [min(1.0, max(0.0, float(x))) for x in nums[:len(sound_mod.BANDS)]]
                 else:

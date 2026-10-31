@@ -912,6 +912,19 @@ Results, 2026-10-31, test node on master with D113, mpv 0.40.0 (measurements/202
 
 The output of checks 1 to 7 and 13, the `journalctl` tail for anything that failed, and a note of what you saw on screen. Say clearly what you did **not** test.
 
+### The box clock (D116): not yet run on a node
+
+Before: a box on a release with this change, the sound switch on (the Owner's) with no capture device chosen, and a pad or button mapped to `clock_tap` (Learn) or OSC `/pvj/clock/tap` from TouchOSC. The unit tests prove the clock, the routes, the actions and what the levels record says, with a fake clock; none of it has met a real hand, a Max patch or a band. Do not run it on the node that is soaking.
+
+| Row | What to do | What should happen | What it would mean if not |
+|---|---|---|---|
+| BC1 | Tap the pad about 8 times at a steady 120 BPM, then stop; `curl -s localhost/api/clock` (with a device token) every 10 s for a minute | The tempo within about 2 BPM of 120 after 4 taps; after you stop, the state stays `running`, `source` `tap`, `held` false for 30 s and then true, the tempo unchanged | The averaging, the 30 s hold, or the flywheel |
+| BC2 | With a shader mapped to the beat (Sound page, source Beat) and no capture device, tap a tempo; watch the picture | The shader moves on the tapped beat, and goes on after the taps stop | The consumer path (levels, shader input) |
+| BC3 | Send `/nxlx/sound/in/bpm 128` and `/nxlx/sound/in/beat` from Max (source "Levels sent in over OSC", the sender listed) while a tap is 40 s old | `source` becomes `osc`, tempo 128; the beat lands on the sender's beats | The hand-over, the OSC input |
+| BC4 | A capture device on music at a steady tempo, no tap and no OSC for 40 s | `source` `sound` only while the confidence is 0.5 or more; the phase does not jump when a single stray hit is made (clap off the beat once) | The trust rule for sound |
+| BC5 | A DMX console: raise the tenth channel from below 128 to 255 and back, 4 times | One tap each time it goes up; none when it comes down; nine-channel consoles unchanged | The tenth channel |
+| BC6 | Read the CPU of the panel with the clock running for 10 minutes (`top -b -n1 -p $(pgrep -f pvj-web)`) | No measurable difference from before | The cost; not measured here |
+
 ## Safety
 
 - The workflow starts by **manual dispatch only**, and only for the repository owner. It never runs for pushes, pull requests or forks, so nobody else's code reaches the Pi. Keep it that way.

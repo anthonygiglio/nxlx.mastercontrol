@@ -461,6 +461,7 @@ A mapping belongs to one controller (by its ALSA card id, such as `nanoKONTROL2`
 | Effect amount (`effect_amount`) | level | The mix between the picture as it is (the bottom) and the filtered picture (the top) of the effect that is on ([SHADERS.md](SHADERS.md#effects)) |
 | Effect control 1 to 8 (`effect_control_1` ...) | follows the control | The n-th input of the effect that is on, exactly as a shader control does for a shader |
 | Effect on / off (`effect_toggle`) | trigger | Takes the effect off; with none on, puts the one that was on last back (the first of the list if there was none) |
+| Tap tempo (`clock_tap`) | trigger | One tap on the box clock (D116): the beat at once, and from the second tap the average tempo of 2 to 8 taps (30 to 300 BPM; a pause over 2 s starts again). Learn only; no layout has it |
 | Previous effect, Next effect (`effect_prev`, `effect_next`) | trigger | The neighbour in the list of effects, put on in place of the one that is on (the first or the last when none is) |
 | Show a one-time guest code, Show a one-time owner code (`code_join`, `code_owner`) | hold | Held for 3 to 10 seconds and let go: the box draws a pairing code on its own display for 2 minutes. Off until switched on under People and codes. See "A pairing code on the display" |
 | Nothing (`none`) | trigger | Does nothing: switches one control of a standard layout off |
