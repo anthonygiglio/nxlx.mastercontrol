@@ -1315,6 +1315,15 @@ class MoveTest(MoveBase):
         inside = px <= x < px + pw and py <= y < py + ph
         return quadrants(x - px + sx, y - py + sy) if inside else MAGENTA
 
+    def test_a_slide_leaves_the_new_picture_where_it_is(self):
+        """A slide is not a push (D71, D111): the old picture moves off, the new one stands. The point read is in the
+        new picture's left half, just inside the edge; moved along with the old picture it would show the right half."""
+        r = self.r
+        r.load(self.blue)
+        self.move(self.picture, 6.0, "slide-left")
+        self.at(0.56, 0.85)
+        self.assertColour(r.pixel(147, H // 4), RED, "the new picture's own place")
+
     def test_a_transition_of_two_seconds_is_a_picture_a_vblank_for_two_seconds(self):
         r = self.r
         r.load(self.picture)

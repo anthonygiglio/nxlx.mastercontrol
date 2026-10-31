@@ -24,6 +24,6 @@
 
 **Measured:** see `measurements/2026-10-31-native-wipes` and below.
 
-WRITE-NODE
+Not run on the node at this commit.
 
 **Tests.** `tests/test_pvj_render.py` (MoveTest, MovePaceTest, ManyMovesTest, PlayerFadeTest, FinalPassTest), `tests/test_native_shaders.py` (MoveEffectTest), `tests/test_transitions.py` (LayeredCrossfade), headless on llvmpipe and over the stand-in mpv. Break-checks in the journal entry. Rows MW1 to MW6 in `tools/DEVICE-TESTING.md`.

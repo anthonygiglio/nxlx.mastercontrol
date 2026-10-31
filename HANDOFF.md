@@ -210,7 +210,7 @@ Merged to `master`: the security hotfix, the platform layer, the installer and s
 | --- | --- | --- |
 | Library: upload, rename, delete; play from a USB drive; copy a clip from USB to the box | `pvj/README.md`, `docs/MANUAL.md` | on |
 | Playback: pads in banks, seek, skip, prev/next, play all, shuffle, end-of-clip, slideshow, audio files, fade in/out, freeze, blackout | `docs/MANUAL.md` | on |
-| Mix: opacity, size, position, speed, volume, rotate, mirror, PNG overlay, transitions (cut, dip to black, and from a still of the screen a crossfade, wipes and slides: D71, `pvj/transitions.py`; run on the test Pi 4 by a script on 2026-10-09, never watched) | `docs/MANUAL.md` | on |
+| Mix: opacity, size, position, speed, volume, rotate, mirror, PNG overlay, transitions (cut, dip to black, and a crossfade, wipes and slides, from a still of the screen on classic and drawn by the renderer on the New one: D71, D98, D111, `pvj/transitions.py`; run on the test Pi 4 by a script on 2026-10-09, never watched) | `docs/MANUAL.md` | on |
 | Clip advice (what plays well on this board) | `pvj/probe.py` | on |
 | Sound output, test tones | `docs/MANUAL.md` | on |
 | Screen snapshot (on request; live view dropped, D20) | `docs/MANUAL.md` | on |
