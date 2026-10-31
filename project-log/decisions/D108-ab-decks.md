@@ -51,7 +51,10 @@ Where surfaces read it from is decided below: a surface may choose Program. With
   - **At an end, Fade crosses over.** At A (exactly 0) it goes to B, and at B (exactly 1) it goes to A, so the button always does something (his word of 30 October: "fade between A and B, not just to B").
   - **From the Centre (exactly 0.5): Fade goes to B.** That is the simplest rule: a tie goes to B.
   - The button's label says where it will go ("Fade to B" or "Fade to A") and changes as the fader moves, so a performer never has to guess.
-  - **The duration is the whole fade, wherever it starts.** A fade from the Centre takes the set time, not half of it. This is the simplest to say and to hear; a fade at constant speed would be the other way and is not planned.
+  - **Constant speed (the owner, 2026-10-31).** The set length is the time for a whole crossing, A to B. A shorter trip takes its share of that: at 2 s, from 0.4 back to A takes 0.8 s, and from the Centre to B takes 1 s.
+  - **Seconds or beats (the owner, 2026-10-31).** The length is set in seconds (0.1 to 30) or in beats (1, 2, 4, 8, 16). Beats use the tempo pvj-sound already works out (`pvj/SOUND.md`), read at the press, so a running fade does not change speed with the tempo. That tempo is rough: folded into 75 to 150 BPM and known only while sound reactivity is on and hearing music.
+  - **When the tempo is not good enough, Fade uses seconds.** With no tempo, or a confidence below 0.5 (a first value, to be checked on a real set), Fade uses the seconds value, which is kept while beats are chosen, and the desk says so beside the button. A press never waits or fails for want of a tempo.
+  - **Not beat matched.** A fade lasts a number of beats but starts at the press, not on a beat. Starting on the beat would need a steadier clock than the tempo above; a tap tempo is the likely way, and it is not in this design.
   - **Pressing Fade while a fade runs stops it where it is.** The hand wins, as under the live rules. Pressing again then starts a fade by the same rule from the new position.
 
 **Live rules.**
@@ -155,14 +158,14 @@ Where surfaces read it from is decided below: a surface may choose Program. With
 0. **Before any code:** the owner's order for the renderer's work (plain playback, then transitions, then shaders and effects) has to reach the point where decks come next, and the Pi spike has to be run (deck B decoding, deck A crossfading, a program pass at 540 and 720). The owner's three choices are decided above.
 1. **The program pass in pvj-render.**
    - The blends `add`, `screen` and `multiply` in `FS_MIX`.
-   - The `pvj-mix` commands (decks, crossfader, blend, fade duration, on and off, program transform), the curve per blend, the fade by the clock in either direction and its stop by a press or a move.
+   - The `pvj-mix` commands (decks, crossfader, blend, fade length, on and off, program transform), the curve per blend, the fade by the clock in either direction at a constant speed and its stop by a press or a move.
    - The program's own texture; the skip when nothing changed; each deck's level before the pass, and Blackout once at the end.
    - The program transform (size, position, rotation, flips), upstream of the surfaces' mapping.
    - A surface's Program choice, and Program as the default for a surface without a choice while Performance mode is on.
    - Read back in `pvj-render`. Tests by pixels for each blend at 0, 0.25, 0.5 and 1, and for each blend with a level on one deck (multiply at the Centre with L(B) = 0 included).
    - A device row for the cost and the latency.
 2. **The panel's side of the engine.**
-   - The settings (`performance`: on, deck A, deck B, blend, crossfader, fade duration), saved on a debounce; `GET` and `POST /api/performance`.
+   - The settings (`performance`: on, deck A, deck B, blend, crossfader, fade length in seconds and in beats, and which is used), saved on a debounce; `GET` and `POST /api/performance`.
    - The roles, the holds of the guest card, schedule, Room scenes, autostart and Vibes, and remote support watching only.
    - The `crossfader` action for MIDI, OSC and DMX, with latest-value-wins, soft takeover, 14-bit MIDI and the slew.
    - The on-air warning; classic's refusal; the optional duck of A's sound.
