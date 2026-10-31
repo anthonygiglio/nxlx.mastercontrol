@@ -917,6 +917,7 @@ Before: a node running classic mpv (not pvj-render), a clip from the library, th
 | PC1 | Play a clip, press Pause, put an effect on (an invert is the plainest), then take it off | The screen shows the effect within a frame or two of the press, and the plain picture within the same time of Off; the panel answers at once, not after 4 s | The seek did not redraw on this mpv or this GPU (0.40, V3D) |
 | PC2 | Same, with the effect on: move an amount or a value slider while paused | The frozen picture follows the slider; the clip does not creep forward or back (watch the time) | The seek moves the clip on this file type, or redraws too slowly for a slider |
 | PC3 | Same with a long 1080p clip paused deep in it (a few seconds past a keyframe), and with a still picture and an NDI source | The 1080p redraw takes under about a quarter of a second; the picture and the NDI source take the effect at their next frame without an error on the page | A long GOP makes the exact seek too slow on a Pi 4, or a source that cannot seek is upset by it |
+| PC4 | New renderer: pause a clip, then turn a mapping on or change a surface | The screen follows within a frame or two (D115 did not change this path: the mapping's list goes to libmpv, which may only redraw its cached frame) | The mapping shows only at the next frame: it needs the same cure in the renderer |
 
 ### What to send back
 

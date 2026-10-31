@@ -3076,6 +3076,13 @@ class PlayerLayerTest(unittest.TestCase):
         self.p.put_effect("/e3.glsl")
         self.assertFalse([c for c in self.mpv.commands[n:] if c[0] == "seek"])
 
+    def test_a_paused_generator_is_not_sought_its_clock_would_move(self):
+        self.p._carrier = "/carrier.lavfi"
+        self.mpv.props["pause"] = True
+        n = len(self.mpv.commands)
+        self.p.put_effect("/e1.glsl")
+        self.assertFalse([c for c in self.mpv.commands[n:] if c[0] == "seek"])
+
     def test_a_paused_picture_or_live_input_that_cannot_seek_still_takes_the_effect(self):
         real = self.mpv.request
 

@@ -1284,8 +1284,9 @@ class Player:
         player decode the frame it shows once more and draw it through the new list, the position unchanged. A clip
         that cannot seek (a picture, a live input) has nothing to redraw and the refusal is ignored: its next frame
         is drawn with the list. The New renderer draws its own programs whenever they change and never comes here.
-        mpv reads a pass's time when the frame after it is drawn, so the panel's look for a first drawn pass (shaders
-        `_watch`) asks for one more draw when the pass is listed with no time."""
+        A paused generator is left alone: on its live carrier a seek moves the clock its picture is drawn from."""
+        if self._carrier is not None:
+            return
         try:
             if self.ipc.request("get_property", "pause") is not True:
                 return

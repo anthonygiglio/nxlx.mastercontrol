@@ -1455,7 +1455,7 @@ class Engine:
     def _watch(self, tap, desc):
         """Wait until the player has drawn a frame with the shader called `desc` or has complained.
         ("ok" | "refused" | "unknown", message)."""
-        lines, drawn, listed = [], False, None
+        lines, drawn, listed, settle = [], False, None, 0.2
         player = self.api.player       # a generator and an effect together: only what names this shader is its own (see about)
         both = bool(getattr(player, "source_shader", None) and getattr(player, "effect_shader", None))
         deadline = self._clock() + VERIFY_SECONDS
@@ -1472,13 +1472,14 @@ class Engine:
                 if self._frozen():
                     # mpv reads no pass time over a frozen clip (seen on a real mpv: the pass is listed with no time
                     # however often the picture is drawn), and the player has drawn it once already (Player.redraw_paused).
-                    # Waiting a second for a time that cannot come only holds the request; a refusal is in the log
-                    # by now and is read below. The answer is "unknown", as for a GPU that reports no times.
+                    # Waiting a second for a time that cannot come only holds the request; half a second is kept for a
+                    # refusal still on its way to the log. The answer is "unknown", as for a GPU that reports no times.
+                    settle = 0.5
                     break
                 listed = self._clock() if listed is None else listed
                 if self._clock() - listed >= 1.0:
                     break
-        lines += tap.drain(0.2)
+        lines += tap.drain(settle)
         message = shader_errors(about(lines, desc, both))
         if message:
             return "refused", message
