@@ -3077,7 +3077,7 @@ class PlayerLayerTest(unittest.TestCase):
         self.assertFalse([c for c in self.mpv.commands[n:] if c[0] == "seek"])
 
     def test_a_paused_generator_is_not_sought_its_clock_would_move(self):
-        self.p._carrier = "/carrier.lavfi"
+        self.p._source, self.p._source_pid, self.p._carrier = "/source.glsl", self.mpv.pid, "av://carrier"
         self.mpv.props["pause"] = True
         n = len(self.mpv.commands)
         self.p.put_effect("/e1.glsl")
