@@ -1352,6 +1352,24 @@ class MoveTest(MoveBase):
         self.assertEqual((st["fades"], st["fades-from-nothing"]), (0, 1))
         self.assertTrue(self.r.wait(lambda: near(self.centre(), MAGENTA)), self.centre())
 
+    def test_a_cut_from_nothing_says_its_own_kind_and_no_steps(self):
+        r = self.r
+        r.load(self.picture)
+        self.move(self.magenta, 0.2, "slide-up")
+        st = self.settled()
+        self.assertEqual(st["fade-kind"], "slide-up")
+        self.assertGreater(st["fade-steps"], 0)
+        r("stop")
+        self.assertTrue(r.wait(lambda: r("get_property", "idle-active") is True))
+        self.move(self.blue, 2.0, "wipe-from-top")
+        st = self.st()
+        self.assertEqual((st["fades-from-nothing"], st["fade"], st["fade-kind"], st["fade-steps"]), (1, "off", "wipe-from-top", 0))
+        r("stop")
+        self.assertTrue(r.wait(lambda: r("get_property", "idle-active") is True))
+        self.fade(self.red, 2.0)
+        st = self.st()
+        self.assertEqual((st["fades-from-nothing"], st["fade-kind"], st["fade-steps"]), (2, "crossfade", 0))
+
     def test_a_crossfade_after_a_wipe_is_a_mix_again(self):
         r = self.r
         r.load(self.red)

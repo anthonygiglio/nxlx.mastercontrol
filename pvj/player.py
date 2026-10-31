@@ -362,7 +362,9 @@ class Player:
         """True if the player that answers now is pvj-render with two video layers, which draws a crossfade itself
         (D98). Asked once per player process (its pid, as the last word with it gave it): classic mpv answers
         "property not found" and keeps D71's still. A player that does not answer is asked again next time. With
-        `ask` False, only what is known already (for a status, which asks the player nothing)."""
+        `ask` False, only what is known already (for a status, which asks the player nothing). The same answer says
+        whether it draws the wipes and the slides (`moves`, D111), so that is noted too: one request, both answers,
+        and a status after a give-up does not show the still's reason for a wipe the renderer would draw."""
         known, pid = self._layers_seen, self._seen_pid
         if known is not None and known[0] == pid:
             return known[1]
@@ -375,10 +377,12 @@ class Player:
         except PlayerError as e:
             if str(e).startswith("mpv: ") and pid is not None:
                 self._layers_seen = (pid, False)        # mpv's own refusal: this player has no layers
+                self._moves_seen = (pid, False)         # and draws no wipes of its own
             return False
         layers = state.get("layers") if isinstance(state, dict) else None
         ok = isinstance(layers, int) and not isinstance(layers, bool) and layers >= 2
         self._layers_seen = (pid, ok)
+        self._moves_seen = (pid, isinstance(state, dict) and state.get("moves") is True)
         return ok
 
     def moves(self, ask=True):

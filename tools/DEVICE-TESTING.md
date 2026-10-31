@@ -645,6 +645,19 @@ Everything of D111 ran on a software GPU in a headless window first. MW1, MW2 an
 | MW5 | Out of a shader pad into A1, and out of the NDI input into A1, with a wipe | The still's wipe, as on classic: the old picture stands | Yes or no |
 | MW6 | A logo or a mask on, a slide | The logo or mask stays where it is, over both pictures | Yes or no |
 
+**MW1 to MW6, on the node with the renderer's own wipes, 2026-10-31 (Pi 4, 1920 x 1080 at 60 Hz, HDMI through the dongle; `measurements/2026-10-31-native-wipes`):**
+
+| Row | Result | What was seen |
+|---|---|---|
+| MW1 | Passed, one clip | All eight, 119 or 120 steps each, no refusal, no fallback, no black frame. By eye on the strips: each comes from the side its button names; a wipe leaves the old picture standing; a slide moves the old picture off and the new one stands, both playing. The edge is straight and hard |
+| MW2 | Run | 2 s, 4 sources, mapping on. At Automatic (720): wipe 116, 119, 119 steps of 120, slide 116, 120, 120, crossfade 111, 114, 115; 58.0 to 60.1 flips a second; nothing given up. At full: wipe 82 to 92, slide 95 to 100, crossfade 74 to 94; 41.3 to 51.9 flips a second, 33 to 76 missed vblanks, nothing given up. The incoming clip's drops: 24 to 41 at 720 in the wipes and slides against 14 to 24 for the crossfade (59 to 76 against 60 to 63 in 5 s windows inside a 9 s transition). The drops are not mended: 12 to 15 of 30 frames a second while a transition runs, with the box at 99% CPU. Before this build the still gave up every time |
+| MW3 | Not run | The look under a turned surface is seen only on the node's own quad and triangle. What was seen: the wipe runs inside the surface and is warped with it, and a surface of another source plays on |
+| MW4 | Run | Blackout during a slide, 4 sources: black at HDMI, the transition went on and the picture came back; one strip frame shows the quad dark and the triangle (source 2) still lit, as the level reached source 1 first by at most a third of a second (not chased). Stop during a wipe: off at once, `fades-cut` up by one. A new play during a wipe: the first ended, the new slide running. Effect on through a wipe: 120 steps, on both pictures, the edge mirrored with them |
+| MW5 | Not run | The still's path on this build, out of a shader or the NDI input |
+| MW6 | Not run | A logo or a mask over a slide |
+
+Also run: 24 transitions in a row, all eight in turn, 4 sources, mapping on, Automatic: 24 done, 0 cut, 59 of about 5870 vblanks missed (1%), `mix.fallback` empty every time, nothing in the journal. Not run: the projector or a monitor, and a long soak (24 in a row is not one).
+
 ### Sound reactivity (D96): never run on a Pi or with a real audio input
 
 Before: the box updated to this release; `systemctl status pvj-sound` says active; `arecord --version` answers (if
@@ -843,7 +856,7 @@ Everything of this ran on a WSL kernel, never on a Pi. Before: the node on a rel
 |---|---|---|
 | RT1 | Passed | 45.6 to 46.2 flips a second over 12 minutes, counters only, 4 sources at 720p, mapping on, 1080p60. Read today: `950000` and `1000000`; `LimitRTPRIO=1`; 34 lines "real-time priority 1" and none "stays at normal priority" this boot. Those flips are also what RT4 asks for: above the 40.7 of before, and the picture was not looked at |
 
-### The display scaler (D108): counters on the test node, the picture not yet
+### The display scaler (D108): counters and the dongle on the test node, the projector not yet
 
 Numbers and what they do not show are in D108. Before: the node on a release with this change, New, mapped surfaces on, 4 clips of 720p ready, a screen or the dongle on the HDMI. `q()` is RT4's. Setup > Screen output, renderer card, is where **Final picture** is chosen.
 
@@ -855,6 +868,20 @@ Numbers and what they do not show are in D108. Before: the node on a release wit
 | RT10 | At 720 lines look at the owner's mapping with thin lines, on the projector and on a monitor, against **The screen's own size** | Softer edges, and thin lines in squeezed areas may break into dashes. Judge whether Automatic is acceptable for a show | The owner may want the setting left at full for fine mapped work. The edge of a surface may differ from the scratch build's picture (D108, the warp table) |
 | RT11 | At 720 lines put the logo, the masks and a text up; `GET /api/mapper` | Masks and the logo where they are at full size; `screen` is the output's | An overlay out of place: something read the draw size |
 | RT12 | Unplug the screen and plug in a 720-line one or lower, or set a mode of 720 lines or fewer | The card says "the output has no more than 720 lines", the box plays at the screen's own size, no restart loop | A failed start: the refusal must never stop pvj-render |
+
+**RT7 to RT12, on the deployed build, 2026-10-31 (the test node, master 3d4e9ca, 1920 x 1080 at 60 Hz, HDMI through the dongle; `measurements/2026-10-31-hdmi`):**
+
+| Row | Result | What was measured |
+|---|---|---|
+| RT7 | Passed | 4 clips, mapping on, 60 s, final 720: 60.0 flips a second, missed 0.0 a second, `final-lines` 720, 3 gaps over 2 vblanks in 60 s, nothing of the unused buffer at any edge (a grey picture reads 43 up to the last column and row at both sizes) |
+| RT8 | Passed | Automatic, one clip, a switch every second for 30 s: each switch is one step between two frames, with no flash, no black frame, no torn or extra frame. The visible effect is the +0.4 px step (a change of 27 dB in PSNR on a fine PNG, 49.6 dB on a clip), reported and not chased |
+| RT9 | Passed | For the line and the rule: to 720 about 3 s after the 4th source started, with the reason text, and back to full 21 s after source 4 stopped (33 s or more after the switch down, as D108 says). The wipe in the middle of a switch was driven by the socket, not by the rule, which cannot be timed. `/api/mapper` gave `screen` 1920 x 1080 and the same vertices at both sizes; the mapped edges moved 0.01 to 0.60 px |
+| RT10 | Not settled | The dongle cannot show the look on the projector or a monitor, or whether the owner's own mapping with thin lines is acceptable. What it shows: thin lines in a squeezed quad break into dashes at 720 and stay whole at full. Needs the owner's eye on a projector. The X27 was not touched |
+| RT11 | Passed at the dongle | A 1920 x 1080 PNG with alpha (12 px red frame at the edge, blocks, a bar) and the renderer text over a grey picture: the frame is on rows 0 to 11 and 1068 to 1079 and columns 0 to 11 and 1908 to 1919 at both sizes, the bar at x 100 to 499 (101 to 499 at 720), edges softer at 720. `screen` is 1920 x 1080. The logo is the same thing as a mask |
+| RT12 | Not run | It changes the box's display mode (a system setting, with confirm and revert), so it was left; the dongle was also set to 1920 x 1080 only |
+| A long run | Not settled | The longest run was 3 minutes |
+
+Also seen: 54 switches on static pictures and 60 on a playing clip showed no black frame beyond the clip's own loop seam. With 4 sources and the mapping on, a wipe or a slide ran choppy (26 to 33 of 60 steps) and the box's guard gave up, the same at full and at 720 (D108 says this already); no black frame in the captures. Not shown: the projector or a monitor, masks other than one PNG, the wipe in the middle of a switch made by the rule rather than the socket, a Pi 3.
 
 ### What to send back
 
