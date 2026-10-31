@@ -1856,7 +1856,7 @@ class PipeCheckTest(NdiApiTest):
 
         def request(message, timeout=None):
             reply = real(message, timeout)
-            if message.get("cmd") == "open" and reply.get("ok"):
+            if message.get("cmd") == "handover" and reply.get("ok"):      # the last call to the helper before the panel looks at the pipe
                 how()
             return reply
         self.client.request = request
@@ -2895,12 +2895,13 @@ class PlayerLetsGoTest(NdiApiTest):
         opened = len(self.lib.opened)
         asked = []
         self.player.release_pipe = lambda path: asked.append(self.service.receiver is not None) or False
+        threading.Thread(target=lambda: wait(lambda: len(self.lib.opened) > opened, 5) and self.lib.frames.put(frame(64, 16)), daemon=True).start()
         st, body, _ = self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)
         self.assertEqual((st, body["error"]), (409, self.api.NDI_HELD))
-        self.assertEqual(len(self.lib.opened), opened)               # no new source was opened over it
+        self.assertEqual(len(self.lib.opened), opened + 1)           # the new source was opened (the old picture stood meanwhile) and never written
         # The player is not left wedged with the old writer feeding it (the review, and the Pi's stuck Test
-        # Patterns): the helper was told to close before the player was asked the second time.
-        self.assertEqual(asked, [True, False])
+        # Patterns): the helper was told to close the old stream before the player was asked the second time.
+        self.assertEqual(asked, [True, True])
         self.assertIsNone(self.service.receiver)
         page = self.call("GET", "/api/ndi", token=self.full)[1]
         self.assertEqual((self.api.ndi.current, page["playing"], page["ended"]),
@@ -2916,7 +2917,8 @@ class PlayerLetsGoTest(NdiApiTest):
         self.enable()
         self.lib.frames.put(frame(64, 16))
         self.assertEqual(self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)[0], 200)
-        self.player.release_pipe = lambda path: self.service.receiver is None
+        calls = []
+        self.player.release_pipe = lambda path: len(calls.append(1) or calls) > 1      # lets go only once the helper has closed the old stream (the second ask)
         opened = len(self.lib.opened)                                # the new source's picture, once it is opened
         threading.Thread(target=lambda: wait(lambda: len(self.lib.opened) > opened, 5) and self.lib.frames.put(frame(64, 16)), daemon=True).start()
         st, body, _ = self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)
@@ -2930,6 +2932,7 @@ class PlayerLetsGoTest(NdiApiTest):
         self.player.release_pipe = lambda path: False
         self.lib.frames.put(frame(128, 16))                          # a change of size: the watch asks
         self.assertTrue(wait(lambda: self.service.receiver.state == "changed"))
+        self.lib.frames.put(frame(128, 16))                          # the picture the new open waits for
         self.api.ndi._retry_at = 0.0
         self.assertTrue(self.api.ndi_tick())
         self.assertEqual(self.api.ndi.current["id"], self.rid)       # still wanted, tried again later

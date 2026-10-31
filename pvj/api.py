@@ -3748,10 +3748,9 @@ class Api:
                     claim()
                 wish = self.transitions.claim()
             # The NDI pipe is one pipe for every source. If it is what plays (another source, or this one before a
-            # change of size), the player is told to let go of it BEFORE the helper is asked: the helper lets the
-            # new source's writer through only once it has seen the pipe without a reader (Service._clear_pipe),
-            # and the player does not reliably let go by itself. The picture of the source before is over either
-            # way: the helper closes it as the first thing it does for the new one.
+            # change of size), the player is told to let go of it BEFORE the helper lets the new source's writer
+            # through (below: open, release, handover): the helper does so only once it has seen the pipe without a
+            # reader (Service._clear_pipe), and the player does not reliably let go by itself.
             # A source that is not on the network now is refused BEFORE the player lets go: what plays stays on
             # the screen (the helper would refuse it too, but only after the screen had gone black for it). One
             # short question; when the helper cannot say what is there, it is left to `open` to say why.
@@ -3775,17 +3774,30 @@ class Api:
             # ends the old writer, and the end of the stream is what ends a player stuck opening or reading it),
             # and the player is asked once more. Only if it still holds the pipe is the press refused, with the
             # reason on the page; a source the watch asked for stays wanted and is tried again.
+            # The order of a switch (2026-10-31, the gap of about 0.87 s measured on the node): the helper OPENS the new
+            # source first (connects, waits for its first picture) while the picture before stays on the screen with
+            # the pipe still held; then the player is told to let go of the pipe; then the helper is asked to HAND
+            # OVER (it closes what it kept, sees the pipe without a reader, lets the new writer through). A press
+            # that fails to open ends as it always did: the helper has closed everything, the player is told to let
+            # go (the screen goes black), and the page says why. The old picture is never left frozen.
             release = getattr(self.player, "release_pipe", None)
+            try:
+                p = self.ndi.open(sid, split=True)
+            except ndi_mod.NdiError as e:
+                if release is not None:
+                    release(self.ndi.fifo)          # the old picture goes, as it did before the new source was asked for
+                raise ApiError(409, str(e))
             if release is not None and release(self.ndi.fifo) is False:
-                self.ndi.client_close()
+                self.ndi.let_go()                   # the picture before is closed at the helper; the new source waits
                 if release(self.ndi.fifo) is False:
+                    self.ndi.client_close()
                     had = self.ndi.current
                     if again is None and had:
                         # by hand, not ndi.stop: that would cancel the ticket of a press that came meanwhile
                         self.ndi.current, self.ndi.ended = None, {"name": had["name"], "message": self.NDI_HELD}
                     raise ApiError(409, self.NDI_HELD)
             try:
-                p = self.ndi.open(sid)
+                self.ndi.handover(p)
             except ndi_mod.NdiError as e:
                 raise ApiError(409, str(e))
             # Connecting takes seconds. If anything was played, cleared or stopped meanwhile (_player_call and

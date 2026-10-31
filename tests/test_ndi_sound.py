@@ -1334,8 +1334,8 @@ class ApiSoundTest(ServerBase):
         self.lib.frames.put(frame(64, 16))
         real = self.api.ndi.open
 
-        def lying(sid):
-            return dict(real(sid), container="matroska")
+        def lying(sid, **kw):
+            return dict(real(sid, **kw), container="matroska")
         self.api.ndi.open = lying
         st, body, _ = self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)
         self.assertEqual(st, 200, body)
