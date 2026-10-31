@@ -1668,6 +1668,227 @@ class SourceScalerTest(OwnersMappingBase):
             self.assertColour(r.pixel(x, H // 2, shot), GREEN, "source 2 across the whole surface, x %d" % x)
 
 
+class FinalPassTest(unittest.TestCase):
+    """The final pass at 720 lines (D108), without the plane: headless, a build with the tests' hooks draws in the corner of
+    its framebuffer as a screen's buffer is drawn, so all that CI cannot see is the kernel's scaler."""
+    FW, FH = 1600, 900
+
+    def setUp(self):
+        need_program(self)
+        self.tmp = tempfile.mkdtemp(prefix="pvj-render-final-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def start(self, *args, test_final=True):
+        if test_final:
+            hooks = "with test hooks" in subprocess.run([BIN, "--version"], capture_output=True, text=True, timeout=10).stdout
+            if not hooks:
+                if STRICT:
+                    self.fail("PVJ_RENDER_TEST=1 and pvj-render was built without TEST_HOOKS=1")
+                self.skipTest("pvj-render was built without TEST_HOOKS=1")
+        r = Renderer("--headless=%dx%d" % (self.FW, self.FH), "--detail=450", *args, env={"PVJ_RENDER_TEST_FINAL": "1"} if test_final else None)
+        self.addCleanup(r.close)
+        r("set_property", "image-display-duration", "inf")
+        self.picture = os.path.join(self.tmp, "q.png")
+        png(self.picture, W, H, quadrants)
+        return r
+
+    def lines(self, r, want):
+        got = r.wait(lambda: r("get_property", "pvj-render")["final-lines"] == want, 5)
+        self.assertTrue(got, r("get_property", "pvj-render"))
+
+    def assertScreen(self, r):
+        """Every size the socket reports is the screen's, whichever way the final pass draws."""
+        st = r("get_property", "pvj-render")
+        self.assertEqual((st["output-width"], st["output-height"]), (self.FW, self.FH))
+        self.assertEqual((r("get_property", "osd-width"), r("get_property", "osd-height")), (self.FW, self.FH))
+        self.assertEqual((r("get_property", "display-width"), r("get_property", "display-height")), (self.FW, self.FH))
+        dims = r("get_property", "osd-dimensions")
+        self.assertEqual((dims["w"], dims["h"]), (self.FW, self.FH))
+
+    def quads(self, r):
+        W_, H_ = self.FW, self.FH
+        shot = r.capture()
+        self.assertEqual(shot[:2], (W_, H_), "pvj-capture answers at the screen's size")
+        # near the middle too: a picture drawn smaller in the corner would have those points in the wrong quadrant
+        for (x, y), want in (((W_ // 4, H_ // 4), RED), ((3 * W_ // 4, H_ // 4), GREEN), ((W_ // 4, 3 * H_ // 4), BLUE),
+                             ((3 * W_ // 4, 3 * H_ // 4), WHITE), ((W_ - 8, H_ - 8), WHITE), ((8, H_ - 8), BLUE),
+                             ((9 * W_ // 20, 9 * H_ // 20), RED), ((11 * W_ // 20, 11 * H_ // 20), WHITE)):
+            self.assertTrue(near(r.pixel(x, y, shot), want), "pixel %d,%d: %s" % (x, y, r.pixel(x, y, shot)))
+
+    def test_no_plane_says_why_and_stays_at_the_outputs_size(self):
+        r = self.start("--final=auto", test_final=False)
+        st = r("get_property", "pvj-render")
+        self.assertEqual((st["final-lines"], st["final-why"]), (0, "there is no display (headless)"))
+        for ask in (720, "full"):
+            with self.assertRaises(PlayerError):
+                r("pvj-final", ask)
+        r2 = Renderer("--final=720")           # a start is never failed for it
+        self.addCleanup(r2.close)
+        self.assertEqual(r2("get_property", "pvj-render")["final-lines"], 0)
+
+    def test_without_the_argument_nothing_of_it_runs(self):
+        r = self.start(test_final=False)
+        st = r("get_property", "pvj-render")
+        self.assertEqual((st["final-lines"], st["final-why"], st["final-switches"]), (0, "", 0))
+        with self.assertRaises(PlayerError):
+            r("pvj-final", 720)
+
+    def test_a_bad_argument_ends_the_start(self):
+        for bad in ("--final=540", "--final=", "--final=full"):
+            run = subprocess.run([BIN, "--socket=" + os.path.join(self.tmp, "x.sock"), "--headless=64x64", bad],
+                                 stdin=subprocess.DEVNULL, capture_output=True, timeout=20)
+            self.assertEqual(run.returncode, 64, bad)
+
+    def test_an_output_of_720_lines_stays_as_it_is(self):
+        self.FW, self.FH = 1280, 720
+        r = self.start("--final=720")
+        self.assertEqual(r("get_property", "pvj-render")["final-lines"], 0)
+        self.assertEqual(r("get_property", "pvj-render")["final-why"], "the output has no more than 720 lines")
+
+    def test_both_sizes_report_the_screen_and_capture_it(self):
+        r = self.start("--final=auto")
+        r.load(self.picture)
+        self.assertScreen(r)
+        self.quads(r)
+        st = r("get_property", "pvj-render")
+        self.assertEqual((st["final-lines"], st["final-switches"], st["final-why"]), (0, 0, ""))
+        r("pvj-final", 720)
+        self.lines(r, 720)
+        self.assertScreen(r)
+        self.quads(r)
+        r("pvj-final", "full")
+        self.lines(r, 0)
+        self.assertScreen(r)
+        self.quads(r)
+        self.assertEqual(r("get_property", "pvj-render")["final-switches"], 2)
+
+    def buffer(self, r):
+        """The buffer as the plane gets it, corner and all, and a function from a screen point to its colour there."""
+        path = os.path.join(self.tmp, "b-%d.ppm" % time.monotonic_ns())
+        r("pvj-test-buffer", path)
+        shot = read_ppm(path)
+        k = 720.0 / self.FH
+        return lambda x, y: r.pixel(int(x * k), int(y * k), shot)
+
+    def test_the_frame_that_goes_out_is_the_picture_in_the_corner(self):
+        r = self.start("--final=720")
+        r.load(self.picture)
+        self.lines(r, 720)
+        w, h = self.FW, self.FH
+        at = self.buffer(r)
+        for (x, y), want in (((w // 4, h // 4), RED), ((3 * w // 4, h // 4), GREEN), ((w // 4, 3 * h // 4), BLUE), ((3 * w // 4, 3 * h // 4), WHITE),
+                             ((w - 12, h - 12), WHITE), ((12, 12), RED), ((11 * w // 20, 11 * h // 20), WHITE)):
+            self.assertTrue(near(at(x, y), want), "screen point %d,%d: %s" % (x, y, at(x, y)))
+
+    def test_a_refusal_at_run_time_is_for_good(self):
+        r = self.start("--final=auto")
+        r.load(self.picture)
+        r("pvj-final", 720)
+        self.lines(r, 720)
+        r("pvj-test-refuse")
+        self.lines(r, 0)
+        self.assertEqual(r("get_property", "pvj-render")["final-why"], "the display refused the scaled frame")
+        for ask in (720, "full"):
+            with self.assertRaises(PlayerError, msg=ask):
+                r("pvj-final", ask)
+        time.sleep(0.3)
+        self.assertEqual(r("get_property", "pvj-render")["final-lines"], 0, "the small frame did not come back")
+        self.quads(r)
+
+    def test_720_from_the_start(self):
+        r = self.start("--final=720")
+        r.load(self.picture)
+        self.lines(r, 720)
+        self.assertEqual(r("get_property", "pvj-render")["final-switches"], 1)
+        self.quads(r)
+
+    def test_only_full_and_720_are_taken(self):
+        r = self.start("--final=auto")
+        for bad in (540, "720", "auto", True, 720.5):
+            with self.assertRaises(PlayerError, msg=bad):
+                r("pvj-final", bad)
+        self.assertEqual(r("get_property", "pvj-render")["final-lines"], 0)
+
+    def mapped(self, r, shader):
+        path = os.path.join(self.tmp, "map-%d.glsl" % time.monotonic_ns())
+        with open(path, "w") as f:
+            f.write(shader)
+        r("set_property", "glsl-shaders", [path])
+        self.assertEqual(r("get_property", "pvj-render")["mapping"], "on", r.stderr())
+
+    def test_the_mapping_lands_in_the_same_place_at_both_sizes(self):
+        w, h = self.FW, self.FH
+        surfaces = mapper.validate_mapping({"surfaces": [{"id": "a1b2c3d4", "type": "quad", "name": "Left", "on": True,
+                                                          "vertices": [[0, 0], [w / 2, 0], [w / 2, h], [0, h]], "tex": [[0, 0], [1, 0], [1, 1], [0, 1]]}]})
+        lw, lh, values = mapper.warp_table(surfaces, w, h)
+        r = self.start("--final=auto")
+        r.load(self.picture)
+
+        def check():
+            shot = r.capture()
+            for (x, y), want in (((w // 8, h // 4), RED), ((3 * w // 8, h // 4), GREEN), ((w // 8, 3 * h // 4), BLUE),
+                                 ((3 * w // 8, 3 * h // 4), WHITE), ((3 * w // 4, h // 2), BLACK), ((w - 5, 5), BLACK),
+                                 ((w // 2 - 12, 3 * h // 4), WHITE), ((w // 2 + 12, 3 * h // 4), BLACK)):
+                self.assertTrue(near(r.pixel(x, y, shot), want), "pixel %d,%d: %s" % (x, y, r.pixel(x, y, shot)))
+        for text in (mapper.warp_shader(lw, lh, values), mapper.shader(surfaces)):      # the show, and editing (it measures in HOOKED_size)
+            self.mapped(r, text)
+            r("pvj-final", "full")
+            self.lines(r, 0)
+            check()
+            r("pvj-final", 720)
+            self.lines(r, 720)
+            check()
+            at = self.buffer(r)                 # and the frame that really goes out, at 720 lines
+            for (x, y), want in (((w // 8, h // 4), RED), ((3 * w // 8, 3 * h // 4), WHITE), ((3 * w // 4, h // 2), BLACK), ((w // 2 + 16, 3 * h // 4), BLACK)):
+                self.assertTrue(near(at(x, y), want), "the frame at screen point %d,%d: %s" % (x, y, at(x, y)))
+
+    def still(self, r, path):
+        from pvj.transitions import read_still
+        open(path, "w").close()
+        r("screenshot-to-file", path, "pvj-screen")
+        return read_still(path, (self.FW, self.FH))
+
+    def test_the_screen_still_is_the_screen_at_both_sizes(self):
+        r = self.start("--final=auto")
+        r.load(self.picture)
+        w, h = self.FW, self.FH
+        surfaces = mapper.validate_mapping({"surfaces": [{"id": "a1b2c3d4", "type": "quad", "name": "Left", "on": True,
+                                                          "vertices": [[0, 0], [w / 2, 0], [w / 2, h], [0, h]], "tex": [[0, 0], [1, 0], [1, 1], [0, 1]]}]})
+        lw, lh, values = mapper.warp_table(surfaces, w, h)
+
+        def bgr(px, x, y):
+            o = (y * w + x) * 4
+            return (px[o + 2], px[o + 1], px[o])
+        for lines in (0, 720):
+            r("pvj-final", 720 if lines else "full")
+            self.lines(r, lines)
+            got_w, got_h, px = self.still(r, os.path.join(self.tmp, "s.png"))
+            self.assertEqual((got_w, got_h), (w, h), "the still is of the screen's size, not libmpv's inside size")
+            self.assertTrue(near(bgr(px, 3 * w // 4, 3 * h // 4), WHITE), lines)
+            self.assertTrue(near(bgr(px, w // 4, h // 4), RED), lines)
+        self.mapped(r, mapper.warp_shader(lw, lh, values))
+        for lines in (0, 720):
+            r("pvj-final", 720 if lines else "full")
+            self.lines(r, lines)
+            px = self.still(r, os.path.join(self.tmp, "s.png"))[2]
+            self.assertTrue(near(bgr(px, 3 * w // 4, h // 2), BLACK), "the mapping is in the still")
+            self.assertTrue(near(bgr(px, w // 8, h // 4), RED), "the mapping is in the still")
+
+    def test_the_text_is_in_the_still_and_the_preview_stays_libmpvs(self):
+        r = self.start("--final=720")
+        r.load(self.picture)
+        self.lines(r, 720)
+        before = self.still(r, os.path.join(self.tmp, "s.png"))[2]
+        r("show-text", "XXXXXXXXXXXXXXXX", 20000)
+        time.sleep(0.5)
+        self.assertNotEqual(self.still(r, os.path.join(self.tmp, "s.png"))[2], before, "the text layer is in the still")
+        # a preview (a JPEG, "window") is libmpv's picture of the inside size as before
+        jpg = os.path.join(self.tmp, "p.jpg")
+        r("screenshot-to-file", jpg, "window")
+        with open(jpg, "rb") as f:
+            self.assertEqual(f.read(2), b"\xff\xd8")
+
+
 class SourceCountTest(Base):
     def test_one_source_by_default_and_no_more_than_eight(self):
         st = self.r("get_property", "pvj-render")

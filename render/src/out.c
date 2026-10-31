@@ -52,11 +52,30 @@ static struct gbm_bo *bo_cur, *bo_pending;
 static int flip_pending, modeset_done;
 static unsigned last_seq, prev_seq;
 static int have_seq;
+// The display's scaler (D108): the final pass may draw at 720 lines and the primary plane bring it to the mode, so the
+// GPU fills fewer pixels. One GBM surface of the mode's size: the frame is drawn in its top left corner and the plane's
+// source rectangle says how much of the buffer is shown, set in the same atomic commit that flips to that frame, so
+// no frame ever goes out with the other frame's rectangle. Until the scaler has been used, and whenever the plane
+// shows the whole buffer again, the flips are the legacy page flips they have always been.
+static int plane_ok;                // the primary plane was found and the kernel takes the scaled size (a test commit)
+static uint32_t plane_id, plane_fb_prop, plane_src_prop[4];     // SRC_X, SRC_Y, SRC_W, SRC_H
+static int plane_h;                 // the lines the plane shows now
+static int small_w, small_h;        // the size the final pass draws at while it is small (the output's shape, as detail)
+static int draw_w, draw_h;          // this frame's size
 
 static int fail(char *err, size_t n, const char *what)
 {
     snprintf(err, n, "%s", what);
     return -1;
+}
+
+static void final_refused(const char *why)
+{
+    pthread_mutex_lock(&app.lock);
+    snprintf(app.final_why, sizeof app.final_why, "%s", why);
+    pthread_mutex_unlock(&app.lock);
+    __atomic_store_n(&app.final_want, 0, __ATOMIC_RELEASE);
+    LOG("the final pass stays at the output's size: %s", why);
 }
 
 static double mode_hz(const drmModeModeInfo *m)
@@ -247,6 +266,25 @@ static int kms_open(const Cfg *cfg, char *err, size_t n)
     return 0;
 }
 
+// Headless there is no plane, so --final says why and the output's size stays. For the tests only, in a build made with
+// `make TEST_HOOKS=1`: PVJ_RENDER_TEST_FINAL=1 lets the final pass draw in the corner of the framebuffer as it does on
+// a screen, so everything but the plane itself runs in CI (the sizes the socket reports, the capture, the mapping).
+static void headless_final(const Cfg *cfg)
+{
+    if (cfg->final_mode == FINAL_OFF) return;
+#ifdef PVJ_RENDER_TEST_HOOKS
+    if (getenv("PVJ_RENDER_TEST_FINAL")) {
+        if (app.out_h <= FINAL_LINES) { final_refused("the output has no more than 720 lines"); return; }
+        small_h = FINAL_LINES;
+        small_w = ((int)lround((double)app.out_w * small_h / app.out_h)) & ~1;
+        plane_h = app.out_h;
+        __atomic_store_n(&plane_ok, 1, __ATOMIC_RELEASE);
+        return;
+    }
+#endif
+    final_refused("there is no display (headless)");
+}
+
 static int headless_open(const Cfg *cfg, char *err, size_t n)
 {
     PFNEGLGETPLATFORMDISPLAYEXTPROC gpd = (PFNEGLGETPLATFORMDISPLAYEXTPROC)eglGetProcAddress("eglGetPlatformDisplayEXT");
@@ -276,6 +314,7 @@ static int headless_open(const Cfg *cfg, char *err, size_t n)
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) return fail(err, n, "the headless framebuffer is incomplete");
     LOG("headless: %dx%d, %s", app.out_w, app.out_h, (const char *)glGetString(GL_RENDERER));
     h_next = now_s();
+    headless_final(cfg);
     return 0;
 }
 
@@ -286,6 +325,101 @@ int out_open(const Cfg *cfg, char *err, size_t n)
 }
 
 GLuint out_target(void) { return headless ? h_fbo : 0; }
+
+int out_final_usable(void) { return __atomic_load_n(&plane_ok, __ATOMIC_ACQUIRE); }
+
+#ifdef PVJ_RENDER_TEST_HOOKS
+// Tests only: the kernel's refusal of a scaled frame at run time, which no headless run can meet.
+void out_test_refuse(void) { final_refused("the display refused the scaled frame"); }
+#endif
+
+// The size of this frame's final pass. Taken once a frame, at its top: the frame and its plane rectangle always agree.
+void out_draw_size(int *w, int *h)
+{
+    int want = plane_ok ? __atomic_load_n(&app.final_want, __ATOMIC_ACQUIRE) : 0;
+    draw_w = want ? small_w : app.out_w;
+    draw_h = want ? small_h : app.out_h;
+    *w = draw_w;
+    *h = draw_h;
+}
+
+static uint32_t find_prop(uint32_t obj, uint32_t type, const char *name)
+{
+    drmModeObjectProperties *ps = drmModeObjectGetProperties(drm_fd, obj, type);
+    uint32_t id = 0;
+    for (uint32_t i = 0; ps && i < ps->count_props && !id; i++) {
+        drmModePropertyRes *pr = drmModeGetProperty(drm_fd, ps->props[i]);
+        if (pr && !strcmp(pr->name, name)) id = pr->prop_id;
+        drmModeFreeProperty(pr);
+    }
+    drmModeFreeObjectProperties(ps);
+    return id;
+}
+
+// The primary plane on our CRTC (legacy mode set has put it there), or 0.
+static uint32_t find_primary(void)
+{
+    uint32_t found = 0, type = 0;
+    drmModePlaneRes *pr = drmModeGetPlaneResources(drm_fd);
+    for (uint32_t i = 0; pr && i < pr->count_planes && !found; i++) {
+        drmModePlane *pl = drmModeGetPlane(drm_fd, pr->planes[i]);
+        if (pl && pl->crtc_id == crtc_id) {
+            type = find_prop(pl->plane_id, DRM_MODE_OBJECT_PLANE, "type");
+            drmModeObjectProperties *ps = drmModeObjectGetProperties(drm_fd, pl->plane_id, DRM_MODE_OBJECT_PLANE);
+            for (uint32_t k = 0; ps && k < ps->count_props; k++)
+                if (ps->props[k] == type && ps->prop_values[k] == DRM_PLANE_TYPE_PRIMARY) found = pl->plane_id;
+            drmModeFreeObjectProperties(ps);
+        }
+        drmModeFreePlane(pl);
+    }
+    drmModeFreePlaneResources(pr);
+    return found;
+}
+
+static int plane_commit(uint32_t fb, int w, int h, uint32_t flags)
+{
+    drmModeAtomicReq *rq = drmModeAtomicAlloc();
+    if (!rq) { errno = ENOMEM; return -1; }
+    drmModeAtomicAddProperty(rq, plane_id, plane_fb_prop, fb);
+    drmModeAtomicAddProperty(rq, plane_id, plane_src_prop[0], 0);
+    drmModeAtomicAddProperty(rq, plane_id, plane_src_prop[1], 0);
+    drmModeAtomicAddProperty(rq, plane_id, plane_src_prop[2], (uint64_t)w << 16);
+    drmModeAtomicAddProperty(rq, plane_id, plane_src_prop[3], (uint64_t)h << 16);
+    int r = drmModeAtomicCommit(drm_fd, rq, flags, NULL);
+    drmModeAtomicFree(rq);
+    return r;
+}
+
+// Once, after the mode is set: can the plane scale? Every "no" is said once and the start goes on at the output's size.
+static void scaler_open(uint32_t fb)
+{
+    char why[120];
+    if (app.out_h <= FINAL_LINES) { final_refused("the output has no more than 720 lines"); return; }
+    if (drmSetClientCap(drm_fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1) || drmSetClientCap(drm_fd, DRM_CLIENT_CAP_ATOMIC, 1)) {
+        final_refused("the display driver has no atomic commits");
+        return;
+    }
+    plane_id = find_primary();
+    if (!plane_id) { final_refused("the display's primary plane was not found"); return; }
+    static const char *const names[4] = { "SRC_X", "SRC_Y", "SRC_W", "SRC_H" };
+    plane_fb_prop = find_prop(plane_id, DRM_MODE_OBJECT_PLANE, "FB_ID");
+    int have = plane_fb_prop != 0;
+    for (int i = 0; i < 4; i++) {
+        plane_src_prop[i] = find_prop(plane_id, DRM_MODE_OBJECT_PLANE, names[i]);
+        have = have && plane_src_prop[i];
+    }
+    if (!have) { final_refused("the display's plane has no source rectangle"); return; }
+    small_h = FINAL_LINES;
+    small_w = ((int)lround((double)app.out_w * small_h / app.out_h)) & ~1;
+    if (plane_commit(fb, small_w, small_h, DRM_MODE_ATOMIC_TEST_ONLY)) {
+        snprintf(why, sizeof why, "the display cannot scale %d x %d to the output (%s)", small_w, small_h, strerror(errno));
+        final_refused(why);
+        return;
+    }
+    plane_h = app.out_h;
+    __atomic_store_n(&plane_ok, 1, __ATOMIC_RELEASE);
+    LOG("the display's plane %u can scale %d x %d to %d x %d", plane_id, small_w, small_h, app.out_w, app.out_h);
+}
 
 static void fb_destroy(struct gbm_bo *bo, void *data)
 {
@@ -330,6 +464,13 @@ int out_present(void)
     if (headless) {
         // paced by the clock: a frame at most every 1/60 s
         glFlush();
+#ifdef PVJ_RENDER_TEST_HOOKS
+        if (plane_ok) {
+            if (draw_h != plane_h) __atomic_add_fetch(&app.final_switches, 1, __ATOMIC_RELAXED);
+            plane_h = draw_h;
+            __atomic_store_n(&app.final_lines, draw_h == app.out_h ? 0 : draw_h, __ATOMIC_RELEASE);
+        }
+#endif
         double now = now_s();
         if (h_next > now) {
             struct timespec ts = { (time_t)(h_next - now), (long)((h_next - now - (time_t)(h_next - now)) * 1e9) };
@@ -355,6 +496,7 @@ int out_present(void)
         modeset_done = 1;
         bo_cur = next;
         app.screen_open = 1;
+        if (app.cfg->final_mode != FINAL_OFF) scaler_open(fb);
         app.flips++;
         return 0;
     }
@@ -369,10 +511,20 @@ int out_present(void)
         prev_seq = last_seq;
         have_seq = 1;
     }
-    if (drmModePageFlip(drm_fd, crtc_id, fb, DRM_MODE_PAGE_FLIP_EVENT, NULL)) {
+    // the frame goes out with its own rectangle; a legacy flip wherever the plane shows the whole buffer
+    int atomic = plane_ok && (draw_h != app.out_h || plane_h != app.out_h);
+    int flip = atomic ? plane_commit(fb, draw_w, draw_h, DRM_MODE_ATOMIC_NONBLOCK | DRM_MODE_PAGE_FLIP_EVENT)
+                      : drmModePageFlip(drm_fd, crtc_id, fb, DRM_MODE_PAGE_FLIP_EVENT, NULL);
+    if (flip) {
         int e = errno;
-        LOG("drmModePageFlip failed (%s)", strerror(e));
+        LOG("%s failed (%s)", atomic ? "the display's atomic commit" : "drmModePageFlip", strerror(e));
         gbm_surface_release_buffer(gsurf, next);
+        if (atomic && e != EBUSY && draw_h != app.out_h) {
+            // the kernel took the test and not the frame: nothing went out, and the next frame is at the output's size.
+            // plane_ok stays: that next frame is the atomic commit back to the whole buffer. final_why keeps it there.
+            final_refused("the display refused the scaled frame");
+            return 0;
+        }
         if (e != EBUSY) return -1;
         // nothing queued, so nothing paces the next turn: wait a frame's time here
         double t = 1.0 / (app.out_hz > 1 ? app.out_hz : 60.0);
@@ -383,6 +535,11 @@ int out_present(void)
     flip_pending = 1;
     bo_pending = next;
     app.flips++;
+    if (plane_ok) {
+        if (draw_h != plane_h) __atomic_add_fetch(&app.final_switches, 1, __ATOMIC_RELAXED);
+        plane_h = draw_h;
+    }
+    __atomic_store_n(&app.final_lines, draw_h == app.out_h ? 0 : draw_h, __ATOMIC_RELEASE);
     return 0;
 }
 

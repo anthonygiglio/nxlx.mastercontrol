@@ -507,8 +507,32 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.click('#renderapply');
       await page.waitForSelector('#confirmrow:has-text("The player restarts")');
       await page.click('#confirmyes');
+      await page.waitForSelector('#rendermsg:has-text("Saved")');       // the answer has drawn: the select below was already 2 before it came
       await page.waitForFunction(() => document.getElementById('rendersources') && document.getElementById('rendersources').value === '2');
-      assert.deepStrictEqual(sent, { use: 'classic', detail: 'auto', sources: 2 }, 'the number goes with the renderer and its detail');
+      assert.deepStrictEqual(sent, { use: 'classic', detail: 'auto', final: 'auto', sources: 2 }, 'the number goes with the renderer and its detail');
+      await page.unroute('**/api/renderer');
+      // The final pass (D108): the Owner's choice beside the detail, and in plain words what it draws at now
+      assert.strictEqual(await page.$eval('#renderfinal', (s) => s.value), 'auto');
+      assert.deepStrictEqual(await page.$$eval('#renderfinal option', (os) => os.map((o) => o.value)), ['auto', 'full', '720']);
+      assert.strictEqual(await page.$('#renderfinalnow'), null, 'classic draws: no word about a final pass');
+      let answer = Object.assign({}, now, { final: 'auto', final_now: { final: 720, why: 'the box was busy: 21 in 100 frames came late with a load of 5' } });
+      await page.route('**/api/renderer', (route) => {
+        if (route.request().method() !== 'POST') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(answer) });
+        sent = JSON.parse(route.request().postData());
+        answer = Object.assign({}, now, { final: sent.final, final_now: { final: 'full', why: 'the display\'s primary plane was not found' } });     // a later look says the same
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(answer) });
+      });
+      await page.selectOption('#renderfinal', '720');
+      // the look 6 s after the Use this above redraws the card with its answer of 'auto': the choice not applied yet stays
+      await page.waitForResponse((res) => res.url().endsWith('/api/renderer') && res.request().method() === 'GET', { timeout: 7000 }).catch(() => {});
+      await page.waitForTimeout(100);
+      assert.strictEqual(await page.$eval('#renderfinal', (s) => s.value), '720', 'a redraw keeps a choice not applied yet');
+      await page.click('#renderapply');
+      await page.waitForSelector('#confirmrow:has-text("The player restarts")');
+      await page.click('#confirmyes');
+      await page.waitForSelector('#renderfinalnow:has-text("primary plane")');      // the answer to Use this: the line is there before it, from the look
+      assert.strictEqual(sent.final, 720, 'a number goes as a number');
+      assert.strictEqual(await page.textContent('#renderfinalnow'), 'Final picture now: the screen\'s own size: the display\'s primary plane was not found.');
       await page.unroute('**/api/renderer');
     }
     await onPage('Screen output');

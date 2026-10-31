@@ -8,8 +8,9 @@ that talks to the player changes: the switch is which program the player's servi
 Who does what, as for the screen's mode (pvj/screenmode.py, D90):
 
 * The panel owns the setting (`renderer` in the settings: {"use": "classic"|"new", "detail": "auto"|540|720|"output"},
-  and since D101 an optional "sources": 1 to 8, read with defaults, no schema change; no key is this board's own
-  number). The player may not read settings.json, so the panel writes the wish alone to
+  since D101 an optional "sources": 1 to 8, and since D108 an optional "final": "full"|720, read with defaults, no
+  schema change; no key is this board's own number and Automatic). The player may not read settings.json, so the
+  panel writes the wish alone to
   WANTED in the state folder, at its start and on a change, and restarts the player for a change (`Renderer`).
 * The player's service (`pvj-player serve`, the display's account) reads WANTED just before it would become mpv. With
   "new" it stays a small supervisor instead (`serve`): it starts pvj-render with the screen's arguments that
@@ -22,6 +23,9 @@ Who does what, as for the screen's mode (pvj/screenmode.py, D90):
   ended to REPORT (the page shows it), and ends the service, which systemd starts again with the new wish. The
   panel's own quit on the socket is only the polite half: on the first Pi run a jammed pvj-render never heard it,
   and the box stayed on the new renderer until the service was restarted by hand (2026-10-18).
+* The final pass may draw at 720 lines and let the display's scaler bring it to the output (D108). `final` is the
+  setting: "full" is pvj-render as it always was; 720 is always on; "auto" allows it on a Pi 3 or 4, and the
+  supervisor, which looks at pvj-render's counters at every WATCH_SECONDS anyway, applies `final_rule`.
 """
 
 import os
@@ -43,6 +47,8 @@ STOP_SECONDS = 5.0                      # systemd's stop: this long for pvj-rend
 QUIT_SECONDS = 2.0                      # a switch: this long for pvj-render to end when asked on its socket, then SIGTERM
 TERM_SECONDS = 3.0                      # ... and this long after SIGTERM, then SIGKILL
 WATCH_SECONDS = 0.5                     # how often the supervisor reads WANTED while pvj-render draws
+FINAL_POLL_SECONDS = 0.2                # the final pass's look at pvj-render: a jammed one must not hold up the watch (D108)
+FINAL_ASK_SECONDS = 1.0                 # ... and a change of it, asked only of a pvj-render that has just answered
 SMALL_BOARDS = ("pi3", "pi4")           # where Automatic draws 540 lines inside (the spike of 2026-10-16, D95)
 # Sources (D101): clip layers beside the player's own picture, which the mapping shows per surface. A board takes at
 # most its cap, and without a choice gets its default. Measured on the owner's Pi 4 (2026-10-20), software H.264
@@ -52,9 +58,53 @@ SMALL_BOARDS = ("pi3", "pi4")           # where Automatic draws 540 lines inside
 # to a source while two others play. A Pi 3 (not measured, about half a Pi 4) has 2. Other boards: 4 by default, 8
 # at most (the renderer's own bound).
 SOURCES_MAX = 8
+FINALS = ("auto", "full", 720)          # the final pass (D108): Automatic, always the output's size, always 720 lines
 SOURCE_CAP = {"pi3": 2, "pi4": 4}
 SOURCE_DEFAULT = {"pi3": 2, "pi4": 4}
 SOURCES_OTHER = 4
+
+
+# Automatic for the final pass (D108): 720 lines when the box is busy, the output's size while it has room, because
+# the scaler costs something on the screen (mapped edges and renderer text a little softer, thin lines in a squeezed
+# mapped area can break into dashes). Busy is more than BUSY_SHARE of the vblanks missed over BUSY_SECONDS. It goes back
+# only when the load has become lighter than it was at the switch and has stayed so for LIGHTER_SECONDS, and at least
+# HOLD_SECONDS after the switch down: so it never needs a trial at full size to know, and a load that stays as it
+# was stays at 720 for good, which is what stops it flapping.
+BUSY_SHARE = 0.05
+BUSY_SECONDS = 2.0
+LIGHTER_SECONDS = 5.0
+HOLD_SECONDS = 30.0
+
+
+def final_rule(state, now, missed, load, hz):
+    """One look at the box: what the final pass should draw at. `state` is what the last look returned, {"final":
+    "full"} at the start; `now` seconds on any clock, `missed` pvj-render's vblanks missed so far, `load` the number of
+    things it draws now (sources that play, their programs, the mapping), `hz` the output's rate. Returns the next
+    state, whose "final" is "full" or 720 and whose "why" says why in words. Asks nothing and changes nothing, so
+    a test can drive it with made-up numbers."""
+    state = dict(state)
+    if state.get("t0") is None or missed < state["m0"]:
+        state.update(t0=now, m0=missed)
+    if state["final"] == "full":
+        seconds = now - state["t0"]
+        if seconds < BUSY_SECONDS:
+            return state
+        share = (missed - state["m0"]) / (seconds * hz) if hz > 0 else 0.0
+        state.update(t0=now, m0=missed)
+        # With nothing drawn there is nothing to lighten: a stall of the box is no reason, and "lighter than nothing"
+        # could never bring it back.
+        if share > BUSY_SHARE and load > 0:
+            state.update(final=720, since=now, load=load, lighter=None,
+                         why="the box was busy: %d in 100 frames came late with a load of %d" % (round(share * 100), load))
+        return state
+    if load >= state["load"]:
+        state["lighter"] = None
+        return state
+    if state.get("lighter") is None:
+        state["lighter"] = now
+    if now - state["lighter"] >= LIGHTER_SECONDS and now - state["since"] >= HOLD_SECONDS:
+        state.update(final="full", t0=now, m0=missed, why="")
+    return state
 
 
 def source_cap(board_kind):
@@ -101,7 +151,7 @@ def source_warning(rows, target, board_kind):
 def clean(data):
     """{"use", "detail"} from a settings section or the wanted file; anything else is the default. "sources" (D101)
     only when it is a number from 1 to SOURCES_MAX: no key is the board's own number, so a file without it is as
-    before."""
+    before. "final" (D108) the same way, only when it is "full" or 720."""
     data = data if isinstance(data, dict) else {}
     use = data.get("use") if data.get("use") in USES else DEFAULT["use"]
     detail = data.get("detail")
@@ -111,6 +161,9 @@ def clean(data):
     n = data.get("sources")
     if isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= SOURCES_MAX:
         out["sources"] = n
+    final = data.get("final")
+    if final == "full" or (final == 720 and isinstance(final, int) and not isinstance(final, bool)):
+        out["final"] = final                # no key is Automatic: a file without it is as before (D108)
     return out
 
 
@@ -125,15 +178,26 @@ def detail_arg(detail, board_kind):
     return "--detail=%s" % detail
 
 
-def command(socket_path, screen_args, detail, board_kind, env=None, sources=None):
+def final_arg(final, board_kind):
+    """--final for pvj-render (D108), or None: without it pvj-render flips as it always has. Automatic is allowed on
+    a Pi 3 or 4 only; elsewhere the GPU has the room, so it is off."""
+    if final == 720:
+        return "--final=720"
+    return "--final=auto" if final == "auto" and board_kind in SMALL_BOARDS else None
+
+
+def command(socket_path, screen_args, detail, board_kind, env=None, sources=None, final=None):
     """pvj-render's argv: the socket, the screen's arguments as screenmode chose them for mpv, the detail, mpv's
-    cheap scalers on a Pi (as classic's --profile=fast), and the number of sources (D101)."""
+    cheap scalers on a Pi (as classic's --profile=fast), the number of sources (D101) and the final pass (D108)."""
     args = [binary(env), "--socket=" + socket_path]
     args += [a for a in screen_args if a.startswith(("--drm-device=", "--drm-connector=", "--drm-mode="))]
     args.append(detail_arg(detail, board_kind))
     if board_kind in SMALL_BOARDS:
         args.append("--fast")
     args.append("--sources=%d" % sources_for(board_kind, sources))
+    extra = final_arg(final, board_kind)
+    if extra:
+        args.append(extra)
     return args
 
 
@@ -165,9 +229,15 @@ class Supervisor:
     the process (SystemExit) when pvj-render was asked to quit or systemd stops the service."""
 
     def __init__(self, cmd, socket_path, rundir, detail, log=print, spawn=None, clock=time.monotonic, sleep=time.sleep,
-                 ready=None, start_seconds=START_SECONDS, healthy_seconds=HEALTHY_SECONDS, wanted=None, sources=None):
+                 ready=None, start_seconds=START_SECONDS, healthy_seconds=HEALTHY_SECONDS, wanted=None, sources=None,
+                 final=None):
         self.cmd, self.socket_path, self.rundir, self.detail = list(cmd), socket_path, rundir, detail
         self.sources = sources              # the Owner's number of sources this run was started with (None: the board's)
+        self.final = final                  # the final pass this run was started with: "full" or 720 (None: Automatic)
+        self.final_rule = None              # final_rule's state, while it decides for this run
+        self.final_watch = False            # pvj-render was started with --final and has not said it cannot
+        self.final_now = ("full", "")       # what the report says: what the final pass draws at, and why
+        self.final_ipc = None
         self.log, self.clock, self.sleep = log, clock, sleep
         self.spawn = spawn or (lambda argv: subprocess.Popen(argv, stdin=subprocess.DEVNULL, close_fds=True))
         self.ready = ready or self._ready
@@ -209,6 +279,8 @@ class Supervisor:
         mine = {"use": "new", "detail": self.detail}
         if self.sources is not None:
             mine["sources"] = self.sources
+        if self.final is not None:
+            mine["final"] = self.final
         return wish if wish != mine else None
 
     def _ask_quit(self):
@@ -261,7 +333,56 @@ class Supervisor:
                 pass
 
     def _report(self, drawing, why):
-        write_report(self.rundir, {"chosen": "new", "drawing": drawing, "why": why, "detail": self.detail}, self.log)
+        write_report(self.rundir, {"chosen": "new", "drawing": drawing, "why": why, "detail": self.detail,
+                                   "final": self.final_now[0], "final_why": self.final_now[1]}, self.log)
+
+    def _final_begin(self):
+        """pvj-render is up: the final pass starts at the output's size, whatever the last run came to."""
+        from .player import Ipc
+        self.final_now = ("full", "")
+        self.final_watch = any(a.startswith("--final=") for a in self.cmd)
+        self.final_rule = {"final": "full"} if "--final=auto" in self.cmd else None
+        self.final_ipc = Ipc(self.socket_path, timeout=FINAL_POLL_SECONDS)
+
+    def _final_say(self, final, why):
+        if (final, why) != self.final_now:
+            self.final_now = (final, why)
+            self._report("new", "")
+
+    def _final_tick(self):
+        """A look at pvj-render's counters while it draws (D108): under Automatic the rule's word goes to pvj-render,
+        and the report says what the final pass draws at and why. A pvj-render that does not answer is looked at
+        again next time: it is not this watch's business."""
+        if not self.final_watch:
+            return
+        from .player import PlayerError
+        try:
+            state = self.final_ipc.request("get_property", "pvj-render")
+        except PlayerError:
+            return
+        if not isinstance(state, dict):
+            return
+        refused = state.get("final-why")
+        if refused:
+            self.final_watch = False            # said once by pvj-render, and it stays at the output's size
+            self._final_say("full", refused if isinstance(refused, str) else "")
+            return
+        words = ""
+        if self.final_rule is not None:
+            before = self.final_rule["final"]
+            self.final_rule = final_rule(self.final_rule, self.clock(), state.get("missed-vblanks") or 0, state.get("load") or 0,
+                                         state.get("output-fps") or 60.0)
+            words = self.final_rule.get("why", "")
+            if self.final_rule["final"] != before:
+                self.log("pvj-player: renderer: the final pass goes to %s (%s)" % (self.final_rule["final"], words or "the load is lighter"))
+                try:
+                    self.final_ipc.request("pvj-final", self.final_rule["final"], wait=FINAL_ASK_SECONDS)
+                except PlayerError as e:
+                    self.log("pvj-player: renderer: the final pass stays as it is (%s)" % e)
+                    self.final_rule, self.final_watch = None, False
+                    self._final_say("full", "pvj-render did not take the change")
+                    return
+        self._final_say(720 if state.get("final-lines") == 720 else "full", words)
 
     def run(self):
         ends = 0
@@ -291,6 +412,7 @@ class Supervisor:
                 self._end()
                 return ("pvj-render did not start (exit %s)" % code) if code is not None else \
                     "pvj-render did not answer within %d seconds" % self.start_seconds
+            self._final_begin()
             self._report("new", "")
             self.log("pvj-player: renderer: pvj-render is drawing (pid %d)" % self.proc.pid)
             while True:
@@ -310,6 +432,7 @@ class Supervisor:
                 if wish is not None:
                     self._switch(wish)
                     raise SystemExit(0)         # systemd starts the service again, which reads the new wish
+                self._final_tick()
             if self.stopping:
                 raise SystemExit(0)
             if code == 0:
@@ -327,9 +450,10 @@ def serve(player, screen_args, detail, log, env=None):
     """Run pvj-render under a Supervisor in this process. Returns the reason to fall back to classic mpv; never
     returns while pvj-render draws."""
     board = hardware.detect_board().get("kind", "")
-    sources = clean(screenmode.read_json(wanted_path(env))).get("sources")
-    sup = Supervisor(command(player.socket_path, screen_args, detail, board, env, sources), player.socket_path, player.rundir, detail,
-                     log=log, wanted=wanted_path(env), sources=sources)
+    wish = clean(screenmode.read_json(wanted_path(env)))
+    sources, final = wish.get("sources"), wish.get("final")
+    sup = Supervisor(command(player.socket_path, screen_args, detail, board, env, sources, final or "auto"), player.socket_path, player.rundir,
+                     detail, log=log, wanted=wanted_path(env), sources=sources, final=final)
     signal.signal(signal.SIGTERM, sup._stop)
     signal.signal(signal.SIGINT, sup._stop)
     try:
@@ -360,6 +484,8 @@ def clean_report(data):
             "why": screenmode._WHY.sub("", data["why"])[:REPORT_WORDS] if isinstance(data.get("why"), str) else "",
             "switched": screenmode._WHY.sub("", data["switched"])[:REPORT_WORDS] if isinstance(data.get("switched"), str) else "",
             "detail": clean({"detail": data.get("detail")})["detail"],
+            "final": clean({"final": data.get("final")}).get("final"),
+            "final_why": screenmode._WHY.sub("", data["final_why"])[:REPORT_WORDS] if isinstance(data.get("final_why"), str) else "",
             "pid": pid if isinstance(pid, int) and not isinstance(pid, bool) else None,
             "boot": screenmode._WHY.sub("", data["boot"])[:64] if isinstance(data.get("boot"), str) else "",
             "at": data.get("at") if isinstance(data.get("at"), int) and not isinstance(data.get("at"), bool) else None}
@@ -453,10 +579,13 @@ class Renderer:
         saved = self.saved()
         drawing, why = self.drawing()
         out = {"use": saved["use"], "detail": saved["detail"], "drawing": drawing, "available": available(self.env),
-               "uses": list(USES), "details": list(DETAILS), "sources": self.sources()}
+               "uses": list(USES), "details": list(DETAILS), "sources": self.sources(),
+               "final": saved.get("final", "auto"), "finals": list(FINALS)}
         if saved["use"] == "new" and drawing == "classic":
             out["why"] = why or "the player has not started pvj-render yet"
         rep = self.report()
+        if rep and drawing == "new" and rep["final"]:
+            out["final_now"] = {"final": rep["final"], "why": rep["final_why"]}      # what the final pass draws at now (D108)
         if rep and rep["switched"]:
             # how the player ended pvj-render at the last change of the wish (Supervisor._switch)
             out["switched"], out["switched_at"] = rep["switched"], rep["at"]
@@ -466,14 +595,18 @@ class Renderer:
         s = self.state()
         return {"use": s["use"], "drawing": s["drawing"], "why": s.get("why", "")}
 
-    def choose(self, use, detail=None, sources=None):
+    def choose(self, use, detail=None, sources=None, final=None):
         """`sources` (D101): None keeps the number as it is, "auto" is the board's own, 1 to the board's cap a
-        number of the Owner's."""
+        number of the Owner's. `final` (D108): None keeps it as it is, else one of FINALS."""
         if use not in USES:
             raise RendererError(400, "use must be classic or new")
         detail = self.saved()["detail"] if detail is None else detail
         if isinstance(detail, bool) or detail not in DETAILS:
             raise RendererError(400, "detail must be auto, 540, 720 or output")
+        if final is None:
+            final = self.saved().get("final", "auto")
+        if isinstance(final, bool) or final not in FINALS or isinstance(final, float):
+            raise RendererError(400, "final must be auto, full or 720")
         cap = source_cap(self.board())
         if sources is None:
             sources = self.saved().get("sources")
@@ -488,6 +621,8 @@ class Renderer:
             self.settings.data["renderer"] = {"use": use, "detail": detail}
             if sources is not None:
                 self.settings.data["renderer"]["sources"] = sources
+            if final != "auto":
+                self.settings.data["renderer"]["final"] = final
             self.settings.save()
         try:
             self._write()

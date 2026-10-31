@@ -104,12 +104,205 @@ class Base(unittest.TestCase):
         return renderer.clean_report(screenmode.read_json(os.path.join(self.dir, renderer.REPORT)))
 
 
+class FinalRuleTest(unittest.TestCase):
+    """Automatic for the final pass (D108): the rule alone, driven with made-up numbers."""
+    HZ = 60.0
+
+    def run_rule(self, steps, state=None, start=0.0, step=0.5):
+        """steps: (seconds, missed a second, load). Returns (the state, [(when, final)] at each change)."""
+        st, now, missed, seen = state or {"final": "full"}, start, 0.0, []
+        for seconds, rate, load in steps:
+            for _ in range(int(round(seconds / step))):
+                before = st["final"]
+                st = renderer.final_rule(st, now, int(missed), load, self.HZ)
+                if st["final"] != before:
+                    seen.append((now, st["final"]))
+                now += step
+                missed += rate * step
+        return st, seen
+
+    def test_a_box_with_room_stays_at_full_size(self):
+        st, seen = self.run_rule([(120, 0, 5), (120, 2.9, 5)])       # just under 5 in 100 for two minutes
+        self.assertEqual((st["final"], seen), ("full", []))
+
+    def test_more_than_5_in_100_missed_over_2_seconds_goes_to_720(self):
+        st, seen = self.run_rule([(10, 0, 5), (10, 12.9, 5)])
+        self.assertEqual(seen[0][1], 720)
+        self.assertLessEqual(seen[0][0] - 10, renderer.BUSY_SECONDS + 2.0, "within a window or two")
+        self.assertIn("the box was busy", st["why"])
+        self.assertEqual(st["load"], 5)
+
+    def test_one_stall_under_the_share_is_not_busy(self):
+        # 5 vblanks in one instant: 4 in 100 of a 2 s window
+        st = {"final": "full"}
+        st = renderer.final_rule(st, 0.0, 0, 3, self.HZ)
+        st = renderer.final_rule(st, 2.0, 5, 3, self.HZ)
+        self.assertEqual(st["final"], "full")
+
+    def test_nothing_drawn_is_never_busy(self):
+        st, seen = self.run_rule([(30, 30, 0)])
+        self.assertEqual((st["final"], seen), ("full", []))
+
+    def test_the_same_load_holds_720_however_clean_it_runs(self):
+        st, seen = self.run_rule([(5, 13, 5), (600, 0, 5)])
+        self.assertEqual((st["final"], len(seen)), (720, 1), "no trial at full size, no flap")
+
+    def test_a_heavier_load_holds_720(self):
+        st, seen = self.run_rule([(5, 13, 3), (120, 0, 4)])
+        self.assertEqual((st["final"], len(seen)), (720, 1))
+
+    def test_a_lighter_load_goes_back_after_5_seconds_and_at_least_30_after_the_switch(self):
+        st, seen = self.run_rule([(5, 13, 5), (40, 0, 4)])
+        down, up = seen
+        self.assertEqual((down[1], up[1]), (720, "full"))
+        self.assertGreaterEqual(up[0] - down[0], renderer.HOLD_SECONDS)
+        self.assertLess(up[0] - down[0], renderer.HOLD_SECONDS + 1.5, "the hold was the longer of the two")
+        # lighter long after the switch: the 5 seconds decide
+        st, seen = self.run_rule([(5, 13, 5), (60, 0, 5), (20, 0, 4)])
+        self.assertEqual(seen[1][1], "full")
+        self.assertAlmostEqual(seen[1][0], 65 + renderer.LIGHTER_SECONDS, delta=0.6)
+
+    def test_a_load_that_comes_back_starts_the_5_seconds_again(self):
+        st, seen = self.run_rule([(40, 13, 5), (4, 0, 4), (2, 0, 5), (4, 0, 4)])
+        self.assertEqual((st["final"], len(seen)), (720, 1))
+        st, seen = self.run_rule([(1, 0, 4)] * 3, state=st, start=100.0)
+        self.assertEqual((st["final"], seen[-1][1] if seen else None), ("full", "full"))
+
+    def test_it_cannot_flap_on_a_load_that_stays(self):
+        # busy at 5, lighter at 4 and still busy there, lighter at 3: every way back needs a load lighter than the last
+        st, seen = self.run_rule([(5, 13, 5), (40, 13, 4), (40, 13, 4), (300, 13, 4)])
+        self.assertEqual([f for _, f in seen], [720, "full", 720], "down, back once for the lighter load, and down to stay")
+        self.assertEqual((st["final"], st["load"]), (720, 4))
+
+    def test_the_counter_starting_again_is_no_jump(self):
+        st = {"final": "full"}
+        st = renderer.final_rule(st, 0.0, 900, 5, self.HZ)
+        st = renderer.final_rule(st, 3.0, 0, 5, self.HZ)
+        self.assertEqual(st["final"], "full")
+
+    def test_the_rule_changes_only_what_it_returns(self):
+        st = {"final": "full", "t0": 0.0, "m0": 0}
+        renderer.final_rule(st, 3.0, 100, 5, self.HZ)
+        self.assertEqual(st, {"final": "full", "t0": 0.0, "m0": 0})
+
+
+class FakeRender:
+    """What the supervisor's watch asks of pvj-render: its counters, and pvj-final."""
+
+    def __init__(self):
+        self.state = {"missed-vblanks": 0, "load": 5, "output-fps": 60.0, "final-lines": 0, "final-why": ""}
+        self.asked, self.refuse, self.down = [], False, False
+
+    def request(self, *command, wait=None):
+        if self.down:
+            raise PlayerError("no reply from mpv")
+        if command[0] == "pvj-final":
+            if self.refuse:
+                raise PlayerError("mpv: invalid parameter")
+            self.asked.append(command[1])
+            self.state["final-lines"] = 720 if command[1] == 720 else 0
+            return None
+        return dict(self.state)
+
+
+class FinalWatchTest(Base):
+    def watched(self, cmd_final="--final=auto"):
+        now = [0.0]
+        sup = renderer.Supervisor(["pvj-render", cmd_final], self.sock, self.dir, "auto", log=self.lines.append, clock=lambda: now[0])
+        sup._final_begin()
+        fake = sup.final_ipc = FakeRender()
+        return sup, fake, now
+
+    def tick(self, sup, fake, now, seconds, rate=0.0):
+        for _ in range(int(seconds * 2)):
+            now[0] += 0.5
+            fake.state["missed-vblanks"] += int(rate / 2)
+            sup._final_tick()
+
+    def test_busy_then_lighter_tells_the_renderer_and_the_report(self):
+        sup, fake, now = self.watched()
+        self.tick(sup, fake, now, 6, 14)
+        self.assertEqual(fake.asked, [720])
+        self.tick(sup, fake, now, 1)
+        rep = self.report()
+        self.assertEqual(rep["final"], 720)
+        self.assertIn("the box was busy", rep["final_why"])
+        fake.state["load"] = 4
+        self.tick(sup, fake, now, 40)
+        self.assertEqual(fake.asked, [720, "full"])
+        self.assertEqual((self.report()["final"], self.report()["final_why"]), ("full", ""))
+
+    def test_a_refusal_at_the_start_is_said_and_the_watch_ends(self):
+        sup, fake, now = self.watched()
+        fake.state["final-why"] = "the display's primary plane was not found"
+        self.tick(sup, fake, now, 10, 30)
+        self.assertEqual(fake.asked, [])
+        self.assertFalse(sup.final_watch)
+        rep = self.report()
+        self.assertEqual((rep["final"], rep["final_why"]), ("full", "the display's primary plane was not found"))
+
+    def test_a_refused_switch_stays_full_and_says_so(self):
+        sup, fake, now = self.watched()
+        fake.refuse = True
+        self.tick(sup, fake, now, 10, 30)
+        self.assertFalse(sup.final_watch)
+        self.assertEqual(self.report()["final_why"], "pvj-render did not take the change")
+
+    def test_the_poll_is_short_so_a_jammed_renderer_holds_nothing_up(self):
+        sup = renderer.Supervisor(["pvj-render", "--final=auto"], self.sock, self.dir, "auto")
+        sup._final_begin()
+        self.assertEqual(sup.final_ipc.timeout, 0.2)
+        asked = []
+        fake = FakeRender()
+        fake.request = lambda *c, wait=None: (asked.append((c[0], wait)), {"missed-vblanks": 900, "load": 5, "output-fps": 60.0, "final-lines": 0, "final-why": ""})[1]
+        sup.final_ipc, sup.clock = fake, lambda: 10.0
+        sup.final_rule = {"final": "full", "t0": 0.0, "m0": 0}
+        sup._final_tick()
+        self.assertEqual(asked, [("get_property", None), ("pvj-final", renderer.FINAL_ASK_SECONDS)])
+
+    def test_a_silent_renderer_is_not_this_watchs_business(self):
+        sup, fake, now = self.watched()
+        fake.down = True
+        self.tick(sup, fake, now, 10)
+        self.assertTrue(sup.final_watch)
+
+    def test_720_chosen_only_reports(self):
+        sup, fake, now = self.watched("--final=720")
+        fake.state["final-lines"] = 720
+        self.tick(sup, fake, now, 40, 30)
+        self.assertEqual(fake.asked, [])
+        self.assertEqual((self.report()["final"], self.report()["final_why"]), (720, ""))
+
+    def test_full_chosen_has_no_watch(self):
+        cmd = renderer.command(self.sock, [], "auto", "pi4", self.env, None, "full")
+        self.assertFalse(any(a.startswith("--final") for a in cmd))
+        sup = renderer.Supervisor(cmd, self.sock, self.dir, "auto", final="full")
+        sup._final_begin()
+        self.assertFalse(sup.final_watch)
+        sup._final_tick()               # asks nothing: the socket does not exist here
+
+
 class ChoiceTest(Base):
     def test_the_setting_is_cleaned(self):
         self.assertEqual(renderer.clean(None), {"use": "classic", "detail": "auto"})
         self.assertEqual(renderer.clean({"use": "new", "detail": 720}), {"use": "new", "detail": 720})
         for bad in ({"use": "NEW"}, {"use": True}, {"detail": True}, {"detail": 1080}, {"detail": "540"}, [], "new"):
             self.assertEqual(renderer.clean(bad), renderer.DEFAULT, bad)
+
+    def test_the_final_setting_is_cleaned(self):
+        self.assertEqual(renderer.clean({"final": "full"}), dict(renderer.DEFAULT, final="full"))
+        self.assertEqual(renderer.clean({"final": 720}), dict(renderer.DEFAULT, final=720))
+        for bad in ("auto", 720.0, "720", True, 1, 540, None, ["full"]):
+            self.assertEqual(renderer.clean({"final": bad}), renderer.DEFAULT, bad)
+
+    def test_the_final_argument(self):
+        screen = ["--drm-mode=1920x1080@60.00"]
+        for board, final, want in (("pi4", "auto", "--final=auto"), ("pi3", "auto", "--final=auto"), ("pi5", "auto", None), ("x86", "auto", None),
+                                   ("pi4", 720, "--final=720"), ("pi5", 720, "--final=720"), ("x86", 720, "--final=720"),
+                                   ("pi4", "full", None), ("x86", "full", None), ("pi4", None, None)):
+            self.assertEqual(renderer.final_arg(final, board), want, (board, final))
+            cmd = renderer.command("/run/s", screen, "auto", board, self.env, None, final)
+            self.assertEqual([a for a in cmd if a.startswith("--final")], [want] if want else [], (board, final))
 
     def test_the_arguments_are_the_screens_and_the_detail(self):
         screen = ["--drm-device=/dev/dri/card1", "--drm-connector=HDMI-A-1", "--drm-mode=1920x1080@60.00"]
@@ -296,6 +489,18 @@ class SwitchTest(Base):
         rep = self.report()
         self.assertEqual((rep["chosen"], rep["detail"]), ("new", 720))
 
+    def test_the_final_pass_this_run_has_is_no_change(self):
+        wanted = os.path.join(self.dir, "wanted.json")
+        sup = renderer.Supervisor(["x"], self.sock, self.dir, "auto", wanted=wanted, final=720)
+        screenmode.write_json(wanted, {"use": "new", "detail": "auto", "final": 720})
+        self.assertIsNone(sup._wish_changed())
+        screenmode.write_json(wanted, {"use": "new", "detail": "auto"})
+        self.assertEqual(sup._wish_changed(), {"use": "new", "detail": "auto"})
+
+    def test_another_final_pass_is_a_change_too(self):
+        done, sup, took = self.run_switch("ok", {"use": "new", "detail": "auto", "final": 720})
+        self.assertEqual(done, {"exit": 0})
+
     def test_the_same_wish_or_none_changes_nothing(self):
         for wanted in (None, os.path.join(self.dir, "missing.json")):
             sup = self.supervisor("quit-after:1.5", wanted=wanted)
@@ -344,7 +549,7 @@ class ServeTest(Base):
         self.assertIn("--drm-mode=1920x1080@60.00", args)
         self.assertEqual((rep["chosen"], rep["drawing"]), ("new", "classic"))
         self.assertEqual(rep["why"], "pvj-render did not start (exit 2)")
-        self.assertEqual(self.runs()[0][-4:], ["--drm-mode=1920x1080@60.00", "--detail=540", "--fast", "--sources=4"])
+        self.assertEqual(self.runs()[0][-4:], ["--detail=540", "--fast", "--sources=4", "--final=auto"])
 
     def test_a_killed_renderers_socket_is_gone_before_classic_mpv_starts(self):
         # the opener takes whatever is at the name for mpv's socket: an old file left there would be opened instead of
@@ -382,6 +587,13 @@ class ReportTest(Base):
         self.assertEqual((r["chosen"], r["drawing"], r["detail"], r["pid"], r["at"], r["boot"]), (None, None, "auto", None, None, ""))
         self.assertNotIn("<", r["why"])
         self.assertLessEqual(len(r["why"]), renderer.REPORT_WORDS)
+
+    def test_the_final_pass_in_the_report_is_untrusted_data_too(self):
+        r = renderer.clean_report({"chosen": "new", "drawing": "new", "final": "huge", "final_why": "<b>x" + "y" * 500})
+        self.assertEqual(r["final"], None)
+        self.assertEqual((r["final_why"][:1], len(r["final_why"])), ("b", renderer.REPORT_WORDS))
+        self.assertEqual(renderer.clean_report({"final": 720, "final_why": 3}).get("final_why"), "")
+        self.assertEqual(renderer.clean_report({"final": 720})["final"], 720)
 
     def test_a_link_or_a_pipe_at_the_reports_name_is_no_report(self):
         api = mock.Mock()
@@ -437,6 +649,43 @@ class PanelTest(CareBase):
         self.assertEqual(stat.S_IMODE(os.stat(self.api.renderer.wanted_file).st_mode), 0o640)
         st, body = self.r("POST", "/api/renderer", {"use": "classic"})
         self.assertEqual((st, body["use"], body["detail"], len(self.quits)), (200, "classic", 720, 2))
+
+    def test_the_final_pass_is_saved_beside_the_detail_and_a_change_restarts_the_player(self):
+        st, body = self.r("GET", "/api/renderer")
+        self.assertEqual((body["final"], body["finals"]), ("auto", ["auto", "full", 720]))
+        self.assertNotIn("final_now", body)
+        self.r("POST", "/api/renderer", {"use": "new", "detail": 540})
+        self.assertEqual(self.settings.data["renderer"], {"use": "new", "detail": 540}, "Automatic is no key: a file as before")
+        quits = len(self.quits)
+        st, body = self.r("POST", "/api/renderer", {"use": "new", "final": 720})
+        self.assertEqual((st, body["final"], body["detail"]), (200, 720, 540), body)
+        self.assertEqual(self.settings.data["renderer"], {"use": "new", "detail": 540, "final": 720})
+        self.assertEqual(screenmode.read_json(self.api.renderer.wanted_file), {"use": "new", "detail": 540, "final": 720})
+        self.assertEqual(len(self.quits), quits + 1)
+        st, body = self.r("POST", "/api/renderer", {"use": "new", "detail": 720})
+        self.assertEqual(body["final"], 720, "leaving it out keeps it")
+        st, body = self.r("POST", "/api/renderer", {"use": "new", "final": "full"})
+        self.assertEqual(self.settings.data["renderer"]["final"], "full")
+        st, body = self.r("POST", "/api/renderer", {"use": "new", "final": "auto"})
+        self.assertNotIn("final", self.settings.data["renderer"])
+
+    def test_a_bad_final_pass_is_refused_and_nothing_changes(self):
+        before = dict(self.settings.data.get("renderer") or {})
+        for bad in (540, "720", True, 720.0, "yes", [720]):
+            st, body = self.r("POST", "/api/renderer", {"use": "new", "final": bad})
+            self.assertEqual(st, 400, bad)
+        self.assertEqual(dict(self.settings.data.get("renderer") or {}), before)
+
+    def test_the_page_says_what_the_final_pass_draws_at_and_why(self):
+        self.r("POST", "/api/renderer", {"use": "new", "detail": "auto"})
+        os.makedirs(os.path.dirname(self.api.renderer.report_file), exist_ok=True)
+        pid = 4321
+        self.api.player.ipc = mock.Mock(request=mock.Mock(return_value=pid))
+        screenmode.write_json(self.api.renderer.report_file, {"chosen": "new", "drawing": "new", "why": "", "detail": "auto", "pid": os.getpid(),
+                                                              "final": 720, "final_why": "the box was busy: 21 in 100 frames came late with a load of 5"})
+        with mock.patch.object(self.api.renderer, "_same_run", return_value=True):
+            st, body = self.r("GET", "/api/renderer")
+        self.assertEqual(body["final_now"], {"final": 720, "why": "the box was busy: 21 in 100 frames came late with a load of 5"})
 
     def test_choosing_new_again_after_a_fall_back_tries_pvj_render_again(self):
         self.r("POST", "/api/renderer", {"use": "new", "detail": 720})
@@ -509,6 +758,15 @@ class PanelTest(CareBase):
                               {"chosen": "new", "drawing": "classic", "why": "old", "detail": "auto"})
         with mock.patch.object(self.api.player.ipc, "request", lambda *a: 999999):
             self.assertEqual(self.api.renderer.drawing(), ("classic", ""))
+
+    def test_not_exported_and_an_import_leaves_the_final_pass(self):
+        self.settings.data["renderer"] = {"use": "new", "detail": 540, "final": 720}
+        file = self.export()
+        self.assertNotIn("renderer", file["settings"])
+        file["settings"]["renderer"] = {"use": "new", "detail": 540, "final": "full"}
+        st, out = self.send(file)
+        self.assertEqual(st, 200, out)
+        self.assertEqual(self.settings.data["renderer"]["final"], 720)
 
     def test_not_exported_and_an_import_leaves_it(self):
         self.settings.data["renderer"] = {"use": "new", "detail": 540}

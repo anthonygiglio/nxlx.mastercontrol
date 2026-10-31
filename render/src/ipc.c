@@ -879,12 +879,15 @@ static int shot_write(const char *path, const unsigned char *rgba, int w, int h,
     return r;
 }
 
+// The third word "pvj-screen" asks for the whole final picture at the screen's size, program or no program: libmpv's own
+// window is the inside size and has no mapping in it, and a transition's still must be the screen (pvj/transitions.py).
 static int native_screenshot(int fd, const mpv_node *id, const char *path, const char *kind)
 {
     pthread_mutex_lock(&app.lock);
     int on = app.native[0];
     pthread_mutex_unlock(&app.lock);
-    if (!on) return 0;
+    int screen = !strcmp(kind, "pvj-screen");
+    if (!on && !screen) return 0;
     size_t n = strlen(path);
     int jpeg = (n > 4 && !strcasecmp(path + n - 4, ".jpg")) || (n > 5 && !strcasecmp(path + n - 5, ".jpeg"));
     int png = n > 4 && !strcasecmp(path + n - 4, ".png");
@@ -893,7 +896,7 @@ static int native_screenshot(int fd, const mpv_node *id, const char *path, const
     if (mpv_get_property(front_handle(), "screenshot-jpeg-quality", MPV_FORMAT_INT64, &q) < 0) q = 90;
     pthread_mutex_lock(&shot_lock);
     pthread_mutex_lock(&app.lock);
-    app.shot.kind = strcmp(kind, "video") != 0;
+    app.shot.kind = screen ? 2 : strcmp(kind, "video") != 0;
     shot_want = ++app.shot.serial;
     pthread_mutex_unlock(&app.lock);
     wake_render();
@@ -992,6 +995,14 @@ static void get_property(int fd, const mpv_node *id, const char *name)
         int phase = app.fade.phase, front = app.front;
         double progress = app.fade.progress, seconds = app.fade.seconds;
         int back_idle = __atomic_load_n(&app.idle[1 - front], __ATOMIC_ACQUIRE);      // nothing loaded: it costs nothing
+        // how much the box is drawing (D108): the sources that play, their programs, and the mapping
+        long load = app.hook_state[0] == 'o' && app.hook_state[1] == 'n';
+        for (int s = 0; s < app.nsources; s++) {
+            load += !__atomic_load_n(&app.idle[s == 0 ? front : s + 1], __ATOMIC_ACQUIRE);
+            for (int k = 0; k < FX_SLOTS; k++) load += app.fx[s][k].on != 0;
+        }
+        char final_why[sizeof app.final_why];
+        memcpy(final_why, app.final_why, sizeof final_why);
         pthread_mutex_unlock(&app.lock);
         static const char *const PHASES[] = { "off", "waiting", "running" };
         static const char *const keys[] = { "version", "internal-width", "internal-height", "output-width", "output-height",
@@ -999,8 +1010,9 @@ static void get_property(int fd, const mpv_node *id, const char *name)
                                             "gl-fences", "gl-fences-freed", "layers", "front", "fade", "fade-progress",
                                             "fade-seconds", "fades", "fades-done", "fades-cut", "back-drawn", "gl-objects",
                                             "back-idle", "fades-from-nothing", "sound-held", "sources", "shaders", "fx-fps",
-                                            "fx-gl-objects", "fx-passes", "fx-passes-per-second" };
-        mpv_node vals[33] = { node_str(PVJ_VERSION), node_int(app.in_w), node_int(app.in_h), node_int(app.out_w), node_int(app.out_h),
+                                            "fx-gl-objects", "fx-passes", "fx-passes-per-second", "load", "final-lines",
+                                            "final-switches", "final-why" };
+        mpv_node vals[37] = { node_str(PVJ_VERSION), node_int(app.in_w), node_int(app.in_h), node_int(app.out_w), node_int(app.out_h),
                               node_dbl(app.out_hz), node_int(flips), node_int(drawn), node_int(missed), node_str(state),
                               { .format = MPV_FORMAT_FLAG }, node_str(app.cfg->hwdec), node_int(fences), node_int(freed),
                               node_int(LAYERS), node_int(front), node_str(PHASES[phase]), node_dbl(progress), node_dbl(seconds),
@@ -1008,10 +1020,12 @@ static void get_property(int fd, const mpv_node *id, const char *name)
                               node_int(__atomic_load_n(&app.gl_objects, __ATOMIC_RELAXED)), { .format = MPV_FORMAT_FLAG },
                               node_int(nothing), node_int(held), node_int(app.nsources), node_int(FX_SLOTS),
                               node_int((int64_t)app.fx_fps), node_int(__atomic_load_n(&app.fx_gl, __ATOMIC_RELAXED)),
-                              node_int(__atomic_load_n(&app.fx_passes, __ATOMIC_RELAXED)), node_dbl(passes_rate) };
+                              node_int(__atomic_load_n(&app.fx_passes, __ATOMIC_RELAXED)), node_dbl(passes_rate), node_int(load),
+                              node_int(__atomic_load_n(&app.final_lines, __ATOMIC_ACQUIRE)),
+                              node_int(__atomic_load_n(&app.final_switches, __ATOMIC_RELAXED)), node_str(final_why) };
         vals[10].u.flag = osd;
         vals[24].u.flag = back_idle;
-        mpv_node_list list = { .num = 33, .values = vals, .keys = (char **)keys };
+        mpv_node_list list = { .num = 37, .values = vals, .keys = (char **)keys };
         d.format = MPV_FORMAT_NODE_MAP;
         d.u.list = &list;
         reply(fd, id, "success", &d);
@@ -1093,6 +1107,25 @@ static void set_level(int fd, const mpv_node *id, const mpv_node *v)
     pthread_mutex_unlock(&layer_lock);
     wake_render();
     reply(fd, id, r < 0 ? mpv_error_string(r) : "success", NULL);
+}
+
+// ["pvj-final", "full" | 720]: the size of the final pass from the next frame on (D108); the supervisor's rule asks it
+// (pvj/renderer.py). Nothing else changes: the screen's size, the surfaces and the sizes this socket reports stay.
+// Refused where the scaler cannot be used: pvj-render reports why (final-why). The look at final_why and the store are
+// one step under app.lock, as final_refused writes it there before it clears the wish: a word that comes after a refusal
+// never brings the small frame back, so "said once, then full for good" holds.
+static void final_command(int fd, const mpv_node *id, const mpv_node *v)
+{
+    int full = v->format == MPV_FORMAT_STRING && !strcmp(v->u.string, "full");
+    int small = v->format == MPV_FORMAT_INT64 && v->u.int64 == FINAL_LINES;
+    if ((!full && !small) || !out_final_usable()) { reply(fd, id, "invalid parameter", NULL); return; }
+    pthread_mutex_lock(&app.lock);
+    int refused = app.final_why[0] != 0;
+    if (!refused) __atomic_store_n(&app.final_want, full ? 0 : FINAL_LINES, __ATOMIC_RELEASE);
+    pthread_mutex_unlock(&app.lock);
+    if (refused) { reply(fd, id, "invalid parameter", NULL); return; }
+    wake_render();
+    reply(fd, id, "success", NULL);
 }
 
 static void handle(int fd, const char *line, size_t len)
@@ -1190,7 +1223,7 @@ static void handle(int fd, const char *line, size_t len)
         }
     } else if (!strcmp(name, "screenshot-to-file") && (nargs == 2 || nargs == 3) && arg_str(cmd, 1) && arg_str(cmd, 1)[0] == '/') {
         const char *f = nargs == 3 ? arg_str(cmd, 2) : "subtitles";
-        if (f && (!strcmp(f, "video") || !strcmp(f, "window") || !strcmp(f, "subtitles"))) {
+        if (f && (!strcmp(f, "video") || !strcmp(f, "window") || !strcmp(f, "subtitles") || !strcmp(f, "pvj-screen"))) {
             if (!native_screenshot(fd, id, arg_str(cmd, 1), f)) forward(fd, id, front_handle(), cmd);
         }
         else reply(fd, id, "invalid parameter", NULL);
@@ -1248,6 +1281,19 @@ static void handle(int fd, const char *line, size_t len)
         reply(fd, id, r < 0 ? mpv_error_string(r) : "success", NULL);
     } else if (!strcmp(name, "pvj-capture") && nargs == 2) {
         capture(fd, id, arg_str(cmd, 1));
+#ifdef PVJ_RENDER_TEST_HOOKS
+    } else if (!strcmp(name, "pvj-test-buffer") && nargs == 2) {
+        // the buffer as the plane gets it, corner and all: only a test can see the frame that goes out while it is small
+        pthread_mutex_lock(&app.lock);
+        app.capture_buffer = 1;
+        pthread_mutex_unlock(&app.lock);
+        capture(fd, id, arg_str(cmd, 1));
+    } else if (!strcmp(name, "pvj-test-refuse") && nargs == 1) {
+        out_test_refuse();
+        reply(fd, id, "success", NULL);
+#endif
+    } else if (!strcmp(name, "pvj-final") && nargs == 2) {
+        final_command(fd, id, arg(cmd, 1));
     } else if (!strcmp(name, "quit") && nargs <= 2) {
         reply(fd, id, "success", NULL);
         pthread_mutex_lock(&app.lock);

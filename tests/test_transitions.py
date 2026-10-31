@@ -3668,3 +3668,69 @@ class ScaledRealPlayer(ServerBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReadStillSizeTest(unittest.TestCase):
+    """A still of the wrong size is a cut that once (D108's review of the fault as shipped: the window still fell to
+    libmpv's 960 x 540 between two 1080p pictures and gave transitions up for five minutes)."""
+
+    def test_the_wrong_size_is_its_own_refusal(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "s.png")
+            with open(path, "wb") as f:
+                f.write(png(4, 2, b"\x10\x20\x30"))
+            with self.assertRaises(T.WrongSize):
+                T.read_still(path, (8, 4))
+            with open(path, "wb") as f:
+                f.write(b"nothing of the kind")
+            with self.assertRaises(T.StillError) as e:
+                T.read_still(path, (8, 4))
+            self.assertNotIsInstance(e.exception, T.WrongSize)
+
+
+class WrongSizeStillTest(Base):
+    def test_a_still_of_the_wrong_size_is_a_cut_and_gives_nothing_up(self):
+        real = self.player.still
+
+        def small(path):
+            real(path)
+            with open(path, "wb") as f:
+                f.write(png(1, 1, b"\x10\x20\x30"))
+        self.player.still = small
+        self.assertEqual(self.tr.hold("wipe-from-left"), 0, "a cut this once")
+        self.assertEqual(self.tr.given_up, "", "nothing about the box in one still's size")
+        self.assertEqual(self.tr.fallback(), "")
+        self.player.still = real
+        self.assertTrue(self.tr.hold("wipe-from-left"), "the next one is a wipe")
+
+    def wrong_still(self):
+        real = self.player.still
+
+        def small(path):
+            real(path)
+            with open(path, "wb") as f:
+                f.write(png(1, 1, b"\x10\x20\x30"))
+        self.player.still = small
+        self.addCleanup(setattr, self.player, "still", real)
+        return real
+
+    def test_stills_of_the_wrong_size_in_a_row_give_up_with_a_reason(self):
+        self.wrong_still()
+        for n in range(T.SLOW_IN_A_ROW):
+            self.assertEqual(self.tr.given_up, "", n)
+            self.assertEqual(self.tr.hold("wipe-from-left"), 0)
+        self.assertIn("%d stills in a row were not of the screen's size" % T.SLOW_IN_A_ROW, self.tr.fallback())
+        self.assertIn("were not of the screen's size", self.api.status({}, None, "t")["mix"]["fallback"])
+
+    def test_a_good_still_clears_the_count(self):
+        real = self.wrong_still()
+        small = self.player.still
+        for _ in range(3):
+            self.player.still = small
+            self.assertEqual(self.tr.hold("wipe-from-left"), 0)
+            self.assertEqual(self.tr.given_up, "")
+            self.player.still = real
+            self.assertTrue(self.tr.hold("wipe-from-left"))
+            self.tr.end()
+        self.assertEqual(self.tr.given_up, "")

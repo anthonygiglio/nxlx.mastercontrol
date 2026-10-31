@@ -13,13 +13,14 @@
 //                     mapping's final pass reads them by name (SOURCEk); without a mapping only source 1 is seen
 //   the compositor    while a crossfade runs, mixes the two textures by real opacity at the internal size, once a
 //                     vblank, and hands the mix to the final pass; otherwise there is no such pass
-//   the final pass    scales the picture to the screen; with a mapping it is the mapping's own OUTPUT shader
+//   the final pass    scales the picture to the screen; with a mapping it is the mapping's own OUTPUT shader. It may
+//                     draw at 720 lines and leave the rest to the display's scaler (D108); the screen's size stays
 //   the text layer    a second libmpv that plays nothing draws overlays and show-text at the screen's size, laid
 //                     over the final picture while something is on it
 //
 // Usage: pvj-render --socket=PATH [--drm-device=/dev/dri/cardN] [--drm-connector=NAME] [--drm-mode=WxH@R|N]
 //                   [--detail=LINES|output] [--hwdec=NAME] [--audio-device=NAME] [--fast] [--every-vblank]
-//                   [--sources=N] [--fx-fps=N] [--headless=WxH] [--frames=N] [--verbose]
+//                   [--sources=N] [--fx-fps=N] [--final=auto|720] [--headless=WxH] [--frames=N] [--verbose]
 #define _GNU_SOURCE
 #include "pvj.h"
 #include "json.h"
@@ -114,6 +115,10 @@ static int parse_args(int argc, char **argv, Cfg *c)
             long k = strtol(v, &e, 10);
             if (*e || k < 1 || k > MAX_SOURCES) { LOG("--sources is a number from 1 to %d", MAX_SOURCES); return -1; }
             c->sources = (int)k;
+        } else if (opt(a, "--final", &v)) {
+            if (!strcmp(v, "auto")) c->final_mode = FINAL_AUTO;
+            else if (!strcmp(v, "720")) c->final_mode = FINAL_720;
+            else { LOG("--final is auto or 720"); return -1; }
         } else if (opt(a, "--fx-fps", &v)) {
             char *e;
             long k = strtol(v, &e, 10);
@@ -622,15 +627,26 @@ static float frame_level[MAX_SOURCES];     // each source's level while it has a
 static GLuint source_tex[MAX_LAYERS];      // each source k > 1's picture after its programs (D106), this frame
 static int idle_drawn[MAX_LAYERS];         // render thread: source k's empty picture is drawn since it went idle     // each source's opacity for this frame (one look under app.lock)
 
-static void final_pass(GLuint picture, int text_on, float level)
+// The final pass into `target`, at w x h in its top left corner (GL's origin is the bottom left, so the corner starts at
+// row `target_h` - h). The size is only the viewport: every uniform below keeps the output's real size, because HOOKED_size
+// is the mapping's screen, and HOOKED_pos goes from 0 to 1 over the viewport at any size (D108).
+static void final_pass(GLuint target, int target_h, int w, int h, GLuint picture, int text_on, float level)
 {
     reset_gl();
-    glBindFramebuffer(GL_FRAMEBUFFER, out_target());
-    glViewport(0, 0, app.out_w, app.out_h);
+    glBindFramebuffer(GL_FRAMEBUFFER, target);
+    glViewport(0, target_h - h, w, h);
     // Both final passes (the plain scale and the mapping's shader) draw the whole target, so the clear changes no pixel;
     // it tells the GPU the old frame need not be loaded into the tiles first (measured on the Pi 4, 4 sources: 40.7 to 44.9 flips a second).
+    // In a corner of the buffer (D108) a clear would fill the part the plane does not show: the same work is asked by
+    // invalidating the buffer, and the pass still draws every pixel that goes out. Measured on the Pi 4, 4 sources and the
+    // mapping, GPU busy: whole clear 69%, scissored clear 83%, invalidate 62%.
     glClearColor(0, 0, 0, 1);
-    glClear(GL_COLOR_BUFFER_BIT);
+    if (h == target_h) {
+        glClear(GL_COLOR_BUFFER_BIT);
+    } else {
+        const GLenum what = target ? GL_COLOR_ATTACHMENT0 : GL_COLOR;
+        glInvalidateFramebuffer(GL_FRAMEBUFFER, 1, &what);
+    }
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, picture);
     if (have_hook) {
@@ -673,15 +689,34 @@ static void final_pass(GLuint picture, int text_on, float level)
     }
 }
 
-// The final picture as a PPM file (P6, top row first), never through a link.
-static int write_capture(const char *path)
+// A framebuffer of the screen's size of its own, for a picture that must be the screen's whichever way the final pass draws.
+static int screen_target(GLuint *tex, GLuint *fbo)
+{
+    glGenTextures(1, tex);
+    glBindTexture(GL_TEXTURE_2D, *tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, app.out_w, app.out_h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    glGenFramebuffers(1, fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, *fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, *tex, 0);
+    return glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE ? 0 : -1;
+}
+
+// The final picture as a PPM file (P6, top row first), never through a link. Always at the screen's size: while the
+// final pass draws smaller (D108) the frame on its way out is a corner of the buffer, so the picture is drawn once more
+// at the screen's size for the file.
+static int write_capture(const char *path, int small, GLuint picture, int text_on, float level)
 {
     size_t row = (size_t)app.out_w * 4;
     unsigned char *px = malloc(row * (size_t)app.out_h);
     if (!px) return -1;
-    glBindFramebuffer(GL_FRAMEBUFFER, out_target());
+    GLuint tex = 0, fbo = 0;
+    if (small && screen_target(&tex, &fbo)) { free(px); return -1; }
+    if (small) final_pass(fbo, app.out_h, app.out_w, app.out_h, picture, text_on, level);
+    glBindFramebuffer(GL_FRAMEBUFFER, small ? fbo : out_target());
     glPixelStorei(GL_PACK_ALIGNMENT, 4);
     glReadPixels(0, 0, app.out_w, app.out_h, GL_RGBA, GL_UNSIGNED_BYTE, px);
+    if (fbo) glDeleteFramebuffers(1, &fbo);
+    if (tex) glDeleteTextures(1, &tex);
     int fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0640);
     if (fd < 0) { LOG("capture: %s: %s", path, strerror(errno)); free(px); return -1; }
     FILE *f = fdopen(fd, "wb");
@@ -710,6 +745,8 @@ static int write_capture(const char *path)
 // at the inside size ("video"). This thread draws it and starts reading it into a pixel buffer; the next frame maps
 // the buffer (by then the GPU has written it) and hands the pixels to the client's thread, which encodes them
 // (ipc.c, native_screenshot). Nothing here waits for an encoder or a file (the review of #167).
+// Kind 2 is the whole final picture at the screen's size, the mapping and the text in it, drawn once more into the
+// readback's own framebuffer: a transition's still of the screen (pvj/transitions.py), whatever the final pass's size.
 static struct { int serial, w, h; GLuint tex, fbo, pbo; } shot_read;      // a readback on its way (serial > 0)
 
 static void shot_hand(int serial, unsigned char *rgba, int w, int h)
@@ -766,6 +803,11 @@ static void native_shot(GLuint picture, int text_on, float level)
     shot_free();
     int w = kind ? app.out_w : app.in_w, h = kind ? app.out_h : app.in_h;
     GLuint tex = 0, fbo = 0;
+    if (kind == 2) {
+        if (screen_target(&tex, &fbo)) goto done;
+        final_pass(fbo, h, w, h, picture, text_on, level);
+        goto read;
+    }
     glGenTextures(1, &tex);
     glBindTexture(GL_TEXTURE_2D, tex);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
@@ -789,7 +831,9 @@ static void native_shot(GLuint picture, int text_on, float level)
         quad();
         glDisable(GL_BLEND);
     }
+read:
     // the read goes into a pixel buffer and returns at once; the next frame maps it (shot_finish)
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
     GLuint pbo = 0;
     glGenBuffers(1, &pbo);
     glBindBuffer(GL_PIXEL_PACK_BUFFER, pbo);
@@ -850,6 +894,7 @@ int main(int argc, char **argv)
         app.in_w = ((int)lround((double)app.out_w * app.in_h / app.out_h)) & ~1;
     }
     if (cfg.headless_w > 0) app.screen_open = 1;
+    if (cfg.final_mode == FINAL_720) app.final_want = FINAL_LINES;   // the size from the frame the scaler is known to work on (D108)
 
     static const float q[] = { -1, -1, 1, -1, -1, 1, 1, 1 };
     glGenVertexArrays(1, &vao);
@@ -1060,15 +1105,18 @@ int main(int argc, char **argv)
         // generator is its picture (the carrier plays under it)
         if (!(__atomic_load_n(&app.idle[fi], __ATOMIC_ACQUIRE) && phase == FADE_OFF && !fx_has_generator(0)))
             picture = fx_source(0, picture, fresh, __atomic_load_n(&app.paused[fi], __ATOMIC_ACQUIRE), now);
-        final_pass(picture, text_on, level);
+        int draw_w, draw_h;
+        out_draw_size(&draw_w, &draw_h);                    // this frame's size, whole: it goes out with the plane's for it (D108)
+        final_pass(out_target(), app.out_h, draw_w, draw_h, picture, text_on, level);
         shot_finish();                                      // a readback started a frame ago (D106)
         if (shot) native_shot(picture, text_on, level);
         if (cap) {
             pthread_mutex_lock(&app.lock);
             char *path = app.capture_path ? strdup(app.capture_path) : NULL;
-            int serial = app.capture_serial;
+            int serial = app.capture_serial, raw = app.capture_buffer;
+            app.capture_buffer = 0;
             pthread_mutex_unlock(&app.lock);
-            int r = path ? write_capture(path) : -1;
+            int r = path ? write_capture(path, draw_h != app.out_h && !raw, picture, text_on, level) : -1;
             free(path);
             pthread_mutex_lock(&app.lock);
             app.capture_result = r;

@@ -34,6 +34,7 @@ What that costs, and the rules that follow:
   second, a clip that drops more than MAX_DROPS frames a second under the steps: the box uses the dip to black
   from then on, and says so in `GET /api/status` (mix.fallback) and under the panel's picker, until the transition
   is chosen again (the panel's "Try again" does that) or RETRY seconds have passed, when it tries again by itself.
+  A still that is not of the size asked for is a cut that once; SLOW_IN_A_ROW of them in a row and the box gives up (`WrongSize`).
   "Too slow to take the still" is SLOW_IN_A_ROW stills in a row over SLOW seconds each, or one still that took
   over HOPELESS seconds: a single slow still (a preview snapshot at the same moment, a heavy
   decode, a busy card) is used, and the blend starts late that once. The still's time is the screenshot and its
@@ -118,6 +119,11 @@ class StillError(Exception):
     pass
 
 
+class WrongSize(StillError):
+    """This still is not of the size asked for. One says nothing of how the box copes: a cut this once. SLOW_IN_A_ROW
+    in a row, as for slow stills, and the box gives up, since every play would freeze the clip for nothing."""
+
+
 class Gone(Exception):
     """The player a still was given to is not there any more (it stopped, or it is another process)."""
 
@@ -160,7 +166,7 @@ def read_still(path, size, half=None, within=False):
                 bpp = {2: 3, 6: 4}.get(ctype, 0) if depth == 8 else 0
                 fits = 0 < w <= size[0] and 0 < h <= size[1] if within else (w, h) == tuple(size)
                 if not fits or not bpp:
-                    raise StillError("the still is not an 8-bit picture of the screen's size")
+                    raise WrongSize("the still is not an 8-bit picture of the screen's size")
             elif kind == b"IDAT":
                 if not bpp:
                     raise StillError("the still has no header")
@@ -328,6 +334,7 @@ class Transitions:
         self.given_up = ""                  # why this box dips instead, until the transition is chosen again or RETRY has passed
         self._gave_up_at = None             # when, by the clock
         self._slow = []                     # the seconds of the slow stills in a row so far
+        self._odd = 0                       # the stills of the wrong size in a row so far
         self._large = ""                    # the same for a screen that is too large, from the last look at it
         self.late = []                      # with no threads (tests): the removals `_once_more` would send later
         self.last = {}                      # what the last one did: {"name", "still_ms", "steps", "seconds", "dropped", "ended",
@@ -343,7 +350,7 @@ class Transitions:
         gave up RETRY seconds ago tries again from now on."""
         if self.given_up and self._gave_up_at is not None and self._clock() - self._gave_up_at >= RETRY:
             self.log("pvj-web: transitions: trying again, %d minutes after giving up" % int(RETRY // 60))
-            self.given_up, self._gave_up_at, self._slow = "", None, []
+            self.given_up, self._gave_up_at, self._slow, self._odd = "", None, [], 0
         return self.given_up or self._large
 
     def look(self):
@@ -362,7 +369,7 @@ class Transitions:
 
     def chosen_again(self):
         """Somebody saved the transition (or pressed Try again, which saves it): the box tries again."""
-        self.given_up, self._gave_up_at, self._slow = "", None, []
+        self.given_up, self._gave_up_at, self._slow, self._odd = "", None, [], 0
         self.look()
 
     def current(self, token):
@@ -516,6 +523,11 @@ class Transitions:
                         # a still of the clip that failed or is not what was expected (the player refused that kind
                         # of screenshot, or the clip changed hands): a cut, never a give-up; the window's next
                         self._clip_missed(pid)
+                    elif not gone and not moved and isinstance(e, WrongSize):
+                        # counted as slow stills are: one is a cut, and only a run of them says something of this player
+                        self._odd += 1
+                        if self._odd >= SLOW_IN_A_ROW:
+                            self._give_up("%d stills in a row were not of the screen's size" % self._odd)
                     elif not gone and not moved:    # a player that went away, or a picture that changed hands, is not a box that is too slow
                         self._give_up("the still failed (%s)" % (str(e) or type(e).__name__)[:80])
                 if "no reply" in str(e):
@@ -527,6 +539,7 @@ class Transitions:
                 except OSError:
                     pass
             took = self._clock() - began
+            self._odd = 0
             if kind == "video":
                 with self._mark:
                     self._misses = 0
@@ -790,7 +803,7 @@ class Transitions:
 
     def _give_up(self, why):
         self.given_up = why + "; dipping to black instead. The box tries again in %d minutes, or at once when the transition is chosen again" % int(RETRY // 60)
-        self._gave_up_at, self._slow = self._clock(), []
+        self._gave_up_at, self._slow, self._odd = self._clock(), [], 0
         self.log("pvj-web: transitions given up: %s" % why)
 
     def _first_frame(self):
