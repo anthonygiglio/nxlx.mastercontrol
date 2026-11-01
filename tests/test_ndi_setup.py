@@ -793,6 +793,7 @@ class RollbackTest(unittest.TestCase):
             u._systemd_restart()
         # In this order on purpose of what it costs: the helper before the panel is why an update can restart it twice (D110).
         self.assertEqual(ran, [["systemctl", "try-restart", "pvj-netd.service"], ["systemctl", "try-restart", "pvj-ndi.service"],
+                               ["systemctl", "try-restart", "pvj-link.service"],     # or a rollback leaves Link on the network
                                ["systemctl", "restart", "pvj-player.service", "pvj-web.service"]])
         self.assertEqual([c for c in ran if "pvj-ndi.service" in c], [["systemctl", "try-restart", "pvj-ndi.service"]])      # alone in its call
         # try-restart, never restart or start: on a box that did not opt in there is no such unit, and nothing is started

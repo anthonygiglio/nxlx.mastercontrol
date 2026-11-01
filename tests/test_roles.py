@@ -110,6 +110,7 @@ ROWS = {
     ("GET", "/api/tempo"): KINDS["op"],
     ("POST", "/api/tempo"): KINDS["op"],
     ("POST", "/api/tempo/tap"): KINDS["live"],
+    ("POST", "/api/tempo/link"): KINDS["owner"],     # D117: following Ableton Link is the Owner's
     ("POST", "/api/control"): KINDS["guest"],
     ("POST", "/api/blackout"): KINDS["guest"],
     ("POST", "/api/vibes"): KINDS["guest"],

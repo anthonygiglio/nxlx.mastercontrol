@@ -201,6 +201,24 @@ def sound_levels(env=None):
     return os.path.join(sound_dir(env), SOUND_LEVELS)
 
 
+LINK_DIR = "/run/pvj-link"                # the Ableton Link follower (render/link/, D117): its socket and its state file
+LINK_SOCKET = "link.sock"
+LINK_STATE = "state"
+
+
+def link_dir(env=None):
+    """The Link helper's folder: its socket for the panel and its state file (group pvj-link). Only the service creates it."""
+    return _env(env).get("PVJ_LINK_DIR") or LINK_DIR
+
+
+def link_socket(env=None):
+    return os.path.join(link_dir(env), LINK_SOCKET)
+
+
+def link_state(env=None):
+    return os.path.join(link_dir(env), LINK_STATE)
+
+
 def ndi_fifo(env=None):
     return os.path.join(ndi_pipe_dir(env), NDI_FIFO)
 

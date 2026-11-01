@@ -954,6 +954,22 @@ Before: a box on a release with this change, the sound switch on (the Owner's) w
 | BC4 | Not run | Needs music on a capture device |
 | BC5 | Passed, sound off | pvj-web 2.86 percent of a core without the clock, 3.01 percent with it. The sound-on path is measured with the rerun of BC2 |
 
+### Ableton Link (D117): not run on a node
+
+Not run. The unit tests prove the clock's word, the hand-over, stale records and who may switch it, with a fake helper and a fake clock; `tests/test_pvj_link.py` runs the real helper beside a stand-in peer on one machine. None of it has met Ableton Live, a phone, a Pi or a real network.
+
+Before: a box on a release with this change, `pvj-link` built (`ls /opt/pvj/current/render/pvj-link`), a Link program on another machine on the same network, the Owner on the Sound page. `curl -s localhost/api/tempo` means with a device token.
+
+| Row | What to do | What should happen | What it would mean if not |
+|---|---|---|---|
+| LK1 | Link on the box switched on, nothing else in a session, for a few minutes; then switch Link on in the program, which is set to a tempo that is not 120 | The program keeps its own tempo. `GET /api/tempo` goes from `state` `listening` to `following`, `peers` 1, in about 2 s, and the clock's `source` is `link`. The box's tempo is the program's | The wait for someone, or a network that drops multicast |
+| LK2 | Change the tempo in the program | The box's `bpm` follows within a second, and the program's tempo is never moved by the box | The panel's reading; a look at the file is at most 1 s apart |
+| LK3 | Put a shader on the beat (Sound page, source Beat), or watch OSC `/nxlx/sound/beat`, against the program's metronome or a recording of the screen | Beats land with the program's; a steady offset is latency to measure, a drift is a fault. Bar position 0 is the program's bar 1 | The clock conversion (CLOCK_MONOTONIC against Link's clock), or the place in the bar |
+| LK4 | Switch Link off in the program, or close it | `peers` 0 within a few seconds, `state` back to `listening`; 5 s later the clock hands over by D116's rules (a tap before it, else held and running) and the beat does not jump | The hand-over |
+| LK5 | Link off on the box (the default), and again on with no peers: `sudo tcpdump -ni any port 20808` for a minute with no other Link program running | Off: nothing, and `ss -u -a` shows pvj-link holds no socket. On and alone: nothing sent by the box on port 20808 (one IGMP join is the network's own) | The promise that off sends nothing |
+| LK6 | `top -b -n1 -p $(pgrep -x pvj-link)` while following, with a clip playing; and `GET /api/tempo` for `cpu_percent` | Under 1 percent of one core, and the panel no higher than before | The cost; not measured on a Pi |
+| LK7 | A box without the package: `sudo systemctl stop pvj-link`, or an install where it was missing | The page says Link is not available, the switch keeps its value, everything else runs. With the service back, the helper is told on within a few seconds | The missing-helper path |
+
 ## Safety
 
 - The workflow starts by **manual dispatch only**, and only for the repository owner. It never runs for pushes, pull requests or forks, so nobody else's code reaches the Pi. Keep it that way.

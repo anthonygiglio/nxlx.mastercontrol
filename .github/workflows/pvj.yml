@@ -388,6 +388,48 @@ jobs:
           grep -q -E "^Ran [1-9]" /tmp/native.txt || { echo "::error::no test ran"; exit 1; }
           exit "${code:-0}"
 
+  pvj-link:
+    # The Ableton Link follower (render/link/, D117): built with every warning an error against Debian 13's own
+    # ableton-link-dev (the Pi's distribution; arch-independent headers, so this is the source the Pi builds), then run
+    # for real beside a stand-in peer inside the container, on its own network and nowhere else. A skip here is a
+    # failure. No other job needs the package: tests/test_pvj_link.py skips without PVJ_LINK_TEST=1.
+    name: pvj-link (Debian 13)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    container:
+      image: debian:trixie
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      PKGS: g++ make libc6-dev ableton-link-dev libasio-dev python3 git ca-certificates
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the compiler and Link's headers (three tries; a slow mirror is given up on)
+        timeout-minutes: 10
+        run: |
+          for n in 1 2 3; do
+            if apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 update && apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 install -y --no-install-recommends $PKGS; then
+              exit 0
+            fi
+            echo "attempt $n failed"
+            sleep 5
+          done
+          exit 1
+      - name: Build pvj-link and the stand-in peer (every warning an error)
+        run: |
+          dpkg-query -W -f '${Version}\n' ableton-link-dev
+          make -C render WERROR=1 pvj-link pvj-link-peer
+      - name: pvj-link for real, beside a stand-in peer (a skip is a failure)
+        timeout-minutes: 5
+        run: |
+          PVJ_LINK_TEST=1 python3 -X faulthandler -m unittest -v tests.test_pvj_link > /tmp/link.txt 2>&1 || code=$?
+          cat /tmp/link.txt
+          if grep -q -E "skipped|OK \(skipped" /tmp/link.txt; then
+            echo "::error::a test of pvj-link was skipped: it judges nothing here"
+            exit 1
+          fi
+          grep -q -E "^Ran [1-9]" /tmp/link.txt || { echo "::error::no test ran"; exit 1; }
+          exit "${code:-0}"
+
   panel-ui:
     runs-on: ubuntu-24.04
     timeout-minutes: 30       # about seven

@@ -2274,7 +2274,7 @@ class Api:
                "plugged": cfg["device"] == "" or cfg["device"] in {d["id"] for d in devices},
                "inputs": [{"id": k, "name": soundout.INPUT_NAMES[k], "allowed": k in cfg["allowed"], "bands": k in ("device", "osc")} for k in soundout.INPUTS],
                "channels": self.sound.device_channels(cfg), "feed_why": self.sound.feed_why, "meter_why": self.sound.meter_why or "",
-               "in_stats": dict(self.sound.in_stats), "clock": self.sound.clock.status()}
+               "in_stats": dict(self.sound.in_stats), "clock": self.sound.clock.status(), "link": self.sound.link.view()}
         if not (device and device.get("role") == "full"):
             out["config"] = dict(cfg, in_hosts=[])          # the addresses are the Owner's to see (as the render nodes' hosts)
         return out
@@ -2380,7 +2380,30 @@ class Api:
             raise ApiError(403, self.CLOCK_REMOTE)
 
     def get_tempo(self, body, device, client):
-        return {"clock": self.sound.clock.status()}
+        self.sound.link.hear()
+        return {"clock": self.sound.clock.status(), "link": self.sound.link.view()}
+
+    LINK_REMOTE = "Ableton Link joins the room's network, so it is switched on by the owner in the room; through remote support it can be switched off, never on (D117)"
+
+    def set_link(self, body, device, client):
+        """{"on": true or false}: the Owner's switch for following an Ableton Link session (D117). Off by default. Through
+        remote support (D84) a session of the Owner's role may switch it off, never on."""
+        from . import link as link_mod
+        if not isinstance(body, dict) or set(body) != {"on"}:
+            raise bad("send on: true or false")
+        remote = self._remote_owner(device, client, "changing Ableton Link")
+        try:
+            new = link_mod.form({"on": body["on"]})
+        except link_mod.LinkError as e:
+            raise bad(str(e))
+        if remote and new["on"] and not self.sound.link.config()["on"]:
+            raise ApiError(403, self.LINK_REMOTE)
+        try:
+            self.sound.link.save(new)
+        except OSError as e:
+            raise ApiError(500, "the setting could not be saved: %s" % (e.strerror or e))
+        self.log("pvj-web: Ableton Link switched %s by device %s (%s) from %s" % ("on" if new["on"] else "off", (device or {}).get("id"), (device or {}).get("role"), client))
+        return self.get_tempo({}, device, client)
 
     def clock_tap(self, body, device, client):
         """One tap: the phase at once, and from the second tap the average tempo. From a pad, an OSC button or a DMX channel too."""
@@ -5189,6 +5212,7 @@ class Api:
             ("GET", "/api/tempo"): ("live", self.get_tempo),               # the box clock (D116): seen by the Operator,
             ("POST", "/api/tempo"): ("live", self.set_tempo),             # its tempo and phase set by the Operator and the Owner,
             ("POST", "/api/tempo/tap"): ("live", self.clock_tap),         # and tapped, also from MIDI and OSC
+            ("POST", "/api/tempo/link"): ("full", self.set_link),         # following an Ableton Link session: the Owner's (D117)
             ("POST", "/api/sound/source"): ("live", self.set_sound_source),  # between the allowed sources: the Owner's and an Operator's (D97)     # the shader input: the Operator's
             ("POST", "/api/control"): ("live", self.control),
             ("POST", "/api/blackout"): ("live", self.blackout),

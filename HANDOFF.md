@@ -6,6 +6,10 @@ For a new person or a new claude session picking this up cold. Read this, then t
 
 This page is meant to be read once, top to bottom. "State and what is next" is the only part that is about a date; everything after it is by topic.
 
+## What changes when you update: Ableton Link (D117)
+
+**Nothing changes until the Owner switches it on** (Setup > Show tools > Sound reactivity, "Follow Ableton Link"). Then the box follows a Link session on its network: tempo and beat go to the box clock, ahead of a tap. It only follows, never sets a tempo, and joins only once another program is in a session. A new service, `pvj-link`, is on every box where it could be built; the installer adds `g++`, `ableton-link-dev` and `libasio-dev` where the network allows, and without them Link is simply not available. **Never run on a Pi or with a real Link program**: DEVICE-TESTING LK1 to LK7.
+
 ## What changes when you update: sound sources (D97, #147)
 
 **Nothing changes until the Owner allows another source** (Setup > Sound reactivity > Advanced). Then the Owner and Operators can switch between: the capture device (now also one input of a multi-input card), the box's own sound (what the clip or NDI plays, measured by an audio filter inside classic mpv: level and beat, no bands), the NDI sound, and levels sent in over OSC from Max/RNBO on a render node or a listed address. Remote support never switches to the microphone. Going back to D96 reads the section as off. Never run on a Pi: DEVICE-TESTING SS1 to SS6.
