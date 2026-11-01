@@ -251,10 +251,10 @@ static void on_update(void *ctx) { (void)ctx; wake_render(); }
 static volatile int events_stop;
 
 // A loop that cannot go on (D118): the file of a generated list is gone at a join, so mpv's loop-file seeks to the start,
-// reaches the end at once and seeks again, for ever, with both cores of the decoder's thread busy and nothing drawn
-// (measured on a Pi 4, plain mpv: 7000 turns a second, 2 cores). Nothing else restarts this fast with no frame between:
-// a clip is at least a frame long, and a person or a controller seeks far slower. The loop is taken off and the file ends
-// as any other does, on its own layer and no other.
+// reaches the end at once and seeks again, for ever, with nothing drawn (measured on a Pi 4, plain mpv: 7000 turns a
+// second, two cores busy, never idle). Nothing else restarts this fast with no frame between: a clip is at least a frame
+// long, and a person or a controller seeks far slower. The loop is taken off and the file ends as any other does, on its
+// own layer and no other.
 #define SPIN_GAP 0.02                   // seconds between two restarts that count as one turn of such a loop
 #define SPIN_TURNS 20
 

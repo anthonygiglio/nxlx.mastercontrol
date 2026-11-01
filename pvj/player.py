@@ -1727,7 +1727,10 @@ class Player:
                 self._set("end", "none")
                 self._set("loop-file", "inf")
             else:
-                at = self.ipc.ask("get_property", "time-pos")
+                try:
+                    at = self.ipc.ask("get_property", "time-pos")
+                except PlayerError:
+                    at = 0.0                            # still opening: the first pass
                 micro = round(view.length * 1e6)        # as the demuxer adds the lengths up, with a hair to spare for the join's frame
                 self._set("end", "%.6f" % ((view.pass_of(at) + 1) * micro / 1e6 - 0.001))
                 self._set("loop-file", "no")

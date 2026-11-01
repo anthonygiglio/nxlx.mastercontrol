@@ -185,7 +185,7 @@ class WhichLoadsTest(Base):
         self.assertFalse([c for c in self.mpv.loads if c[1].endswith(".ffconcat")])
 
     def test_a_clip_under_the_shortest_length_or_of_another_kind_stays_plain_for_good(self):
-        for seconds, kind, video in ((0.19, MP4, "h264"), (5.0, "mpegts", "h264"), (5.0, "concat", "h264"), (5.0, MP4, None), (None, MP4, "h264")):
+        for seconds, kind, video in ((0.19, MP4, "h264"), (5.0, "mpeg", "h264"), (5.0, "concat", "h264"), (5.0, MP4, None), (None, MP4, "h264")):
             lists = looplist.Lists(os.path.join(self.dir, "other"), prober=lambda p, b: (seconds, kind, video))
             self.assertIsNone(lists.for_clip(self.clip))
             deadline = time.monotonic() + 5

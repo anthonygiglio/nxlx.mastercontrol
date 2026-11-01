@@ -53,7 +53,7 @@ class View:
         return position % self.length
 
     def pass_of(self, position):
-        return math.floor(position / self.length)
+        return max(0, math.floor(position / self.length))      # the very start may read a hair under 0
 
 
 class Lists:
