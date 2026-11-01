@@ -284,6 +284,7 @@ class Supervisor:
         if not data:
             return None
         wish = clean(data)
+        wish.pop("loop_lists", None)        # the panel's switch, which the file carries: nothing of this run's (D118)
         mine = {"use": "new", "detail": self.detail}
         if self.sources is not None:
             mine["sources"] = self.sources
