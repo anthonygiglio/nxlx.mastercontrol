@@ -2508,7 +2508,13 @@ class LoopListTest(Base):
         ask = self.player.ipc.request
         self.assertEqual(ask("pvj-source", 2, "get_property", "path"), self.clip)
         self.assertEqual(ask("pvj-source", 2, "get_property", "duration"), 2.0)
-        self.assertTrue(self.r.wait(lambda: self.player.ipc.direct("pvj-source", 2, "get_property", "time-pos") > 2.4, 15), self.r.stderr())
+
+        def position():
+            try:
+                return self.player.ipc.direct("pvj-source", 2, "get_property", "time-pos")
+            except PlayerError:         # still opening: `path` is there before a position is
+                return 0
+        self.assertTrue(self.r.wait(lambda: position() > 2.4, 15), self.r.stderr())
         self.assertLess(ask("pvj-source", 2, "get_property", "time-pos"), 2.0)
         self.assertEqual(self.player.sources_state()[1]["path"], self.clip)
 
