@@ -15,7 +15,7 @@ A theme file never carries CSS. It holds names from fixed lists, colours as `#rr
 
 **From Figma.** Three ways to get the values out of the Figma file "nxlx.mastercontrol Signal UI kit" (its variable collection "Signal theme"):
 
-1. *Ask Claude.* A Claude session with the Figma connector can read the variables of the file and write the theme file; say which file and what the theme should be called.
+1. *Ask an AI session.* An AI session with the Figma connector can read the variables of the file and write the theme file; say which file and what the theme should be called.
 2. *A variables-export plugin.* Export the collection as JSON (the W3C design-tokens shape, any plugin's nested JSON with `$value` or `value`, or a list of named values) and run `tools/figma-theme.py export.json --id my-look --name "My look" -o my-look.json` on a computer that has this repository. It prints what it took, the contrast of every pairing and any name it did not know, and writes the file only if the box would accept it.
 3. *By hand.* Copy `tools/theme-samples/starter-flat.json`, type the dozen values from Figma into it, and run the same command on it.
 

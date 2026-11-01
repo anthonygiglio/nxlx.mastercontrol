@@ -2,7 +2,7 @@
      SPDX-License-Identifier: Apache-2.0 -->
 # Project log
 
-Where the project remembers itself, so a new person or a new claude session can pick up cold, and so you can look back and see why something is the way it is.
+Where the project remembers itself, so a new person or a new AI session can pick up cold, and so you can look back and see why something is the way it is.
 
 Since 2026-10-24 (D107) every pull request writes **files of its own** and never edits a shared one, so two open pull requests no longer conflict on the log.
 
