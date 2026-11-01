@@ -141,10 +141,10 @@ class Ipc:
         the usual timeout (a request the player itself answers only after a bounded wait of its own, such as pvj-render's
         build of a program)."""
         if self.translate is not None:
-            return self.translate.request(self.ask, command, wait)
-        return self.ask(*command, wait=wait)
+            return self.translate.request(self.direct, command, wait)
+        return self.direct(*command, wait=wait)
 
-    def ask(self, *command, wait=None):
+    def direct(self, *command, wait=None):
         """One command and its answer, as the player says it."""
         self._id += 1
         rid = self._id
@@ -262,7 +262,7 @@ class Player:
 
     def _lists_playing(self):
         """The paths the layers play, as the player says them: what a prune must leave. Raises PlayerError."""
-        rows = self.ipc.ask("get_property", "pvj-sources")
+        rows = self.ipc.direct("get_property", "pvj-sources")
         return [r.get("path") for r in rows if isinstance(r, dict)]
 
     def _front_list(self):
@@ -270,7 +270,7 @@ class Player:
         if self.lists is None or not self.lists.any():
             return None
         try:
-            return self.lists.view(self.ipc.ask("get_property", "path"))
+            return self.lists.view(self.ipc.direct("get_property", "path"))
         except PlayerError:
             return None                     # nothing loaded, or a player that does not answer: not a list either way
 
@@ -523,7 +523,7 @@ class Player:
         target = self._list_for(files, ending)
         if target is not None:
             try:
-                self.ipc.ask("pvj-source", source, "loadfile", target, "replace", opts + "," + looplist.QUEUE)
+                self.ipc.direct("pvj-source", source, "loadfile", target, "replace", opts + "," + looplist.QUEUE)
             except PlayerError:
                 target = None               # a renderer that refuses it: the clip itself, as always
         if target is None:
@@ -535,7 +535,7 @@ class Player:
         deadline = time.monotonic() + 3.0
         while time.monotonic() < deadline:
             try:
-                if self.ipc.ask("pvj-source", source, "get_property", "path") == target:
+                if self.ipc.direct("pvj-source", source, "get_property", "path") == target:
                     break
             except PlayerError:
                 pass
@@ -704,12 +704,12 @@ class Player:
         seconds = max(0.0, min(60.0, float(seconds)))
         if self.lists is not None and self.lists.any():
             try:
-                self.lists.touch(self.ipc.ask("get_property", "path"))         # it plays on under the fade (looplist.GRACE)
+                self.lists.touch(self.ipc.direct("get_property", "path"))         # it plays on under the fade (looplist.GRACE)
             except PlayerError:
                 pass
         if target is not None:
             try:
-                self.ipc.ask("pvj-crossfade", target, seconds, opts + "," + looplist.QUEUE, *tail)
+                self.ipc.direct("pvj-crossfade", target, seconds, opts + "," + looplist.QUEUE, *tail)
             except PlayerError:
                 target = None               # a renderer that refuses it: the clip itself, as always
         if target is None:
@@ -753,7 +753,7 @@ class Player:
         target = self._list_for(files, ending)
         if target is not None:
             try:
-                self.ipc.ask("loadfile", target, "replace", -1, looplist.QUEUE)
+                self.ipc.direct("loadfile", target, "replace", -1, looplist.QUEUE)
             except PlayerError:
                 target = None               # a renderer that refuses it: the clip itself, as always
         if target is None:
@@ -928,7 +928,7 @@ class Player:
     def _wait_for_path(self, path, timeout=3.0):
         """loadfile returns before mpv switches; wait so status() is truthful. `path` as the player says it: a list is
         waited for as the list, or a clip that goes over into its own list would seem to be there at once."""
-        ask = self.ipc.ask if self.lists is not None else self.ipc.request
+        ask = self.ipc.direct if self.lists is not None else self.ipc.request
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
@@ -1728,7 +1728,7 @@ class Player:
                 self._set("loop-file", "inf")
             else:
                 try:
-                    at = self.ipc.ask("get_property", "time-pos")
+                    at = self.ipc.direct("get_property", "time-pos")
                 except PlayerError:
                     at = 0.0                            # still opening: the first pass
                 micro = round(view.length * 1e6)        # as the demuxer adds the lengths up, with a hair to spare for the join's frame

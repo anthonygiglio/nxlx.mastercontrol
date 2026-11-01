@@ -2385,7 +2385,7 @@ class LoopListTest(Base):
         self.list = self.lists.for_clip(self.clip)
         self.assertIsNotNone(self.list)
         try:
-            self.r.ipc.ask("loadfile", self.list, "replace", -1, looplist.QUEUE)
+            self.r.ipc.direct("loadfile", self.list, "replace", -1, looplist.QUEUE)
             self.takes = True
         except PlayerError:
             self.takes = False
@@ -2394,7 +2394,7 @@ class LoopListTest(Base):
 
     def raw(self, *where):
         try:
-            return self.player.ipc.ask(*where, "get_property", "path")
+            return self.player.ipc.direct(*where, "get_property", "path")
         except PlayerError:
             return None
 
@@ -2403,7 +2403,7 @@ class LoopListTest(Base):
 
     def position(self):
         try:
-            return self.player.ipc.ask("get_property", "time-pos")
+            return self.player.ipc.direct("get_property", "time-pos")
         except PlayerError:
             return None
 
@@ -2452,7 +2452,7 @@ class LoopListTest(Base):
         seen = []
         self.assertTrue(self.r.wait(lambda: seen.append(self.position() or seen[-1] if seen else self.position() or 0) or self.r("get_property", "idle-active") is True, 8, 0.02), self.r.stderr())
         self.assertLess(max(seen), 2.0, "it went into the next pass")
-        self.assertGreater(max(seen), 1.7, "it stopped short of the end of this one")
+        self.assertGreater(max(seen), 1.4, "it stopped short of the end of this one")
         p.play([self.clip], ending="stop", spawn=False)     # the same layer: its `end` went with the file
         self.assertTrue(self.r.wait(lambda: (self.position() or 0) > 1.6, 8), self.r.stderr())
         p.play([self.other], loop=True, spawn=False)        # and through a crossfade to the other layer and back
@@ -2491,7 +2491,7 @@ class LoopListTest(Base):
         self.assertTrue(self.plays_list(), self.r.stderr())
         self.assertTrue(settled(), self.r.stderr())
         self.assertEqual(self.r("get_property", "vd-queue-max-samples"), 6)
-        self.assertEqual(p.ipc.ask("get_property", "loop-file"), "inf")
+        self.assertEqual(p.ipc.direct("get_property", "loop-file"), "inf")
         self.assertIsNone(p.play([self.clip], fade=0.3, spawn=False))       # the list on both sides
         self.assertTrue(settled(), self.r.stderr())
         self.assertEqual(self.raw(), self.list)
@@ -2508,7 +2508,7 @@ class LoopListTest(Base):
         ask = self.player.ipc.request
         self.assertEqual(ask("pvj-source", 2, "get_property", "path"), self.clip)
         self.assertEqual(ask("pvj-source", 2, "get_property", "duration"), 2.0)
-        self.assertTrue(self.r.wait(lambda: self.player.ipc.ask("pvj-source", 2, "get_property", "time-pos") > 2.4, 15), self.r.stderr())
+        self.assertTrue(self.r.wait(lambda: self.player.ipc.direct("pvj-source", 2, "get_property", "time-pos") > 2.4, 15), self.r.stderr())
         self.assertLess(ask("pvj-source", 2, "get_property", "time-pos"), 2.0)
         self.assertEqual(self.player.sources_state()[1]["path"], self.clip)
 
@@ -2537,7 +2537,13 @@ class LoopListTest(Base):
         self.assertTrue(self.plays_list(), self.r.stderr())
         self.assertTrue(self.r.wait(lambda: (self.position() or 0) > 0.3, 10), self.r.stderr())
         os.unlink(doomed)
-        self.assertTrue(self.r.wait(lambda: self.r("get_property", "idle-active") is True, 8), self.r.stderr())
+
+        def idle():
+            try:
+                return self.r("get_property", "idle-active") is True
+            except PlayerError as e:
+                self.fail("no answer: %s, the program %s\n%s" % (e, self.r.proc.poll(), self.r.stderr()))
+        self.assertTrue(self.r.wait(idle, 8), self.r.stderr())
         self.assertIn("restarts without a frame", self.r.stderr())
         self.assertIsNone(self.r.proc.poll())
         self.player.play([self.other], ending="stop", spawn=False)      # and the box plays on

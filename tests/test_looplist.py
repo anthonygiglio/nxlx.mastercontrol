@@ -121,7 +121,7 @@ class Base(unittest.TestCase):
         return self.lists.for_clip(clip or self.clip)
 
     def raw(self):
-        return self.player.ipc.ask("get_property", "path")
+        return self.player.ipc.direct("get_property", "path")
 
 
 class WhichLoadsTest(Base):
