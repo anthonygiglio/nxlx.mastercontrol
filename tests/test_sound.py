@@ -756,6 +756,22 @@ class ShaderMapTest(unittest.TestCase):
         self.assertEqual(len(changes), n, "a value that stands is not sent again (each send is a compile)")
         self.assertEqual(out.map_state["what"], "Moving zoom of nxlx-silk")
 
+    def test_on_the_new_renderer_a_value_can_land_on_each_beat(self):
+        out, changes, _on = self.rig()
+        out.api.shaders.playing = {"native": True}
+        m = soundout.map_form({"on": True, "input": "zoom", "source": "beat", "rest": 0.0, "depth": 1.0, "smooth": 0.05})
+        t = 0.0
+        while t < 3.0:
+            self.now[0] = t
+            pulse = 1.0 if t % 0.6 < 0.15 else 0.0            # 100 BPM
+            out.map_step(m, sound.unpack(sound.pack(record(pulse=pulse), 1, 1.0, 1)), t)
+            t += 0.05
+        gaps = [b["at"] - a["at"] for a, b in zip(changes, changes[1:])]
+        self.assertGreaterEqual(min(gaps), soundout.MAP_EVERY_NATIVE - 1e-9)
+        values = [c["values"]["zoom"] for c in changes]
+        turns = sum(1 for a, b, c in zip(values, values[1:], values[2:]) if a < b > c)
+        self.assertGreaterEqual(turns, 4, "one rise a beat, not a slow alias of the beat: %s" % values)
+
     def test_the_beat_and_a_band_and_what_is_said_when_it_cannot(self):
         out, changes, on = self.rig()
         v = sound.unpack(sound.pack(record(pulse=1.0, bands=[0.0, 0.0, 0.0, 0.0, 0.0, 1.0]), 1, 1.0, 1))
@@ -770,7 +786,7 @@ class ShaderMapTest(unittest.TestCase):
         out.map_step(soundout.map_form({"on": True, "input": "zoom"}), v, 1.0)
         self.assertEqual(out.map_state["what"], "No shader is on the screen")
         self.assertEqual(changes, [])
-        for bad in ({"source": "band9"}, {"depth": 2}, {"smooth": 0.1}, {"rest": -1}, {"input": "a\nb"}, {"on": 1}, {"x": 1}):
+        for bad in ({"source": "band9"}, {"depth": 2}, {"smooth": 0.01}, {"rest": -1}, {"input": "a\nb"}, {"on": 1}, {"x": 1}):
             with self.assertRaises(soundout.SoundError, msg=bad):
                 soundout.map_form(bad)
 
@@ -813,7 +829,7 @@ class RoutesTest(RolesBase):
         self.assertEqual((d["config"]["on"], d["config"]["device"], d["helper"]["running"]), (False, "", False))
         self.assertEqual(d["devices"], [{"id": DEVICE, "name": "USB Audio Device: USB Audio", "channels": 2}])
         self.assertIn("No sound is stored, recorded or sent anywhere, ever", d["privacy"])
-        self.assertIn("Real reaction at every frame comes with the new renderer", d["slow"])
+        self.assertIn("up to 20 times a second", d["slow"])
         self.assertIsNone(d["levels"])
         self.assertEqual(self.h("GET", "/api/sound", {}, self.guest)[0], 403)
         self.assertEqual(self.h("GET", "/api/sound/levels", {}, self.guest)[0], 403)

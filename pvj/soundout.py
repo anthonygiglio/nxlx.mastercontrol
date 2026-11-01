@@ -29,7 +29,7 @@ from . import sound as sound_mod
 SOURCES = ("level", "beat") + tuple("band%d" % (i + 1) for i in range(len(sound_mod.BANDS)))
 REST_MIN, REST_MAX = 0.0, 1.0
 DEPTH_MIN, DEPTH_MAX = -1.0, 1.0
-SMOOTH_MIN, SMOOTH_MAX = 0.5, 10.0
+SMOOTH_MIN, SMOOTH_MAX = 0.05, 10.0
 NAME_MAX = 64
 DEFAULT_MAP = {"on": False, "input": "", "source": "level", "rest": 0.0, "depth": 0.5, "smooth": 1.5}
 # The sources (D97): what pvj-sound hears. The device is the one capture device; the others are fed in by the panel.
@@ -272,6 +272,7 @@ IN_ALL_RATE, IN_ALL_BURST = 160.0, 40.0     # from all senders: at most 200
 
 # --- the shader input -------------------------------------------------------------------------------------------------------
 MAP_EVERY = 0.5                 # a new value at most twice a second (the classic renderer compiles each one)
+MAP_EVERY_NATIVE = 0.05         # on the New renderer nothing is compiled (D106): at most twenty a second, so a beat shows
 MAP_STEP = 0.02                 # and only when it moved by this share of the input's range
 
 
@@ -585,7 +586,7 @@ class Sound:
         return bands[n] if 0 <= n < len(bands) else 0.0
 
     def map_step(self, m, v, now):
-        """Smooth the source, and at most every MAP_EVERY send the input a new value if it moved enough."""
+        """Smooth the source, and at most every map_gap() send the input a new value if it moved enough."""
         raw = self.source_value(m, v)
         if self._smooth is None:
             self._smooth = (now, 0.0)          # from where it rests: never a jump when it is switched on
@@ -593,12 +594,17 @@ class Sound:
         dt = max(0.0, now - t0)
         y += (1.0 - math.exp(-dt / m["smooth"])) * (raw - y)
         self._smooth = (now, y)
-        if self._map_at is not None and now - self._map_at < MAP_EVERY:
+        if self._map_at is not None and now - self._map_at < self.map_gap():
             return
         self._map_at = now
         what, value = self._apply(m, y)
         with self.lock:
             self.map_state = {"what": what, "value": value, "at": time.time()}
+
+    def map_gap(self):
+        """Seconds between two values: the slow classic gap unless the shader on the screen is the New renderer's own."""
+        playing = getattr(getattr(self.api, "shaders", None), "playing", None)
+        return MAP_EVERY_NATIVE if playing and playing.get("native") else MAP_EVERY
 
     def _input_of(self, m):
         """(the shader on the screen, its input of that name) or (on, None), or (None, None)."""

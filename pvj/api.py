@@ -2248,7 +2248,7 @@ class Api:
     SOUND_PRIVACY = ("The box analyses levels only. No sound is stored, recorded or sent anywhere, ever: a block of 20 ms "
                      "lives in memory for that block and is gone.")
     SOUND_SLOW = ("On the classic renderer a shader's value changes by compiling the shader again, so it follows the sound "
-                  "slowly: at most twice a second, smoothed. Real reaction at every frame comes with the new renderer.")
+                  "slowly: at most twice a second, smoothed. On the new renderer the value goes straight in, up to 20 times a second.")
     SOUND_BANDS = ("Before sending: the six band levels can carry the outline of speech in the room. They leave the box only "
                    "averaged over 200 ms, at most 5 times a second; the level and the beat up to 20 times a second.")
     SOUND_REMOTE = "a helper does not start listening to the room: switching the microphone on is done by the owner in the room (D96)"
