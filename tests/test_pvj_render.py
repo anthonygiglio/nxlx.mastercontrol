@@ -24,8 +24,8 @@ import unittest
 import zlib
 
 import tests        # the run's own temp folder (tests/__init__.py)
-from pvj import mapper
-from pvj.player import Ipc, PlayerError
+from pvj import looplist, mapper
+from pvj.player import Ipc, Player, PlayerError
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 BIN = os.environ.get("PVJ_RENDER_BIN") or os.path.join(REPO, "render", "pvj-render")
@@ -2358,6 +2358,224 @@ class ManySourceLoadsTest(SourcesBase):
         self.assertIsNone(r.proc.poll())
         print("\n%d loads to sources 2 to 4: warm-up %s, then %s" % (sum(s["loads"] for s in self.sources()),
                                                                      [w for w in warm], [c for c in later]))
+
+
+class LoopListTest(Base):
+    """A plain clip's loop through a generated list (D118) on the real renderer, through the panel's real Player. Where
+    libmpv's loadfile has no index (CI's Ubuntu has mpv 0.37) the load is refused and the clip plays plain: that is the
+    design's own fall back, and the first test holds it; the others then have nothing to look at."""
+    ARGS = ("--sources=2",)
+    LENGTH = 2.0
+
+    def setUp(self):
+        super().setUp()
+        self.clip = os.path.join(self.tmp, "clip.mp4")
+        make_clip(self, self.clip, seconds=2)
+        self.other = os.path.join(self.tmp, "other.mp4")
+        make_clip(self, self.other, seconds=2, source="color=c=blue")
+        self.player = Player(rundir=self.tmp)
+        self.player.ipc = Ipc(self.r.sock, timeout=10.0)
+        self.lists = looplist.Lists(os.path.join(self.tmp, "loops"), prober=lambda path, mpv_bin: (self.LENGTH, looplist.FORMATS[0], "h264"))
+        self.player.attach_lists(self.lists)
+        self.player.is_running()
+        self.addCleanup(lambda: setattr(looplist, "PAIRS", 1000))
+        for clip in (self.clip, self.other):
+            self.lists.for_clip(clip)
+            self.assertTrue(self.r.wait(lambda: self.lists._worker is None, 5))
+        self.list = self.lists.for_clip(self.clip)
+        self.assertIsNotNone(self.list)
+        try:
+            self.r.ipc.direct("loadfile", self.list, "replace", -1, looplist.QUEUE)
+            self.takes = True
+        except PlayerError:
+            self.takes = False
+        self.r("stop")
+        self.assertTrue(self.r.wait(lambda: self.r("get_property", "idle-active") is True))
+
+    def raw(self, *where):
+        try:
+            return self.player.ipc.direct(*where, "get_property", "path")
+        except PlayerError:
+            return None
+
+    def plays_list(self, *where):
+        return self.r.wait(lambda: str(self.raw(*where)).endswith(".ffconcat"))
+
+    def position(self):
+        try:
+            return self.player.ipc.direct("get_property", "time-pos")
+        except PlayerError:
+            return None
+
+    def test_a_looping_clip_plays_on_through_its_list_and_reads_as_the_clip(self):
+        p = self.player
+        p.play([self.clip], spawn=False)
+        if not self.takes:
+            self.assertEqual(self.raw(), self.clip)         # refused by this libmpv: the clip itself, as always
+            return
+        self.assertEqual(self.raw(), self.list)
+        self.assertTrue(self.r.wait(lambda: (self.position() or 0) > 2.6, 15), self.r.stderr())
+        st = p.status()
+        self.assertEqual((st["path"], st["duration"], st["loop_file"]), (self.clip, 2.0, "inf"))
+        self.assertLess(st["position"], 2.0)
+        self.assertEqual(self.r("get_property", "vd-queue-max-samples"), 6, "the queue is on for this file")
+        self.assertEqual(self.r("get_property", "pvj-render")["fade"], "off")
+
+    def test_the_queue_is_that_files_alone(self):
+        if not self.takes:
+            return
+        p = self.player
+        p.play([self.clip], spawn=False)
+        self.assertTrue(self.plays_list())
+        self.assertTrue(self.r.wait(lambda: self.r("get_property", "vd-queue-enable") is True))
+        p.play([self.clip], ending="stop", spawn=False)
+        self.assertTrue(self.r.wait(lambda: self.raw() == self.clip))
+        self.assertTrue(self.r.wait(lambda: self.r("get_property", "vd-queue-enable") is False))
+
+    def test_a_seek_lands_in_the_pass_that_plays(self):
+        if not self.takes:
+            return
+        p = self.player
+        p.play([self.clip], spawn=False)
+        self.assertTrue(self.r.wait(lambda: (self.position() or 0) > 2.3, 15), self.r.stderr())
+        p.ipc.request("seek", 1.0, "absolute+exact")
+        self.assertTrue(self.r.wait(lambda: 2.9 < (self.position() or 0) < 3.8, 5), (self.position(), self.r.stderr()))
+        self.assertAlmostEqual(p.status()["position"], 1.0, delta=0.8)
+
+    def test_loop_off_ends_at_the_end_of_the_pass_and_the_next_clip_is_not_cut_short(self):
+        if not self.takes:
+            return
+        p = self.player
+        p.play([self.clip], spawn=False)
+        self.assertTrue(self.r.wait(lambda: (self.position() or 0) > 0.3, 10), self.r.stderr())
+        p.loop(False)
+        seen = []
+        self.assertTrue(self.r.wait(lambda: seen.append(self.position() or seen[-1] if seen else self.position() or 0) or self.r("get_property", "idle-active") is True, 8, 0.02), self.r.stderr())
+        self.assertLess(max(seen), 2.0, "it went into the next pass")
+        self.assertGreater(max(seen), 1.4, "it stopped short of the end of this one")
+        p.play([self.clip], ending="stop", spawn=False)     # the same layer: its `end` went with the file
+        self.assertTrue(self.r.wait(lambda: (self.position() or 0) > 1.6, 8), self.r.stderr())
+        p.play([self.other], loop=True, spawn=False)        # and through a crossfade to the other layer and back
+        self.assertEqual(self.r("get_property", "end"), "none")
+
+    def test_loop_on_again_goes_on_as_if_nothing_had_happened(self):
+        if not self.takes:
+            return
+        p = self.player
+        p.play([self.clip], spawn=False)
+        self.assertTrue(self.r.wait(lambda: (self.position() or 0) > 0.2, 10), self.r.stderr())
+        p.loop(False)
+        p.loop(True)
+        self.assertTrue(self.r.wait(lambda: (self.position() or 0) > 2.5, 15), self.r.stderr())
+        self.assertIs(self.r("get_property", "idle-active"), False)
+
+    def test_the_end_refuses_what_is_not_a_time(self):
+        for value in ("1%", "-1", "+2", "1:00", "", "a", 5, "1.2.3"):
+            with self.assertRaises(PlayerError, msg=value):
+                self.r("set_property", "end", value)
+        for opts in ("vd-queue-max-bytes=1", "vd-queue-enable=yes;x", "vd-queue-enable"):
+            with self.assertRaises(PlayerError, msg=opts):
+                self.r("loadfile", self.list, "replace", -1, opts)
+            with self.assertRaises(PlayerError, msg=opts):
+                self.r("pvj-crossfade", self.list, 1, opts)
+            with self.assertRaises(PlayerError, msg=opts):
+                self.r("pvj-source", 2, "loadfile", self.list, "replace", opts)
+
+    def test_crossfades_in_out_and_from_a_clip_to_itself(self):
+        if not self.takes:
+            return
+        p = self.player
+        settled = lambda: self.r.wait(lambda: self.r("get_property", "pvj-render")["fade"] == "off", 15, 0.02)  # noqa: E731
+        p.play([self.other], ending="stop", spawn=False)
+        self.assertIsNone(p.play([self.clip], fade=0.3, spawn=False))       # into its list
+        self.assertTrue(self.plays_list(), self.r.stderr())
+        self.assertTrue(settled(), self.r.stderr())
+        self.assertEqual(self.r("get_property", "vd-queue-max-samples"), 6)
+        self.assertEqual(p.ipc.direct("get_property", "loop-file"), "inf")
+        self.assertIsNone(p.play([self.clip], fade=0.3, spawn=False))       # the list on both sides
+        self.assertTrue(settled(), self.r.stderr())
+        self.assertEqual(self.raw(), self.list)
+        self.assertIsNone(p.play([self.other], ending="stop", fade=0.3, spawn=False))       # and out of it
+        self.assertTrue(self.r.wait(lambda: self.raw() == self.other))
+        self.assertTrue(settled(), self.r.stderr())
+        self.assertTrue(os.path.exists(self.list))
+
+    def test_a_source_plays_its_list(self):
+        if not self.takes:
+            return
+        self.player.play_to(2, [self.clip])
+        self.assertTrue(self.plays_list("pvj-source", 2), self.r.stderr())
+        ask = self.player.ipc.request
+        self.assertEqual(ask("pvj-source", 2, "get_property", "path"), self.clip)
+        self.assertEqual(ask("pvj-source", 2, "get_property", "duration"), 2.0)
+
+        def position():
+            try:
+                return self.player.ipc.direct("pvj-source", 2, "get_property", "time-pos")
+            except PlayerError:         # still opening: `path` is there before a position is
+                return 0
+        self.assertTrue(self.r.wait(lambda: position() > 2.4, 15), self.r.stderr())
+        self.assertLess(ask("pvj-source", 2, "get_property", "time-pos"), 2.0)
+        self.assertEqual(self.player.sources_state()[1]["path"], self.clip)
+
+    def test_the_end_of_the_list_is_one_ordinary_seam(self):
+        if not self.takes:
+            return
+        looplist.PAIRS = 2
+        os.unlink(self.list)
+        lists = self.lists.for_clip(self.clip)
+        self.assertEqual(lists, self.list)
+        self.player.play([self.clip], spawn=False)
+        self.assertTrue(self.plays_list(), self.r.stderr())
+        self.assertTrue(self.r.wait(lambda: (self.position() or 0) > 3.5, 15), self.r.stderr())
+        self.assertTrue(self.r.wait(lambda: 0 < (self.position() or 0) < 1.5, 8), self.r.stderr())      # back at the start
+        self.assertIs(self.r("get_property", "idle-active"), False)
+
+    def test_a_clip_that_is_gone_at_a_join_ends_and_the_renderer_lives(self):
+        """Measured in plain mpv on the node: loop-file seeks for ever at 2 cores with nothing drawn."""
+        if not self.takes:
+            return
+        doomed = os.path.join(self.tmp, "doomed.mp4")
+        shutil.copy(self.clip, doomed)
+        self.lists.for_clip(doomed)
+        self.assertTrue(self.r.wait(lambda: self.lists._worker is None, 5))
+        self.player.play([doomed], spawn=False)
+        self.assertTrue(self.plays_list(), self.r.stderr())
+        self.assertTrue(self.r.wait(lambda: (self.position() or 0) > 0.3, 10), self.r.stderr())
+        os.unlink(doomed)
+
+        def idle():
+            try:
+                return self.r("get_property", "idle-active") is True
+            except PlayerError as e:
+                self.r.wait(lambda: self.r.proc.poll() is not None, 2)      # a program that fell: its end takes a moment
+                self.fail("no answer: %s, the program %s\n%s" % (e, self.r.proc.poll(), self.r.stderr()))
+        self.assertTrue(self.r.wait(idle, 8), self.r.stderr())
+        self.assertIn("cannot be read any more", self.r.stderr())
+        self.assertIsNone(self.r.proc.poll())
+        self.player.play([self.other], ending="stop", spawn=False)      # and the box plays on
+        self.assertTrue(self.r.wait(lambda: self.raw() == self.other))
+
+    def test_a_seek_after_the_clip_has_gone_ends_the_same_way(self):
+        if not self.takes:
+            return
+        doomed = os.path.join(self.tmp, "doomed.mp4")
+        shutil.copy(self.clip, doomed)
+        self.lists.for_clip(doomed)
+        self.assertTrue(self.r.wait(lambda: self.lists._worker is None, 5))
+        self.player.play([doomed], spawn=False)
+        self.assertTrue(self.plays_list(), self.r.stderr())
+        self.assertTrue(self.r.wait(lambda: (self.position() or 0) > 0.3, 10), self.r.stderr())
+        os.unlink(doomed)
+        for at in (0.1, 1.5, 0.5):              # a pass ahead, as a seek from the panel lands past a join near the end
+            try:
+                self.player.ipc.request("seek", at, "absolute+exact")
+                self.player.ipc.request("seek", 1.8, "relative")
+            except PlayerError as e:
+                self.assertIn("mpv:", str(e), "the renderer fell: %s" % self.r.stderr())
+            time.sleep(0.05)
+        self.assertTrue(self.r.wait(lambda: self.r("get_property", "idle-active") is True, 8), self.r.stderr())
+        self.assertIsNone(self.r.proc.poll())
 
 
 if __name__ == "__main__":

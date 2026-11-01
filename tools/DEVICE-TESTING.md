@@ -970,6 +970,26 @@ Before: a box on a release with this change, `pvj-link` built (`ls /opt/pvj/curr
 | LK6 | `top -b -n1 -p $(pgrep -x pvj-link)` while following, with a clip playing; and `GET /api/tempo` for `cpu_percent` | Under 1 percent of one core, and the panel no higher than before | The cost; not measured on a Pi |
 | LK7 | A box without the package: `sudo systemctl stop pvj-link`, or an install where it was missing | The page says Link is not available, the switch keeps its value, everything else runs. With the service back, the helper is told on within a few seconds | The missing-helper path |
 
+### The loop lists (D118): not run on a node
+
+Not run on a node's renderer. `tests/test_looplist.py` holds which loads take a list, every fall back, the translation, seeks, Loop off and on, pruning and the refusal, against the stand-in; `LoopListTest` in `tests/test_pvj_render.py` runs lists, crossfades, a source, Loop off, the end of a list and a clip gone at a join on the real renderer, headless, and reads no timing. Plain mpv on the node gave the facts in D118. The seam numbers are the two measurements', from a scratch build with lists written by hand.
+
+Before: a box on a release with this change, New renderer, 4 sources, mapping off. A clip's first load after a panel start plays plain: play it twice. The renderer's trace is the scratch patch of `measurements/2026-10-31-loop-seam/scripts/patch_trace.py`. `settings.json` `renderer.loop_lists` false is the way back, then a load.
+
+| Row | What to do | What should happen | What it would mean if not |
+|---|---|---|---|
+| LL1 | One 720p clip on Source 1, played twice, 2 minutes, the trace on | Hold at each join one frame (34 ms at 30 fps, 17 at 60), against 117 to 167 with the switch off | The list is not what plays, or the queue is off |
+| LL2 | Lumia 1, Lumia 2, CRT and Oscilloscope Spirals on sources 1 to 4, each played twice, 2 minutes | 34 to 57 ms at the joins, 60.0 flips a second, the box as busy as before | The load the measurements saw has changed |
+| LL3 | A 1 s clip, 100 minutes, or `journalctl -u pvj-player` over a night | Every join clean, RSS flat, no `Invalid video timestamp`, no end of the renderer | Joins add up to something over hours |
+| LL4 | A clip with sound on the HDMI output, by ear, and with `aid` on through a crossfade | No click at a join; 50 ms of picture hold at most, as measured; sound goes over in a crossfade as for a plain clip | The list costs sound. Nobody has listened yet |
+| LL5 | Crossfades, a wipe and a slide into a list, out of one, a clip to itself, and a list to a list, with mapping on and off | Runs to the end, no black, no flash, the right clip after it. On the panel the clip's name and time as ever | The outgoing side lost its file, or the renderer's layers |
+| LL6 | Loop off while a list plays, near the end of a pass and in the middle; Loop on again before the end; then the panel's Loop on over a clip that played with ending Stop | Ends at the end of that pass as a plain clip does, nothing shown of the next pass; on again goes on with no jump; a plain clip stays plain | `end` is a frame off, or the panel reads the wrong state |
+| LL7 | A clip on a USB drive, played twice. A read-only drive if there is one | The list plays, and `ls -l /run/pvj/web/loops` shows the link. The panel names the clip on the drive | The player cannot follow the link from the panel's folder |
+| LL8 | While a list plays: delete the clip in the library. Then again with a USB clip, pulling the drive | The picture ends cleanly at the next join (on USB at the first failed read), black, idle in `/api/status`, the log says `cannot be read any more`, pvj-render's pid is the same, `top` shows no spinning core, the next pad plays | The guard does not catch this form of the failure. A pulled drive's read error was not tried anywhere |
+| LL8b | With the switch off, the same USB pull under a plain looping clip | As on a release without lists: no change from this work | The guard reaches further than a list |
+| LL9 | A clip of a few seconds with the list made short: leave a 0.2 s clip looping for 200 s, or a 2 s clip for 2000 s | One ordinary seam at the end of the list, and it goes on; position and length on the panel stay right | The wrap is not what plain mpv showed |
+| LL10 | With sources 1 to 4 on lists, 1 hour; compare with the switch off | RSS within 12 MB a source of the plain run, no growth over the hour, CPU within the node's own spread | A leak, or the queue costs more than measured |
+
 ## Safety
 
 - The workflow starts by **manual dispatch only**, and only for the repository owner. It never runs for pushes, pull requests or forks, so nobody else's code reaches the Pi. Keep it that way.
