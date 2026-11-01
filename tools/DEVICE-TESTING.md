@@ -1048,7 +1048,7 @@ The first use of the switch found a fault: `renderer.loop_lists` false reached t
 
 The D119 check holds: the gaps are well under the 1 to 3 a second the lock would have won back, and the count of uneven frames is at the low end of it. That is the trace's reading, and the undercount of D119 stands until a screen or the dongle has looked.
 
-**All four sources fall during a transition at this load.** D111 said it of the incoming clip. This run shows the other three too: in the 3 cycles read by the second, Lumia 2, CRT and Oscilloscope drew 6 to 30 frames a second instead of 30, for 2 to 4 s from the start of each 2 s crossfade, with gaps of up to 300 ms. The incoming clip took 2 to 4 s to reach 30. Flips stayed about 60 and the edge of a wipe keeps moving, so the picture's motion stutters and the output does not. The cause is the one in D111: five software decoders on four cores. Open as its own bug. Four 720p sources are the budget (the 2026-10-21 figures in D105), and a crossfade on top of a full budget is over it.
+**All four sources fall during a transition at this load.** D111 said it of the incoming clip. This run shows the other three too: in the 3 cycles read by the second, Lumia 2, CRT and Oscilloscope drew 6 to 30 frames a second instead of 30, for 2 to 4 s from the start of each 2 s crossfade, with gaps of up to 300 ms. The incoming clip took 3 to 4 s to reach 30. Flips stayed about 60 and the edge of a wipe keeps moving, so the picture's motion stutters and the output does not. The cause is the one in D111: five software decoders on four cores. Open as its own bug. Four 720p sources are the budget (the figures in D101), and a crossfade on top of a full budget is over it.
 
 ## Safety
 
