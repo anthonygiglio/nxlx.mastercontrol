@@ -18,7 +18,7 @@ import sys
 import threading
 import time
 
-from . import locks, paths
+from . import locks, looplist, paths
 
 VIDEO_EXTENSIONS = (".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mpg", ".mpeg", ".ts", ".wmv")
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".gif")
@@ -38,17 +38,48 @@ def runtime_dir():
         raise PlayerError(str(e))
 
 
+CONCAT_HEAD = b"ffconcat"
+ID3_HOPS = 8                    # tags read past before the file is left alone
+
+
+def names_other_files(path):
+    """Whether the file at `path` is an ffconcat list under any name. mpv judges a file by its content, and FFmpeg's
+    concat demuxer opens the files a list names by itself, past access-references=no: a text file called x.mp4 could
+    play another file of its folder (D118, measurements/2026-10-31-loop-concat). FFmpeg looks at the very first bytes
+    and, as for any file, past an ID3 tag. A byte order mark or white space before the word is not detected
+    (seen on the node, FFmpeg 7.1.5), so neither is looked for here. Only a regular file is opened: a live input's pipe
+    would never answer."""
+    try:
+        if not stat.S_ISREG(os.stat(path).st_mode):
+            return False
+        with open(path, "rb") as f:
+            at = 0
+            for _ in range(ID3_HOPS):
+                f.seek(at)
+                head = f.read(10)
+                if head.startswith(CONCAT_HEAD):
+                    return True
+                if head[:3] != b"ID3" or len(head) < 10 or any(b & 0x80 for b in head[6:]):
+                    return False
+                at += 10 + ((head[6] << 21) | (head[7] << 14) | (head[8] << 7) | head[9]) + (10 if head[5] & 0x10 else 0)
+    except (OSError, TypeError, ValueError):
+        pass
+    return False
+
+
 def expand_media(paths, extensions=VIDEO_EXTENSIONS + IMAGE_EXTENSIONS):
-    """Expand directories into sorted media files; keep URLs and files as given."""
+    """Expand directories into sorted media files; keep URLs and files as given. Every local file of every way of
+    playing passes here (source 1, a crossfade, sources 2 to N, a list of clips), and an ffconcat list in disguise
+    ends here: it is not a playable file (names_other_files). The lists the box writes itself never come this way."""
     out = []
     for p in paths:
         if "://" in p:
             out.append(p)
         elif os.path.isdir(p):
             for name in sorted(os.listdir(p)):
-                if name.lower().endswith(extensions) and not name.startswith("."):
+                if name.lower().endswith(extensions) and not name.startswith(".") and not names_other_files(os.path.join(p, name)):
                     out.append(os.path.join(p, name))
-        else:
+        elif not names_other_files(p):
             out.append(p)
     return out
 
@@ -102,11 +133,19 @@ class Ipc:
         self.path = path
         self.timeout = timeout
         self.patient_until = 0.0    # time.monotonic() until which a request waits START_WAIT (Player._spawn sets it)
+        self.translate = None       # looplist.Clips, where a loop list may play: what is above sees a plain clip
         self._id = 0
 
     def request(self, *command, wait=None):
-        """One command and its answer. `wait`: seconds to wait for it instead of the usual timeout (a request the
-        player itself answers only after a bounded wait of its own, such as pvj-render's build of a program)."""
+        """One command and its answer, as everything above the player sees it. `wait`: seconds to wait for it instead of
+        the usual timeout (a request the player itself answers only after a bounded wait of its own, such as pvj-render's
+        build of a program)."""
+        if self.translate is not None:
+            return self.translate.request(self.ask, command, wait)
+        return self.ask(*command, wait=wait)
+
+    def ask(self, *command, wait=None):
+        """One command and its answer, as the player says it."""
         self._id += 1
         rid = self._id
         payload = json.dumps({"command": list(command), "request_id": rid}).encode() + b"\n"
@@ -153,6 +192,7 @@ class Player:
     _effect, _effect_pid, effect_serial, effect_ended, effect_8bit, clears = None, None, 0, "", False, 0
     cleared_by, _seen_pid, _new_expected = "", None, False
     _pid_lock = locks.make("player.pid")
+    lists = None                                           # looplist.Lists: looping clips may play through a generated list (D118)
     _pipe_gone = None                                      # the pipe that was on the screen when mpv became another process
     _pipe, _pipe_pid, _pipe_path = False, None, None      # a live input's pipe is what was loaded last, the mpv it was loaded into, and which pipe
 
@@ -205,6 +245,35 @@ class Player:
         self._chain = {}
 
     # --- lifecycle -------------------------------------------------------
+    def attach_lists(self, lists):
+        """From now on a looping clip may play through a generated list (pvj/looplist.py), and this side reads it as the
+        clip. The panel's own Player only: the one with the settings and the folder."""
+        self.lists = lists
+        self.ipc.translate = looplist.Clips(lists)
+
+    def _list_for(self, files, ending):
+        """The list to load for `files` with `ending`, or None for the plain load: one local video to loop on the New
+        renderer, whose length is known already. Asks nothing that takes time. The gates after this are the list's own."""
+        if self.lists is None or ending != "loop" or len(files) != 1 or not files[0].lower().endswith(VIDEO_EXTENSIONS):
+            return None
+        if not self.crossfades():
+            return None
+        return self.lists.for_clip(files[0], self._lists_playing)
+
+    def _lists_playing(self):
+        """The paths the layers play, as the player says them: what a prune must leave. Raises PlayerError."""
+        rows = self.ipc.ask("get_property", "pvj-sources")
+        return [r.get("path") for r in rows if isinstance(r, dict)]
+
+    def _front_list(self):
+        """The View of the list source 1 plays, or None."""
+        if self.lists is None or not self.lists.any():
+            return None
+        try:
+            return self.lists.view(self.ipc.ask("get_property", "path"))
+        except PlayerError:
+            return None                     # nothing loaded, or a player that does not answer: not a list either way
+
     def is_running(self):
         try:
             self._note_pid(self.ipc.request("get_property", "pid"))
@@ -451,14 +520,22 @@ class Player:
         single = len(files) == 1
         shows = "inf" if single or image_seconds is None else max(0.1, min(3600.0, float(image_seconds)))
         opts = "keep-open=%s,image-display-duration=%s" % ("yes" if ending == "hold" else "no", shows)
-        first = True
-        for f in files:
-            self.ipc.request("pvj-source", source, "loadfile", f, "replace" if first else "append", opts)
-            first = False
+        target = self._list_for(files, ending)
+        if target is not None:
+            try:
+                self.ipc.ask("pvj-source", source, "loadfile", target, "replace", opts + "," + looplist.QUEUE)
+            except PlayerError:
+                target = None               # a renderer that refuses it: the clip itself, as always
+        if target is None:
+            target = files[0]
+            first = True
+            for f in files:
+                self.ipc.request("pvj-source", source, "loadfile", f, "replace" if first else "append", opts)
+                first = False
         deadline = time.monotonic() + 3.0
         while time.monotonic() < deadline:
             try:
-                if self.ipc.request("pvj-source", source, "get_property", "path") == files[0]:
+                if self.ipc.ask("pvj-source", source, "get_property", "path") == target:
                     break
             except PlayerError:
                 pass
@@ -621,16 +698,29 @@ class Player:
             self.fade_refused = "a live input's settings could not be taken back"
             return False
         path = files[0]
-        words = [path, max(0.0, min(60.0, float(seconds))), "keep-open=%s,image-display-duration=inf" % ("yes" if ending == "hold" else "no")]
-        if style != "crossfade":
-            words.append(style)
-        try:
-            self.ipc.request("pvj-crossfade", *words)
-        except PlayerError as e:
-            self.fade_refused = str(e)
-            return False
+        target = self._list_for(files, ending)
+        opts = "keep-open=%s,image-display-duration=inf" % ("yes" if ending == "hold" else "no")
+        tail = [] if style == "crossfade" else [style]
+        seconds = max(0.0, min(60.0, float(seconds)))
+        if self.lists is not None and self.lists.any():
+            try:
+                self.lists.touch(self.ipc.ask("get_property", "path"))         # it plays on under the fade (looplist.GRACE)
+            except PlayerError:
+                pass
+        if target is not None:
+            try:
+                self.ipc.ask("pvj-crossfade", target, seconds, opts + "," + looplist.QUEUE, *tail)
+            except PlayerError:
+                target = None               # a renderer that refuses it: the clip itself, as always
+        if target is None:
+            target = path
+            try:
+                self.ipc.request("pvj-crossfade", path, seconds, opts, *tail)
+            except PlayerError as e:
+                self.fade_refused = str(e)
+                return False
         self.fade_refused = ""
-        self._wait_for_path(path)
+        self._wait_for_path(target)
         self.ipc.request("set_property", "pause", False)
         self.ipc.request("set_property", "loop-file", "inf" if ending == "loop" else "no")
         self.ipc.request("set_property", "loop-playlist", "no")
@@ -660,13 +750,21 @@ class Player:
         self.ipc.request("set_property", "keep-open", "yes" if ending == "hold" else "no")
         self.ipc.request("set_property", "image-display-duration",
                          "inf" if single or image_seconds is None else max(0.1, min(3600.0, float(image_seconds))))
-        first = True
-        for f in files:
-            # "--" style option injection is impossible here: the path is a
-            # loadfile argument, never a command line option.
-            self.ipc.request("loadfile", f, "replace" if first else "append")
-            first = False
-        self._wait_for_path(files[0])
+        target = self._list_for(files, ending)
+        if target is not None:
+            try:
+                self.ipc.ask("loadfile", target, "replace", -1, looplist.QUEUE)
+            except PlayerError:
+                target = None               # a renderer that refuses it: the clip itself, as always
+        if target is None:
+            target = files[0]
+            first = True
+            for f in files:
+                # "--" style option injection is impossible here: the path is a
+                # loadfile argument, never a command line option.
+                self.ipc.request("loadfile", f, "replace" if first else "append")
+                first = False
+        self._wait_for_path(target)
         self.ipc.request("set_property", "pause", False)
         looping = ending == "loop"
         self.ipc.request("set_property", "loop-file", "inf" if (looping and single) else "no")
@@ -828,11 +926,13 @@ class Player:
         self.ipc.request("playlist-shuffle")
 
     def _wait_for_path(self, path, timeout=3.0):
-        """loadfile returns before mpv switches; wait so status() is truthful."""
+        """loadfile returns before mpv switches; wait so status() is truthful. `path` as the player says it: a list is
+        waited for as the list, or a clip that goes over into its own list would seem to be there at once."""
+        ask = self.ipc.ask if self.lists is not None else self.ipc.request
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
-                if self.ipc.request("get_property", "path") == path:
+                if ask("get_property", "path") == path:
                     return
             except PlayerError:
                 pass
@@ -1617,7 +1717,21 @@ class Player:
         self._set("video-pan-y", max(-3000, min(3000, float(y))) / 1000.0)
 
     def loop(self, enabled):
-        """Loop the current clip (or the whole playlist when there are several)."""
+        """Loop the current clip (or the whole playlist when there are several). A clip that plays through a list goes
+        on to the end of this pass and ends there as a plain clip would: loop-file does not end a list, so `end` does
+        (the renderer sets it for this file alone), and Loop on again clears it. Loop on over a plain clip leaves it
+        plain until its next load: nothing is reloaded in the middle of playing (D118)."""
+        view = self._front_list()
+        if view is not None:
+            if enabled:
+                self._set("end", "none")
+                self._set("loop-file", "inf")
+            else:
+                at = self.ipc.ask("get_property", "time-pos")
+                micro = round(view.length * 1e6)        # as the demuxer adds the lengths up, with a hair to spare for the join's frame
+                self._set("end", "%.6f" % ((view.pass_of(at) + 1) * micro / 1e6 - 0.001))
+                self._set("loop-file", "no")
+            return
         count = self.ipc.request("get_property", "playlist-count") or 0
         self._set("loop-file", "inf" if (enabled and count <= 1) else "no")
         self._set("loop-playlist", "inf" if (enabled and count > 1) else "no")

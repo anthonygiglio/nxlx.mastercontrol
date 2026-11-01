@@ -164,7 +164,15 @@ def clean(data):
     final = data.get("final")
     if final == "full" or (final == 720 and isinstance(final, int) and not isinstance(final, bool)):
         out["final"] = final                # no key is Automatic: a file without it is as before (D108)
+    if data.get("loop_lists") is False:
+        out["loop_lists"] = False           # the kill switch of the loop lists (D118), no page shows it: no key is on
     return out
+
+
+def loop_lists(data):
+    """Whether a looping clip may play through a generated list (pvj/looplist.py): `renderer.loop_lists` in the
+    settings, read with defaults like the other keys here, so a file from before it is on and a rollback loses nothing."""
+    return clean(data).get("loop_lists", True)
 
 
 def wanted_path(env=None):
@@ -623,6 +631,8 @@ class Renderer:
                 self.settings.data["renderer"]["sources"] = sources
             if final != "auto":
                 self.settings.data["renderer"]["final"] = final
+            if before.get("loop_lists") is False:
+                self.settings.data["renderer"]["loop_lists"] = False
             self.settings.save()
         try:
             self._write()

@@ -100,7 +100,7 @@ void ipc_close(void)
 // level during a crossfade reaches both pictures. The others are the file's own (pause, loops, a live input's keys)
 // and go to the layer on the screen only.
 static const char *const SETTABLE[] = {
-    "pause", "speed", "volume", "mute", "loop-file", "loop-playlist", "keep-open", "image-display-duration",
+    "pause", "speed", "volume", "mute", "loop-file", "loop-playlist", "keep-open", "image-display-duration", "end",
     "audio-device", "brightness", "video-zoom", "video-pan-x", "video-pan-y", "video-rotate", "video-crop",
     "keepaspect", "fbo-format", "screenshot-format", "screenshot-jpeg-quality", "screenshot-png-compression",
     "screenshot-png-filter", "screenshot-high-bit-depth",
@@ -114,8 +114,11 @@ static const char *const MIRRORED[] = {
     "video-crop", "keepaspect", "fbo-format", "screenshot-format", "screenshot-jpeg-quality", "screenshot-png-compression",
     "screenshot-png-filter", "screenshot-high-bit-depth", NULL };
 
-// Keys a crossfade's options may hold: what Player.play sets before a load, for the incoming clip alone.
-static const char *const FADE_KEYS[] = { "keep-open", "image-display-duration", NULL };
+// Keys a crossfade's options, and a source's load, may hold: what Player.play sets before a load, for the incoming clip
+// alone; and the decoded queue of a generated loop list (QUEUE_KEYS, D118), which goes with the load as that file's own.
+static const char *const FADE_KEYS[] = { "keep-open", "image-display-duration", "vd-queue-enable", "vd-queue-max-samples",
+                                         "vd-queue-max-secs", NULL };
+static const char *const QUEUE_KEYS[] = { "vd-queue-enable", "vd-queue-max-samples", "vd-queue-max-secs", NULL };
 
 // Sources 2 to N (D101): what may be set on one, and what of it may be read. `brightness` is also the panel's level:
 // a set_property of it on the socket (opacity, Blackout, a fade) reaches every source, so a source's own brightness
@@ -133,7 +136,8 @@ static const char *const TO_SOURCES[] = { "brightness", "keepaspect", "fbo-forma
 // Keys loadfile's options may hold (the pipe's, set with the load on mpv 0.38 and later).
 static const char *const LOAD_KEYS[] = {
     "demuxer", "demuxer-rawvideo-w", "demuxer-rawvideo-h", "demuxer-rawvideo-mp-format", "demuxer-rawvideo-fps",
-    "cache", "cache-pause", "initial-audio-sync", "demuxer-readahead-secs", "demuxer-max-bytes", "audio-delay", NULL };
+    "cache", "cache-pause", "initial-audio-sync", "demuxer-readahead-secs", "demuxer-max-bytes", "audio-delay",
+    "vd-queue-enable", "vd-queue-max-samples", "vd-queue-max-secs", NULL };
 
 static int in_list(const char *const *list, const char *s)
 {
@@ -241,6 +245,25 @@ static int options_ok(const char *s, const char *const *keys)
     return ok;
 }
 
+// `end`: where the file that plays stops (Loop off on a generated list, D118, whose loop-file does not end it). "none" or
+// a plain number of seconds. It is set as the file's own: mpv's plain `end` stays for the next file, on this layer, and
+// a clip loaded later, after a crossfade too, would stop there.
+static int set_end(mpv_handle *h, const mpv_node *v)
+{
+    if (v->format != MPV_FORMAT_STRING) return MPV_ERROR_INVALID_PARAMETER;
+    const char *s = v->u.string;
+    if (strcmp(s, "none")) {
+        int dots = 0, digits = 0;
+        for (const char *c = s; *c; c++) {
+            if (*c == '.') dots++;
+            else if (*c >= '0' && *c <= '9') digits++;
+            else return MPV_ERROR_INVALID_PARAMETER;
+        }
+        if (!digits || dots > 1 || strlen(s) > 20) return MPV_ERROR_INVALID_PARAMETER;
+    }
+    return mpv_set_property_string(h, "file-local-options/end", s);
+}
+
 static int seek_flags_ok(const char *s)
 {
     static const char *const words[] = { "relative", "absolute", "absolute-percent", "relative-percent", "exact", "keyframes", NULL };
@@ -325,7 +348,28 @@ static void end_fade(void)
 // that core has closed its audio output (`current-ao` unavailable), and only then is the incoming clip given its sound.
 #define SOUND_WAIT 1.0
 
-// "k=v,k=v" (already checked against FADE_KEYS) set on `h`; the first refusal is the answer
+// The pairs of "k=v,k=v" (already checked against FADE_KEYS) that go with the load, for that file alone: loadfile's
+// fourth argument after its index. Nothing in `out` when there are none, and the load is as it always was. On a libmpv
+// whose loadfile has no index (0.35) such a load is refused, and the panel loads the plain clip.
+#define QUEUE_OPTIONS 300
+static void load_part(const char *opts, char *out, size_t n)
+{
+    out[0] = 0;
+    char *copy = opts ? strdup(opts) : NULL, *save = NULL;
+    if (!copy) return;
+    for (char *part = strtok_r(copy, ",", &save); part; part = strtok_r(NULL, ",", &save)) {
+        char *eq = strchr(part, '=');
+        *eq = 0;
+        if (!in_list(QUEUE_KEYS, part)) continue;
+        *eq = '=';
+        size_t used = strlen(out);
+        snprintf(out + used, n - used, "%s%s", used ? "," : "", part);
+    }
+    free(copy);
+}
+
+// "k=v,k=v" (already checked against FADE_KEYS) set on `h`, but for what goes with the load (load_part); the first
+// refusal is the answer
 static int apply_options(mpv_handle *h, const char *opts)
 {
     if (!opts) return 0;
@@ -335,7 +379,7 @@ static int apply_options(mpv_handle *h, const char *opts)
     for (char *part = strtok_r(copy, ",", &save); part && r >= 0; part = strtok_r(NULL, ",", &save)) {
         char *eq = strchr(part, '=');
         *eq = 0;
-        r = set_str(h, part, eq + 1);
+        if (!in_list(QUEUE_KEYS, part)) r = set_str(h, part, eq + 1);
     }
     free(copy);
     return r;
@@ -364,7 +408,9 @@ static void crossfade(int fd, const mpv_node *id, const mpv_node *cmd)
         reply(fd, id, "invalid parameter", NULL);
         return;
     }
-    const char *load[] = { "loadfile", url, "replace", NULL };
+    char queue[QUEUE_OPTIONS];
+    load_part(opts, queue, sizeof queue);
+    const char *load[] = { "loadfile", url, "replace", *queue ? "-1" : NULL, *queue ? queue : NULL, NULL };
     pthread_mutex_lock(&layer_lock);
     end_fade();
     int out = front_layer(), in = 1 - out;
@@ -496,7 +542,9 @@ static void source_command(int fd, const mpv_node *id, const mpv_node *cmd)
             return;
         }
         int r = apply_options(h, opts);
-        const char *load[] = { "loadfile", url, flag, NULL };
+        char queue[QUEUE_OPTIONS];
+        load_part(opts, queue, sizeof queue);
+        const char *load[] = { "loadfile", url, flag, *queue ? "-1" : NULL, *queue ? queue : NULL, NULL };
         if (r >= 0) r = mpv_command(h, load);
         if (r >= 0) __atomic_add_fetch(&app.source_loads[k], 1, __ATOMIC_RELAXED);
         reply(fd, id, r < 0 ? mpv_error_string(r) : "success", NULL);
@@ -1180,7 +1228,8 @@ static void handle(int fd, const char *line, size_t len)
             int r = set_both(prop, arg(cmd, 2));
             reply(fd, id, r < 0 ? mpv_error_string(r) : "success", NULL);
         } else if (in_list(SETTABLE, prop)) {
-            int r = mpv_set_property(front_handle(), prop, MPV_FORMAT_NODE, (void *)arg(cmd, 2));
+            int r = !strcmp(prop, "end") ? set_end(front_handle(), arg(cmd, 2))
+                                         : mpv_set_property(front_handle(), prop, MPV_FORMAT_NODE, (void *)arg(cmd, 2));
             reply(fd, id, r < 0 ? mpv_error_string(r) : "success", NULL);
         } else {
             LOG("ipc: set_property %s is not on the list", prop);

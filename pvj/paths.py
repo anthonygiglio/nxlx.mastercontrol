@@ -6,7 +6,7 @@ On a box each service has a folder of its own that only it can write, under a pa
 
     /run/pvj                root:root       0755   made by systemd and install/pvj-tmpfiles.conf, never a service's own
     /run/pvj/player         <display>:pvj   0750   pvj-player: player.sock, preview.jpg, screen.json
-    /run/pvj/web            pvj-web:pvj     0750   pvj-web: pin, capture.fifo, overlays, shader and mapping files
+    /run/pvj/web            pvj-web:pvj     0750   pvj-web: pin, capture.fifo, overlays, shader and mapping files, loops/
     /run/pvj/netd           root:pvj        0750   pvj-netd: netd.sock
     /run/pvj-sysd           root:pvj        0750   pvj-sysd: sysd.sock
     /run/pvj-supportd       root:pvj        0750   pvj-supportd: supportd.sock
@@ -67,6 +67,7 @@ NDI_SOCKET = "ndi.sock"
 NDI_FIFO = "ndi.fifo"
 PIN = "pin"
 CAPTURE_FIFO = "capture.fifo"
+LOOPS = "loops"                               # the generated loop lists (pvj/looplist.py, D118): in the panel's folder, read through group pvj
 OVERLAY = "overlay.bgra"
 UNDERVOLTAGE = "undervoltage-seen"
 
@@ -229,6 +230,10 @@ def update_result(env=None):
 
 def pin_file(rundir):
     return os.path.join(rundir, PIN)
+
+
+def loops_dir(rundir):
+    return os.path.join(rundir, LOOPS)
 
 
 def capture_fifo(rundir):

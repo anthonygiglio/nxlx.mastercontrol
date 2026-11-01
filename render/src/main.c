@@ -250,11 +250,22 @@ static void on_update(void *ctx) { (void)ctx; wake_render(); }
 
 static volatile int events_stop;
 
+// A loop that cannot go on (D118): the file of a generated list is gone at a join, so mpv's loop-file seeks to the start,
+// reaches the end at once and seeks again, for ever, with both cores of the decoder's thread busy and nothing drawn
+// (measured on a Pi 4, plain mpv: 7000 turns a second, 2 cores). Nothing else restarts this fast with no frame between:
+// a clip is at least a frame long, and a person or a controller seeks far slower. The loop is taken off and the file ends
+// as any other does, on its own layer and no other.
+#define SPIN_GAP 0.02                   // seconds between two restarts that count as one turn of such a loop
+#define SPIN_TURNS 20
+
 static void *event_loop(void *arg)
 {
     Layer *l = arg;
     mpv_handle *h = l->h;
     int i = l->index;
+    double restart_at = -1e9;
+    long restart_drawn = -1;
+    int turns = 0;
     while (!events_stop) {
         mpv_event *ev = mpv_wait_event(h, 0.5);
         if (ev->event_id == MPV_EVENT_SHUTDOWN) break;
@@ -276,6 +287,15 @@ static void *event_loop(void *arg)
             if (ev->event_id == MPV_EVENT_PLAYBACK_RESTART) {
                 __atomic_store_n(&app.restart_of[i], __atomic_load_n(&app.starts[i], __ATOMIC_ACQUIRE), __ATOMIC_RELEASE);
                 wake_render();
+                double t = now_s();
+                long drawn = __atomic_load_n(&app.layer_drawn[i], __ATOMIC_RELAXED);
+                turns = t - restart_at < SPIN_GAP && drawn == restart_drawn ? turns + 1 : 0;
+                restart_at = t;
+                restart_drawn = drawn;
+                if (turns == SPIN_TURNS) {
+                    LOG("layer %d: its file restarts without a frame; the loop is taken off and it ends", i);
+                    mpv_set_property_string(h, "loop-file", "no");
+                }
             }
             if (ev->event_id == MPV_EVENT_END_FILE && ev->data
                 && ((mpv_event_end_file *)ev->data)->reason == MPV_END_FILE_REASON_ERROR) {
