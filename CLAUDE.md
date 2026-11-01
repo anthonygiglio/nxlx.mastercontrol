@@ -1,6 +1,6 @@
 <!-- SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
      SPDX-License-Identifier: Apache-2.0 -->
-# Notes for claude sessions
+# Notes for AI sessions
 
 Read first: [HANDOFF.md](HANDOFF.md), then [project-log/](project-log/README.md). The decisions, lessons and open items are there.
 
