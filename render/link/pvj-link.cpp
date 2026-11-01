@@ -35,6 +35,7 @@
 //          48  u32      CRC-32 (zlib's) of bytes 0 to 47
 //          52  u32      sequence number again
 
+#include <algorithm>
 #include <ableton/Link.hpp>
 
 #include <arpa/inet.h>
@@ -594,13 +595,18 @@ int main()
   std::printf("pvj-link: ready; off until the owner switches it on, and it only ever follows\n");
   std::fflush(stdout);
   double last = 0.0;
+  double deaf = 0.0;     // the listener is left alone until then, so datagrams from the network cannot spin this loop
   while (stopping == 0)
   {
     const double next = last + (helper.fast() ? RECORD_EVERY : IDLE_EVERY);
-    const double wait = next - monotonic();
+    const double before = monotonic();
+    const bool listen = helper.listenerFd() >= 0 && before >= deaf;
+    const double wait = (before >= deaf ? next : std::min(next, deaf)) - before;
     pollfd fds[2] = {{server, POLLIN, 0}, {helper.listenerFd(), POLLIN, 0}};
-    const int rc = poll(fds, helper.listenerFd() >= 0 ? 2 : 1, wait > 0.0 ? static_cast<int>(wait * 1000.0) + 1 : 0);
-    const bool readable = rc > 0 && helper.listenerFd() >= 0 && (fds[1].revents & POLLIN) != 0;
+    const int rc = poll(fds, listen ? 2 : 1, wait > 0.0 ? static_cast<int>(wait * 1000.0) + 1 : 0);
+    const bool readable = rc > 0 && listen && (fds[1].revents & POLLIN) != 0;
+    if (readable)
+      deaf = monotonic() + RECORD_EVERY;
     if (rc > 0 && (fds[0].revents & POLLIN) != 0)
     {
       const int fd = accept4(server, nullptr, nullptr, SOCK_CLOEXEC);

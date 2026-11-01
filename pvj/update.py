@@ -534,6 +534,9 @@ class Updater:
             # that most boxes do not have.
             self.run(["systemctl", "try-restart", "pvj-netd.service"], capture_output=True)
             self.run(["systemctl", "try-restart", "pvj-ndi.service"], capture_output=True)
+            # The Link helper too: nothing else stops it after a rollback to a release without Link, where the old
+            # panel cannot tell it off and it would stay on the network; the unit's condition keeps it down there.
+            self.run(["systemctl", "try-restart", "pvj-link.service"], capture_output=True)
             self.run(["systemctl", "restart", "pvj-player.service", "pvj-web.service"], capture_output=True)
 
     def configured_port(self):
