@@ -1029,7 +1029,7 @@ Before: a box on a release with this change, New renderer, 4 sources, mapping of
 | LL9 | Passed | 0.2 s clip, 270 s: one hold over 50 ms, 165.6 ms at the end of the 200 s list, then on. The panel stayed right | A hold of 117 to 181 ms at every pass |
 | LL10 | Passed, with a note | 1 hour, 4 sources: medians 34.2 to 36.6 ms, 9 of 717 holds over 100 ms. RSS 339 to 364.6 MB, flat for the last 35 minutes, not from the start, and 3 MB under the plain run. 299 percent CPU, 0.009 missed a second | Medians 134 to 170 ms. RSS 367.9 MB, 296 percent CPU, 0.009 missed |
 
-The first use of the switch found a fault: `renderer.loop_lists` false reached the file the player watches, the player took it for a new wish and ended pvj-render every 3 s, 124 times in 7 minutes, with no picture. That is fixed (`tests/test_renderer.py`) and was rerun on the node on master 617d8ae: with the switch off the player ran 60 s with no restart, pvj-render kept its pid, and the switch went back on the same way. The switch-off runs above took the key out of that file by hand.
+The first use of the switch found a fault: `renderer.loop_lists` false reached the file the player watches, the player took it for a new wish and ended pvj-render every 3 s, 124 times in 7 minutes, with no picture. That is fixed (`tests/test_renderer.py`) and was rerun on the node on master 617d8ae (`measurements/2026-11-01-loop-lists`): with the switch off the player ran 60 s with no restart, pvj-render kept its pid, and the switch went back on the same way. The switch-off runs above took the key out of that file by hand.
 
 ### Final soak, 2026-11-01
 
@@ -1048,7 +1048,7 @@ The first use of the switch found a fault: `renderer.loop_lists` false reached t
 
 The D119 check holds: the gaps are well under the 1 to 3 a second the lock would have won back, and the count of uneven frames is at the low end of it. That is the trace's reading, and the undercount of D119 stands until a screen or the dongle has looked.
 
-**All four sources fall during a transition at this load.** D111 said it of the incoming clip. This run shows the other three too: in the 3 cycles read by the second, Lumia 2, CRT and Oscilloscope drew 6 to 30 frames a second instead of 30, for 2 to 4 s from the start of each 2 s crossfade, with gaps of up to 300 ms. The incoming clip took 3 to 4 s to reach 30. Flips stayed about 60 and the edge of a wipe keeps moving, so the picture's motion stutters and the output does not. The cause is the one in D111: five software decoders on four cores. Open as its own bug. Four 720p sources are the budget (the figures in D101), and a crossfade on top of a full budget is over it.
+**The other sources fall during a transition at this load.** D111 said it of the incoming clip. This run shows the others too. Frames drawn in each of the 6 s after a play, over all 22 transitions (`results/crossfade-per-second.txt`), where 30 is full: Lumia 2 fell as low as 8 and some fades did not touch it, under 25 for 1.1 s on average; CRT fell to 6 to 13 in every fade, under 25 for 3.8 s; Oscilloscope fell to 7 to 16, under 25 for 3.0 s. Gaps reached 300 ms. The incoming clip took 2.7 s on average to reach 25, from 1 to 4 s. Flips stayed about 60 by the trace, so the clips' motion stutters and the output does not. Nobody has looked at it. The cause is the one in D111: five software decoders on four cores. Open as its own bug. Four 720p sources are the budget (the figures in D101), and a crossfade on top of a full budget is over it.
 
 ## Safety
 
