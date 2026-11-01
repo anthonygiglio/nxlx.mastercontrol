@@ -1029,7 +1029,26 @@ Before: a box on a release with this change, New renderer, 4 sources, mapping of
 | LL9 | Passed | 0.2 s clip, 270 s: one hold over 50 ms, 165.6 ms at the end of the 200 s list, then on. The panel stayed right | A hold of 117 to 181 ms at every pass |
 | LL10 | Passed, with a note | 1 hour, 4 sources: medians 34.2 to 36.6 ms, 9 of 717 holds over 100 ms. RSS 339 to 364.6 MB, flat for the last 35 minutes, not from the start, and 3 MB under the plain run. 299 percent CPU, 0.009 missed a second | Medians 134 to 170 ms. RSS 367.9 MB, 296 percent CPU, 0.009 missed |
 
-The first use of the switch found a fault: `renderer.loop_lists` false reached the file the player watches, the player took it for a new wish and ended pvj-render every 3 s, 124 times in 7 minutes, with no picture. That is fixed (`tests/test_renderer.py`) and has not been rerun on the node. The switch-off runs above took the key out of that file by hand.
+The first use of the switch found a fault: `renderer.loop_lists` false reached the file the player watches, the player took it for a new wish and ended pvj-render every 3 s, 124 times in 7 minutes, with no picture. That is fixed (`tests/test_renderer.py`) and was rerun on the node on master 617d8ae (`measurements/2026-11-01-loop-lists`): with the switch off the player ran 60 s with no restart, pvj-render kept its pid, and the switch went back on the same way. The switch-off runs above took the key out of that file by hand.
+
+### Final soak, 2026-11-01
+
+2 hours on the node, master 617d8ae, bounded to 7200 s. New renderer, 4 sources on 720p clips, all on loop lists, mapping on with 2 surfaces, Link off, 11 crossfade cycles on source 1 (22 transitions of 2 s). Numbers in `measurements/2026-11-01-final-soak`. Everything comes from the renderer's trace and counters: nobody watched the screen, and no switch-off run was made for comparison.
+
+| Measure | Seen |
+|---|---|
+| Flips and misses | 59.98 flips a second, 0.025 missed a second (181 in all, 34 of them near a transition) |
+| Load | Box 76.0 percent, pvj-render 291 percent of a core, 46.7 C rising to 57.0 C (58.4 at most), throttled 0x0 at every reading |
+| Memory | RSS 346 MB at the start, stepping up at transitions to 427 MB by 70 minutes, then 411 to 432 MB to the end. Bounded, not flat: it does not move between transitions. fds 28 to 31, threads 83 to 86 |
+| Process | The same pvj-render pid at all 120 readings, 0 player restarts, 0 `Invalid video timestamp`, no log lines of concern |
+| Joins | 1399 holds, medians 34.1 to 36.2 ms, p95 50.3 to 52.4 ms, none of 100 ms or more |
+| Gaps of 50 ms or more, away from joins and transitions | 0.17 to 0.30 a second per source |
+| Frames not exactly 2 vblanks | 1.06 to 1.54 a second per source, approximate: this trace had no T lines. 1 vblank and 3 vblanks come in nearly equal numbers, so it cannot tell jitter from real frame lengths |
+| Transitions | 22 of 22 ran to the end, same pid, source 1 on a list after each |
+
+The D119 check holds: the gaps are well under the 1 to 3 a second the lock would have won back, and the count of uneven frames is at the low end of it. That is the trace's reading, and the undercount of D119 stands until a screen or the dongle has looked.
+
+**The other sources fall during a transition at this load.** D111 said it of the incoming clip. This run shows the others too. Frames drawn in each of the 6 s after a play, over all 22 transitions (`results/crossfade-per-second.txt`), where 30 is full: Lumia 2 fell as low as 8 and some fades did not touch it, under 25 for 1.1 s on average; CRT fell to 6 to 13 in every fade, under 25 for 3.8 s; Oscilloscope fell to 7 to 16, under 25 for 3.0 s. Gaps reached 300 ms. The incoming clip took 2.7 s on average to reach 25, from 1 to 4 s. Flips stayed about 60 by the trace, so the clips' motion stutters and the output does not. Nobody has looked at it. The cause is the one in D111: five software decoders on four cores. Open as its own bug. Four 720p sources are the budget (the figures in D101), and a crossfade on top of a full budget is over it.
 
 ## Safety
 
