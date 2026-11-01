@@ -497,6 +497,15 @@ class SwitchTest(Base):
         screenmode.write_json(wanted, {"use": "new", "detail": "auto"})
         self.assertEqual(sup._wish_changed(), {"use": "new", "detail": "auto"})
 
+    def test_the_loop_lists_switch_is_no_change(self):
+        wanted = os.path.join(self.dir, "wanted.json")
+        sup = renderer.Supervisor(["x"], self.sock, self.dir, "auto", wanted=wanted)
+        screenmode.write_json(wanted, renderer.clean({"use": "new", "detail": "auto", "loop_lists": False}))
+        self.assertIn("loop_lists", screenmode.read_json(wanted), "the file the panel writes carries the switch")
+        self.assertIsNone(sup._wish_changed(), "or the player ends pvj-render every few seconds, for good")
+        screenmode.write_json(wanted, {"use": "new", "detail": 720, "loop_lists": False})
+        self.assertEqual(sup._wish_changed(), {"use": "new", "detail": 720}, "a real change is still one")
+
     def test_another_final_pass_is_a_change_too(self):
         done, sup, took = self.run_switch("ok", {"use": "new", "detail": "auto", "final": 720})
         self.assertEqual(done, {"exit": 0})

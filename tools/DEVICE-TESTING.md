@@ -954,9 +954,17 @@ Before: a box on a release with this change, the sound switch on (the Owner's) w
 | BC4 | Not run | Needs music on a capture device |
 | BC5 | Passed, sound off | pvj-web 2.86 percent of a core without the clock, 3.01 percent with it. The sound-on path is measured with the rerun of BC2 |
 
-### Ableton Link (D117): not run on a node
+BC2 rerun, 2026-10-31, node on master 7553553, seen through the HDMI dongle, nobody at the screen. Numbers in `measurements/2026-10-31-clock-paused`.
 
-Not run. The unit tests prove the clock's word, the hand-over, stale records and who may switch it, with a fake helper and a fake clock; `tests/test_pvj_link.py` runs the real helper beside a stand-in peer on one machine. None of it has met Ableton Live, a phone, a Pi or a real network.
+| Measure | Seen |
+|---|---|
+| The beat | Radial gradient on Beat at 100 BPM from 9 taps: 1.66 Hz in the dongle's picture against a beat of 1.667 Hz, 46 rises in 28 s against 46.6 beats, 0.561 to 0.642 s apart, 30 s after the last tap. Before: a 0.30 Hz alias |
+| Sound-on cost, mapping off | pvj-web 2.61 percent of a core, pvj-render 17.7, box 6.0, no missed vblanks in 121 s |
+| Sound-on cost, mapping at 20 a second | pvj-web 9.85 percent of a core, pvj-render 21.8, box 8.9, no missed vblanks in 121 s. The mapping costs about 7 points of the panel and 4 of the renderer |
+
+### Ableton Link (D117): run on a node beside a stand-in, not yet with a second machine
+
+The unit tests prove the clock's word, the hand-over, stale records and who may switch it, with a fake helper and a fake clock; `tests/test_pvj_link.py` runs the real helper beside a stand-in peer on one machine. None of it has met Ableton Live, a phone or a real network.
 
 Before: a box on a release with this change, `pvj-link` built (`ls /opt/pvj/current/render/pvj-link`), a Link program on another machine on the same network, the Owner on the Sound page. `curl -s localhost/api/tempo` means with a device token.
 
@@ -970,11 +978,26 @@ Before: a box on a release with this change, `pvj-link` built (`ls /opt/pvj/curr
 | LK6 | `top -b -n1 -p $(pgrep -x pvj-link)` while following, with a clip playing; and `GET /api/tempo` for `cpu_percent` | Under 1 percent of one core, and the panel no higher than before | The cost; not measured on a Pi |
 | LK7 | A box without the package: `sudo systemctl stop pvj-link`, or an install where it was missing | The page says Link is not available, the switch keeps its value, everything else runs. With the service back, the helper is told on within a few seconds | The missing-helper path |
 
-### The loop lists (D118): not run on a node
+2026-11-01, node on master 524014b. Numbers in `measurements/2026-11-01-link`. The peer was the repo's stand-in, on the node itself: WSL's network is NAT here and multicast does not cross it. So nothing below has crossed a network, a tempo has come from no real Link program, and nobody watched or listened. Rows LK8 to LK10 are extra checks of this run.
 
-Not run on a node's renderer. `tests/test_looplist.py` holds which loads take a list, every fall back, the translation, seeks, Loop off and on, pruning and the refusal, against the stand-in; `LoopListTest` in `tests/test_pvj_render.py` runs lists, crossfades, a source, Loop off, the end of a list and a clip gone at a join on the real renderer, headless, and reads no timing. Plain mpv on the node gave the facts in D118. The seam numbers are the two measurements', from a scratch build with lists written by hand.
+| Row | Result | Seen |
+|---|---|---|
+| LK1 | Passed, one machine | Alone for 120 s: `listening`, 0 peers, no clock. Peer at 97: `following` in 1.82 s, the peer's tempo never moved |
+| LK2 | Passed, one machine | 97 to 135 within one 0.25 s sample; the peer stayed on its own values |
+| LK3 | Passed, one machine, no ear | 985 samples over 197 s: 10.1 ms between box and peer, inside the 30 ms of a request, 0.33 ms of drift a minute. Both ends read one clock, so this cannot show a bad conversion between machines |
+| LK4 | Passed, one machine, no tap | 0 peers in 0.23 s, `listening` 2 s later, held at 135 at 5.5 s, largest beat error 0.016. The branch with an earlier tap was not tried |
+| LK5 | Passed | Off: no socket, nothing on port 20808 in 60 s. On and alone: the group joined, nothing sent. Captured on eth0 by a small script, tcpdump is not on the node |
+| LK6 | Passed, one machine, no clip | pvj-link 0.6 percent of a core following, the panel no higher. No clip was playing, so the row's load is not met |
+| LK7 | Passed, one machine | Service stopped: `unavailable` in 0.83 s, the switch kept, no failed request in 280. Back: following 2.3 s after the start returned |
+| LK8 | Passed, one machine | 2000 junk datagrams a second for 30 s to the group: pvj-link 0.42 percent, same pid. That they reached the socket is read from the CPU alone |
+| LK9 | Passed, one machine | Restart while following: following again 3.35 s later, the panel told the new helper by itself |
+| LK10 | Passed | `systemd-analyze security pvj-link` 1.9, its own user, CPU quota and memory limit in force. Off after a reboot not tested |
 
-Before: a box on a release with this change, New renderer, 4 sources, mapping off. A clip's first load after a panel start plays plain: play it twice. The renderer's trace is the scratch patch of `measurements/2026-10-31-loop-seam/scripts/patch_trace.py`. `settings.json` `renderer.loop_lists` false is the way back, then a load.
+### The loop lists (D118): run on a node, 2026-11-01
+
+`tests/test_looplist.py` holds which loads take a list, every fall back, the translation, seeks, Loop off and on, pruning and the refusal, against the stand-in; `LoopListTest` in `tests/test_pvj_render.py` runs lists, crossfades, a source, Loop off, the end of a list and a clip gone at a join on the real renderer, headless, and reads no timing. Plain mpv on the node gave the facts in D118. The seam numbers are the two measurements', from a scratch build with lists written by hand.
+
+Before: a box on a release with this change, New renderer, 4 sources, mapping off. A clip's first load after a panel start plays plain: play it twice. The renderer's trace is the scratch patch of `measurements/2026-10-31-loop-seam/scripts/patch_trace.py`. `settings.json` `renderer.loop_lists` false and a restart of `pvj-web` is the way back, then a load.
 
 | Row | What to do | What should happen | What it would mean if not |
 |---|---|---|---|
@@ -989,6 +1012,24 @@ Before: a box on a release with this change, New renderer, 4 sources, mapping of
 | LL8b | With the switch off, the same USB pull under a plain looping clip | As on a release without lists: no change from this work | The guard reaches further than a list |
 | LL9 | A clip of a few seconds with the list made short: leave a 0.2 s clip looping for 200 s, or a 2 s clip for 2000 s | One ordinary seam at the end of the list, and it goes on; position and length on the panel stay right | The wrap is not what plain mpv showed |
 | LL10 | With sources 1 to 4 on lists, 1 hour; compare with the switch off | RSS within 12 MB a source of the plain run, no growth over the hour, CPU within the node's own spread | A leak, or the queue costs more than measured |
+
+2026-11-01, node on master 4ab1168. Numbers in `measurements/2026-11-01-loop-lists`. Holds are minimum, median, maximum at the joins, from the renderer's trace. Off means the switch off, same clip and run length. Nobody watched or listened.
+
+| Row | Result | With lists | Switch off |
+|---|---|---|---|
+| LL1 | Passed | 33.4, 33.5, 34.5 ms | 83.8, 84.6, 116.7 ms |
+| LL2 | Passed | Medians 34.4 to 36.2 ms, largest 53.1. 60.01 flips a second, box 78.5 percent | Medians 117 to 179 ms. 59.99 flips, box 77.4 percent |
+| LL3 | Passed, 30 minutes, not 100 | 1 s clip, 1807 joins: 33.4, 33.6, 165.8 ms, the one large hold at the end of the list. RSS flat for the last 10 minutes, same pid, no `Invalid video timestamp` | 1658 joins: 116.7, 134.0, 184.5 ms |
+| LL4 | State half passed, not heard | 49.3, 49.9, 50.5 ms. `aid`, codec and output unchanged, through crossfades too. Nobody has listened | 83.9, 100.3, 116.0 ms |
+| LL5 | Passed | 24 transitions, mapping off and on, all to the end, right clip and length on the panel. No dark capture, but it samples 7 times a second, so a flash under about 150 ms is not excluded | The same lows |
+| LL6 | Passed | Loop off in mid pass and near the end: ended within 0.1 s of what the panel said, nothing drawn after. Off then on: no jump, 33.5 ms. Loop on over an ending Stop stays plain and loops | The same |
+| LL7 | Not run | No USB drive on the node | |
+| LL8 | Delete half passed | Ended at the next join, 12.4 s later, nothing drawn after, idle, `cannot be read any more` in the log, same pid, next clip played. The drive pull is not run | A plain clip plays on from its open file |
+| LL8b | Not run | Needs a drive pull | |
+| LL9 | Passed | 0.2 s clip, 270 s: one hold over 50 ms, 165.6 ms at the end of the 200 s list, then on. The panel stayed right | A hold of 117 to 181 ms at every pass |
+| LL10 | Passed, with a note | 1 hour, 4 sources: medians 34.2 to 36.6 ms, 9 of 717 holds over 100 ms. RSS 339 to 364.6 MB, flat for the last 35 minutes, not from the start, and 3 MB under the plain run. 299 percent CPU, 0.009 missed a second | Medians 134 to 170 ms. RSS 367.9 MB, 296 percent CPU, 0.009 missed |
+
+The first use of the switch found a fault: `renderer.loop_lists` false reached the file the player watches, the player took it for a new wish and ended pvj-render every 3 s, 124 times in 7 minutes, with no picture. That is fixed (`tests/test_renderer.py`) and has not been rerun on the node. The switch-off runs above took the key out of that file by hand.
 
 ## Safety
 
