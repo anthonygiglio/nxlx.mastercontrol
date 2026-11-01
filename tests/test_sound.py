@@ -772,6 +772,40 @@ class ShaderMapTest(unittest.TestCase):
         turns = sum(1 for a, b, c in zip(values, values[1:], values[2:]) if a < b > c)
         self.assertGreaterEqual(turns, 4, "one rise a beat, not a slow alias of the beat: %s" % values)
 
+    def test_with_nothing_to_move_it_looks_at_the_slow_gap_even_on_the_new_renderer(self):
+        out, _changes, _on = self.rig()
+        asked = []
+        out.api.shaders.playing = {"native": True}                      # left over: a clip has taken the screen
+        out.api.shaders.on_screen = lambda: asked.append(1)
+        m = soundout.map_form({"on": True, "input": "zoom", "source": "level"})
+        for i in range(40):
+            out.map_step(m, None, i * 0.05)
+        self.assertLessEqual(len(asked), 5)
+
+    def test_a_player_that_keeps_the_shader_input_waiting_does_not_hold_back_the_beats(self):
+        out, _changes, _on = self.rig()
+        out.api.settings.data["sound"] = dict(soundout.DEFAULT, on=True, osc_state=True, map=dict(soundout.DEFAULT_MAP, on=True, input="zoom"))
+        let_go, reached, looks = threading.Event(), threading.Event(), []
+        def stuck():
+            reached.set()
+            let_go.wait(5)
+        out.api.shaders.on_screen = stuck
+        v = dict(sound.unpack(sound.pack(record(), 1, 1.0, 1)), fresh=True, capturing=True)
+        out.levels = lambda: v
+        out.current_targets = lambda cfg, now: []
+        out.plan = lambda v, now: looks.append(now) or []
+        out.send = lambda *a: None
+        out.ensure()
+        try:
+            self.assertTrue(reached.wait(3))
+            before = len(looks)
+            time.sleep(0.3)
+            self.assertGreater(len(looks), before + 5, "the sending thread went on")
+            self.assertEqual(out._map_thread.name, "sound-map")
+        finally:
+            let_go.set()
+            out.stop()
+
     def test_the_beat_and_a_band_and_what_is_said_when_it_cannot(self):
         out, changes, on = self.rig()
         v = sound.unpack(sound.pack(record(pulse=1.0, bands=[0.0, 0.0, 0.0, 0.0, 0.0, 1.0]), 1, 1.0, 1))

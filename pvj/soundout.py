@@ -291,6 +291,7 @@ class Sound:
         self.helper = {"running": False}
         self.helper_at = None
         self._thread = None
+        self._map_thread = None             # the shader input's own thread, started and stopped with _thread
         self._stop = threading.Event()
         self._caps = {}                     # (address, port) -> _Caps
         self._all = None
@@ -300,6 +301,7 @@ class Sound:
         self._smooth = None                 # (time, value) of the slow source
         self._map_sent = None               # (shader id, epoch, input, value)
         self._map_at = None
+        self._map_moving = False            # the last look reached a shader: only then is the New renderer's gap used
         self._last_beats = None
         self._last_src = False
         self._feeder, self._feed_stop = None, threading.Event()
@@ -412,19 +414,22 @@ class Sound:
     def ensure(self):
         want = self.needed()
         with self.lock:
-            running = self._thread is not None and self._thread.is_alive()
-            if want and not running:
+            alive = [t for t in (self._thread, self._map_thread) if t is not None and t.is_alive()]
+            if want and len(alive) < 2:
+                self._stop.set()                # what is left of an earlier pair ends with it
                 self._stop = threading.Event()
                 self._thread = threading.Thread(target=self._loop, args=(self._stop,), name="sound-out", daemon=True)
+                self._map_thread = threading.Thread(target=self._map_loop, args=(self._stop,), name="sound-map", daemon=True)
                 self._thread.start()
-            elif not want and running:
+                self._map_thread.start()
+            elif not want and alive:
                 self._stop.set()
-                self._thread = None
+                self._thread = self._map_thread = None
 
     def stop(self):
         with self.lock:
             self._stop.set()
-            self._thread = None
+            self._thread = self._map_thread = None
         self.stop_feeder()
 
     def plan(self, v, now):
@@ -483,14 +488,30 @@ class Sound:
                 elif sock is not None:
                     sock.close()
                     sock = None
-                if cfg["map"]["on"]:
-                    self.map_step(cfg["map"], v if live else None, now)
-                stop.wait(LOOK_EVERY if live and osc else (0.05 if cfg["map"]["on"] else IDLE_LOOK))
+                stop.wait(LOOK_EVERY if live and osc else IDLE_LOOK)
         except Exception as e:                   # the thread must not take the panel down; it is started again by tick
             self.log("pvj-web: sound out stopped: %s" % e)
         finally:
             if sock is not None:
                 sock.close()
+
+    def _map_loop(self, stop):
+        """The shader input has a thread of its own: a value can wait on the player, and a beat must not wait for it."""
+        cfg_at = None
+        try:
+            while not stop.is_set():
+                now = self._clock()
+                with self.lock:
+                    gen = self.gen
+                if cfg_at is None or cfg_at[1] != gen or now - cfg_at[0] >= TARGETS_EVERY:
+                    cfg_at = (now, gen, self.config())
+                m = cfg_at[2]["map"]
+                if m["on"]:
+                    v = self.levels()
+                    self.map_step(m, v if self.live(v) else None, now)
+                stop.wait(0.05 if m["on"] else IDLE_LOOK)
+        except Exception as e:                   # as _loop: tick starts it again
+            self.log("pvj-web: sound map stopped: %s" % e)
 
     def targets(self, cfg):
         """[(kind, name, address, port)] where sound may go now; the reason for each that is left out is noted in
@@ -594,10 +615,11 @@ class Sound:
         dt = max(0.0, now - t0)
         y += (1.0 - math.exp(-dt / m["smooth"])) * (raw - y)
         self._smooth = (now, y)
-        if self._map_at is not None and now - self._map_at < self.map_gap():
+        if self._map_at is not None and now - self._map_at < (self.map_gap() if self._map_moving else MAP_EVERY):
             return
         self._map_at = now
         what, value = self._apply(m, y)
+        self._map_moving = value is not None
         with self.lock:
             self.map_state = {"what": what, "value": value, "at": time.time()}
 
