@@ -958,7 +958,7 @@ BC2 rerun, 2026-10-31, node on master 7553553, seen through the HDMI dongle, nob
 
 | Measure | Seen |
 |---|---|
-| The beat | Radial gradient on Beat at 100 BPM from 9 taps: 1.66 Hz in the dongle's picture against a beat of 1.667 Hz, 46 rises in 28 s against 46.6 beats, 0.561 to 0.642 s apart, 30 s after the last tap. Before: a 0.30 Hz alias |
+| The beat | Radial gradient on Beat at 100 BPM from 9 taps: 1.66 Hz in the dongle's picture against a beat of 1.667 Hz, 46 rises in 28 s against 46.6 beats, 0.561 to 0.642 s apart, in the 30 s after the last tap. Before: a 0.30 Hz alias |
 | Sound-on cost, mapping off | pvj-web 2.61 percent of a core, pvj-render 17.7, box 6.0, no missed vblanks in 121 s |
 | Sound-on cost, mapping at 20 a second | pvj-web 9.85 percent of a core, pvj-render 21.8, box 8.9, no missed vblanks in 121 s. The mapping costs about 7 points of the panel and 4 of the renderer |
 
@@ -987,11 +987,11 @@ Before: a box on a release with this change, `pvj-link` built (`ls /opt/pvj/curr
 | LK3 | Passed, one machine, no ear | 985 samples over 197 s: 10.1 ms between box and peer, inside the 30 ms of a request, 0.33 ms of drift a minute. Both ends read one clock, so this cannot show a bad conversion between machines |
 | LK4 | Passed, one machine, no tap | 0 peers in 0.23 s, `listening` 2 s later, held at 135 at 5.5 s, largest beat error 0.016. The branch with an earlier tap was not tried |
 | LK5 | Passed | Off: no socket, nothing on port 20808 in 60 s. On and alone: the group joined, nothing sent. Captured on eth0 by a small script, tcpdump is not on the node |
-| LK6 | Passed, one machine, no clip | pvj-link 0.6 percent of a core following, the panel no higher. No clip was playing, so the row's load is not met |
+| LK6 | Partly run, one machine, no clip | pvj-link 0.6 percent of a core following, the panel no higher. No clip was playing, so the row's load is still to do |
 | LK7 | Passed, one machine | Service stopped: `unavailable` in 0.83 s, the switch kept, no failed request in 280. Back: following 2.3 s after the start returned |
 | LK8 | Passed, one machine | 2000 junk datagrams a second for 30 s to the group: pvj-link 0.42 percent, same pid. That they reached the socket is read from the CPU alone |
 | LK9 | Passed, one machine | Restart while following: following again 3.35 s later, the panel told the new helper by itself |
-| LK10 | Passed | `systemd-analyze security pvj-link` 1.9, its own user, CPU quota and memory limit in force. Off after a reboot not tested |
+| LK10 | Passed | `systemd-analyze security pvj-link` 1.9, its own user, CPU quota and memory limit set. Off after a reboot not tested |
 
 ### The loop lists (D118): run on a node, 2026-11-01
 
