@@ -37,6 +37,7 @@ MOST = 128                      # never more than this: a list is 45 KB of the b
 GRACE = 180.0                   # seconds a list that was just used or just left is not touched: longer than any crossfade
 WAITING = 32                    # clips waiting for their length, at most
 KNOWN = 1000                    # lengths remembered, at most
+RETRY = 60.0                    # seconds before a clip whose length could not be found is asked about again
 _NAME = re.compile(r"[0-9a-f]{32}")
 _FILE = re.compile(r"([0-9a-f]{32})(\.ffconcat|\.mp4)?(\.tmp)?")
 _LENGTH = re.compile(rb"\nduration ([0-9]+\.[0-9]{6})\n")
@@ -62,6 +63,7 @@ class Lists:
         self._enabled = enabled or (lambda: True)
         self._lock = threading.Lock()   # a leaf: a few fields, never held over a call (pvj/locks.py)
         self._lengths = {}              # (real path, size, mtime_ns): seconds, or None for a clip that stays plain
+        self._retry = {}                # the same key: when a probe that failed may run again
         self._queue = []
         self._worker = None
         self._views = {}                # list path: (its mtime_ns, View)
@@ -94,7 +96,7 @@ class Lists:
     def _find(self, key):
         """Find this clip's length on the worker. Never in the load: a cut does not wait for a program."""
         with self._lock:
-            if key in self._queue or len(self._queue) >= WAITING:
+            if key in self._queue or len(self._queue) >= WAITING or self._clock() < self._retry.get(key, 0):
                 return
             self._queue.append(key)
             if self._worker is not None:
@@ -113,7 +115,7 @@ class Lists:
             try:
                 seconds, kind, video = self.prober(key[0], self.mpv_bin)
                 found = True
-            except Exception:           # gone, or a box too busy to answer: nothing is known, and the next load asks again
+            except Exception:           # gone, or a box too busy to answer: nothing is known, and a load asks again after RETRY
                 seconds, kind, video, found = None, None, None, False
             with self._lock:
                 self._queue.remove(key)
@@ -122,6 +124,10 @@ class Lists:
                         self._lengths.clear()
                     usable = kind in FORMATS and video and seconds is not None and seconds >= MIN_SECONDS
                     self._lengths[key] = seconds if usable else None
+                else:
+                    if len(self._retry) >= WAITING:     # a pad hit in a show must not start a decoder each time; no more than that
+                        self._retry.clear()
+                    self._retry[key] = self._clock() + RETRY
 
     @staticmethod
     def name_of(real):

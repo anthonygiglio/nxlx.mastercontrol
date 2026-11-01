@@ -264,9 +264,15 @@ class FallbackTest(Base):
             calls.append(path)
             raise OSError("busy")
         self.lists.prober = fails
+        now = [1000.0]
+        self.lists._clock = lambda: now[0]
         self.known()
         self.known()
-        self.assertEqual(len(calls), 2, "a probe that failed says nothing: the next load asks again")
+        self.assertEqual(len(calls), 1, "a clip that cannot be probed is not asked about at every press of its pad")
+        now[0] += looplist.RETRY
+        self.known()
+        self.assertEqual(len(calls), 2, "a probe that failed says nothing for good: later a load asks again")
+        now[0] += looplist.RETRY
         self.lists.prober = self.prober
         self.known()
         self.assertIsNotNone(self.lists.for_clip(self.clip))

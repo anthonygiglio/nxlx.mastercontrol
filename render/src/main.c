@@ -269,6 +269,18 @@ static int file_is_lost(const mpv_event_log_message *m)
            || (!strcmp(m->prefix, "lavf") && strstr(m->text, "treating it as fatal error"));
 }
 
+// The words above also come from a plain clip with one bad read, and there the loop itself is the way on: it starts again
+// and the show goes on. So the loop comes off a generated list only (spinning is caught for any file, below).
+static int plays_a_list(mpv_handle *h)
+{
+    static const char tail[] = ".ffconcat";
+    char *path = mpv_get_property_string(h, "path");
+    size_t n = path ? strlen(path) : 0, t = sizeof tail - 1;
+    int yes = n > t && !strcmp(path + n - t, tail);
+    mpv_free(path);
+    return yes;
+}
+
 static void *event_loop(void *arg)
 {
     Layer *l = arg;
@@ -317,7 +329,7 @@ static void *event_loop(void *arg)
         if (ev->event_id == MPV_EVENT_LOG_MESSAGE) {
             mpv_event_log_message *m = ev->data;
             size_t n = strlen(m->text);
-            if (i >= 0 && file_is_lost(m) && __atomic_load_n(&app.restart_of[i], __ATOMIC_ACQUIRE) == __atomic_load_n(&app.starts[i], __ATOMIC_ACQUIRE)) {
+            if (i >= 0 && file_is_lost(m) && __atomic_load_n(&app.restart_of[i], __ATOMIC_ACQUIRE) == __atomic_load_n(&app.starts[i], __ATOMIC_ACQUIRE) && plays_a_list(h)) {
                 LOG("layer %d: its file cannot be read any more; the loop is taken off and it ends", i);
                 mpv_set_property_string(h, "loop-file", "no");
             }
