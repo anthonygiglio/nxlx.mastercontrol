@@ -258,6 +258,17 @@ static volatile int events_stop;
 #define SPIN_GAP 0.02                   // seconds between two restarts that count as one turn of such a loop
 #define SPIN_TURNS 20
 
+// That seek is not only wasted: after a failed open at a join, FFmpeg's concat demuxer can seek through a context it no
+// longer has (a null pointer in avformat_seek_file, seen with FFmpeg 7.1 and 8.0 on this program in CI and on a desk), and
+// the whole renderer falls. The demuxer reads ahead of the picture, so its complaint comes while frames are still to
+// show: the loop is taken off then, the buffered frames play out, and the file ends with no seek at all. Only for a file
+// that has played: an open that a newer load cuts short says the same words, and the new file's loop is not to be touched.
+static int file_is_lost(const mpv_event_log_message *m)
+{
+    return (!strcmp(m->prefix, "ffmpeg/demuxer") && strstr(m->text, "concat: Impossible to open"))
+           || (!strcmp(m->prefix, "lavf") && strstr(m->text, "treating it as fatal error"));
+}
+
 static void *event_loop(void *arg)
 {
     Layer *l = arg;
@@ -306,6 +317,10 @@ static void *event_loop(void *arg)
         if (ev->event_id == MPV_EVENT_LOG_MESSAGE) {
             mpv_event_log_message *m = ev->data;
             size_t n = strlen(m->text);
+            if (i >= 0 && file_is_lost(m) && __atomic_load_n(&app.restart_of[i], __ATOMIC_ACQUIRE) == __atomic_load_n(&app.starts[i], __ATOMIC_ACQUIRE)) {
+                LOG("layer %d: its file cannot be read any more; the loop is taken off and it ends", i);
+                mpv_set_property_string(h, "loop-file", "no");
+            }
             char who[24];
             if (i < 0) snprintf(who, sizeof who, "text");
             else if (i < LAYERS) snprintf(who, sizeof who, "video %d", i);

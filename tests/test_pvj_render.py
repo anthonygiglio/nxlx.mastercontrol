@@ -2542,12 +2542,34 @@ class LoopListTest(Base):
             try:
                 return self.r("get_property", "idle-active") is True
             except PlayerError as e:
+                self.r.wait(lambda: self.r.proc.poll() is not None, 2)      # a program that fell: its end takes a moment
                 self.fail("no answer: %s, the program %s\n%s" % (e, self.r.proc.poll(), self.r.stderr()))
         self.assertTrue(self.r.wait(idle, 8), self.r.stderr())
-        self.assertIn("restarts without a frame", self.r.stderr())
+        self.assertIn("cannot be read any more", self.r.stderr())
         self.assertIsNone(self.r.proc.poll())
         self.player.play([self.other], ending="stop", spawn=False)      # and the box plays on
         self.assertTrue(self.r.wait(lambda: self.raw() == self.other))
+
+    def test_a_seek_after_the_clip_has_gone_ends_the_same_way(self):
+        if not self.takes:
+            return
+        doomed = os.path.join(self.tmp, "doomed.mp4")
+        shutil.copy(self.clip, doomed)
+        self.lists.for_clip(doomed)
+        self.assertTrue(self.r.wait(lambda: self.lists._worker is None, 5))
+        self.player.play([doomed], spawn=False)
+        self.assertTrue(self.plays_list(), self.r.stderr())
+        self.assertTrue(self.r.wait(lambda: (self.position() or 0) > 0.3, 10), self.r.stderr())
+        os.unlink(doomed)
+        for at in (0.1, 1.5, 0.5):              # a pass ahead, as a seek from the panel lands past a join near the end
+            try:
+                self.player.ipc.request("seek", at, "absolute+exact")
+                self.player.ipc.request("seek", 1.8, "relative")
+            except PlayerError as e:
+                self.assertIn("mpv:", str(e), "the renderer fell: %s" % self.r.stderr())
+            time.sleep(0.05)
+        self.assertTrue(self.r.wait(lambda: self.r("get_property", "idle-active") is True, 8), self.r.stderr())
+        self.assertIsNone(self.r.proc.poll())
 
 
 if __name__ == "__main__":

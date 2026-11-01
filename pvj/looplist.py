@@ -330,11 +330,15 @@ class Clips:
 
     def _seek(self, send, get, value, flags):
         """An absolute place in the clip is that place in the pass that plays (`absolute+exact` is one string). A
-        relative seek needs nothing: it is a distance on either timeline, and past a join it is the loop's own wrap."""
+        relative seek needs nothing: it is a distance on either timeline, and past a join it is the loop's own wrap.
+        With the clip gone nothing is sent: FFmpeg's concat demuxer can fall on a seek when it cannot open the file again,
+        and it takes the whole renderer with it (D118). The list plays out to the next join and ends."""
         words = str(flags).split("+")
         view = self._view(get) if isinstance(value, (int, float)) else None
         if view is None:
             return send("seek", value, flags)
+        if not os.path.exists(view.clip):
+            return None
         rest = [w for w in words if w not in ("absolute", "absolute-percent", "relative-percent", "relative")]
         if "relative-percent" in words:
             return send("seek", value * view.length / 100.0, "+".join(["relative"] + rest))

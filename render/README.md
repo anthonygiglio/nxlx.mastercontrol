@@ -19,7 +19,7 @@ both layers; a load, a stop, a step in the list or another crossfade ends a fade
 Mix's Crossfade from one clip to another (`Player.play(..., fade=seconds)`); everything else is a cut, as before.
 Classic's crossfade steps a still 20 times a second; this one moves at the screen's rate, with both pictures moving.
 
-A generated loop list (D118) comes as a load like any other, with the decoded queue's `vd-queue-*` keys for that file alone: in `loadfile`'s options, and split off the options of `pvj-crossfade` and of a source's load. `end` is a time in seconds or `none`, and is set for the file that plays alone. A core that restarts 20 times in a row with no frame between has its loop taken off, so a list whose clip is gone ends instead of spinning.
+A generated loop list (D118) comes as a load like any other, with the decoded queue's `vd-queue-*` keys for that file alone: in `loadfile`'s options, and split off the options of `pvj-crossfade` and of a source's load. `end` is a time in seconds or `none`, and is set for the file that plays alone. A core whose demuxer says its file cannot be read, or that restarts 20 times in a row with no frame between, has its loop taken off, so a list whose clip is gone ends, with no seek into FFmpeg's concat demuxer.
 
 The wipes and the slides (D111) are the same stage. `["pvj-crossfade", URL, SECONDS, OPTIONS, MOVE]`, MOVE one of the
 panel's eight names (`wipe-from-left`, `-right`, `-top`, `-bottom`, `slide-left`, `-right`, `-up`, `-down`): the same

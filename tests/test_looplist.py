@@ -440,6 +440,15 @@ class SeekTest(Base):
         self.player.ipc.request("seek", 50, "relative-percent+exact")
         self.assertEqual(self.mpv.seeks[-1], (1.0, "relative+exact"))
 
+    def test_with_the_clip_gone_nothing_is_sent(self):
+        """FFmpeg's concat demuxer falls on such a seek, and the renderer with it (seen on a desk)."""
+        os.unlink(self.clip)
+        self.mpv.seeks.clear()
+        self.player.seek_to(1.0)
+        self.player.seek(1.0)
+        self.player.ipc.request("seek", 0, "relative+exact")
+        self.assertEqual(self.mpv.seeks, [])
+
     def test_a_plain_clip_is_not_touched(self):
         self.player.play([self.make("b.mp4")], spawn=False)
         self.player.seek_to(1.0)
