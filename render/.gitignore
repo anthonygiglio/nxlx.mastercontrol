@@ -3,3 +3,6 @@
 # built here by make, never committed
 /pvj-render
 *.o
+/pvj-link
+/pvj-link-peer
+/link-build.log

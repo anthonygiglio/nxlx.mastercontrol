@@ -21,6 +21,7 @@ import threading
 import time
 
 from . import clock as clock_mod
+from . import link as link_mod
 from . import oscfeedback as fb
 from . import paths
 from . import sound as sound_mod
@@ -279,13 +280,15 @@ MAP_STEP = 0.02                 # and only when it moved by this share of the in
 class Sound:
     """The panel's side. `api` gives the settings, the OSC manager, the render bridge and the shader engine."""
 
-    def __init__(self, api, socket_path=None, levels_path=None, proc=sound_mod.PROC, clock=time.monotonic, log=print, udp=_udp):
+    def __init__(self, api, socket_path=None, levels_path=None, proc=sound_mod.PROC, clock=time.monotonic, log=print, udp=_udp,
+                 link_socket=None, link_state=None):
         self.api = api
         self.client = Client(socket_path or paths.sound_socket())
         self.levels_path = levels_path or paths.sound_levels()
         self.proc = proc
         self._clock, self.log, self._udp = clock, log, udp
         self.clock = clock_mod.Clock(now=clock)      # the box clock (D116): tap, OSC and the sound's tempo, kept by itself
+        self.link = link_mod.Link(api, self.clock, Client(link_socket or paths.link_socket()), link_state, now=clock)   # D117
         self.lock = threading.Lock()        # not in the order of pvj/locks.py: never held over a call out
         self.gen = 1
         self.helper = {"running": False}
@@ -371,6 +374,7 @@ class Sound:
         self.ensure()
         self.ensure_feeder()
         try:
+            self.link.tick()                    # the Link helper told again after a restart of either (D117)
             self.clock.tick(self._clock())      # the box clock hands over from a source gone quiet (D116)
             self.levels()                       # and hears pvj-sound even while nobody looks at the meter
         except Exception as e:
@@ -378,6 +382,7 @@ class Sound:
 
     def levels(self):
         """The last record of the levels file, with "fresh" (younger than STALE_SECONDS), or None."""
+        self.link.hear()                        # read here, with the levels: nothing at all while Link is off (D117)
         v = sound_mod.read_levels(self.levels_path)
         if v is not None:
             v["age"] = max(0.0, time.monotonic() - v["time"])
@@ -393,7 +398,7 @@ class Sound:
         return v is not None and v["fresh"] and (v["capturing"] or bool(v.get("clock")))
 
     def follow_clock(self, v, live):
-        """The beat pulse, the tempo and the beat count of a record are the box clock's while a tap or OSC steers it, so
+        """The beat pulse, the tempo and the beat count of a record are the box clock's while Link, a tap or OSC steers it, so
         what follows the beat follows the clock, with or without a sound device (D116). Otherwise the record is returned
         as it is, untouched. Without live sound the record is a quiet one: the levels are zero and nothing is heard."""
         got = self.clock.reading(self._clock())

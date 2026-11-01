@@ -12,7 +12,7 @@ for a value move it on. All methods take an optional `now`; the ones OSC and pvj
 
 Sources, most trusted first (SOURCES):
 
-    link    nothing feeds it yet: a later change adds Ableton Link through `hear("link", bpm, now)`
+    link    Ableton Link through pvj/link.py: `link(bpm, phase, at)`, the tempo and the place in the bar (D117)
     tap     a person's hand: taps, or a tempo typed in
     osc     /nxlx/sound/in/beat and /bpm (pvj/soundout.py)
     sound   pvj-sound's tempo and beats, only at a confidence of SOUND_MIN_CONFIDENCE or more
@@ -22,7 +22,7 @@ over to the next fresh one. The hand wins: a tap or a tempo set by number holds 
 from it (the status still shows how old the last tap is). When nobody is fresh the clock keeps the last good tempo running
 and says which source steered it last and how old its word is ("held").
 
-What reaches the consumers (pvj/soundout.py) is the clock under tap or OSC only. With sound alone nothing is changed:
+What reaches the consumers (pvj/soundout.py) is the clock under Link, tap or OSC only. With sound alone nothing is changed:
 the beat is the service's own, so when the music stops the beat stops, as it always did. The clock follows sound
 internally so that it can hand over, but it is not what the pulse, the meter or OSC out are given in that case.
 """
@@ -148,12 +148,37 @@ class Clock:
 
     # -- the sources --
     def hear(self, source, bpm, now=None):
-        """A source's word: its tempo. This is how the Link slot will be fed. False if refused."""
+        """A source's word: its tempo. False if refused."""
         with self.lock:
             b = number(bpm)
             if source not in SOURCES or not in_range(b):
                 return False
             self._word(source, b, self._at(now))
+            return True
+
+    def link(self, bpm, phase, at, now=None):
+        """Ableton Link's word (pvj/link.py, D117): the session's tempo, and `phase`, its place in the bar (0 up to
+        BAR_BEATS) at time `at` on this clock. Its word is as old as `at`, not as old as the moment it was read, so a
+        helper that stopped goes quiet at the right time. A tempo outside BPM_MIN to BPM_MAX is refused like any other, and
+        so is a time ahead of now or older than a source may be.
+
+        Link outranks everyone, so it sets the phase at once, like a tap or an OSC beat, each time. Only the place in the
+        bar is taken: the position moves to the nearest one with that place, at most half a bar, and the beat count
+        stays this clock's own (Link's is another program's). False if refused."""
+        with self.lock:
+            b, p, h = number(bpm), number(phase), number(at)
+            t = self._at(now)
+            if not in_range(b) or p is None or h is None or not 0.0 <= t - h <= HOLD["link"]:
+                return False
+            if self._bpm is None:
+                self._bpm, self._t0, self._b0 = b, h, 0.0
+            self._words["link"] = {"at": h, "bpm": b}
+            self._update(t)
+            if self._steer != "link":
+                return False
+            here = self._pos(h)
+            there = here + ((p - here + BAR_BEATS / 2.0) % BAR_BEATS - BAR_BEATS / 2.0)
+            self._b0, self._t0 = there + BAR_BEATS if there < 0.0 else there, h
             return True
 
     def tap(self, now=None):

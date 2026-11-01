@@ -2,6 +2,9 @@
      SPDX-License-Identifier: GPL-3.0-or-later -->
 # pvj-render
 
+`link/` beside this holds another program, pvj-link, the Ableton Link follower (D117, pvj/SOUND.md). It is C++, shares
+nothing with pvj-render, and is built only by `make pvj-link`.
+
 The box's own renderer (project-log/DECISIONS.md, D95). Phase 1 takes the place of the one mpv behind the same JSON
 socket: one video layer drawn by libmpv at an internal size, the projection mapping and the scale to the screen as one
 final pass, and overlays and on-screen text over it. Chosen on Setup > Screen output (Renderer); classic mpv stays the

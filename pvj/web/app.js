@@ -3797,6 +3797,14 @@
           'To the devices listed under OSC, "Send state back", while that is on. Under /nxlx/sound/: the level and the beat up to 20 times a second, the bands at most 5.'));
         body.appendChild(toggle('soundoscrender', 'Send sound to the render nodes', !!d.config.osc_render, function (v) { post({ osc_render: v }, v ? 'Sound goes to the render nodes.' : 'Sound no longer goes to the render nodes.'); },
           'To the render nodes listed under Render nodes, on this box\'s own network only.'));
+        var lk = d.link || {};
+        body.appendChild(toggle('soundlink', 'Follow Ableton Link', !!lk.on, function (v) {
+          api('POST', '/api/tempo/link', { on: v }).then(function (r) {
+            if (!r.ok) say(ndiSentence(r.data.error || 'could not change it'), true);
+            else say(v ? 'The box follows an Ableton Link session when there is one.' : 'The box no longer follows Ableton Link.');
+            refresh();
+          });
+        }, d.remote ? 'Through remote support it can be switched off, never on.' : 'Off by default. The box only follows: it takes the tempo and the beat and never sets them. It joins only when another program is in a session.'));
         var left = (d.osc && d.osc.left_out) || [];
         if ((d.config.osc_state || d.config.osc_render) && left.length) {
           body.appendChild(h('div', { class: 'hint warn', id: 'soundoscleft', text: 'Not sent to: ' + left.map(function (x) { return x.name + ' (' + x.why + ')'; }).join('; ') + '.' }));
@@ -3806,9 +3814,17 @@
       } else {
         body.appendChild(h('div', { class: 'hint', id: 'soundowner', text: 'The owner chooses the capture device and switches listening on.' }));
       }
+      if (d.link) body.appendChild(h('div', { class: 'hint', id: 'soundlinkline', role: 'status', text: linkLine(d.link) }));
       if (!bars || !document.getElementById('soundlevel')) drawMeter(d);
       else showLevels(d.levels);
       drawMap(d);
+    }
+    function linkLine(l) {
+      if (!l.available) return 'Ableton Link is not available on this box.' + (l.on ? ' It stays switched on and starts when it is.' : '');
+      if (!l.on) return 'Ableton Link is off.';
+      if (l.peers > 0) return 'Ableton Link: following ' + l.peers + (l.peers === 1 ? ' peer' : ' peers') + (l.bpm ? ' at ' + l.bpm + ' BPM.' : '.');
+      if (l.why) return 'Ableton Link: ' + ndiSentence(l.why) + '.';
+      return l.state === 'joining' ? 'Ableton Link: joining a session.' : 'Ableton Link: on, no peers.';
     }
     // Advanced (the owner's word of 2026-10-18): which sources may be chosen, and who may send levels in over OSC.
     function soundAdvanced(d) {

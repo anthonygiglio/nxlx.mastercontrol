@@ -89,6 +89,7 @@ NET_UNIT="$ROOT/etc/systemd/system/pvj-netd.service"
 SYS_UNIT="$ROOT/etc/systemd/system/pvj-sysd.service"
 SUP_UNIT="$ROOT/etc/systemd/system/pvj-supportd.service"
 SOUND_UNIT="$ROOT/etc/systemd/system/pvj-sound.service"      # sound analysis (D96): on every box, idle until the Owner chooses a device
+LINK_UNIT="$ROOT/etc/systemd/system/pvj-link.service"        # the Ableton Link follower (D117): on every box that could build it, off until the Owner says
 # The NDI input is opt-in per box (D62): none of these four files exists unless root ran "pvj-ndi-runtime install"
 # at the box (pvj/ndisetup.py). The panel's drop-in is the mark of that; this installer never writes it.
 NDI_UNIT="$ROOT/etc/systemd/system/pvj-ndi.service"
@@ -121,13 +122,14 @@ uninstall() {
 		systemctl disable --now pvj-ndi.service 2>/dev/null || true
 		systemctl disable --now pvj-ndi-discovery.service 2>/dev/null || true
 		systemctl disable --now pvj-sound.service 2>/dev/null || true
+		systemctl disable --now pvj-link.service 2>/dev/null || true
 	fi
 	# The discovery server's set-up, where there is one: its mark first (it lies in the same folder as the NDI mark).
 	run rm -f "$NDISC_MARK" "$NDISC_UNIT" "$NDISC_WANTS" || log "WARNING: could not remove everything of the discovery server's set-up; look at $NDISC_MARK and $NDISC_UNIT and remove them by hand"
 	# A box that was set up for NDI: the mark first, then the rest; the two folders only if nothing else is in them.
 	run rm -f "$NDI_MARK" "$NDI_PLAYER_DROPIN" "$NDI_TMPFILES" "$NDI_UNIT" "$NDI_WANTS" "$BIN_LINKS/pvj-ndi-runtime" || log "WARNING: could not remove everything of the NDI helper; look at $NDI_MARK, $NDI_PLAYER_DROPIN and $NDI_UNIT and remove them by hand"
 	if [ "$DRY" = 0 ]; then rmdir "$(dirname "$NDI_MARK")" "$(dirname "$NDI_PLAYER_DROPIN")" 2>/dev/null || true; fi
-	run rm -f "$SUP_UNIT" "$SOUND_UNIT" "$WG_LOAD" "$UPD_USB_UNIT" "$UPD_INBOX_UNIT" "$JOURNAL_CONF" "$TMPFILES"
+	run rm -f "$SUP_UNIT" "$SOUND_UNIT" "$LINK_UNIT" "$WG_LOAD" "$UPD_USB_UNIT" "$UPD_INBOX_UNIT" "$JOURNAL_CONF" "$TMPFILES"
 	run rm -f "$UNIT" "$WEB_UNIT" "$NET_UNIT" "$SYS_UNIT" "$USB_UNIT" "$USB_RULE" "$BIN_LINKS/pvj-player" "$BIN_LINKS/pvj-selftest" "$BIN_LINKS/pvj-usb" "$BIN_LINKS/pvj-rootfs" "$BIN_LINKS/pvj-pin" "$BIN_LINKS/pvj-update"
 	run rm -rf "${ROOT}${PREFIX:?}"
 	[ "$PURGE" = 1 ] && run rm -rf "$ETC"
@@ -137,7 +139,7 @@ uninstall() {
 	if [ "$PURGE" = 1 ]; then run rm -rf "${ROOT}/opt/pvj-ndi-server"; fi
 	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then systemctl daemon-reload; fi
 	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && command -v udevadm >/dev/null; then udevadm control --reload || true; fi
-	log "done. Kept ${ETC}, media and /opt/pvj-ndi (your copy of the NDI runtime, if this box was set up for NDI) unless --purge; the users (pvj-web, pvj-sound, the player's, and pvj-ndi on a box that was set up for NDI) and the groups pvj and pvj-ndi are left in place (remove them with deluser and delgroup if you want them gone)."
+	log "done. Kept ${ETC}, media and /opt/pvj-ndi (your copy of the NDI runtime, if this box was set up for NDI) unless --purge; the users (pvj-web, pvj-sound, pvj-link, the player's, and pvj-ndi on a box that was set up for NDI) and the groups pvj and pvj-ndi are left in place, the group pvj-link too (remove them with deluser and delgroup if you want them gone)."
 }
 
 if [ "$UNINSTALL" = 1 ]; then uninstall; exit 0; fi
@@ -187,6 +189,22 @@ if [ ${#render_need[@]} -gt 0 ] && command -v dpkg-query >/dev/null; then
 	else
 		log "installing ${render_need[*]} (to build pvj-render)"
 		run apt-get install -y --no-install-recommends "${render_need[@]}" || log "could not install ${render_need[*]}; pvj-render stays unavailable"
+	fi
+fi
+
+# Optional: Ableton Link (D117). The helper pvj-link is built here from its source against Debian's ableton-link-dev
+# (header only, it brings libasio-dev), and needs a C++ compiler. Missing ones are installed when the network allows;
+# without them pvj-link is not built, the panel says Link is not available, and nothing else changes.
+link_need=()
+for p in g++ make ableton-link-dev libasio-dev; do
+	dpkg-query -W -f '${Status}' "$p" 2>/dev/null | grep -q 'install ok installed' || link_need+=("$p")
+done
+if [ ${#link_need[@]} -gt 0 ] && command -v dpkg-query >/dev/null; then
+	if [ "$OFFLINE" = 1 ] || [ "$REAL" = 0 ] || ! command -v apt-get >/dev/null; then
+		log "Ableton Link will be unavailable until these are installed: ${link_need[*]}"
+	else
+		log "installing ${link_need[*]} (for Ableton Link)"
+		run apt-get install -y --no-install-recommends "${link_need[@]}" || log "could not install ${link_need[*]}; Ableton Link stays unavailable"
 	fi
 fi
 
@@ -245,6 +263,14 @@ if [ "$REAL" = 1 ]; then
 		log "creating system user pvj-sound"
 		run useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --gid audio pvj-sound
 	fi
+	# The Link follower (D117) meets the network, so it runs as its own account in its own group, with nothing else of
+	# the box's. The panel joins that group to reach its folder, and nobody else does; the panel's next start takes it.
+	getent group pvj-link >/dev/null || run groupadd --system pvj-link
+	if ! id pvj-link >/dev/null 2>&1; then
+		log "creating system user pvj-link"
+		run useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --gid pvj-link pvj-link
+	fi
+	run usermod -aG pvj-link pvj-web
 fi
 
 # --- program files: releases/<version>, "current" points at the active one --
@@ -271,6 +297,21 @@ if [ "$DRY" = 0 ]; then
 			rm -f "$RELEASE.new"/render/src/*.o
 		else
 			log "pvj-render was not built: the build tools or headers are missing"
+		fi
+	fi
+	# The Link follower (D117), built here in the same way. It never stops an install: without it the panel says Link is
+	# not available, and its unit's condition leaves the service alone. Niced, because a box may be playing.
+	if [ "$REAL" = 1 ] && [ -f "$RELEASE.new/render/Makefile" ]; then
+		rm -f "$RELEASE.new/render/pvj-link" "$RELEASE.new/render/pvj-link-peer"
+		if command -v g++ >/dev/null && command -v make >/dev/null && [ -f /usr/include/ableton/Link.hpp ] && [ -f /usr/include/asio.hpp ]; then
+			log "building pvj-link (a minute or two on a Pi 4)"
+			if nice -n 10 timeout 1200 make -C "$RELEASE.new/render" pvj-link > "$RELEASE.new/render/link-build.log" 2>&1; then
+				log "pvj-link built"
+			else
+				log "pvj-link was not built (render/link-build.log in the release); Ableton Link stays unavailable"
+			fi
+		else
+			log "pvj-link was not built: g++ or the headers of ableton-link-dev are missing; Ableton Link stays unavailable"
 		fi
 	fi
 fi
@@ -351,6 +392,7 @@ if [ "$DRY" = 0 ]; then
 	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-sysd.service" > "$SYS_UNIT"
 	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-supportd.service" > "$SUP_UNIT"
 	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-sound.service" > "$SOUND_UNIT"
+	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-link.service" > "$LINK_UNIT"
 	# Updates from the panel: started on request by pvj-sysd, never enabled.
 	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-update-usb@.service" > "$UPD_USB_UNIT"
 	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-update-inbox@.service" > "$UPD_INBOX_UNIT"
@@ -522,6 +564,10 @@ if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then
 	# (it is idle until the Owner chooses a device): a box updated from before D96 gets it at once.
 	if [ "$START" = 1 ]; then systemctl restart pvj-sound.service || log "the sound service did not start; see: journalctl -u pvj-sound -n 30"
 	else systemctl try-restart pvj-sound.service || true; systemctl start pvj-sound.service 2>/dev/null || true; fi
+	# The Link follower the same way. Where it could not be built its condition skips it, which is no failure.
+	systemctl enable pvj-link.service || log "could not enable the Ableton Link service"
+	if [ "$START" = 1 ]; then systemctl restart pvj-link.service || log "the Ableton Link service did not start; see: journalctl -u pvj-link -n 30"
+	else systemctl try-restart pvj-link.service || true; systemctl start pvj-link.service 2>/dev/null || true; fi
 	# The network helper only makes sense with NetworkManager (Raspberry Pi OS, most desktops).
 	if command -v nmcli >/dev/null; then
 		systemctl enable pvj-netd.service

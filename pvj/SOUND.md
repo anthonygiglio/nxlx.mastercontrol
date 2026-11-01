@@ -113,14 +113,14 @@ One tempo and one beat position for the box, kept by itself between beats like a
 
 | Source | What feeds it | How far it is trusted | Stays in charge for |
 | --- | --- | --- | --- |
-| `link` | nothing yet (a later change adds Ableton Link) | most | 5 s |
+| `link` | Ableton Link, through the helper `pvj-link` (below) | most: the tempo and the place in the bar at once, every time | 5 s, counted from the record's own time |
 | `tap` | taps, or a tempo typed in | sets the tempo and the phase at once | until `clear`: the hand wins and sound never takes over from it |
 | `osc` | `/nxlx/sound/in/bpm` and `/nxlx/sound/in/beat` | the tempo at once; a beat sets the phase at once | 5 s |
 | `sound` | this service's tempo and beats | only at a confidence of 0.5 or more (`SOUND_MIN_CONFIDENCE`), and then only the tempo and a gentle push of the phase: a hit more than 0.3 beat from the grid is ignored, a nearer one moves the phase by 15 percent of its distance | 3 s |
 
 The first of these with a word younger than its time is in charge. When a machine (OSC, Link, sound) goes quiet the next takes over, and the beat position carries on from where it was, never a jump. When all are quiet the last good tempo keeps running, and the status says which source steered it last and how old its word is (`held`). Taps: a first tap with no tempo anywhere sets nothing (a tempo needs at least two); 2 to 8 are averaged, a pause over 2 s starts a new count, a tempo outside 30 to 300 BPM is refused. A tempo can also be set by number and the phase nudged by up to half a beat. The clock is empty after a restart; the tempo is not saved.
 
-**What follows it.** While a tap or OSC is in charge, the levels record that the meter, OSC out and the shader input read has the clock's pulse (1 at a beat, 0 after 0.15 s), tempo (confidence 1) and beat count in place of the service's. This works with no sound device: the levels are then zero and nothing is heard. With no tap or OSC clock, the values are the service's, exactly as before: with sound alone, when the music stops the beat stops. The clock follows sound only so that it can hand over; it reaches the consumers under tap or OSC only. A beat message over OSC is sent only for a count that went up under the same supplier; when the supplier changes (sound to clock or back) or a count goes down, it is a silent resync, and a backwards phase nudge never beats twice. The levels file and its layout are not touched, and the privacy rules below hold unchanged: the clock adds only a tempo and a beat. The Owner's switch for sound reactivity still has to be on for the shader input and OSC out to run, and OSC beats and tempos reach the clock only through the source "Levels sent in over OSC" from the addresses the Owner listed (the user chooses the audio source, h30).
+**What follows it.** While Link, a tap or OSC is in charge, the levels record that the meter, OSC out and the shader input read has the clock's pulse (1 at a beat, 0 after 0.15 s), tempo (confidence 1) and beat count in place of the service's. This works with no sound device: the levels are then zero and nothing is heard. With no Link, tap or OSC clock, the values are the service's, exactly as before: with sound alone, when the music stops the beat stops. The clock follows sound only so that it can hand over; it reaches the consumers under tap or OSC only. A beat message over OSC is sent only for a count that went up under the same supplier; when the supplier changes (sound to clock or back) or a count goes down, it is a silent resync, and a backwards phase nudge never beats twice. The levels file and its layout are not touched, and the privacy rules below hold unchanged: the clock adds only a tempo and a beat. The Owner's switch for sound reactivity still has to be on for the shader input and OSC out to run, and OSC beats and tempos reach the clock only through the source "Levels sent in over OSC" from the addresses the Owner listed (the user chooses the audio source, h30).
 
 Routes: `GET /api/tempo` (status), `POST /api/tempo` (one of `{"bpm": 30 to 300}`, `{"nudge": -0.5 to 0.5}`, `{"clear": true}`) and `POST /api/tempo/tap`. The Owner and an Operator may use all three; a Guest none; a support session may look and may not change. The tap is also an action, `clock_tap`, for MIDI and OSC (`/pvj/clock/tap`); DMX has none, so a neighbouring fixture on the same universe cannot tap it. Why not a new beat tracker: D116.
 
@@ -145,6 +145,25 @@ To a target: 20 values bundles, 5 bands bundles and the beats (at most 5.6 a sec
 
 On classic mpv a shader's value changes by writing a new shader text that mpv compiles again: at most five a second, 0.34 to 0.61 s to the screen on a Pi 4 (`pvj/SHADERS.md`). So an Operator may map one number input of the shader on the screen to the level, the beat (smoothed into how busy the beat is) or a band, with where it rests (0 to 1 of the input's range), a depth (-1 to 1) and a smoothing (0.05 to 10 s). It is sent at most twice a second, and only when it moved by 2 percent of the input's range. On the New renderer nothing is compiled (D106), so the same value goes at most twenty times a second and a beat can show; keep the smoothing under about 0.2 s for that, since a longer one flattens each beat into a slow swell. Its default stays 1.5 s.
 
+## Ableton Link (D117, `render/link/`, `pvj/link.py`)
+
+The box can follow a Link session on its network: it takes the tempo and the place in a four-beat bar from whoever is in the session (Ableton Live, a phone app, anything with Link) and gives them to the box clock. **It only follows.** It never sets the tempo, the beat, or play and stop, and there is nothing in the helper that could. **Off by default**, and only the Owner can switch it on: Setup > Show tools > Sound reactivity, "Follow Ableton Link" (`POST /api/tempo/link`, `{"on": true}`), kept in the setting `link`, which is the box's own and is never exported.
+
+| Part | Where | What it does |
+| --- | --- | --- |
+| The helper | `render/link/pvj-link.cpp`, `install/pvj-link.service` | A small C++ program built at install from Debian's `ableton-link-dev`. GPL-3.0-or-later, its own account and group, no capabilities, a read-only system, no devices. |
+| The state file | `/run/pvj-link/state` | 56 bytes, the layout at the top of `pvj-link.cpp`: the tempo, the place in the bar, the peers, and when (CLOCK_MONOTONIC). At most 20 times a second, once a second while nobody is there. Group `pvj-link`, 0640. |
+| The socket | `/run/pvj-link/link.sock` | Answers the panel's account only: `status`, `on`, `off`. |
+| The panel's side | `pvj/link.py` | The setting, telling the helper, reading the file where the levels are read, `link` in `GET /api/tempo` and `GET /api/sound`. |
+
+**What it does on the network.** Off: nothing, not even listening; the Link object is disabled. On and alone: it listens for another peer on Link's multicast address (224.76.78.75, port 20808) and sends nothing; the only thing that leaves the box is the network's own join for that address. When it hears a peer it waits 0.75 s and then enables Link, because when two Link sessions meet the **older one wins** and the younger takes its tempo: a box that sat alone in a session of its own would hand Link's default tempo to any program that switched Link on (seen on a desk, two peers: the newer one went from 133 to 120 BPM). Waiting makes sure the box is always the younger. When the last peer has been gone for a second it disables Link and listens again.
+
+**The clock.** A session with no peers says nothing, so Link's default tempo never reaches the clock. A record reaches it only with at least one peer and no older than 0.5 s. Link's clock on Linux is CLOCK_MONOTONIC_RAW, not the box's CLOCK_MONOTONIC, so the helper reads both side by side and each record says "this was the place in the bar at this time" on the box's clock. The clock takes the place in the bar and keeps its own beat count. When the peers go, or the helper stops, nothing more is heard and the clock's own rules take over after 5 s, as for any quiet source; a tap made while Link steered takes over then. A session tempo outside 30 to 300 BPM is refused like any other (Link allows 20 to 999).
+
+**Without the package** (it could not be installed, or `--offline` on a box without it) there is no helper, the unit is skipped, the switch keeps its value, the page says Link is not available, and everything else runs as before.
+
+Why not a beat tracker, and why not MIDI clock yet: D116 and D117.
+
 ## Who may do what (D80, D84)
 
 | Route | Who | Remote support |
@@ -156,6 +175,7 @@ On classic mpv a shader's value changes by writing a new shader text that mpv co
 
 | `GET /api/tempo` | Operator | as the Operator; a session of the Owner's role sees it |
 | `POST /api/tempo`, `POST /api/tempo/tap` (D116) | Operator | none: a helper through remote support may look and not change |
+| `POST /api/tempo/link` (D117) | Owner | the Owner's role only, and only to switch it off, never on |
 
 A Guest gets nothing of this.
 

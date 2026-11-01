@@ -246,7 +246,11 @@ class RuntimeFolderTest(unittest.TestCase):
         self.assertEqual(folders["pvj-sound"], {("pvj-sound.service", "pvj-sound", "0750", "no")})
         self.assertEqual(self.units["pvj-sound.service"]["Group"], ["audio"])
         self.assertEqual("/run/pvj-sound", p.SOUND_DIR)
-        self.assertEqual(set(folders), set(want) | {"pvj-update", "pvj-ndi", "pvj-ndisc", "pvj-sound"})
+        # and the Ableton Link follower too, in a group of its own that only the panel joins (D117)
+        self.assertEqual(folders["pvj-link"], {("pvj-link.service", "pvj-link", "0750", "no")})
+        self.assertEqual(self.units["pvj-link.service"]["Group"], ["pvj-link"])
+        self.assertEqual("/run/pvj-link", p.LINK_DIR)
+        self.assertEqual(set(folders), set(want) | {"pvj-update", "pvj-ndi", "pvj-ndisc", "pvj-sound", "pvj-link"})
         self.assertEqual(["/run/" + d for d in want], [p.PLAYER_DIR, p.WEB_DIR, p.NETD_DIR, p.SYSD_DIR, p.SUPPORTD_DIR])
         self.assertEqual("/run/pvj-update", p.UPDATE_DIR)
 
@@ -366,7 +370,7 @@ class RuntimeFolderTest(unittest.TestCase):
         known = {p.RUN, p.RUN + "/.d45", p.PLAYER_DIR, p.WEB_DIR, p.NETD_DIR, p.SYSD_DIR, p.SUPPORTD_DIR, p.UPDATE_DIR, p.NDI_PIPE_DIR, p.NDI_PIPE_DIR + "/" + p.NDI_FIFO,
                  p.UPDATE_RESULT, p.WEB_DIR + "/" + p.PIN, p.WEB_DIR + "/player.sock", p.WEB_DIR + "/netd.sock",
                  p.PLAYER_DIR + "/" + p.PLAYER_SOCKET, p.NETD_DIR + "/" + p.NETD_SOCKET, p.NETD_DIR + "/<name>",
-                 p.RUN + "/<name>", p.NDI_DIR, p.NDI_CONFIG_DIR, p.NDISC_DIR, p.SOUND_DIR}
+                 p.RUN + "/<name>", p.NDI_DIR, p.NDI_CONFIG_DIR, p.NDISC_DIR, p.SOUND_DIR, p.LINK_DIR}
         files = glob.glob(os.path.join(REPO, "bin", "*")) + glob.glob(os.path.join(REPO, "install", "*")) + glob.glob(os.path.join(NDI_UNITS, "*"))
         seen = set()
         for path in files:
@@ -798,7 +802,7 @@ class NdiUnitTest(unittest.TestCase):
         with open(os.path.join(REPO, "image", "stage-pvj", "00-install-pvj", "01-run.sh")) as f:
             image = f.read()
         self.assertNotRegex(image, r"pvj-ndi|NDI")
-        self.assertIn("systemctl enable pvj-player.service pvj-web.service pvj-netd.service pvj-sysd.service pvj-supportd.service pvj-sound.service\n", image)
+        self.assertIn("systemctl enable pvj-player.service pvj-web.service pvj-netd.service pvj-sysd.service pvj-supportd.service pvj-sound.service pvj-link.service\n", image)
         with open(os.path.join(REPO, "image", "stage-pvj", "00-install-pvj", "00-packages-nr")) as f:
             self.assertNotIn("avahi", f.read())
         for name in ("pvj-ndi", "pvj-ndi-runtime"):
