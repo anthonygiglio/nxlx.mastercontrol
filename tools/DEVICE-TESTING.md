@@ -908,7 +908,7 @@ Results, 2026-10-31, test node on master with D113, mpv 0.40.0 (measurements/202
 | NS5 | Passed, not as written | 409 after 6.3 s with the reason on the page. The old picture holds for those 6 s, black for about 0.6 s, then the old source returns by itself |
 | NS6 | Passed | Each ended on the last press; no "did not hand the new source over" line in 25 minutes |
 
-### An effect over a paused clip on classic mpv (D115): not yet looked at on a node
+### An effect over a paused clip on classic mpv (D115)
 
 Before: a node running classic mpv (not pvj-render), a clip from the library, the screen watched by eye or by the HDMI dongle. The unit tests prove the order of the commands and a real mpv on a software GPU proves the shown frame passes through the effect (its pass list); nobody has seen a Pi's screen.
 
@@ -919,11 +919,20 @@ Before: a node running classic mpv (not pvj-render), a clip from the library, th
 | PC3 | Same with a long 1080p clip paused deep in it (a few seconds past a keyframe), and with a still picture and an NDI source | The 1080p redraw takes under about a quarter of a second; the picture and the NDI source take the effect at their next frame without an error on the page | A long GOP makes the exact seek too slow on a Pi 4, or a source that cannot seek is upset by it |
 | PC4 | New renderer: pause a clip, then turn a mapping on or change a surface | The screen follows within a frame or two (D115 did not change this path: the mapping's list goes to libmpv, which may only redraw its cached frame) | The mapping shows only at the next frame: it needs the same cure in the renderer |
 
+2026-10-31, node on master bb20b04, seen through the HDMI dongle, nobody at the screen. The dongle's own latency, 0.13 s on the New renderer and 0.22 s on classic, is inside these times. Numbers in `measurements/2026-10-31-clock-paused`.
+
+| Row | Result | Seen |
+|---|---|---|
+| PC1 | Passed | Effect on 0.24 to 0.32 s, off 0.14 to 0.20 s, the plain picture back exactly, time-pos unchanged. The panel answers On in 0.84 to 1.0 s, after the picture has changed |
+| PC2 | Passed | Each slider step 0.13 to 0.24 s, time-pos unchanged |
+| PC3 | Partly run | 1080p, a 2 h clip paused deep in it and a 20 s clip: on 0.22 to 0.26 s, off 0.14 to 0.20 s. Not run: a still picture and an NDI source |
+| PC4 | Follows, about 1 s late | 0.86 to 1.34 s to turn on or change a surface, 0.34 s to turn off. Not a redraw fault: the time is the mapping being built, 0.6 s for the table and 0.3 s for the shader with the 2 surfaces on a Pi 4, measured apart from the player. So it is the same over a playing clip, and the row's "a frame or two" holds only for off |
+
 ### What to send back
 
 The output of checks 1 to 7 and 13, the `journalctl` tail for anything that failed, and a note of what you saw on screen. Say clearly what you did **not** test.
 
-### The box clock (D116): not yet run on a node
+### The box clock (D116)
 
 Before: a box on a release with this change, the sound switch on (the Owner's) with no capture device chosen, and a pad or button mapped to `clock_tap` (Learn) or OSC `/pvj/clock/tap` from TouchOSC. Also: watch the OSC `/nxlx/sound/beat` messages across a hand-over and a negative nudge; none should be off the grid or twice. The unit tests prove the clock, the routes, the actions and what the levels record says, with a fake clock; none of it has met a real hand, a Max patch or a band. Do not run it on the node that is soaking.
 
@@ -934,6 +943,16 @@ Before: a box on a release with this change, the sound switch on (the Owner's) w
 | BC3 | After a `clear`, send `/nxlx/sound/in/bpm 128` and `/nxlx/sound/in/beat` from Max (source "Levels sent in over OSC", the sender listed), then stop sending for 10 s | `source` `osc`, tempo 128, the beat lands on the sender's beats; after 5 s of silence it is held, not dropped | The hand-over, the OSC input |
 | BC4 | After a `clear`, a capture device on music at a steady tempo, no tap and no OSC | `source` `sound` only while the confidence is 0.5 or more; the phase does not jump when a single stray hit is made (clap off the beat once) | The trust rule for sound |
 | BC5 | Read the CPU of the panel with the clock running for 10 minutes (`top -b -n1 -p $(pgrep -f pvj-web)`) | No measurable difference from before | The cost; not measured here |
+
+2026-10-31, node on master bb20b04. Numbers in `measurements/2026-10-31-clock-paused`.
+
+| Row | Result | Seen |
+|---|---|---|
+| BC1 | Passed | Through the API, not a pad. 119.93 BPM after 4 taps, 119.77 after 9. Held 620 s as `running`, `tap`, tempo unchanged, `age` growing |
+| BC2 | Partly run, found a fault | The shader input and the picture moved after the taps and went on after them. But the mapping sent 2 values a second, so a 100 BPM beat came out as a slow 0.3 Hz pulse. Fixed by sending up to 20 a second on the New renderer; rerun below |
+| BC3 | Passed | From a script, not Max. `osc` and 128 in 0.3 s, beats +3.7 ms on average (-2 to +6), held after 5 s. `in_hosts` wants the address the node sees: from WSL that is the Windows host, and with the wrong one the messages were silently not taken |
+| BC4 | Not run | Needs music on a capture device |
+| BC5 | Passed, sound off | pvj-web 2.86 percent of a core without the clock, 3.01 percent with it. The sound-on path is measured with the rerun of BC2 |
 
 ## Safety
 

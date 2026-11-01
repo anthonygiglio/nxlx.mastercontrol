@@ -143,7 +143,7 @@ To a target: 20 values bundles, 5 bands bundles and the beats (at most 5.6 a sec
 
 ## The classic renderer's shaders: a slow envelope
 
-On classic mpv a shader's value changes by writing a new shader text that mpv compiles again: at most five a second, 0.34 to 0.61 s to the screen on a Pi 4 (`pvj/SHADERS.md`). So an Operator may map one number input of the shader on the screen to the level, the beat (smoothed into how busy the beat is) or a band, with where it rests (0 to 1 of the input's range), a depth (-1 to 1) and a smoothing (0.5 to 10 s). It is sent at most twice a second, and only when it moved by 2 percent of the input's range. **Real per-frame reaction comes with the new renderer (D95, phase 4)**, which reads the levels file every frame.
+On classic mpv a shader's value changes by writing a new shader text that mpv compiles again: at most five a second, 0.34 to 0.61 s to the screen on a Pi 4 (`pvj/SHADERS.md`). So an Operator may map one number input of the shader on the screen to the level, the beat (smoothed into how busy the beat is) or a band, with where it rests (0 to 1 of the input's range), a depth (-1 to 1) and a smoothing (0.05 to 10 s). It is sent at most twice a second, and only when it moved by 2 percent of the input's range. On the New renderer nothing is compiled (D106), so the same value goes at most twenty times a second and a beat can show; keep the smoothing under about 0.2 s for that, since a longer one flattens each beat into a slow swell. Its default stays 1.5 s.
 
 ## Who may do what (D80, D84)
 

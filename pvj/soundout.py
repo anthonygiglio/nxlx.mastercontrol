@@ -29,7 +29,7 @@ from . import sound as sound_mod
 SOURCES = ("level", "beat") + tuple("band%d" % (i + 1) for i in range(len(sound_mod.BANDS)))
 REST_MIN, REST_MAX = 0.0, 1.0
 DEPTH_MIN, DEPTH_MAX = -1.0, 1.0
-SMOOTH_MIN, SMOOTH_MAX = 0.5, 10.0
+SMOOTH_MIN, SMOOTH_MAX = 0.05, 10.0
 NAME_MAX = 64
 DEFAULT_MAP = {"on": False, "input": "", "source": "level", "rest": 0.0, "depth": 0.5, "smooth": 1.5}
 # The sources (D97): what pvj-sound hears. The device is the one capture device; the others are fed in by the panel.
@@ -272,6 +272,7 @@ IN_ALL_RATE, IN_ALL_BURST = 160.0, 40.0     # from all senders: at most 200
 
 # --- the shader input -------------------------------------------------------------------------------------------------------
 MAP_EVERY = 0.5                 # a new value at most twice a second (the classic renderer compiles each one)
+MAP_EVERY_NATIVE = 0.05         # on the New renderer nothing is compiled (D106): at most twenty a second, so a beat shows
 MAP_STEP = 0.02                 # and only when it moved by this share of the input's range
 
 
@@ -290,6 +291,7 @@ class Sound:
         self.helper = {"running": False}
         self.helper_at = None
         self._thread = None
+        self._map_thread = None             # the shader input's own thread, started and stopped with _thread
         self._stop = threading.Event()
         self._caps = {}                     # (address, port) -> _Caps
         self._all = None
@@ -299,6 +301,7 @@ class Sound:
         self._smooth = None                 # (time, value) of the slow source
         self._map_sent = None               # (shader id, epoch, input, value)
         self._map_at = None
+        self._map_moving = False            # the last look reached a shader: only then is the New renderer's gap used
         self._last_beats = None
         self._last_src = False
         self._feeder, self._feed_stop = None, threading.Event()
@@ -411,19 +414,22 @@ class Sound:
     def ensure(self):
         want = self.needed()
         with self.lock:
-            running = self._thread is not None and self._thread.is_alive()
-            if want and not running:
+            alive = [t for t in (self._thread, self._map_thread) if t is not None and t.is_alive()]
+            if want and len(alive) < 2:
+                self._stop.set()                # what is left of an earlier pair ends with it
                 self._stop = threading.Event()
                 self._thread = threading.Thread(target=self._loop, args=(self._stop,), name="sound-out", daemon=True)
+                self._map_thread = threading.Thread(target=self._map_loop, args=(self._stop,), name="sound-map", daemon=True)
                 self._thread.start()
-            elif not want and running:
+                self._map_thread.start()
+            elif not want and alive:
                 self._stop.set()
-                self._thread = None
+                self._thread = self._map_thread = None
 
     def stop(self):
         with self.lock:
             self._stop.set()
-            self._thread = None
+            self._thread = self._map_thread = None
         self.stop_feeder()
 
     def plan(self, v, now):
@@ -482,14 +488,30 @@ class Sound:
                 elif sock is not None:
                     sock.close()
                     sock = None
-                if cfg["map"]["on"]:
-                    self.map_step(cfg["map"], v if live else None, now)
-                stop.wait(LOOK_EVERY if live and osc else (0.05 if cfg["map"]["on"] else IDLE_LOOK))
+                stop.wait(LOOK_EVERY if live and osc else IDLE_LOOK)
         except Exception as e:                   # the thread must not take the panel down; it is started again by tick
             self.log("pvj-web: sound out stopped: %s" % e)
         finally:
             if sock is not None:
                 sock.close()
+
+    def _map_loop(self, stop):
+        """The shader input has a thread of its own: a value can wait on the player, and a beat must not wait for it."""
+        cfg_at = None
+        try:
+            while not stop.is_set():
+                now = self._clock()
+                with self.lock:
+                    gen = self.gen
+                if cfg_at is None or cfg_at[1] != gen or now - cfg_at[0] >= TARGETS_EVERY:
+                    cfg_at = (now, gen, self.config())
+                m = cfg_at[2]["map"]
+                if m["on"]:
+                    v = self.levels()
+                    self.map_step(m, v if self.live(v) else None, now)
+                stop.wait(0.05 if m["on"] else IDLE_LOOK)
+        except Exception as e:                   # as _loop: tick starts it again
+            self.log("pvj-web: sound map stopped: %s" % e)
 
     def targets(self, cfg):
         """[(kind, name, address, port)] where sound may go now; the reason for each that is left out is noted in
@@ -585,7 +607,7 @@ class Sound:
         return bands[n] if 0 <= n < len(bands) else 0.0
 
     def map_step(self, m, v, now):
-        """Smooth the source, and at most every MAP_EVERY send the input a new value if it moved enough."""
+        """Smooth the source, and at most every map_gap() send the input a new value if it moved enough."""
         raw = self.source_value(m, v)
         if self._smooth is None:
             self._smooth = (now, 0.0)          # from where it rests: never a jump when it is switched on
@@ -593,12 +615,18 @@ class Sound:
         dt = max(0.0, now - t0)
         y += (1.0 - math.exp(-dt / m["smooth"])) * (raw - y)
         self._smooth = (now, y)
-        if self._map_at is not None and now - self._map_at < MAP_EVERY:
+        if self._map_at is not None and now - self._map_at < (self.map_gap() if self._map_moving else MAP_EVERY):
             return
         self._map_at = now
         what, value = self._apply(m, y)
+        self._map_moving = value is not None
         with self.lock:
             self.map_state = {"what": what, "value": value, "at": time.time()}
+
+    def map_gap(self):
+        """Seconds between two values: the slow classic gap unless the shader on the screen is the New renderer's own."""
+        playing = getattr(getattr(self.api, "shaders", None), "playing", None)
+        return MAP_EVERY_NATIVE if playing and playing.get("native") else MAP_EVERY
 
     def _input_of(self, m):
         """(the shader on the screen, its input of that name) or (on, None), or (None, None)."""

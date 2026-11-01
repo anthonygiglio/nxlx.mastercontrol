@@ -3863,7 +3863,7 @@
       mapBody.appendChild(labelled('Follows', src));
       mapBody.appendChild(num('soundmaprest', 'rest', 'Where it rests', '0 to 1 of the input\'s range, with no sound.'));
       mapBody.appendChild(num('soundmapdepth', 'depth', 'Depth', '-1 to 1: how far the sound moves it, and which way.'));
-      mapBody.appendChild(num('soundmapsmooth', 'smooth', 'Smoothing (seconds)', '0.5 to 10. Longer is calmer.'));
+      mapBody.appendChild(num('soundmapsmooth', 'smooth', 'Smoothing (seconds)', '0.05 to 10. Longer is calmer. Under 0.2 lets a beat show.'));
       mapBody.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn on pri grow', id: 'soundmapsave', text: 'Save', onclick: function () {
         var body2 = { input: soundMapForm.input, source: soundMapForm.source, rest: parseFloat(soundMapForm.rest), depth: parseFloat(soundMapForm.depth), smooth: parseFloat(soundMapForm.smooth) };
         api('POST', '/api/sound/map', body2).then(function (r) {
