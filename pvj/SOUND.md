@@ -122,7 +122,7 @@ The first of these with a word younger than its time is in charge. When a machin
 
 **What follows it.** While a tap or OSC is in charge, the levels record that the meter, OSC out and the shader input read has the clock's pulse (1 at a beat, 0 after 0.15 s), tempo (confidence 1) and beat count in place of the service's. This works with no sound device: the levels are then zero and nothing is heard. With no tap or OSC clock, the values are the service's, exactly as before: with sound alone, when the music stops the beat stops. The clock follows sound only so that it can hand over; it reaches the consumers under tap or OSC only. A beat message over OSC is sent only for a count that went up under the same supplier; when the supplier changes (sound to clock or back) or a count goes down, it is a silent resync, and a backwards phase nudge never beats twice. The levels file and its layout are not touched, and the privacy rules below hold unchanged: the clock adds only a tempo and a beat. The Owner's switch for sound reactivity still has to be on for the shader input and OSC out to run, and OSC beats and tempos reach the clock only through the source "Levels sent in over OSC" from the addresses the Owner listed (the user chooses the audio source, h30).
 
-Routes: `GET /api/clock` (status), `POST /api/clock` (one of `{"bpm": 30 to 300}`, `{"nudge": -0.5 to 0.5}`, `{"clear": true}`) and `POST /api/clock/tap`. The Owner and an Operator may use all three; a Guest none; a support session may look and may not change. The tap is also an action, `clock_tap`, for MIDI and OSC (`/pvj/clock/tap`); DMX has none, so a neighbouring fixture on the same universe cannot tap it. Why not a new beat tracker: D116.
+Routes: `GET /api/tempo` (status), `POST /api/tempo` (one of `{"bpm": 30 to 300}`, `{"nudge": -0.5 to 0.5}`, `{"clear": true}`) and `POST /api/tempo/tap`. The Owner and an Operator may use all three; a Guest none; a support session may look and may not change. The tap is also an action, `clock_tap`, for MIDI and OSC (`/pvj/clock/tap`); DMX has none, so a neighbouring fixture on the same universe cannot tap it. Why not a new beat tracker: D116.
 
 ## OSC out (`/nxlx/sound/...`)
 
@@ -154,8 +154,8 @@ On classic mpv a shader's value changes by writing a new shader text that mpv co
 | `POST /api/sound` (on, device, gain, the two OSC switches) | Owner | the Owner's role only, and never to switch capture on, choose the device while it is on, or switch OSC sending on |
 | `POST /api/sound/map` (the shader input) | Operator | the Owner's role only (D80's rule for a support session) |
 
-| `GET /api/clock` | Operator | as the Operator; a session of the Owner's role sees it |
-| `POST /api/clock`, `POST /api/clock/tap` (D116) | Operator | none: a helper through remote support may look and not change |
+| `GET /api/tempo` | Operator | as the Operator; a session of the Owner's role sees it |
+| `POST /api/tempo`, `POST /api/tempo/tap` (D116) | Operator | none: a helper through remote support may look and not change |
 
 A Guest gets nothing of this.
 

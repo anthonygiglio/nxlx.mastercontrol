@@ -31,7 +31,7 @@ _PRESS = {
     "shader_next": ("/api/shaders/step", {"dir": 1}), "shader_prev": ("/api/shaders/step", {"dir": -1}),
     "effect_next": ("/api/effects/step", {"dir": 1}), "effect_prev": ("/api/effects/step", {"dir": -1}),
     "effect_toggle": ("/api/effects", {"toggle": True}),
-    "clock_tap": ("/api/clock/tap", {}),                    # one tap on the box clock (D116)
+    "clock_tap": ("/api/tempo/tap", {}),                    # one tap on the box clock (D116)
 }
 # Mapping mode (pvj/mapper.py, "from a controller"): entering and leaving it, and what works only inside it. The
 # box refuses every one of these unless the owner switched "Controllers may adjust the mapping" on.

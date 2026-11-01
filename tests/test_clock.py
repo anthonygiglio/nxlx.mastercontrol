@@ -623,39 +623,39 @@ class ClockRoutesTest(RolesBase):
 
     def test_the_owner_and_the_operator_look_tap_set_nudge_and_clear_and_a_guest_nothing(self):
         for who in (self.owner, self.operator):
-            self.assertEqual(self.h("GET", "/api/clock", {}, who)[1]["clock"]["state"], "none")
-        for method, path, body in (("GET", "/api/clock", {}), ("POST", "/api/clock", {"bpm": 120}), ("POST", "/api/clock/tap", {})):
+            self.assertEqual(self.h("GET", "/api/tempo", {}, who)[1]["clock"]["state"], "none")
+        for method, path, body in (("GET", "/api/tempo", {}), ("POST", "/api/tempo", {"bpm": 120}), ("POST", "/api/tempo/tap", {})):
             self.assertEqual(self.h(method, path, body, self.guest)[0], 403, path)
-        self.assertEqual(self.h("POST", "/api/clock/tap", {}, self.operator)[1]["tap"]["taps"], 1)
+        self.assertEqual(self.h("POST", "/api/tempo/tap", {}, self.operator)[1]["tap"]["taps"], 1)
         self.f.t += 0.5
-        st, d = self.h("POST", "/api/clock/tap", {}, self.owner)
+        st, d = self.h("POST", "/api/tempo/tap", {}, self.owner)
         self.assertEqual((st, d["tap"]["taps"], d["clock"]["bpm"], d["clock"]["source"]), (200, 2, 120.0, "tap"))
-        self.assertEqual(self.h("POST", "/api/clock", {"bpm": 90}, self.operator)[1]["clock"]["bpm"], 90.0)
-        self.assertEqual(self.h("POST", "/api/clock", {"nudge": 0.1}, self.owner)[0], 200)
-        self.assertEqual(self.h("POST", "/api/clock", {"clear": True}, self.operator)[1]["clock"]["state"], "none")
+        self.assertEqual(self.h("POST", "/api/tempo", {"bpm": 90}, self.operator)[1]["clock"]["bpm"], 90.0)
+        self.assertEqual(self.h("POST", "/api/tempo", {"nudge": 0.1}, self.owner)[0], 200)
+        self.assertEqual(self.h("POST", "/api/tempo", {"clear": True}, self.operator)[1]["clock"]["state"], "none")
         self.assertEqual(self.h("GET", "/api/sound", {}, self.operator)[1]["clock"]["state"], "none", "the sound page carries it too")
 
     def test_refusals_are_plain(self):
         for body in ({}, {"bpm": 1000}, {"bpm": "fast"}, {"bpm": True}, {"nudge": 3}, {"nudge": 0.1}, {"clear": False}, {"clear": 1},
                      {"bpm": 120, "clear": True}, {"x": 1}, {"bpm": None}):
-            st, d = self.h("POST", "/api/clock", body, self.operator)
+            st, d = self.h("POST", "/api/tempo", body, self.operator)
             self.assertEqual(st, 400, body)
             self.assertIn("error", d)
         self.f.t = 500.0
-        self.h("POST", "/api/clock/tap", {}, self.operator)
+        self.h("POST", "/api/tempo/tap", {}, self.operator)
         self.f.t = 500.05
-        st, d = self.h("POST", "/api/clock/tap", {}, self.operator)
+        st, d = self.h("POST", "/api/tempo/tap", {}, self.operator)
         self.assertEqual(st, 409)
         self.assertIn("not counted", d["error"])
 
     def test_a_support_session_may_look_and_may_not_change(self):
-        self.h("POST", "/api/clock", {"bpm": 100}, self.owner)
+        self.h("POST", "/api/tempo", {"bpm": 100}, self.owner)
         dev = self.session()
-        self.assertEqual(self.h("GET", "/api/clock", {}, dev, TUNNEL)[1]["clock"]["bpm"], 100.0)
-        for path, body in (("/api/clock", {"bpm": 150}), ("/api/clock", {"nudge": 0.1}), ("/api/clock", {"clear": True}), ("/api/clock/tap", {})):
+        self.assertEqual(self.h("GET", "/api/tempo", {}, dev, TUNNEL)[1]["clock"]["bpm"], 100.0)
+        for path, body in (("/api/tempo", {"bpm": 150}), ("/api/tempo", {"nudge": 0.1}), ("/api/tempo", {"clear": True}), ("/api/tempo/tap", {})):
             st, d = self.h("POST", path, body, dev, TUNNEL)
             self.assertEqual(st, 403, (path, body))
-        st, d = self.h("POST", "/api/clock", {"clear": True}, dev, TUNNEL)
+        st, d = self.h("POST", "/api/tempo", {"clear": True}, dev, TUNNEL)
         self.assertIn("set in the room", d["error"])
         c = self.api.sound.clock.status()
         self.assertEqual((c["bpm"], c["taps"]), (100.0, 0), "nothing changed")
@@ -663,19 +663,19 @@ class ClockRoutesTest(RolesBase):
     def test_controllers_may_only_tap(self):
         for device in (midi.MIDI_DEVICE, osc.OSC_DEVICE):
             self.f.t += 0.5
-            st, d = self.api.handle("POST", "/api/clock/tap", {}, device, device["id"])
+            st, d = self.api.handle("POST", "/api/tempo/tap", {}, device, device["id"])
             self.assertEqual(st, 200, device)
-            self.assertEqual(self.api.handle("POST", "/api/clock", {"bpm": 100}, device, device["id"])[0], 403, device)
-            self.assertEqual(self.api.handle("GET", "/api/clock", {}, device, device["id"])[0], 403, device)
+            self.assertEqual(self.api.handle("POST", "/api/tempo", {"bpm": 100}, device, device["id"])[0], 403, device)
+            self.assertEqual(self.api.handle("GET", "/api/tempo", {}, device, device["id"])[0], 403, device)
         self.assertEqual(self.api.sound.clock.status()["taps"], 2, "two taps, one from each")
 
     def test_a_tap_does_not_switch_listening_on_or_save_anything(self):
         before = self.settings.data.get("sound")
         saved = self.saves()
-        self.h("POST", "/api/clock/tap", {}, self.operator)
+        self.h("POST", "/api/tempo/tap", {}, self.operator)
         self.f.t += 0.5
-        self.h("POST", "/api/clock/tap", {}, self.operator)
-        self.h("POST", "/api/clock", {"bpm": 100}, self.operator)
+        self.h("POST", "/api/tempo/tap", {}, self.operator)
+        self.h("POST", "/api/tempo", {"bpm": 100}, self.operator)
         self.assertEqual(saved, [], "the tempo is kept in memory only: it starts empty after a restart")
         self.assertEqual(self.settings.data.get("sound"), before)
         self.assertFalse(self.api.sound.config()["on"])
@@ -684,13 +684,13 @@ class ClockRoutesTest(RolesBase):
 # --- the controller actions: MIDI, OSC and DMX ----------------------------------------------------------------------------
 class ControllerActionTest(unittest.TestCase):
     def test_the_one_table_has_it_and_midi_and_osc_make_the_same_call(self):
-        self.assertEqual(actions.press("clock_tap"), ("/api/clock/tap", {}))
+        self.assertEqual(actions.press("clock_tap"), ("/api/tempo/tap", {}))
         self.assertEqual(midi.ACTIONS["clock_tap"][0], "trigger")
         calls = []
         m = midi.MidiMapper(lambda p, b: calls.append((p, b)) or True,
                             [midi.validate_entry({"kind": "note", "number": 40, "action": "clock_tap"})], {})
         m.message("x", ("on", 0, 40, 127))
-        self.assertEqual(calls, [("/api/clock/tap", {})])
+        self.assertEqual(calls, [("/api/tempo/tap", {})])
         (a, parsed), = osc.parse_packet(_osc_message("/pvj/clock/tap", 1.0))
         self.assertEqual(osc.translate(a, parsed, None), actions.press("clock_tap"))
         (a, parsed), = osc.parse_packet(_osc_message("/pvj/clock/tap", 0.0))

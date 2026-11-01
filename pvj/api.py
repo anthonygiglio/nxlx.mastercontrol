@@ -2379,7 +2379,7 @@ class Api:
         if self.support.is_remote(client) or (isinstance(device, dict) and device.get("remote")):
             raise ApiError(403, self.CLOCK_REMOTE)
 
-    def get_clock(self, body, device, client):
+    def get_tempo(self, body, device, client):
         return {"clock": self.sound.clock.status()}
 
     def clock_tap(self, body, device, client):
@@ -2392,7 +2392,7 @@ class Api:
             raise ApiError(409, str(e))
         return {"tap": tap, "clock": self.sound.clock.status()}
 
-    def set_clock(self, body, device, client):
+    def set_tempo(self, body, device, client):
         """Exactly one of {"bpm": 30 to 300}, {"nudge": -0.5 to 0.5 beats} or {"clear": true}."""
         from . import clock as clock_mod
         self._clock_change(device, client)
@@ -5186,9 +5186,9 @@ class Api:
             ("GET", "/api/sound/levels"): ("live", self.sound_levels),    # the meter alone,
             ("POST", "/api/sound"): ("full", self.set_sound),             # the device, on and off and sending: the Owner's,
             ("POST", "/api/sound/map"): ("live", self.set_sound_map),
-            ("GET", "/api/clock"): ("live", self.get_clock),               # the box clock (D116): seen by the Operator,
-            ("POST", "/api/clock"): ("live", self.set_clock),             # its tempo and phase set by the Operator and the Owner,
-            ("POST", "/api/clock/tap"): ("live", self.clock_tap),         # and tapped, also from MIDI, OSC and DMX
+            ("GET", "/api/tempo"): ("live", self.get_tempo),               # the box clock (D116): seen by the Operator,
+            ("POST", "/api/tempo"): ("live", self.set_tempo),             # its tempo and phase set by the Operator and the Owner,
+            ("POST", "/api/tempo/tap"): ("live", self.clock_tap),         # and tapped, also from MIDI and OSC
             ("POST", "/api/sound/source"): ("live", self.set_sound_source),  # between the allowed sources: the Owner's and an Operator's (D97)     # the shader input: the Operator's
             ("POST", "/api/control"): ("live", self.control),
             ("POST", "/api/blackout"): ("live", self.blackout),

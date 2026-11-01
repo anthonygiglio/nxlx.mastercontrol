@@ -918,7 +918,7 @@ Before: a box on a release with this change, the sound switch on (the Owner's) w
 
 | Row | What to do | What should happen | What it would mean if not |
 |---|---|---|---|
-| BC1 | Tap the pad about 8 times at a steady 120 BPM, then stop; `curl -s localhost/api/clock` (with a device token) every 10 s for a minute | The tempo within about 2 BPM of 120 after 4 taps; after you stop, the state stays `running`, `source` `tap`, the tempo unchanged for as long as you wait, and `age` grows | The averaging, the hold, or the flywheel |
+| BC1 | Tap the pad about 8 times at a steady 120 BPM, then stop; `curl -s localhost/api/tempo` (with a device token) every 10 s for a minute | The tempo within about 2 BPM of 120 after 4 taps; after you stop, the state stays `running`, `source` `tap`, the tempo unchanged for as long as you wait, and `age` grows | The averaging, the hold, or the flywheel |
 | BC2 | With a shader mapped to the beat (Sound page, source Beat) and no capture device, tap a tempo; watch the picture | The shader moves on the tapped beat, and goes on after the taps stop | The consumer path (levels, shader input) |
 | BC3 | After a `clear`, send `/nxlx/sound/in/bpm 128` and `/nxlx/sound/in/beat` from Max (source "Levels sent in over OSC", the sender listed), then stop sending for 10 s | `source` `osc`, tempo 128, the beat lands on the sender's beats; after 5 s of silence it is held, not dropped | The hand-over, the OSC input |
 | BC4 | After a `clear`, a capture device on music at a steady tempo, no tap and no OSC | `source` `sound` only while the confidence is 0.5 or more; the phase does not jump when a single stray hit is made (clap off the beat once) | The trust rule for sound |
