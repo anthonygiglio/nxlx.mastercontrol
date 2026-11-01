@@ -923,6 +923,18 @@ Before: a node running classic mpv (not pvj-render), a clip from the library, th
 
 The output of checks 1 to 7 and 13, the `journalctl` tail for anything that failed, and a note of what you saw on screen. Say clearly what you did **not** test.
 
+### The box clock (D116): not yet run on a node
+
+Before: a box on a release with this change, the sound switch on (the Owner's) with no capture device chosen, and a pad or button mapped to `clock_tap` (Learn) or OSC `/pvj/clock/tap` from TouchOSC. Also: watch the OSC `/nxlx/sound/beat` messages across a hand-over and a negative nudge; none should be off the grid or twice. The unit tests prove the clock, the routes, the actions and what the levels record says, with a fake clock; none of it has met a real hand, a Max patch or a band. Do not run it on the node that is soaking.
+
+| Row | What to do | What should happen | What it would mean if not |
+|---|---|---|---|
+| BC1 | Tap the pad about 8 times at a steady 120 BPM, then stop; `curl -s localhost/api/tempo` (with a device token) every 10 s for a minute | The tempo within about 2 BPM of 120 after 4 taps; after you stop, the state stays `running`, `source` `tap`, the tempo unchanged for as long as you wait, and `age` grows | The averaging, the hold, or the flywheel |
+| BC2 | With a shader mapped to the beat (Sound page, source Beat) and no capture device, tap a tempo; watch the picture | The shader moves on the tapped beat, and goes on after the taps stop | The consumer path (levels, shader input) |
+| BC3 | After a `clear`, send `/nxlx/sound/in/bpm 128` and `/nxlx/sound/in/beat` from Max (source "Levels sent in over OSC", the sender listed), then stop sending for 10 s | `source` `osc`, tempo 128, the beat lands on the sender's beats; after 5 s of silence it is held, not dropped | The hand-over, the OSC input |
+| BC4 | After a `clear`, a capture device on music at a steady tempo, no tap and no OSC | `source` `sound` only while the confidence is 0.5 or more; the phase does not jump when a single stray hit is made (clap off the beat once) | The trust rule for sound |
+| BC5 | Read the CPU of the panel with the clock running for 10 minutes (`top -b -n1 -p $(pgrep -f pvj-web)`) | No measurable difference from before | The cost; not measured here |
+
 ## Safety
 
 - The workflow starts by **manual dispatch only**, and only for the repository owner. It never runs for pushes, pull requests or forks, so nobody else's code reaches the Pi. Keep it that way.

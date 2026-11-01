@@ -67,7 +67,8 @@ LEGACY_LIVE = frozenset(
         "/api/mix", "/api/access/code", "/api/access/cancel", "/api/access/screen", "/api/overlay",
         "/api/support/stop", "/api/shaders/play", "/api/shaders/values", "/api/shaders/step", "/api/shaders/preset",
         "/api/vibes", "/api/effects", "/api/effects/values", "/api/effects/step", "/api/effects/preset",
-        "/api/projector", "/api/room/scene", "/api/room/group", "/api/autostart/test")])
+        "/api/projector", "/api/room/scene", "/api/room/group", "/api/autostart/test",
+        "/api/tempo/tap")])
 
 GUEST_ACTIONS, GUEST_WINDOW = 10, 10.0          # one guest device: this many actions in this many seconds
 BOX_ACTIONS, BOX_WINDOW = 30, 10.0              # all guests together

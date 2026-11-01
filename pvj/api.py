@@ -2274,7 +2274,7 @@ class Api:
                "plugged": cfg["device"] == "" or cfg["device"] in {d["id"] for d in devices},
                "inputs": [{"id": k, "name": soundout.INPUT_NAMES[k], "allowed": k in cfg["allowed"], "bands": k in ("device", "osc")} for k in soundout.INPUTS],
                "channels": self.sound.device_channels(cfg), "feed_why": self.sound.feed_why, "meter_why": self.sound.meter_why or "",
-               "in_stats": dict(self.sound.in_stats)}
+               "in_stats": dict(self.sound.in_stats), "clock": self.sound.clock.status()}
         if not (device and device.get("role") == "full"):
             out["config"] = dict(cfg, in_hosts=[])          # the addresses are the Owner's to see (as the render nodes' hosts)
         return out
@@ -2371,6 +2371,49 @@ class Api:
         except OSError as e:
             raise ApiError(500, "the setting could not be saved: %s" % (e.strerror or e))
         return self.get_sound({}, device, client)
+
+    # --- the box clock (D116, pvj/clock.py) -------------------------------------------------------------
+    CLOCK_REMOTE = "the box clock is set in the room: a helper through remote support may look at it and not change it (D116)"
+
+    def _clock_change(self, device, client):
+        if self.support.is_remote(client) or (isinstance(device, dict) and device.get("remote")):
+            raise ApiError(403, self.CLOCK_REMOTE)
+
+    def get_tempo(self, body, device, client):
+        return {"clock": self.sound.clock.status()}
+
+    def clock_tap(self, body, device, client):
+        """One tap: the phase at once, and from the second tap the average tempo. From a pad, an OSC button or a DMX channel too."""
+        from . import clock as clock_mod
+        self._clock_change(device, client)
+        try:
+            tap = self.sound.clock.tap()
+        except clock_mod.ClockError as e:
+            raise ApiError(409, str(e))
+        return {"tap": tap, "clock": self.sound.clock.status()}
+
+    def set_tempo(self, body, device, client):
+        """Exactly one of {"bpm": 30 to 300}, {"nudge": -0.5 to 0.5 beats} or {"clear": true}."""
+        from . import clock as clock_mod
+        self._clock_change(device, client)
+        if not isinstance(body, dict) or len(body) != 1 or next(iter(body)) not in ("bpm", "nudge", "clear"):
+            raise bad('send one of {"bpm": 30 to 300}, {"nudge": a step in beats} or {"clear": true}')
+        key, value = next(iter(body.items()))
+        c = self.sound.clock
+        try:
+            if key == "bpm":
+                c.set_bpm(value)
+            elif key == "nudge":
+                c.nudge(value)
+            elif value is True:
+                c.clear()
+            else:
+                raise bad('clear is {"clear": true}')
+        except clock_mod.ClockError as e:
+            raise bad(str(e))
+        what = "cleared" if key == "clear" else "%s %s" % (key, value)
+        self.log("pvj-web: box clock %s by device %s (%s) from %s" % (what, (device or {}).get("id"), (device or {}).get("role"), client))
+        return {"clock": c.status()}
 
     def sound_tick(self):
         """About once a second, beside ndi_tick (server.py)."""
@@ -5143,6 +5186,9 @@ class Api:
             ("GET", "/api/sound/levels"): ("live", self.sound_levels),    # the meter alone,
             ("POST", "/api/sound"): ("full", self.set_sound),             # the device, on and off and sending: the Owner's,
             ("POST", "/api/sound/map"): ("live", self.set_sound_map),
+            ("GET", "/api/tempo"): ("live", self.get_tempo),               # the box clock (D116): seen by the Operator,
+            ("POST", "/api/tempo"): ("live", self.set_tempo),             # its tempo and phase set by the Operator and the Owner,
+            ("POST", "/api/tempo/tap"): ("live", self.clock_tap),         # and tapped, also from MIDI and OSC
             ("POST", "/api/sound/source"): ("live", self.set_sound_source),  # between the allowed sources: the Owner's and an Operator's (D97)     # the shader input: the Operator's
             ("POST", "/api/control"): ("live", self.control),
             ("POST", "/api/blackout"): ("live", self.blackout),

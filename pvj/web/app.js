@@ -2900,7 +2900,7 @@
       ['clip_prev', 'Previous clip'], ['clip_next', 'Next clip'], ['fadein', 'Fade in'],
       ['bank_pad', 'Play a pad of the controllers\' bank'], ['bank_prev', 'Controllers\' bank: the one before'], ['bank_next', 'Controllers\' bank: the next']])
     .concat([1, 2, 3, 4, 5, 6, 7, 8].map(function (n) { return ['scene_' + n, 'Room scene ' + n]; }))
-    .concat([['effect_amount', 'Effect: amount (fader)'], ['effect_toggle', 'Effect on / off'], ['effect_prev', 'Effect: the one before'], ['effect_next', 'Effect: the next one']])
+    .concat([['effect_amount', 'Effect: amount (fader)'], ['effect_toggle', 'Effect on / off'], ['effect_prev', 'Effect: the one before'], ['effect_next', 'Effect: the next one'], ['clock_tap', 'Tap the tempo (box clock)']])
     .concat([1, 2, 3, 4, 5, 6, 7, 8].map(function (n) { return ['effect_control_' + n, 'Effect: control ' + n + ' of the one that is on (knob)']; }))
     // a pairing code on the box's own display (System > People and codes switches it on): held 3 to 10 seconds, then let go
     .concat([['code_join', 'Show a one-time guest code on the display (hold 3 seconds, let go)'],
@@ -2910,7 +2910,7 @@
   // What an action is called on the drawn layout of a controller: short, since a control is a small box.
   var MIDI_SHORT = { shader_speed: 'Shader speed', shader_prev: 'Previous shader', shader_next: 'Next shader', shader_hue: 'Shader colour turn',
     shader_brightness: 'Shader brightness', vibes_ambient: 'Vibes: Ambient', vibes_show: 'Vibes: Show', vibes_dwell: 'Vibes time', bank_prev: 'Bank before', bank_next: 'Next bank',
-    effect_amount: 'Effect amount', effect_toggle: 'Effect on / off', effect_prev: 'Previous effect', effect_next: 'Next effect',
+    effect_amount: 'Effect amount', effect_toggle: 'Effect on / off', effect_prev: 'Previous effect', effect_next: 'Next effect', clock_tap: 'Tap tempo',
     code_join: 'Guest code (hold)', code_owner: 'Owner code (hold)',
     fade: 'Fade out / in', size: 'Zoom', rotate: 'Rotate', flip_h: 'Mirror left to right', flip_v: 'Mirror top to bottom', overlay: 'Overlay', seek_back: 'Back 10 s', seek_forward: 'Forward 10 s',
     loop: 'Loop', mute: 'Sound off / on', test_pattern: 'Test pattern', pause: 'Freeze / resume', mapping_mode: 'Mapping mode', layer_geometry: 'Geometry',
