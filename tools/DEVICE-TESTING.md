@@ -1050,6 +1050,17 @@ The D119 check holds: the gaps are well under the 1 to 3 a second the lock would
 
 **The other sources fall during a transition at this load.** D111 said it of the incoming clip. This run shows the others too. Frames drawn in each of the 6 s after a play, over all 22 transitions (`results/crossfade-per-second.txt`), where 30 is full: Lumia 2 fell as low as 8 and some fades did not touch it, under 25 for 1.1 s on average; CRT fell to 6 to 13 in every fade, under 25 for 3.8 s; Oscilloscope fell to 7 to 16, under 25 for 3.0 s. Gaps reached 300 ms. The incoming clip took 2.7 s on average to reach 25, from 1 to 4 s. Flips stayed about 60 by the trace, so the clips' motion stutters and the output does not. Nobody has looked at it. The cause is the one in D111: five software decoders on four cores. Open as its own bug. Four 720p sources are the budget (the figures in D101), and a crossfade on top of a full budget is over it.
 
+### Deblocking off on a Pi (D120): run in part before the build
+
+Before: a scratch build of the same setting, 6 crossfades per run, single runs, nobody watched (`measurements/2026-11-01-crossfade-decode`). Normal: CRT 2.67 s under 25 frames a second per crossfade, box 81 percent. All frames skipped: 0 s on every source, lowest second 27, box 64 percent. Stills `A.png` and `C.png` there, and the owner said to build it after seeing them.
+
+| Row | Do | Good | Bad |
+|---|---|---|---|
+| DB1 | On a Pi: `tr '\0' ' ' < /proc/$(pgrep -x pvj-render)/cmdline` | `--skip-deblock` in it | Not there |
+| DB2 | 4 sources of 720p clips, mapping on, a 1 hour soak with crossfades | Every source 25 or more through each crossfade, as the scratch build; no growth beyond the final soak's | Stutter back, or a new fault |
+| DB3 | `settings.json` `renderer.deblock` true and a restart of `pvj-web` | The player restarts once, `--skip-deblock` is gone, no restart loop | Restarts keep coming |
+| DB4 | The owner on a screen or projector, with a low-bitrate clip | The picture is acceptable | Blocks he minds: DB3 is the way back |
+
 ## Safety
 
 - The workflow starts by **manual dispatch only**, and only for the repository owner. It never runs for pushes, pull requests or forks, so nobody else's code reaches the Pi. Keep it that way.
