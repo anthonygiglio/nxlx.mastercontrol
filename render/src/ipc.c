@@ -347,6 +347,24 @@ static void end_fade(void)
 // with no sound track, the outgoing layer's sound is taken off, this thread waits (at most SOUND_WAIT seconds) until
 // that core has closed its audio output (`current-ao` unavailable), and only then is the incoming clip given its sound.
 #define SOUND_WAIT 1.0
+#define STOP_WAIT 1.0
+
+// The stop that ended the last fade on this layer has been run. It is queued (the render thread never waits on
+// libmpv), and libmpv runs a blocking command ahead of what is queued, so a load sent now would go first and the stop
+// would take the new clip with it: a crossfade asked just as the last one ended would wait out FADE_FIRST_FRAME and
+// fade to nothing. Bounded: a core that does not answer in STOP_WAIT seconds is loaded into anyway, as before.
+static void wait_for_stop(int layer)
+{
+    double until = now_s() + STOP_WAIT;
+    while (__atomic_load_n(&app.stops_done[layer], __ATOMIC_ACQUIRE) < __atomic_load_n(&app.stops_asked[layer], __ATOMIC_ACQUIRE)) {
+        if (now_s() >= until) {
+            LOG("ipc: pvj-crossfade: layer %d has not run its stop after %.1f s", layer, STOP_WAIT);
+            return;
+        }
+        struct timespec ts = { 0, 1000 * 1000 };
+        nanosleep(&ts, NULL);
+    }
+}
 
 // The pairs of "k=v,k=v" (already checked against FADE_KEYS) that go with the load, for that file alone: loadfile's
 // fourth argument after its index. Nothing in `out` when there are none, and the load is as it always was. On a libmpv
@@ -431,6 +449,7 @@ static void crossfade(int fd, const mpv_node *id, const mpv_node *cmd)
         reply(fd, id, r < 0 ? mpv_error_string(r) : "success", NULL);
         return;
     }
+    wait_for_stop(in);
     // the incoming layer as a fresh player for this clip: playing, no sound yet (below), and the file's own options
     set_str(H, "pause", "no");
     set_str(H, "keep-open", "no");

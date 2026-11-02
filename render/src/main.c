@@ -301,6 +301,8 @@ static void *event_loop(void *arg)
                 wake_render();
             }
             if (ev->event_id == MPV_EVENT_START_FILE) __atomic_add_fetch(&app.starts[i], 1, __ATOMIC_RELEASE);
+            if (ev->event_id == MPV_EVENT_COMMAND_REPLY && ev->reply_userdata == STOP_REPLY)
+                __atomic_add_fetch(&app.stops_done[i], 1, __ATOMIC_RELEASE);
             if (ev->event_id == MPV_EVENT_PROPERTY_CHANGE) {
                 mpv_event_property *p = ev->data;
                 if (p && p->format == MPV_FORMAT_FLAG && p->data && !strcmp(p->name, "idle-active"))
@@ -392,6 +394,44 @@ static void slow_start(void)
     nanosleep(&t, NULL);
 }
 #endif
+
+#ifdef PVJ_RENDER_TEST_HOOKS
+// PVJ_RENDER_TEST_SLOW_STOP=<ms> holds back the stop that ends a fade until the next fade has loaded, or for that long,
+// as a core busy with its clip reaches it after a blocking command (tests/test_pvj_render.py).
+static mpv_handle *held_stop;
+static double held_until;
+
+static void send_stop(mpv_handle *h)
+{
+    const char *stop[] = { "stop", NULL };
+    mpv_command_async(h, STOP_REPLY, stop);
+}
+
+static void send_held_stop(int phase)
+{
+    if (!held_stop || (phase != FADE_WAITING && now_s() < held_until)) return;
+    send_stop(held_stop);
+    held_stop = NULL;
+}
+#endif
+
+// Stops layer i, the outgoing layer of a fade that has ended. The stop is counted first, so whoever sees the fade off
+// sees the stop owed too.
+static void stop_outgoing(mpv_handle *h, int i)
+{
+    __atomic_add_fetch(&app.stops_asked[i], 1, __ATOMIC_RELEASE);
+#ifdef PVJ_RENDER_TEST_HOOKS
+    const char *v = getenv("PVJ_RENDER_TEST_SLOW_STOP");
+    long ms = v ? strtol(v, NULL, 10) : 0;
+    if (ms > 0 && ms <= 5000) {
+        held_stop = h;
+        held_until = now_s() + ms / 1000.0;
+        return;
+    }
+#endif
+    const char *stop[] = { "stop", NULL };
+    if (mpv_command_async(h, STOP_REPLY, stop) < 0) __atomic_sub_fetch(&app.stops_asked[i], 1, __ATOMIC_RELEASE);
+}
 
 static int layer_render_context(Layer *l)
 {
@@ -1092,6 +1132,9 @@ int main(int argc, char **argv)
         fx_take();
         Layer *front = &video[fi], *back = &video[1 - fi];
         int fresh = 0;                                      // source 1's picture is new this frame (D106)
+#ifdef PVJ_RENDER_TEST_HOOKS
+        send_held_stop(phase);
+#endif
         if (fi != was_front) { front->dirty = 1; was_front = fi; fresh = 1; }
         for (int i = 0; i < nlayers; i++) {
             // every layer's update is taken at every turn (libmpv asks for that), whether or not it is drawn
@@ -1174,15 +1217,14 @@ int main(int argc, char **argv)
             if (share >= 1.0f) {
                 // the end: the incoming layer alone from this picture on; the outgoing one is stopped (async: this
                 // thread never waits on libmpv, which may be waiting on it). Under the lock, so the socket's thread,
-                // which loads the next crossfade into this layer only once the fade is off, queues its load after
-                // this stop in the same core.
+                // which loads the next crossfade into this layer only once the fade is off, finds the stop counted
+                // and waits for its reply (ipc.c, wait_for_stop).
                 pthread_mutex_lock(&app.lock);
                 if (app.fade.phase != FADE_OFF && app.front == fi) {
                     app.fade.phase = FADE_OFF;
                     app.fade.progress = 1.0;
                     app.fades_done++;
-                    const char *stop[] = { "stop", NULL };
-                    mpv_command_async(back->h, 0, stop);
+                    stop_outgoing(back->h, 1 - fi);
                 }
                 pthread_mutex_unlock(&app.lock);
             } else {
