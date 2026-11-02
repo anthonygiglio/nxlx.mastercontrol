@@ -1160,8 +1160,8 @@ class FadeOnFadeTest(FadeBase):
     """A crossfade asked as the last one ends loads into the layer that fade is stopping. The stop is queued, and libmpv
     runs a blocking command ahead of what is queued, so it has to be seen done first, or it takes the new clip with it:
     the fade then waits out FADE_FIRST_FRAME and goes to nothing. On its own that takes a core busy at the wrong
-    microsecond (CI, 2026-11-02, once in the 200 fades of ManyFadesTest), so the hook holds the stop back until the
-    load is in, or for 300 ms if nothing loads."""
+    microsecond (CI, 2026-11-01, once, fade 26 of ManyFadesTest's 180), so the hook holds the stop back until the
+    load is in, or for 100 ms if nothing loads."""
 
     def test_a_fade_asked_as_the_last_one_ends_keeps_its_clip(self):
         hooks = "with test hooks" in subprocess.run([BIN, "--version"], capture_output=True, text=True, timeout=10).stdout
@@ -1170,7 +1170,7 @@ class FadeOnFadeTest(FadeBase):
                 self.fail("PVJ_RENDER_TEST=1 and pvj-render was built without its test hooks: make -C render TEST_HOOKS=1")
             self.skipTest("pvj-render was built without its test hooks (make -C render clean; make -C render TEST_HOOKS=1)")
         self.r.close()
-        self.r = r = Renderer(env={"PVJ_RENDER_TEST_SLOW_STOP": "300"})
+        self.r = r = Renderer(env={"PVJ_RENDER_TEST_SLOW_STOP": "100"})
         r("set_property", "image-display-duration", "inf")
         r.load(self.red)
         self.assertTrue(r.wait(lambda: self.centre() == RED, 10), self.st())

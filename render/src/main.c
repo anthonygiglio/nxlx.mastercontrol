@@ -395,22 +395,27 @@ static void slow_start(void)
 }
 #endif
 
-#ifdef PVJ_RENDER_TEST_HOOKS
-// PVJ_RENDER_TEST_SLOW_STOP=<ms> holds back the stop that ends a fade until the next fade has loaded, or for that long,
-// as a core busy with its clip reaches it after a blocking command (tests/test_pvj_render.py).
-static mpv_handle *held_stop;
-static double held_until;
-
-static void send_stop(mpv_handle *h)
+static void send_stop(mpv_handle *h, int i)
 {
     const char *stop[] = { "stop", NULL };
-    mpv_command_async(h, STOP_REPLY, stop);
+    int r = mpv_command_async(h, STOP_REPLY, stop);
+    if (r >= 0) return;
+    __atomic_sub_fetch(&app.stops_asked[i], 1, __ATOMIC_RELEASE);      // no stop, so no reply to wait for
+    LOG("layer %d: the stop at the end of a fade was refused: %s", i, mpv_error_string(r));
 }
+
+#ifdef PVJ_RENDER_TEST_HOOKS
+// PVJ_RENDER_TEST_SLOW_STOP=<ms> holds back the stop that ends a fade until the next fade has loaded, or for that long,
+// as a core busy with its clip reaches it after a blocking command (tests/test_pvj_render.py). The hold stays well under
+// STOP_WAIT, or the load goes ahead without the stop and the test sees what it is there to catch.
+static mpv_handle *held_stop;
+static int held_layer;
+static double held_until;
 
 static void send_held_stop(int phase)
 {
     if (!held_stop || (phase != FADE_WAITING && now_s() < held_until)) return;
-    send_stop(held_stop);
+    send_stop(held_stop, held_layer);
     held_stop = NULL;
 }
 #endif
@@ -425,12 +430,12 @@ static void stop_outgoing(mpv_handle *h, int i)
     long ms = v ? strtol(v, NULL, 10) : 0;
     if (ms > 0 && ms <= 5000) {
         held_stop = h;
+        held_layer = i;
         held_until = now_s() + ms / 1000.0;
         return;
     }
 #endif
-    const char *stop[] = { "stop", NULL };
-    if (mpv_command_async(h, STOP_REPLY, stop) < 0) __atomic_sub_fetch(&app.stops_asked[i], 1, __ATOMIC_RELEASE);
+    send_stop(h, i);
 }
 
 static int layer_render_context(Layer *l)
