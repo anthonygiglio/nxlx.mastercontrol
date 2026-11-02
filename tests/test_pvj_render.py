@@ -1871,7 +1871,7 @@ class OwnersMappingTest(OwnersMappingBase):
     # without --fast, the way other boards draw, is SourceScalerTest below.
     ARGS = ("--sources=4", "--fast", "--skip-deblock")
 
-    def test_the_decoders_take_the_skipped_deblocking(self):
+    def test_the_decoders_leave_out_the_deblocking(self):
         self.r.load(self.red)
         self.assertEqual(self.r("get_property", "options/vd-lavc-skiploopfilter"), "all", self.r.stderr())
 
