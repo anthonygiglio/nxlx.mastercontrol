@@ -1050,7 +1050,9 @@ The D119 check holds: the gaps are well under the 1 to 3 a second the lock would
 
 **The other sources fall during a transition at this load.** D111 said it of the incoming clip. This run shows the others too. Frames drawn in each of the 6 s after a play, over all 22 transitions (`results/crossfade-per-second.txt`), where 30 is full: Lumia 2 fell as low as 8 and some fades did not touch it, under 25 for 1.1 s on average; CRT fell to 6 to 13 in every fade, under 25 for 3.8 s; Oscilloscope fell to 7 to 16, under 25 for 3.0 s. Gaps reached 300 ms. The incoming clip took 2.7 s on average to reach 25, from 1 to 4 s. Flips stayed about 60 by the trace, so the clips' motion stutters and the output does not. Nobody has looked at it. The cause is the one in D111: five software decoders on four cores. Open as its own bug. Four 720p sources are the budget (the figures in D101), and a crossfade on top of a full budget is over it.
 
-### Deblocking off on a Pi (D120): run in part before the build
+**Corrected the same day:** this script polled the node over ssh every 0.4 s through each crossfade, and that polling caused most of what is above. See the D120 addendum. With the filter on and the node left alone, the short test gave CRT 2.67 s under 25 and Oscilloscope 1.83 s. With the filter off and the node left alone, 0 s. The bug is closed for 4 sources of 720p clips.
+
+### Deblocking off on a Pi (D120): DB1 to DB3 run, DB4 waits for the owner
 
 Before: a scratch build of the same setting, 6 crossfades per run, single runs, nobody watched (`measurements/2026-11-01-crossfade-decode`). Normal: CRT 2.67 s under 25 frames a second per crossfade, box 81 percent. All frames skipped: 0 s on every source, lowest second 27, box 64 percent. Stills `A.png` and `C.png` there, and the owner said to build it after seeing them.
 
@@ -1060,6 +1062,15 @@ Before: a scratch build of the same setting, 6 crossfades per run, single runs, 
 | DB2 | 4 sources of 720p clips, mapping on, a 1 hour soak with crossfades | Every source 25 or more through each crossfade, as the scratch build; no growth beyond the final soak's | Stutter back, or a new fault |
 | DB3 | `settings.json` `renderer.deblock` true and a restart of `pvj-web` | The player restarts once, `--skip-deblock` is gone, no restart loop | Restarts keep coming |
 | DB4 | The owner on a screen or projector, with a low-bitrate clip | The picture is acceptable | Blocks he minds: DB3 is the way back |
+
+Run 2026-11-01, master 7d6b151, nobody watched (`measurements/2026-11-02-deblock-soak`, `measurements/2026-11-02-crossfade-poll-check`):
+
+- DB1 passes: `--skip-deblock` in the running arguments.
+- DB2, the hour with mapping on and 22 transitions: no fault. 59.99 flips, 28 missed vblanks (0.008 a second), box 62.2 percent, render 235 percent, 51.6 C at the end, throttled 0x0, same pid, 0 restarts, 0 `Invalid video timestamp`, no gap of 70 ms or more away from joins. Memory rose from 364 to 426 MB in 20 minutes, then held at 434 to 437 MB from minute 30, 4.5 MB over the final soak's highest. The hour does not show what two would do. Its reading of "every source 25 or more" failed, CRT and Oscilloscope under 25 for up to 3 s, because the script polled the node through each crossfade.
+- DB2 again, without that polling, 8 crossfades a block, 14 s apart: left alone 0 s under 25 on all sources in 32 of 32, lowest second 29. One imitated panel 0 s in 16 of 16, two imitated panels 0 s in 16 of 16, lowest second 28, 0 errors. With the 0.4 s probe, CRT 1 to 2 s in 16 of 16, lowest second 6. Fades-done rose by 8 in every block, same pid.
+- DB3 passes both ways: one player restart each way, `--skip-deblock` gone and back, no second restart in 52 to 60 s.
+- DB4 waits for the owner.
+- Not covered: a real browser or phone, other panel screens, other clips or codecs, effects on, the picture itself.
 
 ## Safety
 
