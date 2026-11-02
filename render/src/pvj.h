@@ -20,6 +20,7 @@
 #define MAX_LAYERS (LAYERS + MAX_SOURCES - 1)   // every video layer: 0 and 1 are source 1's, layer k (2 to 8) is source k
 #define FADE_MAX_SECONDS 60.0
 #define FADE_FIRST_FRAME 10.0       // seconds a crossfade waits for its clip's first frame, then fades anyway (as D71)
+#define STOP_REPLY 1                // the reply_userdata of the stop that ends a fade
 
 #define FINAL_LINES 720             // the size the final pass draws at while the display's scaler brings it to the output (D108)
 enum { FADE_OFF, FADE_WAITING, FADE_RUNNING };
@@ -145,6 +146,7 @@ typedef struct {
     // playback restart (a first frame ready, after a load or a seek) and the last failed load belong to. libmpv sends
     // a layer's events in order, so what an older file of that layer said is never taken for the incoming clip's.
     int starts[MAX_LAYERS], restart_of[MAX_LAYERS], failed_of[MAX_LAYERS];
+    int stops_asked[MAX_LAYERS], stops_done[MAX_LAYERS];    // the stops that end a fade, and those libmpv has run (atomics)
     int idle[MAX_LAYERS];           // the layer's idle-active, as observed by its event thread (atomics)
     long layer_drawn[MAX_LAYERS];   // frames each layer converted (atomics: the render thread adds, the socket reads)
     long source_loads[MAX_LAYERS];  // loads asked of source k > 1 (pvj-source k loadfile), by its index

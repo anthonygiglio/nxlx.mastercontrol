@@ -1156,6 +1156,34 @@ class ManyFadesTest(FadeBase):
                  [w["gl-objects"] for w in warm], [c["gl-objects"] for c in later], self.st()["gl-fences-freed"]))
 
 
+class FadeOnFadeTest(FadeBase):
+    """A crossfade asked as the last one ends loads into the layer that fade is stopping. The stop is queued, and libmpv
+    runs a blocking command ahead of what is queued, so it has to be seen done first, or it takes the new clip with it:
+    the fade then waits out FADE_FIRST_FRAME and goes to nothing. On its own that takes a core busy at the wrong
+    microsecond (CI, 2026-11-01, once, fade 26 of ManyFadesTest's 180), so the hook holds the stop back until the
+    load is in, or for 100 ms if nothing loads."""
+
+    def test_a_fade_asked_as_the_last_one_ends_keeps_its_clip(self):
+        hooks = "with test hooks" in subprocess.run([BIN, "--version"], capture_output=True, text=True, timeout=10).stdout
+        if not hooks:
+            if STRICT:
+                self.fail("PVJ_RENDER_TEST=1 and pvj-render was built without its test hooks: make -C render TEST_HOOKS=1")
+            self.skipTest("pvj-render was built without its test hooks (make -C render clean; make -C render TEST_HOOKS=1)")
+        self.r.close()
+        self.r = r = Renderer(env={"PVJ_RENDER_TEST_SLOW_STOP": "100"})
+        r("set_property", "image-display-duration", "inf")
+        r.load(self.red)
+        self.assertTrue(r.wait(lambda: self.centre() == RED, 10), self.st())
+        self.fade(self.blue, 0.03)
+        self.assertTrue(r.wait(lambda: self.st()["fades-done"] == 1, 10, 0.005), self.st())
+        started = time.monotonic()
+        self.fade(self.red, 0.03)
+        self.assertTrue(r.wait(lambda: self.st()["fades-done"] == 2, 12, 0.02), "%s\n%s" % (self.st(), r.stderr()))
+        self.assertLess(time.monotonic() - started, 5.0, "it waited out its first frame: %s" % self.st())
+        self.assertTrue(r.wait(lambda: self.centre() == RED, 5), (self.centre(), self.st()))
+        self.assertEqual(self.st()["fades-cut"], 0)
+
+
 def make_clip_with_sound(case, path, seconds=3):
     """As make_clip, with a sound track (a tone)."""
     maker = shutil.which("ffmpeg")
