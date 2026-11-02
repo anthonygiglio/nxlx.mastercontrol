@@ -18,7 +18,7 @@ import unittest
 from unittest import mock
 
 import tests        # the run's own temp folder (tests/__init__.py)
-from pvj import boxcare, renderer, screenmode
+from pvj import boxcare, renderer, screenmode, settings as settings_mod
 from pvj.player import Ipc, Player, PlayerError
 
 # The stand-in: answers get_property pid with its own pid (and quit) on --socket=PATH, as pvj-render does. What it
@@ -307,12 +307,21 @@ class ChoiceTest(Base):
     def test_the_arguments_are_the_screens_and_the_detail(self):
         screen = ["--drm-device=/dev/dri/card1", "--drm-connector=HDMI-A-1", "--drm-mode=1920x1080@60.00"]
         self.assertEqual(renderer.command("/run/s", screen, "auto", "pi4", self.env),
-                         [self.standin, "--socket=/run/s"] + screen + ["--detail=540", "--fast", "--sources=4"])
+                         [self.standin, "--socket=/run/s"] + screen + ["--detail=540", "--fast", "--skip-deblock", "--sources=4"])
         self.assertEqual(renderer.command("/run/s", screen[2:], "auto", "x86", self.env),
                          [self.standin, "--socket=/run/s", "--drm-mode=1920x1080@60.00", "--detail=output", "--sources=4"])
         self.assertEqual(renderer.command("/run/s", [], 720, "pi5", self.env)[-2], "--detail=720")
         self.assertEqual(renderer.command("/run/s", ["--vo=gpu", "--drm-mode=3"], "output", "pi3", self.env),
-                         [self.standin, "--socket=/run/s", "--drm-mode=3", "--detail=output", "--fast", "--sources=2"])
+                         [self.standin, "--socket=/run/s", "--drm-mode=3", "--detail=output", "--fast", "--skip-deblock", "--sources=2"])
+
+    def test_a_pi_skips_the_deblocking_unless_the_settings_keep_it(self):
+        self.assertIn("--skip-deblock", renderer.command("/run/s", [], "auto", "pi4", self.env))
+        self.assertNotIn("--skip-deblock", renderer.command("/run/s", [], "auto", "pi4", self.env, deblock=True))
+        self.assertNotIn("--skip-deblock", renderer.command("/run/s", [], "auto", "x86", self.env))
+        self.assertTrue(renderer.clean({"deblock": True})["deblock"])
+        for no in (False, "yes", 1, None):
+            self.assertNotIn("deblock", renderer.clean({"deblock": no}), "only True keeps it")
+        self.assertNotIn("deblock", settings_mod.default_settings()["renderer"], "no schema change: nothing for a rollback to trip on")
 
     def chosen(self, wish, extra=("--vo=gpu", "--gpu-context=drm"), windowed=False, env=None):
         state = os.path.join(self.dir, "state")
@@ -506,6 +515,14 @@ class SwitchTest(Base):
         screenmode.write_json(wanted, {"use": "new", "detail": 720, "loop_lists": False})
         self.assertEqual(sup._wish_changed(), {"use": "new", "detail": 720}, "a real change is still one")
 
+    def test_keeping_the_deblocking_is_a_change_once(self):
+        wanted = os.path.join(self.dir, "wanted.json")
+        sup = renderer.Supervisor(["x"], self.sock, self.dir, "auto", wanted=wanted)
+        screenmode.write_json(wanted, renderer.clean({"use": "new", "detail": "auto", "deblock": True}))
+        self.assertEqual(sup._wish_changed(), {"use": "new", "detail": "auto", "deblock": True}, "the way back takes hold")
+        again = renderer.Supervisor(["x"], self.sock, self.dir, "auto", wanted=wanted, deblock=True)
+        self.assertIsNone(again._wish_changed(), "or the player ends pvj-render every few seconds, for good")
+
     def test_another_final_pass_is_a_change_too(self):
         done, sup, took = self.run_switch("ok", {"use": "new", "detail": "auto", "final": 720})
         self.assertEqual(done, {"exit": 0})
@@ -558,7 +575,7 @@ class ServeTest(Base):
         self.assertIn("--drm-mode=1920x1080@60.00", args)
         self.assertEqual((rep["chosen"], rep["drawing"]), ("new", "classic"))
         self.assertEqual(rep["why"], "pvj-render did not start (exit 2)")
-        self.assertEqual(self.runs()[0][-4:], ["--detail=540", "--fast", "--sources=4", "--final=auto"])
+        self.assertEqual(self.runs()[0][-5:], ["--detail=540", "--fast", "--skip-deblock", "--sources=4", "--final=auto"])
 
     def test_a_killed_renderers_socket_is_gone_before_classic_mpv_starts(self):
         # the opener takes whatever is at the name for mpv's socket: an old file left there would be opened instead of

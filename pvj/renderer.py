@@ -166,6 +166,8 @@ def clean(data):
         out["final"] = final                # no key is Automatic: a file without it is as before (D108)
     if data.get("loop_lists") is False:
         out["loop_lists"] = False           # the kill switch of the loop lists (D118), no page shows it: no key is on
+    if data.get("deblock") is True:
+        out["deblock"] = True               # the way back to the video's deblocking on a Pi (D120), no page shows it
     return out
 
 
@@ -194,14 +196,17 @@ def final_arg(final, board_kind):
     return "--final=auto" if final == "auto" and board_kind in SMALL_BOARDS else None
 
 
-def command(socket_path, screen_args, detail, board_kind, env=None, sources=None, final=None):
+def command(socket_path, screen_args, detail, board_kind, env=None, sources=None, final=None, deblock=False):
     """pvj-render's argv: the socket, the screen's arguments as screenmode chose them for mpv, the detail, mpv's
-    cheap scalers on a Pi (as classic's --profile=fast), the number of sources (D101) and the final pass (D108)."""
+    cheap scalers on a Pi (as classic's --profile=fast), no deblocking on a Pi unless the settings keep it (D120), the
+    number of sources (D101) and the final pass (D108)."""
     args = [binary(env), "--socket=" + socket_path]
     args += [a for a in screen_args if a.startswith(("--drm-device=", "--drm-connector=", "--drm-mode="))]
     args.append(detail_arg(detail, board_kind))
     if board_kind in SMALL_BOARDS:
         args.append("--fast")
+        if not deblock:
+            args.append("--skip-deblock")
     args.append("--sources=%d" % sources_for(board_kind, sources))
     extra = final_arg(final, board_kind)
     if extra:
@@ -238,10 +243,11 @@ class Supervisor:
 
     def __init__(self, cmd, socket_path, rundir, detail, log=print, spawn=None, clock=time.monotonic, sleep=time.sleep,
                  ready=None, start_seconds=START_SECONDS, healthy_seconds=HEALTHY_SECONDS, wanted=None, sources=None,
-                 final=None):
+                 final=None, deblock=False):
         self.cmd, self.socket_path, self.rundir, self.detail = list(cmd), socket_path, rundir, detail
         self.sources = sources              # the Owner's number of sources this run was started with (None: the board's)
         self.final = final                  # the final pass this run was started with: "full" or 720 (None: Automatic)
+        self.deblock = deblock              # this run was started keeping the video's deblocking (D120)
         self.final_rule = None              # final_rule's state, while it decides for this run
         self.final_watch = False            # pvj-render was started with --final and has not said it cannot
         self.final_now = ("full", "")       # what the report says: what the final pass draws at, and why
@@ -290,6 +296,8 @@ class Supervisor:
             mine["sources"] = self.sources
         if self.final is not None:
             mine["final"] = self.final
+        if self.deblock:
+            mine["deblock"] = True
         return wish if wish != mine else None
 
     def _ask_quit(self):
@@ -461,8 +469,9 @@ def serve(player, screen_args, detail, log, env=None):
     board = hardware.detect_board().get("kind", "")
     wish = clean(screenmode.read_json(wanted_path(env)))
     sources, final = wish.get("sources"), wish.get("final")
-    sup = Supervisor(command(player.socket_path, screen_args, detail, board, env, sources, final or "auto"), player.socket_path, player.rundir,
-                     detail, log=log, wanted=wanted_path(env), sources=sources, final=final)
+    deblock = wish.get("deblock", False)
+    sup = Supervisor(command(player.socket_path, screen_args, detail, board, env, sources, final or "auto", deblock), player.socket_path, player.rundir,
+                     detail, log=log, wanted=wanted_path(env), sources=sources, final=final, deblock=deblock)
     signal.signal(signal.SIGTERM, sup._stop)
     signal.signal(signal.SIGINT, sup._stop)
     try:
@@ -634,6 +643,8 @@ class Renderer:
                 self.settings.data["renderer"]["final"] = final
             if before.get("loop_lists") is False:
                 self.settings.data["renderer"]["loop_lists"] = False
+            if before.get("deblock"):
+                self.settings.data["renderer"]["deblock"] = True
             self.settings.save()
         try:
             self._write()

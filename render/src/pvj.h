@@ -75,6 +75,7 @@ typedef struct {
     const char *hwdec;              // mpv's hwdec for the video layer ("no" by default)
     const char *audio_device;
     int fast;                       // mpv's cheap scalers in the video layer (a Pi)
+    int skip_deblock;               // the decoders leave out the deblocking filter (a Pi, D120)
     int every_vblank;               // accepted for old command lines: a picture goes out at every vblank anyway
     int frames;                     // > 0: end after this many presented frames (tests)
     int sources;                    // sources 1 to N (D101): 1 by default, at most MAX_SOURCES

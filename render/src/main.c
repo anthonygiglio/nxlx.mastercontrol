@@ -20,8 +20,8 @@
 //                     over the final picture while something is on it
 //
 // Usage: pvj-render --socket=PATH [--drm-device=/dev/dri/cardN] [--drm-connector=NAME] [--drm-mode=WxH@R|N]
-//                   [--detail=LINES|output] [--hwdec=NAME] [--audio-device=NAME] [--fast] [--every-vblank]
-//                   [--sources=N] [--fx-fps=N] [--final=auto|720] [--headless=WxH] [--frames=N] [--verbose]
+//                   [--detail=LINES|output] [--hwdec=NAME] [--audio-device=NAME] [--fast] [--skip-deblock]
+//                   [--every-vblank] [--sources=N] [--fx-fps=N] [--final=auto|720] [--headless=WxH] [--frames=N] [--verbose]
 #define _GNU_SOURCE
 #include "pvj.h"
 #include "json.h"
@@ -130,6 +130,7 @@ static int parse_args(int argc, char **argv, Cfg *c)
             c->fx_fps = (int)k;
         } else if (opt(a, "--frames", &v)) c->frames = atoi(v);
         else if (!strcmp(a, "--fast")) c->fast = 1;
+        else if (!strcmp(a, "--skip-deblock")) c->skip_deblock = 1;
         else if (!strcmp(a, "--every-vblank")) c->every_vblank = 1;
         else if (!strcmp(a, "--verbose")) c->verbose = 1;
 #ifdef PVJ_RENDER_TEST_HOOKS
@@ -466,6 +467,9 @@ static int layer_open(Layer *l, int index, const Cfg *c, int w, int h)
         if (layer_render_context(l)) return -1;
     } else {
         set(l->h, "hwdec", c->hwdec);
+        // Set before the core starts: mpv reads it when it opens a decoder. A fade's fifth decoder on a Pi 4 with 4
+        // sources busy held every clip to 6 to 16 frames a second; without the filter they stay at 27 or more (D120).
+        if (c->skip_deblock) set(l->h, "vd-lavc-skiploopfilter", "all");
         if (c->fast) {
             set(l->h, "profile", "fast");           // a Pi: mpv's cheap scalers, bilinear (no table of weights)
         } else {

@@ -1869,7 +1869,11 @@ class OwnersMappingBase(SourcesBase):
 class OwnersMappingTest(OwnersMappingBase):
     # Started with --fast, as the Pi starts pvj-render (renderer.command): mpv's cheap scalers. The same mapping
     # without --fast, the way other boards draw, is SourceScalerTest below.
-    ARGS = ("--sources=4", "--fast")
+    ARGS = ("--sources=4", "--fast", "--skip-deblock")
+
+    def test_the_decoders_leave_out_the_deblocking(self):
+        self.r.load(self.red)
+        self.assertEqual(self.r("get_property", "options/vd-lavc-skiploopfilter"), "all", self.r.stderr())
 
     def test_the_owners_mapping_shows_each_surfaces_source(self):
         narrow = os.path.join(self.tmp, "green43.png")
