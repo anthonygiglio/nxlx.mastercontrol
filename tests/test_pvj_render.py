@@ -1873,7 +1873,7 @@ class OwnersMappingTest(OwnersMappingBase):
 
     def test_the_decoders_take_the_skipped_deblocking(self):
         self.r.load(self.red)
-        self.assertNotIn("vd-lavc-skiploopfilter", self.r.stderr(), "mpv refused it, and it failed in silence on a Pi")
+        self.assertEqual(self.r("get_property", "options/vd-lavc-skiploopfilter"), "all", self.r.stderr())
 
     def test_the_owners_mapping_shows_each_surfaces_source(self):
         narrow = os.path.join(self.tmp, "green43.png")
