@@ -31,9 +31,9 @@ other_mirror() {
 }
 # An attempt timed out in the middle of unpacking leaves dpkg marked as interrupted, and every later attempt then stops
 # at once with "dpkg was interrupted" (2026-11-01 and 2026-11-02, two PRs). Finish what it began first. A failure here
-# is the next attempt's to report.
+# is the next attempt's to report. 20 seconds, so that all of it still fits inside the step's ten minutes.
 finish_dpkg() {
-    sudo timeout -k 10 "$EACH" env DEBIAN_FRONTEND=noninteractive dpkg --configure -a || echo "ci-apt: dpkg --configure -a did not finish"
+    sudo timeout -k 5 20 env DEBIAN_FRONTEND=noninteractive dpkg --configure -a || echo "ci-apt: dpkg --configure -a did not finish"
 }
 n=1
 while :; do
