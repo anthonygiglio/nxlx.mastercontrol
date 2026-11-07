@@ -1195,7 +1195,12 @@ class BoxCare:
         api = self.api
         tunnel = bool(api.support.is_remote(client) or (isinstance(device, dict) and device.get("remote")))
         # a support login is the Owner's role but not the Owner: names and addresses never leave the node (D125)
-        rows = [dict(e, text=scrub(e["text"], secrets), **({"who": scrub(e["who"], secrets)} if e.get("who") and not tunnel else {})) for e in log.events()]
+        rows = []
+        for e in log.events():
+            row = dict({k: v for k, v in e.items() if k != "who"}, text=scrub(e["text"], secrets))
+            if e.get("who") and not tunnel:
+                row["who"] = scrub(e["who"], secrets)
+            rows.append(row)
         return dict(log.state(rootfs.current_state() == "overlay"), events=rows)
 
     def diagnostics(self, body, device, client):

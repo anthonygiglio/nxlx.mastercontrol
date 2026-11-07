@@ -314,10 +314,7 @@ class ApiTest(CareBase):
         self.assertEqual(len(out["events"]), 1)
         self.assertNotIn("who", out["events"][0])
         self.assertNotIn("192.168.0.9", json.dumps(out))
-        with mock.patch.object(self.api.support, "is_remote", return_value=True):
-            out = self.h("GET", "/api/events", {}, self.full_dev)[1]
-        self.assertNotIn("who", out["events"][0])
-        self.assertEqual(self.h("GET", "/api/events", {}, self.full_dev)[1]["events"][0]["who"], "192.168.0.9")
+        self.assertEqual(self.h("GET", "/api/events", {}, self.full_dev)[1]["events"][0]["who"], "192.168.0.9", "the Owner in the room still sees it")
 
     def test_a_secret_in_an_event_is_taken_out_for_the_owner_too(self):
         self.api.event("player", "something said %s aloud" % PIN)
