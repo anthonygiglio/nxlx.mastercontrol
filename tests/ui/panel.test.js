@@ -1803,6 +1803,15 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.waitForSelector('#nowproj-1, [id^="nowproj-"]', { timeout: 15000 });
       await page.waitForSelector('#nowneed-projectors .chip-problem, #nowneed-projectors .chip-check', { timeout: 40000 });
       assert(/^Needs you \(\d+\)$/.test(await page.textContent('#nowneedshead')), 'Needs you counts what needs you');
+      // what happened (D125): the node's last events under Today, the whole log on Health
+      // (a fresh harness node may have nothing in it yet: then each place says so)
+      await page.waitForSelector('#nowevents .eventrow, #nowevents .state', { timeout: 40000 });
+      if (await page.$('#nowevent-0')) assert(/ \u00b7 (\d\d:\d\d|.+, \d\d:\d\d)$/.test(await page.textContent('#nowevent-0 .lname')), 'an event says its kind and when: ' + await page.textContent('#nowevent-0 .lname'));
+      await page.click('#nowtoevents');
+      await page.waitForSelector('#eventscard #eventlist .eventrow, #eventscard #eventnone', { timeout: 15000 });
+      assert(/kept|memory/.test(await page.textContent('#eventnote')), 'the log says where it is kept');
+      await go(page, 'now/now');
+      await page.waitForSelector('#nownode .nowrow', { timeout: 15000 });
       assert.strictEqual(await page.textContent('#nowfade'), await page.textContent('#fade'), 'Now\'s fade button says what the strip\'s says (D75: out, then in)');
       await page.click('#nowneed-projectors button');
       await page.waitForSelector('#sysback:text-is("Back to Now")');

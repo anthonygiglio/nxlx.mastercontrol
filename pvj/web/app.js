@@ -1922,7 +1922,7 @@
     var rows = [
       { id: 'health', group: 'top', name: 'Health', role: 'view', url: '/api/health',
         blurb: 'Whether the node is well: its power supply, temperature, the player and the helpers it needs, and each projector\'s own warnings.',
-        body: function () { return [healthCard()]; } },
+        body: function () { return can('full') ? [healthCard(), eventsCard()] : [healthCard()]; } },
       { id: 'projectors', group: 'everyday', name: 'Projectors', role: 'live', module: 'projector', url: '/api/projectors',
         blurb: 'Switch the projectors on the network on and off, choose their input, mute them, and see their state, lamp hours and warnings. On an Epson also freeze, brightness, Eco and the colour mode.',
         confirmOff: function (ask) { ask('The node stops checking the projectors. They stay as they are.'); },
@@ -2715,6 +2715,52 @@
         } }))));
     }
     return cards;
+  }
+  // ---- What happened (D125): the node's own log of events, the Owner's (GET /api/events) ----------------------
+  // Newest first: when, what kind, the node's own short sentence, how many times, and (for the Owner, never over a
+  // support login) the device or address it was about. The whole log is on Health; Now shows the last few.
+  var EVENT_KINDS = { boot: 'Node', player: 'Player', renderer: 'Renderer', update: 'Update', projector: 'Projector', network: 'Network', signin: 'Sign-in', scene: 'Scene' };
+  function eventWhen(t) {
+    var d = new Date(t * 1000), now = new Date(), two = function (n) { return (n < 10 ? '0' : '') + n; };
+    var hm = two(d.getHours()) + ':' + two(d.getMinutes());
+    return d.toDateString() === now.toDateString() ? hm : d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }) + ', ' + hm;
+  }
+  function eventRow(e, id) {
+    return h('div', { class: 'item nowrow eventrow', id: id },
+      h('div', { class: 'nowwords' }, h('div', { class: 'lname', text: (EVENT_KINDS[e.kind] || e.kind) + ' \u00b7 ' + eventWhen(e.t) }),
+        h('span', { class: 'navstate', text: e.text + (e.n > 1 ? ' (' + e.n + ' times)' : '') + (e.who ? ' \u00b7 ' + e.who : '') })));
+  }
+  function eventsCard() {
+    var list = h('div', { class: 'list', id: 'eventlist' }, h('div', { class: 'hint', text: 'Loading...' }));
+    var note = h('div', { class: 'hint', id: 'eventnote' });
+    var shown = 20, last = null, timer = null;
+    var more = h('button', { class: 'btn small', id: 'eventmore', text: 'Show more', hidden: true, onclick: function () { shown += 50; draw(); } });
+    var card = h('div', { class: 'card', id: 'eventscard' }, h('h2', { text: 'What happened' }), list,
+      h('div', { class: 'row' }, more, h('button', { class: 'btn small', id: 'eventrefresh', text: 'Refresh', onclick: function () { look(); } })), note);
+    function draw() {
+      keepCursor(list, function () {
+        list.textContent = '';
+        var rows = last.events || [];
+        rows.slice(0, shown).forEach(function (e, i) { list.appendChild(eventRow(e, 'event-' + i)); });
+        if (!rows.length) list.appendChild(h('div', { class: 'state', id: 'eventnone', text: 'Nothing has happened yet that the node keeps.' }));
+        more.hidden = rows.length <= shown;
+      });
+      note.textContent = last.note || '';
+    }
+    function look() {
+      clearTimeout(timer);
+      api('GET', '/api/events').then(function (r) {
+        if (!card.isConnected && card.dataset.shown) return;              // the page was left: nothing more is asked
+        card.dataset.shown = '1';
+        timer = setTimeout(function () { if (card.isConnected) look(); }, 30000);
+        if (held('events', look)) return;
+        if (!r.ok) { list.textContent = ''; list.appendChild(h('div', { class: 'hint', id: 'eventerr', text: (r.data.error || 'Not available') + '.' })); return; }
+        last = r.data;
+        draw();
+      });
+    }
+    look();
+    return card;
   }
   // ---- health (the old Powersupply, Check Services and GPU Usage buttons, in plain words) ----
   var healthTimer = null;
@@ -6980,7 +7026,7 @@
     var todayList = h('div', { class: 'list', id: 'nowtoday' });
     var today = h('div', { class: 'card', id: 'nowtodaycard' }, h('h2', { text: 'Today' }), todayList);
     var root = h('div', { class: 'screen nowscreen', id: 'nowscreen' }, needs, h('div', { class: 'nowgrid' }, screens, room, node, today));
-    var last = { health: null, sources: null, room: null };
+    var last = { health: null, sources: null, room: null, events: null };
 
     function rows() {               // the rows of Setup that Now reads, each from its own page's answer
       return sysRows().filter(function (r) { return rowShown(r) && rowFetchable(r); });
@@ -6990,7 +7036,7 @@
       var asked = {};
       return Promise.all(rows().map(function (row) {
         return (asked[row.url] = asked[row.url] || api('GET', row.url)).then(function (r) { keepAnswer(row, r); });
-      }));
+      }).concat(full ? [api('GET', '/api/events').then(function (r) { last.events = r.ok ? r.data.events : null; })] : []));
     }
     function draw() {
       var hd = last.health;
@@ -7051,6 +7097,13 @@
           var r = sysRows().filter(function (x) { return x.id === id; })[0];
           if (r && rowShown(r)) todayList.appendChild(nowRow('nowtoday-' + id, r.name, sysState(r), ['Open', nowOpen(id)]));
         });
+        // what happened: the node's last five events (D125), the whole log on Health
+        if (!full) return;
+        var ev = h('div', { class: 'list', id: 'nowevents' }, h('div', { class: 'k', text: 'What happened' }));
+        (last.events || []).slice(0, 5).forEach(function (e, i) { ev.appendChild(eventRow(e, 'nowevent-' + i)); });
+        if (last.events && !last.events.length) ev.appendChild(h('div', { class: 'state', text: 'Nothing yet.' }));
+        ev.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn small', id: 'nowtoevents', text: 'The whole log', onclick: nowOpen('health') })));
+        todayList.appendChild(ev);
       });
     }
     function look() {
