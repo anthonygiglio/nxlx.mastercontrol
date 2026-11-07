@@ -214,12 +214,21 @@ def command(socket_path, screen_args, detail, board_kind, env=None, sources=None
     return args
 
 
-def chosen(rundir, extra_args, windowed, env=None):
+LEAN_WHY = ("pvj-render needs OpenGL ES 3 and this node's graphics chip only has version 2, so classic mpv draws; "
+            "New stays chosen for a node that can")
+
+
+def chosen(rundir, extra_args, windowed, env=None, board_kind=None):
     """(use, detail, why) for the start that is about to happen. "new" only where pvj-render can draw in phase 1: on
-    a box without a desktop, where the player draws through DRM itself (`--gpu-context=drm`)."""
+    a node without a desktop, where the player draws through DRM itself (`--gpu-context=drm`), and not on a lean board
+    (Pi 3 class), whose graphics chip cannot run it: classic at once, with the reason, and the choice stays saved."""
     want = clean(screenmode.read_json(wanted_path(env)))
     if want["use"] != "new":
         return "classic", want["detail"], ""
+    if board_kind is None:
+        board_kind = hardware.detect_board().get("kind", "")
+    if hardware.tier(board_kind) == "lean":
+        return "classic", want["detail"], LEAN_WHY
     if windowed or "--gpu-context=drm" not in extra_args:
         return "classic", want["detail"], "pvj-render draws only on a node without a desktop (phase 1)"
     if not available(env):
