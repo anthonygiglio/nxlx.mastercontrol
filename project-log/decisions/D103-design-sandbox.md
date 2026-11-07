@@ -1,0 +1,39 @@
+<!-- SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+     SPDX-License-Identifier: Apache-2.0 -->
+## D103. The design sandbox: the real panel on 127.0.0.1 with the harness's fakes, one port per role, a new box per scenario (2026-10-20)
+
+**The owner's words** (the panel design brief, 2026-10-20): "a design sandbox where I can click the real panel on this laptop without the node", "every role and state can be shown and clicked", "scenarios are plain data files", "the switcher must sit outside the real panel's markup, so captures show the panel exactly as users see it", "bind to 127.0.0.1 only".
+
+**What it is** (`tools/sandbox/`, README.md there):
+
+- **The real panel, nothing real behind it.** `box.py` builds the panel with `pvj/server.py`'s own `build()` and `make_handler()`, in a temporary folder, with what the browser test's harness puts behind it (`tests/ui/harness.py`): a headless mpv when the machine has one (else no player), fake PJLink projectors on loopback, the fake NetworkManager, the report of a 1440p monitor. Not the harness's MIDI and delivery fakes.
+- **One port per role.** The Owner, an Operator, a Guest, and a device that is not paired each get a port of 127.0.0.1. Each port's handler is the server's own, with `_token()` returning that role's token. So three roles stand side by side in one browser with no cookie, and every route, role check (`pvj/policy.py`), page and policy is the box's own.
+- **The switcher is its own page on its own port.** It opens the panel's address in a window of the chosen width. The panel's policy says `frame-ancestors 'none'`, so a wrapper page holding the panel in a frame would need that policy loosened for the sandbox. It is kept as it is, and the switcher stays out of the panel's page. The switcher has the same kind of policy (no inline script), takes a POST only with its own header and origin, and answers only when the Host is 127.0.0.1 or localhost at its port.
+- **A scenario is a JSON file, put in place through the box's own routes.** It sets the Library's files, the modules, the fake projectors (on, off, warming, cooling, silent, PJLink error digits), requests as a role in order (`@projector:Name` and `@group:Name` stand for the ids the box makes), guest controls locked, a lost connection after some seconds, and a slow combining of masks. A step the box refuses is listed, not hidden, so a scenario that no longer fits the panel says so. `_base.json` is shared through `extends`, and chooses the look Signal; `empty` keeps a new box's Darkstage.
+- **A new process per scenario.** The box before is stopped (SIGTERM, which the box turns into a normal exit: mpv stopped, folder removed) and a new one started. Nothing is reset by hand, so no scenario inherits another's state. `/open?scenario=x&role=y` loads a scenario if another is running, then sends the browser to that role's port: one address gives the same page every time, for Figma.
+
+**Rejected.** A wrapper page with the panel in a frame (needs the panel's policy changed). Rebuilding the box in-process between scenarios (the panel's background threads, the health monitor, the projector monitor and the scheduler, would outlive it). The fake mpv of `tests/fakempv.py` as the default player (the harness, and so the browser test, uses a real headless mpv; the sandbox shows what that shows). A cookie per role (cookies do not keep ports apart).
+
+**Cost and limits.** No fakes for MIDI, DMX, OSC, NDI, render nodes or sound input: their pages show their empty states. Without mpv nothing plays. A GET of `/open` changes which scenario runs (it is how a capture address works); since the review below, the browser's word `Sec-Fetch-Site: cross-site` refuses it from another site. A role's port gives that role to anything on this computer that connects to it, which is the point of the tool. The box's own CSRF and Host checks still stand in front of every POST of the panel. Not run on the owner's Mac.
+
+**Amended after the review of #155 (2026-10-20, the same branch).** An independent read-only review found two Mediums and four Lows; each is fixed with a test that fails without its fix (the break-checks in the journal).
+
+- **Ctrl+C left mpv running, every time** (Medium). The box was in the switcher's process group, so it got the terminal's SIGINT itself and then the switcher's SIGTERM, and the second signal cut its own cleanup short. Mpv runs in a session of its own, so nothing stopped it. Now:
+  - the box runs in a session of its own and does not act on SIGINT;
+  - SIGTERM only sets an event, and the cleanup runs once in the main thread;
+  - the box stops when its stdin closes, which happens however the switcher ends, even when it is killed;
+  - the cleanup's try begins as soon as the player exists;
+  - the switcher stops a box in order: stdin closed, then SIGTERM, then SIGKILL. After that it removes any process that names the box's own folder (checked to be a `nxlx-sandbox-*` folder in the temp folder), and the folder itself.
+  - The switcher also sets its own SIGINT, because a script that starts it in the background hands it SIGINT ignored.
+- **The box listened on 0.0.0.0 once OSC, DMX or Boxes in step was switched on** (Medium), and a leader's broadcast would reach the network a node is on. `box.loopback_only()` now holds every socket of the box process to this machine. A bind to every address is put on loopback, and a bind, connect or send to any other address is refused. One place for every listener, the ones of later decisions too, instead of a patch per module. A test switches OSC and DMX on through the Owner's port and reads the box's sockets from /proc.
+- **Any web page could restart the sandbox** with a picture pointing at `/open` (Low): refused when the browser says cross-site.
+- **The box read some of the computer's own things** (Low): the shell's `PVJ_` variables (PVJ_ALLOWED_HOSTS widened the Host check), the webcam list, a plugged-in MIDI controller, USB sticks and update results. Now the `PVJ_` variables are cleared, each folder and file the panel reads from one is inside the box's folder, the capture list is empty and MIDI sees no controller.
+- **A taken port left an empty log** (Low): the port is bound before anything is made.
+- **Two loads at once both answered as the winner** (Low): a second load while one runs is refused (409).
+- Also fixed: other writers to the box's stdout (a program it runs) can no longer spoil or block its two-line handshake. The real stdout is kept for those lines (`os.dup`), and fd 1 is stderr. The tests use their own temporary folder and free ports.
+
+**Amended after the second review (2026-11-06, the coordinator's, on bringing #155 up to master).**
+
+- **The Ableton Link follower's folder was not the box's own** (Medium). D117 came after the sandbox: without `PVJ_LINK_DIR` the panel looks in `/run/pvj-link`, so the Owner's "Follow Ableton Link" in the sandbox could reach a real follower on this computer and read its state. `private_env` now gives the box its own folders for Link, the NDI helper (`PVJ_NDI_DIR`) and the NDI discovery server (`PVJ_NDISC_DIR`). With an NDI folder set the panel takes the box as set up for NDI, so the sandbox's NDI page shows the helper as not running. A test checks every helper folder and socket the panel can name, and fails without the Link folder.
+- **What the loopback hold covers is said** (Low): the box's own Python sockets. A name is still looked up through this computer's resolver, and a program the box starts (mpv, given a Streams address) is not held. Said in `box.loopback_only`, the README and here, rather than stubbing name lookups.
+- **Two tests could leave things behind or wait too long** (Low): the class that sets `TMPDIR` and `PVJ_ALLOWED_HOSTS` now puts them back even when its box fails to start, and the switcher's lines are read on a thread so a hung box cannot hold a test past its 120 s.

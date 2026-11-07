@@ -1,0 +1,144 @@
+{
+  "about": "The shared box most scenarios start from: three clips, a logo and two masks in the Library, three pads, two projectors on the network (one on, one off), one room group with three scenes, and the Projectors, Room, Shaders and Projection mapping modules on, in the look Signal (the redesign's; a new box has Darkstage).",
+  "clips": [
+    "intro.mkv",
+    "tunnel.mkv",
+    "01_loop.mkv"
+  ],
+  "pictures": [
+    "logo.png",
+    "mask-left.png",
+    "mask-right.png"
+  ],
+  "modules": {
+    "projector": true,
+    "room": true,
+    "shaders": true,
+    "mapper": true
+  },
+  "projectors": [
+    {
+      "name": "Main wall",
+      "state": "on"
+    },
+    {
+      "name": "Back wall",
+      "state": "off"
+    }
+  ],
+  "steps": [
+    {
+      "path": "/api/theme",
+      "body": {
+        "name": "signal",
+        "accent": null
+      }
+    },
+    {
+      "path": "/api/pads",
+      "body": {
+        "bank": 0,
+        "index": 0,
+        "label": "Intro",
+        "file": "intro.mkv",
+        "ending": "loop"
+      }
+    },
+    {
+      "path": "/api/pads",
+      "body": {
+        "bank": 0,
+        "index": 1,
+        "label": "Tunnel",
+        "file": "tunnel.mkv",
+        "ending": "loop"
+      }
+    },
+    {
+      "path": "/api/pads",
+      "body": {
+        "bank": 0,
+        "index": 2,
+        "label": "Loop",
+        "file": "01_loop.mkv",
+        "ending": "stop"
+      }
+    },
+    {
+      "path": "/api/room",
+      "body": {
+        "group": {
+          "name": "Stage",
+          "projectors": [
+            "@projector:Main wall",
+            "@projector:Back wall"
+          ]
+        }
+      }
+    },
+    {
+      "path": "/api/room",
+      "body": {
+        "scene": {
+          "name": "Open the room",
+          "groups": [
+            {
+              "group": "@group:Stage",
+              "power": "on",
+              "input": "",
+              "picture": "unmute",
+              "sound": "leave"
+            }
+          ],
+          "box": {
+            "action": "leave"
+          }
+        }
+      }
+    },
+    {
+      "path": "/api/room",
+      "body": {
+        "scene": {
+          "name": "Show",
+          "groups": [
+            {
+              "group": "@group:Stage",
+              "power": "on",
+              "input": "",
+              "picture": "unmute",
+              "sound": "leave"
+            }
+          ],
+          "box": {
+            "action": "pad",
+            "pad": [
+              0,
+              0
+            ]
+          }
+        }
+      }
+    },
+    {
+      "path": "/api/room",
+      "body": {
+        "scene": {
+          "name": "All dark",
+          "groups": [
+            {
+              "group": "@group:Stage",
+              "power": "leave",
+              "input": "",
+              "picture": "mute",
+              "sound": "leave"
+            }
+          ],
+          "box": {
+            "action": "leave"
+          }
+        }
+      }
+    }
+  ]
+}

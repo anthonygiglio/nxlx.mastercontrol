@@ -1,0 +1,7 @@
+{"extends": "_base", "title": "A mapping with surfaces", "about": "Projection mapping is on with three surfaces (a quad, a triangle and a grid), and one saved mapping.",
+ "steps": [{"path": "/api/play", "body": {"pad": [0, 1]}},
+           {"path": "/api/mapper", "body": {"action": "add", "type": "quad"}},
+           {"path": "/api/mapper", "body": {"action": "add", "type": "triangle"}},
+           {"path": "/api/mapper", "body": {"action": "add", "type": "grid"}},
+           {"path": "/api/mapper", "body": {"action": "on", "on": true}},
+           {"path": "/api/mapper", "body": {"action": "save", "name": "Main stage"}}]}

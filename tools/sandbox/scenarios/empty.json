@@ -1,0 +1,10 @@
+{
+ "title": "A new box",
+ "about": "A box just out of the box: no clips, no pictures, no projectors, nothing set up. Every list shows its empty state. It keeps the look a new box has, Darkstage.",
+ "modules": {
+  "projector": true,
+  "room": true,
+  "shaders": true,
+  "mapper": true
+ }
+}
