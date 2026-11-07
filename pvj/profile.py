@@ -155,6 +155,11 @@ def describe(kind, model="", saved=None):
         put(3, "720 lines", "Chosen on the Renderer card.", "Final picture (new renderer)")
     elif final == "full":
         put(3, "always the screen's size", "Chosen on the Renderer card.", "Final picture (new renderer)")
+    hw = saved.get("hwdec")
+    if isinstance(hw, str) and hw and hw != "no":
+        values.append({"name": "Hardware decoding (new renderer)", "value": hw,
+                       "why": "Set by renderer.hwdec in the settings (D124): the copy variant, so decoded frames are copied to the graphics "
+                              "chip. Not measured off a Pi 4, where it did not help."})
     n = saved.get("sources")
     if isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= SOURCES_MAX:
         eff = min(n, p["sources_cap"])

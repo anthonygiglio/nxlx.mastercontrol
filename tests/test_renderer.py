@@ -314,6 +314,20 @@ class ChoiceTest(Base):
         self.assertEqual(renderer.command("/run/s", ["--vo=gpu", "--drm-mode=3"], "output", "pi3", self.env),
                          [self.standin, "--socket=/run/s", "--drm-mode=3", "--detail=output", "--fast", "--skip-deblock", "--sources=2"])
 
+    def test_hardware_decoding_is_only_ever_set_by_the_settings(self):
+        for board in ("pi3", "pi4", "pi5", "x86", "pi-other"):
+            self.assertFalse([a for a in renderer.command("/run/s", [], "auto", board, self.env) if a.startswith("--hwdec")], board)
+            self.assertFalse([a for a in renderer.command("/run/s", [], "auto", board, self.env, hwdec="no") if a.startswith("--hwdec")], board)
+        base = renderer.command("/run/s", [], "auto", "pi4", self.env)
+        for hw in ("auto-copy", "v4l2m2m-copy", "vaapi-copy", "nvdec-copy", "drm-copy"):
+            cmd = renderer.command("/run/s", [], "auto", "pi4", self.env, hwdec=hw)
+            self.assertEqual([a for a in cmd if a != "--hwdec=" + hw], base, hw)
+            self.assertEqual(renderer.clean({"hwdec": hw})["hwdec"], hw)
+        for bad in ("no", "auto", "v4l2m2m", "vaapi", "nvdec", "drm", "", "--x", None, 5, True, ["auto-copy"], {"a": 1}):
+            self.assertNotIn("hwdec", renderer.clean({"hwdec": bad}), repr(bad))
+        self.assertEqual(renderer.command("/run/s", [], "auto", "pi4", self.env, hwdec="rm -rf"), base, "never a free word")
+        self.assertNotIn("hwdec", settings_mod.default_settings()["renderer"], "no schema change")
+
     def test_a_pi_skips_the_deblocking_unless_the_settings_keep_it(self):
         self.assertIn("--skip-deblock", renderer.command("/run/s", [], "auto", "pi4", self.env))
         self.assertNotIn("--skip-deblock", renderer.command("/run/s", [], "auto", "pi4", self.env, deblock=True))
@@ -539,6 +553,16 @@ class SwitchTest(Base):
         self.assertIsNone(sup._wish_changed(), "or the player ends pvj-render every few seconds, for good")
         screenmode.write_json(wanted, {"use": "new", "detail": 720, "loop_lists": False})
         self.assertEqual(sup._wish_changed(), {"use": "new", "detail": 720}, "a real change is still one")
+
+    def test_setting_hardware_decoding_is_a_change_once(self):
+        wanted = os.path.join(self.dir, "wanted.json")
+        sup = renderer.Supervisor(["x"], self.sock, self.dir, "auto", wanted=wanted)
+        screenmode.write_json(wanted, renderer.clean({"use": "new", "detail": "auto", "hwdec": "v4l2m2m-copy"}))
+        self.assertEqual(sup._wish_changed(), {"use": "new", "detail": "auto", "hwdec": "v4l2m2m-copy"}, "the player restarts once")
+        again = renderer.Supervisor(["x"], self.sock, self.dir, "auto", wanted=wanted, hwdec="v4l2m2m-copy")
+        self.assertIsNone(again._wish_changed(), "and takes hold")
+        screenmode.write_json(wanted, renderer.clean({"use": "new", "detail": "auto"}))
+        self.assertEqual(again._wish_changed(), {"use": "new", "detail": "auto"}, "taking it off is a change too")
 
     def test_keeping_the_deblocking_is_a_change_once(self):
         wanted = os.path.join(self.dir, "wanted.json")
@@ -893,6 +917,18 @@ class PanelTest(CareBase):
         with mock.patch.object(self.api.renderer, "drawing", lambda: ("classic", renderer.GLES2_WHY)):
             self.r("POST", "/api/renderer", {"use": "new"})
         self.assertEqual(len(self.quits), n + 1, "the board cannot change: no retry")
+
+    def test_choose_keeps_hardware_decoding_and_the_row_shows_only_when_set(self):
+        self.api.board = {"kind": "pi4", "model": "Raspberry Pi 4 Model B Rev 1.4", "arch": "aarch64"}
+        names = lambda: [v["name"] for v in self.r("GET", "/api/renderer")[1]["profile"]["values"]]
+        self.assertNotIn("Hardware decoding (new renderer)", names())
+        self.settings.data["renderer"] = {"use": "classic", "detail": "auto", "hwdec": "v4l2m2m-copy"}
+        self.assertIn("Hardware decoding (new renderer)", names())
+        self.assertEqual(self.r("POST", "/api/renderer", {"use": "new", "detail": 720})[0], 200)
+        self.assertEqual(self.settings.data["renderer"], {"use": "new", "detail": 720, "hwdec": "v4l2m2m-copy"})
+        self.assertEqual(screenmode.read_json(self.api.renderer.wanted_file)["hwdec"], "v4l2m2m-copy")
+        self.settings.data["renderer"] = {"use": "new", "detail": "auto", "hwdec": "bogus"}
+        self.assertNotIn("Hardware decoding (new renderer)", names())
 
     def test_the_card_gets_the_tier_and_each_value_with_its_reason(self):
         self.api.board = {"kind": "pi3", "model": "Raspberry Pi 3 Model B Rev 1.2", "arch": "aarch64"}
