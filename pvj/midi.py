@@ -97,6 +97,7 @@ for _n in range(1, SCENE_SLOTS + 1):
 # puts the last effect back on or takes it off; two more step through the filters.
 ACTIONS.update({"effect_amount": ("level", 0.0, 1.0), "effect_toggle": ("trigger", None, None),
                 "effect_prev": ("trigger", None, None), "effect_next": ("trigger", None, None)})
+ACTIONS["clock_tap"] = ("trigger", None, None)       # one tap on the box clock (D116, pvj/clock.py)
 for _n in range(1, SHADER_SLOTS + 1):
     ACTIONS["effect_control_%d" % _n] = ("control", _n, None)
 # A pairing code on the box's display, for someone at the box with no paired device (D61). Kind "hold": nothing

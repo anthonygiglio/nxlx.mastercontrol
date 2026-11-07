@@ -271,6 +271,8 @@ class Api:
         self.vibes = vibes_mod.Vibes(self, self.shaders)            # the endless rotation; its thread starts on demand
         from . import effects as effects_mod
         self.effects = effects_mod.Effects(self)                    # ISF filters over what plays (see effects.py)
+        from . import fxchain
+        self.chains = fxchain.Chains(self)                          # chains of effects on the New renderer (D106 step b)
         from . import health as health_mod
         self.health = health_mod.Health(self, getattr(player, "rundir", paths.WEB_DIR))     # checks start in server.build
         from . import sync as sync_mod
@@ -404,18 +406,20 @@ class Api:
         mix = self.settings.data["mix"]
         out = {"transition": transitions_mod.named(mix), "duration": mix["duration"]}
         why = self.transitions.fallback() if out["transition"] in transitions_mod.STYLES else ""      # asks the player nothing
-        if why and out["transition"] == "crossfade" and self._layered_fade(ask=False):
-            why = ""                    # the new renderer's crossfade takes no still, so nothing of the still's gives it up
+        if why and self._layered_fade(ask=False, kind=out["transition"]):
+            why = ""                    # the new renderer's own takes no still, so nothing of the still's gives it up
         if why:
             out["fallback"] = why
         return out
 
-    def _layered_fade(self, ask=True):
-        """True where the player is pvj-render with two video layers, which draws a crossfade itself (D98), and what
-        plays is a plain clip (out of a generator or a live input a crossfade takes D71's still, on that player too).
-        Asked of the player once per process (Player.crossfades); a player without these questions is classic. So
-        the status shows the still's reason for giving up whenever the still is what a crossfade would use."""
-        probe, plain = getattr(self.player, "crossfades", None), getattr(self.player, "fades_from_clip", None)
+    def _layered_fade(self, ask=True, kind="crossfade"):
+        """True where the player is pvj-render with two video layers, which draws the transition `kind` itself (D98 a
+        crossfade, D111 a wipe or a slide), and what plays is a plain clip (out of a generator or a live input it
+        takes D71's still, on that player too). Asked of the player once per process (Player.crossfades, Player.moves);
+        a player without these questions is classic. So the status shows the still's reason for giving up whenever
+        the still is what the transition would use."""
+        probe = getattr(self.player, "crossfades" if kind == "crossfade" else "moves", None)
+        plain = getattr(self.player, "fades_from_clip", None)
         if probe is None or plain is None:
             return False
         try:
@@ -1343,7 +1347,183 @@ class Api:
         self._start_list(paths[:PRESET_MAX_FILES], ending, self._shuffle_flag(body))
         return {"playing": name, "files": len(paths[:PRESET_MAX_FILES])}
 
+    # ---- sources 2 to N (D101) ------------------------------------------------------------------------------------
+    SOURCE_ONLY_CLIPS = ("only clips play to Source 2 and up for now; %s plays on Source 1: choose Source 1 under "
+                         "Play to, or a clip")
+
+    def _source_target(self, body):
+        """The source a play names (1 to 8), 1 without the key."""
+        from . import mapper as mapper_mod
+        k = body.get("source", 1)
+        if isinstance(k, bool) or not isinstance(k, int) or not 1 <= k <= mapper_mod.MAX_SOURCES:
+            raise bad("source must be 1 to %d" % mapper_mod.MAX_SOURCES)
+        return k
+
+    def _source_count(self):
+        fn = getattr(self.player, "sources", None)        # a player of before D101 (or a stand-in) has Source 1 only
+        return self._player_call(fn) if fn is not None else 1
+
+    def _need_source(self, k):
+        n = self._source_count()
+        if n < 2:
+            raise ApiError(409, "Source %d needs the New renderer (System > Renderer); classic mpv has Source 1 only" % k)
+        if k > n:
+            raise ApiError(409, "this box runs %d sources; Source %d is not one of them" % (n, k))
+
+    def _source_rows(self):
+        """The sources as the panel shows them: a clip by its file name only, never a path."""
+        fn = getattr(self.player, "sources_state", None)
+        rows = self._player_call(fn) if fn is not None else [{"source": 1, "idle": not self._player_call(self.player.status).get("path"),
+                                                              "path": self._player_call(self.player.status).get("path"),
+                                                              "height": None, "pause": False}]
+        chains = getattr(self, "chains", None)
+        gens = chains.generators() if chains is not None else {}           # one look a request (the review of #171)
+        out = []
+        for r in rows:
+            shader = gens.get(r["source"]) if r["source"] > 1 else None
+            # a shader that is a source's picture (D106 step d) is said by its name, as a clip is
+            out.append(dict(r, path=None, name=shader or (os.path.basename(r["path"]) if r.get("path") else None),
+                            idle=r["idle"] and not shader, shader=shader))
+        return out
+
+    def play_to_source(self, body, k, device, client):
+        """A clip, by name or by a clip pad, played on source k (2 to N): a cut, with no sound, and nothing else on the
+        screen changes (source 1 plays on). The Owner's and an Operator's (a Guest's play form has no "source").
+        On the New renderer a shader, by name or by a shader pad, plays there too, as the source's picture (D106
+        step d). Anything else (an NDI source, a render cue, a stream, a slideshow, the capture input, and a shader
+        on classic) is refused with plain words: those play on Source 1 only."""
+        for kind, words in (("preset", "a preset"), ("stream", "a stream"), ("slideshow", "a slideshow"),
+                            ("capture", "the capture input"), ("ndi", "an NDI source"), ("usb_drive", "a USB drive's list"),
+                            ("usb", "a clip from a USB drive")):
+            if kind in body:
+                raise ApiError(409, self.SOURCE_ONLY_CLIPS % words)
+        chains = getattr(self, "chains", None)
+        native = chains is not None and bool(getattr(self.player, "native_chains", lambda: False)())
+        if "shader" in body:
+            if not native:
+                raise ApiError(409, self.SOURCE_ONLY_CLIPS % "a shader")
+            self._need_source(k)
+            out = chains.put_generator(k, body["shader"], body.get("shader_preset"))
+            self.log("pvj-web: source %d plays the shader %s, by device %s (%s, from %s)"
+                     % (k, json.dumps(body["shader"]), (device or {}).get("id"), (device or {}).get("role"), client))
+            return out
+        if "pad" in body:
+            pad = body["pad"]
+            if not (isinstance(pad, list) and len(pad) == 2 and all(isinstance(x, int) and not isinstance(x, bool) for x in pad)):
+                raise bad("pad must be [bank, index]")
+            banks = self.settings.data["pads"]["banks"]
+            if not (0 <= pad[0] < len(banks) and 0 <= pad[1] < 12):
+                raise bad("no such pad")
+            held = banks[pad[0]]["pads"][pad[1]]
+            if self.pad_shader(held) and native:
+                # a shader pad to Source 2 and up (D106 step d): the shader is that source's picture. A pad whose
+                # preset is gone plays with the shader's own start and says so, as on Source 1 (_play_shader_pad)
+                self._need_source(k)
+                sid, preset = self.pad_shader(held)
+                note = None
+                self.shaders._need()
+                try:
+                    self.shaders._path(sid)
+                except ApiError as e:
+                    if e.status != 404:
+                        raise
+                    raise ApiError(404, "this pad's shader, %s, is not on the box any more (deleted or renamed): choose another for the pad" % sid)
+                if preset is not None:
+                    try:
+                        preset = self._shader_preset(sid, preset)
+                    except ApiError:
+                        note = "this pad's preset, %s, is gone: the shader starts as it does by itself. Choose a preset for the pad again" % preset
+                        preset = None
+                out = chains.put_generator(k, sid, preset)
+                if note:
+                    out = dict(out, note=note)
+                self.log("pvj-web: source %d plays the shader of pad %s, by device %s (%s, from %s)"
+                         % (k, pad, (device or {}).get("id"), (device or {}).get("role"), client))
+                return out
+            for test, words in ((self.pad_shader, "this pad's shader"), (self.pad_ndi, "this pad's NDI source"),
+                                (self.pad_render, "this pad's render cue")):
+                if test(held):
+                    raise ApiError(409, self.SOURCE_ONLY_CLIPS % words)
+            name = held.get("file")
+            if not name:
+                raise bad("pad is empty")
+            if "ending" not in body and "loop" not in body:
+                body = dict(body, ending=held.get("ending", "loop"))
+        else:
+            name = body.get("file")
+        path = self.resolve_media(name)
+        if not path.lower().endswith(PLAYLIST_EXTENSIONS):
+            # a sound file plays on a source with no sound track and no picture: black and silent (review of #153)
+            raise ApiError(409, self.SOURCE_ONLY_CLIPS % "a sound file")
+        ending = self._ending(body, "loop")
+        if ending == "next":
+            ending = "stop"
+        self._need_source(k)
+        if chains is not None:
+            # a clip takes the shader's place (D106 step d): the clip loads first and the shader comes off after it,
+            # so a cut never shows black between them, under the chains' lock so no shader goes on in between
+            with chains._lock:
+                had = (k, 0) in chains._seen()
+                self._player_call(self.player.play_to, k, [path], ending)
+                if had:
+                    self._player_call(self.player.chain_clear, k, 0)
+        else:
+            self._player_call(self.player.play_to, k, [path], ending)
+        self.log("pvj-web: source %d plays %s, by device %s (%s, from %s)"
+                 % (k, json.dumps(name), (device or {}).get("id"), (device or {}).get("role"), client))
+        out = {"playing": name, "source": k}
+        warning = self._source_warning(k)
+        if warning:
+            out["warning"] = warning
+        return out
+
+    def _source_warning(self, k, wait=1.0):
+        """The warning about load (renderer.source_warning), once the clip's height is known (at most `wait` s)."""
+        from . import renderer as renderer_mod
+        if self.board.get("kind") not in renderer_mod.SMALL_BOARDS:
+            return None
+        deadline = time.monotonic() + wait
+        while True:
+            rows = self._player_call(self.player.sources_state)
+            mine = [r for r in rows if r["source"] == k]
+            if (mine and mine[0]["height"]) or time.monotonic() >= deadline:
+                return renderer_mod.source_warning(rows, k, self.board.get("kind"))
+            time.sleep(0.1)
+
+    def get_sources(self, body, device, client):
+        """{"count", "cap", "sources": [{"source", "idle", "name", "height", "pause"}], "warning"}: what each source
+        plays (D101). On classic mpv: one source."""
+        from . import renderer as renderer_mod
+        rows = self._source_rows()
+        warning = None
+        for r in rows:
+            if r["source"] > 1 and not r["idle"]:
+                warning = warning or renderer_mod.source_warning(rows, r["source"], self.board.get("kind"))
+        return {"count": len(rows), "cap": renderer_mod.source_cap(self.board.get("kind")),
+                # "shader" only where a shader is a source's picture (D106 step d): every other row is as it was
+                "sources": [dict({k: r[k] for k in ("source", "idle", "name", "height", "pause")}, **({"shader": r["shader"]} if r.get("shader") else {}))
+                            for r in rows],
+                "warning": warning}
+
+    def set_sources(self, body, device, client):
+        """{"source": 2 to N, "action": "stop"}: that source stops and is idle (D101). Source 1 stops with the
+        panel's own Stop, as always. The Owner's and an Operator's."""
+        if set(body) != {"source", "action"} or body.get("action") != "stop":
+            raise bad("send source and action: stop")
+        k = self._source_target(body)
+        if k == 1:
+            raise bad("Source 1 stops with Stop")
+        self._need_source(k)
+        self._player_call(self.player.stop_source, k)
+        self.log("pvj-web: source %d stopped, by device %s (%s, from %s)" % (k, (device or {}).get("id"), (device or {}).get("role"), client))
+        return self.get_sources({}, device, client)
+
     def play(self, body, device, client):
+        if "source" in body:
+            k = self._source_target(body)
+            if k != 1:
+                return self.play_to_source(body, k, device, client)
+            body = {key: v for key, v in body.items() if key != "source"}     # Source 1: the play it always was
         if "preset" in body:
             return self.play_preset(body, body["preset"])
         if "stream" in body:
@@ -1415,13 +1595,14 @@ class Api:
         # that is dark (Blackout, a picture faded out) has nothing to blend from, as the dip skips itself there.
         # Where the box cannot do one it dips; where the still itself fails, time has passed already and the clip
         # is cut to. Whether anything is loaded in the player is the still's own first question.
-        # On pvj-render with two video layers (D98) a crossfade from a plain clip is the renderer's own: no still, no
-        # freeze, both pictures move, and the box never gives up on it for a slow still. Out of a generator or a live
-        # input, and for wipes and slides, D71's still as on classic (it works on pvj-render too; _layered_fade).
+        # On pvj-render with two video layers (D98) a crossfade from a plain clip is the renderer's own, and on one that
+        # says so (D111) a wipe or a slide too: no still, no freeze, both pictures play, and the box never gives up on it
+        # for a slow still. Out of a generator or a live input, D71's still as on classic (it works on pvj-render too;
+        # _layered_fade).
         blend = layered = False
         if kind in transitions_mod.STYLES:
             if playing and not self.mix["blackout"] and self.mix["opacity"] > 0 and not faded_out:
-                if kind == "crossfade" and self._layered_fade():
+                if self._layered_fade(kind=kind):
                     layered = True
                 elif self.transitions.look() or self.access_on_screen():
                     kind = "dip"
@@ -1450,11 +1631,11 @@ class Api:
                         self.transitions.abandon(token)
                         return False
                     if layered:
-                        # the renderer's crossfade over the Mix's duration; a cut where it cannot or would not
-                        self._player_call(self.player.play, [path], loop, None, False, self.spawn, ending, None, transition["duration"])
+                        # the renderer's own over the Mix's duration; a cut where it cannot or would not
+                        self._player_call(self.player.play, [path], loop, None, False, self.spawn, ending, None, transition["duration"], kind)
                         refused = getattr(self.player, "fade_refused", "")
                         if refused and isinstance(refused, str):
-                            self.log("pvj-web: no crossfade on the new renderer, a cut instead: %s" % refused)
+                            self.log("pvj-web: no %s on the new renderer, a cut instead: %s" % (kind, refused))
                     else:
                         self._player_call(self.player.play, [path], loop, None, False, self.spawn, ending)
                 # This clip plays now, so a live input that was on the screen is not shown any more and its helper
@@ -2067,7 +2248,7 @@ class Api:
     SOUND_PRIVACY = ("The box analyses levels only. No sound is stored, recorded or sent anywhere, ever: a block of 20 ms "
                      "lives in memory for that block and is gone.")
     SOUND_SLOW = ("On the classic renderer a shader's value changes by compiling the shader again, so it follows the sound "
-                  "slowly: at most twice a second, smoothed. Real reaction at every frame comes with the new renderer.")
+                  "slowly: at most twice a second, smoothed. On the new renderer the value goes straight in, up to 20 times a second.")
     SOUND_BANDS = ("Before sending: the six band levels can carry the outline of speech in the room. They leave the box only "
                    "averaged over 200 ms, at most 5 times a second; the level and the beat up to 20 times a second.")
     SOUND_REMOTE = "a helper does not start listening to the room: switching the microphone on is done by the owner in the room (D96)"
@@ -2093,7 +2274,7 @@ class Api:
                "plugged": cfg["device"] == "" or cfg["device"] in {d["id"] for d in devices},
                "inputs": [{"id": k, "name": soundout.INPUT_NAMES[k], "allowed": k in cfg["allowed"], "bands": k in ("device", "osc")} for k in soundout.INPUTS],
                "channels": self.sound.device_channels(cfg), "feed_why": self.sound.feed_why, "meter_why": self.sound.meter_why or "",
-               "in_stats": dict(self.sound.in_stats)}
+               "in_stats": dict(self.sound.in_stats), "clock": self.sound.clock.status(), "link": self.sound.link.view()}
         if not (device and device.get("role") == "full"):
             out["config"] = dict(cfg, in_hosts=[])          # the addresses are the Owner's to see (as the render nodes' hosts)
         return out
@@ -2191,6 +2372,72 @@ class Api:
             raise ApiError(500, "the setting could not be saved: %s" % (e.strerror or e))
         return self.get_sound({}, device, client)
 
+    # --- the box clock (D116, pvj/clock.py) -------------------------------------------------------------
+    CLOCK_REMOTE = "the box clock is set in the room: a helper through remote support may look at it and not change it (D116)"
+
+    def _clock_change(self, device, client):
+        if self.support.is_remote(client) or (isinstance(device, dict) and device.get("remote")):
+            raise ApiError(403, self.CLOCK_REMOTE)
+
+    def get_tempo(self, body, device, client):
+        self.sound.link.hear()
+        return {"clock": self.sound.clock.status(), "link": self.sound.link.view()}
+
+    LINK_REMOTE = "Ableton Link joins the room's network, so it is switched on by the owner in the room; through remote support it can be switched off, never on (D117)"
+
+    def set_link(self, body, device, client):
+        """{"on": true or false}: the Owner's switch for following an Ableton Link session (D117). Off by default. Through
+        remote support (D84) a session of the Owner's role may switch it off, never on."""
+        from . import link as link_mod
+        if not isinstance(body, dict) or set(body) != {"on"}:
+            raise bad("send on: true or false")
+        remote = self._remote_owner(device, client, "changing Ableton Link")
+        try:
+            new = link_mod.form({"on": body["on"]})
+        except link_mod.LinkError as e:
+            raise bad(str(e))
+        if remote and new["on"] and not self.sound.link.config()["on"]:
+            raise ApiError(403, self.LINK_REMOTE)
+        try:
+            self.sound.link.save(new)
+        except OSError as e:
+            raise ApiError(500, "the setting could not be saved: %s" % (e.strerror or e))
+        self.log("pvj-web: Ableton Link switched %s by device %s (%s) from %s" % ("on" if new["on"] else "off", (device or {}).get("id"), (device or {}).get("role"), client))
+        return self.get_tempo({}, device, client)
+
+    def clock_tap(self, body, device, client):
+        """One tap: the phase at once, and from the second tap the average tempo. From a pad, an OSC button or a DMX channel too."""
+        from . import clock as clock_mod
+        self._clock_change(device, client)
+        try:
+            tap = self.sound.clock.tap()
+        except clock_mod.ClockError as e:
+            raise ApiError(409, str(e))
+        return {"tap": tap, "clock": self.sound.clock.status()}
+
+    def set_tempo(self, body, device, client):
+        """Exactly one of {"bpm": 30 to 300}, {"nudge": -0.5 to 0.5 beats} or {"clear": true}."""
+        from . import clock as clock_mod
+        self._clock_change(device, client)
+        if not isinstance(body, dict) or len(body) != 1 or next(iter(body)) not in ("bpm", "nudge", "clear"):
+            raise bad('send one of {"bpm": 30 to 300}, {"nudge": a step in beats} or {"clear": true}')
+        key, value = next(iter(body.items()))
+        c = self.sound.clock
+        try:
+            if key == "bpm":
+                c.set_bpm(value)
+            elif key == "nudge":
+                c.nudge(value)
+            elif value is True:
+                c.clear()
+            else:
+                raise bad('clear is {"clear": true}')
+        except clock_mod.ClockError as e:
+            raise bad(str(e))
+        what = "cleared" if key == "clear" else "%s %s" % (key, value)
+        self.log("pvj-web: box clock %s by device %s (%s) from %s" % (what, (device or {}).get("id"), (device or {}).get("role"), client))
+        return {"clock": c.status()}
+
     def sound_tick(self):
         """About once a second, beside ndi_tick (server.py)."""
         self.sound.tick()
@@ -2207,10 +2454,12 @@ class Api:
         return self.renderer.state()
 
     def set_renderer(self, body, device, client):
-        """{"use": "classic" | "new", "detail": "auto" | 540 | 720 | "output"}: saved, and the player restarts for a change."""
-        if "use" not in body or not set(body) <= {"use", "detail"}:
-            raise bad("send use (classic or new) and, if you like, detail")
-        return self._renderer_call(self.renderer.choose, body["use"], body.get("detail"))
+        """{"use": "classic" | "new", "detail": "auto" | 540 | 720 | "output", "sources": "auto" | 1 to the board's cap,
+        "final": "auto" | "full" | 720}: saved, and the player restarts for a change. Leaving detail, sources or final
+        out keeps them as they are."""
+        if "use" not in body or not set(body) <= {"use", "detail", "sources", "final"}:
+            raise bad("send use (classic or new) and, if you like, detail, sources and final")
+        return self._renderer_call(self.renderer.choose, body["use"], body.get("detail"), body.get("sources"), body.get("final"))
 
     def confirm_screen(self, body, device, client):
         return self._screen_call(self.screen.confirm)
@@ -3565,10 +3814,9 @@ class Api:
                     claim()
                 wish = self.transitions.claim()
             # The NDI pipe is one pipe for every source. If it is what plays (another source, or this one before a
-            # change of size), the player is told to let go of it BEFORE the helper is asked: the helper lets the
-            # new source's writer through only once it has seen the pipe without a reader (Service._clear_pipe),
-            # and the player does not reliably let go by itself. The picture of the source before is over either
-            # way: the helper closes it as the first thing it does for the new one.
+            # change of size), the player is told to let go of it BEFORE the helper lets the new source's writer
+            # through (below: open, release, handover): the helper does so only once it has seen the pipe without a
+            # reader (Service._clear_pipe), and the player does not reliably let go by itself.
             # A source that is not on the network now is refused BEFORE the player lets go: what plays stays on
             # the screen (the helper would refuse it too, but only after the screen had gone black for it). One
             # short question; when the helper cannot say what is there, it is left to `open` to say why.
@@ -3592,17 +3840,30 @@ class Api:
             # ends the old writer, and the end of the stream is what ends a player stuck opening or reading it),
             # and the player is asked once more. Only if it still holds the pipe is the press refused, with the
             # reason on the page; a source the watch asked for stays wanted and is tried again.
+            # The order of a switch (2026-10-31, the gap of about 0.87 s measured on the node): the helper OPENS the new
+            # source first (connects, waits for its first picture) while the picture before stays on the screen with
+            # the pipe still held; then the player is told to let go of the pipe; then the helper is asked to HAND
+            # OVER (it closes what it kept, sees the pipe without a reader, lets the new writer through). A press
+            # that fails to open ends as it always did: the helper has closed everything, the player is told to let
+            # go (the screen goes black), and the page says why. The old picture is never left frozen.
             release = getattr(self.player, "release_pipe", None)
+            try:
+                p = self.ndi.open(sid, split=True)
+            except ndi_mod.NdiError as e:
+                if release is not None:
+                    release(self.ndi.fifo)          # the old picture goes, as it did before the new source was asked for
+                raise ApiError(409, str(e))
             if release is not None and release(self.ndi.fifo) is False:
-                self.ndi.client_close()
+                self.ndi.let_go()                   # the picture before is closed at the helper; the new source waits
                 if release(self.ndi.fifo) is False:
+                    self.ndi.client_close()
                     had = self.ndi.current
                     if again is None and had:
                         # by hand, not ndi.stop: that would cancel the ticket of a press that came meanwhile
                         self.ndi.current, self.ndi.ended = None, {"name": had["name"], "message": self.NDI_HELD}
                     raise ApiError(409, self.NDI_HELD)
             try:
-                p = self.ndi.open(sid)
+                self.ndi.handover(p)
             except ndi_mod.NdiError as e:
                 raise ApiError(409, str(e))
             # Connecting takes seconds. If anything was played, cleared or stopped meanwhile (_player_call and
@@ -4939,6 +5200,8 @@ class Api:
             ("POST", "/api/osc/key"): ("full", self.osc_key),
             ("POST", "/api/osc/feedback"): ("full", self.osc_feedback),
             ("POST", "/api/play"): ("live", self.play),
+            ("GET", "/api/sources"): ("live", self.get_sources),          # sources 2 to N (D101): the Operator's, as play
+            ("POST", "/api/sources"): ("live", self.set_sources),
             ("GET", "/api/render"): ("live", self.get_render),            # render nodes (D94): seen by the Operator,
             ("POST", "/api/render"): ("full", self.set_render),           # kept by the Owner,
             ("POST", "/api/render/cue"): ("live", self.render_cue),       # and cued by hand by the Operator
@@ -4946,6 +5209,10 @@ class Api:
             ("GET", "/api/sound/levels"): ("live", self.sound_levels),    # the meter alone,
             ("POST", "/api/sound"): ("full", self.set_sound),             # the device, on and off and sending: the Owner's,
             ("POST", "/api/sound/map"): ("live", self.set_sound_map),
+            ("GET", "/api/tempo"): ("live", self.get_tempo),               # the box clock (D116): seen by the Operator,
+            ("POST", "/api/tempo"): ("live", self.set_tempo),             # its tempo and phase set by the Operator and the Owner,
+            ("POST", "/api/tempo/tap"): ("live", self.clock_tap),         # and tapped, also from MIDI and OSC
+            ("POST", "/api/tempo/link"): ("full", self.set_link),         # following an Ableton Link session: the Owner's (D117)
             ("POST", "/api/sound/source"): ("live", self.set_sound_source),  # between the allowed sources: the Owner's and an Operator's (D97)     # the shader input: the Operator's
             ("POST", "/api/control"): ("live", self.control),
             ("POST", "/api/blackout"): ("live", self.blackout),
@@ -5009,6 +5276,9 @@ class Api:
             ("POST", "/api/effects/presets"): ("live", self.effects.api_presets),
             ("POST", "/api/effects/library"): ("live", self.effects.api_library),
             ("POST", "/api/effects/config"): ("live", self.effects.api_config),
+            # chains of effects on any source (D106 step b): the Owner's and an Operator's, as the sources are (D101)
+            ("GET", "/api/effects/chain"): ("live", self.chains.api_get),
+            ("POST", "/api/effects/chain"): ("live", self.chains.api_post),
             ("GET", "/api/projectors"): ("view", self.get_projectors),
             ("POST", "/api/projectors"): ("full", self.set_projectors),
             ("POST", "/api/projector"): ("live", self.projector_action),

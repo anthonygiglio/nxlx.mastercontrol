@@ -821,6 +821,7 @@ async function roles(pages, post) {
   assert(await pages.presenter.evaluate(() => !!document.querySelector('#syspage #mapcard') && !document.getElementById('sysswitch') && !!document.querySelector('#syspage #testpattern') && !document.querySelector('#syspage #testpattern').disabled),
     'an operator has the mapping page with its card and Test pattern, and no switch');
   await go(pages.guest, 'shape/mapping');
+  await pages.guest.waitForSelector('#plainpage #testpattern', { timeout: 15000 });     // as the operator's, above: the page draws after it has read its state
   assert(await pages.guest.evaluate(() => { const t = document.querySelector('#plainpage #testpattern'); return !!t && t.disabled; }), 'a guest sees Test pattern on Mapping, and cannot press it');
   await go(pages.guest, 'shape/sound');
   assert(await pages.guest.evaluate(() => !!document.querySelector('#plainpage #mvol') && !document.getElementById('audiocard') && document.getElementById('mvol').disabled), 'a guest has the Volume slider, and cannot move it');

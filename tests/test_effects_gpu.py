@@ -821,6 +821,38 @@ class FxCase(GpuCase):
         self.near(left(), (191, 255, 255))
         self.assertIsNone(self.fx.error)
 
+    def test_an_effect_over_a_frozen_clip_is_drawn_when_it_goes_on_changes_and_comes_off(self):
+        """On the screen itself, not in a screenshot (a screenshot renders the frame anew and shows the effect whatever
+        the screen holds): the player's list of the passes of the last picture it drew. Over a frozen clip mpv redrew
+        its cached picture, which has no user shader, so the effect waited for the next frame, and the panel waited its
+        4 seconds (VERIFY_SECONDS) for a pass that did not come."""
+        self.fx.upload("invert.fs", INVERT)
+        self.real.ipc.request("set_property", "pause", True)
+        time.sleep(0.3)
+
+        def user_passes():
+            p = self.real.ipc.request("get_property", "vo-passes") or {}
+            return [x for x in (p.get("fresh") or []) if isinstance(x, dict) and "user shader" in str(x.get("desc", ""))]
+        self.assertEqual(user_passes(), [])
+        start = time.monotonic()
+        r = self.fx.put("invert.fs")
+        took = time.monotonic() - start
+        self.assertTrue(r and r["ok"], r)
+        self.assertLess(took, 2.5, "putting an effect on over a frozen clip waited %.1f s" % took)
+        # (not "checked": mpv gives no pass time over a frozen clip, so the panel's answer there is "unknown")
+        self.assertTrue(user_passes(), "the frozen picture was not drawn through the effect")
+        # new values are a new text for the player; the frozen picture is drawn through it at once
+        self.fx.change({"controls": {"amount": 0.5}})
+        start = time.monotonic()
+        while not self.fx.changer.pump():
+            self.assertLess(time.monotonic() - start, 3.0, "no change was due")
+            time.sleep(0.02)
+        self.assertTrue(self.fx._fresh(self.fx.on["desc"]), "the frozen picture was not drawn through the changed effect")
+        self.assertLess(time.monotonic() - start, 2.5, "changing the effect over a frozen clip waited")
+        self.fx.off()
+        self.assertEqual(user_passes(), [], "the frozen picture was still drawn through the effect that came off")
+        self.assertTrue(self.real.ipc.request("get_property", "pause"), "the clip must stay frozen")
+
     def test_the_picture_is_never_dark_while_an_effect_goes_on_changes_and_comes_off(self):
         """No screenshot in the middle of it may be dark, with the clip playing and with it frozen, and that with the
         switch to 8-bit buffers that a Pi 4 makes for an effect. (With mpv's default scalers, which this rig does

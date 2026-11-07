@@ -5,7 +5,9 @@
 // line, {"command": [...], "request_id": n}, answered {"request_id": n, "error": "success", "data": ...}. Anything
 // outside the subset is answered with mpv's own words ("invalid parameter", "property not found"), so the panel's
 // code treats it as it treats mpv refusing something. Phase 2 (D98) adds one command, pvj-crossfade (below), and
-// every other command speaks to the video layer on the screen, so the panel still sees one player.
+// every other command speaks to the video layer on the screen, so the panel still sees one player. Sources (D101) add
+// pvj-source, which speaks to source 2 to N on a short list of its own, and the property pvj-sources; every other
+// command and property still means source 1.
 //
 // The socket is reachable by the panel's group only (0660, as mpv's is made by the player's service). Still every
 // line is bounded, every command and every name that may be set is on a fixed list, and nothing here can run a
@@ -26,6 +28,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -97,7 +100,7 @@ void ipc_close(void)
 // level during a crossfade reaches both pictures. The others are the file's own (pause, loops, a live input's keys)
 // and go to the layer on the screen only.
 static const char *const SETTABLE[] = {
-    "pause", "speed", "volume", "mute", "loop-file", "loop-playlist", "keep-open", "image-display-duration",
+    "pause", "speed", "volume", "mute", "loop-file", "loop-playlist", "keep-open", "image-display-duration", "end",
     "audio-device", "brightness", "video-zoom", "video-pan-x", "video-pan-y", "video-rotate", "video-crop",
     "keepaspect", "fbo-format", "screenshot-format", "screenshot-jpeg-quality", "screenshot-png-compression",
     "screenshot-png-filter", "screenshot-high-bit-depth",
@@ -111,13 +114,30 @@ static const char *const MIRRORED[] = {
     "video-crop", "keepaspect", "fbo-format", "screenshot-format", "screenshot-jpeg-quality", "screenshot-png-compression",
     "screenshot-png-filter", "screenshot-high-bit-depth", NULL };
 
-// Keys a crossfade's options may hold: what Player.play sets before a load, for the incoming clip alone.
-static const char *const FADE_KEYS[] = { "keep-open", "image-display-duration", NULL };
+// Keys a crossfade's options, and a source's load, may hold: what Player.play sets before a load, for the incoming clip
+// alone; and the decoded queue of a generated loop list (QUEUE_KEYS, D118), which goes with the load as that file's own.
+static const char *const FADE_KEYS[] = { "keep-open", "image-display-duration", "vd-queue-enable", "vd-queue-max-samples",
+                                         "vd-queue-max-secs", NULL };
+static const char *const QUEUE_KEYS[] = { "vd-queue-enable", "vd-queue-max-samples", "vd-queue-max-secs", NULL };
+
+// Sources 2 to N (D101): what may be set on one, and what of it may be read. `brightness` is also the panel's level:
+// a set_property of it on the socket (opacity, Blackout, a fade) reaches every source, so a source's own brightness
+// lasts until the next change of the level.
+static const char *const SOURCE_SET[] = { "pause", "loop-file", "loop-playlist", "speed", "brightness", NULL };
+static const char *const SOURCE_GET[] = { "path", "pause", "idle-active", "time-pos", "duration", "width", "height",
+                                          "playlist-count", "playlist-pos", "loop-file", "loop-playlist", "speed",
+                                          "brightness", "aid", "current-ao", "keepaspect", "fbo-format",
+                                          "demuxer-max-bytes", "demuxer-max-back-bytes", NULL };
+// Names set on source 1 that reach the other sources too: the picture's level, and the mapping's stretch of the
+// picture to the whole frame with its 8-bit buffers (Player.set_mapping_mode). Without keepaspect a source's picture
+// was letterboxed inside its texture, so a surface showed black bars where the picture's edge should be.
+static const char *const TO_SOURCES[] = { "brightness", "keepaspect", "fbo-format", NULL };
 
 // Keys loadfile's options may hold (the pipe's, set with the load on mpv 0.38 and later).
 static const char *const LOAD_KEYS[] = {
     "demuxer", "demuxer-rawvideo-w", "demuxer-rawvideo-h", "demuxer-rawvideo-mp-format", "demuxer-rawvideo-fps",
-    "cache", "cache-pause", "initial-audio-sync", "demuxer-readahead-secs", "demuxer-max-bytes", "audio-delay", NULL };
+    "cache", "cache-pause", "initial-audio-sync", "demuxer-readahead-secs", "demuxer-max-bytes", "audio-delay",
+    "vd-queue-enable", "vd-queue-max-samples", "vd-queue-max-secs", NULL };
 
 static int in_list(const char *const *list, const char *s)
 {
@@ -225,6 +245,25 @@ static int options_ok(const char *s, const char *const *keys)
     return ok;
 }
 
+// `end`: where the file that plays stops (Loop off on a generated list, D118, whose loop-file does not end it). "none" or
+// a plain number of seconds. It is set as the file's own: mpv's plain `end` stays for the next file, on this layer, and
+// a clip loaded later, after a crossfade too, would stop there.
+static int set_end(mpv_handle *h, const mpv_node *v)
+{
+    if (v->format != MPV_FORMAT_STRING) return MPV_ERROR_INVALID_PARAMETER;
+    const char *s = v->u.string;
+    if (strcmp(s, "none")) {
+        int dots = 0, digits = 0;
+        for (const char *c = s; *c; c++) {
+            if (*c == '.') dots++;
+            else if (*c >= '0' && *c <= '9') digits++;
+            else return MPV_ERROR_INVALID_PARAMETER;
+        }
+        if (!digits || dots > 1 || strlen(s) > 20) return MPV_ERROR_INVALID_PARAMETER;
+    }
+    return mpv_set_property_string(h, "file-local-options/end", s);
+}
+
 static int seek_flags_ok(const char *s)
 {
     static const char *const words[] = { "relative", "absolute", "absolute-percent", "relative-percent", "exact", "keyframes", NULL };
@@ -251,6 +290,11 @@ static int set_both(const char *name, const mpv_node *v)
     if (r >= 0) {
         int r2 = mpv_set_property(app.layer[1 - f], name, MPV_FORMAT_NODE, (void *)v);
         if (r2 < 0 && app.cfg->verbose) LOG("ipc: %s on the second layer: %s", name, mpv_error_string(r2));
+        // the level reaches sources 2 to N too (D101): a Blackout darkens every picture the mapping shows
+        for (int k = LAYERS; in_list(TO_SOURCES, name) && k < LAYERS + app.nsources - 1; k++) {
+            int r3 = mpv_set_property(app.layer[k], name, MPV_FORMAT_NODE, (void *)v);
+            if (r3 < 0 && app.cfg->verbose) LOG("ipc: %s on source %d: %s", name, k, mpv_error_string(r3));
+        }
     }
     return r;
 }
@@ -292,6 +336,10 @@ static void end_fade(void)
 // device, one player on it at a time), and the render thread mixes the two from the incoming clip's first frame on,
 // over SECONDS, then stops the outgoing one. OPTIONS: "keep-open=..,image-display-duration=.." for the incoming clip.
 //
+// ["pvj-crossfade", URL, SECONDS, OPTIONS, MOVE]: all of that, and the picture is a wipe or a slide (MOVE_LIST, the
+// panel's names, D111) instead of a mix: the same layers, the same clock, the same ends. The property's `moves` says so;
+// a renderer before this one refuses the fifth word.
+//
 // With nothing loaded on the screen (after a Stop, at power-up) there is nothing to fade from: the clip is loaded into
 // the front layer as a loadfile would load it, which is a cut, as D71 starts the clip "as with a cut" there.
 //
@@ -299,8 +347,47 @@ static void end_fade(void)
 // with no sound track, the outgoing layer's sound is taken off, this thread waits (at most SOUND_WAIT seconds) until
 // that core has closed its audio output (`current-ao` unavailable), and only then is the incoming clip given its sound.
 #define SOUND_WAIT 1.0
+#define STOP_WAIT 1.0
 
-// "k=v,k=v" (already checked against FADE_KEYS) set on `h`; the first refusal is the answer
+// The stop that ended the last fade on this layer has been run. It is queued (the render thread never waits on
+// libmpv), and libmpv runs a blocking command ahead of what is queued, so a load sent now would go first and the stop
+// would take the new clip with it: a crossfade asked just as the last one ended would wait out FADE_FIRST_FRAME and
+// fade to nothing. Bounded: a core that does not answer in STOP_WAIT seconds is loaded into anyway, as before.
+static void wait_for_stop(int layer)
+{
+    double until = now_s() + STOP_WAIT;
+    while (__atomic_load_n(&app.stops_done[layer], __ATOMIC_ACQUIRE) < __atomic_load_n(&app.stops_asked[layer], __ATOMIC_ACQUIRE)) {
+        if (now_s() >= until) {
+            LOG("ipc: pvj-crossfade: layer %d has not run its stop after %.1f s", layer, STOP_WAIT);
+            return;
+        }
+        struct timespec ts = { 0, 1000 * 1000 };
+        nanosleep(&ts, NULL);
+    }
+}
+
+// The pairs of "k=v,k=v" (already checked against FADE_KEYS) that go with the load, for that file alone: loadfile's
+// fourth argument after its index. Nothing in `out` when there are none, and the load is as it always was. On a libmpv
+// whose loadfile has no index (0.35) such a load is refused, and the panel loads the plain clip.
+#define QUEUE_OPTIONS 300
+static void load_part(const char *opts, char *out, size_t n)
+{
+    out[0] = 0;
+    char *copy = opts ? strdup(opts) : NULL, *save = NULL;
+    if (!copy) return;
+    for (char *part = strtok_r(copy, ",", &save); part; part = strtok_r(NULL, ",", &save)) {
+        char *eq = strchr(part, '=');
+        *eq = 0;
+        if (!in_list(QUEUE_KEYS, part)) continue;
+        *eq = '=';
+        size_t used = strlen(out);
+        snprintf(out + used, n - used, "%s%s", used ? "," : "", part);
+    }
+    free(copy);
+}
+
+// "k=v,k=v" (already checked against FADE_KEYS) set on `h`, but for what goes with the load (load_part); the first
+// refusal is the answer
 static int apply_options(mpv_handle *h, const char *opts)
 {
     if (!opts) return 0;
@@ -310,7 +397,7 @@ static int apply_options(mpv_handle *h, const char *opts)
     for (char *part = strtok_r(copy, ",", &save); part && r >= 0; part = strtok_r(NULL, ",", &save)) {
         char *eq = strchr(part, '=');
         *eq = 0;
-        r = set_str(h, part, eq + 1);
+        if (!in_list(QUEUE_KEYS, part)) r = set_str(h, part, eq + 1);
     }
     free(copy);
     return r;
@@ -329,13 +416,19 @@ static void crossfade(int fd, const mpv_node *id, const mpv_node *cmd)
     int nargs = cmd->u.list->num;
     const char *url = arg_str(cmd, 1);
     const mpv_node *secs = arg(cmd, 2);
-    const char *opts = nargs == 4 ? arg_str(cmd, 3) : NULL;
+    const char *opts = nargs >= 4 ? arg_str(cmd, 3) : NULL;
+    const char *word = nargs == 5 ? arg_str(cmd, 4) : NULL;
+    const Move *move = NULL;
+    for (int i = 0; word && i < MOVES; i++) if (!strcmp(word, MOVE_LIST[i].name)) move = &MOVE_LIST[i];
     double s = is_num(secs) ? num(secs) : -1;
-    if (!url || !*url || strlen(url) > 4096 || !(s >= 0 && s <= FADE_MAX_SECONDS) || (nargs == 4 && (!opts || !options_ok(opts, FADE_KEYS)))) {
+    if (!url || !*url || strlen(url) > 4096 || !(s >= 0 && s <= FADE_MAX_SECONDS) || (nargs >= 4 && (!opts || !options_ok(opts, FADE_KEYS)))
+        || (nargs == 5 && !move)) {
         reply(fd, id, "invalid parameter", NULL);
         return;
     }
-    const char *load[] = { "loadfile", url, "replace", NULL };
+    char queue[QUEUE_OPTIONS];
+    load_part(opts, queue, sizeof queue);
+    const char *load[] = { "loadfile", url, "replace", *queue ? "-1" : NULL, *queue ? queue : NULL, NULL };
     pthread_mutex_lock(&layer_lock);
     end_fade();
     int out = front_layer(), in = 1 - out;
@@ -349,11 +442,14 @@ static void crossfade(int fd, const mpv_node *id, const mpv_node *cmd)
         if (r >= 0) r = mpv_command(O, load);
         pthread_mutex_lock(&app.lock);
         if (r >= 0) app.fades_from_nothing++;
+        app.fade.move = move;           // `fade-kind` says this cut's kind, not the last transition that ran
+        app.fade.steps = 0;
         pthread_mutex_unlock(&app.lock);
         pthread_mutex_unlock(&layer_lock);
         reply(fd, id, r < 0 ? mpv_error_string(r) : "success", NULL);
         return;
     }
+    wait_for_stop(in);
     // the incoming layer as a fresh player for this clip: playing, no sound yet (below), and the file's own options
     set_str(H, "pause", "no");
     set_str(H, "keep-open", "no");
@@ -397,6 +493,8 @@ static void crossfade(int fd, const mpv_node *id, const mpv_node *cmd)
     app.fade.asked = now_s();
     app.fade.progress = 0.0;
     app.fade.base_starts = base;
+    app.fade.move = move;
+    app.fade.steps = 0;
     app.fades++;
     __atomic_store_n(&app.front, in, __ATOMIC_RELEASE);
     pthread_mutex_unlock(&app.lock);
@@ -421,6 +519,175 @@ static void forward_front(int fd, const mpv_node *id, const mpv_node *cmd, int e
     }
     reply(fd, id, "success", res.format == MPV_FORMAT_NONE ? NULL : &res);
     mpv_free_node_contents(&res);
+}
+
+/* ---- sources 2 to N (D101) ------------------------------------------------------------------------------------------ */
+// ["pvj-source", N, "loadfile", URL, FLAG?, OPTIONS?]  FLAG: replace (the default), append or append-play; OPTIONS:
+//                                                      "keep-open=..,image-display-duration=.." set on that source
+//                                                      before the load (it has nobody else's file to disturb)
+// ["pvj-source", N, "stop"]
+// ["pvj-source", N, "set_property", NAME, VALUE]       NAME from SOURCE_SET
+// ["pvj-source", N, "get_property", NAME]              NAME from SOURCE_GET
+// N is 2 to the number of sources this run has. Source 1 is spoken to by every other command, as before. A load
+// here is a cut: the crossfade (D98) is source 1's alone in this step. The source plays with no sound (aid=no from
+// its start, and aid is on no list). A source's core is its own: nothing here takes layer_lock, and the render
+// thread is never waited on.
+static int source_level_native(int s)
+{
+    pthread_mutex_lock(&app.lock);
+    int on = app.level_native[s];
+    pthread_mutex_unlock(&app.lock);
+    return on;
+}
+
+static void source_command(int fd, const mpv_node *id, const mpv_node *cmd)
+{
+    int nargs = cmd->u.list->num;
+    const mpv_node *n = arg(cmd, 1);
+    const char *what = arg_str(cmd, 2);
+    if (!n || n->format != MPV_FORMAT_INT64 || n->u.int64 < 2 || n->u.int64 > app.nsources || !what) {
+        reply(fd, id, "invalid parameter", NULL);
+        return;
+    }
+    int k = (int)n->u.int64;
+    mpv_handle *h = app.layer[k];
+    if (!strcmp(what, "loadfile") && nargs >= 4 && nargs <= 6) {
+        static const char *const flags[] = { "replace", "append", "append-play", NULL };
+        const char *url = arg_str(cmd, 3);
+        const char *flag = nargs >= 5 ? arg_str(cmd, 4) : "replace";
+        const char *opts = nargs == 6 ? arg_str(cmd, 5) : NULL;
+        if (!url || !*url || strlen(url) > 4096 || !flag || !in_list(flags, flag) || (nargs == 6 && (!opts || !options_ok(opts, FADE_KEYS)))) {
+            reply(fd, id, "invalid parameter", NULL);
+            return;
+        }
+        int r = apply_options(h, opts);
+        char queue[QUEUE_OPTIONS];
+        load_part(opts, queue, sizeof queue);
+        const char *load[] = { "loadfile", url, flag, *queue ? "-1" : NULL, *queue ? queue : NULL, NULL };
+        if (r >= 0) r = mpv_command(h, load);
+        if (r >= 0) __atomic_add_fetch(&app.source_loads[k], 1, __ATOMIC_RELAXED);
+        reply(fd, id, r < 0 ? mpv_error_string(r) : "success", NULL);
+    } else if (!strcmp(what, "stop") && nargs == 3) {
+        const char *stop[] = { "stop", NULL };
+        int r = mpv_command(h, stop);
+        reply(fd, id, r < 0 ? mpv_error_string(r) : "success", NULL);
+    } else if (!strcmp(what, "set_property") && nargs == 5 && arg_str(cmd, 3) && !strcmp(arg_str(cmd, 3), "opacity")) {
+        // the source's mix (D101): read by the render loop once a frame
+        const mpv_node *v = arg(cmd, 4);
+        double o = is_num(v) ? num(v) : -1;
+        if (!(o >= 0.0 && o <= 1.0)) { reply(fd, id, "invalid parameter", NULL); return; }
+        pthread_mutex_lock(&app.lock);
+        app.opacity[k] = (float)o;
+        pthread_mutex_unlock(&app.lock);
+        wake_render();
+        reply(fd, id, "success", NULL);
+    } else if (!strcmp(what, "set_property") && nargs == 5 && arg_str(cmd, 3) && !strcmp(arg_str(cmd, 3), "blend")) {
+        const char *b = arg_str(cmd, 4);
+        int found = -1;
+        for (int i = 0; b && i < BLENDS; i++) if (!strcmp(b, BLEND_NAMES[i])) found = i;
+        if (found < 0) { reply(fd, id, "invalid parameter", NULL); return; }
+        pthread_mutex_lock(&app.lock);
+        app.blend[k] = found;
+        pthread_mutex_unlock(&app.lock);
+        reply(fd, id, "success", NULL);
+    } else if (!strcmp(what, "get_property") && nargs == 4 && arg_str(cmd, 3)
+               && (!strcmp(arg_str(cmd, 3), "opacity") || !strcmp(arg_str(cmd, 3), "blend"))) {
+        pthread_mutex_lock(&app.lock);
+        double o = app.opacity[k];
+        int b = app.blend[k];
+        pthread_mutex_unlock(&app.lock);
+        mpv_node d = !strcmp(arg_str(cmd, 3), "opacity") ? node_dbl(o) : node_str(BLEND_NAMES[b]);
+        reply(fd, id, "success", &d);
+    } else if (!strcmp(what, "set_property") && nargs == 5 && arg_str(cmd, 3) && !strcmp(arg_str(cmd, 3), "brightness")
+               && is_num(arg(cmd, 4)) && num(arg(cmd, 4)) >= -100 && num(arg(cmd, 4)) <= 100) {
+        // the source's own level (D101), kept (D106): while it has a program on, the renderer draws it after them
+        pthread_mutex_lock(&layer_lock);
+        pthread_mutex_lock(&app.lock);
+        int native = app.level_native[k - 1];
+        pthread_mutex_unlock(&app.lock);
+        int r = native ? 0 : mpv_set_property(h, "brightness", MPV_FORMAT_NODE, (void *)arg(cmd, 4));
+        if (r >= 0) {                       // kept only when mpv took it (a refused value changes nothing)
+            pthread_mutex_lock(&app.lock);
+            app.level[k - 1] = num(arg(cmd, 4));
+            pthread_mutex_unlock(&app.lock);
+        }
+        pthread_mutex_unlock(&layer_lock);
+        wake_render();
+        reply(fd, id, r < 0 ? mpv_error_string(r) : "success", NULL);
+    } else if (!strcmp(what, "get_property") && nargs == 4 && arg_str(cmd, 3) && !strcmp(arg_str(cmd, 3), "brightness")
+               && source_level_native(k - 1)) {
+        pthread_mutex_lock(&app.lock);
+        mpv_node d = node_dbl(app.level[k - 1]);
+        pthread_mutex_unlock(&app.lock);
+        reply(fd, id, "success", &d);
+    } else if (!strcmp(what, "set_property") && nargs == 5 && arg_str(cmd, 3)) {
+        if (!in_list(SOURCE_SET, arg_str(cmd, 3))) {
+            LOG("ipc: pvj-source set_property %s is not on the list", arg_str(cmd, 3));
+            reply(fd, id, "property not found", NULL);
+            return;
+        }
+        int r = mpv_set_property(h, arg_str(cmd, 3), MPV_FORMAT_NODE, (void *)arg(cmd, 4));
+        reply(fd, id, r < 0 ? mpv_error_string(r) : "success", NULL);
+    } else if (!strcmp(what, "get_property") && nargs == 4 && arg_str(cmd, 3)) {
+        if (!in_list(SOURCE_GET, arg_str(cmd, 3))) { reply(fd, id, "property not found", NULL); return; }
+        mpv_node res;
+        int r = mpv_get_property(h, arg_str(cmd, 3), MPV_FORMAT_NODE, &res);
+        if (r < 0) { reply(fd, id, mpv_error_string(r), NULL); return; }
+        reply(fd, id, "success", &res);
+        mpv_free_node_contents(&res);
+    } else {
+        reply(fd, id, "invalid parameter", NULL);
+    }
+}
+
+// get_property pvj-sources: one map a source, from 1. What each plays, whether it is idle, the frames it converted
+// and its picture's height (the panel's warning about load). Asks the cores (a client's thread may): never read to
+// time anything.
+static void sources_property(int fd, const mpv_node *id)
+{
+    static const char *const keys[] = { "source", "idle", "path", "drawn", "height", "pause", "loads", "opacity", "blend" };
+    mpv_node maps[MAX_SOURCES], vals[MAX_SOURCES][9];
+    float opacity[MAX_LAYERS];
+    int blend[MAX_LAYERS];
+    pthread_mutex_lock(&app.lock);
+    memcpy(opacity, app.opacity, sizeof opacity);
+    memcpy(blend, app.blend, sizeof blend);
+    pthread_mutex_unlock(&app.lock);
+    mpv_node_list lists[MAX_SOURCES];
+    char *paths[MAX_SOURCES] = { 0 };
+    int ns = app.nsources;
+    for (int s = 1; s <= ns; s++) {
+        int li = s == 1 ? front_layer() : s;
+        mpv_handle *h = app.layer[li];
+        int idle = __atomic_load_n(&app.idle[li], __ATOMIC_ACQUIRE);
+        paths[s - 1] = idle ? NULL : mpv_get_property_string(h, "path");
+        int64_t height = 0;
+        int have_h = !idle && mpv_get_property(h, "height", MPV_FORMAT_INT64, &height) >= 0;
+        int pause = 0;
+        mpv_get_property(h, "pause", MPV_FORMAT_FLAG, &pause);
+        long drawn = s == 1 ? __atomic_load_n(&app.layer_drawn[0], __ATOMIC_RELAXED) + __atomic_load_n(&app.layer_drawn[1], __ATOMIC_RELAXED)
+                            : __atomic_load_n(&app.layer_drawn[li], __ATOMIC_RELAXED);
+        mpv_node *v = vals[s - 1];
+        v[0] = node_int(s);
+        v[1] = (mpv_node){ .format = MPV_FORMAT_FLAG };
+        v[1].u.flag = idle;
+        v[2] = paths[s - 1] ? node_str(paths[s - 1]) : (mpv_node){ .format = MPV_FORMAT_NONE };
+        v[3] = node_int(drawn);
+        v[4] = have_h ? node_int(height) : (mpv_node){ .format = MPV_FORMAT_NONE };
+        v[5] = (mpv_node){ .format = MPV_FORMAT_FLAG };
+        v[5].u.flag = pause;
+        v[6] = node_int(s == 1 ? 0 : __atomic_load_n(&app.source_loads[li], __ATOMIC_RELAXED));
+        v[7] = node_dbl(s == 1 ? 1.0 : opacity[li]);         // source 1 is the program: its level is the Mix's
+        v[8] = node_str(BLEND_NAMES[s == 1 ? BLEND_NORMAL : blend[li]]);
+        lists[s - 1] = (mpv_node_list){ .num = 9, .values = v, .keys = (char **)keys };
+        maps[s - 1].format = MPV_FORMAT_NODE_MAP;
+        maps[s - 1].u.list = &lists[s - 1];
+    }
+    mpv_node_list all = { .num = ns, .values = maps };
+    mpv_node d = { .format = MPV_FORMAT_NODE_ARRAY };
+    d.u.list = &all;
+    reply(fd, id, "success", &d);
+    for (int s = 0; s < ns; s++) mpv_free(paths[s]);
 }
 
 /* ---- the render thread's parts ------------------------------------------------------------------------------------ */
@@ -500,6 +767,231 @@ static void set_shaders(int fd, const mpv_node *id, const mpv_node *val)
     reply(fd, id, "success", NULL);
 }
 
+/* ---- the renderer's own programs (D106) ---------------------------------------------------------------------------- */
+// ["pvj-shader", "load", SOURCE, SLOT, PATH]   a program file (fx.c) into a slot: 0 the generator, 1 the effect.
+//                                              Answered once the render thread has built it (at most 3 s): "success",
+//                                              or why the GPU refused it (the program before it then runs on)
+// ["pvj-shader", "clear", SOURCE, SLOT]
+// ["pvj-shader", "set", SOURCE, SLOT, {NAME: VALUE, ...}]   inputs by name, and @speed, @hue, @gain, @amount, @offset;
+//                                              all of one set are taken in one frame. Nothing is built again.
+// SOURCE is 1 to the number of sources; slot 0 is a source's generator (step d: on sources 2 to N it is the source's
+// whole picture, its clip layer idle), slots 1 to 3 are its effects, run in that order (step b).
+static int fx_answered_s, fx_answered_k;
+static long fx_wait_for;
+static int fx_answered(void) { return app.fx[fx_answered_s][fx_answered_k].answered >= fx_wait_for; }
+
+// The video layers of source index s: source 1's two, or source k's one (layer k).
+static int source_layers(int s, int *first)
+{
+    *first = s == 0 ? 0 : s + 1;
+    return s == 0 ? LAYERS : 1;
+}
+
+// A source's level goes with whether it has a program on: while it has, its layers' own brightness is 0 and the
+// renderer draws the level after the programs; otherwise the layers have the level, as before (under layer_lock). The
+// order keeps the level from ever being absent (the review of #167). The render thread draws a source's level while it
+// has a program on OR while its layers still have 0 (`level_native`, main.c). A program that comes on is drawn with
+// the level at once (for a moment the layers have it too: darker, never lighter), and the layers get 0 after. A
+// program that goes off: the render thread goes on drawing the level until the layers have it back, and only then is
+// level_native cleared (again a moment of both, never of none).
+static void level_sync(int s)
+{
+    pthread_mutex_lock(&app.lock);
+    int want = app.native[s], had = app.level_native[s];
+    double level = app.level[s];
+    if (want) app.level_native[s] = 1;
+    pthread_mutex_unlock(&app.lock);
+    if (want == had) return;
+    double v = want ? 0.0 : level;
+    int first, n = source_layers(s, &first);
+    for (int i = first; i < first + n; i++) mpv_set_property(app.layer[i], "brightness", MPV_FORMAT_DOUBLE, &v);
+    if (!want) {
+        pthread_mutex_lock(&app.lock);
+        app.level_native[s] = 0;
+        pthread_mutex_unlock(&app.lock);
+    }
+    wake_render();
+}
+
+static pthread_mutex_t fx_lock = PTHREAD_MUTEX_INITIALIZER;     // one load or clear at a time (it waits on the render thread)
+
+static void shader_command(int fd, const mpv_node *id, const mpv_node *cmd)
+{
+    int nargs = cmd->u.list->num;
+    const char *what = arg_str(cmd, 1);
+    const mpv_node *src = arg(cmd, 2), *slot = arg(cmd, 3);
+    if (!what || !src || !slot || src->format != MPV_FORMAT_INT64 || slot->format != MPV_FORMAT_INT64 || src->u.int64 < 1
+        || src->u.int64 > app.nsources || slot->u.int64 < 0 || slot->u.int64 >= FX_SLOTS) {
+        reply(fd, id, "invalid parameter", NULL);
+        return;
+    }
+    int si = (int)src->u.int64 - 1, k = (int)slot->u.int64;
+    if (!strcmp(what, "set") && nargs == 5) {
+        const mpv_node *m = arg(cmd, 4);
+        if (m->format != MPV_FORMAT_NODE_MAP || m->u.list->num < 1 || m->u.list->num > FX_MAX_INPUTS + FXC_N) {
+            reply(fd, id, "invalid parameter", NULL);
+            return;
+        }
+        pthread_mutex_lock(&app.lock);
+        FxSlot *s = &app.fx[si][k];
+        // all or nothing: checked on a copy first
+        FxSlot copy;
+        memcpy(copy.val, s->val, sizeof copy.val);
+        memcpy(copy.ctl, s->ctl, sizeof copy.ctl);
+        copy.ninputs = s->ninputs;
+        copy.reset_time = 0;
+        int ok = s->on;
+        for (int i = 0; ok && i < m->u.list->num; i++) ok = fx_set_value(&copy, m->u.list->keys[i], &m->u.list->values[i]) == 0;
+        if (ok) {
+            memcpy(s->val, copy.val, sizeof s->val);
+            memcpy(s->ctl, copy.ctl, sizeof s->ctl);
+            if (copy.reset_time) s->reset_time = 1;
+            s->values_serial++;
+        }
+        pthread_mutex_unlock(&app.lock);
+        if (ok) wake_render();
+        reply(fd, id, ok ? "success" : "invalid parameter", NULL);
+        return;
+    }
+    FxProg *p = NULL;
+    if (!strcmp(what, "load") && nargs == 5 && arg_str(cmd, 4) && arg_str(cmd, 4)[0] == '/' && strlen(arg_str(cmd, 4)) < 4000) {
+        char err[300] = "";
+        if (fx_read(arg_str(cmd, 4), &p, err, sizeof err)) {
+            LOG("pvj-shader: %s refused: %s", arg_str(cmd, 4), err);
+            reply(fd, id, "invalid parameter", NULL);
+            return;
+        }
+        if (fx_prog_kind(p) != (k == 0 ? FX_GENERATOR : FX_FILTER)) {
+            fx_prog_free(p);
+            reply(fd, id, "invalid parameter", NULL);       // a generator goes to slot 0, an effect to slot 1
+            return;
+        }
+    } else if (!(!strcmp(what, "clear") && nargs == 4)) {
+        reply(fd, id, "invalid parameter", NULL);
+        return;
+    }
+    pthread_mutex_lock(&fx_lock);
+    pthread_mutex_lock(&app.lock);
+    FxSlot *s = &app.fx[si][k];
+    fx_prog_free(s->pending);
+    s->pending = p;
+    s->pending_clear = p == NULL;
+    long mine = ++s->asked;
+    pthread_mutex_unlock(&app.lock);
+    wake_render();
+    pthread_mutex_lock(&app.lock);
+    fx_answered_s = si;
+    fx_answered_k = k;
+    fx_wait_for = mine;
+    int done = wait_render(fx_answered, 3.0);
+    char answer[sizeof s->answer];
+    memcpy(answer, s->answer, sizeof answer);
+    pthread_mutex_unlock(&app.lock);
+    pthread_mutex_lock(&layer_lock);
+    level_sync(si);
+    pthread_mutex_unlock(&layer_lock);
+    pthread_mutex_unlock(&fx_lock);
+    if (!done) reply(fd, id, "the renderer did not build the program in time", NULL);
+    else reply(fd, id, answer[0] ? answer : "success", NULL);
+}
+
+// get_property pvj-shaders: one map a slot, source 1's first (slots 0 to 3), then each other source's.
+static void shaders_property(int fd, const mpv_node *id)
+{
+    static const char *const keys[] = { "source", "slot", "kind", "state", "time", "runs", "drops", "inputs", "rebuilds", "width", "height", "path" };
+    enum { NK = sizeof keys / sizeof keys[0] };
+    enum { NI = MAX_SOURCES * FX_SLOTS };
+    static __thread mpv_node vals[NI][NK];
+    static __thread mpv_node_list lists[NI];
+    static __thread mpv_node items[NI];
+    static __thread char states[NI][160], paths[NI][1024];
+    int ni = app.nsources * FX_SLOTS;
+    pthread_mutex_lock(&app.lock);
+    for (int i = 0; i < ni; i++) {
+        int si = i / FX_SLOTS, k = i % FX_SLOTS;
+        const FxSlot *s = &app.fx[si][k];
+        snprintf(states[i], sizeof states[i], "%s", s->on ? s->state : "off");
+        snprintf(paths[i], sizeof paths[i], "%s", s->on ? s->path : "");
+        int w = s->w, h = s->h;
+        mpv_node v[NK] = { node_int(si + 1), node_int(k), node_str(!s->on ? "" : s->kind == FX_GENERATOR ? "generator" : "filter"),
+                           node_str(states[i]), node_dbl(s->time), node_int(s->runs), node_int(s->drops), node_int(s->on ? s->ninputs : 0),
+                           node_int(s->rebuilds), node_int(s->on ? w : 0), node_int(s->on ? h : 0), node_str(paths[i]) };
+        memcpy(vals[i], v, sizeof v);
+        lists[i] = (mpv_node_list){ .num = NK, .values = vals[i], .keys = (char **)keys };
+        items[i].format = MPV_FORMAT_NODE_MAP;
+        items[i].u.list = &lists[i];
+    }
+    pthread_mutex_unlock(&app.lock);
+    mpv_node_list list = { .num = ni, .values = items };
+    mpv_node d = { .format = MPV_FORMAT_NODE_ARRAY };
+    d.u.list = &list;
+    reply(fd, id, "success", &d);
+}
+
+// screenshot-to-file while a program is on: the renderer's own picture. The render thread reads it back (main.c,
+// native_shot); this client's thread encodes it and writes the file, so the screen never waits for an encoder (the
+// review of #167). One screenshot at a time: two clients never take each other's picture.
+static pthread_mutex_t shot_lock = PTHREAD_MUTEX_INITIALIZER;
+static int shot_want;
+static int shot_taken(void) { return app.shot.done_serial == shot_want; }
+
+// The file the panel names (and has made, in its own folder): written over, never through a link, never a FIFO or a
+// device (opened without waiting, checked to be a regular file, then emptied).
+static int shot_write(const char *path, const unsigned char *rgba, int w, int h, int jpeg, int quality)
+{
+    unsigned char *rgb = malloc((size_t)w * (size_t)h * 3);
+    if (!rgb) return -1;
+    for (int y = 0; y < h; y++) {               // top row first: the pass drew the picture's top at the last GL row
+        const unsigned char *s = rgba + (size_t)(h - 1 - y) * (size_t)w * 4;
+        unsigned char *d = rgb + (size_t)y * (size_t)w * 3;
+        for (int x = 0; x < w; x++) { d[x * 3] = s[x * 4]; d[x * 3 + 1] = s[x * 4 + 1]; d[x * 3 + 2] = s[x * 4 + 2]; }
+    }
+    int r = -1;
+    int fd = open(path, O_WRONLY | O_CREAT | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC, 0640);
+    struct stat st;
+    if (fd < 0) LOG("screenshot: %s: %s", path, strerror(errno));
+    else if (fstat(fd, &st) || !S_ISREG(st.st_mode)) LOG("screenshot: %s is not a file", path);
+    else if (ftruncate(fd, 0)) LOG("screenshot: %s: %s", path, strerror(errno));
+    else r = jpeg ? still_jpeg(fd, rgb, w, h, quality) : still_png(fd, rgb, w, h);
+    if (fd >= 0 && close(fd)) r = -1;
+    free(rgb);
+    return r;
+}
+
+// The third word "pvj-screen" asks for the whole final picture at the screen's size, program or no program: libmpv's own
+// window is the inside size and has no mapping in it, and a transition's still must be the screen (pvj/transitions.py).
+static int native_screenshot(int fd, const mpv_node *id, const char *path, const char *kind)
+{
+    pthread_mutex_lock(&app.lock);
+    int on = app.native[0];
+    pthread_mutex_unlock(&app.lock);
+    int screen = !strcmp(kind, "pvj-screen");
+    if (!on && !screen) return 0;
+    size_t n = strlen(path);
+    int jpeg = (n > 4 && !strcasecmp(path + n - 4, ".jpg")) || (n > 5 && !strcasecmp(path + n - 5, ".jpeg"));
+    int png = n > 4 && !strcasecmp(path + n - 4, ".png");
+    if ((!jpeg && !png) || n > 4000) { reply(fd, id, "invalid parameter", NULL); return 1; }
+    int64_t q = 90;
+    if (mpv_get_property(front_handle(), "screenshot-jpeg-quality", MPV_FORMAT_INT64, &q) < 0) q = 90;
+    pthread_mutex_lock(&shot_lock);
+    pthread_mutex_lock(&app.lock);
+    app.shot.kind = screen ? 2 : strcmp(kind, "video") != 0;
+    shot_want = ++app.shot.serial;
+    pthread_mutex_unlock(&app.lock);
+    wake_render();
+    pthread_mutex_lock(&app.lock);
+    int done = wait_render(shot_taken, 5.0);
+    unsigned char *rgba = done ? app.shot.rgba : NULL;
+    int w = app.shot.w, h = app.shot.h;
+    if (done) app.shot.rgba = NULL;
+    pthread_mutex_unlock(&app.lock);
+    int r = rgba ? shot_write(path, rgba, w, h, jpeg, (int)q) : -1;
+    free(rgba);
+    pthread_mutex_unlock(&shot_lock);
+    reply(fd, id, r == 0 ? "success" : "error running command", NULL);
+    return 1;
+}
+
 static void get_property(int fd, const mpv_node *id, const char *name)
 {
     mpv_node d;
@@ -551,6 +1043,22 @@ static void get_property(int fd, const mpv_node *id, const char *name)
         if (have) mpv_free_node_contents(&vid);
         return;
     }
+    if (!strcmp(name, "pvj-sources")) { sources_property(fd, id); return; }
+    if (!strcmp(name, "pvj-shaders")) { shaders_property(fd, id); return; }
+    pthread_mutex_lock(&app.lock);
+    int level_native = app.level_native[0];
+    double level = app.level[0];
+    long fx_drops = app.fx_drops;      // a total that only rises: no jump as programs go on and off
+    pthread_mutex_unlock(&app.lock);
+    if (level_native && !strcmp(name, "brightness")) { d = node_dbl(level); reply(fd, id, "success", &d); return; }
+    if (fx_drops && !strcmp(name, "frame-drop-count")) {
+        // a generator's late frames count as dropped frames while it is on (the guard reads this, D106)
+        int64_t v = 0;
+        mpv_get_property(front_handle(), name, MPV_FORMAT_INT64, &v);
+        d = node_int(v + fx_drops);
+        reply(fd, id, "success", &d);
+        return;
+    }
     if (!strcmp(name, "pvj-render")) {
         pthread_mutex_lock(&app.lock);
         char state[sizeof app.hook_state];
@@ -561,27 +1069,46 @@ static void get_property(int fd, const mpv_node *id, const char *name)
         long flips = app.flips, missed = app.missed, drawn = app.drawn, fences = app.fences, freed = app.fences_freed;
         long back = app.back_drawn, fades = app.fades, done = app.fades_done, cut = app.fades_cut;
         long nothing = app.fades_from_nothing, held = app.sound_held;
+        double passes_rate = app.fx_passes_rate;
         int osd = app.overlays != 0 || now_s() < app.text_until;
         int phase = app.fade.phase, front = app.front;
         double progress = app.fade.progress, seconds = app.fade.seconds;
+        const char *kind = app.fade.move ? app.fade.move->name : "crossfade";   // a constant: it may be read after the lock
+        long steps = app.fade.steps;
         int back_idle = __atomic_load_n(&app.idle[1 - front], __ATOMIC_ACQUIRE);      // nothing loaded: it costs nothing
+        // how much the box is drawing (D108): the sources that play, their programs, and the mapping
+        long load = app.hook_state[0] == 'o' && app.hook_state[1] == 'n';
+        for (int s = 0; s < app.nsources; s++) {
+            load += !__atomic_load_n(&app.idle[s == 0 ? front : s + 1], __ATOMIC_ACQUIRE);
+            for (int k = 0; k < FX_SLOTS; k++) load += app.fx[s][k].on != 0;
+        }
+        char final_why[sizeof app.final_why];
+        memcpy(final_why, app.final_why, sizeof final_why);
         pthread_mutex_unlock(&app.lock);
         static const char *const PHASES[] = { "off", "waiting", "running" };
         static const char *const keys[] = { "version", "internal-width", "internal-height", "output-width", "output-height",
                                             "output-fps", "flips", "drawn", "missed-vblanks", "mapping", "text-layer", "hwdec",
                                             "gl-fences", "gl-fences-freed", "layers", "front", "fade", "fade-progress",
                                             "fade-seconds", "fades", "fades-done", "fades-cut", "back-drawn", "gl-objects",
-                                            "back-idle", "fades-from-nothing", "sound-held" };
-        mpv_node vals[27] = { node_str(PVJ_VERSION), node_int(app.in_w), node_int(app.in_h), node_int(app.out_w), node_int(app.out_h),
+                                            "back-idle", "fades-from-nothing", "sound-held", "sources", "shaders", "fx-fps",
+                                            "fx-gl-objects", "fx-passes", "fx-passes-per-second", "load", "final-lines",
+                                            "final-switches", "final-why", "moves", "fade-kind", "fade-steps" };
+        mpv_node vals[40] = { node_str(PVJ_VERSION), node_int(app.in_w), node_int(app.in_h), node_int(app.out_w), node_int(app.out_h),
                               node_dbl(app.out_hz), node_int(flips), node_int(drawn), node_int(missed), node_str(state),
                               { .format = MPV_FORMAT_FLAG }, node_str(app.cfg->hwdec), node_int(fences), node_int(freed),
                               node_int(LAYERS), node_int(front), node_str(PHASES[phase]), node_dbl(progress), node_dbl(seconds),
                               node_int(fades), node_int(done), node_int(cut), node_int(back),
                               node_int(__atomic_load_n(&app.gl_objects, __ATOMIC_RELAXED)), { .format = MPV_FORMAT_FLAG },
-                              node_int(nothing), node_int(held) };
+                              node_int(nothing), node_int(held), node_int(app.nsources), node_int(FX_SLOTS),
+                              node_int((int64_t)app.fx_fps), node_int(__atomic_load_n(&app.fx_gl, __ATOMIC_RELAXED)),
+                              node_int(__atomic_load_n(&app.fx_passes, __ATOMIC_RELAXED)), node_dbl(passes_rate), node_int(load),
+                              node_int(__atomic_load_n(&app.final_lines, __ATOMIC_ACQUIRE)),
+                              node_int(__atomic_load_n(&app.final_switches, __ATOMIC_RELAXED)), node_str(final_why),
+                              { .format = MPV_FORMAT_FLAG }, node_str(kind), node_int(steps) };
         vals[10].u.flag = osd;
         vals[24].u.flag = back_idle;
-        mpv_node_list list = { .num = 27, .values = vals, .keys = (char **)keys };
+        vals[37].u.flag = 1;                // wipes and slides are drawn here (D111): the panel asks this once per process
+        mpv_node_list list = { .num = 40, .values = vals, .keys = (char **)keys };
         d.format = MPV_FORMAT_NODE_MAP;
         d.u.list = &list;
         reply(fd, id, "success", &d);
@@ -629,8 +1156,69 @@ static void capture(int fd, const mpv_node *id, const char *path)
     reply(fd, id, done && result == 0 ? "success" : "error running command", NULL);
 }
 
+// set_property brightness: the panel's level (D95, D98, D101). Kept here as well (D106): while a program of the
+// renderer's is on, source 1's layers keep brightness 0 and the renderer draws the level after the programs; the
+// other sources get it as before.
+static void set_level(int fd, const mpv_node *id, const mpv_node *v)
+{
+    if (!is_num(v) || !(num(v) >= -100 && num(v) <= 100)) {
+        // mpv's own answer for a value it cannot take (a word, a number out of range)
+        int r = mpv_set_property(front_handle(), "brightness", MPV_FORMAT_NODE, (void *)v);
+        reply(fd, id, r < 0 ? mpv_error_string(r) : "success", NULL);
+        return;
+    }
+    pthread_mutex_lock(&layer_lock);
+    pthread_mutex_lock(&app.lock);
+    int native[MAX_SOURCES];
+    for (int s = 0; s < app.nsources; s++) native[s] = app.level_native[s];
+    pthread_mutex_unlock(&app.lock);
+    // Each source's layers get the level unless the source has a program on (its layers then keep 0 and the
+    // renderer draws the level): set once, so a Blackout is never drawn twice for a moment (the review of #168).
+    int r = 0;
+    if (!native[0]) {
+        int f = front_layer();
+        r = mpv_set_property(app.layer[f], "brightness", MPV_FORMAT_NODE, (void *)v);
+        if (r >= 0) mpv_set_property(app.layer[1 - f], "brightness", MPV_FORMAT_NODE, (void *)v);
+    }
+    if (r >= 0) {
+        for (int s = 1; s < app.nsources; s++)
+            if (!native[s]) mpv_set_property(app.layer[s + 1], "brightness", MPV_FORMAT_NODE, (void *)v);
+        pthread_mutex_lock(&app.lock);
+        for (int s = 0; s < app.nsources; s++) app.level[s] = num(v);     // the panel's level reaches every source (D101)
+        pthread_mutex_unlock(&app.lock);
+    }
+    pthread_mutex_unlock(&layer_lock);
+    wake_render();
+    reply(fd, id, r < 0 ? mpv_error_string(r) : "success", NULL);
+}
+
+// ["pvj-final", "full" | 720]: the size of the final pass from the next frame on (D108); the supervisor's rule asks it
+// (pvj/renderer.py). Nothing else changes: the screen's size, the surfaces and the sizes this socket reports stay.
+// Refused where the scaler cannot be used: pvj-render reports why (final-why). The look at final_why and the store are
+// one step under app.lock, as final_refused writes it there before it clears the wish: a word that comes after a refusal
+// never brings the small frame back, so "said once, then full for good" holds.
+static void final_command(int fd, const mpv_node *id, const mpv_node *v)
+{
+    int full = v->format == MPV_FORMAT_STRING && !strcmp(v->u.string, "full");
+    int small = v->format == MPV_FORMAT_INT64 && v->u.int64 == FINAL_LINES;
+    if ((!full && !small) || !out_final_usable()) { reply(fd, id, "invalid parameter", NULL); return; }
+    pthread_mutex_lock(&app.lock);
+    int refused = app.final_why[0] != 0;
+    if (!refused) __atomic_store_n(&app.final_want, full ? 0 : FINAL_LINES, __ATOMIC_RELEASE);
+    pthread_mutex_unlock(&app.lock);
+    if (refused) { reply(fd, id, "invalid parameter", NULL); return; }
+    wake_render();
+    reply(fd, id, "success", NULL);
+}
+
 static void handle(int fd, const char *line, size_t len)
 {
+    // a program came on or went off after its client stopped waiting (a slow build): the level follows it now
+    if (__atomic_exchange_n(&app.level_resync, 0, __ATOMIC_ACQ_REL)) {
+        pthread_mutex_lock(&layer_lock);
+        for (int s = 0; s < app.nsources; s++) level_sync(s);
+        pthread_mutex_unlock(&layer_lock);
+    }
     mpv_node req;
     if (json_parse(line, len, &req) || req.format != MPV_FORMAT_NODE_MAP) {
         if (req.format != MPV_FORMAT_NONE) json_free(&req);
@@ -654,11 +1242,13 @@ static void handle(int fd, const char *line, size_t len)
     } else if (!strcmp(name, "set_property") && nargs == 3 && arg_str(cmd, 1)) {
         const char *prop = arg_str(cmd, 1);
         if (!strcmp(prop, "glsl-shaders")) set_shaders(fd, id, arg(cmd, 2));
+        else if (!strcmp(prop, "brightness")) set_level(fd, id, arg(cmd, 2));
         else if (in_list(MIRRORED, prop)) {
             int r = set_both(prop, arg(cmd, 2));
             reply(fd, id, r < 0 ? mpv_error_string(r) : "success", NULL);
         } else if (in_list(SETTABLE, prop)) {
-            int r = mpv_set_property(front_handle(), prop, MPV_FORMAT_NODE, (void *)arg(cmd, 2));
+            int r = !strcmp(prop, "end") ? set_end(front_handle(), arg(cmd, 2))
+                                         : mpv_set_property(front_handle(), prop, MPV_FORMAT_NODE, (void *)arg(cmd, 2));
             reply(fd, id, r < 0 ? mpv_error_string(r) : "success", NULL);
         } else {
             LOG("ipc: set_property %s is not on the list", prop);
@@ -677,7 +1267,11 @@ static void handle(int fd, const char *line, size_t len)
         int replaces = nargs < 3 || !arg_str(cmd, 2) || !strcmp(arg_str(cmd, 2), "replace");
         if (ok) forward_front(fd, id, cmd, replaces);
         else reply(fd, id, "invalid parameter", NULL);
-    } else if (!strcmp(name, "pvj-crossfade") && (nargs == 3 || nargs == 4)) {
+    } else if (!strcmp(name, "pvj-shader") && nargs >= 4 && nargs <= 5) {
+        shader_command(fd, id, cmd);
+    } else if (!strcmp(name, "pvj-source") && nargs >= 3) {
+        source_command(fd, id, cmd);
+    } else if (!strcmp(name, "pvj-crossfade") && nargs >= 3 && nargs <= 5) {
         crossfade(fd, id, cmd);
     } else if ((!strcmp(name, "stop") || !strcmp(name, "playlist-shuffle")) && nargs == 1) {
         forward_front(fd, id, cmd, !strcmp(name, "stop"));
@@ -713,7 +1307,9 @@ static void handle(int fd, const char *line, size_t len)
         }
     } else if (!strcmp(name, "screenshot-to-file") && (nargs == 2 || nargs == 3) && arg_str(cmd, 1) && arg_str(cmd, 1)[0] == '/') {
         const char *f = nargs == 3 ? arg_str(cmd, 2) : "subtitles";
-        if (f && (!strcmp(f, "video") || !strcmp(f, "window") || !strcmp(f, "subtitles"))) forward(fd, id, front_handle(), cmd);
+        if (f && (!strcmp(f, "video") || !strcmp(f, "window") || !strcmp(f, "subtitles") || !strcmp(f, "pvj-screen"))) {
+            if (!native_screenshot(fd, id, arg_str(cmd, 1), f)) forward(fd, id, front_handle(), cmd);
+        }
         else reply(fd, id, "invalid parameter", NULL);
     } else if (!strcmp(name, "overlay-add") && (nargs == 10 || nargs == 12)) {
         // id, x, y, file, offset, fmt, w, h, stride[, dw, dh]: a file by its path only (mpv's "@fd" and "&addr"
@@ -769,6 +1365,19 @@ static void handle(int fd, const char *line, size_t len)
         reply(fd, id, r < 0 ? mpv_error_string(r) : "success", NULL);
     } else if (!strcmp(name, "pvj-capture") && nargs == 2) {
         capture(fd, id, arg_str(cmd, 1));
+#ifdef PVJ_RENDER_TEST_HOOKS
+    } else if (!strcmp(name, "pvj-test-buffer") && nargs == 2) {
+        // the buffer as the plane gets it, corner and all: only a test can see the frame that goes out while it is small
+        pthread_mutex_lock(&app.lock);
+        app.capture_buffer = 1;
+        pthread_mutex_unlock(&app.lock);
+        capture(fd, id, arg_str(cmd, 1));
+    } else if (!strcmp(name, "pvj-test-refuse") && nargs == 1) {
+        out_test_refuse();
+        reply(fd, id, "success", NULL);
+#endif
+    } else if (!strcmp(name, "pvj-final") && nargs == 2) {
+        final_command(fd, id, arg(cmd, 1));
     } else if (!strcmp(name, "quit") && nargs <= 2) {
         reply(fd, id, "success", NULL);
         pthread_mutex_lock(&app.lock);

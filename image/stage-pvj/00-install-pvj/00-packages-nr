@@ -13,3 +13,6 @@ libgles-dev
 libgbm-dev
 libdrm-dev
 alsa-utils
+g++
+ableton-link-dev
+libasio-dev

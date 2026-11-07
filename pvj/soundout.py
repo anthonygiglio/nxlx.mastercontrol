@@ -20,6 +20,8 @@ import struct
 import threading
 import time
 
+from . import clock as clock_mod
+from . import link as link_mod
 from . import oscfeedback as fb
 from . import paths
 from . import sound as sound_mod
@@ -28,7 +30,7 @@ from . import sound as sound_mod
 SOURCES = ("level", "beat") + tuple("band%d" % (i + 1) for i in range(len(sound_mod.BANDS)))
 REST_MIN, REST_MAX = 0.0, 1.0
 DEPTH_MIN, DEPTH_MAX = -1.0, 1.0
-SMOOTH_MIN, SMOOTH_MAX = 0.5, 10.0
+SMOOTH_MIN, SMOOTH_MAX = 0.05, 10.0
 NAME_MAX = 64
 DEFAULT_MAP = {"on": False, "input": "", "source": "level", "rest": 0.0, "depth": 0.5, "smooth": 1.5}
 # The sources (D97): what pvj-sound hears. The device is the one capture device; the others are fed in by the panel.
@@ -249,6 +251,14 @@ def _udp():
     return sock
 
 
+CLOCK_BACK = 4              # the clock's count may step back this far (a phase nudge) without the next beat counting twice
+
+# What the levels are while the box clock stands in for sound that is not there (no device, or none heard).
+QUIET = {"seq": 0, "flags": 0, "time": 0.0, "blocks": 0, "rate": 0, "rms_db": sound_mod.FLOOR_DB, "level": 0.0, "envelope": 0.0,
+         "onset": 0.0, "pulse": 0.0, "bpm": 0.0, "confidence": 0.0, "beats": 0, "bands": [], "peak_db": sound_mod.FLOOR_DB,
+         "slow_bands": [0.0] * len(sound_mod.BANDS), "capturing": False, "beat": False, "onset_flag": False, "clipped": False,
+         "idle": True, "fresh": True, "age": 0.0}
+
 # --- the fed sources (D97) ----------------------------------------------------------------------------------------------------
 METER_LABEL = "pvjsound"
 # A filter that passes the sound through unchanged and leaves its RMS and peak level per audio frame as metadata.
@@ -263,23 +273,28 @@ IN_ALL_RATE, IN_ALL_BURST = 160.0, 40.0     # from all senders: at most 200
 
 # --- the shader input -------------------------------------------------------------------------------------------------------
 MAP_EVERY = 0.5                 # a new value at most twice a second (the classic renderer compiles each one)
+MAP_EVERY_NATIVE = 0.05         # on the New renderer nothing is compiled (D106): at most twenty a second, so a beat shows
 MAP_STEP = 0.02                 # and only when it moved by this share of the input's range
 
 
 class Sound:
     """The panel's side. `api` gives the settings, the OSC manager, the render bridge and the shader engine."""
 
-    def __init__(self, api, socket_path=None, levels_path=None, proc=sound_mod.PROC, clock=time.monotonic, log=print, udp=_udp):
+    def __init__(self, api, socket_path=None, levels_path=None, proc=sound_mod.PROC, clock=time.monotonic, log=print, udp=_udp,
+                 link_socket=None, link_state=None):
         self.api = api
         self.client = Client(socket_path or paths.sound_socket())
         self.levels_path = levels_path or paths.sound_levels()
         self.proc = proc
         self._clock, self.log, self._udp = clock, log, udp
+        self.clock = clock_mod.Clock(now=clock)      # the box clock (D116): tap, OSC and the sound's tempo, kept by itself
+        self.link = link_mod.Link(api, self.clock, Client(link_socket or paths.link_socket()), link_state, now=clock)   # D117
         self.lock = threading.Lock()        # not in the order of pvj/locks.py: never held over a call out
         self.gen = 1
         self.helper = {"running": False}
         self.helper_at = None
         self._thread = None
+        self._map_thread = None             # the shader input's own thread, started and stopped with _thread
         self._stop = threading.Event()
         self._caps = {}                     # (address, port) -> _Caps
         self._all = None
@@ -289,7 +304,9 @@ class Sound:
         self._smooth = None                 # (time, value) of the slow source
         self._map_sent = None               # (shader id, epoch, input, value)
         self._map_at = None
+        self._map_moving = False            # the last look reached a shader: only then is the New renderer's gap used
         self._last_beats = None
+        self._last_src = False
         self._feeder, self._feed_stop = None, threading.Event()
         self.feed_why, self.meter_why = "", None
         self._in_latest, self._in_at, self._in_hosts = None, 0.0, None
@@ -356,15 +373,40 @@ class Sound:
                 self.push()
         self.ensure()
         self.ensure_feeder()
+        try:
+            self.link.tick()                    # the Link helper told again after a restart of either (D117)
+            self.clock.tick(self._clock())      # the box clock hands over from a source gone quiet (D116)
+            self.levels()                       # and hears pvj-sound even while nobody looks at the meter
+        except Exception as e:
+            self.log("pvj-web: box clock tick: %s" % e)
 
     def levels(self):
         """The last record of the levels file, with "fresh" (younger than STALE_SECONDS), or None."""
+        self.link.hear()                        # read here, with the levels: nothing at all while Link is off (D117)
         v = sound_mod.read_levels(self.levels_path)
-        if v is None:
-            return None
-        v["age"] = max(0.0, time.monotonic() - v["time"])
-        v["fresh"] = v["age"] <= sound_mod.STALE_SECONDS
-        return v
+        if v is not None:
+            v["age"] = max(0.0, time.monotonic() - v["time"])
+            v["fresh"] = v["age"] <= sound_mod.STALE_SECONDS
+        live = v is not None and v["fresh"] and v["capturing"]
+        if live:
+            self.clock.sound(v["bpm"], v["confidence"], v["beats"], at=v["time"])      # the clock's own rules decide how far it is believed
+        return self.follow_clock(v, live)
+
+    @staticmethod
+    def live(v):
+        """Whether the sending thread has something to send: sound that is being heard now, or the box clock's beat."""
+        return v is not None and v["fresh"] and (v["capturing"] or bool(v.get("clock")))
+
+    def follow_clock(self, v, live):
+        """The beat pulse, the tempo and the beat count of a record are the box clock's while Link, a tap or OSC steers it, so
+        what follows the beat follows the clock, with or without a sound device (D116). Otherwise the record is returned
+        as it is, untouched. Without live sound the record is a quiet one: the levels are zero and nothing is heard."""
+        got = self.clock.reading(self._clock())
+        if got is None or got["source"] not in clock_mod.FOLLOWED:
+            return v
+        out = dict(v) if live else dict(QUIET, time=self._clock())
+        out.update(pulse=got["pulse"], bpm=got["bpm"], confidence=1.0, beats=got["beat_count"], clock=True)
+        return out
 
     def devices(self):
         return sound_mod.capture_devices(self.proc)
@@ -377,29 +419,39 @@ class Sound:
     def ensure(self):
         want = self.needed()
         with self.lock:
-            running = self._thread is not None and self._thread.is_alive()
-            if want and not running:
+            alive = [t for t in (self._thread, self._map_thread) if t is not None and t.is_alive()]
+            if want and len(alive) < 2:
+                self._stop.set()                # what is left of an earlier pair ends with it
                 self._stop = threading.Event()
                 self._thread = threading.Thread(target=self._loop, args=(self._stop,), name="sound-out", daemon=True)
+                self._map_thread = threading.Thread(target=self._map_loop, args=(self._stop,), name="sound-map", daemon=True)
                 self._thread.start()
-            elif not want and running:
+                self._map_thread.start()
+            elif not want and alive:
                 self._stop.set()
-                self._thread = None
+                self._thread = self._map_thread = None
 
     def stop(self):
         with self.lock:
             self._stop.set()
-            self._thread = None
+            self._thread = self._map_thread = None
         self.stop_feeder()
 
     def plan(self, v, now):
         """The datagrams of this look at the file: a beat at once, the values every SEND_EVERY, the slow bands every
         BANDS_EVERY."""
         msgs = []
-        if self._last_beats is not None and v["beats"] != self._last_beats:
-            msgs.append(beat_message(v["beats"]))
+        src, n = bool(v.get("clock")), v["beats"]
+        if self._last_beats is None or src != self._last_src:
+            self._last_beats = n                    # who supplies the count changed: a silent resync, no message
+        elif n > self._last_beats:
+            msgs.append(beat_message(n))
             self.stats["beats"] += 1
-        self._last_beats = v["beats"]
+            self._last_beats = n
+        elif n < self._last_beats and not (src and self._last_beats - n <= CLOCK_BACK):
+            self._last_beats = n                    # a count that went down (the service started again): silent resync
+        # (a small step back of the clock's own count, a nudge, keeps the highest sent: it must not beat twice)
+        self._last_src = src
         if now >= self._plan["next_send"]:
             msgs.append(values_bundle(v))
             self._plan["next_send"] = now + SEND_EVERY
@@ -430,7 +482,7 @@ class Sound:
                     cfg_at = (now, gen, self.config())
                 cfg = cfg_at[2]
                 v = self.levels()
-                live = v is not None and v["fresh"] and v["capturing"]
+                live = self.live(v)
                 osc = cfg["osc_state"] or cfg["osc_render"]
                 if live and osc:
                     if sock is None:
@@ -441,14 +493,30 @@ class Sound:
                 elif sock is not None:
                     sock.close()
                     sock = None
-                if cfg["map"]["on"]:
-                    self.map_step(cfg["map"], v if live else None, now)
-                stop.wait(LOOK_EVERY if live and osc else (0.05 if cfg["map"]["on"] else IDLE_LOOK))
+                stop.wait(LOOK_EVERY if live and osc else IDLE_LOOK)
         except Exception as e:                   # the thread must not take the panel down; it is started again by tick
             self.log("pvj-web: sound out stopped: %s" % e)
         finally:
             if sock is not None:
                 sock.close()
+
+    def _map_loop(self, stop):
+        """The shader input has a thread of its own: a value can wait on the player, and a beat must not wait for it."""
+        cfg_at = None
+        try:
+            while not stop.is_set():
+                now = self._clock()
+                with self.lock:
+                    gen = self.gen
+                if cfg_at is None or cfg_at[1] != gen or now - cfg_at[0] >= TARGETS_EVERY:
+                    cfg_at = (now, gen, self.config())
+                m = cfg_at[2]["map"]
+                if m["on"]:
+                    v = self.levels()
+                    self.map_step(m, v if self.live(v) else None, now)
+                stop.wait(0.05 if m["on"] else IDLE_LOOK)
+        except Exception as e:                   # as _loop: tick starts it again
+            self.log("pvj-web: sound map stopped: %s" % e)
 
     def targets(self, cfg):
         """[(kind, name, address, port)] where sound may go now; the reason for each that is left out is noted in
@@ -544,7 +612,7 @@ class Sound:
         return bands[n] if 0 <= n < len(bands) else 0.0
 
     def map_step(self, m, v, now):
-        """Smooth the source, and at most every MAP_EVERY send the input a new value if it moved enough."""
+        """Smooth the source, and at most every map_gap() send the input a new value if it moved enough."""
         raw = self.source_value(m, v)
         if self._smooth is None:
             self._smooth = (now, 0.0)          # from where it rests: never a jump when it is switched on
@@ -552,12 +620,18 @@ class Sound:
         dt = max(0.0, now - t0)
         y += (1.0 - math.exp(-dt / m["smooth"])) * (raw - y)
         self._smooth = (now, y)
-        if self._map_at is not None and now - self._map_at < MAP_EVERY:
+        if self._map_at is not None and now - self._map_at < (self.map_gap() if self._map_moving else MAP_EVERY):
             return
         self._map_at = now
         what, value = self._apply(m, y)
+        self._map_moving = value is not None
         with self.lock:
             self.map_state = {"what": what, "value": value, "at": time.time()}
+
+    def map_gap(self):
+        """Seconds between two values: the slow classic gap unless the shader on the screen is the New renderer's own."""
+        playing = getattr(getattr(self.api, "shaders", None), "playing", None)
+        return MAP_EVERY_NATIVE if playing and playing.get("native") else MAP_EVERY
 
     def _input_of(self, m):
         """(the shader on the screen, its input of that name) or (on, None), or (None, None)."""
@@ -806,8 +880,10 @@ class Sound:
                     latest["envelope"] = min(1.0, max(0.0, float(nums[0])))
                 elif name == "beat":
                     latest["beat"] = True
+                    self.clock.osc_beat(now)
                 elif name == "bpm" and nums:
                     latest["bpm"] = min(400.0, max(0.0, float(nums[0])))
+                    self.clock.osc_bpm(nums[0], now)
                 elif name == "bands" and nums:
                     latest["bands"] = [min(1.0, max(0.0, float(x))) for x in nums[:len(sound_mod.BANDS)]]
                 else:

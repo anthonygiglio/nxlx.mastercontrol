@@ -71,6 +71,30 @@ def probe(path, mpv_bin="mpv", timeout=20):
     return dict(info)
 
 
+LENGTH = "PVJLEN|"
+
+
+def exact(path, mpv_bin="mpv", timeout=20):
+    """(seconds, the container as mpv calls it, the video's codec) of the file at `path`: the length as mpv gives it, to
+    the microsecond, for a loop list's `duration` lines (D118; `probe` rounds to 2 places, which is what a person reads).
+    The same bounded look as `probe`, and only ever on a thread of its own: it starts a program. Raises ProbeError."""
+    args = [mpv_bin, "--no-config", "--vo=null", "--ao=null", "--frames=1", "--load-unsafe-playlists=no",
+            "--access-references=no", "--ytdl=no", "--load-scripts=no",
+            "--term-playing-msg=" + LENGTH + "${=duration}|${file-format}|${video-format}", "--", path]
+    try:
+        r = subprocess.run(args, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout,
+                           env=dict(os.environ, HOME="/nonexistent"))
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise ProbeError("could not read the file: %s" % e)
+    lines = [l for l in r.stdout.splitlines() if l.startswith(LENGTH)]
+    if not lines:
+        raise ProbeError("the player could not open this file")
+    parts = lines[0][len(LENGTH):].split("|")
+    if len(parts) != 3:
+        raise ProbeError("unexpected answer from the player")
+    return _number(parts[0], float), parts[1] or None, parts[2] or None
+
+
 HEAVY = ("prores", "dnxhd", "dnxhr", "cfhd", "rawvideo", "v210", "qtrle", "ffv1", "huffyuv", "utvideo")
 
 

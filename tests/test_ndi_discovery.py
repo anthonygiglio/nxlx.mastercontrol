@@ -566,6 +566,7 @@ class Panel(PadBase):
         confdir = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, confdir, True)
         self.api.ndi.config_dir = self.service.config_dir = confdir
+        self.service.transport = ndi.CONFIG_TRANSPORT                           # as if the library had been started with this folder
         for dev in (self.operator, self.guest):
             self.later()
             self.assertEqual(self.h("POST", "/api/ndi", {"action": "own_discovery", "on": True}, dev)[0], 403)
@@ -575,11 +576,11 @@ class Panel(PadBase):
         out = self.h("GET", "/api/ndi", {}, self.owner)[1]
         self.assertEqual((out["discovery"], out["discovery_saved"]), (["192.168.1.9"], []))
         with open(os.path.join(confdir, ndi.CONFIG_NAME)) as f:
-            self.assertEqual(json.load(f), {"ndi": {"networks": {"discovery": "192.168.1.9"}}})
+            self.assertEqual(json.load(f)["ndi"]["networks"], {"discovery": "192.168.1.9"})
         self.addrs[0] = ("eth0", "192.168.1.77")                                # the server moves: so does what the input asks
         self.api.ndisc_tick()
         with open(os.path.join(confdir, ndi.CONFIG_NAME)) as f:
-            self.assertEqual(json.load(f), {"ndi": {"networks": {"discovery": "192.168.1.77"}}})
+            self.assertEqual(json.load(f)["ndi"]["networks"], {"discovery": "192.168.1.77"})
         self.assertEqual(self.settings.data["ndi"].get("own_discovery"), True)
         self.assertNotIn("discovery", self.settings.data["ndi"], "the address of the moment is not saved as a server")
         self.h("POST", "/api/ndi", {"action": "sound", "on": True}, self.owner)
@@ -587,7 +588,7 @@ class Panel(PadBase):
         self.h("POST", "/api/ndi", {"action": "own_discovery", "on": False}, self.owner)
         self.assertNotIn("own_discovery", self.settings.data["ndi"])
         with open(os.path.join(confdir, ndi.CONFIG_NAME)) as f:
-            self.assertEqual(json.load(f), {"ndi": {}})
+            self.assertNotIn("networks", json.load(f)["ndi"])
 
     def test_the_setting_is_not_exported_and_an_older_release_ignores_it(self):
         self.switch(True)

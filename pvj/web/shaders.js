@@ -488,6 +488,12 @@
     }
     // One change: the answer is the whole state, or a short one (then the state is asked for a moment later). A
     // refusal is said in the card it belongs to.
+    // A shader that is the picture of Source 2 and up and could not be built again after a change (D106 step e)
+    function notBuilt(d) {
+      var rows = d && d.sources_not_rebuilt;
+      if (!rows || !rows.length) return;
+      c.say(rows.map(function (x) { return 'Source ' + x.source + ' keeps ' + x.id + ' as it was: ' + x.why; }).join(' '), true);
+    }
     function send(path, payload, done, msgId) {
       return c.api('POST', path, payload).then(function (r) {
         if (!root.isConnected) return r;
@@ -497,6 +503,7 @@
         if (said) { said.textContent = ''; said.className = 'msg inmsg'; }
         if (r.data && r.data.shaders) draw(r.data); else soon(600);
         if (done) done(r.data);
+        notBuilt(r.data);
         c.poll();
         return r;
       });

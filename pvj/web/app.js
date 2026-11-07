@@ -495,6 +495,10 @@
       if (!pad.file && !held && !src && !cue) return say(canOp() ? 'Empty pad. Tap "Edit pads" to assign a clip, a shader, an NDI source or a render cue.' : 'Empty pad.', true);
       if (src && !can('live')) return say(guestsLocked() ? LOCKED_TEXT : NDI_PAD_GUEST, true);     // never sent: the box refuses a guest an NDI pad (D80)
       if (cue && !can('live')) return say(guestsLocked() ? LOCKED_TEXT : RENDER_PAD_GUEST, true);     // never sent: the box refuses it to a guest (D94)
+      // Play to (D101): with another source chosen, the pad's clip goes there, and on the New renderer a shader pad's
+      // shader (D106 step d); the box refuses anything else in plain words (an NDI source and a render cue play on
+      // Source 1, and a shader too on classic)
+      if (S.playTo > 1 && canOp()) return playToSource({ pad: [bank, index] }, S.playTo, pad.label || pad.file || 'the pad');
       if (cue && !cue.show) return act('POST', '/api/play', { pad: [bank, index] }, function () { say('Cue sent to ' + padRenderName(cue) + ' (OSC has no reply).'); });
       if (canGuest()) return guestSend('/api/play', { pad: [bank, index] }, '', b);
       if (!can('live')) return say(guestsLocked() ? LOCKED_TEXT : 'This device can watch only.', true);
@@ -526,9 +530,173 @@
     if (b.textContent !== text) b.textContent = text;
     b.setAttribute('aria-label', fade === 'out' ? 'Fade in (the picture is faded out)' : fade === 'in' ? 'Fade in (fading in now)' : text);
   }
+  // ---- sources (D101) ----------------------------------------------------
+  // Sources 2 and up are clip layers of the New renderer beside the player's own picture (Source 1); the mapping
+  // chooses which one each surface shows. A play to one is a cut, with no sound.
+  function playToSource(body, k, what) {
+    return act('POST', '/api/play', Object.assign({ source: k }, body), function (r) {
+      say('Source ' + k + ' plays ' + (r.playing || what) + (r.warning ? ': ' + r.warning : '.'));
+      sourcesSeen(null);
+    });
+  }
+  // How many sources the box has (GET /api/sources), asked when the pads or the mapping are drawn; the pads are
+  // drawn again only when the number changes. A box without them (classic) has one, and no Play to is shown.
+  function sourcesSeen(data) {
+    if (data) {
+      var n = data.count || 1, was = S.sourceCount || 1;
+      S.sourceCount = n;
+      if (S.playTo > n) S.playTo = 1;
+      if (n !== was && document.getElementById('pads')) redrawPart('pads');
+      if (S.mapSources) S.mapSources(n);         // the mapping card's Shows follows too (review of #153)
+      return;
+    }
+    if (!canOp()) return;
+    api('GET', '/api/sources').then(function (r) { if (r.ok) sourcesSeen(r.data); });
+  }
+  function playToRow() {
+    var n = S.sourceCount || 1;
+    if (!canOp() || n < 2) return null;
+    var choices = []; for (var k = 1; k <= n; k++) choices.push(k);
+    var pick = h('select', { class: 'text-input', id: 'playto', 'aria-label': 'Play the pads to' }, choices.map(function (k) {
+      return h('option', { value: String(k), text: 'Source ' + k + (k === 1 ? ' (the player)' : ''), selected: k === (S.playTo || 1) });
+    }));
+    pick.addEventListener('change', function () { S.playTo = +pick.value; });
+    return h('div', { class: 'row', id: 'playtorow' }, h('span', { class: 'k', text: 'Play to' }), pick,
+      h('span', { class: 'hint grow', text: 'Source 1 is what plays as always. A clip pad sent to another source (or a shader pad, on the New renderer) shows on the surfaces that show it (Projection mapping).' }));
+  }
+  function sourcesCard() {
+    var body = h('div', { class: 'list', id: 'srclist' }, h('div', { class: 'hint', text: 'Loading...' }));
+    var card = h('div', { class: 'card', id: 'mapsources' }, h('div', { class: 'k', text: 'Sources' }), body);
+    var timer = null, chosen = {};          // the clip chosen for each source survives the strip's redraws
+    // The New renderer's chains (D106 step e): what each source's effect slots hold, and the libraries to choose
+    // from, asked with the strip. On classic, or a player without chains, `chain.available` is false and the strip
+    // is as it was.
+    // `opened`: the advanced sections opened or closed by hand, kept over the redraws; `sliding`: an amount being
+    // dragged, which a redraw would take out of the hand (the strip waits for its release)
+    var chain = null, lib = { effects: null, shaders: null, at: 0 }, opened = {}, sliding = null;
+    function libraries() {
+      // Asked again after a minute, and sooner (10 s) when the chain names something the lists do not have: an
+      // upload since. (With the Shaders module off both answer with an error, and nothing is offered.)
+      var age = Date.now() - lib.at;
+      var missing = lib.effects && (chain.chains || []).some(function (c) {
+        return !(c.slot === 0 ? lib.shaders : lib.effects).some(function (x) { return x.id === c.id; }); });
+      if (lib.effects && age < 60000 && !(missing && age > 10000)) return Promise.resolve();
+      return Promise.all([api('GET', '/api/effects'), api('GET', '/api/shaders')]).then(function (rs) {
+        lib.effects = rs[0] && rs[0].ok ? (rs[0].data.effects || []).filter(function (x) { return !x.error; }) : [];
+        lib.shaders = rs[1] && rs[1].ok ? (rs[1].data.shaders || []).filter(function (x) { return !x.error; }) : [];
+        lib.at = Date.now();
+      });
+    }
+    function load() {
+      clearTimeout(timer);
+      api('GET', '/api/sources').then(function (r) {
+        if (!card.isConnected && card.dataset.shown) return;            // the page was left: nothing more is asked
+        card.dataset.shown = '1';
+        if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'hint', text: r.data.error || 'Not available' })); return; }
+        timer = setTimeout(function () { if (card.isConnected) load(); }, 4000);
+        // the chains only where there are sources to hold them: classic (one source) is asked nothing more
+        (r.data.count >= 2 ? api('GET', '/api/effects/chain') : Promise.resolve(null)).then(function (c) {
+          chain = c && c.ok && c.data.available ? c.data : null;
+          sourcesSeen(r.data);
+          (chain ? libraries() : Promise.resolve()).then(function () {
+            if (sliding && sliding.isConnected) return;                 // an amount in the hand: drawn again next time
+            sliding = null;
+            keepCursor(body, function () { fill(r.data); });
+          });
+        });
+      });
+    }
+    // One effect slot of a source: the effect in it (or a choice of one), On, Off, and its amount while it is on.
+    function slotRow(k, slot) {
+      var on = (chain.chains || []).filter(function (c) { return c.source === k && c.slot === slot; })[0];
+      var id = 'srcfx-' + k + '-' + slot;
+      // the one chosen by hand stays chosen over the redraws until it is put on (or another is)
+      var pick = h('select', { class: 'text-input', id: id, 'aria-label': 'Effect ' + slot + ' of Source ' + k },
+        lib.effects.map(function (e) { return h('option', { value: e.id, text: e.name || e.id, selected: chosen[id] ? chosen[id] === e.id : !!on && on.id === e.id }); }));
+      pick.addEventListener('change', function () { chosen[id] = pick.value; });
+      var row = h('span', { class: 'row', id: id + '-row' }, h('span', { class: 'k', text: slot === 1 ? 'Effect' : 'Effect ' + slot }), pick,
+        h('button', { class: 'btn small', id: 'srcfxon-' + k + '-' + slot, text: on ? 'Change' : 'On', disabled: !lib.effects.length, onclick: function () {
+          act('POST', '/api/effects/chain', { source: k, slot: slot, id: pick.value }, function () { delete chosen[id]; say('Source ' + k + ': ' + pick.value + ' is on.'); load(); });
+        } }),
+        h('button', { class: 'btn small', id: 'srcfxoff-' + k + '-' + slot, text: 'Off', disabled: !on, onclick: function () {
+          act('POST', '/api/effects/chain', { source: k, slot: slot, off: true }, function () { say('Source ' + k + ': the effect is off.'); load(); });
+        } }));
+      if (on) {
+        var amt = h('input', { type: 'range', min: '0', max: '1', step: '0.01', id: 'srcfxamt-' + k + '-' + slot, 'aria-label': 'Amount of effect ' + slot + ' of Source ' + k,
+          value: String(on.controls && typeof on.controls.amount === 'number' ? on.controls.amount : 1) });
+        amt.addEventListener('input', function () { sliding = amt; });
+        amt.addEventListener('change', function () { sliding = null; act('POST', '/api/effects/chain', { source: k, slot: slot, controls: { amount: +amt.value } }); });
+        row.appendChild(amt);
+      }
+      return row;
+    }
+    // What a source may hold beside its clip on the New renderer: a shader as its picture (Sources 2 and up), one
+    // effect, and (advanced, the owner's to see: D74 had one effect) two more after it. The box says which slots a
+    // source has (slot 0 is the shader that is its picture, never an effect) and whether Effects and Shaders are on.
+    function chainRows(k, x) {
+      var out = [], slots = (chain.slots && chain.slots[k]) || [];
+      var gen = (chain.chains || []).filter(function (c) { return c.source === k && c.slot === 0; })[0];
+      if (slots.indexOf(0) >= 0 && chain.shaders !== false && lib.shaders.length) {
+        var pid = 'srcshader-' + k, playing = gen ? gen.id : x.shader;
+        var sp = h('select', { class: 'text-input', id: pid, 'aria-label': 'Shader for Source ' + k },
+          lib.shaders.map(function (s) { return h('option', { value: s.id, text: s.name || s.id, selected: chosen[pid] ? chosen[pid] === s.id : playing === s.id }); }));
+        sp.addEventListener('change', function () { chosen[pid] = sp.value; });
+        out.push(h('span', { class: 'row', id: pid + '-row' }, h('span', { class: 'k', text: 'Shader' }), sp,
+          h('button', { class: 'btn small', id: 'srcshaderplay-' + k, text: 'Play', onclick: function () {
+            var want = sp.value;
+            playToSource({ shader: want }, k, want).then(function () { if (chosen[pid] === want) delete chosen[pid]; load(); });
+          } })));
+      }
+      if (chain.effects === false) return out;            // Effects off: a shader may still be a source's picture
+      if (slots.indexOf(1) >= 0) out.push(slotRow(k, 1));
+      var after = slots.filter(function (s) { return s >= 2; });
+      if (!after.length) return out;
+      var summary = h('summary', { text: k > 1 ? 'More effects (advanced)' : 'More effects after the Effect (advanced)' });
+      var more = h('details', { class: 'srcmore', id: 'srcmore-' + k }, summary,
+        h('div', { class: 'hint', text: k > 1 ? 'Effects run in order: Effect, then 2, then 3, each over what the one before made.'
+          : 'Source 1\'s first effect is the one under Effect. These run after it, in order.' }));
+      after.forEach(function (s) { more.appendChild(slotRow(k, s)); });
+      // open where one of them is on, or as it was left by hand (kept over the strip's redraws: the review of #172)
+      more.open = k in opened ? opened[k] : (chain.chains || []).some(function (c) { return c.source === k && c.slot >= 2; });
+      summary.addEventListener('click', function () { opened[k] = !more.open; });
+      out.push(more);
+      return out;
+    }
+    function fill(d) {
+      body.textContent = '';
+      if (d.count < 2) {
+        body.appendChild(h('div', { class: 'hint', id: 'srcclassic', text: 'Sources 2 and up need the New renderer (Setup > Renderer). The classic player has Source 1 only: every surface shows it.' }));
+        return;
+      }
+      var clips = (S.media || []).filter(function (n) { return /\.(mp4|mkv|mov|avi|webm|m4v|mpg|mpeg|ts|wmv|png|jpe?g|gif|bmp|webp)$/i.test(n); });
+      d.sources.forEach(function (x) {
+        var k = x.source, what = x.idle ? 'nothing' : (x.name || 'something') + (x.height ? ' (' + x.height + 'p)' : '');
+        var row = h('div', { class: 'item', id: 'src-' + k }, h('span', { class: 'grow', id: 'srcnow-' + k, text: 'Source ' + k + ': ' + what + (k === 1 ? ' (the player: Play and Stop)' : '') }));
+        if (k > 1) {
+          var pick = h('select', { class: 'text-input', id: 'srcclip-' + k, 'aria-label': 'Clip for Source ' + k },
+            clips.map(function (n) { return h('option', { value: n, text: n, selected: n === chosen[k] }); }));
+          pick.addEventListener('change', function () { chosen[k] = pick.value; });
+          row.appendChild(h('span', { class: 'row' }, pick,
+            h('button', { class: 'btn small', id: 'srcplay-' + k, text: 'Play', disabled: !clips.length, onclick: function () {
+              playToSource({ file: pick.value }, k, pick.value).then(load);
+            } }),
+            h('button', { class: 'btn small', id: 'srcstop-' + k, text: 'Stop', disabled: x.idle, onclick: function () {
+              act('POST', '/api/sources', { source: k, action: 'stop' }, function () { say('Source ' + k + ' stopped.'); load(); });
+            } })));
+        }
+        if (chain) chainRows(k, x).forEach(function (el) { row.appendChild(el); });
+        body.appendChild(row);
+      });
+      if (d.warning) body.appendChild(h('div', { class: 'hint warn', id: 'srcwarn', role: 'status', text: 'A source plays a clip of more than 720 lines while two others play: ' + d.warning + '.' }));
+      body.appendChild(h('div', { class: 'hint', text: 'A surface shows the source chosen under Shows. Sources 2 and up have no sound and take a clip (or a shader, on the New renderer) at a cut; the crossfade is Source 1\'s.' }));
+    }
+    load();
+    return card;
+  }
   function live() {
     var bank = S.banks[S.bank];
     var pads = h('div', { class: 'pads', id: 'pads' });
+    if (canOp() && !S.sourcesAsked) { S.sourcesAsked = true; sourcesSeen(null); }
     (bank ? bank.pads : []).forEach(function (p, i) { pads.appendChild(padButton(S.bank, i, p)); });
     // Play > Pads (D65, D72): the pads with their banks, the big Vibes button above them as it was on Live, how one
     // clip gives way to the next (transitionCard(), which was on Shape > Picture), and the snapshot. What Live also
@@ -542,6 +710,7 @@
         return h('button', { class: 'btn' + (i === S.bank ? ' on' : ''), text: b.name.replace('Bank ', 'Bank '), 'aria-pressed': i === S.bank ? 'true' : 'false',
           onclick: function () { S.bank = i; redrawPart('pads'); } });
       })),
+      playToRow(),
       pads,
       canOp() ? h('button', { class: 'btn small', text: S.editing ? 'Done editing' : 'Edit pads', onclick: function () { S.editing = !S.editing; redrawPart('pads'); } }) : null,
       transitionCard(),
@@ -1143,6 +1312,7 @@
       body.appendChild(h('div', { class: 'card' }, h('div', { class: 'k', text: 'Projection mapping (beta)' }), h('div', { class: 'hint', id: 'mapmsg', text: 'Off. Switch it on under Setup, Projection mapping (beta).' })));
       return card;
     }
+    if (canOp()) card.appendChild(sourcesCard());        // what each source plays (D101): the Operator's, as play
     var full = canOp(), d = null, canvas = null, drag = null, lastSend = 0, waiting = null;      // the mapping is the Operator's (D80)
     // Answers can arrive out of order (the first state read can land after a change already drawn): each request is
     // numbered, and an answer older than one already drawn is not drawn.
@@ -1257,6 +1427,11 @@
     // Every answer rebuilds the card, and one can arrive while a name is being typed or the canvas is being moved
     // with the arrow keys: the control in use keeps the cursor, and a field what was typed into it.
     function draw(data) { keepCursor(body, function () { build(data); }); }
+    // the Sources strip learns the box's number of sources every few seconds: Shows is drawn again when it differs
+    S.mapSources = function (n) {
+      if (!body.isConnected) { S.mapSources = null; return; }
+      if (d && d.sources !== n && !drag) { d.sources = n; draw(d); }
+    };
     // The screen as a desk (the owner, 2026-10-10: room to design the layout, and a place for what each surface
     // will get later). The display is drawn at its own aspect, as large as the room above the strip allows, with
     // what acts on the whole display under it: Mapping on, Edit on the display, Screen or Picture corners, Test
@@ -1360,7 +1535,7 @@
       var list = h('div', { class: 'list', id: 'maplist' });
       d.surfaces.forEach(function (x, i) {
         list.appendChild(h('div', { class: 'item map-entry' + (x.id === d.edit.selected ? ' on' : '') },
-          h('button', { class: 'linkish', text: x.name + ' (' + x.type + (x.type === 'grid' ? ' ' + x.cols + 'x' + x.rows : '') + ')' + (x.on ? '' : ', hidden'), 'aria-label': 'Choose ' + x.name,
+          h('button', { class: 'linkish', text: x.name + ' (' + x.type + (x.type === 'grid' ? ' ' + x.cols + 'x' + x.rows : '') + ')' + (x.source > 1 ? ', Source ' + x.source : '') + (x.on ? '' : ', hidden'), 'aria-label': 'Choose ' + x.name,
             onclick: function () { send({ action: 'edit', selected: x.id }); } }),
           h('span', { class: 'row' },
             h('button', { class: 'btn small', text: '↑', 'aria-label': 'Bring ' + x.name + ' forward', disabled: i === 0, onclick: function () { send({ action: 'order', id: x.id, dir: 'up' }); } }),
@@ -1394,6 +1569,18 @@
         var nm = h('input', { class: 'text-input', id: 'mapname', 'aria-label': 'Surface name', maxlength: 40, value: s.name });
         panel.appendChild(h('div', { class: 'row' }, nm, h('button', { class: 'btn small', id: 'maprename', text: 'Rename',
           onclick: function () { send({ action: 'rename', id: s.id, name: nm.value.trim() }); } })));
+        // What the surface shows (D101): Source 1, the player's picture, or on the New renderer another source.
+        // A source the box does not run now stays chosen (the mapping outlives a switch of the renderer) and is said.
+        var have = Math.max(1, d.sources || 1), mine = s.source || 1, choices = [];
+        for (var k = 1; k <= Math.max(have, mine); k++) choices.push(k);
+        var shows = h('select', { class: 'text-input', id: 'mapsource', 'aria-label': 'What ' + s.name + ' shows' }, choices.map(function (k) {
+          return h('option', { value: String(k), text: 'Source ' + k + (k === 1 ? ' (the player)' : ''), selected: k === mine });
+        }));
+        shows.addEventListener('change', function () { send({ action: 'source', id: s.id, source: +shows.value }); });
+        panel.appendChild(h('div', { class: 'row' }, h('span', { class: 'k', text: 'Shows' }), shows));
+        if (mine > have) panel.appendChild(h('div', { class: 'hint warn', id: 'mapsourcenote', role: 'status', text: 'Source ' + mine + ' needs the New renderer' +
+          (have > 1 ? ' with ' + mine + ' sources (it runs ' + have + ')' : '') + ': until then this surface shows Source 1.' }));
+        else if (have < 2) panel.appendChild(h('div', { class: 'hint', id: 'mapsourcenote', text: 'Sources 2 and up need the New renderer (Setup > Renderer).' }));
         if (s.type === 'grid') {
           var sizes = [1, 2, 3, 4, 5, 6, 7, 8];
           var cols = h('select', { class: 'text-input', id: 'mapcols', 'aria-label': 'Columns' }, sizes.map(function (v) { return h('option', { value: String(v), text: v + ' columns', selected: v === s.cols }); }));
@@ -2713,7 +2900,7 @@
       ['clip_prev', 'Previous clip'], ['clip_next', 'Next clip'], ['fadein', 'Fade in'],
       ['bank_pad', 'Play a pad of the controllers\' bank'], ['bank_prev', 'Controllers\' bank: the one before'], ['bank_next', 'Controllers\' bank: the next']])
     .concat([1, 2, 3, 4, 5, 6, 7, 8].map(function (n) { return ['scene_' + n, 'Room scene ' + n]; }))
-    .concat([['effect_amount', 'Effect: amount (fader)'], ['effect_toggle', 'Effect on / off'], ['effect_prev', 'Effect: the one before'], ['effect_next', 'Effect: the next one']])
+    .concat([['effect_amount', 'Effect: amount (fader)'], ['effect_toggle', 'Effect on / off'], ['effect_prev', 'Effect: the one before'], ['effect_next', 'Effect: the next one'], ['clock_tap', 'Tap the tempo (box clock)']])
     .concat([1, 2, 3, 4, 5, 6, 7, 8].map(function (n) { return ['effect_control_' + n, 'Effect: control ' + n + ' of the one that is on (knob)']; }))
     // a pairing code on the box's own display (System > People and codes switches it on): held 3 to 10 seconds, then let go
     .concat([['code_join', 'Show a one-time guest code on the display (hold 3 seconds, let go)'],
@@ -2723,7 +2910,7 @@
   // What an action is called on the drawn layout of a controller: short, since a control is a small box.
   var MIDI_SHORT = { shader_speed: 'Shader speed', shader_prev: 'Previous shader', shader_next: 'Next shader', shader_hue: 'Shader colour turn',
     shader_brightness: 'Shader brightness', vibes_ambient: 'Vibes: Ambient', vibes_show: 'Vibes: Show', vibes_dwell: 'Vibes time', bank_prev: 'Bank before', bank_next: 'Next bank',
-    effect_amount: 'Effect amount', effect_toggle: 'Effect on / off', effect_prev: 'Previous effect', effect_next: 'Next effect',
+    effect_amount: 'Effect amount', effect_toggle: 'Effect on / off', effect_prev: 'Previous effect', effect_next: 'Next effect', clock_tap: 'Tap tempo',
     code_join: 'Guest code (hold)', code_owner: 'Owner code (hold)',
     fade: 'Fade out / in', size: 'Zoom', rotate: 'Rotate', flip_h: 'Mirror left to right', flip_v: 'Mirror top to bottom', overlay: 'Overlay', seek_back: 'Back 10 s', seek_forward: 'Forward 10 s',
     loop: 'Loop', mute: 'Sound off / on', test_pattern: 'Test pattern', pause: 'Freeze / resume', mapping_mode: 'Mapping mode', layer_geometry: 'Geometry',
@@ -3187,10 +3374,19 @@
   // ---- the renderer (D95) -----------------------------------------------
   var RENDERER_NAMES = { classic: 'Classic (mpv)', 'new': 'New (pvj-render)' };
   var DETAIL_NAMES = { auto: 'Automatic (540 lines on a Pi 3 or 4, else the screen\'s own)', 540: '540 lines', 720: '720 lines', output: 'The screen\'s own size' };
+  var FINAL_NAMES = { auto: 'Automatic (720 lines when a Pi 3 or 4 is busy, else the screen\'s own)', full: 'The screen\'s own size', 720: '720 lines, scaled by the display' };
+  // Choices not applied yet survive a redraw, as autoForm's do: the look a few seconds after Use this redraws the card,
+  // and a new status can build the page and this card again, and neither may put back a select the Owner has just changed.
+  var renderForm = {};
   function rendererCard() {
     var body = h('div', { class: 'list sp', id: 'renderbody' }, h('div', { class: 'state', text: 'Loading...' }));
     var card = h('div', { class: 'card', id: 'rendercard' }, h('h2', { text: 'Renderer' }), body);
     var out = h('div', { class: 'msg inmsg', id: 'rendermsg', role: 'status' });
+    function kept(select, key) {
+      if (renderForm[key] !== undefined) select.value = renderForm[key];
+      select.addEventListener('change', function () { renderForm[key] = select.value; });
+      return select;
+    }
     function refresh() {
       api('GET', '/api/renderer').then(function (r) {
         if (!document.getElementById('rendercard') || asking(card)) return;
@@ -3212,15 +3408,44 @@
       var detail = h('select', { class: 'text-input', id: 'renderdetail' }, d.details.map(function (v) {
         return h('option', { value: String(v), text: DETAIL_NAMES[v] || String(v), selected: v === d.detail });
       }));
+      kept(use, 'use');
+      kept(detail, 'detail');
       body.appendChild(labelled('Renderer', use, 'Classic is the player as it always was. New is the box\'s own renderer, a first step towards layers and live visuals; if it fails to start the box goes back to classic by itself.'));
       body.appendChild(labelled('Picture detail inside (new only)', detail, 'The new renderer draws the clip at this size and scales it to the screen once.'));
+      // sources (D101): how many clips the new renderer can play side by side for the mapping's surfaces, up to the board's cap
+      var src = d.sources || null, sources = null;
+      if (src && src.cap >= 1) {
+        var counts = [];
+        for (var n = 1; n <= src.cap; n++) counts.push(n);
+        sources = h('select', { class: 'text-input', id: 'rendersources' },
+          [h('option', { value: 'auto', text: 'Automatic: ' + src['default'] + ' on this box', selected: src.chosen === null })].concat(
+            counts.map(function (n) { return h('option', { value: String(n), text: n + (n === 1 ? ' source' : ' sources'), selected: src.chosen === n }); })));
+        kept(sources, 'sources');
+        body.appendChild(labelled('Sources (new only)', sources, 'Clips the new renderer can play at once, one per source, for the mapping\'s surfaces. A source with nothing loaded costs nothing; each one that plays costs decoding. Up to ' + src.cap + ' on this box.'));
+      }
+      // the final pass (D108): drawn at the screen's size, or at 720 lines with the display's scaler bringing it up
+      var final_ = null;
+      if (d.finals) {
+        final_ = h('select', { class: 'text-input', id: 'renderfinal' }, d.finals.map(function (v) {
+          return h('option', { value: String(v), text: FINAL_NAMES[v] || String(v), selected: v === d.final });
+        }));
+        kept(final_, 'final');
+        body.appendChild(labelled('Final picture (new only)', final_, 'Drawing the final picture at 720 lines leaves the graphics chip more room and steadier motion at 4 sources with the mapping on. Mapped edges and on-screen text get a little softer, and thin lines in a squeezed mapped area can break into dashes, so Automatic does it only while the box is busy, and goes back when the load is lighter.'));
+        if (d.final_now) {
+          var small = d.final_now.final === 720;
+          body.appendChild(h('div', { class: 'hint', id: 'renderfinalnow', role: 'status',
+            text: 'Final picture now: ' + (small ? '720 lines, scaled to the screen by the display' : 'the screen\'s own size') + (d.final_now.why ? ': ' + d.final_now.why : '') + '.' }));
+        }
+      }
       var go = h('button', { class: 'btn on pri grow', id: 'renderapply', text: 'Use this', onclick: function (e) {
         var want = { use: use.value, detail: /^\d+$/.test(detail.value) ? parseInt(detail.value, 10) : detail.value };
+        if (final_) want.final = /^\d+$/.test(final_.value) ? parseInt(final_.value, 10) : final_.value;
+        if (sources) want.sources = sources.value === 'auto' ? 'auto' : parseInt(sources.value, 10);
         confirmRow('The player restarts and the screen goes dark for a few seconds.', 'Restart with it', 'Cancel', function () {
           sayAt(out, 'Restarting the player...');
           api('POST', '/api/renderer', want).then(function (r) {
             if (!r.ok) sayAt(out, (r.data.error || 'Could not change it') + '. Nothing was changed.', true);
-            else { sayAt(out, 'Saved. The player is restarting.'); draw(r.data); setTimeout(refresh, 6000); }
+            else { renderForm = {}; sayAt(out, 'Saved. The player is restarting.'); draw(r.data); setTimeout(refresh, 6000); }
           });
         }, e.currentTarget);
       } });
@@ -3572,6 +3797,14 @@
           'To the devices listed under OSC, "Send state back", while that is on. Under /nxlx/sound/: the level and the beat up to 20 times a second, the bands at most 5.'));
         body.appendChild(toggle('soundoscrender', 'Send sound to the render nodes', !!d.config.osc_render, function (v) { post({ osc_render: v }, v ? 'Sound goes to the render nodes.' : 'Sound no longer goes to the render nodes.'); },
           'To the render nodes listed under Render nodes, on this box\'s own network only.'));
+        var lk = d.link || {};
+        body.appendChild(toggle('soundlink', 'Follow Ableton Link', !!lk.on, function (v) {
+          api('POST', '/api/tempo/link', { on: v }).then(function (r) {
+            if (!r.ok) say(ndiSentence(r.data.error || 'could not change it'), true);
+            else say(v ? 'The box follows an Ableton Link session when there is one.' : 'The box no longer follows Ableton Link.');
+            refresh();
+          });
+        }, d.remote ? 'Through remote support it can be switched off, never on.' : 'Off by default. The box only follows: it takes the tempo and the beat and never sets them. It joins only when another program is in a session.'));
         var left = (d.osc && d.osc.left_out) || [];
         if ((d.config.osc_state || d.config.osc_render) && left.length) {
           body.appendChild(h('div', { class: 'hint warn', id: 'soundoscleft', text: 'Not sent to: ' + left.map(function (x) { return x.name + ' (' + x.why + ')'; }).join('; ') + '.' }));
@@ -3581,9 +3814,17 @@
       } else {
         body.appendChild(h('div', { class: 'hint', id: 'soundowner', text: 'The owner chooses the capture device and switches listening on.' }));
       }
+      if (d.link) body.appendChild(h('div', { class: 'hint', id: 'soundlinkline', role: 'status', text: linkLine(d.link) }));
       if (!bars || !document.getElementById('soundlevel')) drawMeter(d);
       else showLevels(d.levels);
       drawMap(d);
+    }
+    function linkLine(l) {
+      if (!l.available) return 'Ableton Link is not available on this box.' + (l.on ? ' It stays switched on and starts when it is.' : '');
+      if (!l.on) return 'Ableton Link is off.';
+      if (l.peers > 0) return 'Ableton Link: following ' + l.peers + (l.peers === 1 ? ' peer' : ' peers') + (l.bpm ? ' at ' + l.bpm + ' BPM.' : '.');
+      if (l.why) return 'Ableton Link: ' + ndiSentence(l.why) + '.';
+      return l.state === 'joining' ? 'Ableton Link: joining a session.' : 'Ableton Link: on, no peers.';
     }
     // Advanced (the owner's word of 2026-10-18): which sources may be chosen, and who may send levels in over OSC.
     function soundAdvanced(d) {
@@ -3638,7 +3879,7 @@
       mapBody.appendChild(labelled('Follows', src));
       mapBody.appendChild(num('soundmaprest', 'rest', 'Where it rests', '0 to 1 of the input\'s range, with no sound.'));
       mapBody.appendChild(num('soundmapdepth', 'depth', 'Depth', '-1 to 1: how far the sound moves it, and which way.'));
-      mapBody.appendChild(num('soundmapsmooth', 'smooth', 'Smoothing (seconds)', '0.5 to 10. Longer is calmer.'));
+      mapBody.appendChild(num('soundmapsmooth', 'smooth', 'Smoothing (seconds)', '0.05 to 10. Longer is calmer. Under 0.2 lets a beat show.'));
       mapBody.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn on pri grow', id: 'soundmapsave', text: 'Save', onclick: function () {
         var body2 = { input: soundMapForm.input, source: soundMapForm.source, rest: parseFloat(soundMapForm.rest), depth: parseFloat(soundMapForm.depth), smooth: parseFloat(soundMapForm.smooth) };
         api('POST', '/api/sound/map', body2).then(function (r) {

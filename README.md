@@ -30,6 +30,10 @@ More screens, with the beta modules (autostart, schedule, streams, DMX, MIDI, ne
 | `ROADMAP.md` | Phased plan for the modernization |
 | `NOTICE.md`, `THIRD_PARTY_LICENSES.md` | Credits and licensing of bundled parts |
 
+## Use of AI
+
+AI development tools were used extensively throughout this project, including for research, design, code, tests and documentation, under the direction of NXLX.Systems. NXLX.Systems is responsible for the project and for what it ships.
+
 ## Licence and credits
 
 New code in this fork is licensed under the Apache License 2.0; the legacy code keeps its original licence. See [NOTICE.md](NOTICE.md) for exactly which is which.

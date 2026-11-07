@@ -4,13 +4,187 @@
 
 Newest entry first. One entry per working session: what was done, what merged, what is open.
 
-## 2026-10-20, the panel inventory (`panel-design`, D102)
+<!-- log-fragments: pointer -->
+**Since 2026-10-24 (D107) a new entry goes in a file of its own in [journal/](journal/), one file a pull request. This file is the history before that and is not edited again.** Read the whole journal as one, newest first, with `python3 tools/project-log.py journal`. How to write an entry: [README.md](README.md).
+<!-- /log-fragments: pointer -->
 
-- **The brief:** the owner's panel design brief (a sandbox, a Figma file that matches the panel, ranked proposals). Step 1 is the inventory.
-- **Found first:** `tests/ui/harness.py` already serves the real panel with mpv, four fake PJLink projectors, fake Wi-Fi and a fake screen report, so the sandbox builds on it. The sources-surfaces work (D101) is a local branch of seven commits, not pushed, no pull request; its panel part is 98 lines of `app.js`. The Figma file "Signal UI kit" has one page now (Start here, with the token sheet and 14 text styles); the components and screens pages that the memory notes of 2026-10-05 describe are not in it.
-- **Written:** `pvj/PANEL.md` (not `pvj/web`, as the brief said: every file there is served by the panel and copied to the node), from the code: roles, widths and frames, the frame around every screen, the shared patterns, Play, Shape, Room and Setup card by card, Projectors, the mask list and the Mapping card in full, what D101 adds, the tokens of Darkstage, Signal and Signal light, accessibility facts, the routes by role.
-- **Noted for the proposals:** a mapping surface's Remove and a saved mapping's Delete do not ask first; a Room wall's Off does not ask while All off and the Projectors page do; the mapping canvas's colours are fixed in the script.
-- **Not run:** the browser test on this laptop (Chromium needs libnspr4 and libnss3 in WSL; Playwright's own installer does not know Ubuntu 26.04).
+## 2026-10-24, the review of #171 (D106 step d), fixed on its branch
+
+- **Medium:** the source's clip stops only once the shader is taken; a refused shader leaves the clip playing. **Low:** a clip in a shader's place loads before the shader comes off, under the chains' lock; a shader pad's deleted preset plays with a note on Sources 2 and up; the sources' rows look once a request; slot 0 in the chains' state, `available` with Effects off; the panel's words.
+- **Tests:** a refused shader keeps the clip, a taken one stops it; a pad with a preset that is gone. **Break-checks (4, each caught):** the clip stopped before the shader is taken; the clip never stopped; a gone preset passed on; slot 0 left out of the state.
+- **For (e):** generators on Sources 2 to N rebuilt on an upload or a Picture detail change.
+
+## 2026-10-24, pvj-render phase 3, step d (D106): a generator as a source
+
+- **Built:** a generator in slot 0 of any source; on sources 2 to N it is the source's picture, its clip layer idle. A shader pad or a shader by name played to Source 2 and up on the New renderer (D101 refused it), its values through the chains' API, a clip in its place, the Stop. Version 0.7.0.
+- **Not built:** a generator in each of source 1's two layers for D98's crossfade: step (f) of D106's plan, after (e) (the coordinator's word; D71's still already works out of a native generator).
+- **Tests:** `GeneratorSourceTest`, `GeneratorSourceApiTest`. **Break-checks (5, each caught):** the generator as an idle source's picture; slot 0 open on source 2; a clip in the shader's place; a shader pad to a source; a source's Stop taking its shader off.
+
+## 2026-10-24, the review of #170 (D106 step c), fixed on its branch
+
+- **Medium:** IMG_SIZE and IMG_PIXEL of the picture use its own size in a smaller pass; every program's buffers together at most 192 MB. **Low:** GLSL's reserved words refused by the panel too; nothing on the last pass, one size a buffer; a run at most 4 pictures' area; a half-float buffer retried in 8 bits.
+- **Tests:** the picture's own size, the box-wide cap, a fresh buffer each run, classic's listing. **Break-checks (6, each caught):** the picture's size; the box-wide cap; a slot's own buffers given back; a non-persistent buffer cleared; the run's area; nothing on the last pass.
+- **For (e):** the cost estimate times passes; `native()` read once.
+
+## 2026-10-24, pvj-render phase 3, step c (D106): persistent and feedback passes
+
+- **Built:** ISF PASSES, TARGET, PERSISTENT (and PERSISTENT_BUFFERS), FLOAT and pass sizes, for generators and effects, on the New renderer only (classic's refusal says the New renderer draws it). Two textures a buffer, swapped after each pass; half floats where the GPU draws into them; a 64 MB cap a program. Version 0.6.0.
+- **Tests:** `PassParseTest`, `PassTest`, and an upload of several passes through the engines. **Break-checks (9, each caught):** the persistent buffer kept; the swap; a buffer's own size; half floats; a pass into a buffer keeping what the code wrote; the memory cap; classic's refusal; the library parsing passes on the New renderer; every pass counted.
+- **Not run on a Pi** (rows FX15 to FX17).
+
+## 2026-10-24, two findings of the 2-hour soak on the Pi (D105 gate 1, D106)
+
+- **Memory:** sources 2 to N and the text core get a small demuxer cache (32 MiB ahead, 16 behind) instead of mpv's 150 and 50; source 1 keeps mpv's own (streams and NDI need it, and the player sets it). The soak had grown from 340 to about 875 MB in an hour with 4 sources at 720p.
+- **Re-arm:** choosing New again while the report says classic took over restarts the player, which tries pvj-render again.
+- **Tests:** `SourcesTest.test_sources_2_to_n_have_a_small_demuxer_cache_and_source_1_mpvs_own`, `PanelTest.test_choosing_new_again_after_a_fall_back_tries_pvj_render_again`; both break-checked. **To measure on the Pi:** row SK1.
+
+## 2026-10-24, the review of #168 (D106 step b), fixed on its branch
+
+- **Medium:** Stop and Off send a clear for every slot asked, so an effect whose load had no word (a slow build) comes off too. **Medium:** an idle source (and source 1 with nothing on) runs no effect over its black.
+- **Low:** passes a second in the property; the level set once a source (no doubled Blackout); the chains' record read under the lock; chains only with four slots a source; the level kept only when mpv took it. One re-run trigger (what the effect read last) instead of two.
+- **Tests:** `ChainSlowBuildTest`, the idle source, an effect cleared before another, each source's level with a program on source 1, the passes a second. **Break-checks (6, each caught):** the clear sent whatever the record holds; an idle source; source 1 idle; the re-run trigger; the passes a second; source 2's level apart from source 1's.
+
+## 2026-10-24, pvj-render phase 3, step b (D106): a chain of up to three effects on any source
+
+- **Built:** four slots a source in pvj-render (0 a generator, source 1's only until step d; 1 to 3 effects in order), the chain of a source 2 to N read by the mapping where its texture was, each source's level after its effects (`SOURCEk_level`), and `pvj/fxchain.py` with `GET` and `POST /api/effects/chain` (source 1's slots 2 and 3, every slot of sources 2 to N; the Owner's and an Operator's). A source's Stop takes its chain off. The panel offers no chain yet (step e, the coordinator's answer). Version 0.5.0.
+- **Tests:** `ChainTest` and `ChainApiTest` (6); the module's 32 and `tests.test_roles` pass here. Rebased on #167's review fixes (cca23c8); the chains take the same longer load wait, the same "no word is no refusal" and the same cap.
+- **Break-checks (11, each caught):** the mapping reading the source's clip instead of its chain; the chain run backwards; both ways an effect learns that the picture before it changed (either one alone is enough: the amount-0 pass-through tells the next effect, and each effect remembers what it read); a source's level after its effects; a source's own level kept; a generator refused on source 2; a source's Stop leaving its chain on; source 1's slot 1 offered to the chain; a value written as a new file; a chain offered on classic.
+- **Not run on a Pi** (rows FX11 to FX14).
+
+## 2026-10-24, the review of #167 (D106 step a), fixed on its branch
+
+- **High:** screenshots no longer encode on the render thread: it reads the picture into a pixel buffer, maps it on the next frame and hands it to the client's thread, which encodes and writes. Headless at 1920 x 1080: 15.4 flips a second during screenshots with the reviewed build, 60.0 now.
+- **Medium:** the panel waits 6 s for a load (the renderer 3 s); only the renderer's refusal counts as one; a load with no word leaves the slot unknown, found again by its path (`pvj-shaders` gives it) before values are sent. **Medium:** the 30-a-second cap holds while values move (48 runs a second before, under 33 now).
+- **Low and nits:** frame-drop-count's total always added; the level drawn by the renderer until the layers have it back (a first try, the layers' level put back before the clear, left libmpv's still picture at the old level about one change in three, so it was dropped) and resynced after a late build; one screenshot at a time; the screenshot's file opened without waiting and checked; constants tried only on a constant-expression error; whole numbers bounded; GLSL's reserved words refused as names; an empty LINE refused.
+- **Break-checks (10, each caught):** the stall test against the reviewed build; the load's longer wait; "no word is no refusal"; the slot found by its path; the generator's and the effect's cap; one screenshot at a time (also against the reviewed build); a FIFO; whole numbers; an empty LINE. Not held by a test: the level's order (a one-frame window), frame-drop-count's total, the single compile of a refused program.
+
+## 2026-10-24, pvj-render phase 3, step a (D106): generators and effects run by the renderer, values set every frame
+
+- **The plan first:** D106 was sent to the coordinator before any code and approved with two answers: up to 3 effects per source in the renderer but one in the panel until step (e), and no lower drawing height for light generators (D93's Automatic height stands; its cost on the New renderer is a device row). D74's "one effect at a time" was checked: a scope choice of the first version (SHADERS.md, the journal's "Left out"), not the owner's word.
+- **Built:** `render/src/fx.c` (the program file's reader, the GLSL ES 3.00 wrapper, source 1's generator and effect slots, values copied once a frame, TIME of the renderer's own clock, a build with constants when the code cannot take uniforms, the 30-a-second cap), `render/src/still.c` (the renderer's own PNG and JPEG for the screenshots while a program is on), `pvj-shader` and `pvj-shaders` on the socket, the level after the programs, late generator frames counted as dropped. On the panel's side: `translate_native` for generators and effects, `Player.native_shaders`, the slots, `native_values`, and the engines setting values instead of writing texts on the New renderer. Version 0.4.0.
+- **Measured here (llvmpipe, 320 x 180):** all 47 generators within 2 levels of libmpv's drawing of the same shader (the 99th percentile 1); all 37 effects within 3 at the 99th percentile except the three step effects (isf-rgb-halftone 5, with 1.9 percent of channels more than 3 apart on its dots' edges); the level within 1 of mpv's brightness from -100 to 100.
+- **Tests:** `tests/test_native_shaders.py` (20 tests), a CI step of its own in the pvj-render job (a skip fails it; the job's limit 30 to 40 minutes). The existing `tests.test_pvj_render tests.test_renderer` (102, 393 s here) and the shader, effect and player modules (536) pass.
+- **Break-checks (16, each caught by a test, each file restored from a copy):** the level after the programs taken out (Blackout under an invert lit up); the layers' brightness not held at 0 (the level drawn twice); the values not copied each frame; a program with constants not built again; TIME reset at a change of speed; the rate cap taken out; an effect run at every vblank; a program's texture not given back (the leak test); the screenshot left to libmpv (the still was the carrier); a set applied halfway; a refused build clearing the slot; program files put in libmpv's list (the engine test and the classic test); the generator's and the effect's values written as new texts (the path changed); the renderer's verdict ignored (no 422 for a refused upload); an effect's clock running on under a paused clip.
+- **Found on the way:** mpv keeps a user shader compiled by its file's path, so a measurement that wrote each shader to the same file compared every shader with the first one (LESSONS).
+- **Open:** nothing ran on a Pi or a real GPU (rows FX1 to FX10). Pass times are not reported on the New renderer. Steps (b) to (e) follow, one pull request at a time.
+
+## 2026-10-23, bug sweep 3 (D105): the screen-mode warning after a projector warms up
+
+- **The fault (seen 2026-10-21 on the X27):** "1024 x 768 at 60 Hz did not start on this screen, so the screen's own mode is used", `used` null, and then the picture drew fine. That sentence is written by the player's `decide` when this boot's skips hold the arguments. The skip came from the panel's look: the player given the mode had no screen after 6 s, so the mode was barred for the boot after one failure. The projector, still warming, said it was connected before it could take a mode.
+- **Done (pvj/screenmode.py):** the first failure of a set of arguments waits for the screen to keep still (connected, its status and modes unchanged for 4 s; at most 30 s) and tries the same arguments once more; only a second failure bars them. The status is `used` null with "did not start yet; it is tried once more when the screen keeps still" while it waits, and the page's note says when the second try worked. D90 to D92's choices are unchanged. DECISIONS: an addendum to D90 and D92.
+- **Tests:** a fake player that fails the first try only (`test_a_projector_that_wakes_up_late_gets_its_mode_on_the_second_try`), a screen that never keeps still, a mode that fails twice, and the two-thread look; the existing tests that expected a verdict at the first failure now go through the second try. With the second try taken out six tests fail. `tests.test_screenmode tests.test_renderer tests.test_transport`: OK.
+- **The review of #164 (two Medium, two Low), mended in the same PR:** a mode chosen during the wait was spoken of as the one that waited (the second try is now tied to its arguments and dropped by a choice, an import or a going back); a second warm-up in the same boot went straight to the skip (a good second try now clears its mark); the words said "settled" after a time-out (they now say which); and the first failure put the same sentence on the page twice (the note is now for results only). A test for each, each failing on the reviewed head. Cost, plainly: a mode that truly cannot start now costs one more dark start, about 4 to 30 seconds more, once per boot per set of arguments.
+- **Not tested:** the Pi and the X27. Whether the X27 really settles in its sysfs modes is not known; SETTLE_MAX bounds the wait either way.
+
+## 2026-10-23, bug sweep 4 (D105): three small findings of the review of #158
+
+- **(a) The sources' buffers back to mpv's own:** `OwnersMappingTest.test_the_mappings_stretch_and_buffers_reach_every_source` now also sets `fbo-format` back to "auto" (as `Player.set_mapping_mode` does with the mapping off) and asks sources 2 to 4 for it. Break-check: with `fbo-format` taken out of pvj-render's list of properties sent on to the sources, it fails.
+- **(b) A quad whose horizon passes through the screen's origin:** `mapper.homography` fixed h[8] at 1, but h[8] is w at the origin, so for such a quad the solve was singular and said "the corners are in a line", which they were not (seen with (400, 200) (700, 400) (1000, 800) (700, 550), whose vanishing points are both on y = x). It now tries h[8] = 1 first, exactly as before, and only when that is singular fixes another entry and divides by the largest; a "solution" that sends a corner to infinity (corners truly in a line) is still refused with the same words. Every quad that worked keeps its numbers: 400 random convex quads give the same floats both ways in a test, and 300 random mappings of one to three quads (random textures) give byte-identical direct shaders and warp tables against master's mapper.
+- **(c) The number of sources on the panel:** the renderer card (System > Screen output, full access only, as `/api/renderer` is) has a "Sources (new only)" choice: Automatic (the board's default) or 1 to the board's cap, sent with "Use this" as `sources` and applied with the same confirm and restart as the renderer and its detail. Panel test: the choices, the words, and the body sent (answered in the test, so the harness's player is not restarted).
+
+## 2026-10-23, bug sweep 1 (D105): the text layer that sometimes had no window
+
+- **The fault:** CI's Debian 13 job failed once on TextLayerTest.test_show_text_is_drawn_and_goes ("no text on the picture", 2026-10-21). The text core of pvj-render (the second libmpv that plays nothing and draws overlays and show-text) needs a window to have an on-screen layer. mpv makes that window as the core first goes idle, a moment after `mpv_initialize`. mpv 0.41 also acts on a `force-window` turned on later; mpv 0.40 (Debian 13, the Pi) and 0.37 (Ubuntu 24.04) never do. #148 turned `force-window` on after the render context, so on those versions the text layer worked only when the core went idle after that; otherwise that process drew no text and no overlay for its whole life.
+- **How it was found:** the local mpv is 0.41, where the fault cannot happen (0 of 140 runs under load). mpv's sources (0.40 against 0.41) showed the difference: 0.41 added `handle_force_window` to the option-change callback. A libmpv 0.41 built here with that one line taken out failed the test the CI way 1 of 30 runs and 1 of 120 under load (two cores, three CPU hogs); a probe in the failing run showed the text core's `vo-configured` still "no" 300 ms after `force-window` was turned on.
+- **The fix (render/src/main.c):** the text core's render context is made before `mpv_initialize`, and its `force-window` is on from the start, so its window is made as it first goes idle, on every mpv. The video cores are unchanged (they get their window when a clip loads).
+- **The test:** `test_the_text_layer_works_after_a_slow_start` starts pvj-render with `PVJ_RENDER_TEST_SLOW_START=500` (a test-only wait after the text core's `mpv_initialize`, so the core is surely idle first). Break-check on the 0.40-like libmpv: without the fix it fails 3 of 3, with it passes 3 of 3; on stock 0.41 both pass (so CI's Debian and Ubuntu jobs are the ones that guard it). Stress with the fix: 0 failures in 120 runs of the show-text test on two cores under three CPU hogs with the 0.40-like libmpv (master: 1 in 120 the same way).
+- **The review of #162, mended in the same PR:** (Medium) made before `mpv_initialize`, the text core's render context found mpv's paths not yet set, so `config=no` no longer turned its shader cache off, and it wrote compiled shaders to `$XDG_CACHE_HOME/mpv` (on the Pi, the player account's ~/.cache on the SD card): the text core now has `gpu-shader-cache=no`, and `test_no_shader_cache_is_written` runs pvj-render with an empty cache folder and finds no `mpv` there (it found one without the option). (Low) `mpv_request_log_messages` now comes right after `mpv_create` on every core, so an error while the text core's window is made reaches the journal. (Low) the slow-start hook is compiled only with `make TEST_HOOKS=1`: CI builds the box's way first (every warning an error), then with the hooks for the tests; the box's own build (install.sh's `make`) has none, `pvj-render --version` says "(with test hooks)" when it has them, and under PVJ_RENDER_TEST=1 the slow-start test fails on a build without them rather than passing without judging.
+- **Not tested:** the real mpv 0.40 and 0.37 (CI runs them), and the Pi. On the Pi the same start race can leave a New-renderer start with no masks and no PIN text until pvj-render restarts; not seen there, and not claimed.
+
+## 2026-10-23, bug sweep 2 (D105): the Pi's mpv job without its whole suite
+
+- **What was wrong:** the ndi-mpv job's last step, the whole suite on mpv 0.40 "for information", timed out on every run: 12 of 12 runs read were stopped at 2,100 s (1,053 and 1,205 tests done in the two logs counted, no failure among them). It decided nothing and kept a required check waiting about 35 minutes more.
+- **Done:** the step and the rollback list only it used are removed; the job's limit is 35 minutes (about sixteen without it). `tests/test_ci_shard.py`: the old check that the two lists match is replaced by one that the job runs no whole suite (break-check: master's workflow fails it). DECISIONS: an addendum to D104.
+- **Not done:** no new step for the remaining real-mpv modules on 0.40 (masks, picture, player, server, sound sources, sync, system info). That would be a new deciding gate never run there; a candidate for later if a 0.40-only fault is suspected in one of them.
+
+## 2026-10-23, bug sweep 5 (D105): the black or dim source without --fast, found in mpv
+
+- **Cause:** mpv's scaler table. For 6-tap kernels (the default lanczos when scaling up) each row of weights is padded to 8 and the padding is left uninitialised; llvmpipe's filtering mixes it in, and a source stays black or dim for the life of the process. Found by switching one option at a time (only 6-tap kernels failed), then confirmed with a libmpv built here with the table zeroed (0 of 10 bad, against 7 of 10). Upstream fixed it after 0.41 (mpv 72d43dc9c, issue #18540); no released mpv has the fix yet.
+- **Workaround (render/src/main.c):** without `--fast`, every video core and source gets lanczos of radius 4 for `scale`, `cscale` and `dscale` (8 taps, never 6). The Pi's `--fast` is unchanged. To be dropped once the box's mpv is 0.42 or later (D101's addendum says so).
+- **Test:** the old opt-in reproducer is the regular `SourceScalerTest` now, without `--fast`. Here: 0 failures in 30 runs with the workaround, 4 in 10 with master's scalers. On CI the break-check is statistical (about half of runs fail without it). `tests.test_pvj_render tests.test_renderer`: OK (100 tests).
+- **Not tested:** a real GPU (a PC or a Pi 5) without `--fast`, and the Pi (unchanged). D98's black clip in a fresh process is likely the same cause; not verified.
+
+## 2026-10-23, classic frozen and the gates for the New renderer (D105)
+
+- **Decided (D105):** classic mpv gets fixes only; new picture features go to pvj-render only; pvj-render becomes the default on a Pi 4 and up after five gates (soak, fallback, everyday parity, decoding, real use).
+- **The owner's words:** "I would rather you and the agents work through all bugs and issues to ensure the system runs smoothly and efficiently." He will connect a spare monitor or TV to the test node for the soak, and gave a standing yes for deploys of reviewed, green master to the test node during this push.
+- **Next:** the bug sweep, then gates 1 and 2, then phase 3.
+
+## 2026-10-21, sources and the mapping fix on the node (D101, #158; rows SO1 to SO9)
+
+- **#158 on the Pi (2026-10-20, deployed e645760 with the owner's word):** the owner's own mapping on the X27 at 1024 x 768, its quad on source 1 and triangle on source 2, then both on source 1. The quad shows on top again in the node's capture and on the webcam; before #158 it was pure black (the quad sign, D28). Two sources plus the mapping: 63.6 flips a second, 17 missed vblanks in 30 s, the box 75 percent busy. The projector was on about 2 minutes.
+- **720p copies for the sources test (2026-10-21):** Lumia 1, Lumia 2, CRT and Oscilloscope Spirals were scaled to 1280 x 720 on the coordinator's PC (ffmpeg, libx264 slow, CRF 20, at most 10 Mbit/s, sound kept) and added to the node's library as "<name> 720p.mp4" (6 to 26 MB each). The originals are untouched. A first try at CRF 18 without a cap made CRT 121 MB, larger than its 1080p original: noisy pictures need a bitrate cap, or the decode test is unfair.
+- **Sources at 720p on the X27 (1024 x 768, New renderer, detail auto, 4 sources):**
+
+| Sources | Flips a second | Missed vblanks in 30 s | pvj-render CPU (of one core) | Whole box |
+| --- | --- | --- | --- | --- |
+| 1 | 61.9 | 0 | 49 % | 14 % |
+| 2 | 62.1 | 0 | 108 % | 29 % |
+| 4 | 61.0 | 59 | 297 % | 76 % |
+| 4 plus the owner's mapping | 60.6 | 72 | 297 % | 76 % |
+
+  Against the same test with the 1080p originals (2026-10-20): 4 sources were 37.5 flips a second with 784 missed and the box saturated. So D101's cap of 4 on a Pi 4 holds with 720p clips, and the panel's warning above 720 lines is the right line. Open files and threads stayed flat. The projector was on about 4 minutes and is off.
+- **Seen once:** right after the projector warmed up, the screen line said "1024 x 768 at 60 Hz did not start on this screen, so the screen's own mode is used"; the picture still drew. Probably the projector reporting its modes late while warming. Worth a look if it repeats (S-rows).
+- **CI:** #157 split the unit tests into three parts (about 10 minutes each). One pvj-render run failed once on TextLayerTest.test_show_text_is_drawn_and_goes ("no text on the picture") and passed on the rerun: the older text-layer start fault, to fix if it repeats.
+
+## 2026-10-21, CI pinned to Ubuntu 24.04
+
+- **What broke:** GitHub moved `ubuntu-latest` to Ubuntu 26.04 (runner image 20261012). On it, actions/setup-python has no Python 3.9 ("The version '3.9' with architecture 'x64' was not found for Ubuntu 26.04") and Playwright refuses chromium ("Playwright does not support chromium on ubuntu26.04-x64"). Every PR failed, a journal-only one (#159) included. (A "No space left on device" line in the logs is a test simulating a full disk on purpose, not a real one.)
+- **The fix:** every GitHub-hosted job runs on `ubuntu-24.04` instead of `ubuntu-latest` (supported by GitHub until 2029). The self-hosted device job is unchanged. No check name changes, so the "Protect master" ruleset is untouched.
+- **A flaky test fixed on the way:** tests/test_boxcare.py DiagnosticsTest.test_no_secret_is_in_it looked for the test PIN 4821 as plain text in each stream's diagnostics, and the runner's free disk (90882482176 bytes) held those four digits by chance. The first loop of that test already matched a PIN only as a number of its own; the second loop now does the same.
+- **The NDI PipeReuseTest flake, found and fixed (test only, no product change):** it failed in 3 of the last 4 runs here (CI's 3.12 part 2 on 4ae974c: line 2282, `old.gone` not set after the open of B). The cause was the test's player, not the helper: it closed its end of the pipe and set `gone` one step later, and on a busy machine the helper's look could fall between the two, see the pipe without a reader (true), answer, and the test then read `gone` as not set. Evidence: with a check inside the helper's look, a run on two cores under 16 CPU hogs showed the look seeing the pipe free while `gone` was unset, in the run that failed; the unchanged class failed 1 of 40 runs that way (and 2 of 70 instrumented), and failed 5 of 5 with a 50 ms pause put between the close and the set. Fix: the close and the set are one step under `OldPlayer.LETTING_GO`, and PipeReuseTest's service takes the same lock around the helper's look (`_pipe_free`), so `gone` says exactly what the pipe said; the late-reader test also waits (`sent_all`) for A's last frame to be taken before it opens B, so a frame of A in the shared fake queue cannot be B's first (a hole found by reading, not seen to fail). After: 40 of 40 on two cores under 16 hogs, 5 of 5 with the 50 ms pause (now inside the lock), the whole `tests.test_ndi` (202 tests) passes. Break-check: with `_clear_pipe` made to answer at once, the next-source test and the late-reader test fail on their `gone` checks; the mirror test still passes then, because its old player leaves (0.3 s) before B's first frame is through, so its `gone` check does not guard the wait (as before this change).
+- **Later:** move to 26.04 on purpose, once Playwright supports it and the Python matrix is reviewed (3.9 is not available there; the Pi's Debian 13 has 3.13). A dated follow-up, not urgent while 24.04 is supported.
+
+## 2026-10-20, CI's unit tests in three parts (`ci-test-split`, D104)
+
+- **The task:** the unit-test jobs used 1,535 to 1,731 of their 1,800 seconds; split or speed up, raise the limit only as a last resort. Started after #153 merged (it changed the same workflow).
+- **Measured:** per module from master's run 39384981398 (its log lines are stamped): no single cause, the ten slowest modules about half. The GPU shader steps after the unit tests took another 14 minutes of the same 45-minute job.
+- **Built:** `tools/ci-shard.py`, the `unit` job in three parts per Python, the `shaders-gpu` job, and `test (3.9)` and `test (3.12)` as checks over them, so the ruleset's required names stay. `tests/test_ci_shard.py` (new, 10 tests).
+- **The review:** no High or Medium; three Lows. Fixed: the two checks over the parts cancelled each other on a failure (now `fail-fast: false`), and `tests/test_ndi_review.py` looked at the whole file from the unit job on, so the Debian job's fetch of master passed it; it now reads the unit job alone (break-checked: it fails with the unit job's fetch removed). Not taken: "test_000_tmp tests only discover"; its `test_named_modules_leave_nothing` runs named modules.
+- **CI on 2f8647f:** each part took 8.5 to 11 minutes (the one step had taken 25 to 29). Part 3 failed on both Pythons: the new `tests/test_ci_shard.py` did not `import tests` at its top, which `test_lockrank` asks of every module; now it does. Part 2 failed once on 3.12 on the known NDI PipeReuseTest flake (passed in the other three runs).
+- **Not done:** no test was made faster. The Debian job's whole suite for information already times out (2,104 s, exit 124); a follow-up.
+
+## 2026-10-20, sources on the node, and the owner's quad (`sources-fix-src1`, D28 and D101)
+
+- **On the node** (master 12c6e33, the X27 at 1024 x 768, detail Automatic, 1080p H.264 clips):
+
+  | Sources | Flips a second | Missed in 30 s | pvj-render CPU | Whole box CPU |
+  | --- | --- | --- | --- | --- |
+  | 1 | 62.1 | 0 | 123% of one core | 33% |
+  | 2 | 62.1 | 23 | 295% | 75% |
+  | 4 | 37.5 | 784 | 402% | 100% (saturated) |
+  | 4 with the mapping | 34.6 | 872 | | |
+
+  Open files and threads stayed flat. The panel's warning showed for Sources 3 and 4. So 4 x 1080p is too heavy, as predicted; 720p clips are not measured yet. The flips read a little over 60 at 1 and 2 sources, most likely the probe's own timing (not checked).
+- **Seen there:** the owner's quad (Source 1, on top) was pure black and the triangle (Source 2) showed through it. The cause was the quad's perspective sign, there since D28 and on classic too: fixed here. Also fixed: sources 2 to N kept their letterbox under a mapping.
+- **Traced:** in some fresh processes on llvmpipe a source showed black or dim through the mapping. It is not the final pass but libmpv's default scaling of a small upscaled picture; with `--fast`, as the Pi runs, 20 of 20 runs were right. The owner's mapping test runs with `--fast`; the reproducer without it is opt-in (`PVJ_SOURCE_RACE=1`). Row SO9 checks the Pi.
+- **Tests:** FacingTest and the stretch test break-checked; the pvj-render suite run 5 times, all OK.
+
+## 2026-10-20, the review of #153 (sources, D101 amendment)
+
+- **The review:** no High or Medium; two Lows, fixed on `sources-surfaces`. Shows could offer Source 1 alone on a box with four sources (the state used only what was known of a new player process); it now asks once per process, and the card follows the strip. A sound file sent to Source 2 played black and silent; it is now refused in plain words.
+- **Tests:** 2 new, each break-checked and caught. Local suites OK before the push.
+- **CI on c01a978:** an idle source drew its empty picture 3 times on CI (2 here); now once until it plays (break-checked: 2 and 3 without the fix). The masks' rollback commit 1a6484b was not in CI's checkout: every rollback test's commit is now fetched in the test job and in the Debian whole-suite job.
+
+## 2026-10-20, sources and surfaces, step 1 (`sources-surfaces`, D101)
+
+- **The owner's words:** "start sources and surfaces, step 1: more clip layers and a source per surface on the new renderer."
+- **Found first:** the mapping's two-layer show table (D58) had two spare channels in its second texture, and pvj-render's own reader of the mapping file (D95) could take a new BIND without anything of mpv's. So the source per surface rides in the table that exists, and pvj-render supplies the other pictures by name.
+- **Built:** pvj-render `--sources=N` (1 to 8): sources 2 to N are one libmpv core each, muted, idle until loaded, with `pvj-source` (loadfile, stop, a short set and get list) and `get_property pvj-sources`; every older command still means source 1. `//!BIND SOURCEk` in the mapping file. A surface's `"source"` (no key for 1), the table's source per layer read at the nearest cell, both shaders, classic byte for byte as before. The renderer's number of sources per board (a Pi 4 has 4). `POST /api/play` with `"source"`, `GET`/`POST /api/sources`, the warning about 1080p clips. The panel: Shows on the chosen surface, the Sources strip on the mapping page, Play to above the pads.
+- **Chosen:** a shader, NDI or a render cue sent to Source 2 and up is refused in plain words rather than played on Source 1; the level (opacity, Blackout) reaches every source; Stop stays Source 1's.
+- **The owner's note, the same day:** a mixing stage for later A/B decks, a manual crossfader and blend modes. Each source now has an opacity and a blend (normal only; the others refused), set and read over the socket and read once a frame; the crossfade of D98 is that stage with the opacity moved by the clock, its tests unchanged. D101 says how decks build on it.
+- **Tests:** `tests/test_pvj_render.py` 64 tests, OK with `PVJ_RENDER_TEST=1` and no skips (sources, the capture per source, opacity, idle cost, stop, refusals, sound, 270 loads with descriptors 9, threads 110 and GL objects 27 flat, a crossfade on source 1 while source 2 plays); `tests/test_sources.py` (new, 21); the related suites (mapper, mapping mode, player, layers, transitions, server, roles, masks, renderer, settings, boxcare: 565 tests) OK.
+- **Break-checks (21), each caught:** a load on source 2 going to source 1; the final pass reading source 1 for SOURCEk; sources keeping their sound; sources converted at every vblank; the level not reaching sources; any name settable on a source; source numbers not bounded; a descriptor leaked per load; BIND SOURCEk not taken; source 1 stored as a key; a source the player lacks not drawn from source 1; the layer under taking the top's source; the editing shader reading source 1 everywhere; the engine never asking the player's sources; a shader pad going to a source; a guest playing to a source; the warning needing three others; `play_to` not looping; `play_to` taking any number (first not caught, see LESSONS; caught after the test asked for the player's own words); the opacity not reaching the final pass.
+- **Not run here:** `tests/ui/panel.test.js` (its Chromium needs libnss3 and libnspr4, which this WSL has not; CI runs it on the push).
+- **Not done:** anything on the Pi, a real GPU or the X27 (rows SO1 to SO8); a crossfade, effects and sound on sources 2 to N; shaders as sources (step 2); the full sources panel (step 3).
+
+## 2026-10-20, the mask list on the node (D100, rows MK)
+
+- **On the node at 1024 x 768 (the X27):** 3 test masks combined in 1.1 s on the Pi; switching one or moving one up took 0.8 s.
+- **Under nxlx-grid:** 0 dropped frames; the GPU at 39 percent with the masks against 35 percent without.
+- **A classic crossfade:** the masks stayed on during and after it (seen by webcam).
+- **Afterwards:** the overlay was put back off, and the test PNGs deleted through `POST /api/media/delete`.
+- **Found:** the owner's old overlay `logo.png` is missing from the media folder (the overlay was off, so nothing showed it). He may want to upload it again.
 
 ## 2026-10-20, the review of #152 (masks, D100 amendment)
 

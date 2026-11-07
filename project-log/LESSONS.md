@@ -4,6 +4,10 @@
 
 Append new lessons at the bottom. Format: what happened, what we do now.
 
+<!-- log-fragments: pointer -->
+**Since 2026-10-24 (D107) a new lesson goes in a file of its own in [lessons/](lessons/), one file a pull request. This file is the history before that and is not edited again.** Read every lesson as one, this file first and then the new ones, oldest first, with `python3 tools/project-log.py lessons`. How to write one: [README.md](README.md).
+<!-- /log-fragments: pointer -->
+
 - **An archive extractor stripped `../evil` as if it were a top folder.** Found by a test. Validate the raw member name before stripping anything.
 - **A rotation of 45 degrees was accepted, then the panel reported "player down".** Validate values at the API (only 0, 90, 180, 270), not only in the player.
 - **The server dropped connections on unexpected exceptions.** Added a catch-all 500, and made responses tolerate a client that vanished.
@@ -565,4 +569,44 @@ The first test of "a Blackout during a crossfade darkens both layers" waited unt
 - **A brief named a module to build that already existed.** The projector brief asked for a new `pvj/projector.py` with PJLink; PJLink had been built, reviewed and decided on (D27, D37, D40, D80, D84), and two of the brief's rules differed from those decisions. Before building from a brief's file list, read what is there and grep DECISIONS for the subject; extend it, keep what the owner decided, and say in the decision where the brief was not followed and why.
 - **A reading in a brief can differ on the day.** The X27 answered `ERR?` in the coordinator's run and refused it with ERR in this one. Treat each answer as optional (not known) unless the status cannot be read without it, and do not make one reading a rule.
 - **Moving work out of a request changes what the request answers.** The mask list (D100) moved the overlay's conversion to a worker; a failed conversion had answered 409 and now answers 200 with the error in the status, and three tests held the old answer. List every caller (the panel, OSC, MIDI, an import, the autostart tick) and say what each now sees, in the decision.
-- **Playwright 1.56 cannot install its browser's libraries on Ubuntu 26.04** (2026-10-20, the HP's WSL): `npx playwright install-deps` stops with "Cannot install dependencies for ubuntu26.04-x64". `ldd` on the headless shell named only three missing files, all in two packages of the distribution: `sudo apt-get install libnspr4 libnss3`. Ask `ldd` before reaching for the installer.
+- **A bound in the layer above can hide behind the same bound below.** The break-check of `Player.play_to`'s own check of the source number (removed) still passed: pvj-render refused the number with "invalid parameter" a step later, and the test only asked for an error. The test now asks for the player's own words. When two layers both refuse something, a test that only expects "an error" proves the lower one; ask for the words of the layer under test.
+- **A rest state must be one state.** The first leak test of loads to sources counted threads after the last load, with some sources playing and some stopped: the count moved by 17 with no leak (a clip's decoder threads come and go as it plays and ends). Counting after stopping every source gave the same 9 descriptors, 110 threads and 27 GL objects at seven checkpoints.
+
+## A limit that is nearly reached is a failure that has not happened yet (2026-10-20, D104)
+The unit step used 1,731 of its 1,800 seconds and its job 43.5 of 45 minutes, and every PR still passed, so nothing said so. Each limit comment in the workflow carried the time of its day ("about eighteen minutes", "about 22"), and those grew past their limits' margins one module at a time. When a step's limit is set, write down the time it takes then, and look again when the suite grows by a quarter. The 3.12 job's `--durations 25` named the slowest tests, but per-module time came only from the stamps on GitHub's log lines.
+
+## A flag set after the thing it reports is a race of the test's own (2026-10-21)
+
+The NDI PipeReuseTest failed on CI's busy runners for weeks, called a "known flake". Its fake player closed the pipe and set `gone` a statement later; the helper, looking at the pipe from another thread, could see the close and answer before the set, and the test then said the helper had answered too early. The product was right: the pipe itself said the reader had gone. A check inside the helper's look, run on two cores under load, caught the window in the run that failed, and a 50 ms pause between close and set made it fail 5 of 5. What we do now: when a test thread reports a state change with a flag, make the change and the flag one step under a lock the observing side also takes, or check the real state (the pipe, the socket, the process) rather than the flag; and to prove a timing flake, widen the suspected window on purpose and see it fail every time.
+
+## "Half of fresh processes" can be uninitialised memory, not a race (2026-10-23)
+
+The black or dim source looked like a timing fault for days: it came in about half of fresh processes and then stayed for the life of the process. It was a table built once per process from memory nobody had cleared. Switching one option at a time (the scaler, then its radius) showed the pattern: only 6-tap kernels failed, 4 and 8 never. That pointed at the one place where 6 is padded to 8. When a fault is "per process, about half the time, then forever", suspect a value computed once from uninitialised data before suspecting threads, and vary sizes and options before timings.
+
+## A step "for information" that nobody reads is only a cost (2026-10-23)
+
+The ndi-mpv job's whole suite ran with continue-on-error for eleven days. It never once finished, its log was never read, and every PR waited 35 minutes for it, because a green check hid it. A step that may fail without failing the job needs an owner who reads it and a date to decide; without both, remove it or make it decide.
+
+## A flake that never happens here may be a version that is not here (2026-10-23)
+
+The text-layer flake could not be made to happen on this PC in 140 runs under load, because its mpv is 0.41 and the fault is in 0.40 and older: there a `force-window` turned on while idle does nothing, and 0.41 quietly fixed that. Reading mpv's sources of the two versions side by side found it, and a libmpv built here with the one changed line taken out failed the CI way. When a flake shows on one CI job only, list what that job has that this machine has not (Debian's mpv 0.40, Ubuntu 24.04's 0.37) before stressing timing, and when the difference is a library, diff its versions.
+
+## mpv keeps a user shader by its file's path (2026-10-24, D106)
+
+The first comparison of pvj-render's own programs with libmpv's drawing said every shader but the first was 40 to 130 levels apart. Every libmpv text had been written to the same file, and mpv compiles a user shader once per path and draws the old one when the file changes under the same name: every capture was of the first shader. The panel never meets it (each text it writes has a new name, which is why it does so), but a test or a tool that rewrites one file will. Give each text a new file, and before trusting a comparison check that its reference changed at all (the measurement now also prints how far the reference moved from the picture before it).
+
+## Two changes of one property in a row can leave libmpv's still picture at the first (2026-10-24, D106)
+
+Giving source 1's layers their brightness back just before a program was cleared, and then the panel's new level just after, left the still picture at the first value in about one change in three, while `get_property brightness` said the second; forcing more renders did not help. With the layers set once, after the clear, it never happened. It was not traced inside libmpv. When the order of two writes to libmpv is a choice, make one write, and judge it by the picture, not by what the property says.
+
+## A name that changes meaning per pass changes every reader of it (2026-10-24, D106)
+
+Giving each pass its own RENDERSIZE was right for the pass, and quietly wrong for the effect's reads of its picture, which had been written in terms of RENDERSIZE when there was one pass. When a value becomes per-pass (or per-anything), search for every place that read it as one value, and give those that meant the old thing a name of their own.
+
+## A break-check restored within the same second can leave the broken bytecode behind (2026-10-24, D106)
+
+A break-check wrote `if False:` over `if extra:` in pvj/shaders.py, ran its test, and put the file back from a copy, all within one second. Python checks a module's cached bytecode by the source's modification time in whole seconds and its size; the two lines are the same length, so the next run used the broken bytecode and two tests failed on code that was right. After a break-check that restores a Python file, remove its `__pycache__` (or touch the file a second later) before trusting the next run.
+
+## Give up the old thing only once the new one is taken (2026-10-24, D106)
+
+Putting a shader on a source stopped the source's clip first, then asked the renderer for the shader. Every refusal (the GPU, a budget, a cap) then left nothing: a black source where a clip had played. When one thing replaces another and the replacement can be refused, ask for the new one first and let the old go only on its "yes"; and test the refusal's aftermath, not only the refusal's words, since no test noticed the clip had gone.

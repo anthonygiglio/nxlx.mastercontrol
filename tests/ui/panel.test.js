@@ -486,6 +486,55 @@ function startServer(env) {          // env: more for the harness's environment 
     assert.strictEqual(await page.textContent('#renderline'), 'Drawing now: Classic (mpv).');
     assert.strictEqual(await page.$eval('#renderuse', (s) => s.value), 'classic');
     assert.strictEqual(await page.$eval('#renderdetail', (s) => s.value), 'auto');
+    // Sources (D101): the Owner chooses how many, up to the board's cap, beside the renderer (the review of #158)
+    {
+      const st = (await page.evaluate(() => fetch('/api/renderer').then((r) => r.json()))).sources;
+      assert.strictEqual(await page.$eval('#rendersources', (s) => s.value), 'auto', 'no number chosen: Automatic');
+      assert.deepStrictEqual(await page.$$eval('#rendersources option', (os) => os.map((o) => o.value)),
+        ['auto'].concat(Array.from({ length: st.cap }, (_, i) => String(i + 1))), 'Automatic, then 1 to the cap');
+      assert.strictEqual(await page.textContent('#rendersources option[value="auto"]'), 'Automatic: ' + st.default + ' on this box');
+      assert.match(await page.textContent('#rendersourceswrap'), new RegExp('Up to ' + st.cap + ' on this box'));
+      // what Use this sends, answered here so that the harness's player is not restarted
+      let sent = null;
+      const now = await page.evaluate(() => fetch('/api/renderer').then((r) => r.json()));
+      await page.route('**/api/renderer', (route) => {
+        if (route.request().method() !== 'POST') return route.fallback();
+        sent = JSON.parse(route.request().postData());
+        const after = Object.assign({}, now, { sources: Object.assign({}, now.sources, { chosen: sent.sources, starts: sent.sources }) });
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(after) });
+      });
+      await page.selectOption('#rendersources', '2');
+      await page.click('#renderapply');
+      await page.waitForSelector('#confirmrow:has-text("The player restarts")');
+      await page.click('#confirmyes');
+      await page.waitForSelector('#rendermsg:has-text("Saved")');       // the answer has drawn: the select below was already 2 before it came
+      await page.waitForFunction(() => document.getElementById('rendersources') && document.getElementById('rendersources').value === '2');
+      assert.deepStrictEqual(sent, { use: 'classic', detail: 'auto', final: 'auto', sources: 2 }, 'the number goes with the renderer and its detail');
+      await page.unroute('**/api/renderer');
+      // The final pass (D108): the Owner's choice beside the detail, and in plain words what it draws at now
+      assert.strictEqual(await page.$eval('#renderfinal', (s) => s.value), 'auto');
+      assert.deepStrictEqual(await page.$$eval('#renderfinal option', (os) => os.map((o) => o.value)), ['auto', 'full', '720']);
+      assert.strictEqual(await page.$('#renderfinalnow'), null, 'classic draws: no word about a final pass');
+      let answer = Object.assign({}, now, { final: 'auto', final_now: { final: 720, why: 'the box was busy: 21 in 100 frames came late with a load of 5' } });
+      await page.route('**/api/renderer', (route) => {
+        if (route.request().method() !== 'POST') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(answer) });
+        sent = JSON.parse(route.request().postData());
+        answer = Object.assign({}, now, { final: sent.final, final_now: { final: 'full', why: 'the display\'s primary plane was not found' } });     // a later look says the same
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(answer) });
+      });
+      await page.selectOption('#renderfinal', '720');
+      // the look 6 s after the Use this above redraws the card with its answer of 'auto': the choice not applied yet stays
+      await page.waitForResponse((res) => res.url().endsWith('/api/renderer') && res.request().method() === 'GET', { timeout: 7000 }).catch(() => {});
+      await page.waitForTimeout(100);
+      assert.strictEqual(await page.$eval('#renderfinal', (s) => s.value), '720', 'a redraw keeps a choice not applied yet');
+      await page.click('#renderapply');
+      await page.waitForSelector('#confirmrow:has-text("The player restarts")');
+      await page.click('#confirmyes');
+      await page.waitForSelector('#renderfinalnow:has-text("primary plane")');      // the answer to Use this: the line is there before it, from the look
+      assert.strictEqual(sent.final, 720, 'a number goes as a number');
+      assert.strictEqual(await page.textContent('#renderfinalnow'), 'Final picture now: the screen\'s own size: the display\'s primary plane was not found.');
+      await page.unroute('**/api/renderer');
+    }
     await onPage('Screen output');
     await sysIndex();
     // Network: switch the module on, preview, apply, watch the countdown, confirm
@@ -2038,6 +2087,194 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.click(`.map-entry:has-text("${chosen.name}") >> button:has-text("Remove")`);
     await page.waitForFunction(() => document.querySelectorAll('.map-entry').length === 1);
     await page.waitForSelector('.map-entry:has-text("Quad")');
+    // Sources (D101). The harness's player is classic mpv: the chosen surface's Shows offers Source 1 alone and says
+    // what the others need; the strip says the same.
+    await page.waitForSelector('#mapsource');
+    assert.deepStrictEqual(await page.$$eval('#mapsource option', (os) => os.map((o) => o.value)), ['1'], 'classic: Source 1 only');
+    assert.match(await page.textContent('#mapsourcenote'), /need the New renderer/);
+    await page.waitForSelector('#mapsources #srcclassic');
+    // A box on the New renderer with four sources (its answers changed on the way, as the harness has no pvj-render):
+    // Shows offers Source 1 to 4, and a choice is the surface's own, kept by the box and shown in the list.
+    const withSources = (n) => async (route) => {
+      const res = await route.fetch();
+      const data = await res.json();
+      data.sources = n;
+      await route.fulfill({ response: res, json: data });
+    };
+    const four = withSources(4);
+    await page.route('**/api/mapper', four);
+    const quadId = (await get('/api/mapper')).surfaces[0].id;
+    await markMap();
+    await page.click('.map-entry:has-text("Quad") >> button.linkish');
+    await drawnAgain();
+    assert.deepStrictEqual(await page.$$eval('#mapsource option', (os) => os.map((o) => o.value)), ['1', '2', '3', '4'], 'four sources: Shows offers them all');
+    await markMap();
+    await page.selectOption('#mapsource', '3');
+    await drawnAgain();
+    assert.strictEqual((await get('/api/mapper')).surfaces[0].source, 3, 'the box keeps the surface on Source 3');
+    await page.waitForSelector('.map-entry:has-text("Source 3")');
+    assert.strictEqual(await page.inputValue('#mapsource'), '3');
+    // back on the classic answers: Source 3 stays chosen and the card says it needs the New renderer
+    await page.unroute('**/api/mapper', four);
+    await markMap();
+    await page.click('.map-entry:has-text("Quad") >> button.linkish');
+    await drawnAgain();
+    assert.strictEqual(await page.inputValue('#mapsource'), '3', 'a source the box does not run stays chosen');
+    assert.match(await page.textContent('#mapsourcenote'), /^Source 3 needs the New renderer: until then this surface shows Source 1\.$/);
+    await markMap();
+    await page.selectOption('#mapsource', '1');
+    await drawnAgain();
+    assert.strictEqual((await get('/api/mapper')).surfaces[0].source, undefined, 'Source 1 is stored as no key, as before D101');
+    assert.strictEqual(await post('/api/mapper', { action: 'source', id: quadId, source: 9 }), 400, 'the box refuses a source past 8');
+    // The Sources strip with four sources: what each plays, Play from the Library to a source, Stop, and the warning
+    // about load. The box's answers are made up here; what the panel sends is checked.
+    const sourcesAnswer = {
+      count: 4, cap: 4, warning: 'this may drop frames on this box; 720p clips are lighter',
+      sources: [{ source: 1, idle: false, name: 'intro.mkv', height: 180, pause: false }, { source: 2, idle: true, name: null, height: null, pause: false },
+        { source: 3, idle: false, name: 'big.mkv', height: 1080, pause: false }, { source: 4, idle: false, name: 'tunnel.mkv', height: 720, pause: false }],
+    };
+    const srcSent = [];
+    const sourcesRoute = async (route) => {
+      const req = route.request();
+      if (req.method() === 'POST') srcSent.push(JSON.parse(req.postData()));
+      await route.fulfill({ json: sourcesAnswer });
+    };
+    const playRoute = async (route) => {
+      const b = JSON.parse(route.request().postData());
+      if (!b.source) return route.continue();
+      srcSent.push(b);
+      await route.fulfill({ json: { playing: b.file || b.shader || 'intro.mkv', source: b.source, warning: 'this may drop frames on this box; 720p clips are lighter' } });
+    };
+    // The harness's player is classic: no chain controls in the strip until the box says it runs chains (D106 step e)
+    await page.waitForSelector('#srcclassic', { timeout: 10000 });
+    assert.strictEqual(await page.$('[id^="srcfx-"]'), null, 'no chain controls on a player without chains');
+    // The chains of the New renderer (D106 step e), made up as the sources are: an effect on Source 3, one after
+    // Source 1's own effect, the libraries to choose from; what the panel sends is checked
+    const chainAnswer = {
+      available: true, effects: true, shaders: true, slots: { 1: [2, 3], 2: [0, 1, 2, 3], 3: [0, 1, 2, 3], 4: [0, 1, 2, 3] },
+      chains: [{ source: 3, slot: 1, id: 'fx-grade.fs', kind: 'effect', values: {}, controls: { amount: 0.5, speed: 1 }, preset: null },
+        { source: 4, slot: 0, id: 'nxlx-tide.fs', kind: 'shader', values: {}, controls: { speed: 1, hue: 0, brightness: 1 }, preset: null },
+        { source: 1, slot: 2, id: 'fx-ring.fs', kind: 'effect', values: {}, controls: { amount: 1, speed: 1 }, preset: null }],
+    };
+    const chainSent = [];
+    let chainGets = 0;
+    const chainRoute = async (route) => {
+      const req = route.request();
+      if (req.method() === 'POST') { chainSent.push(JSON.parse(req.postData())); return route.fulfill({ json: { ok: true } }); }
+      chainGets += 1;
+      await route.fulfill({ json: chainAnswer });
+    };
+    const fxLibRoute = async (route) => (route.request().method() === 'GET'
+      ? route.fulfill({ json: { effects: [{ id: 'fx-grade.fs', name: 'Grade' }, { id: 'fx-ring.fs', name: 'Ring' }] } }) : route.continue());
+    const shLibRoute = async (route) => (route.request().method() === 'GET'
+      ? route.fulfill({ json: { shaders: [{ id: 'nxlx-silk.fs', name: 'Silk' }, { id: 'nxlx-tide.fs', name: 'Tide' }] } }) : route.continue());
+    await page.route('**/api/effects/chain', chainRoute);
+    await page.route('**/api/effects', fxLibRoute);
+    await page.route('**/api/shaders', shLibRoute);
+    await page.route('**/api/sources', sourcesRoute);
+    await page.route('**/api/play', playRoute);
+    await page.waitForSelector('#srcnow-3:text-is("Source 3: big.mkv (1080p)")', { timeout: 10000 });
+    assert.strictEqual(await page.textContent('#srcnow-2'), 'Source 2: nothing');
+    assert.match(await page.textContent('#srcwarn'), /this may drop frames on this box; 720p clips are lighter/);
+    assert.strictEqual(await page.isDisabled('#srcstop-2'), true, 'an idle source has nothing to stop');
+    await page.click('#srcstop-3');
+    await page.waitForFunction(() => /Source 3 stopped/.test(document.getElementById('msg').textContent));
+    await page.selectOption('#srcclip-2', 'tunnel.mkv');
+    await page.click('#srcplay-2');
+    await page.waitForFunction(() => /Source 2 plays tunnel\.mkv: this may drop frames on this box; 720p clips are lighter/.test(document.getElementById('msg').textContent));
+    assert.deepStrictEqual(srcSent.slice(0, 2), [{ source: 3, action: 'stop' }, { source: 2, file: 'tunnel.mkv' }]);
+    // each source's effect: what is on, its amount, Off, another one On; the advanced slots after it; a shader to a source
+    await page.waitForSelector('#srcfx-3-1', { timeout: 10000 });
+    assert.strictEqual(await page.inputValue('#srcfx-3-1'), 'fx-grade.fs');
+    assert.strictEqual(await page.inputValue('#srcfxamt-3-1'), '0.5');
+    assert.strictEqual(await page.isDisabled('#srcfxoff-2-1'), true, 'nothing on: nothing to take off');
+    assert.strictEqual(await page.$('#srcfx-1-1'), null, "Source 1's own effect stays under Effect");
+    assert.strictEqual(await page.$eval('#srcmore-1', (d) => d.open), true, 'the advanced slots are open where one is on');
+    assert.strictEqual(await page.$eval('#srcmore-2', (d) => d.open), false, 'and closed where none is');
+    assert.strictEqual(await page.inputValue('#srcfx-1-2'), 'fx-ring.fs');
+    assert.strictEqual(await page.inputValue('#srcshader-4'), 'nxlx-tide.fs', "slot 0 is the source's shader, shown in the Shader row");
+    assert.strictEqual(await page.$('#srcfx-4-0'), null, 'and never as an effect slot');
+    assert.strictEqual(await page.$('#srcshader-1'), null, "Source 1's shader stays the Shaders screen's");
+    await page.click('#srcfxoff-3-1');
+    await page.waitForFunction(() => /Source 3: the effect is off/.test(document.getElementById('msg').textContent));
+    await page.selectOption('#srcfx-2-1', 'fx-ring.fs');
+    await page.click('#srcfxon-2-1');
+    await page.waitForFunction(() => /Source 2: fx-ring\.fs is on/.test(document.getElementById('msg').textContent));
+    const sentSoFar = async (n, what) => {             // what the panel sent, waited for (never a fixed pause)
+      for (let i = 0; i < 100 && chainSent.length < n; i++) await page.waitForTimeout(50);
+      assert(chainSent.length >= n, what);
+    };
+    await page.$eval('#srcfxamt-1-2', (e) => { e.value = '0.25'; e.dispatchEvent(new Event('change')); });
+    await sentSoFar(3, 'the amount was sent');
+    await page.selectOption('#srcshader-2', 'nxlx-tide.fs');
+    await page.click('#srcshaderplay-2');
+    await page.waitForFunction(() => /Source 2 plays nxlx-tide\.fs/.test(document.getElementById('msg').textContent));
+    for (let i = 0; i < 100 && srcSent[srcSent.length - 1].shader !== 'nxlx-tide.fs'; i++) await page.waitForTimeout(50);
+    assert.deepStrictEqual(chainSent.slice(0, 3), [{ source: 3, slot: 1, off: true }, { source: 2, slot: 1, id: 'fx-ring.fs' },
+      { source: 1, slot: 2, controls: { amount: 0.25 } }]);
+    assert.deepStrictEqual(srcSent[srcSent.length - 1], { source: 2, shader: 'nxlx-tide.fs' });
+    // The review of #172: what is opened and chosen by hand outlives the strip's redraw every 4 s, and an amount in
+    // the hand is not taken out of it
+    await page.click('#srcmore-2 > summary');
+    assert.strictEqual(await page.$eval('#srcmore-2', (d) => d.open), true);
+    await page.click('#srcmore-1 > summary');
+    assert.strictEqual(await page.$eval('#srcmore-1', (d) => d.open), false, 'closed by hand where one is on');
+    await page.selectOption('#srcfx-2-2', 'fx-grade.fs');
+    await page.selectOption('#srcfx-3-1', 'fx-ring.fs');            // another than the one on, not yet put on
+    const twoRedraws = async () => {                    // the strip draws again every 4 s: two of them, waited for
+      const from = chainGets, el = await page.$('#srcmore-2');
+      for (let i = 0; i < 240 && (chainGets < from + 2 || await el.evaluate((e) => e.isConnected)); i++) await page.waitForTimeout(50);
+      assert(chainGets >= from + 2, 'the strip asked the box again (more than 4 s)');
+    };
+    await twoRedraws();
+    assert.strictEqual(await page.$eval('#srcmore-2', (d) => d.open), true, 'opened by hand: still open after the redraws');
+    assert.strictEqual(await page.$eval('#srcmore-1', (d) => d.open), false, 'closed by hand: still closed');
+    assert.strictEqual(await page.inputValue('#srcfx-2-2'), 'fx-grade.fs', 'the effect chosen stays chosen');
+    const amtBefore = await page.$('#srcfxamt-3-1');
+    await page.$eval('#srcfxamt-3-1', (e) => { e.value = '0.8'; e.dispatchEvent(new Event('input')); });     // in the hand
+    const held = chainGets;
+    for (let i = 0; i < 240 && chainGets < held + 2; i++) await page.waitForTimeout(50);
+    assert(chainGets >= held + 2, 'the strip asked the box again while the amount was held');
+    assert.strictEqual(await amtBefore.evaluate((e) => e.isConnected && e.value), '0.8', 'the amount in the hand was not drawn over');
+    await page.$eval('#srcfxamt-3-1', (e) => { e.dispatchEvent(new Event('change')); });                      // let go
+    await sentSoFar(4, 'the amount let go was sent');
+    for (let i = 0; i < 200 && (await amtBefore.evaluate((e) => e.isConnected)); i++) await page.waitForTimeout(50);
+    assert.strictEqual(await page.inputValue('#srcfx-3-1'), 'fx-ring.fs', 'the choice made beside the slider stays too');
+    // the chain rows at the three widths of the panel brief (D102): nothing runs past the card, a choice stays usable
+    const wasSize = page.viewportSize();
+    for (const width of [390, 820, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      const drawnAt = chainGets;
+      for (let i = 0; i < 200 && chainGets < drawnAt + 1; i++) await page.waitForTimeout(50);
+      await page.waitForTimeout(100);
+      const over = await page.$$eval('#mapsources *', (els) => { const card = document.getElementById('mapsources').getBoundingClientRect();
+        return els.filter((e) => { const r = e.getBoundingClientRect(); return r.width && (r.right > card.right + 1 || r.left < card.left - 1 || (e.matches('select') && r.width < 120)); })
+          .map((e) => (e.id || e.tagName) + ': ' + Math.round(e.getBoundingClientRect().width) + ' px'); });
+      assert.deepStrictEqual(over, [], 'the Sources card\'s chain rows fit at ' + width + ' px');
+    }
+    await page.setViewportSize(wasSize);
+    await page.unroute('**/api/effects/chain', chainRoute);
+    await page.unroute('**/api/effects', fxLibRoute);
+    await page.unroute('**/api/shaders', shLibRoute);
+    // The pads' Play to: Source 1 by default; with Source 2 chosen a pad's clip goes there
+    assert.strictEqual(await post('/api/pads', { bank: 0, index: 11, label: 'To a source', file: 'intro.mkv' }), 200);
+    await page.reload();
+    await go(page, 'play/pads');
+    await page.waitForSelector('#playto');
+    assert.strictEqual(await page.inputValue('#playto'), '1', 'the pads play to Source 1 unless another is chosen');
+    assert.deepStrictEqual(await page.$$eval('#playto option', (os) => os.map((o) => o.value)), ['1', '2', '3', '4']);
+    await page.selectOption('#playto', '2');
+    await page.click('#pads button[data-pad="11"]');
+    await page.waitForFunction(() => /Source 2 plays intro\.mkv: this may drop frames/.test(document.getElementById('msg').textContent));
+    assert.deepStrictEqual(srcSent[srcSent.length - 1], { source: 2, pad: [0, 11] });
+    await page.unroute('**/api/sources', sourcesRoute);
+    await page.unroute('**/api/play', playRoute);
+    assert.strictEqual(await post('/api/pads', { bank: 0, index: 11, label: '', file: '' }), 200);
+    // On the harness's classic player the box itself refuses a play to Source 2, in plain words
+    assert.strictEqual(await post('/api/play', { file: 'intro.mkv', source: 2 }), 409);
+    await page.reload();
+    await sys('Projection mapping');
+    await page.waitForSelector('.map-entry:has-text("Quad")');
     await page.click('#mapon');
     await page.waitForSelector('#mapstatus:has-text("Mapping is on")', { timeout: 20000 });
     if (shots) await page.screenshot({ path: path.join(shots, '7-mapper.png'), fullPage: true });
@@ -2483,7 +2720,7 @@ function startServer(env) {          // env: more for the harness's environment 
     // the big button on Pads, open the page from the link next to it, choose one shader by hand (which ends the
     // rotation), move a slider, change the settings, add and remove a file. The harness player draws nothing
     // (--vo=null), so this checks the panel and the API, not the picture; that is tests/test_shaders_gpu.py.
-    const BUNDLED_SHADERS = 40;         // the files in pvj/shaders.d (named one by one in tests/test_shaders.py)
+    const BUNDLED_SHADERS = 39;         // the files in pvj/shaders.d (named one by one in tests/test_shaders.py)
     await go(page, 'play/pads');
     await page.waitForSelector('.pads');
     assert.strictEqual(await page.locator('#vibes').count(), 0, 'no Vibes button while the module is off');
@@ -3049,7 +3286,7 @@ function startServer(env) {          // env: more for the harness's environment 
     // Automatic picture detail (D93) is offered on a Pi 4 only, and this box is not one: its answer is given what a
     // Pi 4's says, first under Automatic, then with a height an earlier version saved. The tap is answered here too.
     {
-      const auto = { lines: 720, other: 540, lower: { 'nxlx-drift.fs': 540, 'nxlx-nebula.fs': 540 }, output: [1920, 1080] }, render0 = (await get('/api/shaders')).render;
+      const auto = { lines: 720, other: 540, lower: { 'nxlx-aurora.fs': 540, 'nxlx-nebula.fs': 540 }, output: [1920, 1080] }, render0 = (await get('/api/shaders')).render;
       let mode = 'auto', sent = null, last = null;
       await page.route('**/api/shaders', async (route) => {
         if (route.request().method() === 'POST') {
@@ -3070,7 +3307,7 @@ function startServer(env) {          // env: more for the harness's environment 
       assert.deepStrictEqual(await page.$$eval('#shaderheight option', (os) => os.map((o) => o.value)), ['auto'].concat(render0.heights.map(String)), 'Automatic first, then the heights');
       assert.strictEqual(await page.textContent('#shaderheight option[value="auto"]'), 'Automatic (usual here)');
       assert.strictEqual(await page.inputValue('#shaderheight'), 'auto');
-      assert.strictEqual(await page.textContent('#detailhint'), 'Automatic draws each shader at the most lines it kept up at on a Pi 4 with a 1920 x 1080 screen: 720 lines, 540 for 2 heavier ones (Drift, Nebula), and 540 for a shader you add.');
+      assert.strictEqual(await page.textContent('#detailhint'), 'Automatic draws each shader at the most lines it kept up at on a Pi 4 with a 1920 x 1080 screen: 720 lines, 540 for 2 heavier ones (Aurora, Nebula), and 540 for a shader you add.');
       assert.strictEqual(await page.locator('#detailhigh').count(), 0, 'nothing more is said under Automatic');
       // dropping frames under Automatic: the page says that a number is for every shader before anyone chooses one
       await page.waitForSelector('#shaderload[data-load="heavy"]', { timeout: 20000 });

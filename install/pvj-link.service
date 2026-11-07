@@ -1,0 +1,61 @@
+# SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+# SPDX-License-Identifier: Apache-2.0
+[Unit]
+Description=nxlx.mastercontrol Ableton Link follower (tempo and beat only; off until the Owner switches it on)
+# The program is built at install from Debian's ableton-link-dev (D117). Where the package was missing, or after a
+# rollback to a release from before D117, this unit is here and its program is not. A condition that is not met is not
+# a failure: the unit is skipped, once, and nothing is started again (as the NDI helper's, D62).
+ConditionPathExists=@PVJ_DIR@/render/pvj-link
+StartLimitIntervalSec=0
+
+[Service]
+# Its own account and its own group (D117): this is the one part that takes packets from anyone on the network, so it
+# has nothing else of the box's. It is NOT in group "pvj" (the player's socket, the settings, the PIN) or "audio" (the
+# microphone, the levels). The panel alone joins group pvj-link, and the socket checks the caller's uid too.
+User=pvj-link
+Group=pvj-link
+UMask=0027
+# Its own folder: the socket for the panel and the state file (0640, group pvj-link). Nobody else writes here.
+RuntimeDirectory=pvj-link
+RuntimeDirectoryMode=0750
+Environment=PVJ_LINK_DIR=/run/pvj-link
+Environment=HOME=/nonexistent
+ExecStart=@PVJ_DIR@/render/pvj-link
+Restart=always
+RestartSec=2
+
+# Sandbox. No capabilities, a read-only system, and only what Link's discovery needs: IPv4 and IPv6 for its messages,
+# netlink to list the box's addresses, a Unix socket for the panel.
+CapabilityBoundingSet=
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK AF_UNIX
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+# No devices at all; /dev/urandom is where Link's peer id comes from.
+DevicePolicy=closed
+DeviceAllow=/dev/null rw
+DeviceAllow=/dev/urandom r
+InaccessiblePaths=-/var/lib/pvj -/etc/pvj -/run/pvj -/run/pvj-sound -/run/pvj-ndi -/run/pvj-sysd -/run/pvj-supportd
+# Bounds: one small loop and Link's own thread, on a node near 80 percent while playing.
+MemoryMax=32M
+LimitCORE=0
+TasksMax=8
+CPUQuota=10%
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+# Not PrivateUsers: it would hide the caller's uid from the socket's peer check.
+
+[Install]
+WantedBy=multi-user.target
