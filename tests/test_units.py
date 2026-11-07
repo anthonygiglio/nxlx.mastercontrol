@@ -226,7 +226,7 @@ class RuntimeFolderTest(unittest.TestCase):
 
     def test_each_folder_has_one_owner_and_the_mode_the_code_expects(self):
         p = self.paths
-        want = {"pvj/player": ("pvj-player.service", "@PVJ_USER@", "0750", "no"),
+        want = {"pvj/player": ("pvj-player.service", "@PVJ_USER@", "0750", "restart"),
                 "pvj/web": ("pvj-web.service", "pvj-web", "0750", "yes"),
                 "pvj/netd": ("pvj-netd.service", "root", "0750", "no"),
                 "pvj-sysd": ("pvj-sysd.service", "root", "0750", "no"),
