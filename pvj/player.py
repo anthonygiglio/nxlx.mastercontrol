@@ -365,6 +365,15 @@ class Player:
             # it, and mpv's own new one would stay owner-only, out of the panel's reach (the soak of 2026-10-30)
             if os.path.exists(self.socket_path):
                 os.unlink(self.socket_path)
+            if use == "new":
+                # pvj-render fell back only for want of a screen (the projector warms up after the Pi boots): a screen that
+                # comes later ends this process once, and systemd starts the service by its normal path
+                from . import hardware, latescreen
+                try:
+                    if latescreen.no_screen_fallback(why, hardware.drm_connectors()):
+                        latescreen.start(self.rundir, log)
+                except Exception as e:
+                    log("pvj-player: renderer: a screen that comes later is not watched for (%s)" % e)
         # mpv creates its socket owner-only (0600) whatever the umask, so the web panel (another user, same
         # group) could not reach it. A short-lived helper waits for the NEW socket and opens it to the group.
         detach_socket_opener(self.socket_path)

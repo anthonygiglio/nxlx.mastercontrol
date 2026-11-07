@@ -1072,6 +1072,19 @@ Run 2026-11-01, master 7d6b151, nobody watched (`measurements/2026-11-02-deblock
 - DB4 waits for the owner.
 - Not covered: a real browser or phone, other panel screens, other clips or codecs, effects on, crossfades 7 s apart left alone, the picture itself.
 
+### A screen that comes after the player starts (pvj/latescreen.py): not yet run on a node
+
+With New chosen, a box that boots with no screen falls back to classic mpv; when a screen is connected later it should come up on pvj-render by itself, once. Unplug the HDMI cable (or switch the projector off) first.
+
+| Row | Do | Good | Bad |
+|---|---|---|---|
+| LS1 | Screen unplugged, `sudo systemctl restart pvj-player`. Then `journalctl -u pvj-player -n 20` and `pgrep -x pvj-render` | Journal: "pvj-render did not start (exit 2)" and "classic mpv draws"; no pvj-render running; the page says classic is drawing | pvj-render running with no screen, or no fallback |
+| LS2 | Plug the screen in. Within 15 s: `tr '\0' ' ' < /proc/$(pgrep -x pvj-render)/cmdline` | pvj-render running with `--skip-deblock` in its cmdline (and the screen's own mode chosen as at a normal start: `cat /run/pvj/player/screen.json`); the journal says "a screen is connected now (HDMI-A-1) ... restarting the player once" | Still classic after 15 s, or the mode differs from a normal start |
+| LS3 | Wait 2 minutes with the screen in. `journalctl -u pvj-player --since "-3min" \| grep -c "restarting the player once"` | 1; no second restart; same pvj-render pid | More than 1: a loop |
+| LS4 | Flapping: unplug and plug the cable every 5 s for 3 minutes, then leave it plugged in. Count "restarting the player once" lines | Never two within 30 s; at most 4 since boot, then "classic mpv stays until the player is restarted"; a picture on whichever program is drawing | A restart every few seconds, or a black screen that does not recover |
+| LS5 | Crash stays on classic: screen plugged in, New chosen, `sudo pkill -x -SEGV pvj-render` twice within a minute (as R7) | Classic draws, "ended twice in a row"; plugging and unplugging the screen afterwards does not restart the player | The player restarts when the screen comes |
+| LS6 | Boot with the screen plugged in | pvj-render draws from the first start; no "a screen is connected now" line | A restart at boot |
+
 ## Safety
 
 - The workflow starts by **manual dispatch only**, and only for the repository owner. It never runs for pushes, pull requests or forks, so nobody else's code reaches the Pi. Keep it that way.

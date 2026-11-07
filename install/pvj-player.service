@@ -21,6 +21,9 @@ SupplementaryGroups=video render audio input
 # The parent /run/pvj stays root's (systemd creates it root:root 0755; see pvj-tmpfiles.conf).
 RuntimeDirectory=pvj/player
 RuntimeDirectoryMode=0750
+# Kept when the service restarts itself, so that the count of switches made for a late screen (pvj/latescreen.py) holds
+# for the whole boot. A stop still removes it.
+RuntimeDirectoryPreserve=restart
 UMask=0007
 EnvironmentFile=-/etc/pvj/pvj.env
 Environment=PVJ_RUNTIME_DIR=/run/pvj/player
