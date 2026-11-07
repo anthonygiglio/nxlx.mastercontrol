@@ -810,6 +810,34 @@ function startServer(env) {          // env: more for the harness's environment 
     assert(await page.isDisabled('.oscsender button:text-is("Allow this one")'), 'a full list takes no more');
     await page.unroute('**/api/osc', oscWide);
     await page.unroute('**/api/osc/messages', oscWideLog);
+    // The title bar stays at the top while a screen scrolls (pvj/PROPOSALS.md, 2): on a tablet, also with the strip's
+    // More open; on a phone under 800 px high it scrolls away; the offline banner shows above it.
+    const headAt = () => page.evaluate(() => ({ top: Math.round(document.getElementById('wshead').getBoundingClientRect().top),
+      pos: getComputedStyle(document.getElementById('wshead')).position, y: Math.round(window.scrollY) }));
+    await page.setViewportSize({ width: 820, height: 1180 });
+    await page.evaluate(() => window.scrollTo(0, 2000));
+    await page.waitForFunction(() => window.scrollY > 100);
+    let headNow = await headAt();
+    assert.deepStrictEqual([headNow.top, headNow.pos], [0, 'sticky'], 'the title bar stays at the top of a scrolled screen at 820 x 1180: ' + JSON.stringify(headNow));
+    if (await page.isVisible('#wsmore')) {
+      const expanded = () => page.evaluate(() => document.getElementById('wsmore').getAttribute('aria-expanded') === 'true');
+      for (let i = 0; i < 3 && !(await expanded()); i++) { await require('./signal-pages').stripOpen(page); await page.waitForTimeout(300); }
+      assert(await expanded(), 'More opens the strip at 820');
+      await page.evaluate(() => window.scrollTo(0, 2000));
+      headNow = await headAt();
+      assert.deepStrictEqual([headNow.top, headNow.pos], [0, 'sticky'], 'and with More open: ' + JSON.stringify(headNow));
+      await page.click('#wsmore');
+    }
+    await page.evaluate(() => { document.getElementById('offline').hidden = false; });
+    assert(await page.evaluate(() => { const o = document.getElementById('offline'), r = o.getBoundingClientRect();
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return !!hit && o.contains(hit); }), 'the offline banner shows above the title bar');
+    await page.evaluate(() => { document.getElementById('offline').hidden = true; });
+    await page.setViewportSize({ width: 390, height: 700 });
+    await page.evaluate(() => window.scrollTo(0, 2000));
+    await page.waitForFunction(() => window.scrollY > 100);
+    headNow = await headAt();
+    assert.strictEqual(headNow.pos, 'static', 'on a phone under 800 px high the title bar scrolls away: ' + JSON.stringify(headNow));
+    await page.evaluate(() => window.scrollTo(0, 0));
     await page.setViewportSize({ width: 390, height: 844 });
     assert.strictEqual(await post('/api/osc', { only_on: false, only: [], paired_on: false, key_on: false }), 200);
     await sys('OSC');

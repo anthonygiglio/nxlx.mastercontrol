@@ -7144,6 +7144,17 @@
   function dockHeight() {           // how tall the strip and the tabs are: what floats above them (a message) clears them
     var d = document.getElementById('wsdock');
     if (d) document.documentElement.style.setProperty('--dock', d.offsetHeight + 'px');
+    // and how tall the title bar and the screen tabs are while they stay at the top: what sticks under them starts
+    // below them, and what is scrolled to or focused is kept clear of them (scroll-padding in app.css). Their real
+    // heights (a Signal title bar is a fraction of a pixel over a whole number). On a phone a title bar taller than a
+    // quarter of the window (a long job line, large text) is let go and scrolls with the screen.
+    var root = document.documentElement.style, t = document.getElementById('wshead'), s = document.getElementById('wssub');
+    if (t) {
+      var th = t.getBoundingClientRect().height, wsp = document.getElementById('wsp');
+      if (t.parentNode) t.parentNode.classList.toggle('headfree', !!wsp && wsp.clientWidth < 600 && th > window.innerHeight / 4);
+      root.setProperty('--head', (getComputedStyle(t).position === 'sticky' ? th : 0) + 'px');
+    }
+    root.setProperty('--sub', (s && getComputedStyle(s).position === 'sticky' ? s.getBoundingClientRect().height : 0) + 'px');
     moreBelow();
   }
   function render() {
@@ -7181,6 +7192,8 @@
     if (window.ResizeObserver) {
       if (dockWatch) dockWatch.disconnect();
       dockWatch = new ResizeObserver(dockHeight); dockWatch.observe(document.getElementById('wsdock'));
+      if (document.getElementById('wshead')) dockWatch.observe(document.getElementById('wshead'));
+      if (!dockHeight.onResize) { dockHeight.onResize = true; window.addEventListener('resize', dockHeight); }     // a window that changes height
       if (widthWatch) widthWatch.disconnect();
       widthWatch = new ResizeObserver(function () { markArea(); fixCursor(); }); widthWatch.observe(document.getElementById('wsp'));
     }
