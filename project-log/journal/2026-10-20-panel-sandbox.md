@@ -4,6 +4,7 @@
 
 - **What.** The branch was 182 commits behind master (8d473ea). Master merged in; the only conflicts were the three frozen log files, so this branch's entries moved into its own files under D107, word for word, and its decision keeps its number.
 - **The second review** (the coordinator's, 2026-11-06): one Medium (no `PVJ_LINK_DIR`, so the sandbox could reach a real Link follower) and three Lows, fixed (D103's second amendment).
+- **CI after the merge:** a rule of master's since 20 October (`tests.test_lockrank`) wants every test module to import the `tests` package; `test_sandbox.py` now does.
 
 ## 2026-10-20, the design sandbox (`panel-sandbox`, D103)
 

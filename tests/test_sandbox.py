@@ -14,6 +14,8 @@ import sys
 import tempfile
 import threading
 import unittest
+
+import tests  # noqa: F401  (the package: ranked locks and a temp folder of its own, as every test module)
 from http.server import ThreadingHTTPServer
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
