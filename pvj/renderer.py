@@ -716,6 +716,6 @@ class Renderer:
             # start): a restart of the player is what tries pvj-render again (D95), so choosing New again does it,
             # instead of leaving the box on classic until something else restarts the player (the 2-hour soak, D106)
             drawing, why = self.drawing()
-            if drawing == "classic" and why and why not in (GLES2_WHY, NO_GPU_WHY):
+            if drawing == "classic" and why and why != GLES2_WHY:
                 self._restart("New chosen again after classic took over (%s)" % why)
         return self.state()

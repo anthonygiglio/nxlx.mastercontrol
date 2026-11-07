@@ -883,6 +883,17 @@ class PanelTest(CareBase):
             self.r("POST", "/api/renderer", {"use": "new"})
         self.assertEqual(len(self.quits), n + 1, "other reasons still restart")
 
+    def test_new_chosen_again_retries_after_no_graphics_chip_but_not_after_gles2(self):
+        self.api.board = {"kind": "pi4", "model": "Raspberry Pi 4 Model B Rev 1.4", "arch": "aarch64"}
+        self.r("POST", "/api/renderer", {"use": "new"})
+        n = len(self.quits)
+        with mock.patch.object(self.api.renderer, "drawing", lambda: ("classic", renderer.NO_GPU_WHY)):
+            self.r("POST", "/api/renderer", {"use": "new"})
+        self.assertEqual(len(self.quits), n + 1, "a driver fixed without a reboot: the retry")
+        with mock.patch.object(self.api.renderer, "drawing", lambda: ("classic", renderer.GLES2_WHY)):
+            self.r("POST", "/api/renderer", {"use": "new"})
+        self.assertEqual(len(self.quits), n + 1, "the board cannot change: no retry")
+
     def test_the_card_gets_the_tier_and_each_value_with_its_reason(self):
         self.api.board = {"kind": "pi3", "model": "Raspberry Pi 3 Model B Rev 1.2", "arch": "aarch64"}
         st, body = self.r("GET", "/api/renderer")

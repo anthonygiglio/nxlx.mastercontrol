@@ -1114,7 +1114,7 @@ With New chosen, a box that boots with no screen falls back to classic mpv; when
 |---|---|---|---|
 | RL1 | The Pi 4 node (regression): New chosen, then `tr '\0' ' ' < /proc/$(pgrep -x pvj-render)/cmdline` | `--detail=540 --fast --skip-deblock --sources=4` with no `--fx-fps` in it, as before; `journalctl -u pvj-player` shows `graphics chip: V3D ...` | An `--fx-fps` argument, or no "graphics chip" line |
 | RL2 | The Pi 3B card: choose New | Classic draws at once with the OpenGL ES 3 reason (pvj-render never starts) | pvj-render started |
-| RL3 | A PC with no graphics driver (llvmpipe), on a screen with the DRM output: choose New | Classic draws; the card says "New was chosen; classic mpv is drawing: this node has no graphics chip the new renderer can use"; the journal says the reason once; choosing New again restarts nothing | A second try, a slow software-drawn picture, or a loop of restarts |
+| RL3 | A PC with no graphics driver (llvmpipe), on a screen with the DRM output: choose New | Classic draws; the card says "New was chosen; classic mpv is drawing: this node has no graphics chip the new renderer can use"; the journal says the reason once; choosing New again tries once more and falls back at once the same way | A second try, a slow software-drawn picture, or a loop of restarts |
 | RL4 | A Pi 5 or a PC with a real GPU at 60 Hz: choose New | The argument list has `--fx-fps=60`; the Renderer card lists "Effect rate: up to the screen's rate, at most 60 a second" | No `--fx-fps`, or a rate over 60 |
 
 ## Safety
