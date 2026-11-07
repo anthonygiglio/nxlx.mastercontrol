@@ -1,0 +1,9 @@
+<!-- SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+     SPDX-License-Identifier: Apache-2.0 -->
+## 2026-11-07, pvj-render refuses a software rasteriser on a screen, and the effect rate follows the tier
+
+- `render/src/out.c` now logs `graphics chip: <GL_RENDERER>` on a screen as well as headless. On a screen, a software rasteriser (llvmpipe, softpipe, swrast, "Software Rasterizer", any case) ends the start with exit code 5 (`EXIT_NO_GPU`) and the message "this node has no graphics chip the new renderer can use (<name> is a software rasteriser)". Headless is not checked, so every test path on llvmpipe runs as before.
+- The supervisor turns exit 5 into the reason "this node has no graphics chip the new renderer can use", which the Renderer card shows after "New was chosen; classic mpv is drawing:". It does not try a second time, and choosing New again does not restart the player over it (as for the OpenGL ES 2 reason).
+- Test hook, in a TEST_HOOKS build only: `PVJ_RENDER_TEST_GL_RENDERER=<name>` makes a headless run judge that name as a screen's GL_RENDERER is judged. `GraphicsChipTest` checks five software names (exit 5, the message, the name logged), three real chips that start, and headless on llvmpipe without the hook.
+- `--fx-fps` by tier (`profile.fx_fps`): lean, standard and unknown never pass it (pvj-render's 30), so the argv of a Pi 3 and a Pi 4 is byte for byte what it was. The full tier (Pi 5, x86) passes the screen's refresh rate from `--drm-mode=WxH@HZ`, at most 60 and at least 1, and nothing when the mode has no rate. The frozen-values test expects `--fx-fps=60` after `--sources=N` for pi5 and x86 and master's argv for the rest. D123.
+- The profile has two new rows: "Effect rate (new renderer)" and "Graphics chip (new renderer)", so the card lists twelve.

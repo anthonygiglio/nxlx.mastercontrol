@@ -29,6 +29,7 @@ Who does what, as for the screen's mode (pvj/screenmode.py, D90):
 """
 
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -198,6 +199,10 @@ def command(socket_path, screen_args, detail, board_kind, env=None, sources=None
         if not deblock:
             args.append("--skip-deblock")
     args.append("--sources=%d" % sources_for(board_kind, sources))
+    hz = re.search(r"^--drm-mode=\d+x\d+@([0-9.]+)$", next((a for a in screen_args if a.startswith("--drm-mode=")), ""))
+    rate = profile.fx_fps(board_kind, hz.group(1) if hz else None)
+    if rate:
+        args.append("--fx-fps=%d" % rate)       # only the full tier; the others keep pvj-render's 30, their argv as it was
     extra = final_arg(final, board_kind)
     if extra:
         args.append(extra)
@@ -205,6 +210,8 @@ def command(socket_path, screen_args, detail, board_kind, env=None, sources=None
 
 
 GLES2_WHY = "pvj-render needs OpenGL ES 3 and this node's graphics chip only has version 2"
+EXIT_NO_GPU = 5                         # pvj-render's exit when its screen is drawn by a software rasteriser (render/src/pvj.h)
+NO_GPU_WHY = "this node has no graphics chip the new renderer can use"
 
 
 def gles2_only(board_kind):
@@ -443,6 +450,8 @@ class Supervisor:
             if not up:
                 code = self.proc.poll()
                 self._end()
+                if code == EXIT_NO_GPU:
+                    return NO_GPU_WHY
                 return ("pvj-render did not start (exit %s)" % code) if code is not None else \
                     "pvj-render did not answer within %d seconds" % self.start_seconds
             self._final_begin()
@@ -707,6 +716,6 @@ class Renderer:
             # start): a restart of the player is what tries pvj-render again (D95), so choosing New again does it,
             # instead of leaving the box on classic until something else restarts the player (the 2-hour soak, D106)
             drawing, why = self.drawing()
-            if drawing == "classic" and why and why != GLES2_WHY:
+            if drawing == "classic" and why and why not in (GLES2_WHY, NO_GPU_WHY):
                 self._restart("New chosen again after classic took over (%s)" % why)
         return self.state()

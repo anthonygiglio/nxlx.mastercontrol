@@ -69,6 +69,23 @@ static int fail(char *err, size_t n, const char *what)
     return -1;
 }
 
+// Mesa's software rasterisers name themselves in GL_RENDERER. On a screen one of them would only drop frames, so the
+// start is refused (headless, which is the tests' and has no screen, keeps working on llvmpipe).
+static int software_gl(const char *renderer)
+{
+    static const char *const names[] = { "llvmpipe", "softpipe", "swrast", "software rasterizer" };
+    if (!renderer) return 0;
+    for (size_t i = 0; i < sizeof names / sizeof *names; i++)
+        if (strcasestr(renderer, names[i])) return 1;
+    return 0;
+}
+
+static int refuse_software(const char *renderer, char *err, size_t n)
+{
+    snprintf(err, n, "this node has no graphics chip the new renderer can use (%s is a software rasteriser)", renderer);
+    return OUT_NO_GPU;
+}
+
 static void final_refused(const char *why)
 {
     pthread_mutex_lock(&app.lock);
@@ -261,8 +278,11 @@ static int kms_open(const Cfg *cfg, char *err, size_t n)
     if (surf == EGL_NO_SURFACE) return fail(err, n, "eglCreateWindowSurface failed");
     if (!eglMakeCurrent(dpy, surf, surf, ctx)) return fail(err, n, "eglMakeCurrent failed");
     eglSwapInterval(dpy, 0);
+    const char *gl = (const char *)glGetString(GL_RENDERER);
+    LOG("graphics chip: %s", gl ? gl : "unknown");
+    if (software_gl(gl)) return refuse_software(gl, err, n);
     LOG("screen: %ux%u at %.3f Hz, connector %u, crtc %u, %s", mode.hdisplay, mode.vdisplay, app.out_hz, conn_id, crtc_id,
-        (const char *)glGetString(GL_RENDERER));
+        gl ? gl : "unknown");
     return 0;
 }
 
@@ -302,6 +322,15 @@ static int headless_open(const Cfg *cfg, char *err, size_t n)
     ctx = eglCreateContext(dpy, got > 0 ? cfgs[0] : EGL_NO_CONFIG_KHR, EGL_NO_CONTEXT, cta);
     if (ctx == EGL_NO_CONTEXT) return fail(err, n, "no OpenGL ES 3 context (surfaceless)");
     if (!eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, ctx)) return fail(err, n, "eglMakeCurrent without a surface failed");
+#ifdef PVJ_RENDER_TEST_HOOKS
+    // Tests only: PVJ_RENDER_TEST_GL_RENDERER=<name> is judged as GL_RENDERER is on a screen, so the refusal of a software
+    // rasteriser runs in CI, where every headless run is on llvmpipe and must go on being allowed.
+    const char *fake = getenv("PVJ_RENDER_TEST_GL_RENDERER");
+    if (fake) {
+        LOG("graphics chip: %s (from the test hook)", fake);
+        if (software_gl(fake)) return refuse_software(fake, err, n);
+    }
+#endif
     app.out_w = cfg->headless_w;
     app.out_h = cfg->headless_h;
     app.out_hz = 60.0;

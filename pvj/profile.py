@@ -27,14 +27,14 @@ SOURCES_MAX = 8                         # the renderer's own bound on sources (D
 # at 540p, so it has 4 (an idle source costs nothing). A Pi 3 (not measured, about half a Pi 4) has 2. Others: 4 by default,
 # 8 at most.
 PROFILES = {
-    "lean": {"small": True, "sources_default": 2, "sources_cap": 2,
+    "lean": {"small": True, "sources_default": 2, "sources_cap": 2, "fx_follows_output": False,
              "shader_heights": 3, "shader_default": 540, "effects": "lean"},
-    "standard": {"small": True, "sources_default": 4, "sources_cap": 4,
+    "standard": {"small": True, "sources_default": 4, "sources_cap": 4, "fx_follows_output": False,
                  "shader_heights": 3, "shader_default": 540, "effects": "standard"},
-    "full": {"small": False, "sources_default": 4, "sources_cap": SOURCES_MAX,
+    "full": {"small": False, "sources_default": 4, "sources_cap": SOURCES_MAX, "fx_follows_output": True,
              "shader_heights": 4, "shader_default": 720, "effects": None},
     # Nothing measured, so the careful (lean) values everywhere (D122); before it the renderer took the heavy path here.
-    "unknown": {"small": True, "sources_default": 2, "sources_cap": 2,
+    "unknown": {"small": True, "sources_default": 2, "sources_cap": 2, "fx_follows_output": False,
                 "shader_heights": 3, "shader_default": 540, "effects": "lean"},
 }
 
@@ -64,6 +64,25 @@ def inside_lines(kind):
 def effects_row(kind):
     """"lean", "standard" or None: which of effects.py's Automatic tables this kind uses (None: nothing scaled)."""
     return of(kind)["effects"] if kind in KINDS else None
+
+
+FX_FPS_DEFAULT = 30             # pvj-render's own default (--fx-fps), the carrier's rate on classic
+FX_FPS_MAX = 60
+
+
+def fx_fps(kind, refresh):
+    """The --fx-fps to pass pvj-render, or None to leave its default of 30: the lean, standard and unknown tiers never
+    pass it; the full tier passes the output's refresh rate (Hz), at most 60 and at least 1, and nothing when the rate
+    is not known."""
+    if not of(kind)["fx_follows_output"]:
+        return None
+    try:
+        hz = float(refresh)
+    except (TypeError, ValueError):
+        return None
+    if not 0 < hz < 1000:
+        return None
+    return max(1, min(FX_FPS_MAX, int(round(hz))))
 
 
 def shader_heights(kind):
@@ -114,6 +133,10 @@ def describe(kind, model="", saved=None):
          "why": "All bundled shaders keep up at 540 lines on a Pi 4." if p["shader_default"] == 540 else "A guess until someone measures this board."},
         {"name": "Effect detail by default", "value": "Automatic" if p["effects"] else "full size",
          "why": "Automatic scales each filter to what this board holds." if p["effects"] else "No effect has been measured here."},
+        {"name": "Effect rate (new renderer)", "value": "up to the screen's rate, at most 60 a second" if p["fx_follows_output"] else "30 a second",
+         "why": "30 a second on a Pi 3 or 4; up to the screen's rate, at most 60, on a Pi 5 or a desktop, not yet measured there."},
+        {"name": "Graphics chip (new renderer)", "value": "a real one only",
+         "why": "On a screen the renderer refuses a software rasteriser (llvmpipe and the like): it would only drop frames, so classic mpv draws."},
     ]
     if tier == "unknown":
         for v in values[:7]:

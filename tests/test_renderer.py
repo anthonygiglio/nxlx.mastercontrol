@@ -309,7 +309,7 @@ class ChoiceTest(Base):
         self.assertEqual(renderer.command("/run/s", screen, "auto", "pi4", self.env),
                          [self.standin, "--socket=/run/s"] + screen + ["--detail=540", "--fast", "--skip-deblock", "--sources=4"])
         self.assertEqual(renderer.command("/run/s", screen[2:], "auto", "x86", self.env),
-                         [self.standin, "--socket=/run/s", "--drm-mode=1920x1080@60.00", "--detail=output", "--sources=4"])
+                         [self.standin, "--socket=/run/s", "--drm-mode=1920x1080@60.00", "--detail=output", "--sources=4", "--fx-fps=60"])   # the full tier passes the screen's rate
         self.assertEqual(renderer.command("/run/s", [], 720, "pi5", self.env)[-2], "--detail=720")
         self.assertEqual(renderer.command("/run/s", ["--vo=gpu", "--drm-mode=3"], "output", "pi3", self.env),
                          [self.standin, "--socket=/run/s", "--drm-mode=3", "--detail=output", "--fast", "--skip-deblock", "--sources=2"])
@@ -374,6 +374,11 @@ class SupervisorTest(Base):
         self.assertEqual((rep["chosen"], rep["drawing"], rep["why"]), ("new", "new", ""))
         self.assertEqual(rep["pid"], os.getpid())
         self.assertIn("--detail=540", self.runs()[0])
+
+    def test_a_software_rasteriser_gives_the_plain_reason(self):
+        why = self.supervisor("exit:%d" % renderer.EXIT_NO_GPU).run()
+        self.assertEqual(why, "this node has no graphics chip the new renderer can use")
+        self.assertEqual(len(self.runs()), 1, "no second try")
 
     def test_a_program_that_ends_at_once_falls_back_at_once(self):
         why = self.supervisor("exit:2").run()
