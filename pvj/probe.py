@@ -98,6 +98,8 @@ def exact(path, mpv_bin="mpv", timeout=20):
 HEAVY = ("prores", "dnxhd", "dnxhr", "cfhd", "rawvideo", "v210", "qtrle", "ffv1", "huffyuv", "utvideo")
 
 
+# By exact kind, not tier: what is said here was measured on a Pi 4, not tested on a Pi 3, or is a fact of the Pi 5 chip
+# (pvj/profile.py keeps the tier questions).
 def advice(info, board):
     """Plain-word warnings for a clip that may not play smoothly on this board, or []. Only what was measured on a
     Pi 4 (1080p H.264 at 24 fps in software: about 109 percent of one core, no dropped frames) or is plainly far

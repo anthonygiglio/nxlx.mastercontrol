@@ -34,7 +34,7 @@ import subprocess
 import sys
 import time
 
-from . import hardware, paths, screenmode
+from . import hardware, paths, profile, screenmode
 
 USES = ("classic", "new")
 DETAILS = ("auto", 540, 720, "output")
@@ -49,19 +49,9 @@ TERM_SECONDS = 3.0                      # ... and this long after SIGTERM, then 
 WATCH_SECONDS = 0.5                     # how often the supervisor reads WANTED while pvj-render draws
 FINAL_POLL_SECONDS = 0.2                # the final pass's look at pvj-render: a jammed one must not hold up the watch (D108)
 FINAL_ASK_SECONDS = 1.0                 # ... and a change of it, asked only of a pvj-render that has just answered
-SMALL_BOARDS = ("pi3", "pi4")           # where Automatic draws 540 lines inside (the spike of 2026-10-16, D95)
-# Sources (D101): clip layers beside the player's own picture, which the mapping shows per surface. A board takes at
-# most its cap, and without a choice gets its default. Measured on the owner's Pi 4 (2026-10-20), software H.264
-# decode alone: 1080p 83 fps for one stream, 44 each for two, 22 each for four; 720p 161, 88, 44; 540p 229, 137, 67,
-# and 46 each for six. With room left for drawing, a Pi 4 carries about 2 at 1080p, 4 at 720p, 6 at 540p. So a Pi 4
-# has 4: that is what it carries at 720p, an idle source costs nothing, and the panel warns when a 1080p clip goes
-# to a source while two others play. A Pi 3 (not measured, about half a Pi 4) has 2. Other boards: 4 by default, 8
-# at most (the renderer's own bound).
-SOURCES_MAX = 8
+# Sources (D101) and the Pi 3 or 4 group (was SMALL_BOARDS) are in pvj/profile.py, one row per tier.
+SOURCES_MAX = profile.SOURCES_MAX
 FINALS = ("auto", "full", 720)          # the final pass (D108): Automatic, always the output's size, always 720 lines
-SOURCE_CAP = {"pi3": 2, "pi4": 4}
-SOURCE_DEFAULT = {"pi3": 2, "pi4": 4}
-SOURCES_OTHER = 4
 
 
 # Automatic for the final pass (D108): 720 lines when the box is busy, the output's size while it has room, because
@@ -108,14 +98,14 @@ def final_rule(state, now, missed, load, hz):
 
 
 def source_cap(board_kind):
-    return SOURCE_CAP.get(board_kind, SOURCES_MAX)
+    return profile.sources_cap(board_kind)
 
 
 def sources_for(board_kind, chosen=None):
     """The sources pvj-render is started with on this board: the Owner's number, or the board's default, never over
     its cap."""
     n = chosen if isinstance(chosen, int) and not isinstance(chosen, bool) and 1 <= chosen <= SOURCES_MAX else \
-        SOURCE_DEFAULT.get(board_kind, SOURCES_OTHER)
+        profile.sources_default(board_kind)
     return min(n, source_cap(board_kind))
 
 
@@ -138,7 +128,7 @@ def source_warning(rows, target, board_kind):
     """The panel's warning (D101) when a clip of more than 720 lines plays on source `target` while two or more other
     sources play, on a board whose numbers say that is past what it decodes (a Pi 3 or 4); else None. `rows`:
     Player.sources_state()."""
-    if board_kind not in SMALL_BOARDS:
+    if not profile.small(board_kind):
         return None
     mine = [r for r in rows if r.get("source") == target]
     others = [r for r in rows if r.get("source") != target and not r.get("idle")]
@@ -184,7 +174,7 @@ def wanted_path(env=None):
 def detail_arg(detail, board_kind):
     """--detail for pvj-render: lines inside, or the output's own size. Automatic: 540 on a Pi 3 or 4, else the output."""
     if detail == "auto":
-        detail = 540 if board_kind in SMALL_BOARDS else "output"
+        detail = profile.inside_lines(board_kind) or "output"
     return "--detail=%s" % detail
 
 
@@ -193,7 +183,7 @@ def final_arg(final, board_kind):
     a Pi 3 or 4 only; elsewhere the GPU has the room, so it is off."""
     if final == 720:
         return "--final=720"
-    return "--final=auto" if final == "auto" and board_kind in SMALL_BOARDS else None
+    return "--final=auto" if final == "auto" and profile.small(board_kind) else None
 
 
 def command(socket_path, screen_args, detail, board_kind, env=None, sources=None, final=None, deblock=False):
@@ -203,7 +193,7 @@ def command(socket_path, screen_args, detail, board_kind, env=None, sources=None
     args = [binary(env), "--socket=" + socket_path]
     args += [a for a in screen_args if a.startswith(("--drm-device=", "--drm-connector=", "--drm-mode="))]
     args.append(detail_arg(detail, board_kind))
-    if board_kind in SMALL_BOARDS:
+    if profile.small(board_kind):
         args.append("--fast")
         if not deblock:
             args.append("--skip-deblock")
@@ -241,8 +231,20 @@ def chosen(rundir, extra_args, windowed, env=None, board_kind=None):
     return "new", want["detail"], ""
 
 
+def board_profile():
+    """The tier and each value of this node's profile with its reason (profile.describe), as the wish says it is in
+    effect, or None if the board cannot be read."""
+    try:
+        board = hardware.detect_board()
+        return profile.describe(board.get("kind", ""), board.get("model", ""), clean(screenmode.read_json(wanted_path())))
+    except Exception:
+        return None
+
+
 def write_report(rundir, data, log=None):
     data = dict(data, pid=os.getpid(), at=int(time.time()), boot=screenmode.boot_id())
+    if "profile" not in data:
+        data["profile"] = board_profile()        # the tier and what it gives, with the reasons, beside what is drawing
     try:
         screenmode.write_json(os.path.join(rundir, REPORT), data)
     except OSError as e:
@@ -503,6 +505,19 @@ def fallback(rundir, detail, why, log):
 
 # ---- the panel's side --------------------------------------------------------------------------------------------
 REPORT_WORDS = 200
+PROFILE_ROWS = 16
+
+
+def clean_profile(data):
+    """The profile in the report, as data from a less trusted account: a tier from the list, short plain sentences."""
+    if not isinstance(data, dict) or not isinstance(data.get("tier"), str) or data["tier"] not in profile.PROFILES:
+        return None
+    def words(v):
+        return screenmode._WHY.sub("", v)[:REPORT_WORDS] if isinstance(v, str) else ""
+    rows = [{k: words(r.get(k)) for k in ("name", "value", "why")} for r in (data.get("values") if isinstance(data.get("values"), list) else [])[:PROFILE_ROWS] if isinstance(r, dict)]
+    return {"tier": data["tier"], "tier_words": profile.TIER_WORDS[data["tier"]], "model": words(data.get("model")), "values": rows}
+
+
 
 
 def clean_report(data):
@@ -518,6 +533,7 @@ def clean_report(data):
             "detail": clean({"detail": data.get("detail")})["detail"],
             "final": clean({"final": data.get("final")}).get("final"),
             "final_why": screenmode._WHY.sub("", data["final_why"])[:REPORT_WORDS] if isinstance(data.get("final_why"), str) else "",
+            "profile": clean_profile(data.get("profile")),
             "pid": pid if isinstance(pid, int) and not isinstance(pid, bool) else None,
             "boot": screenmode._WHY.sub("", data["boot"])[:64] if isinstance(data.get("boot"), str) else "",
             "at": data.get("at") if isinstance(data.get("at"), int) and not isinstance(data.get("at"), bool) else None}
@@ -600,6 +616,21 @@ class Renderer:
         board = getattr(self.api, "board", None)
         return board.get("kind", "") if isinstance(board, dict) else hardware.detect_board().get("kind", "")
 
+    def settings_profile(self, drawing=None):
+        """(profile, note) for the card: this node's tier and each value with its reason (profile.describe), from the
+        board the panel read and the settings saved. While pvj-render draws it is the report's own (what the player
+        started with); the note says so in one line when the two differ."""
+        board = getattr(self.api, "board", None)
+        board = board if isinstance(board, dict) else {}
+        own = profile.describe(board.get("kind", ""), board.get("model", ""), self.saved())
+        rep = self.report() if drawing == "new" else None
+        if rep and rep.get("profile"):
+            theirs = rep["profile"]
+            if (theirs["tier"], theirs["model"]) != (own["tier"], own["model"]):
+                return theirs, "The player reports %s (%s); this panel reads %s (%s)." % (theirs["tier"], theirs["model"], own["tier"], own["model"])
+            return theirs, ""
+        return own, ""
+
     def sources(self):
         """What the page says of sources (D101): the Owner's number or None (the board's own), this board's default
         and cap, and the number pvj-render is started with."""
@@ -613,6 +644,9 @@ class Renderer:
         out = {"use": saved["use"], "detail": saved["detail"], "drawing": drawing, "available": available(self.env),
                "uses": list(USES), "details": list(DETAILS), "sources": self.sources(),
                "final": saved.get("final", "auto"), "finals": list(FINALS)}
+        out["profile"], note = self.settings_profile(drawing)
+        if note:
+            out["profile_note"] = note
         if saved["use"] == "new" and drawing == "classic":
             out["why"] = why or "the player has not started pvj-render yet"
         rep = self.report()

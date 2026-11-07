@@ -44,8 +44,8 @@ def pi_kind(model):
 
 def tier(kind):
     """How much a board is asked to do: "lean" (Pi 3 class), "standard" (Pi 4 class), "full" (Pi 5, x86) or "unknown"
-    (a Pi below the floor, an ARM board the node cannot name). Only renderer.gles2_only reads it for a limit, and it
-    treats the Pi 1 class (pi-other) as lean for that one purpose: the same OpenGL ES 2 chip."""
+    (a Pi below the floor, an ARM board the node cannot name). pvj/profile.py reads it for every value; renderer.gles2_only
+    also treats the Pi 1 class (pi-other) as lean for one purpose: the same OpenGL ES 2 chip."""
     return {"pi3": "lean", "pi4": "standard", "pi5": "full", "x86": "full"}.get(kind, "unknown")
 
 

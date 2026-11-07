@@ -1,0 +1,9 @@
+<!-- SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+     SPDX-License-Identifier: Apache-2.0 -->
+## D122. A board the node cannot name takes the lean values (2026-11-07)
+
+D95, D101, D108 and D120 gave the careful renderer values (540 lines inside, mpv's cheap scalers, no deblocking, the final pass's Automatic, 2 sources, the overload warning of D101) to "a Pi 3 or 4" and left every other board on the heavy path ("their numbers are not known", D101; "other boards keep the filter, as nothing was measured on them", D120). That left a Pi 1 or Zero, a board of another make and a board whose model the node does not read at the screen's own size with up to 8 sources and no warning, while the effects (D57), the shader heights and the shader default (D93) already treated those boards as a Pi 3.
+
+Now the unknown tier (a pi-other or arm-other board, `pvj/profile.py`) takes the lean values for the renderer: Automatic detail 540 lines, `--fast`, `--skip-deblock`, the Automatic final pass allowed, 2 sources by default and at most, and the warning when a clip over 720 lines goes to a source while two others play. Why: nothing is measured on such a board, and a wrong start on a weak one drops frames in front of an audience, while a strong one loses a little sharpness that the Owner can set back (Picture detail, Final picture, and `renderer.deblock` of D120). A Pi 5 and x86 are the full tier and keep their values; so do the Pi 3 and the Pi 4.
+
+Cost / rules out: a capable ARM board that the node cannot name (an RK3588, say) starts at 540 lines (the Owner can choose another detail on the Renderer card) and is held to 2 sources (a saved sources choice above 2 on such a board is clamped to 2 on upgrade, and the Renderer card says so); a later change can give such a board a higher cap once someone measures it. Classic mpv's arguments, the clip advice of `probe`, and which board a module runs on are not changed by this.

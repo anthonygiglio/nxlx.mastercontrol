@@ -409,7 +409,8 @@ class WarningTest(ApiBase):
 
 class CountTest(unittest.TestCase):
     def test_the_cap_and_the_default_per_board(self):
-        self.assertEqual([renderer.sources_for(b) for b in ("pi4", "pi3", "pi5", "x86", "")], [4, 2, 4, 4, 4])
+        self.assertEqual([renderer.sources_for(b) for b in ("pi4", "pi3", "pi5", "x86", "")], [4, 2, 4, 4, 2])
+        self.assertEqual([renderer.source_cap(b) for b in ("pi-other", "arm-other", "")], [2, 2, 2], "a board nobody named takes the lean values (D122)")
         self.assertEqual([renderer.source_cap(b) for b in ("pi4", "pi3", "pi5", "x86")], [4, 2, 8, 8])
         self.assertEqual(renderer.sources_for("pi4", 8), 4, "never over the board's cap")
         self.assertEqual(renderer.sources_for("x86", 8), 8)
