@@ -169,6 +169,18 @@ class WatcherTest(unittest.TestCase):
         self.assertGreaterEqual(f.ended[0] - began, latescreen.GAP_SECONDS)
         self.assertEqual(len([line for line in f.lines if "cannot be kept" in line]), 1)
 
+    def test_a_readable_count_from_this_boot_does_not_lift_the_floor_when_nothing_can_be_written(self):
+        f = Fake(self)
+        f.screen("HDMI-A-1", True)
+        screenmode.write_json(os.path.join(f.rundir, latescreen.STATE), {"boot": "boot-1", "switches": [f.now - 100]})
+        with mock.patch.object(screenmode, "write_json", side_effect=OSError(30, "Read-only file system")):
+            w = f.watcher()
+            began = f.now
+            self.assertTrue(f.run_until(w, 100))
+        self.assertGreaterEqual(f.ended[0] - began, latescreen.GAP_SECONDS)
+        self.assertEqual(len([line for line in f.lines if "cannot be kept" in line]), 1)
+        self.assertTrue(any("sooner than 30 s" in line for line in f.lines), f.lines)
+
     def test_the_count_belongs_to_one_boot(self):
         f = Fake(self)
         f.screen("HDMI-A-1", True)

@@ -12,7 +12,7 @@ reads the connector status files under /sys/class/drm (any connector on any card
 it ends the player's process, and systemd (`Restart=always`) starts the service again by its normal path: the screen's
 mode is chosen as at any start and pvj-render is tried, with the same gate as ever (a pvj-render that fails to start
 or ends twice stays on classic). It is not a restart loop: after a switch the next one waits WAITS in turn (30 s, 60 s,
-120 s, then 300 s). There is no total: a loose cable never leaves the box on classic for the rest of the boot, it only
+120 s, then 300 s). There is no total: a no-screen fallback never leaves the box on classic for the rest of the boot, it only
 makes it wait longer. The wait starts again at 30 s once the last switch is more than RESET_SECONDS old, i.e. pvj-render
 has drawn that long since. The first switch of a boot has no wait.
 
@@ -90,8 +90,8 @@ class Watcher:
             screenmode.write_json(self.path, {"boot": self.boot, "switches": self._switches()})
         except OSError as e:
             self.floor = True
-            self.log("pvj-player: renderer: the count of switches cannot be kept (%s); every switch waits %d s after "
-                     "the player starts" % (e.strerror or e, self.gap))
+            self.log("pvj-player: renderer: the count of switches cannot be kept (%s); no switch comes sooner than %d s "
+                     "after the player starts, whatever the count says" % (e.strerror or e, self.gap))
 
     def _switches(self):
         data = screenmode.read_json(self.path)
@@ -115,6 +115,8 @@ class Watcher:
             self.since = now
         if now - self.since < self.settle:
             return False
+        if self.floor and now - self.began < self.gap:
+            return False            # the count cannot be kept (so a file read here may be stale): never sooner than the floor
         switches = self._switches()
         run = 0                     # how many switches in a row, each less than `reset` after the one before (or before now)
         edge = now
@@ -126,8 +128,6 @@ class Watcher:
             wait = self.waits[min(run, len(self.waits)) - 1]
             if now - switches[-1] < wait:
                 return False        # the screen may be flapping: wait out the wait, then look again
-        elif self.floor and now - self.began < self.gap:
-            return False            # the count cannot be kept: never sooner than the floor after this watcher began
         switches = switches[-KEEP:]
         wait_next = self.waits[min(run + 1, len(self.waits)) - 1]
         self.spent = True
