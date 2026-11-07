@@ -398,7 +398,7 @@ class Files(Base):
             self.assertNotIn("skipped", self.call("GET", "/api/theme", token=token)[1])
         with open(os.path.join(server.WEB_DIR, "app.js")) as f:
             js = f.read()
-        self.assertIn("One theme file on this box could not be used: ", js)
+        self.assertIn("One theme file on this node could not be used: ", js)
         self.assertIn("k.file + ': ' + k.why", js)
 
     def test_a_name_of_a_look_that_comes_with_the_box_is_refused(self):
