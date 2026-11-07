@@ -1458,6 +1458,16 @@ html[data-style="signal"] .navrow.on .navname { color: var(--fg); text-decoratio
    area's name in the bar likewise. */
 html[data-style="signal"] .syshead h1, html[data-style="signal"] .syshead h2 { flex-basis: auto; min-width: 0; overflow-wrap: break-word; }
 html[data-style="signal"] .wstitle { overflow-wrap: break-word; }
+/* The title bar is the same on every screen (2026-11-07): the area's name and one line under it, which a page with
+   its own heading fills with its name. On a phone the line keeps room for two lines, so the bar, the tabs under it
+   and the screen start at the same place on every screen; a longer job is cut after the second line (its whole text
+   is the line's title). From 1200 px the line is beside the name, and starts at the same place for every area. */
+@container app (max-width: 599px) {
+  .wsjob:not(.all):not([hidden]) { min-height: calc(2em * 1.35); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+}
+@container app (min-width: 1200px) {
+  html[data-style="signal"] .wstitle { min-width: 100px; }
+}
 html[data-style="signal"] .tp .tpmore { min-width: max-content; }      /* (this look takes a button's least width away; More is a column of the line that says what plays, and is never narrower than its word: at 1200 px, where the line is fullest, it was 3 px short) */
 /* The flashing buttons (D75) in this look. The block above gives every button its outline and its background by a
    heavier selector, so the flash is said again here, after it: the fade button flashes in the ink, Blackout in

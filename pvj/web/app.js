@@ -833,10 +833,10 @@
           act('POST', '/api/control', { action: 'loop', value: !looping() }, poll);
         } })),
       h('div', { class: 'tpgrp' },
-        b('prev', '⏮ Prev', 'Previous clip', 'tpx fold f-steps', ctl('prev')),
+        b('prev', 'Prev', 'Previous clip', 'tpx fold f-steps', ctl('prev')),
         b('back10', '− 10 s', 'Back 10 seconds', 'tpx fold f-ten', ctl('seek', -10)),
         b('fwd10', '+ 10 s', 'Forward 10 seconds', 'tpx fold f-ten', ctl('seek', 10)),
-        b('next', 'Next ⏭', 'Next clip', 'tpx fold f-steps', ctl('next'))),
+        b('next', 'Next', 'Next clip', 'tpx fold f-steps', ctl('next'))),
       h('div', { class: 'tpgrp' },
         // the one fade button (D75): out, then in, decided by the box; fadeShow() in patchLive() keeps its words and its flash
         fadeButton('btn tpb tpx fold f-fades', canLive),
@@ -1279,9 +1279,9 @@
           h('span', { text: (i + 1) + '. ' + m.file + (m.missing ? ' (not in the Library)' : '') }),
           h('div', { class: 'row' },
             h('span', { class: 'switchlabel', text: m.on ? 'On' : 'Off' }), sw,
-            h('button', { class: 'btn small maskup', text: '↑', 'aria-label': 'Move ' + m.file + ' up', disabled: !live || i === 0,
+            h('button', { class: 'btn small maskup', text: 'Up', 'aria-label': 'Move ' + m.file + ' up', disabled: !live || i === 0,
               onclick: function (e) { send({ mask: m.file, move: 'up' }, e.target); } }),
-            h('button', { class: 'btn small maskdown', text: '↓', 'aria-label': 'Move ' + m.file + ' down', disabled: !live || i === d.masks.length - 1,
+            h('button', { class: 'btn small maskdown', text: 'Down', 'aria-label': 'Move ' + m.file + ' down', disabled: !live || i === d.masks.length - 1,
               onclick: function (e) { send({ mask: m.file, move: 'down' }, e.target); } }),
             remove)));
       });
@@ -1565,8 +1565,8 @@
           h('button', { class: 'linkish', text: x.name + ' (' + x.type + (x.type === 'grid' ? ' ' + x.cols + 'x' + x.rows : '') + ')' + (x.source > 1 ? ', Source ' + x.source : '') + (x.on ? '' : ', hidden'), 'aria-label': 'Choose ' + x.name,
             onclick: function () { send({ action: 'edit', selected: x.id }); } }),
           h('span', { class: 'row' },
-            h('button', { class: 'btn small', text: '↑', 'aria-label': 'Bring ' + x.name + ' forward', disabled: i === 0, onclick: function () { send({ action: 'order', id: x.id, dir: 'up' }); } }),
-            h('button', { class: 'btn small', text: '↓', 'aria-label': 'Send ' + x.name + ' back', disabled: i === d.surfaces.length - 1, onclick: function () { send({ action: 'order', id: x.id, dir: 'down' }); } }),
+            h('button', { class: 'btn small', text: 'Up', 'aria-label': 'Bring ' + x.name + ' forward', disabled: i === 0, onclick: function () { send({ action: 'order', id: x.id, dir: 'up' }); } }),
+            h('button', { class: 'btn small', text: 'Down', 'aria-label': 'Send ' + x.name + ' back', disabled: i === d.surfaces.length - 1, onclick: function () { send({ action: 'order', id: x.id, dir: 'down' }); } }),
             h('button', { class: 'btn small', text: x.on ? 'Hide' : 'Show', 'aria-label': (x.on ? 'Hide ' : 'Show ') + x.name, onclick: function () { send({ action: 'show', id: x.id, on: !x.on }); } }),
             h('button', { class: 'btn small', text: 'Remove', 'aria-label': 'Remove ' + x.name, onclick: function () { send({ action: 'remove', id: x.id }); } }))));
       });
@@ -1583,10 +1583,10 @@
         }));
         step.addEventListener('change', function (e) { mapUi.step = +e.target.value; });
         panel.appendChild(h('div', { class: 'row nudge' },
-          h('button', { class: 'btn small', id: 'mapleft', text: '←', 'aria-label': 'Move left', onclick: function () { nudge(-1, 0); } }),
-          h('button', { class: 'btn small', id: 'mapup', text: '↑', 'aria-label': 'Move up', onclick: function () { nudge(0, -1); } }),
-          h('button', { class: 'btn small', id: 'mapdown', text: '↓', 'aria-label': 'Move down', onclick: function () { nudge(0, 1); } }),
-          h('button', { class: 'btn small', id: 'mapright', text: '→', 'aria-label': 'Move right', onclick: function () { nudge(1, 0); } }),
+          h('button', { class: 'btn small', id: 'mapleft', text: 'Left', 'aria-label': 'Move left', onclick: function () { nudge(-1, 0); } }),
+          h('button', { class: 'btn small', id: 'mapup', text: 'Up', 'aria-label': 'Move up', onclick: function () { nudge(0, -1); } }),
+          h('button', { class: 'btn small', id: 'mapdown', text: 'Down', 'aria-label': 'Move down', onclick: function () { nudge(0, 1); } }),
+          h('button', { class: 'btn small', id: 'mapright', text: 'Right', 'aria-label': 'Move right', onclick: function () { nudge(1, 0); } }),
           step));
         panel.appendChild(h('div', { class: 'row' },
           h('button', { class: 'btn small grow', id: 'mapnext', text: 'Next corner', disabled: mapUi.whole,
@@ -3187,7 +3187,7 @@
       var what = MIDI_ACTIONS.filter(function (a) { return a[0] === e.action; })[0];
       var ctl = (e.kind === 'note' ? 'note ' : e.kind === 'cc' ? 'CC ' : 'program ') + e.number + (e.channel ? ' ch ' + e.channel : '');
       var pad = e.action === 'pad' ? ' ' + 'ABC'[e.bank] + (e.index + 1) : e.action === 'bank_pad' ? ' ' + (e.index + 1) : '';
-      return (e.source === '*' ? 'any controller' : e.source) + ' · ' + ctl + ' → ' + (what ? what[1] : e.action) + pad;
+      return (e.source === '*' ? 'any controller' : e.source) + ' · ' + ctl + ' to ' + (what ? what[1] : e.action) + pad;
     }
     function poll() {
       clearTimeout(midiTimer);
@@ -5902,7 +5902,7 @@
       var what = p.mode === 'hotspot' ? 'own hotspot “' + p.ssid + '”' : p.ssid ? 'joining “' + p.ssid + '”' + (p.mode === 'static' ? ' (fixed address)' : '')
         : p.mode === 'off' ? 'Wi-Fi off' : p.mode;
       body.appendChild(h('div', { class: 'card', id: 'netpending', role: 'alert' },
-        h('div', { class: 'field', text: 'Waiting for your confirmation: ' + p.iface + ' \u2192 ' + what }),
+        h('div', { class: 'field', text: 'Waiting for your confirmation: ' + p.iface + ' to ' + what }),
         h('div', { class: 'state', id: 'netleft', text: 'Reverts in ' + p.seconds_left + ' s' }),
         h('div', { class: 'hint', text: S.netNote || '' }),
         h('div', { class: 'row' },
@@ -7113,7 +7113,10 @@
     var mine = list.filter(function (x) { return x.area === area; });
     var desk = mine.filter(function (x) { return x.part; });      // the screens that share the page where there is room
     if (desk.length < 2) desk = [];
-    var job = cur && cur.job && !paged ? (mine.length > 1 && area !== 'setup' ? cur.name + ': ' : '') + cur.job : '';
+    // (a page with its own heading and sentence has its name on the line, so the bar is the same on every screen)
+    // (a page of Setup whose module is off is not among the screens: its row gives the name)
+    var pageRow = !cur && paged && S.sys ? sysRows().filter(function (r) { return r.id === S.sys; })[0] : null;
+    var job = !cur ? (pageRow ? pageRow.name : '') : paged ? cur.name : cur.job ? (mine.length > 1 && area !== 'setup' ? cur.name + ': ' : '') + cur.job : '';
     var item = function (x, cls, text) {
       return h('button', { class: cls + (x.key === key ? ' on' : ''), id: 'sub-' + x.key.replace('/', '-'), 'data-go': x.key, 'aria-current': x.key === key ? 'page' : false, text: text || x.name,
         onclick: function () { go(x.key); } });
@@ -7123,7 +7126,7 @@
     var head = h('header', { class: 'wshead', id: 'wshead' },
       h('div', { class: 'wsheadmain' },
         h(paged ? 'div' : 'h1', { class: 'wstitle', id: 'wstitle', text: areaName }),
-        h('p', { class: 'wsjob' + (cur && cur.part && desk.length ? ' one' : ''), id: 'wsjob', text: job, hidden: !job }),
+        h('p', { class: 'wsjob' + (cur && cur.part && desk.length ? ' one' : ''), id: 'wsjob', text: job, title: job || false, hidden: !job }),
         cur && cur.part && desk.length ? h('p', { class: 'wsjob all', id: 'wsjoball', text: AREA_JOBS[area] }) : null),
       h('span', { class: 'wsbrand', text: 'nxlx.mastercontrol' }),
       h('div', { class: 'pill k', id: 'pill' }));

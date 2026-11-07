@@ -159,7 +159,7 @@
     var fade = null;
     function say(text, err, pending) {
       clearTimeout(fade);
-      el.textContent = pending ? '●' : (text || '');
+      el.textContent = pending ? '...' : (text || '');
       el.className = 'ctlnote' + (err ? ' err' : '') + (pending ? ' pending' : '');
       if (err) fade = setTimeout(function () { say('', false, false); }, 8000);      // a refusal is read, then it goes
     }
@@ -751,7 +751,7 @@
       }
       // Previous and Next go through the Vibes set, with Vibes running or not; their controller buttons sit under them
       card.appendChild(h('div', { class: 'row wrap midirow' },
-        h('span', { class: 'hint grow keyshint', id: 'shaderkeys', text: 'Keys: Space is Vibes on and off \u00b7 \u2190 \u2192 step \u00b7 1 to 8 presets' }),
+        h('span', { class: 'hint grow keyshint', id: 'shaderkeys', text: 'Keys: Space is Vibes on and off \u00b7 the left and right arrow keys step \u00b7 1 to 8 presets' }),
         prev ? prev.btn : null, next ? next.btn : null));
       if (prev) {
         prev.btn.textContent = 'MIDI: Previous'; next.btn.textContent = 'MIDI: Next';
