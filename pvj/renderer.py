@@ -52,6 +52,9 @@ FINAL_POLL_SECONDS = 0.2                # the final pass's look at pvj-render: a
 FINAL_ASK_SECONDS = 1.0                 # ... and a change of it, asked only of a pvj-render that has just answered
 # Sources (D101) and the Pi 3 or 4 group (was SMALL_BOARDS) are in pvj/profile.py, one row per tier.
 SOURCES_MAX = profile.SOURCES_MAX
+# Hardware decoding for pvj-render (D124), a setting with no page: only the copy variants, because pvj-render makes its render
+# context without a display, so a zero-copy import is not attempted. "no" (software) is the default and passes nothing.
+HWDECS = ("no", "auto-copy", "v4l2m2m-copy", "vaapi-copy", "nvdec-copy", "drm-copy")
 FINALS = ("auto", "full", 720)          # the final pass (D108): Automatic, always the output's size, always 720 lines
 
 
@@ -159,6 +162,9 @@ def clean(data):
         out["loop_lists"] = False           # the kill switch of the loop lists (D118), no page shows it: no key is on
     if data.get("deblock") is True:
         out["deblock"] = True               # the way back to the video's deblocking on a Pi (D120), no page shows it
+    hw = data.get("hwdec")
+    if isinstance(hw, str) and hw in HWDECS and hw != "no":
+        out["hwdec"] = hw                   # hardware decoding, copy variants only (D124), no page shows it: no key is software
     return out
 
 
@@ -187,13 +193,15 @@ def final_arg(final, board_kind):
     return "--final=auto" if final == "auto" and profile.small(board_kind) else None
 
 
-def command(socket_path, screen_args, detail, board_kind, env=None, sources=None, final=None, deblock=False):
+def command(socket_path, screen_args, detail, board_kind, env=None, sources=None, final=None, deblock=False, hwdec=None):
     """pvj-render's argv: the socket, the screen's arguments as screenmode chose them for mpv, the detail, mpv's
     cheap scalers on a Pi (as classic's --profile=fast), no deblocking on a Pi unless the settings keep it (D120), the
     number of sources (D101) and the final pass (D108)."""
     args = [binary(env), "--socket=" + socket_path]
     args += [a for a in screen_args if a.startswith(("--drm-device=", "--drm-connector=", "--drm-mode="))]
     args.append(detail_arg(detail, board_kind))
+    if hwdec and hwdec != "no" and hwdec in HWDECS:
+        args.append("--hwdec=" + hwdec)     # only when the settings set it (D124): every other argument list is as it was
     if profile.small(board_kind):
         args.append("--fast")
         if not deblock:
@@ -266,11 +274,12 @@ class Supervisor:
 
     def __init__(self, cmd, socket_path, rundir, detail, log=print, spawn=None, clock=time.monotonic, sleep=time.sleep,
                  ready=None, start_seconds=START_SECONDS, healthy_seconds=HEALTHY_SECONDS, wanted=None, sources=None,
-                 final=None, deblock=False):
+                 final=None, deblock=False, hwdec=None):
         self.cmd, self.socket_path, self.rundir, self.detail = list(cmd), socket_path, rundir, detail
         self.sources = sources              # the Owner's number of sources this run was started with (None: the board's)
         self.final = final                  # the final pass this run was started with: "full" or 720 (None: Automatic)
         self.deblock = deblock              # this run was started keeping the video's deblocking (D120)
+        self.hwdec = hwdec                  # this run was started with --hwdec=this (D124), or None
         self.final_rule = None              # final_rule's state, while it decides for this run
         self.final_watch = False            # pvj-render was started with --final and has not said it cannot
         self.final_now = ("full", "")       # what the report says: what the final pass draws at, and why
@@ -321,6 +330,8 @@ class Supervisor:
             mine["final"] = self.final
         if self.deblock:
             mine["deblock"] = True
+        if self.hwdec:
+            mine["hwdec"] = self.hwdec
         return wish if wish != mine else None
 
     def _ask_quit(self):
@@ -495,8 +506,9 @@ def serve(player, screen_args, detail, log, env=None):
     wish = clean(screenmode.read_json(wanted_path(env)))
     sources, final = wish.get("sources"), wish.get("final")
     deblock = wish.get("deblock", False)
-    sup = Supervisor(command(player.socket_path, screen_args, detail, board, env, sources, final or "auto", deblock), player.socket_path, player.rundir,
-                     detail, log=log, wanted=wanted_path(env), sources=sources, final=final, deblock=deblock)
+    hwdec = wish.get("hwdec")
+    sup = Supervisor(command(player.socket_path, screen_args, detail, board, env, sources, final or "auto", deblock, hwdec), player.socket_path, player.rundir,
+                     detail, log=log, wanted=wanted_path(env), sources=sources, final=final, deblock=deblock, hwdec=hwdec)
     signal.signal(signal.SIGTERM, sup._stop)
     signal.signal(signal.SIGINT, sup._stop)
     try:
@@ -704,6 +716,8 @@ class Renderer:
                 self.settings.data["renderer"]["loop_lists"] = False
             if before.get("deblock"):
                 self.settings.data["renderer"]["deblock"] = True
+            if before.get("hwdec"):
+                self.settings.data["renderer"]["hwdec"] = before["hwdec"]
             self.settings.save()
         try:
             self._write()

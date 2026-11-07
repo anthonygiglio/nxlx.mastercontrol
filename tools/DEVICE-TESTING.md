@@ -1117,6 +1117,15 @@ With New chosen, a box that boots with no screen falls back to classic mpv; when
 | RL3 | A PC with no graphics driver (llvmpipe), on a screen with the DRM output: choose New | Classic draws; the card says "New was chosen; classic mpv is drawing: this node has no graphics chip the new renderer can use"; the journal says the reason once; choosing New again tries once more and falls back at once the same way | A second try, a slow software-drawn picture, or a loop of restarts |
 | RL4 | A Pi 5 or a PC with a real GPU at 60 Hz: choose New | The argument list has `--fx-fps=60`; the Renderer card lists "Effect rate: up to the screen's rate, at most 60 a second" | No `--fx-fps`, or a rate over 60 |
 
+### Pacing advice and renderer.hwdec: not yet run on a node
+
+| Row | Do | Good | Bad |
+|---|---|---|---|
+| PH1 | The Pi 4 node (regression): New chosen, then `tr '\0' ' ' < /proc/$(pgrep -x pvj-render)/cmdline` | No `--hwdec` in it, as before | An `--hwdec` argument |
+| PH2 | Set `"hwdec": "v4l2m2m-copy"` under `renderer` in the settings file of a test Pi 4 (not the show node), restart `pvj-web`, then choose New again | The player restarts once; `pvj-render` runs with `--hwdec=v4l2m2m-copy`; the card lists "Hardware decoding (new renderer): v4l2m2m-copy"; remove the key, restart `pvj-web` (or choose New again), and the player restarts once more without it | A second restart, or no row |
+| PH3 | Play a 24 fps clip on a 60.00 Hz screen, then open the clip's info in the media list | A note says the clip judders as 3:2 at 60.00 Hz; a 30 fps clip shows no pacing note | No note, or one for the 30 fps clip |
+| PH4 | A 29.97 fps clip on a 60.00 Hz screen, then on a 59.94 Hz mode | 60.00: a note that it slips about every 17 s and a 59.94 Hz mode would make it even; 59.94: no pacing note | No note |
+
 ## Safety
 
 - The workflow starts by **manual dispatch only**, and only for the repository owner. It never runs for pushes, pull requests or forks, so nobody else's code reaches the Pi. Keep it that way.

@@ -1983,7 +1983,13 @@ class Api:
             info = probe.probe(path, getattr(self.player, "mpv_bin", "mpv"))
         except probe.ProbeError as e:
             raise ApiError(422, str(e))
-        info["advice"] = probe.advice(info, self.board["kind"])
+        hz = None
+        try:
+            hz = probe.mode_hz(self.screen.brief().get("used"))       # the output's real rate, when the player has said it
+        except Exception:
+            pass
+        info["advice"] = probe.advice(info, self.board["kind"], hz)
+        info["output_hz"] = hz
         return info
 
     def system_info(self, body, device, client):

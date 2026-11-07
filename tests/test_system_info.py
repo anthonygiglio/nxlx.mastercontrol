@@ -60,6 +60,18 @@ class ApiTest(ServerBase):
         with mock.patch("pvj.probe.probe", side_effect=probe.ProbeError("the player could not open this file")):
             self.assertEqual(self.call("POST", "/api/media/info", {"name": "a.mp4"}, token=self.view)[0], 422)
 
+    def test_clip_info_carries_the_outputs_rate_and_the_pacing_line(self):
+        info = {"codec": "h264", "width": 1280, "height": 720, "fps": 24.0, "duration": 1.0, "audio": None, "container": "mp4"}
+        with mock.patch("pvj.probe.probe", return_value=dict(info)):
+            body = self.call("POST", "/api/media/info", {"name": "a.mp4"}, token=self.view)[1]
+            self.assertIsNone(body["output_hz"], "no mode in use: no pacing line")
+            self.assertEqual(body["advice"], [])
+            with mock.patch.object(self.api.screen, "brief", return_value={"asked": "auto", "used": "1920x1080@60.00", "why": ""}):
+                body = self.call("POST", "/api/media/info", {"name": "a.mp4"}, token=self.view)[1]
+        self.assertEqual(body["output_hz"], 60.0)
+        self.assertIn("60.00 Hz", body["advice"][0])
+        self.assertIn("3 and 2 refreshes", body["advice"][0])
+
     def test_system_info(self):
         with mock.patch("pvj.api.hardware.drm_connectors", return_value=[
                 {"connector": "HDMI-A-1", "status": "connected", "modes": ["2560x1440", "2560x1440", "1920x1080"]},
@@ -87,6 +99,60 @@ class ClipAdviceTest(unittest.TestCase):
     def test_the_measured_case_has_no_warning(self):
         from pvj import probe
         self.assertEqual(probe.advice({"codec": "h264", "width": 1920, "height": 1080, "fps": 23.976}, "pi4"), [])
+
+    def clip(self, fps, **kw):
+        return dict({"codec": "h264", "width": 1280, "height": 720, "fps": fps}, **kw)
+
+    def test_no_pacing_line_without_the_screens_rate(self):
+        from pvj import probe
+        self.assertEqual(probe.advice(self.clip(24), "x86"), [])
+        self.assertEqual(probe.advice(self.clip(29.97), "pi4"), [])
+
+    def test_pacing_on_a_60_hz_screen(self):
+        from pvj import probe
+        line = lambda fps, hz=60.0: probe.advice(self.clip(fps), "x86", hz)
+        for fps in (24, 23.976):
+            self.assertEqual(len(line(fps)), 1)
+            self.assertIn("3 and 2 refreshes", line(fps)[0])
+            self.assertIn("60.00 Hz", line(fps)[0])
+        self.assertIn("2 or 3 refreshes", line(25)[0])
+        self.assertIn("slips one frame about every 17 s", line(29.97)[0])
+        self.assertIn("A 59.94 Hz mode would make it even", line(29.97)[0])
+        self.assertIn("slips one frame about every 17 s", line(30, 59.94)[0])
+        self.assertIn("A 60.00 Hz mode would make it even", line(30, 59.94)[0])
+        for fps, hz in ((30, 60.0), (60, 60.0), (29.97, 59.94), (59.94, 59.94), (50, 50.0), (25, 50.0)):
+            self.assertEqual(line(fps, hz), [], (fps, hz))
+        self.assertIn("2 or 3 refreshes", line(24, 50.0)[0])
+
+    def test_an_output_that_is_not_60_or_50_class_says_so_once(self):
+        from pvj import probe
+        for hz in (75.0, 144.0, 30.0, 59.0):
+            a = probe.advice(self.clip(30), "x86", hz)
+            self.assertEqual(len(a), 1, hz)
+            self.assertIn("%.2f Hz" % hz, a[0])
+            self.assertIn("60.00 or 50.00 Hz mode", a[0])
+
+    def test_pacing_keeps_to_video_and_leaves_other_advice_in_place(self):
+        from pvj import probe
+        a = probe.advice({"codec": "h264", "width": 3840, "height": 2160, "fps": 24}, "pi4", 60.0)
+        self.assertIn("will very likely stutter", a[0])
+        self.assertEqual(len(a), 2)
+        self.assertEqual(probe.advice({"codec": "png", "width": 100, "height": 100, "fps": None}, "x86", 60.0), [])
+        self.assertEqual(probe.advice({"codec": "prores", "width": 1920, "height": 1080, "fps": 24}, "x86", 60.0)[0][:6], "PRORES")
+
+    def test_above_61_fps_has_one_line_and_a_non_finite_rate_is_unknown(self):
+        from pvj import probe
+        for hz in (None, 60.0):
+            a = probe.advice(self.clip(120.0), "x86", hz)
+            self.assertEqual(len(a), 1, hz)
+            self.assertIn("more than a screen shows", a[0])
+        for bad in (float("inf"), float("nan"), -float("inf")):
+            self.assertEqual(probe.advice(self.clip(bad), "x86", 60.0), [], bad)
+        self.assertEqual(probe.pacing_advice(30, float("inf")), [])
+
+    def test_mode_hz(self):
+        from pvj import probe
+        self.assertEqual((probe.mode_hz("1920x1080@59.94"), probe.mode_hz("x"), probe.mode_hz(None)), (59.94, None, None))
 
     def test_too_heavy_or_untested_cases_say_so(self):
         from pvj import probe
