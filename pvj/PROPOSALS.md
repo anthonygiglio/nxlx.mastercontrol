@@ -53,7 +53,7 @@ On the laptop these are four columns across the whole width; on the tablet two; 
 - **Why:** D50 asks for the question in place for every Remove. A projector switched off must cool for about a minute before it can come back.
 - **Work:** `confirmRow` at three call sites. **Risk:** low.
 
-### 5. The box clock gets a place on the panel
+### 5. The node's clock (D116) gets a place on the panel
 
 - **Where:** the clock (D116) has routes but no control. A tap comes only from a MIDI action or OSC.
 - **What:** show the tempo, its source (tap, Link, sound) and Tap on Now's node column. The beat matters for running a room as much as for playing.
