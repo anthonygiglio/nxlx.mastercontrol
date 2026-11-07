@@ -635,7 +635,7 @@ class LightsHubTest(LightsHubBase):
         self.refuse = PermissionError(1, "Operation not permitted")         # what a unit with "char-alsa r" answers to an open for writing
         self.plug(C_PAD)
         self.wait(lambda: self.lights_of("Mini")["state"] == "installer")
-        self.assertEqual(self.lights_of("Mini")["line"], "Lights need the box's installer to run once.")
+        self.assertEqual(self.lights_of("Mini")["line"], "Lights need the node's installer to run once.")
         time.sleep(1.5)                                                     # five looks at the lights later
         self.assertEqual(self.opens, [C_PAD])                               # it was tried once
         self.assertFalse([line for line in self.said if "light" in line.lower()])       # and nothing fills the log

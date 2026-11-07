@@ -106,8 +106,8 @@ class Health:
                                             "a weak one causes stutters, network drops and damaged SD cards."}
         if seen:
             return {"state": "warn", "since": int(seen) if seen.isdigit() else None,
-                    "text": "Undervoltage happened since the box started (not now). Check the power supply and its cable."}
-        return {"state": "ok", "text": "Power supply OK since the box started."}
+                    "text": "Undervoltage happened since the node started (not now). Check the power supply and its cable."}
+        return {"state": "ok", "text": "Power supply OK since the node started."}
 
     # -- the rest --
     def temperature(self):
@@ -120,7 +120,7 @@ class Health:
         if c is None:
             return {"state": "unknown", "celsius": None, "text": "Not measured."}
         if c >= HOT_C:
-            return {"state": "bad", "celsius": round(c), "text": "%d C: too hot, the box is slowing down. Give it air or a fan." % c}
+            return {"state": "bad", "celsius": round(c), "text": "%d C: too hot, the node is slowing down. Give it air or a fan." % c}
         if c >= WARM_C:
             return {"state": "warn", "celsius": round(c), "text": "%d C: hot; above 80 C a Pi starts to slow down." % c}
         return {"state": "ok", "celsius": round(c), "text": "%d C" % c}
@@ -159,7 +159,7 @@ class Health:
                 out["text"] += ", %s dropped frames a second" % rate
                 if rate >= 1:
                     out["state"] = "warn"
-                    out["text"] += ": the clip is too heavy for this box (see Prepare your clips in the manual)"
+                    out["text"] += ": the clip is too heavy for this node (see Prepare your clips in the manual)"
         return out
 
     def helpers(self):

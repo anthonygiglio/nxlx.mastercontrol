@@ -142,7 +142,7 @@ _LABEL = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
 WHY_TUNNEL = "on the support connection's network"
-SENT_WORDS = "OSC over UDP has no reply: sent means the cue left the box, not that the node took it"
+SENT_WORDS = "OSC over UDP has no reply: sent means the cue left this node, not that the render node took it"
 
 
 class RenderError(ValueError):
@@ -413,7 +413,7 @@ class Bridge:
             try:
                 sock.sendto(data, (ip, node["port"]))
             except (OSError, ValueError) as e:
-                raise RenderError("the box could not send to %s (%s)" % (node["name"], getattr(e, "strerror", None) or type(e).__name__), 502)
+                raise RenderError("the node could not send to %s (%s)" % (node["name"], getattr(e, "strerror", None) or type(e).__name__), 502)
             finally:
                 sock.close()
         except RenderError as e:

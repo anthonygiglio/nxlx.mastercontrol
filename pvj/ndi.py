@@ -157,7 +157,7 @@ STATES = ("connecting", "ready", "playing", "still", "waiting", "changed", "refu
 ENDED = ("changed", "refused", "stopped")
 # The one command, run by root at the box, that sets NDI up (the library and the helper; pvj/ndisetup.py has the same words).
 SETUP_COMMAND = 'sudo pvj-ndi-runtime install "/path/to/NDI SDK for Linux"'
-NOT_SET_UP = "NDI is not set up on this box; someone with a keyboard or SSH on the box runs: " + SETUP_COMMAND
+NOT_SET_UP = "NDI is not set up on this node; someone with a keyboard or SSH on the node runs: " + SETUP_COMMAND
 
 _ID = re.compile(r"[0-9a-f]{12}")
 _WHERE = re.compile(r"[A-Za-z0-9._:\[\]-]{1,%d}" % MAX_WHERE)
@@ -845,14 +845,14 @@ def runtime_problem(path, owner_uids=(0,), machine=None):
     try:
         st = os.lstat(path)
     except OSError:
-        return "the NDI runtime is not on this box yet"
+        return "the NDI runtime is not on this node yet"
     if not stat.S_ISREG(st.st_mode) or st.st_uid not in owner_uids or st.st_mode & 0o022 or st.st_size > LIB_MAX_BYTES:
         return "the NDI runtime file is not a plain file that only root can change; install it again with pvj-ndi-runtime"
     found, want = elf_machine(path), machine if machine is not None else box_machine()
     if found is None:
         return "the NDI runtime file is not a program library"
     if found[0] != want:
-        return "the NDI runtime file is for %s, this box is %s" % (ELF_MACHINES.get(found[0], "another processor"),
+        return "the NDI runtime file is for %s, this node is %s" % (ELF_MACHINES.get(found[0], "another processor"),
                                                                    ELF_MACHINES.get(want, "another kind"))
     return None
 
@@ -870,7 +870,7 @@ class CtypesLibrary:
         try:
             self._declare(lib)
         except AttributeError:
-            raise NdiError("the NDI runtime is not a version this box knows (it needs NDI 5 or 6)")
+            raise NdiError("the NDI runtime is not a version this node knows (it needs NDI 5 or 6)")
         if not lib.NDIlib_initialize():
             raise NdiError("the NDI runtime does not run on this processor")
         self.lib = lib
@@ -2827,8 +2827,8 @@ class Input:
         servers wanted. Never raises: what went wrong is kept for the page (`config_problem`)."""
         wanted = self._discovery()
         if not self.config_dir:
-            self.config_problem = ("a discovery server needs this box's NDI set-up refreshed: update the box, or run "
-                                   "'sudo pvj-ndi-runtime refresh' at the box, then restart it") if wanted else ""
+            self.config_problem = ("a discovery server needs this node's NDI set-up refreshed: update the node, or run "
+                                   "'sudo pvj-ndi-runtime refresh' at the node, then restart it") if wanted else ""
             return wanted
         path, text = os.path.join(self.config_dir, CONFIG_NAME), config_text(wanted)
         try:
@@ -2853,7 +2853,7 @@ class Input:
                 raise
             self.config_problem = ""
         except OSError as e:
-            self.config_problem = ("the NDI discovery setting could not be written (%s); if the box was updated and not restarted since, restart it"
+            self.config_problem = ("the NDI discovery setting could not be written (%s); if the node was updated and not restarted since, restart it"
                                    % (e.strerror or type(e).__name__))
             self.log("pvj-web: %s" % self.config_problem)
         return wanted
@@ -3179,7 +3179,7 @@ def install_runtime(source, dest_dir=LIB_DIR, machine=None, chown=True):
     machine = machine if machine is not None else box_machine()
     path = find_in_sdk(source, machine) if os.path.isdir(source) else same_folder_target(source)
     if path is None:
-        raise NdiError("no libndi.so for this box (%s) under %s/lib" % (ELF_MACHINES.get(machine, "unknown processor"), source))
+        raise NdiError("no libndi.so for this node (%s) under %s/lib" % (ELF_MACHINES.get(machine, "unknown processor"), source))
     # Root reads a name somebody else may control (a USB stick, a download folder). So: never through a link in
     # the last part of the name, never waiting on a pipe, and what is judged is the open file itself, not the name.
     try:
@@ -3243,13 +3243,13 @@ def runtime_main(argv=None, out=sys.stdout, setup=None):
     dest = os.path.join(LIB_DIR, LIB_NAME)
     usage = ("usage: pvj-ndi-runtime install <the unpacked NDI SDK folder, or libndi.so.6> | status | remove\n"
              "       pvj-ndi-runtime server install <NDI's folder, or ndi-discovery-server> | status | remove\n"
-             "install: sets NDI up on this box. It copies NDI's library into place, then installs and starts the NDI\n"
+             "install: sets NDI up on this node. It copies NDI's library into place, then installs and starts the NDI\n"
              "  helper (the service pvj-ndi with an account of its own; avahi-daemon if it is missing) and restarts the\n"
-             "  panel and the player. Until it has been run, a box has nothing of NDI on it and nothing of it runs.\n"
+             "  panel and the player. Until it has been run, a node has nothing of NDI on it and nothing of it runs.\n"
              "remove: takes the helper and the library off again.\n"
              "The NDI runtime is proprietary. Get the NDI SDK for Linux from https://ndi.video/ and read its licence\n"
-             "BEFORE installing: NDI's free licence may not cover a box like this one (it names embedded devices\n"
-             "running Linux among what it does not cover). The owner of the box decides. This is not legal advice.\n"
+             "BEFORE installing: NDI's free licence may not cover a node like this one (it names embedded devices\n"
+             "running Linux among what it does not cover). The owner of the node decides. This is not legal advice.\n"
              "NDI(R) is a registered trademark of Vizrt NDI AB.")
     if argv and argv[0] == "refresh":      # the installer's call for a box that opted in; never sets a box up
         return setup.refresh_main(argv[1:], out)
@@ -3258,8 +3258,8 @@ def runtime_main(argv=None, out=sys.stdout, setup=None):
         return ndiscovery.server_main(argv[1:], out)
     if len(argv) == 1 and argv[0] == "status":
         print(runtime_problem(dest) or "the NDI runtime is in place: %s" % dest, file=out)
-        print("NDI is set up on this box (the helper pvj-ndi is installed)" if setup.opted_in()
-              else "NDI is not set up on this box; to set it up: %s" % setup.COMMAND, file=out)
+        print("NDI is set up on this node (the helper pvj-ndi is installed)" if setup.opted_in()
+              else "NDI is not set up on this node; to set it up: %s" % setup.COMMAND, file=out)
         return 0
     if os.geteuid() != 0 and argv and argv[0] in ("install", "remove"):
         print("pvj-ndi-runtime: run it with sudo", file=out)

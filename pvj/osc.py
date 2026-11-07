@@ -306,7 +306,7 @@ def validate_layers(v, extra=()):
 EVER_ON = "ever_on"
 PAIRED_DEFAULT = "paired_default"      # the paired lock is on because the box put it on, not the owner: said on the page
 LAYER_KEYS = ("only_on", "only", "paired_on", "paired_roles", "paired_hours", "key_on", "feedback_on", "feedback")
-OPEN_TEXT = "OSC is open: anyone on this network can control the box. Switch on a lock."
+OPEN_TEXT = "OSC is open: anyone on this network can control the node. Switch on a lock."
 
 
 def used_before(data):

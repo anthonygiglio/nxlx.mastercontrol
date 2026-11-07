@@ -2603,7 +2603,7 @@ class ApiSoundFromTest(ServerBase):
         self.assertEqual(self.post({"action": "sound_from", "id": VID})[0], 200)
         st, body = self.post({"action": "forget", "id": VID})
         self.assertEqual(st, 409)
-        self.assertEqual(body["error"], "'VLC (Audio)' is where this box's NDI sound comes from; choose another sound source first, then remove it")
+        self.assertEqual(body["error"], "'VLC (Audio)' is where this node's NDI sound comes from; choose another sound source first, then remove it")
         self.assertEqual(self.settings.data["ndi"]["sources"], [VOICE_ROW])
         self.assertEqual(self.post({"action": "sound", "on": False})[0], 200)            # also while sound is off: the choice is kept
         self.assertEqual(self.post({"action": "forget", "id": VID})[0], 409)
@@ -2661,7 +2661,7 @@ class ApiSoundFromTest(ServerBase):
         asked = len([m for m in self.client.sent if m["cmd"] in ("open", "close")])
         st, body, _ = self.call("POST", "/api/play", {"ndi": VID}, token=self.full)
         self.assertEqual(st, 409)
-        self.assertEqual(body["error"], "VLC (Audio) is where this box's NDI sound comes from, so it is not shown as a picture (to show it, choose another sound source first); "
+        self.assertEqual(body["error"], "VLC (Audio) is where this node's NDI sound comes from, so it is not shown as a picture (to show it, choose another sound source first); "
                                         "what plays was not touched")
         after = (list(self.lib.opens), list(self.lib.closed_handles), len(self.player.calls), self.service.receiver, self.service.feed, dict(self.api.ndi.current))
         self.assertEqual(after, before)                                                  # the picture, its sound and the player are as they were

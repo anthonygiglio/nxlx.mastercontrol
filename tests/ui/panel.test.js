@@ -389,7 +389,7 @@ function startServer(env) {          // env: more for the harness's environment 
     // Try again does what choosing the transition again does. (The box's answer is given a reason here: nothing in
     // the harness is slow enough to make one.)
     {
-      const why = '2 stills in a row took over a second (1.2, 1.4); dipping to black instead. The box tries again in 5 minutes, or at once when the transition is chosen again';
+      const why = '2 stills in a row took over a second (1.2, 1.4); dipping to black instead. The node tries again in 5 minutes, or at once when the transition is chosen again';
       assert.strictEqual(await page.locator('#mixfallback').count(), 0, 'nothing is said while the box does the transition');
       let giveUp = true;
       await page.route('**/api/status', async (route) => {
@@ -655,13 +655,13 @@ function startServer(env) {          // env: more for the harness's environment 
     assert.strictEqual(await page.locator('#oscopen').count(), 0, 'no warning while a lock is on');
     await page.click('#oscpaired');                           // the owner's own choice: off. Now OSC is open, and three places say so
     await page.waitForSelector('#oscopen');
-    assert(/^OSC is open: anyone on this network can control the box\. Switch on a lock\./.test(await page.textContent('#oscopen')), 'the plain warning on the OSC page');
+    assert(/^OSC is open: anyone on this network can control the node\. Switch on a lock\./.test(await page.textContent('#oscopen')), 'the plain warning on the OSC page');
     assert.strictEqual(await page.locator('#oscpaireddefault').count(), 0, 'the note is for a lock the box put on, not one the owner switched');
     await sysIndex();
     await chip('OSC', 'Check');
     await page.waitForSelector(`${rowOf('OSC')} .navstate:has-text("Open: anyone on this network can control the box")`);
     await sys('Health');
-    await page.waitForSelector('#healthosc:has-text("OSC is open: anyone on this network can control the box")', { timeout: 15000 });
+    await page.waitForSelector('#healthosc:has-text("OSC is open: anyone on this network can control the node")', { timeout: 15000 });
     await sysIndex();
     await sys('OSC');
     await page.waitForSelector('#oscopen');
@@ -1297,7 +1297,7 @@ function startServer(env) {          // env: more for the harness's environment 
       assert.strictEqual(await page.textContent('#ndigroupempty'), "No group set: the box looks in NDI's default group, Public.");
       assert.strictEqual(await page.textContent('#ndidiscoveryempty'), 'No discovery server set.');
       // The two halves (2026-10-12): the list is named as what this box ASKS, and under "Use this box's own discovery
-      // server" stands the state of the server this box runs and whether the two fit.
+      // server" stands the state of the server this node runs and whether the two fit.
       assert((await page.$$eval('#ndiscopecard .field', (els) => els.map((e) => e.textContent))).includes('Discovery servers this box asks'), 'the list says whose servers these are');
       assert(/finding one does not prove that a discovery server is in use/.test(await page.textContent('#ndiscopenote')), 'a sender found on the local network proves nothing about a server');
       await page.waitForSelector('#ndiownline');
@@ -1758,7 +1758,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await back(page);
     await page.waitForSelector('#roomscreen #roomamboff');
     await page.click('.room-scene:has-text("Console night")');
-    await page.waitForFunction(() => /Main wall: on, input Box, sound muted\. Painting wall: switching on \(warming up\)\. Box: playing tunnel\.mkv\./.test((document.getElementById('roomjob') || {}).textContent || ''), null, { timeout: 20000 });
+    await page.waitForFunction(() => /Main wall: on, input Box, sound muted\. Painting wall: switching on \(warming up\)\. Node: playing tunnel\.mkv\./.test((document.getElementById('roomjob') || {}).textContent || ''), null, { timeout: 20000 });
     if (await pjlink(info.projector_ports[0], 'secret1', 'INPT ?') !== '32') problems.push('the scene did not switch the main wall to input 32');
     if (await pjlink(info.projector_ports[0], 'secret1', 'AVMT ?') !== '21') problems.push('the scene did not mute the sound of the main wall only');
     if (await pjlink(info.projector_ports[1], '', 'POWR ?') !== '3') problems.push('the scene did not switch the painting wall on');

@@ -117,7 +117,7 @@ class ExistingBoxTest(Base):
         self.assertEqual(self.api.osc.server.handle_packet(msg("/pvj/stop"), OTHER), 1, "the tablet that worked still works")
         out = self.get()
         self.assertEqual((out["open"], out["paired_on"], out["paired_default"]), (True, False, False))
-        self.assertEqual(out["open_text"], "OSC is open: anyone on this network can control the box. Switch on a lock.")
+        self.assertEqual(out["open_text"], "OSC is open: anyone on this network can control the node. Switch on a lock.")
         # switched off and on again, to find a fault: still as the owner had it
         self.assertEqual(self.post({"enabled": False})[0], 200)
         self.assertFalse(self.get()["open"])

@@ -61,9 +61,9 @@ ESCVP_PORT = 3629
 ESCVP_HELLO = b"ESC/VP.net\x10\x03\x00\x00\x00\x00"       # "connect", version 1.0, no headers
 ESCVP_REFUSED = {
     0x40: "the projector did not understand the Epson control request",
-    0x41: "the projector asks for a password for Epson control, which this box cannot send; use PJLink, or switch the projector's Epson control password off",
+    0x41: "the projector asks for a password for Epson control, which this node cannot send; use PJLink, or switch the projector's Epson control password off",
     0x43: "the projector refused the Epson control password",
-    0x45: "the projector does not allow Epson control from this box right now",
+    0x45: "the projector does not allow Epson control from this node right now",
     0x53: "the projector is busy with another Epson control connection",
     0x55: "the projector does not speak this version of Epson control"}
 EPSON_POWER = {"00": "off", "01": "on", "02": "warming up", "03": "cooling down", "04": "off", "05": "off", "09": "off"}

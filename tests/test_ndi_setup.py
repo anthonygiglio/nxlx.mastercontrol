@@ -386,7 +386,7 @@ class EnableTest(Base):
         self.assertTrue(ndisetup.opted_in(self.root))
         self.assertIn("ExecStart=/opt/pvj/current/bin/pvj-ndi\n", self.read(ndisetup.UNIT_PATH))
         self.assertIn("the screen goes dark for a moment", " ".join(self.said))
-        self.assertIn("NDI is set up on this box", self.said[-1])
+        self.assertIn("NDI is set up on this node", self.said[-1])
         self.assertIn("was running 3 seconds after its start", self.said[-1])
         self.assertEqual(self.slept, [1, 1, 1])
 
@@ -449,7 +449,7 @@ class EnableTest(Base):
             self.assertEqual(run.ran[len(done):], ["systemctl disable --now pvj-ndi.service", "systemctl daemon-reload"], fail)
             self.assertFalse(ndisetup.opted_in(self.root), fail)
             self.assertEqual(self.tree(), [], fail)
-            self.assertIn("the setup failed and was undone: this box is not set up for NDI", " ".join(self.said))
+            self.assertIn("the setup failed and was undone: this node is not set up for NDI", " ".join(self.said))
 
     def test_something_in_the_place_of_a_file_is_refused_before_anything_is_changed(self):
         """Second review, M1, the first half: a folder or a link where one of the three files goes is found by the
@@ -490,7 +490,7 @@ class EnableTest(Base):
         self.assertFalse(ndisetup.opted_in(self.root))
         self.assertTrue(os.path.isdir(self.p(ndisetup.WEB_DROPIN)))            # not this command's to remove; it says so
         said = " ".join(self.said)
-        self.assertIn("the setup failed and was undone: this box is not set up for NDI", said)
+        self.assertIn("the setup failed and was undone: this node is not set up for NDI", said)
         self.assertIn("50-pvj-ndi.conf could not be removed", said)
         self.assertEqual(run.ran, ["ACCOUNT", "FILES /opt/pvj", "systemctl disable --now pvj-ndi.service", "systemctl daemon-reload"])
 
@@ -553,7 +553,7 @@ class EnableTest(Base):
     def test_the_panel_or_the_player_not_restarting_is_said(self):
         run = Commands(fail=("systemctl try-restart",))
         self.assertIs(self.enable(run), True)
-        self.assertIn("restart the box before using NDI", " ".join(self.said))
+        self.assertIn("restart the node before using NDI", " ".join(self.said))
 
     def test_the_account_is_there_before_a_file_names_its_group(self):
         def refuse(run, say):
@@ -702,7 +702,7 @@ class CommandTest(Base):
 
     def test_a_library_that_is_refused_sets_nothing_up(self):
         s = FakeSetup()
-        code, said = self.main(["install", "/sdk"], s, library=ndi.NdiError("this file is for x86_64, this box is aarch64"))
+        code, said = self.main(["install", "/sdk"], s, library=ndi.NdiError("this file is for x86_64, this node is aarch64"))
         self.assertEqual((code, s.calls), (1, ["check", "library"]))
         self.assertIn("this file is for x86_64", said)
 
@@ -752,8 +752,8 @@ class CommandTest(Base):
     def test_status_says_whether_the_box_is_set_up_and_names_the_command(self):
         code, said = self.main(["status"], FakeSetup())
         self.assertEqual(code, 0)
-        self.assertIn("NDI is not set up on this box; to set it up: " + ndi.SETUP_COMMAND, said)
-        self.assertIn("NDI is set up on this box", self.main(["status"], FakeSetup(opted=True))[1])
+        self.assertIn("NDI is not set up on this node; to set it up: " + ndi.SETUP_COMMAND, said)
+        self.assertIn("NDI is set up on this node", self.main(["status"], FakeSetup(opted=True))[1])
         self.assertEqual(ndisetup.COMMAND, ndi.SETUP_COMMAND)
         self.assertIn(ndi.SETUP_COMMAND, ndi.NOT_SET_UP)
 
@@ -766,7 +766,7 @@ class CommandTest(Base):
         code, said = self.main([], FakeSetup())
         self.assertEqual(code, 2)
         for words in ("installs and starts the NDI", "avahi-daemon if it is missing", "restarts the", "nothing of NDI on it",
-                      "remove: takes the helper and the library off again", "read its licence", "The owner of the box decides"):
+                      "remove: takes the helper and the library off again", "read its licence", "The owner of the node decides"):
             self.assertIn(words, said)
 
     def test_without_root_nothing_is_tried(self):
@@ -1125,7 +1125,7 @@ class ApiNotSetUpTest(ServerBase):
         self.assertEqual(body["install"]["command"], ndi.SETUP_COMMAND)
         st, body, _ = self.call("POST", "/api/play", {"ndi": "0123456789ab"}, token=self.full)
         self.assertEqual(st, 409)
-        self.assertIn("NDI is not set up on this box", body["error"])
+        self.assertIn("NDI is not set up on this node", body["error"])
         self.assertIn("sudo pvj-ndi-runtime install", body["error"])
         # the addresses are plain settings: they can be filled in before the box is set up, and are kept
         st, body, _ = self.call("POST", "/api/ndi", {"action": "add_address", "address": "192.168.1.20"}, token=self.full)

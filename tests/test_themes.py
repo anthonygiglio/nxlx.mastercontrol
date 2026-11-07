@@ -273,7 +273,7 @@ class Reading(unittest.TestCase):
                 themes.checked(raw)
         with self.assertRaises(themes.ThemeError) as e:
             themes.checked(text(mine(id="signal")), taken=("signal",))
-        self.assertIn("belongs to a look that comes with the box", str(e.exception))
+        self.assertIn("belongs to a look that comes with the node", str(e.exception))
 
     def test_the_sample_theme_in_tools_is_good_and_uses_the_range(self):
         with open(SAMPLE, "rb") as f:

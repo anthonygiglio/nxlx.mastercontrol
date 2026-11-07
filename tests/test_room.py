@@ -552,12 +552,12 @@ class SceneTest(RoomBase):
         self.assertEqual((self.player.plays[-1]["paths"][0].endswith("a.mp4"), self.player.plays[-1]["loop"]), (True, False))
         self.assertFalse(self.api.mix["blackout"])                                        # a scene that plays shows the screen
         self.assertTrue(self.finished())
-        self.assertEqual(self.job()["text"], "Main wall: on. Box: playing a.mp4.")
+        self.assertEqual(self.job()["text"], "Main wall: on. Node: playing a.mp4.")
         self.scene("Close", [{"group": "all", "power": "off"}], {"action": "stop"})
         self.post("/api/room/scene", {"name": "Close"})
         self.assertIn(("clear",), self.player.calls)
         self.assertTrue(self.finished())
-        self.assertEqual(self.job()["text"], "All: off. Box: stopped.")
+        self.assertEqual(self.job()["text"], "All: off. Node: stopped.")
         self.scene("Dark", [], {"action": "blackout"})
         self.post("/api/room/scene", {"number": 3})
         self.assertTrue(self.api.mix["blackout"])
@@ -759,7 +759,7 @@ class VibesBoxTest(RoomBase):
         self.assertFalse(self.api.mix["blackout"])
         self.assertEqual(self.post("/api/room/scene", {"name": "Quiet"})[1]["box"], {"ok": True, "text": "Vibes stopped"})
         self.assertEqual(asked, [({"on": True}, "live"), ({"on": False}, "live")])
-        self.assertEqual(self.job()["text"], "Box: Vibes stopped.")
+        self.assertEqual(self.job()["text"], "Node: Vibes stopped.")
 
 
 class ScheduleOscMidiTest(RoomBase):

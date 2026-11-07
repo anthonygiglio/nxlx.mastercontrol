@@ -1405,7 +1405,7 @@ class GuardTest(Live):
             if not self.vibes.running:
                 break
         self.assertFalse(self.vibes.running)
-        self.assertEqual(self.vibes.status()["last"]["message"], "ended: the box is dropping frames whatever plays: check the picture detail")
+        self.assertEqual(self.vibes.status()["last"]["message"], "ended: the node is dropping frames whatever plays: check the picture detail")
         self.assertEqual((self.engine.config().get("heavy"), len(self.engine.vibes_ids())), (None, IN_VIBES))     # the two marks were taken back
         self.assertIsNotNone(self.engine.state()["playing"])          # the shader that was on stays on
         self.vibes.start()                                            # and it starts again
@@ -1451,7 +1451,7 @@ class GuardTest(Live):
         with self.assertRaises(ApiError) as c:
             self.vibes.start()
         self.assertEqual(c.exception.status, 409)
-        self.assertIn("left out on this box", c.exception.message)
+        self.assertIn("left out on this node", c.exception.message)
 
     def test_a_short_burst_or_a_change_is_not_taken_for_a_heavy_shader(self):
         self.vibes.start()

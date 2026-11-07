@@ -208,7 +208,7 @@ NO_LOGIN = ("/usr/sbin/nologin", "/sbin/nologin", "/bin/false", "/usr/bin/false"
 
 
 NOTHING_YET = "; nothing was set up"
-JUST_MADE = ("; it was made a moment ago by this command and is not what was asked for (the box's own rules for new accounts "
+JUST_MADE = ("; it was made a moment ago by this command and is not what was asked for (the node's own rules for new accounts "
              "changed it), so the setup stops here. Remove it before trying again: sudo deluser %s; sudo delgroup %s" % (ACCOUNT, GROUP))
 
 
@@ -293,7 +293,7 @@ def _overlay():
         return False
 
 
-OVERLAY_WARNING = ("the read-only root is active on this box (pvj-rootfs): everything this command writes is in memory and is "
+OVERLAY_WARNING = ("the read-only root is active on this node (pvj-rootfs): everything this command writes is in memory and is "
                    "gone at the next restart, and with it the NDI setup. To keep it: sudo pvj-rootfs disable, restart, run "
                    "this command again, sudo pvj-rootfs enable, restart.")
 
@@ -383,20 +383,20 @@ def enable(run=_run, say=print, systemd=_systemd_runs, account=ensure_account, w
                 say(line)
             if systemd():
                 run(["systemctl", "daemon-reload"])
-            say("the setup failed and was undone: this box is not set up for NDI. NDI's library, the account and group %s "
+            say("the setup failed and was undone: this node is not set up for NDI. NDI's library, the account and group %s "
                 "and any package installed above stay (sudo pvj-ndi-runtime remove takes the library off)." % ACCOUNT)
         raise
     running = _stays_up(run, sleep)
     say("restarting the panel and the player so they may reach the NDI helper (the screen goes dark for a moment)")
     if run(["systemctl", "try-restart"] + list(RESTART)) != 0:
-        say("the panel or the player did not restart; restart the box before using NDI")
+        say("the panel or the player did not restart; restart the node before using NDI")
     if wet:
         say(OVERLAY_WARNING)
     if running:
-        say("NDI is set up on this box: the helper pvj-ndi is installed and was running %d seconds after its start. "
+        say("NDI is set up on this node: the helper pvj-ndi is installed and was running %d seconds after its start. "
             "Switch the input on under System > NDI input." % STAYS_UP_SECONDS)
     else:
-        say("NDI is set up on this box, but the helper pvj-ndi is NOT running: it was started and did not stay up. "
+        say("NDI is set up on this node, but the helper pvj-ndi is NOT running: it was started and did not stay up. "
             "See: journalctl -u pvj-ndi -n 30. The setup was left in place (sudo pvj-ndi-runtime remove takes it off).")
     return running
 
@@ -415,10 +415,10 @@ def disable(run=_run, say=print, systemd=_systemd_runs, root=""):
         if was:
             say("restarting the panel and the player without the NDI helper's group (the screen goes dark for a moment)")
             if run(["systemctl", "try-restart"] + list(RESTART)) != 0:
-                say("the panel or the player did not restart; restart the box")
-    say("the NDI helper is removed from this box. Left in place: the account and group %s (sudo deluser %s; sudo delgroup %s) "
+                say("the panel or the player did not restart; restart the node")
+    say("the NDI helper is removed from this node. Left in place: the account and group %s (sudo deluser %s; sudo delgroup %s) "
         "and the packages avahi-daemon and libavahi-client3, which may have been here before and which other things may use "
-        "(a box with avahi-daemon answers to its name on the network; sudo apt-get remove avahi-daemon takes it off)."
+        "(a node with avahi-daemon answers to its name on the network; sudo apt-get remove avahi-daemon takes it off)."
         % (ACCOUNT, ACCOUNT, GROUP))
     if left:
         raise SetupError("not everything of the NDI helper could be removed: " + "; ".join(left))
@@ -443,7 +443,7 @@ def refresh_main(argv, out=sys.stdout):
         return 1
     try:
         if refresh(root, prefix, say=lambda m: print("pvj-ndi-runtime: %s" % m, file=out)):
-            print("pvj-ndi-runtime: this box has NDI set up; its helper's unit was written again", file=out)
+            print("pvj-ndi-runtime: this node has NDI set up; its helper's unit was written again", file=out)
         return 0
     except (SetupError, OSError) as e:
         print("pvj-ndi-runtime: %s" % e, file=out)

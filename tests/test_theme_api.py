@@ -106,8 +106,8 @@ class AddAndRemove(Base):
             (good[:-1] + ', "design": {"radius_control": 8.5}}', 422, "whole numbers only"),
             ("{", 422, "not valid JSON"), ("[]", 422, "a JSON object is expected"), ("", 422, "not valid JSON"),
             (good + " " * themes.MAX_FILE, 413, "too large for a theme"),
-            (mine(id="signal"), 409, "the id signal belongs to a look that comes with the box"),
-            (mine(id="dark-stage"), 409, "belongs to a look that comes with the box"),
+            (mine(id="signal"), 409, "the id signal belongs to a look that comes with the node"),
+            (mine(id="dark-stage"), 409, "belongs to a look that comes with the node"),
         )
         for theme, status, want in cases:
             st, out = self.add(theme)
@@ -159,7 +159,7 @@ class AddAndRemove(Base):
         # a box with no folder for them says so
         self.api.theme_store = themes.Store(None)
         st, out = self.add(mine(id="other"))
-        self.assertEqual((st, out["error"]), (503, "this box has no folder for added themes"))
+        self.assertEqual((st, out["error"]), (503, "this node has no folder for added themes"))
 
     def test_through_the_remote_support_tunnel_only_with_the_owners_role(self):
         """Until D84 no support session added or removed a theme. A theme is checked data, so a session of the
@@ -384,7 +384,7 @@ class Files(Base):
         skipped = {k["file"]: k["why"] for k in self.api.theme_store.skipped}
         self.assertEqual(sorted(skipped), ["big.json", "broken.json", "dim.json", "evil.json", "link.json", "named.json", "taken.json"])
         for file, want in (("dim.json", "Text on the page is 2.6 to 1; it needs 4.5"), ("broken.json", "not valid JSON"), ("evil.json", "the name must be"),
-                           ("taken.json", "its id, signal, belongs to a look that comes with the box"), ("named.json", "is that of a look that comes with the box"),
+                           ("taken.json", "its id, signal, belongs to a look that comes with the node"), ("named.json", "is that of a look that comes with the node"),
                            ("big.json", "not a plain file of at most 16 KB"), ("link.json", "not a plain file")):
             self.assertIn(want, skipped[file], file)
             self.assertIn("pvj-web: theme file %s was not used: " % file, log)
@@ -405,7 +405,7 @@ class Files(Base):
         for name in ("Signal", "signal", "SIGNAL LIGHT", "Dark stage", "dark Stage", "High contrast"):
             st, out = self.add(mine(name=name))
             self.assertEqual(st, 409, name)
-            self.assertIn("is that of a look that comes with the box; give the theme another name", out["error"])
+            self.assertIn("is that of a look that comes with the node; give the theme another name", out["error"])
         self.assertEqual(self.files(), [])
         self.assertEqual(self.add(mine(name="My Signal"))[0], 200)
         self.assertEqual(self.add(mine(id="other", name="My Signal"))[0], 200)          # two of the owner's own may share a name: they are marked "yours"
@@ -558,12 +558,12 @@ class WithTheSettings(Base):
             ([mine(design={"radius_control": 8.0})], 400, "themes: Mine: the file is not a theme: it is not valid JSON (a theme holds whole numbers only)"),
             ([dict(mine(), name="x" * 30, tokens=dict(SIGNAL["tokens"]), areas=dict(SIGNAL["areas"], **{}), states=dict(SIGNAL["states"]),
                    design=dict(themes.DESIGN_DEFAULTS), id="a" * 41)] * 1 + [], 200, ""),
-            ([mine(name="signal LIGHT")], 400, "the name signal LIGHT is that of a look that comes with the box"),
+            ([mine(name="signal LIGHT")], 400, "the name signal LIGHT is that of a look that comes with the node"),
             ([mine(design={"radius_control": True})], 400, "must be a whole number"),
             ([dict(mine(), css="body{}")], 400, "unknown keys: css"),
             ([mine(tokens=dict(SIGNAL["tokens"], bg="#000;}*{x:y"))], 400, "token bg must be #rrggbb"),
             ([mine(name="<b>x</b>")], 400, "themes: theme 1: the name must be"),
-            ([mine(id="signal")], 400, "the id signal belongs to a look that comes with the box"),
+            ([mine(id="signal")], 400, "the id signal belongs to a look that comes with the node"),
             ([mine(), mine()], 400, "the id mine is in the file twice"),
             ([mine(), "x"], 400, "themes: theme 2: the file is not a theme: a JSON object is expected"),
             ("x", 400, "a list of at most 16 themes is expected"), ({"mine": mine()}, 400, "a list of at most 16"),
@@ -595,7 +595,7 @@ class WithTheSettings(Base):
         st, out = self.send(dict(base, settings=dict(base["settings"], theme={"name": "elsewhere", "accent": None})))
         self.assertEqual(st, 200)
         self.assertEqual(self.settings.data["theme"]["name"], "light")
-        self.assertTrue(any("elsewhere is not on this box" in n for n in out["notes"]))
+        self.assertTrue(any("elsewhere is not on this node" in n for n in out["notes"]))
 
     def test_a_theme_that_cannot_be_stored_is_reported_and_the_box_draws_its_own_look(self):
         base = self.export()

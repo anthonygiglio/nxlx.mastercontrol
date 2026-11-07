@@ -216,7 +216,7 @@ class Press(PadBase):
     def test_duplicated_it_is_refused_and_no_sender_is_picked(self):
         self.announce((NAME, HOST + ":5961"), (NAME, HOST + ":5962"))
         st, out = self.press(self.operator)
-        self.assertEqual((st, out["error"]), (409, "two senders announce '%s' from %s now: the box does not pick one" % (NAME, HOST)))
+        self.assertEqual((st, out["error"]), (409, "two senders announce '%s' from %s now: the node does not pick one" % (NAME, HOST)))
         self.assertEqual((self.lib.opened, self.pipes()), ([], []))
         # and a helper that lists one id twice is not believed either
         self.announce((NAME, HOST + ":5961"))
@@ -266,9 +266,9 @@ class Press(PadBase):
         st, out = self.press(self.operator)
         self.assertEqual((st, out["error"]), (409, ndi.NOT_SET_UP))
         self.api.ndi.setup = True
-        self.client.answer = dict(self.service.status(), runtime={"present": False, "loaded": False, "problem": "the NDI runtime is not on this box yet"})
+        self.client.answer = dict(self.service.status(), runtime={"present": False, "loaded": False, "problem": "the NDI runtime is not on this node yet"})
         st, out = self.press(self.operator)
-        self.assertEqual((st, out["error"]), (409, "the NDI runtime is not on this box yet"))
+        self.assertEqual((st, out["error"]), (409, "the NDI runtime is not on this node yet"))
         self.client.answer = None
         self.enable(False)
         st, out = self.press(self.operator)

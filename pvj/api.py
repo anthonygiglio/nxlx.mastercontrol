@@ -844,7 +844,7 @@ class Api:
         try:
             self.sweep_stale_uploads()  # any .upload-* file now is left over from a crash: no upload is running
             if length + FREE_SPACE_RESERVE > self._free_space():
-                raise ApiError(507, "not enough free space on the box")
+                raise ApiError(507, "not enough free space on the node")
             final = os.path.join(root, name)
             if os.path.lexists(final) and not replace:
                 raise ApiError(409, "a file with that name already exists")
@@ -987,7 +987,7 @@ class Api:
         path = self.resolve_media(name)
         plain = os.path.join(os.path.realpath(self.media_dir), name)
         if os.path.islink(plain):
-            raise ApiError(409, "%s is a link; change it on the box, not from here" % name)
+            raise ApiError(409, "%s is a link; change it on the node, not from here" % name)
         return plain
 
     def _pads_using(self, name):
@@ -1150,7 +1150,7 @@ class Api:
                 if not seen:
                     raise ApiError(404, why or "that NDI source is not on the network now: a pad takes a source that is on the list")
                 if seen[0].get("twins"):
-                    raise ApiError(409, "two senders announce '%s' from %s: a pad cannot hold a source the box cannot tell apart"
+                    raise ApiError(409, "two senders announce '%s' from %s: a pad cannot hold a source the node cannot tell apart"
                                    % (seen[0]["name"], ndi_mod.host_of(seen[0]["from"])))
                 allow = {"id": source, "name": seen[0]["name"], "from": seen[0]["from"]}
             pad = {"label": label, "file": "", "ndi": source}
@@ -1214,7 +1214,7 @@ class Api:
         except ApiError as e:
             if e.status != 404:
                 raise
-            raise ApiError(404, "this pad's shader, %s, is not on the box any more (deleted or renamed): choose another for the pad" % sid)
+            raise ApiError(404, "this pad's shader, %s, is not on the node any more (deleted or renamed): choose another for the pad" % sid)
         said = {}
         if preset is not None:
             try:
@@ -1368,7 +1368,7 @@ class Api:
         if n < 2:
             raise ApiError(409, "Source %d needs the New renderer (System > Renderer); classic mpv has Source 1 only" % k)
         if k > n:
-            raise ApiError(409, "this box runs %d sources; Source %d is not one of them" % (n, k))
+            raise ApiError(409, "this node runs %d sources; Source %d is not one of them" % (n, k))
 
     def _source_rows(self):
         """The sources as the panel shows them: a clip by its file name only, never a path."""
@@ -1427,7 +1427,7 @@ class Api:
                 except ApiError as e:
                     if e.status != 404:
                         raise
-                    raise ApiError(404, "this pad's shader, %s, is not on the box any more (deleted or renamed): choose another for the pad" % sid)
+                    raise ApiError(404, "this pad's shader, %s, is not on the node any more (deleted or renamed): choose another for the pad" % sid)
                 if preset is not None:
                     try:
                         preset = self._shader_preset(sid, preset)
@@ -2020,7 +2020,7 @@ class Api:
 
     def _sysd(self, message):
         if self.sysd is None:
-            raise ApiError(503, "the system helper is not available on this box")
+            raise ApiError(503, "the system helper is not available on this node")
         try:
             reply = self.sysd.request(message)
         except OSError as e:
@@ -2245,11 +2245,11 @@ class Api:
         return self._screen_call(self.screen.choose, body["mode"])
 
     # --- sound reactivity (D96, pvj/sound.py, pvj/soundout.py) ----------------------------------------
-    SOUND_PRIVACY = ("The box analyses levels only. No sound is stored, recorded or sent anywhere, ever: a block of 20 ms "
+    SOUND_PRIVACY = ("The node analyses levels only. No sound is stored, recorded or sent anywhere, ever: a block of 20 ms "
                      "lives in memory for that block and is gone.")
     SOUND_SLOW = ("On the classic renderer a shader's value changes by compiling the shader again, so it follows the sound "
                   "slowly: at most twice a second, smoothed. On the new renderer the value goes straight in, up to 20 times a second.")
-    SOUND_BANDS = ("Before sending: the six band levels can carry the outline of speech in the room. They leave the box only "
+    SOUND_BANDS = ("Before sending: the six band levels can carry the outline of speech in the room. They leave the node only "
                    "averaged over 200 ms, at most 5 times a second; the level and the beat up to 20 times a second.")
     SOUND_REMOTE = "a helper does not start listening to the room: switching the microphone on is done by the owner in the room (D96)"
 
@@ -2373,7 +2373,7 @@ class Api:
         return self.get_sound({}, device, client)
 
     # --- the box clock (D116, pvj/clock.py) -------------------------------------------------------------
-    CLOCK_REMOTE = "the box clock is set in the room: a helper through remote support may look at it and not change it (D116)"
+    CLOCK_REMOTE = "the node clock is set in the room: a helper through remote support may look at it and not change it (D116)"
 
     def _clock_change(self, device, client):
         if self.support.is_remote(client) or (isinstance(device, dict) and device.get("remote")):
@@ -2628,7 +2628,7 @@ class Api:
         if theme is None:
             raise ApiError(404, "there is no such theme")
         if theme.get("source") != "addon":
-            raise ApiError(409, "%s comes with the box and cannot be removed" % theme["name"])
+            raise ApiError(409, "%s comes with the node and cannot be removed" % theme["name"])
         # The file goes first. From then on a setting that still names the theme is drawn as the look the box came
         # with (_stored_look), so whatever fails after this, the look and the list of themes agree; if the file
         # cannot be removed, nothing has changed.
@@ -2988,7 +2988,7 @@ class Api:
             if bad:
                 self.support.refused(device, "adding a network OSC accepts from")
                 raise ApiError(403, "through remote support a network OSC accepts from can be removed or narrowed, and one added only if the "
-                                    "box is directly connected to it: %s cannot be added; ask someone at the studio" % ", ".join(bad))
+                                    "node is directly connected to it: %s cannot be added; ask someone at the studio" % ", ".join(bad))
         with self.osc.lock:                   # one save at a time (OscManager.lock says why)
             out = self._set_osc(body)
         out["feedback"] = self.osc.feedback_status()
@@ -3002,7 +3002,7 @@ class Api:
         from . import oscfeedback
         if self.osc is None:
             raise ApiError(404, "OSC is not available")
-        remote = self._remote_owner(device, client, "where the box sends its state")      # D84
+        remote = self._remote_owner(device, client, "where the node sends its state")      # D84
         if not self._still_paired(device):
             raise ApiError(401, "this device is no longer paired")
         if set(body) - {"on", "add", "remove"} or not body:
@@ -3030,7 +3030,7 @@ class Api:
                     oscfeedback._target_form(body["add"])       # the form first: its refusal says more than "no networks"
                     nets = self.osc.local_nets()
                     if not nets:
-                        raise ApiError(409, "the box's own network addresses could not be read; try again in a moment")
+                        raise ApiError(409, "the node's own network addresses could not be read; try again in a moment")
                     # only the one that is added is checked against the networks: one that went stale with a move
                     # of the box stays in the list (nothing is sent to it) and does not stand in a new one's way
                     new_one = oscfeedback.validate_targets([body["add"]], nets)[0]
@@ -3058,7 +3058,7 @@ class Api:
         self.log("pvj-web: OSC state feedback %s by device %s (%s) from %s; %d target(s), %s"
                  % (", ".join(said), device["id"], device["name"], client, len(targets), "on" if on else "off"))
         if remote:
-            self.support.note(device, "changed where the box sends its state over OSC", detail="%s; %d target(s), %s" % (", ".join(said), len(targets), "on" if on else "off"))
+            self.support.note(device, "changed where the node sends its state over OSC", detail="%s; %d target(s), %s" % (", ".join(said), len(targets), "on" if on else "off"))
         return out
 
     def _set_osc(self, body):
@@ -3527,7 +3527,7 @@ class Api:
             if action == "colour_mode":
                 cur = ((self.projectors.status(pid).get("picture") or {}).get("colour_mode"))
                 if not isinstance(value, str) or (value not in projector_mod.COLOUR_MODES and value != cur):
-                    raise bad("that is not a colour mode the box knows")
+                    raise bad("that is not a colour mode the node knows")
             if action in ("brightness", "light", "colour_mode"):
                 action = (action, value)
         elif "value" in body:
@@ -3732,7 +3732,7 @@ class Api:
                                % (row["name"], other[0], host, " (an address the owner gave)" if self._ndi_bound(row) else ""))
             raise ApiError(409, "NDI source '%s' is not on the network now" % row["name"])
         if len(seen) > 1 or seen[0].get("twins"):
-            raise ApiError(409, "two senders announce '%s' from %s now: the box does not pick one" % (row["name"], host))
+            raise ApiError(409, "two senders announce '%s' from %s now: the node does not pick one" % (row["name"], host))
         if seen[0]["name"] != row["name"] or ndi_mod.host_of(seen[0]["from"]) != host:
             raise ApiError(409, "NDI source '%s' is not on the network now" % row["name"])
         return row
@@ -3834,7 +3834,7 @@ class Api:
             # picture sender that was merely slow that once must not be locked out by it (the review of #132, H1).
             if again is None and isinstance(sid, str) and self.ndi.sound_wanted() and sid == self.ndi.sound_from():
                 name = ([r["name"] for r in rows if r["id"] == sid] or ["that source"])[0]
-                raise ApiError(409, "%s is where this box's NDI sound comes from, so it is not shown as a picture (to show it, choose another sound source first); what plays was not touched" % name)
+                raise ApiError(409, "%s is where this node's NDI sound comes from, so it is not shown as a picture (to show it, choose another sound source first); what plays was not touched" % name)
             # If the player does not confirm that it let go, no new writer is started over a reader that may still
             # be there. But the player is not left as it is either: the helper is told to close what it has (that
             # ends the old writer, and the end of the stream is what ends a player stuck opening or reading it),
@@ -3972,7 +3972,7 @@ class Api:
                 if not seen:
                     raise ApiError(404, why or "that NDI source is not on the network now: the sound source is chosen from the list")
                 if seen[0].get("twins"):
-                    raise ApiError(409, "two senders announce '%s' from %s: the box cannot tell them apart, so it cannot take its sound from one"
+                    raise ApiError(409, "two senders announce '%s' from %s: the node cannot tell them apart, so it cannot take its sound from one"
                                    % (seen[0]["name"], ndi_mod.host_of(seen[0]["from"])))
             with self.settings.lock:
                 rows = ndi_mod.saved_sources(self.settings.data.get("ndi"))
@@ -4091,7 +4091,7 @@ class Api:
                     raise ApiError(404, "no such allowed source")
                 if body.get("id") == ndi_mod.saved_sound_from(self.settings.data.get("ndi")):
                     name = [r["name"] for r in rows if r["id"] == body.get("id")][0]
-                    raise ApiError(409, "'%s' is where this box's NDI sound comes from; choose another sound source first, then remove it" % name)
+                    raise ApiError(409, "'%s' is where this node's NDI sound comes from; choose another sound source first, then remove it" % name)
                 self._ndi_write(sources=left)
                 self.settings.save()
             self.ndi._wanted()
@@ -4188,7 +4188,7 @@ class Api:
         ndi_on = self.ndi is not None and self.registry.enabled("inputs-ndi")
         rows, why = [], ""
         if not ndi_on:
-            why = "the NDI input is off" if self.ndi is not None else "the NDI input is not available on this box"
+            why = "the NDI input is off" if self.ndi is not None else "the NDI input is not available on this node"
         elif any(n["ndi"] for n in nodes):
             rows, why = self.ndi.find()
         here = {r["id"]: r for r in rows if not r.get("twins")}
@@ -4256,7 +4256,7 @@ class Api:
                 if len(nodes) >= render_mod.MAX_NODES:
                     raise bad("at most %d render nodes; remove one first" % render_mod.MAX_NODES)
                 if item.get("id") not in (None, ""):
-                    raise bad("a new render node is given its id by the box")
+                    raise bad("a new render node is given its id by the node")
                 old, cand = None, dict(item)
             else:
                 old = self._render_node(item.get("id"))
@@ -4271,7 +4271,7 @@ class Api:
             if render_mod.is_ipv4_text(node["host"]) and (old is None or old["host"] != node["host"]):
                 nets = self._render_nets(fresh=True)
                 if not nets:
-                    raise ApiError(409, "the box's own network addresses could not be read; try again in a moment")
+                    raise ApiError(409, "the node's own network addresses could not be read; try again in a moment")
                 why = self.render.why_not(node["host"], nets)
                 if why:
                     raise bad("%s is %s" % (node["host"], oscfeedback.WHY_ADD if why == oscfeedback.WHY_NETWORK else why))
@@ -4284,7 +4284,7 @@ class Api:
                 if not seen:
                     raise ApiError(404, why or "that NDI source is not on the network now: a node's picture is chosen from the list")
                 if seen[0].get("twins"):
-                    raise ApiError(409, "two senders announce '%s' from %s: the box cannot tell them apart"
+                    raise ApiError(409, "two senders announce '%s' from %s: the node cannot tell them apart"
                                    % (seen[0]["name"], ndi_mod.host_of(seen[0]["from"])))
                 allow = {"id": node["ndi"], "name": seen[0]["name"], "from": seen[0]["from"]}
             new_nodes = nodes + [node] if old is None else [node if n["id"] == node["id"] else n for n in nodes]
