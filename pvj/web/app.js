@@ -2358,6 +2358,7 @@
   // (Back then returns there). replace: the page takes the place of the one that is open, so Back does not stop at
   // it; that is also how one page of Setup follows another from the index beside it.
   function openSys(id, from, replace) {
+    S.landing = false;
     var home = HOMES[id] && screenList().filter(function (x) { return x.key === HOMES[id]; })[0];
     if (home && home.part && home.tab === S.tab && from !== 'index') return go(home.key);     // a column of the build that is on the page
     var other = S.tab !== 'system';
@@ -7249,6 +7250,7 @@
   // again (where the columns stand side by side it is brought into view and given the cursor's place); anything
   // else reads the box's state and draws, as a tap on a tab always did.
   function go(key) {
+    S.landing = false;              // a screen chosen by hand is never taken back by the start screen (Now)
     key = OLD_TABS[key] || key;
     var list = screenList(), sc = list.filter(function (x) { return x.key === key; })[0];
     if (!sc && key === 'shape/effect') sc = list.filter(function (x) { return x.key === 'shape/picture'; })[0];      // (no effects on this box: the area's next screen)
