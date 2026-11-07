@@ -6956,7 +6956,7 @@
         testPattern()),
       h('div', { class: 'row' }, h('button', { class: 'btn small', id: 'nowtopads', text: 'Open the pads', onclick: function () { go('play/pads'); } })));
     var hasRoom = !!window.pvjRoom && moduleOn('room');
-    var scenesRow = h('div', { class: 'row nowscenes', id: 'nowscenes' });
+    var scenesRow = h('div', { class: 'room-scenes nowscenes', id: 'nowscenes' });      // (the Room's own blocks: a long name stays inside them)
     var wallsList = h('div', { class: 'list', id: 'nowwalls' });
     var room = h('div', { class: 'card', id: 'nowroom' }, h('h2', { text: 'The room' }),
       hasRoom ? scenesRow : null, wallsList,
@@ -7013,7 +7013,8 @@
       if (hasRoom) keepCursor(scenesRow, function () {
         scenesRow.textContent = '';
         ((rd && rd.scenes) || []).forEach(function (s) {
-          scenesRow.appendChild(h('button', { class: 'btn grow nowscene', id: 'nowscene-' + s.id, text: s.name, disabled: !live, onclick: function () {
+          var on = !!rd.job && rd.job.scene === s.id;
+          scenesRow.appendChild(h('button', { class: 'btn big room-scene nowscene' + (on ? ' on' : ''), id: 'nowscene-' + s.id, text: s.name, 'aria-pressed': on ? 'true' : 'false', disabled: !live, onclick: function () {
             act('POST', '/api/room/scene', { scene: s.id }, function () { say(s.name + ': started'); refresh(); });
           } }));
         });

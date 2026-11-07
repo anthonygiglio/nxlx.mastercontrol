@@ -1612,7 +1612,8 @@ function startServer(env) {          // env: more for the harness's environment 
     // A tap is not lost to the page's own redraw: the 5 second look draws the list again when an answer differs (here
     // every answer does), and a press held across it acts on its release, once, with no second try.
     {
-      const moving = (route) => route.fetch().then((res) => res.json().then((d) => route.fulfill({ response: res, json: Object.assign(d, { asked_at: Date.now() }) })));
+      // (an answer still on its way when the route is taken off is let go: its fulfil would throw "already handled")
+      const moving = (route) => route.fetch().then((res) => res.json().then((d) => route.fulfill({ response: res, json: Object.assign(d, { asked_at: Date.now() }) }))).catch(() => {});
       await page.route('**/api/projectors', moving);
       const more = page.locator('.proj-entry .lacts button.morebtn').first();
       const box = await more.boundingBox();

@@ -1490,6 +1490,10 @@ html[data-style="signal"] .tp #black.flash { background: var(--st-problem, var(-
 .list .item.nowrow > .row { flex: 0 0 auto; flex-wrap: nowrap; }
 .nowrow .nowwords { flex: 1 1 auto; min-width: 0; }
 .nowrow .navstate { display: block; overflow-wrap: anywhere; }
-.nowscenes, .nowcues { flex-wrap: wrap; }
+.nowcues { flex-wrap: wrap; }
+/* the Room's scene blocks in a column of Now: as many to a row as have 140 px, the name cut between words */
+.nowscreen .room-scenes { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+.nowscreen .room-scene { overflow-wrap: break-word; }
+html[data-style="signal"] .nowscreen .room-scene { font-size: 15px; }
 @container ws (min-width: 600px) { .nowgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @container ws (min-width: 1100px) { .nowgrid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
