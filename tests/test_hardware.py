@@ -19,13 +19,45 @@ def make_tree(files):
 
 
 class HardwareTest(unittest.TestCase):
+    MODELS = (("Raspberry Pi 5 Model B Rev 1.0", "pi5", "full"),
+              ("Raspberry Pi 500 Rev 1.0", "pi5", "full"),
+              ("Raspberry Pi Compute Module 5 Rev 1.0", "pi5", "full"),
+              ("Raspberry Pi 4 Model B Rev 1.4", "pi4", "standard"),
+              ("Raspberry Pi 4 Model B Rev 1.5", "pi4", "standard"),
+              ("Raspberry Pi 400 Rev 1.0", "pi4", "standard"),
+              ("Raspberry Pi Compute Module 4 Rev 1.0", "pi4", "standard"),
+              ("Raspberry Pi Compute Module 4S Rev 1.0", "pi4", "standard"),
+              ("Raspberry Pi 3 Model B Plus Rev 1.3", "pi3", "lean"),
+              ("Raspberry Pi 3 Model B Rev 1.2", "pi3", "lean"),
+              ("Raspberry Pi 3 Model A Plus Rev 1.0", "pi3", "lean"),
+              ("Raspberry Pi Compute Module 3 Rev 1.0", "pi3", "lean"),
+              ("Raspberry Pi 2 Model B Rev 1.1", "pi3", "lean"),
+              ("Raspberry Pi Zero 2 W Rev 1.0", "pi3", "lean"),
+              ("Raspberry Pi Zero W Rev 1.1", "pi-other", "unknown"),
+              ("Raspberry Pi Model B Rev 2", "pi-other", "unknown"),
+              ("Raspberry Pi Model B Plus Rev 1.2", "pi-other", "unknown"),
+              ("Raspberry Pi Compute Module Rev 1.0", "pi-other", "unknown"))
+
     def test_pi_models(self):
-        for model, kind in (("Raspberry Pi 3 Model B Plus Rev 1.3", "pi3"),
-                            ("Raspberry Pi 4 Model B Rev 1.5", "pi4"),
-                            ("Raspberry Pi 5 Model B Rev 1.0", "pi5"),
-                            ("Raspberry Pi Zero 2 W Rev 1.0", "pi-other")):
+        for model, kind, tier in self.MODELS:
             root = make_tree({"proc/device-tree/model": model.encode() + b"\0"})
-            self.assertEqual(hardware.detect_board(root)["kind"], kind, model)
+            board = hardware.detect_board(root)
+            self.assertEqual(board["kind"], kind, model)
+            self.assertEqual(board["model"], model, "the exact model stays visible")
+            self.assertEqual(hardware.tier(board["kind"]), tier, model)
+
+    def test_model_from_the_sys_path_too(self):
+        root = make_tree({"sys/firmware/devicetree/base/model": b"Raspberry Pi 400 Rev 1.0\0"})
+        self.assertEqual(hardware.detect_board(root)["kind"], "pi4")
+
+    def test_tiers(self):
+        for kind, tier in (("pi3", "lean"), ("pi4", "standard"), ("pi5", "full"), ("x86", "full"),
+                           ("pi-other", "unknown"), ("arm-other", "unknown"), ("", "unknown"), ("nonsense", "unknown")):
+            self.assertEqual(hardware.tier(kind), tier, kind)
+
+    def test_a_non_pi_model_is_not_a_pi(self):
+        root = make_tree({"proc/device-tree/model": b"Orange Pi 5 Plus\0"})
+        self.assertEqual(hardware.detect_board(root)["kind"], "arm-other")
 
     def test_x86_from_cpuinfo(self):
         root = make_tree({"proc/cpuinfo": "vendor_id\t: GenuineIntel\nmodel name\t: Intel N100\n"})

@@ -1090,6 +1090,15 @@ With New chosen, a box that boots with no screen falls back to classic mpv; when
 | LS8 | Unplug (or switch off) the screen while pvj-render draws; wait 2 minutes; plug it back | The player falls back to classic ("ended twice in a row (exit 2)", "watching for one"), then within about 10 s of the screen settling pvj-render draws again | Classic stays after the screen is back |
 | LS9 | Two short unplugs, a minute apart, while pvj-render draws; replug after each. Record the journal | Nothing is decided here: it records what happens. Expected by the code: each unplug ends pvj-render with exit 3 (or 2), so the second gives "ended twice in a row (exit 3)" and classic stays (D105); with exit 2 the watcher brings pvj-render back | What the exit codes were, and whether the box ended on classic or pvj-render |
 
+### Board tiers: a Pi 3 does not try the New renderer; the Pi 4 is as it was (not yet run on a node)
+
+| Row | Do | Good | Bad |
+|---|---|---|---|
+| BT1 | On a real Pi 3B (not yet run): Setup > Renderer: choose New, then `journalctl -u pvj-player -n 20` and `pgrep -x pvj-render` | Classic draws at once, with no "pvj-render did not start" lines and no pvj-render process; the Renderer card says "New was chosen; classic mpv is drawing: pvj-render needs OpenGL ES 3 ..."; choosing New again from a Pi 3 is refused with that reason; the choice still reads New | pvj-render started and failed twice before classic, or the card reads Classic |
+| BT2 | The same Pi 3B: the System card for the model, or `/api/status` (its `system.board` has the kind) | The exact model "Raspberry Pi 3 Model B ..." shown, kind pi3 | A different kind |
+| BT3 | The Pi 4 node (regression): choose New, then `tr '\0' ' ' < /proc/$(pgrep -x pvj-render)/cmdline` | pvj-render draws as before, with `--detail=540 --fast --skip-deblock --sources=4`; no tier reason on the card | Classic drawing, a reason on the card, or a changed argument |
+| BT4 | Move the Pi 3B's saved card to the Pi 4 (or restore its settings there) | The Pi 4 draws New with no new choice | New lost on the move |
+
 ## Safety
 
 - The workflow starts by **manual dispatch only**, and only for the repository owner. It never runs for pushes, pull requests or forks, so nobody else's code reaches the Pi. Keep it that way.

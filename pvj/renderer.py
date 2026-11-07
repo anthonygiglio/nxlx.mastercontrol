@@ -214,12 +214,26 @@ def command(socket_path, screen_args, detail, board_kind, env=None, sources=None
     return args
 
 
-def chosen(rundir, extra_args, windowed, env=None):
+GLES2_WHY = "pvj-render needs OpenGL ES 3 and this node's graphics chip only has version 2"
+
+
+def gles2_only(board_kind):
+    """A board whose graphics chip is OpenGL ES 2 (VC4: a Pi 3 class board, and a Pi 1 or Zero, which are pi-other), so
+    pvj-render cannot start on it. An arm-other board may have ES 3 (an RK3588 has 3.2): it keeps trying."""
+    return hardware.tier(board_kind) == "lean" or board_kind == "pi-other"
+
+
+def chosen(rundir, extra_args, windowed, env=None, board_kind=None):
     """(use, detail, why) for the start that is about to happen. "new" only where pvj-render can draw in phase 1: on
-    a box without a desktop, where the player draws through DRM itself (`--gpu-context=drm`)."""
+    a node without a desktop, where the player draws through DRM itself (`--gpu-context=drm`), and not on a board whose
+    graphics chip is OpenGL ES 2 (gles2_only): classic at once, with the reason, and the choice stays saved."""
     want = clean(screenmode.read_json(wanted_path(env)))
     if want["use"] != "new":
         return "classic", want["detail"], ""
+    if board_kind is None:
+        board_kind = hardware.detect_board().get("kind", "")
+    if gles2_only(board_kind):
+        return "classic", want["detail"], GLES2_WHY
     if windowed or "--gpu-context=drm" not in extra_args:
         return "classic", want["detail"], "pvj-render draws only on a node without a desktop (phase 1)"
     if not available(env):
@@ -632,6 +646,8 @@ class Renderer:
             sources = None
         elif isinstance(sources, bool) or not isinstance(sources, int) or not 1 <= sources <= cap:
             raise RendererError(400, "sources must be auto or 1 to %d on this node" % cap)
+        if use == "new" and gles2_only(self.board()):
+            raise RendererError(409, GLES2_WHY)
         if use == "new" and not available(self.env):
             raise RendererError(409, "pvj-render is not built on this node")
         before = self.saved()
@@ -657,6 +673,6 @@ class Renderer:
             # start): a restart of the player is what tries pvj-render again (D95), so choosing New again does it,
             # instead of leaving the box on classic until something else restarts the player (the 2-hour soak, D106)
             drawing, why = self.drawing()
-            if drawing == "classic" and why:
+            if drawing == "classic" and why and why != GLES2_WHY:
                 self._restart("New chosen again after classic took over (%s)" % why)
         return self.state()

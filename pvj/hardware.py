@@ -20,21 +20,43 @@ def _read(root, path):
         return None
 
 
+# Raspberry Pi device-tree model names by the silicon under them. The exact model stays in detect_board()["model"].
+_PI_NUMBERED = {"2": "pi3", "3": "pi3", "4": "pi4", "400": "pi4", "5": "pi5", "500": "pi5"}   # Pi 2 is Pi 3 class
+_PI_COMPUTE = {"3": "pi3", "4": "pi4", "5": "pi5"}       # Compute Module 3, 4 (and 4S), 5
+
+
+def pi_kind(model):
+    """The kind for a Raspberry Pi device-tree model string, by its silicon: Pi 400 and Compute Module 4 are Pi 4,
+    Pi 500 and Compute Module 5 are Pi 5, Pi 2, Pi 3 (A+, B+) and Zero 2 W are Pi 3 class. A Pi 1, a Zero (not 2), a
+    Compute Module 1 and anything unnamed are below the supported floor: pi-other."""
+    if "Raspberry Pi" not in model:
+        return None
+    if re.search(r"Raspberry Pi Zero 2\b", model):
+        return "pi3"
+    m = re.search(r"Raspberry Pi Compute Module (\d+)", model)
+    if m:
+        return _PI_COMPUTE.get(m.group(1), "pi-other")
+    m = re.search(r"Raspberry Pi (\d+)", model)
+    if m:
+        return _PI_NUMBERED.get(m.group(1), "pi-other")
+    return "pi-other"
+
+
+def tier(kind):
+    """How much a board is asked to do: "lean" (Pi 3 class), "standard" (Pi 4 class), "full" (Pi 5, x86) or "unknown"
+    (a Pi below the floor, an ARM board the node cannot name). Only renderer.gles2_only reads it for a limit, and it
+    treats the Pi 1 class (pi-other) as lean for that one purpose: the same OpenGL ES 2 chip."""
+    return {"pi3": "lean", "pi4": "standard", "pi5": "full", "x86": "full"}.get(kind, "unknown")
+
+
 def detect_board(root="/"):
     """Return {'kind', 'model', 'arch'}.
 
-    kind is one of pi3, pi4, pi5, pi-other, x86, arm-other.
+    kind is one of pi3, pi4, pi5, pi-other, x86, arm-other (pi_kind says which Pi model is which).
     """
     arch = platform.machine() if root == "/" else "unknown"
     model = _read(root, "/proc/device-tree/model") or _read(root, "/sys/firmware/devicetree/base/model")
-    kind = None
-    if model:
-        m = re.search(r"Raspberry Pi (\d+)", model)
-        if m:
-            n = m.group(1)
-            kind = "pi" + n if n in ("3", "4", "5") else "pi-other"
-        elif "Raspberry Pi" in model:
-            kind = "pi-other"
+    kind = pi_kind(model) if model else None
     if kind is None:
         if arch in ("x86_64", "i386", "i686", "AMD64"):
             kind = "x86"
@@ -108,7 +130,7 @@ def playback_profile(board, has_desktop):
     if kind == "pi5":
         notes.append("Pi 5 has no hardware H.264 decode; use HEVC files or expect software decode.")
     if kind == "pi3":
-        notes.append("Pi 3 is the weakest supported board; check heavy files with pvj-selftest first.")
+        notes.append("Pi 3 class is the weakest supported board; check heavy files with pvj-selftest first.")
     return {"mpv_args": args, "notes": notes}
 
 
