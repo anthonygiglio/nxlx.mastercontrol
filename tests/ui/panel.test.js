@@ -821,8 +821,8 @@ function startServer(env) {          // env: more for the harness's environment 
     assert.deepStrictEqual([headNow.top, headNow.pos], [0, 'sticky'], 'the title bar stays at the top of a scrolled screen at 820 x 1180: ' + JSON.stringify(headNow));
     if (await page.isVisible('#wsmore')) {
       const expanded = () => page.evaluate(() => document.getElementById('wsmore').getAttribute('aria-expanded') === 'true');
-      for (let i = 0; i < 3 && !(await expanded()); i++) { await require('./signal-pages').stripOpen(page); await page.waitForTimeout(300); }
-      assert(await expanded(), 'More opens the strip at 820');
+      await stripOpen(page);
+      assert(await expanded(), 'More opens the strip at 820, with one click');
       await page.evaluate(() => window.scrollTo(0, 2000));
       headNow = await headAt();
       assert.deepStrictEqual([headNow.top, headNow.pos], [0, 'sticky'], 'and with More open: ' + JSON.stringify(headNow));
@@ -1746,6 +1746,38 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.waitForSelector(`${rowOf('Projectors')} .navstate:has-text("Main has a warning")`);
     await sys('Health');
     await page.waitForSelector('#healthcard .item:has-text("Projector: Main"):has-text("lamp 1234 h"):has-text("Warning: filter")', { timeout: 15000 });
+    // A timed card knows its own element: a late answer to a Health card that was drawn again meanwhile is dropped,
+    // and does not take the card's next look away from the new one (another card with the same id). The first card's
+    // answer is held back 4 s and lands while a press is down, after the new card's own answer; on the release only
+    // the new card looks again, and it shows the node's latest answer.
+    {
+      let asked = 0, lateDone, lamp = '1234';
+      const late = new Promise((res) => { lateDone = res; });
+      const slowHealth = async (route) => {
+        const n = ++asked, answer = await route.fetch();
+        const text = (await answer.text()).replace(/lamp 1234 h/g, 'lamp ' + lamp + ' h');
+        if (n === 1) await new Promise((res) => setTimeout(res, 4000));
+        else if (n === 2) await new Promise((res) => setTimeout(res, 500));
+        await route.fulfill({ response: answer, body: text });
+        if (n === 1) lateDone();
+      };
+      await sysIndex();
+      await page.route('**/api/health', slowHealth);
+      await sys('Health');                                   // the first card: its answer comes in 4 s
+      await sysIndex();
+      await sys('Health');                                   // the new card
+      const head = await page.locator('#healthcard h2').boundingBox();
+      await page.mouse.move(head.x + 10, head.y + head.height / 2);
+      await page.mouse.down();
+      await late;                                            // the new card's answer came first and waits for the release
+      lamp = '4321';
+      await page.waitForTimeout(300);
+      await page.mouse.up();
+      await page.waitForSelector('#healthcard .item:has-text("lamp 4321 h")', { timeout: 8000 }).catch(() => {
+        throw new Error('a late answer to a card drawn again took its next look away: the new Health card stopped refreshing');
+      });
+      await page.unroute('**/api/health', slowHealth);
+    }
     await onPage('Health');
     await sys('Projectors');
     await page.waitForSelector('.proj-entry');

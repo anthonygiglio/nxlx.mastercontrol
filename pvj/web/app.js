@@ -348,7 +348,7 @@
     var body = h('div', { class: 'list sp', id: 'supportbody' }, h('div', { class: 'hint', text: 'Loading...' }));
     var card = h('div', { class: 'card', id: 'supportcard' }, h('h2', { text: 'Remote support' }), body);
     var timer = null;
-    function refresh() { api('GET', '/api/support').then(function (r) { if (document.getElementById('supportcard') && r.ok) { if (asking(body)) { timer = setTimeout(refresh, 5000); return; } if (held('support', refresh)) return; draw(r.data); } }); }
+    function refresh() { api('GET', '/api/support').then(function (r) { if (card.isConnected && r.ok) { if (asking(body)) { timer = setTimeout(refresh, 5000); return; } if (held('support', refresh)) return; draw(r.data); } }); }
     function post(path, b) { return act('POST', path, b, function (data) { say(''); draw(data); poll(); }); }
     var ROLES = { full: 'check and change everything', live: 'play and mix only', view: 'watch only' };
     function draw(d) {
@@ -2749,8 +2749,8 @@
     }
     function refresh() {
       clearTimeout(healthTimer);
-      healthTimer = setTimeout(function () { if (document.getElementById('healthcard')) refresh(); }, 5000);
-      api('GET', '/api/health').then(function (r) { if (r.ok && document.getElementById('healthcard') && !held('health', refresh)) draw(r.data); });
+      healthTimer = setTimeout(function () { if (card.isConnected) refresh(); }, 5000);
+      api('GET', '/api/health').then(function (r) { if (r.ok && card.isConnected && !held('health', refresh)) draw(r.data); });
     }
     refresh();
     return card;
@@ -3337,7 +3337,7 @@
     function refresh() {
       clearTimeout(screenTimer);
       api('GET', '/api/screen').then(function (r) {
-        if (!document.getElementById('screencard')) return;
+        if (!card.isConnected) return;
         if (asking(card)) { screenTimer = setTimeout(refresh, 1000); return; }      // a question is open: not wiped
         if (held('screen', refresh)) return;
         if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'hint', id: 'screenerr', text: (r.data.error || 'Not available') + '. Open the page again in a moment.' })); return; }
@@ -4979,7 +4979,7 @@
     function refresh() {
       var n = posts;
       api('GET', '/api/sync').then(function (r) {
-        if (!document.getElementById('synccard') || !r.ok) return;
+        if (!card.isConnected || !r.ok) return;
         if (n !== posts) return refresh();
         if (held('sync', refresh)) return;
         draw(r.data);
@@ -5681,7 +5681,7 @@
     function refresh() {
       clearTimeout(netTimer);
       api('GET', '/api/network').then(function (r) {
-        if (!document.getElementById('netcard')) return;
+        if (!card.isConnected) return;
         if (held('network', refresh)) return;
         if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'hint', id: 'netmsg', text: (r.data.error || 'Not available') + '. Open the page again in a moment.' })); return; }
         draw(r.data);
