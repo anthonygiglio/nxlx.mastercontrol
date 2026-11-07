@@ -305,8 +305,8 @@ class NodesTest(ApiBase):
         self.assertEqual(out["nodes"][0]["host"], NODE_HOST)
         self.assertEqual(out["nodes"][0]["picture"], "here")
         self.assertEqual(self.settings.data["ndi"]["sources"], [ROW], "the node's source is allowed, as a pad's")
-        for host, words in (("192.168.1.30", "not on one of the box's own networks"), ("192.168.0.5", "the box's own address"),
-                            ("192.168.0.255", "broadcast"), ("10.77.0.9", "not on one of the box's own networks"), ("8.8.8.8", "private")):
+        for host, words in (("192.168.1.30", "not on one of the node's own networks"), ("192.168.0.5", "the node's own address"),
+                            ("192.168.0.255", "broadcast"), ("10.77.0.9", "not on one of the node's own networks"), ("8.8.8.8", "private")):
             st, out = self.add(host=host, port=7500)
             self.assertEqual(st, 400, host)
             self.assertIn(words, out["error"], host)

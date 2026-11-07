@@ -55,7 +55,7 @@ MAX_TEXT = 96                   # characters of a name in a packet
 
 WHY_NETWORK = "not on this network now, nothing is sent to it"
 WHY_LOCKS = "not let in by the locks that are on, nothing is sent to it"
-WHY_ADD = "not on one of the box's own networks"
+WHY_ADD = "not on one of the node's own networks"
 SLOTS = 8
 
 
@@ -98,7 +98,7 @@ def address_form(text):
     if str(addr) != text:
         raise FeedbackError("write the address the plain way, like 192.168.1.50")
     if not any(addr in net for net in PRIVATE) or addr.is_multicast or addr.is_loopback:
-        raise FeedbackError("%s is not an address on a private network; state is only sent to devices on the box's own network" % addr)
+        raise FeedbackError("%s is not an address on a private network; state is only sent to devices on the node's own network" % addr)
     return addr
 
 
@@ -111,7 +111,7 @@ def not_local(addr, nets):
     except FeedbackError:
         return "not an address on a private network"
     if any(addr == i.ip for i in nets):
-        return "the box's own address"
+        return "the node's own address"
     for i in nets:
         net = i.network
         if addr in net and any(net.subnet_of(p) for p in PRIVATE):
@@ -583,7 +583,7 @@ class Feedback:
         try:
             state = self._state_fn(now)
         except Exception as e:
-            self._note("state", "could not read the box's state: %r" % (e,))
+            self._note("state", "could not read the node's state: %r" % (e,))
             return 0
         before = self.stats["datagrams"]
         # The cap for all targets together is spent in the order they are served, so the one that goes first changes

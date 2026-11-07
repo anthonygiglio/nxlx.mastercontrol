@@ -434,7 +434,7 @@ class OverlapTest(SupportBase):
                                      {"ifname": "wg-pvj", "addr_info": [{"family": "inet", "local": "10.99.0.5", "prefixlen": 24}]}]
         st, body = self.h("POST", "/api/support/config", dict(CFG, allowed=True), self.full_dev)
         self.assertEqual(st, 400, body)
-        self.assertIn("overlaps a network this box is on (10.77.0.0/24)", body["error"])
+        self.assertIn("overlaps a network this node is on (10.77.0.0/24)", body["error"])
         ok = dict(CFG, address="10.99.0.5", network="10.99.0.0/24")      # the tunnel's own interface does not count
         self.assertEqual(self.h("POST", "/api/support/config", dict(ok, allowed=True), self.full_dev)[0], 200)
 

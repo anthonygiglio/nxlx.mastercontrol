@@ -630,7 +630,7 @@ def validate_lights(v, controls):
     never makes a lights section wrong."""
     _keys(v, "lights", ("default", "unverified", "note", "sources", "channel", "brightness", "off", "styles", "controls"), ("setup", "clear", "flash"))
     if v.get("flash", "timer") not in ("timer", "device"):
-        raise MidiError("lights.flash must be timer (the box switches the light on and off) or device (the controller flashes it)")
+        raise MidiError("lights.flash must be timer (the node switches the light on and off) or device (the controller flashes it)")
     device_flash = v.get("flash") == "device"
     for flag in ("default", "unverified", "brightness"):
         if not isinstance(v[flag], bool):
@@ -1964,11 +1964,11 @@ class MidiHub:
         elif not self.standard_on(source):
             state, line = "off", "Lights are off while the standard layout is off."
         elif path in self._sure and not self._sure[path][1]:
-            state, line = "unsure", "Lights are off: the box could not make sure which controller this is, so it sends it nothing."
+            state, line = "unsure", "Lights are off: the node could not make sure which controller this is, so it sends it nothing."
         elif w is None or w.state == "opening":
             state, line = "opening", "Lights are starting."
         elif w.state == "installer":
-            state, line = "installer", "Lights need the box's installer to run once."
+            state, line = "installer", "Lights need the node's installer to run once."
         elif w.state == "on":
             state, line = "on", "Lights on."
         else:
@@ -2084,7 +2084,7 @@ class MidiHub:
         except Exception:
             on_usb = False
         if not on_usb:
-            self._note("%s asked for a code on the display, but it is not a USB controller the box can place; nothing was done" % source)
+            self._note("%s asked for a code on the display, but it is not a USB controller the node can place; nothing was done" % source)
             return False
         return codes.request(body.get("kind"), body.get("since"), source)
 

@@ -842,7 +842,7 @@ class Transitions:
             self.late.append(again)
 
     def _give_up(self, why):
-        self.given_up = why + "; dipping to black instead. The box tries again in %d minutes, or at once when the transition is chosen again" % int(RETRY // 60)
+        self.given_up = why + "; dipping to black instead. The node tries again in %d minutes, or at once when the transition is chosen again" % int(RETRY // 60)
         self._gave_up_at, self._slow, self._odd = self._clock(), [], 0
         self.log("pvj-web: transitions given up: %s" % why)
 

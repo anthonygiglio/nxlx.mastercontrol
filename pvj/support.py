@@ -58,7 +58,7 @@ DEFAULTS_FILE = "/etc/pvj/support.json"
 # answered to a remote session by its role like any other (a session below Owner is held to policy.LEGACY_LIVE, D80).
 REMOTE_DENY = {
     # the session's own settings, start and length: a helper does not lengthen or widen his own access
-    ("POST", "/api/support/config"): "a helper does not change where the box dials out to, or whether it may",
+    ("POST", "/api/support/config"): "a helper does not change where the node dials out to, or whether it may",
     ("POST", "/api/support/start"): "a session is started by someone at the studio",
     ("POST", "/api/support/extend"): "a helper does not lengthen his own session",
     # pairing and sessions: a device paired through the tunnel would still be paired after Stop
@@ -71,12 +71,12 @@ REMOTE_DENY = {
     ("POST", "/api/pin/show"): "the PIN pairs an Owner's device",
     ("GET", "/api/qr.svg"): "the QR code carries a way to pair",
     # nobody remote can switch the box back on (a restart is allowed: it ends the session and the box comes back)
-    ("POST", "/api/system/poweroff"): "nobody remote can switch the box back on",
+    ("POST", "/api/system/poweroff"): "nobody remote can switch the node back on",
     # a network change stays pending until someone confirms it, and goes back by itself otherwise (netcfg.py): the
     # confirm is the proof that the studio still reaches the box, which a helper in the tunnel cannot give. He may
     # make the change and take it back; someone at the studio confirms it. (Added by D84: found while trying to
     # lock the owner out.)
-    ("POST", "/api/network/confirm"): "a network change is confirmed from the studio: only that shows the studio still reaches the box",
+    ("POST", "/api/network/confirm"): "a network change is confirmed from the studio: only that shows the studio still reaches the node",
     # the same for the screen's mode (D90): it is tried and goes back by itself unless kept, and the keep is the proof
     # that someone sees the picture in the room. A helper sees a snapshot of what the player draws, which says nothing
     # about what the projector shows. He may try a mode and take it back; someone in the room keeps it.
@@ -93,7 +93,7 @@ REMOTE_DENY = {
 # Everything under these, whatever the role: path prefix -> why.
 REMOTE_DENY_PREFIX_WHY = {
     "/api/access": "join codes, links and the choice of what a controller's code pairs are ways in",
-    "/api/https": "the box's key and certificate, and the switch that could shut the owner's devices out (D79)",
+    "/api/https": "the node's key and certificate, and the switch that could shut the owner's devices out (D79)",
     "/api/recovery": "the owner's ways back in (D81)",
     "/api/ndi/discovery": "the NDI discovery server's own settings: a listener on the network is the owner's, in the room (D85)",
 }
@@ -102,7 +102,7 @@ REMOTE_DENY_PREFIX = tuple(REMOTE_DENY_PREFIX_WHY)
 # module id -> why. Switching one of them off takes something away and is allowed, except where the whole switch
 # is refused above (ndi-discovery).
 REMOTE_NO_MODULE_ON = {
-    "inputs-ndi": "the NDI input makes the box listen to senders on the network and run NDI's library, and stays on after the session",
+    "inputs-ndi": "the NDI input makes the node listen to senders on the network and run NDI's library, and stays on after the session",
     "ndi-discovery": "a program that listens on the network is switched by the owner in the room (D85)",
 }
 REMOTE_OPEN = {("GET", "/api/hello"), ("POST", "/api/support/login")}
@@ -110,15 +110,15 @@ REMOTE_OPEN = {("GET", "/api/hello"), ("POST", "/api/support/login")}
 # keeps it inside the principle. Not read by the guard (not being refused is what opens them); it is the record
 # the tests hold the handlers to, and every one of them writes what was done into the session's log (Support.note).
 REMOTE_OWNER_OPENED = {
-    ("POST", "/api/system/settings/import"): "what a file may not carry for a helper is left as the box has it (boxcare.REMOTE_KEPT)",
+    ("POST", "/api/system/settings/import"): "what a file may not carry for a helper is left as the node has it (boxcare.REMOTE_KEPT)",
     ("POST", "/api/theme/add"): "a theme is checked data, never code",
-    ("POST", "/api/theme/remove"): "only a theme that was added; the box's own look comes back",
+    ("POST", "/api/theme/remove"): "only a theme that was added; the node's own look comes back",
     ("POST", "/api/osc/key"): "the helper then knows the key: the owner is told to make a new one after the session",
-    ("POST", "/api/osc/feedback"): "a target is still only a device on the box's own network, never the tunnel",
+    ("POST", "/api/osc/feedback"): "a target is still only a device on the node's own network, never the tunnel",
     ("POST", "/api/guests"): "the lock on guest controls: a switch the owner or an Operator sets back",
     ("POST", "/api/devices/revoke"): "a Guest's or an Operator's device only: never an Owner's",
     # D94: the nearest setting is the state targets above: the box sending to a device in the room
-    ("POST", "/api/render"): "a render node is only a device on the box's own network, checked at every send, never the tunnel",
+    ("POST", "/api/render"): "a render node is only a device on the node's own network, checked at every send, never the tunnel",
 }
 # What a session did, kept with its entry in the support log (SupportManager.note): the major lines, the routine
 # lines (one per route, so a few hundred covers every route there is), and the characters of one line.
@@ -279,7 +279,7 @@ class SupportManager:
     # -- the helper -------------------------------------------------------------------------------------------
     def _helper(self, message):
         if self.client is None:
-            raise SupportApiError(503, "remote support is not set up on this box")
+            raise SupportApiError(503, "remote support is not set up on this node")
         try:
             reply = self.client.request(message)
         except OSError as e:
@@ -440,7 +440,7 @@ class SupportManager:
             raise SupportApiError(400, "send confirm: \"start\"")
         cfg = self.config()
         if not cfg["allowed"]:
-            raise SupportApiError(409, "remote support is not allowed on this box; allow it first")
+            raise SupportApiError(409, "remote support is not allowed on this node; allow it first")
         if not self.configured(cfg):
             raise SupportApiError(409, "set the support server details first")
         minutes = body.get("minutes", DEFAULT_MINUTES)
@@ -451,7 +451,7 @@ class SupportManager:
             raise SupportApiError(400, "role must be view, live or full")
         clash = self.overlap(cfg["network"])
         if clash is not None:
-            raise SupportApiError(409, "the support network %s overlaps a network this box is on (%s); ask your support "
+            raise SupportApiError(409, "the support network %s overlaps a network this node is on (%s); ask your support "
                                        "provider for a different one" % (cfg["network"], clash))
         with self.lock:
             if self.session:
@@ -620,7 +620,7 @@ class SupportManager:
                 cfg = validate_config(body, self.settings.data.get("support", blank()))
                 clash = self.overlap(cfg["network"]) if cfg["network"] else None
                 if clash is not None:
-                    raise SupportApiError(400, "the support network %s overlaps a network this box is on (%s)" % (cfg["network"], clash))
+                    raise SupportApiError(400, "the support network %s overlaps a network this node is on (%s)" % (cfg["network"], clash))
                 self.settings.data["support"] = cfg
                 self.settings.save()
             self.log("pvj-web: remote support settings changed by %s (allowed: %s)" % (device["name"], cfg["allowed"]))

@@ -254,7 +254,7 @@ class SeamTest(unittest.TestCase):
                 ndi.load_library(f.name)
         with self.assertRaises(ndi.NdiError) as e:
             ndi.load_library("/nonexistent/libndi.so.6")
-        self.assertIn("not on this box yet", str(e.exception))
+        self.assertIn("not on this node yet", str(e.exception))
 
 
 class ReceiverTest(unittest.TestCase):
@@ -516,10 +516,10 @@ class ServiceTest(unittest.TestCase):
 
         def loader(path):
             if self.missing:
-                raise ndi.NdiError("the NDI runtime is not on this box yet")
+                raise ndi.NdiError("the NDI runtime is not on this node yet")
             return self.lib
         self.s = ndi.Service(self.dir, "/opt/pvj-ndi/libndi.so.6", loader=loader, log=lambda *_: None, first_frame=0.3,
-                             problem=lambda path: "the NDI runtime is not on this box yet" if self.missing else None)
+                             problem=lambda path: "the NDI runtime is not on this node yet" if self.missing else None)
         self.addCleanup(self.s.close)
         self.rid = ndi.source_id("RESOLUME (Output)", "192.168.0.20")
 
@@ -532,10 +532,10 @@ class ServiceTest(unittest.TestCase):
     def test_without_the_runtime_it_says_so_and_lists_nothing(self):
         self.missing = True
         st = self.s.handle({"cmd": "configure", "on": True, "addresses": []})
-        self.assertEqual(st["runtime"], {"present": False, "loaded": False, "version": "", "problem": "the NDI runtime is not on this box yet"})
+        self.assertEqual(st["runtime"], {"present": False, "loaded": False, "version": "", "problem": "the NDI runtime is not on this node yet"})
         self.assertEqual(st["sources"], [])
         reply = self.s.handle({"cmd": "open", "id": self.rid})
-        self.assertEqual((reply["ok"], reply["error"]), (False, "the NDI runtime is not on this box yet"))
+        self.assertEqual((reply["ok"], reply["error"]), (False, "the NDI runtime is not on this node yet"))
         self.missing = False                                           # the owner installed it; the panel says "on" again
         st = self.s.handle({"cmd": "configure", "on": True, "addresses": []})
         self.assertEqual((st["runtime"]["loaded"], st["runtime"]["version"], len(st["sources"])), (True, "fake 6.0", 2))
@@ -823,8 +823,8 @@ class RuntimeFileTest(unittest.TestCase):
     def test_a_file_for_another_processor_is_named_in_plain_words(self):
         path = self.put("libndi.so.6", elf(62))
         self.assertIsNone(ndi.runtime_problem(path, self.me, machine=62))
-        self.assertEqual(ndi.runtime_problem(path, self.me, machine=183), "the NDI runtime file is for x86_64, this box is aarch64")
-        self.assertEqual(ndi.runtime_problem(os.path.join(self.dir, "nope"), self.me, machine=62), "the NDI runtime is not on this box yet")
+        self.assertEqual(ndi.runtime_problem(path, self.me, machine=183), "the NDI runtime file is for x86_64, this node is aarch64")
+        self.assertEqual(ndi.runtime_problem(os.path.join(self.dir, "nope"), self.me, machine=62), "the NDI runtime is not on this node yet")
         self.assertIn("not a program library", ndi.runtime_problem(self.put("text", b"hello" * 10), self.me, machine=62))
 
     def test_a_file_someone_else_could_change_is_not_loaded(self):
@@ -858,7 +858,7 @@ class RuntimeFileTest(unittest.TestCase):
         wrong = self.put("libndi.so.6", elf(62))
         with self.assertRaises(ndi.NdiError) as e:
             ndi.install_runtime(wrong, dest, machine=183, chown=False)
-        self.assertIn("is for x86_64, this box is aarch64", str(e.exception))
+        self.assertIn("is for x86_64, this node is aarch64", str(e.exception))
         self.assertFalse(os.path.lexists(dest))            # review M1: not even the folder it made is left by a refused file
         for source in (self.put("script.sh", b"#!/bin/sh\n" + b" " * 40), os.path.join(self.dir, "missing"), self.dir):
             with self.assertRaises(ndi.NdiError, msg=source):
@@ -906,12 +906,12 @@ class NdiApiTest(ServerBase):
 
         def loader(path):
             if self.missing:
-                raise ndi.NdiError("the NDI runtime is not on this box yet")
+                raise ndi.NdiError("the NDI runtime is not on this node yet")
             return self.lib
         self.ndidir = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.ndidir, True)
         self.service = ndi.Service(self.ndidir, "x", loader=loader, log=lambda *_: None, first_frame=0.3,
-                                   problem=lambda path: "the NDI runtime is not on this box yet" if self.missing else None)
+                                   problem=lambda path: "the NDI runtime is not on this node yet" if self.missing else None)
         self.addCleanup(self.service.close)
         self.client = FakeClient(self.service)
         reg, st = self.api.registry, self.settings
@@ -947,9 +947,9 @@ class NdiApiTest(ServerBase):
         self.enable()
         body = self.call("GET", "/api/ndi", token=self.full)[1]
         self.assertEqual((body["helper"], body["runtime"]["present"], body["runtime"]["problem"], body["sources"]),
-                         (True, False, "the NDI runtime is not on this box yet", []))
+                         (True, False, "the NDI runtime is not on this node yet", []))
         st, out, _ = self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)
-        self.assertEqual((st, out["error"]), (409, "the NDI runtime is not on this box yet"))
+        self.assertEqual((st, out["error"]), (409, "the NDI runtime is not on this node yet"))
         self.assertFalse([c for c in self.player.calls if c[0] == "play_pipe"])
 
     def test_without_the_helper_the_page_still_answers(self):
@@ -1390,7 +1390,7 @@ class RuntimeInstallHardeningTest(unittest.TestCase):
         os.symlink("libndi.so.6.3.2", os.path.join(x86, "libndi.so.6"))
         with self.assertRaises(ndi.NdiError) as e:
             ndi.install_runtime(os.path.join(x86, "libndi.so.6"), self.dest, machine=183, chown=False)
-        self.assertIn("is for x86_64, this box is aarch64", str(e.exception))
+        self.assertIn("is for x86_64, this node is aarch64", str(e.exception))
         # everything else that is a link stays refused, and nothing is put in place
         with open(os.path.join(other, "lib.so"), "wb") as f:
             f.write(elf(183) + b"from another folder")

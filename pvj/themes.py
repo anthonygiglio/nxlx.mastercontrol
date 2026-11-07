@@ -342,7 +342,7 @@ def checked(raw, taken=()):
     if problems:
         raise ThemeError("; ".join(PLAIN.get(p, p) for p in problems))
     if theme["id"] in taken:
-        raise ThemeError("the id %s belongs to a look that comes with the box; give the theme another id" % theme["id"])
+        raise ThemeError("the id %s belongs to a look that comes with the node; give the theme another id" % theme["id"])
     return theme
 
 
@@ -353,7 +353,7 @@ def name_taken(theme, themes):
     return any(t.get("source") == "builtin" and t["name"].strip().lower() == name and k != theme["id"] for k, t in list(themes.items()))
 
 
-NAME_TAKEN = "the name %s is that of a look that comes with the box; give the theme another name"
+NAME_TAKEN = "the name %s is that of a look that comes with the node; give the theme another name"
 
 
 def clean(theme):
@@ -438,7 +438,7 @@ class Store:
                 had = out.get(tid)
                 if had is not None and had.get("source") != "addon":
                     for n, _t in copies:
-                        self._skip(n, "its id, %s, belongs to a look that comes with the box" % tid)
+                        self._skip(n, "its id, %s, belongs to a look that comes with the node" % tid)
                     continue
                 if name_taken(theme, out):
                     for n, _t in copies:
@@ -459,12 +459,12 @@ class Store:
         """Store a checked theme and put it in `themes`. Returns True when it replaced one of the owner's own with
         the same id. Raises ThemeError (with .status) when it cannot be kept."""
         if self.dir is None:
-            raise _status(ThemeError("this box has no folder for added themes"), 503)
+            raise _status(ThemeError("this node has no folder for added themes"), 503)
         tid = theme["id"]
         with self.lock:
             had = themes.get(tid)
             if had is not None and had.get("source") != "addon":
-                raise _status(ThemeError("the id %s belongs to a look that comes with the box; give the theme another id" % tid), 409)
+                raise _status(ThemeError("the id %s belongs to a look that comes with the node; give the theme another id" % tid), 409)
             if had is None and sum(1 for t in list(themes.values()) if t.get("source") == "addon") >= MAX_ADDED:
                 raise _status(ThemeError("at most %d added themes; remove one first" % MAX_ADDED), 409)
             if name_taken(theme, themes):
@@ -524,7 +524,7 @@ class Store:
             if had is None:
                 raise _status(ThemeError("there is no such theme"), 404)
             if had.get("source") != "addon":
-                raise _status(ThemeError("%s comes with the box and cannot be removed" % had.get("name", tid)), 409)
+                raise _status(ThemeError("%s comes with the node and cannot be removed" % had.get("name", tid)), 409)
             names = self.files.get(tid) or [tid + ".json"]
             if self._folder_ok():
                 left = [n for n in names if not self._unlink(n)]         # every file that holds this id, or it would be back at the next start

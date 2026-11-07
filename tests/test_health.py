@@ -58,8 +58,8 @@ class PowerTest(unittest.TestCase):
         self.assertEqual(h.power()["state"], "bad")
         set_alarm(sysfs, False)
         p = h.power()
-        self.assertEqual(p["state"], "warn")                      # it happened since the box started
-        self.assertIn("since the box started", p["text"])
+        self.assertEqual(p["state"], "warn")                      # it happened since the node started
+        self.assertIn("since the node started", p["text"])
         fresh = health.Health(Api(), run, sysfs=sysfs, proc=proc, log=lambda *_: None)
         self.assertEqual(fresh.power()["state"], "warn")          # a restart of the panel does not forget it
 

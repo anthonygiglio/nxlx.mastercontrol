@@ -35,7 +35,7 @@ NAME_MAX = 64
 DEFAULT_MAP = {"on": False, "input": "", "source": "level", "rest": 0.0, "depth": 0.5, "smooth": 1.5}
 # The sources (D97): what pvj-sound hears. The device is the one capture device; the others are fed in by the panel.
 INPUTS = ("device", "box", "ndi", "osc")
-INPUT_NAMES = {"device": "The capture device", "box": "The box's own sound", "ndi": "The NDI sound", "osc": "Levels sent in over OSC"}
+INPUT_NAMES = {"device": "The capture device", "box": "The node's own sound", "ndi": "The NDI sound", "osc": "Levels sent in over OSC"}
 MAX_IN_HOSTS = 8
 DEFAULT = {"on": False, "device": "", "gain_db": 0.0, "osc_state": False, "osc_render": False, "map": dict(DEFAULT_MAP),
            "source": "device", "allowed": ["device"], "channel": "mix", "in_hosts": []}

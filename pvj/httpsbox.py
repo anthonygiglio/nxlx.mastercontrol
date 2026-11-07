@@ -453,7 +453,7 @@ class HttpsBox:
     def make_request(self, names, new_key=False):
         dns, ips = self.check_names(names)
         if not self.has_openssl():
-            raise HttpsError("this box has no openssl, so it cannot make a key; install the openssl package on it", 503)
+            raise HttpsError("this node has no openssl, so it cannot make a key; install the openssl package on it", 503)
         with self.lock:
             self._ensure_folder()
             if new_key or not os.path.isfile(self.path(KEY)):
@@ -509,7 +509,7 @@ class HttpsBox:
     def _try_load(self, cert_text):
         """A context for this certificate with the box's key, or an HttpsError that says why not."""
         if not os.path.isfile(self.path(KEY)):
-            raise HttpsError("this box has no key yet: make the request first, sign it, then upload the certificate")
+            raise HttpsError("this node has no key yet: make the request first, sign it, then upload the certificate")
         tmp = self.path("check.pem")
         self._write("check.pem", cert_text, 0o600)
         try:
@@ -519,7 +519,7 @@ class HttpsBox:
             except ssl.SSLError as e:
                 text = str(e)
                 if "key values mismatch" in text.lower() or "mismatch" in text.lower():
-                    raise HttpsError("the certificate does not match this box's key: it was not made from this box's request (or a new key was made since); download the request again and sign that")
+                    raise HttpsError("the certificate does not match this node's key: it was not made from this node's request (or a new key was made since); download the request again and sign that")
                 raise HttpsError("the certificate could not be loaded: %s" % text[:160])
             return ctx
         finally:
@@ -558,7 +558,7 @@ class HttpsBox:
             raise HttpsError("the file holds something that is not a certificate")
         leaf = infos[0]
         if leaf["ca"]:
-            raise HttpsError("this is the root certificate (install that on devices); upload the box's certificate, the file boxcert.py sign wrote")
+            raise HttpsError("this is the root certificate (install that on devices); upload the node's certificate, the file boxcert.py sign wrote")
         if not leaf["server_auth"]:
             raise HttpsError("the certificate is not for a server (no serverAuth extended key usage), so browsers would refuse it")
         if not leaf["dns"] and not leaf["ips"]:
@@ -569,7 +569,7 @@ class HttpsBox:
             raise HttpsError("the certificate has run out (it ended on %s): sign the request again" % self.date(leaf["not_after"]))
         h = host_of(host)
         if h and h not in ("localhost", "127.0.0.1", "::1") and not name_matches(h, leaf["dns"], leaf["ips"]):
-            raise HttpsError("the certificate does not name %s, which is how you reached the box; it names %s. Make the request again with that name in it, or open the box by a name it has"
+            raise HttpsError("the certificate does not name %s, which is how you reached the node; it names %s. Make the request again with that name in it, or open the node by a name it has"
                              % (h, ", ".join(leaf["dns"] + leaf["ips"])))
         root = None
         for info, (_, block) in zip(infos[1:], blocks[1:]):
@@ -611,10 +611,10 @@ class HttpsBox:
                 # the root is pinned once it exists (third review of #119): a certificate from another root is
                 # refused whatever the file carries, and the stored root is never touched by an upload
                 if not self.has_openssl():
-                    raise HttpsError("the certificate cannot be checked against this box's root without openssl on the box", 503)
+                    raise HttpsError("the certificate cannot be checked against this node's root without openssl on the node", 503)
                 chained = self._issued_by_stored_root(leaf_pem, leaf)
                 if not chained:
-                    raise HttpsError("the certificate was not issued by the root this box knows (fingerprint %s): a certificate from another "
+                    raise HttpsError("the certificate was not issued by the root this node knows (fingerprint %s): a certificate from another "
                                      "root is refused. To move to a new root, replace the root first, over https://, then upload." % stored_fp[:19])
                 root_pem = None
             else:
@@ -633,7 +633,7 @@ class HttpsBox:
                 os.replace(self.path(NEW), self.path(CERT))
             except OSError as e:
                 self._unlink(NEW)
-                raise HttpsError("the certificate could not be saved on the box: %s" % (e.strerror or e), 500)
+                raise HttpsError("the certificate could not be saved on the node: %s" % (e.strerror or e), 500)
             self.context, self.info, self.load_error, self.chained = ctx, leaf, None, chained
         self.log("pvj-web: certificate installed for %s, ends %s (serial %s)" % (", ".join(leaf["dns"] + leaf["ips"]), self.date(leaf["not_after"]), leaf["serial"]))
         return leaf

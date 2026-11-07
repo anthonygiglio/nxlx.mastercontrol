@@ -2764,7 +2764,7 @@ class OverShaderTest(Base):
         self.assertIs(self.heavy_seconds(now, 3), True)
         s = self.state()
         self.assertEqual((s["on"], self.mpv.loaded, self.texts()), (None, gen, []))
-        said = "the picture was dropping frames with it on over the shader for 20 seconds, so the box took the effect off to lighten the load. The shader plays on"
+        said = "the picture was dropping frames with it on over the shader for 20 seconds, so the node took the effect off to lighten the load. The shader plays on"
         self.assertEqual(s["last"], said)                                              # what is known, and no more: not "it was too heavy"
         self.assertEqual(self.gen.on_screen()["id"], "nxlx-silk.fs")                   # the shader was never touched,
         self.assertEqual(self.settings.data.get("shaders", {}).get("heavy", {}), {})   # and nothing is marked against it

@@ -55,7 +55,7 @@ WEB_TEXT = ("# Written by pvj-ndi-runtime (pvj/ndiscovery.py) when the NDI disco
             "# 'pvj-ndi-runtime server remove'. The panel may reach the server's supervisor (D85). This file is also the mark.\n"
             "[Service]\nSupplementaryGroups=pvj-ndisc\nEnvironment=PVJ_NDISC_DIR=/run/pvj-ndisc\n")
 COMMAND = 'sudo pvj-ndi-runtime server install "/path/to/NDI SDK for Linux"'
-NOT_SET_UP = "the NDI discovery server is not set up on this box; someone with a keyboard or SSH on the box runs: " + COMMAND
+NOT_SET_UP = "the NDI discovery server is not set up on this node; someone with a keyboard or SSH on the node runs: " + COMMAND
 SOCKET = "ndisc.sock"
 DEFAULT_PORT = 5959                           # NDI's own default
 MIN_PORT, MAX_PORT = 1024, 65535              # the account has no privileges: no port below 1024
@@ -98,7 +98,7 @@ def server_problem(path=SERVER_PATH, owner_uids=(0,), machine=None):
     try:
         st, folder = os.lstat(path), os.lstat(os.path.dirname(path))
     except OSError:
-        return "NDI's discovery server program is not on this box yet"
+        return "NDI's discovery server program is not on this node yet"
     if (not stat.S_ISREG(st.st_mode) or st.st_uid not in owner_uids or st.st_mode & 0o022 or st.st_size > SERVER_MAX_BYTES
             or not stat.S_ISDIR(folder.st_mode) or folder.st_uid not in owner_uids or folder.st_mode & 0o022):
         return "NDI's discovery server program is not a plain file that only root can change; install it again with pvj-ndi-runtime"
@@ -107,13 +107,13 @@ def server_problem(path=SERVER_PATH, owner_uids=(0,), machine=None):
         # NDI's program reads a configuration file lying beside it (ndi-discovery-service.v1.json), which would
         # count for more than the arguments it is given. The box writes nothing into this folder but the program,
         # so anything else there is somebody else's, and the program is not started with it.
-        return ("%s lies beside NDI's program in %s and this box did not put it there; remove it (the program is not started while it is there)"
+        return ("%s lies beside NDI's program in %s and this node did not put it there; remove it (the program is not started while it is there)"
                 % (", ".join(extra), os.path.dirname(path)))
     found, want = elf_machine(path), machine if machine is not None else box_machine()
     if found is None or _elf_type(path) not in (ET_EXEC, ET_DYN):
         return "the file is not a program (NDI's discovery server is one)"
     if found[0] != want:
-        return "NDI's discovery server program is for %s, this box is %s" % (ELF_MACHINES.get(found[0], "another processor"),
+        return "NDI's discovery server program is for %s, this node is %s" % (ELF_MACHINES.get(found[0], "another processor"),
                                                                            ELF_MACHINES.get(want, "another kind"))
     return None
 
@@ -138,7 +138,7 @@ def install_server(source, dest_dir=SERVER_DIR, machine=None, chown=True):
     if os.path.isdir(source):
         path = find_server(source, machine)
         if path is None:
-            raise NdiError("no %s for this box (%s) under %s/bin" % (SERVER_NAME, ELF_MACHINES.get(machine, "unknown processor"), source))
+            raise NdiError("no %s for this node (%s) under %s/bin" % (SERVER_NAME, ELF_MACHINES.get(machine, "unknown processor"), source))
     else:
         path = same_folder_target(source)
     try:
@@ -281,7 +281,7 @@ def enable(run=ndisetup._run, say=print, systemd=ndisetup._systemd_runs, account
                 say(line)
             if systemd():
                 run(["systemctl", "daemon-reload"])
-            say("the set-up failed and was undone: this box has no NDI discovery server set up. NDI's program and the "
+            say("the set-up failed and was undone: this node has no NDI discovery server set up. NDI's program and the "
                 "account and group %s stay (sudo pvj-ndi-runtime server remove takes the program off)." % ACCOUNT)
         raise
     running = True
@@ -292,12 +292,12 @@ def enable(run=ndisetup._run, say=print, systemd=ndisetup._systemd_runs, account
             break
     say("restarting the panel so it may reach the discovery server's supervisor")
     if run(["systemctl", "try-restart", "pvj-web.service"]) != 0:
-        say("the panel did not restart; restart the box before using the discovery server")
+        say("the panel did not restart; restart the node before using the discovery server")
     if running:
-        say("the NDI discovery server is set up on this box. Nothing of it listens yet: an owner switches it on in the "
+        say("the NDI discovery server is set up on this node. Nothing of it listens yet: an owner switches it on in the "
             "panel under Setup, NDI discovery server.")
     else:
-        say("the NDI discovery server is set up on this box, but its supervisor is NOT running: it was started and did not "
+        say("the NDI discovery server is set up on this node, but its supervisor is NOT running: it was started and did not "
             "stay up. See: journalctl -u pvj-ndi-discovery -n 30")
     return running
 
@@ -315,9 +315,9 @@ def disable(run=ndisetup._run, say=print, systemd=ndisetup._systemd_runs, root="
         if was:
             say("restarting the panel without the discovery server's group")
             if run(["systemctl", "try-restart", "pvj-web.service"]) != 0:
-                say("the panel did not restart; restart the box")
+                say("the panel did not restart; restart the node")
     if was:
-        say("the NDI discovery server's set-up is removed from this box. Left in place: the account and group %s "
+        say("the NDI discovery server's set-up is removed from this node. Left in place: the account and group %s "
             "(sudo deluser %s; sudo delgroup %s)." % (ACCOUNT, ACCOUNT, GROUP))
     if left:
         raise SetupError("not everything of the discovery server could be removed: " + "; ".join(left))
@@ -352,10 +352,10 @@ def server_main(argv, out=sys.stdout):
     """`pvj-ndi-runtime server install <folder or file> | remove | status | refresh ...`."""
     say = lambda m: print("pvj-ndi-runtime: %s" % m, file=out)      # noqa: E731
     usage = ("usage: pvj-ndi-runtime server install <the unpacked NDI SDK or Discovery Server folder, or ndi-discovery-server> | status | remove\n"
-             "install: puts NDI's discovery server program on this box from YOUR copy and sets up the service that can run it\n"
+             "install: puts NDI's discovery server program on this node from YOUR copy and sets up the service that can run it\n"
              "  (an account of its own, pvj-ndisc). Nothing of it listens until an owner switches it on in the panel.\n"
              "NDI's Discovery Server is proprietary: get it from https://ndi.video/ and read its licence first. It is never\n"
-             "part of nxlx.mastercontrol and is never downloaded by the box. NDI(R) is a registered trademark of Vizrt NDI AB.")
+             "part of nxlx.mastercontrol and is never downloaded by the node. NDI(R) is a registered trademark of Vizrt NDI AB.")
     if argv and argv[0] == "refresh":
         root, prefix, rest = "", None, list(argv[1:])
         while rest:
@@ -372,15 +372,15 @@ def server_main(argv, out=sys.stdout):
             return 1
         try:
             if refresh(root, prefix, say=say):
-                say("this box has the NDI discovery server set up; its unit was written again")
+                say("this node has the NDI discovery server set up; its unit was written again")
             return 0
         except (ndisetup.SetupError, OSError) as e:
             say(str(e))
             return 1
     if argv == ["status"]:
         print(server_problem() or "NDI's discovery server program is in place: %s" % SERVER_PATH, file=out)
-        print("the NDI discovery server is set up on this box (the service pvj-ndi-discovery is installed)" if opted_in()
-              else "the NDI discovery server is not set up on this box; to set it up: %s" % COMMAND, file=out)
+        print("the NDI discovery server is set up on this node (the service pvj-ndi-discovery is installed)" if opted_in()
+              else "the NDI discovery server is not set up on this node; to set it up: %s" % COMMAND, file=out)
         return 0
     if argv and argv[0] in ("install", "remove") and os.geteuid() != 0:
         say("run it with sudo")

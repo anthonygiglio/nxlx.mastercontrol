@@ -323,7 +323,7 @@ class PlayToSourceTest(ApiBase):
             self.assertEqual(st, 400, k)
         self.src.n = 3
         st, out = self.post("/api/play", {"file": "a.mp4", "source": 4})
-        self.assertEqual((st, out["error"]), (409, "this box runs 3 sources; Source 4 is not one of them"))
+        self.assertEqual((st, out["error"]), (409, "this node runs 3 sources; Source 4 is not one of them"))
         self.src.n = 1
         st, out = self.post("/api/play", {"file": "a.mp4", "source": 2})
         self.assertEqual(st, 409)
@@ -379,7 +379,7 @@ class SourcesRouteTest(ApiBase):
 
 
 class WarningTest(ApiBase):
-    WARN = "this may drop frames on this box; 720p clips are lighter"
+    WARN = "this may drop frames on this node; 720p clips are lighter"
 
     def rows(self, heights):
         return [{"source": k, "idle": h is None, "path": None if h is None else "/m/c%d.mp4" % k, "height": h, "pause": False, "drawn": 0}

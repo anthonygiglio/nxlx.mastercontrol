@@ -103,7 +103,7 @@ def validate_box(b):
     if b is None:
         b = {"action": "leave"}
     if not isinstance(b, dict) or not isinstance(b.get("action", "leave"), str) or b.get("action", "leave") not in BOX:
-        raise RoomError("what the box does must be one of: %s" % ", ".join(BOX))
+        raise RoomError("what the node does must be one of: %s" % ", ".join(BOX))
     action = b.get("action", "leave")
     return dict(BOX[action][0](b), action=action)
 
@@ -717,7 +717,7 @@ class Room:
             parts.append("%s: %s" % (row["name"], text))
         if job["box"]:
             ok = ok and job["box"]["ok"]
-            parts.append("Box: %s" % job["box"]["text"])
+            parts.append("Node: %s" % job["box"]["text"])
         out = {"started": job["started"], "running": running, "ok": ok, "text": ". ".join(parts) + "." if parts else "Nothing to do."}
         if "scene" in job:
             out["scene"], out["name"] = job["scene"], job["name"]

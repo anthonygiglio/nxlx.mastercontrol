@@ -254,7 +254,7 @@ def check_modules(v, care):
         m = registry.manifests[mid]
         if m["status"] != "ready" or not registry._supported(m):
             out[mid] = False
-            care.note("module %s does not run on this box; left off" % m["name"])
+            care.note("module %s does not run on this node; left off" % m["name"])
     changed = True
     while changed:                       # a requirement that is off switches off what needs it, however deep
         changed = False
@@ -274,7 +274,7 @@ def check_theme(v, care):
     name, accent = _obj(v).get("name"), v.get("accent")
     theme = care.incoming_themes.get(name) if isinstance(name, str) else None        # a theme the file itself brings
     if theme is None and (not isinstance(name, str) or name not in care.api.themes):
-        care.note("the theme %s is not on this box; the theme was left as it is" % _printable(name))
+        care.note("the theme %s is not on this node; the theme was left as it is" % _printable(name))
         return copy.deepcopy(care.api.settings.data["theme"])
     faint = themes_mod.accent_problems(theme or care.api.themes[name], accent)        # as the Look page's own check
     if faint and faint != ["accent must be #rrggbb"]:
@@ -722,7 +722,7 @@ class BoxCare:
         if envelope.get("format") != FORMAT:
             raise bad("this is not a settings export of nxlx.mastercontrol")
         if type(envelope.get("format_version")) is not int or envelope["format_version"] != FORMAT_VERSION:      # true == 1
-            raise bad("this export has a format this version does not know; update the box first", 409)
+            raise bad("this export has a format this version does not know; update the node first", 409)
         extra = sorted(k for k in envelope if k not in ENVELOPE)
         if extra:
             raise bad("the file has parts that do not belong in a settings export: %s" % ", ".join(_printable(k) for k in extra))
@@ -743,7 +743,7 @@ class BoxCare:
             migrate(data, self.settings._migrations, current)          # the same path as a normal load
         except SettingsError as e:
             if data["schema"] > current:
-                raise bad("the file is from a newer version (settings schema %d, this box knows %d); update the box first"
+                raise bad("the file is from a newer version (settings schema %d, this node knows %d); update the node first"
                           % (data["schema"], current), 409)
             raise bad("the file cannot be used: %s" % e)
         except Exception as e:                   # a migration met something an older version never wrote
@@ -797,13 +797,13 @@ class BoxCare:
             if tid in out:
                 raise bad("%s: the id %s is in the file twice" % (label, tid))
             if tid in mine and mine[tid].get("source") != "addon":
-                raise bad("%s: the id %s belongs to a look that comes with the box" % (label, tid))
+                raise bad("%s: the id %s belongs to a look that comes with the node" % (label, tid))
             if themes_mod.name_taken(theme, mine):
                 raise bad("%s: %s" % (label, themes_mod.NAME_TAKEN % theme["name"]))
             out[tid] = themes_mod.clean(theme)
         after = {k for k, t in list(mine.items()) if t.get("source") == "addon"} | set(out)
         if len(after) > themes_mod.MAX_ADDED:
-            raise bad("themes: the file's themes and this box's own would be %d together, and %d is the most; remove some under Look first"
+            raise bad("themes: the file's themes and this node's own would be %d together, and %d is the most; remove some under Look first"
                       % (len(after), themes_mod.MAX_ADDED), 409)
         return out
 
@@ -950,7 +950,7 @@ class BoxCare:
             # which file it was (its sha256: not a secret) and what it changed, so the owner can tell afterwards
             self.api.support.note(device, "imported a settings file, sha256 %s; changed: %s%s" % (
                 hashlib.sha256(raw if isinstance(raw, bytes) else str(raw).encode()).hexdigest(), ", ".join(out["changed"]) or "nothing",
-                "; left as the box has it: %s" % ", ".join(out["kept_for_support"]) if out["kept_for_support"] else ""), always=True)
+                "; left as the node has it: %s" % ", ".join(out["kept_for_support"]) if out["kept_for_support"] else ""), always=True)
         return out
 
     def _remote_parts(self, clean, notes):
@@ -979,13 +979,13 @@ class BoxCare:
                 if any(a not in had and not api.ndi_on_own_net(a, nets) for a in clean["ndi"].get(part, [])):
                     clean["ndi"][part] = had
                     kept.append("ndi.%s" % part)
-                    notes.append("NDI: an address that is not on one of this box's own networks is not added through remote support; %s left as this box has them" % part)
+                    notes.append("NDI: an address that is not on one of this node's own networks is not added through remote support; %s left as this node has them" % part)
             if clean["ndi"].get("own_discovery") and mine.get("own_discovery") is not True:
                 clean["ndi"].pop("own_discovery")
                 if "own_discovery" in mine:
                     clean["ndi"]["own_discovery"] = mine["own_discovery"]
                 kept.append("ndi.own_discovery")
-                notes.append("NDI: using this box's own discovery server is not switched on by a file through remote support")
+                notes.append("NDI: using this node's own discovery server is not switched on by a file through remote support")
         if "render" in clean:
             # Render nodes (D94): a file through remote support adds no node whose IPv4 host is not another device on
             # one of the box's own networks now (the route's rule; the tunnel's network never counts). A `.local`
@@ -997,13 +997,13 @@ class BoxCare:
                    for n in clean["render"]["nodes"]):
                 clean["render"] = {"nodes": had}
                 kept.append("render.nodes")
-                notes.append("Render nodes: a host that is not on one of this box's own networks is not added through remote support; the nodes are left as this box has them")
+                notes.append("Render nodes: a host that is not on one of this node's own networks is not added through remote support; the nodes are left as this node has them")
         if "osc" in clean:
             mine = list((current.get("osc") or {}).get("allow") or [])
             if api.remote_allow_refused(clean["osc"].get("allow", []), mine):
                 clean["osc"]["allow"] = mine
                 kept.append("osc.allow")
-                notes.append("OSC: a network from outside is not added through remote support; the networks OSC accepts from are left as this box has them")
+                notes.append("OSC: a network from outside is not added through remote support; the networks OSC accepts from are left as this node has them")
         if "control" in clean:
             midi, have = clean["control"]["midi"], (current.get("control") or {}).get("midi") or {}
             old = list(have.get("map") or [])
@@ -1018,7 +1018,7 @@ class BoxCare:
                 else:
                     midi.pop("controllers", None)
                 kept.append("control.midi.controllers")
-                notes.append("MIDI: which standard layouts are on is left as this box has it through remote support (a layout can hold a control that shows an access code)")
+                notes.append("MIDI: which standard layouts are on is left as this node has it through remote support (a layout can hold a control that shows an access code)")
         return kept
 
     def _import(self, raw, device, remote=False):
@@ -1031,7 +1031,7 @@ class BoxCare:
             for name in REMOTE_KEPT:
                 if clean.pop(name, None) is not None:
                     kept_for_support.append(name)
-                    notes.append("%s: not taken from a file through remote support; left as this box has it" % name)
+                    notes.append("%s: not taken from a file through remote support; left as this node has it" % name)
             kept_for_support += self._remote_parts(clean, notes)
         incoming = dict(self.incoming_themes)
         with self.settings.lock:
@@ -1124,7 +1124,7 @@ class BoxCare:
         if not lines:
             return {"readable": False, "lines": [],
                     "note": "No log lines came back. The panel runs as its own unprivileged user, which is not allowed to read the "
-                            "system log. On the box: sudo journalctl -b -u 'pvj-*'"}
+                            "system log. On the node: sudo journalctl -b -u 'pvj-*'"}
         return {"readable": True, "lines": lines, "note": "the last %d lines of this start, with PINs, codes and logins removed" % len(lines)}
 
     def diagnostics(self, body, device, client):
@@ -1221,7 +1221,7 @@ class BoxCare:
                 pin = auth._new_pin()                      # saves the emptied settings with the new PIN
             except OSError as e:
                 self._replace(previous)
-                raise ApiError(500, "the settings could not be saved, so the box was not reset: %s" % (e.strerror or e))
+                raise ApiError(500, "the settings could not be saved, so the node was not reset: %s" % (e.strerror or e))
             auth.last_seen.clear()
             auth._joins.clear()
         return pin
@@ -1242,7 +1242,7 @@ class BoxCare:
     def _reset(self, media, device, client):
         api = self.api
         if media == "delete" and self._media_on_usb():
-            raise ApiError(409, "the clips of this box are on a USB drive, which a reset never empties; choose to keep the clips")
+            raise ApiError(409, "the clips of this node are on a USB drive, which a reset never empties; choose to keep the clips")
         if not api._upload_lock.acquire(blocking=False):
             raise ApiError(409, "an upload is running; reset when it has finished")
         try:
@@ -1298,4 +1298,4 @@ class BoxCare:
             api._upload_lock.release()
         print("pvj-web: factory reset by %s (clips %s)" % (device["name"], "deleted" if media == "delete" else "kept"), flush=True)
         return {"reset": True, "media": media, "deleted": deleted, "problems": problems,
-                "note": "Every device is unpaired. The new PIN is on the box's display (or: sudo pvj-pin)."}
+                "note": "Every device is unpaired. The new PIN is on the node's display (or: sudo pvj-pin)."}

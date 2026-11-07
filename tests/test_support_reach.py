@@ -196,7 +196,7 @@ class LogTest(Base):
         self.care.import_settings(json.dumps(self.export()).encode(), "import", dev, TUNNEL)
         did = self.did()
         self.assertEqual(did, ["added a theme", "removed a theme", "made a new OSC key and knows it", "was shown the OSC key",
-                               "changed where the box sends its state over OSC", "locked guest controls"])
+                               "changed where the node sends its state over OSC", "locked guest controls"])
         entry = self.settings.data["support_log"][0]
         self.assertEqual([d.get("some") for d in entry["major"]], [["helper"], ["helper"], None, None, ["added a target; 1 target(s), off"], None])
         kept = self.kept()
@@ -379,7 +379,7 @@ class NdiTest(Base):
         self.assertEqual(boxcare.REMOTE_SETS["ndi"], "/api/ndi")
 
     def test_what_counts_as_on_the_boxes_own_networks_for_ndi(self):
-        """D88, from the review of #137: the box's own address is this box's own discovery server by another name, so a
+        """D88, from the review of #137: the node's own address is this node's own discovery server by another name, so a
         file could point the input at it although `own_discovery` is held back; a
         network's own and broadcast addresses are no device; a studio network that overlaps the support session's
         network does not make the tunnel's addresses local; and with no way to read the networks nothing is local."""
@@ -631,7 +631,7 @@ class ImportTest(Base):
         self.assertTrue(any("recovery" in n and "remote support" in n for n in out["notes"]))
         self.assertTrue(self.auth.usb_enabled(), "the stick way is still as the owner set it")
         self.assertEqual(self.settings.data["osc"]["port"], 9911, "the rest of the file came")
-        self.assertTrue(self.kept()[-1].endswith("; left as the box has it: recovery"), self.kept()[-1])
+        self.assertTrue(self.kept()[-1].endswith("; left as the node has it: recovery"), self.kept()[-1])
         # the same file from the owner at the studio switches it, as before
         st, out = self.send(file)
         self.assertEqual((st, out["kept_for_support"]), (200, []))

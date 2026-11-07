@@ -131,7 +131,7 @@ class ProgramFile(unittest.TestCase):
         os.symlink(placed + ".real", placed)
         self.assertIn("only root can change", D.server_problem(placed, mine, ARM64), "a link is not the program")
         os.unlink(placed)
-        self.assertEqual(D.server_problem(placed, mine, ARM64), "NDI's discovery server program is not on this box yet")
+        self.assertEqual(D.server_problem(placed, mine, ARM64), "NDI's discovery server program is not on this node yet")
         self.assertTrue(D.remove_program(self.dest) is False)
 
 
@@ -237,7 +237,7 @@ class SetUp(unittest.TestCase):
         out = io.StringIO()
         self.assertEqual(ndi.runtime_main(["server"], out), 2)
         self.assertIn("server install", out.getvalue())
-        self.assertIn("never downloaded by the box", out.getvalue())
+        self.assertIn("never downloaded by the node", out.getvalue())
         if os.geteuid() != 0:
             out = io.StringIO()
             self.assertEqual(ndi.runtime_main(["server", "install", "/nowhere"], out), 1)
@@ -351,7 +351,7 @@ class Supervisor(unittest.TestCase):
         self.assertEqual(self.s.handle({"cmd": "configure", "on": True, "bind": "0.0.0.0", "port": 5959})["state"], "running")     # "all the box's networks", when the Owner chose it
 
     def test_a_file_that_is_not_roots_program_is_never_started(self):
-        self.problem = "NDI's discovery server program is not on this box yet"
+        self.problem = "NDI's discovery server program is not on this node yet"
         out = self.s.handle({"cmd": "configure", "on": True, "bind": "192.168.1.9", "port": 5959})
         self.assertEqual((out["state"], out["message"], out["installed"]), ("missing", self.problem, False))
         time.sleep(0.3)
@@ -538,7 +538,7 @@ class Panel(PadBase):
         self.assertTrue(wait(lambda: self.sup.child is not None))
 
     def test_the_pages_states(self):
-        self.missing = "NDI's discovery server program is not on this box yet"
+        self.missing = "NDI's discovery server program is not on this node yet"
         self.switch(True)
         p = self.page()
         self.assertEqual((p["setup"], p["supervisor"], p["installed"], p["state"], p["problem"]), (True, True, False, "missing", self.missing))

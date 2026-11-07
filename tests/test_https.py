@@ -275,7 +275,7 @@ class HttpsTest(HttpsBase):
         wrong_key = self.request_and_sign(csr=foreign, out="wrongkey.pem")
         st, body, _ = self.install(wrong_key)
         self.assertEqual(st, 400, body)
-        self.assertIn("does not match this box's key", body["error"])
+        self.assertIn("does not match this node's key", body["error"])
         # run out, by a clock the box trusts
         short = self.request_and_sign(days=1, out="short.pem")
         self.clock.t += 3 * 86400
@@ -490,7 +490,7 @@ class HttpsTest(HttpsBase):
         # with the switch off: refused, and the stored root untouched, whatever root the file carries
         st, body, _ = self.install(foreign)
         self.assertEqual(st, 400, body)
-        self.assertIn("not issued by the root this box knows", body["error"])
+        self.assertIn("not issued by the root this node knows", body["error"])
         self.assertEqual(open(self.box.path("root.pem")).read(), root_before)
         self.assertEqual(self.box.info["serial"], httpsbox.read_certificate(httpsbox.pem_certificates(first)[0])["serial"])
         # the reviewer's exact sequence: switch on, the certificate run out, a sniffed http owner token
@@ -503,7 +503,7 @@ class HttpsTest(HttpsBase):
         self.assertEqual(st, 200)                               # he can read the request: the public key and names, no secret
         st, body, _ = self.install(foreign, token=self.full)
         self.assertEqual(st, 400, body)
-        self.assertIn("not issued by the root this box knows", body["error"])
+        self.assertIn("not issued by the root this node knows", body["error"])
         self.assertEqual(open(self.box.path("root.pem")).read(), root_before)
         self.assertEqual(self.call("GET", "/api/https", token=self.full)[1]["relief"], "run_out", "still run out: nothing was taken")
         # a renewal the owner's root issued is accepted over http in that state

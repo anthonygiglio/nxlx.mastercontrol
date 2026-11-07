@@ -277,7 +277,7 @@ if [ "$(avahi_state)" != "$AVAHI_BEFORE" ]; then fail "a plain install changed a
 [ "$(readlink /usr/local/bin/pvj-ndi-runtime)" = /opt/pvj/current/bin/pvj-ndi-runtime ] || fail "the opt-in command is not on the path"
 /usr/local/bin/pvj-ndi-runtime status > "$OUT"
 cat "$OUT"
-grep -q "NDI is not set up on this box" "$OUT" || fail "the status command does not say that NDI is not set up"
+grep -q "NDI is not set up on this node" "$OUT" || fail "the status command does not say that NDI is not set up"
 ndi_page
 grep -q '"setup": false' "$OUT" || fail "the panel does not say that NDI is not set up on this box"
 grep -q 'sudo pvj-ndi-runtime install' "$OUT" || fail "the panel does not name the one command"
@@ -320,7 +320,7 @@ grep -q '"helper": true' "$OUT" || fail "the panel cannot reach the helper it wa
 grep -q '"present": false' "$OUT" || fail "the panel says NDI's library is here; it is not on this machine"
 /usr/local/bin/pvj-ndi-runtime status > "$OUT"
 cat "$OUT"
-grep -q "NDI is set up on this box" "$OUT" || fail "the status command does not see the opt-in"
+grep -q "NDI is set up on this node" "$OUT" || fail "the status command does not see the opt-in"
 refused pvj-ndi cat /run/pvj/web/pin
 refused pvj-ndi ls /run/pvj/web
 refused pvj-ndi ls /run/pvj/netd

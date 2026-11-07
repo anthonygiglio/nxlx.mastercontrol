@@ -279,7 +279,7 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
             if host_allowed(self.headers.get("Host"), host_names):
                 return True
             self.close_connection = True
-            self._json(421, {"error": "unknown host name; open the box by its address or add the name to PVJ_ALLOWED_HOSTS"})
+            self._json(421, {"error": "unknown host name; open the node by its address or add the name to PVJ_ALLOWED_HOSTS"})
             return False
 
         def do_GET(self):
@@ -436,7 +436,7 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                     if path == "/api/https/root.crt":
                         text = box.root_pem()
                         if text is None:
-                            raise ApiError(404, "the box has no root certificate to give: upload a certificate file that holds the root after the box's certificate")
+                            raise ApiError(404, "the node has no root certificate to give: upload a certificate file that holds the root after the node's certificate")
                         return self._send(200, text.encode(), "application/x-x509-ca-cert",
                                           [("Content-Disposition", 'attachment; filename="nxlx-root.crt"')])
                     raise ApiError(405 if path in ("/api/https/request", "/api/https/certificate", "/api/https/undo", "/api/https/remove", "/api/https/owner-only", "/api/https/root") else 404,

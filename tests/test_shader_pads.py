@@ -260,7 +260,7 @@ class Tapped(PadBase):
             with self.assertRaises(ApiError) as c:
                 self.tap(device=device)
             self.assertEqual(c.exception.status, 404)
-            self.assertIn("this pad's shader, mine.fs, is not on the box any more", c.exception.message)
+            self.assertIn("this pad's shader, mine.fs, is not on the node any more", c.exception.message)
         self.assertEqual(self.player.calls, [], "something was sent to the player for a shader that is gone")
 
     def test_a_pad_whose_preset_was_deleted_starts_the_shader_by_itself_and_says_so(self):

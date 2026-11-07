@@ -90,7 +90,7 @@ def check_addresses(address, network):
     if not 16 <= net.prefixlen <= 30:
         raise SupportError("the support network must be a /16 to /30")
     if addr not in net or addr in (net.network_address, net.broadcast_address):
-        raise SupportError("this box's tunnel address must be inside the support network")
+        raise SupportError("this node's tunnel address must be inside the support network")
     return str(addr), str(net)
 
 
@@ -160,7 +160,7 @@ class SupportService:
 
     def available(self):
         missing = [n for n, p in self._tools.items() if p is None]
-        return (False, "not installed on this box: %s (package wireguard-tools / nftables)" % ", ".join(missing)) if missing else (True, "")
+        return (False, "not installed on this node: %s (package wireguard-tools / nftables)" % ", ".join(missing)) if missing else (True, "")
 
     def _keyfile(self):
         return os.path.join(self.keydir, "private.key")
@@ -185,7 +185,7 @@ class SupportService:
             private = f.read().strip()
         code, out = self._run(["wg", "pubkey"], stdin=private + "\n")
         if code != 0:
-            raise SupportError("could not read this box's key: %s" % out[-160:])
+            raise SupportError("could not read this node's key: %s" % out[-160:])
         return check_key(out.strip())
 
     def teardown(self, reason):

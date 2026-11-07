@@ -129,7 +129,7 @@ class FinalRuleTest(unittest.TestCase):
         st, seen = self.run_rule([(10, 0, 5), (10, 12.9, 5)])
         self.assertEqual(seen[0][1], 720)
         self.assertLessEqual(seen[0][0] - 10, renderer.BUSY_SECONDS + 2.0, "within a window or two")
-        self.assertIn("the box was busy", st["why"])
+        self.assertIn("the node was busy", st["why"])
         self.assertEqual(st["load"], 5)
 
     def test_one_stall_under_the_share_is_not_busy(self):
@@ -226,7 +226,7 @@ class FinalWatchTest(Base):
         self.tick(sup, fake, now, 1)
         rep = self.report()
         self.assertEqual(rep["final"], 720)
-        self.assertIn("the box was busy", rep["final_why"])
+        self.assertIn("the node was busy", rep["final_why"])
         fake.state["load"] = 4
         self.tick(sup, fake, now, 40)
         self.assertEqual(fake.asked, [720, "full"])
@@ -710,10 +710,10 @@ class PanelTest(CareBase):
         pid = 4321
         self.api.player.ipc = mock.Mock(request=mock.Mock(return_value=pid))
         screenmode.write_json(self.api.renderer.report_file, {"chosen": "new", "drawing": "new", "why": "", "detail": "auto", "pid": os.getpid(),
-                                                              "final": 720, "final_why": "the box was busy: 21 in 100 frames came late with a load of 5"})
+                                                              "final": 720, "final_why": "the node was busy: 21 in 100 frames came late with a load of 5"})
         with mock.patch.object(self.api.renderer, "_same_run", return_value=True):
             st, body = self.r("GET", "/api/renderer")
-        self.assertEqual(body["final_now"], {"final": 720, "why": "the box was busy: 21 in 100 frames came late with a load of 5"})
+        self.assertEqual(body["final_now"], {"final": 720, "why": "the node was busy: 21 in 100 frames came late with a load of 5"})
 
     def test_choosing_new_again_after_a_fall_back_tries_pvj_render_again(self):
         self.r("POST", "/api/renderer", {"use": "new", "detail": 720})

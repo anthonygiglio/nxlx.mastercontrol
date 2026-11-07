@@ -617,7 +617,7 @@ class Auth:
             raise AuthError("invites are for view or live access")
         return self._add_device(name, role)
 
-    FULL_TEXT = ("too many devices are paired with this box; the owner removes some under Setup, People and codes, "
+    FULL_TEXT = ("too many devices are paired with this node; the owner removes some under Setup, People and codes, "
                  "and then this works")
 
     def _room_for(self, role, via=None):

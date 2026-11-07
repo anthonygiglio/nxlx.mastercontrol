@@ -102,7 +102,7 @@ class ControllerCodes:
             return False                        # this hold began with the press that hid the last code
         screen, auth = self._screen(), self.api.auth
         if screen is None:
-            self._quiet("asked for, but this box has no on-screen display")
+            self._quiet("asked for, but this node has no on-screen display")
             return False
         locked = auth.pairing_locked()
         if locked >= auth_mod.CONTROLLER_SECONDS and self.cfg()["enabled"] and (kind != "owner" or self.cfg()["owner"]):

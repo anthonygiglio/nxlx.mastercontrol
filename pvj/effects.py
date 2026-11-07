@@ -98,7 +98,7 @@ PAIR_SECONDS = 20.0             # over this long
 # What is known is that frames dropped while it was on over a shader, not that it was the cause (a hitch of the box
 # or a heavy mapping drop frames too): the words say that much, and STILL_DROPPING is added when the shader goes on
 # dropping frames without it.
-PAIR_HEAVY_WORDS = "the picture was dropping frames with it on over the shader for %d seconds, so the box took the effect off to lighten the load. The shader plays on"
+PAIR_HEAVY_WORDS = "the picture was dropping frames with it on over the shader for %d seconds, so the node took the effect off to lighten the load. The shader plays on"
 STILL_DROPPING = ". Frames are still dropping without it, so the effect may not have been the cause"
 
 
@@ -1036,11 +1036,11 @@ class Effects(S.Engine):
             translate(parsed)
         e = estimate(parsed)
         if not e["sure"]:
-            raise ShaderError("%s. The box takes a filter only when its work for one pixel can be counted from its text" % e["why"])
+            raise ShaderError("%s. The node takes a filter only when its work for one pixel can be counted from its text" % e["why"])
         if e["reads"] > MAX_READS:
-            raise ShaderError("it would read the picture about %d times for every pixel (at most %d): too heavy for this box" % (e["reads"], MAX_READS))
+            raise ShaderError("it would read the picture about %d times for every pixel (at most %d): too heavy for this node" % (e["reads"], MAX_READS))
         if e["rounds"] > MAX_ROUNDS:
-            raise ShaderError("its loops would run about %d rounds for every pixel (at most %d): too heavy for this box" % (e["rounds"], MAX_ROUNDS))
+            raise ShaderError("its loops would run about %d rounds for every pixel (at most %d): too heavy for this node" % (e["rounds"], MAX_ROUNDS))
 
     def speed_max(self, parsed):
         """How fast TIME may run for this filter: null for one that does not move by itself, 1 for one that does or

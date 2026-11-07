@@ -191,7 +191,7 @@ class NetService:
             raise NetError("no such Wi-Fi port")
         hw, on = self._radio()
         if hw is False:
-            raise NetError("Wi-Fi is blocked on this box (a switch, or no Wi-Fi country set)")
+            raise NetError("Wi-Fi is blocked on this node (a switch, or no Wi-Fi country set)")
         if on is False:
             raise NetError("Wi-Fi is off; choose a network or a hotspot and apply it to switch it on")
         base = ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY,CHAN", "device", "wifi", "list", "ifname", iface]
@@ -214,7 +214,7 @@ class NetService:
             if wifi:
                 hw, on = self._radio()
                 if hw is False:
-                    raise NetError("Wi-Fi is blocked on this box (a switch, or no Wi-Fi country set); it cannot be changed here")
+                    raise NetError("Wi-Fi is blocked on this node (a switch, or no Wi-Fi country set); it cannot be changed here")
                 if cfg["mode"] == "off" and on is False:
                     raise NetError("Wi-Fi is already off")
                 radio_was_off = cfg["mode"] != "off" and on is False

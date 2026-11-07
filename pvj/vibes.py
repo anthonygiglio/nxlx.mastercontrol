@@ -118,7 +118,7 @@ class Vibes:
             set_id = self.engine.rotation(set_id)["id"]         # 404 for a set that is not there
         if not self.engine.vibes_ids(set_id):
             if getattr(self.engine, "rotation", None) and self.engine.rotation(set_id)["shaders"]:
-                raise ApiError(409, "every shader of this set is left out on this box (refused by the GPU, or found too heavy): "
+                raise ApiError(409, "every shader of this set is left out on this node (refused by the GPU, or found too heavy): "
                                     "put one back on the Shaders page")
             raise ApiError(409, "no shader is switched on for Vibes")
         with self._state:
@@ -406,11 +406,11 @@ class Vibes:
             # is marked, and the rotation ends with the shader that is on left on the screen.
             self.engine.unmark(self._marked)
             self._marked = []
-            self._finish("ended: the box is dropping frames whatever plays: check the picture detail")
+            self._finish("ended: the node is dropping frames whatever plays: check the picture detail")
             return "box"
         self._marked.append(self.current)
         self.engine.note_heavy(self.current, seen)
-        self._note("%s left out: it dropped %s frames a second (too heavy on this box at this drawing size)" % (self.current, seen["drops_per_second"]))
+        self._note("%s left out: it dropped %s frames a second (too heavy on this node at this drawing size)" % (self.current, seen["drops_per_second"]))
         return True
 
     def _lost(self):

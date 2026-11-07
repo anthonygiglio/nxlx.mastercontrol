@@ -56,8 +56,8 @@ LABELS = {"pin": "Full access PIN", "view": "Guest, watch only, code", "live": "
 CONTROLLER_LABELS = {"join": "One-time guest code", "owner": "One-time full access code"}
 NOTICE_SECONDS = 8            # a line that says why no code came (too many this hour) stays this long
 NOTICES = {"limit": "No more codes from a controller for now. Try again in %d minutes.",
-           "owner off": "Full access codes from a controller are switched off on this box.",
-           "full": "Too many devices are paired with this box. No code was made.",
+           "owner off": "Full access codes from a controller are switched off on this node.",
+           "full": "Too many devices are paired with this node. No code was made.",
            "locked": "Pairing is locked for %d minutes after wrong guesses. No code was made."}
 LOCKED_LINE = "Pairing is locked for %d minutes after wrong guesses"     # under a code that is showing
 

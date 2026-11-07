@@ -152,7 +152,7 @@ def validate(request, interfaces, others=()):
         if addr == net.network_address or addr == net.broadcast_address:
             raise NetError("address %s is the network or broadcast address of %s" % (addr, net))
         if ipmode == "share" and not any(addr in n for n in _RFC1918):
-            raise NetError("the box may only serve addresses from 10.x, 172.16-31.x or 192.168.x")
+            raise NetError("the node may only serve addresses from 10.x, 172.16-31.x or 192.168.x")
         for other_iface, other_net in others:
             if other_iface != iface and net.overlaps(other_net):
                 raise NetError("%s overlaps %s, which %s already uses; pick a different range" % (net, other_net, other_iface))
@@ -172,7 +172,7 @@ def validate(request, interfaces, others=()):
                 da = _ipv4(d, "DNS server")
                 _reject_odd_unicast(da, "DNS server")
                 if str(da) in servers or da == addr:
-                    raise NetError("DNS server %s is listed twice or is this box's own address" % da)
+                    raise NetError("DNS server %s is listed twice or is this node's own address" % da)
                 servers.append(str(da))
             cfg["dns"] = servers
     return cfg
@@ -209,7 +209,7 @@ def _validate_wifi(request, cfg):
     if security not in WIFI_SECURITY:
         raise NetError("security must be one of: %s" % ", ".join(WIFI_SECURITY))
     if hotspot and security != "wpa-psk":
-        raise NetError("the box's hotspot always uses a WPA2 password")
+        raise NetError("the node's hotspot always uses a WPA2 password")
     cfg.update(ssid=ssid, security=security)
     password = request.get("password")
     if security == "open":
