@@ -379,7 +379,7 @@ class NdiTest(Base):
         self.assertEqual(boxcare.REMOTE_SETS["ndi"], "/api/ndi")
 
     def test_what_counts_as_on_the_boxes_own_networks_for_ndi(self):
-        """D88, from the review of #137: the node's own address is this box's own discovery server by another name, so a
+        """D88, from the review of #137: the node's own address is this node's own discovery server by another name, so a
         file could point the input at it although `own_discovery` is held back; a
         network's own and broadcast addresses are no device; a studio network that overlaps the support session's
         network does not make the tunnel's addresses local; and with no way to read the networks nothing is local."""

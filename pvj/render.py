@@ -413,7 +413,7 @@ class Bridge:
             try:
                 sock.sendto(data, (ip, node["port"]))
             except (OSError, ValueError) as e:
-                raise RenderError("the node could not send to %s (%s)" % (node["name"], getattr(e, "strerror", None) or type(e).__name__), 502)
+                raise RenderError("this node could not send to %s (%s)" % (node["name"], getattr(e, "strerror", None) or type(e).__name__), 502)
             finally:
                 sock.close()
         except RenderError as e:

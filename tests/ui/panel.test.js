@@ -242,7 +242,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.waitForSelector('.item:has-text("renamed-on-phone.mp4")');
     // Delete asks first, in place, naming the file; "Keep it" changes nothing
     await page.click('.item:has-text("renamed-on-phone.mp4") >> text=Delete');
-    await page.waitForSelector('#confirmrow:has-text("Delete renamed-on-phone.mp4? The file is removed from the box.")');
+    await page.waitForSelector('#confirmrow:has-text("Delete renamed-on-phone.mp4? The file is removed from the node.")');
     await page.click('#confirmno');
     await page.waitForSelector('.item:has-text("renamed-on-phone.mp4") >> text=Delete');
     await page.click('.item:has-text("renamed-on-phone.mp4") >> text=Delete');
@@ -402,7 +402,7 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.setViewportSize({ width: 320, height: before.height });
       await page.waitForSelector('#mixfallbackwhy', { timeout: 15000 });        // the card follows the poll: nothing is pressed
       assert.strictEqual(await at(page), 'play/pads', 'the reason is under the pads, where the transition is chosen');
-      assert.strictEqual(await page.textContent('#mixfallbackwhy'), 'This box is not doing that transition now: ' + why + '.');
+      assert.strictEqual(await page.textContent('#mixfallbackwhy'), 'This node is not doing that transition now: ' + why + '.');
       const fits = await page.evaluate(() => {
         const box = document.getElementById('mixfallback').getBoundingClientRect(), text = document.getElementById('mixfallbackwhy').getBoundingClientRect();
         return { right: Math.max(box.right, text.right), wide: window.innerWidth, page: document.documentElement.scrollWidth };
@@ -438,9 +438,9 @@ function startServer(env) {          // env: more for the harness's environment 
     // Setup: the index (three groups, a row each), the folded list of what is not built, then each page
     await sysIndex();
     await page.waitForSelector('h1#wstitle:text-is("Setup")');
-    assert.deepStrictEqual(await page.$$eval('.navhead', (hs) => hs.map((x) => x.textContent)), ['Everyday', 'Show tools', 'This box']);
+    assert.deepStrictEqual(await page.$$eval('.navhead', (hs) => hs.map((x) => x.textContent)), ['Everyday', 'Show tools', 'This node']);
     assert.deepStrictEqual(await page.$$eval('.navname', (ns) => ns.map((x) => x.textContent)), ['Health', 'Projectors', 'Room', 'Schedule', 'Shaders and Vibes', 'People and codes', 'Sound',
-      'At power-up', 'Streams', 'NDI\u00ae input', 'Render nodes', 'Sound reactivity', 'NDI\u00ae discovery server', 'Projection mapping', 'Boxes in step', 'MIDI controller', 'DMX lighting desk', 'OSC',
+      'At power-up', 'Streams', 'NDI\u00ae input', 'Render nodes', 'Sound reactivity', 'NDI\u00ae discovery server', 'Projection mapping', 'Nodes in step', 'MIDI controller', 'DMX lighting desk', 'OSC',
       'Network', 'Screen output', 'Updates', 'Remote support', 'Secure connection', 'Backup and reset', 'Look', 'About and power'], 'the rows a full-access device sees');
     const low = await page.$$eval('.navrow', (rs) => rs.filter((r) => r.getBoundingClientRect().height < 56).map((r) => r.textContent));
     assert.deepStrictEqual(low, [], 'every row is at least 56 px high');
@@ -492,8 +492,8 @@ function startServer(env) {          // env: more for the harness's environment 
       assert.strictEqual(await page.$eval('#rendersources', (s) => s.value), 'auto', 'no number chosen: Automatic');
       assert.deepStrictEqual(await page.$$eval('#rendersources option', (os) => os.map((o) => o.value)),
         ['auto'].concat(Array.from({ length: st.cap }, (_, i) => String(i + 1))), 'Automatic, then 1 to the cap');
-      assert.strictEqual(await page.textContent('#rendersources option[value="auto"]'), 'Automatic: ' + st.default + ' on this box');
-      assert.match(await page.textContent('#rendersourceswrap'), new RegExp('Up to ' + st.cap + ' on this box'));
+      assert.strictEqual(await page.textContent('#rendersources option[value="auto"]'), 'Automatic: ' + st.default + ' on this node');
+      assert.match(await page.textContent('#rendersourceswrap'), new RegExp('Up to ' + st.cap + ' on this node'));
       // what Use this sends, answered here so that the harness's player is not restarted
       let sent = null;
       const now = await page.evaluate(() => fetch('/api/renderer').then((r) => r.json()));
@@ -659,7 +659,7 @@ function startServer(env) {          // env: more for the harness's environment 
     assert.strictEqual(await page.locator('#oscpaireddefault').count(), 0, 'the note is for a lock the box put on, not one the owner switched');
     await sysIndex();
     await chip('OSC', 'Check');
-    await page.waitForSelector(`${rowOf('OSC')} .navstate:has-text("Open: anyone on this network can control the box")`);
+    await page.waitForSelector(`${rowOf('OSC')} .navstate:has-text("Open: anyone on this network can control the node")`);
     await sys('Health');
     await page.waitForSelector('#healthosc:has-text("OSC is open: anyone on this network can control the node")', { timeout: 15000 });
     await sysIndex();
@@ -726,7 +726,7 @@ function startServer(env) {          // env: more for the harness's environment 
     // Send state back (D82): off, nobody in the list, and the reason said in place. "Use the device that is sending
     // now" fills the form and adds nothing; this browser's loopback address is then refused as a target by the box.
     await page.waitForSelector('#oscstatecard:not([hidden]) #oscstate[aria-checked="false"]');
-    assert(/off by default because a box that answers over the network could be made to send at someone else/.test(await page.textContent('#oscstatecard')), 'why it is off is said on the card');
+    assert(/off by default because a node that answers over the network could be made to send at someone else/.test(await page.textContent('#oscstatecard')), 'why it is off is said on the card');
     assert.deepStrictEqual(await get('/api/osc').then((d) => [d.feedback.on, d.feedback.targets, d.feedback.max, d.feedback.sending]), [false, [], 4, false], 'state feedback is off with no target until the owner says so');
     await page.waitForSelector('#oscstatenone');
     await page.waitForSelector('#oscstateuse:not([disabled])', { timeout: 15000 });
@@ -780,7 +780,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await sys('OSC');
     await page.waitForFunction(() => document.querySelectorAll('#osconlylist .item').length === 16 && document.querySelectorAll('.oscsender').length === 2);
     await page.waitForSelector('#oscmessages .oscmsg:has-text("98765 times")');
-    assert(/reached the panel over IPv6 .*open the panel by the box's IPv4 address\.$/.test(await page.textContent('#oscpairednow')), 'an IPv6 panel device is said not to count');
+    assert(/reached the panel over IPv6 .*open the panel by the node's IPv4 address\.$/.test(await page.textContent('#oscpairednow')), 'an IPv6 panel device is said not to count');
     assert.strictEqual(await page.textContent('.oscsender .oscwrong'), '98765 wrong keys from this address.');
     assert.strictEqual(await page.textContent('.oscsender .oscnopanel'), 'No panel device here, check before allowing.');
     await page.click('#osckeyshow');
@@ -1134,7 +1134,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await sys(NDI);
     await switchOn(NDI);
     await page.waitForSelector('#ndiruntime');
-    assert(/NDI is not set up on this box/.test(await page.textContent('#ndinotsetup')), 'a box that did not opt in says so in plain words');
+    assert(/NDI is not set up on this node/.test(await page.textContent('#ndinotsetup')), 'a box that did not opt in says so in plain words');
     assert(!/is not running/.test(await page.textContent('#ndiruntime')), 'and does not speak of a helper that stopped: there never was one');
     assert.strictEqual(await page.textContent('#ndicommand'), 'sudo pvj-ndi-runtime install "/path/to/NDI SDK for Linux"', 'the one command is named');
     assert.strictEqual((await get('/api/ndi')).setup, false, 'the route says the same');
@@ -1156,7 +1156,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await onPage(NDI);
     await page.click('.ndiaddr-entry .morebtn');
     await page.click('.ndiaddr-entry .moreacts button:has-text("Remove")');
-    await page.waitForSelector('#confirmrow:has-text("Remove 192.168.1.20? The box stops asking it for sources.")');
+    await page.waitForSelector('#confirmrow:has-text("Remove 192.168.1.20? The node stops asking it for sources.")');
     await page.click('#confirmno');
     assert.strictEqual((await get('/api/ndi')).addresses.length, 1, '"Keep it" removes nothing');
     await page.click('.ndiaddr-entry .moreacts button:has-text("Remove")');
@@ -1237,7 +1237,7 @@ function startServer(env) {          // env: more for the harness's environment 
       assert.strictEqual(await page.textContent('#msg'), 'Sound for every NDI picture now comes from ' + VOX.name + '. Sound was off: choosing a sound source switched it on.');
       await page.waitForFunction(() => document.getElementById('ndisoundone').getAttribute('aria-checked') === 'true');
       assert.strictEqual(await page.$eval('#ndisoundpick', (el) => el.options[el.selectedIndex].textContent), VOX.name + ' (' + VOX.from + ') · sound only');
-      assert.strictEqual(await page.textContent('#ndisoundline'), 'Sound comes from ' + VOX.name + ' at ' + VOX.from + '. It is on the network; the box connects to it when an NDI picture plays.');
+      assert.strictEqual(await page.textContent('#ndisoundline'), 'Sound comes from ' + VOX.name + ' at ' + VOX.from + '. It is on the network; the node connects to it when an NDI picture plays.');
       assert.strictEqual(await page.locator('.ndi-soundonly .ndiusesound').count(), 0, 'it is the sound source now: nothing more to choose on its row');
       assert(/The sound of every NDI picture comes from this sender/.test(await page.textContent('.ndi-soundonly .lnote')));
       // the delay: only now, with one sound source chosen; the sentence that says why; saved when the slider is let go
@@ -1267,7 +1267,7 @@ function startServer(env) {          // env: more for the harness's environment 
       // it keeps changing the form of its sound: held back, the picture plays on, and the page says why
       world.source = Object.assign({ state: 'restless', arriving: true }, ROW);
       await page.waitForFunction((want) => document.getElementById('ndisoundline').textContent === want,
-        VOX.name + ' keeps changing its sound; pictures play without it for now. The box takes its sound again by itself once it has stopped changing.');
+        VOX.name + ' keeps changing its sound; pictures play without it for now. The node takes its sound again by itself once it has stopped changing.');
       // away
       world.source = Object.assign({ state: 'away', arriving: false }, ROW);
       await page.waitForFunction((want) => document.getElementById('ndisoundline').textContent === want, VOX.name + ' is not on the network now; pictures play without sound.');
@@ -1286,25 +1286,25 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.unroute('**/api/ndi');
       await page.waitForFunction(() => document.querySelectorAll('.ndi-entry').length === 0);
     }
-    // Which senders this box looks for (D62, 2026-10-11): groups and discovery servers, the Owner's, with the honest
+    // Which senders this node looks for (D62, 2026-10-11): groups and discovery servers, the Owner's, with the honest
     // words beside them. WRITTEN AND SYNTAX-CHECKED ONLY when it was committed (no Playwright on the dev Mac).
     {
       await page.waitForSelector('#ndiscopecard');
-      assert.strictEqual(await page.textContent('#ndiscopecard h2'), 'Which senders this box looks for');
-      assert.strictEqual(await page.textContent('#ndiscopenow'), 'Not looking yet: NDI is not set up on this box.', 'not set up is said as that, not as "no senders in a group"');
+      assert.strictEqual(await page.textContent('#ndiscopecard h2'), 'Which senders this node looks for');
+      assert.strictEqual(await page.textContent('#ndiscopenow'), 'Not looking yet: NDI is not set up on this node.', 'not set up is said as that, not as "no senders in a group"');
       assert(/They are not a password and they encrypt nothing/.test(await page.textContent('#ndiscopenote')), 'the honest words are beside the settings');
       assert(/NDI documents no setting that stops that/.test(await page.textContent('#ndiscopenote')), 'and that the box goes on listening on the local network');
-      assert.strictEqual(await page.textContent('#ndigroupempty'), "No group set: the box looks in NDI's default group, Public.");
+      assert.strictEqual(await page.textContent('#ndigroupempty'), "No group set: the node looks in NDI's default group, Public.");
       assert.strictEqual(await page.textContent('#ndidiscoveryempty'), 'No discovery server set.');
       // The two halves (2026-10-12): the list is named as what this box ASKS, and under "Use this box's own discovery
       // server" stands the state of the server this node runs and whether the two fit.
-      assert((await page.$$eval('#ndiscopecard .field', (els) => els.map((e) => e.textContent))).includes('Discovery servers this box asks'), 'the list says whose servers these are');
+      assert((await page.$$eval('#ndiscopecard .field', (els) => els.map((e) => e.textContent))).includes('Discovery servers this node asks'), 'the list says whose servers these are');
       assert(/finding one does not prove that a discovery server is in use/.test(await page.textContent('#ndiscopenote')), 'a sender found on the local network proves nothing about a server');
       await page.waitForSelector('#ndiownline');
-      assert.strictEqual(await page.textContent('#ndiownline'), "This box runs no discovery server (none is set up), and this switch is off. The two fit.");
+      assert.strictEqual(await page.textContent('#ndiownline'), "This node runs no discovery server (none is set up), and this switch is off. The two fit.");
       assert(!(await page.$eval('#ndiownline', (e) => e.classList.contains('warn'))), 'a pair that fits is not a warning');
       await page.click('#ndiown');
-      await page.waitForFunction(() => document.getElementById('ndiownline').textContent === 'This is on, but no discovery server is set up on this box, so it does nothing.');
+      await page.waitForFunction(() => document.getElementById('ndiownline').textContent === 'This is on, but no discovery server is set up on this node, so it does nothing.');
       assert(await page.$eval('#ndiownline', (e) => e.classList.contains('warn')), 'a pair that does not fit is a warning');
       assert.strictEqual((await get('/api/ndi')).own_discovery, true, 'the switch is saved');
       assert(!(await page.$('#ndiownoff')), 'no button to switch on a server that is not set up');
@@ -1329,7 +1329,7 @@ function startServer(env) {          // env: more for the harness's environment 
       const scoped = await get('/api/ndi');
       assert.deepStrictEqual([scoped.discovery, scoped.discovery_now], [['192.168.1.5:5959'], []], 'saved, and not said to be in force on a box that cannot hand it to NDI');
       assert(!/pvj-ndi-runtime refresh/.test(scoped.notice), 'a box with no NDI set-up at all is not told to refresh one: ' + scoped.notice);
-      assert.strictEqual(await page.textContent('#ndiscopenow'), 'Not looking yet: NDI is not set up on this box.', 'and the line still says why nothing is looked for');
+      assert.strictEqual(await page.textContent('#ndiscopenow'), 'Not looking yet: NDI is not set up on this node.', 'and the line still says why nothing is looked for');
       assert.strictEqual(await page.textContent('#ndiallowedempty'), 'No pad holds an NDI source yet.');
       const before = page.viewportSize();
       await page.setViewportSize({ width: 320, height: before.height });
@@ -1358,20 +1358,20 @@ function startServer(env) {          // env: more for the harness's environment 
       await sys(DS);
       await switchOn(DS);
       await page.waitForSelector('#ndiscnotsetup');
-      assert(/is not set up on this box, so nothing listens/.test(await page.textContent('#ndiscnotsetup')), 'a box without the set-up says so');
+      assert(/is not set up on this node, so nothing listens/.test(await page.textContent('#ndiscnotsetup')), 'a box without the set-up says so');
       assert.strictEqual(await page.textContent('#ndisccommand'), 'sudo pvj-ndi-runtime server install "/path/to/NDI SDK for Linux"', 'the one command is named');
       // The two halves (2026-10-12): the page says it RUNS a server, and whether this box's own input asks it. NDI
       // input is off here, so the line says that and there is no switch.
-      assert.strictEqual(await page.textContent('#ndisccard h2'), 'The discovery server this box runs');
-      assert(/That is one half\. The other half is whether this box's own NDI input asks it/.test(await page.textContent('#ndiscwhat')), 'the page names both halves');
+      assert.strictEqual(await page.textContent('#ndisccard h2'), 'The discovery server this node runs');
+      assert(/That is one half\. The other half is whether this node's own NDI input asks it/.test(await page.textContent('#ndiscwhat')), 'the page names both halves');
       await page.waitForSelector('#ndiscownline');
-      assert.strictEqual(await page.textContent('#ndiscownline'), 'NDI input is switched off on this box, so this box itself asks no discovery server. Other machines can still use this one.');
+      assert.strictEqual(await page.textContent('#ndiscownline'), 'NDI input is switched off on this node, so this node itself asks no discovery server. Other machines can still use this one.');
       assert(!(await page.$('#ndiscown')), 'no switch for an input that is off');
       const ds = await get('/api/ndi/discovery');
       assert.strictEqual(ds.own, false, 'and the answer says this box does not ask its own server');
       assert.deepStrictEqual([ds.setup, ds.supervisor, ds.listening, ds.network, ds.port, ds.module], [false, false, null, 'wired', 5959, true]);
       assert(/not a password: anything that can reach it can register with it/.test(await page.textContent('#ndiscnote')), 'what a discovery server is not');
-      assert(/never part of nxlx\.mastercontrol and the box never downloads it/.test(await page.textContent('#ndiscnote')), 'and where the program comes from');
+      assert(/never part of nxlx\.mastercontrol and the node never downloads it/.test(await page.textContent('#ndiscnote')), 'and where the program comes from');
       assert((await page.textContent('#ndiscmark')).includes('NDI® is a registered trademark of Vizrt NDI AB.'), 'the trademark sentence');
       assert.deepStrictEqual(await page.$$eval('#ndiscnetwork option', (os) => os.map((o) => o.value)), ['wired', 'wifi', 'all']);
       assert(!(await page.isVisible('#ndiscallwarn')), 'no warning while one network is chosen');
@@ -1412,10 +1412,10 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.waitForSelector('#confirmrow');
       await page.click('#confirmyes');
     }
-    assert(/^Box time now: (Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d+ [A-Z][a-z]{2}, \d\d:\d\d \(.+\)$/.test(await page.textContent('#schedclock')), 'the box time, readable, with its zone: ' + await page.textContent('#schedclock'));
+    assert(/^Node time now: (Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d+ [A-Z][a-z]{2}, \d\d:\d\d \(.+\)$/.test(await page.textContent('#schedclock')), 'the box time, readable, with its zone: ' + await page.textContent('#schedclock'));
     assert(/^No entries yet\. An entry makes something happen by itself at a set time/.test(await page.textContent('#schedempty')), 'the empty state says what an entry is for');
     for (const id of ['schedtime', 'schedaction', 'schedlabel']) assert(await page.isVisible(`label[for="${id}"]`), `a visible label above #${id}`);
-    assert(/An entry runs only if the box is on at that minute\. A missed entry is not caught up\./.test(await page.textContent('#schedform')), 'the form says what happens to a missed entry');
+    assert(/An entry runs only if the node is on at that minute\. A missed entry is not caught up\./.test(await page.textContent('#schedform')), 'the form says what happens to a missed entry');
     // What happens, in plain words; a choice whose feature is off is marked; the old start script is under Advanced
     assert.deepStrictEqual(await page.$$eval('#schedaction option', (os) => os.map((o) => o.textContent)),
       ['Play a clip', 'Start Vibes (Vibes is off)', 'Apply a Room scene (Room is off)', 'Projectors on (Projectors is off)', 'Projectors off (Projectors is off)',
@@ -1734,7 +1734,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.selectOption('#roomsfile', 'tunnel.mkv');
     await page.click('#roomssave');
     await page.waitForSelector('.room-scene:has-text("Console night")', { state: 'attached' });       // (the button is on Room > Scenes)
-    await page.waitForSelector('.room-sitem:has-text("Main wall: on, Box, sound muted"):has-text("Box: play tunnel.mkv")');
+    await page.waitForSelector('.room-sitem:has-text("Main wall: on, Box, sound muted"):has-text("Node: play tunnel.mkv")');
     await fitsCard('#roomscreen .card', 'Setup > Room');
     await fitsPhone('Setup > Room');
     assert.strictEqual(await page.locator('#syspage .room-group:visible, #syspage .room-scene:visible, #syspage #roomletin:visible').count(), 0, 'Setup > Room holds the set-up, not the room\'s own controls');
@@ -1861,7 +1861,7 @@ function startServer(env) {          // env: more for the harness's environment 
     };
     await page.route('**/api/system', noClock);
     await sys('Schedule');
-    await page.waitForSelector('#schedclockwarn:has-text("The box clock was not set from the network, so it may be wrong.")');
+    await page.waitForSelector('#schedclockwarn:has-text("The node clock was not set from the network, so it may be wrong.")');
     await onPage('Schedule');
     await page.unroute('**/api/system', noClock);
     await sys('Room');                                  // the scene is removed where it was made, on Setup > Room
@@ -1897,7 +1897,7 @@ function startServer(env) {          // env: more for the harness's environment 
     // Remove is under More and asks first, naming the projector
     await page.click(`${rowP('Painting')} .morebtn`);
     await page.click('button[aria-label="Remove Painting"]');
-    await page.waitForSelector('#confirmrow:has-text("Remove Painting? The box forgets its address, its password and the names of its inputs.")');
+    await page.waitForSelector('#confirmrow:has-text("Remove Painting? The node forgets its address, its password and the names of its inputs.")');
     await page.click('#confirmno');
     assert.strictEqual((await get('/api/projectors')).projectors.length, 2, '"Keep it" removes nothing');
     await page.click('button[aria-label="Remove Painting"]');
@@ -1949,12 +1949,12 @@ function startServer(env) {          // env: more for the harness's environment 
       }).catch((x) => 'evaluate failed: ' + x.message);
       return JSON.stringify({ form: form, requests: syncSeen });
     };
-    await sys('Boxes in step');
-    await switchOn('Boxes in step');
+    await sys('Nodes in step');
+    await switchOn('Nodes in step');
     await page.waitForSelector('#syncrole-server');
     // The first thing asked is what this box does: two large choices, and nothing else to fill in yet
-    assert.strictEqual(await page.textContent('#syncask'), 'What does this box do?');
-    assert.deepStrictEqual(await page.$$eval('#syncroles button', (bs) => bs.map((b) => b.textContent)), ['LeadOther boxes follow this one.', 'FollowThis box follows another.'], 'lead or follow');
+    assert.strictEqual(await page.textContent('#syncask'), 'What does this node do?');
+    assert.deepStrictEqual(await page.$$eval('#syncroles button', (bs) => bs.map((b) => b.textContent)), ['LeadOther nodes follow this one.', 'FollowThis node follows another.'], 'lead or follow');
     assert.strictEqual(await page.locator('#syncgroup, #wallfold').count(), 0, 'the group and the wall come after the choice');
     await page.click('#syncrole-server');
     await page.waitForSelector('#syncline:has-text("server of group")');
@@ -1986,11 +1986,11 @@ function startServer(env) {          // env: more for the harness's environment 
     assert.strictEqual(await post('/api/sync', { wall: { cols: 2, rows: 1, col: 2, row: 0, bezel: 3 } }), 400, 'the box refuses a tile outside the wall');
     // Stopping asks first: the other boxes stop following
     await page.click('#syncrole-off');
-    await page.waitForSelector('#confirmrow:has-text("Stop leading? The other boxes stop following this one.")');
+    await page.waitForSelector('#confirmrow:has-text("Stop leading? The other nodes stop following this one.")');
     await page.click('#confirmyes');
     await page.waitForSelector('#syncline:has-text("Off")');
     await fitsCard('#synccard', 'Sync card');
-    await onPage('Boxes in step');
+    await onPage('Nodes in step');
     // Projection mapping: switch the module on (its page says where the controls are and takes you there), add a
     // quad on Mix, drag and nudge a corner, save, switch it on
     await sys('Projection mapping');
@@ -2129,7 +2129,7 @@ function startServer(env) {          // env: more for the harness's environment 
     // The Sources strip with four sources: what each plays, Play from the Library to a source, Stop, and the warning
     // about load. The box's answers are made up here; what the panel sends is checked.
     const sourcesAnswer = {
-      count: 4, cap: 4, warning: 'this may drop frames on this box; 720p clips are lighter',
+      count: 4, cap: 4, warning: 'this may drop frames on this node; 720p clips are lighter',
       sources: [{ source: 1, idle: false, name: 'intro.mkv', height: 180, pause: false }, { source: 2, idle: true, name: null, height: null, pause: false },
         { source: 3, idle: false, name: 'big.mkv', height: 1080, pause: false }, { source: 4, idle: false, name: 'tunnel.mkv', height: 720, pause: false }],
     };
@@ -2143,7 +2143,7 @@ function startServer(env) {          // env: more for the harness's environment 
       const b = JSON.parse(route.request().postData());
       if (!b.source) return route.continue();
       srcSent.push(b);
-      await route.fulfill({ json: { playing: b.file || b.shader || 'intro.mkv', source: b.source, warning: 'this may drop frames on this box; 720p clips are lighter' } });
+      await route.fulfill({ json: { playing: b.file || b.shader || 'intro.mkv', source: b.source, warning: 'this may drop frames on this node; 720p clips are lighter' } });
     };
     // The harness's player is classic: no chain controls in the strip until the box says it runs chains (D106 step e)
     await page.waitForSelector('#srcclassic', { timeout: 10000 });
@@ -2175,13 +2175,13 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.route('**/api/play', playRoute);
     await page.waitForSelector('#srcnow-3:text-is("Source 3: big.mkv (1080p)")', { timeout: 10000 });
     assert.strictEqual(await page.textContent('#srcnow-2'), 'Source 2: nothing');
-    assert.match(await page.textContent('#srcwarn'), /this may drop frames on this box; 720p clips are lighter/);
+    assert.match(await page.textContent('#srcwarn'), /this may drop frames on this node; 720p clips are lighter/);
     assert.strictEqual(await page.isDisabled('#srcstop-2'), true, 'an idle source has nothing to stop');
     await page.click('#srcstop-3');
     await page.waitForFunction(() => /Source 3 stopped/.test(document.getElementById('msg').textContent));
     await page.selectOption('#srcclip-2', 'tunnel.mkv');
     await page.click('#srcplay-2');
-    await page.waitForFunction(() => /Source 2 plays tunnel\.mkv: this may drop frames on this box; 720p clips are lighter/.test(document.getElementById('msg').textContent));
+    await page.waitForFunction(() => /Source 2 plays tunnel\.mkv: this may drop frames on this node; 720p clips are lighter/.test(document.getElementById('msg').textContent));
     assert.deepStrictEqual(srcSent.slice(0, 2), [{ source: 3, action: 'stop' }, { source: 2, file: 'tunnel.mkv' }]);
     // each source's effect: what is on, its amount, Off, another one On; the advanced slots after it; a shader to a source
     await page.waitForSelector('#srcfx-3-1', { timeout: 10000 });
@@ -2307,7 +2307,7 @@ function startServer(env) {          // env: more for the harness's environment 
     // D84: before a session is started the page says in two short lists what a helper can and cannot do
     assert(await page.isVisible('#supportcan') && await page.isVisible('#supportcannot'), 'the two lists are there before Start');
     assert(/remove a guest's or an operator's device/.test(await page.textContent('#supportcan')) && /make a new key afterwards/.test(await page.textContent('#supportcan')), 'what support can do, with the word about the OSC key');
-    assert(/pair a device/.test(await page.textContent('#supportcannot')) && /remove an owner's device/.test(await page.textContent('#supportcannot')) && /switch the box off/.test(await page.textContent('#supportcannot')), 'what support can never do');
+    assert(/pair a device/.test(await page.textContent('#supportcannot')) && /remove an owner's device/.test(await page.textContent('#supportcannot')) && /switch the node off/.test(await page.textContent('#supportcannot')), 'what support can never do');
     assert.strictEqual(await page.locator('#supportoldkey').count(), 0, 'no word about the OSC key when no session saw it');
     assert(await page.isVisible('#support-address'), 'Advanced stays open through a redraw');
     await page.waitForSelector('#supportwhy');                       // no helper in the test harness: said plainly
@@ -2552,7 +2552,7 @@ function startServer(env) {          // env: more for the harness's environment 
     // With no certificate the page answers by itself and makes no fetch: a fetch of https://<host> from this http
     // page would be refused by the page's policy, which names that origin only once a certificate is in use (page_csp),
     // and the CSP check at the end of this test would fail. That is the check that found this (2026-10-10).
-    assert(/^No\. The box has no certificate/.test(await page.textContent('#httpstrust')), 'with no certificate the trust check says no, without asking: ' + await page.textContent('#httpstrust'));
+    assert(/^No\. The node has no certificate/.test(await page.textContent('#httpstrust')), 'with no certificate the trust check says no, without asking: ' + await page.textContent('#httpstrust'));
     await page.setViewportSize({ width: 390, height: 844 });
     const platforms = await page.evaluate(() => [
       'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
@@ -2580,7 +2580,7 @@ function startServer(env) {          // env: more for the harness's environment 
     const otherDuration = exportedFile.settings.mix.duration === 3 ? 4 : 3;
     assert.strictEqual(await post('/api/mix', { transition: exportedFile.settings.mix.transition, duration: otherDuration }), 200);
     await page.setInputFiles('#importpick', { name: 'my-settings.json', mimeType: 'application/json', buffer: Buffer.from(exportedText) });
-    await page.waitForSelector('#confirmrow:has-text("Replace this box\'s settings with my-settings.json?")');
+    await page.waitForSelector('#confirmrow:has-text("Replace this node\'s settings with my-settings.json?")');
     await page.click('#confirmyes');
     await page.waitForFunction(() => /Settings imported/.test(document.getElementById('msg').textContent));
     await page.waitForFunction(() => /no passwords/.test(document.getElementById('importresult').textContent));
@@ -2678,7 +2678,7 @@ function startServer(env) {          // env: more for the harness's environment 
     assert.strictEqual(await guest.locator('#powercard, #sysswitch, #setclock, #rebootbtn, #poweroffbtn, #restartplayer').count(), 0, 'a guest gets no power action');
     assert(!/Vitals/.test(await guest.textContent('#sysbody')), 'no second card repeating the board and the player');
     await guest.click('#forgetdevice');
-    await guest.waitForSelector('#confirmrow:has-text("Log out on this phone? The box forgets it. You will need a code, a link or the PIN to get back in.")');
+    await guest.waitForSelector('#confirmrow:has-text("Log out on this phone? The node forgets it. You will need a code, a link or the PIN to get back in.")');
     await guest.click('#confirmno');
     await guest.waitForSelector('#forgetdevice');
 
@@ -2962,7 +2962,7 @@ function startServer(env) {          // env: more for the harness's environment 
     assert(!(await page.isVisible('#shaderupload')), 'Advanced starts folded');
     await page.click('#shaderadvanced summary');
     await page.waitForSelector('#shaderupload');
-    assert(/too heavy for this box/.test(await page.textContent('#shaderadvanced')), 'the guard\'s switch is under Advanced');
+    assert(/too heavy for this node/.test(await page.textContent('#shaderadvanced')), 'the guard\'s switch is under Advanced');
     assert(/lightest/.test(await page.textContent('#shaderheight')), 'picture detail (beside the load, not under Advanced) says which choice is the lightest');
     await page.setInputFiles('#shaderpick', { name: 'bad$name.fs', mimeType: 'text/plain', buffer: Buffer.from('void main() {}') });
     await page.waitForFunction(() => /bad\$name\.fs was not added: a shader file is named/.test(document.getElementById('shaderuploadmsg').textContent));
@@ -2981,7 +2981,7 @@ function startServer(env) {          // env: more for the harness's environment 
       .map((e) => (e.getAttribute('aria-label') || e.textContent || e.id).slice(0, 30)));
     assert.deepStrictEqual(small, [], 'every control on the Shaders page is at least 44 px high');
     await page.click(mine + ' button:has-text("Remove")');
-    await page.waitForSelector('#confirmrow:has-text("Remove Flat grey? The file is deleted from the box.")');
+    await page.waitForSelector('#confirmrow:has-text("Remove Flat grey? The file is deleted from the node.")');
     await fitsPhone('Shaders page, asking about a file');
     await page.click('#confirmno');
     await page.waitForFunction(() => !document.getElementById('confirmrow'));
@@ -3271,7 +3271,7 @@ function startServer(env) {          // env: more for the harness's environment 
         }));
         throw new Error(e.message.split('\n')[0] + ' | the line about a high picture detail did not come (#shadernow #detailhigh): ' + JSON.stringify(why));
       }
-      assert.strictEqual(await page.textContent('#detailhighwords'), 'Picture detail is ' + above + ' lines. This box is happier at ' + render.default + '.');
+      assert.strictEqual(await page.textContent('#detailhighwords'), 'Picture detail is ' + above + ' lines. This node is happier at ' + render.default + '.');
       assert.strictEqual(await page.textContent('#detailuse'), 'Use ' + render.default);
       await onPage('Shaders and Vibes');
       const lowered = page.waitForResponse((r) => r.url().endsWith('/api/shaders') && r.request().method() === 'POST' && r.request().postData() === JSON.stringify({ action: 'config', height: render.default }));
@@ -3315,7 +3315,7 @@ function startServer(env) {          // env: more for the harness's environment 
         'under Automatic the load line says what a lower detail does: ' + await page.textContent('#shaderloadwords'));
       mode = 'kept';
       await page.waitForSelector('#shadernow #detailhigh', { timeout: 20000 });
-      assert.strictEqual(await page.textContent('#detailhighwords'), 'Picture detail is 720 lines for every shader, saved by an earlier version. Automatic draws each shader at the most lines it keeps up at on this box.');
+      assert.strictEqual(await page.textContent('#detailhighwords'), 'Picture detail is 720 lines for every shader, saved by an earlier version. Automatic draws each shader at the most lines it keeps up at on this node.');
       assert.strictEqual(await page.textContent('#detailuse'), 'Use Automatic');
       await page.click('#detailuse');
       await page.waitForFunction(() => !document.getElementById('detailhigh'), null, { timeout: 20000 });
@@ -3336,13 +3336,13 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.waitForSelector('#shaderload[data-load="heavy"]', { timeout: 20000 });
     assert(/Dropping frames: try a lower picture detail/.test(await page.textContent('#shaderloadwords')) && /4\.2 dropped frames a second/.test(await page.textContent('#shaderloadwords')), 'the load is said in words');
     assert(await page.evaluate(() => document.getElementById('shadernow').contains(document.getElementById('shaderheight'))), 'picture detail is right there with the load');
-    await page.waitForSelector('#shadercard [data-shader="nxlx-ember.fs"] .shaderrefused:has-text("This box\'s GPU refused it: line 6: no such thing")');
+    await page.waitForSelector('#shadercard [data-shader="nxlx-ember.fs"] .shaderrefused:has-text("This node\'s GPU refused it: line 6: no such thing")');
     faked = false;
     await page.unroute('**/api/shaders');
     await page.waitForFunction(() => document.getElementById('shaderload').getAttribute('data-load') !== 'heavy' && !document.querySelector('.shaderrefused'), null, { timeout: 20000 });
-    // Too heavy on this box: said on its row, with the way back
+    // Too heavy on this node: said on its row, with the way back
     assert.strictEqual(await post('/api/shaders', { action: 'heavy', id: 'nxlx-silk.fs', on: true }), 200);
-    await page.waitForSelector('#shadercard [data-shader="nxlx-silk.fs"] .shaderheavy:has-text("Too heavy on this box. Left out of Vibes.")', { timeout: 20000 });
+    await page.waitForSelector('#shadercard [data-shader="nxlx-silk.fs"] .shaderheavy:has-text("Too heavy on this node. Left out of Vibes.")', { timeout: 20000 });
     await page.click('#shadercard [data-shader="nxlx-silk.fs"] .shaderheavy button:has-text("Put it back")');
     await page.waitForFunction(() => !document.querySelector('#shadercard [data-shader="nxlx-silk.fs"] .shaderheavy'));
     assert.strictEqual((await get('/api/shaders')).shaders.find((s) => s.id === 'nxlx-silk.fs').heavy, null, '"Put it back" took the note off');
@@ -3531,7 +3531,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await presenter.waitForSelector('#sysindex');
     {     // an Operator's rows (D80): what a presenter had, the daily pages that were the owner's, and nothing system critical
       const rows = await presenter.$$eval('.navname', (ns) => ns.map((x) => x.textContent));
-      for (const name of ['Health', 'Projectors', 'Shaders and Vibes', 'People and codes', 'Sound', 'At power-up', 'Streams', 'Render nodes', 'Sound reactivity', 'Boxes in step', 'About and power']) {
+      for (const name of ['Health', 'Projectors', 'Shaders and Vibes', 'People and codes', 'Sound', 'At power-up', 'Streams', 'Render nodes', 'Sound reactivity', 'Nodes in step', 'About and power']) {
         assert(rows.includes(name), 'an operator sees ' + name + ': ' + rows.join(', '));
       }
       for (const name of ['Network', 'Screen output', 'Updates', 'Remote support', 'Backup and reset', 'Look', 'DMX lighting desk', 'OSC']) {
@@ -3621,7 +3621,7 @@ function startServer(env) {          // env: more for the harness's environment 
     for (const width of [390, 1366]) {
       await presenter.setViewportSize({ width, height: 844 });
       for (const [name, marker] of [['Health', '#healthpower'], ['Projectors', '#projline'], ['People and codes', '#accesshint'], ['Sound', '#audioline'],
-        ['Streams', '#streamempty, .stream-entry'], ['Boxes in step', '#syncline'], ['About and power', '#boxcard .kvv']]) {
+        ['Streams', '#streamempty, .stream-entry'], ['Nodes in step', '#syncline'], ['About and power', '#boxcard .kvv']]) {
         await presenter.click(`.navrow:has(.navname:text-is("${name}"))`);
         await presenter.waitForSelector(marker);
         await fitsOn(presenter, `a presenter's ${name} page at ${width}`);
@@ -3785,7 +3785,7 @@ function startServer(env) {          // env: more for the harness's environment 
         assert.strictEqual(det.value, det.default, 'nobody chose yet: the board\'s own default');
         assert.strictEqual(await page.inputValue('#fxdetailpick'), String(det.value), 'the picker shows what is in force');
         assert.deepStrictEqual(await page.$$eval('#fxdetailpick option', (els) => els.map((e) => e.textContent)),
-          ['Automatic' + (det.default === 'auto' ? ' (recommended on this box)' : ''), '540 lines', '720 lines', 'Full']);
+          ['Automatic' + (det.default === 'auto' ? ' (recommended on this node)' : ''), '540 lines', '720 lines', 'Full']);
         assert(/fine patterns \(dots, lines, tiles\) look larger/.test(await page.textContent('#fxdetailnote')), 'the price in look is said');
         const lineIs = (re) => page.waitForFunction((src) => new RegExp(src).test((document.getElementById('fxworking') || {}).textContent || ''), re.source, { timeout: 20000 });
         const clip = (await get('/api/effects')).on.working.clip;
@@ -3961,7 +3961,7 @@ function startServer(env) {          // env: more for the harness's environment 
           await route.fulfill({ response, json: body });
         });
         await page.waitForSelector('#padrefused');
-        assert.strictEqual(await page.textContent('#padrefused'), "A pad's shader was not shown. The box refused nxlx-aurora.fs: line 12: `oops' undeclared. The screen is black.");
+        assert.strictEqual(await page.textContent('#padrefused'), "A pad's shader was not shown. The node refused nxlx-aurora.fs: line 12: `oops' undeclared. The screen is black.");
         assert.deepStrictEqual(await page.$$eval('.pad', (els) => els.map((el, i) => (el.classList.contains('refused') ? i : -1)).filter((i) => i >= 0)), [5]);
         const fits = await page.evaluate(() => {
           const line = document.getElementById('padrefused').getBoundingClientRect(), pads = document.getElementById('pads').getBoundingClientRect();
@@ -4050,7 +4050,7 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.click('.pad >> nth=7');
       await page.click('#padkindndi');
       await page.waitForSelector('#padndiempty');
-      assert(/NDI is not set up on this box yet/.test(await page.textContent('#padndiempty')), 'a box without NDI set up says so in the editor');
+      assert(/NDI is not set up on this node yet/.test(await page.textContent('#padndiempty')), 'a box without NDI set up says so in the editor');
       // a source on the network, one at an address the owner gave that is away, and two senders under one name
       await page.route('**/api/ndi', async (route) => {
         if (route.request().method() !== 'GET') return route.continue();
@@ -4642,7 +4642,7 @@ function startServer(env) {          // env: more for the harness's environment 
       // removing the look in use asks first, in place, and says what will happen
       await page.setViewportSize({ width: 390, height: 844 });
       await page.click('#themelist button[data-remove="browser-test"]');
-      await page.waitForSelector('#confirmrow:has-text("Remove the theme Browser test from this box? It is the look in use: the panel goes back to Dark stage.")');
+      await page.waitForSelector('#confirmrow:has-text("Remove the theme Browser test from this node? It is the look in use: the panel goes back to Dark stage.")');
       await page.click('#confirmno');
       assert.strictEqual((await get('/api/theme')).theme.name, 'browser-test', '"Keep it" changes nothing');
       await page.click('#themelist button[data-remove="browser-test"]');

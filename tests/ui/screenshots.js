@@ -225,7 +225,7 @@ function startServer() {
     await shot('system-page', async (f) => { await sys('Streams'); await soft('streams page', page.waitForSelector('.stream-entry')); await page.waitForTimeout(600); await whole(f); });
     await shot('system-page-off', async (f) => { await sys('Shaders and Vibes'); await page.waitForSelector('#sysswitchon'); await whole(f); });
     await pageShot('health', 'Health', 'Health', () => page.waitForSelector('#healthpower'));
-    await pageShot('box', 'About and power', 'This box', () => page.waitForFunction(() => !/Loading/.test(document.getElementById('boxbody').textContent)));
+    await pageShot('box', 'About and power', 'This node', () => page.waitForFunction(() => !/Loading/.test(document.getElementById('boxbody').textContent)));
     await pageShot('sound-output', 'Sound', 'Sound output', () => page.waitForSelector('#audioline, #audiomsg'));
     await pageShot('projectors', 'Projectors', 'Projectors', () => page.waitForSelector('.proj-status:has-text("lamp")'));   // the harness's fake projectors have answered
     await pageShot('autostart', 'At power-up', 'At power-up', () => page.waitForSelector('#autoline'));
@@ -366,7 +366,7 @@ function startServer() {
     const SYS_PAGES = [['Health', 'system-health', '#healthpower'], ['Projectors', 'system-projectors', '.proj-status'], ['Room', 'system-room', '#roomsetup'],
       ['Schedule', 'system-schedule', '.sched-entry'], ['Shaders and Vibes', 'system-shaders-and-vibes', '#shadercard'], ['People and codes', 'system-people-and-codes', '#devicelist'],
       ['Sound', 'system-sound', '#audioline'], ['At power-up', 'system-at-power-up', '#autosave'], ['Streams', 'system-streams', '.stream-entry'],
-      ['Projection mapping', 'system-projection-mapping', '#sysbody .card'], ['Boxes in step', 'system-boxes-in-step', '#syncline'],
+      ['Projection mapping', 'system-projection-mapping', '#sysbody .card'], ['Nodes in step', 'system-boxes-in-step', '#syncline'],
       ['MIDI controller', 'system-midi-controller', '.ctlgrid'], ['DMX lighting desk', 'system-dmx', '#dmxchannels'], ['OSC', 'system-osc', '#oscport'],
       ['Network', 'system-network', '#netiface'], ['Updates', 'system-updates', '#updateversion'], ['Remote support', 'system-remote-support', '#supportline'],
       ['Backup and reset', 'system-backup-and-reset', '#resetcard'], ['Look', 'system-look', '#sysbody .card'], ['About and power', 'system-about-and-power', '#boxcard .kvv']];
