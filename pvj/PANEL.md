@@ -8,9 +8,10 @@ and what states it can be in. It is the reference for the design work of 2026-10
 does not judge. What could be better goes in the proposals.
 
 Taken from master at 06d1067 (the merge of #152, the mask list) by reading `app.js`, `room.js`, `shaders.js`,
-`effects.js`, `app.css`, `pvj/policy.py`, the route table in `pvj/api.py`, `pvj/THEMES.md` and the decisions. Parts
-marked **coming in D101** are on the branch `sources-surfaces` and not on master yet. Not checked in a browser while
-writing: the control lists of `tests/ui/inventory.js` are the machine check of what each role can reach.
+`effects.js`, `app.css`, `pvj/policy.py`, the route table in `pvj/api.py`, `pvj/THEMES.md` and the decisions, and
+brought up to master at 8d473ea on 2026-11-06 (the sources D101, the sources' chains D106, the final picture D108, the
+box clock D116 and Ableton Link D117). Not checked in a browser while writing: the control lists of
+`tests/ui/inventory.js` are the machine check of what each role can reach.
 
 Keep it true: a change to a screen changes its section here in the same pull request.
 
@@ -27,7 +28,7 @@ Keep it true: a change to a screen changes its section here in the same pull req
 9. Projectors (D99) in full
 10. The mask list (D100) in full
 11. The Mapping card in full
-12. Coming in D101
+12. Sources (D101) and their chains (D106)
 13. Design tokens
 14. Accessibility facts
 15. Routes and the role each needs
@@ -271,7 +272,7 @@ not built yet, is in a fold at the foot (Owner only).
 | Streams | Show tools | Operator and up (module `inputs-srt`) | module | saved SRT, RTSP and RTMP addresses, Play; adding is the Owner's | No streams saved yet; Playing: x |
 | NDI input | Show tools | Operator and up (module `inputs-ndi`) | module (asks when an NDI picture is on) | Sources on the network, Where sound comes from, Addresses to ask, Which senders this box looks for, Sources that pads may hold; the settings are the Owner's | Showing: x; Waiting for x |
 | Render nodes | Show tools | Operator and up | | Render nodes (add, the Owner's), Send a cue | Showing x; No render nodes yet |
-| Sound reactivity | Show tools | Operator and up | | Sound reactivity (device, gain: the Owner's), A shader input that follows the sound | Listening: -18 dB |
+| Sound reactivity | Show tools | Operator and up | | Sound reactivity (device, gain: the Owner's; the level, the beat and "About N BPM"), Follow Ableton Link (the Owner's, off by default, D117; a line says off, joining, no peers or "following N peers at N BPM"), A shader input that follows the sound (smoothing 0.05 to 10 s) | Listening: -18 dB |
 | NDI discovery server | Show tools | Owner, never through support | module | The discovery server this box runs, Where it listens, What this is | Listening on address:port |
 | Projection mapping | Show tools | Operator and up (module `mapper`) | module (asks when the mapping is on screen) | Shape > Mapping (section 11) | On the screen; Being placed |
 | Boxes in step | Show tools | Operator and up (module `wall`) | module (asks when it leads or follows) | Boxes in step: lead or follow, the group, a tile of a video wall; changing it is the Owner's | Leads group x; Following x |
@@ -279,7 +280,7 @@ not built yet, is in a fold at the foot (Owner only).
 | DMX lighting desk | Show tools | Owner (module `control-dmx`) | module and its flag | Lighting desk (protocol, universe, start channel, networks, Save changes), Channels | Frames arriving; Listening, nothing received yet |
 | OSC | Show tools | Owner | its flag (the paired-device lock comes on with the first switch-on, D83) | OSC (port, who may send, the key), Send state back | Open: anyone on this network can control the box |
 | Network | This box | Owner (module `network`) | module | Network: wired and Wi-Fi, automatic or fixed, a direct cable, a hotspot; every change waits for a confirm and goes back by itself | A change is waiting for your confirmation |
-| Screen output | This box | Owner | | Screen output (Automatic or a mode, tried and kept or put back, D90), Renderer (classic or New, D95) | 1920 x 1080 at 60 Hz (Automatic) |
+| Screen output | This box | Owner | | Screen output (Automatic or a mode, tried and kept or put back, D90), Renderer (classic or New, D95; for the New one Picture detail inside, Sources: Automatic or 1 to the board's cap, D101, and Final picture: Automatic, the screen's own size or 720 lines scaled by the display, with a line saying which is in use and why, D108; Use this asks first, and choices not yet applied survive a redraw) | 1920 x 1080 at 60 Hz (Automatic) |
 | Updates | This box | Owner | | Updates: from a USB stick or an upload, signed only | Version x |
 | Remote support | This box | Owner (and the support session itself) | its flag; the card shows while off | Remote support: state, start a session (how long, what support may do), the code to read, extend, stop; Advanced: the server, this box's key, recent sessions and what support did | Session open, 40 min left |
 | Secure connection | This box | Owner | | State, Certificate, this device | |
@@ -383,14 +384,16 @@ Facts noted for the proposals: a surface's Remove and a saved mapping's Delete a
 place that D50 asks for every Remove; the display's colours are written in the script (`#ffd800`, `#00ccff`,
 `#ff2878`, `#808080`, `#111`), not taken from the look.
 
-## 12. Coming in D101
+## 12. Sources (D101) and their chains (D106)
 
-On the branch `sources-surfaces` (seven commits on 2026-10-20, not pushed when this was written). Its panel part is 98
-lines of `app.js`; nothing of the stylesheet changes.
+On master since #153 (D101) and #172 (D106 step e). Sources 2 and up are clip layers of the New renderer beside the
+player's own picture (Source 1); the mapping chooses which one each surface shows. A play to one is a cut, with no
+sound. On the classic player there is one source and none of this is shown, except the line in the Sources card.
 
-- **Play to** (`#playtorow`, beside the pads): a list "Source 1 (the player)", "Source 2" ... and a hint. With another source
-  chosen, a pad's clip plays there (`POST /api/play {pad, source}`), "Source N plays x."; a shader, NDI or render pad is
-  refused in plain words. Shown to Operator and up, only when the box has two sources or more (the New renderer).
+- **Play to** (`#playtorow`, above the pads): a list "Source 1 (the player)", "Source 2" ... and a hint. With another
+  source chosen, a pad's clip plays there (`POST /api/play {pad, source}`), "Source N plays x."; on the New renderer a
+  shader pad's shader too. An NDI or render pad is refused in plain words. Shown to Operator and up, only when the box
+  has two sources or more.
 - **Shows** (`#mapsource`, in the chosen surface's panel of the Mapping card): which source the surface shows; sent at once
   (`POST /api/mapper {action: source, id, source}`). A source the box does not run now stays chosen and is said
   ("Source 3 needs the New renderer ...: until then this surface shows Source 1."). The surface list says ", Source N".
@@ -398,8 +401,16 @@ lines of `app.js`; nothing of the stylesheet changes.
   player); for Sources 2 and up a clip list, Play and Stop. Read every 4 s (`GET /api/sources`), `POST /api/sources
   {source, action: stop}`. On the classic player: "Sources 2 and up need the New renderer (Setup > Renderer)." A warning
   when a source over 720 lines plays while two others do. Operator and up.
+- **A source's chain** (in each row of the Sources card, New renderer only, when `GET /api/effects/chain` says it is
+  available): for Sources 2 and up a Shader list and Play (a shader as the source's picture); an Effect list with On
+  (Change when one is on), Off, and an Amount slider while it is on; and a fold "More effects (advanced)" with effects 2
+  and 3, which run in order over the one before. The fold opens by itself when one of them is on, and stays as it was
+  left by hand. `POST /api/effects/chain {source, slot, id | off | controls}`. With Effects off only the shader row
+  shows. A shader that could not be built again after a change says so on the Shaders page ("Source N keeps x as it
+  was: why"). At 390 px each row wraps under its list.
 
-This file is updated to match once that pull request merges.
+The box clock (D116) has routes (`GET`/`POST /api/tempo`, `POST /api/tempo/tap`, Operator and up) but no control on the
+panel yet: a tap comes from a MIDI control mapped to "Tap the tempo (box clock)", or from OSC.
 
 ## 13. Design tokens
 
@@ -506,10 +517,11 @@ From the route table in `pvj/api.py` and `policy.OUTSIDE` (a Guest's extra forms
   mapping and mapping mode's nudge, projectors' actions (`/api/projector`), the room (`/room`, `/room/group`, `/room/scene`),
   the schedule, power-up, sound output and sound reactivity's mapping and source, media (upload, delete, rename, import),
   access (`/access`, `/access/code`, `/access/cancel`, `/access/screen`, `/devices`, `/devices/invite`, `/devices/revoke`,
-  `/guests`), MIDI (`/midi`, `/midi/learn`, `/midi/map`, `/midi/lights`), render cues, the look (`POST /api/theme`, and
+  `/guests`), MIDI (`/midi`, `/midi/learn`, `/midi/map`, `/midi/lights`), the sources and their chains (`/api/sources`,
+  `/api/effects/chain`), the box clock (`/api/tempo`, `/api/tempo/tap`), render cues, the look (`POST /api/theme`, and
   its export), `/api/support/stop`, and the reads of NDI, render nodes and sound.
 - **Owner (full)**: network, screen output and the renderer, updates, clock, reboot and power off, the PIN, recovery,
-  controller codes, DMX, OSC (and its key, its messages and state sent back), NDI settings and the discovery server,
+  controller codes, following Ableton Link (`/api/tempo/link`), DMX, OSC (and its key, its messages and state sent back), NDI settings and the discovery server,
   streams' changes, render nodes' changes, sound reactivity's device, boxes in step, adding and changing projectors
   (`/api/projectors`), mapping mode's switch, remote support's settings, start and extend, HTTPS (every route), settings
   export and import, diagnostics, factory reset, adding and removing looks.
