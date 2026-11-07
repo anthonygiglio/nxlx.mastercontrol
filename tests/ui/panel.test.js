@@ -1572,6 +1572,24 @@ function startServer(env) {          // env: more for the harness's environment 
     // One power button, from the state: it is on, so the button turns it off; the row has that and More, nothing else
     await page.waitForSelector('.proj-power:text-is("Turn off")');
     assert.deepStrictEqual(await page.$$eval('.proj-entry .lacts button', (bs) => bs.map((b) => b.textContent)), ['Turn off', 'More'], 'a projector row has one power button and More');
+    // A tap is not lost to the page's own redraw: the 5 second look draws the list again when an answer differs (here
+    // every answer does), and a press held across it acts on its release, once, with no second try.
+    {
+      const moving = (route) => route.fetch().then((res) => res.json().then((d) => route.fulfill({ response: res, json: Object.assign(d, { asked_at: Date.now() }) })));
+      await page.route('**/api/projectors', moving);
+      const more = page.locator('.proj-entry .lacts button.morebtn').first();
+      const box = await more.boundingBox();
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      const held = await more.elementHandle();
+      await page.waitForTimeout(6500);                                     // longer than the look
+      assert(await held.evaluate((el) => el.isConnected), 'the control under the finger is not replaced while it is pressed');
+      await page.mouse.up();
+      await page.waitForSelector('.proj-entry .morebtn[aria-expanded="true"]', { timeout: 3000 });
+      await page.unroute('**/api/projectors', moving);
+      await page.click('.proj-entry .morebtn[aria-expanded="true"]');
+      await page.waitForSelector('.proj-entry .morebtn[aria-expanded="true"]', { state: 'detached' });
+    }
     // Inputs: a plain hint from the PJLink kind until somebody names them; the choice applies when made
     assert.deepStrictEqual(await page.$$eval('.proj-input option', (os) => os.map((o) => o.textContent)),
       ['Choose...', 'RGB 1 (computer, VGA)', 'Digital 1 (HDMI or DVI)', 'Digital 2 (HDMI or DVI)'], 'unnamed inputs say what kind of socket they are');

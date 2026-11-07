@@ -1,0 +1,10 @@
+<!-- SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+     SPDX-License-Identifier: Apache-2.0 -->
+## 2026-11-07, a tap is not lost to the page's own redraw (`panel-steady-taps`)
+
+- **Why.** A tap is a press and a release on one control. When a timer redraws the card between the two, a new control is under the finger and the tap does nothing: in a show, a button that does not answer. The coordinator saw it as a test flake twice (Try again on the Projectors page, #205; More in #206's test) and asked for the product fix before Now.
+- **Measured first.** In the sandbox (scenario playing, 820 px), each screen was left alone for 12 s and every control it removed from the page was counted. The ten area screens and 17 of 19 Setup pages removed none. Projectors removed its whole list every look (All on, All off, each projector's power, mute, input and More), because a projector's answer changes between looks. Health removed "Show the address" every 5 s. Neither the strip nor OSC removed anything while idle, so what swallowed More's click in #206's test is not shown by this; it was during a window resize.
+- **What.** `whenFree(key, fn)` in app.js: while a pointer, Enter or Space is down, a redraw that is not the answer to a press waits, and runs just after the release (after its click); a later one of the same key replaces an earlier. Used by the Projectors look, the Health look, and the status poll's full redraws (a support session starting or ending, guest controls locked or opened). A redraw that answers a press is unchanged.
+- **Test.** panel.test.js holds a press on a projector's More for 6.5 s while every answer of `/api/projectors` differs (routed), then lets go once: the control is still the same element and More opens. Break-check: with `whenFree` running every redraw at once, the test fails on "the control under the finger is not replaced while it is pressed".
+- **Run on the HP's WSL:** `tests/ui/panel.test.js` passes, run alone.
+- **Next:** take the retry out of #206's test once this is in.

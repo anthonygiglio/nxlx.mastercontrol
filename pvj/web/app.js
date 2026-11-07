@@ -119,6 +119,22 @@
       if (r[5] && r[5].ok) S.devices = r[5].data.devices;
     });
   }
+  // A tap is a press and a release on one control. A redraw that comes between the two (a timer's look at the box)
+  // puts a new control under the finger, and the tap does nothing: in a show, a button that does not answer. So a
+  // redraw that is not the answer to a press waits while a pointer, Enter or Space is down, and runs just after the
+  // release (after its click). whenFree(key, fn): fn now, or once after the press; a later fn of the same key wins.
+  var pressing = false, afterPress = {};
+  function pressed(e) { if (e.type !== 'keydown' || e.key === 'Enter' || e.key === ' ') pressing = true; }
+  function released() {
+    if (!pressing) return;
+    pressing = false;
+    var q = afterPress; afterPress = {};
+    setTimeout(function () { Object.keys(q).forEach(function (k) { q[k](); }); }, 0);
+  }
+  document.addEventListener('pointerdown', pressed, true);
+  document.addEventListener('keydown', pressed, true);
+  ['pointerup', 'pointercancel', 'keyup', 'blur'].forEach(function (t) { (t === 'blur' ? window : document).addEventListener(t, released, true); });
+  function whenFree(key, fn) { if (pressing) afterPress[key] = fn; else fn(); }
   function poll() {
     if (!S.device || document.visibilityState === 'hidden') return;
     api('GET', '/api/status').then(function (r) {
@@ -126,8 +142,8 @@
         var was = !!(S.status && S.status.support && S.status.support.active), reached = reach();
         S.status = r.data;
         var now = !!(r.data.support && r.data.support.active);
-        if (was !== now) return render();          // a session started or ended: show or hide the banner
-        if (reached !== reach() && S.device && S.device.role === 'view') return render();      // guest controls were locked or opened
+        if (was !== now) return whenFree('render', render);          // a session started or ended: show or hide the banner
+        if (reached !== reach() && S.device && S.device.role === 'view') return whenFree('render', render);      // guest controls were locked or opened
         var left = document.getElementById('supportleft');
         if (left && now) left.textContent = (S.device && S.device.remote ? 'You are connected as remote support' : 'Remote support session is open') + ' · ' + mins(r.data.support.seconds_left) + ' left';
         patchLive();
@@ -2722,7 +2738,7 @@
         act('POST', '/api/access/screen', { show: true, items: ['address'], seconds: 120 }, function () { say('The address is on the display for 2 minutes.'); });
       } })));
     }
-    function refresh() { api('GET', '/api/health').then(function (r) { if (document.getElementById('healthcard') && r.ok) draw(r.data); }); }
+    function refresh() { api('GET', '/api/health').then(function (r) { if (r.ok) whenFree('health', function () { if (document.getElementById('healthcard')) draw(r.data); }); }); }
     refresh();
     return card;
   }
@@ -5129,7 +5145,10 @@
         var a = document.activeElement;
         var typing = a && body.contains(a) && /^(INPUT|SELECT)$/.test(a.tagName);
         // a question that is open, or a field being typed in, is never drawn over by the 5 second look
-        if (force || (JSON.stringify(r.data) !== shown && !typing && !asking(body))) draw(r.data);
+        if (force) draw(r.data);
+        else if (JSON.stringify(r.data) !== shown && !typing && !asking(body)) whenFree('projectors', function () {
+          if (document.body.contains(card) && JSON.stringify(r.data) !== shown && !asking(body)) draw(r.data);
+        });
       });
     }
     // The add form's fields, filled in, in place of the projector's row. Only what was changed is sent: a password
