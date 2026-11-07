@@ -210,6 +210,45 @@ class Base(unittest.TestCase):
             self.assertColour(self.r.pixel(x, y, shot), want, "pixel %d,%d" % (x, y))
 
 
+class GraphicsChipTest(unittest.TestCase):
+    """A screen is not drawn by a software rasteriser (render/src/out.c): exit 5 and a plain message. Headless, which the
+    tests and CI run on llvmpipe, stays allowed. The hook PVJ_RENDER_TEST_GL_RENDERER judges a name as a screen's
+    GL_RENDERER is judged."""
+
+    def setUp(self):
+        need_program(self)
+        hooks = "with test hooks" in subprocess.run([BIN, "--version"], capture_output=True, text=True, timeout=10).stdout
+        if not hooks:
+            if STRICT:
+                self.fail("PVJ_RENDER_TEST=1 and pvj-render was built without TEST_HOOKS=1")
+            self.skipTest("pvj-render was built without TEST_HOOKS=1")
+        self.tmp = tempfile.mkdtemp(prefix="pvj-render-gpu-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def run_named(self, name):
+        return subprocess.run([BIN, "--socket=" + os.path.join(self.tmp, "x.sock"), "--headless=64x64"], stdin=subprocess.DEVNULL,
+                              capture_output=True, text=True, timeout=30,
+                              env=dict(os.environ, LIBGL_ALWAYS_SOFTWARE="1", PVJ_RENDER_TEST_GL_RENDERER=name))
+
+    def test_a_software_rasteriser_ends_the_start_with_its_own_code_and_a_plain_message(self):
+        for name in ("llvmpipe (LLVM 15.0.6, 256 bits)", "softpipe", "Mesa swrast", "Software Rasterizer", "LLVMPIPE"):
+            run = self.run_named(name)
+            self.assertEqual(run.returncode, 5, (name, run.stderr))
+            self.assertIn("no graphics chip the new renderer can use", run.stderr, name)
+            self.assertIn("graphics chip: " + name, run.stderr, "GL_RENDERER is logged")
+
+    def test_a_real_chip_starts(self):
+        for name in ("V3D 4.2.14.0", "Mali-G610", "AMD Radeon RX 6600"):
+            r = Renderer(env={"PVJ_RENDER_TEST_GL_RENDERER": name})
+            self.addCleanup(r.close)
+            self.assertIn("graphics chip: " + name, r.stderr())
+
+    def test_headless_on_llvmpipe_without_the_hook_still_runs(self):
+        r = Renderer()
+        self.addCleanup(r.close)
+        self.assertIn("headless:", r.stderr())
+
+
 class AnswersTest(Base):
     def test_what_it_says_of_itself(self):
         r = self.r

@@ -247,6 +247,10 @@ int still_jpeg(int fd, const unsigned char *rgb, int w, int h, int quality);
 
 // the output (out.c)
 int out_open(const Cfg *cfg, char *err, size_t n);
+// out_open's answer when the graphics are a software rasteriser (llvmpipe and the like) on a screen: main ends with
+// EXIT_NO_GPU, which the player's supervisor tells apart from every other failure to start.
+#define OUT_NO_GPU (-2)
+#define EXIT_NO_GPU 5
 GLuint out_target(void);
 void out_draw_size(int *w, int *h); // the size this frame's final pass draws at, in the top left of out_target (D108)
 int out_final_usable(void);         // the final pass may change size at run time

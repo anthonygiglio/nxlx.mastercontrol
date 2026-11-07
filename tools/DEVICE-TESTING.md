@@ -1103,10 +1103,19 @@ With New chosen, a box that boots with no screen falls back to classic mpv; when
 
 | Row | Do | Good | Bad |
 |---|---|---|---|
-| PT1 | The Pi 4 node (regression): Setup > Renderer, choose New, then `tr '\0' ' ' < /proc/$(pgrep -x pvj-render)/cmdline` | `--detail=540 --fast --skip-deblock --sources=4`, as before; the card says "Settings for this node: standard (Raspberry Pi 4 Model B ...)" with ten lines, each with a reason | Any other argument, or no settings list |
+| PT1 | The Pi 4 node (regression): Setup > Renderer, choose New, then `tr '\0' ' ' < /proc/$(pgrep -x pvj-render)/cmdline` | `--detail=540 --fast --skip-deblock --sources=4`, as before; the card says "Settings for this node: standard (Raspberry Pi 4 Model B ...)" with its lines, each with a reason | Any other argument, or no settings list |
 | PT2 | The same Pi 4: play a 1080p clip to Source 2 while Sources 3 and 4 play | The overload warning still shows | No warning |
 | PT3 | The real Pi 3B: open Setup > Renderer | "Settings for this node: lean (Raspberry Pi 3 Model B ...)"; New is refused with the OpenGL ES 3 reason; sources default and most are 2 | A different tier, or New accepted |
 | PT4 | The Pi 3B: `cat /run/pvj/player/renderer.json` (the report) | It holds `profile` with the tier and the values | No `profile` |
+
+### The effect rate by tier and no software rasteriser (pvj-render): not yet run on a node
+
+| Row | Do | Good | Bad |
+|---|---|---|---|
+| RL1 | The Pi 4 node (regression): New chosen, then `tr '\0' ' ' < /proc/$(pgrep -x pvj-render)/cmdline` | `--detail=540 --fast --skip-deblock --sources=4` with no `--fx-fps` in it, as before; `journalctl -u pvj-player` shows `graphics chip: V3D ...` | An `--fx-fps` argument, or no "graphics chip" line |
+| RL2 | The Pi 3B card: choose New | Classic draws at once with the OpenGL ES 3 reason (pvj-render never starts) | pvj-render started |
+| RL3 | A PC with no graphics driver (llvmpipe), on a screen with the DRM output: choose New | Classic draws; the card says "New was chosen; classic mpv is drawing: this node has no graphics chip the new renderer can use"; the journal says the reason once; choosing New again tries once more and falls back at once the same way | A second try, a slow software-drawn picture, or a loop of restarts |
+| RL4 | A Pi 5 or a PC with a real GPU at 60 Hz: choose New | The argument list has `--fx-fps=60`; the Renderer card lists "Effect rate: up to the screen's rate, at most 60 a second" | No `--fx-fps`, or a rate over 60 |
 
 ## Safety
 

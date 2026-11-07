@@ -47,10 +47,18 @@ def measure(k):
     return json.loads(json.dumps(o))
 
 
+def with_fx(argv, rate):
+    """Master's argv with --fx-fps=N after --sources=N, where the full tier now puts it."""
+    i = next(i for i, a in enumerate(argv) if a.startswith("--sources="))
+    return argv[:i + 1] + ["--fx-fps=%d" % rate] + argv[i + 1:]
+
+
 class FrozenValuesTest(unittest.TestCase):
     def test_every_kind_has_the_values_master_gave_it(self):
         for kind in ("pi3", "pi4", "pi5", "x86"):
             got, want = measure(kind), FROZEN[kind]
+            if kind in ("pi5", "x86"):      # the one addition: the full tier passes the screen's rate (60 in the 1920x1080@60.00 these use)
+                want = dict(want, command={k: with_fx(v, 60) for k, v in want["command"].items()})
             for key in want:
                 self.assertEqual(got[key], want[key], (kind, key))
 
@@ -89,6 +97,26 @@ class FrozenValuesTest(unittest.TestCase):
         self.assertEqual(E.auto_lines(None, "x"), want["auto_lines"])
         self.assertEqual(list(S.heights_for(None)), want["heights"])
         self.assertEqual(S.default_height(None), want["default_height"])
+
+
+class EffectRateTest(unittest.TestCase):
+    def test_only_the_full_tier_passes_the_screens_rate_capped_at_60(self):
+        for kind in ("pi3", "pi4", "pi-other", "arm-other"):
+            for mode in ("1920x1080@60.00", "1920x1080@144.00"):
+                self.assertFalse([a for a in R.command("/run/s", ["--drm-mode=" + mode], "auto", kind, ENV) if a.startswith("--fx-fps")], (kind, mode))
+        for mode, want in (("1920x1080@60.00", 60), ("1920x1080@59.94", 60), ("1920x1080@50.00", 50), ("2560x1440@144.00", 60),
+                           ("1280x720@24.00", 24), ("1920x1080@30.00", 30)):
+            for kind in ("pi5", "x86"):
+                cmd = R.command("/run/s", ["--vo=gpu", "--drm-mode=" + mode], "auto", kind, ENV)
+                self.assertEqual([a for a in cmd if a.startswith("--fx-fps")], ["--fx-fps=%d" % want], (kind, mode))
+        for screen in ([], ["--vo=gpu"], ["--drm-mode=3"], ["--drm-mode=1920x1080"], ["--drm-mode=1920x1080@x"]):
+            self.assertFalse([a for a in R.command("/run/s", screen, "auto", "x86", ENV) if a.startswith("--fx-fps")], screen)
+
+    def test_the_row_says_30_and_the_reason(self):
+        for kind, text in (("pi4", "30 a second"), ("pi3", "30 a second"), ("pi-other", "30 a second"), ("x86", "up to the screen's rate, at most 60 a second")):
+            row = {v["name"]: v for v in profile.describe(kind, "m")["values"]}["Effect rate (new renderer)"]
+            self.assertEqual(row["value"], text, kind)
+            self.assertIn("30 a second on a Pi 3 or 4; up to the screen's rate, at most 60, on a Pi 5 or a desktop, not yet measured there", row["why"])
 
 
 class TableTest(unittest.TestCase):

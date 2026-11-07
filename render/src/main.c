@@ -1026,7 +1026,8 @@ int main(int argc, char **argv)
     signal(SIGPIPE, SIG_IGN);
 
     char err[200] = "";
-    if (out_open(&cfg, err, sizeof err)) { LOG("no output: %s", err); out_close(); return 2; }
+    int out_rc = out_open(&cfg, err, sizeof err);
+    if (out_rc) { LOG("no output: %s", err); out_close(); return out_rc == OUT_NO_GPU ? EXIT_NO_GPU : 2; }
     // the internal size: `detail` lines at the output's shape (even numbers), never more than the output
     if (cfg.detail <= 0 || cfg.detail >= app.out_h) {
         app.in_w = app.out_w;
