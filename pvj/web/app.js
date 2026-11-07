@@ -3432,6 +3432,13 @@
     function draw(d) {
       body.textContent = '';
       body.appendChild(h('div', { class: 'state', id: 'renderline', text: 'Drawing now: ' + (RENDERER_NAMES[d.drawing] || d.drawing) + '.' }));
+      if (d.profile) {
+        // the tier this node is in and what it gives, each with its reason (pvj/profile.py)
+        body.appendChild(h('div', { class: 'state', id: 'renderprofile', text: 'Settings for this node: ' + (d.profile.tier_words || d.profile.tier) + (d.profile.model ? ' (' + d.profile.model + ')' : '') }));
+        body.appendChild(h('div', { class: 'list', id: 'renderprofilelist' }, (d.profile.values || []).map(function (v) {
+          return h('div', { class: 'hint', text: v.name + ': ' + v.value + '. ' + v.why });
+        })));
+      }
       if (d.why) body.appendChild(h('div', { class: 'hint warn', id: 'renderwhy', role: 'status', text: 'New was chosen; classic mpv is drawing: ' + d.why + '.' }));
       if (d.switched) body.appendChild(h('div', { class: 'hint', id: 'renderswitched', role: 'status',
         text: 'At the last change the player ended pvj-render' + (d.switched_at ? ' (' + new Date(d.switched_at * 1000).toLocaleString() + ')' : '') + ': ' + d.switched + '.' }));

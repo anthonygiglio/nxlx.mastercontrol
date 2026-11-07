@@ -636,6 +636,27 @@ class ReportTest(Base):
         self.assertNotIn("<", r["why"])
         self.assertLessEqual(len(r["why"]), renderer.REPORT_WORDS)
 
+    def test_the_report_holds_the_tier_and_the_values_and_is_cleaned(self):
+        from unittest import mock as m
+        board = {"kind": "pi4", "model": "Raspberry Pi 400 Rev 1.0", "arch": "aarch64"}
+        with m.patch.object(renderer.hardware, "detect_board", lambda: board):
+            renderer.fallback(self.dir, "auto", "x", lambda line: None)
+        prof = self.report()["profile"]
+        self.assertEqual((prof["tier"], prof["model"]), ("standard", "Raspberry Pi 400 Rev 1.0"))
+        self.assertIn("540 lines", {v["name"]: v["value"] for v in prof["values"]}["Picture detail inside (Automatic)"])
+        self.assertTrue(all(v["name"] and v["value"] and v["why"] for v in prof["values"]))
+
+    def test_a_hostile_profile_in_the_report_is_cleaned(self):
+        for bad in (None, "x", 3, {"tier": "huge"}, {"tier": ["lean"]}):
+            self.assertIsNone(renderer.clean_report({"drawing": "classic", "profile": bad})["profile"], bad)
+        r = renderer.clean_report({"drawing": "classic", "profile": {"tier": "lean", "model": "<b>x" + "y" * 500,
+                                   "values": [{"name": "<i>n", "value": 5, "why": "w" * 500}, "junk"] * 20}})["profile"]
+        self.assertEqual(r["tier"], "lean")
+        self.assertLessEqual(len(r["model"]), renderer.REPORT_WORDS)
+        self.assertLessEqual(len(r["values"]), renderer.PROFILE_ROWS)
+        self.assertEqual(r["values"][0]["value"], "")
+        self.assertNotIn("<", r["values"][0]["name"])
+
     def test_the_final_pass_in_the_report_is_untrusted_data_too(self):
         r = renderer.clean_report({"chosen": "new", "drawing": "new", "final": "huge", "final_why": "<b>x" + "y" * 500})
         self.assertEqual(r["final"], None)
@@ -856,6 +877,19 @@ class PanelTest(CareBase):
         with mock.patch.object(self.api.renderer, "drawing", lambda: ("classic", "pvj-render did not start (exit 2)")):
             self.r("POST", "/api/renderer", {"use": "new"})
         self.assertEqual(len(self.quits), n + 1, "other reasons still restart")
+
+    def test_the_card_gets_the_tier_and_each_value_with_its_reason(self):
+        self.api.board = {"kind": "pi3", "model": "Raspberry Pi 3 Model B Rev 1.2", "arch": "aarch64"}
+        st, body = self.r("GET", "/api/renderer")
+        self.assertEqual(st, 200, body)
+        prof = body["profile"]
+        self.assertEqual((prof["tier"], prof["model"]), ("lean", "Raspberry Pi 3 Model B Rev 1.2"))
+        names = {v["name"]: v["value"] for v in prof["values"]}
+        self.assertEqual((names["Sources by default"], names["Most sources"]), ("2", "2"))
+        self.assertTrue(all(v["why"] for v in prof["values"]))
+        self.api.board = {"kind": "x86", "model": "Intel N100", "arch": "x86_64"}
+        self.assertEqual(self.r("GET", "/api/renderer")[1]["profile"]["tier"], "full")
+
 
 
 if __name__ == "__main__":

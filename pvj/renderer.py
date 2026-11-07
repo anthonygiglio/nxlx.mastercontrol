@@ -231,8 +231,19 @@ def chosen(rundir, extra_args, windowed, env=None, board_kind=None):
     return "new", want["detail"], ""
 
 
+def board_profile():
+    """The tier and each value of this node's profile with its reason (profile.describe), or None if the board cannot be read."""
+    try:
+        board = hardware.detect_board()
+        return profile.describe(board.get("kind", ""), board.get("model", ""))
+    except Exception:
+        return None
+
+
 def write_report(rundir, data, log=None):
     data = dict(data, pid=os.getpid(), at=int(time.time()), boot=screenmode.boot_id())
+    if "profile" not in data:
+        data["profile"] = board_profile()        # the tier and what it gives, with the reasons, beside what is drawing
     try:
         screenmode.write_json(os.path.join(rundir, REPORT), data)
     except OSError as e:
@@ -493,6 +504,19 @@ def fallback(rundir, detail, why, log):
 
 # ---- the panel's side --------------------------------------------------------------------------------------------
 REPORT_WORDS = 200
+PROFILE_ROWS = 16
+
+
+def clean_profile(data):
+    """The profile in the report, as data from a less trusted account: a tier from the list, short plain sentences."""
+    if not isinstance(data, dict) or not isinstance(data.get("tier"), str) or data["tier"] not in profile.PROFILES:
+        return None
+    def words(v):
+        return screenmode._WHY.sub("", v)[:REPORT_WORDS] if isinstance(v, str) else ""
+    rows = [{k: words(r.get(k)) for k in ("name", "value", "why")} for r in (data.get("values") if isinstance(data.get("values"), list) else [])[:PROFILE_ROWS] if isinstance(r, dict)]
+    return {"tier": data["tier"], "model": words(data.get("model")), "values": rows}
+
+
 
 
 def clean_report(data):
@@ -508,6 +532,7 @@ def clean_report(data):
             "detail": clean({"detail": data.get("detail")})["detail"],
             "final": clean({"final": data.get("final")}).get("final"),
             "final_why": screenmode._WHY.sub("", data["final_why"])[:REPORT_WORDS] if isinstance(data.get("final_why"), str) else "",
+            "profile": clean_profile(data.get("profile")),
             "pid": pid if isinstance(pid, int) and not isinstance(pid, bool) else None,
             "boot": screenmode._WHY.sub("", data["boot"])[:64] if isinstance(data.get("boot"), str) else "",
             "at": data.get("at") if isinstance(data.get("at"), int) and not isinstance(data.get("at"), bool) else None}
@@ -590,6 +615,13 @@ class Renderer:
         board = getattr(self.api, "board", None)
         return board.get("kind", "") if isinstance(board, dict) else hardware.detect_board().get("kind", "")
 
+    def profile(self):
+        """This node's tier and each value with its reason (profile.describe), for the card; from the board the panel
+        itself read, not from the report."""
+        board = getattr(self.api, "board", None)
+        board = board if isinstance(board, dict) else {}
+        return profile.describe(board.get("kind", ""), board.get("model", ""))
+
     def sources(self):
         """What the page says of sources (D101): the Owner's number or None (the board's own), this board's default
         and cap, and the number pvj-render is started with."""
@@ -602,7 +634,7 @@ class Renderer:
         drawing, why = self.drawing()
         out = {"use": saved["use"], "detail": saved["detail"], "drawing": drawing, "available": available(self.env),
                "uses": list(USES), "details": list(DETAILS), "sources": self.sources(),
-               "final": saved.get("final", "auto"), "finals": list(FINALS)}
+               "final": saved.get("final", "auto"), "finals": list(FINALS), "profile": self.profile()}
         if saved["use"] == "new" and drawing == "classic":
             out["why"] = why or "the player has not started pvj-render yet"
         rep = self.report()
