@@ -140,6 +140,16 @@ class ClipAdviceTest(unittest.TestCase):
         self.assertEqual(probe.advice({"codec": "png", "width": 100, "height": 100, "fps": None}, "x86", 60.0), [])
         self.assertEqual(probe.advice({"codec": "prores", "width": 1920, "height": 1080, "fps": 24}, "x86", 60.0)[0][:6], "PRORES")
 
+    def test_above_61_fps_has_one_line_and_a_non_finite_rate_is_unknown(self):
+        from pvj import probe
+        for hz in (None, 60.0):
+            a = probe.advice(self.clip(120.0), "x86", hz)
+            self.assertEqual(len(a), 1, hz)
+            self.assertIn("more than a screen shows", a[0])
+        for bad in (float("inf"), float("nan"), -float("inf")):
+            self.assertEqual(probe.advice(self.clip(bad), "x86", 60.0), [], bad)
+        self.assertEqual(probe.pacing_advice(30, float("inf")), [])
+
     def test_mode_hz(self):
         from pvj import probe
         self.assertEqual((probe.mode_hz("1920x1080@59.94"), probe.mode_hz("x"), probe.mode_hz(None)), (59.94, None, None))

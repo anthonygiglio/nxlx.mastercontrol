@@ -7,6 +7,7 @@ opens the file with no video or audio output, decodes one frame and prints its p
 clip on a Pi 4. Results are kept per file (path, size, modification time), so asking again is free.
 """
 
+import math
 import os
 import re
 import subprocess
@@ -123,7 +124,7 @@ def _snap(rate):
 def pacing_advice(fps, hz):
     """One plain line on how a clip's frame rate sits on the screen's refresh rate, or []. No timing code runs for it (D119):
     this only says what to expect. `hz` is the output's real rate; with none known there is no advice."""
-    if not fps or not hz or fps <= 0 or hz <= 0:
+    if not fps or not hz or not math.isfinite(fps) or not math.isfinite(hz) or fps <= 0 or hz <= 0:
         return []
     shown = "%.2f Hz" % hz
     if not (abs(hz - 60) <= 0.2 or abs(hz - 50) <= 0.2):
@@ -166,6 +167,8 @@ def advice(info, board, hz=None):
     (pacing_advice); without it the advice is as it always was."""
     codec = (info.get("codec") or "").lower()
     w, h, fps = info.get("width") or 0, info.get("height") or 0, info.get("fps") or 0
+    if not isinstance(fps, (int, float)) or not math.isfinite(fps):
+        fps = 0                 # not a rate (inf or nan from a damaged file): unknown
     if not codec:
         return []
     out = []
@@ -190,7 +193,7 @@ def advice(info, board, hz=None):
         out.append("%s fps is more than a screen shows; use 25, 30, 50 or 60." % round(fps))
     if codec in ("mjpeg", "png", "bmp", "tiff", "webp") and pixels > 24000000:
         out.append("A very large picture (%dx%d): it may be slow to show. 1920x1080 is plenty for a screen." % (w, h))
-    elif fps and codec not in ("mjpeg", "png", "bmp", "tiff", "webp") and fps > 1:
+    elif fps and codec not in ("mjpeg", "png", "bmp", "tiff", "webp") and 1 < fps <= 61:       # above 61 the line above is the one
         out += pacing_advice(fps, hz)
     return out
 

@@ -1122,7 +1122,7 @@ With New chosen, a box that boots with no screen falls back to classic mpv; when
 | Row | Do | Good | Bad |
 |---|---|---|---|
 | PH1 | The Pi 4 node (regression): New chosen, then `tr '\0' ' ' < /proc/$(pgrep -x pvj-render)/cmdline` | No `--hwdec` in it, as before | An `--hwdec` argument |
-| PH2 | Set `"hwdec": "v4l2m2m-copy"` under `renderer` in the settings file of a test Pi 4 (not the show node), restart `pvj-web`, then choose New again | The player restarts once; `pvj-render` runs with `--hwdec=v4l2m2m-copy`; the card lists "Hardware decoding (new renderer): v4l2m2m-copy"; remove the key and the player restarts once more without it | A second restart, or no row |
+| PH2 | Set `"hwdec": "v4l2m2m-copy"` under `renderer` in the settings file of a test Pi 4 (not the show node), restart `pvj-web`, then choose New again | The player restarts once; `pvj-render` runs with `--hwdec=v4l2m2m-copy`; the card lists "Hardware decoding (new renderer): v4l2m2m-copy"; remove the key, restart `pvj-web` (or choose New again), and the player restarts once more without it | A second restart, or no row |
 | PH3 | Play a 24 fps clip on a 60.00 Hz screen, then open the clip's info in the media list | A note says the clip judders as 3:2 at 60.00 Hz; a 30 fps clip shows no pacing note | No note, or one for the 30 fps clip |
 | PH4 | A 29.97 fps clip on a 60.00 Hz screen, then on a 59.94 Hz mode | 60.00: a note that it slips about every 17 s and a 59.94 Hz mode would make it even; 59.94: no pacing note | No note |
 
