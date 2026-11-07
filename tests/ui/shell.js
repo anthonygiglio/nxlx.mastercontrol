@@ -767,7 +767,7 @@ async function stripText(pg, post, get) {
   return looked;
 }
 
-// What each role has, with every module on (Now, 2026-11-07, for an owner and a presenter) (tests/ui/signal-pages.js setUp). "presenter" is the key of the `live`
+// What each role has, with every module on (tests/ui/signal-pages.js setUp); Now (2026-11-07) is an owner's and a presenter's. "presenter" is the key of the `live`
 // device, which the panel calls an Operator since D80: he has the daily pages of Setup (Room's set-up, Schedule, At
 // power-up, MIDI controller) and the Mapping page, and none that is the Owner's; a guest has no way to let anyone in.
 const PLAY = ['play/pads', 'play/library', 'play/shaders'];

@@ -6915,7 +6915,7 @@
       openProjectors: can('full') ? function () { openSys('projectors', S.tab === 'system' ? null : S.tab); } : null };
   }
   function stopTimers() {
-    [netTimer, midiTimer, midiLightTimer, accessTimer, updateTimer, healthTimer, indexTimer, syncTimer, confirmTimer, pageStateTimer, dmxTimer, oscTimer].forEach(clearTimeout);
+    [netTimer, midiTimer, midiLightTimer, accessTimer, updateTimer, healthTimer, indexTimer, syncTimer, confirmTimer, pageStateTimer, dmxTimer, oscTimer, nowTimer].forEach(clearTimeout);
   }
   // ---- Now (the owner, 2026-11-06: "a control centre that VJs can use"; built 2026-11-07) ----------------------
   // What is on and what needs you, first. One screen of its own area: Needs you across the top, then On the screens,
@@ -6950,7 +6950,11 @@
     var cue = function (id, text, fn) { return h('button', { class: 'btn small grow', id: id, text: text, disabled: !live, onclick: fn }); };
     var screens = h('div', { class: 'card', id: 'nowscreens' }, h('h2', { text: 'On the screens' }), srcList,
       h('div', { class: 'row nowcues' },
-        cue('nowfade', 'Fade out', function () { act('POST', '/api/fade', { seconds: 2 }, poll); }),
+        (function () {               // one fade button, out then in, decided by the node (D75): worded by fadeShow, as the strip's
+          var b = h('button', { class: 'btn small grow', 'data-cls': 'btn small grow', id: 'nowfade', text: 'Fade out', disabled: !live, onclick: function () { act('POST', '/api/fade', { seconds: 2 }, poll); } });
+          fadeShow(b, (S.status || {}).mix);
+          return b;
+        })(),
         cue('nownext', 'Next clip', function () { act('POST', '/api/control', { action: 'next' }, poll); }),
         cue('nowstop', 'Stop', function () { act('POST', '/api/control', { action: 'stop' }, poll); }),
         testPattern()),
@@ -7023,7 +7027,7 @@
       keepCursor(wallsList, function () {
         wallsList.textContent = '';
         ((hd && hd.projectors) || []).forEach(function (x) {
-          wallsList.appendChild(nowRow('nowproj-' + x.id, x.name, { chip: HEALTH_STATE[x.state] || null, text: x.text }, full ? ['Open', nowOpen('projectors')] : null));
+          wallsList.appendChild(nowRow('nowproj-' + x.id, x.name, { chip: HEALTH_STATE[x.state] || null, text: x.text }, canOp() ? ['Open', nowOpen('projectors')] : null));
         });
         if (!hd || !(hd.projectors || []).length) wallsList.appendChild(h('div', { class: 'hint', id: 'nownoprojectors', text: 'No projectors on the list.' }));
       });
@@ -7050,10 +7054,12 @@
     }
     function look() {
       clearTimeout(nowTimer);
-      var stale = Date.now() - nowRowsAt > 30000;
+      // a hidden tab asks nothing (as poll() does): it looks again in 5 s, and asks once it is shown
+      if (document.visibilityState === 'hidden') { nowTimer = setTimeout(refresh, 5000); return; }
+      // the rows of Setup every 30 s, on their own: a slow one does not hold up the 5 s looks
+      if (Date.now() - nowRowsAt > 30000) askRows().then(function () { if (root.isConnected && !held('now', refresh)) draw(); });
       Promise.all([
-        api('GET', '/api/health'), api('GET', '/api/sources'), hasRoom ? api('GET', '/api/room') : Promise.resolve(null),
-        stale ? askRows() : Promise.resolve()
+        api('GET', '/api/health'), api('GET', '/api/sources'), hasRoom ? api('GET', '/api/room') : Promise.resolve(null)
       ]).then(function (rs) {
         if (!root.isConnected) return;
         nowTimer = setTimeout(refresh, 5000);
@@ -7068,7 +7074,6 @@
     function refresh() { if (root.isConnected) look(); }
     nowRowsAt = 0;
     look();
-    nowLive(null, (S.status || {}).player || {}, (S.status || {}).mix || {});
     return root;
   }
   // Source 1's line on Now: what the strip says plays, the place in the clip and the transition (patchLive, every second)
@@ -7080,6 +7085,7 @@
     var place = pl.duration > 0 ? clock(pl.position) + ' / ' + clock(pl.duration) : '';
     var how = mix.transition ? (TRANSITION_WORDS[mix.transition] || mix.transition) + (mix.duration ? ', ' + mix.duration + ' s' : '') : '';
     showState(row.querySelector('.chip'), row.querySelector('.navstate'), { chip: pl.running && pl.path ? 'active' : 'off', text: [name, place, how].filter(Boolean).join(' · ') });
+    fadeShow(document.getElementById('nowfade'), mix);
   }
   // ---- the Workspace shell (D65, D72) ----------------------------------
   // Four areas: Play (Pads, Library, Shaders), Shape (Effect, Picture, Sound, and Mapping), Room (Scenes, Walls,
@@ -7119,7 +7125,7 @@
     }
     var list = [];
     // Now (2026-11-07): what is on and what needs you, for whoever runs the night (an owner, an operator)
-    if (can('live')) list.push(scr('now', 'now', 'Now', 'What is on, and what needs you.', 'now', { part: 'now' }));
+    if (canOp()) list.push(scr('now', 'now', 'Now', 'What is on, and what needs you.', 'now', { part: 'now' }));
     list.push(
       scr('play', 'pads', 'Pads', 'Start what sits on a pad.', 'play', { part: 'pads' }),
       scr('play', 'library', 'Library', 'Find a clip, a picture or a live input and play it; keep the files.', 'play', { part: 'library' }));
