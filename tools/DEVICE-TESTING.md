@@ -2,7 +2,7 @@
      SPDX-License-Identifier: Apache-2.0 -->
 # Testing on a real board
 
-Everything so far was tested in a container. This lets a real Raspberry Pi (or mini PC) run the tests and send the results back, so a claude session or you can read them.
+Everything so far was tested in a container. This lets a real Raspberry Pi (or mini PC) run the tests and send the results back, so an AI session or you can read them.
 
 ## What runs
 
@@ -38,7 +38,7 @@ This is the test that matters most, because it is the only one that checks the t
 2. **Flash it.** In Raspberry Pi Imager choose "Use custom", pick the `.img.xz`, pick the SD card (check the size and name; everything on it is erased), and skip "Edit settings".
 3. **Give it a login without a keyboard.** The image has no password and SSH is off. While the card is still in the laptop and the `bootfs` volume is mounted, add two files to it: an empty file called `ssh`, and `userconf.txt` containing one line, `USERNAME:HASH`, where `HASH` comes from `openssl passwd -6` (it asks for the password). Eject, put the card in the Pi, power it on. If it does not show up on the network within about 3 minutes, connect a monitor and keyboard: the first boot then asks for a user name and password itself.
 4. **Find it.** Look for a new device on your network with a Raspberry Pi hardware address (`dc:a6:32`, `e4:5f:01`, `d8:3a:dd`, `2c:cf:67`, `88:a2:9e` or `b8:27:eb`), or try `ssh USER@nxlx-mastercontrol.local`. Your router's client list is the surest way.
-5. **Put a key on it** so a claude session (or a script) can connect without a password: `ssh-copy-id -o StrictHostKeyChecking=accept-new -i KEY.pub USER@HOST` (run in your own terminal; it asks for the password once). Remove the key from `~/.ssh/authorized_keys` when you are done.
+5. **Put a key on it** so an AI session (or a script) can connect without a password: `ssh-copy-id -o StrictHostKeyChecking=accept-new -i KEY.pub USER@HOST` (run in your own terminal; it asks for the password once). Remove the key from `~/.ssh/authorized_keys` when you are done.
 
 ### Checklist on the Pi
 
@@ -359,6 +359,7 @@ Before: two clips of 1920 x 1080 on pads A1 and A2, Mix > Transition between cli
 | X25 | D89. The same with a picture over the video on (a logo: the overlay setting), on the 2560 x 1440 screen and once more on a 1920 x 1080 screen | `"still": "window"`, `"still_size": [1280, 720]` (on the 1920 x 1080 screen `[960, 540]`); `"drawn"` the whole screen; the logo fades with the old picture and is not doubled | Whether the half-size still looks softer than the screen at the moment of the tap (the player draws it at twice its size), on each screen, and the same figures as X24 |
 | X26 | D89. X14 and X15 on the 2560 x 1440 screen | The edge moves evenly; the still's part is where the old picture was | Whether the edge looked smooth (on a halved still it moves in steps of two pixels; on a 1920 x 1080 clip's own still drawn at 2560 x 1440 in steps of one or two), and `steps` from `mix.last` |
 | X27 | D89. A clip of another shape first (4:3, or a tall phone clip), then a 1920 x 1080 one: a crossfade, then a wipe from left and a slide off left | The crossfade: the old picture fades where it was, and beside it the new clip is there at once (a still of the clip has no bars). The wipe and the slide: a still of the window (`mix.last.still` "window"), so the old picture with its bars moves or is cut across the whole screen and does not stop at the bar's edge | Whether the crossfade beside the bars looks acceptable to the owner; if not, a still of the window whenever the clip does not fill the screen is a one-line change in `Player.video_place`. And whether the wipe and the slide went edge to edge |
+| X28 | D112. Crossfade set, a clip playing on the box. Play a pad, and kill the panel on purpose during the transition (`sudo systemctl kill -s KILL pvj-web`, then it restarts). Do it on classic mpv and on the New renderer | The panel comes back and the old clip plays again within a few seconds; `ls /run/pvj/web` shows no `transition-frozen.json` | Whether the picture stayed frozen, and `journalctl -u pvj-web` for "an earlier panel froze" or not. The kill must land between the freeze and the load, so repeat it a few times with a heavy clip; a kill outside that window proves nothing |
 
 ### A shader pad with an effect on (D73 and D74 together): do these two first
 
@@ -565,8 +566,8 @@ What is not known is whether 720 lines look better than 540 on the room's own sc
 | A1 | On the projector at its own Automatic mode (D90), play nxlx-silk, nxlx-lattice, nxlx-grid and nxlx-halftone, each under Automatic (720 lines) and then with Picture detail at 540 lines by hand, from where the audience stands | Fine lines, dots and edges: sharper at 720, or no difference you would notice | For each: 720 better, the same, or 540 better. If the same everywhere, 540 for all would leave the GPU more room |
 | A2 | The same four on the 1440p monitor set to 1920 x 1080 | As A1, close up | As A1 |
 | A3 | nxlx-tide and nxlx-bloom under Automatic (720 lines; the GPU was 87 to 90 percent busy there) with an effect on over them, then with the mapping on | The load line beside the shader on the Shaders page; dropped frames in Setup > Health | Dropped frames a second for each. If they drop, these two may need 540 the way two effects got it in D58 |
-| A4 | Vibes on Ambient under Automatic for 20 minutes | No shader marked "Too heavy on this box"; nxlx-drift and nxlx-nebula now come round too, at 540 lines | Any shader marked, with its rate |
-| A5 | nxlx-drift and nxlx-nebula at 540 lines (the GPU was 97 percent busy) | Their slow clouds: smooth, or an occasional hitch | Whether they look smooth |
+| A4 | Vibes on Ambient under Automatic for 20 minutes | No shader marked "Too heavy on this box"; nxlx-nebula now comes round too, at 540 lines | Any shader marked, with its rate |
+| A5 | nxlx-nebula at 540 lines (the GPU was 96 percent busy) | Its slow clouds: smooth, or an occasional hitch | Whether it looks smooth |
 
 ### Render nodes (D94): never run with a real render node
 
@@ -632,6 +633,32 @@ before and after each run; the GPU's busy share as in R1.
 | CF9 | Out of a generator (a shader pad) into A1, and out of the NDI input into A1, both with Crossfade | D71's crossfade as on classic: the generator's or the NDI picture stands still and melts into A1; for NDI the next NDI source still opens (D62) | Whether both looked as on classic |
 | CF10 | Stop, then play A1 with Crossfade | A1 is there at once, as a cut (no rise from black); `fades-from-nothing` up by 1 | Yes or no |
 
+### pvj-render's own wipes and slides (D111)
+
+Everything of D111 ran on a software GPU in a headless window first. MW1, MW2 and MW4 were run at the dongle on 2026-10-31 (`measurements/2026-10-31-native-wipes`); MW3, MW5 and MW6 have not been run on a Pi. Before: New chosen, the same two clips on A1 and A2, a wipe or a slide chosen under the pads, duration 2 s. `fade-kind` and `fade-steps` in `["get_property","pvj-render"]` say which one ran and how many pictures it drew; `mix.fallback` in `GET /api/status` must stay empty.
+
+| # | Do | Look for | Send back |
+| --- | --- | --- | --- |
+| MW1 | Each of the four wipes and four slides from A1 to A2, by eye at the output | The edge comes from the side the button names, straight, with no softness; the outgoing clip goes on playing; a slide uncovers A2, which does not move; no freeze before it, no flash at its end | Yes or no, and any that runs the wrong way |
+| MW2 | 4 sources of 720p clips, mapping on, final Automatic, then final full: the same transitions | At Automatic `fade-steps` about 120 in 2 s; the incoming clip drops about what a crossfade's does at this load (12 to 15 frames a second on the test node: five software decoders); no line "transitions given up", `mix.fallback` empty | Steps, drops, flips, missed vblanks, GPU share at each |
+| MW3 | A mapping with a turned surface and a wipe | The wipe runs along the surface, warped with the picture, and nothing moves outside the surfaces. The Owner decides whether this is what he wants: the still ran across the whole screen | Yes or no |
+| MW4 | During a slide: Blackout, then the same with Stop, then a pad, then an effect on through it | Blackout: black at once and both pictures come back with the transition still running if it has not ended. Stop: black. A pad: the first ends and the pad's clip comes in. Effect: on both pictures | Yes or no for each |
+| MW5 | Out of a shader pad into A1, and out of the NDI input into A1, with a wipe | The still's wipe, as on classic: the old picture stands | Yes or no |
+| MW6 | A logo or a mask on, a slide | The logo or mask stays where it is, over both pictures | Yes or no |
+
+**MW1 to MW6, on the node with the renderer's own wipes, 2026-10-31 (Pi 4, 1920 x 1080 at 60 Hz, HDMI through the dongle; `measurements/2026-10-31-native-wipes`):**
+
+| Row | Result | What was seen |
+|---|---|---|
+| MW1 | Passed, one clip | All eight, 119 or 120 steps each, no refusal, no fallback, no black frame. By eye on the strips: each comes from the side its button names; a wipe leaves the old picture standing; a slide moves the old picture off and the new one stands, both playing. The edge is straight and hard |
+| MW2 | Run | 2 s, 4 sources, mapping on. At Automatic (720): wipe 116, 119, 119 steps of 120, slide 116, 120, 120, crossfade 111, 114, 115; 58.0 to 60.1 flips a second; nothing given up. At full: wipe 82 to 92, slide 95 to 100, crossfade 74 to 94; 41.3 to 51.9 flips a second, 33 to 76 missed vblanks, nothing given up. The incoming clip's drops: 24 to 41 at 720 in the wipes and slides against 14 to 24 for the crossfade (59 to 76 against 60 to 63 in 5 s windows inside a 9 s transition). The drops are not mended: 12 to 15 of 30 frames a second while a transition runs, with the box at 99% CPU. Before this build the still gave up every time |
+| MW3 | Not run | The look under a turned surface is seen only on the node's own quad and triangle. What was seen: the wipe runs inside the surface and is warped with it, and a surface of another source plays on |
+| MW4 | Run | Blackout during a slide, 4 sources: black at HDMI, the transition went on and the picture came back; one strip frame shows the quad dark and the triangle (source 2) still lit, as the level reached source 1 first by at most a third of a second (not chased). Stop during a wipe: off at once, `fades-cut` up by one. A new play during a wipe: the first ended, the new slide running. Effect on through a wipe: 120 steps, on both pictures, the edge mirrored with them |
+| MW5 | Not run | The still's path on this build, out of a shader or the NDI input |
+| MW6 | Not run | A logo or a mask over a slide |
+
+Also run: 24 transitions in a row, all eight in turn, 4 sources, mapping on, Automatic: 24 done, 0 cut, 59 of about 5870 vblanks missed (1%), `mix.fallback` empty every time, nothing in the journal. Not run: the projector or a monitor, and a long soak (24 in a row is not one).
+
 ### Sound reactivity (D96): never run on a Pi or with a real audio input
 
 Before: the box updated to this release; `systemctl status pvj-sound` says active; `arecord --version` answers (if
@@ -694,9 +721,356 @@ Before: the node on the projector (the X27 at 1024 x 768 is fine), a shader or a
 | MK10 | The memory cap on the Pi (review of #152): 8 masks at 1920 x 1080, then 4 at 3840 x 2160 if the screen has the mode; then add a PNG that says 16000 x 16000 | Each combines (the cap is 2 GB of address space, 1 MB thread stacks); the big one is left out at once with "larger than a mask may be"; `free -m` shows no swap storm | The seconds, and anything in `journalctl -u pvj-web` |
 | MK9 | GPU and frames with 8 masks on over a shader: `vcgencmd` / the health page as in test D | The same cost as one mask (one overlay, as measured on 2026-10-19 with two) and 0 dropped frames | The numbers |
 
+### Sources and surfaces, step 1 (D101): never run on a Pi
+
+Everything of D101 ran on a software GPU in a 320 x 180 headless window. Before: the node on the X27, Setup > Renderer on **New** (its card says 4 sources on a Pi 4), four clips of the owner's at **720p30** and two at **1080p30** in the Library, each of a clearly different picture. Read `["get_property","pvj-render"]` (`flips`, `missed-vblanks`, `gl-fences`, `gl-objects`) and `["get_property","pvj-sources"]` (each source's `drawn`, `path`, `idle`) over the socket as in R1, before and after each run; CPU with `top` (per core); the GPU's busy share as in R1. The webcam aimed at the wall for SO3 and SO4.
+
+| # | Do | Look for | Send back |
+| --- | --- | --- | --- |
+| SO1 | Four sources at 720p, the X27 at **1024 x 768**: a clip on Source 1 from a pad, and on Sources 2, 3 and 4 from the Sources strip on Shape > Mapping; 2 minutes | `flips` up by about 60 a second, `missed-vblanks` up by few; each source's `drawn` up by about 30 a second; no line "Export failed" | Flips and missed vblanks a second, CPU per core, the GPU's share, the temperature at the end |
+| SO2 | The same with the output at **1920 x 1080** (Setup > Screen output) | As SO1. The decode measure says 4 at 720p fit with some room | As SO1 |
+| SO3 | Two quads side by side, the left on Source 1 and the right on Source 2 (Shows), with two different clips; then **Edit on the display**, then off | Each quad shows its own clip; their shared edge soft, no line of the wrong picture, no step every 4 pixels; the editing view shows the same | Webcam photos of the edge, shown and while editing |
+| SO4 | A crossfade on Source 1 (Mix on Crossfade, 2 s, a pad) while Sources 2 to 4 play, 10 times | Source 1 fades as in CF1; the quads on Sources 2 to 4 go on moving without a stutter; `fades-done` up by 10 | Missed vblanks during the 10 fades; anything that stuttered |
+| SO5 | A 1080p clip to Source 2 while Sources 3 and 4 play | The panel says "this may drop frames on this box; 720p clips are lighter"; whether it does drop (`missed-vblanks`, the clip's own `frame-drop-count` cannot be read on a source: watch it) | The words; missed vblanks a second with it |
+| SO6 | The fd and GL counts over many loads: pvj-render run by hand as in R1 with `--sources=4`; `ls /proc/$(pgrep -x pvj-render)/fd \| wc -l`; then 300 loads round Sources 2 to 4 (`for i in $(seq 100); do for k in 2 3 4; do echo '{"command":["pvj-source",'$k',"loadfile","/path/a.mp4"]}' \| socat - /tmp/r.sock; sleep 0.5; done; done`), stop them all, and count again | The descriptor count as before (within a few), `gl-fences` near 0, `gl-objects` no higher than after the first 30 loads, the thread count (`ls /proc/PID/task \| wc -l`) as before | The counts before and after |
+| SO7 | Blackout with Sources 2 to 4 on surfaces; then Stop (the transport) | Blackout: every surface black at once; Stop: Source 1's surfaces black, the others play on (each stops with its own Stop in the strip) | Anything that stayed lit under Blackout |
+| SO8 | The switch back to classic (Setup > Renderer: Classic) with surfaces on Sources 2 and 3 | Classic draws within about 10 s; every surface shows Source 1; the card says Source 2 and 3 "need the New renderer"; switching New on again brings the sources back as surfaces of 2 and 3 (their clips must be played again) | Yes or no, and the card's words |
+| SO9 | The source race (D101, open): the owner's mapping with the quad on Source 1 and the triangle on Source 2 (pictures of different colours), then change the mapping three times (edit on and off, Shows on each surface); `pvj-capture` after each | The triangle shows Source 2's picture every time, never black or a dim fixed colour that does not change when Source 2 plays something else | The captures, and whether a dim or black surface came back after loading another clip to Source 2 |
+
+### pvj-render phase 3, step a (D106): the renderer's own generators and effects, never run on a Pi
+
+Everything of D106 ran on a software GPU in a 320 x 180 headless window. Before: the node on a monitor or TV (not the X27 unless it must be), Setup > Renderer on **New**, Picture detail on Automatic. Read `["get_property","pvj-render"]` (`flips`, `missed-vblanks`, `fx-gl-objects`, `gl-objects`) and `["get_property","pvj-shaders"]` (each slot's `state`, `runs`, `drops`, `rebuilds`, `width`, `height`) over the socket as in R1; the GPU's busy share as in R1; CPU with `top`.
+
+| # | Do | Look for | Send back |
+| --- | --- | --- | --- |
+| FX1 | Every bundled shader for 20 s each through Vibes (or the Shaders page), at the box's Automatic heights | Each slot 0 `state` "on" (never "constants" for a bundled shader), `runs` up by about 30 a second, `drops` about 0, the picture as on classic | Per shader: `drops` a second, missed vblanks a second, the GPU's share; any that did not compile (the panel says the GPU's words) |
+| FX2 | The 5 of the 6 that dropped at 720 on classic that are still here (nebula, ridgelines, simplex-noise, aurora, lantern; nxlx-drift is gone) at 540 | As FX1 | As FX1, beside classic's numbers in D93 |
+| FX3 | The light shaders at **720** (Automatic gives them 720 at 1080p): bars, silk, tiles, stars for 60 s each | `drops` and missed vblanks near 0; the GPU's share against classic's (at most 52 percent there) | The GPU's share and drops at 720 on New; whether 720 should stay the New renderer's Automatic height for them |
+| FX4 | Move a value fast: a MIDI knob or the Shaders page's slider on nxlx-silk for 30 s | The picture follows the knob smoothly (classic: five steps a second), `rebuilds` 0, no stutter | Whether it is smooth; missed vblanks during the 30 s |
+| FX5 | An effect over a 720p clip (fx-grade, then isf-rgb-invert), 60 s each | `runs` about the clip's frame rate, the picture as on classic, no stutter | Missed vblanks, the GPU's share, the CPU |
+| FX6 | An effect over a generator (fx-kaleido over nxlx-nebula at 540) | As classic's pair; `drops` near 0 | As FX5; whether the effects' floor took the effect off |
+| FX7 | Blackout and Fade out with an effect on (isf-rgb-invert over a clip), then with a generator | Black at once under Blackout (never the inverted white), the fade smooth, the level back as it was | Anything lit under Blackout |
+| FX8 | A crossfade out of a generator into a clip (Mix on Crossfade, 2 s) | D71's still is the generator's picture (not black, not the carrier's colours), then the clip | Yes or no; a photo if it is wrong |
+| FX9 | The panel's preview (the Live page's snapshot) with a generator and with an effect on, watched for a minute (a preview every 3 s) | The snapshot shows the shader and the effect, at the screen's size; no stutter on the screen as each preview is taken | The time of one preview at 1920 x 1080; `missed-vblanks` during the minute against a minute without the Live page open |
+| FX10 | 200 changes of shader through Vibes' Next (a controller or the page) and 500 value changes; then the counts | `fx-gl-objects` back to what it was with the same shader on, descriptors and threads as before (`ls /proc/PID/fd \| wc -l`, `/task`) | The counts before and after |
+
+### pvj-render phase 3, step b (D106): chains of effects, never run on a Pi
+
+As the step a rows, with `--sources=4` (the renderer card's 4 sources) and a mapping of four quads, one a source. The chain is put on with `POST /api/effects/chain` (`curl` with the Owner's token, or the browser's console), as the panel has no control for it before step e.
+
+| # | Do | Look for | Send back |
+| --- | --- | --- | --- |
+| FX11 | Four 720p clips on Sources 1 to 4, one effect on each (fx-grade), 2 minutes | Every quad shows its clip graded; no stutter | Missed vblanks a second, the GPU's share, the CPU, against the same four clips with no effect |
+| FX12 | Three effects on Source 2 (fx-grade, isf-rgb-invert, fx-vignette) while Sources 1, 3 and 4 play | The order shows (the vignette dark at the edges after the invert); no stutter | As FX11 |
+| FX13 | Blackout, then Fade in, with an inverting effect on Source 3 | Source 3's quad black under Blackout (never white), and up with the others | Anything lit under Blackout |
+| FX14 | Stop on Source 2 in the Sources strip with its chain on; then play a clip to it again | The chain is off with the Stop; the new clip plays plain | Yes or no |
+### The 2-hour soak's memory, again (D106's soak findings)
+
+| # | Do | Look for | Send back |
+| --- | --- | --- | --- |
+| SK1 | The soak of 2026-10-24 again: 4 sources at 720p looping, the mapping on, 2 hours; `ps -o rss= -p $(pgrep -x pvj-render)` every 10 minutes | Resident memory flat after the first minutes, well under the 875 MB of before (about 150 MB less a source 2 to 4) | The readings |
+| SK3 | New drawing, a clip on source 1: `SIGKILL` to pvj-render twice in a row, then Stop in the panel, then choose New again | Classic takes over and says why; the panel still stops it (no "Permission denied"); New chosen again draws within a few seconds | Yes or no |
+| SK2 | Make pvj-render end twice in a row (`sudo kill -9` it twice within a minute), so classic draws; then System > Screen output, New, Use this | The player restarts and New draws again; the card says New | Yes or no |
+
+### pvj-render phase 3, step c (D106): passes and buffers, never run on a Pi
+
+Uploads of ISF files with PASSES (a feedback trail effect and a two-pass blur; any from the ISF library that uses PERSISTENT), on the New renderer.
+
+| # | Do | Look for | Send back |
+| --- | --- | --- | --- |
+| FX15 | A feedback trail effect over a 720p clip for 60 s | Trails that build and fade as on a desktop ISF host; no stutter; `pvj-shaders` slot 1 "on" (not "8-bit") | Missed vblanks, the GPU's share, `fx-passes-per-second` |
+| FX16 | A two-pass blur generator at 540 and at 720 lines | As on a desktop host; the slot's `width` and `height` | As FX15 |
+| FX17 | The same uploads on classic | Refused in words that say the New renderer draws them | The words |
+
+### pvj-render phase 3, step d (D106): a generator as a source, never run on a Pi
+
+| # | Do | Look for | Send back |
+| --- | --- | --- | --- |
+| FX18 | A mapping of two quads, the right on Source 2; a shader pad played to Source 2 (Play to) while a 720p clip plays on Source 1 | The right quad shows the shader, the left the clip; no stutter | Missed vblanks, the GPU's share, `fx-passes-per-second` |
+| FX19 | Three shaders on Sources 2 to 4 at once (Automatic heights) | Each quad its shader; how many hold | The same numbers |
+
+### pvj-render phase 3, step e (D106): the chain controls in the Sources card, never run on a Pi
+
+| # | Do | Look for | Send back |
+| --- | --- | --- | --- |
+| FX20 | Projection mapping > Sources on the New renderer, from a phone and a laptop: an effect on Source 2 (On, its amount, Off), a shader played to Source 3 from its Shader row | The quads change as the card says; the rows fit at 390 px | Yes or no, and a screenshot if a row overruns |
+| FX21 | With a shader on Source 2, Shaders > Picture detail to another height; then upload a new version of that shader (replace) | Source 2's shader drawn again each time, at the new detail and from the new file, with its values | Yes or no |
+
+### Run on the test node, 2026-10-24 (FX11 to FX21, SK1)
+
+One projector session on the owner's test Pi 4 with the X27. The script was `nxlx_shared/scripts/phase3_session.py`, run by the coordinator. The results are in `measurements/2026-10-25-phase3/run-20261024-160437/` (results.json, session.log, pixel captures, webcam photos).
+
+**The setup.** The New renderer, detail auto, at the mapping's 1024 x 768 screen, with a 2 x 2 mapping of quads on Sources 1 to 4. The clips were 720p H.264, decoded in software. Effects worked at 720 x 540 and generators at 960 x 720 (Automatic). The projector was on 62.0 minutes and is now in standby. Everything was put back as found.
+
+**What was not read.** The GPU's share: the run has no GPU counter. FX1 to FX10 and SK2 were not part of this session. FX20 ran through the API only, not on a phone or a laptop, so the rows were not seen at 390 px.
+
+| # | Result | Numbers |
+| --- | --- | --- |
+| FX11 | Ran. Every slot "on", no effect dropped a run. Effects on all four sources cost about a quarter of the frame rate | 4 clips plain: 58.3 flips/s, 207 missed in 122 s, pvj-render 297% of one core, the box 79%. fx-grade on all 4: **42.7 flips/s**, 2115 missed in 122 s, pvj-render 312%, the box 83%, 78.9 passes/s, each slot about 30 runs/s |
+| FX12 | Ran. A chain of 3 on Source 2 and fx-grade on Sources 1, 3, 4 | **32.3 flips/s**, 1715 missed in 62 s, pvj-render 323%, the box 87%, 121.8 passes/s; no drops in any slot (slots 2 and 3 at about 31 runs/s) |
+| FX13 | Passed | Capture mean 86.2 before, **0.0 under Blackout**, 52.6 after Fade in |
+| FX14 | Passed | The Stop left no chain on Source 2; the clip played again plain |
+| SK1 | Passed for 44 minutes (not the 2 hours of the row) | **RSS flat at 586 to 589 MB** (about 875 MB and climbing before #169); 58.8 to 58.9 flips/s, about 1.2 missed vblanks/s (328 to 371 per 5 minutes); fds 24 to 26, threads 83 to 86, GL objects 26; 58 to 60 C; the box 78 to 80%, pvj-render 296 to 299% of one core; memory available about 2.97 GB |
+| FX15 | Ran. Slot 1 "on" (not "8-bit"), no drops | A feedback trail over a 720p clip: **55.2 flips/s**, 299 missed in 62 s, 46.5 passes/s, pvj-render 313% |
+| FX16 | Ran. No program was refused; a few drops | A two-pass blur generator: **59.4 flips/s at 540** (720 x 540, 8 drops in 47 s) and **59.2 at 720** (960 x 720, 11 drops) |
+| FX17 | Passed | Classic listed each upload with passes as "it draws in several passes (PASSES), which is not supported on classic mpv (the New renderer draws it: System > Screen output)" |
+| FX18 | Ran | One shader (nxlx-silk) on Source 2 at 960 x 720, a 720p clip on Source 1: **59.4 flips/s**, 39 missed in 62 s, 10 drops |
+| FX19 | Ran, and did not hold | Shaders on Sources 2 to 4 (silk, bars, tiles) at 960 x 720: **50.5 flips/s**, 867 missed in 92 s, **545 to 570 drops per shader** in 92 s (about one run in five); pvj-render only 51% of one core, the box 15% |
+| FX20 | Passed through the API (the calls the Sources card makes) | Effect on, amount 0.4, off, a shader to Source 3: every call 200, the state as sent |
+| FX21 | Passed | Source 2's shader was built again on the change of Picture detail and on the replaced upload, with its value (level 0.8) kept |
+
+**What it means.**
+- **Effects or shaders on all four sources at once cost a quarter to almost half the frame rate on a Pi 4.** Four effects took 58.3 down to 42.7; a chain of 3 plus three effects took it to 32.3; three generators on Sources 2 to 4 took it to 50.5 and dropped about one run in five. One program on one source costs little: FX15, FX16 and FX18 held 55 to 59.
+- **Most likely GPU-bound, not proven.** With four clips decoding, the CPU sat at 79% of the box and rose only to 83 to 87% with the effects, while the frame rate fell by a quarter to a half. In FX19 the CPU was at 15% of the box and the shaders still dropped about one run in five (545 drops against 2450 runs on Sources 3 and 4). Nothing measured the GPU itself, so this is read from the CPU staying flat, not from a GPU counter.
+- **For D108's spike.** The program pass draws the whole picture every frame, where an effect here ran about 30 times a second. So expect it to cost at least what one effect costs, not less. Two decks decode two clips, not four, which leaves the CPU room; the GPU is the limit to measure. The spike should therefore measure, at 540 and at 720:
+  - deck B decoding while deck A crossfades and the program pass runs, as planned;
+  - the same with one effect on each deck.
+
+  Skipping the pass when nothing changed matters more than the design said.
+- **For the effects' cost estimate.** It judges one program alone (light, medium, heavy), and every program here was light enough alone. What lost frames was several at once. So a warning needs a box-wide count. One option is the passes a second the renderer already reports (`fx-passes-per-second`), weighted by each program's area. The box would warn as D101's source warning does. From this one run, about 80 passes a second of a light effect at 720 x 540 (four fx-grade) already cost a quarter of the frames on a Pi 4; a threshold needs more than one run to set.
+
+### The overnight soak on the test node, 2026-10-30 (SK3)
+
+10 hours on New: 4 sources at 720p in software, the mapping on, an output of 1920 x 1080 at 60 Hz, 1199 crossfades on source 1, all with a dongle at the real HDMI. Results in `measurements/2026-10-29-soak` on the HP.
+
+| Row | Result | What was measured |
+|---|---|---|
+| SK3 | **Failed, before this fix** | Classic took over and said why, but its socket stayed owner-only (mode 600), so every panel call got "Permission denied" and New chosen again did nothing. To be run again on the fix |
+| SK3 | Passed on master 331e6b6, 2026-10-30 | Killed twice: classic in 0.8 s and said why; socket mode 660; Stop in the panel answered 200; New chosen again answered 200 and was drawing in 3.1 s. Run by `nxlx_shared/scripts/sk3_check.py` |
+
+### The render thread at real-time priority (fix 1 of the playback measurements, 2026-10-30): not yet run on a node
+
+Everything of this ran on a WSL kernel, never on a Pi. Before: the node on a release with this change (the unit is rewritten by the installer or an update, then `sudo systemctl daemon-reload` and Restart player), Setup > Renderer on **New**, 4 sources at 720p30 playing and the mapping on, 1920 x 1080 at 60 Hz. The numbers to beat come from a scratch build in 20 s windows: 40.7 flips a second as shipped, 45.3 with this change, no flip longer than 2 vblanks.
+
+| Row | What to do | What should happen | What it would mean if not |
+|---|---|---|---|
+| RT1 | `cat /proc/sys/kernel/sched_rt_runtime_us /proc/sys/kernel/sched_rt_period_us; systemctl show pvj-player -p LimitRTPRIO; journalctl -b -u pvj-player --no-pager \| grep "render thread"` | `950000` and `1000000`; `LimitRTPRIO=1`; one line, "the render thread runs at real-time priority 1 (SCHED_RR)", for each start of pvj-render | `-1` as the first number: the kernel's throttle is off and a runaway real-time thread could hold a core; do not ship until that is settled. "stays at normal priority" with a reason: the unit was not reloaded, or the limit did not reach pvj-render |
+| RT2 | `ps -L -o tid,cls,rtprio,pri,pcpu,comm -p $(pgrep -x pvj-render)` while 4 clips play | Exactly one thread with class `RR` and rtprio `1`: the one whose tid equals the pid. Every other thread `TS` (or `B`) | A second real-time thread (a decoder, the socket's thread): the flag that keeps children at normal priority did not hold |
+| RT3 | `grep Cap /proc/$(pgrep -x pvj-render)/status` | `CapEff` and `CapPrm` all zeros: the right came from the limit, not from a capability | Any capability set: the unit grew a right it should not have |
+| RT4 | `q() { echo '{"command":["get_property","pvj-render"]}' \| sudo socat - /run/pvj/player/player.sock; }; q; sleep 20; q`; take `flips` from each (R1 names the fields) and divide the difference by 20 | About 45 flips a second (the scratch build reached 45.3; as shipped 40.7), and the picture unchanged: the mapped quad and triangle where they were, black round them | Not above 40.7: the change did nothing on this build. A picture that differs (a black edge, a stale strip) is a bug in the clear: report it |
+| RT5 | During RT4, open the panel from a laptop and click around; `uptime` | The panel answers as usual; the load average is that of 4 decoders, not higher than before the change | A panel that stalls for seconds: the throttle is not holding; stop the player and report the RT1 numbers |
+| RT6 | Setup > Renderer: **Classic**, play a clip; `ps -L -o tid,cls,rtprio,comm -p $(pgrep -x mpv)` | Every mpv thread `TS`: classic uses none of the limit | An `RR` thread under mpv |
+
+**RT1 and RT4, on the shipped build, 2026-10-30 (the test node, 1920 x 1080 at 60 Hz):**
+
+| Row | Result | What was measured |
+|---|---|---|
+| RT1 | Passed | 45.6 to 46.2 flips a second over 12 minutes, counters only, 4 sources at 720p, mapping on, 1080p60. Read today: `950000` and `1000000`; `LimitRTPRIO=1`; 34 lines "real-time priority 1" and none "stays at normal priority" this boot. Those flips are also what RT4 asks for: above the 40.7 of before, and the picture was not looked at |
+
+### The display scaler (D108): counters and the dongle on the test node, the projector not yet
+
+Numbers and what they do not show are in D108. Before: the node on a release with this change, New, mapped surfaces on, 4 clips of 720p ready, a screen or the dongle on the HDMI. `q()` is RT4's. Setup > Screen output, renderer card, is where **Final picture** is chosen.
+
+| Row | What to do | What should happen | What it would mean if not |
+|---|---|---|---|
+| RT7 | Final picture **720 lines**. Play 4 clips with the mapping on; `q; sleep 20; q`, then watch 60 s of the dongle's capture | About 60 flips a second, `final-lines` 720, `missed-vblanks` hardly moving. At HDMI no more than a few gaps over 2 vblanks a minute. The picture fills the screen with nothing of the unused buffer at any edge | A stale strip at the right or bottom edge: the plane shows more than the corner. Flips below 60: the build differs from the node's measurement |
+| RT8 | Final picture **Automatic**. One clip, mapping off; capture while running `pvj-final 720` and `pvj-final full` on the socket every second for 30 s | No flash, no black frame, no frame out of step, and no visible jump of the picture at a switch | A flash or a dropped frame is a bug in the commit. A small jump is the sub-pixel shift of the scaler README (+0.4 px): report it, it is not chased here |
+| RT9 | Automatic. Start 4 clips with the mapping on and wait 10 s; stop one source and wait 60 s; capture a wipe in the middle of a switch | The card's line goes to 720 lines with the reason, then follows the rule of D108. No change to the mapped surfaces' place on the screen at either size | Surfaces that move at a switch: HOOKED_size or the viewport is wrong |
+| RT10 | At 720 lines look at the owner's mapping with thin lines, on the projector and on a monitor, against **The screen's own size** | Softer edges, and thin lines in squeezed areas may break into dashes. Judge whether Automatic is acceptable for a show | The owner may want the setting left at full for fine mapped work. The edge of a surface may differ from the scratch build's picture (D108, the warp table) |
+| RT11 | At 720 lines put the logo, the masks and a text up; `GET /api/mapper` | Masks and the logo where they are at full size; `screen` is the output's | An overlay out of place: something read the draw size |
+| RT12 | Unplug the screen and plug in a 720-line one or lower, or set a mode of 720 lines or fewer | The card says "the output has no more than 720 lines", the box plays at the screen's own size, no restart loop | A failed start: the refusal must never stop pvj-render |
+
+**RT7 to RT12, on the deployed build, 2026-10-31 (the test node, master 3d4e9ca, 1920 x 1080 at 60 Hz, HDMI through the dongle; `measurements/2026-10-31-hdmi`):**
+
+| Row | Result | What was measured |
+|---|---|---|
+| RT7 | Passed | 4 clips, mapping on, 60 s, final 720: 60.0 flips a second, missed 0.0 a second, `final-lines` 720, 3 gaps over 2 vblanks in 60 s, nothing of the unused buffer at any edge (a grey picture reads 43 up to the last column and row at both sizes) |
+| RT8 | Passed | Automatic, one clip, a switch every second for 30 s: each switch is one step between two frames, with no flash, no black frame, no torn or extra frame. The visible effect is the +0.4 px step (a change of 27 dB in PSNR on a fine PNG, 49.6 dB on a clip), reported and not chased |
+| RT9 | Passed | For the line and the rule: to 720 about 3 s after the 4th source started, with the reason text, and back to full 21 s after source 4 stopped (33 s or more after the switch down, as D108 says). The wipe in the middle of a switch was driven by the socket, not by the rule, which cannot be timed. `/api/mapper` gave `screen` 1920 x 1080 and the same vertices at both sizes; the mapped edges moved 0.01 to 0.60 px |
+| RT10 | Not settled | The dongle cannot show the look on the projector or a monitor, or whether the owner's own mapping with thin lines is acceptable. What it shows: thin lines in a squeezed quad break into dashes at 720 and stay whole at full. Needs the owner's eye on a projector. The X27 was not touched |
+| RT11 | Passed at the dongle | A 1920 x 1080 PNG with alpha (12 px red frame at the edge, blocks, a bar) and the renderer text over a grey picture: the frame is on rows 0 to 11 and 1068 to 1079 and columns 0 to 11 and 1908 to 1919 at both sizes, the bar at x 100 to 499 (101 to 499 at 720), edges softer at 720. `screen` is 1920 x 1080. The logo is the same thing as a mask |
+| RT12 | Not run | It changes the box's display mode (a system setting, with confirm and revert), so it was left; the dongle was also set to 1920 x 1080 only |
+| A long run | Not settled | The longest run was 3 minutes |
+
+Also seen: 54 switches on static pictures and 60 on a playing clip showed no black frame beyond the clip's own loop seam. With 4 sources and the mapping on, a wipe or a slide ran choppy (26 to 33 of 60 steps) and the box's guard gave up, the same at full and at 720 (D108 says this already); no black frame in the captures. Not shown: the projector or a monitor, masks other than one PNG, the wipe in the middle of a switch made by the rule rather than the socket, a Pi 3.
+
+### The gap when one NDI source is switched to another (D113): not yet run on a node
+
+Before: the node on a release with this change (the helper and the panel both new), two NDI senders on the network, one 1920x1080@60 and one 1280x720@30 as in `measurements/2026-10-31-ndi-switch`, the HDMI dongle watching the screen. The unit tests prove the order of the calls and the waits with a stand-in for NDI's library and a stand-in for the player; none of this has been run against the real library, mpv 0.40 or a screen.
+
+| Row | What to do | What should happen | What it would mean if not |
+|---|---|---|---|
+| NS1 | The same 21 switches as before (A and B in turn, 16 s apart, through the panel), sound off (the default) | The longest time with no new frame at the dongle is shorter than the 0.83 s median of 2026-10-31, and the old picture is on the screen until the new one's first frame | The rest is mpv letting go and loading, or mpv shows black when its pipe stands still |
+| NS2 | The same, with sound switched on (Setup > NDI), both senders without sound | The first switch to each is as long as before; from the second on about half a second shorter | The wait for sound is still being paid, or a source without sound is not remembered |
+| NS3 | Sound on, a sender that has sound (NDI Tools Test Patterns with sound, or a Mac): switch to it, away, to it again | Sound plays after every switch, in step with the picture (`avsync` as before); no switch is slower than the first | A source with sound was taken for one without, or sound starts late |
+| NS4 | Sound on: a sender without sound is switched to twice (it is now remembered as silent), then start its sound | Within a second or two the panel opens it again by itself and the sound plays; the next switch to it plays sound at once | Sound that turns up late is lost, or the source stays labelled as silent |
+| NS5 | Press a source that is on the list but sends no picture (switch the sender off after the list was read, or a sound-only sender) while another source plays | 409 with the reason on the page, and the screen goes black as a failed press always did; the old picture does not stay frozen | The old picture stands for ever after a failed press |
+| NS6 | Press the source that is already on the screen, and press the other source twice quickly | Each ends on the source of the last press; no frozen picture; `journalctl -u pvj-ndi` has no "did not hand the new source over" line | A hand-over lost to a second press |
+
+Results, 2026-10-31, test node on master with D113, mpv 0.40.0 (measurements/2026-10-31-ndi-gap):
+
+| Row | Result | Seen |
+|---|---|---|
+| NS1 | Passed | 21 of 21. Longest time with no new frame 0.25 s, range 0.20 to 0.32. The old picture holds, then about 0.10 to 0.20 s of black, then the new one: old frame to new frame 0.33 s or 0.47 s by source |
+| NS2 | Passed | First switch 0.82 s; from the second about 0.45 s |
+| NS3 | Passed, not listened to | Written with a 440 Hz sender of ours. Sound after every switch, nothing dropped, avsync about 0, no switch slower than the first |
+| NS4 | Passed | Reopened with sound by itself 1.52 s after the tone began |
+| NS5 | Passed, not as written | 409 after 6.3 s with the reason on the page. The old picture holds for those 6 s, black for about 0.6 s, then the old source returns by itself |
+| NS6 | Passed | Each ended on the last press; no "did not hand the new source over" line in 25 minutes |
+
+### An effect over a paused clip on classic mpv (D115)
+
+Before: a node running classic mpv (not pvj-render), a clip from the library, the screen watched by eye or by the HDMI dongle. The unit tests prove the order of the commands and a real mpv on a software GPU proves the shown frame passes through the effect (its pass list); nobody has seen a Pi's screen.
+
+| Row | What to do | What should happen | What it would mean if not |
+|---|---|---|---|
+| PC1 | Play a clip, press Pause, put an effect on (an invert is the plainest), then take it off | The screen shows the effect within a frame or two of the press, and the plain picture within the same time of Off; the panel answers at once, not after 4 s | The seek did not redraw on this mpv or this GPU (0.40, V3D) |
+| PC2 | Same, with the effect on: move an amount or a value slider while paused | The frozen picture follows the slider; the clip does not creep forward or back (watch the time) | The seek moves the clip on this file type, or redraws too slowly for a slider |
+| PC3 | Same with a long 1080p clip paused deep in it (a few seconds past a keyframe), and with a still picture and an NDI source | The 1080p redraw takes under about a quarter of a second; the picture and the NDI source take the effect at their next frame without an error on the page | A long GOP makes the exact seek too slow on a Pi 4, or a source that cannot seek is upset by it |
+| PC4 | New renderer: pause a clip, then turn a mapping on or change a surface | The screen follows within a frame or two (D115 did not change this path: the mapping's list goes to libmpv, which may only redraw its cached frame) | The mapping shows only at the next frame: it needs the same cure in the renderer |
+
+2026-10-31, node on master bb20b04, seen through the HDMI dongle, nobody at the screen. The dongle's own latency, 0.13 s on the New renderer and 0.22 s on classic, is inside these times. Numbers in `measurements/2026-10-31-clock-paused`.
+
+| Row | Result | Seen |
+|---|---|---|
+| PC1 | Passed | Effect on 0.24 to 0.32 s, off 0.14 to 0.20 s, the plain picture back exactly, time-pos unchanged. The panel answers On in 0.84 to 1.0 s, after the picture has changed |
+| PC2 | Passed | Each slider step 0.13 to 0.24 s, time-pos unchanged |
+| PC3 | Partly run | 1080p, a 2 h clip paused deep in it and a 20 s clip: on 0.22 to 0.26 s, off 0.14 to 0.20 s. Not run: a still picture and an NDI source |
+| PC4 | Follows, about 1 s late | 0.86 to 1.34 s to turn on or change a surface, 0.34 s to turn off. Not a redraw fault: the time is the mapping being built, 0.6 s for the table and 0.3 s for the shader with the 2 surfaces on a Pi 4, measured apart from the player. So it is the same over a playing clip, and the row's "a frame or two" holds only for off |
+
 ### What to send back
 
 The output of checks 1 to 7 and 13, the `journalctl` tail for anything that failed, and a note of what you saw on screen. Say clearly what you did **not** test.
+
+### The box clock (D116)
+
+Before: a box on a release with this change, the sound switch on (the Owner's) with no capture device chosen, and a pad or button mapped to `clock_tap` (Learn) or OSC `/pvj/clock/tap` from TouchOSC. Also: watch the OSC `/nxlx/sound/beat` messages across a hand-over and a negative nudge; none should be off the grid or twice. The unit tests prove the clock, the routes, the actions and what the levels record says, with a fake clock; none of it has met a real hand, a Max patch or a band. Do not run it on the node that is soaking.
+
+| Row | What to do | What should happen | What it would mean if not |
+|---|---|---|---|
+| BC1 | Tap the pad about 8 times at a steady 120 BPM, then stop; `curl -s localhost/api/tempo` (with a device token) every 10 s for a minute | The tempo within about 2 BPM of 120 after 4 taps; after you stop, the state stays `running`, `source` `tap`, the tempo unchanged for as long as you wait, and `age` grows | The averaging, the hold, or the flywheel |
+| BC2 | With a shader mapped to the beat (Sound page, source Beat) and no capture device, tap a tempo; watch the picture | The shader moves on the tapped beat, and goes on after the taps stop | The consumer path (levels, shader input) |
+| BC3 | After a `clear`, send `/nxlx/sound/in/bpm 128` and `/nxlx/sound/in/beat` from Max (source "Levels sent in over OSC", the sender listed), then stop sending for 10 s | `source` `osc`, tempo 128, the beat lands on the sender's beats; after 5 s of silence it is held, not dropped | The hand-over, the OSC input |
+| BC4 | After a `clear`, a capture device on music at a steady tempo, no tap and no OSC | `source` `sound` only while the confidence is 0.5 or more; the phase does not jump when a single stray hit is made (clap off the beat once) | The trust rule for sound |
+| BC5 | Read the CPU of the panel with the clock running for 10 minutes (`top -b -n1 -p $(pgrep -f pvj-web)`) | No measurable difference from before | The cost; not measured here |
+
+2026-10-31, node on master bb20b04. Numbers in `measurements/2026-10-31-clock-paused`.
+
+| Row | Result | Seen |
+|---|---|---|
+| BC1 | Passed | Through the API, not a pad. 119.93 BPM after 4 taps, 119.77 after 9. Held 620 s as `running`, `tap`, tempo unchanged, `age` growing |
+| BC2 | Partly run, found a fault | The shader input and the picture moved after the taps and went on after them. But the mapping sent 2 values a second, so a 100 BPM beat came out as a slow 0.3 Hz pulse. Fixed by sending up to 20 a second on the New renderer; rerun below |
+| BC3 | Passed | From a script, not Max. `osc` and 128 in 0.3 s, beats +3.7 ms on average (-2 to +6), held after 5 s. `in_hosts` wants the address the node sees: from WSL that is the Windows host, and with the wrong one the messages were silently not taken |
+| BC4 | Not run | Needs music on a capture device |
+| BC5 | Passed, sound off | pvj-web 2.86 percent of a core without the clock, 3.01 percent with it. The sound-on path is measured with the rerun of BC2 |
+
+BC2 rerun, 2026-10-31, node on master 7553553, seen through the HDMI dongle, nobody at the screen. Numbers in `measurements/2026-10-31-clock-paused`.
+
+| Measure | Seen |
+|---|---|
+| The beat | Radial gradient on Beat at 100 BPM from 9 taps: 1.66 Hz in the dongle's picture against a beat of 1.667 Hz, 46 rises in 28 s against 46.6 beats, 0.561 to 0.642 s apart, in the 30 s after the last tap. Before: a 0.30 Hz alias |
+| Sound-on cost, mapping off | pvj-web 2.61 percent of a core, pvj-render 17.7, box 6.0, no missed vblanks in 121 s |
+| Sound-on cost, mapping at 20 a second | pvj-web 9.85 percent of a core, pvj-render 21.8, box 8.9, no missed vblanks in 121 s. The mapping costs about 7 points of the panel and 4 of the renderer |
+
+### Ableton Link (D117): run on a node beside a stand-in, not yet with a second machine
+
+The unit tests prove the clock's word, the hand-over, stale records and who may switch it, with a fake helper and a fake clock; `tests/test_pvj_link.py` runs the real helper beside a stand-in peer on one machine. None of it has met Ableton Live, a phone or a real network.
+
+Before: a box on a release with this change, `pvj-link` built (`ls /opt/pvj/current/render/pvj-link`), a Link program on another machine on the same network, the Owner on the Sound page. `curl -s localhost/api/tempo` means with a device token.
+
+| Row | What to do | What should happen | What it would mean if not |
+|---|---|---|---|
+| LK1 | Link on the box switched on, nothing else in a session, for a few minutes; then switch Link on in the program, which is set to a tempo that is not 120 | The program keeps its own tempo. `GET /api/tempo` goes from `state` `listening` to `following`, `peers` 1, in about 2 s, and the clock's `source` is `link`. The box's tempo is the program's | The wait for someone, or a network that drops multicast |
+| LK2 | Change the tempo in the program | The box's `bpm` follows within a second, and the program's tempo is never moved by the box | The panel's reading; a look at the file is at most 1 s apart |
+| LK3 | Put a shader on the beat (Sound page, source Beat), or watch OSC `/nxlx/sound/beat`, against the program's metronome or a recording of the screen | Beats land with the program's; a steady offset is latency to measure, a drift is a fault. Bar position 0 is the program's bar 1 | The clock conversion (CLOCK_MONOTONIC against Link's clock), or the place in the bar |
+| LK4 | Switch Link off in the program, or close it | `peers` 0 within a few seconds, `state` back to `listening`; 5 s later the clock hands over by D116's rules (a tap before it, else held and running) and the beat does not jump | The hand-over |
+| LK5 | Link off on the box (the default), and again on with no peers: `sudo tcpdump -ni any port 20808` for a minute with no other Link program running | Off: nothing, and `ss -u -a` shows pvj-link holds no socket. On and alone: nothing sent by the box on port 20808 (one IGMP join is the network's own) | The promise that off sends nothing |
+| LK6 | `top -b -n1 -p $(pgrep -x pvj-link)` while following, with a clip playing; and `GET /api/tempo` for `cpu_percent` | Under 1 percent of one core, and the panel no higher than before | The cost; not measured on a Pi |
+| LK7 | A box without the package: `sudo systemctl stop pvj-link`, or an install where it was missing | The page says Link is not available, the switch keeps its value, everything else runs. With the service back, the helper is told on within a few seconds | The missing-helper path |
+
+2026-11-01, node on master 524014b. Numbers in `measurements/2026-11-01-link`. The peer was the repo's stand-in, on the node itself: WSL's network is NAT here and multicast does not cross it. So nothing below has crossed a network, a tempo has come from no real Link program, and nobody watched or listened. Rows LK8 to LK10 are extra checks of this run.
+
+| Row | Result | Seen |
+|---|---|---|
+| LK1 | Passed, one machine | Alone for 120 s: `listening`, 0 peers, no clock. Peer at 97: `following` in 1.82 s, the peer's tempo never moved |
+| LK2 | Passed, one machine | 97 to 135 within one 0.25 s sample; the peer stayed on its own values |
+| LK3 | Passed, one machine, no ear | 985 samples over 197 s: 10.1 ms between box and peer, inside the 30 ms of a request, 0.33 ms of drift a minute. Both ends read one clock, so this cannot show a bad conversion between machines |
+| LK4 | Passed, one machine, no tap | 0 peers in 0.23 s, `listening` 2 s later, held at 135 at 5.5 s, largest beat error 0.016. The branch with an earlier tap was not tried |
+| LK5 | Passed | Off: no socket, nothing on port 20808 in 60 s. On and alone: the group joined, nothing sent. Captured on eth0 by a small script, tcpdump is not on the node |
+| LK6 | Partly run, one machine, no clip | pvj-link 0.6 percent of a core following, the panel no higher. No clip was playing, so the row's load is still to do |
+| LK7 | Passed, one machine | Service stopped: `unavailable` in 0.83 s, the switch kept, no failed request in 280. Back: following 2.3 s after the start returned |
+| LK8 | Passed, one machine | 2000 junk datagrams a second for 30 s to the group: pvj-link 0.42 percent, same pid. That they reached the socket is read from the CPU alone |
+| LK9 | Passed, one machine | Restart while following: following again 3.35 s later, the panel told the new helper by itself |
+| LK10 | Passed | `systemd-analyze security pvj-link` 1.9, its own user, CPU quota and memory limit set. Off after a reboot not tested |
+
+### The loop lists (D118): run on a node, 2026-11-01
+
+`tests/test_looplist.py` holds which loads take a list, every fall back, the translation, seeks, Loop off and on, pruning and the refusal, against the stand-in; `LoopListTest` in `tests/test_pvj_render.py` runs lists, crossfades, a source, Loop off, the end of a list and a clip gone at a join on the real renderer, headless, and reads no timing. Plain mpv on the node gave the facts in D118. The seam numbers are the two measurements', from a scratch build with lists written by hand.
+
+Before: a box on a release with this change, New renderer, 4 sources, mapping off. A clip's first load after a panel start plays plain: play it twice. The renderer's trace is the scratch patch of `measurements/2026-10-31-loop-seam/scripts/patch_trace.py`. `settings.json` `renderer.loop_lists` false and a restart of `pvj-web` is the way back, then a load.
+
+| Row | What to do | What should happen | What it would mean if not |
+|---|---|---|---|
+| LL1 | One 720p clip on Source 1, played twice, 2 minutes, the trace on | Hold at each join one frame (34 ms at 30 fps, 17 at 60), against 117 to 167 with the switch off | The list is not what plays, or the queue is off |
+| LL2 | Lumia 1, Lumia 2, CRT and Oscilloscope Spirals on sources 1 to 4, each played twice, 2 minutes | 34 to 57 ms at the joins, 60.0 flips a second, the box as busy as before | The load the measurements saw has changed |
+| LL3 | A 1 s clip, 100 minutes, or `journalctl -u pvj-player` over a night | Every join clean, RSS flat, no `Invalid video timestamp`, no end of the renderer | Joins add up to something over hours |
+| LL4 | A clip with sound on the HDMI output, by ear, and with `aid` on through a crossfade | No click at a join; 50 ms of picture hold at most, as measured; sound goes over in a crossfade as for a plain clip | The list costs sound. Nobody has listened yet |
+| LL5 | Crossfades, a wipe and a slide into a list, out of one, a clip to itself, and a list to a list, with mapping on and off | Runs to the end, no black, no flash, the right clip after it. On the panel the clip's name and time as ever | The outgoing side lost its file, or the renderer's layers |
+| LL6 | Loop off while a list plays, near the end of a pass and in the middle; Loop on again before the end; then the panel's Loop on over a clip that played with ending Stop | Ends at the end of that pass as a plain clip does, nothing shown of the next pass; on again goes on with no jump; a plain clip stays plain | `end` is a frame off, or the panel reads the wrong state |
+| LL7 | A clip on a USB drive, played twice. A read-only drive if there is one | The list plays, and `ls -l /run/pvj/web/loops` shows the link. The panel names the clip on the drive | The player cannot follow the link from the panel's folder |
+| LL8 | While a list plays: delete the clip in the library. Then again with a USB clip, pulling the drive | The picture ends cleanly at the next join (on USB at the first failed read), black, idle in `/api/status`, the log says `cannot be read any more`, pvj-render's pid is the same, `top` shows no spinning core, the next pad plays | The guard does not catch this form of the failure. A pulled drive's read error was not tried anywhere |
+| LL8b | With the switch off, the same USB pull under a plain looping clip | As on a release without lists: no change from this work | The guard reaches further than a list |
+| LL9 | A clip of a few seconds with the list made short: leave a 0.2 s clip looping for 200 s, or a 2 s clip for 2000 s | One ordinary seam at the end of the list, and it goes on; position and length on the panel stay right | The wrap is not what plain mpv showed |
+| LL10 | With sources 1 to 4 on lists, 1 hour; compare with the switch off | RSS within 12 MB a source of the plain run, no growth over the hour, CPU within the node's own spread | A leak, or the queue costs more than measured |
+
+2026-11-01, node on master 4ab1168. Numbers in `measurements/2026-11-01-loop-lists`. Holds are minimum, median, maximum at the joins, from the renderer's trace. Off means the switch off, same clip and run length. Nobody watched or listened.
+
+| Row | Result | With lists | Switch off |
+|---|---|---|---|
+| LL1 | Passed | 33.4, 33.5, 34.5 ms | 83.8, 84.6, 116.7 ms |
+| LL2 | Passed | Medians 34.4 to 36.2 ms, largest 53.1. 60.01 flips a second, box 78.5 percent | Medians 117 to 179 ms. 59.99 flips, box 77.4 percent |
+| LL3 | Passed, 30 minutes, not 100 | 1 s clip, 1807 joins: 33.4, 33.6, 165.8 ms, the one large hold at the end of the list. RSS flat for the last 10 minutes, same pid, no `Invalid video timestamp` | 1658 joins: 116.7, 134.0, 184.5 ms |
+| LL4 | State half passed, not heard | 49.3, 49.9, 50.5 ms. `aid`, codec and output unchanged, through crossfades too. Nobody has listened | 83.9, 100.3, 116.0 ms |
+| LL5 | Passed | 24 transitions, mapping off and on, all to the end, right clip and length on the panel. No dark capture, but it samples 7 times a second, so a flash under about 150 ms is not excluded | The same lows |
+| LL6 | Passed | Loop off in mid pass and near the end: ended within 0.1 s of what the panel said, nothing drawn after. Off then on: no jump, 33.5 ms. Loop on over an ending Stop stays plain and loops | The same |
+| LL7 | Not run | No USB drive on the node | |
+| LL8 | Delete half passed | Ended at the next join, 12.4 s later, nothing drawn after, idle, `cannot be read any more` in the log, same pid, next clip played. The drive pull is not run | A plain clip plays on from its open file |
+| LL8b | Not run | Needs a drive pull | |
+| LL9 | Passed | 0.2 s clip, 270 s: one hold over 50 ms, 165.6 ms at the end of the 200 s list, then on. The panel stayed right | A hold of 117 to 181 ms at every pass |
+| LL10 | Passed, with a note | 1 hour, 4 sources: medians 34.2 to 36.6 ms, 9 of 717 holds over 100 ms. RSS 339 to 364.6 MB, flat for the last 35 minutes, not from the start, and 3 MB under the plain run. 299 percent CPU, 0.009 missed a second | Medians 134 to 170 ms. RSS 367.9 MB, 296 percent CPU, 0.009 missed |
+
+The first use of the switch found a fault: `renderer.loop_lists` false reached the file the player watches, the player took it for a new wish and ended pvj-render every 3 s, 124 times in 7 minutes, with no picture. That is fixed (`tests/test_renderer.py`) and was rerun on the node on master 617d8ae (`measurements/2026-11-01-loop-lists`): with the switch off the player ran 60 s with no restart, pvj-render kept its pid, and the switch went back on the same way. The switch-off runs above took the key out of that file by hand.
+
+### Final soak, 2026-11-01
+
+2 hours on the node, master 617d8ae, bounded to 7200 s. New renderer, 4 sources on 720p clips, all on loop lists, mapping on with 2 surfaces, Link off, 11 crossfade cycles on source 1 (22 transitions of 2 s). Numbers in `measurements/2026-11-01-final-soak`. Everything comes from the renderer's trace and counters: nobody watched the screen, and no switch-off run was made for comparison.
+
+| Measure | Seen |
+|---|---|
+| Flips and misses | 59.98 flips a second, 0.025 missed a second (181 in all, 34 of them near a transition) |
+| Load | Box 76.0 percent, pvj-render 291 percent of a core, 46.7 C rising to 57.0 C (58.4 at most), throttled 0x0 at every reading |
+| Memory | RSS 346 MB at the start, stepping up at transitions to 427 MB by 70 minutes, then 411 to 432 MB to the end. Bounded, not flat: it does not move between transitions. fds 28 to 31, threads 83 to 86 |
+| Process | The same pvj-render pid at all 120 readings, 0 player restarts, 0 `Invalid video timestamp`, no log lines of concern |
+| Joins | 1399 holds, medians 34.1 to 36.2 ms, p95 50.3 to 52.4 ms, none of 100 ms or more |
+| Gaps of 50 ms or more, away from joins and transitions | 0.17 to 0.30 a second per source |
+| Frames not exactly 2 vblanks | 1.06 to 1.54 a second per source, approximate: this trace had no T lines. 1 vblank and 3 vblanks come in nearly equal numbers, so it cannot tell jitter from real frame lengths |
+| Transitions | 22 of 22 ran to the end, same pid, source 1 on a list after each |
+
+The D119 check holds: the gaps are well under the 1 to 3 a second the lock would have won back, and the count of uneven frames is at the low end of it. That is the trace's reading, and the undercount of D119 stands until a screen or the dongle has looked.
+
+**The other sources fall during a transition at this load.** D111 said it of the incoming clip. This run shows the others too. Frames drawn in each of the 6 s after a play, over all 22 transitions (`results/crossfade-per-second.txt`), where 30 is full: Lumia 2 fell as low as 8 and some fades did not touch it, under 25 for 1.1 s on average; CRT fell to 6 to 13 in every fade, under 25 for 3.8 s; Oscilloscope fell to 7 to 16, under 25 for 3.0 s. Gaps reached 300 ms. The incoming clip took 2.7 s on average to reach 25, from 1 to 4 s. Flips stayed about 60 by the trace, so the clips' motion stutters and the output does not. Nobody has looked at it. The cause is the one in D111: five software decoders on four cores. Open as its own bug. Four 720p sources are the budget (the figures in D101), and a crossfade on top of a full budget is over it.
+
+**Corrected the same day:** this script polled the node over ssh through each crossfade, and that made these figures worse than the renderer's own. See the D120 addendum. With the filter on and the node left alone, the short test gave CRT 2.67 s under 25 and Oscilloscope 1.33 to 1.83 s. With the filter off and the node left alone, 0 s. So the bug is closed by deblocking off, for 4 sources of 720p clips, and `renderer.deblock` true brings it back.
+
+### Deblocking off on a Pi (D120): DB1 to DB3 run, DB4 waits for the owner
+
+Before: a scratch build of the same setting, 6 crossfades per run, single runs, nobody watched (`measurements/2026-11-01-crossfade-decode`). Normal: CRT 2.67 s under 25 frames a second per crossfade, box 81 percent. All frames skipped: 0 s on every source, lowest second 27, box 64 percent. Stills `A.png` and `C.png` there, and the owner said to build it after seeing them.
+
+| Row | Do | Good | Bad |
+|---|---|---|---|
+| DB1 | On a Pi: `tr '\0' ' ' < /proc/$(pgrep -x pvj-render)/cmdline` | `--skip-deblock` in it | Not there |
+| DB2 | 4 sources of 720p clips, mapping on, a 1 hour soak with crossfades | Every source 25 or more through each crossfade, as the scratch build; no growth beyond the final soak's | Stutter back, or a new fault |
+| DB3 | `settings.json` `renderer.deblock` true and a restart of `pvj-web` | The player restarts once, `--skip-deblock` is gone, no restart loop | Restarts keep coming |
+| DB4 | The owner on a screen or projector, with a low-bitrate clip | The picture is acceptable | Blocks he minds: DB3 is the way back |
+
+Run 2026-11-01, master 7d6b151, nobody watched (`measurements/2026-11-02-deblock-soak`, `measurements/2026-11-02-crossfade-poll-check`):
+
+- DB1 passes: `--skip-deblock` in the running arguments.
+- DB2, the hour with mapping on and 22 transitions: no fault. 59.99 flips, 28 missed vblanks (0.008 a second), box 62.2 percent, render 235 percent, 51.6 C at the end, throttled 0x0, same pid, 0 restarts, 0 `Invalid video timestamp`, no gap of 70 ms or more away from joins. Memory rose from 364 to 426 MB in 20 minutes, then held at 434 to 437 MB from minute 30, 4.5 MB over the final soak's highest. The hour does not show what two would do. Its reading of "every source 25 or more" failed, CRT and Oscilloscope under 25 for up to 3 s, because the script polled the node through each crossfade.
+- DB2 again, without that polling, 8 crossfades a block, 14 s apart: left alone 0 s under 25 on all sources in 32 of 32, lowest second 29. One imitated panel 0 s in 16 of 16, two imitated panels 0 s in 16 of 16, lowest second 28, 0 errors. With the 0.4 s probe, CRT 1 to 2 s in 16 of 16, lowest second 6. Fades-done rose by 8 in every block, same pid.
+- DB3 passes both ways: one player restart each way, `--skip-deblock` gone and back, no second restart in the minute after.
+- DB4 waits for the owner.
+- Not covered: a real browser or phone, other panel screens, other clips or codecs, effects on, crossfades 7 s apart left alone, the picture itself.
 
 ## Safety
 

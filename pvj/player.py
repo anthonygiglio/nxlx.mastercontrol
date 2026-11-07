@@ -18,7 +18,7 @@ import sys
 import threading
 import time
 
-from . import locks, paths
+from . import locks, looplist, paths
 
 VIDEO_EXTENSIONS = (".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mpg", ".mpeg", ".ts", ".wmv")
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".gif")
@@ -38,17 +38,48 @@ def runtime_dir():
         raise PlayerError(str(e))
 
 
+CONCAT_HEAD = b"ffconcat"
+ID3_HOPS = 8                    # tags read past before the file is left alone
+
+
+def names_other_files(path):
+    """Whether the file at `path` is an ffconcat list under any name. mpv judges a file by its content, and FFmpeg's
+    concat demuxer opens the files a list names by itself, past access-references=no: a text file called x.mp4 could
+    play another file of its folder (D118, measurements/2026-10-31-loop-concat). FFmpeg looks at the very first bytes
+    and, as for any file, past an ID3 tag. A byte order mark or white space before the word is not detected
+    (seen on the node, FFmpeg 7.1.5), so neither is looked for here. Only a regular file is opened: a live input's pipe
+    would never answer."""
+    try:
+        if not stat.S_ISREG(os.stat(path).st_mode):
+            return False
+        with open(path, "rb") as f:
+            at = 0
+            for _ in range(ID3_HOPS):
+                f.seek(at)
+                head = f.read(10)
+                if head.startswith(CONCAT_HEAD):
+                    return True
+                if head[:3] != b"ID3" or len(head) < 10 or any(b & 0x80 for b in head[6:]):
+                    return False
+                at += 10 + ((head[6] << 21) | (head[7] << 14) | (head[8] << 7) | head[9]) + (10 if head[5] & 0x10 else 0)
+    except (OSError, TypeError, ValueError):
+        pass
+    return False
+
+
 def expand_media(paths, extensions=VIDEO_EXTENSIONS + IMAGE_EXTENSIONS):
-    """Expand directories into sorted media files; keep URLs and files as given."""
+    """Expand directories into sorted media files; keep URLs and files as given. Every local file of every way of
+    playing passes here (source 1, a crossfade, sources 2 to N, a list of clips), and an ffconcat list in disguise
+    ends here: it is not a playable file (names_other_files). The lists the box writes itself never come this way."""
     out = []
     for p in paths:
         if "://" in p:
             out.append(p)
         elif os.path.isdir(p):
             for name in sorted(os.listdir(p)):
-                if name.lower().endswith(extensions) and not name.startswith("."):
+                if name.lower().endswith(extensions) and not name.startswith(".") and not names_other_files(os.path.join(p, name)):
                     out.append(os.path.join(p, name))
-        else:
+        elif not names_other_files(p):
             out.append(p)
     return out
 
@@ -102,14 +133,25 @@ class Ipc:
         self.path = path
         self.timeout = timeout
         self.patient_until = 0.0    # time.monotonic() until which a request waits START_WAIT (Player._spawn sets it)
+        self.translate = None       # looplist.Clips, where a loop list may play: what is above sees a plain clip
         self._id = 0
 
-    def request(self, *command):
+    def request(self, *command, wait=None):
+        """One command and its answer, as everything above the player sees it. `wait`: seconds to wait for it instead of
+        the usual timeout (a request the player itself answers only after a bounded wait of its own, such as pvj-render's
+        build of a program)."""
+        if self.translate is not None:
+            return self.translate.request(self.direct, command, wait)
+        return self.direct(*command, wait=wait)
+
+    def direct(self, *command, wait=None):
+        """One command and its answer, as the player says it."""
         self._id += 1
         rid = self._id
         payload = json.dumps({"command": list(command), "request_id": rid}).encode() + b"\n"
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        wait = max(self.timeout, START_WAIT) if time.monotonic() < getattr(self, "patient_until", 0.0) else self.timeout
+        wait = wait if wait is not None else (
+            max(self.timeout, START_WAIT) if time.monotonic() < getattr(self, "patient_until", 0.0) else self.timeout)
         s.settimeout(wait)
         try:
             s.connect(self.path)
@@ -150,6 +192,7 @@ class Player:
     _effect, _effect_pid, effect_serial, effect_ended, effect_8bit, clears = None, None, 0, "", False, 0
     cleared_by, _seen_pid, _new_expected = "", None, False
     _pid_lock = locks.make("player.pid")
+    lists = None                                           # looplist.Lists: looping clips may play through a generated list (D118)
     _pipe_gone = None                                      # the pipe that was on the screen when mpv became another process
     _pipe, _pipe_pid, _pipe_path = False, None, None      # a live input's pipe is what was loaded last, the mpv it was loaded into, and which pipe
 
@@ -193,8 +236,44 @@ class Player:
         self._seen_pid = None       # the mpv last heard from: another one is a new player, with nothing on its screen
         self._new_expected = False  # the panel ended the player (quit): the next new one is that restart, already counted
         self._pid_lock = locks.make("player.pid")       # a leaf: the look at the pid and the count are one step
+        # The New renderer's own programs (D106): what each of source 1's slots holds (path, the player's pid), and
+        # what pvj-render said of each program file it was given.
+        self._native_loaded = [None, None]
+        self._native_verdicts = {}
+        # The chains of effects (D106 step b): {(source, slot): (path, the player's pid)}, for source 1's slots 2 and 3
+        # (slot 1 is the effects engine's own effect, above) and slots 1 to 3 of sources 2 to N.
+        self._chain = {}
 
     # --- lifecycle -------------------------------------------------------
+    def attach_lists(self, lists):
+        """From now on a looping clip may play through a generated list (pvj/looplist.py), and this side reads it as the
+        clip. The panel's own Player only: the one with the settings and the folder."""
+        self.lists = lists
+        self.ipc.translate = looplist.Clips(lists)
+
+    def _list_for(self, files, ending):
+        """The list to load for `files` with `ending`, or None for the plain load: one local video to loop on the New
+        renderer, whose length is known already. Asks nothing that takes time. The gates after this are the list's own."""
+        if self.lists is None or ending != "loop" or len(files) != 1 or not files[0].lower().endswith(VIDEO_EXTENSIONS):
+            return None
+        if not self.crossfades():
+            return None
+        return self.lists.for_clip(files[0], self._lists_playing)
+
+    def _lists_playing(self):
+        """The paths the layers play, as the player says them: what a prune must leave. Raises PlayerError."""
+        rows = self.ipc.direct("get_property", "pvj-sources")
+        return [r.get("path") for r in rows if isinstance(r, dict)]
+
+    def _front_list(self):
+        """The View of the list source 1 plays, or None."""
+        if self.lists is None or not self.lists.any():
+            return None
+        try:
+            return self.lists.view(self.ipc.direct("get_property", "path"))
+        except PlayerError:
+            return None                     # nothing loaded, or a player that does not answer: not a list either way
+
     def is_running(self):
         try:
             self._note_pid(self.ipc.request("get_property", "pid"))
@@ -282,6 +361,10 @@ class Player:
             why = renderer.serve(self, screen, detail, log)
         if why:
             renderer.fallback(self.rundir, detail, why, log)
+            # pvj-render killed leaves its socket behind: the opener below would take that old file for mpv's and open
+            # it, and mpv's own new one would stay owner-only, out of the panel's reach (the soak of 2026-10-30)
+            if os.path.exists(self.socket_path):
+                os.unlink(self.socket_path)
         # mpv creates its socket owner-only (0600) whatever the umask, so the web panel (another user, same
         # group) could not reach it. A short-lived helper waits for the NEW socket and opens it to the group.
         detach_socket_opener(self.socket_path)
@@ -314,13 +397,14 @@ class Player:
         proc.terminate()
         raise PlayerError("mpv did not become ready")
 
-    def play(self, paths, loop=True, audio_device=None, windowed=False, spawn=True, ending=None, image_seconds=None, fade=None):
+    def play(self, paths, loop=True, audio_device=None, windowed=False, spawn=True, ending=None, image_seconds=None, fade=None, style="crossfade"):
         """Play `paths` (see _play). A shader source that was on is taken off first: it draws in place of the
         picture, so it must never stay over a clip.
 
         `fade`: seconds of a crossfade drawn by the renderer itself, where the player is pvj-render with two video
         layers (`crossfades`, D98). Only from a clip to one clip: out of a generator or a live input, into a list,
         on classic mpv, or when the renderer refuses, this is a cut (the plain load below), never a black screen.
+        `style`: "crossfade", or a wipe's or a slide's name, which the renderer draws the same way (`moves`, D111).
         Without `fade` nothing here differs from before."""
         with self._lock:
             from_clip = self.fades_from_clip()
@@ -328,7 +412,7 @@ class Player:
             self.fade_refused = "" if from_clip else "not from a plain clip (a generator or a live input)"
             self._end_source()
             self._pipe, self._pipe_gone = False, None
-            if fade is not None and from_clip and self._crossfade(paths, loop, ending, fade):
+            if fade is not None and from_clip and self._crossfade(paths, loop, ending, fade, style):
                 return None
             return self._play(paths, loop, audio_device, windowed, spawn, ending, image_seconds)
 
@@ -340,13 +424,16 @@ class Player:
         return not self._pipe and self._source is None and self._carrier is None
 
     _layers_seen = None             # (pid, True or False): does that player process mix two video layers (D98)
+    _moves_seen = None              # (pid, True or False): does that player process draw the wipes and slides (D111)
     fade_refused = ""               # why the last crossfade asked of the renderer became a cut, for the log
 
     def crossfades(self, ask=True):
         """True if the player that answers now is pvj-render with two video layers, which draws a crossfade itself
         (D98). Asked once per player process (its pid, as the last word with it gave it): classic mpv answers
         "property not found" and keeps D71's still. A player that does not answer is asked again next time. With
-        `ask` False, only what is known already (for a status, which asks the player nothing)."""
+        `ask` False, only what is known already (for a status, which asks the player nothing). The same answer says
+        whether it draws the wipes and the slides (`moves`, D111), so that is noted too: one request, both answers,
+        and a status after a give-up does not show the still's reason for a wipe the renderer would draw."""
         known, pid = self._layers_seen, self._seen_pid
         if known is not None and known[0] == pid:
             return known[1]
@@ -359,22 +446,250 @@ class Player:
         except PlayerError as e:
             if str(e).startswith("mpv: ") and pid is not None:
                 self._layers_seen = (pid, False)        # mpv's own refusal: this player has no layers
+                self._moves_seen = (pid, False)         # and draws no wipes of its own
             return False
         layers = state.get("layers") if isinstance(state, dict) else None
         ok = isinstance(layers, int) and not isinstance(layers, bool) and layers >= 2
         self._layers_seen = (pid, ok)
+        self._moves_seen = (pid, isinstance(state, dict) and state.get("moves") is True)
         return ok
 
-    def _crossfade(self, paths, loop, ending, seconds):
-        """The renderer's crossfade into one clip (D98): it loads the clip into its idle layer, which is what this
-        side speaks to from then on, and mixes the two pictures itself, once a vblank, from the clip's first frame.
-        True if it took it; False, with nothing changed, where it cannot or would not (then the caller cuts)."""
+    def moves(self, ask=True):
+        """True if the player that answers now draws the wipes and the slides itself, as the same stage as the crossfade
+        (D111): pvj-render's `moves`. Asked once per player process, as `crossfades`; classic mpv and a pvj-render from
+        before that keep D71's still. With `ask` False, only what is known already."""
+        known, pid = self._moves_seen, self._seen_pid
+        if known is not None and known[0] == pid:
+            return known[1]
+        if not ask:
+            return False
+        try:
+            if pid is None:
+                pid = self._note_pid(self.ipc.request("get_property", "pid"))
+            state = self.ipc.request("get_property", "pvj-render")
+        except PlayerError as e:
+            if str(e).startswith("mpv: ") and pid is not None:
+                self._moves_seen = (pid, False)
+            return False
+        ok = isinstance(state, dict) and state.get("moves") is True
+        self._moves_seen = (pid, ok)
+        return ok
+
+    # ---- sources 2 to N (D101) -----------------------------------------------------------------------------------------
+    # pvj-render plays other clips beside the player's own picture (source 1), each on a source of its own, which the
+    # mapping shows on the surfaces that name it. Everything else in this class is source 1, as before.
+    MAX_SOURCES = 8
+    _sources_seen = None            # (pid, n): how many sources that player process has
+
+    def sources(self, ask=True):
+        """How many sources the player has: pvj-render's `sources`, 1 on classic mpv (which answers "property not
+        found") or a player that does not say. Asked once per player process, as `crossfades`; with `ask` False only
+        what is known already."""
+        known, pid = self._sources_seen, self._seen_pid
+        if known is not None and known[0] == pid:
+            return known[1]
+        if not ask:
+            return 1
+        try:
+            if pid is None:
+                pid = self._note_pid(self.ipc.request("get_property", "pid"))
+            state = self.ipc.request("get_property", "pvj-render")
+        except PlayerError as e:
+            if str(e).startswith("mpv: ") and pid is not None:
+                self._sources_seen = (pid, 1)
+            return 1
+        n = state.get("sources") if isinstance(state, dict) else None
+        if isinstance(n, bool) or not isinstance(n, int) or not 1 <= n <= self.MAX_SOURCES:
+            n = 1
+        self._sources_seen = (pid, n)
+        return n
+
+    def _source_ok(self, source):
+        if isinstance(source, bool) or not isinstance(source, int) or not 2 <= source <= self.sources():
+            raise PlayerError("this player has no source %s (it has %d)" % (source, self.sources()))
+
+    def play_to(self, source, paths, ending="loop", image_seconds=None):
+        """Play `paths` on source `source` (2 to N). A cut: the crossfade is source 1's alone in this step. `ending`
+        as for play ("hold" keeps the last frame). The source plays with no sound."""
+        if ending not in ENDINGS:
+            raise PlayerError("ending must be one of " + ", ".join(ENDINGS))
+        self._source_ok(source)
+        files = expand_media(paths)
+        if not files:
+            raise PlayerError("no playable files found")
+        single = len(files) == 1
+        shows = "inf" if single or image_seconds is None else max(0.1, min(3600.0, float(image_seconds)))
+        opts = "keep-open=%s,image-display-duration=%s" % ("yes" if ending == "hold" else "no", shows)
+        target = self._list_for(files, ending)
+        if target is not None:
+            try:
+                self.ipc.direct("pvj-source", source, "loadfile", target, "replace", opts + "," + looplist.QUEUE)
+            except PlayerError:
+                target = None               # a renderer that refuses it: the clip itself, as always
+        if target is None:
+            target = files[0]
+            first = True
+            for f in files:
+                self.ipc.request("pvj-source", source, "loadfile", f, "replace" if first else "append", opts)
+                first = False
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            try:
+                if self.ipc.direct("pvj-source", source, "get_property", "path") == target:
+                    break
+            except PlayerError:
+                pass
+            time.sleep(0.05)
+        looping = ending == "loop"
+        self.ipc.request("pvj-source", source, "set_property", "pause", False)
+        self.ipc.request("pvj-source", source, "set_property", "loop-file", "inf" if (looping and single) else "no")
+        self.ipc.request("pvj-source", source, "set_property", "loop-playlist", "inf" if (looping and not single) else "no")
+
+    def stop_source_clip(self, source):
+        """Stop source `source`'s clip only (2 to N): a generator is about to be its picture (D106 step d)."""
+        self._source_ok(source)
+        self.ipc.request("pvj-source", source, "stop")
+
+    def stop_source(self, source):
+        """Stop source `source` (2 to N): it is idle, and costs nothing again. Its effects come off with it, as an
+        effect comes off source 1 with Stop (D74, D106)."""
+        self._source_ok(source)
+        self.ipc.request("pvj-source", source, "stop")
+        self.chain_clear(source)
+
+    # ---- the chains of effects (D106 step b) -------------------------------------------------------------------------
+    CHAIN_SLOTS = 3
+
+    def chain_slots(self, source, generator=False):
+        """The slots a chain may use on `source`: 2 and 3 on source 1 (slot 1 is the effect of pvj/effects.py), 1 to 3
+        on sources 2 to N; with `generator`, slot 0 too on sources 2 to N (D106 step d: source 1's generator is the
+        shader engine's own)."""
+        if source == 1:
+            return (2, 3)
+        return (0, 1, 2, 3) if generator else (1, 2, 3)
+
+    def _chain_ok(self, source, slot):
+        if isinstance(source, bool) or not isinstance(source, int) or not 1 <= source <= self.sources():
+            raise PlayerError("this player has no source %s (it has %d)" % (source, self.sources()))
+        if isinstance(slot, bool) or not isinstance(slot, int) or slot not in self.chain_slots(source, True):
+            raise PlayerError("source %d has no slot %s for an effect (it has %s)" % (source, slot, ", ".join(map(str, self.chain_slots(source, True)))))
+        if not self.native_chains():
+            raise PlayerError("a chain of effects needs the New renderer")
+
+    def _chain_alive(self):
+        """Forget what a player process that is gone held (its successor holds nothing)."""
+        pid = self._seen_pid
+        for key in [k for k, v in self._chain.items() if v[1] != pid]:
+            del self._chain[key]
+
+    def chain_put(self, source, slot, path):
+        """Put the effect's program file `path` in `slot` of `source`. Returns ("ok" | "refused", message): a program
+        the GPU refuses leaves the one that was there on."""
+        with self._lock:
+            self._chain_ok(source, slot)
+            self._note_pid(self.ipc.request("get_property", "pid"))
+            self._chain_alive()
+            try:
+                self.ipc.request("pvj-shader", "load", source, slot, path, wait=self.NATIVE_LOAD_WAIT)
+            except PlayerError as e:
+                message = str(e)
+                message = message[5:] if message.startswith("mpv: ") else message
+                if message.startswith("the GPU refused") or message == "invalid parameter":
+                    return "refused", message
+                # no word (a slow build): not a refusal; the slot is found again by its path (chain_values)
+                self._chain.pop((source, slot), None)
+                return "unknown", message
+            self._chain[(source, slot)] = (path, self._seen_pid)
+            return "ok", ""
+
+    def _chain_there(self, source, slot, path):
+        """Whether pvj-render says `slot` of `source` holds the program file `path` (after a load that had no word)."""
+        try:
+            rows = self.ipc.request("get_property", "pvj-shaders")
+            return any(isinstance(r, dict) and r.get("source") == source and r.get("slot") == slot and r.get("path") == path for r in rows)
+        except (PlayerError, TypeError):
+            return False
+
+    def chain_values(self, source, slot, values, path=None):
+        """New values for the effect in `slot` of `source`, set while it plays (nothing compiled); with `path`, only
+        while that program is the one there. True if it was done."""
+        with self._lock:
+            self._chain_ok(source, slot)
+            self._chain_alive()
+            have = self._chain.get((source, slot))
+            if have is None and path is not None and self._chain_there(source, slot, path):
+                have = self._chain[(source, slot)] = (path, self._seen_pid)
+            if have is None or (path is not None and have[0] != path):
+                return False
+            self.ipc.request("pvj-shader", "set", source, slot, values)
+            return True
+
+    def chain_clear(self, source, slot=None):
+        """Take the effect in `slot` of `source` off (every slot of it without `slot`). True if one was on, as this
+        side knew it or as the renderer said. The clear is sent for every slot asked whatever this side's record
+        holds: after a load that had no word (a slow build) the renderer may hold an effect this side does not know
+        of, and Stop and Off must take it off all the same (the review of #168)."""
+        with self._lock:
+            self._chain_alive()
+            slots = [slot] if slot is not None else list(self.chain_slots(source, True))
+            try:
+                rows = self.ipc.request("get_property", "pvj-shaders")
+                there = {(r.get("source"), r.get("slot")) for r in rows if isinstance(r, dict) and r.get("state") not in (None, "off")}
+            except (PlayerError, TypeError, AttributeError):
+                there = set()
+            had = False
+            for k in slots:
+                had = (self._chain.pop((source, k), None) is not None) or ((source, k) in there) or had
+                try:
+                    self.ipc.request("pvj-shader", "clear", source, k)
+                except PlayerError:
+                    pass
+            return had
+
+    def chain_state(self):
+        """{(source, slot): path} of the effects in the chains now (the player's own record; asks nothing)."""
+        with self._lock:
+            self._chain_alive()
+            return {k: v[0] for k, v in self._chain.items()}
+
+    def sources_state(self):
+        """[{"source", "idle", "path", "height", "pause", "drawn"}] for sources 1 to N; on classic mpv, or a player
+        that does not answer, the one source the status knows of. Asks the player."""
+        if self.sources() > 1:
+            try:
+                rows = self.ipc.request("get_property", "pvj-sources")
+            except PlayerError:
+                rows = None
+            if isinstance(rows, list):
+                out = []
+                for r in rows[:self.MAX_SOURCES]:
+                    if not isinstance(r, dict):
+                        continue
+                    h = r.get("height")
+                    out.append({"source": r.get("source") if isinstance(r.get("source"), int) else len(out) + 1,
+                                "idle": r.get("idle") is True, "path": r.get("path") if isinstance(r.get("path"), str) else None,
+                                "height": h if isinstance(h, int) and not isinstance(h, bool) else None,
+                                "pause": r.get("pause") is True,
+                                "drawn": r.get("drawn") if isinstance(r.get("drawn"), int) else 0})
+                return out
+        try:
+            path = self.ipc.request("get_property", "path")
+        except PlayerError:
+            path = None
+        return [{"source": 1, "idle": path is None, "path": path if isinstance(path, str) else None, "height": None,
+                 "pause": False, "drawn": 0}]
+
+    def _crossfade(self, paths, loop, ending, seconds, style="crossfade"):
+        """The renderer's crossfade into one clip (D98), or its wipe or slide (D111): it loads the clip into its idle
+        layer, which is what this side speaks to from then on, and draws the two pictures itself, once a vblank, from
+        the clip's first frame. True if it took it; False, with nothing changed, where it cannot or would not (then the
+        caller cuts)."""
         ending = ending or ("loop" if loop else "stop")
         files = expand_media(paths)
         if ending not in ENDINGS or len(files) != 1:
             self.fade_refused = "the new renderer fades into one clip only"
             return False
-        if not self.crossfades():
+        if not (self.crossfades() if style == "crossfade" else self.moves()):
             self.fade_refused = "the player does not draw two layers"
             return False
         self._undo_pipe_globals()
@@ -383,14 +698,29 @@ class Player:
             self.fade_refused = "a live input's settings could not be taken back"
             return False
         path = files[0]
-        try:
-            self.ipc.request("pvj-crossfade", path, max(0.0, min(60.0, float(seconds))),
-                             "keep-open=%s,image-display-duration=inf" % ("yes" if ending == "hold" else "no"))
-        except PlayerError as e:
-            self.fade_refused = str(e)
-            return False
+        target = self._list_for(files, ending)
+        opts = "keep-open=%s,image-display-duration=inf" % ("yes" if ending == "hold" else "no")
+        tail = [] if style == "crossfade" else [style]
+        seconds = max(0.0, min(60.0, float(seconds)))
+        if self.lists is not None and self.lists.any():
+            try:
+                self.lists.touch(self.ipc.direct("get_property", "path"))         # it plays on under the fade (looplist.GRACE)
+            except PlayerError:
+                pass
+        if target is not None:
+            try:
+                self.ipc.direct("pvj-crossfade", target, seconds, opts + "," + looplist.QUEUE, *tail)
+            except PlayerError:
+                target = None               # a renderer that refuses it: the clip itself, as always
+        if target is None:
+            target = path
+            try:
+                self.ipc.request("pvj-crossfade", path, seconds, opts, *tail)
+            except PlayerError as e:
+                self.fade_refused = str(e)
+                return False
         self.fade_refused = ""
-        self._wait_for_path(path)
+        self._wait_for_path(target)
         self.ipc.request("set_property", "pause", False)
         self.ipc.request("set_property", "loop-file", "inf" if ending == "loop" else "no")
         self.ipc.request("set_property", "loop-playlist", "no")
@@ -420,13 +750,21 @@ class Player:
         self.ipc.request("set_property", "keep-open", "yes" if ending == "hold" else "no")
         self.ipc.request("set_property", "image-display-duration",
                          "inf" if single or image_seconds is None else max(0.1, min(3600.0, float(image_seconds))))
-        first = True
-        for f in files:
-            # "--" style option injection is impossible here: the path is a
-            # loadfile argument, never a command line option.
-            self.ipc.request("loadfile", f, "replace" if first else "append")
-            first = False
-        self._wait_for_path(files[0])
+        target = self._list_for(files, ending)
+        if target is not None:
+            try:
+                self.ipc.direct("loadfile", target, "replace", -1, looplist.QUEUE)
+            except PlayerError:
+                target = None               # a renderer that refuses it: the clip itself, as always
+        if target is None:
+            target = files[0]
+            first = True
+            for f in files:
+                # "--" style option injection is impossible here: the path is a
+                # loadfile argument, never a command line option.
+                self.ipc.request("loadfile", f, "replace" if first else "append")
+                first = False
+        self._wait_for_path(target)
         self.ipc.request("set_property", "pause", False)
         looping = ending == "loop"
         self.ipc.request("set_property", "loop-file", "inf" if (looping and single) else "no")
@@ -588,11 +926,13 @@ class Player:
         self.ipc.request("playlist-shuffle")
 
     def _wait_for_path(self, path, timeout=3.0):
-        """loadfile returns before mpv switches; wait so status() is truthful."""
+        """loadfile returns before mpv switches; wait so status() is truthful. `path` as the player says it: a list is
+        waited for as the list, or a clip that goes over into its own list would seem to be there at once."""
+        ask = self.ipc.direct if self.lists is not None else self.ipc.request
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
-                if self.ipc.request("get_property", "path") == path:
+                if ask("get_property", "path") == path:
                     return
             except PlayerError:
                 pass
@@ -808,6 +1148,8 @@ class Player:
             finally:
                 self._end_source()      # also when the player is down: the screen has changed hands either way
                 self._end_effect(why)
+                if self.native_chains():
+                    self.chain_clear(1)     # source 1's chain (D106 step b) comes off with its effect (never asked of classic)
             self.ipc.request("set_property", "loop-file", "no")
             self.ipc.request("set_property", "loop-playlist", "no")
 
@@ -830,7 +1172,10 @@ class Player:
         self._set("screenshot-high-bit-depth", False)
         self._set("screenshot-png-compression", 0)
         self._set("screenshot-png-filter", 0)
-        self.ipc.request("screenshot-to-file", path, "video" if kind == "video" else "window")
+        # pvj-render's libmpv draws the window at the inside size with no mapping in it, so "window" there would not be the
+        # screen: it is asked for the final picture at the screen's size instead, whatever size the final pass draws (D108).
+        window = "pvj-screen" if self.crossfades() else "window"
+        self.ipc.request("screenshot-to-file", path, "video" if kind == "video" else window)
 
     def video_place(self, screen):
         """Where the clip's own picture lies on a screen of `screen` (width, height), when a still of it at its own
@@ -842,6 +1187,8 @@ class Player:
         screen (a still of the window costs no more then)."""
         if self._mapping_mode or self._source is not None:
             return None
+        if self._effect is not None and is_program(self._effect):
+            return None             # the New renderer's own effect (D106): its still is of its own picture, the window
         try:
             box = self.ipc.request("get_property", "osd-dimensions")
             try:
@@ -1016,11 +1363,146 @@ class Player:
         the picture), the effect (a filter of the picture), the projection mapping (the last stage). The source and
         the effect hook the same stage, and there the order of this list is the order they run in (seen on a real
         mpv in CI, tests/test_pair_gpu.py: the other way round the generator draws over what the effect made). So
-        an effect over a source filters the source's picture."""
+        an effect over a source filters the source's picture.
+        On the New renderer (D106) a source or an effect may be one of its own program files instead: those go to
+        its slots (0 the generator, 1 the effect) and never into the list; classic mpv is never given one."""
         self._check_source()
         self._check_effect()
-        self.ipc.request("set_property", "glsl-shaders", ([self._source] if self._source else []) + ([self._effect] if self._effect else [])
-                         + self._mapping_shaders)
+        mine = [p if p and not is_program(p) else None for p in (self._source, self._effect)]
+        self.ipc.request("set_property", "glsl-shaders", [p for p in mine if p] + self._mapping_shaders)
+        if self.native_shaders():
+            self._native_slot(0, self._source)
+            self._native_slot(1, self._effect)
+        else:
+            self.redraw_paused()
+
+    def redraw_paused(self):
+        """Classic mpv only. Over a clip that stands still mpv answers a new shader list by redrawing its cached picture
+        ("redraw cached frame"), which never runs the user shaders: an effect that went on, changed or came off was
+        not on the screen until the clip played again (seen on a real mpv 0.41 with the probe of this fix; the
+        journal's item 2 of "Found" in the effects run saw it on the Pi's 0.40). An exact seek of nothing makes the
+        player decode the frame it shows once more and draw it through the new list, the position unchanged. A clip
+        that cannot seek (a picture, a live input) has nothing to redraw and the refusal is ignored: its next frame
+        is drawn with the list. The New renderer draws its own programs whenever they change and never comes here.
+        A paused generator is left alone: on its live carrier a seek moves the clock its picture is drawn from."""
+        if self._carrier is not None:
+            return
+        try:
+            if self.ipc.request("get_property", "pause") is not True:
+                return
+            self.ipc.request("seek", 0, "relative+exact")
+        except PlayerError:
+            pass
+
+    # ---- the New renderer's own programs (D106) --------------------------------------------------------------------
+    _native_seen = None             # (pid, True or False): does that player process run programs of its own
+    # pvj-render answers a load once it has built the program, waiting at most 3 seconds for its render thread
+    # (ipc.c, shader_command): the panel waits longer than that, so that only the renderer's own word ends it
+    NATIVE_LOAD_WAIT = 6.0
+
+    def native_shaders(self, ask=True):
+        """True if the player that answers now is pvj-render with programs of its own (its `shaders`), which run a
+        generator or an effect with values set while it plays. Asked once per player process, as `crossfades`;
+        classic mpv answers "property not found". With `ask` False, only what is known already."""
+        known, pid = self._native_seen, self._seen_pid
+        if known is not None and known[0] == pid:
+            return known[1]
+        if not ask:
+            return False
+        try:
+            if pid is None:
+                pid = self._note_pid(self.ipc.request("get_property", "pid"))
+            state = self.ipc.request("get_property", "pvj-render")
+        except PlayerError as e:
+            if str(e).startswith("mpv: ") and pid is not None:
+                self._native_seen = (pid, False)
+            return False
+        n = state.get("shaders") if isinstance(state, dict) else None
+        ok = isinstance(n, int) and not isinstance(n, bool) and n >= 2
+        self._native_seen = (pid, ok)
+        self._native_slots = (pid, n if ok else 0)
+        return ok
+
+    _native_slots = None            # (pid, slots a source that player process has)
+
+    def native_chains(self):
+        """True if the player runs a chain of effects on any source (D106 step b: pvj-render with 4 slots a source)."""
+        if not self.native_shaders():
+            return False
+        known = self._native_slots
+        return bool(known and known[0] == self._seen_pid and known[1] >= 4)
+
+    def _native_slot(self, slot, path):
+        """Slot `slot` of source 1 holds the program file `path` (None or an mpv shader: nothing). A refusal is not
+        raised: it is written down for native_verdict, and the program that was there runs on (the engines then go
+        back to it or to black, as with classic's refusals)."""
+        want = path if path and is_program(path) else None
+        pid, have = self._seen_pid, self._native_loaded[slot]
+        if have is not None and have[1] != pid:
+            have = self._native_loaded[slot] = None         # another player process: it holds nothing
+        if (have[0] if have else None) == want:
+            return
+        if want is None:
+            self.ipc.request("pvj-shader", "clear", 1, slot)
+            self._native_loaded[slot] = None
+            return
+        if len(self._native_verdicts) > 32:
+            self._native_verdicts.clear()
+        try:
+            self.ipc.request("pvj-shader", "load", 1, slot, want, wait=self.NATIVE_LOAD_WAIT)
+        except PlayerError as e:
+            message = str(e)
+            message = message[5:] if message.startswith("mpv: ") else message
+            if message.startswith("the GPU refused") or message == "invalid parameter":
+                # the renderer's own refusal: the program that was there runs on, as the slot's record says
+                self._native_verdicts[want] = ("refused", message)
+            else:
+                # no word (a slow build, no reply): the renderer may yet show it, or not. Nothing is said to be
+                # refused, and the slot is held to be unknown, so the next push or value loads it again (the
+                # review of #167: a value sent under the old program's names reached the new one)
+                self._native_verdicts[want] = ("unknown", message)
+                self._native_loaded[slot] = None
+            return
+        self._native_loaded[slot] = (want, pid)
+        self._native_verdicts[want] = ("ok", "")
+
+    def native_verdict(self, path):
+        """("ok" | "refused", message) of pvj-render about the program file `path`, or None if it was never given one."""
+        return self._native_verdicts.get(path)
+
+    def native_values(self, slot, values, epoch=None, serial=None):
+        """New values for the program in slot `slot` (0 the generator, 1 the effect), set while it plays: nothing is
+        compiled. Only while `epoch` (the generator's) or `serial` (the effect's) is still current and that program
+        is what the slot holds. True if it was done."""
+        with self._lock:
+            if slot == 0:
+                self._check_source()
+                if epoch != self.source_epoch or self._source is None:
+                    return False
+                path = self._source
+            else:
+                self._check_effect()
+                if serial != self.effect_serial or self._effect is None:
+                    return False
+                path = self._effect
+            have = self._native_loaded[slot]
+            if not have or have[1] != self._seen_pid:
+                # not known to be there (its load had no word, a slow build): the renderer says what the slot holds
+                # now; if it is not that program, it is loaded again first
+                try:
+                    rows = self.ipc.request("get_property", "pvj-shaders")
+                    there = next((r.get("path") for r in rows if isinstance(r, dict) and r.get("source") == 1 and r.get("slot") == slot), None)
+                except (PlayerError, TypeError, AttributeError):
+                    there = None
+                if there == path:
+                    self._native_loaded[slot] = (path, self._seen_pid)
+                else:
+                    self._native_slot(slot, path)
+                have = self._native_loaded[slot]
+            if not have or have[0] != path or have[1] != self._seen_pid:
+                return False
+            self.ipc.request("pvj-shader", "set", 1, slot, values)
+            return True
 
     # --- the effect layer (pvj/effects.py) ------------------------------------
     @property
@@ -1235,7 +1717,24 @@ class Player:
         self._set("video-pan-y", max(-3000, min(3000, float(y))) / 1000.0)
 
     def loop(self, enabled):
-        """Loop the current clip (or the whole playlist when there are several)."""
+        """Loop the current clip (or the whole playlist when there are several). A clip that plays through a list goes
+        on to the end of this pass and ends there as a plain clip would: loop-file does not end a list, so `end` does
+        (the renderer sets it for this file alone), and Loop on again clears it. Loop on over a plain clip leaves it
+        plain until its next load: nothing is reloaded in the middle of playing (D118)."""
+        view = self._front_list()
+        if view is not None:
+            if enabled:
+                self._set("end", "none")
+                self._set("loop-file", "inf")
+            else:
+                try:
+                    at = self.ipc.direct("get_property", "time-pos")
+                except PlayerError:
+                    at = 0.0                            # still opening: the first pass
+                micro = round(view.length * 1e6)        # as the demuxer adds the lengths up, with a hair to spare for the join's frame
+                self._set("end", "%.6f" % ((view.pass_of(at) + 1) * micro / 1e6 - 0.001))
+                self._set("loop-file", "no")
+            return
         count = self.ipc.request("get_property", "playlist-count") or 0
         self._set("loop-file", "inf" if (enabled and count <= 1) else "no")
         self._set("loop-playlist", "inf" if (enabled and count > 1) else "no")
@@ -1276,6 +1775,18 @@ class Player:
         if not isinstance(items, list):
             return []
         return [i["filename"] for i in items[:limit] if isinstance(i, dict) and isinstance(i.get("filename"), str)]
+
+
+PROGRAM_HEAD = b"//!PVJ 1\n"
+
+
+def is_program(path):
+    """Whether `path` is one of the New renderer's program files (D106; pvj/shaders.py writes them), not an mpv shader."""
+    try:
+        with open(path, "rb") as f:
+            return f.read(len(PROGRAM_HEAD)) == PROGRAM_HEAD
+    except (OSError, TypeError):
+        return False
 
 
 def _alive(pid):

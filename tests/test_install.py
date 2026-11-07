@@ -53,6 +53,7 @@ class InstallTest(unittest.TestCase):
         unit = self.read(self.p("etc/systemd/system/pvj-player.service"))
         self.assertIn("User=gigbox", unit)
         self.assertIn("ExecStart=/opt/pvj/current/bin/pvj-player serve", unit)
+        self.assertRegex(unit, r"(?m)^LimitRTPRIO=1$")       # the render thread's SCHED_RR 1, without a capability
         self.assertNotIn("@PVJ", unit)
         web = self.read(self.p("etc/systemd/system/pvj-web.service"))
         self.assertIn("ExecStart=/opt/pvj/current/bin/pvj-web", web)

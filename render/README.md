@@ -2,6 +2,9 @@
      SPDX-License-Identifier: GPL-3.0-or-later -->
 # pvj-render
 
+`link/` beside this holds another program, pvj-link, the Ableton Link follower (D117, pvj/SOUND.md). It is C++, shares
+nothing with pvj-render, and is built only by `make pvj-link`.
+
 The box's own renderer (project-log/DECISIONS.md, D95). Phase 1 takes the place of the one mpv behind the same JSON
 socket: one video layer drawn by libmpv at an internal size, the projection mapping and the scale to the screen as one
 final pass, and overlays and on-screen text over it. Chosen on Setup > Screen output (Renderer); classic mpv stays the
@@ -15,6 +18,28 @@ decodes and draws nothing. How the picture looks (brightness, zoom, pan, rotatio
 both layers; a load, a stop, a step in the list or another crossfade ends a fade at once. The panel uses it for the
 Mix's Crossfade from one clip to another (`Player.play(..., fade=seconds)`); everything else is a cut, as before.
 Classic's crossfade steps a still 20 times a second; this one moves at the screen's rate, with both pictures moving.
+
+A generated loop list (D118) comes as a load like any other, with the decoded queue's `vd-queue-*` keys for that file alone: in `loadfile`'s options, and split off the options of `pvj-crossfade` and of a source's load. `end` is a time in seconds or `none`, and is set for the file that plays alone. A core whose demuxer says its file cannot be read, or that restarts 20 times in a row with no frame between, has its loop taken off, so a list whose clip is gone ends, with no seek into FFmpeg's concat demuxer.
+
+The wipes and the slides (D111) are the same stage. `["pvj-crossfade", URL, SECONDS, OPTIONS, MOVE]`, MOVE one of the
+panel's eight names (`wipe-from-left`, `-right`, `-top`, `-bottom`, `slide-left`, `-right`, `-up`, `-down`): the same
+layers, clock, sound and ends, and the picture of a vblank is cut along an edge at the internal size instead of mixed.
+A slide moves the outgoing picture off and uncovers the incoming one, which stays where it is, as the panel's still
+does. Two scissored draws, so a pixel reads one texture where the mix reads two. The final pass, the effects and the
+level run on the result as on a crossfade's mix. `moves` in the `pvj-render` property says a renderer draws them,
+`fade-kind` which one runs or ran last, `fade-steps` how many pictures it drew.
+
+Phase 3 (D106) runs generators and effects itself, with their inputs as uniforms: a value that moves is set, never
+compiled. The panel writes a program file (`src/fx.c` says what it holds) and sends `["pvj-shader", "load", 1, SLOT,
+PATH]` (slot 0 the generator, 1 the effect; the answer comes once the program is built, or says what the GPU refused,
+and the program before it runs on), `["pvj-shader", "set", 1, SLOT, {NAME: VALUE, "@speed": ..., "@hue": ...,
+"@gain": ..., "@amount": ..., "@offset": ...}]` (all of one set in one frame) and `["pvj-shader", "clear", 1, SLOT]`;
+`get_property pvj-shaders` says each slot's state, TIME, runs, late frames and builds. A generator runs at most
+`--fx-fps` times a second (30), an effect when its picture or its values change (or its clock is due). Step c adds ISF passes and buffers (`//!TARGET` and `//!PASS` in the program file: two textures a buffer, persistent
+ones kept between runs, half floats for FLOAT where the GPU has them). Step b gives every source three effect slots (1 to 3, run in order; `pvj-shader` takes SOURCE 1 to the run's number of
+sources, and a generator stays source 1's slot 0). While a program
+is on, source 1's brightness is drawn after it (libmpv's own is held at 0) and a screenshot is the renderer's own
+picture (PNG or JPEG by the file's ending, `src/still.c`).
 
 **Licence:** GPL-3.0-or-later (this folder only; `LICENSE`). It links libmpv, which is GPLv2 or later as Debian
 builds it. The rest of nxlx.mastercontrol is Apache-2.0 and only starts this program and talks to it over a socket.
@@ -42,3 +67,7 @@ frame with the render API (on the Pi's V3D a file descriptor each); this program
 `gl-objects` (libmpv's textures, framebuffers, renderbuffers and buffers held now), `fades-from-nothing` (a
 crossfade with nothing on the screen is loaded as a cut) and `sound-held` (crossfades whose outgoing core had not closed
 its sound output within a second).
+
+## The final pass at 720 lines (D108)
+
+`--final=auto` or `--final=720`: after the first frame pvj-render finds the primary plane and tests that it can scale. If so, the final pass can draw in the top left 720 lines (the width follows the output's shape) of the one GBM surface, and the plane's source rectangle goes in the atomic commit of that frame. `["pvj-final", "full"|720]` changes it from the next frame on; pvj/renderer.py's rule decides under Automatic. Without the argument nothing of this runs. The output's size stays what every size on the socket reports, and the mapping's HOOKED_size. `pvj-render` adds `load`, `final-lines` (0: the output's size), `final-switches` and `final-why`. `["screenshot-to-file", PATH, "pvj-screen"]` is the whole final picture at the screen's size, mapping and text in it, whichever way the pass draws. A build with `make TEST_HOOKS=1` run headless with `PVJ_RENDER_TEST_FINAL=1` draws in the corner of its framebuffer, so all but the plane runs in CI.

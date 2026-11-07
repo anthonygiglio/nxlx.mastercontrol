@@ -62,6 +62,7 @@ FIRST_SET = "00000000"
 SHOW_SET = "00000001"
 ORDERS = ("shuffle", "listed")
 APPLY_GAP = 0.2                 # seconds between two compiles: at most five a second
+NATIVE_GAP = 0.02               # on the New renderer nothing is compiled (D106): values go at most fifty a second
 REANCHOR = 2 * 86400.0          # seconds after which a shader that nobody touched gets a new anchor (see LiveEngine.time_of)
 EVENT_HOLD = 0.25               # how long a pressed event stays true
 MAX_CONTROLS = 8
@@ -88,7 +89,6 @@ PI4_OUTPUT = (1920, 1080)       # the output PI4 was measured at: it counts up t
 PI4_1440_OUTPUT = (2560, 1440)
 PI4 = {
     "nxlx-aurora.fs": ("medium", (22.6, 0.0), (34.2, 2.59)),
-    "nxlx-drift.fs": ("medium", (29.8, 0.0), (47.0, 10.07)),
     "nxlx-ember.fs": ("light", (16.4, 0.0), (23.2, 0.0)),
     "nxlx-horizon.fs": ("light", (15.4, 0.0), (21.6, 0.0)),
     "nxlx-lattice.fs": ("light", (14.9, 0.0), (20.5, 0.0)),
@@ -137,7 +137,6 @@ PI4 = {
 }
 PI4_1440 = {
     "nxlx-aurora.fs": ("medium", (12.9, 0.0), (22.8, 4.87)),
-    "nxlx-drift.fs": ("heavy", (20.1, 2.01), (35.7, 10.55)),
     "nxlx-ember.fs": ("light", (6.5, 0.0), (11.4, 0.39)),
     "nxlx-horizon.fs": ("light", (5.5, 0.0), (9.4, 0.0)),
     "nxlx-lattice.fs": ("light", (4.9, 0.0), (8.3, 0.0)),
@@ -807,7 +806,7 @@ class Changer:
         def sooner(wait):
             return None, (wait if hold is None else min(wait, hold))
         if self._adjust is not None:
-            wait = self._last + APPLY_GAP - now
+            wait = self._last + getattr(self.engine, "apply_gap", lambda: APPLY_GAP)() - now
             if wait > 0:
                 return sooner(wait)
             job, self._adjust = self._adjust, None
@@ -1193,7 +1192,7 @@ class LiveEngine(S.Engine):
     def too_heavy(self, sid, cost, cfg, table, auto):
         """Whether a computed set leaves a shader out (D93). On a measured board (AUTO_BOARDS): when it did not hold
         at the height it will be drawn at here (height_for: its own under Automatic, else the box's one height), by
-        the table for the output; so a box with 720 lines kept leaves out nxlx-drift, nxlx-nebula, nxlx-aurora and
+        the table for the output; so a box with 720 lines kept leaves out nxlx-nebula, nxlx-aurora and
         nxlx-lantern at 1080p, and Automatic lets them in at 540. Elsewhere, and for a shader nobody measured: when
         its class is heavy."""
         if self.board() in AUTO_BOARDS:
@@ -1399,6 +1398,28 @@ class LiveEngine(S.Engine):
         gone = max(0, now - p["since"]) if p.get("since") is not None else (now - p["anchor"]) % S.FRAME_WRAP
         return p["offset"] + p["controls"]["speed"] * gone / S.CARRIER_FPS, now % S.FRAME_WRAP, now
 
+    def apply_gap(self):
+        """Seconds between two changes applied (Changer): a compile on classic, a value on the New renderer. Read
+        without a lock from the worker's own condition: one field of the record."""
+        p = self.playing
+        return NATIVE_GAP if p and p.get("native") else APPLY_GAP
+
+    def _native_adjust(self, p, parsed, state, job):
+        """adjust() on the New renderer (D106): the values and controls are set on the program that plays; nothing is
+        written, nothing compiled, and TIME goes on in the renderer at the new pace by itself."""
+        c = state["controls"]
+        send = S.native_send(parsed, state["values"], state["held"])
+        send.update({"@speed": c["speed"], "@hue": S.turn(state["hue"], c["hue"]), "@gain": c["brightness"]})
+        try:
+            done = self.api.player.native_values(0, send, epoch=p["epoch"])
+        except Exception as e:
+            raise ApiError(503, str(e))
+        if not done:
+            return False
+        preset = p.get("preset") if not job["values"] and not job["controls"] else job.get("preset")
+        self.playing = dict(p, values=state["values"], held=state["held"], controls=state["controls"], preset=preset)
+        return bool(state["held"])
+
     def adjust(self, job):
         """Give the shader on screen new values or controls (the worker's call; see Changer). The carrier, the epoch
         and TIME stay as they are: only the shader text is exchanged, and only while that shader still has the
@@ -1422,6 +1443,8 @@ class LiveEngine(S.Engine):
                 state = {"values": dict(p["values"], **job["values"]), "held": dict(job["held"]), "hue": p["hue"],
                          "controls": self.limit(parsed, dict(p["controls"], **job["controls"])), "offset": p["offset"], "anchor": p["anchor"]}
                 since = p.get("since")
+                if p.get("native"):
+                    return self._native_adjust(p, parsed, state, job)
                 if state["anchor"] is not None and (state["controls"]["speed"] != p["controls"]["speed"] or job.get("anchor")):
                     state["offset"], state["anchor"], since = self.time_of(p)       # TIME goes on from where it is, at the new pace
                 desc = "nxlx shader %d %d" % (os.getpid(), self._serial + 1)
@@ -1661,8 +1684,9 @@ class LiveEngine(S.Engine):
         if vibes and not queued:
             vibes.yield_screen()                    # the operator chose a shader: the rotation ends
         path, _ = self._path(sid)
+        native = bool(self.native())                # asked once for the whole play (the review of #170)
         try:
-            parsed = self._parsed(path)[0]
+            parsed = self._parsed(path, native)[0]
             start, stored, name = self.start_values(parsed, self.config(), sid, preset)
             if values is not None:
                 start = dict(start, **S.clean_values(parsed, values))
@@ -1674,7 +1698,7 @@ class LiveEngine(S.Engine):
             if same and stored is None:
                 stored = on["controls"]
             result = self.show(sid, start, hue=on["hue"] if same else 0.0, offset=self.time_of(on)[0] if same else 0.0,
-                               controls=S.clean_controls(controls, stored), preset=name, epoch=epoch, mark=mark)
+                               controls=S.clean_controls(controls, stored), preset=name, epoch=epoch, mark=mark, native=native)
         except ShaderError as e:
             raise ApiError(422, "%s: %s" % (sid, e))
         if result is None:
@@ -1963,6 +1987,7 @@ class LiveEngine(S.Engine):
             # and the write of an earlier one's second step was overwritten by it, and the later choice was lost.
             with self._cfg:
                 cfg = self.config()
+                detail = (cfg.get("height"), cfg.get(HEIGHT_AUTO))
                 self._config_keys(cfg, body)
                 for key in ("guard", "clock", "faster"):
                     if key in body:
@@ -1971,9 +1996,13 @@ class LiveEngine(S.Engine):
                     cfg[HEIGHT_AUTO] = auto             # false: a height chosen by hand, which Automatic never overrides
                 self._save(cfg)
                 self.tune_set(None, cfg["dwell"], cfg["vary"])      # dwell and variation belong to the active set
+                moved = (cfg.get("height"), cfg.get(HEIGHT_AUTO)) != detail
             on = self.on_screen()
             if "faster" in body and on:             # the limit applies to what is on now, not only to the next shader
                 self.changer.submit(on, controls={"speed": on["controls"]["speed"]})
+            if moved:
+                # Sources 2 to N draw at the new detail too (D106 step e); the same detail again builds nothing
+                return self.with_sources(self.state(), self.sources_again())
         else:
             return super().api_set(body, device, client)
         return self.state()

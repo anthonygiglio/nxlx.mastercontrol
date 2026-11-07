@@ -514,7 +514,7 @@ def _room(a, args):
 _NOT_MINE = object()
 _PRESSES = {"/pvj/fade": "fade", "/pvj/clip/next": "clip_next", "/pvj/clip/prev": "clip_prev",
             "/pvj/effect/next": "effect_next", "/pvj/effect/prev": "effect_prev",
-            "/pvj/shader/next": "shader_next", "/pvj/shader/prev": "shader_prev"}
+            "/pvj/shader/next": "shader_next", "/pvj/shader/prev": "shader_prev", "/pvj/clock/tap": "clock_tap"}
 # address -> (the level's name in the shared table, what the number is multiplied by)
 _LEVELS = {"/pvj/position/x": ("position", 1.0), "/pvj/position/y": ("position_y", 1.0), "/pvj/effect/amount": ("effect_amount", 0.01),
            "/pvj/shader/speed": ("shader_speed", 1.0), "/pvj/shader/hue": ("shader_hue", 1.0), "/pvj/shader/brightness": ("shader_brightness", 1.0)}

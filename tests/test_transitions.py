@@ -1039,6 +1039,157 @@ class Moves(Base):
         self.assertEqual(self.left(), [])
 
 
+class Died(BaseException):
+    """The panel process ending in the middle of a hold: nothing in the panel catches it, as nothing catches a kill."""
+
+
+class FrozenByAPanelThatDied(Base):
+    """D112: a panel that dies between freezing the outgoing clip and loading the new one leaves a record, and the
+    next panel to start thaws that clip and only that clip."""
+
+    def record(self):
+        return os.path.join(self.rundir, T.FROZEN_FILE)
+
+    def die_at_the_still(self):
+        """The panel's play, killed while the player takes the still: the clip is frozen, the new one not loaded."""
+        real, real_pause = self.player.still, self.player.pause
+        self.seen_record = None
+
+        def pause(value=None):
+            if value and self.seen_record is None:
+                self.seen_record = os.path.exists(self.record())    # looked at as the freeze is asked for
+            return real_pause(value)
+
+        def still(path, kind="window"):
+            raise Died()
+        self.player.still, self.player.pause = still, pause
+        with self.assertRaises(Died):
+            self.play()
+        self.player.still, self.player.pause = real, real_pause
+
+    def next_panel(self):
+        self.tr = self.api.transitions = T.Transitions(self.api, clock=lambda: self.now[0], sleep=self.sleep, thread=False, log=self.lines.append)
+        del self.player.calls[:]
+        self.tr.tidy()
+
+    def test_the_same_file_still_playing_is_thawed(self):
+        self.player.path = "a.mp4"
+        self.die_at_the_still()
+        self.next_panel()
+        self.assertIn(("pause", False), self.player.calls)
+        self.assertFalse(os.path.exists(self.record()))
+
+    def test_a_thaw_the_player_did_not_answer_keeps_the_record_for_the_next_panel(self):
+        self.die_at_the_still()
+        real = self.player.pause
+
+        def pause(value=None):
+            raise OSError("no reply")
+        self.player.pause = pause
+        self.tr._thaw()
+        self.player.pause = real
+        self.assertTrue(os.path.exists(self.record()))
+        self.next_panel()
+        self.assertIn(("pause", False), self.player.calls)
+
+    def test_a_panel_that_dies_with_the_outgoing_clip_frozen_leaves_a_record_and_the_next_panel_thaws_it(self):
+        self.die_at_the_still()
+        self.assertTrue(self.seen_record, "the record is written before the freeze")
+        self.assertTrue(self.player.props["pause"], "the clip is frozen and nobody is left to thaw it")
+        self.assertTrue(os.path.exists(self.record()))
+        self.next_panel()
+        self.assertFalse(self.player.props["pause"], "a frozen picture on the screen after a crash")
+        self.assertIn(("pause", False), self.player.calls)
+        self.assertEqual(self.left(), [])
+
+    def test_a_hold_that_ends_well_leaves_no_record_and_a_freeze_after_it_is_the_operators(self):
+        self.play()
+        self.assertFalse(os.path.exists(self.record()))
+        self.player.props["pause"] = True               # Freeze, after the new clip loaded
+        self.next_panel()
+        self.assertTrue(self.player.props["pause"], "the operator's freeze is not the fix's to undo")
+
+    def test_a_hold_that_fails_or_is_abandoned_removes_its_record(self):
+        from pvj.api import ApiError
+        self.player.fail = {"play"}
+        with self.assertRaises(ApiError):
+            self.play()
+        self.assertEqual(self.left(), [])
+        self.assertFalse(self.player.props["pause"])
+
+    def test_a_clip_the_operator_froze_before_the_play_gets_no_record_and_stays_frozen_for_the_next_panel(self):
+        self.player.props["pause"] = True
+        self.die_at_the_still()
+        self.assertFalse(self.seen_record, "this hold froze nothing")
+        self.next_panel()
+        self.assertTrue(self.player.props["pause"])
+
+    def test_an_operator_freeze_made_after_the_new_clip_loaded_is_left_alone_even_if_the_record_stayed(self):
+        self.player.path = "a.mp4"
+        self.die_at_the_still()
+        self.player.path = "b.mp4"                      # a load unfreezes and changes the clip; the record was not yet removed
+        self.player.props["pause"] = True               # the operator froze the new clip
+        self.next_panel()
+        self.assertTrue(self.player.props["pause"])
+        self.assertEqual(self.left(), [])
+
+    def test_a_restarted_player_has_nothing_to_thaw(self):
+        self.die_at_the_still()
+        self.player.props["pid"] = 9999                 # the player process was started anew
+        self.player.props["pause"] = True               # an operator's freeze on the new process
+        self.next_panel()
+        self.assertTrue(self.player.props["pause"])
+        self.assertNotIn(("pause", False), self.player.calls)
+        self.assertEqual(self.left(), [])
+
+    def test_a_record_for_a_clip_that_is_not_frozen_is_only_removed(self):
+        self.die_at_the_still()                         # died after the record but, say, before the freeze took
+        self.player.props["pause"] = False
+        self.next_panel()
+        self.assertNotIn(("pause", False), self.player.calls)
+        self.assertEqual(self.left(), [])
+
+    def test_a_record_of_an_older_run_with_a_different_clip_is_removed_and_the_clip_left_alone(self):
+        self.player.path = "old.mp4"
+        self.die_at_the_still()
+        self.player.path = "new.mp4"
+        self.player.props["pause"] = True
+        self.next_panel()
+        self.assertTrue(self.player.props["pause"])
+        self.assertEqual(self.left(), [])
+
+    def test_a_record_that_is_not_ours_to_read_is_removed_and_nothing_is_thawed(self):
+        self.player.props["pause"] = True
+        for body in (b"", b"not json", b"[1]", b'{"player": "4242"}', b"\xff\xfe"):
+            with open(self.record(), "wb") as f:
+                f.write(body)
+            self.next_panel()
+            self.assertTrue(self.player.props["pause"], body)
+            self.assertEqual(self.left(), [], body)
+
+    def test_a_link_in_place_of_the_record_is_not_followed(self):
+        target = os.path.join(self.rundir, "elsewhere")
+        with open(target, "w") as f:
+            f.write('{"player": 4242, "path": null}')
+        os.symlink(target, self.record())
+        self.player.props["pause"] = True
+        self.tr.tidy()
+        self.assertTrue(self.player.props["pause"])
+        self.assertTrue(os.path.exists(target), "only the panel's own files are removed")
+
+    def test_a_player_that_cannot_be_asked_leaves_the_record_removed_and_does_not_stop_the_start(self):
+        self.die_at_the_still()
+        self.player.fail = {"ipc"}
+        self.next_panel()
+        self.assertEqual(self.left(), [])
+
+    def test_a_record_left_by_a_crash_before_the_freeze_took_is_swept_by_the_pattern(self):
+        for n in (T.FROZEN_FILE + ".tmp",):
+            open(os.path.join(self.rundir, n), "w").close()
+        self.next_panel()
+        self.assertEqual(self.left(), [])
+
+
 class Settings(Base):
     def setUp(self):
         super().setUp()
@@ -2638,6 +2789,109 @@ class LayeredCrossfade(ServerBase):
         self.assertNotIn("screenshot-to-file", self.mpv.commands)
         self.assertTrue(any("a cut instead" in line and "error running command" in line for line in self.lines), self.lines)
 
+    def test_on_the_new_renderer_every_wipe_and_slide_is_the_renderers_with_no_still(self):
+        self.mpv.layers = self.mpv.moves = True
+        names = T.WIPES + T.SLIDES
+        self.assertEqual(len(names), 8)
+        for n, name in enumerate(names):
+            self.settings.data["mix"] = T.stored(name, 1.5)
+            asked = len(self.mpv.commands)
+            clip = ("b.mov", "a.mp4")[n % 2]
+            self.assertEqual(self.api.play({"file": clip}, None, "t"), {"playing": clip})
+            self.assertEqual(self.mpv.log[-1], ("fade", "file", clip))
+            self.assertEqual(self.mpv.fade_styles[-1], name, "the panel's name goes to the renderer unchanged")
+            self.assertEqual(self.mpv.fades[-1], 1.5, "the Mix's own duration")
+            sent = self.mpv.commands[asked:]
+            for word in ("screenshot-to-file", "overlay-add", "loadfile"):
+                self.assertNotIn(word, sent, "the still's way was taken: %s" % sent)
+            self.assertEqual(sent.count("set_property pause"), 1, "nothing froze the old clip: %s" % sent)
+        self.assertIsNone(self.api.transitions.running)
+        self.assertEqual(self.lines, [])
+        self.assertEqual(self.mpv.commands.count("get_property pvj-render"), 1, "asked once per player process")
+
+    def test_a_crossfade_sends_what_it_always_sent(self):
+        self.mpv.layers = self.mpv.moves = True
+        self.api.play({"file": "b.mov"}, None, "t")
+        self.assertEqual(self.mpv.fade_styles, [None], "no fifth word")
+
+    def test_a_renderer_from_before_keeps_the_still_for_a_wipe_and_its_own_crossfade(self):
+        self.mpv.layers = True          # two layers, and no `moves`
+        self.settings.data["mix"] = T.stored("slide-left", 0.2)
+        self.still_crossfade()
+        self.settings.data["mix"] = T.stored("crossfade", 0.2)
+        self.api.play({"file": "a.mp4"}, None, "t")
+        self.assertEqual(self.mpv.log[-1], ("fade", "file", "a.mp4"))
+
+    def test_on_classic_mpv_a_wipe_is_the_still_as_before(self):
+        self.settings.data["mix"] = T.stored("wipe-from-top", 0.2)
+        self.still_crossfade()
+        self.assertNotIn("pvj-crossfade", self.mpv.commands)
+        self.api.play({"file": "a.mp4"}, None, "t")
+        self.wait_still_gone()
+        self.assertEqual(self.mpv.commands.count("get_property pvj-render"), 2, "classic's answer is remembered: "
+                         "the question about layers, as Player.still asks it, and the one about moves, once each")
+
+    def test_out_of_a_generator_on_the_new_renderer_a_slide_is_d71s_still(self):
+        self.mpv.layers = self.mpv.moves = True
+        sid = self.api.shaders.library()[0]["id"]
+        self.assertTrue(self.api.shaders.show(sid)["ok"])
+        self.settings.data["mix"] = T.stored("slide-right", 0.2)
+        self.still_crossfade()
+        self.assertIsNone(self.api.player.source_shader)
+
+    def test_out_of_a_live_input_on_the_new_renderer_a_wipe_is_d71s_still(self):
+        self.mpv.layers = self.mpv.moves = True
+        self.live_input()
+        self.settings.data["mix"] = T.stored("wipe-from-bottom", 0.2)
+        self.still_crossfade()
+        self.assertFalse(self.player.pipe_playing)
+
+    def test_when_the_renderer_refuses_a_wipe_it_is_a_cut_never_black(self):
+        self.mpv.layers = self.mpv.moves = True
+        self.settings.data["mix"] = T.stored("wipe-from-left", 1.0)
+        self.mpv.fail.add("pvj-crossfade")
+        self.assertEqual(self.api.play({"file": "b.mov"}, None, "t"), {"playing": "b.mov"})
+        self.assertEqual(self.mpv.log[-1], ("load", "file", "b.mov"), "cut to the clip")
+        self.assertNotIn("screenshot-to-file", self.mpv.commands)
+        self.assertTrue(any("no wipe-from-left on the new renderer, a cut instead" in line for line in self.lines), self.lines)
+
+    def test_a_wipe_from_a_dark_screen_is_a_cut_as_a_crossfade_is(self):
+        self.mpv.layers = self.mpv.moves = True
+        self.settings.data["mix"] = T.stored("slide-up", 1.0)
+        self.api.blackout({"on": True}, None, "t")
+        self.api.play({"file": "b.mov"}, None, "t")
+        self.assertEqual(self.mpv.log[-1], ("load", "file", "b.mov"))
+        self.assertEqual(self.mpv.fades, [])
+
+    def test_a_box_that_gave_up_on_stills_still_draws_the_renderers_wipe(self):
+        self.mpv.layers = self.mpv.moves = True
+        self.settings.data["mix"] = T.stored("wipe-from-left", 1.0)
+        self.api.play({"file": "b.mov"}, None, "t")
+        self.api.transitions._give_up("the clip dropped 30 frames in 2.0 seconds")
+        self.assertNotIn("fallback", self.api._mix_settings(), "nothing of a still gives this up")
+        self.api.play({"file": "a.mp4"}, None, "t")
+        self.assertEqual(self.mpv.log[-1], ("fade", "file", "a.mp4"), "no dip")
+        self.player._source = "/x/generator.glsl"
+        self.assertIn("fallback", self.api._mix_settings(), "out of a generator the still's reason applies")
+
+    def test_one_question_of_the_renderer_answers_for_the_crossfade_and_the_wipe(self):
+        self.mpv.layers = self.mpv.moves = True
+        self.settings.data["mix"] = T.stored("wipe-from-left", 1.0)
+        self.assertIs(self.player.crossfades(), True)
+        self.assertIs(self.player.moves(ask=False), True, "noted with the layers, with no question of its own")
+        self.assertEqual(self.mpv.commands.count("get_property pvj-render"), 1)
+        self.api.transitions._give_up("the clip dropped 30 frames in 2.0 seconds")
+        self.assertNotIn("fallback", self.api._mix_settings(), "the status asks the player nothing, and shows no still's reason")
+        self.assertEqual(self.mpv.commands.count("get_property pvj-render"), 1)
+
+    def test_a_renderer_without_wipes_noted_with_its_layers_keeps_the_stills_reason(self):
+        self.mpv.layers = True          # two layers, and no `moves`
+        self.settings.data["mix"] = T.stored("wipe-from-left", 1.0)
+        self.assertIs(self.player.crossfades(), True)
+        self.assertIs(self.player.moves(ask=False), False)
+        self.api.transitions._give_up("the clip dropped 30 frames in 2.0 seconds")
+        self.assertIn("fallback", self.api._mix_settings())
+
     def still_crossfade(self):
         """The play went D71's way: a still of the window, the clip loaded under it, the still faded away."""
         asked = len(self.mpv.commands)
@@ -3668,3 +3922,69 @@ class ScaledRealPlayer(ServerBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReadStillSizeTest(unittest.TestCase):
+    """A still of the wrong size is a cut that once (D108's review of the fault as shipped: the window still fell to
+    libmpv's 960 x 540 between two 1080p pictures and gave transitions up for five minutes)."""
+
+    def test_the_wrong_size_is_its_own_refusal(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "s.png")
+            with open(path, "wb") as f:
+                f.write(png(4, 2, b"\x10\x20\x30"))
+            with self.assertRaises(T.WrongSize):
+                T.read_still(path, (8, 4))
+            with open(path, "wb") as f:
+                f.write(b"nothing of the kind")
+            with self.assertRaises(T.StillError) as e:
+                T.read_still(path, (8, 4))
+            self.assertNotIsInstance(e.exception, T.WrongSize)
+
+
+class WrongSizeStillTest(Base):
+    def test_a_still_of_the_wrong_size_is_a_cut_and_gives_nothing_up(self):
+        real = self.player.still
+
+        def small(path):
+            real(path)
+            with open(path, "wb") as f:
+                f.write(png(1, 1, b"\x10\x20\x30"))
+        self.player.still = small
+        self.assertEqual(self.tr.hold("wipe-from-left"), 0, "a cut this once")
+        self.assertEqual(self.tr.given_up, "", "nothing about the box in one still's size")
+        self.assertEqual(self.tr.fallback(), "")
+        self.player.still = real
+        self.assertTrue(self.tr.hold("wipe-from-left"), "the next one is a wipe")
+
+    def wrong_still(self):
+        real = self.player.still
+
+        def small(path):
+            real(path)
+            with open(path, "wb") as f:
+                f.write(png(1, 1, b"\x10\x20\x30"))
+        self.player.still = small
+        self.addCleanup(setattr, self.player, "still", real)
+        return real
+
+    def test_stills_of_the_wrong_size_in_a_row_give_up_with_a_reason(self):
+        self.wrong_still()
+        for n in range(T.SLOW_IN_A_ROW):
+            self.assertEqual(self.tr.given_up, "", n)
+            self.assertEqual(self.tr.hold("wipe-from-left"), 0)
+        self.assertIn("%d stills in a row were not of the screen's size" % T.SLOW_IN_A_ROW, self.tr.fallback())
+        self.assertIn("were not of the screen's size", self.api.status({}, None, "t")["mix"]["fallback"])
+
+    def test_a_good_still_clears_the_count(self):
+        real = self.wrong_still()
+        small = self.player.still
+        for _ in range(3):
+            self.player.still = small
+            self.assertEqual(self.tr.hold("wipe-from-left"), 0)
+            self.assertEqual(self.tr.given_up, "")
+            self.player.still = real
+            self.assertTrue(self.tr.hold("wipe-from-left"))
+            self.tr.end()
+        self.assertEqual(self.tr.given_up, "")

@@ -242,6 +242,7 @@ class UpdateRestartTest(unittest.TestCase):
         # in a call of its own, so that the network helper's restart cannot depend on a unit most boxes do not have
         self.assertEqual(calls, [["systemctl", "try-restart", "pvj-netd.service"],
                                  ["systemctl", "try-restart", "pvj-ndi.service"],
+                                 ["systemctl", "try-restart", "pvj-link.service"],
                                  ["systemctl", "restart", "pvj-player.service", "pvj-web.service"]])
         flat = " ".join(sum(calls, []))
         self.assertNotIn("pvj-sysd", flat)           # it started this update

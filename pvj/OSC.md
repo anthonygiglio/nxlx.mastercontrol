@@ -197,6 +197,7 @@ Every address in this table, the ones added with D75 and `/pvj/mapping/...` amon
 | `/pvj/effect` | none, or 0/1 | The effect over the picture: 1 puts the one that was on last back (the first of the list if there was none), 0 takes it off, no argument is the one button (needs the Shaders and Vibes module, as every effect and shader address does) |
 | `/pvj/effect/next`, `/pvj/effect/prev` | value (press) | The neighbour in the list of effects |
 | `/pvj/effect/amount` | 0 to 100 | Percent of the effect in the picture |
+| `/pvj/clock/tap` | value (press) | One tap on the box clock (D116): sets the beat at once, and from the second tap the average tempo (30 to 300 BPM; a pause over 2 s starts again). The clock then steers the beat that sound reactivity, OSC out and the shader input follow; see [SOUND.md](SOUND.md). Press and release as for `/pvj/fade` |
 | `/pvj/effect/control/<n>` | 0 to 1 | The n-th input (1 to 8) of the effect that is on, spread over its own range as a controller's knob does: a number over its MIN to MAX, a switch on from 0.5 up, a choice by position |
 | `/pvj/shader` | name (string) | Show that shader, as the Shaders screen's Play does (`silk` or `silk.fs`). The box answers at once and the shader follows when the graphics chip has taken it; a refusal is shown on the Shaders screen |
 | `/pvj/shader/next`, `/pvj/shader/prev` | value (press) | The neighbour in the active set (steps Vibes while it runs) |

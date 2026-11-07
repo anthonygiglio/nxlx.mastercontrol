@@ -105,7 +105,7 @@ class LiveCase(GpuCase):
         way, every choice at each of its values, every point somewhere else. Each is a text of another shape, so the
         GPU's compiler is asked each time (this is the run that stands for the Pi's GLSL 1.40 in CI)."""
         rows = [s for s in self.engine.library() if s["source"] == "bundled" and not s["error"]]
-        self.assertGreaterEqual(len(rows), 47)
+        self.assertGreaterEqual(len(rows), 46)
         shapes = 0
         for s in rows:
             variants = [{}]

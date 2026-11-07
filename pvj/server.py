@@ -647,6 +647,11 @@ def build(env=None, player=None):
     themes = themes_mod.load_themes()        # the looks the box comes with; the owner's own are read by the Api's store
     player = player or Player()
     rundir = player.rundir
+    attach = getattr(player, "attach_lists", None)
+    if attach is not None:                  # the seamless loop of a plain clip (D118), on the New renderer only
+        from . import looplist, renderer as renderer_mod
+        attach(looplist.Lists(paths.loops_dir(rundir), getattr(player, "mpv_bin", "mpv"),
+                              enabled=lambda: renderer_mod.loop_lists(settings.data.get("renderer"))))
     api = Api(player, settings, auth, registry, themes, media, board, addons_dir=addons,
               spawn=env.get("PVJ_DEV_SPAWN") == "1", on_pin=lambda pin: write_pin_file(rundir, pin))
     api.net = netd_mod.NetdClient(os.path.join(env.get("PVJ_NETD_DIR") or rundir, paths.NETD_SOCKET))

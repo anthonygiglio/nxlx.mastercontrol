@@ -23,6 +23,7 @@ Inventory of components bundled with or fetched by the legacy code. Licences are
 | JetBrains Mono (The JetBrains Mono Project Authors), a Latin subset of the Medium weight | `pvj/web/fonts/` | SIL OFL 1.1 (verified, see below) |
 | libmpv (mpv), linked by pvj-render; not shipped, the box's own package | `render/` builds against it | GPLv2 or later as Debian builds it (see below) |
 | Mesa's EGL, OpenGL ES and GBM, libdrm, glibc: linked by pvj-render; not shipped | `render/` builds against them | MIT (Mesa, libdrm), LGPL-2.1 (glibc) |
+| Ableton Link and asio, compiled into pvj-link at install; not shipped, the box's own packages | `render/link/` builds against them | GPL-2.0-or-later (Link), BSL-1.0 (asio) (see below) |
 
 ## Not bundled: jit.ndi for the Max render node patch (D94)
 
@@ -238,3 +239,24 @@ pinned by the distribution's release; CI names what it got in its log):
 Nothing else is linked, and no code of mpv, Mesa, kmscube or another project is copied into `render/`; the way mpv
 picks a connector and a mode (`video/out/drm_common.c`) and mpv's user-shader format were read in mpv's open source and
 are followed as behaviour, so that the panel's arguments and shaders mean the same to both programs.
+
+## pvj-link and Ableton Link (D117)
+
+`render/link/` holds pvj-link, a program of this project written for the box (not third-party code), and a stand-in peer
+for its test. Both are under **GPL-3.0-or-later**, like the rest of `render/`, because they compile in Ableton Link, which
+is GPL-2.0-or-later in the form Debian packages it (Ableton also sells other terms; this project does not use them).
+GPL-3.0-or-later is compatible with GPLv2-or-later code. Link's headers come with asio's, which are under the Boost
+Software License 1.0, compatible with the GPL. The rest of the tree stays Apache-2.0: the panel only talks to pvj-link
+over a Unix socket and reads a file it writes, as it does with pvj-render.
+
+Nothing of Link or asio is in the repository, a release bundle or the image's own files: the headers are Debian's
+`ableton-link-dev` and `libasio-dev`, installed on the box like the renderer's build packages, with their copyright files
+at `/usr/share/doc/<package>/copyright`, and pvj-link is built from source on the box. Without them there is no pvj-link,
+and nothing else changes.
+
+| Library | On the Pi (Debian 13) | Built and tested in CI | Licence |
+| --- | --- | --- | --- |
+| Ableton Link, headers only | `ableton-link-dev` 3.1.2 | Debian 13's (the job pvj-link) | GPL-2.0-or-later |
+| asio, standalone, headers only | `libasio-dev` | Debian 13's | BSL-1.0 |
+
+The name "Ableton Link" says what the box can join. It carries no logo, and this project is not made by or with Ableton.

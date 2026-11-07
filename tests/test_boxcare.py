@@ -1055,7 +1055,10 @@ class DiagnosticsTest(Base):
             self.assertEqual(file["player"].get("stream"), name)
             self.assertEqual(file["player"]["path"], boxcare.stream_where(url))
             for secret in secrets + ["private-path-s20"] + [x for a in ADDRESSES for x in a[2]]:
-                self.assertNotIn(secret, text, (secret, url))
+                if secret.isdigit():        # a PIN only where it stands as a number of its own (see above)
+                    self.assertIsNone(re.search(r"(?<![0-9])%s(?![0-9])" % re.escape(secret), text), (secret, url))
+                else:
+                    self.assertNotIn(secret, text, (secret, url))
 
     def test_the_log_is_asked_for_with_fixed_arguments(self):
         journal = FakeJournal(stdout="a line\n")
