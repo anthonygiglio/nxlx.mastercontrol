@@ -21,6 +21,12 @@ SupplementaryGroups=video render audio input
 # The parent /run/pvj stays root's (systemd creates it root:root 0755; see pvj-tmpfiles.conf).
 RuntimeDirectory=pvj/player
 RuntimeDirectoryMode=0750
+# A persistent folder of its own, /var/lib/pvj-player/late-screen, for what the player must remember across a restart of
+# its service: the times of the switches made for a late screen (pvj/latescreen.py). systemd makes it and gives it to
+# User=. A subfolder on purpose: /var/lib/pvj-player is the account's home on an install by install.sh, and systemd
+# changes the owner of the StateDirectory= it is given (and what is in it), never of its parent.
+StateDirectory=pvj-player/late-screen
+StateDirectoryMode=0750
 UMask=0007
 EnvironmentFile=-/etc/pvj/pvj.env
 Environment=PVJ_RUNTIME_DIR=/run/pvj/player
