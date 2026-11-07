@@ -227,7 +227,7 @@ class FallbackKindTest(unittest.TestCase):
 
     def test_a_crash_stays_on_classic(self):
         for why in ("pvj-render ended twice in a row (exit 3)", "pvj-render ended twice in a row (signal 11)",
-                    "pvj-render did not answer within 10 seconds", "pvj-render is not built on this box",
+                    "pvj-render did not answer within 10 seconds", "pvj-render is not built on this node",
                     "pvj-render could not be started (Permission denied)", ""):
             self.assertFalse(latescreen.no_screen_fallback(why, self.NONE), why)
 

@@ -95,7 +95,7 @@ def final_rule(state, now, missed, load, hz):
         # could never bring it back.
         if share > BUSY_SHARE and load > 0:
             state.update(final=720, since=now, load=load, lighter=None,
-                         why="the box was busy: %d in 100 frames came late with a load of %d" % (round(share * 100), load))
+                         why="the node was busy: %d in 100 frames came late with a load of %d" % (round(share * 100), load))
         return state
     if load >= state["load"]:
         state["lighter"] = None
@@ -131,7 +131,7 @@ def available(env=None):
 
 
 HEAVY_LINES = 720                       # a clip taller than this is "1080p" for the warning below
-WARN_TEXT = "this may drop frames on this box; 720p clips are lighter"
+WARN_TEXT = "this may drop frames on this node; 720p clips are lighter"
 
 
 def source_warning(rows, target, board_kind):
@@ -221,9 +221,9 @@ def chosen(rundir, extra_args, windowed, env=None):
     if want["use"] != "new":
         return "classic", want["detail"], ""
     if windowed or "--gpu-context=drm" not in extra_args:
-        return "classic", want["detail"], "pvj-render draws only on a box without a desktop (phase 1)"
+        return "classic", want["detail"], "pvj-render draws only on a node without a desktop (phase 1)"
     if not available(env):
-        return "classic", want["detail"], "pvj-render is not built on this box"
+        return "classic", want["detail"], "pvj-render is not built on this node"
     return "new", want["detail"], ""
 
 
@@ -631,9 +631,9 @@ class Renderer:
         elif sources == "auto":
             sources = None
         elif isinstance(sources, bool) or not isinstance(sources, int) or not 1 <= sources <= cap:
-            raise RendererError(400, "sources must be auto or 1 to %d on this box" % cap)
+            raise RendererError(400, "sources must be auto or 1 to %d on this node" % cap)
         if use == "new" and not available(self.env):
-            raise RendererError(409, "pvj-render is not built on this box")
+            raise RendererError(409, "pvj-render is not built on this node")
         before = self.saved()
         with self.settings.lock:
             self.settings.data["renderer"] = {"use": use, "detail": detail}

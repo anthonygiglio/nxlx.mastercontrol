@@ -379,7 +379,7 @@ class SourcesRouteTest(ApiBase):
 
 
 class WarningTest(ApiBase):
-    WARN = "this may drop frames on this box; 720p clips are lighter"
+    WARN = "this may drop frames on this node; 720p clips are lighter"
 
     def rows(self, heights):
         return [{"source": k, "idle": h is None, "path": None if h is None else "/m/c%d.mp4" % k, "height": h, "pause": False, "drawn": 0}
