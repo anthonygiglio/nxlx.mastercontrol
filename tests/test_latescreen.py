@@ -64,7 +64,7 @@ class WatcherTest(unittest.TestCase):
         f.screen("HDMI-A-1", False)
         w = f.watcher()
         started = f.now
-        self.assertFalse(f.run_until(w, 20))
+        self.assertFalse(f.run_until(w, 40))
         self.assertEqual(f.ended, [])
         f.screen("HDMI-A-1", True)
         plugged = f.now
@@ -84,7 +84,7 @@ class WatcherTest(unittest.TestCase):
             f.screen(connector, False, card)
             f.screen("Writeback-1", True, card)         # never a screen
             w = f.watcher()
-            self.assertFalse(f.run_until(w, 10), connector)
+            self.assertFalse(f.run_until(w, 40), connector)
             f.screen(connector, True, card)
             self.assertTrue(f.run_until(w, 10), connector)
 
@@ -96,51 +96,79 @@ class WatcherTest(unittest.TestCase):
         self.assertFalse(f.run_until(w, 60, lambda t: f.screen("HDMI-A-1", t % 5 < 2)))
         self.assertEqual(f.ended, [])
 
-    def test_a_flapping_screen_is_bounded_by_the_gap_and_the_total(self):
-        f = Fake(self)
-        f.screen("HDMI-A-1", True)
-        switches = []
-        # each pass is one start of the player after a switch: a new watcher over the same folder, as systemd restarts it
-        for _ in range(12):
+    def restarts(self, f, seconds, watch_for=600):
+        """A flapping cable for `seconds`: after every switch the player starts again (a new watcher over the same folder),
+        the screen is gone for a moment and comes back two seconds later. Returns when each switch happened."""
+        begin = f.now
+        while f.now - begin < seconds:
             f.screen("HDMI-A-1", False)
             w = f.watcher()
             f.sleep(2.0)
             f.screen("HDMI-A-1", True)
-            if f.run_until(w, 100):
-                switches.append(f.now)
-            f.sleep(1.0)
-        self.assertEqual(len(switches), latescreen.MAX_SWITCHES)
-        self.assertEqual(len(f.ended), latescreen.MAX_SWITCHES)
-        for a, b in zip(f.ended, f.ended[1:]):
-            self.assertGreaterEqual(b - a, latescreen.GAP_SECONDS)
-        said = [line for line in f.lines if "already switched" in line]
-        self.assertGreaterEqual(len(said), 1)
-        self.assertIn("classic mpv stays", said[0])
+            f.run_until(w, watch_for)
+        return f.ended
 
-    def test_a_watcher_waits_out_the_gap_after_a_switch(self):
+    def test_a_flapping_cable_for_an_hour_waits_30_60_120_then_300_and_never_stops(self):
+        f = Fake(self)
+        ended = self.restarts(f, 3600)
+        waits = [b - a for a, b in zip(ended, ended[1:])]
+        want = [30, 60, 120] + [300] * (len(waits) - 3)
+        self.assertGreaterEqual(len(ended), 10)
+        for got, wait in zip(waits, want):
+            self.assertGreaterEqual(got, wait)          # never more than one switch per wait
+            self.assertLessEqual(got, wait + 6)         # and no longer than the wait, the poll and the settle
+        self.assertEqual(waits[:4], sorted(waits[:4]))
+        self.assertTrue(all("the next switch waits at least" in line for line in f.lines if "restarting" in line))
+        self.assertFalse([line for line in f.lines if "stays" in line])     # there is no limit that ends it
+
+    def test_the_wait_starts_again_once_pvj_render_has_drawn_for_ten_minutes(self):
         f = Fake(self)
         f.screen("HDMI-A-1", True)
-        self.assertTrue(f.run_until(f.watcher(), 20))
-        again = f.watcher()
+        self.restarts(f, 1, 100)
+        self.restarts(f, 1, 100)
+        self.restarts(f, 1, 100)                        # three switches in a run: the next would wait 120 s
+        f.sleep(latescreen.RESET_SECONDS + 60)           # pvj-render drew all that time
+        f.screen("HDMI-A-1", False)
+        w = f.watcher()
         f.sleep(2.0)
+        f.screen("HDMI-A-1", True)
+        before = f.now
+        self.assertTrue(f.run_until(w, 100))
+        self.assertLessEqual(f.ended[-1] - before, latescreen.GAP_SECONDS + 2)
+
+    def test_a_watcher_without_a_count_never_switches_sooner_than_30_seconds_after_it_began(self):
+        f = Fake(self)
+        f.screen("HDMI-A-1", True)
+        w = f.watcher()
+        began = f.now
+        self.assertTrue(f.run_until(w, 100))
+        self.assertGreaterEqual(f.ended[0] - began, latescreen.GAP_SECONDS)
+        # the file is gone at every restart (a unit that does not keep its folder): the waits are 30 s, never shorter
+        os.unlink(os.path.join(f.rundir, latescreen.STATE))
+        again = f.watcher()
+        began = f.now
         self.assertTrue(f.run_until(again, 100))
-        self.assertGreaterEqual(f.ended[1] - f.ended[0], latescreen.GAP_SECONDS)
+        self.assertGreaterEqual(f.ended[1] - began, latescreen.GAP_SECONDS)
 
     def test_the_count_belongs_to_one_boot(self):
         f = Fake(self)
         f.screen("HDMI-A-1", True)
-        for n in range(latescreen.MAX_SWITCHES):
-            self.assertTrue(f.run_until(f.watcher(boot="boot-1"), 100), n)
-            f.sleep(1.0)
-        self.assertFalse(f.run_until(f.watcher(boot="boot-1"), 100))
-        self.assertTrue(f.run_until(f.watcher(boot="boot-2"), 100))     # a new boot starts again
+        self.assertTrue(f.run_until(f.watcher(boot="boot-1"), 100))
+        f.sleep(1.0)
+        first = f.watcher(boot="boot-1")
+        self.assertTrue(f.run_until(first, 100))                        # waited its 30 s
+        f.sleep(1.0)
+        second = f.watcher(boot="boot-2")                               # a new boot: no run of switches, 30 s from its start
+        began = f.now
+        self.assertTrue(f.run_until(second, 100))
+        self.assertLessEqual(f.ended[-1] - began, latescreen.GAP_SECONDS + 2)
 
     def test_a_damaged_count_is_nothing(self):
         f = Fake(self)
         f.screen("HDMI-A-1", True)
         with open(os.path.join(f.rundir, latescreen.STATE), "w") as g:
             g.write('{"boot": "boot-1", "switches": "many"}')
-        self.assertTrue(f.run_until(f.watcher(), 20))
+        self.assertTrue(f.run_until(f.watcher(), 60))
 
 
 class FallbackKindTest(unittest.TestCase):
