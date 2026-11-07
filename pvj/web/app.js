@@ -4633,7 +4633,7 @@
     }
     if (/Macintosh|Mac OS X/.test(ua)) {
       return { name: 'Mac', steps: ['Click "Download the root certificate" and double-click the file: Keychain Access opens and adds it to your login keychain.',
-        'In Keychain Access find it (the name is "NXLX nodes root" unless you named it otherwise), double-click it, unfold Trust and set "When using this certificate" to Always Trust. Close the window and enter your password.',
+        'In Keychain Access find it (the name is "NXLX boxes root" unless you named it otherwise), double-click it, unfold Trust and set "When using this certificate" to Always Trust. Close the window and enter your password.',
         'Safari trusts it at once; restart Chrome. Firefox has its own list (Settings, Privacy & Security, Certificates, View Certificates, Authorities, Import).',
         'Come back here and press "Does this device trust the node?".'] };
     }
