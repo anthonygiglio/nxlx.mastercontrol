@@ -134,21 +134,29 @@ class WatcherTest(unittest.TestCase):
         f.screen("HDMI-A-1", True)
         before = f.now
         self.assertTrue(f.run_until(w, 100))
-        self.assertLessEqual(f.ended[-1] - before, latescreen.GAP_SECONDS + 2)
+        self.assertLessEqual(f.ended[-1] - before, latescreen.SETTLE_SECONDS + 2)
 
-    def test_a_watcher_without_a_count_never_switches_sooner_than_30_seconds_after_it_began(self):
+    def test_the_first_switch_of_a_boot_comes_within_a_few_seconds_of_the_screen_settling(self):
+        f = Fake(self)
+        f.screen("HDMI-A-1", False)
+        w = f.watcher()
+        self.assertFalse(f.run_until(w, 5))              # a watcher that has just begun
+        f.screen("HDMI-A-1", True)
+        plugged = f.now
+        self.assertTrue(f.run_until(w, 30))
+        self.assertLessEqual(f.ended[0] - plugged, latescreen.SETTLE_SECONDS + 2)
+        self.assertFalse([line for line in f.lines if "cannot be kept" in line])
+
+    def test_a_count_that_cannot_be_written_gives_the_floor_and_says_so_once(self):
         f = Fake(self)
         f.screen("HDMI-A-1", True)
-        w = f.watcher()
+        gone = os.path.join(f.root, "no-such-folder", "state")      # nothing can be written there
+        w = latescreen.Watcher(gone, f.lines.append, sysfs=f.sysfs, clock=lambda: f.now, sleep=f.sleep, boot="boot-1",
+                               end_player=lambda: f.ended.append(f.now))
         began = f.now
         self.assertTrue(f.run_until(w, 100))
         self.assertGreaterEqual(f.ended[0] - began, latescreen.GAP_SECONDS)
-        # the file is gone at every restart (a unit that does not keep its folder): the waits are 30 s, never shorter
-        os.unlink(os.path.join(f.rundir, latescreen.STATE))
-        again = f.watcher()
-        began = f.now
-        self.assertTrue(f.run_until(again, 100))
-        self.assertGreaterEqual(f.ended[1] - began, latescreen.GAP_SECONDS)
+        self.assertEqual(len([line for line in f.lines if "cannot be kept" in line]), 1)
 
     def test_the_count_belongs_to_one_boot(self):
         f = Fake(self)
@@ -158,10 +166,10 @@ class WatcherTest(unittest.TestCase):
         first = f.watcher(boot="boot-1")
         self.assertTrue(f.run_until(first, 100))                        # waited its 30 s
         f.sleep(1.0)
-        second = f.watcher(boot="boot-2")                               # a new boot: no run of switches, 30 s from its start
+        second = f.watcher(boot="boot-2")                               # a new boot: no run of switches, no wait
         began = f.now
         self.assertTrue(f.run_until(second, 100))
-        self.assertLessEqual(f.ended[-1] - began, latescreen.GAP_SECONDS + 2)
+        self.assertLessEqual(f.ended[-1] - began, latescreen.SETTLE_SECONDS + 2)
 
     def test_a_damaged_count_is_nothing(self):
         f = Fake(self)
@@ -248,10 +256,13 @@ class StartTest(unittest.TestCase):
     def test_a_player_not_run_by_systemd_is_never_watched(self):
         self.assertFalse(latescreen.start(tempfile.gettempdir(), lambda line: None, env={}))
 
-    def test_the_unit_keeps_its_folder_across_its_own_restart(self):
+    def test_the_unit_has_a_state_folder_of_its_own_for_the_count(self):
         here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         with open(os.path.join(here, "install", "pvj-player.service")) as f:
-            self.assertIn("RuntimeDirectoryPreserve=restart", f.read().split("\n"))
+            lines = f.read().split("\n")
+        self.assertIn("StateDirectory=pvj-player", lines)
+        self.assertNotIn("RuntimeDirectoryPreserve=restart", lines)
+        self.assertEqual(os.path.basename(latescreen.paths.PLAYER_STATE_DIR), "pvj-player")
 
 
 if __name__ == "__main__":

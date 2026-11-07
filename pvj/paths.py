@@ -45,6 +45,7 @@ import time
 
 RUN = "/run/pvj"                              # the parent: root's, nobody else may add, rename or remove a name in it
 PLAYER_DIR = RUN + "/player"
+PLAYER_STATE_DIR = "/var/lib/pvj-player"        # persistent, the player account's own (StateDirectory=pvj-player)
 WEB_DIR = RUN + "/web"
 NETD_DIR = RUN + "/netd"
 SYSD_DIR = "/run/pvj-sysd"
@@ -131,6 +132,12 @@ def supportd_dir(env=None):
 def state_dir(env=None):
     """The panel's state folder (settings.json, and screen-mode.json, which the player reads: D90)."""
     return _env(env).get("PVJ_STATE_DIR") or STATE_DIR
+
+
+def player_state_dir(env=None):
+    """The player's own state folder (a StateDirectory= of pvj-player.service, owned by the account that runs it): what the
+    player must remember across a restart of its service, keyed by the boot (pvj/latescreen.py)."""
+    return _env(env).get("PVJ_PLAYER_STATE_DIR") or PLAYER_STATE_DIR
 
 
 def player_socket(env=None):

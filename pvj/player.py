@@ -371,7 +371,7 @@ class Player:
                 from . import hardware, latescreen
                 try:
                     if latescreen.no_screen_fallback(why, hardware.drm_connectors()):
-                        latescreen.start(self.rundir, log)
+                        latescreen.start(paths.player_state_dir(), log)
                 except Exception as e:
                     log("pvj-player: renderer: a screen that comes later is not watched for (%s)" % e)
         # mpv creates its socket owner-only (0600) whatever the umask, so the web panel (another user, same

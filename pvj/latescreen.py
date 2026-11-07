@@ -12,10 +12,14 @@ reads the connector status files under /sys/class/drm (any connector on any card
 it ends the player's process, and systemd (`Restart=always`) starts the service again by its normal path: the screen's
 mode is chosen as at any start and pvj-render is tried, with the same gate as ever (a pvj-render that fails to start
 or ends twice stays on classic). It is not a restart loop: after a switch the next one waits WAITS in turn (30 s, 60 s,
-120 s, then 300 s), counted in a file of the player's folder, which the unit keeps across its own restarts. There is no
-total: a loose cable never leaves the box on classic for the rest of the boot, it only makes it wait longer. The wait
-starts again at 30 s once the last switch is more than RESET_SECONDS old, i.e. pvj-render has drawn that long since. With
-no count (the file gone), a watcher still waits GAP_SECONDS after its own start, so the wait is never shorter than 30 s.
+120 s, then 300 s). There is no total: a loose cable never leaves the box on classic for the rest of the boot, it only
+makes it wait longer. The wait starts again at 30 s once the last switch is more than RESET_SECONDS old, i.e. pvj-render
+has drawn that long since. The first switch of a boot has no wait.
+
+The switch times are kept in STATE in the player's state folder (`paths.player_state_dir`, a StateDirectory= of the
+unit: owned by the account that runs the player, kept across any restart of the service and of the box), keyed by the
+boot's id. The watcher tries to write the file when it starts; if it cannot, it logs that once and keeps a floor of
+GAP_SECONDS after its own start for every switch, so that a count that cannot be kept never allows a quick loop.
 A crash fallback is never watched: the screen is not what failed there.
 """
 import os
@@ -23,12 +27,12 @@ import signal
 import sys
 import time
 
-from . import hardware, screenmode
+from . import hardware, paths, screenmode
 
-STATE = "late-screen.json"      # in the player's folder: {"boot": id, "switches": [monotonic seconds, ...]}
+STATE = "late-screen.json"      # in the player's state folder: {"boot": id, "switches": [monotonic seconds, ...]}
 POLL_SECONDS = 1.0
 SETTLE_SECONDS = 3.0            # a screen must stay connected this long (its modes are read after the kernel has them)
-GAP_SECONDS = 30.0              # the shortest wait, and the wait of a watcher that has no count
+GAP_SECONDS = 30.0              # the floor of a watcher that cannot keep a count
 WAITS = (30.0, 60.0, 120.0, 300.0)      # the wait after the 1st, 2nd, 3rd and later switch of a run of switches
 RESET_SECONDS = 600.0           # a switch this old (pvj-render has drawn since) no longer counts: the waits start again
 KEEP = 8                        # switches kept in the file
@@ -70,8 +74,19 @@ class Watcher:
         self.alive = alive or (lambda: True)
         self.settle, self.gap, self.waits, self.reset = settle, gap, waits, reset
         self.began = clock()
+        self.floor = False          # the count cannot be written: every switch waits GAP_SECONDS after this watcher began
+        self._probe()
         self.since = None           # when the screens now connected were first seen so
         self.spent = False
+
+    def _probe(self):
+        """Write the file as it is (or empty) now, to know that it can be kept; if not, say so once and use the floor."""
+        try:
+            screenmode.write_json(self.path, {"boot": self.boot, "switches": self._switches()})
+        except OSError as e:
+            self.floor = True
+            self.log("pvj-player: renderer: the count of switches cannot be kept (%s); every switch waits %d s after "
+                     "the player starts" % (e.strerror or e, self.gap))
 
     def _switches(self):
         data = screenmode.read_json(self.path)
@@ -106,16 +121,16 @@ class Watcher:
             wait = self.waits[min(run, len(self.waits)) - 1]
             if now - switches[-1] < wait:
                 return False        # the screen may be flapping: wait out the wait, then look again
-        elif now - self.began < self.gap:
-            return False            # no count of switches: never sooner than the shortest wait after this watcher began
+        elif self.floor and now - self.began < self.gap:
+            return False            # the count cannot be kept: never sooner than the floor after this watcher began
         switches = switches[-KEEP:]
         wait_next = self.waits[min(run + 1, len(self.waits)) - 1]
         self.spent = True
         switches.append(now)
         try:
             screenmode.write_json(self.path, {"boot": self.boot, "switches": switches})
-        except OSError as e:
-            self.log("pvj-player: renderer: the count of switches was not written (%s)" % e)
+        except OSError:
+            pass                    # said at the start if the file cannot be written; the next watcher then has the floor
         self.log("pvj-player: renderer: a screen is connected now (%s) and pvj-render did not start only because there "
                  "was none; restarting the player once so that pvj-render draws (the next switch waits at least %d s)"
                  % (", ".join(names), wait_next))
