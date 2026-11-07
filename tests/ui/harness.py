@@ -10,6 +10,7 @@ allowed as a projector address in this harness only, so the browser test never c
 """
 import json
 import os
+import signal
 import sys
 import tempfile
 import threading
@@ -190,6 +191,15 @@ class _TestHandler(server.make_handler(api, auth)):
 httpd = server.PvjServer(("127.0.0.1", 0), _TestHandler)
 print(json.dumps({"port": httpd.server_address[1], "pin": auth.current_pin, "projector_ports": [f.port for f in _fakes], "midi_dir": _midi_dir,
                   "delivery_file": _delivery}), flush=True)
+# The test (or a run that ended badly) stops this process with SIGTERM, which by default ends it at once and leaves
+# its mpv running: turn it into an exit, so the finally below runs and the player is stopped.
+def _end(*_):
+    # a second SIGTERM (the test's exit handler after its wait) must not cut Player.stop() short before its SIGKILL
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    sys.exit(0)
+
+
+signal.signal(signal.SIGTERM, _end)
 try:
     httpd.serve_forever()
 finally:

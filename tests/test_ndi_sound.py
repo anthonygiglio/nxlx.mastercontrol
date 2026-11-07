@@ -1794,7 +1794,8 @@ class SoundFeedTest(FeedBase):
         del self.got[:]
         r2 = self.play_with(feed, block=sound(441, rate=44100))
         self.assertEqual((r2.audio["rate"], len(self.lib.sound_opens())), (44100, 1))
-        self.assertIn(struct.pack(">d", 44100.0), bytes(self.got[:400]))
+        # the reader is its own thread: "playing" is the writer's word, not yet the bytes in `got` (CI, 2026-11-07: empty)
+        self.assertTrue(wait(lambda: struct.pack(">d", 44100.0) in bytes(self.got[:400])), bytes(self.got[:400]))
 
     def test_a_picture_opened_while_the_sound_source_is_quiet_has_its_sound_track_from_the_start(self):
         """The owner's rig: the picture sender changes size at every clip (so the picture is opened again), and the
@@ -1852,7 +1853,7 @@ class SoundFeedTest(FeedBase):
         self.assertEqual((r.decide(), r.state), ("matroska", "ready"))
         self.read()
         self.assertTrue(wait(lambda: r.status()["state"] == "playing"))
-        self.assertIn(struct.pack(">d", 48000.0), bytes(self.got[:400]))
+        self.assertTrue(wait(lambda: struct.pack(">d", 48000.0) in bytes(self.got[:400])), bytes(self.got[:400]))
 
     def again(self, feed, block):
         """The picture is opened again on the same sound connection (as the panel does after "changed")."""

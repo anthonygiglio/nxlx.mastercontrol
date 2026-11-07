@@ -850,6 +850,14 @@ class FxCase(GpuCase):
         self.assertTrue(self.fx._fresh(self.fx.on["desc"]), "the frozen picture was not drawn through the changed effect")
         self.assertLess(time.monotonic() - start, 2.5, "changing the effect over a frozen clip waited")
         self.fx.off()
+        # Off is one request to the player, and the player answers it by decoding the frame it shows again and
+        # drawing it through the new list (Player.redraw_paused): that is its own thread's work, done after the
+        # request has returned. vo-passes still lists the pass of the picture drawn before until that redraw is done
+        # (CI, 2026-11-02: the effect's pass with no count and no samples, read right after Off). So the list is read
+        # until it is empty, for as long as the on and change steps above are allowed; it must come, or this fails.
+        end = time.monotonic() + 3.0
+        while user_passes() and time.monotonic() < end:
+            time.sleep(0.05)
         self.assertEqual(user_passes(), [], "the frozen picture was still drawn through the effect that came off")
         self.assertTrue(self.real.ipc.request("get_property", "pause"), "the clip must stay frozen")
 
