@@ -44,7 +44,7 @@ import re
 import threading
 import time
 
-from . import hardware, paths, shaderlive as L, shaders as S
+from . import hardware, paths, profile, shaderlive as L, shaders as S
 from .api import ApiError, CONTROLLERS as api_controllers
 from .player import PlayerError
 from .shaders import ShaderError
@@ -272,11 +272,13 @@ def _pi4_lines(sid):
     return 720 if PI4_720[sid][1] < HOLDS else 540
 
 
-AUTO = {
-    "pi4": {"lines": 720, "lower": {sid: _pi4_lines(sid) for sid in sorted(PI4_720) if _pi4_lines(sid) < 720}, "other": 540, "measured": True},
-    "pi3": {"lines": 540, "lower": {}, "other": 540, "measured": False},
+# By profile row (pvj/profile.py): "standard" is the Pi 4 class and its numbers were measured on a Pi 4; "lean" is the
+# careful value, not measured; the unknown tier uses the lean row.
+_AUTO_ROWS = {
+    "standard": {"lines": 720, "lower": {sid: _pi4_lines(sid) for sid in sorted(PI4_720) if _pi4_lines(sid) < 720}, "other": 540, "measured": True},
+    "lean": {"lines": 540, "lower": {}, "other": 540, "measured": False},
 }
-AUTO["pi-other"] = AUTO["arm-other"] = AUTO["pi3"]      # a small board the box cannot name: the careful value, not measured
+AUTO = {k: _AUTO_ROWS[profile.effects_row(k)] for k in profile.KINDS if profile.effects_row(k)}      # by board kind
 
 
 def default_detail(board):

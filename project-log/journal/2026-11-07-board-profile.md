@@ -1,0 +1,7 @@
+<!-- SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+     SPDX-License-Identifier: Apache-2.0 -->
+## 2026-11-07, One profile table by tier
+
+- `pvj/profile.py` is now the one place that says what a tier (lean, standard, full, unknown) is asked to do. It replaces `SMALL_BOARDS`, `SOURCE_CAP`, `SOURCE_DEFAULT` and `SOURCES_OTHER` in `renderer.py` (the detail, `--fast`, `--skip-deblock`, final Automatic and overload-warning rules and `api.py`'s warning check), the board keys of `effects.AUTO` (rows by tier, `AUTO` by kind built from them), and `shaders.heights_for` and `default_height`.
+- Kept by exact kind on purpose, each with a comment: `shaderlive.AUTO_BOARDS` (per-shader heights measured on a Pi 4 only), `probe.advice` (what was measured on a Pi 4, not tested on a Pi 3, or a fact of the Pi 5 chip), `modules` (a manifest names kinds, and an arm-other board counts as a pi4 there), and `hardware.playback_profile` (classic mpv's cheap scalers, not part of this table).
+- First commit changes no value. `tests/test_profile.py` compares, for pi3, pi4, pi5, x86, pi-other and arm-other, `command()` argv over 36 settings, the sources default and cap for 7 choices, `detail_arg`, `final_arg`, the overload warning, the effects Automatic lines, Effect detail's default, shader heights and default, the classic mpv arguments and the probe's advice, against `tests/frozen_master_profile.json`. That file was written by running master's own functions before the table existed.

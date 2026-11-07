@@ -1099,6 +1099,15 @@ With New chosen, a box that boots with no screen falls back to classic mpv; when
 | BT3 | The Pi 4 node (regression): choose New, then `tr '\0' ' ' < /proc/$(pgrep -x pvj-render)/cmdline` | pvj-render draws as before, with `--detail=540 --fast --skip-deblock --sources=4`; no tier reason on the card | Classic drawing, a reason on the card, or a changed argument |
 | BT4 | Move the Pi 3B's saved card to the Pi 4 (or restore its settings there) | The Pi 4 draws New with no new choice | New lost on the move |
 
+### One profile table by tier (pvj/profile.py): the Pi 4 is as it was, the Pi 3B shows its settings (not yet run on a node)
+
+| Row | Do | Good | Bad |
+|---|---|---|---|
+| PT1 | The Pi 4 node (regression): Setup > Renderer, choose New, then `tr '\0' ' ' < /proc/$(pgrep -x pvj-render)/cmdline` | `--detail=540 --fast --skip-deblock --sources=4`, as before; the card says "Settings for this node: standard (Raspberry Pi 4 Model B ...)" with ten lines, each with a reason | Any other argument, or no settings list |
+| PT2 | The same Pi 4: play a 1080p clip to Source 2 while Sources 3 and 4 play | The overload warning still shows | No warning |
+| PT3 | The real Pi 3B: open Setup > Renderer | "Settings for this node: lean (Raspberry Pi 3 Model B ...)"; New is refused with the OpenGL ES 3 reason; sources default and most are 2 | A different tier, or New accepted |
+| PT4 | The Pi 3B: `cat /run/pvj/player/renderer.json` (the report) | It holds `profile` with the tier and the values | No `profile` |
+
 ## Safety
 
 - The workflow starts by **manual dispatch only**, and only for the repository owner. It never runs for pushes, pull requests or forks, so nobody else's code reaches the Pi. Keep it that way.

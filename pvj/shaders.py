@@ -32,7 +32,7 @@ import threading
 import time
 import unicodedata
 
-from . import locks, paths
+from . import locks, paths, profile
 from .api import ApiError, valid_name
 from .player import PlayerError
 
@@ -49,7 +49,7 @@ UPLOAD_TEMP = r"\.upload-\d+-\d+"         # upload() writes here first: .upload-
 MAX_TEXT = 200                # description, credit
 CARRIER_FPS = 30
 HEIGHTS = (360, 540, 720, 1080)         # every drawing height any board may use (a settings file may hold any of them)
-DEFAULT_HEIGHT = 540                    # for a Pi 4 and for a board nobody has measured; see default_height()
+DEFAULT_HEIGHT = 540                    # for a Pi 4 and for a board nobody has measured; see default_height() and profile.py
 FRAME_WRAP = 1 << 24                    # the carrier's frame number is carried in three bytes (6.4 days at 30 a second)
 SPEED_MIN, SPEED_MAX = 0.0, 4.0         # the speed control: 1 is the shader's own pace, 0 freezes it
 GAIN_MIN, GAIN_MAX = 0.0, 2.0           # the brightness trim: 1 leaves the shader as it is
@@ -152,14 +152,14 @@ def heights_for(board):
     """The drawing heights offered on a board. Measured on a Pi 4 (2560 x 1440 at 75 Hz): at 1080 lines even the
     lightest shaders dropped 7 to 8 frames a second, so 1080 is never offered there. A Pi 5 and x86 keep every
     choice; nothing is measured on them."""
-    return HEIGHTS if board in ("pi5", "x86") else HEIGHTS[:3]
+    return HEIGHTS[:profile.shader_heights(board)]
 
 
 def default_height(board):
     """The one height for every shader: 540 lines on a Pi 4 (all 46 bundled shaders keep up there at a 1920 x 1080
     output; the Pi 4's own default is Automatic, which draws most of them at 720: shaderlive, D93) and on a board that
     is unknown or weaker; 720 on a Pi 5 and x86, which is a guess until someone measures them."""
-    return 720 if board in ("pi5", "x86") else DEFAULT_HEIGHT
+    return profile.shader_default(board)
 
 
 # ---- numbers ---------------------------------------------------------------------------------------------------------

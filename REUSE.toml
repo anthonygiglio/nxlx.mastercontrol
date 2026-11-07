@@ -23,6 +23,7 @@ path = [
   "tools/sandbox/scenarios/*.json",
   "tools/max/*.maxpat",
   "tests/ui/fixtures/*.json",
+  "tests/frozen_master_profile.json",
   "LICENSES/Apache-2.0.txt",
   "NOTICE.md",
   "SECURITY.md",

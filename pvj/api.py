@@ -22,7 +22,7 @@ import threading
 import time
 import unicodedata
 
-from . import dmx as dmx_mod, hardware, midi as midi_mod, netcfg, osc as osc_mod, presets, streams as streams_mod, themes as themes_mod
+from . import dmx as dmx_mod, hardware, midi as midi_mod, netcfg, osc as osc_mod, presets, profile as tiers_mod, streams as streams_mod, themes as themes_mod
 from . import auth as auth_mod
 from . import locks, paths
 from . import policy
@@ -1480,7 +1480,7 @@ class Api:
     def _source_warning(self, k, wait=1.0):
         """The warning about load (renderer.source_warning), once the clip's height is known (at most `wait` s)."""
         from . import renderer as renderer_mod
-        if self.board.get("kind") not in renderer_mod.SMALL_BOARDS:
+        if not tiers_mod.small(self.board.get("kind")):
             return None
         deadline = time.monotonic() + wait
         while True:

@@ -238,7 +238,7 @@ def measured(sid, table=PI4):
 # board that was measured has it. The rule, from the table that counts for the output (table_for): 720 lines where the
 # shader held at 720, else 540 (where it held, or, at an output larger than PI4's, the lowest that was measured: the
 # guard decides there, as before). A shader nobody measured (an upload) gets AUTO_OTHER.
-AUTO_BOARDS = ("pi4",)
+AUTO_BOARDS = ("pi4",)    # by exact kind, not tier: the per-shader heights below were measured on a Pi 4 only (pvj/profile.py)
 AUTO_OTHER = 540
 HEIGHT_AUTO = "height_auto"     # beside "height" in the settings, as D71 put "style" beside "transition" (see LiveEngine.config)
 
