@@ -4,6 +4,7 @@
 
 - **What.** The branch was 182 commits behind master (8d473ea). Master merged in; the only conflicts were the three frozen log files, so this branch's entries moved into its own files under D107, word for word, and its decision keeps its number.
 - **PANEL.md brought up to master too.** Section 12 is now the sources as merged (D101) and each source's chain (D106 step e); the Renderer row has Sources and Final picture (D108); Sound reactivity has Follow Ableton Link (D117); the routes list the sources, chains and box clock. Found: the box clock (D116) has no control on the panel, only a MIDI action and OSC.
+- **The review** (the coordinator's, 2026-11-06): two Lows, fixed. Section 12 now says Source 1 has no Effect row and gives its fold's real title; D102 no longer says D101 is marked as coming.
 
 ## 2026-10-20, the panel inventory (`panel-design`, D102)
 

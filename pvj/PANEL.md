@@ -402,10 +402,11 @@ sound. On the classic player there is one source and none of this is shown, exce
   {source, action: stop}`. On the classic player: "Sources 2 and up need the New renderer (Setup > Renderer)." A warning
   when a source over 720 lines plays while two others do. Operator and up.
 - **A source's chain** (in each row of the Sources card, New renderer only, when `GET /api/effects/chain` says it is
-  available): for Sources 2 and up a Shader list and Play (a shader as the source's picture); an Effect list with On
+  available). For Sources 2 and up: a Shader list and Play (a shader as the source's picture); an Effect list with On
   (Change when one is on), Off, and an Amount slider while it is on; and a fold "More effects (advanced)" with effects 2
-  and 3, which run in order over the one before. The fold opens by itself when one of them is on, and stays as it was
-  left by hand. `POST /api/effects/chain {source, slot, id | off | controls}`. With Effects off only the shader row
+  and 3, which run in order over the one before. Source 1 has no Effect row (its first effect is the one on Shape >
+  Effect): only the fold, titled "More effects after the Effect (advanced)", with effects 2 and 3 run after it. A fold
+  opens by itself when one of its effects is on, and stays as it was left by hand. `POST /api/effects/chain {source, slot, id | off | controls}`. With Effects off only the shader row
   shows. A shader that could not be built again after a change says so on the Shaders page ("Source N keeps x as it
   was: why"). At 390 px each row wraps under its list.
 
