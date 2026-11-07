@@ -16,6 +16,7 @@ count, so a loop cannot fill the log or wear the card. The file is whole at ever
 500 events."""
 
 import json
+import math
 import os
 import re
 import threading
@@ -56,23 +57,48 @@ class EventLog:
 
     # ---- the file ----------------------------------------------------------------------------------------------
     def _load(self):
+        """The file, if it is a file of ours: any damage (not JSON, not an object, `events` not a list, an odd item, a time that is
+        not a plain number) leaves out what is wrong and never stops the panel."""
         try:
             with open(self.path) as f:
                 data = json.load(f)
-        except (OSError, ValueError):
-            return
-        if not isinstance(data, dict):
-            return
-        self.items = [e for e in (self._clean_item(x) for x in data.get("events", []) if isinstance(x, dict)) if e][-self.cap:]
-        meta = data.get("meta")
-        if isinstance(meta, dict):
-            self.meta = {k: v for k, v in meta.items() if k in ("boot", "update_at") and isinstance(v, (str, int)) and not isinstance(v, bool)}
+            if not isinstance(data, dict):
+                return
+            rows = data.get("events")
+            if isinstance(rows, list):
+                items = []
+                for x in rows:
+                    try:
+                        e = self._clean_item(x) if isinstance(x, dict) else None
+                    except Exception:
+                        e = None
+                    if e:
+                        items.append(e)
+                self.items = items[-self.cap:]
+            meta = data.get("meta")
+            if isinstance(meta, dict):
+                boot, at = meta.get("boot"), meta.get("update_at")
+                if isinstance(boot, str):
+                    self.meta["boot"] = plain(boot, 80)
+                if self._time(at) is not None:
+                    self.meta["update_at"] = self._time(at)
+        except Exception:                   # OSError, ValueError, RecursionError from a hostile file, anything
+            self.items, self.meta = [], {}
+
+    @staticmethod
+    def _time(t):
+        """A whole number of seconds from 0 to 10**11, or None (a bool, text, NaN, an infinity, 1e400, a negative)."""
+        if isinstance(t, bool) or not isinstance(t, (int, float)):
+            return None
+        if isinstance(t, float) and not math.isfinite(t):
+            return None
+        return int(t) if 0 <= t <= 10 ** 11 else None
 
     def _clean_item(self, x):
-        t, kind, text = x.get("t"), x.get("kind"), plain(x.get("text"), TEXT_MAX)
-        if isinstance(t, bool) or not isinstance(t, (int, float)) or kind not in KINDS or not text:
+        t, kind, text = self._time(x.get("t")), x.get("kind"), plain(x.get("text"), TEXT_MAX)
+        if t is None or kind not in KINDS or not text:
             return None
-        out = {"t": int(t), "kind": kind, "text": text}
+        out = {"t": t, "kind": kind, "text": text}
         who = plain(x.get("who"), WHO_MAX)
         if who:
             out["who"] = who

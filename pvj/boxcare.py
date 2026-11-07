@@ -1110,17 +1110,18 @@ class BoxCare:
     def _helper_log(self, secrets):
         """The log through the root helper (pvj-sysd), which may read the system journal that this service may not: this
         start's lines and, when the journal is kept across restarts, the end of the one before. None when there is no
-        helper here or it did not answer (the caller then tries the direct way). Each line is scrubbed whole and only then
-        cut to length, as in read_log."""
+        helper here or it did not answer (the caller then tries the direct way, and says why). Each line is scrubbed whole and only then
+        cut to length, as in read_log. A dict when it answered; else the reason as text (or None when there is no
+        helper here)."""
         sysd = getattr(self.api, "sysd", None)
         if sysd is None:
             return None
         try:
             now = sysd.request({"cmd": "journal", "lines": LOG_LINES, "hours": 24, "boot": 0})
-        except OSError:
-            return None
+        except OSError as e:
+            return str(e)
         if not now.get("ok") or not isinstance(now.get("lines"), list):
-            return None
+            return str(now.get("error") or "it gave no lines")
         clean = lambda rows: [scrub(l, secrets)[:LOG_LINE_MAX] for l in rows if isinstance(l, str)]
         lines = clean(now["lines"])
         persistent, readonly = bool(now.get("persistent")), bool(now.get("read_only_root"))
@@ -1144,9 +1145,12 @@ class BoxCare:
 
     def read_log(self, secrets=()):
         helper = self._helper_log(secrets)
-        if helper is not None:
+        if isinstance(helper, dict):
             return helper
-        return self._direct_log(secrets)
+        out = self._direct_log(secrets)
+        if helper:         # why the helper did not give it (the text it sent, scrubbed), so the cause can be found
+            out["note"] = "%s The system helper could not give the log: %s" % (out["note"], scrub(helper, secrets)[:200])
+        return out
 
     def _direct_log(self, secrets=()):
         """The services' recent log lines, if this unprivileged service may read them. It is told apart: lines came
@@ -1188,7 +1192,10 @@ class BoxCare:
         with self.settings.lock:
             data = copy.deepcopy(self.settings.data)
         secrets = self._secrets(data)
-        rows = [dict(e, text=scrub(e["text"], secrets), **({"who": scrub(e["who"], secrets)} if e.get("who") else {})) for e in log.events()]
+        api = self.api
+        tunnel = bool(api.support.is_remote(client) or (isinstance(device, dict) and device.get("remote")))
+        # a support login is the Owner's role but not the Owner: names and addresses never leave the node (D125)
+        rows = [dict(e, text=scrub(e["text"], secrets), **({"who": scrub(e["who"], secrets)} if e.get("who") and not tunnel else {})) for e in log.events()]
         return dict(log.state(rootfs.current_state() == "overlay"), events=rows)
 
     def diagnostics(self, body, device, client):

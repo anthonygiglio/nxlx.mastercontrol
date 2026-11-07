@@ -40,6 +40,7 @@ JOURNAL_UNITS = ("pvj-web.service", "pvj-player.service", "pvj-sysd.service", "p
 JOURNAL_LINES, JOURNAL_LINES_MAX = 300, 500
 JOURNAL_HOURS, JOURNAL_HOURS_MAX = 24, 24 * 7
 JOURNAL_LINE_MAX = 400
+JOURNAL_SECONDS = 20          # journalctl on a big journal on a card can be slow
 JOURNAL_BYTES = 56000       # the whole reply must fit the 64 KiB the panel reads (netd.exchange), escapes included
 MARKER = "ntp-was-on"       # left in the helper's own runtime folder while network time is switched off
 STATUS_CACHE = 5.0
@@ -178,9 +179,11 @@ class SysService:
             argv += ["--since", "-%dh" % hours]
         for unit in JOURNAL_UNITS:
             argv += ["-u", unit]
-        code, out = self._run(argv, timeout=10)
+        code, out = self._run(argv, timeout=JOURNAL_SECONDS)
         if code != 0:
-            return {"ok": False, "error": "the system log could not be read: %s" % out.strip()[-160:]}
+            why = ("it did not answer within %d seconds" % JOURNAL_SECONDS) if "timed out" in out else out.strip()[-160:]
+            self.log("pvj-sysd: journalctl failed: %s" % why)         # so the node's own journal says why (device row EV1)
+            return {"ok": False, "error": "the system log could not be read: %s" % why}
         rows = [l[:JOURNAL_LINE_MAX] for l in out.splitlines() if l.strip()][-lines:]
         kept, used = [], 0
         for line in reversed(rows):                         # the newest first in the budget, then back to the order

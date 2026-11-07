@@ -139,6 +139,29 @@ class LogTest(unittest.TestCase):
         self.assertEqual(len([l for l in self.lines if "could not be written" in l]), 1)
         self.assertFalse(bad.state()["kept"])
 
+    def test_a_hostile_file_never_stops_the_panel(self):
+        self.make()
+        good = {"t": 5, "kind": "player", "text": "kept"}
+        for text in ('{"events": "no"}', '{"events": 5}', '{"events": null}', '{"events": {"a": 1}}', "[1, 2]", "5", "null", '"x"',
+                     '{"events": [1, "x", null, [], {"t": 1e400, "kind": "player", "text": "inf"}, {"t": NaN, "kind": "player", "text": "nan"},'
+                     ' {"t": -Infinity, "kind": "player", "text": "ninf"}, {"t": -5, "kind": "player", "text": "neg"},'
+                     ' {"t": 1e30, "kind": "player", "text": "huge"}, {"t": true, "kind": "player", "text": "bool"},'
+                     ' {"t": 5, "kind": ["player"], "text": "unhashable"}, {"t": 5, "kind": "player", "text": ["x"]},'
+                     ' {"t": 5, "kind": "player", "text": "n", "n": "many", "who": 5}, {"t": 5, "kind": "player", "text": "kept"}],'
+                     ' "meta": {"boot": ["x"], "update_at": NaN}}',
+                     '{"events": [' + '[' * 100000 + ']}', '\x00\x01'):
+            with open(self.path, "w") as f:
+                f.write(text)
+            log = events.EventLog(self.path, now=self.clock)
+            texts = [e["text"] for e in log.events()]
+            self.assertTrue(set(texts) <= {"kept", "n"}, (text[:40], texts))
+            log.add("player", "and it still works")
+            self.assertEqual(log.events()[0]["text"], "and it still works")
+        with open(self.path, "w") as f:
+            f.write('{"events": [{"t": 5, "kind": "player", "text": "x", "n": 99999999}], "meta": {"boot": "b", "update_at": 7.9}}')
+        log = events.EventLog(self.path)
+        self.assertEqual((log.events()[0]["n"], log.meta), (9999, {"boot": "b", "update_at": 7}))
+
     def test_a_new_boot_id_is_a_node_restart_written_at_once(self):
         log = self.make()
         log.start()
@@ -221,6 +244,23 @@ class JournalCommandTest(unittest.TestCase):
         self.assertTrue(r["lines"][-1].startswith("2026-11-07T10:00:"), "the newest are kept")
         self.assertTrue(all(len(l) <= sysd.JOURNAL_LINE_MAX for l in r["lines"]))
 
+    def test_a_journalctl_failure_is_logged_by_the_helper_and_a_timeout_is_said(self):
+        logged = []
+        s = self.make("", code=1)
+        s.log = logged.append
+        s.handle({"cmd": "journal"})
+        self.assertIn("journalctl failed: boom", logged[0])
+        self.assertEqual(self.calls[0][0], "journalctl")
+
+        def slow(argv, **kw):
+            self.timeout = kw["timeout"]
+            raise subprocess.TimeoutExpired(argv, kw["timeout"])
+        s = sysd.SysService(runner=slow, log=logged.append)
+        r = s.handle({"cmd": "journal"})
+        self.assertEqual(self.timeout, 20)
+        self.assertIn("did not answer within 20 seconds", r["error"])
+        self.assertIn("did not answer within 20 seconds", logged[-1])
+
     def test_it_says_whether_the_journal_is_kept_and_whether_the_root_is_read_only(self):
         s = self.make("a\n")
         s.journal_dir = tempfile.mkdtemp()
@@ -265,6 +305,19 @@ class ApiTest(CareBase):
         self.assertEqual(out["cap"], 500)
         self.assertEqual(out["events"][0]["who"], "192.168.0.9")
         self.assertEqual(self.call("GET", "/api/events", token=self.full)[0], 200)
+
+    def test_a_support_login_never_gets_the_names_and_addresses(self):
+        self.api.event("signin", "A sign-in was refused: wrong PIN.", who="192.168.0.9")
+        remote = dict(self.full_dev, remote=True)
+        with mock.patch.object(self.api.support, "is_remote", return_value=True):
+            out = self.h("GET", "/api/events", {}, remote)[1]
+        self.assertEqual(len(out["events"]), 1)
+        self.assertNotIn("who", out["events"][0])
+        self.assertNotIn("192.168.0.9", json.dumps(out))
+        with mock.patch.object(self.api.support, "is_remote", return_value=True):
+            out = self.h("GET", "/api/events", {}, self.full_dev)[1]
+        self.assertNotIn("who", out["events"][0])
+        self.assertEqual(self.h("GET", "/api/events", {}, self.full_dev)[1]["events"][0]["who"], "192.168.0.9")
 
     def test_a_secret_in_an_event_is_taken_out_for_the_owner_too(self):
         self.api.event("player", "something said %s aloud" % PIN)
@@ -354,6 +407,15 @@ class ApiTest(CareBase):
         self.assertNotIn(PIN, json.dumps(out))
         self.assertEqual([m.get("boot", 0) for m in helper.asked if m.get("cmd") == "journal"], [0, -1])
         self.assertTrue(all(m["lines"] <= 500 for m in helper.asked if m.get("cmd") == "journal"))
+
+    def test_the_reason_the_helper_could_not_give_the_log_is_in_the_note(self):
+        for fake, want in ((FakeSysd({"ok": False, "error": "the system log could not be read: Failed to open journal %s" % PIN}), "Failed to open journal"),
+                           (FakeSysd(None, fail=True), "pvj-sysd) is not running")):
+            self.api.sysd = fake
+            out = self.h("GET", "/api/system/diagnostics", {}, self.full_dev)[1]["file"]["log"]
+            self.assertIn("The system helper could not give the log", out["note"])
+            self.assertIn(want, out["note"])
+            self.assertNotIn(PIN, json.dumps(out))
 
     def test_without_the_helper_the_old_way_is_tried(self):
         self.api.sysd = FakeSysd(None, fail=True)
