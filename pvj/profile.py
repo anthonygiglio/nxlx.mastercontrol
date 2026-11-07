@@ -33,8 +33,8 @@ PROFILES = {
                  "shader_heights": 3, "shader_default": 540, "effects": "standard"},
     "full": {"small": False, "sources_default": 4, "sources_cap": SOURCES_MAX,
              "shader_heights": 4, "shader_default": 720, "effects": None},
-    # Nothing measured: the careful values for effects and shaders (as before), the heavy path for the renderer.
-    "unknown": {"small": False, "sources_default": 4, "sources_cap": SOURCES_MAX,
+    # Nothing measured, so the careful (lean) values everywhere (D122); before it the renderer took the heavy path here.
+    "unknown": {"small": True, "sources_default": 2, "sources_cap": 2,
                 "shader_heights": 3, "shader_default": 540, "effects": "lean"},
 }
 
@@ -85,6 +85,7 @@ def describe(kind, model=""):
     tier = hardware.tier(kind)
     on = "on" if p["small"] else "off"
     sm = p["small"]
+    careful = "A board the node cannot name takes the lean values: nothing is measured on it (D122)."
     values = [
         {"name": "Picture detail inside (Automatic)", "value": "540 lines" if sm else "the screen's own size",
          "why": "A Pi 3 or 4 draws the picture at 540 lines and scales it once (measured 2026-10-16, D95)." if sm
@@ -109,4 +110,7 @@ def describe(kind, model=""):
         {"name": "Effect detail by default", "value": "Automatic" if p["effects"] else "full size",
          "why": "Automatic scales each filter to what this board holds." if p["effects"] else "No effect has been measured here."},
     ]
+    if tier == "unknown":
+        for v in values[:7]:
+            v["why"] = careful
     return {"tier": tier, "tier_words": _TIER_WORDS[tier], "kind": kind, "model": model or "", "values": values}

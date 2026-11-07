@@ -4,7 +4,8 @@
 
 tests/frozen_master_profile.json was written once by running master's own functions (before the table existed) for
 every kind and every setting below; nothing in it is computed by the code under test. If a value here has to change,
-that is a decision to record, not a number to refresh."""
+that is a decision to record, not a number to refresh. The two unknown kinds are the one change (D122): they take the lean
+renderer values (below), and master's values for everything else."""
 import itertools
 import json
 import os
@@ -63,11 +64,24 @@ class FrozenValuesTest(unittest.TestCase):
         self.assertEqual(FROZEN["pi5"]["heights"], [360, 540, 720, 1080])
         self.assertEqual(FROZEN["x86"]["command"]["auto|None|auto|False"][5:], ["--detail=output", "--sources=4"])
 
-    def test_unknown_kinds(self):
+    LEAN_KEYS = ("sources", "cap", "detail_arg", "final_arg", "command", "warning")      # D122: what unknown boards now take from pi3
+
+    def test_unknown_kinds_take_the_lean_values_for_the_renderer_and_master_s_for_the_rest(self):
         for kind in ("pi-other", "arm-other"):
-            got, want = measure(kind), FROZEN[kind]
-            for key in want:
-                self.assertEqual(got[key], want[key], (kind, key))
+            got = measure(kind)
+            for key in self.LEAN_KEYS:
+                self.assertEqual(got[key], FROZEN["pi3"][key], (kind, key))
+            for key in set(FROZEN[kind]) - set(self.LEAN_KEYS):
+                self.assertEqual(got[key], FROZEN[kind][key], (kind, key))
+
+    def test_unknown_boards_by_hand(self):
+        for kind in ("pi-other", "arm-other"):
+            self.assertEqual(R.command("/run/s", SCREEN, "auto", kind, ENV),
+                             ["BIN", "--socket=/run/s", "--drm-device=/dev/dri/card1", "--drm-connector=HDMI-A-1", "--drm-mode=1920x1080@60.00",
+                              "--detail=540", "--fast", "--skip-deblock", "--sources=2"])
+            self.assertEqual((R.sources_for(kind), R.source_cap(kind), R.final_arg("auto", kind)), (2, 2, "--final=auto"))
+            self.assertEqual(R.source_warning(ROWS, 1, kind), R.WARN_TEXT)
+            self.assertEqual(R.sources_for(kind, 8), 2, "never over the cap")
 
     def test_no_board_at_all(self):
         want = FROZEN["none"]
