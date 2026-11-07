@@ -98,7 +98,7 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid 
 .swatches { display: flex; gap: 8px; flex-wrap: wrap; }
 .swatch { width: 44px; height: 44px; border-radius: 6px; border: 2px solid var(--ln); cursor: pointer; padding: 0; }
 .swatch.cur { outline: 3px solid var(--fg); outline-offset: 2px; }
-.offline { position: fixed; left: 8px; right: 8px; top: 8px; z-index: 10; padding: 8px 12px; border-radius: 6px; background: var(--ac); color: var(--on); font-weight: 600; text-align: center; }
+.offline { position: fixed; left: 8px; right: 8px; top: 8px; z-index: 14; padding: 8px 12px; border-radius: 6px; background: var(--ac); color: var(--on); font-weight: 600; text-align: center; }
 [hidden] { display: none !important; }
 .picker { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: flex-end; justify-content: center; z-index: 20; }
 .picker .sheet { background: var(--bg); border: 1.5px solid var(--ln); border-radius: 12px 12px 0 0; width: 100%; max-width: 600px; max-height: 80dvh; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
@@ -830,10 +830,16 @@ main.ws:focus, .deskcol:focus { outline: none; }
     background: linear-gradient(to bottom, transparent, var(--bg) 75%); border-bottom: 3px solid var(--ac); }
 }
 /* The bars that stay put leave at least half of the window to the page (tests/ui/sweep.js): the title bar stays at
-   the top only where that holds. On a phone under 800 px high (320 x 568, 360 x 740), and at any height while the
-   strip is opened with More, it scrolls away with the screen and what stuck under it starts at the top again. */
-.frame:has(.tp.open) { --head: 0px; }
-.frame:has(.tp.open) > .wshead { position: static; }
+   the top only where that holds. On a phone (under 600 px of panel) it scrolls away with the screen when the window
+   is under 800 px high (320 x 568, 360 x 740), while the strip is opened with More, or when the title bar itself is
+   taller than a quarter of the window (the page marks that: .headfree); what stuck under it then starts at the top.
+   A tablet or a laptop keeps it at the top always, More open or not. */
+@container app (max-width: 599px) {
+  .frame:has(.tp.open), .frame.headfree { --head: 0px; }
+  .frame:has(.tp.open) > .wshead, .frame.headfree > .wshead { position: static; }
+}
+/* what is scrolled to or focused stays clear of the bars that stay put (WCAG 2.4.11): the page measures them */
+html { scroll-padding-top: calc(var(--head, 0px) + var(--sub, 0px)); scroll-padding-bottom: var(--dock, 0px); }
 @media (max-height: 799px) {
   @container app (max-width: 599px) {
     .frame { --head: 0px; }
