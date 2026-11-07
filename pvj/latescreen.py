@@ -37,19 +37,24 @@ WAITS = (30.0, 60.0, 120.0, 300.0)      # the wait after the 1st, 2nd, 3rd and l
 RESET_SECONDS = 600.0           # a switch this old (pvj-render has drawn since) no longer counts: the waits start again
 KEEP = 8                        # switches kept in the file
 
-NO_SCREEN_START = "pvj-render did not start (exit"      # renderer.Supervisor.run's words for an end before it answered
+# renderer.Supervisor.run's words for the two ends that exit 2 gives: pvj-render ends with 2 when it has no screen with a
+# mode (render/src/out.c), before it answers ("did not start") or after it has drawn, when the screen went away and
+# presenting failed ("ended twice in a row"). Any other exit code is a crash, and stays on classic.
+NO_SCREEN_WHY = ("pvj-render did not start (exit 2)", "pvj-render ended twice in a row (exit 2)")
 
 
 def connected_screens(sysfs):
-    """The names of the connected screens in hardware.drm_connectors()' list (a writeback connector is not one)."""
+    """The names of the screens pvj-render could draw on in hardware.drm_connectors()' list: status connected AND at
+    least one mode (a projector says "connected" before its EDID is read, and pvj-render takes only a connector with
+    modes: out.c, pick_connector). A writeback connector is not a screen."""
     return sorted(c["connector"] for c in sysfs
-                  if c.get("status") == "connected" and not str(c.get("connector", "")).lower().startswith("writeback"))
+                  if c.get("status") == "connected" and c.get("modes") and not str(c.get("connector", "")).lower().startswith("writeback"))
 
 
 def no_screen_fallback(why, sysfs):
-    """True when pvj-render did not start AND no screen is connected now: the one fallback that a screen can undo. A
-    board whose /sys lists no connector at all cannot say, and a crash after pvj-render drew ("ended twice") is not it."""
-    return bool(sysfs) and isinstance(why, str) and why.startswith(NO_SCREEN_START) and not connected_screens(sysfs)
+    """True when pvj-render ended with exit 2 (NO_SCREEN_WHY) AND no screen with a mode is connected now: the one kind of
+    fallback that a screen can undo. A board whose /sys lists no connector at all cannot say; any other end is a crash."""
+    return bool(sysfs) and why in NO_SCREEN_WHY and not connected_screens(sysfs)
 
 
 def start_time(pid):
@@ -145,6 +150,19 @@ class Watcher:
         return False
 
 
+def still_running(pid, began):
+    """True while `pid` is the process whose start time was `began` (not gone, and not a pid reused by another)."""
+    return start_time(pid) == began
+
+
+def end_process(pid, began):
+    """SIGTERM to `pid` only if it is still the process that began at `began`; True when it was sent."""
+    if not still_running(pid, began):
+        return False
+    os.kill(pid, signal.SIGTERM)        # mpv quits; Restart=always starts the service again
+    return True
+
+
 def start(rundir, log, env=None, boot=None):
     """Called by the player just before it becomes mpv, after a fallback that a screen can undo (no_screen_fallback).
     Starts the watcher in a detached grandchild (as detach_socket_opener does: no zombie, and the exec of mpv leaves
@@ -158,10 +176,7 @@ def start(rundir, log, env=None, boot=None):
         began = start_time(pid)
         if began is None:
             return False
-
-        def end_player():
-            if start_time(pid) == began:        # still this process, not a pid that something else has now
-                os.kill(pid, signal.SIGTERM)    # mpv quits; Restart=always starts the service again
+        log("pvj-player: renderer: no screen with a mode is connected; watching for one, to start pvj-render when it comes")
         child = os.fork()
     except Exception:
         return False
@@ -169,7 +184,8 @@ def start(rundir, log, env=None, boot=None):
         try:
             if os.fork() == 0:
                 os.setsid()
-                Watcher(rundir, log, boot=boot, end_player=end_player, alive=lambda: start_time(pid) == began).watch()
+                Watcher(rundir, log, boot=boot, end_player=lambda: end_process(pid, began),
+                        alive=lambda: still_running(pid, began)).watch()
                 os._exit(0)
         except BaseException:
             pass

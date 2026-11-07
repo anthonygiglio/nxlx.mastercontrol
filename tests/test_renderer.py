@@ -562,6 +562,8 @@ class ServeTest(Base):
                 mock.patch("pvj.player.detach_socket_opener", opener), \
                 mock.patch("os.execvp", execvp), \
                 mock.patch.object(renderer, "START_SECONDS", 3.0), \
+                mock.patch.object(renderer.hardware, "drm_connectors", lambda root="/": []), \
+                mock.patch("pvj.latescreen.start", lambda *a, **k: False), \
                 mock.patch.object(renderer.hardware, "detect_board", lambda: {"kind": "pi4"}):
             try:
                 p.serve()

@@ -6,8 +6,6 @@ of a screen goes back to pvj-render once when one is connected, never in a loop,
 A fake /sys tree and a fake clock; nothing here forks, kills or touches the real /sys."""
 import os
 import shutil
-import subprocess
-import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -30,11 +28,13 @@ class Fake:
         self.ended = []
         self.lines = []
 
-    def screen(self, connector, connected, card=1):
+    def screen(self, connector, connected, card=1, modes=True):
         folder = os.path.join(self.root, "sys/class/drm/card%d-%s" % (card, connector))
         os.makedirs(folder, exist_ok=True)
         with open(os.path.join(folder, "status"), "w") as f:
             f.write("connected\n" if connected else "disconnected\n")
+        with open(os.path.join(folder, "modes"), "w") as f:          # the kernel lists none until it has read the EDID
+            f.write("1920x1080\n1024x768\n" if modes else "")
 
     def sysfs(self):
         return hardware.drm_connectors(self.root)
@@ -87,6 +87,17 @@ class WatcherTest(unittest.TestCase):
             self.assertFalse(f.run_until(w, 40), connector)
             f.screen(connector, True, card)
             self.assertTrue(f.run_until(w, 10), connector)
+
+    def test_a_screen_that_says_connected_before_it_has_modes_does_not_switch_until_it_has_some(self):
+        f = Fake(self)
+        f.screen("HDMI-A-1", True, modes=False)
+        w = f.watcher()
+        self.assertFalse(f.run_until(w, 60))
+        self.assertEqual(f.ended, [])
+        f.screen("HDMI-A-1", True)
+        plugged = f.now
+        self.assertTrue(f.run_until(w, 30))
+        self.assertLessEqual(f.ended[0] - plugged, latescreen.SETTLE_SECONDS + 2)
 
     def test_a_screen_that_goes_before_it_has_settled_does_not_switch(self):
         f = Fake(self)
@@ -182,10 +193,25 @@ class WatcherTest(unittest.TestCase):
 class FallbackKindTest(unittest.TestCase):
     NONE = [{"connector": "HDMI-A-1", "status": "disconnected", "modes": [], "card": 1},
             {"connector": "Writeback-1", "status": "connected", "modes": [], "card": 1}]
+    NO_MODES = [{"connector": "HDMI-A-1", "status": "connected", "modes": [], "card": 1}]
     ONE = [{"connector": "HDMI-A-1", "status": "connected", "modes": ["1920x1080"], "card": 1}]
 
     def test_pvj_render_that_did_not_start_with_no_screen_is_the_one_a_screen_undoes(self):
         self.assertTrue(latescreen.no_screen_fallback("pvj-render did not start (exit 2)", self.NONE))
+
+    def test_a_screen_that_is_connected_but_lists_no_modes_is_not_one(self):
+        self.assertTrue(latescreen.no_screen_fallback("pvj-render did not start (exit 2)", self.NO_MODES))
+
+    def test_a_screen_that_went_away_while_pvj_render_drew_is_a_no_screen_fallback(self):
+        # out_present fails, the supervisor starts it once more, it exits 2: "ended twice in a row (exit 2)"
+        self.assertTrue(latescreen.no_screen_fallback("pvj-render ended twice in a row (exit 2)", self.NONE))
+        self.assertFalse(latescreen.no_screen_fallback("pvj-render ended twice in a row (exit 2)", self.ONE))
+
+    def test_only_exit_2_counts(self):
+        for why in ("pvj-render did not start (exit 1)", "pvj-render did not start (exit -11)", "pvj-render did not start (exit 22)",
+                    "pvj-render ended twice in a row (exit 1)", "pvj-render ended twice in a row (exit 3)",
+                    "pvj-render ended twice in a row (signal 11)", "pvj-render ended twice in a row (exit 20)"):
+            self.assertFalse(latescreen.no_screen_fallback(why, self.NONE), why)
 
     def test_a_crash_stays_on_classic(self):
         for why in ("pvj-render ended twice in a row (exit 3)", "pvj-render ended twice in a row (signal 11)",
@@ -252,6 +278,69 @@ class ServeTest(RendererBase):
         self.assertEqual(seen["watch"], [])
 
 
+class KillTest(unittest.TestCase):
+    """The code that ends a process: the start-time guard, the double fork and what the watcher is handed."""
+
+    def test_a_process_with_the_same_start_time_is_ended(self):
+        with mock.patch.object(latescreen, "start_time", lambda pid: "777"), mock.patch("os.kill") as kill:
+            self.assertTrue(latescreen.end_process(4242, "777"))
+        kill.assert_called_once_with(4242, latescreen.signal.SIGTERM)
+
+    def test_a_pid_with_another_start_time_or_none_is_never_signalled(self):
+        for now in ("778", None):
+            with mock.patch.object(latescreen, "start_time", lambda pid, now=now: now), mock.patch("os.kill") as kill:
+                self.assertFalse(latescreen.end_process(4242, "777"))
+            kill.assert_not_called()
+
+    def test_the_watcher_stops_when_the_pid_is_gone_or_reused(self):
+        for now, alive in (("777", True), (None, False), ("778", False)):
+            with mock.patch.object(latescreen, "start_time", lambda pid, now=now: now):
+                self.assertEqual(latescreen.still_running(4242, "777"), alive, now)
+
+    def test_start_time_of_this_process_is_there_and_of_a_missing_one_is_none(self):
+        self.assertTrue(latescreen.start_time(os.getpid()))
+        self.assertIsNone(latescreen.start_time(2 ** 22 + 12345))
+
+    def test_start_forks_twice_in_the_child_and_hands_the_watcher_the_guarded_kill(self):
+        class Out(Exception):
+            pass
+
+        def leave(code):
+            raise Out()
+        made = {}
+
+        class FakeWatcher:
+            def __init__(self, rundir, log, **kw):
+                made.update(kw)
+
+            def watch(self):
+                made["watched"] = True
+        lines = []
+        with mock.patch.object(latescreen, "start_time", lambda pid: "777"), mock.patch("os.fork", side_effect=[0, 0]), \
+                mock.patch("os.setsid") as setsid, mock.patch("os._exit", leave), mock.patch.object(latescreen, "Watcher", FakeWatcher):
+            with self.assertRaises(Out):
+                latescreen.start("/nowhere", lines.append, env={"INVOCATION_ID": "x"})
+        setsid.assert_called_once_with()
+        self.assertTrue(made["watched"])
+        self.assertTrue(any("watching for one" in line for line in lines), lines)
+        with mock.patch.object(latescreen, "start_time", lambda pid: "777"), mock.patch("os.kill") as kill:
+            self.assertTrue(made["alive"]())
+            made["end_player"]()
+        kill.assert_called_once_with(os.getpid(), latescreen.signal.SIGTERM)
+        with mock.patch.object(latescreen, "start_time", lambda pid: "778"), mock.patch("os.kill") as kill:
+            self.assertFalse(made["alive"]())
+            made["end_player"]()
+        kill.assert_not_called()
+
+    def test_the_parent_waits_for_the_first_child_and_a_failed_fork_starts_nothing(self):
+        with mock.patch.object(latescreen, "start_time", lambda pid: "777"), mock.patch("os.fork", return_value=555), \
+                mock.patch("os.waitpid") as wait:
+            self.assertTrue(latescreen.start("/nowhere", lambda line: None, env={"INVOCATION_ID": "x"}))
+        wait.assert_called_once_with(555, 0)
+        with mock.patch.object(latescreen, "start_time", lambda pid: "777"), mock.patch("os.fork", side_effect=OSError("no")):
+            self.assertFalse(latescreen.start("/nowhere", lambda line: None, env={"INVOCATION_ID": "x"}))
+
+
 class StartTest(unittest.TestCase):
     def test_a_player_not_run_by_systemd_is_never_watched(self):
         self.assertFalse(latescreen.start(tempfile.gettempdir(), lambda line: None, env={}))
@@ -260,9 +349,9 @@ class StartTest(unittest.TestCase):
         here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         with open(os.path.join(here, "install", "pvj-player.service")) as f:
             lines = f.read().split("\n")
-        self.assertIn("StateDirectory=pvj-player", lines)
         self.assertNotIn("RuntimeDirectoryPreserve=restart", lines)
-        self.assertEqual(os.path.basename(latescreen.paths.PLAYER_STATE_DIR), "pvj-player")
+        self.assertIn("StateDirectory=pvj-player/late-screen", lines)
+        self.assertEqual(latescreen.paths.PLAYER_STATE_DIR, "/var/lib/pvj-player/late-screen")
 
 
 if __name__ == "__main__":

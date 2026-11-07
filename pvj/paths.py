@@ -45,7 +45,7 @@ import time
 
 RUN = "/run/pvj"                              # the parent: root's, nobody else may add, rename or remove a name in it
 PLAYER_DIR = RUN + "/player"
-PLAYER_STATE_DIR = "/var/lib/pvj-player"        # persistent, the player account's own (StateDirectory=pvj-player)
+PLAYER_STATE_DIR = "/var/lib/pvj-player/late-screen"    # persistent, the player account's own (StateDirectory=pvj-player/late-screen)
 WEB_DIR = RUN + "/web"
 NETD_DIR = RUN + "/netd"
 SYSD_DIR = "/run/pvj-sysd"
