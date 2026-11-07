@@ -1789,6 +1789,21 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.unroute('**/api/health', slowHealth);
     }
     await onPage('Health');
+    // Now (2026-11-07): first in the menus, what needs you with the way to it, the projectors, the node and today.
+    {
+      await go(page, 'now/now');
+      await page.waitForSelector('#nownode .nowrow', { timeout: 15000 });
+      const menus = await page.evaluate(() => [...document.querySelectorAll('#wsside button, #wstabs button')].filter((b) => b.getClientRects().length).map((b) => b.textContent.trim().toUpperCase())[0]);
+      assert.strictEqual(menus, 'NOW', 'Now is the first area of the menu');
+      assert(await page.isVisible('#nowscreens') && await page.isVisible('#nownodecard') && await page.isVisible('#nowtodaycard') && await page.isVisible('#nowsrc-1'), 'Now has the screens, the node and today');
+      await page.waitForSelector('#nowproj-1, [id^="nowproj-"]', { timeout: 15000 });
+      await page.waitForSelector('#nowneed-projectors .chip-problem, #nowneed-projectors .chip-check', { timeout: 40000 });
+      assert(/^Needs you \(\d+\)$/.test(await page.textContent('#nowneedshead')), 'Needs you counts what needs you');
+      await page.click('#nowneed-projectors button');
+      await page.waitForSelector('#sysback:text-is("Back to Now")');
+      await page.click('#sysback');
+      await page.waitForSelector('#nowscreen');
+    }
     await sys('Projectors');
     await page.waitForSelector('.proj-entry');
     if ((await page.content()).includes('secret1')) problems.push('the projector password came back to the page');

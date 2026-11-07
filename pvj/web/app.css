@@ -1480,3 +1480,16 @@ html[data-style="signal"] .tp #black.flash { background: var(--st-problem, var(-
   html[data-style="signal"] .btn.flash { border-style: solid; animation: fadeflash .5s steps(1, end) infinite; }
   html[data-style="signal"] .tp #black.flash { animation: blackflash .5s steps(1, end) infinite; }      /* (its keyframes are with fadeflash's, above the style blocks: a keyframes rule has no style of its own) */
 }
+
+/* ---- Now (2026-11-07): Needs you across the top, then four columns on a laptop, two on a tablet, one on a phone.
+   It uses the whole width (the owner: "make better use of all that screen real estate"). A row keeps its state and
+   its button at the right of its words, at every width. ---- */
+.deskcol > .screen.nowscreen { max-width: none; }
+.nowgrid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px 24px; align-items: start; }
+.list .item.nowrow { flex-wrap: nowrap; align-items: flex-start; }
+.list .item.nowrow > .row { flex: 0 0 auto; flex-wrap: nowrap; }
+.nowrow .nowwords { flex: 1 1 auto; min-width: 0; }
+.nowrow .navstate { display: block; overflow-wrap: anywhere; }
+.nowscenes, .nowcues { flex-wrap: wrap; }
+@container ws (min-width: 600px) { .nowgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container ws (min-width: 1100px) { .nowgrid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
