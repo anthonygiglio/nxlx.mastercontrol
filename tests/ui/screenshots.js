@@ -101,6 +101,7 @@ function startServer() {
     for (let i = 0; i < labels.length; i++) await api('POST', '/api/pads', { bank: 0, index: i, label: labels[i][0], file: labels[i][1] });
     await api('POST', '/api/play', { pad: [0, 0] });
     await page.reload();
+    await padsOpen(page);
     await page.waitForSelector('.pad.on', { timeout: 10000 }).catch(() => {});
     await stripOpen(page);
     await page.waitForTimeout(1200);
@@ -114,6 +115,7 @@ function startServer() {
       const pic = await page.waitForSelector('#preview:not([hidden])', { timeout: 8000 }).then(() => true, () => false);
       if (!pic) {
         await page.reload();
+        await padsOpen(page);
         await page.waitForSelector('#previewbtn');
         await page.waitForTimeout(1200);
         await stripOpen(page);
@@ -448,6 +450,7 @@ function startServer() {
     await go(page, 'play/pads');
     await padsOpen(page);
     await page.reload();
+    await padsOpen(page);
     await page.waitForSelector('.pad.on', { timeout: 10000 }).catch(() => {});
     await page.waitForTimeout(1200);
     await shot('live-night-red', whole);
@@ -455,6 +458,7 @@ function startServer() {
 
     await page.setViewportSize({ width: 1180, height: 760 });
     await page.reload();
+    await padsOpen(page);
     await page.waitForSelector('.pad.on', { timeout: 10000 }).catch(() => {});
     await page.waitForTimeout(1200);
     await shot('live-desktop', (f) => page.screenshot({ path: f }));
