@@ -14,7 +14,7 @@
     // (Effect, Picture and Sound), room (Scenes, Walls and Guests), each of them ONE build with a column per screen,
     // or system (the Setup index, a page of it, and Shape > Mapping). S.part is the open column of each of the
     // three; S.last is the screen each area was left on.
-    part: { play: 'pads', shape: 'effect', room: 'scenes' }, last: {}, menu: ''
+    part: { now: 'now', play: 'pads', shape: 'effect', room: 'scenes' }, last: {}, menu: ''
   };
   var app = document.getElementById('app');
   var offlineBanner = document.getElementById('offline');
@@ -989,6 +989,7 @@
     // D74: the effect is named over a shader too (it stays on there), so no guard on pl.shader here.
     if (pl.effect && window.pvjEffects && pl.running) np.textContent += ' \u00b7 effect: ' + window.pvjEffects.nice(pl.effect);
     np.title = np.textContent;          // the line is cut with dots where it is long: the whole of it is here
+    nowLive(np.textContent, pl, st.mix || {});
     var temp = typeof sys.temp_c === 'number' ? Math.round(sys.temp_c) + '°C' : '';
     var pill = document.getElementById('pill');
     if (pill) pill.textContent = [sys.board, temp, pl.running ? 'OK' : 'No player'].filter(Boolean).join(' · ');
@@ -6208,7 +6209,7 @@
   }
   // Which of the five colours of a look the open screen wears (D54, D65): Play is "clips", Shape "mix", Room "room",
   // Setup "system", and the Shaders screen keeps its own, "shaders". A theme knows these five names and no others.
-  var AREA_COLOUR = { play: 'clips', shape: 'mix', room: 'room', setup: 'system' };
+  var AREA_COLOUR = { now: 'system', play: 'clips', shape: 'mix', room: 'room', setup: 'system' };
   function markArea() {
     var key = S.device ? screenKey() : null;
     // (the Shaders screen wears its colour while it is the one screen on the page; as a column of Play's desk it
@@ -6914,7 +6915,177 @@
       openProjectors: can('full') ? function () { openSys('projectors', S.tab === 'system' ? null : S.tab); } : null };
   }
   function stopTimers() {
-    [netTimer, midiTimer, midiLightTimer, accessTimer, updateTimer, healthTimer, indexTimer, syncTimer, confirmTimer, pageStateTimer, dmxTimer, oscTimer].forEach(clearTimeout);
+    [netTimer, midiTimer, midiLightTimer, accessTimer, updateTimer, healthTimer, indexTimer, syncTimer, confirmTimer, pageStateTimer, dmxTimer, oscTimer, nowTimer].forEach(clearTimeout);
+  }
+  // ---- Now (the owner, 2026-11-06: "a control centre that VJs can use"; built 2026-11-07) ----------------------
+  // What is on and what needs you, first. One screen of its own area: Needs you across the top, then On the screens,
+  // The room, The node and Today, which stand as four columns on a laptop, two on a tablet and one on a phone (the
+  // stylesheet). Each row says where it is looked after and its button opens that place. Every card is read from
+  // what the node answers to the pages that own it (health, sources, room, each Setup row's own state), every 5 s
+  // for the live parts and every 30 s for the rows of Setup; nothing is drawn under a finger (held), and an answer to
+  // a Now that was left is dropped (its own element, not an id).
+  var nowTimer = null, nowRowsAt = 0;
+  var NOW_TODAY = ['access', 'schedule', 'support', 'updates'];
+  function nowRow(id, name, state, open) {
+    var chip = h('span', { class: 'chip' }), text = h('span', { class: 'navstate' });
+    showState(chip, text, state);
+    return h('div', { class: 'item nowrow', id: id },
+      h('div', { class: 'nowwords' }, h('div', { class: 'lname', text: name }), text),
+      h('div', { class: 'row' }, chip, open ? h('button', { class: 'btn small', text: open[0], 'aria-label': open[0] + ': ' + name, onclick: open[1] }) : null));
+  }
+  function nowOpen(id) {            // a page of Setup, or the screen that is its home
+    if (HOMES[id] && hasScreen(HOMES[id])) return function () { go(HOMES[id]); };
+    return function () { openSys(id, 'now'); };
+  }
+  var HEALTH_STATE = { ok: 'ready', warn: 'check', bad: 'problem', unknown: null };
+  var TRANSITION_WORDS = { cut: 'Cut', dip: 'Dip to black', crossfade: 'Crossfade', 'wipe-from-left': 'Wipe from left', 'wipe-from-right': 'Wipe from right',
+    'wipe-from-top': 'Wipe from top', 'wipe-from-bottom': 'Wipe from bottom', 'slide-left': 'Slide off left', 'slide-right': 'Slide off right', 'slide-up': 'Slide off up', 'slide-down': 'Slide off down' };
+  function nowPart() {
+    clearTimeout(nowTimer);
+    var live = can('live'), full = can('full');
+    var needsList = h('div', { class: 'list', id: 'nowneedslist' }, h('div', { class: 'hint', text: 'Checking...' }));
+    var needs = h('div', { class: 'card nowneeds', id: 'nowneeds' }, h('h2', { id: 'nowneedshead', text: 'Needs you' }), needsList);
+    var srcList = h('div', { class: 'list', id: 'nowsources' },
+      nowRow('nowsrc-1', 'Source 1', { chip: null, text: '' }, null));
+    var cue = function (id, text, fn) { return h('button', { class: 'btn small grow', id: id, text: text, disabled: !live, onclick: fn }); };
+    var screens = h('div', { class: 'card', id: 'nowscreens' }, h('h2', { text: 'On the screens' }), srcList,
+      h('div', { class: 'row nowcues' },
+        (function () {               // one fade button, out then in, decided by the node (D75): worded by fadeShow, as the strip's
+          var b = h('button', { class: 'btn small grow', 'data-cls': 'btn small grow', id: 'nowfade', text: 'Fade out', disabled: !live, onclick: function () { act('POST', '/api/fade', { seconds: 2 }, poll); } });
+          fadeShow(b, (S.status || {}).mix);
+          return b;
+        })(),
+        cue('nownext', 'Next clip', function () { act('POST', '/api/control', { action: 'next' }, poll); }),
+        cue('nowstop', 'Stop', function () { act('POST', '/api/control', { action: 'stop' }, poll); }),
+        testPattern()),
+      h('div', { class: 'row' }, h('button', { class: 'btn small', id: 'nowtopads', text: 'Open the pads', onclick: function () { go('play/pads'); } })));
+    var hasRoom = !!window.pvjRoom && moduleOn('room');
+    var scenesRow = h('div', { class: 'room-scenes nowscenes', id: 'nowscenes' });      // (the Room's own blocks: a long name stays inside them)
+    var wallsList = h('div', { class: 'list', id: 'nowwalls' });
+    var room = h('div', { class: 'card', id: 'nowroom' }, h('h2', { text: 'The room' }),
+      hasRoom ? scenesRow : null, wallsList,
+      h('div', { class: 'row' },
+        h('button', { class: 'btn small grow', id: 'nowallon', text: 'All on', disabled: !live || !hasRoom, onclick: function () {
+          act('POST', '/api/room/group', { group: 'all', action: 'on' }, function () { say('Everything: on, started'); refresh(); });
+        } }),
+        h('button', { class: 'btn small grow', id: 'nowalloff', text: 'All off', disabled: !live || !hasRoom, onclick: function (e) {
+          confirmRow('Switch every projector off?', 'All off', 'Not now', function () {
+            act('POST', '/api/room/group', { group: 'all', action: 'off' }, function () { say('Everything: off, started'); refresh(); });
+          }, e.currentTarget);
+        } }),
+        hasRoom ? h('button', { class: 'btn small', id: 'nowtowalls', text: 'Open the walls', onclick: function () { go('room/walls'); } }) : null));
+    var nodeList = h('div', { class: 'list', id: 'nownode' });
+    var node = h('div', { class: 'card', id: 'nownodecard' }, h('h2', { text: 'The node' }), nodeList);
+    var todayList = h('div', { class: 'list', id: 'nowtoday' });
+    var today = h('div', { class: 'card', id: 'nowtodaycard' }, h('h2', { text: 'Today' }), todayList);
+    var root = h('div', { class: 'screen nowscreen', id: 'nowscreen' }, needs, h('div', { class: 'nowgrid' }, screens, room, node, today));
+    var last = { health: null, sources: null, room: null };
+
+    function rows() {               // the rows of Setup that Now reads, each from its own page's answer
+      return sysRows().filter(function (r) { return rowShown(r) && rowFetchable(r); });
+    }
+    function askRows() {
+      nowRowsAt = Date.now();
+      var asked = {};
+      return Promise.all(rows().map(function (row) {
+        return (asked[row.url] = asked[row.url] || api('GET', row.url)).then(function (r) { keepAnswer(row, r); });
+      }));
+    }
+    function draw() {
+      var hd = last.health;
+      // Needs you: every row of Setup that says Problem or Check, with the button to its page; the health of the
+      // node is one of them (its own lines are under The node)
+      var needRows = sysRows().filter(rowShown).map(function (r) { return { r: r, s: sysState(r) }; })
+        .filter(function (x) { return x.s.chip === 'problem' || x.s.chip === 'check'; })
+        .sort(function (a, b) { return (a.s.chip === 'problem' ? 0 : 1) - (b.s.chip === 'problem' ? 0 : 1); });
+      keepCursor(needsList, function () {
+        needsList.textContent = '';
+        needRows.forEach(function (x) { needsList.appendChild(nowRow('nowneed-' + x.r.id, x.r.name, x.s, ['Open', nowOpen(x.r.id)])); });
+        if (!needRows.length) needsList.appendChild(h('div', { class: 'state', id: 'nownothing', text: 'Nothing needs you.' }));
+      });
+      document.getElementById('nowneedshead') && (document.getElementById('nowneedshead').textContent = needRows.length ? 'Needs you (' + needRows.length + ')' : 'Needs you');
+      // On the screens: each source and what it plays (Source 1 follows the strip, every second)
+      var sd = last.sources;
+      keepCursor(srcList, function () {
+        Array.prototype.slice.call(srcList.querySelectorAll('.nowrow:not(#nowsrc-1)')).forEach(function (el) { el.remove(); });
+        (sd && sd.count >= 2 ? sd.sources : []).filter(function (x) { return x.source > 1; }).forEach(function (x) {
+          srcList.appendChild(nowRow('nowsrc-' + x.source, 'Source ' + x.source, x.idle ? { chip: 'off', text: 'Nothing loaded' } : { chip: 'active', text: x.name || 'Playing' }, null));
+        });
+      });
+      // The room: the scenes, and one line for each projector
+      var rd = last.room;
+      if (hasRoom) keepCursor(scenesRow, function () {
+        scenesRow.textContent = '';
+        ((rd && rd.scenes) || []).forEach(function (s) {
+          var on = !!rd.job && rd.job.scene === s.id;
+          scenesRow.appendChild(h('button', { class: 'btn big room-scene nowscene' + (on ? ' on' : ''), id: 'nowscene-' + s.id, text: s.name, 'aria-pressed': on ? 'true' : 'false', disabled: !live, onclick: function () {
+            act('POST', '/api/room/scene', { scene: s.id }, function () { say(s.name + ': started'); refresh(); });
+          } }));
+        });
+        if (!rd || !(rd.scenes || []).length) scenesRow.appendChild(h('div', { class: 'hint', text: full ? 'No scenes yet: they are made under Room.' : 'No scenes yet.' }));
+      });
+      keepCursor(wallsList, function () {
+        wallsList.textContent = '';
+        ((hd && hd.projectors) || []).forEach(function (x) {
+          wallsList.appendChild(nowRow('nowproj-' + x.id, x.name, { chip: HEALTH_STATE[x.state] || null, text: x.text }, canOp() ? ['Open', nowOpen('projectors')] : null));
+        });
+        if (!hd || !(hd.projectors || []).length) wallsList.appendChild(h('div', { class: 'hint', id: 'nownoprojectors', text: 'No projectors on the list.' }));
+      });
+      // The node: power, temperature, the player and the load, from Health
+      keepCursor(nodeList, function () {
+        nodeList.textContent = '';
+        if (!hd) { nodeList.appendChild(h('div', { class: 'hint', text: 'Checking...' })); return; }
+        [['power', 'Power'], ['temperature', 'Temperature'], ['player', 'Player']].forEach(function (k) {
+          var x = hd[k[0]]; if (x) nodeList.appendChild(nowRow('nownode-' + k[0], k[1], { chip: HEALTH_STATE[x.state] || null, text: x.text }, null));
+        });
+        var busy = hd.cpu_percent !== null && hd.cpu_percent >= 90;
+        nodeList.appendChild(nowRow('nownode-load', 'Load', { chip: busy ? 'check' : 'ready', text: hd.cpu_percent === null ? '?' : hd.cpu_percent + '% of all cores' }, null));
+        if (hd.addresses && hd.addresses.length) nodeList.appendChild(nowRow('nownode-address', 'Address', { chip: null, text: hd.addresses[0] }, null));
+        nodeList.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn small', id: 'nowtohealth', text: 'Open Health', onclick: nowOpen('health') })));
+      });
+      // Today: who is connected, the schedule, remote support, updates (each row of Setup as the index says it)
+      keepCursor(todayList, function () {
+        todayList.textContent = '';
+        NOW_TODAY.forEach(function (id) {
+          var r = sysRows().filter(function (x) { return x.id === id; })[0];
+          if (r && rowShown(r)) todayList.appendChild(nowRow('nowtoday-' + id, r.name, sysState(r), ['Open', nowOpen(id)]));
+        });
+      });
+    }
+    function look() {
+      clearTimeout(nowTimer);
+      // a hidden tab asks nothing (as poll() does): it looks again in 5 s, and asks once it is shown
+      if (document.visibilityState === 'hidden') { nowTimer = setTimeout(refresh, 5000); return; }
+      // the rows of Setup every 30 s, on their own: a slow one does not hold up the 5 s looks
+      if (Date.now() - nowRowsAt > 30000) askRows().then(function () { if (root.isConnected && !held('now', refresh)) draw(); });
+      Promise.all([
+        api('GET', '/api/health'), api('GET', '/api/sources'), hasRoom ? api('GET', '/api/room') : Promise.resolve(null)
+      ]).then(function (rs) {
+        if (!root.isConnected) return;
+        nowTimer = setTimeout(refresh, 5000);
+        if (held('now', refresh)) return;
+        last.health = rs[0] && rs[0].ok ? rs[0].data : last.health;
+        if (rs[0] && rs[0].ok) keepAnswer({ id: 'health' }, rs[0]);
+        last.sources = rs[1] && rs[1].ok ? rs[1].data : null;
+        last.room = rs[2] && rs[2].ok ? rs[2].data : last.room;
+        draw();
+      });
+    }
+    function refresh() { if (root.isConnected) look(); }
+    nowRowsAt = 0;
+    look();
+    return root;
+  }
+  // Source 1's line on Now: what the strip says plays, the place in the clip and the transition (patchLive, every second)
+  function nowLive(what, pl, mix) {
+    var row = document.getElementById('nowsrc-1');
+    if (!row) return;
+    var np = document.getElementById('np');
+    var name = what || (np ? np.textContent : '');
+    var place = pl.duration > 0 ? clock(pl.position) + ' / ' + clock(pl.duration) : '';
+    var how = mix.transition ? (TRANSITION_WORDS[mix.transition] || mix.transition) + (mix.duration ? ', ' + mix.duration + ' s' : '') : '';
+    showState(row.querySelector('.chip'), row.querySelector('.navstate'), { chip: pl.running && pl.path ? 'active' : 'off', text: [name, place, how].filter(Boolean).join(' · ') });
+    fadeShow(document.getElementById('nowfade'), mix);
   }
   // ---- the Workspace shell (D65, D72) ----------------------------------
   // Four areas: Play (Pads, Library, Shaders), Shape (Effect, Picture, Sound, and Mapping), Room (Scenes, Walls,
@@ -6927,12 +7098,12 @@
   // An area is ONE build with a column per screen, at every width: which columns are shown is the stylesheet's
   // affair, so a tab or a change of the window's width draws nothing again, and no card is ever on the page twice.
   // Every card is the one the panel had before, built by the function that built it.
-  var AREAS = [['play', 'Play'], ['shape', 'Shape'], ['room', 'Room'], ['setup', 'Setup']];
+  var AREAS = [['now', 'Now'], ['play', 'Play'], ['shape', 'Shape'], ['room', 'Room'], ['setup', 'Setup']];
   // what the title bar says where an area's screens share the page
   var AREA_JOBS = { play: 'Start a pad, a clip or a shader.', shape: 'Put an effect on, set the picture and the sound.', room: 'Run the room: scenes, walls and guests.' };
   // pages of the old System that are a screen of another area now (the Setup index still lists them, and opens them there)
   var HOMES = { vibes: 'play/shaders', mapping: 'shape/mapping', sound: 'shape/sound' };
-  var BACK_NAMES = { play: 'Play', shape: 'Shape', room: 'Room', index: 'Setup' };
+  var BACK_NAMES = { now: 'Now', play: 'Play', shape: 'Shape', room: 'Room', index: 'Setup' };
   function hasScreen(key) { return screenList().some(function (x) { return x.key === key; }); }
   function screenKey() {            // the open screen, from what is built: 'area/screen'
     if (S.tab !== 'system') return S.tab + '/' + S.part[S.tab];
@@ -6952,9 +7123,12 @@
       Object.keys(more || {}).forEach(function (k) { o[k] = more[k]; });
       return o;
     }
-    var list = [
+    var list = [];
+    // Now (2026-11-07): what is on and what needs you, for whoever runs the night (an owner, an operator)
+    if (canOp()) list.push(scr('now', 'now', 'Now', 'What is on, and what needs you.', 'now', { part: 'now' }));
+    list.push(
       scr('play', 'pads', 'Pads', 'Start what sits on a pad.', 'play', { part: 'pads' }),
-      scr('play', 'library', 'Library', 'Find a clip, a picture or a live input and play it; keep the files.', 'play', { part: 'library' })];
+      scr('play', 'library', 'Library', 'Find a clip, a picture or a live input and play it; keep the files.', 'play', { part: 'library' }));
     if (has('vibes')) list.push(scr('play', 'shaders', 'Shaders', 'Pick a shader, or let Vibes play a set.', 'play', { part: 'shaders' }));
     if (window.pvjEffects && moduleOn('shaders')) list.push(scr('shape', 'effect', 'Effect', 'Put one effect over the picture and set how much.', 'shape', { part: 'effect' }));
     list.push(scr('shape', 'picture', 'Picture', 'Set how the picture looks and where it sits.', 'shape', { part: 'picture' }));
@@ -6979,6 +7153,7 @@
   function settle() {
     var list = screenList();
     if (S.tab === 'room' && !list.some(function (x) { return x.tab === 'room'; })) S.tab = 'play';
+    if (S.tab === 'now' && !list.some(function (x) { return x.tab === 'now'; })) S.tab = 'play';
     if (S.tab === 'system') {
       var home = S.sys && HOMES[S.sys] && list.filter(function (x) { return x.key === HOMES[S.sys]; })[0];
       if (!home || !home.part) return;
@@ -6995,6 +7170,7 @@
   }
   // ---- an area's one build ----
   var PARTS = {
+    now: { now: function () { return nowPart(); } },
     play: { pads: live, library: media, shaders: function () { return pagePart('vibes'); } },
     shape: { effect: effectPart, picture: picturePart, sound: function () { return pagePart('sound'); } }
   };

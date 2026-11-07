@@ -59,7 +59,7 @@ const assert = require('assert');
 const { go, at } = require('./signal-pages.js');
 const inv = require('./inventory.js');
 
-const AREAS = { play: 'Play', shape: 'Shape', room: 'Room', setup: 'Setup' };
+const AREAS = { now: 'Now', play: 'Play', shape: 'Shape', room: 'Room', setup: 'Setup' };
 const SIZES = [[390, 844], [768, 1024], [1366, 768]];
 const DESK = 1200;                 // from this width of the panel an area's screens share the page
 // the screens that are columns of one page there (the others have the whole width: Mapping, Setup's pages, and
@@ -242,7 +242,7 @@ async function menus(pg) {
     const s = await see(pg), wide = width >= DESK, at = 'at ' + width + ' px ';
     assert.strictEqual(s.tabs, tabs, 'the area tabs at ' + width + ' px');
     assert.strictEqual(s.side, !tabs, 'the rail at ' + width + ' px');
-    assert.deepStrictEqual(s.rail, [['side-play', 'Play'], ['side-shape', 'Shape'], ['side-room', 'Room'], ['side-setup', 'Setup']], 'the rail has one button per area and nothing else');
+    assert.deepStrictEqual(s.rail, [['side-now', 'Now'], ['side-play', 'Play'], ['side-shape', 'Shape'], ['side-room', 'Room'], ['side-setup', 'Setup']], 'the rail has one button per area and nothing else');
     assert.strictEqual(s.sub, true, 'the tabs of Shape\'s screens at ' + width + ' px');
     assert.deepStrictEqual(s.subs, wide ? ['sub-shape-desk', 'sub-shape-mapping'] : ['sub-shape-effect', 'sub-shape-picture', 'sub-shape-sound', 'sub-shape-mapping'], at + 'the tabs of Shape');
     assert.deepStrictEqual(s.cols, wide ? ['effect', 'picture', 'sound'] : ['picture'], at + 'the columns of Shape');
@@ -767,15 +767,15 @@ async function stripText(pg, post, get) {
   return looked;
 }
 
-// What each role has, with every module on (tests/ui/signal-pages.js setUp). "presenter" is the key of the `live`
+// What each role has, with every module on (tests/ui/signal-pages.js setUp); Now (2026-11-07) is an owner's and a presenter's. "presenter" is the key of the `live`
 // device, which the panel calls an Operator since D80: he has the daily pages of Setup (Room's set-up, Schedule, At
 // power-up, MIDI controller) and the Mapping page, and none that is the Owner's; a guest has no way to let anyone in.
 const PLAY = ['play/pads', 'play/library', 'play/shaders'];
 const SHAPE = ['shape/effect', 'shape/picture', 'shape/sound', 'shape/mapping'];
 const MENUS = {
-  owner: PLAY.concat(SHAPE, ['room/scenes', 'room/walls', 'room/guests'], ['index', 'health', 'projectors', 'room', 'schedule', 'access', 'autostart', 'streams', 'ndi', 'render', 'soundin', 'ndisc', 'sync', 'midi', 'dmx', 'osc',
+  owner: ['now/now'].concat(PLAY, SHAPE, ['room/scenes', 'room/walls', 'room/guests'], ['index', 'health', 'projectors', 'room', 'schedule', 'access', 'autostart', 'streams', 'ndi', 'render', 'soundin', 'ndisc', 'sync', 'midi', 'dmx', 'osc',
     'network', 'screen', 'updates', 'support', 'https', 'backup', 'look', 'about'].map((x) => 'setup/' + x)),
-  presenter: PLAY.concat(SHAPE, ['room/scenes', 'room/walls', 'room/guests'], ['index', 'health', 'projectors', 'room', 'schedule', 'access', 'autostart', 'streams', 'ndi', 'render', 'soundin', 'sync', 'midi', 'about'].map((x) => 'setup/' + x)),
+  presenter: ['now/now'].concat(PLAY, SHAPE, ['room/scenes', 'room/walls', 'room/guests'], ['index', 'health', 'projectors', 'room', 'schedule', 'access', 'autostart', 'streams', 'ndi', 'render', 'soundin', 'sync', 'midi', 'about'].map((x) => 'setup/' + x)),
   guest: PLAY.concat(SHAPE, ['room/scenes', 'room/walls'], ['index', 'health', 'about'].map((x) => 'setup/' + x)),
 };
 // pages: { owner, presenter, guest }, each a page that has just been loaded. post(url, body): as the owner.
@@ -797,7 +797,7 @@ async function roles(pages, post) {
     const s = await see(pg);
     // staff and guests land on the Room; the owner on the pads
     assert.strictEqual(s.screen, who === 'owner' ? 'play/pads' : 'room/scenes', 'where a ' + who + ' lands');
-    assert.deepStrictEqual(s.tabNames, ['Play', 'Shape', 'Room', 'Setup'], 'the areas a ' + who + ' has');
+    assert.deepStrictEqual(s.tabNames, (who === 'guest' ? [] : ['Now']).concat(['Play', 'Shape', 'Room', 'Setup']), 'the areas a ' + who + ' has (Now for whoever runs the night)');
     // a guest, guest controls being open (D80, the default): Stop and Blackout are his, Previous and Next with a
     // playlist, and every other control of the strip is disabled; locked, all of them (panel.test.js locks and looks)
     const steps = s.disabled.filter((b) => b === 'prev' || b === 'next');
@@ -818,8 +818,10 @@ async function roles(pages, post) {
   // guest's Sound is Volume and Audio alone; both have Test pattern on Mapping, which a guest cannot press
   await go(pages.presenter, 'shape/mapping');
   await pages.presenter.waitForSelector('#syspage #mapcard', { timeout: 15000 });      // (a page reads its module's state before it draws its body)
-  assert(await pages.presenter.evaluate(() => !!document.querySelector('#syspage #mapcard') && !document.getElementById('sysswitch') && !!document.querySelector('#syspage #testpattern') && !document.querySelector('#syspage #testpattern').disabled),
-    'an operator has the mapping page with its card and Test pattern, and no switch');
+  // (the page's parts are drawn as their answers come in: the check waits for them, up to 10 s)
+  const opMap = () => !!document.querySelector('#syspage #mapcard') && !document.getElementById('sysswitch') && !!document.querySelector('#syspage #testpattern') && !document.querySelector('#syspage #testpattern').disabled;
+  await pages.presenter.waitForFunction(opMap, null, { timeout: 10000 }).catch(() => null);
+  assert(await pages.presenter.evaluate(opMap), 'an operator has the mapping page with its card and Test pattern, and no switch');
   await go(pages.guest, 'shape/mapping');
   await pages.guest.waitForSelector('#plainpage #testpattern', { timeout: 15000 });     // as the operator's, above: the page draws after it has read its state
   assert(await pages.guest.evaluate(() => { const t = document.querySelector('#plainpage #testpattern'); return !!t && t.disabled; }), 'a guest sees Test pattern on Mapping, and cannot press it');
