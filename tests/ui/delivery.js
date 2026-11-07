@@ -20,7 +20,7 @@
 const fs = require('fs');
 const assert = require('assert');
 
-const LOST = (files) => 'Part of this page did not arrive from the box (' + files + '), so some of the panel is missing. The box keeps playing. Press Try again.';
+const LOST = (files) => 'Part of this page did not arrive from the node (' + files + '), so some of the panel is missing. The node keeps playing. Press Try again.';
 const BROKEN = (files) => 'Part of this page arrived but did not start (' + files + '), so some of the panel is missing. This is a fault in the panel, not in the connection; please report it.';
 const SCANNED = 'Reload forgets the code you scanned. Join first, or scan the code again afterwards.';
 const PARTS = ['pvjShaders', 'pvjEffects', 'pvjApp', 'pvjRoom'];

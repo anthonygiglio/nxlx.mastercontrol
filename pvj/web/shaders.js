@@ -82,11 +82,11 @@
     var now = d && d.config && d.config.height, usual = d && d.render && d.render['default'], auto = d && d.render && d.render.auto;
     if (auto) {
       if (typeof now !== 'number' || !d.config.height_kept) return null;
-      return { words: 'Picture detail is ' + now + ' lines for every shader, saved by an earlier version. Automatic draws each shader at the most lines it keeps up at on this box.',
+      return { words: 'Picture detail is ' + now + ' lines for every shader, saved by an earlier version. Automatic draws each shader at the most lines it keeps up at on this node.',
         short: 'Picture detail ' + now + ' for every shader.', button: 'Use Automatic', body: { action: 'config', height: 'auto' }, done: 'Picture detail is Automatic now.' };
     }
     if (typeof now !== 'number' || typeof usual !== 'number' || now <= usual) return null;
-    return { words: 'Picture detail is ' + now + ' lines. This box is happier at ' + usual + '.', short: 'Picture detail ' + now + ' is high here.',
+    return { words: 'Picture detail is ' + now + ' lines. This node is happier at ' + usual + '.', short: 'Picture detail ' + now + ' is high here.',
       button: 'Use ' + usual, body: { action: 'config', height: usual }, done: 'Picture detail is ' + usual + ' lines now.' };
   }
   // What Automatic does here, in one sentence, from render.auto.
@@ -128,7 +128,7 @@
         c.api('POST', path, b).then(function (r) {
           st.flying--; st.done = Date.now();
           if (!r.ok) { st.done = 0; st.last = 0; st.sent = null; }       // refused: the box's own value may go back into the control at once
-          if (!r.ok) note(r.status === 409 ? gone : (r.data.error || 'The box did not take it.'), true);
+          if (!r.ok) note(r.status === 409 ? gone : (r.data.error || 'The node did not take it.'), true);
           else if (!st.flying && !st.has) note('', false, false);
           if (after) after(r);
         });
@@ -925,11 +925,11 @@
           facts ? h('br') : null, facts ? h('span', { class: 'hint shaderfacts', text: facts }) : null,
           from ? h('br') : null, from ? h('span', { class: 'hint shadercredit', text: from }) : null));
       if (s.error) row.appendChild(h('div', { class: 'msg err shaderproblem', text: 'Cannot be shown: ' + s.error }));
-      else if (s.refused) row.appendChild(h('div', { class: 'msg err shaderproblem shaderrefused', text: 'This box\'s GPU refused it: ' + s.refused }));
+      else if (s.refused) row.appendChild(h('div', { class: 'msg err shaderproblem shaderrefused', text: 'This node\'s GPU refused it: ' + s.refused }));
       else if (d.error && d.error.id === s.id) row.appendChild(h('div', { class: 'msg err shaderproblem', text: 'The GPU refused it: ' + d.error.message }));
       if (s.heavy) {
         row.appendChild(h('div', { class: 'row wrap shaderheavy' },
-          h('span', { class: 'msg err grow', text: 'Too heavy on this box. Left out of Vibes.' + (s.heavy.drops ? ' (' + round(s.heavy.drops) + ' dropped frames a second at ' + s.heavy.height + ' lines)' : '') }),
+          h('span', { class: 'msg err grow', text: 'Too heavy on this node. Left out of Vibes.' + (s.heavy.drops ? ' (' + round(s.heavy.drops) + ' dropped frames a second at ' + s.heavy.height + ' lines)' : '') }),
           full ? h('button', { class: 'btn', text: 'Put it back', 'aria-label': 'Put ' + name + ' back into Vibes', onclick: function () { send('/api/shaders', { action: 'heavy', id: s.id, on: false }, null, 'shaderlibmsg'); } }) : null));
       }
       if (!live) return row;
@@ -953,7 +953,7 @@
           onclick: function () { send('/api/shaders/play', { id: s.id }, null, 'shaderlibmsg'); } }),
         full ? h('label', { class: 'rot' }, h('span', { text: label }), sw) : null,
         full && s.source === 'uploaded' ? h('button', { class: 'btn', text: 'Remove', 'aria-label': 'Remove ' + name, onclick: function (ev) {
-          c.confirmRow('Remove ' + name + '? The file is deleted from the box.' + (s.pads ? ' ' + (s.pads === 1 ? 'One pad plays it' : s.pads + ' pads play it') + ' and will say that it is gone.' : ''), 'Remove', 'Keep it', function () { send('/api/shaders', { action: 'delete', id: s.id }, null, 'shaderlibmsg'); }, ev.target);
+          c.confirmRow('Remove ' + name + '? The file is deleted from the node.' + (s.pads ? ' ' + (s.pads === 1 ? 'One pad plays it' : s.pads + ' pads play it') + ' and will say that it is gone.' : ''), 'Remove', 'Keep it', function () { send('/api/shaders', { action: 'delete', id: s.id }, null, 'shaderlibmsg'); }, ev.target);
         } }) : null));
       return row;
     }
@@ -1082,7 +1082,7 @@
         reader.onload = function () {
           // asked directly, so a refusal lands under the button and not in the page's message line
           c.api('POST', '/api/shaders', { action: 'upload', name: file.name, source: String(reader.result) }).then(function (r) {
-            var why = r.data.error || 'the box did not answer';
+            var why = r.data.error || 'the node did not answer';
             if (!r.ok) return refuse(why.indexOf(file.name + ': ') === 0 ? why.slice(file.name.length + 2) : why);   // the box's own words, without the name twice
             uploaded(file.name + ' was added. It is in the list of shaders; switch it into Vibes there.', false);
             drawn.set = '';
@@ -1096,8 +1096,8 @@
       var adv = h('details', { class: 'fold', id: 'shaderadvanced', open: ui.advanced },
         h('summary', { text: 'Advanced' }),
         h('div', { class: 'list shaderadv' },
-          h('label', { class: 'rot between' }, h('span', {}, 'Leave out shaders that are too heavy for this box ', savedMark('guard')),
-            h('button', { class: 'switch', id: 'shaderguard', role: 'switch', 'aria-checked': guard ? 'true' : 'false', 'aria-label': 'Leave out shaders that are too heavy for this box',
+          h('label', { class: 'rot between' }, h('span', {}, 'Leave out shaders that are too heavy for this node ', savedMark('guard')),
+            h('button', { class: 'switch', id: 'shaderguard', role: 'switch', 'aria-checked': guard ? 'true' : 'false', 'aria-label': 'Leave out shaders that are too heavy for this node',
               onclick: function () { send('/api/shaders', { action: 'config', guard: !guard }, function () { saved('guard'); var m = document.getElementById('saved-guard'); if (m) m.textContent = 'Saved'; }, 'setmsg'); } })),
           h('p', { class: 'hint', text: 'While Vibes runs, a shader that keeps dropping frames is passed over and marked in the list until you put it back.' }),
           h('label', { class: 'rot between' }, h('span', {}, 'Allow faster than the flash limit ', savedMark('faster')),

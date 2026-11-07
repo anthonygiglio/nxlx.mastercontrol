@@ -275,13 +275,13 @@
         return (g ? g.name : 'A removed group') + ': ' + words.join(', ');
       });
       var b = s.box;
-      if (b.action === 'file') parts.push('Box: play ' + b.file);
-      if (b.action === 'pad') parts.push('Box: play pad ' + 'ABCDEFGHIJ'.charAt(b.pad[0]) + (b.pad[1] + 1));
-      if (b.action === 'stream') parts.push('Box: play a saved stream');
-      if (b.action === 'stop') parts.push('Box: stop');
-      if (b.action === 'blackout') parts.push('Box: blackout');
-      if (b.action === 'vibes') parts.push('Box: start Vibes');
-      if (b.action === 'vibes_stop') parts.push('Box: stop Vibes');
+      if (b.action === 'file') parts.push('Node: play ' + b.file);
+      if (b.action === 'pad') parts.push('Node: play pad ' + 'ABCDEFGHIJ'.charAt(b.pad[0]) + (b.pad[1] + 1));
+      if (b.action === 'stream') parts.push('Node: play a saved stream');
+      if (b.action === 'stop') parts.push('Node: stop');
+      if (b.action === 'blackout') parts.push('Node: blackout');
+      if (b.action === 'vibes') parts.push('Node: start Vibes');
+      if (b.action === 'vibes_stop') parts.push('Node: stop Vibes');
       return parts.join(' · ') || 'Does nothing yet';
     }
     function learn(s) {  // give a MIDI control this scene: the same Learn as System > MIDI controllers
@@ -393,10 +393,10 @@
           choose('Sound of ' + title, [['leave', 'Sound: leave'], ['mute', 'Sound muted'], ['unmute', 'Sound on']], r.sound, function (v) { r.sound = v; })));
       });
       var b = draft.scene.box, media = c.state.media || [];
-      var kinds = [['leave', 'The box: leave alone'], ['file', 'The box plays a clip'], ['pad', 'The box plays a pad']];
-      if (c.moduleOn('inputs-srt')) kinds.push(['stream', 'The box plays a saved stream']);
-      if (c.moduleOn('shaders')) kinds.push(['vibes', 'The box starts Vibes (shaders)'], ['vibes_stop', 'The box stops Vibes']);
-      kinds.push(['stop', 'The box stops its clip'], ['blackout', 'The box goes black']);
+      var kinds = [['leave', 'The node: leave alone'], ['file', 'The node plays a clip'], ['pad', 'The node plays a pad']];
+      if (c.moduleOn('inputs-srt')) kinds.push(['stream', 'The node plays a saved stream']);
+      if (c.moduleOn('shaders')) kinds.push(['vibes', 'The node starts Vibes (shaders)'], ['vibes_stop', 'The node stops Vibes']);
+      kinds.push(['stop', 'The node stops its clip'], ['blackout', 'The node goes black']);
       if (!b.file && media.length) b.file = media[0];
       var file = choose('Clip to play', media.map(function (n) { return [n, n]; }), b.file, function (v) { b.file = v; }, 'roomsfile');
       var loop = choose('At the end of the clip', [['1', 'Loop the clip'], ['0', 'Play it once']], b.loop ? '1' : '0', function (v) { b.loop = v === '1'; }, 'roomsloop');
@@ -408,7 +408,7 @@
         bank.hidden = index.hidden = b.action !== 'pad';
         stream.hidden = b.action !== 'stream';
       }
-      var kind = choose('What the box does', kinds, b.action, function (v) {
+      var kind = choose('What the node does', kinds, b.action, function (v) {
         b.action = v; params();
         if (v === 'stream' && streams === null) {
           c.api('GET', '/api/streams').then(function (r) { streams = r.ok ? r.data.streams : []; if (document.body.contains(root)) drawSetup(last); });

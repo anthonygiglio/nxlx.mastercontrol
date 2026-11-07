@@ -179,7 +179,7 @@
           var wait = r.data.retry_after ? ' Try again in ' + r.data.retry_after + ' seconds.' : '';
           // a 403 with an https address: the box takes owner codes over the secure connection only (D79, D81)
           var why = r.status === 403 && !r.data.https ? WRONG[kind || (secret.length === 6 ? 'code' : 'pin')] : (r.data.error || 'Could not connect.');
-          if (r.status === 403 && r.data.https && kind === 'recovery') why = 'This box takes owner codes over https:// only. Open ' + r.data.https + ' and type the code there; accept the browser\'s warning if this phone has not got the box\'s root certificate.';
+          if (r.status === 403 && r.data.https && kind === 'recovery') why = 'This node takes owner codes over https:// only. Open ' + r.data.https + ' and type the code there; accept the browser\'s warning if this phone has not got the node\'s root certificate.';
           return say(why + wait, true);
         }
         S.scanned = null;
@@ -191,7 +191,7 @@
     var pinButton = h('button', { class: 'btn' + (sc ? '' : ' on') + ' big', id: 'pairbtn', text: 'Pair with PIN' });
     pinButton.addEventListener('click', function () {
       var pin = pinValue();
-      if (pin.length !== 4) return say('Enter the 4 digit PIN shown on the box.', true);
+      if (pin.length !== 4) return say('Enter the 4 digit PIN shown on the node.', true);
       join(pin, pinButton);
     });
     var codeButton = h('button', { class: 'btn' + (sc && sc.kind === 'code' ? ' on' : '') + ' big', id: 'joinbtn', text: 'Join with code' });
@@ -202,8 +202,8 @@
     var scannedNote = sc && sc.kind === 'code' ? h('div', { class: 'msg', id: 'scannednote', text: 'Code read from the QR code. Tap Join.' }) : null;
     return h('div', { class: 'shell' },
       h('div', { class: 'screen' },
-        h('h1', { text: 'Connect to your box' }),
-        h('p', { text: 'Scan the QR code on the screen, or type the code shown there. The box\'s owner can use the 4 digit PIN instead. No internet needed.' }),
+        h('h1', { text: 'Connect to your node' }),
+        h('p', { text: 'Scan the QR code on the screen, or type the code shown there. The node\'s owner can use the 4 digit PIN instead. No internet needed.' }),
         scannedNote,
         h('div', { class: 'k', text: 'Guest or operator code' }), code,
         h('label', { class: 'k', for: 'devname', text: 'Name for this device' }),
@@ -215,7 +215,7 @@
         recoveryEntry(join),
         h('div', { id: 'msg', class: 'msg', role: 'status' }),
         h('div', { class: 'grow' }),
-        h('div', { class: 'k', text: 'Connection lost? The box keeps playing. Reconnect any time.' })));
+        h('div', { class: 'k', text: 'Connection lost? The node keeps playing. Reconnect any time.' })));
   }
   // "I have a recovery code" (D81), folded under the PIN, and the "Locked out?" help that names every way in.
   function recoveryEntry(join) {
@@ -232,7 +232,7 @@
     });
     // While "Owner access only over the secure connection" is on, a code typed here over http:// would cross the
     // network in the clear before the box refused it: the page learns that from hello and offers the link instead.
-    var waiting = h('div', { class: 'hint', id: 'recoverywait', text: 'One moment: asking the box how it takes owner codes.' });
+    var waiting = h('div', { class: 'hint', id: 'recoverywait', text: 'One moment: asking the node how it takes owner codes.' });
     var entry = h('div', { id: 'recoveryentry', hidden: true }, h('div', { class: 'k', text: 'Owner: recovery code' }), waiting);
     var httpsOnly = false;
     askHello(function (hello) {
@@ -241,9 +241,9 @@
       entry.removeChild(waiting);
       if (httpsOnly) {
         entry.appendChild(h('div', { class: 'hint', id: 'recoveryhttps' },
-          'This box takes owner codes over https:// only, so the code is not typed here: over http:// it would cross the network in the clear. ',
+          'This node takes owner codes over https:// only, so the code is not typed here: over http:// it would cross the network in the clear. ',
           h('a', { id: 'recoveryhttpslink', href: hello.https, text: 'Open ' + hello.https }),
-          ' and type it there; accept the browser\'s warning if this phone has not got the box\'s root certificate.'));
+          ' and type it there; accept the browser\'s warning if this phone has not got the node\'s root certificate.'));
       } else {
         entry.appendChild(code); entry.appendChild(go);
         if (!entry.hidden) code.focus();
@@ -254,8 +254,8 @@
     } });
     var help = h('details', { class: 'fold', id: 'lockedout' }, h('summary', { class: 'k', text: 'Locked out?' }),
       h('div', { class: 'hint', text: 'If every owner phone is lost: a recovery code from the sheet the owner printed (above). ' +
-        'Or, at the box, a USB stick with an empty file named pvj-recover at its top: the box shows a fresh PIN on its own screen for 2 minutes, which works once (unless the owner switched that off). ' +
-        'Or sudo pvj-pin at a keyboard on the box. As the last resort a factory reset from the box\'s console removes every device and makes a new PIN (the clips can be kept).' }));
+        'Or, at the node, a USB stick with an empty file named pvj-recover at its top: the node shows a fresh PIN on its own screen for 2 minutes, which works once (unless the owner switched that off). ' +
+        'Or sudo pvj-pin at a keyboard on the node. As the last resort a factory reset from the node\'s console removes every device and makes a new PIN (the clips can be kept).' }));
     return h('div', { class: 'recovery' }, open, entry, help);
   }
   // ---- remote support --------------------------------------------------
@@ -275,7 +275,7 @@
     });
     return h('div', { class: 'shell' }, h('div', { class: 'screen' },
       h('h1', { text: 'Remote support' }),
-      h('p', { text: 'You reached this box through its support tunnel. Ask the studio for the support code shown in their panel (Setup > Remote support) and type it here. It works only during their session.' }),
+      h('p', { text: 'You reached this node through its support tunnel. Ask the studio for the support code shown in their panel (Setup > Remote support) and type it here. It works only during their session.' }),
       h('label', { class: 'k', for: 'supportcode', text: 'Support code' }), code, go,
       h('div', { id: 'msg', class: 'msg', role: 'status' })));
   }
@@ -301,21 +301,21 @@
     }
     return h('div', { class: 'list sp', id: 'supportreach' },
       list('supportcan', 'With "Everything", support can', [
-        'play, mix and change every setting you can change, and restart the box',
-        'install an update signed by a key this box trusts, and load a settings file',
-        'point the box at other machines: boxes in step, projector addresses, streams, and what the schedule and power-up play. These stay after the session, so read the list of what support did afterwards',
+        'play, mix and change every setting you can change, and restart the node',
+        'install an update signed by a key this node trusts, and load a settings file',
+        'point the node at other machines: nodes in step, projector addresses, streams, and what the schedule and power-up play. These stay after the session, so read the list of what support did afterwards',
         'add and remove looks, lock and open guest controls',
         'remove a guest\'s or an operator\'s device',
-        'see and renew the OSC key, and choose where the box sends its state (make a new key afterwards: support knows the one it saw)']),
+        'see and renew the OSC key, and choose where the node sends its state (make a new key afterwards: support knows the one it saw)']),
       list('supportcannot', 'Support can never, whatever you choose', [
         'pair a device, make a code, a link or an invitation, or see or change the PIN',
         'remove an owner\'s device, or touch your recovery codes and the secure connection',
         'start a session, make one longer, or change these support settings',
-        'confirm a change of the network: you confirm it here, which shows you can still reach the box',
+        'confirm a change of the network: you confirm it here, which shows you can still reach the node',
         'let OSC in from a network outside the building, or set a controller button that shows an access code',
-        'switch the NDI input on, or touch the NDI discovery server on this box',
-        'switch the box off, or reset it to factory settings']),
-      h('div', { class: 'hint', text: 'Everything support does is listed afterwards under Advanced, Recent sessions, with what it was refused. A copy of your settings from before support\'s first settings file is kept on the box. With "Play and mix only" or "Watch only", support can do no more than that.' }));
+        'switch the NDI input on, or touch the NDI discovery server on this node',
+        'switch the node off, or reset it to factory settings']),
+      h('div', { class: 'hint', text: 'Everything support does is listed afterwards under Advanced, Recent sessions, with what it was refused. A copy of your settings from before support\'s first settings file is kept on the node. With "Play and mix only" or "Watch only", support can do no more than that.' }));
   }
   function supportCard() {
     var body = h('div', { class: 'list sp', id: 'supportbody' }, h('div', { class: 'hint', text: 'Loading...' }));
@@ -334,8 +334,8 @@
       }
       var c = d.config;
       body.appendChild(h('div', { class: 'state', id: 'supportline', text: d.active ? 'A support session is open, ' + mins(d.seconds_left) + ' left. Support may ' + ROLES[d.role] + '.' :
-        !c.allowed ? 'Remote support is off. Nothing can reach this box from outside until you switch it on above and start a session.' :
-        d.configured ? 'Ready. No session is open, and nothing can reach this box until you start one.' : 'Switched on, but not set up yet.' }));
+        !c.allowed ? 'Remote support is off. Nothing can reach this node from outside until you switch it on above and start a session.' :
+        d.configured ? 'Ready. No session is open, and nothing can reach this node until you start one.' : 'Switched on, but not set up yet.' }));
       var last = (d.log || [])[0];
       if ((d.log || []).some(function (e) { return e.ended && e.osc_key; })) body.appendChild(h('div', { class: 'hint warn', id: 'supportoldkey', role: 'status',
         text: 'In an earlier session support was shown the OSC key, or made a new one, so support knows it. Make a new key now: Setup > OSC, "A key in the address", Make a new key. Then put the new key into your TouchOSC layout.' }));
@@ -343,7 +343,7 @@
       if (last && last.ended && !d.active && (lastN || (last.did || []).length)) body.appendChild(h('div', { class: 'state', id: 'supportlastdid',
         text: 'The last session is over. What support did in it is listed under Advanced, Recent sessions: ' + plural(lastN - lastNo, 'change') + ' worth reading' +
           (lastNo ? ', ' + plural(lastNo, 'thing') + ' support tried and was refused' : '') + ', and routine use.' }));
-      if (d.available === false) body.appendChild(h('div', { class: 'hint warn', id: 'supportwhy', text: 'It cannot start on this box: ' + (d.why || 'a part it needs is missing') + '. Tell whoever looks after the box.' }));
+      if (d.available === false) body.appendChild(h('div', { class: 'hint warn', id: 'supportwhy', text: 'It cannot start on this node: ' + (d.why || 'a part it needs is missing') + '. Tell whoever looks after the node.' }));
       if (d.active) {
         body.appendChild(h('div', { class: 'hint', text: 'Read this code to your support contact. They open http://' + d.address + '/ through the support connection and type it.' }));
         body.appendChild(h('div', { class: 'support-code', id: 'supportcodeshow', text: d.code }));
@@ -374,7 +374,7 @@
       var f = supportForm || { endpoint: c.endpoint, server_key: c.server_key, address: c.address, network: c.network };
       var fields = [['endpoint', 'Support server', 'support.example.com:51820', 'Its name or address, a colon, and its port.'],
         ['server_key', 'Support server key', '', 'The 44 characters your support team gave you.'],
-        ['address', 'This box on the support network', '10.77.0.5', 'The address your support team gave this box.'],
+        ['address', 'This node on the support network', '10.77.0.5', 'The address your support team gave this node.'],
         ['network', 'Support network', '10.77.0.0/24', 'The range support connects from. The address above must be inside it.']];
       var inputs = {}, inner = h('div', { class: 'list sp' });
       var bar = saveBar('supportsave', 'Save changes', function () {
@@ -395,11 +395,11 @@
       bar.dirty(!!supportForm);
       if (d.public_key) {
         var key = h('input', { class: 'text-input mono', id: 'supportkey', readonly: true, value: d.public_key });
-        inner.appendChild(h('div', { class: 'fieldwrap' }, h('label', { class: 'field', for: 'supportkey', text: 'This box\'s key' }),
+        inner.appendChild(h('div', { class: 'fieldwrap' }, h('label', { class: 'field', for: 'supportkey', text: 'This node\'s key' }),
           h('div', { class: 'row' }, key, h('button', { class: 'btn', text: 'Copy', onclick: function () {
             key.select(); (navigator.clipboard ? navigator.clipboard.writeText(d.public_key) : Promise.reject()).then(function () { say('Key copied.'); }, function () { say('Select the key and copy it.'); });
           } })),
-          h('div', { class: 'hint', text: 'Give it to your support team once, so their server knows this box.' })));
+          h('div', { class: 'hint', text: 'Give it to your support team once, so their server knows this node.' })));
       }
       if (d.log && d.log.length) {
         inner.appendChild(h('div', { class: 'field', text: 'Recent sessions' }));
@@ -415,11 +415,11 @@
           }
           // first of all, and never pushed out by anything else: an update, a settings file, a device removed
           if (e.always && e.always.length) inner.appendChild(h('ul', { class: 'hint supportdid supportalways' }, e.always.map(line)
-            .concat(e.always_dropped ? [h('li', { class: 'warn', text: 'There were ' + plural(e.always_dropped, 'more line') + ' of this kind between the first and the last shown here. The box\'s journal has them.' })] : [])));
+            .concat(e.always_dropped ? [h('li', { class: 'warn', text: 'There were ' + plural(e.always_dropped, 'more line') + ' of this kind between the first and the last shown here. The node\'s journal has them.' })] : [])));
           if (e.major && e.major.length) inner.appendChild(h('ul', { class: 'hint supportdid supportmajor' }, e.major.map(line)
-            .concat(e.major_more ? [h('li', { class: 'warn', text: 'This list is full: ' + plural(e.major_more, 'more line') + ' of this kind are not shown. The box\'s journal has them.' })] : [])));
+            .concat(e.major_more ? [h('li', { class: 'warn', text: 'This list is full: ' + plural(e.major_more, 'more line') + ' of this kind are not shown. The node\'s journal has them.' })] : [])));
           if (e.did && e.did.length) inner.appendChild(h('ul', { class: 'hint supportdid' }, e.did.map(line)
-            .concat(e.did_more ? [h('li', { text: 'and ' + plural(e.did_more, 'more kind') + ' of routine request not listed here; the box\'s journal has them' })] : [])));
+            .concat(e.did_more ? [h('li', { text: 'and ' + plural(e.did_more, 'more kind') + ' of routine request not listed here; the node\'s journal has them' })] : [])));
         });
       }
       var adv = h('details', { class: 'fold', id: 'supportadv', open: supportAdv }, h('summary', { text: 'Advanced: support server settings' }), inner);
@@ -476,7 +476,7 @@
       line = h('div', { class: 'hint warn', id: 'padrefused', role: 'status' });
       pads.parentNode.insertBefore(line, pads.nextSibling);
     }
-    var text = [held ? 'A pad\'s shader was not shown. ' + String(r.message || '').replace(/^the player refused /, 'The box refused ') : '',
+    var text = [held ? 'A pad\'s shader was not shown. ' + String(r.message || '').replace(/^the player refused /, 'The node refused ') : '',
       heldNdi ? 'A pad\'s NDI source was not shown. ' + ndiSentence(String(n.message || '')) : ''].filter(Boolean).join(' ');
     if (line.textContent !== text) line.textContent = text;
   }
@@ -746,7 +746,7 @@
       // words, and Try again, which does what choosing the transition again does. setMix replaces this card alone
       // (a render() here would wipe the desk).
       m.fallback ? h('div', { class: 'mixfallback', id: 'mixfallback', role: 'status' },
-        h('div', { class: 'hint warn', id: 'mixfallbackwhy', text: 'This box is not doing that transition now: ' + m.fallback + '.' }),
+        h('div', { class: 'hint warn', id: 'mixfallbackwhy', text: 'This node is not doing that transition now: ' + m.fallback + '.' }),
         can('live') ? h('button', { class: 'btn small', id: 'mixretry', text: 'Try again', onclick: function () { setMix({}); } }) : null) : null,
       h('div', { class: 'k', text: 'Duration' }),
       choice([0.5, 1, 2, 5].map(function (d) { return { label: d + 's', value: d }; }), m.duration, function (v) { setMix({ duration: v }); }));
@@ -759,7 +759,7 @@
     var card = document.getElementById('transitioncard');
     if (!card) return;
     var shown = card.querySelector('#mixfallbackwhy');
-    var want = m.fallback ? 'This box is not doing that transition now: ' + m.fallback + '.' : '';
+    var want = m.fallback ? 'This node is not doing that transition now: ' + m.fallback + '.' : '';
     if ((shown ? shown.textContent : '') === want) return;
     card.parentNode.replaceChild(transitionCard(), card);
   }
@@ -853,7 +853,7 @@
           reader.onerror = function () { tell('No picture: it could not be read. Try again.'); };
           reader.readAsDataURL(blob);
         });
-      }, function () { tell('No picture: no connection to the box.'); });
+      }, function () { tell('No picture: no connection to the node.'); });
     });
     return h('div', { class: 'card', id: 'previewcard' },
       h('div', { class: 'row between' }, h('div', { class: 'k', text: 'Screen' }), btn),
@@ -1010,7 +1010,7 @@
         if (!list.isConnected) return;
         list.textContent = '';
         var all = r.ok && r.data.shaders ? r.data.shaders.filter(function (x) { return !x.error; }) : [];
-        if (!all.length) { list.appendChild(h('div', { class: 'k', text: r.ok ? 'No shaders on the box yet.' : (r.data.error || 'The shaders could not be read.') })); return; }
+        if (!all.length) { list.appendChild(h('div', { class: 'k', text: r.ok ? 'No shaders on the node yet.' : (r.data.error || 'The shaders could not be read.') })); return; }
         all.forEach(function (sh) {
           list.appendChild(row(padShaderNice(sh.id), padShaderNice(sh.id), function () { if (sh.presets && sh.presets.length) presets(sh); else save(sh.id, ''); }, padShader(current) === sh.id));
         });
@@ -1034,9 +1034,9 @@
         (d.sources || []).forEach(function (x) { seen[x.id] = true; rows.push({ id: x.id, name: x.name, from: x.from, here: true, twins: !!x.twins }); });
         (d.allowed || []).forEach(function (x) { if (!seen[x.id]) rows.push({ id: x.id, name: x.name, from: x.from, here: false }); });
         if (!rows.length) {
-          ndiList.appendChild(h('div', { class: 'k', id: 'padndiempty', text: d.setup === false ? 'NDI is not set up on this box yet. Setup, NDI input says how.'
-            : !d.helper || !d.runtime.loaded ? 'NDI cannot look for sources on this box yet. Setup, NDI input says why.'
-              : 'No NDI sources found yet. Switch on NDI output in the sending program, on the same network as the box. Setup, NDI input lists what the box finds.' }));
+          ndiList.appendChild(h('div', { class: 'k', id: 'padndiempty', text: d.setup === false ? 'NDI is not set up on this node yet. Setup, NDI input says how.'
+            : !d.helper || !d.runtime.loaded ? 'NDI cannot look for sources on this node yet. Setup, NDI input says why.'
+              : 'No NDI sources found yet. Switch on NDI output in the sending program, on the same network as the node. Setup, NDI input lists what the node finds.' }));
           return;
         }
         rows.forEach(function (x) {
@@ -1167,7 +1167,7 @@
         slider('mp', 'Position X', -100, 100, 1, m.position === undefined ? 0 : m.position, function (v) { return String(v); }, ctl('position')),
         slider('mpy', 'Position Y', -100, 100, 1, m.position_y === undefined ? 0 : m.position_y, function (v) { return String(v); }, ctl('position_y'))),
       h('div', { class: 'card' },
-        h('div', { class: 'k sent', text: 'Mirror (for rear projection or a mirror rig; costs the box some work)' }),
+        h('div', { class: 'k sent', text: 'Mirror (for rear projection or a mirror rig; costs the node some work)' }),
         h('div', { class: 'row' },
           h('button', { class: 'btn grow' + (m.flip_h ? ' on' : ''), id: 'fliph', text: 'Flip left-right', 'aria-pressed': m.flip_h ? 'true' : 'false', disabled: !can('live'),
             onclick: function () { act('POST', '/api/control', { action: 'flip_h', value: !m.flip_h }, again); } }),
@@ -1474,7 +1474,7 @@
       // moved to fit, each way on its own, so shapes are squeezed. Said until the mapping is next changed.
       if (d.reshaped && d.made_at) stage.appendChild(h('div', { class: 'hint warn', id: 'mapreshaped', role: 'status',
         text: 'This mapping was made on a ' + d.made_at[0] + ' x ' + d.made_at[1] + ' screen, another shape than this one (' + d.screen[0] + ' x ' + d.screen[1] + '). Its corners were moved to fit, so shapes may be squeezed: check each surface on the screen.' }));
-      stage.appendChild(h('div', { class: 'hint', text: 'Masks: add them under Overlay pictures on Shape > Picture (PNGs, black where no light should fall). Several can be on at once; the box combines them into one picture, in screen space, over the mapping. Map at 1920x1080 or less on a Pi 4; at 2560x1440 it drops frames.' }));
+      stage.appendChild(h('div', { class: 'hint', text: 'Masks: add them under Overlay pictures on Shape > Picture (PNGs, black where no light should fall). Several can be on at once; the node combines them into one picture, in screen space, over the mapping. Map at 1920x1080 or less on a Pi 4; at 2560x1440 it drops frames.' }));
       // the owner's switch for mapping mode (D75): in the stage, with the other controls that act on the whole mapping.
       // The mapping is an Operator's since D80; this switch stays the Owner's (the box refuses it to anyone else), so
       // an Operator reads how it stands and has nothing to press
@@ -1664,7 +1664,7 @@
       importTimer = setTimeout(function () { api('GET', '/api/media/import').then(function (r) { if (r.ok) watchImport(r.data); }); }, 1000);
     } else if (d.error || d.result) {
       // Kept after the list is redrawn, until the next copy (a redraw used to wipe it at once).
-      S.importNote = d.error ? 'Copy of ' + d.name + ' stopped: ' + d.error : d.name + ' is now on the box.';
+      S.importNote = d.error ? 'Copy of ' + d.name + ' stopped: ' + d.error : d.name + ' is now on the node.';
       line.textContent = S.importNote;
       if (d.result && !d.seen) { d.seen = true; refreshMedia(); }
     }
@@ -1749,7 +1749,7 @@
             to.focus();
           } }) : null,
           full ? h('button', { class: 'btn small del', text: 'Delete', onclick: function (e) {
-            confirmRow('Delete ' + d.name + '? The file is removed from the box.', 'Delete', 'Keep it', function () {
+            confirmRow('Delete ' + d.name + '? The file is removed from the node.', 'Delete', 'Keep it', function () {
               act('POST', '/api/media/delete', { name: d.name }, refreshMedia);
             }, e.currentTarget);
           } }) : null));
@@ -1814,18 +1814,18 @@
           h('div', { class: 'list' }, drive.files.length ? drive.files.map(function (f) {
             var have = S.media.indexOf(f.name) >= 0;
             return h('div', { class: 'item' },
-              h('span', {}, f.name, h('br'), h('span', { class: 'k', text: megabytes(f.size) + (have ? ' \u00b7 also on the box' : '') })),
+              h('span', {}, f.name, h('br'), h('span', { class: 'k', text: megabytes(f.size) + (have ? ' \u00b7 also on the node' : '') })),
               h('span', { class: 'row' },
                 h('button', { class: 'btn small', text: 'Play', 'aria-label': 'Play ' + f.name + ' from USB', disabled: !can('live'),
                   onclick: function () { act('POST', '/api/play', { usb: drive.drive + '/' + f.name }, function () { say('Playing ' + f.name); poll(); }); } }),
-                canOp() ? h('button', { class: 'btn small', text: have ? 'Copy again' : 'Copy to the box', 'aria-label': 'Copy ' + f.name + ' to the box',
+                canOp() ? h('button', { class: 'btn small', text: have ? 'Copy again' : 'Copy to the node', 'aria-label': 'Copy ' + f.name + ' to the node',
                   onclick: function (e) {
                     function copy() {
                       S.importNote = '';
                       act('POST', '/api/media/import', { usb: drive.drive + '/' + f.name, replace: have }, function (d) { watchImport(d); });
                     }
                     if (!have) return copy();
-                    confirmRow(f.name + ' is already on the box. Replace it with the one on the USB drive?', 'Replace', 'Keep it', copy, e.currentTarget);
+                    confirmRow(f.name + ' is already on the node. Replace it with the one on the USB drive?', 'Replace', 'Keep it', copy, e.currentTarget);
                   } }) : null));
           }) : h('div', { class: 'k', text: 'No video or image files at the top of this drive.' })));
       }),
@@ -1837,7 +1837,7 @@
   // Each row can say how it is doing (a chip and a sentence), worked out from the same GET calls the cards use.
   var confirmTimer = null, pageStateTimer = null;
   var CHIPS = { off: 'Off', setup: 'Set up', ready: 'Ready', active: 'Active', problem: 'Problem', check: 'Check' };
-  var SYS_GROUPS = [['everyday', 'Everyday'], ['show', 'Show tools'], ['box', 'This box']];
+  var SYS_GROUPS = [['everyday', 'Everyday'], ['show', 'Show tools'], ['box', 'This node']];
   function mod(id) { return S.modules.filter(function (x) { return x.id === id; })[0]; }
   function plural(n, word, many) { return n + ' ' + (n === 1 ? word : (many || word + 's')); }
   function st(chip, text) { return { chip: chip, text: text }; }
@@ -1893,11 +1893,11 @@
     var full = can('full'), op = canOp(), remote = !!(S.device && S.device.remote);
     var rows = [
       { id: 'health', group: 'top', name: 'Health', role: 'view', url: '/api/health',
-        blurb: 'Whether the box is well: its power supply, temperature, the player and the helpers it needs, and each projector\'s own warnings.',
+        blurb: 'Whether the node is well: its power supply, temperature, the player and the helpers it needs, and each projector\'s own warnings.',
         body: function () { return [healthCard()]; } },
       { id: 'projectors', group: 'everyday', name: 'Projectors', role: 'live', module: 'projector', url: '/api/projectors',
         blurb: 'Switch the projectors on the network on and off, choose their input, mute them, and see their state, lamp hours and warnings. On an Epson also freeze, brightness, Eco and the colour mode.',
-        confirmOff: function (ask) { ask('The box stops checking the projectors. They stay as they are.'); },
+        confirmOff: function (ask) { ask('The node stops checking the projectors. They stay as they are.'); },
         body: function () { return [projectorsCard(full)]; } },
       // (what staff had on this page before D65 is the Room area's screens. The groups and the scenes are set up here,
       // by the Owner and, since D80, by an Operator: room.js's set-up card, which the Room area leaves out.)
@@ -1905,11 +1905,11 @@
         blurb: 'For the people who run the room: scenes to tap, each wall on or off, its source and its mutes, and All off, on the Room screens. Here: the groups and the scenes. It needs Projectors to be on. Not yet tried on a real projector.',
         body: function () { return window.pvjRoom ? [roomInPage()] : []; } },
       { id: 'schedule', group: 'everyday', name: 'Schedule', role: 'op', module: 'scheduler', url: '/api/schedule',
-        blurb: 'Play a clip, stop, black out or show the screen, start Vibes or switch the projectors at set times on chosen days. It uses the box\'s clock, so check the clock first.',
+        blurb: 'Play a clip, stop, black out or show the screen, start Vibes or switch the projectors at set times on chosen days. It uses the node\'s clock, so check the clock first.',
         steps: [scheduleStep()], offInner: true,
         body: function () { return [scheduleCard()]; } },
       { id: 'vibes', group: 'everyday', name: 'Shaders and Vibes', role: 'view', module: 'shaders', url: '/api/shaders',
-        blurb: 'Moving pictures the box draws by itself, in place of a clip. Vibes plays them one after another, for as long as you like. Play one yourself and it is an instrument: its controls, presets and a controller are all on this page.',
+        blurb: 'Moving pictures the node draws by itself, in place of a clip. Vibes plays them one after another, for as long as you like. Play one yourself and it is an instrument: its controls, presets and a controller are all on this page.',
         confirmOff: function (ask) {
           var pl = (S.status && S.status.player) || {};
           ask(pl.vibes || typeof pl.shader === 'string' ? 'Vibes is on the screen. Switching off stops it now.' : null);
@@ -1918,7 +1918,7 @@
       // An Operator gets this row too (D48, D80): the guest code and the guest link, the guests to remove, the lock on
       // guest controls, and nothing else.
       { id: 'access', group: 'everyday', name: 'People and codes', role: 'live', url: '/api/access', urlRole: 'live',
-        blurb: full ? 'The phones and tablets paired with this box, codes for guests and operators, and the PIN.' :
+        blurb: full ? 'The phones and tablets paired with this node, codes for guests and operators, and the PIN.' :
           'Let a guest in from their own phone, with a code that stops working by itself.',
         body: accessCards },
       { id: 'sound', group: 'everyday', name: 'Sound', role: 'live', url: '/api/audio',
@@ -1926,57 +1926,57 @@
         plain: soundCards,
         body: function () { return soundCards().concat([audioCard(op)]); } },
       { id: 'autostart', group: 'show', name: 'At power-up', role: 'op', url: '/api/autostart',
-        blurb: 'What the box plays by itself when it is powered up, with nobody at the panel.',
+        blurb: 'What the node plays by itself when it is powered up, with nobody at the panel.',
         body: function () { return [autostartCard(op)]; } },
       { id: 'streams', group: 'show', name: 'Streams', role: 'live', module: 'inputs-srt', url: '/api/streams',
         blurb: 'Save the addresses of network video streams (SRT, RTSP, RTMP) and play them like clips.',
         body: function () { return [streamsCard(full)]; } },
       { id: 'ndi', group: 'show', name: 'NDI\u00ae input', role: 'op', module: 'inputs-ndi', url: '/api/ndi',
-        blurb: 'Show the picture of an NDI sender on the network (Resolume, MadMapper, OBS and others) like a clip. Beta: the picture has run once on a Pi 4. Sound from NDI is new and off until you choose it: measured on the test box, not yet confirmed by ear.',
+        blurb: 'Show the picture of an NDI sender on the network (Resolume, MadMapper, OBS and others) like a clip. Beta: the picture has run once on a Pi 4. Sound from NDI is new and off until you choose it: measured on the test node, not yet confirmed by ear.',
         confirmOff: function (ask) { ndiWasOn = !!((S.status && S.status.player) || {}).ndi; ask(ndiWasOn ? 'The NDI picture comes off the screen now.' : null); },
         offSaid: function () { return ndiWasOn ? 'Switched off. The NDI picture came off the screen because the input was switched off.' : null; },
         body: function () { return ndiCards(full); } },
       { id: 'render', group: 'show', name: 'Render nodes', role: 'op', url: '/api/render', urlRole: 'op',
-        blurb: 'Cue a laptop or GPU box running Max/Jitter or another tool over OSC, and show its NDI picture. If its picture goes, the box goes back to what played before. Not yet tried with a real render node.',
+        blurb: 'Cue a laptop or GPU computer running Max/Jitter or another tool over OSC, and show its NDI picture. If its picture goes, the node goes back to what played before. Not yet tried with a real render node.',
         body: function () { return renderCards(full); } },
       { id: 'soundin', group: 'show', name: 'Sound reactivity', role: 'op', url: '/api/sound', urlRole: 'op',
-        blurb: 'Let the picture follow the music: the level, the beat or a band of a capture device moves a shader input, and can go to other programs over OSC. The box analyses levels only; no sound is stored or sent. Not yet tried with a real audio input.',
+        blurb: 'Let the picture follow the music: the level, the beat or a band of a capture device moves a shader input, and can go to other programs over OSC. The node analyses levels only; no sound is stored or sent. Not yet tried with a real audio input.',
         body: function () { return soundInCards(full); } },
       { id: 'ndisc', group: 'show', name: 'NDI\u00ae discovery server', role: 'full', module: 'ndi-discovery', url: '/api/ndi/discovery', urlRole: 'full',
-        blurb: 'Run NDI\'s own Discovery Server on this box, so senders and receivers on a network you control find each other through it. The program is NDI\'s, not part of this box: someone with a keyboard or SSH puts it in place from your copy first. It is not a password: whatever can reach it can register with it and ask it. Switching it on makes the box listen on the network.',
+        blurb: 'Run NDI\'s own Discovery Server on this node, so senders and receivers on a network you control find each other through it. The program is NDI\'s, not part of this node: someone with a keyboard or SSH puts it in place from your copy first. It is not a password: whatever can reach it can register with it and ask it. Switching it on makes the node listen on the network.',
         body: function () { return ndiscCards(); } },
       { id: 'mapping', group: 'show', name: 'Projection mapping', role: 'op', module: 'mapper', url: '/api/mapper',
         blurb: 'Bend the picture onto walls and objects: four-cornered shapes, triangles and grids for curved screens, up to 16, drawn with outlines on the display while you place them.',
         confirmOff: function (ask) { api('GET', '/api/mapper').then(function (r) { ask(r.ok && r.data.on ? 'The mapping comes off the screen now.' : null); }); },
         plain: function () { return [mapperCard()]; },         // a presenter had the card on Mix, without the page; Test pattern is in it
         body: function () { return [mapperCard()]; } },
-      { id: 'sync', group: 'show', name: 'Boxes in step', role: 'live', module: 'wall', url: '/api/sync',
-        blurb: 'Several boxes play together: one server leads and the clients follow its clip, position, pause and blackout. Each box can also show one tile of a video wall.',
-        confirmOff: function (ask) { api('GET', '/api/sync').then(function (r) { ask(r.ok && r.data.config.role !== 'off' ? 'The other boxes stop following.' : null); }); },
+      { id: 'sync', group: 'show', name: 'Nodes in step', role: 'live', module: 'wall', url: '/api/sync',
+        blurb: 'Several nodes play together: one server leads and the clients follow its clip, position, pause and blackout. Each node can also show one tile of a video wall.',
+        confirmOff: function (ask) { api('GET', '/api/sync').then(function (r) { ask(r.ok && r.data.config.role !== 'off' ? 'The other nodes stop following.' : null); }); },
         body: function () { return [syncCard()]; } },
       { id: 'midi', group: 'show', name: 'MIDI controller', role: 'op', module: 'control-midi', url: '/api/midi', urlRole: 'op',
-        blurb: 'Play pads, fade and mix from a USB pad controller, keyboard or fader box. A controller the box knows works as soon as it is plugged in. The box only listens; it sends nothing back.',
+        blurb: 'Play pads, fade and mix from a USB pad controller, keyboard or fader box. A controller the node knows works as soon as it is plugged in. The node only listens; it sends nothing back.',
         steps: [flagStep('midi', '/api/midi', function (d) { return d.enabled; }, function (v) { return { enabled: v }; })],
         body: function () { return [midiControllers(), midiCard()]; } },
       { id: 'dmx', group: 'show', name: 'DMX lighting desk', role: 'full', module: 'control-dmx', url: '/api/dmx', urlRole: 'full',
-        blurb: 'Control the box from a lighting desk or lighting software over the network (Art-Net or sACN): opacity, size, position, speed, volume, blackout and pads. The box only listens.',
+        blurb: 'Control the node from a lighting desk or lighting software over the network (Art-Net or sACN): opacity, size, position, speed, volume, blackout and pads. The node only listens.',
         steps: [flagStep('dmx', '/api/dmx', function (d) { return d.enabled; }, function (v) { return { enabled: v }; })],
         body: dmxCard },
       { id: 'osc', group: 'show', name: 'OSC', role: 'full', url: '/api/osc',
-        blurb: 'Control the box from TouchOSC, QLab, Resolume and other programs that send OSC messages over the network.',
+        blurb: 'Control the node from TouchOSC, QLab, Resolume and other programs that send OSC messages over the network.',
         steps: [oscStep()],
         body: function () { return [oscCard(), oscStateCard()]; } },
       { id: 'network', group: 'box', name: 'Network', role: 'full', module: 'network', url: '/api/network', urlRole: 'full',
-        blurb: 'Change the box\'s wired and Wi-Fi network: automatic, a fixed address, a direct cable, handing out addresses, joining a Wi-Fi network or making its own hotspot. Every change goes back by itself unless you confirm it.',
+        blurb: 'Change the node\'s wired and Wi-Fi network: automatic, a fixed address, a direct cable, handing out addresses, joining a Wi-Fi network or making its own hotspot. Every change goes back by itself unless you confirm it.',
         body: function () { return [networkCard()]; } },
       { id: 'screen', group: 'box', name: 'Screen output', role: 'full', url: '/api/screen', urlRole: 'full',
-        blurb: 'The size and rate the box sends to the screen or projector. Automatic picks the screen\'s own mode up to 1920 x 1200 at 60 Hz. A change is tried and goes back by itself unless you keep it.',
+        blurb: 'The size and rate the node sends to the screen or projector. Automatic picks the screen\'s own mode up to 1920 x 1200 at 60 Hz. A change is tried and goes back by itself unless you keep it.',
         body: function () { return [screenCard(), rendererCard()]; } },
       { id: 'updates', group: 'box', name: 'Updates', role: 'full', url: '/api/system',
         blurb: 'Install a newer version from a USB stick or an upload. Only updates signed with your key are taken, and a failed one goes back by itself.',
         body: function () { return [updateCard()]; } },
       { id: 'support', group: 'box', name: 'Remote support', role: 'full', url: '/api/support',
-        blurb: 'Let someone you trust help from far away, for a set time. Nothing can reach the box until you allow it and start a session.',
+        blurb: 'Let someone you trust help from far away, for a set time. Nothing can reach the node until you allow it and start a session.',
         // the settings are filled in before it is allowed, so the card shows while the switch is off; a support
         // session itself may not change this (the server refuses), so it gets no switch
         steps: full && !remote ? [flagStep('support', '/api/support', function (d) { return !!(d.config && d.config.allowed); }, function (v) { return { allowed: v }; }, '/api/support/config')] : null,
@@ -1987,7 +1987,7 @@
         body: httpsCards },
       { id: 'backup', group: 'box', name: 'Backup and reset', role: 'full',
         fact: function () { return remote ? 'Settings file, diagnostics' : 'Settings file, diagnostics, factory reset'; },
-        blurb: 'Save or load this box\'s settings as a file, make a file for whoever is helping you, or start over.',
+        blurb: 'Save or load this node\'s settings as a file, make a file for whoever is helping you, or start over.',
         body: function () {
           var cards = boxCareCards(), last = cards[cards.length - 1];
           if (last && last.id === 'resetcard') cards.splice(cards.length - 1, 0, h('h2', { class: 'danger-h', id: 'dangerhead', text: 'Danger' }));
@@ -1998,7 +1998,7 @@
         blurb: 'The panel\'s colours, on every paired device.',
         body: function () { return [appearanceCard()]; } },
       { id: 'about', group: 'box', name: 'About and power', role: 'view', url: '/api/system',
-        blurb: 'What this box is, its versions, storage, screens and clock, and restarting it.',
+        blurb: 'What this node is, its versions, storage, screens and clock, and restarting it.',
         body: aboutPage }
     ];
     // A module nobody gave a row still gets one, so it can always be switched.
@@ -2055,11 +2055,11 @@
   var SYS_STATE = {
     https: httpsState,
     health: function (d) {
-      var host = /^https?:\/\/([^.\/:]+)\.local/.exec((d.addresses || [])[0] || ''), name = host ? host[1] : 'This box';
+      var host = /^https?:\/\/([^.\/:]+)\.local/.exec((d.addresses || [])[0] || ''), name = host ? host[1] : 'This node';
       var lines = [['Power', d.power], ['Temperature', d.temperature], ['Player', d.player]];
       (d.helpers || []).forEach(function (x) { if (!x.running && x.name !== 'pvj-netd') lines.push([x.label, { state: 'bad', text: 'Not running' }]); });
       (d.projectors || []).forEach(function (x) { lines.push(['Projector ' + x.name, x]); });
-      if (d.osc_open) lines.push(['OSC', { state: 'warn', text: 'open, anyone on this network can control the box' }]);    // D83
+      if (d.osc_open) lines.push(['OSC', { state: 'warn', text: 'open, anyone on this network can control the node' }]);    // D83
       var worst = lines.filter(function (l) { return l[1] && l[1].state === 'bad'; })[0] || lines.filter(function (l) { return l[1] && l[1].state === 'warn'; })[0];
       if (!worst) return st(null, name + ' · all well');
       return st(worst[1].state === 'bad' ? 'problem' : 'check', worst[0] + ': ' + worst[1].text);
@@ -2108,7 +2108,7 @@
     },
     autostart: function (d) {
       var c = d.config;
-      if (c.mode === 'off') return st('off', 'The box waits for you at power-up');
+      if (c.mode === 'off') return st('off', 'The node waits for you at power-up');
       if (d.last && d.last.ok === false) return st('problem', 'Last run failed: ' + d.last.message);
       return st('ready', ({ file: 'Plays ' + c.file, all: 'Plays every clip', slideshow: 'Shows the pictures', pad: 'Plays a pad', usb: 'Plays the USB stick',
         preset: 'Runs ' + c.preset, vibes: 'Starts Vibes' })[c.mode] || c.mode);
@@ -2120,9 +2120,9 @@
       return st('ready', d.streams.length + ' saved');
     },
     ndisc: function (d) {
-      if (d.setup === false) return st('setup', 'Not set up on this box');
+      if (d.setup === false) return st('setup', 'Not set up on this node');
       if (!d.supervisor) return st('problem', 'Its service is not running');
-      if (!d.installed) return st('setup', 'NDI\'s program is not on this box yet');
+      if (!d.installed) return st('setup', 'NDI\'s program is not on this node yet');
       if (d.state === 'running' && d.listening) return st('active', 'Listening on ' + d.listening.address + ':' + d.listening.port);
       if (d.state === 'failed') return st('problem', 'It stopped and is being started again');
       if (!d.bind) return st('check', 'No address on that network now');
@@ -2148,9 +2148,9 @@
     },
     ndi: function (d) {
       var p = d.playing;
-      if (d.setup === false) return st('setup', 'NDI is not set up on this box');
+      if (d.setup === false) return st('setup', 'NDI is not set up on this node');
       if (!d.helper) return st('problem', 'The NDI helper is not running');
-      if (!d.runtime.present) return st('setup', 'The NDI runtime is not on this box yet');
+      if (!d.runtime.present) return st('setup', 'The NDI runtime is not on this node yet');
       if (d.runtime.problem) return st('problem', ndiSentence(d.runtime.problem));
       if (d.ended) return st('problem', d.ended.name + ' stopped: ' + ndiSentence(d.ended.message));
       if (p && p.state === 'waiting') return st('check', 'Waiting for ' + p.name);
@@ -2170,7 +2170,7 @@
       if (d.error) return st('problem', d.error);
       if (c.role === 'off') return st('setup', 'Not chosen yet: lead or follow');
       if (c.role === 'server') return st('active', 'Leads group "' + c.group + '"');
-      return d.server ? st('active', 'Following ' + d.server) : st('problem', 'Listening for the box that leads');
+      return d.server ? st('active', 'Following ' + d.server) : st('problem', 'Listening for the node that leads');
     },
     midi: function (d) {
       if (!d.enabled) return st('off', '');
@@ -2188,7 +2188,7 @@
     osc: function (d) {
       if (!d.enabled) return st('off', '');
       if (d.error) return st('problem', d.error);
-      if (d.open) return st('check', 'Open: anyone on this network can control the box');     // D83: on, with every lock off
+      if (d.open) return st('check', 'Open: anyone on this network can control the node');     // D83: on, with every lock off
       return st('ready', d.listening ? 'Listening on UDP ' + d.port : 'Starting');
     },
     network: function (d) {
@@ -2211,7 +2211,7 @@
       var c = d.config;
       if (!c) return d.active ? st('active', 'Session open, ' + mins(d.seconds_left) + ' left') : st(null, 'No session');
       if (!c.allowed) return st('off', 'Not allowed');
-      if (d.available === false) return st('problem', 'Not available on this box');
+      if (d.available === false) return st('problem', 'Not available on this node');
       if (d.active) return st('active', 'Session open, ' + mins(d.seconds_left) + ' left');
       // D84: a session that is over, in which support saw or made the OSC key (any of them: a later session hides nothing)
       if ((d.log || []).some(function (e) { return e.ended && e.osc_key; })) return st('check', 'Support knows the OSC key: make a new one');
@@ -2682,7 +2682,7 @@
       cards.push(h('div', { class: 'card', id: 'forgetcard' }, h('h2', { text: 'This phone' }),
         h('div', { class: 'hint', text: S.device ? S.device.name + ', ' + roleName(S.device.role) : '' }),
         h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'forgetdevice', text: 'Log out', onclick: function (e) {
-          logOutHere(e.currentTarget, 'Log out on this phone? The box forgets it. You will need a code, a link or the PIN to get back in.');
+          logOutHere(e.currentTarget, 'Log out on this phone? The node forgets it. You will need a code, a link or the PIN to get back in.');
         } }))));
     }
     return cards;
@@ -2731,7 +2731,7 @@
   function boxCard() {
     var now = S.status || {}, sys = now.system || {};
     var body = h('div', { class: 'list sp', id: 'boxbody' }, h('div', { class: 'hint', text: 'Loading...' }));
-    var card = h('div', { class: 'card', id: 'boxcard' }, h('h2', { text: 'This box' }), body);
+    var card = h('div', { class: 'card', id: 'boxcard' }, h('h2', { text: 'This node' }), body);
     api('GET', '/api/system').then(function (r) {
       if (!document.getElementById('boxcard')) return;
       body.textContent = '';
@@ -2760,23 +2760,23 @@
       var c = d.clock || {};
       var boxTime = c.now ? new Date(c.now * 1000) : null;
       head('Clock');
-      body.appendChild(kv('Box time', boxTime ? boxTime.toLocaleString() : '?'));
+      body.appendChild(kv('Node time', boxTime ? boxTime.toLocaleString() : '?'));
       body.appendChild(h('div', { class: c.clock_from_network === false ? 'hint warn' : 'hint', id: 'boxclockline',
         text: c.clock_from_network === true ? 'Set from the network.' : c.clock_from_network === false ? 'Not set from the network, so it may be wrong. The schedule uses this clock.' : '' }));
       if (mod('inputs-ndi')) body.appendChild(h('div', { class: 'hint', id: 'boxmarks', text: NDI_MARK }));     // NDI's terms: said on the About page
       if (!can('full') || !d.system_actions) return;
-      if (c.clock_from_network === false) body.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'setclock', text: 'Set the box clock to this phone\'s time', onclick: function () {
-        act('POST', '/api/system/clock', { epoch: Math.round(Date.now() / 1000) }, function () { say('Box clock set.'); render(); });
+      if (c.clock_from_network === false) body.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'setclock', text: 'Set the node clock to this phone\'s time', onclick: function () {
+        act('POST', '/api/system/clock', { epoch: Math.round(Date.now() / 1000) }, function () { say('Node clock set.'); render(); });
       } })));
       var power = document.getElementById('powerbody'), out = document.getElementById('powerresult');
       if (!power) return;
-      power.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'rebootbtn', text: 'Restart the box', onclick: function (e) {
-        confirmRow('Restart the box? The show stops for about a minute.', 'Restart the box', 'Not now', function () {
+      power.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'rebootbtn', text: 'Restart the node', onclick: function (e) {
+        confirmRow('Restart the node? The show stops for about a minute.', 'Restart the node', 'Not now', function () {
           act('POST', '/api/system/reboot', { confirm: 'reboot' }, function () { sayAt(out, 'Restarting. Open the panel again in about a minute.'); });
         }, e.currentTarget);
       } })));
       power.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'poweroffbtn', text: 'Power off', onclick: function (e) {
-        confirmRow('Power the box off? Someone must unplug it and plug it in again to start it.', 'Power off', 'Keep it on', function () {
+        confirmRow('Power the node off? Someone must unplug it and plug it in again to start it.', 'Power off', 'Keep it on', function () {
           act('POST', '/api/system/poweroff', { confirm: 'poweroff' }, function () { sayAt(out, 'Powering off. Wait for the light to stop blinking before unplugging.'); });
         }, e.currentTarget);
       } })));
@@ -2802,7 +2802,7 @@
     function count(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
     function lineText(d) {
       var what = (d.protocol === 'sacn' ? 'sACN' : 'Art-Net') + ' on universe ' + d.universe;
-      if (d.error) return 'Problem: ' + d.error + '. Check that no other program on the box uses the same port, then save again.';
+      if (d.error) return 'Problem: ' + d.error + '. Check that no other program on the node uses the same port, then save again.';
       if (!d.listening) return 'Not listening yet.';
       return 'Listening for ' + what + '. ' + (d.received ? count(d.received) + (d.received === 1 ? ' frame' : ' frames') + ' received.' : 'Nothing received yet.');
     }
@@ -2860,16 +2860,16 @@
       [proto, uni, start, allow].forEach(function (el) { el.addEventListener('input', touch); el.addEventListener('change', touch); });
       var adv = h('details', { class: 'fold', id: 'dmxadv', open: dmxAdv }, h('summary', { text: 'Advanced' }), h('div', { class: 'list sp' },
         labelled('Also accept from these networks', allow, 'Only private networks may send. Add your show network here if the desk is on another one. Separate several with commas.'),
-        h('div', { class: 'hint', text: 'The box listens on UDP port ' + d.port + '.' })));
+        h('div', { class: 'hint', text: 'The node listens on UDP port ' + d.port + '.' })));
       adv.addEventListener('toggle', function () { dmxAdv = adv.open; });
       body.appendChild(labelled('Protocol', proto, 'What the desk sends. Most desks and programs can send Art-Net.'));
       body.appendChild(labelled('Universe', uni, 'The same number as on the desk.'));
-      body.appendChild(labelled('Start channel', start, 'The box uses 8 channels from here. A ninth, if the desk sends it, is Vibes.'));
+      body.appendChild(labelled('Start channel', start, 'The node uses 8 channels from here. A ninth, if the desk sends it, is Vibes.'));
       body.appendChild(adv);
       body.appendChild(bar.el);
       bar.dirty(changed());
       if (saved) bar.result.textContent = 'Saved';
-      body.appendChild(h('div', { class: 'hint', text: 'The first frame only sets a starting point, and the box holds its last state if the signal stops. The box only listens.' }));
+      body.appendChild(h('div', { class: 'hint', text: 'The first frame only sets a starting point, and the node holds its last state if the signal stops. The node only listens.' }));
       watch();
     }
     api('GET', '/api/dmx').then(function (r) {
@@ -2900,7 +2900,7 @@
       ['clip_prev', 'Previous clip'], ['clip_next', 'Next clip'], ['fadein', 'Fade in'],
       ['bank_pad', 'Play a pad of the controllers\' bank'], ['bank_prev', 'Controllers\' bank: the one before'], ['bank_next', 'Controllers\' bank: the next']])
     .concat([1, 2, 3, 4, 5, 6, 7, 8].map(function (n) { return ['scene_' + n, 'Room scene ' + n]; }))
-    .concat([['effect_amount', 'Effect: amount (fader)'], ['effect_toggle', 'Effect on / off'], ['effect_prev', 'Effect: the one before'], ['effect_next', 'Effect: the next one'], ['clock_tap', 'Tap the tempo (box clock)']])
+    .concat([['effect_amount', 'Effect: amount (fader)'], ['effect_toggle', 'Effect on / off'], ['effect_prev', 'Effect: the one before'], ['effect_next', 'Effect: the next one'], ['clock_tap', 'Tap the tempo (node clock)']])
     .concat([1, 2, 3, 4, 5, 6, 7, 8].map(function (n) { return ['effect_control_' + n, 'Effect: control ' + n + ' of the one that is on (knob)']; }))
     // a pairing code on the box's own display (System > People and codes switches it on): held 3 to 10 seconds, then let go
     .concat([['code_join', 'Show a one-time guest code on the display (hold 3 seconds, let go)'],
@@ -2983,7 +2983,7 @@
       box.appendChild(h('p', { class: 'hint', text: 'Sends ' + (x.send.type === 'cc' ? 'CC ' : 'note ') + x.send.number +
         (x.unverified ? ' (from a list that the maker\'s document does not confirm)' : '') + '.' +
         (x.guard ? ' Press it twice within a second; one press does nothing.' : '') +
-        (x.pickup ? ' It picks up: nothing changes until it reaches the value the box has, so nothing jumps.' : '') +
+        (x.pickup ? ' It picks up: nothing changes until it reaches the value the node has, so nothing jumps.' : '') +
         (x.action && ['size', 'position', 'position_y', 'speed', 'shader_speed', 'shader_hue', 'shader_brightness'].indexOf(x.action.action) >= 0 ? ' The middle of the control is exactly the normal value.' : '') +
         (x.waiting ? ' It has not reached that value yet.' : '') }));
       if (!midiMay(x.action) || !midiMay(x.standard)) {
@@ -3120,7 +3120,7 @@
           zones.map(function (z) { return h('span', { class: 'ctlzone z-' + z[0], role: 'listitem', text: z[1] }); })));
         if (open) card.appendChild(detail(c, open));
         card.appendChild(h('p', { class: 'hint', text: 'Move a control and it lights up here. Tap one to see' + (canOp() ? ' or change' : '') + ' what it does.' +
-          (c.lights ? ' A small ring marks a control that has a light; it is filled while the box has that light on.' : '') +
+          (c.lights ? ' A small ring marks a control that has a light; it is filled while the node has that light on.' : '') +
           (c.controls.some(function (x) { return x.guard; }) ? ' 2x: press twice within a second.' : '') +
           (c.controls.some(function (x) { return x.action && x.action.action === 'bank_pad'; }) ? ' The pad buttons play bank ' + 'ABC'[d.bank || 0] + ' now.' : '') }));
         card.appendChild(h('p', { class: 'hint ctlnote', text: c.profile.note || c.profile.description }));
@@ -3186,7 +3186,7 @@
       body.appendChild(h('div', { class: 'state', id: 'midiline', text: !d.enabled ? 'Off' : (d.devices.length ? d.devices.length + ' controller' + (d.devices.length > 1 ? 's' : '') + ': ' + names.join(', ') + (d.last ? '. Last: ' + d.last : '') : 'On, waiting for a controller to be plugged in') }));
       body.appendChild(toggle('midibuiltin', 'Built-in map', d.builtin, function (v) {
         act('POST', '/api/midi', { builtin: v }, function (data) { draw(data); say('Saved'); });
-      }, 'For a controller the box does not know: notes 36 to 71 play pads, CC 20 to 25 are levels. Your own mappings win over it and over a known controller\'s layout.'));
+      }, 'For a controller the node does not know: notes 36 to 71 play pads, CC 20 to 25 are levels. Your own mappings win over it and over a known controller\'s layout.'));
       body.appendChild(h('div', { class: 'field', text: 'Your mappings' }));
       if (!d.map.length) body.appendChild(h('div', { class: 'hint', id: 'midinomap', text: 'None yet. A mapping makes one knob, fader or button do one thing. Choose what it should do below, tap Learn a control, then move or press it.' }));
       var maplist = h('div', { class: 'list sp', id: 'midimaplist' });
@@ -3235,7 +3235,7 @@
           remember();
           act('POST', '/api/midi/learn', { start: true }, function (data) { draw(data); });
         } })));
-        form.appendChild(h('div', { class: 'hint', text: 'The box waits 15 seconds or so for you to move or press the control, then saves the mapping.' }));
+        form.appendChild(h('div', { class: 'hint', text: 'The node waits 15 seconds or so for you to move or press the control, then saves the mapping.' }));
       }
       body.appendChild(form);
     }
@@ -3339,7 +3339,7 @@
         return;
       }
       if (!d.modes.length) {
-        body.appendChild(h('div', { class: 'hint', id: 'screennone', text: d.connected ? 'The screen\'s modes are not known yet. They are read each time the player starts.' : 'No screen is connected. Connect one and restart the player (or the box); its modes are read then.' }));
+        body.appendChild(h('div', { class: 'hint', id: 'screennone', text: d.connected ? 'The screen\'s modes are not known yet. They are read each time the player starts.' : 'No screen is connected. Connect one and restart the player (or the node); its modes are read then.' }));
       } else {
         var current = d.saved;
         if (screenPick === null || (screenPick !== 'auto' && !d.modes.some(function (m) { return m.mode === screenPick; }))) screenPick = current;
@@ -3401,7 +3401,7 @@
       if (d.why) body.appendChild(h('div', { class: 'hint warn', id: 'renderwhy', role: 'status', text: 'New was chosen; classic mpv is drawing: ' + d.why + '.' }));
       if (d.switched) body.appendChild(h('div', { class: 'hint', id: 'renderswitched', role: 'status',
         text: 'At the last change the player ended pvj-render' + (d.switched_at ? ' (' + new Date(d.switched_at * 1000).toLocaleString() + ')' : '') + ': ' + d.switched + '.' }));
-      if (!d.available) body.appendChild(h('div', { class: 'hint', id: 'rendernone', text: 'pvj-render is not built on this box, so only classic mpv can draw.' }));
+      if (!d.available) body.appendChild(h('div', { class: 'hint', id: 'rendernone', text: 'pvj-render is not built on this node, so only classic mpv can draw.' }));
       var use = h('select', { class: 'text-input', id: 'renderuse' }, d.uses.map(function (u) {
         return h('option', { value: u, text: RENDERER_NAMES[u] || u, selected: u === d.use, disabled: u === 'new' && !d.available && d.use !== 'new' });
       }));
@@ -3410,7 +3410,7 @@
       }));
       kept(use, 'use');
       kept(detail, 'detail');
-      body.appendChild(labelled('Renderer', use, 'Classic is the player as it always was. New is the box\'s own renderer, a first step towards layers and live visuals; if it fails to start the box goes back to classic by itself.'));
+      body.appendChild(labelled('Renderer', use, 'Classic is the player as it always was. New is the node\'s own renderer, a first step towards layers and live visuals; if it fails to start the node goes back to classic by itself.'));
       body.appendChild(labelled('Picture detail inside (new only)', detail, 'The new renderer draws the clip at this size and scales it to the screen once.'));
       // sources (D101): how many clips the new renderer can play side by side for the mapping's surfaces, up to the board's cap
       var src = d.sources || null, sources = null;
@@ -3418,10 +3418,10 @@
         var counts = [];
         for (var n = 1; n <= src.cap; n++) counts.push(n);
         sources = h('select', { class: 'text-input', id: 'rendersources' },
-          [h('option', { value: 'auto', text: 'Automatic: ' + src['default'] + ' on this box', selected: src.chosen === null })].concat(
+          [h('option', { value: 'auto', text: 'Automatic: ' + src['default'] + ' on this node', selected: src.chosen === null })].concat(
             counts.map(function (n) { return h('option', { value: String(n), text: n + (n === 1 ? ' source' : ' sources'), selected: src.chosen === n }); })));
         kept(sources, 'sources');
-        body.appendChild(labelled('Sources (new only)', sources, 'Clips the new renderer can play at once, one per source, for the mapping\'s surfaces. A source with nothing loaded costs nothing; each one that plays costs decoding. Up to ' + src.cap + ' on this box.'));
+        body.appendChild(labelled('Sources (new only)', sources, 'Clips the new renderer can play at once, one per source, for the mapping\'s surfaces. A source with nothing loaded costs nothing; each one that plays costs decoding. Up to ' + src.cap + ' on this node.'));
       }
       // the final pass (D108): drawn at the screen's size, or at 720 lines with the display's scaler bringing it up
       var final_ = null;
@@ -3430,7 +3430,7 @@
           return h('option', { value: String(v), text: FINAL_NAMES[v] || String(v), selected: v === d.final });
         }));
         kept(final_, 'final');
-        body.appendChild(labelled('Final picture (new only)', final_, 'Drawing the final picture at 720 lines leaves the graphics chip more room and steadier motion at 4 sources with the mapping on. Mapped edges and on-screen text get a little softer, and thin lines in a squeezed mapped area can break into dashes, so Automatic does it only while the box is busy, and goes back when the load is lighter.'));
+        body.appendChild(labelled('Final picture (new only)', final_, 'Drawing the final picture at 720 lines leaves the graphics chip more room and steadier motion at 4 sources with the mapping on. Mapped edges and on-screen text get a little softer, and thin lines in a squeezed mapped area can break into dashes, so Automatic does it only while the node is busy, and goes back when the load is lighter.'));
         if (d.final_now) {
           var small = d.final_now.final === 720;
           body.appendChild(h('div', { class: 'hint', id: 'renderfinalnow', role: 'status',
@@ -3461,7 +3461,7 @@
   function autostartCard(full) {
     var body = h('div', { class: 'list sp', id: 'autobody' });
     var card = h('div', { class: 'card', id: 'autocard' }, h('h2', { text: 'At power-up' }), body);
-    var MODES = [['off', 'Nothing: the box waits for you'], ['file', 'Play one clip'], ['all', 'Play every clip'], ['slideshow', 'Slideshow of the pictures'],
+    var MODES = [['off', 'Nothing: the node waits for you'], ['file', 'Play one clip'], ['all', 'Play every clip'], ['slideshow', 'Slideshow of the pictures'],
       ['pad', 'Play a pad'], ['usb', 'Play the USB stick (and any stick plugged in later)'], ['vibes', 'Start Vibes'], ['preset', 'Old start script']];
     function padName(p) {
       var b = (S.banks || [])[p[0]], pad = b && b.pads && b.pads[p[1]];
@@ -3474,7 +3474,7 @@
         shuffle: !!cfg.shuffle, seconds: cfg.seconds || 10, pad: cfg.pad || [0, 0] };
       var detail = cfg.mode === 'file' ? ' (' + cfg.file + ')' : cfg.mode === 'preset' ? ' (' + cfg.preset + ')' :
         cfg.mode === 'pad' ? ' (' + padName(cfg.pad || [0, 0]) + ')' : cfg.mode === 'slideshow' ? ' (' + (cfg.seconds || 10) + ' s a picture)' : '';
-      var line = cfg.mode === 'off' ? 'Off: the box waits for you at power-up.' :
+      var line = cfg.mode === 'off' ? 'Off: the node waits for you at power-up.' :
         'On: ' + MODES.filter(function (m) { return m[0] === cfg.mode; })[0][1] + detail + (cfg.shuffle ? ', shuffled' : '') + ', after ' + cfg.delay + ' s.';
       body.appendChild(h('div', { class: 'state', id: 'autoline', text: line }));
       if (d.last) body.appendChild(h('div', { class: d.last.ok ? 'hint' : 'hint warn', id: 'autolast', text: 'Last run ' + d.last.at + ': ' + (d.last.ok ? 'started' : 'failed, ' + d.last.message) }));
@@ -3483,7 +3483,7 @@
       var mode = h('select', { class: 'text-input', id: 'automode' },
         MODES.map(function (m) { return h('option', { value: m[0], text: m[1] + (m[0] === 'vibes' && vibesOff ? ' (Vibes is off)' : ''), selected: m[0] === c.mode }); }));
       var file = h('select', { class: 'text-input', id: 'autofile' },
-        S.media.length ? S.media.map(function (n) { return h('option', { value: n, text: n, selected: n === (c.file || S.media[0]) }); }) : [h('option', { value: '', text: 'No clips on the box yet' })]);
+        S.media.length ? S.media.map(function (n) { return h('option', { value: n, text: n, selected: n === (c.file || S.media[0]) }); }) : [h('option', { value: '', text: 'No clips on the node yet' })]);
       var preset = h('input', { class: 'text-input mono', id: 'autopreset', placeholder: 'startlessonce05', value: c.preset, autocomplete: 'off' });
       var pads = [];
       (S.banks || []).forEach(function (bk, bi) { (bk.pads || []).forEach(function (pd, pi) { if (pd.file || padShader(pd)) pads.push([bi, pi]); }); });
@@ -3496,7 +3496,7 @@
       var loop = h('select', { class: 'text-input', id: 'autoloop' },
         [[true, 'Play it again, for ever'], [false, 'Stop after one time']].map(function (o) { return h('option', { value: String(o[0]), text: o[1], selected: o[0] === c.loop }); }));
       var delay = h('input', { class: 'text-input mono', id: 'autodelay', type: 'number', min: 0, max: 120, value: c.delay });
-      var wrap = { file: labelled('Clip', file), preset: labelled('Start script name', preset, 'The name of an old PocketVJ start script, as it was called on the old box.'),
+      var wrap = { file: labelled('Clip', file), preset: labelled('Start script name', preset, 'The name of an old PocketVJ start script, as it was called on the old node.'),
         pad: labelled('Pad', pad), seconds: labelled('Seconds a picture', seconds), shuffle: labelled('Order', shuffle),
         loop: labelled('When it ends', loop), delay: labelled('Wait after power-up (seconds)', delay, 'Gives a projector or a screen time to wake before the picture starts.') };
       var off = offNotice('autovibesoff', 'vibes', 'Vibes', function () { draw(d); });
@@ -3547,7 +3547,7 @@
       body.appendChild(tryNote);
       show();
       if (autoTried) { bar.result.textContent = autoTried; bar.result.className = 'msg inmsg' + (/did not/.test(autoTried) ? ' err' : ''); autoTried = ''; }
-      body.appendChild(h('div', { class: 'hint', text: 'It runs when the box starts, and again if the player is restarted after a crash. A Stop from the panel is not undone. "Play the USB stick" also plays each new stick the moment it is plugged in.' }));
+      body.appendChild(h('div', { class: 'hint', text: 'It runs when the node starts, and again if the player is restarted after a crash. A Stop from the panel is not undone. "Play the USB stick" also plays each new stick the moment it is plugged in.' }));
     }
     api('GET', '/api/autostart').then(function (r) {
       if (!document.getElementById('autocard')) return;
@@ -3585,7 +3585,7 @@
         name.addEventListener('input', function () { streamForm.name = name.value; });
         url.addEventListener('input', function () { streamForm.url = url.value; });
         return h('div', { class: 'addform', id: 'streamform' }, h('div', { class: 'field', text: 'Add a stream' }),
-          labelled('Name', name), labelled('Address', url, 'Starts with srt://, rtsp:// or rtmp://. A login in the address is kept on the box and hidden here.'),
+          labelled('Name', name), labelled('Address', url, 'Starts with srt://, rtsp:// or rtmp://. A login in the address is kept on the node and hidden here.'),
           h('div', { class: 'row' },
             h('button', { class: 'btn on pri grow', id: 'streamadd', text: 'Add', onclick: function () {
               api('POST', '/api/streams', { action: 'add', name: streamForm.name, url: streamForm.url }).then(function (r) {
@@ -3609,7 +3609,7 @@
   // hand. OSC over UDP has no reply, so the page says "sent", never "received".
   var renderForm = { name: '', host: '', port: '7400', ndi: '', profile: 'max' };
   var RENDER_PICTURE = { none: 'No NDI picture chosen', off: 'NDI input is off', not_allowed: 'Its NDI source is not allowed any more',
-    unknown: 'The box cannot tell whether its picture is there', here: 'Its picture is on the network', away: 'Its picture is not on the network now' };
+    unknown: 'The node cannot tell whether its picture is there', here: 'Its picture is on the network', away: 'Its picture is not on the network now' };
   function agoWords(s) { return s == null ? '' : s < 60 ? s + ' s ago' : s < 7200 ? Math.round(s / 60) + ' min ago' : Math.round(s / 3600) + ' h ago'; }
   function renderState(n) {
     if (n.showing) return st('active', 'Its picture is on the screen');
@@ -3713,7 +3713,7 @@
       bars.bands.forEach(function (b, i) { setBar(b, live ? (l.bands[i] || 0) : 0, ''); });
       bars.beat.className = 'chip' + (live && l.pulse > 0.3 ? ' chip-active' : '');
       bars.tempo.textContent = live && l.bpm > 0 ? 'About ' + Math.round(l.bpm) + ' BPM' + (l.confidence < 0.6 ? ' (not sure)' : '') : '';
-      bars.note.textContent = !live ? 'Nothing is being heard now: the meter moves while the box listens.' : l.bands_hidden ? 'Through remote support the bands are not shown.' : 'The bands are averaged over 200 ms.';
+      bars.note.textContent = !live ? 'Nothing is being heard now: the meter moves while the node listens.' : l.bands_hidden ? 'Through remote support the bands are not shown.' : 'The bands are averaged over 200 ms.';
     }
     function meterLoop() {
       clearTimeout(soundMeterTimer);
@@ -3734,7 +3734,7 @@
     }
     function stateLine(d) {
       var hlp = d.helper || {};
-      if (!hlp.running) return ['problem', 'The sound service (pvj-sound) is not running on this box. Restarting the box usually brings it back.'];
+      if (!hlp.running) return ['problem', 'The sound service (pvj-sound) is not running on this node. Restarting the node usually brings it back.'];
       if (!d.config.on) return ['off', 'Off. Nothing is listened to.'];
       if (d.config.source !== 'device') {
         var nm = (d.inputs.filter(function (x) { return x.id === d.config.source; })[0] || {}).name || d.config.source;
@@ -3764,19 +3764,19 @@
             say('The source is now: ' + src.options[src.selectedIndex].textContent + '.'); draw(r.data);
           });
         });
-        body.appendChild(labelled('Source', src, 'What the box listens to. The box\'s own sound is what the clip or the NDI stream plays, measured inside the player; it gives the level and the beat, not the bands.'));
+        body.appendChild(labelled('Source', src, 'What the node listens to. The node\'s own sound is what the clip or the NDI stream plays, measured inside the player; it gives the level and the beat, not the bands.'));
       }
       if (full) {
         body.appendChild(toggle('soundon', 'Listen to the capture device', !!d.config.on, function (v) {
-          post({ on: v }, v ? 'The box listens to the capture device now (levels only).' : 'The box no longer listens.');
-        }, d.remote ? 'Through remote support it can be switched off, never on: a helper does not start listening to the room.' : 'Off by default. The box keeps no sound: only the levels below.'));
+          post({ on: v }, v ? 'The node listens to the capture device now (levels only).' : 'The node no longer listens.');
+        }, d.remote ? 'Through remote support it can be switched off, never on: a helper does not start listening to the room.' : 'Off by default. The node keeps no sound: only the levels below.'));
         var dev = h('select', { class: 'text-input', id: 'sounddevice', disabled: !!(d.remote && d.config.on) },
           [h('option', { value: '', text: d.devices.length ? 'None' : 'No capture device is plugged in' })].concat(d.devices.map(function (x) {
             return h('option', { value: x.id, text: x.name + ' (' + x.id + ')', selected: x.id === d.config.device });
           })));
         if (d.config.device && !d.plugged) dev.appendChild(h('option', { value: d.config.device, text: d.config.device + ' (not plugged in now)', selected: true }));
         dev.addEventListener('change', function () { post({ device: dev.value }, dev.value ? 'Capture device chosen.' : 'No capture device.'); });
-        body.appendChild(labelled('Capture device', dev, 'A USB audio input or a line in. The list is what the box sees now.'));
+        body.appendChild(labelled('Capture device', dev, 'A USB audio input or a line in. The list is what the node sees now.'));
         if (d.config.device && d.channels > 1) {
           var chs = [['mix', 'All inputs mixed']].concat(Array.apply(null, Array(d.channels)).map(function (_, i) {
             return [String(i + 1), d.channels === 2 ? (i ? 'Right (input 2)' : 'Left (input 1)') : 'Input ' + (i + 1)];
@@ -3796,21 +3796,21 @@
         body.appendChild(toggle('soundoscstate', 'Send sound to the state targets', !!d.config.osc_state, function (v) { post({ osc_state: v }, v ? 'Sound goes to the state targets of OSC.' : 'Sound no longer goes to the state targets.'); },
           'To the devices listed under OSC, "Send state back", while that is on. Under /nxlx/sound/: the level and the beat up to 20 times a second, the bands at most 5.'));
         body.appendChild(toggle('soundoscrender', 'Send sound to the render nodes', !!d.config.osc_render, function (v) { post({ osc_render: v }, v ? 'Sound goes to the render nodes.' : 'Sound no longer goes to the render nodes.'); },
-          'To the render nodes listed under Render nodes, on this box\'s own network only.'));
+          'To the render nodes listed under Render nodes, on this node\'s own network only.'));
         var lk = d.link || {};
         body.appendChild(toggle('soundlink', 'Follow Ableton Link', !!lk.on, function (v) {
           api('POST', '/api/tempo/link', { on: v }).then(function (r) {
             if (!r.ok) say(ndiSentence(r.data.error || 'could not change it'), true);
-            else say(v ? 'The box follows an Ableton Link session when there is one.' : 'The box no longer follows Ableton Link.');
+            else say(v ? 'The node follows an Ableton Link session when there is one.' : 'The node no longer follows Ableton Link.');
             refresh();
           });
-        }, d.remote ? 'Through remote support it can be switched off, never on.' : 'Off by default. The box only follows: it takes the tempo and the beat and never sets them. It joins only when another program is in a session.'));
+        }, d.remote ? 'Through remote support it can be switched off, never on.' : 'Off by default. The node only follows: it takes the tempo and the beat and never sets them. It joins only when another program is in a session.'));
         var left = (d.osc && d.osc.left_out) || [];
         if ((d.config.osc_state || d.config.osc_render) && left.length) {
           body.appendChild(h('div', { class: 'hint warn', id: 'soundoscleft', text: 'Not sent to: ' + left.map(function (x) { return x.name + ' (' + x.why + ')'; }).join('; ') + '.' }));
         }
         body.appendChild(soundAdvanced(d));
-        body.appendChild(h('div', { class: 'hint', id: 'soundvocoder', text: 'The values are not sound. Off the box they go to the paired Owner and Operator devices that open this page (through remote support without the bands) and, when you switch it on, over OSC to the devices you list, on this box\'s own network. The bands leave averaged over 200 ms, at most 5 times a second.' }));
+        body.appendChild(h('div', { class: 'hint', id: 'soundvocoder', text: 'The values are not sound. Off the node they go to the paired Owner and Operator devices that open this page (through remote support without the bands) and, when you switch it on, over OSC to the devices you list, on this node\'s own network. The bands leave averaged over 200 ms, at most 5 times a second.' }));
       } else {
         body.appendChild(h('div', { class: 'hint', id: 'soundowner', text: 'The owner chooses the capture device and switches listening on.' }));
       }
@@ -3820,7 +3820,7 @@
       drawMap(d);
     }
     function linkLine(l) {
-      if (!l.available) return 'Ableton Link is not available on this box.' + (l.on ? ' It stays switched on and starts when it is.' : '');
+      if (!l.available) return 'Ableton Link is not available on this node.' + (l.on ? ' It stays switched on and starts when it is.' : '');
       if (!l.on) return 'Ableton Link is off.';
       if (l.peers > 0) return 'Ableton Link: following ' + l.peers + (l.peers === 1 ? ' peer' : ' peers') + (l.bpm ? ' at ' + l.bpm + ' BPM.' : '.');
       if (l.why) return 'Ableton Link: ' + ndiSentence(l.why) + '.';
@@ -3839,14 +3839,14 @@
         });
         box.appendChild(h('label', { class: 'row', for: 'soundallow' + x.id }, cb, h('span', { text: ' Allow: ' + x.name })));
       });
-      box.appendChild(h('div', { class: 'hint', id: 'soundallowhint', text: 'Operators switch between the allowed sources. The NDI sound is the one the box plays under an NDI picture. Levels sent in: Max/RNBO or another program sends /nxlx/sound/in/level, /db, /envelope, /beat, /bpm and /bands to the box\'s OSC port; they are taken from the render nodes and from the addresses below, and from nobody else.' }));
+      box.appendChild(h('div', { class: 'hint', id: 'soundallowhint', text: 'Operators switch between the allowed sources. The NDI sound is the one the node plays under an NDI picture. Levels sent in: Max/RNBO or another program sends /nxlx/sound/in/level, /db, /envelope, /beat, /bpm and /bands to the node\'s OSC port; they are taken from the render nodes and from the addresses below, and from nobody else.' }));
       d.config.in_hosts.forEach(function (a) {
         box.appendChild(h('div', { class: 'row' }, h('span', { class: 'addr grow', text: a }), h('button', { class: 'btn', text: 'Remove', 'aria-label': 'Remove ' + a, onclick: function () {
           post({ in_hosts: d.config.in_hosts.filter(function (b) { return b !== a; }) }, a + ' removed.');
         } })));
       });
       var host = h('input', { class: 'text-input mono', id: 'soundinhost', placeholder: '192.168.1.40', autocomplete: 'off', maxlength: 15 });
-      box.appendChild(labelled('Also take levels from', host, 'An IPv4 address on this box\'s own network.'));
+      box.appendChild(labelled('Also take levels from', host, 'An IPv4 address on this node\'s own network.'));
       box.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn', id: 'soundinhostadd', text: 'Add', onclick: function () {
         post({ in_hosts: d.config.in_hosts.concat([host.value.trim()]) }, 'Added.');
       } })));
@@ -3911,7 +3911,7 @@
   function renderCards(full) {
     var body = h('div', { class: 'list sp', id: 'renderbody' }, h('div', { class: 'hint', text: 'Looking...' }));
     var card = h('div', { class: 'card', id: 'rendercard' }, h('h2', { text: 'Render nodes' }),
-      h('div', { class: 'hint', id: 'renderwhat', text: 'A render node is a laptop or a GPU box running Max/Jitter or another tool. The box sends it OSC cues and can show its NDI picture. If its picture goes, the box goes back to what played before. Nothing the room needs lives only on a render node.' }), body);
+      h('div', { class: 'hint', id: 'renderwhat', text: 'A render node is a laptop or a GPU computer running Max/Jitter or another tool. The node sends it OSC cues and can show its NDI picture. If its picture goes, the node goes back to what played before. Nothing the room needs lives only on a render node.' }), body);
     var sendCard = h('div', { class: 'card', id: 'rendersendcard' }, h('h2', { text: 'Send a cue' }), h('div', { class: 'list sp', id: 'rendersendbody' }));
     var sendState = { node: '', address: '', args: [], show: false };
     function draw(d) {
@@ -3958,9 +3958,9 @@
           });
         });
         return h('div', { class: 'addform', id: 'renderform' }, h('div', { class: 'field', text: 'Add a render node' }),
-          labelled('Name', name), labelled('Address', host, 'An IPv4 address on this box\'s own network, or the machine\'s .local name. Never an address outside the building.'),
+          labelled('Name', name), labelled('Address', host, 'An IPv4 address on this node\'s own network, or the machine\'s .local name. Never an address outside the building.'),
           labelled('OSC port', port, 'The port the tool listens on: 1024 or higher.'), labelled('Tool', prof),
-          labelled('Its NDI picture', src, moduleOn('inputs-ndi') ? 'Chosen from the NDI senders the box sees, the way a pad\'s source is.' : 'Turn on NDI input to choose a picture.'),
+          labelled('Its NDI picture', src, moduleOn('inputs-ndi') ? 'Chosen from the NDI senders the node sees, the way a pad\'s source is.' : 'Turn on NDI input to choose a picture.'),
           h('div', { class: 'row' },
             h('button', { class: 'btn on pri grow', id: 'renderadd', text: 'Add', onclick: function () {
               var node = { name: renderForm.name, host: renderForm.host.trim(), port: parseInt(renderForm.port, 10) };
@@ -4001,7 +4001,7 @@
           if (sendState.address) { cue.address = sendState.address.trim(); cue.args = args; }
           api('POST', '/api/render/cue', cue).then(function (r) {
             if (!r.ok) return sayAt(err, r.data.error || 'The cue was not sent.', true);
-            sayAt(err, (r.data.sent ? 'Sent to ' + r.data.node + ' (OSC has no reply: the box cannot tell whether it was taken).' : '') + (r.data.shown ? ' Showing its picture.' : ''));
+            sayAt(err, (r.data.sent ? 'Sent to ' + r.data.node + ' (OSC has no reply: the node cannot tell whether it was taken).' : '') + (r.data.shown ? ' Showing its picture.' : ''));
             load();
           });
         } })), err));
@@ -4024,13 +4024,13 @@
   // the box's networks it listens on, the port, and the one line to give to senders and receivers. NDI's program is
   // not part of the box; the page says how it gets here, and what a discovery server is not.
   var ndiscTimer = null, ndiscForm = null;
-  var NDISC_NOTE = 'This is NDI\'s own closed program, listening on the network. The box runs it under an account of its own that cannot reach the box\'s settings, PIN, clips or controls, and cannot reach the internet. A discovery server is not a password: anything that can reach it can register with it and ask it who is there. Use it on a network you control. The program comes from your copy of NDI\'s SDK or Discovery Server download, under NDI\'s licence; it is never part of nxlx.mastercontrol and the box never downloads it.';
+  var NDISC_NOTE = 'This is NDI\'s own closed program, listening on the network. The node runs it under an account of its own that cannot reach the node\'s settings, PIN, clips or controls, and cannot reach the internet. A discovery server is not a password: anything that can reach it can register with it and ask it who is there. Use it on a network you control. The program comes from your copy of NDI\'s SDK or Discovery Server download, under NDI\'s licence; it is never part of nxlx.mastercontrol and the node never downloads it.';
   function ndiscCards() {
-    var NAMES = { wired: 'The wired network', wifi: 'The Wi-Fi', all: 'All the box\'s networks' };
+    var NAMES = { wired: 'The wired network', wifi: 'The Wi-Fi', all: 'All the node\'s networks' };
     var state = h('div', { class: 'list sp', id: 'ndiscbody' }, h('div', { class: 'hint', text: 'Looking...' }));
     var setBody = h('div', { class: 'list sp', id: 'ndiscsetbody' }), ownBody = h('div', { class: 'list sp', id: 'ndiscownbody' });
-    var card = h('div', { class: 'card', id: 'ndisccard' }, h('h2', { text: 'The discovery server this box runs' }),
-      h('div', { class: 'hint', id: 'ndiscwhat', text: 'This runs a discovery server on this box, for senders and receivers to register with. That is one half. The other half is whether this box\'s own NDI input asks it: shown below.' }), state, ownBody);
+    var card = h('div', { class: 'card', id: 'ndisccard' }, h('h2', { text: 'The discovery server this node runs' }),
+      h('div', { class: 'hint', id: 'ndiscwhat', text: 'This runs a discovery server on this node, for senders and receivers to register with. That is one half. The other half is whether this node\'s own NDI input asks it: shown below.' }), state, ownBody);
     var setCard = h('div', { class: 'card', id: 'ndiscsetcard' }, h('h2', { text: 'Where it listens' }), setBody);
     var noteCard = h('div', { class: 'card', id: 'ndiscnotecard' }, h('h2', { text: 'What this is' }), h('div', { class: 'hint', id: 'ndiscnote', text: NDISC_NOTE }),
       h('div', { class: 'hint', id: 'ndiscmark' }, NDI_MARK + ' About NDI: ', ndiLink('https://ndi.video/', 'ndi.video'), '.'));
@@ -4044,21 +4044,21 @@
       state.textContent = '';
       if (d.setup === false) {
         state.appendChild(h('div', { class: 'hint warn', id: 'ndiscnotsetup' },
-          h('div', { text: 'The discovery server is not set up on this box, so nothing listens. NDI\'s program is not part of nxlx.mastercontrol and cannot be added from a phone. Someone with a keyboard or SSH on the box does this once:' }),
-          h('div', {}, '1. Get the NDI SDK for Linux, or NDI\'s Discovery Server for Linux, from ', ndiLink(d.install.get, 'ndi.video'), ' (it asks you to agree to NDI\'s licence) and unpack it on the box or a USB stick.'),
-          h('div', { text: '2. Run this at the box, with the folder you unpacked:' }),
+          h('div', { text: 'The discovery server is not set up on this node, so nothing listens. NDI\'s program is not part of nxlx.mastercontrol and cannot be added from a phone. Someone with a keyboard or SSH on the node does this once:' }),
+          h('div', {}, '1. Get the NDI SDK for Linux, or NDI\'s Discovery Server for Linux, from ', ndiLink(d.install.get, 'ndi.video'), ' (it asks you to agree to NDI\'s licence) and unpack it on the node or a USB stick.'),
+          h('div', { text: '2. Run this at the node, with the folder you unpacked:' }),
           h('div', { class: 'addr', id: 'ndisccommand', text: d.install.command }),
           h('div', { text: 'It prints the program\'s sha256 so you can compare it with your copy. Then come back to this page.' })));
         return;
       }
-      if (!d.supervisor) { state.appendChild(h('div', { class: 'hint warn', id: 'ndiscdown', text: 'The discovery server\'s service (pvj-ndi-discovery) is not running on this box, so nothing listens. Restarting the box usually brings it back.' })); return; }
+      if (!d.supervisor) { state.appendChild(h('div', { class: 'hint warn', id: 'ndiscdown', text: 'The discovery server\'s service (pvj-ndi-discovery) is not running on this node, so nothing listens. Restarting the node usually brings it back.' })); return; }
       if (!d.installed) {
-        state.appendChild(h('div', { class: 'hint warn', id: 'ndiscmissing' }, h('div', { text: ndiSentence(d.problem || 'NDI\'s program is not on this box yet') + ' Someone with a keyboard or SSH on the box runs:' }),
+        state.appendChild(h('div', { class: 'hint warn', id: 'ndiscmissing' }, h('div', { text: ndiSentence(d.problem || 'NDI\'s program is not on this node yet') + ' Someone with a keyboard or SSH on the node runs:' }),
           h('div', { class: 'addr', id: 'ndisccommand', text: d.install.command })));
         return;
       }
       var line = d.state === 'running' && d.listening ? 'Running: listening on ' + d.listening.address + ', port ' + d.listening.port + (d.seconds >= 60 ? ', for ' + Math.floor(d.seconds / 60) + ' min' : '') + '.'
-        : d.state === 'failed' ? 'It stopped: ' + ndiSentence(d.message || 'the program ended') + ' The box is starting it again' + (d.restarts ? ' (' + plural(d.restarts, 'try', 'tries') + ' so far)' : '') + '.'
+        : d.state === 'failed' ? 'It stopped: ' + ndiSentence(d.message || 'the program ended') + ' The node is starting it again' + (d.restarts ? ' (' + plural(d.restarts, 'try', 'tries') + ' so far)' : '') + '.'
           : !d.bind ? NAMES[d.network] + ' has no address now, so the server is stopped. It starts by itself when that network is back; it does not move to another network.'
             : 'Starting...';
       state.appendChild(h('div', { class: 'hint' + (d.state === 'running' ? '' : ' warn'), id: 'ndiscstate', role: 'status', text: line }));
@@ -4078,17 +4078,17 @@
     function drawOwn(d) {
       var runs = d.module && d.state === 'running' && !!d.listening;
       ownBody.textContent = '';
-      if (!moduleOn('inputs-ndi')) { ownBody.appendChild(h('div', { class: 'hint', id: 'ndiscownline', role: 'status', text: 'NDI input is switched off on this box, so this box itself asks no discovery server. Other machines can still use this one.' })); return; }
-      ownBody.appendChild(toggle('ndiscown', 'This box\'s own NDI input asks this server', !!d.own, function (v, sw) {
+      if (!moduleOn('inputs-ndi')) { ownBody.appendChild(h('div', { class: 'hint', id: 'ndiscownline', role: 'status', text: 'NDI input is switched off on this node, so this node itself asks no discovery server. Other machines can still use this one.' })); return; }
+      ownBody.appendChild(toggle('ndiscown', 'This node\'s own NDI input asks this server', !!d.own, function (v, sw) {
         api('POST', '/api/ndi', { action: 'own_discovery', on: v }).then(function (r) {
           if (!r.ok) { sw.setAttribute('aria-checked', v ? 'false' : 'true'); return say(ndiSentence(r.data.error || 'could not change it'), true); }
-          say(v ? 'This box now also asks its own discovery server, while that is switched on.' : 'This box no longer asks its own discovery server.'); refresh();
+          say(v ? 'This node now also asks its own discovery server, while that is switched on.' : 'This node no longer asks its own discovery server.'); refresh();
         });
-      }, 'The same switch as "Use this box\'s own discovery server" on NDI input.'));
-      ownBody.appendChild(h('div', { class: 'hint' + (d.own !== runs ? ' warn' : ''), id: 'ndiscownline', role: 'status', text: d.own && runs ? 'This box\'s NDI input asks this server. The two fit.'
-        : d.own ? 'This box\'s NDI input is set to ask this server, but the server is not running now, so there is nothing to ask.'
-          : runs ? 'This box\'s NDI input does not ask this server. Senders that registered with it are found by this box only if they also announce themselves on the local network, and a sender given a discovery server stops doing that.'
-            : 'This box\'s NDI input does not ask this server, and the server is not running. The two fit.' }));
+      }, 'The same switch as "Use this node\'s own discovery server" on NDI input.'));
+      ownBody.appendChild(h('div', { class: 'hint' + (d.own !== runs ? ' warn' : ''), id: 'ndiscownline', role: 'status', text: d.own && runs ? 'This node\'s NDI input asks this server. The two fit.'
+        : d.own ? 'This node\'s NDI input is set to ask this server, but the server is not running now, so there is nothing to ask.'
+          : runs ? 'This node\'s NDI input does not ask this server. Senders that registered with it are found by this node only if they also announce themselves on the local network, and a sender given a discovery server stops doing that.'
+            : 'This node\'s NDI input does not ask this server, and the server is not running. The two fit.' }));
     }
     function drawSet(d) {
       setBody.textContent = '';
@@ -4101,10 +4101,10 @@
       var err = h('div', { class: 'msg inmsg', id: 'ndiscerr', role: 'alert' });
       net.addEventListener('change', function () { ndiscForm.network = net.value; warn(); });
       port.addEventListener('input', function () { ndiscForm.port = port.value; });
-      var all = h('div', { class: 'hint warn', id: 'ndiscallwarn', text: 'All the box\'s networks: the server is then reachable from every network the box is on, the Wi-Fi and a hotspot included.' });
+      var all = h('div', { class: 'hint warn', id: 'ndiscallwarn', text: 'All the node\'s networks: the server is then reachable from every network the node is on, the Wi-Fi and a hotspot included.' });
       function warn() { all.hidden = net.value !== 'all'; }
       warn();
-      setBody.appendChild(labelled('Network', net, 'The server listens on this network\'s address only. If that address changes (a new lease), the box starts the server again on the new one and the line above changes: senders and receivers must then be given the new address, so a fixed address for the box is better.'));
+      setBody.appendChild(labelled('Network', net, 'The server listens on this network\'s address only. If that address changes (a new lease), the node starts the server again on the new one and the line above changes: senders and receivers must then be given the new address, so a fixed address for the node is better.'));
       setBody.appendChild(all);
       setBody.appendChild(labelled('Port', port, 'NDI\'s own is ' + d.default_port + '. Change it only if something else needs that port. ' + d.min_port + ' to ' + d.max_port + '.'));
       setBody.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn on pri grow', id: 'ndiscsave', text: 'Save', onclick: function () {
@@ -4165,17 +4165,17 @@
         // one sound source for every picture, and it is not the picture on the screen itself
         var who = ss.name + ' at ' + ss.from;
         if (ss.state === 'away') return ss.name + ' is not on the network now; pictures play without sound.';
-        if (ss.state === 'restless') return ss.name + ' keeps changing its sound; pictures play without it for now. The box takes its sound again by itself once it has stopped changing.';
-        if (ss.state === 'twins') return 'Two senders announce ' + ss.name + ' from one address. The box cannot tell them apart, so it plays neither; pictures play without sound.';
-        if (!p) return 'Sound comes from ' + who + '. It is on the network; the box connects to it when an NDI picture plays.';
-        if (ss.state !== 'playing') return 'Sound comes from ' + who + '. The box is connecting to it.';
+        if (ss.state === 'restless') return ss.name + ' keeps changing its sound; pictures play without it for now. The node takes its sound again by itself once it has stopped changing.';
+        if (ss.state === 'twins') return 'Two senders announce ' + ss.name + ' from one address. The node cannot tell them apart, so it plays neither; pictures play without sound.';
+        if (!p) return 'Sound comes from ' + who + '. It is on the network; the node connects to it when an NDI picture plays.';
+        if (ss.state !== 'playing') return 'Sound comes from ' + who + '. The node is connecting to it.';
         if (!ss.arriving && !(a && a.arriving)) return ss.name + ' is connected and silent: it sends no sound now' + (a && a.rate ? ', so silence is played until it does.' : '. The picture plays without sound; when its sound starts, the picture is loaded again with it.');
         if (!a || !a.rate) return 'Sound from ' + who + ' is arriving; the picture is being loaded again with it.';
         if (a.silent) return ss.name + ' is connected and silent: sound is arriving from ' + ss.from + ' and there is nothing to hear in it. ' + soundShape(a);
         return 'Sound from ' + who + ': arriving, loudest at ' + a.level_db + ' dB (0 is as loud as it goes) · ' + soundShape(a);
       }
       if (!p) return 'No source is on the screen.';
-      if (!a || !a.rate) return 'This source sends no sound' + (a && a.problem ? ' that the box can play (' + a.problem + ')' : '') + '.';
+      if (!a || !a.rate) return 'This source sends no sound' + (a && a.problem ? ' that the node can play (' + a.problem + ')' : '') + '.';
       var what = !a.arriving ? 'No sound has arrived in the last second' : a.silent ? 'Sound is arriving, and it is silent'
         : 'Sound is arriving, loudest at ' + a.level_db + ' dB (0 is as loud as it goes)';
       return what + ' · ' + soundShape(a);
@@ -4199,7 +4199,7 @@
       soundKey = soundKeyOf(d);
       soundBody.textContent = '';
       var mode = soundMode(d), ss = d.sound_source;
-      var hint = 'Sound from NDI is new, so it is off until you choose it. On the test box it was measured and not listened to: with a picture from one sender and sound from another, the samples left the box\'s sound device at the right rate and the player\'s clocks for picture and sound stayed within 40 ms of each other. Nobody has yet confirmed by ear that sound and picture are in step. It is played through the box\'s own sound output, with its volume and mute. NDI\'s reference level comes out ' +
+      var hint = 'Sound from NDI is new, so it is off until you choose it. On the test node it was measured and not listened to: with a picture from one sender and sound from another, the samples left the node\'s sound device at the right rate and the player\'s clocks for picture and sound stayed within 40 ms of each other. Nobody has yet confirmed by ear that sound and picture are in step. It is played through the node\'s own sound output, with its volume and mute. NDI\'s reference level comes out ' +
         d.headroom_db + ' dB below full scale, so a sender at that level sounds quieter than a clip.';
       var names = { none: 'No sound', own: 'The source on the screen', one: 'One sound source for every NDI picture' };
       if (!full) {
@@ -4261,26 +4261,26 @@
     }
     var addrCard = h('div', { class: 'card', id: 'ndiaddrcard' }, h('h2', { text: 'Addresses to ask' }),
       h('div', { class: 'hint', text: 'Senders are found by themselves on most networks. Where they are not (some Wi-Fi, a sender on another part of the network), add the sending computer\'s address here.' }), addrBody);
-    var LICENCE = 'NDI\'s licence may not cover a box like this one. Its free licence is for ordinary computers, and it names small devices built for one job, running Linux, among what it does not cover. Whoever owns this box must read the licence that comes with the NDI SDK and decide, and ask NDI if in doubt. This is not legal advice.';
+    var LICENCE = 'NDI\'s licence may not cover a node like this one. Its free licence is for ordinary computers, and it names small devices built for one job, running Linux, among what it does not cover. Whoever owns this node must read the licence that comes with the NDI SDK and decide, and ask NDI if in doubt. This is not legal advice.';
     function notice(d) {
       // A box where nobody ran the one command: there is no helper and nothing of NDI runs here. Said as that, with the command.
       if (d.setup === false) return h('div', { class: 'hint warn', id: 'ndiruntime' },
-        h('div', { id: 'ndinotsetup', text: 'NDI is not set up on this box, so no source can be found or shown. Nothing of NDI is installed or running here until someone sets it up.' }),
+        h('div', { id: 'ndinotsetup', text: 'NDI is not set up on this node, so no source can be found or shown. Nothing of NDI is installed or running here until someone sets it up.' }),
         h('div', { id: 'ndilicence', text: 'Before anyone does: ' + LICENCE }),
-        h('div', { text: 'NDI\'s own program is not part of nxlx.mastercontrol and cannot be added from a phone. Someone with a keyboard or SSH on the box does this once:' }),
-        h('div', {}, '1. Get the NDI SDK for Linux from ', ndiLink(d.install.get, 'ndi.video'), ' (it asks you to agree to NDI\'s licence) and unpack it on the box or a USB stick.'),
-        h('div', { text: '2. On the box, run this one command. It puts NDI\'s library in place, installs the NDI helper and restarts the panel and the player (the screen goes dark for a moment):' }),
+        h('div', { text: 'NDI\'s own program is not part of nxlx.mastercontrol and cannot be added from a phone. Someone with a keyboard or SSH on the node does this once:' }),
+        h('div', {}, '1. Get the NDI SDK for Linux from ', ndiLink(d.install.get, 'ndi.video'), ' (it asks you to agree to NDI\'s licence) and unpack it on the node or a USB stick.'),
+        h('div', { text: '2. On the node, run this one command. It puts NDI\'s library in place, installs the NDI helper and restarts the panel and the player (the screen goes dark for a moment):' }),
         h('div', { class: 'addr', id: 'ndicommand', text: d.install.command }),
         h('div', { text: 'Then this page lists the senders. The address list below can be filled in meanwhile.' }));
-      if (!d.helper) return h('div', { class: 'hint warn', id: 'ndiruntime' }, h('div', { text: 'The NDI helper (pvj-ndi) is not running on this box, so no source can be found or shown. Restarting the box usually brings it back.' }));
+      if (!d.helper) return h('div', { class: 'hint warn', id: 'ndiruntime' }, h('div', { text: 'The NDI helper (pvj-ndi) is not running on this node, so no source can be found or shown. Restarting the node usually brings it back.' }));
       if (d.runtime.loaded && !d.runtime.problem) return null;
-      if (d.runtime.present) return h('div', { class: 'hint warn', id: 'ndiruntime' }, h('div', { text: ndiSentence(d.runtime.problem || 'the NDI runtime is on the box but has not been loaded yet') }));
+      if (d.runtime.present) return h('div', { class: 'hint warn', id: 'ndiruntime' }, h('div', { text: ndiSentence(d.runtime.problem || 'the NDI runtime is on the node but has not been loaded yet') }));
       return h('div', { class: 'hint warn', id: 'ndiruntime' },
-        h('div', { text: 'The NDI runtime is not on this box yet, so no source can be found or shown.' }),
+        h('div', { text: 'The NDI runtime is not on this node yet, so no source can be found or shown.' }),
         h('div', { id: 'ndilicence', text: 'Before anyone installs it: ' + LICENCE }),
-        h('div', { text: 'It is NDI\'s own program, it is not part of nxlx.mastercontrol, and it cannot be added from a phone. Someone with a keyboard or SSH on the box does this once:' }),
-        h('div', {}, '1. Get the NDI SDK for Linux from ', ndiLink(d.install.get, 'ndi.video'), ' (it asks you to agree to NDI\'s licence) and unpack it on the box or a USB stick.'),
-        h('div', { text: '2. On the box, run:' }),
+        h('div', { text: 'It is NDI\'s own program, it is not part of nxlx.mastercontrol, and it cannot be added from a phone. Someone with a keyboard or SSH on the node does this once:' }),
+        h('div', {}, '1. Get the NDI SDK for Linux from ', ndiLink(d.install.get, 'ndi.video'), ' (it asks you to agree to NDI\'s licence) and unpack it on the node or a USB stick.'),
+        h('div', { text: '2. On the node, run:' }),
         h('div', { class: 'addr', id: 'ndicommand', text: d.install.command }),
         h('div', { text: 'Then this page lists the senders. The address list below can be filled in meanwhile.' }));
     }
@@ -4301,7 +4301,7 @@
         '). If yours is missing, add its computer\'s address below: senders at those addresses are always listed.' }));
       if (d.notice) srcBody.appendChild(h('div', { class: 'hint warn', id: 'ndinotice', text: ndiSentence(d.notice) }));
       if (d.ended) srcBody.appendChild(h('div', { class: 'hint warn problem', id: 'ndiproblem', text: d.ended.name + ' stopped: ' + ndiSentence(d.ended.message) }));
-      if (!d.sources.length && !n) srcBody.appendChild(h('div', { class: 'empty', id: 'ndiempty', text: (d.groups_now && d.groups_now.length ? 'No senders found in ' + (d.groups_now.length === 1 ? 'the group ' : 'the groups ') + d.groups_now.join(', ') + ' yet. A sender must be put in that group in its own program to be found. ' : 'No NDI sources found yet. ') + 'Switch on NDI output in the sending program (Resolume, MadMapper, OBS), on the same network as this box. A new sender takes a few seconds to appear. If it never does, add its address below.' }));
+      if (!d.sources.length && !n) srcBody.appendChild(h('div', { class: 'empty', id: 'ndiempty', text: (d.groups_now && d.groups_now.length ? 'No senders found in ' + (d.groups_now.length === 1 ? 'the group ' : 'the groups ') + d.groups_now.join(', ') + ' yet. A sender must be put in that group in its own program to be found. ' : 'No NDI sources found yet. ') + 'Switch on NDI output in the sending program (Resolume, MadMapper, OBS), on the same network as this node. A new sender takes a few seconds to appear. If it never does, add its address below.' }));
       d.sources.forEach(function (s) {
         var mine = playing && playing.id === s.id && playing.state !== 'refused' && playing.state !== 'stopped';
         // A sender that was asked for a picture and sent sound and none (D87) is labelled "sound only" and offered as
@@ -4335,7 +4335,7 @@
       d.addresses.forEach(function (a) {
         addrBody.appendChild(listRow({ cls: 'ndiaddr-entry', data: a, name: a, key: 'ndiaddr-' + a, redraw: function () { drawAddresses(d); },
           more: full ? [h('button', { class: 'btn', text: 'Remove', 'aria-label': 'Remove ' + a, onclick: function (e) {
-            confirmRow('Remove ' + a + '? The box stops asking it for sources.', 'Remove', 'Keep it', function () {
+            confirmRow('Remove ' + a + '? The node stops asking it for sources.', 'Remove', 'Keep it', function () {
               act('POST', '/api/ndi', { action: 'remove_address', address: a }, function (data) { moreOpen = null; drawAddresses(data); drawSources(data); say(a + ' is removed.'); });
             }, e.currentTarget);
           } })] : null }));
@@ -4373,25 +4373,25 @@
       var key = JSON.stringify([own, on, at, ds && ds.setup, ds && SYS_STATE.ndisc(ds).text]);
       if (key === ownDrawn) return;          // drawn again only when it changed: it can hold a button (D59)
       ownDrawn = key;
-      var miss = ' Senders that registered with it are found by this box only if they also announce themselves on the local network, and a sender given a discovery server stops doing that. Switch this on to ask it.';
-      var text = ds && ds.setup === false ? (own ? 'This is on, but no discovery server is set up on this box, so it does nothing.' : 'This box runs no discovery server (none is set up), and this switch is off. The two fit.')
-        : !on ? (own ? 'This is on, but this box\'s own discovery server is switched off, so there is nothing to ask.' : 'This box\'s own discovery server is switched off, and this box\'s input does not ask it. The two fit.')
-          : ds && !at ? 'This box\'s own discovery server is switched on but not running now (' + SYS_STATE.ndisc(ds).text + ').' + (own ? ' This box\'s input asks it as soon as it runs.' : ' This box\'s input does not ask it.')
-            : 'This box\'s own discovery server is ' + (at ? 'running at ' + at : 'switched on (whether it is running is not known from this device)') + (own ? ', and this box\'s input asks it. The two fit.' : ', but this box\'s input does not ask it.' + miss);
+      var miss = ' Senders that registered with it are found by this node only if they also announce themselves on the local network, and a sender given a discovery server stops doing that. Switch this on to ask it.';
+      var text = ds && ds.setup === false ? (own ? 'This is on, but no discovery server is set up on this node, so it does nothing.' : 'This node runs no discovery server (none is set up), and this switch is off. The two fit.')
+        : !on ? (own ? 'This is on, but this node\'s own discovery server is switched off, so there is nothing to ask.' : 'This node\'s own discovery server is switched off, and this node\'s input does not ask it. The two fit.')
+          : ds && !at ? 'This node\'s own discovery server is switched on but not running now (' + SYS_STATE.ndisc(ds).text + ').' + (own ? ' This node\'s input asks it as soon as it runs.' : ' This node\'s input does not ask it.')
+            : 'This node\'s own discovery server is ' + (at ? 'running at ' + at : 'switched on (whether it is running is not known from this device)') + (own ? ', and this node\'s input asks it. The two fit.' : ', but this node\'s input does not ask it.' + miss);
       ownNow.textContent = '';
       ownNow.appendChild(h('div', { class: 'hint' + (/The two fit\.$/.test(text) ? '' : ' warn'), id: 'ndiownline', role: 'status', text: text }));
       if (own && !on && ds && ds.setup !== false) ownNow.appendChild(offNotice('ndiownoff', 'ndisc', 'NDI discovery server', function () { ownDrawn = ''; refresh(); }));
     }
     var groupBody = h('div', { class: 'list sp', id: 'ndigroupbody' }), discBody = h('div', { class: 'list sp', id: 'ndidiscbody' });
-    var scopeCard = h('div', { class: 'card', id: 'ndiscopecard' }, h('h2', { text: 'Which senders this box looks for' }), scopeNow,
+    var scopeCard = h('div', { class: 'card', id: 'ndiscopecard' }, h('h2', { text: 'Which senders this node looks for' }), scopeNow,
       h('div', { class: 'field', text: 'Groups to look in' }), groupBody,
-      h('div', { class: 'field', text: 'Discovery servers this box asks' }), discBody, h('div', { class: 'list sp', id: 'ndiownbody' }), ownNow,
-      h('div', { class: 'hint', id: 'ndiscopenote', text: 'Groups and a discovery server decide what this box looks for, and keep the list short and the network in order. They are not a password and they encrypt nothing: a sender that puts itself in the same group, or registers with the same discovery server, is found. For a venue: a group of your own, a discovery server on a machine that is always on, or fixed addresses below. This box also goes on listening for senders that announce themselves on the local network: NDI documents no setting that stops that. So a sender can be found with no discovery server at all, and finding one does not prove that a discovery server is in use.' }));
+      h('div', { class: 'field', text: 'Discovery servers this node asks' }), discBody, h('div', { class: 'list sp', id: 'ndiownbody' }), ownNow,
+      h('div', { class: 'hint', id: 'ndiscopenote', text: 'Groups and a discovery server decide what this node looks for, and keep the list short and the network in order. They are not a password and they encrypt nothing: a sender that puts itself in the same group, or registers with the same discovery server, is found. For a venue: a group of your own, a discovery server on a machine that is always on, or fixed addresses below. This node also goes on listening for senders that announce themselves on the local network: NDI documents no setting that stops that. So a sender can be found with no discovery server at all, and finding one does not prove that a discovery server is in use.' }));
     function scopeWords(d) {
       var g = d.groups_now && d.groups_now.length ? 'Looking in ' + (d.groups_now.length === 1 ? 'the group ' : 'the groups ') + d.groups_now.join(', ') : 'Looking in NDI\'s default group (Public)';
       var s = d.discovery_now && d.discovery_now.length ? 'asking the discovery ' + (d.discovery_now.length === 1 ? 'server ' : 'servers ') + d.discovery_now.join(', ') + ' and listening on the local network' : 'listening on the local network';
       var wait = JSON.stringify(d.discovery || []) !== JSON.stringify(d.discovery_now || []) ? ' The discovery servers you set are not in force yet.' : '';
-      return (d.setup === false || !d.helper || !d.runtime.loaded) ? 'Not looking yet: ' + (d.setup === false ? 'NDI is not set up on this box.' : 'NDI is not running on this box.') : g + ', ' + s + '.' + wait;
+      return (d.setup === false || !d.helper || !d.runtime.loaded) ? 'Not looking yet: ' + (d.setup === false ? 'NDI is not set up on this node.' : 'NDI is not running on this node.') : g + ', ' + s + '.' + wait;
     }
     // One list with its add form, for the groups and for the discovery servers: o = { body, items, max, cls, key,
     // field, id, label, hint, placeholder, maxlength, add, remove, what, removed, empty }.
@@ -4431,21 +4431,21 @@
       if (own) {
         // "Use this box's own discovery server" (D85): shown where the box has one set up; it follows that server's address.
         own.textContent = '';
-        if (mod('ndi-discovery') && full) own.appendChild(toggle('ndiown', 'Use this box\'s own discovery server', !!d.own_discovery, function (v, sw) {
+        if (mod('ndi-discovery') && full) own.appendChild(toggle('ndiown', 'Use this node\'s own discovery server', !!d.own_discovery, function (v, sw) {
           api('POST', '/api/ndi', { action: 'own_discovery', on: v }).then(function (r) {
             if (!r.ok) { sw.setAttribute('aria-checked', v ? 'false' : 'true'); return say(ndiSentence(r.data.error || 'could not change it'), true); }
-            drawScope(r.data); say(v ? 'This box now also asks its own discovery server, while that is switched on.' : 'This box no longer asks its own discovery server.');
+            drawScope(r.data); say(v ? 'This node now also asks its own discovery server, while that is switched on.' : 'This node no longer asks its own discovery server.');
           });
-        }, 'The box\'s own input then finds the senders that registered with the server this box runs. This switch asks that server; it does not start it.'));
+        }, 'The node\'s own input then finds the senders that registered with the server this node runs. This switch asks that server; it does not start it.'));
         drawOwnState(d);
       }
       drawScopeList(d, { body: groupBody, items: d.groups || [], max: d.max_groups, cls: 'ndigroup-entry', key: 'ndigroup', field: 'group', id: 'ndigroup', what: 'a group',
-        label: 'Group', placeholder: 'Leyline', maxlength: 64, add: 'add_group', remove: 'remove_group', removed: 'The box stops looking in it.',
+        label: 'Group', placeholder: 'Leyline', maxlength: 64, add: 'add_group', remove: 'remove_group', removed: 'The node stops looking in it.',
         hint: 'The name exactly as the sending program has it, capitals included. Letters, digits, spaces, dashes, dots and underscores.',
-        empty: 'No group set: the box looks in NDI\'s default group, Public.' });
+        empty: 'No group set: the node looks in NDI\'s default group, Public.' });
       drawScopeList(d, { body: discBody, items: d.discovery_saved || d.discovery || [], max: d.max_discovery, cls: 'ndidisc-entry', key: 'ndidisc', field: 'server', id: 'ndidiscovery', what: 'a discovery server',
-        label: 'Discovery server', placeholder: '192.168.1.5', maxlength: 21, add: 'add_discovery', remove: 'remove_discovery', removed: 'The box stops asking it.',
-        hint: 'The address of the machine that runs NDI\'s Discovery Server, on a private network. Add :port only if it is not ' + (d.discovery_port || 5959) + '. Changing this starts NDI on the box again: a source on the screen stops and is started again by hand.',
+        label: 'Discovery server', placeholder: '192.168.1.5', maxlength: 21, add: 'add_discovery', remove: 'remove_discovery', removed: 'The node stops asking it.',
+        hint: 'The address of the machine that runs NDI\'s Discovery Server, on a private network. Add :port only if it is not ' + (d.discovery_port || 5959) + '. Changing this starts NDI on the node again: a source on the screen stops and is started again by hand.',
         empty: 'No discovery server set.' });
     }
     // The sources pads may hold (D62): an Operator adds one by putting a source that is on the network on a pad; only
@@ -4524,7 +4524,7 @@
       }, later);
     }
     function start(source, version, where, control) {
-      confirmRow('Install version ' + version + where + '? The panel and the player restart, so the picture stops for a moment. If the new version does not come up, the box goes back to this one by itself.',
+      confirmRow('Install version ' + version + where + '? The panel and the player restart, so the picture stops for a moment. If the new version does not come up, the node goes back to this one by itself.',
         'Install', 'Not now', function () {
           act('POST', '/api/system/update', { source: source, version: version, confirm: 'update' }, function () {
             say('Update to ' + version + ' started.');
@@ -4583,7 +4583,7 @@
       body.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'updateupload', text: 'Upload an update', onclick: function () { pick.click(); } })));
       body.appendChild(h('details', { class: 'fold', id: 'updatehow' }, h('summary', { text: 'How to get an update' }), h('div', { class: 'list sp' },
         h('div', { class: 'hint', text: 'An update is two files with the same name: pvj-N.N.N.tar.gz and pvj-N.N.N.tar.gz.sig (N.N.N is the version). A .sha256 file may come with them and is optional.' }),
-        h('div', { class: 'hint', text: 'From a USB stick: put both files in a folder named pvj-update on the stick, plug it into the box, and the version shows here.' }),
+        h('div', { class: 'hint', text: 'From a USB stick: put both files in a folder named pvj-update on the stick, plug it into the node, and the version shows here.' }),
         h('div', { class: 'hint', text: 'From this phone or laptop: tap Upload an update and choose both files.' }),
         h('div', { class: 'hint', text: 'Only updates signed with your key are installed. An older version is refused. A failed update goes back by itself.' }))));
       later();
@@ -4612,38 +4612,38 @@
       return { name: ipad ? 'iPad' : 'iPhone', steps: ['Tap "Download the root certificate". Safari asks to allow the download, then says "Profile Downloaded".',
         'Open Settings. Tap "Profile Downloaded" near the top (or General, VPN & Device Management), then Install, and enter your passcode.',
         'Then go to Settings, General, About, Certificate Trust Settings, and turn on the switch under "Enable full trust for root certificates".',
-        'Come back here and tap "Does this device trust the box?".'] };
+        'Come back here and tap "Does this device trust the node?".'] };
     }
     if (/Android/.test(ua)) {
       return { name: 'Android', steps: ['Tap "Download the root certificate" and keep the file.',
         'Open Settings, Security (or Security & privacy), More security settings (or Advanced), Encryption & credentials, Install a certificate, CA certificate. The words differ by phone.',
         'Android warns that your data could be read; tap "Install anyway", enter your screen lock and choose the downloaded file.',
-        'Chrome trusts it after that; most other apps do not, which is fine for the panel. Come back here and tap "Does this device trust the box?".'] };
+        'Chrome trusts it after that; most other apps do not, which is fine for the panel. Come back here and tap "Does this device trust the node?".'] };
     }
     if (/CrOS/.test(ua)) {
       return { name: 'Chromebook', steps: ['Click "Download the root certificate".',
         'In Chrome open Settings, Privacy and security, Security, Manage certificates, the Authorities tab, Import, and choose the file.',
-        'Tick "Trust this certificate for identifying websites" and press OK.', 'Come back here and press "Does this device trust the box?".'] };
+        'Tick "Trust this certificate for identifying websites" and press OK.', 'Come back here and press "Does this device trust the node?".'] };
     }
     if (/Windows/.test(ua)) {
       return { name: 'Windows', steps: ['Click "Download the root certificate" and open the file.',
         'Press "Install Certificate...", choose Current User, then "Place all certificates in the following store", Browse, "Trusted Root Certification Authorities", and finish.',
         'Windows asks whether to install it and shows the thumbprint: press Yes. Edge and Chrome use it at once; Firefox has its own list (Settings, Privacy & Security, Certificates, View Certificates, Authorities, Import).',
-        'Come back here and press "Does this device trust the box?".'] };
+        'Come back here and press "Does this device trust the node?".'] };
     }
     if (/Macintosh|Mac OS X/.test(ua)) {
       return { name: 'Mac', steps: ['Click "Download the root certificate" and double-click the file: Keychain Access opens and adds it to your login keychain.',
         'In Keychain Access find it (the name is "NXLX boxes root" unless you named it otherwise), double-click it, unfold Trust and set "When using this certificate" to Always Trust. Close the window and enter your password.',
         'Safari trusts it at once; restart Chrome. Firefox has its own list (Settings, Privacy & Security, Certificates, View Certificates, Authorities, Import).',
-        'Come back here and press "Does this device trust the box?".'] };
+        'Come back here and press "Does this device trust the node?".'] };
     }
     if (/Linux|X11/.test(ua)) {
       return { name: 'Linux', steps: ['Click "Download the root certificate".',
         'Chrome and Chromium: Settings, Privacy and security, Security, Manage certificates, Authorities, Import, tick "Trust this certificate for identifying websites". Firefox: Settings, Privacy & Security, Certificates, View Certificates, Authorities, Import.',
-        'Come back here and press "Does this device trust the box?".'] };
+        'Come back here and press "Does this device trust the node?".'] };
     }
     return { name: 'this device', steps: ['Click "Download the root certificate" and install it as a trusted root certificate authority the way this device does it.',
-      'Come back here and press "Does this device trust the box?".'] };
+      'Come back here and press "Does this device trust the node?".'] };
   }
   // After a change the page is drawn from a fresh answer: the page machinery keeps a new answer for the state line
   // only, and a redraw alone would show the old one (seen in CI: no Download button after the request was made).
@@ -4668,21 +4668,21 @@
   function httpsStateCard(d) {
     var c = d.certificate, lines = [];
     if (!d.https) {
-      lines.push(h('div', { class: 'kv', id: 'httpsline', text: 'HTTP only. ' + (d.load_error ? 'The certificate on the box could not be loaded: ' + d.load_error + '.' : 'No certificate is in use yet.') }));
+      lines.push(h('div', { class: 'kv', id: 'httpsline', text: 'HTTP only. ' + (d.load_error ? 'The certificate on the node could not be loaded: ' + d.load_error + '.' : 'No certificate is in use yet.') }));
     } else {
       lines.push(h('div', { class: 'kv', id: 'httpsline', text: 'HTTPS is on. Certificate for ' + c.names.join(', ') + ', from ' + c.starts + ', ends on ' + c.ends + '.' }));
       if (c.run_out) lines.push(h('div', { class: 'hint warn', id: 'httpswarn', text: 'The certificate ran out on ' + c.ends + '. Devices will refuse https:// until a new one is uploaded: download the request below, sign it again, upload the certificate.' }));
       else if (c.soon) lines.push(h('div', { class: 'hint warn', id: 'httpswarn', text: 'The certificate ends in ' + c.days_left + ' days. Download the request below, sign it again and upload the new certificate before then.' }));
       if (c.chained === false) lines.push(h('div', { class: 'hint warn', id: 'httpschain', text: 'The certificate in use was issued by the root before this one. Devices that installed the new root refuse https:// until a certificate from it is uploaded; devices with the old root keep working meanwhile.' }));
-      if (!c.names_this_host && d.host) lines.push(h('div', { class: 'hint warn', text: 'It does not name ' + d.host + ', which is how you reached the box, so https://' + d.host + '/ would be refused. Use one of its names, or make a new request with this one in it.' }));
+      if (!c.names_this_host && d.host) lines.push(h('div', { class: 'hint warn', text: 'It does not name ' + d.host + ', which is how you reached the node, so https://' + d.host + '/ would be refused. Use one of its names, or make a new request with this one in it.' }));
     }
-    if (!d.clock_trusted) lines.push(h('div', { class: 'hint', text: 'The box\'s clock is not set from the network, so dates here are as the box counts them; your device judges the certificate by its own clock.' }));
-    if (d.root_fingerprint) lines.push(h('div', { class: 'hint', id: 'httpsfp', text: 'Root this box trusts, SHA-256: ' + d.root_fingerprint + '. Compare it once with "python3 tools/boxcert.py root" on your computer.' }));
-    lines.push(h('div', { class: 'hint', id: 'httpsyouare', text: d.secure ? 'You are reading this over https://. This device trusts the box.' : 'You are reading this over http://.' + (d.https ? ' Install the root below, then move to ' + d.https_address : '') }));
+    if (!d.clock_trusted) lines.push(h('div', { class: 'hint', text: 'The node\'s clock is not set from the network, so dates here are as the node counts them; your device judges the certificate by its own clock.' }));
+    if (d.root_fingerprint) lines.push(h('div', { class: 'hint', id: 'httpsfp', text: 'Root this node trusts, SHA-256: ' + d.root_fingerprint + '. Compare it once with "python3 tools/boxcert.py root" on your computer.' }));
+    lines.push(h('div', { class: 'hint', id: 'httpsyouare', text: d.secure ? 'You are reading this over https://. This device trusts the node.' : 'You are reading this over http://.' + (d.https ? ' Install the root below, then move to ' + d.https_address : '') }));
     var sw = toggle('httpsowneronly', 'Owner access only over the secure connection', d.owner_only, function (v) {
       act('POST', '/api/https/owner-only', { on: v }, function () { say(v ? 'From now on the PIN and owner devices work over https:// only.' : 'Owner access works over http:// again.'); httpsReload(); })
         .then(function (r) { if (!r.ok) { sw.sw.setAttribute('aria-checked', v ? 'false' : 'true'); } });
-    }, d.secure ? (d.this_device_secure ? 'While on: the PIN is refused over http://, owner devices paired over http:// are told to pair again over https://, and guests notice nothing. The way back is the box itself (docs/HTTPS.md).'
+    }, d.secure ? (d.this_device_secure ? 'While on: the PIN is refused over http://, owner devices paired over http:// are told to pair again over https://, and guests notice nothing. The way back is the node itself (docs/HTTPS.md).'
       : 'This device was paired over http://. Log out, pair again here over https://, and then this switch works.')
       : 'This switch is changed over https:// only, so you cannot lock yourself out. Open ' + d.https_address + ' first.');
     if (!d.secure || !d.this_device_secure || (!d.https && !d.owner_only)) sw.sw.disabled = true;
@@ -4718,8 +4718,8 @@
         }).then(function (r) { if (!r.ok) sayAt(out, r.data.error || 'The certificate was refused.', true); });
       });
     });
-    var rows = [h('div', { class: 'hint', text: '1. Make the request on the box (its key never leaves it). 2. Download the request and sign it on your computer with tools/boxcert.py. 3. Upload the certificate file it wrote.' }),
-      labelled('Names and addresses this box is reached by', names, 'Comma separated. The .local name first; add any other name you type for this box. No bare host name.'),
+    var rows = [h('div', { class: 'hint', text: '1. Make the request on the node (its key never leaves it). 2. Download the request and sign it on your computer with tools/boxcert.py. 3. Upload the certificate file it wrote.' }),
+      labelled('Names and addresses this node is reached by', names, 'Comma separated. The .local name first; add any other name you type for this node. No bare host name.'),
       h('div', { class: 'row' },
         h('button', { class: 'btn grow', id: 'httpsrequest', text: d.key ? 'Make the request again' : 'Make the request', onclick: function () { request(false); } }),
         d.request ? h('a', { class: 'btn grow', id: 'httpsdownload', href: '/api/https/request.csr', download: (d.host || 'box').split('.')[0] + '.csr', text: 'Download the request' }) : null),
@@ -4742,9 +4742,9 @@
           if (r.ok || !m) return sayAt(out, r.data.error || 'The root could not be read.', true);
           var fp = m[1], control = document.getElementById('httpsrootbtn');
           if (!control) return;
-          confirmRow('Replace the root this box trusts? Old: ' + (d.root_fingerprint || 'none') + '. New: ' + fp + '. The next certificate must come from the new root; your devices need the new root installed.',
+          confirmRow('Replace the root this node trusts? Old: ' + (d.root_fingerprint || 'none') + '. New: ' + fp + '. The next certificate must come from the new root; your devices need the new root installed.',
             'Replace the root', 'Keep it', function () {
-              act('POST', '/api/https/root', { root: text, confirm: fp }, function () { sayAt(out, 'The root was replaced. Now sign this box\'s request with it and upload the certificate.'); httpsReload(); });
+              act('POST', '/api/https/root', { root: text, confirm: fp }, function () { sayAt(out, 'The root was replaced. Now sign this node\'s request with it and upload the certificate.'); httpsReload(); });
             }, control);
         });
       });
@@ -4755,12 +4755,12 @@
     if (d.https || d.key) {
       rows.push(h('div', { class: 'row' },
         d.https ? h('button', { class: 'btn grow', id: 'httpsremove', text: 'Remove the certificate', onclick: function (e) {
-          confirmRow('Remove the certificate? The box answers on http:// only until a new one is uploaded' + (d.owner_only ? ', and the owner-only switch has no effect meanwhile' : '') + '.', 'Remove it', 'Keep it', function () {
+          confirmRow('Remove the certificate? The node answers on http:// only until a new one is uploaded' + (d.owner_only ? ', and the owner-only switch has no effect meanwhile' : '') + '.', 'Remove it', 'Keep it', function () {
             act('POST', '/api/https/remove', {}, function () { say('HTTP only now.'); httpsReload(); });
           }, e.currentTarget);
         } }) : null,
         d.key ? h('button', { class: 'btn grow', id: 'httpsnewkey', text: 'New key', onclick: function (e) {
-          confirmRow('Make a new key? The certificate in use stops fitting and is dropped: the box is http:// only until the new request is signed and uploaded.', 'New key', 'Keep the key', function () { request(true); }, e.currentTarget);
+          confirmRow('Make a new key? The certificate in use stops fitting and is dropped: the node is http:// only until the new request is signed and uploaded.', 'New key', 'Keep the key', function () { request(true); }, e.currentTarget);
         } }) : null));
     }
     return h('div', { class: 'card', id: 'httpscert' }, h('h2', { text: 'Certificate' }), h('div', { class: 'list sp' }, rows));
@@ -4773,27 +4773,27 @@
       // origin, and only while the box has a certificate that carries this host (pvj/server.py page_csp). In every
       // other case the answer is known without asking, and asking would only trip the policy.
       if (d.secure) { httpsForm.trust = 'Yes: you are reading this over https://.'; return sayAt(out, httpsForm.trust); }
-      if (!d.https) { httpsForm.trust = 'No. The box has no certificate in use yet.'; return sayAt(out, httpsForm.trust, true); }
+      if (!d.https) { httpsForm.trust = 'No. The node has no certificate in use yet.'; return sayAt(out, httpsForm.trust, true); }
       if (!(d.certificate && d.certificate.names_this_host)) {
-        httpsForm.trust = 'No. The certificate does not carry ' + (d.host || 'this address') + ', so no device trusts the box by it. Open the box as ' + (d.certificate ? d.certificate.names.join(' or ') : 'one of its names') + ' and check again there.';
+        httpsForm.trust = 'No. The certificate does not carry ' + (d.host || 'this address') + ', so no device trusts the node by it. Open the node as ' + (d.certificate ? d.certificate.names.join(' or ') : 'one of its names') + ' and check again there.';
         return sayAt(out, httpsForm.trust, true);
       }
       sayAt(out, 'Asking ' + d.https_address + '...');
       fetch(d.https_address + 'api/https/probe', { mode: 'no-cors', cache: 'no-store', credentials: 'omit' })
-        .then(function () { httpsForm.trust = 'Yes. This device trusts the box. Open ' + d.https_address + ' and pair again there (it is a new address to the browser).'; sayAt(out, httpsForm.trust); },
+        .then(function () { httpsForm.trust = 'Yes. This device trusts the node. Open ' + d.https_address + ' and pair again there (it is a new address to the browser).'; sayAt(out, httpsForm.trust); },
           function () { httpsForm.trust = 'No. The root is not installed or not trusted yet on this device; follow the steps above.'; sayAt(out, httpsForm.trust, true); });
     }
-    var rows = [h('div', { class: 'hint', text: 'Each of your own devices installs the root once and then trusts every box you sign. Guests do not do this; they stay on http://.' })];
+    var rows = [h('div', { class: 'hint', text: 'Each of your own devices installs the root once and then trusts every node you sign. Guests do not do this; they stay on http://.' })];
     if (d.root) {
       rows.push(h('div', { class: 'hint', text: 'On ' + (plat.name === 'this device' ? 'this device' : 'an ' + plat.name).replace('an Mac', 'a Mac').replace('an Windows', 'Windows').replace('an Chromebook', 'a Chromebook').replace('an Linux', 'Linux') + ':'
         + (/iPhone|iPad/.test(plat.name) ? '' : ' (roughly: the exact words differ by version, and nobody has checked them on a real device yet)') }),
         h('ol', { class: 'hint', id: 'httpssteps' }, plat.steps.map(function (t) { return h('li', { text: t }); })),
         h('div', { class: 'row' }, h('a', { class: 'btn grow', id: 'httpsroot', href: '/api/https/root.crt', download: 'nxlx-root.crt', text: 'Download the root certificate' })));
     } else {
-      rows.push(h('div', { class: 'hint', id: 'httpsnoroot', text: 'The box has no root certificate to give yet: it comes with the certificate file you upload (boxcert.py writes the box\'s certificate followed by the root).' }));
+      rows.push(h('div', { class: 'hint', id: 'httpsnoroot', text: 'The node has no root certificate to give yet: it comes with the certificate file you upload (boxcert.py writes the node\'s certificate followed by the root).' }));
     }
     rows.push(h('div', { class: 'row' },
-      h('button', { class: 'btn grow', id: 'httpsprobe', text: 'Does this device trust the box?', onclick: probe }),
+      h('button', { class: 'btn grow', id: 'httpsprobe', text: 'Does this device trust the node?', onclick: probe }),
       d.https && !d.secure ? h('a', { class: 'btn grow', id: 'httpsgo', href: d.https_address, text: 'Open ' + d.https_address }) : null), out);
     return h('div', { class: 'card', id: 'httpsdevices' }, h('h2', { text: d.secure ? 'This device' : 'Your devices' }), h('div', { class: 'list sp' }, rows));
   }
@@ -4802,7 +4802,7 @@
     var d = (S.sysData.https || {}).now;
     if (!d) return [h('div', { class: 'card', id: 'httpsstate' }, h('div', { class: 'hint', text: 'Checking...' }))];
     var cards = [httpsStateCard(d), httpsCertificateCard(d), httpsDeviceCard(d)];
-    if (!d.openssl) cards.splice(1, 0, h('div', { class: 'card' }, h('div', { class: 'hint warn', id: 'httpsnoopenssl', text: 'This box has no openssl, so it cannot make a key. Install the openssl package on it (it comes with Debian), then come back.' })));
+    if (!d.openssl) cards.splice(1, 0, h('div', { class: 'card' }, h('div', { class: 'hint warn', id: 'httpsnoopenssl', text: 'This node has no openssl, so it cannot make a key. Install the openssl package on it (it comes with Debian), then come back.' })));
     return cards;
   }
 
@@ -4835,9 +4835,9 @@
         .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, status: r.status, data: j }; }); },
           function () { return { ok: false, status: 0, data: { error: 'no connection' } }; })
         .then(function (r) {
-          if (!r.ok) return sayAt(document.getElementById('importresult'), (r.data.error || 'The import failed (HTTP ' + r.status + ')') + '. Nothing was changed. Choose a settings file this box or another one exported.', true);
+          if (!r.ok) return sayAt(document.getElementById('importresult'), (r.data.error || 'The import failed (HTTP ' + r.status + ')') + '. Nothing was changed. Choose a settings file this node or another one exported.', true);
           var lines = (r.data.problems || []).map(function (t) { return 'Check: ' + t; }).concat(r.data.notes || []);
-          if (!r.data.passwords_in_file) lines.push('The file holds no passwords; ' + r.data.passwords_kept + ' already on this box were kept.');
+          if (!r.data.passwords_in_file) lines.push('The file holds no passwords; ' + r.data.passwords_kept + ' already on this node were kept.');
           loadAll().then(function () {
             render();
             say('Settings imported.' + (r.data.problems && r.data.problems.length ? ' Some parts need a look (see the Settings file card).' : ''));
@@ -4851,12 +4851,12 @@
       pick.value = '';
       var control = document.getElementById('importbtn');
       if (!f || !control) return;
-      confirmRow('Replace this box\'s settings with ' + f.name + '? The PIN, the paired devices and remote support stay as they are. A copy of the present settings is kept on the box.',
+      confirmRow('Replace this node\'s settings with ' + f.name + '? The PIN, the paired devices and remote support stay as they are. A copy of the present settings is kept on the node.',
         'Replace the settings', 'Keep mine', function () { load(f); }, control);
     });
     cards.push(h('div', { class: 'card', id: 'settingscard' }, h('h2', { text: 'Settings file' }),
       h('div', { class: 'list sp' },
-        h('div', { class: 'hint', text: 'Save this box\'s settings as one file, or load them from one. The PIN, the paired devices and remote support are never in the file.' }),
+        h('div', { class: 'hint', text: 'Save this node\'s settings as one file, or load them from one. The PIN, the paired devices and remote support are never in the file.' }),
         remote ? null : tick,
         h('div', { class: 'row' },
           h('button', { class: 'btn grow', id: 'exportbtn', text: 'Export settings', onclick: function () {
@@ -4885,20 +4885,20 @@
     // factory reset: never through remote support
     if (!remote) {
       var media = h('select', { class: 'text-input', id: 'resetmedia' },
-        [['', 'Choose...'], ['keep', 'Keep the clips on the box'], ['delete', 'Delete the clips too']].map(function (o) {
+        [['', 'Choose...'], ['keep', 'Keep the clips on the node'], ['delete', 'Delete the clips too']].map(function (o) {
           return h('option', { value: o[0], text: o[1], selected: o[0] === careForm.media });
         }));
       media.addEventListener('change', function () { careForm.media = media.value; });
       var resetErr = h('div', { class: 'msg inmsg', id: 'resetresult', role: 'alert' });
       cards.push(h('div', { class: 'card', id: 'resetcard' }, h('h2', { text: 'Factory reset' }),
         h('div', { class: 'list sp' },
-          h('div', { class: 'hint', text: 'Every setting goes back to how a new box starts, and every phone, tablet and guest is unpaired. You pair again with the new PIN on the box\'s display. The box\'s own key and certificate for https:// go too: it answers on http:// only, as a new box.' }),
+          h('div', { class: 'hint', text: 'Every setting goes back to how a new node starts, and every phone, tablet and guest is unpaired. You pair again with the new PIN on the node\'s display. The node\'s own key and certificate for https:// go too: it answers on http:// only, as a new node.' }),
           labelled('What happens to the clips', media),
           h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'resetbtn', text: 'Reset to factory settings', onclick: function (e) {
             if (!media.value) return sayAt(resetErr, 'Choose what happens to the clips first.', true);
-            var clips = media.value === 'delete' ? 'ALL CLIPS ON THE BOX ARE DELETED.' : 'The clips stay.';
-            confirmRow('Reset this box to factory settings? All settings are lost and every device is unpaired, this one too. ' + clips + ' The https:// certificate and key go too. This cannot be undone.',
-              'Reset this box', 'Keep everything', function () {
+            var clips = media.value === 'delete' ? 'ALL CLIPS ON THE NODE ARE DELETED.' : 'The clips stay.';
+            confirmRow('Reset this node to factory settings? All settings are lost and every device is unpaired, this one too. ' + clips + ' The https:// certificate and key go too. This cannot be undone.',
+              'Reset this node', 'Keep everything', function () {
                 act('POST', '/api/system/factory-reset', { confirm: 'factory-reset', media: media.value }, function () {
                   careForm = { passwords: false, media: '' };
                   S.device = null;
@@ -4930,7 +4930,7 @@
   }
   function syncCard() {
     var body = h('div', { class: 'list sp', id: 'syncbody' }, h('div', { class: 'hint', text: 'Loading...' }));
-    var card = h('div', { class: 'card', id: 'synccard' }, h('h2', { text: 'Boxes in step' }), body);
+    var card = h('div', { class: 'card', id: 'synccard' }, h('h2', { text: 'Nodes in step' }), body);
     var full = can('full');
     // Saves are counted: an answer that is older than a later save does not clear that save's message and is not
     // drawn over it; the card asks again instead. `sent` is what the fields held at the click: once saved, a field
@@ -4963,9 +4963,9 @@
       keepSyncForm();
       body.textContent = '';
       var c = d.config, f = d.follow || {};
-      var line = c.role === 'off' ? 'Off: this box plays on its own.' :
-        c.role === 'server' ? 'This box leads: it is the server of group "' + c.group + '". ' + (d.sent ? d.sent + ' messages sent.' : 'Nothing sent yet.') :
-        'This box follows: it is a client of group "' + c.group + '", ' + (d.server ? 'following ' + d.server + '. ' : 'listening for the box that leads. ') +
+      var line = c.role === 'off' ? 'Off: this node plays on its own.' :
+        c.role === 'server' ? 'This node leads: it is the server of group "' + c.group + '". ' + (d.sent ? d.sent + ' messages sent.' : 'Nothing sent yet.') :
+        'This node follows: it is a client of group "' + c.group + '", ' + (d.server ? 'following ' + d.server + '. ' : 'listening for the node that leads. ') +
           (f.state || '') + (f.file ? ', ' + f.file : '') + (typeof f.error_ms === 'number' ? ', ' + f.error_ms + ' ms off' : '');
       body.appendChild(h('div', { class: 'state', id: 'syncline', text: line }));
       if (c.role !== 'off') syncTimer = setTimeout(refresh, 2000);
@@ -4973,21 +4973,21 @@
       function choose(role) { syncForm.choosing = false; post({ role: role }); }
       if (c.role === 'off' || syncForm.choosing) {
         // the first thing asked: what this box does. Two large choices.
-        body.appendChild(h('div', { class: 'field', id: 'syncask', text: 'What does this box do?' }));
+        body.appendChild(h('div', { class: 'field', id: 'syncask', text: 'What does this node do?' }));
         body.appendChild(h('div', { class: 'list sp', id: 'syncroles' },
           h('button', { class: 'btn bigchoice' + (c.role === 'server' ? ' on' : ''), id: 'syncrole-server', 'aria-pressed': c.role === 'server' ? 'true' : 'false', onclick: function () { choose('server'); } },
-            h('b', { text: 'Lead' }), h('span', { text: 'Other boxes follow this one.' })),
+            h('b', { text: 'Lead' }), h('span', { text: 'Other nodes follow this one.' })),
           h('button', { class: 'btn bigchoice' + (c.role === 'client' ? ' on' : ''), id: 'syncrole-client', 'aria-pressed': c.role === 'client' ? 'true' : 'false', onclick: function () { choose('client'); } },
-            h('b', { text: 'Follow' }), h('span', { text: 'This box follows another.' })),
+            h('b', { text: 'Follow' }), h('span', { text: 'This node follows another.' })),
           c.role !== 'off' ? h('button', { class: 'btn', id: 'syncrole-off', text: 'Neither: play on its own', onclick: function (e) {
-            confirmRow(c.role === 'server' ? 'Stop leading? The other boxes stop following this one.' : 'Stop following? This box plays on its own.', 'Play on its own', 'Keep it', function () { choose('off'); }, e.currentTarget);
+            confirmRow(c.role === 'server' ? 'Stop leading? The other nodes stop following this one.' : 'Stop following? This node plays on its own.', 'Play on its own', 'Keep it', function () { choose('off'); }, e.currentTarget);
           } }) : null));
-        if (c.role === 'off') body.appendChild(h('div', { class: 'hint', text: 'One box leads and the others follow its clip, position, pause and blackout. Every box needs the same clips with the same file names.' }));
+        if (c.role === 'off') body.appendChild(h('div', { class: 'hint', text: 'One node leads and the others follow its clip, position, pause and blackout. Every node needs the same clips with the same file names.' }));
       } else {
         body.appendChild(h('div', { class: 'row wrap', id: 'syncroles' },
-          h('button', { class: 'btn grow', id: 'syncchange', text: 'Change what this box does', onclick: function () { syncForm.choosing = true; draw(d); } }),
+          h('button', { class: 'btn grow', id: 'syncchange', text: 'Change what this node does', onclick: function () { syncForm.choosing = true; draw(d); } }),
           h('button', { class: 'btn grow', id: 'syncrole-off', text: 'Play on its own', onclick: function (e) {
-            confirmRow(c.role === 'server' ? 'Stop leading? The other boxes stop following this one.' : 'Stop following? This box plays on its own.', 'Play on its own', 'Keep it', function () { choose('off'); }, e.currentTarget);
+            confirmRow(c.role === 'server' ? 'Stop leading? The other nodes stop following this one.' : 'Stop following? This node plays on its own.', 'Play on its own', 'Keep it', function () { choose('off'); }, e.currentTarget);
           } })));
       }
       if (c.role === 'off') return;
@@ -4995,8 +4995,8 @@
       var groupOut = h('div', { class: 'msg inmsg', id: 'syncgroupresult', role: 'status' });
       body.appendChild(h('div', { class: 'fieldwrap' }, h('label', { class: 'field', for: 'syncgroup', text: 'Group name' }),
         h('div', { class: 'row' }, group, h('button', { class: 'btn', id: 'syncgroupsave', text: 'Save', onclick: function () { post({ group: group.value.trim() }, { syncgroup: group.value }); } })),
-        h('div', { class: 'hint', text: 'The same on every box that plays together.' }), groupOut));
-      body.appendChild(h('div', { class: 'hint', text: 'Every box needs the same clips with the same file names (in its media folder or at the top of a USB drive).' }));
+        h('div', { class: 'hint', text: 'The same on every node that plays together.' }), groupOut));
+      body.appendChild(h('div', { class: 'hint', text: 'Every node needs the same clips with the same file names (in its media folder or at the top of a USB drive).' }));
       // The video wall: folded unless it is in use
       var w = c.wall, nums = function (lo, hi) { var a = []; for (var i = lo; i <= hi; i++) a.push(i); return a; };
       var inUse = w.cols > 1 || w.rows > 1;
@@ -5143,7 +5143,7 @@
       pw.value = e.clear ? '' : e.password;      // the property, not an attribute: a typed password never becomes page HTML
       var proto = protoSelect(ids + 'proto', e.protocol);
       var err = h('div', { class: 'msg err', id: ids + 'err', role: 'alert', text: e.error || '' });
-      var moved = h('div', { class: 'hint', id: ids + 'moved', text: 'A new address or port: the box asks the projector at the new one who it is. The names you gave its inputs are kept.' +
+      var moved = h('div', { class: 'hint', id: ids + 'moved', text: 'A new address or port: the node asks the projector at the new one who it is. The names you gave its inputs are kept.' +
         (p.has_password ? ' The stored password is then used at the new address. If the password belongs to the old projector only, remove it or type the new one.' : '') });
       function read() { e.name = name.value; e.host = host.value; e.port = port.value; e.protocol = proto.value; if (!e.clear) e.password = pw.value; }
       function change() {           // what would be sent
@@ -5314,7 +5314,7 @@
       body.textContent = '';
       var n = d.projectors.length, live = can('live');
       var lit = d.projectors.filter(function (p) { return /^(on|warming)/.test((p.status || {}).power || ''); }).length;
-      if (n) body.appendChild(h('div', { class: 'state', id: 'projline', text: plural(n, 'projector') + ', ' + (lit ? lit + ' on.' : 'none on.') + ' The box asks each one how it is every few seconds.' }));
+      if (n) body.appendChild(h('div', { class: 'state', id: 'projline', text: plural(n, 'projector') + ', ' + (lit ? lit + ' on.' : 'none on.') + ' The node asks each one how it is every few seconds.' }));
       else body.appendChild(h('div', { class: 'empty', id: 'projline', text: 'No projectors yet. On the projector, open its network menu and switch PJLink on. Then add it here.' }));
       if (n > 1 && live) body.appendChild(h('div', { class: 'row', id: 'projall' },
         h('button', { class: 'btn grow', id: 'projallon', text: 'All on', onclick: function (e) {
@@ -5373,7 +5373,7 @@
             if (first) first.focus();
           } }) : null,
           full ? h('button', { class: 'btn', text: 'Remove', 'aria-label': 'Remove ' + p.name, onclick: function (e) {
-            confirmRow('Remove ' + p.name + '? The box forgets its address, its password and the names of its inputs. The projector itself stays as it is.', 'Remove', 'Keep it', function () {
+            confirmRow('Remove ' + p.name + '? The node forgets its address, its password and the names of its inputs. The projector itself stays as it is.', 'Remove', 'Keep it', function () {
               act('POST', '/api/projectors', { remove: p.id }, function (data) { moreOpen = null; say(p.name + ' is removed.'); draw(data, true); });
             }, e.currentTarget);
           } }) : null];
@@ -5381,7 +5381,7 @@
         var entry = listRow({ cls: 'proj-entry', data: p.id, name: p.name, key: 'proj-' + p.id, redraw: redraw,
           sub: (who ? who + ' · ' : '') + where(p) + (p.has_password ? ' · password set' : '') + (p.protocol && p.protocol !== 'pjlink' ? ' · ' + PJ_PROTO_NAME[p.protocol] : ''), subCls: 'proj-details',
           state: h('div', { class: 'state proj-status' }, statusText(p), warn ? h('span', { class: 'proj-warn', text: ' · ' + warn }) : null),
-          problem: silent ? 'Not answering at ' + where(p) + '. Is it plugged in at the wall, and is PJLink switched on in its network menu?' + (st.error ? ' (The box says: ' + st.error + '.)' : '') : '',
+          problem: silent ? 'Not answering at ' + where(p) + '. Is it plugged in at the wall, and is PJLink switched on in its network menu?' + (st.error ? ' (The node says: ' + st.error + '.)' : '') : '',
           note: [st.pending_input ? 'Switching to ' + inputText(p, st.pending_input) + ' when the projector is ready (up to 90 seconds).' : (st.notice ? st.notice.text : ''), states[p.id]].filter(Boolean).join(' '),
           primary: live ? powerButton(p) : null, more: more, below: below.length ? h('div', { class: 'list sp proj-below' }, below) : null });
         entry.setAttribute('data-power', st.ok === undefined ? 'checking' : st.ok ? String(st.power) : 'no answer');      // for a style that draws the state as a chip
@@ -5416,7 +5416,7 @@
           labelled('Name', name, 'What people in the room call it.'),
           labelled('Address', host, 'The projector\'s IP address, from its network menu. Only a private address (such as 192.168.x.x) is taken.'),
           labelled('Port', port, '4352 unless it was changed on the projector.'),
-          labelled('PJLink password', pw, 'Only if the projector asks for one. It is kept on the box and never shown again.'),
+          labelled('PJLink password', pw, 'Only if the projector asks for one. It is kept on the node and never shown again.'),
           labelled('Control', proto, 'PJLink works with most projectors. Epson control adds freeze, brightness, Eco and the colour mode on an Epson. Test finds out which the projector answers, and picks the best.'),
           h('div', { class: 'row' }, test), found,
           h('div', { class: 'row' },
@@ -5424,7 +5424,7 @@
               keep();
               api('POST', '/api/projectors', { add: { name: projForm.name || projForm.host, host: projForm.host, port: parseInt(projForm.port || '4352', 10), password: projForm.password, protocol: projForm.protocol } }).then(function (r) {
                 if (!r.ok) return sayAt(err, r.data.error || 'Could not add the projector. Check the address.', true);
-                projForm = { name: '', host: '', port: '4352', password: '', protocol: 'pjlink' }; projFound = ''; addOpen.proj = false; say('Projector added. The box is asking it who it is.'); draw(r.data, true); load();
+                projForm = { name: '', host: '', port: '4352', password: '', protocol: 'pjlink' }; projFound = ''; addOpen.proj = false; say('Projector added. The node is asking it who it is.'); draw(r.data, true); load();
               });
             } }),
             cancel ? h('button', { class: 'btn grow', id: 'projcancel', text: 'Cancel', onclick: function () { keep(); cancel(); } }) : null),
@@ -5494,7 +5494,7 @@
       var scene = window.pvjRoom ? window.pvjRoom.scheduleField(roomCtx(), action, f, function () { draw(d); }) : null;
       if (!f.file && S.media.length) f.file = S.media[0];
       var file = h('select', { class: 'text-input', id: 'schedfile' },
-        S.media.length ? S.media.map(function (n) { return h('option', { value: n, text: n, selected: n === f.file }); }) : [h('option', { value: '', text: 'No clips on the box yet' })]);
+        S.media.length ? S.media.map(function (n) { return h('option', { value: n, text: n, selected: n === f.file }); }) : [h('option', { value: '', text: 'No clips on the node yet' })]);
       var preset = h('input', { class: 'text-input mono', id: 'schedpreset', placeholder: 'startlessonce05', value: f.preset, autocomplete: 'off' });
       var set = h('select', { class: 'text-input', id: 'schedset' }, [h('option', { value: '', text: 'The set that is in use then', selected: !f.set })].concat((sets || []).map(function (e) {
         return h('option', { value: e.id, text: e.name, selected: e.id === f.set });
@@ -5520,7 +5520,7 @@
       fit();
       function done() { schedForm = blankSched(); addOpen.sched = false; moreOpen = null; }
       return h('div', { class: 'addform', id: 'schedform' }, h('div', { class: 'field', id: 'schedformtitle', text: editing ? 'Change the entry' : 'Add an entry' }),
-        labelled('Time', time, 'By the box\'s own clock, shown above.'),
+        labelled('Time', time, 'By the node\'s own clock, shown above.'),
         h('div', { class: 'fieldwrap' }, h('div', { class: 'field', text: 'Days' }), shortcuts, days),
         labelled('What happens', action), off, wrap.file, wrap.set, wrap.scene, wrap.preset,
         labelled('Note (optional)', label, 'A word for yourself, shown in the list.'),
@@ -5530,7 +5530,7 @@
             if (!/^\d\d:\d\d/.test(f.time)) return sayAt(err, 'Choose a time.', true);
             var entry = { time: f.time.slice(0, 5), days: f.days.slice(), action: f.action, label: f.label };
             if (editing) entry.id = f.id;
-            if (f.action === 'play') { if (!f.file) return sayAt(err, 'There are no clips on the box yet. Upload one in the Library (under Play), or choose something else to happen.', true); entry.file = f.file; entry.loop = f.loop !== false; }
+            if (f.action === 'play') { if (!f.file) return sayAt(err, 'There are no clips on the node yet. Upload one in the Library (under Play), or choose something else to happen.', true); entry.file = f.file; entry.loop = f.loop !== false; }
             if (f.action === 'preset') { if (!f.preset) return sayAt(err, 'Type the start script name.', true); entry.preset = f.preset.trim(); }
             if (f.action === 'scene') { if (!f.scene) return sayAt(err, isOff('scene') ? 'Switch Room on first, with the button above.' : 'There is no scene yet. Make one on the Room screen, or choose something else to happen.', true); entry.scene = f.scene; }
             if (f.action === 'vibes' && f.set) entry.set = f.set;
@@ -5538,18 +5538,18 @@
           } }),
           cancel || editing ? h('button', { class: 'btn grow', id: 'schedcancel', text: 'Cancel', onclick: function () { done(); draw(d); } }) : null),
         err,
-        h('div', { class: 'hint', text: 'An entry runs only if the box is on at that minute. A missed entry is not caught up.' }));
+        h('div', { class: 'hint', text: 'An entry runs only if the node is on at that minute. A missed entry is not caught up.' }));
     }
     function draw(d) {
       last = d;
       body.textContent = '';
-      body.appendChild(h('div', { class: 'state', id: 'schedclock', text: 'Box time now: ' + boxTimeText(d) }));
+      body.appendChild(h('div', { class: 'state', id: 'schedclock', text: 'Node time now: ' + boxTimeText(d) }));
       var next = schedNextEntry(d);
       if (next) body.appendChild(h('div', { class: 'state', id: 'schednext', text: 'Next: ' + (next.off === 0 ? 'today' : next.off === 1 ? 'tomorrow' : next.off === 7 ? 'next ' + next.day : next.day) + ' ' + next.e.time + ', ' + schedWhat(next.e) }));
       if (clock && clock.clock_from_network === false) body.appendChild(h('div', { class: 'hint warn', id: 'schedclockwarn' },
-        h('div', { text: 'The box clock was not set from the network, so it may be wrong. Compare the time above with your own before you trust the schedule.' }),
-        clock.can_set ? h('div', { class: 'row' }, h('button', { class: 'btn', id: 'schedsetclock', text: 'Set the box clock to this phone\'s time', onclick: function () {
-          act('POST', '/api/system/clock', { epoch: Math.round(Date.now() / 1000) }, function () { say('Box clock set.'); loadClock(); refresh(); });
+        h('div', { text: 'The node clock was not set from the network, so it may be wrong. Compare the time above with your own before you trust the schedule.' }),
+        clock.can_set ? h('div', { class: 'row' }, h('button', { class: 'btn', id: 'schedsetclock', text: 'Set the node clock to this phone\'s time', onclick: function () {
+          act('POST', '/api/system/clock', { epoch: Math.round(Date.now() / 1000) }, function () { say('Node clock set.'); loadClock(); refresh(); });
         } })) : null));
       var list = h('div', { class: 'list sp splitlist', id: 'schedlist' });
       if (!d.entries.length) list.appendChild(h('div', { class: 'empty', id: 'schedempty', text: 'No entries yet. An entry makes something happen by itself at a set time on the days you choose: Vibes at opening time, the projectors off at night. Add the first one here.' }));
@@ -5621,13 +5621,13 @@
   var NET_MODES = [
     ['dhcp', 'Automatic (DHCP)', 'Take an address from a router.'],
     ['static', 'Fixed address', 'You choose the address. Use a range your other gear is on.'],
-    ['linklocal', 'Direct cable', 'Laptop plugged straight into the box; no router. The box uses a 169.254.x.x address.'],
-    ['share', 'Serve addresses', 'The box hands out addresses to whatever is plugged in.']
+    ['linklocal', 'Direct cable', 'Laptop plugged straight into the node; no router. The node uses a 169.254.x.x address.'],
+    ['share', 'Serve addresses', 'The node hands out addresses to whatever is plugged in.']
   ];
   var WIFI_MODES = [
     ['dhcp', 'Join a network', 'Join a Wi-Fi network and take an address from its router.'],
     ['static', 'Join, fixed address', 'Join a Wi-Fi network with an address you choose.'],
-    ['hotspot', 'Own hotspot', 'The box makes its own Wi-Fi network (WPA2) and hands out addresses to phones and tablets that join it.'],
+    ['hotspot', 'Own hotspot', 'The node makes its own Wi-Fi network (WPA2) and hands out addresses to phones and tablets that join it.'],
     ['off', 'Wi-Fi off', 'Switch Wi-Fi off. Saved networks are kept.']
   ];
   var WIFI_SECURITY = [['wpa-psk', 'WPA2 or WPA2/WPA3 password'], ['sae', 'WPA3 only'], ['open', 'Open (no password)']];
@@ -5691,10 +5691,10 @@
       try { fill(d); } finally { body = cols.parentNode; }
     }
     function fill(d) {
-      if (!d.helper) body.appendChild(h('div', { class: 'hint warn', id: 'netmsg', text: 'The part of the box that changes the network is not running, so a change cannot be tried. Restart the box; if this stays, tell whoever looks after it.' }));
-      if (d.reverting) { body.appendChild(h('div', { class: 'msg err', id: 'netreverting', role: 'alert', text: 'Restoring the previous network. If this page stops responding, reconnect to the box at its old address.' })); netTimer = setTimeout(refresh, 2000); }
+      if (!d.helper) body.appendChild(h('div', { class: 'hint warn', id: 'netmsg', text: 'The part of the node that changes the network is not running, so a change cannot be tried. Restart the node; if this stays, tell whoever looks after it.' }));
+      if (d.reverting) { body.appendChild(h('div', { class: 'msg err', id: 'netreverting', role: 'alert', text: 'Restoring the previous network. If this page stops responding, reconnect to the node at its old address.' })); netTimer = setTimeout(refresh, 2000); }
       if (d.pending) return drawPending(d.pending);
-      if (!d.interfaces.length) return body.appendChild(h('div', { class: 'hint', text: 'No network port found on this box.' }));
+      if (!d.interfaces.length) return body.appendChild(h('div', { class: 'hint', text: 'No network port found on this node.' }));
       var names = d.interfaces.map(function (i) { return i.name; });
       if (names.indexOf(netForm.iface) < 0) netForm.iface = names[0];
       function kindOf(name) { return d.interfaces.filter(function (i) { return i.name === name; })[0].kind; }
@@ -5722,7 +5722,7 @@
         api('POST', '/api/network/scan', { iface: out.iface.value }).then(function (r) {
           list.textContent = '';
           if (!r.ok) return list.appendChild(h('div', { class: 'msg inmsg err', text: (r.data.error || 'Could not look for networks') + '. Try again in a moment.' }));
-          if (!r.data.networks.length) return list.appendChild(h('div', { class: 'hint', text: 'No networks found. Move the box closer to the Wi-Fi, or type the name below.' }));
+          if (!r.data.networks.length) return list.appendChild(h('div', { class: 'hint', text: 'No networks found. Move the node closer to the Wi-Fi, or type the name below.' }));
           r.data.networks.forEach(function (n) {
             var usable = n.security !== 'unsupported';
             list.appendChild(h('button', { class: 'btn' + (n.in_use ? ' on' : ''), disabled: !usable,
@@ -5744,7 +5744,7 @@
         if (mode !== 'hotspot' && out.security && out.security.value === 'open') return;
         out.pass = h('input', { class: 'text-input mono', id: 'netpass', type: 'password', autocomplete: 'off' });
         remember(out.pass);
-        wrap.appendChild(labelled(mode === 'hotspot' ? 'Password for the hotspot' : 'Wi-Fi password', out.pass, mode === 'hotspot' ? '8 to 63 characters. People type it to join the box\'s Wi-Fi.' : ''));
+        wrap.appendChild(labelled(mode === 'hotspot' ? 'Password for the hotspot' : 'Wi-Fi password', out.pass, mode === 'hotspot' ? '8 to 63 characters. People type it to join the node\'s Wi-Fi.' : ''));
       }
       function drawFields() {
         fields.textContent = '';
@@ -5756,7 +5756,7 @@
             fields.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'netscanbtn', text: 'Find networks', onclick: function () { scanList(list); } })));
             fields.appendChild(list);
           }
-          out.ssid = input('netssid', mode === 'hotspot' ? 'Name of the box\'s Wi-Fi' : 'Network name', mode === 'hotspot' ? 'NXLX box' : 'Studio Wi-Fi', { autocomplete: 'off' });
+          out.ssid = input('netssid', mode === 'hotspot' ? 'Name of the node\'s Wi-Fi' : 'Network name', mode === 'hotspot' ? 'NXLX node' : 'Studio Wi-Fi', { autocomplete: 'off' });
           if (mode !== 'hotspot') {
             out.security = h('select', { class: 'text-input', id: 'netsec', onchange: drawPass },
               WIFI_SECURITY.map(function (x) { return h('option', { value: x[0], text: x[1] }); }));
@@ -5774,12 +5774,12 @@
         }
         if (mode === 'static' || mode === 'share' || mode === 'hotspot') {
           out.address = input('netaddr', 'Address', mode === 'hotspot' ? '10.43.0.1' : mode === 'share' ? '10.42.0.1' : '192.168.1.50', { inputmode: 'decimal' },
-            mode === 'static' ? 'The box\'s own address. Choose one in the range your other gear uses that nothing else has.' : 'The box\'s own address. Leave empty for the usual one.');
+            mode === 'static' ? 'The node\'s own address. Choose one in the range your other gear uses that nothing else has.' : 'The node\'s own address. Leave empty for the usual one.');
           out.prefix = input('netprefix', 'Size of the network', '24', { inputmode: 'numeric' }, '24 is the usual size (the same as 255.255.255.0). Leave empty for 24.');
         }
         if (mode === 'static') {
           out.gateway = input('netgw', 'Router (optional)', '192.168.1.1', { inputmode: 'decimal' }, 'The address of the router, for reaching the internet. Leave empty on a network with no router.');
-          out.dns = input('netdns', 'Name servers (optional)', '192.168.1.1, 9.9.9.9', null, 'Usually the router\'s address. Leave empty if the box needs no internet names.');
+          out.dns = input('netdns', 'Name servers (optional)', '192.168.1.1, 9.9.9.9', null, 'Usually the router\'s address. Leave empty if the node needs no internet names.');
         }
         drawPass();
       }
@@ -5816,7 +5816,7 @@
       var applyBtn = h('button', { class: 'btn on pri grow', id: 'netapply', text: 'Try this setting', onclick: function () {
           var c = config(kind());
           if (c.mode === 'off' && !wifiOffAsked) {
-            return confirmRow('Switch Wi-Fi off? A phone that reaches the box over Wi-Fi loses it. The change goes back by itself unless it is confirmed from a wired connection.',
+            return confirmRow('Switch Wi-Fi off? A phone that reaches the node over Wi-Fi loses it. The change goes back by itself unless it is confirmed from a wired connection.',
               'Switch Wi-Fi off', 'Keep Wi-Fi on', function () { wifiOffAsked = true; applyBtn.click(); }, applyBtn);
           }
           wifiOffAsked = false;
@@ -5826,8 +5826,8 @@
             var where;
             if (c.mode === 'hotspot') where = ' Join the Wi-Fi “' + c.ssid + '” with this phone or tablet, then open http://' + (c.address || '10.43.0.1') + ' and press Confirm before the timer runs out.';
             else if (c.mode === 'static' || c.mode === 'share') where = ' If this page stops responding, open http://' + (c.address || '10.42.0.1') + ' and press Confirm before the timer runs out.';
-            else if (c.ssid) where = ' If this page stops responding, join “' + c.ssid + '” yourself, find the box there (for example at http://' + location.hostname + ') and press Confirm before the timer runs out.';
-            else where = ' If this page stops responding, find the box at its new address and press Confirm before the timer runs out.';
+            else if (c.ssid) where = ' If this page stops responding, join “' + c.ssid + '” yourself, find the node there (for example at http://' + location.hostname + ') and press Confirm before the timer runs out.';
+            else where = ' If this page stops responding, find the node at its new address and press Confirm before the timer runs out.';
             S.netNote = 'Applied.' + where;
             clearNetForm();
             refresh();
@@ -5835,9 +5835,9 @@
         } });
       body.appendChild(h('div', { class: 'row' }, applyBtn));
       body.appendChild(out.msg);
-      body.appendChild(h('div', { class: 'hint', text: 'A change can cut this connection. The box tries it and goes back by itself unless you confirm it, and also if it restarts before you do.' }));
+      body.appendChild(h('div', { class: 'hint', text: 'A change can cut this connection. The node tries it and goes back by itself unless you confirm it, and also if it restarts before you do.' }));
       var adv = h('details', { class: 'fold', id: 'netadv', open: netForm.adv }, h('summary', { text: 'Advanced' }), h('div', { class: 'list sp' },
-        labelled('Go back by itself after', out.secs, 'How long you have to confirm before the box goes back to the network it had.'),
+        labelled('Go back by itself after', out.secs, 'How long you have to confirm before the node goes back to the network it had.'),
         h('div', { class: 'row' },
         h('button', { class: 'btn grow', id: 'netpreview', text: 'Show the commands', onclick: function () {
           api('POST', '/api/network/plan', config(kind())).then(function (r) {
@@ -5846,7 +5846,7 @@
             if (r.ok) out.preview.textContent = r.data.commands.join('\n');
           });
         } })),
-        h('div', { class: 'hint', text: 'The commands the box would run for this setting. Nothing is changed by looking.' }),
+        h('div', { class: 'hint', text: 'The commands the node would run for this setting. Nothing is changed by looking.' }),
         out.preview));
       adv.addEventListener('toggle', function () { netForm.adv = adv.open; });
       body.appendChild(adv);
@@ -5898,7 +5898,7 @@
       body.textContent = '';
       body.appendChild(h('div', { class: d.error ? 'hint warn' : 'state', id: 'oscline', text: lineText(d) }));
       // D83: on with every lock off. OSC has no login, and the roles and the guest lock do not apply to it.
-      if (d.open) body.appendChild(h('div', { class: 'hint warn', id: 'oscopen', role: 'status', text: (d.open_text || 'OSC is open: anyone on this network can control the box. Switch on a lock.') +
+      if (d.open) body.appendChild(h('div', { class: 'hint warn', id: 'oscopen', role: 'status', text: (d.open_text || 'OSC is open: anyone on this network can control the node. Switch on a lock.') +
         ' OSC has no login: with no lock on, any device on this network can play, stop, black out and move the picture, and the roles and the guest lock do not apply to it. The locks are below, under "Who may send".' }));
       var port = h('input', { class: 'text-input mono', id: 'oscport', type: 'number', min: 1024, max: 65535, value: oscForm.port === null ? d.port : oscForm.port });
       var allow = h('input', { class: 'text-input mono', id: 'oscallow', placeholder: '192.168.50.0/24', value: oscForm.allow === null ? d.allow.join(', ') : oscForm.allow });
@@ -5916,7 +5916,7 @@
       var adv = h('details', { class: 'fold', id: 'oscadv', open: oscAdv }, h('summary', { text: 'Advanced' }), h('div', { class: 'list sp' },
         labelled('Also accept from these networks', allow, 'Only private networks may send. Add your show network here if the sender is on another one. Separate several with commas.')));
       adv.addEventListener('toggle', function () { oscAdv = adv.open; });
-      body.appendChild(labelled('UDP port', port, 'The port the other program sends to, with this box\'s address. 9876 unless it was changed here.'));
+      body.appendChild(labelled('UDP port', port, 'The port the other program sends to, with this node\'s address. 9876 unless it was changed here.'));
       body.appendChild(adv);
       body.appendChild(bar.el);
       bar.dirty(changed());
@@ -5973,7 +5973,7 @@
     }
     // 3. the key
     box.appendChild(toggle('osckey', 'A key in the address', d.key_on, function (v) { set({ key_on: v }); },
-      'Every message must start with /k/ and the key, for example /k/<key>/pvj/stop. Anyone who can listen on this network can read the key from a single message, so it stops people who are merely on the network from poking the box, not someone who is capturing traffic.'));
+      'Every message must start with /k/ and the key, for example /k/<key>/pvj/stop. Anyone who can listen on this network can read the key from a single message, so it stops people who are merely on the network from poking the node, not someone who is capturing traffic.'));
     if (d.key_on) box.appendChild(oscKeyBox());
     // who sent, and what
     box.appendChild(h('div', { class: 'switchlabel', text: 'Senders in the last ten minutes' }));
@@ -5989,7 +5989,7 @@
     return box;
   }
   function oscPairedText(d) {
-    var v6 = (d.paired_v6 || []).length ? ' A paired device reached the panel over IPv6 (' + d.paired_v6.join(', ') + '); the receiver listens on IPv4 only: open the panel by the box\'s IPv4 address.' : '';
+    var v6 = (d.paired_v6 || []).length ? ' A paired device reached the panel over IPv6 (' + d.paired_v6.join(', ') + '); the receiver listens on IPv4 only: open the panel by the node\'s IPv4 address.' : '';
     return (d.paired_now.length ? 'Counts now: ' + d.paired_now.join(', ') + '.' : 'No paired device counts now. Open the panel on the tablet that sends.') + v6;
   }
   function oscSenders(el, d, set) {
@@ -6040,7 +6040,7 @@
   // (the server sends `feedback` to nobody else). Off by default; nothing here is added by a packet: "Use the device
   // that is sending now" fills the address into the form, and the Owner presses Add.
   var oscStateForm = { name: '', address: '', port: '' };
-  var OSC_STATE_WHY = 'Off unless you switch it on. With it on, the box tells the devices below what is really playing (the clip and its pad, fade, blackout, the levels, the shader), so a TouchOSC layout shows the truth whoever acted. It is off by default because a box that answers over the network could be made to send at someone else. So it sends only to the devices you add here, on the box\'s own network, at a small fixed rate, and never as an answer to anybody else. No PIN, code or key is ever in it. Clip names are, and OSC is not encrypted.';
+  var OSC_STATE_WHY = 'Off unless you switch it on. With it on, the node tells the devices below what is really playing (the clip and its pad, fade, blackout, the levels, the shader), so a TouchOSC layout shows the truth whoever acted. It is off by default because a node that answers over the network could be made to send at someone else. So it sends only to the devices you add here, on the node\'s own network, at a small fixed rate, and never as an answer to anybody else. No PIN, code or key is ever in it. Clip names are, and OSC is not encrypted.';
   function oscStateCard() {
     return h('div', { class: 'card oscstate', id: 'oscstatecard', hidden: true }, h('h2', { text: 'Send state back' }),
       h('div', { class: 'list sp', id: 'oscstatebody' }));
@@ -6059,7 +6059,7 @@
   }
   function oscStateRows(el, f) {
     el.textContent = '';
-    if (!f.targets.length) el.appendChild(h('div', { class: 'hint', id: 'oscstatenone', text: 'No device yet: the box sends its state to nobody.' }));
+    if (!f.targets.length) el.appendChild(h('div', { class: 'hint', id: 'oscstatenone', text: 'No device yet: the node sends its state to nobody.' }));
     f.targets.forEach(function (t) {
       el.appendChild(h('div', { class: 'item lrow oscstaterow', 'data-id': t.address + ':' + t.port },
         h('div', { class: 'lhead' }, h('div', { class: 'lname', text: t.name }),
@@ -6089,7 +6089,7 @@
     } });
     return h('div', { class: 'list sp', id: 'oscstateform' },
       labelled('Name', name, 'Your own word for the device, shown in this list only. It is never sent.'),
-      labelled('Address', address, 'The tablet\'s own IPv4 address on the box\'s network. Give the tablet a fixed address in the router.'),
+      labelled('Address', address, 'The tablet\'s own IPv4 address on the node\'s network. Give the tablet a fixed address in the router.'),
       labelled('Receive port', port, 'The port TouchOSC listens on (its connection settings, "Receive port"), 1024 or higher. Not the port it sends to.'),
       h('div', { class: 'row wrap' }, use, add), filled,
       full ? h('div', { class: 'hint', id: 'oscstatefull', text: 'The list is full (' + f.max + ' devices). Remove one to add another.' }) : null);
@@ -6298,12 +6298,12 @@
           act('POST', '/api/theme/export', {}, function (d) { saveFile(d.name, d.file); note('Saved ' + d.name + '.' + (d.note ? ' ' + d.note : '')); });
         } })),
       h('div', { class: 'msg inmsg' + (lookNote.err ? ' err' : ''), id: 'themeresult', role: 'status', text: lookNote.text }),
-      (S.themeSkipped || []).length ? h('div', { class: 'hint warn', id: 'themeskipped', text: (S.themeSkipped.length === 1 ? 'One theme file on this box could not be used: ' : S.themeSkipped.length + ' theme files on this box could not be used: ')
+      (S.themeSkipped || []).length ? h('div', { class: 'hint warn', id: 'themeskipped', text: (S.themeSkipped.length === 1 ? 'One theme file on this node could not be used: ' : S.themeSkipped.length + ' theme files on this node could not be used: ')
         + S.themeSkipped.map(function (k) { return k.file + ': ' + k.why; }).join('. ') + '.' }) : null,
       yours.length ? h('div', { class: 'list', id: 'themelist' }, yours.map(function (th) {
         return h('div', { class: 'item' }, h('span', { class: 'lname', text: th.name }),
           h('div', { class: 'row' }, h('button', { class: 'btn small del', 'data-remove': th.id, 'aria-label': 'Remove the theme ' + th.name, text: 'Remove', onclick: function (e) {
-            confirmRow('Remove the theme ' + th.name + ' from this box?' + (th.id === t.name ? ' It is the look in use: the panel goes back to Dark stage.' : ''), 'Remove', 'Keep it', function () {
+            confirmRow('Remove the theme ' + th.name + ' from this node?' + (th.id === t.name ? ' It is the look in use: the panel goes back to Dark stage.' : ''), 'Remove', 'Keep it', function () {
               api('POST', '/api/theme/remove', { id: th.id }).then(function (r) {
                 if (!r.ok) return note((r.data.error || 'The theme was not removed') + '.', true);
                 S.theme = r.data.theme; S.themes = r.data.available; S.themeSkipped = r.data.skipped || []; S.accentDropped = '';
@@ -6459,11 +6459,11 @@
     function draw(c, force) {
       if (!c || (!force && asking(card))) return;          // a question is open: it is not wiped
       body.textContent = '';
-      body.appendChild(h('div', { class: 'hint', id: 'ctlcodehint', text: 'For when you stand at the box with a MIDI controller and no paired phone. ' +
-        'Hold the pad or button that has this action for 3 seconds and let go: the box draws a one-time code on its own display for ' +
+      body.appendChild(h('div', { class: 'hint', id: 'ctlcodehint', text: 'For when you stand at the node with a MIDI controller and no paired phone. ' +
+        'Hold the pad or button that has this action for 3 seconds and let go: the node draws a one-time code on its own display for ' +
         plural(Math.round(c.seconds / 60), 'minute') + ', and one new device pairs with it. Anyone who can reach the controller can do this, so it is off until you switch it on here.' }));
       body.appendChild(toggle('ctlcode-on', 'Guest codes from a controller', c.enabled,
-        flip('enabled', 'Let a controller show a guest code? Anyone who can hold a button on a controller plugged into the box can then pair a device as a guest.',
+        flip('enabled', 'Let a controller show a guest code? Anyone who can hold a button on a controller plugged into the node can then pair a device as a guest.',
           'Switch it on', 'Codes from a controller are on.', 'Codes from a controller are off.'),
         'Pairs one device as ' + roleName(c.join === 'live' ? 'live' : 'view') + '. It goes by itself after a week unused. The MIDI action is "Show a one-time guest code".'));
       if (c.enabled) {
@@ -6473,15 +6473,15 @@
         pairs.addEventListener('change', function () {
           var to = pairs.value;
           if (to !== 'live') return send({ join: 'view' }, 'A controller\'s join code pairs a guest.');
-          confirmRow('Let a controller\'s join code pair an operator? Anyone who can hold a button on a controller plugged into the box can then become an operator and run the room.',
+          confirmRow('Let a controller\'s join code pair an operator? Anyone who can hold a button on a controller plugged into the node can then become an operator and run the room.',
             'Pair operators', 'Keep guests', function () { send({ join: 'live' }, 'A controller\'s join code pairs an operator.'); }, pairs, function () { pairs.value = 'view'; });
         });
         body.appendChild(labelled('A controller\'s join code pairs', pairs, c.join === 'live' ?
           'Anyone at the controller can become an operator now. Phones paired while this said Guest stay guests.' :
-          'A guest watches, and plays around while guest controls are open. Choose Operator when staff must be able to get in at the box with no owner there, for example while guest controls are locked.'));
+          'A guest watches, and plays around while guest controls are open. Choose Operator when staff must be able to get in at the node with no owner there, for example while guest controls are locked.'));
       }
       if (c.enabled) body.appendChild(toggle('ctlcode-owner', 'Owner codes too', c.owner,
-        flip('owner', 'Let a controller show an owner code? Anyone who can hold a button on a controller plugged into the box can then pair a device with everything allowed.',
+        flip('owner', 'Let a controller show an owner code? Anyone who can hold a button on a controller plugged into the node can then pair a device with everything allowed.',
           'Allow owner codes', 'Owner codes from a controller are allowed.', 'Owner codes from a controller are off.'),
         'Pairs one device as ' + roleName('full') + ', like the PIN. Leave it off unless you need it. The MIDI action is "Show a one-time owner code".'));
       if (c.enabled && !c.midi_on) body.appendChild(h('div', { class: 'hint', id: 'ctlcodemidi', text: 'MIDI controllers are switched off (Setup, MIDI controller), so no control can ask for a code yet.' }));
@@ -6490,14 +6490,14 @@
       var s = c.status;
       if (s.active) {
         body.appendChild(h('div', { class: 'codeshown', id: 'ctlcodeshown', role: 'status' },
-          h('span', { text: 'A one-time ' + KIND[s.kind] + ' code is on the box\'s display now, put there from a controller ' + agoWords(s.shown_ago) + '. It works for ' +
+          h('span', { text: 'A one-time ' + KIND[s.kind] + ' code is on the node\'s display now, put there from a controller ' + agoWords(s.shown_ago) + '. It works for ' +
             Math.floor(s.seconds_left / 60) + ':' + ('0' + s.seconds_left % 60).slice(-2) + ' more.' }),
           h('div', { class: 'row' }, h('button', { class: 'btn small', id: 'ctlcodeend', text: 'End this code', onclick: function () { send({ cancel: true }, 'The code is ended and off the display.'); } }))));
       } else {
         body.appendChild(h('div', { class: 'hint', id: 'ctlcodelast', text: s.last ?
           'The last one: a ' + KIND[s.last.kind] + ' code, ' + agoWords(s.last.ended_ago) + ', ' + (HOW[s.last.how] || s.last.how) +
           (s.last.device ? ' by the device "' + s.last.device + '" (it is in the list below)' : '') + '.' :
-          'No code has been shown from a controller since the box started.' }));
+          'No code has been shown from a controller since the node started.' }));
       }
     }
     controllerCodeDraw = function (c) { if (card.isConnected) draw(c); };
@@ -6520,7 +6520,7 @@
     var pinHide = null;
     function hidePin() { clearTimeout(pinHide); pinField.value = ''; }
     function showPin(pin) { pinField.value = pin; pinOut.textContent = ''; clearTimeout(pinHide); pinHide = setTimeout(function () { if (pinField.isConnected) hidePin(); }, PIN_SHOW_MS); }
-    var UNKNOWN = 'This panel has not known the PIN since the box started (it keeps only a check value of it). New PIN makes one and shows it here; sudo pvj-pin on the box prints the current one.';
+    var UNKNOWN = 'This panel has not known the PIN since the node started (it keeps only a check value of it). New PIN makes one and shows it here; sudo pvj-pin on the node prints the current one.';
     // Asks the box for the PIN; `then(pin)` with it, or `unknown()` (by default a note under the field) when this
     // run of the panel does not know it. An error (the rate limit, a stale device) is said in the message line.
     function withPin(then, unknown) {
@@ -6549,12 +6549,12 @@
       api('GET', '/api/devices').then(function (r) {
         if (r.ok) S.devices = r.data.devices;          // read again: another owner device may have logged out meanwhile (no redraw: the pressed button stays)
         var others = S.devices.filter(function (x) { return x.role === 'full' && !(S.device && x.id === S.device.id); }).length;
-        if (others) return then('Log out on this device? The box forgets it. You will need the PIN to get back in.');
+        if (others) return then('Log out on this device? The node forgets it. You will need the PIN to get back in.');
         var last = 'This is the last device with everything allowed. Once it logs out nobody can read the PIN from a panel. ';
         withPin(function (pin) {
-          then(last + 'The PIN to pair again is ' + pin + '. The box also draws it on its display while nothing is paired, and sudo pvj-pin prints it.');
+          then(last + 'The PIN to pair again is ' + pin + '. The node also draws it on its display while nothing is paired, and sudo pvj-pin prints it.');
         }, function () {
-          then(last + 'This panel does not know the PIN: press Stay and New PIN to get one first, or log out anyway. The box draws the PIN on its display while nothing is paired, and sudo pvj-pin prints it.');
+          then(last + 'This panel does not know the PIN: press Stay and New PIN to get one first, or log out anyway. The node draws the PIN on its display while nothing is paired, and sudo pvj-pin prints it.');
         });
       });
     }
@@ -6595,7 +6595,7 @@
     card.appendChild(link);
     card.appendChild(linkQr);
     card.appendChild(h('div', { class: 'field', text: 'The ' + roleName('full') + ' PIN' }));
-    card.appendChild(h('div', { class: 'hint', text: 'The PIN pairs a phone with everything allowed. It is on the box\'s display when nothing is paired. Show puts it on this screen for a few seconds: mind a projector or a stream.' }));
+    card.appendChild(h('div', { class: 'hint', text: 'The PIN pairs a phone with everything allowed. It is on the node\'s display when nothing is paired. Show puts it on this screen for a few seconds: mind a projector or a stream.' }));
     card.appendChild(h('div', { class: 'row' }, pinField));
     card.appendChild(h('div', { class: 'row wrap' },
       h('button', { class: 'btn grow', id: 'showpin', text: 'Show', onclick: function () { withPin(function (pin) { showPin(pin); say('The PIN is on this screen for ' + Math.round(PIN_SHOW_MS / 1000) + ' seconds.'); }); } }),
@@ -6608,7 +6608,7 @@
     card.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'unlockpair', text: 'Unblock joining', onclick: function () {
       act('POST', '/api/pin/unlock', {}, function () { pinOut.textContent = 'Joining is open again (the PIN is unchanged).'; say('Joining is open again.'); });
     } })));
-    card.appendChild(h('div', { class: 'hint', text: 'After too many wrong PINs or codes the box stops taking them for a while. Unblock joining opens it again at once.' }));
+    card.appendChild(h('div', { class: 'hint', text: 'After too many wrong PINs or codes the node stops taking them for a while. Unblock joining opens it again at once.' }));
     card.appendChild(pinOut);
     return [first, controllerCodeCard(), card, guestLockCard(), recoveryCard()];      // the Recovery card: an Owner's only (D81)
   }
@@ -6628,7 +6628,7 @@
           });
         } })),
       h('div', { class: 'hint', text: 'One lock for every guest on every phone. It holds until someone opens it again, also after a restart.' }),
-      locked && can('full') ? h('div', { class: 'hint', id: 'guestlockjoin', text: 'While this is locked, a code shown from a MIDI controller still pairs a guest, who can only watch. If staff must get in at the box, set "A controller\'s join code pairs" to Operator under Setup > People and codes > A code from a controller.' }) : null);
+      locked && can('full') ? h('div', { class: 'hint', id: 'guestlockjoin', text: 'While this is locked, a code shown from a MIDI controller still pairs a guest, who can only watch. If staff must get in at the node, set "A controller\'s join code pairs" to Operator under Setup > People and codes > A code from a controller.' }) : null);
     return card;
   }
   // An Operator's part of the paired devices (D80): the guests, to remove, and a guest link. The box gives him the
@@ -6748,14 +6748,14 @@
     function eventWords(e) {
       if (e.kind === 'code') return 'A recovery code was used by "' + (e.name || 'a device') + '" at ' + when(e.t) + '; ' + plural(e.left, 'code') + ' left.';
       if (e.kind === 'stick-used') return 'The PIN shown for a recovery stick was used by "' + (e.name || 'a device') + '" at ' + when(e.t) + '.';
-      return 'The PIN was shown on the box\'s screen at ' + when(e.t) + ' because a recovery stick was put in.';
+      return 'The PIN was shown on the node\'s screen at ' + when(e.t) + ' because a recovery stick was put in.';
     }
     function draw(d) {
       if (asking(card)) return;
       body.textContent = '';
-      body.appendChild(h('div', { class: 'hint', id: 'recoveryhint', text: 'Two ways in that need no paired phone and no keyboard at the box. ' +
-        'Recovery codes: one-time codes you print and keep where you keep the box\'s keys, never with the box; at the pairing screen "I have a recovery code" pairs a phone as ' + roleName('full') + '. ' +
-        'A USB stick: a stick with an empty file named pvj-recover at its top makes the box draw a fresh owner PIN on its own screen for 2 minutes.' }));
+      body.appendChild(h('div', { class: 'hint', id: 'recoveryhint', text: 'Two ways in that need no paired phone and no keyboard at the node. ' +
+        'Recovery codes: one-time codes you print and keep where you keep the node\'s keys, never with the node; at the pairing screen "I have a recovery code" pairs a phone as ' + roleName('full') + '. ' +
+        'A USB stick: a stick with an empty file named pvj-recover at its top makes the node draw a fresh owner PIN on its own screen for 2 minutes.' }));
       var c = d.codes;
       body.appendChild(h('div', { class: 'field', id: 'recoverystate', text: c ? c.left + ' of ' + c.count + ' codes left · made ' + when(c.made) + ' by ' + (c.by || 'an owner') : 'No recovery codes yet.' }));
       if (c && c.left <= 2) body.appendChild(h('div', { class: 'hint warn', id: 'recoveryfew', text: (c.left ? 'Only ' + plural(c.left, 'code') + ' left.' : 'No codes left.') + ' Make a new set soon and keep the new sheet; the old sheet is then waste paper.' }));
@@ -6770,16 +6770,16 @@
             act('POST', '/api/recovery/cancel', {}, function () { say('The recovery codes are cancelled.'); load(); });
           }, e.currentTarget);
         } }) : null));
-      body.appendChild(toggle('recovery-usb', 'A USB stick at the box shows the PIN', d.usb, function (v, sw) {
+      body.appendChild(toggle('recovery-usb', 'A USB stick at the node shows the PIN', d.usb, function (v, sw) {
         api('POST', '/api/recovery/usb', { on: v }).then(function (r) {
           if (!card.isConnected) return;
           if (!r.ok) { say(r.data.error || 'Something went wrong', true); sw.setAttribute('aria-checked', v ? 'false' : 'true'); return; }
-          say(v ? 'A recovery stick shows the PIN again.' : 'A recovery stick shows nothing now. The ways in are the codes, sudo pvj-pin at the box, or a factory reset.');
+          say(v ? 'A recovery stick shows the PIN again.' : 'A recovery stick shows nothing now. The ways in are the codes, sudo pvj-pin at the node, or a factory reset.');
           load();
         });
-      }, 'The screen is the room\'s projector: everyone there sees the PIN for 2 minutes. It is a new PIN each time, it works once, and it dies when the stick comes out. Switch this off where strangers can reach the box.'));
+      }, 'The screen is the room\'s projector: everyone there sees the PIN for 2 minutes. It is a new PIN each time, it works once, and it dies when the stick comes out. Switch this off where strangers can reach the node.'));
       var st = d.stick;
-      if (st && st.active) body.appendChild(h('div', { class: 'codeshown', id: 'stickshown', role: 'status', text: 'The PIN is on the box\'s screen now for a recovery stick, ' + st.seconds_left + ' s more. Take the stick out to end it.' }));
+      if (st && st.active) body.appendChild(h('div', { class: 'codeshown', id: 'stickshown', role: 'status', text: 'The PIN is on the node\'s screen now for a recovery stick, ' + st.seconds_left + ' s more. Take the stick out to end it.' }));
       var log = (d.log || []).slice().reverse().slice(0, 5);
       if (log.length) body.appendChild(h('div', { class: 'list', id: 'recoverylog' }, log.map(function (e) { return h('div', { class: 'hint warn', text: eventWords(e) }); })));
     }
@@ -6795,7 +6795,7 @@
       function onVis() { if (document.visibilityState === 'hidden') hiddenTimer = setTimeout(gone, 1500); else clearTimeout(hiddenTimer); }
       document.addEventListener('visibilitychange', onVis);
       tenMinutes = setTimeout(gone, 600000);
-      body.appendChild(h('div', { class: 'hint warn', text: 'These codes are on this screen now and never again, not while this screen is shared or projected. Print them or write them down, then keep the paper where you keep the box\'s keys. Each works once and pairs a phone as ' + roleName('full') + '. They leave this screen by themselves when you switch away or after ten minutes.' }));
+      body.appendChild(h('div', { class: 'hint warn', text: 'These codes are on this screen now and never again, not while this screen is shared or projected. Print them or write them down, then keep the paper where you keep the node\'s keys. Each works once and pairs a phone as ' + roleName('full') + '. They leave this screen by themselves when you switch away or after ten minutes.' }));
       var list = h('ol', { class: 'codes', id: 'recoverycodes' }, codes.map(function (c) { return h('li', { class: 'mono', text: c }); }));
       body.appendChild(list);
       var area = h('textarea', { class: 'text-input mono', id: 'recoverytext', readonly: true, rows: 8, 'aria-label': 'The recovery codes, to copy', hidden: true });
@@ -6820,7 +6820,7 @@
       if (typeof window.print !== 'function') return say('This browser cannot print. Use Copy, or write the codes down.', true);
       printPage(h('div', { id: 'printsheet' },
         h('h1', { text: 'nxlx.mastercontrol recovery codes' }),
-        h('p', { text: 'Box: ' + location.host + ', made ' + new Date().toLocaleString() + '. Each code works once and pairs a phone with everything allowed. Keep this sheet where you keep the keys, never with the box.' }),
+        h('p', { text: 'Node: ' + location.host + ', made ' + new Date().toLocaleString() + '. Each code works once and pairs a phone with everything allowed. Keep this sheet where you keep the keys, never with the node.' }),
         h('ol', { class: 'codes' }, codes.map(function (c) { return h('li', { text: c }); })),
         h('p', { text: 'To use one: open the panel, tap "I have a recovery code" and type it. Cross it off. Then make a new set under Setup, People and codes.' })));
     }
@@ -6833,7 +6833,7 @@
   function printSheet(d) {
     var sheet = h('div', { id: 'printsheet' },
       h('h1', { text: 'nxlx.mastercontrol' }),
-      h('p', { text: 'Scan with your phone camera to open the control panel. You need a code from the person running the show, or the PIN on the box.' }),
+      h('p', { text: 'Scan with your phone camera to open the control panel. You need a code from the person running the show, or the PIN on the node.' }),
       h('div', { class: 'sheet-row' },
         h('figure', {}, h('img', { class: 'qr-big', alt: 'QR code for the control panel', src: '/api/qr.svg?for=panel' }), h('figcaption', { text: location.origin + '/' }))),
       d.codes.length ? h('div', { class: 'sheet-row' }, d.codes.map(function (c) {

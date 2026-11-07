@@ -118,7 +118,7 @@
     }
     note.textContent = '';
     var lines = [];
-    if (lost.length) lines.push('Part of this page did not arrive from the box (' + lost.map(name).join(', ') + '), so some of the panel is missing. The box keeps playing. Press Try again.');
+    if (lost.length) lines.push('Part of this page did not arrive from the node (' + lost.map(name).join(', ') + '), so some of the panel is missing. The node keeps playing. Press Try again.');
     if (broken.length) {
       lines.push('Part of this page arrived but did not start (' + broken.map(name).join(', ') + '), so some of the panel is missing. This is a fault in the panel, not in the connection; please report it.');
       // Reload is the one thing here that loses a scanned code, and only once app.js has taken it out of the address.
