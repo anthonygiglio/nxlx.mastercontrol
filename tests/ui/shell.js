@@ -818,8 +818,10 @@ async function roles(pages, post) {
   // guest's Sound is Volume and Audio alone; both have Test pattern on Mapping, which a guest cannot press
   await go(pages.presenter, 'shape/mapping');
   await pages.presenter.waitForSelector('#syspage #mapcard', { timeout: 15000 });      // (a page reads its module's state before it draws its body)
-  assert(await pages.presenter.evaluate(() => !!document.querySelector('#syspage #mapcard') && !document.getElementById('sysswitch') && !!document.querySelector('#syspage #testpattern') && !document.querySelector('#syspage #testpattern').disabled),
-    'an operator has the mapping page with its card and Test pattern, and no switch');
+  // (the page's parts are drawn as their answers come in: the check waits for them, up to 10 s)
+  const opMap = () => !!document.querySelector('#syspage #mapcard') && !document.getElementById('sysswitch') && !!document.querySelector('#syspage #testpattern') && !document.querySelector('#syspage #testpattern').disabled;
+  await pages.presenter.waitForFunction(opMap, null, { timeout: 10000 }).catch(() => null);
+  assert(await pages.presenter.evaluate(opMap), 'an operator has the mapping page with its card and Test pattern, and no switch');
   await go(pages.guest, 'shape/mapping');
   await pages.guest.waitForSelector('#plainpage #testpattern', { timeout: 15000 });     // as the operator's, above: the page draws after it has read its state
   assert(await pages.guest.evaluate(() => { const t = document.querySelector('#plainpage #testpattern'); return !!t && t.disabled; }), 'a guest sees Test pattern on Mapping, and cannot press it');
