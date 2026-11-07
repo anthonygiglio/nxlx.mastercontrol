@@ -284,10 +284,10 @@
         var prev = teacher(c, 'effect_prev', 'The effect before', 'a pad or a button'), tog = teacher(c, 'effect_toggle', 'Effect on / off', 'a pad or a button'),
           next = teacher(c, 'effect_next', 'The next effect', 'a pad or a button');
         el.appendChild(h('div', { class: 'row fxbuttons' },
-          h('button', { class: 'btn big grow', id: 'fxprev', text: '‹ Previous', 'aria-label': 'The effect before', disabled: blocked, onclick: function () { send(c, '/api/effects/step', { dir: -1 }); } }),
+          h('button', { class: 'btn big grow', id: 'fxprev', text: 'Previous', 'aria-label': 'The effect before', disabled: blocked, onclick: function () { send(c, '/api/effects/step', { dir: -1 }); } }),
           on ? h('button', { class: 'btn big grow', id: 'fxoff', text: 'Off', 'aria-label': 'Take the effect off', onclick: function () { send(c, '/api/effects', { off: true }); } })
             : h('button', { class: 'btn big grow', id: 'fxon', text: 'On', 'aria-label': 'Put the last effect back on', disabled: blocked, onclick: function () { send(c, '/api/effects', { toggle: true }); } }),
-          h('button', { class: 'btn big grow', id: 'fxnext', text: 'Next ›', 'aria-label': 'The next effect', disabled: blocked, onclick: function () { send(c, '/api/effects/step', { dir: 1 }); } })));
+          h('button', { class: 'btn big grow', id: 'fxnext', text: 'Next', 'aria-label': 'The next effect', disabled: blocked, onclick: function () { send(c, '/api/effects/step', { dir: 1 }); } })));
         if (prev) {
           el.appendChild(h('div', { class: 'row fxbuttons fxteachrow' }, [prev, tog, next].map(function (t) { return h('span', { class: 'grow fxteachcell' }, t.btn); })));
           [prev, tog, next].forEach(function (t) { el.appendChild(t.box); });

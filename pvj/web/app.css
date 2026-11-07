@@ -161,7 +161,8 @@ input.seek { width: 100%; margin: 10px 0 4px; accent-color: var(--ac); height: 2
    dragged; narrower than the card it is centred. */
 canvas.mapcanvas { display: block; width: min(100%, calc((100dvh - var(--dock, 120px) - var(--mapallow, 340px)) * var(--mapaspect, 1.7778))); max-width: 100%; margin: 8px auto; border: 1px solid var(--ln); border-radius: 8px; touch-action: none; background: #111; }
 canvas.mapcanvas:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
-.row.nudge .btn { min-width: 44px; min-height: 44px; font-size: 18px; }
+.row.nudge { flex-wrap: wrap; }
+.row.nudge .btn { flex: 0 0 auto; min-width: 44px; min-height: 44px; padding: 0 12px; }      /* (words now: Left, Up, Down, Right, each as wide as its word) */
 .list .item.map-entry.on { box-shadow: inset 3px 0 0 var(--ac); padding-left: 8px; }
 /* MIDI controllers: one card per controller, the whole width of the page, with its layout drawn as a grid of its
    controls. A wide controller scrolls sideways inside its card on a phone; the page itself never does. */
@@ -958,8 +959,8 @@ html[data-style="signal"] .navgroup { padding: 0; gap: 0; }
 /* a fold is something to tap: an outlined bar with a plus that turns into a minus, not a label with nothing under it */
 html[data-style="signal"] .fold summary, html[data-style="signal"] .card details.fold > summary { min-height: var(--tk-ch, 44px); padding: 4px 14px; border: var(--rule) solid var(--fg); list-style: none; }
 html[data-style="signal"] .fold summary::-webkit-details-marker { display: none; }
-html[data-style="signal"] .fold:not(#setaddfold) summary::after { content: "+"; margin-left: auto; padding-left: 10px; font: 900 22px/1 var(--sans); }
-html[data-style="signal"] .fold[open] > summary::after, html[data-style="signal"] details.fold[open] > summary::after { content: "\2212"; }
+html[data-style="signal"] .fold:not(#setaddfold) summary::after { content: "Show"; margin-left: auto; padding-left: 10px; font: 900 13px/1 var(--sans); letter-spacing: .04em; text-transform: uppercase; }
+html[data-style="signal"] .fold[open] > summary::after, html[data-style="signal"] details.fold[open] > summary::after { content: "Hide"; }
 html[data-style="signal"] .fold[open] > summary { margin-bottom: 10px; }
 html[data-style="signal"] .card .navhead { padding: 0 0 10px; }
 html[data-style="signal"] .picker .sheet, html[data-style="signal"] .moreacts, html[data-style="signal"] .teachbox, html[data-style="signal"] .confirm { border-radius: var(--tk-rp, 0); border-width: var(--rule); }
@@ -1297,7 +1298,7 @@ html[data-style="signal"] .livecols .btn, html[data-style="signal"] .livecols .b
 html[data-style="signal"] .switchlabel:has(+ .switch) { display: none; }
 html[data-style="signal"] #midimaplist .lname { text-transform: none; }
 html[data-style="signal"] .hint.ctlnote, html[data-style="signal"] .hint.ctllightnote { font-weight: var(--tk-xw, 400); color: var(--mu); }
-html[data-style="signal"] .row.nudge .btn, html[data-style="signal"] .btn[aria-label^="Bring "], html[data-style="signal"] .btn[aria-label^="Send "] { min-width: 44px; }
+html[data-style="signal"] .row.nudge .btn, html[data-style="signal"] .btn[aria-label^="Up: bring "], html[data-style="signal"] .btn[aria-label^="Down: send "] { min-width: 44px; }
 html[data-style="signal"] #netscan { display: flex; flex-direction: column; gap: 8px; }
 html[data-style="signal"] #netscan .btn { width: 100%; text-align: left; }
 
@@ -1458,6 +1459,16 @@ html[data-style="signal"] .navrow.on .navname { color: var(--fg); text-decoratio
    area's name in the bar likewise. */
 html[data-style="signal"] .syshead h1, html[data-style="signal"] .syshead h2 { flex-basis: auto; min-width: 0; overflow-wrap: break-word; }
 html[data-style="signal"] .wstitle { overflow-wrap: break-word; }
+/* The title bar is the same on every screen (2026-11-07): the area's name and one line under it, which a page with
+   its own heading fills with its name. On a phone the line keeps room for two lines, so the bar, the tabs under it
+   and the screen start at the same place on every screen; a longer job is cut after the second line (its whole text
+   is the line's title). From 1200 px the line is beside the name, and starts at the same place for every area. */
+@container app (max-width: 599px) {
+  html[data-style="signal"] .wsjob:not(.all):not([hidden]) { min-height: calc(2em * 1.35); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+}
+@container app (min-width: 1200px) {
+  html[data-style="signal"] .wstitle { min-width: 100px; }
+}
 html[data-style="signal"] .tp .tpmore { min-width: max-content; }      /* (this look takes a button's least width away; More is a column of the line that says what plays, and is never narrower than its word: at 1200 px, where the line is fullest, it was 3 px short) */
 /* The flashing buttons (D75) in this look. The block above gives every button its outline and its background by a
    heavier selector, so the flash is said again here, after it: the fade button flashes in the ink, Blackout in

@@ -2825,7 +2825,7 @@ function startServer(env) {          // env: more for the harness's environment 
     assert.strictEqual(await page.locator('#shaderslink').count(), 0, 'and no Shaders link');
     await sys('Shaders and Vibes');
     assert.strictEqual(await page.locator('#shaderpage').count(), 0, 'the module off shows only the description and the big button');
-    assert.strictEqual(await page.textContent('#sysback'), '‹ Setup', 'opened from the Setup index, the page goes back to it');
+    assert.strictEqual(await page.textContent('#sysback'), 'Back to Setup', 'opened from the Setup index, the page goes back to it');
     await switchOn('Shaders and Vibes');
     assert(await moduleIsOn('shaders'), 'the shaders module is on');
     await page.waitForSelector('#shadercard [data-shader="nxlx-tide.fs"]');
@@ -2927,7 +2927,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.waitForSelector('#syspage .syshead :is(h1, h2):text-is("Shaders and Vibes")');
     await page.waitForFunction(() => /Vibes is playing/.test((document.getElementById('shaderline') || {}).textContent));
     assert.strictEqual(await page.textContent('#vibesbtn'), 'Stop Vibes');
-    assert.strictEqual(await page.textContent('#shadernext'), 'Next \u203a');
+    assert.strictEqual(await page.textContent('#shadernext'), 'Next');
     assert.strictEqual(await at(page), 'play/shaders', 'the Shaders link opens Play > Shaders');
     assert.strictEqual(await page.locator('#sysback').count(), 0, 'a tab of the same area has no Back');
     if (shots) await page.screenshot({ path: path.join(shots, '9-shaders.png'), fullPage: true });
@@ -3509,7 +3509,7 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.click('#shadernext');
       await page.waitForFunction(() => fetch('/api/shaders').then((r) => r.json()).then((d) => !d.vibes.running && d.playing), null, { timeout: 20000 });
       assert.deepStrictEqual(sentTo('/api/shaders/step').slice(n), [{ dir: 1 }], 'Next steps without Vibes');
-      assert.strictEqual(await page.textContent('#shaderprev'), '‹ Previous');
+      assert.strictEqual(await page.textContent('#shaderprev'), 'Previous');
     }
     // A Performance shader flashes, so its Speed stops at 1 until the owner allows faster, under Advanced, with a
     // plain warning
