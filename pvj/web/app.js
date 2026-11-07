@@ -119,6 +119,33 @@
       if (r[5] && r[5].ok) S.devices = r[5].data.devices;
     });
   }
+  // A tap is a press and a release on one control. A redraw that comes between the two (a timer's look at the box)
+  // puts a new control under the finger, and the tap does nothing: in a show, a button that does not answer. So what
+  // a timer would draw waits while a press is down, and comes just after the release (after its click).
+  // A press: each pointer that is down with its main button (a touch, a pen, a left click: two fingers are two, and
+  // the first one still holds when the second lifts), and Enter or Space held on a control (let go by the same key).
+  // Everything lets go when a menu opens (a right click on a Mac sends no pointerup), when the window itself loses
+  // the focus (a field losing it to the next does not count) or when the page is hidden.
+  var downPointers = {}, downKey = null, afterPress = {};
+  function pressing() { return downKey !== null || Object.keys(downPointers).length > 0; }
+  function letGo() {
+    if (pressing()) return;
+    var q = afterPress; afterPress = {};
+    setTimeout(function () { Object.keys(q).forEach(function (k) { q[k](); }); }, 0);
+  }
+  function letGoAll() { downPointers = {}; downKey = null; letGo(); }
+  document.addEventListener('pointerdown', function (e) { if (!(e.button > 0)) downPointers[e.pointerId] = true; }, true);
+  ['pointerup', 'pointercancel'].forEach(function (t) { document.addEventListener(t, function (e) { delete downPointers[e.pointerId]; letGo(); }, true); });
+  document.addEventListener('keydown', function (e) { if ((e.key === 'Enter' || e.key === ' ') && !e.repeat) downKey = e.key; }, true);
+  document.addEventListener('keyup', function (e) { if (e.key === downKey) { downKey = null; letGo(); } }, true);
+  document.addEventListener('contextmenu', letGoAll, true);
+  window.addEventListener('blur', function (e) { if (e.target === window) letGoAll(); });
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') letGoAll(); });
+  // whenFree(key, fn): fn now, or once just after the release (a later fn of the same key replaces an earlier one).
+  // held(key, again): for a timed look, just before it draws: false when nothing is pressed (draw now); true when a
+  // press is down, and then `again` (the look itself, so the drawing is of fresh data) runs just after the release.
+  function whenFree(key, fn) { if (pressing()) afterPress[key] = fn; else fn(); }
+  function held(key, again) { if (!pressing()) return false; afterPress[key] = again; return true; }
   function poll() {
     if (!S.device || document.visibilityState === 'hidden') return;
     api('GET', '/api/status').then(function (r) {
@@ -126,8 +153,8 @@
         var was = !!(S.status && S.status.support && S.status.support.active), reached = reach();
         S.status = r.data;
         var now = !!(r.data.support && r.data.support.active);
-        if (was !== now) return render();          // a session started or ended: show or hide the banner
-        if (reached !== reach() && S.device && S.device.role === 'view') return render();      // guest controls were locked or opened
+        if (was !== now) return whenFree('render', render);          // a session started or ended: show or hide the banner
+        if (reached !== reach() && S.device && S.device.role === 'view') return whenFree('render', render);      // guest controls were locked or opened
         var left = document.getElementById('supportleft');
         if (left && now) left.textContent = (S.device && S.device.remote ? 'You are connected as remote support' : 'Remote support session is open') + ' · ' + mins(r.data.support.seconds_left) + ' left';
         patchLive();
@@ -321,7 +348,7 @@
     var body = h('div', { class: 'list sp', id: 'supportbody' }, h('div', { class: 'hint', text: 'Loading...' }));
     var card = h('div', { class: 'card', id: 'supportcard' }, h('h2', { text: 'Remote support' }), body);
     var timer = null;
-    function refresh() { api('GET', '/api/support').then(function (r) { if (document.getElementById('supportcard') && r.ok) { if (asking(body)) { timer = setTimeout(refresh, 5000); return; } draw(r.data); } }); }
+    function refresh() { api('GET', '/api/support').then(function (r) { if (document.getElementById('supportcard') && r.ok) { if (asking(body)) { timer = setTimeout(refresh, 5000); return; } if (held('support', refresh)) return; draw(r.data); } }); }
     function post(path, b) { return act('POST', path, b, function (data) { say(''); draw(data); poll(); }); }
     var ROLES = { full: 'check and change everything', live: 'play and mix only', view: 'watch only' };
     function draw(d) {
@@ -2699,8 +2726,6 @@
         h('span', { class: 'badge', text: mark[state] || '?' }));
     }
     function draw(d) {
-      clearTimeout(healthTimer);
-      healthTimer = setTimeout(refresh, 5000);
       body.textContent = '';
       body.appendChild(row('healthpower', 'Power', d.power.state, d.power.text));
       body.appendChild(row('healthtemp', 'Temperature', d.temperature.state, d.temperature.text));
@@ -2722,7 +2747,11 @@
         act('POST', '/api/access/screen', { show: true, items: ['address'], seconds: 120 }, function () { say('The address is on the display for 2 minutes.'); });
       } })));
     }
-    function refresh() { api('GET', '/api/health').then(function (r) { if (document.getElementById('healthcard') && r.ok) draw(r.data); }); }
+    function refresh() {
+      clearTimeout(healthTimer);
+      healthTimer = setTimeout(function () { if (document.getElementById('healthcard')) refresh(); }, 5000);
+      api('GET', '/api/health').then(function (r) { if (r.ok && document.getElementById('healthcard') && !held('health', refresh)) draw(r.data); });
+    }
     refresh();
     return card;
   }
@@ -3310,6 +3339,7 @@
       api('GET', '/api/screen').then(function (r) {
         if (!document.getElementById('screencard')) return;
         if (asking(card)) { screenTimer = setTimeout(refresh, 1000); return; }      // a question is open: not wiped
+        if (held('screen', refresh)) return;
         if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'hint', id: 'screenerr', text: (r.data.error || 'Not available') + '. Open the page again in a moment.' })); return; }
         draw(r.data);
       });
@@ -4520,6 +4550,7 @@
       if (!body.isConnected) return;
       api('GET', '/api/system/update').then(function (r) {
         if (!body.isConnected) return;
+        if (held('update', refresh)) return;
         if (r.ok) draw(r.data); else later();
       }, later);
     }
@@ -4950,6 +4981,7 @@
       api('GET', '/api/sync').then(function (r) {
         if (!document.getElementById('synccard') || !r.ok) return;
         if (n !== posts) return refresh();
+        if (held('sync', refresh)) return;
         draw(r.data);
       });
     }
@@ -5129,7 +5161,8 @@
         var a = document.activeElement;
         var typing = a && body.contains(a) && /^(INPUT|SELECT)$/.test(a.tagName);
         // a question that is open, or a field being typed in, is never drawn over by the 5 second look
-        if (force || (JSON.stringify(r.data) !== shown && !typing && !asking(body))) draw(r.data);
+        if (force) draw(r.data);
+        else if (JSON.stringify(r.data) !== shown && !typing && !asking(body) && !held('projectors', function () { if (document.body.contains(card)) load(); })) draw(r.data);
       });
     }
     // The add form's fields, filled in, in place of the projector's row. Only what was changed is sent: a password
@@ -5649,6 +5682,7 @@
       clearTimeout(netTimer);
       api('GET', '/api/network').then(function (r) {
         if (!document.getElementById('netcard')) return;
+        if (held('network', refresh)) return;
         if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'hint', id: 'netmsg', text: (r.data.error || 'Not available') + '. Open the page again in a moment.' })); return; }
         draw(r.data);
       });
@@ -7236,8 +7270,8 @@
     // the page and keeps only the Network and the Boxes-in-step fields, so a name being typed, a list that is open,
     // a question waiting for its answer (confirmRow) or a slider being dragged would be gone. Then the drawing
     // waits: it looks again when the field is left, and a few times a second for the rest.
-    var late = null, pressed = false;
-    function busy() { return pressed || inUse(app); }
+    var late = null;
+    function busy() { return pressing() || inUse(app); }
     function drawLate() {
       clearTimeout(late);
       late = null;
@@ -7262,8 +7296,6 @@
     document.addEventListener('focusout', function (e) { if (e.target && e.target.id === navFocus && e.target.getClientRects && e.target.getClientRects().length) navFocus = ''; }, true);
     // (after the moment in which the cursor is nowhere: it may be on its way to the next field)
     document.addEventListener('focusout', function () { if (late) { clearTimeout(late); late = setTimeout(drawLate, 0); } }, true);
-    document.addEventListener('pointerdown', function () { pressed = true; }, true);
-    ['pointerup', 'pointercancel', 'blur'].forEach(function (n) { window.addEventListener(n, function () { pressed = false; }, true); });
   }
   boot();
   // The last statement of the file, read by load.js (data-gives in index.html): the file was read as a program and
