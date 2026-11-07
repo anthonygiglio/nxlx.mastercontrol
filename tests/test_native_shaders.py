@@ -639,24 +639,39 @@ class ShotPaceTest(NativeBase):
         self.carrier()
         self.r("pvj-shader", "load", 1, 0, self.generator(FLAT, size=(1920, 1080)))
         time.sleep(1.0)
-        a, t = self.flips(), time.monotonic()
-        time.sleep(3.0)
-        quiet = (self.flips() - a) / (time.monotonic() - t)
-        a, t, n = self.flips(), time.monotonic(), 0
-        while time.monotonic() - t < 3.0:
-            for ext in ("jpg", "png"):
-                path = os.path.join(self.tmp, "shot.%s" % ext)
-                open(path, "w").close()
-                self.r("screenshot-to-file", path, "window")
-                n += 1
-        busy = (self.flips() - a) / (time.monotonic() - t)
+        # The quiet and the busy rate are taken in turn, five times 1.5 s each, and added up. One quiet stretch and
+        # one busy stretch after it (3 s each) let a runner that got busier or slower between the two read as a
+        # stall (CI, 2026-11-02: 37.6 quiet, 26.0 during, which is 0.69 of it, on a loaded machine). Taken in turn,
+        # both rates see the same load; a real stall still takes the busy ones down to a quarter of the quiet.
+        quiet_flips = quiet_secs = busy_flips = busy_secs = 0.0
+        n = 0
+        for _ in range(5):
+            a, t = self.flips(), time.monotonic()
+            time.sleep(1.5)
+            quiet_flips += self.flips() - a
+            quiet_secs += time.monotonic() - t
+            a, t = self.flips(), time.monotonic()
+            while time.monotonic() - t < 1.5:
+                for ext in ("jpg", "png"):
+                    path = os.path.join(self.tmp, "shot.%s" % ext)
+                    open(path, "w").close()
+                    self.r("screenshot-to-file", path, "window")
+                    n += 1
+            busy_flips += self.flips() - a
+            busy_secs += time.monotonic() - t
+        quiet, busy = quiet_flips / quiet_secs, busy_flips / busy_secs
         print("\n  flips a second at 1920 x 1080: %.1f quiet, %.1f during %d screenshots" % (quiet, busy, n))
         self.assertGreater(n, 4)
         # Encoding a 1080p JPEG took 139 to 273 ms on this kind of machine: on the render thread that was 8 to 16
         # vblanks without a picture each, and the rate fell to a quarter of the quiet one (15.4 of 60 here). With
         # only the readback there it stays near the quiet rate. Judged against the quiet rate of the same run, since
         # a CI runner's software GPU draws 1080p at about 30 a second, not 60.
-        self.assertGreater(busy, 0.7 * quiet, (quiet, busy, n))
+        # The bound was 0.7 of the quiet rate, taken from one run. Measured over 30 runs on a loaded machine with the
+        # fix in place (so with no stall at all) the busy rate was 0.64 to 0.97 of the quiet one, median 0.88: the
+        # screenshots' own work takes CPU from a software GPU that already uses all of it, and the load of the
+        # machine moves while the test runs. A run at 0.69 failed in CI with nothing wrong. The stall it guards
+        # against gives 0.26, so the bound is 0.45: above that, and well below anything a healthy render gives.
+        self.assertGreater(busy, 0.45 * quiet, (quiet, busy, n))
 
     def test_two_screenshots_at_once_each_get_their_picture(self):
         import threading

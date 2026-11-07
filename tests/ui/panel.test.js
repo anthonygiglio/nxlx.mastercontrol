@@ -48,6 +48,9 @@ function startServer(env) {          // env: more for the harness's environment 
 
 (async () => {
   const { p: server, info } = await startServer();
+  // The harness ends its mpv when it is told to stop. A run that dies without reaching the finally below (an error
+  // nobody awaited, which Node turns into an exit) still tells it so, or its mpv stays behind.
+  process.on('exit', () => { server.kill(); });
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || undefined });
   let failed = false;
   // For a failure that comes and goes: every page the test opens is kept, with the box's last answers to it, and
@@ -408,10 +411,16 @@ function startServer(env) {          // env: more for the harness's environment 
         return { right: Math.max(box.right, text.right), wide: window.innerWidth, page: document.documentElement.scrollWidth };
       });
       assert(fits.right <= fits.wide && fits.page <= fits.wide, 'the reason sticks out at 320 px: ' + JSON.stringify(fits));
-      const sent = page.waitForRequest((r) => r.url().endsWith('/api/mix') && r.method() === 'POST');
+      // Press Try again while the box still gives its reason. Letting go of the reason first (giveUp = false) before the
+      // press let a status poll in between draw the card anew without the button (followFallback), and the press then
+      // found nothing to press for 30 s (CI, 2026-11-02). The request and the press are awaited together, so a failed
+      // press is this step's failure and not a request wait that nobody awaits.
+      const [sent] = await Promise.all([
+        page.waitForRequest((r) => r.url().endsWith('/api/mix') && r.method() === 'POST'),
+        page.click('#mixretry'),
+      ]);
       giveUp = false;
-      await page.click('#mixretry');
-      assert.deepStrictEqual(JSON.parse((await sent).postData()), { transition: 'slide-down', duration: (await get('/api/status')).mix.duration });
+      assert.deepStrictEqual(JSON.parse(sent.postData()), { transition: 'slide-down', duration: (await get('/api/status')).mix.duration });
       await page.waitForFunction(() => !document.getElementById('mixfallback'));
       await page.unroute('**/api/status');
       await page.setViewportSize(before);
@@ -4678,8 +4687,10 @@ function startServer(env) {          // env: more for the harness's environment 
     console.error('FAILED:', e.message, (e.stack || '').split('\n').filter(function (l) { return /panel.test.js/.test(l); }).slice(0, 2).join(' | '));
     try { await report(e); } catch (x) { console.error('(no report of the pages: ' + x.message + ')'); }
   } finally {
-    await browser.close();
+    await browser.close().catch(() => {});
     server.kill();
+    // wait for the harness to let go of its player (it stops mpv before it exits), so none is left when this ends
+    await new Promise((done) => { if (server.exitCode !== null || server.signalCode !== null) done(); else { server.once('exit', done); setTimeout(done, 10000); } });
   }
   process.exit(failed ? 1 : 0);
 })();
