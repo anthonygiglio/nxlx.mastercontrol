@@ -76,33 +76,38 @@ class PresenceTest(unittest.TestCase):
         self.assertEqual(v["guests"], 2)
         self.assertNotIn("Support", [r["name"] for r in v["devices"] if r["name"] != "Remote support"])
 
-    def test_an_operator_sees_owners_and_operators_by_name_and_a_count_of_guests(self):
+    def test_an_operator_sees_operators_by_name_owners_by_role_and_a_count_of_guests(self):
         self.seen_all()
         v = self.p.view(OP)
-        self.assertEqual({r["name"] for r in v["devices"]}, {"Studio laptop", "Owner phone", "Operator iPad"})
+        self.assertEqual(sorted((r["name"], r["role"]) for r in v["devices"] if r["name"]), [("Operator iPad", "Operator")])
+        self.assertEqual(sorted(r["role"] for r in v["devices"] if r["name"] is None), ["Owner", "Owner"], "an Owner's device by its role only")
+        self.assertEqual(len(v["devices"]), 3)
         self.assertEqual(v["guests"], 2)
         self.assertEqual(v["count"], 5, "the support session is not counted for him")
         self.assertEqual([r["you"] for r in v["devices"] if r["name"] == "Operator iPad"], [True])
         text = json.dumps(v)
-        for hidden in ("Guest phone", "Other guest", "Support", "Remote support", "cccc", "support-1"):
+        for hidden in ("Studio laptop", "Owner phone", "Guest phone", "Other guest", "Support", "Remote support", "aaaa", "cccc", "support-1"):
             self.assertNotIn(hidden, text)
 
     def test_a_guest_sees_only_a_count(self):
         self.seen_all()
         v = self.p.view(GUEST)
-        self.assertEqual((v["devices"], v["count"], v["guests"]), ([], 5, 2))
+        self.assertEqual((v["devices"], v["count"], v["guests"]), ([], 5, 0), "the count, and nothing that splits it")
         text = json.dumps(v)
         for hidden in ("Studio", "Owner", "Operator", "Other guest", "Remote", "Support", "aaaa", "bbbb"):
             self.assertNotIn(hidden, text)
         self.assertEqual(self.p.view(None)["devices"], [], "nobody in particular is a guest")
 
-    def test_a_support_login_is_told_like_an_operator_and_sees_itself(self):
+    def test_a_support_login_is_told_roles_and_counts_and_no_device_name(self):
         self.seen_all()
         v = self.p.view(SUPPORT)
-        self.assertEqual({r["name"] for r in v["devices"]}, {"Studio laptop", "Owner phone", "Operator iPad", "Remote support"})
-        self.assertEqual([r["name"] for r in v["devices"] if r["you"]], ["Remote support"])
-        self.assertNotIn("Guest phone", json.dumps(v))
-        self.assertEqual(v["guests"], 2)
+        self.assertEqual(sorted(r["role"] for r in v["devices"]), ["Operator", "Owner", "Owner", "Remote support"])
+        self.assertEqual([r["name"] for r in v["devices"] if not r["you"]], [None, None, None])
+        self.assertEqual([r["name"] for r in v["devices"] if r["you"]], ["Remote support"], "its own entry carries only the label")
+        text = json.dumps(v)
+        for hidden in ("Studio laptop", "Owner phone", "Operator iPad", "Guest phone", "Other guest"):
+            self.assertNotIn(hidden, text)
+        self.assertEqual((v["guests"], v["count"]), (2, 6))
 
     def test_the_last_changes_by_area_newest_first_and_ten_at_most(self):
         for i in range(14):
@@ -140,14 +145,35 @@ class PresenceTest(unittest.TestCase):
         by = lambda viewer: [(c["area"], c["by"], c["role"]) for c in self.p.view(viewer)["changes"]]
         self.assertEqual(by(OWNER), [("Playback", "Owner phone", "Owner"), ("Pads", "Operator iPad", "Operator"),
                                      ("Projectors", "Remote support", "Remote support"), ("Mix", "Guest phone", "Guest")])
-        self.assertEqual(by(OP), [("Playback", "Owner phone", "Owner"), ("Pads", "Operator iPad", "Operator"), ("Mix", None, "Guest")],
-                         "no support change, and a guest is a guest")
+        self.assertEqual(by(OP), [("Playback", None, "Owner"), ("Pads", "Operator iPad", "Operator"), ("Mix", None, "Guest")],
+                         "an Owner's device and a guest by role only, and no support change")
+        self.assertEqual(by(SUPPORT), [("Playback", None, "Owner"), ("Pads", None, "Operator"), ("Projectors", "Remote support", "Remote support"),
+                                       ("Mix", None, "Guest")], "no device name, its own change as Remote support")
         self.assertEqual(by(GUEST), [("Playback", None, None), ("Pads", None, None), ("Mix", None, None)])
         self.assertEqual([c["you"] for c in self.p.view(GUEST)["changes"]], [False, False, True])
         for viewer in (OWNER, OP, GUEST, SUPPORT):
             text = json.dumps(self.p.view(viewer))
             for secret in ("aaaa0001", "bbbb0001", "cccc0001", "support-1", "token"):
                 self.assertNotIn(secret, text)
+
+    def test_looking_or_asking_is_not_a_change(self):
+        for method, path, body in (("POST", "/api/network/scan", {}), ("POST", "/api/osc/key", {}), ("POST", "/api/osc/key", {"new": False}),
+                                   ("POST", "/api/osc/key", None), ("POST", "/api/midi/learn", {"start": True}), ("POST", "/api/midi/learn", {"start": False})):
+            self.p.changed(OWNER, method, path, body)
+        self.assertEqual(self.p.view(OWNER)["changes"], [])
+        self.p.changed(OWNER, "POST", "/api/osc/key", {"new": True})
+        self.assertEqual([c["area"] for c in self.p.view(OWNER)["changes"]], ["Controllers"], "a new key is one")
+
+    def test_a_removed_device_is_gone_at_once_from_the_list_and_the_changes(self):
+        self.seen_all()
+        self.p.changed(GUEST, "POST", "/api/mix")
+        self.p.changed(OP, "POST", "/api/play")
+        self.p.forget(GUEST["id"])
+        v = self.p.view(OWNER)
+        self.assertNotIn("Guest phone", json.dumps(v))
+        self.assertEqual((v["count"], [c["area"] for c in v["changes"]]), (5, ["Playback"]))
+        self.p.forget(None)
+        self.assertEqual(self.p.view(OWNER), {"window_seconds": 30, "count": 0, "devices": [], "guests": 0, "changes": []})
 
     def test_nothing_is_ever_written_to_the_disk(self):
         folder = tests.TMP if hasattr(tests, "TMP") else os.environ.get("TMPDIR", "/tmp")
@@ -192,7 +218,8 @@ class ApiTest(CareBase):
         owner, op, guest = (self.status(self.full_dev), self.status(self.live_dev), self.status(self.view_dev))
         self.assertEqual(sorted(r["role"] for r in owner["devices"]), ["Guest", "Operator", "Owner"])
         self.assertEqual(sorted(r["role"] for r in op["devices"]), ["Operator", "Owner"])
-        self.assertEqual((guest["devices"], guest["count"]), ([], 3))
+        self.assertEqual([r["name"] for r in op["devices"] if r["role"] == "Owner"], [None], "an Owner's device by role only")
+        self.assertEqual((guest["devices"], guest["count"], guest["guests"]), ([], 3, 0))
         self.assertEqual(op["guests"], 1)
         self.assertTrue(all(set(r) == {"name", "role", "you", "seconds_ago"} for r in owner["devices"]))
         self.assertEqual(len(json.dumps(owner)) < 1500, True, "small enough to ride on a status every second")
@@ -217,6 +244,38 @@ class ApiTest(CareBase):
         self.assertIn("Remote support", [r["name"] for r in owner["devices"]])
         self.assertNotIn("Remote support", json.dumps(self.status(self.live_dev)))
         self.assertNotIn("Remote support", json.dumps(self.status(self.view_dev)))
+
+    def test_revoking_a_device_and_a_factory_reset_drop_it_at_once(self):
+        op_id = self.live_dev["id"]
+        for d in (self.full_dev, self.live_dev, self.view_dev):
+            self.status(d)
+        self.assertEqual(self.h("POST", "/api/mix", {"duration": 2.0}, self.live_dev)[0], 200)
+        owner = self.status(self.full_dev)
+        self.assertEqual((owner["count"], owner["changes"][0]["by"]), (3, self.names["live_dev"]))
+        st, out = self.h("POST", "/api/devices/revoke", {"id": op_id}, self.full_dev)
+        self.assertEqual(st, 200, out)
+        owner = self.status(self.full_dev)
+        self.assertEqual((owner["count"], owner["changes"]), (2, []))
+        self.assertNotIn("Operator", [r["role"] for r in owner["devices"]])
+        st, out = self.h("POST", "/api/system/factory-reset", {"confirm": "factory-reset", "media": "keep"}, self.full_dev)
+        self.assertEqual(st, 200, out)
+        self.assertEqual(self.api.presence.view(self.full_dev), {"window_seconds": 30, "count": 0, "devices": [], "guests": 0, "changes": []})
+
+    def test_the_requests_answered_outside_the_route_table_count(self):
+        full = self.call("POST", "/api/devices/invite", {"name": "Booth", "role": "live"}, token=self.full)[1]["token"]
+        before = self.status(self.full_dev)
+        st, body, _ = self.call("POST", "/api/media/upload?name=cue.mp4", raw=b"not really a video", token=full,
+                                headers={"Content-Type": "application/octet-stream"})
+        self.assertIn(st, (200, 201, 415, 422, 400), body)
+        names = [c["area"] for c in self.status(self.full_dev)["changes"]]
+        if st == 200:
+            self.assertEqual(names[0], "Media")
+        self.assertIn("Booth", [r["name"] for r in self.status(self.full_dev)["devices"]], "marked as connected by that request")
+        self.assertEqual(len(before["changes"]) + (1 if st == 200 else 0), len(self.status(self.full_dev)["changes"]))
+        file = self.export()
+        st, out = self.send(file)
+        self.assertEqual(st, 200, out)
+        self.assertEqual(self.status(self.full_dev)["changes"][0]["area"], "System")
 
     def test_nothing_new_is_in_the_settings_file(self):
         before = self.on_disk()

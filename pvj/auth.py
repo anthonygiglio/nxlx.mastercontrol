@@ -723,8 +723,18 @@ class Auth:
         else:
             self._addresses.pop(device_id, None)
 
+    on_revoke = None        # called with the id of a removed device, or None when all went (the presence list, D126)
+
+    def _revoked(self, ident):
+        if self.on_revoke:
+            try:
+                self.on_revoke(ident)
+            except Exception:
+                pass
+
     def revoke(self, device_id):
         self._addresses.pop(device_id, None)
+        self._revoked(device_id)
         with self.settings.lock:
             before = len(self.settings.data["devices"])
             self.settings.data["devices"] = [d for d in self.settings.data["devices"] if d["id"] != device_id]
@@ -734,6 +744,7 @@ class Auth:
             return changed
 
     def revoke_all(self):
+        self._revoked(None)
         with self.settings.lock:
             self.settings.data["devices"] = []
             self.settings.save()
