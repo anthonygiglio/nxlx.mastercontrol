@@ -7392,11 +7392,13 @@
     var held = dock && a && dock.el.contains(a) ? a : null;      // a control of the strip, which is kept across the redraw
     app.textContent = '';
     if (!S.device) { S.landing = true; dock = null; app.appendChild(connect()); return; }
-    // The Room area (room.js) is there while its module is on. A presenter or a guest starts on it when the page is
-    // first loaded or the device has just been paired; nobody already on another screen is ever moved.
+    // Where a device starts when the page is first loaded or the device has just been paired (nobody already on
+    // another screen is ever moved): an owner or an operator on Now, what is on and what needs them (the owner,
+    // 2026-11-07: "open on Now"); a guest on the Room area (room.js) while its module is on.
     var landing = S.landing !== false;
     if (S.modules.length) S.landing = false;      // decided once the modules are known, not by a render that came before them
-    if (window.pvjRoom && moduleOn('room') && landing && !can('full')) S.tab = 'room';
+    if (landing && canOp() && hasScreen('now/now')) S.tab = 'now';
+    else if (window.pvjRoom && moduleOn('room') && landing && !can('full')) S.tab = 'room';
     settle();
     markArea();        // again: the screen may just have been decided
     var desk = S.tab === 'system' ? system() : areaDesk();

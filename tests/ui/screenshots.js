@@ -10,6 +10,8 @@ const path = require('path');
 const fs = require('fs');
 // Moving about in the Workspace shell (D65, D72): go(page, 'area/screen'), and stripOpen(page) for the transport strip's More.
 const { go, stripOpen, sys: sysOf, sysIndex: sysIndexOf } = require('./signal-pages');
+// an owner starts on Now (2026-11-07): the pictures of Pads go there first
+async function padsOpen(page) { await page.waitForSelector('main.ws'); await go(page, 'play/pads'); await page.waitForSelector('.pads'); }
 
 const out = process.env.SHOTS || path.join(__dirname, '..', '..', 'docs', 'images', 'ui');
 const pyBin = process.env.PYTHON || 'python3';
@@ -79,7 +81,7 @@ function startServer() {
     for (let i = 0; i < 4; i++) await page.fill(`input[aria-label="PIN digit ${i + 1}"]`, info.pin[i]);
     await page.fill('#devname', 'Anthony\'s phone');
     await page.click('#pairbtn');
-    await page.waitForSelector('.pads');
+    await padsOpen(page);
     await stripOpen(page);               // a phone: the whole transport is in the pictures of Pads
 
     // (ONLY=signal... goes straight to the Signal pictures, which set the box up themselves)
@@ -287,7 +289,7 @@ function startServer() {
       await api('POST', '/api/modules/room', { enabled: true });
       try {
         await page.reload();
-        await page.waitForSelector('.pads');
+        await padsOpen(page);
         await go(page, 'room/scenes');
         await soft('ambience button', page.waitForFunction(() => /^Ambience is playing: /.test((document.getElementById('roomambwords') || {}).textContent), null, { timeout: 15000 }));
         await page.waitForTimeout(600);
@@ -295,7 +297,7 @@ function startServer() {
       } finally {
         await api('POST', '/api/modules/room', { enabled: false });
         await page.reload();
-        await page.waitForSelector('.pads');
+        await padsOpen(page);
       }
     });
     await shot('shaders-page-laptop', async (f) => {
@@ -383,7 +385,7 @@ function startServer() {
       try {                                                   // a module that is off: its page says what it does, and one button
         await api('POST', '/api/modules/inputs-srt', { enabled: false });
         await page.reload();                                  // the panel reads which modules are on when it loads
-        await page.waitForSelector('.pads');
+        await padsOpen(page);
         await go(page, 'setup/index');
         await page.waitForSelector('#sysindex');
         await page.click('#nav-streams');
@@ -392,7 +394,7 @@ function startServer() {
       } catch (e) { failures.push('mock-up ' + device + ' system-page-off: ' + e.message.split('\n').slice(0, 3).join(' | ')); }
       await api('POST', '/api/modules/inputs-srt', { enabled: true });
       await page.reload();
-      await page.waitForSelector('.pads');
+      await padsOpen(page);
       try {                                                   // the Room area, as staff land on it (Scenes)
         await go(page, 'room/scenes');
         await page.waitForSelector('#roomscenes', { timeout: 8000 });
@@ -434,17 +436,17 @@ function startServer() {
     await pages('phone');
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.reload();
-    await page.waitForSelector('.pads');
+    await padsOpen(page);
     await screens('screen-laptop');
     await pages('laptop');
     await page.setViewportSize({ width: 390, height: 844 });
     await page.reload();
-    await page.waitForSelector('.pads');
+    await padsOpen(page);
 
     // Another theme, and the wide layout.
     await api('POST', '/api/theme', { name: 'night-red', accent: null });
     await go(page, 'play/pads');
-    await page.waitForSelector('.pads');
+    await padsOpen(page);
     await page.reload();
     await page.waitForSelector('.pad.on', { timeout: 10000 }).catch(() => {});
     await page.waitForTimeout(1200);

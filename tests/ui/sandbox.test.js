@@ -70,8 +70,8 @@ function watch(page, problems, where) {
     // The panel, each role at two widths. What each must show is the panel's own: the area tabs or the rail, and
     // the pairing screen for a device that is not paired. A Guest and an Operator land on Room (the Room module is on).
     const want = {
-      owner: async (p) => p.waitForSelector('#padsscreen', { timeout: 20000 }),
-      operator: async (p) => p.waitForSelector('#roomscreen, [data-area="room"] .deskcol', { timeout: 20000 }),
+      owner: async (p) => p.waitForSelector('#nowscreen', { timeout: 20000 }),           // an owner and an operator start on Now
+      operator: async (p) => p.waitForSelector('#nowscreen', { timeout: 20000 }),
       guest: async (p) => p.waitForSelector('#guestcard', { timeout: 20000 }),
       nobody: async (p) => p.waitForSelector('#pairbtn', { timeout: 20000 }),
     };
