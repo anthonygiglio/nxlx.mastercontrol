@@ -820,9 +820,9 @@ function startServer(env) {          // env: more for the harness's environment 
     let headNow = await headAt();
     assert.deepStrictEqual([headNow.top, headNow.pos], [0, 'sticky'], 'the title bar stays at the top of a scrolled screen at 820 x 1180: ' + JSON.stringify(headNow));
     if (await page.isVisible('#wsmore')) {
-      const expanded = () => page.evaluate(() => document.getElementById('wsmore').getAttribute('aria-expanded') === 'true');
       await stripOpen(page);
-      assert(await expanded(), 'More opens the strip at 820, with one click');
+      await page.waitForFunction(() => document.getElementById('wsmore').getAttribute('aria-expanded') === 'true', null, { timeout: 3000 })
+        .catch(() => { throw new Error('More opens the strip at 820, with one click'); });
       await page.evaluate(() => window.scrollTo(0, 2000));
       headNow = await headAt();
       assert.deepStrictEqual([headNow.top, headNow.pos], [0, 'sticky'], 'and with More open: ' + JSON.stringify(headNow));
@@ -1747,32 +1747,42 @@ function startServer(env) {          // env: more for the harness's environment 
     await sys('Health');
     await page.waitForSelector('#healthcard .item:has-text("Projector: Main"):has-text("lamp 1234 h"):has-text("Warning: filter")', { timeout: 15000 });
     // A timed card knows its own element: a late answer to a Health card that was drawn again meanwhile is dropped,
-    // and does not take the card's next look away from the new one (another card with the same id). The first card's
-    // answer is held back 4 s and lands while a press is down, after the new card's own answer; on the release only
-    // the new card looks again, and it shows the node's latest answer.
+    // and does not take the card's next look away from the new one (another card with the same id). Every request
+    // made while the first card is open is held back 4 s, so its answer lands while a press is down, after the page
+    // was drawn again; on the release the new card keeps its own look and shows the node's latest answer.
     {
-      let asked = 0, lateDone, lamp = '1234';
-      const late = new Promise((res) => { lateDone = res; });
+      let oldCard = true, held4 = 0, lateDone, lamp = '1234', lateIn = false;
+      const late = new Promise((res) => { lateDone = res; }).then(() => { lateIn = true; });
       const slowHealth = async (route) => {
-        const n = ++asked, answer = await route.fetch();
-        const text = (await answer.text()).replace(/lamp 1234 h/g, 'lamp ' + lamp + ' h');
-        if (n === 1) await new Promise((res) => setTimeout(res, 4000));
-        else if (n === 2) await new Promise((res) => setTimeout(res, 500));
-        await route.fulfill({ response: answer, body: text });
-        if (n === 1) lateDone();
+        const slow = oldCard;
+        if (slow) held4++;
+        try {
+          const answer = await route.fetch();
+          const text = (await answer.text()).replace(/lamp 1234 h/g, 'lamp ' + lamp + ' h');
+          if (slow) await new Promise((res) => setTimeout(res, 4000));
+          await route.fulfill({ response: answer, body: text });
+        } catch (e) { if (!slow) throw e; }
+        if (slow && --held4 === 0 && !oldCard) lateDone();
       };
       await sysIndex();
       await page.route('**/api/health', slowHealth);
-      await sys('Health');                                   // the first card: its answer comes in 4 s
+      await sys('Health');                                   // the first card: its answers come in 4 s
+      await page.waitForFunction(() => !!document.getElementById('healthcard'));
+      oldCard = false;
+      if (held4 === 0) lateDone();
       await sysIndex();
       await sys('Health');                                   // the new card
       const head = await page.locator('#healthcard h2').boundingBox();
       await page.mouse.move(head.x + 10, head.y + head.height / 2);
       await page.mouse.down();
-      await late;                                            // the new card's answer came first and waits for the release
-      lamp = '4321';
-      await page.waitForTimeout(300);
-      await page.mouse.up();
+      try {
+        if (lateIn) throw new Error('the held-back Health answers came before the press: the case did not test anything');
+        await Promise.race([late, new Promise((res, rej) => setTimeout(() => rej(new Error('the held-back Health answers never came')), 15000))]);
+        lamp = '4321';
+        await page.waitForTimeout(300);
+      } finally {
+        await page.mouse.up();
+      }
       await page.waitForSelector('#healthcard .item:has-text("lamp 4321 h")', { timeout: 8000 }).catch(() => {
         throw new Error('a late answer to a card drawn again took its next look away: the new Health card stopped refreshing');
       });

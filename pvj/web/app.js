@@ -2747,12 +2747,15 @@
         act('POST', '/api/access/screen', { show: true, items: ['address'], seconds: 120 }, function () { say('The address is on the display for 2 minutes.'); });
       } })));
     }
-    function refresh() {
+    // A look queued by an old card (a timer, or held() for after a press) does nothing: the new card's timer is not
+    // touched. The first look is made before the card is on the page, so it is look() itself.
+    function refresh() { if (card.isConnected) look(); }
+    function look() {
       clearTimeout(healthTimer);
       healthTimer = setTimeout(function () { if (card.isConnected) refresh(); }, 5000);
       api('GET', '/api/health').then(function (r) { if (r.ok && card.isConnected && !held('health', refresh)) draw(r.data); });
     }
-    refresh();
+    look();
     return card;
   }
 
@@ -3334,7 +3337,8 @@
     var body = h('div', { class: 'list sp', id: 'screenbody' }, h('div', { class: 'state', text: 'Loading...' }));
     var card = h('div', { class: 'card', id: 'screencard' }, h('h2', { text: 'Screen output' }), body);
     var out = h('div', { class: 'msg inmsg', id: 'screenmsg', role: 'status' });
-    function refresh() {
+    function refresh() { if (card.isConnected) look(); }      // as in Health
+    function look() {
       clearTimeout(screenTimer);
       api('GET', '/api/screen').then(function (r) {
         if (!card.isConnected) return;
@@ -3398,7 +3402,7 @@
       body.appendChild(h('div', { class: 'hint', text: 'Colour bars at the screen\'s own size, with a grid, a red border one pixel wide at the very edge and the mode in words, in place of what plays. A border you cannot see means the projector cuts the edge off.' }));
       body.appendChild(h('div', { class: 'row' }, testPattern()));
     }
-    refresh();
+    look();
     return card;
   }
   // ---- the renderer (D95) -----------------------------------------------
@@ -5678,7 +5682,8 @@
     var mode = netForm.mode;
     var out = { iface: null, address: null, prefix: null, gateway: null, dns: null, ssid: null, pass: null, security: null,
       hidden: null, band: null, secs: null, preview: null, msg: null };
-    function refresh() {
+    function refresh() { if (card.isConnected) look(); }      // as in Health
+    function look() {
       clearTimeout(netTimer);
       api('GET', '/api/network').then(function (r) {
         if (!card.isConnected) return;
@@ -5901,7 +5906,7 @@
           } }))));
       netTimer = setTimeout(refresh, 1000);
     }
-    refresh();
+    look();
     return card;
   }
   var oscForm = { port: null, allow: null }, oscAdv = false, oscTimer = null;
