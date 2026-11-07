@@ -1,0 +1,2 @@
+{"extends": "_base", "title": "The connection drops", "about": "The panel loads, then after 5 seconds the box stops answering, as on a lost Wi-Fi: the panel says Connection lost. Load the scenario again to get the box back.",
+ "offline_after": 5}

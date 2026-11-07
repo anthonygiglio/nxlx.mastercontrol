@@ -1,0 +1,3 @@
+{"extends": "_base", "title": "Guests locked for a show", "about": "A pad plays and guest controls are locked: a Guest can watch only. Look at it as Guest and as Operator.",
+ "guests_locked": true,
+ "steps": [{"path": "/api/play", "body": {"pad": [0, 0]}}]}

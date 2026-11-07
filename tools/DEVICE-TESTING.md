@@ -1072,6 +1072,24 @@ Run 2026-11-01, master 7d6b151, nobody watched (`measurements/2026-11-02-deblock
 - DB4 waits for the owner.
 - Not covered: a real browser or phone, other panel screens, other clips or codecs, effects on, crossfades 7 s apart left alone, the picture itself.
 
+### A screen that comes after the player starts (pvj/latescreen.py): not yet run on a node
+
+With New chosen, a box that boots with no screen falls back to classic mpv; when a screen is connected later it should come up on pvj-render by itself, once. Unplug the HDMI cable (or switch the projector off) first.
+
+| Row | Do | Good | Bad |
+|---|---|---|---|
+| LS1 | Screen unplugged, `sudo systemctl restart pvj-player`. Then `journalctl -u pvj-player -n 20` and `pgrep -x pvj-render` | Journal: "pvj-render did not start (exit 2)", "classic mpv draws" and "watching for one"; no pvj-render running; the page says classic is drawing | pvj-render running with no screen, or no fallback |
+| LS2 | Plug the screen in. Within 10 s (the screen settles 3 s, then the player restarts): `tr '\0' ' ' < /proc/$(pgrep -x pvj-render)/cmdline` | pvj-render running with `--skip-deblock` in its cmdline (and the screen's own mode chosen as at a normal start: `cat /run/pvj/player/screen.json`); the journal says "a screen is connected now (HDMI-A-1) ... restarting the player once" | Still classic after 10 s, or the mode differs from a normal start |
+| LS3 | Wait 2 minutes with the screen in. `journalctl -u pvj-player --since "-3min" \| grep -c "restarting the player once"` | 1; no second restart; same pvj-render pid | More than 1: a loop |
+| LS4 | Flapping: unplug the screen and plug it back every 10 s for 15 minutes, then leave it plugged in. List the times of the "restarting the player once" lines | The gaps between them are at least 30 s, 60 s, 120 s, then 300 s each, with no upper limit on how many; once left plugged in, the next switch comes at the end of its wait and pvj-render is drawing | Two within a wait, a restart every few seconds, or a box left on classic with the screen plugged in |
+| LS4b | After LS4, with pvj-render drawing, leave it 11 minutes, then repeat LS1 and LS2 | The switch comes within a few seconds of the screen settling, as in LS2, not after a long wait | A long wait |
+| LS4c | After a switch: `ls -ld /var/lib/pvj-player /var/lib/pvj-player/late-screen; ls -la /var/lib/pvj-player; cat /var/lib/pvj-player/late-screen/late-screen.json`; then `sudo systemctl restart pvj-player` and look again | `late-screen` is owned by the account that runs the player (0750) and nothing else in `/var/lib/pvj-player` (the home, with its other files) has changed owner; the file lists this boot's id and the switch times; it is still there, unchanged, after the restart | No folder or file, or a "cannot be kept" line in `journalctl -u pvj-player` |
+| LS5 | Crash stays on classic: screen plugged in, New chosen, `sudo pkill -x -SEGV pvj-render` twice within a minute (as R7) | Classic draws, "ended twice in a row"; plugging and unplugging the screen afterwards does not restart the player | The player restarts when the screen comes |
+| LS6 | Boot with the screen plugged in | pvj-render draws from the first start; no "a screen is connected now" line | A restart at boot |
+| LS7 | A projector that reports connected before it has modes: boot with it warming up. `cat /sys/class/drm/card*-HDMI*/status /sys/class/drm/card*-HDMI*/modes` while it warms | (First confirm on the node's kernel that `modes` fills on a hotplug, not only at boot.) While `modes` is empty the watcher does not switch; when modes appear (and stay 3 s) the player restarts once and pvj-render draws | A restart while `modes` is empty, or classic all boot because no watcher was started |
+| LS8 | Unplug (or switch off) the screen while pvj-render draws; wait 2 minutes; plug it back | The player falls back to classic ("ended twice in a row (exit 2)", "watching for one"), then within about 10 s of the screen settling pvj-render draws again | Classic stays after the screen is back |
+| LS9 | Two short unplugs, a minute apart, while pvj-render draws; replug after each. Record the journal | Nothing is decided here: it records what happens. Expected by the code: each unplug ends pvj-render with exit 3 (or 2), so the second gives "ended twice in a row (exit 3)" and classic stays (D105); with exit 2 the watcher brings pvj-render back | What the exit codes were, and whether the box ended on classic or pvj-render |
+
 ## Safety
 
 - The workflow starts by **manual dispatch only**, and only for the repository owner. It never runs for pushes, pull requests or forks, so nobody else's code reaches the Pi. Keep it that way.

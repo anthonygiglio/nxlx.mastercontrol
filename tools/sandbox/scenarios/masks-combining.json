@@ -1,0 +1,5 @@
+{"extends": "_base", "title": "Masks combining", "about": "Two masks are on and the box is combining them: Shape > Picture says Combining... for about 30 seconds after loading.",
+ "slow_masks": 30,
+ "steps": [{"path": "/api/play", "body": {"pad": [0, 1]}},
+           {"path": "/api/overlay", "body": {"add": "mask-left.png", "on": true}},
+           {"path": "/api/overlay", "body": {"add": "mask-right.png"}}]}
