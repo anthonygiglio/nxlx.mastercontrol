@@ -834,7 +834,7 @@
         } })),
       h('div', { class: 'tpgrp' },
         b('prev', 'Prev', 'Previous clip', 'tpx fold f-steps', ctl('prev')),
-        b('back10', '− 10 s', 'Back 10 seconds', 'tpx fold f-ten', ctl('seek', -10)),
+        b('back10', '- 10 s', 'Back 10 seconds', 'tpx fold f-ten', ctl('seek', -10)),
         b('fwd10', '+ 10 s', 'Forward 10 seconds', 'tpx fold f-ten', ctl('seek', 10)),
         b('next', 'Next', 'Next clip', 'tpx fold f-steps', ctl('next'))),
       h('div', { class: 'tpgrp' },
@@ -1032,7 +1032,7 @@
     var fill = function () {
       list.textContent = '';
       if (!moduleOn('shaders')) { list.appendChild(h('div', { class: 'k', id: 'padshadersoff', text: 'Shaders are off. Turn on the Shaders and Vibes module in Setup, then give the pad a shader.' })); return; }
-      list.appendChild(h('div', { class: 'k', text: 'Loading the shaders…' }));
+      list.appendChild(h('div', { class: 'k', text: 'Loading the shaders...' }));
       api('GET', '/api/shaders').then(function (r) {
         if (!list.isConnected) return;
         list.textContent = '';
@@ -1565,8 +1565,8 @@
           h('button', { class: 'linkish', text: x.name + ' (' + x.type + (x.type === 'grid' ? ' ' + x.cols + 'x' + x.rows : '') + ')' + (x.source > 1 ? ', Source ' + x.source : '') + (x.on ? '' : ', hidden'), 'aria-label': 'Choose ' + x.name,
             onclick: function () { send({ action: 'edit', selected: x.id }); } }),
           h('span', { class: 'row' },
-            h('button', { class: 'btn small', text: 'Up', 'aria-label': 'Bring ' + x.name + ' forward', disabled: i === 0, onclick: function () { send({ action: 'order', id: x.id, dir: 'up' }); } }),
-            h('button', { class: 'btn small', text: 'Down', 'aria-label': 'Send ' + x.name + ' back', disabled: i === d.surfaces.length - 1, onclick: function () { send({ action: 'order', id: x.id, dir: 'down' }); } }),
+            h('button', { class: 'btn small', text: 'Up', 'aria-label': 'Up: bring ' + x.name + ' forward', disabled: i === 0, onclick: function () { send({ action: 'order', id: x.id, dir: 'up' }); } }),
+            h('button', { class: 'btn small', text: 'Down', 'aria-label': 'Down: send ' + x.name + ' back', disabled: i === d.surfaces.length - 1, onclick: function () { send({ action: 'order', id: x.id, dir: 'down' }); } }),
             h('button', { class: 'btn small', text: x.on ? 'Hide' : 'Show', 'aria-label': (x.on ? 'Hide ' : 'Show ') + x.name, onclick: function () { send({ action: 'show', id: x.id, on: !x.on }); } }),
             h('button', { class: 'btn small', text: 'Remove', 'aria-label': 'Remove ' + x.name, onclick: function () { send({ action: 'remove', id: x.id }); } }))));
       });
@@ -1583,10 +1583,10 @@
         }));
         step.addEventListener('change', function (e) { mapUi.step = +e.target.value; });
         panel.appendChild(h('div', { class: 'row nudge' },
-          h('button', { class: 'btn small', id: 'mapleft', text: 'Left', 'aria-label': 'Move left', onclick: function () { nudge(-1, 0); } }),
-          h('button', { class: 'btn small', id: 'mapup', text: 'Up', 'aria-label': 'Move up', onclick: function () { nudge(0, -1); } }),
-          h('button', { class: 'btn small', id: 'mapdown', text: 'Down', 'aria-label': 'Move down', onclick: function () { nudge(0, 1); } }),
-          h('button', { class: 'btn small', id: 'mapright', text: 'Right', 'aria-label': 'Move right', onclick: function () { nudge(1, 0); } }),
+          h('button', { class: 'btn small', id: 'mapleft', text: 'Left', 'aria-label': 'Left: move left', onclick: function () { nudge(-1, 0); } }),
+          h('button', { class: 'btn small', id: 'mapup', text: 'Up', 'aria-label': 'Up: move up', onclick: function () { nudge(0, -1); } }),
+          h('button', { class: 'btn small', id: 'mapdown', text: 'Down', 'aria-label': 'Down: move down', onclick: function () { nudge(0, 1); } }),
+          h('button', { class: 'btn small', id: 'mapright', text: 'Right', 'aria-label': 'Right: move right', onclick: function () { nudge(1, 0); } }),
           step));
         panel.appendChild(h('div', { class: 'row' },
           h('button', { class: 'btn small grow', id: 'mapnext', text: 'Next corner', disabled: mapUi.whole,
@@ -2685,7 +2685,7 @@
       // screen of another area (Shaders, Mapping, Sound) and was opened from the menu has nowhere to go back to.
       // (toindex: where the index stands beside the page, the stylesheet leaves this one out.)
       HOMES[id] && hasScreen(HOMES[id]) && !S.sysFrom ? null : h('div', { class: 'row backrow' + (S.sysFrom && S.sysFrom !== 'index' ? '' : ' toindex') },
-        h('button', { class: 'btn back', id: 'sysback', text: '‹ ' + (BACK_NAMES[S.sysFrom] || 'Setup'), onclick: sysBack })),
+        h('button', { class: 'btn back', id: 'sysback', text: 'Back to ' + (BACK_NAMES[S.sysFrom] || 'Setup'), onclick: sysBack })),
       head,
       h('p', { class: 'hint', id: 'sysblurb', text: blurb || '' }),
       h('div', { class: 'row', id: 'sysstate', hidden: true }, h('span', { class: 'chip' }), h('span', { class: 'hint' })),

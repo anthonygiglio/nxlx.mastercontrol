@@ -395,10 +395,10 @@
           c.act('POST', '/api/vibes', vibesBody(L.data, !player(c).vibes), function () { c.say(''); setTimeout(c.poll, 1200); });
         } },
         c.h('span', { id: 'vibeswords', text: words(pl) }), c.h('span', { class: 'vibessub', id: 'vibessub', text: sub(pl) })),
-      can ? c.h('button', { class: 'btn big', id: 'liveprev', text: '‹ Previous', 'aria-label': 'The shader before', hidden: !on, onclick: step(-1) }) : null,
-      can ? c.h('button', { class: 'btn big', id: 'vibesskip', text: 'Next ›', 'aria-label': 'The next shader', hidden: !on, onclick: step(1) }) : null,
+      can ? c.h('button', { class: 'btn big', id: 'liveprev', text: 'Previous', 'aria-label': 'The shader before', hidden: !on, onclick: step(-1) }) : null,
+      can ? c.h('button', { class: 'btn big', id: 'vibesskip', text: 'Next', 'aria-label': 'The next shader', hidden: !on, onclick: step(1) }) : null,
       pick,
-      c.h('button', { class: 'btn big', id: 'shaderslink', text: 'Shaders ›', 'aria-label': 'Shaders: the list, controls, presets and Vibes settings', onclick: c.openShaders }));
+      c.h('button', { class: 'btn big', id: 'shaderslink', text: 'Open Shaders', 'aria-label': 'Shaders: the list, controls, presets and Vibes settings', onclick: c.openShaders }));
   }
   // (Until D72 a strip with Speed and the first four controls of the shader that is on stood on Live, then on
   // Shape > Controls: a second copy of what the Controls card of the Shaders screen holds, and gone as that.)
@@ -741,9 +741,9 @@
       if (picks.firstChild) card.appendChild(picks);
       var prev = teacher('shader_prev', 'The shader before', '', 'a pad or a button'), next = teacher('shader_next', 'The next shader', '', 'a pad or a button');
       card.appendChild(h('div', { class: 'transport3' },
-        h('button', { class: 'btn big', id: 'shaderprev', text: '‹ Previous', 'aria-label': 'The shader before', onclick: function () { step(-1); } }),
+        h('button', { class: 'btn big', id: 'shaderprev', text: 'Previous', 'aria-label': 'The shader before', onclick: function () { step(-1); } }),
         h('button', { class: 'btn big' + (running ? '' : ' on'), id: 'vibesbtn', disabled: !running && !n, text: running ? 'Stop Vibes' : 'Start Vibes', onclick: toggleVibes }),
-        h('button', { class: 'btn big', id: 'shadernext', text: 'Next ›', 'aria-label': 'The next shader', onclick: function () { step(1); } })));
+        h('button', { class: 'btn big', id: 'shadernext', text: 'Next', 'aria-label': 'The next shader', onclick: function () { step(1); } })));
       card.appendChild(h('div', { class: 'msg inmsg', id: 'shadernowmsg', role: 'status' }));
       if (!n) {
         card.appendChild(h('div', { class: 'hint', id: 'norotation', text: (many ? 'The set ' + chosen.name + ' has no shader in it. ' : 'Nothing is in Vibes. ') +

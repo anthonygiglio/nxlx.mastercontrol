@@ -858,7 +858,7 @@ async function roles(pages, post) {
     const off = await see(pg);
     assert.strictEqual(off.screen, 'setup/vibes', 'the page that is off is a page of Setup');
     assert.deepStrictEqual(off.open, ['tab-setup'], 'and Setup is the area that is open');
-    assert.strictEqual(await pg.evaluate(() => document.getElementById('sysback').textContent), '‹ Setup', 'with a Back to the index');
+    assert.strictEqual(await pg.evaluate(() => document.getElementById('sysback').textContent), 'Back to Setup', 'with a Back to the index');
   } finally {
     await post('/api/modules/inputs-srt', { enabled: true });
     await post('/api/modules/shaders', { enabled: true });
