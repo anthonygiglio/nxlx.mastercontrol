@@ -7144,6 +7144,9 @@
   function dockHeight() {           // how tall the strip and the tabs are: what floats above them (a message) clears them
     var d = document.getElementById('wsdock');
     if (d) document.documentElement.style.setProperty('--dock', d.offsetHeight + 'px');
+    // and how tall the title bar is, which stays at the top while the screen scrolls: what sticks under it starts below it
+    var t = document.getElementById('wshead');
+    if (t) document.documentElement.style.setProperty('--head', t.offsetHeight + 'px');
     moreBelow();
   }
   function render() {
@@ -7181,6 +7184,7 @@
     if (window.ResizeObserver) {
       if (dockWatch) dockWatch.disconnect();
       dockWatch = new ResizeObserver(dockHeight); dockWatch.observe(document.getElementById('wsdock'));
+      if (document.getElementById('wshead')) dockWatch.observe(document.getElementById('wshead'));
       if (widthWatch) widthWatch.disconnect();
       widthWatch = new ResizeObserver(function () { markArea(); fixCursor(); }); widthWatch.observe(document.getElementById('wsp'));
     }

@@ -371,7 +371,7 @@ div.ctl.compact { padding: 4px 0; }
    use the whole window. */
 @container ws (min-width: 900px) {
   .syspage .shaderpage { grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); }
-  .col-lib { grid-column: 1; grid-row: 1 / span 2; position: sticky; top: 12px; }
+  .col-lib { grid-column: 1; grid-row: 1 / span 2; position: sticky; top: calc(var(--head, 0px) + 12px); }
   .col-stage { grid-column: 2; grid-row: 1; }
   .col-side { grid-column: 2; grid-row: 2; }
   .shaderlist { max-height: calc(100dvh - 330px); min-height: 240px; overflow-y: auto; padding-right: 8px; }
@@ -507,7 +507,7 @@ table.chan .lvl { width: 36%; }
   .split { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 28px; align-items: start; }
   .split.alone { grid-template-columns: minmax(0, 1fr); max-width: 560px; }
   .split > .splitlist { max-height: calc(100dvh - 300px); min-height: 240px; overflow-y: auto; padding-right: 8px; }
-  .split > .splitside { position: sticky; top: 12px; }
+  .split > .splitside { position: sticky; top: calc(var(--head, 0px) + 12px); }
   .split > .splitside > .addform { border-top: 0; padding-top: 0; }
 }
 .sched-entry.editing { box-shadow: inset 3px 0 0 var(--ac); padding-left: 10px; }
@@ -583,7 +583,11 @@ table.chan .lvl { width: 36%; }
    tabs stay at the foot, the rail at the left. Measured in headless Chromium and Edge only. ---- */
 .shell.wsp { display: block; max-width: none; margin: 0; min-height: 0; container: app / inline-size; }
 .frame { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto 1fr auto; grid-template-areas: "head" "sub" "main" "dock"; min-height: 100dvh; }
-.wshead { grid-area: head; display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; padding: 12px 16px 6px; min-width: 0; }
+/* The title bar stays at the top while the screen scrolls (the owner, 2026-11-06: switching screens must never leave it
+   out of view). What sticks under it (the message line, the rail, the screen tabs, the Setup index, the mapping
+   tools) starts at --head, its height, which the page measures as it measures the strip's (--dock). */
+.wshead { grid-area: head; display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; padding: 12px 16px 6px; min-width: 0;
+  position: sticky; top: 0; z-index: 13; background: var(--bg); }
 .wsheadmain { flex: 1 1 12rem; min-width: 0; }
 .wstitle { margin: 0; font-size: 20px; font-weight: 700; line-height: 1.15; }
 .wsjob { margin: 2px 0 0; font-size: 14px; line-height: 1.35; color: var(--mu); overflow-wrap: anywhere; }
@@ -606,7 +610,7 @@ main.ws:focus, .deskcol:focus { outline: none; }
 .deskcol:not(.cur) { display: none; }
 .deskhead { display: none; margin: 0; padding: 14px 16px 0; font-size: 17px; font-weight: 700; }
 /* (:where: these weigh no more than "#msg", so a style that floats the message, as Signal does, places it itself) */
-:where(.ws) > #msg { position: sticky; top: 0; z-index: 5; padding: 0 16px; }
+:where(.ws) > #msg { position: sticky; top: var(--head, 0px); z-index: 5; padding: 0 16px; }
 :where(.ws) > #msg:empty { min-height: 0; }
 :where(.ws) > #msg:not(:empty) { padding-top: 6px; padding-bottom: 6px; background: var(--bg); border-bottom: 1.5px solid var(--ln); }
 .navrow.on .navname { color: var(--ac); }
@@ -627,7 +631,7 @@ main.ws:focus, .deskcol:focus { outline: none; }
 #maptest .hint.grow { flex: 1 1 160px; align-self: center; }
 @container ws (min-width: 900px) {
   .mapbody { grid-template-columns: minmax(0, 1fr) 360px; }
-  .maptools { position: sticky; top: 0; max-height: calc(100dvh - var(--dock, 120px) - 12px); overflow-y: auto; overscroll-behavior: contain; }
+  .maptools { position: sticky; top: var(--head, 0px); max-height: calc(100dvh - var(--head, 0px) - var(--dock, 120px) - 12px); overflow-y: auto; overscroll-behavior: contain; }
 }
 .libhead { justify-content: flex-end; }
 .wsdock { grid-area: dock; position: sticky; bottom: 0; z-index: 12; background: var(--bg); min-width: 0; }
@@ -712,12 +716,12 @@ main.ws:focus, .deskcol:focus { outline: none; }
   .wsheadmain { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 12px; }
   .wsjob { margin: 0; }
   /* the rail: one button per area, and nothing else */
-  .wsside { grid-area: side; display: flex; flex-direction: column; gap: 8px; align-self: start; position: sticky; top: 0; max-height: calc(100dvh - var(--dock, 120px)); overflow-x: hidden; overflow-y: auto; padding: 10px 8px 16px; }
+  .wsside { grid-area: side; display: flex; flex-direction: column; gap: 8px; align-self: start; position: sticky; top: var(--head, 0px); max-height: calc(100dvh - var(--head, 0px) - var(--dock, 120px)); overflow-x: hidden; overflow-y: auto; padding: 10px 8px 16px; }
   .wsside .wsar { display: block; width: 100%; min-height: 56px; padding: 4px 2px; border: 1.5px solid var(--ln); border-radius: 8px; background: none; color: var(--fg); font-weight: 700; text-align: center; cursor: pointer; overflow-wrap: anywhere; }
   .wsside .wsar.on { background: var(--ac); border-color: var(--ac); color: var(--on); }
   main.ws, .wssub { border-left: 1.5px solid var(--ln); }
   /* the open area's screens: tabs across the top of the workspace, which stay there while the screen scrolls */
-  .wssub { position: sticky; top: 0; z-index: 11; padding: 8px 16px; background: var(--bg); border-bottom: 1.5px solid var(--ln); }
+  .wssub { position: sticky; top: var(--head, 0px); z-index: 11; padding: 8px 16px; background: var(--bg); border-bottom: 1.5px solid var(--ln); }
   .wssub .segbtn { flex: 0 1 auto; min-width: 6.5rem; }
   /* The strip: ONE line at every width from here. What plays has at least 180 px for its name and is never
      squeezed under that; Freeze, Stop and Blackout are always at the right end. Everything else is on the line
@@ -811,7 +815,7 @@ main.ws:focus, .deskcol:focus { outline: none; }
   .desk:not([data-cols="1"]) .syspage .syshead { position: absolute; top: 6px; right: 16px; margin: 0; }
   .desk:not([data-cols="1"]) #roomscenes > h2 { display: none; }
   .setupdesk { display: flex; align-items: stretch; }
-  .setupdesk > .deskcol.ix { display: block; flex: 0 0 272px; align-self: flex-start; position: sticky; top: 0; max-height: calc(100dvh - var(--dock, 120px)); overflow-x: hidden; overflow-y: auto; }
+  .setupdesk > .deskcol.ix { display: block; flex: 0 0 272px; align-self: flex-start; position: sticky; top: var(--head, 0px); max-height: calc(100dvh - var(--head, 0px) - var(--dock, 120px)); overflow-x: hidden; overflow-y: auto; }
   .setupdesk > .deskcol.cur { flex: 1 1 0; border-left: 1.5px solid var(--ln); }
   .setupdesk .backrow.toindex { display: none; }
 }
@@ -825,9 +829,22 @@ main.ws:focus, .deskcol:focus { outline: none; }
   .tp.open.below::after { content: ""; order: 99; grid-column: 1 / -1; flex: 0 0 100%; position: sticky; bottom: -4px; height: 28px; margin-top: -34px; pointer-events: none;
     background: linear-gradient(to bottom, transparent, var(--bg) 75%); border-bottom: 3px solid var(--ac); }
 }
-/* short: the title bar gives way, the controls keep their height */
+/* The bars that stay put leave at least half of the window to the page (tests/ui/sweep.js): the title bar stays at
+   the top only where that holds. On a phone under 800 px high (320 x 568, 360 x 740), and at any height while the
+   strip is opened with More, it scrolls away with the screen and what stuck under it starts at the top again. */
+.frame:has(.tp.open) { --head: 0px; }
+.frame:has(.tp.open) > .wshead { position: static; }
+@media (max-height: 799px) {
+  @container app (max-width: 599px) {
+    .frame { --head: 0px; }
+    .frame > .wshead { position: static; }
+  }
+}
+/* short: the title bar gives way, the controls keep their height; it scrolls away with the screen, so the room
+   goes to the controls (what stuck under it starts at the top again) */
 @media (max-height: 479px) {
-  .wshead { padding-top: 4px; padding-bottom: 4px; }
+  .wshead { padding-top: 4px; padding-bottom: 4px; position: static; }
+  .frame { --head: 0px; }
   .tp { padding-top: 4px; padding-bottom: 4px; }
 }
 
