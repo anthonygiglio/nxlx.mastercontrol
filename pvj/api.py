@@ -252,6 +252,7 @@ class Api:
         from . import controllercode as controllercode_mod
         self.controller_codes = controllercode_mod.ControllerCodes(self, log=lambda line: self.log(line))   # a code on the display from a MIDI controller (D61)
         self.sysd = None          # SysdClient or None (reboot, power off, set the clock)
+        self.events = None        # EventLog or None (pvj/events.py, D125): what happened on this node
         self.https = None         # httpsbox.HttpsBox or None: the secure connection (D79), set in server.build
         self.capture = None       # Capture or None (live input from a USB capture device)
         self.ndi = None           # ndi.Input or None (the NDI helper's client; D62)
@@ -532,8 +533,10 @@ class Api:
         try:
             token, dev = self.auth.pair(str(body.get("pin", "")), str(body.get("name", "device")), client)
         except auth_mod.TooManyDevices as e:
+            self.event("signin", "A sign-in was refused: too many devices are paired.", who=client)
             raise ApiError(409, str(e))
         except AuthError as e:
+            self.event("signin", "A sign-in was refused: %s." % e, who=client)
             raise ApiError(429 if e.retry_after else 403, str(e), e.retry_after)
         self.controller_codes.used()       # if it was the code shown from a controller, it leaves the display now
         self._recovery_used(dev, client)
@@ -2023,6 +2026,46 @@ class Api:
         except (PlayerError, AttributeError):
             pass
         return out
+
+    def event(self, kind, text, who=None, urgent=None):
+        """One line in the event log (D125); nothing when there is none, and never an error for the caller."""
+        log = self.events
+        if log is not None:
+            try:
+                log.add(kind, text, who, urgent)
+            except Exception as e:
+                self.log("pvj-web: the event log: %s" % e)
+
+    def events_tick(self):
+        """About once a second (server.py, beside render_tick): what only shows in a file or a state is looked at here, the
+        update result and the renderer's fall back at once, a projector that does not answer every ten seconds. Each is
+        said once, when it is new."""
+        log = self.events
+        if log is None:
+            return
+        try:
+            last = self._update_result()
+            if last and last.get("state") in ("done", "failed") and log.update_seen(last.get("at")):
+                ok = last["state"] == "done"
+                self.event("update", ("Update finished: %s" if ok else "Update failed: %s") % (last.get("message") or last["state"]), urgent=not ok)
+            rep = self.renderer.report() if self.renderer is not None else None
+            if rep and rep["drawing"] == "classic" and rep["why"] and self.renderer.saved()["use"] == "new":
+                key = (rep["pid"], rep["why"])
+                if key != self._ev_renderer:
+                    self._ev_renderer = key
+                    self.event("renderer", "The new renderer fell back to classic mpv: %s" % rep["why"])
+            now = time.monotonic()
+            if now - self._ev_slow >= 10:
+                self._ev_slow = now
+                down = {r["id"]: r["name"] for r in self.projectors.health() if str(r.get("text", "")).startswith("No answer")}
+                for pid, name in down.items():
+                    if pid not in self._ev_down:
+                        self.event("projector", "A projector did not answer.", who=name)
+                self._ev_down = set(down)
+        except Exception as e:
+            self.log("pvj-web: event watch: %s" % e)
+
+    _ev_renderer, _ev_slow, _ev_down = None, 0.0, frozenset()
 
     def _sysd(self, message):
         if self.sysd is None:
@@ -5165,6 +5208,7 @@ class Api:
         self._need_network_module()
         cfg = self._checked_config(body)  # the helper validates again; refusing early gives a clear 400
         reply = self._netd({"cmd": "apply", "config": cfg})
+        self.event("network", "The network settings were changed.", who=(device or {}).get("name"))
         return {"pending": reply.get("pending"), "config": netcfg.public(cfg)}  # never the Wi-Fi password
 
     def scan_wifi(self, body, device, client):

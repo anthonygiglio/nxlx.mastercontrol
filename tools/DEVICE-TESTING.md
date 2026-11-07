@@ -1126,6 +1126,19 @@ With New chosen, a box that boots with no screen falls back to classic mpv; when
 | PH3 | Play a 24 fps clip on a 60.00 Hz screen, then open the clip's info in the media list | A note says the clip judders as 3:2 at 60.00 Hz; a 30 fps clip shows no pacing note | No note, or one for the 30 fps clip |
 | PH4 | A 29.97 fps clip on a 60.00 Hz screen, then on a 59.94 Hz mode | 60.00: a note that it slips about every 17 s and a 59.94 Hz mode would make it even; 59.94: no pacing note | No note |
 
+### The journal in the diagnostics and the event log (D125): not yet run on a node
+
+| Row | Do | Good | Bad |
+|---|---|---|---|
+| EV1 | Owner: Setup > Diagnostics (or `GET /api/system/diagnostics`) on the node | `log.readable` is true with lines from `pvj-web`, `pvj-player` and the others; a PIN or a stream login in a line is replaced; the note says whether the journal is kept | "No log lines came back", or a secret in a line. If `journalctl` is refused for the helper (its unit has no capabilities), note the error text: `journalctl -u pvj-sysd` |
+| EV2 | `sudo journalctl --disk-usage; ls /var/log/journal`, then restart the node and open the diagnostics | With the journal kept, `log.previous_start` holds the end of the start before | Nothing from before the restart although `/var/log/journal` exists |
+| EV3 | `sudo pvj-rootfs enable`, restart, open the diagnostics and `GET /api/events` | Both say the log is kept in memory and lost at a restart | A claim that it survives |
+| EV4 | `sudo kill -9 $(pgrep -x mpv)` (or the player's pid), then `GET /api/events` as Owner | A "The player restarted by itself" line, newest first, within a second or two; the file `/var/lib/pvj/events.json` has it | No line |
+| EV5 | Restart the node, then `GET /api/events` | A "The node restarted" line | None |
+| EV6 | Sign in with a wrong PIN three times from a phone | One "A sign-in was refused: wrong PIN." line with "(3 times)" and the phone's address in `who`; the diagnostics file shows the line without the address | The address in the diagnostics, or three lines |
+| EV7 | Operator and Guest: `GET /api/events` | 403 for both | Any list |
+| EV8 | Choose New on the Pi 3B card (or unplug the projector for a minute with its check running) | "The new renderer fell back to classic mpv: ..." at once; "A projector did not answer." within about a minute | No line, or a second line for the same fall back |
+
 ## Safety
 
 - The workflow starts by **manual dispatch only**, and only for the repository owner. It never runs for pushes, pull requests or forks, so nobody else's code reaches the Pi. Keep it that way.

@@ -11,6 +11,8 @@ with SO_PEERCRED), and runs only these fixed commands, as argument lists, never 
   it starts at the last shutdown time); `timedatectl set-time` with a validated epoch, then network time back on, so
   a network that appears later still corrects it;
 * status: whether the clock is set from the network;
+* journal: the node's own pvj-* log lines, read with `journalctl` for a fixed list of units, a capped number of lines
+  and a bounded time window (the panel is deliberately not in the systemd-journal group, so this is how it reads them);
 * update: start pvj-update-usb@V.service or pvj-update-inbox@V.service (fixed template units, V a checked version: pvj-update checks the signature,
   refuses older versions and rolls back by itself).
 
@@ -32,6 +34,14 @@ from .netd import exchange, NetServer, peer_uid  # noqa: F401  (the same small, 
 MIN_EPOCH = 1735689600      # 2025-01-01: anything earlier is a wrong clock, not a date to set
 MAX_EPOCH = 2082758400      # 2036-01-01: a phone set to a far future year would otherwise stick (timesyncd saves the
                             # clock and never moves it back), so such a date is refused, not set
+JOURNAL_UNITS = ("pvj-web.service", "pvj-player.service", "pvj-sysd.service", "pvj-netd.service", "pvj-supportd.service",
+                 "pvj-sound.service", "pvj-link.service", "pvj-ndi*.service", "pvj-update-usb@*.service",
+                 "pvj-update-inbox@*.service", "pvj-usb@*.service")      # the node's own, a fixed list: nothing else is asked for
+JOURNAL_LINES, JOURNAL_LINES_MAX = 300, 500
+JOURNAL_HOURS, JOURNAL_HOURS_MAX = 24, 24 * 7
+JOURNAL_LINE_MAX = 400
+JOURNAL_SECONDS = 20          # journalctl on a big journal on a card can be slow
+JOURNAL_BYTES = 56000       # the whole reply must fit the 64 KiB the panel reads (netd.exchange), escapes included
 MARKER = "ntp-was-on"       # left in the helper's own runtime folder while network time is switched off
 STATUS_CACHE = 5.0
 
@@ -47,7 +57,7 @@ class SysService:
         self._power_requested = None
 
     def _run(self, argv, timeout=15):
-        assert isinstance(argv, list) and argv[0] in ("systemctl", "timedatectl")
+        assert isinstance(argv, list) and argv[0] in ("systemctl", "timedatectl", "journalctl")
         try:
             r = self.runner(argv, capture_output=True, text=True, timeout=timeout)
         except (OSError, subprocess.TimeoutExpired) as e:
@@ -150,6 +160,44 @@ class SysService:
                         % datetime.datetime.fromtimestamp(now, datetime.timezone.utc).strftime("%Y-%m-%d %H:%M")}
             return {"ok": True, "now": now}
 
+    @staticmethod
+    def _bounded(value, low, high, default):
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value != value:
+            return default
+        return int(min(max(value, low), high))
+
+    def journal(self, lines=None, hours=None, boot=None):
+        """The node's own pvj-* log lines: {"ok", "lines", "boot", "persistent", "read_only_root", "cut"}. `lines` (at most
+        500, default 300), `hours` (1 to 168, default 24; the current boot only) and `boot` (0 this start, -1 the one
+        before; anything else is 0) are bounded here. Raw: the panel, which knows the secrets, scrubs them. The reply is
+        cut from the old end to fit what the panel reads."""
+        lines = self._bounded(lines, 1, JOURNAL_LINES_MAX, JOURNAL_LINES)
+        hours = self._bounded(hours, 1, JOURNAL_HOURS_MAX, JOURNAL_HOURS)
+        boot = -1 if boot == -1 and not isinstance(boot, bool) else 0
+        argv = ["journalctl", "--no-pager", "-q", "-o", "short-iso", "--boot=%d" % boot, "-n", str(lines)]
+        if boot == 0:
+            argv += ["--since", "-%dh" % hours]
+        for unit in JOURNAL_UNITS:
+            argv += ["-u", unit]
+        code, out = self._run(argv, timeout=JOURNAL_SECONDS)
+        if code != 0:
+            why = ("it did not answer within %d seconds" % JOURNAL_SECONDS) if "timed out" in out else out.strip()[-160:]
+            self.log("pvj-sysd: journalctl failed: %s" % why)         # so the node's own journal says why (device row EV1)
+            return {"ok": False, "error": "the system log could not be read: %s" % why}
+        rows = [l[:JOURNAL_LINE_MAX] for l in out.splitlines() if l.strip()][-lines:]
+        kept, used = [], 0
+        for line in reversed(rows):                         # the newest first in the budget, then back to the order
+            used += len(json.dumps(line)) + 2
+            if used > JOURNAL_BYTES:
+                break
+            kept.append(line)
+        kept.reverse()
+        from . import rootfs
+        return {"ok": True, "lines": kept, "boot": boot, "cut": len(rows) - len(kept),
+                "persistent": os.path.isdir(self.journal_dir), "read_only_root": rootfs.current_state() == "overlay"}
+
+    journal_dir = "/var/log/journal"
+
     UPDATE_SOURCES = ("usb", "inbox")
     UPDATE_VERSION = re.compile(r"[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}")
 
@@ -184,6 +232,8 @@ class SysService:
             return self.set_time(message.get("epoch"))
         if cmd == "update":
             return self.update(message.get("source"), message.get("version"))
+        if cmd == "journal":
+            return self.journal(message.get("lines"), message.get("hours"), message.get("boot"))
         return {"ok": False, "error": "unknown command"}
 
 

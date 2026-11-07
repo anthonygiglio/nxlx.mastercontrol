@@ -658,6 +658,11 @@ def build(env=None, player=None):
     from . import capture as capture_mod
     api.capture = capture_mod.Capture(rundir, getattr(player, "mpv_bin", "mpv"))
     api.sysd = sysd_mod.SysdClient(paths.sysd_socket())
+    from . import events as events_mod, screenmode
+    api.events = events_mod.EventLog(os.path.join(state, events_mod.FILE), boot_id=screenmode.boot_id, log=lambda m: print(m, file=sys.stderr))
+    api.events.start()          # a boot id that is not the one in the file: the node restarted
+    if hasattr(player, "on_restart"):
+        player.on_restart = lambda: api.event("player", "The player restarted by itself (it stopped or crashed).")
     # The NDI helper's client. NDI is opt-in per box (D62): PVJ_NDI_DIR is set only by the drop-in that root's
     # `pvj-ndi-runtime install` writes for the panel's unit (pvj/ndisetup.py). Without it this box has no helper, the
     # socket is never tried, and the page says how to set NDI up. With it, the helper is idle until the module is on.
@@ -770,6 +775,10 @@ def main(argv=None):
             except Exception as e:
                 print("pvj-web: NDI watch: %s" % e, file=sys.stderr)
             try:
+                api.events_tick()            # the update result, the renderer's fall back, a projector without an answer (D125)
+            except Exception as e:
+                print("pvj-web: event watch: %s" % e, file=sys.stderr)
+            try:
                 api.render_tick()            # a render node's picture that went: back to what played before (D94)
             except Exception as e:
                 print("pvj-web: render watch: %s" % e, file=sys.stderr)
@@ -792,6 +801,8 @@ def main(argv=None):
             tlsd.shutdown()
             tlsd.server_close()
         api.scheduler.stop()
+        if api.events is not None:
+            api.events.flush()
         api.autostart.stop()
         api.pinscreen.stop()
         if api.capture:

@@ -216,6 +216,7 @@ ROWS = {
     ("POST", "/api/system/settings/export"): KINDS["owner"],
     ("POST", "/api/system/settings/import"): KINDS["owner"],          # D84: a support session of the Owner's role too
     ("GET", "/api/system/diagnostics"): KINDS["owner"],
+    ("GET", "/api/events"): KINDS["owner"],
     ("POST", "/api/system/factory-reset"): STUDIO("owner"),
     # D75 (#115), met in a merge. The one fade button: an Operator's, a presenter's before, so the controllers keep it;
     # never a guest's (D80: no fades for a guest). Mapping mode from a controller: the gate lets pass who could reach

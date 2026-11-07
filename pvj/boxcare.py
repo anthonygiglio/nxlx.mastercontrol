@@ -640,6 +640,7 @@ class BoxCare:
             ("POST", "/api/system/settings/export"): ("full", self.export),
             ("POST", "/api/system/settings/import"): ("full", self._import_route),
             ("GET", "/api/system/diagnostics"): ("full", self.diagnostics),
+            ("GET", "/api/events"): ("full", self.events_route),
             ("POST", "/api/system/factory-reset"): ("full", self.factory_reset),
         }
 
@@ -1106,7 +1107,52 @@ class BoxCare:
             found.update(session.get("tokens", {}))
         return sorted((s for s in found if isinstance(s, str) and len(s) >= 3), key=len, reverse=True)
 
+    def _helper_log(self, secrets):
+        """The log through the root helper (pvj-sysd), which may read the system journal that this service may not: this
+        start's lines and, when the journal is kept across restarts, the end of the one before. None when there is no
+        helper here or it did not answer (the caller then tries the direct way, and says why). Each line is scrubbed whole and only then
+        cut to length, as in read_log. A dict when it answered; else the reason as text (or None when there is no
+        helper here)."""
+        sysd = getattr(self.api, "sysd", None)
+        if sysd is None:
+            return None
+        try:
+            now = sysd.request({"cmd": "journal", "lines": LOG_LINES, "hours": 24, "boot": 0})
+        except OSError as e:
+            return str(e)
+        if not now.get("ok") or not isinstance(now.get("lines"), list):
+            return str(now.get("error") or "it gave no lines")
+        clean = lambda rows: [scrub(l, secrets)[:LOG_LINE_MAX] for l in rows if isinstance(l, str)]
+        lines = clean(now["lines"])
+        persistent, readonly = bool(now.get("persistent")), bool(now.get("read_only_root"))
+        out = {"readable": bool(lines), "lines": lines, "journal": {"persistent": persistent, "read_only_root": readonly}}
+        keep = ("The system log is kept in memory on this node (the read-only root, or no persistent journal), so lines from before "
+                "the last restart are gone." if readonly or not persistent else
+                "The system log is kept on the disk, so the end of the start before this one is below.")
+        if persistent and not readonly:
+            try:
+                before = sysd.request({"cmd": "journal", "lines": 100, "boot": -1})
+            except OSError:
+                before = {}
+            if before.get("ok") and isinstance(before.get("lines"), list):
+                out["previous_start"] = clean(before["lines"])
+        if lines:
+            out["note"] = ("the last %d lines of this start from the node's own services (pvj-*), with PINs, codes and logins "
+                           "removed. %s" % (len(lines), keep))
+        else:
+            out["note"] = "No pvj-* log lines were found for this start. %s" % keep
+        return out
+
     def read_log(self, secrets=()):
+        helper = self._helper_log(secrets)
+        if isinstance(helper, dict):
+            return helper
+        out = self._direct_log(secrets)
+        if helper:         # why the helper did not give it (the text it sent, scrubbed), so the cause can be found
+            out["note"] = "%s The system helper could not give the log: %s" % (out["note"], scrub(helper, secrets)[:200])
+        return out
+
+    def _direct_log(self, secrets=()):
         """The services' recent log lines, if this unprivileged service may read them. It is told apart: lines came
         back, none came back (the usual case: the panel's user is not in the systemd-journal group, on purpose),
         or the command could not run. Each line is scrubbed whole and only then cut to length: cut first, a secret
@@ -1126,6 +1172,36 @@ class BoxCare:
                     "note": "No log lines came back. The panel runs as its own unprivileged user, which is not allowed to read the "
                             "system log. On the node: sudo journalctl -b -u 'pvj-*'"}
         return {"readable": True, "lines": lines, "note": "the last %d lines of this start, with PINs, codes and logins removed" % len(lines)}
+
+    def _events_for_file(self):
+        """What happened, newest first, one line each, without any device name or address (the file leaves the node)."""
+        log = getattr(self.api, "events", None)
+        if log is None:
+            return {"lines": [], "note": "The event log is not running."}
+        from . import rootfs
+        info = log.state(rootfs.current_state() == "overlay")
+        return {"lines": [log.line(e) for e in log.events(who=False)], "note": info["note"]}
+
+    def events_route(self, body, device, client):
+        """GET /api/events (the Owner's): {"events": [{"t", "kind", "text", "who"?, "n"?}] newest first, "cap", "kept", "note"}.
+        The text is scrubbed of everything secret the node knows; names and addresses are in `who` for the Owner only."""
+        log = getattr(self.api, "events", None)
+        if log is None:
+            raise ApiError(503, "the event log is not running")
+        from . import rootfs
+        with self.settings.lock:
+            data = copy.deepcopy(self.settings.data)
+        secrets = self._secrets(data)
+        api = self.api
+        tunnel = bool(api.support.is_remote(client) or (isinstance(device, dict) and device.get("remote")))
+        # a support login is the Owner's role but not the Owner: names and addresses never leave the node (D125)
+        rows = []
+        for e in log.events():
+            row = dict({k: v for k, v in e.items() if k != "who"}, text=scrub(e["text"], secrets))
+            if e.get("who") and not tunnel:
+                row["who"] = scrub(e["who"], secrets)
+            rows.append(row)
+        return dict(log.state(rootfs.current_state() == "overlay"), events=rows)
 
     def diagnostics(self, body, device, client):
         """One file to send to whoever is helping: versions, the board, module states, health, the last update, the
@@ -1158,6 +1234,7 @@ class BoxCare:
                "health": part(api.health.report),
                "update": part(lambda: {k: v for k, v in api.update_status({}, device, client).items() if k != "version"}),
                "log": part(lambda: self.read_log(secrets)),
+               "events": part(self._events_for_file),
                "settings": public_settings(data, part(api.support.configured)),
                "left_out": "The PIN, device tokens, join and support codes, remote-support keys and addresses, projector "
                            "passwords and stream logins are never in this file."}
