@@ -131,6 +131,27 @@ class ScenarioFileTest(unittest.TestCase):
         self.assertIsNone(boxes.proc)          # nothing was started for either
 
 
+class PrivateEnvTest(unittest.TestCase):
+    """The second review of #155: every helper's folder the panel can reach is the box's own, Link (D117) and NDI too."""
+
+    def test_helper_folders_are_the_boxs_own(self):
+        from pvj import paths
+        saved = dict(os.environ)
+
+        def restore():
+            os.environ.clear()
+            os.environ.update(saved)
+        self.addCleanup(restore)
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        os.environ["PVJ_LINK_DIR"] = "/run/pvj-link"            # from the developer's shell: taken out, then the box's own
+        box.private_env(tmp)
+        for fn in (paths.link_dir, paths.link_socket, paths.ndi_dir, paths.ndi_socket, paths.ndisc_dir, paths.ndi_config_dir,
+                   paths.ndi_pipe_dir, paths.sound_dir, paths.sound_socket, paths.sysd_dir, paths.supportd_dir):
+            got = fn()
+            self.assertTrue(got and got.startswith(tmp + os.sep), (fn.__name__, got))
+
+
 class FakeBoxes:
     """Boxes with no process: what the switcher asked for is written down."""
 
@@ -388,12 +409,27 @@ class WholeSandboxTest(unittest.TestCase):
         env = dict(os.environ, TMPDIR=tmp)
         proc = subprocess.Popen([sys.executable, os.path.join(SANDBOX, "serve.py"), "--port", str(free_ports(5)), "--scenario", scenario],
                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, env=env, start_new_session=True)
-        self.addCleanup(lambda: proc.poll() is None and proc.kill())
         self.addCleanup(proc.stdout.close)
+        self.addCleanup(lambda: proc.poll() is None and proc.kill())     # (runs first: the reader below sees the end)
+        # read on a thread, so a box that hangs cannot hold the test past its deadline (the second review of #155)
+        import queue
+        lines = queue.Queue()
+
+        def reader():
+            try:
+                for got in iter(proc.stdout.readline, ""):
+                    lines.put(got)
+            except (OSError, ValueError):
+                pass
+            lines.put(None)
+        threading.Thread(target=reader, daemon=True).start()
         deadline, out = time.time() + 120, ""
-        while "Stop with" not in out and time.time() < deadline:
-            line = proc.stdout.readline()
-            if not line:
+        while "Stop with" not in out:
+            try:
+                line = lines.get(timeout=max(0.0, deadline - time.time()))
+            except queue.Empty:
+                break
+            if line is None:
                 break
             out += line
         self.assertIn("Stop with", out)
@@ -527,18 +563,19 @@ class BoxKeepsToThisMachineTest(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = tempfile.mkdtemp()
         cls.old = os.environ.get("TMPDIR")
+        cls.addClassCleanup(cls.restore)          # also when a box fails to start (the second review of #155)
         os.environ["TMPDIR"] = cls.tmp
         tempfile.tempdir = None
         os.environ["PVJ_ALLOWED_HOSTS"] = "evil.example"       # from the developer's shell: must not reach the box
         cls.boxes = serve.Boxes(free_ports(4))
+        cls.addClassCleanup(cls.boxes.close)
         cls.st = cls.boxes.start("idle")
 
     @classmethod
-    def tearDownClass(cls):
-        cls.boxes.close()
-        del os.environ["PVJ_ALLOWED_HOSTS"]
+    def restore(cls):
+        os.environ.pop("PVJ_ALLOWED_HOSTS", None)
         if cls.old is None:
-            del os.environ["TMPDIR"]
+            os.environ.pop("TMPDIR", None)
         else:
             os.environ["TMPDIR"] = cls.old
         tempfile.tempdir = None

@@ -128,7 +128,9 @@ def loopback_only():
     """Hold every socket this process makes to this machine (the review of #155): a bind to every address ("",
     0.0.0.0, ::) is made on loopback instead, and a bind, connect or send to any other address is refused. So what the
     panel opens when the Owner switches OSC, DMX or Boxes in step on listens on 127.0.0.1, a leader's broadcast goes
-    nowhere, and nothing reaches the network a node would be on. Unix sockets (the player's) are left as they are."""
+    nowhere, and nothing reaches the network a node would be on. Unix sockets (the player's) are left as they are.
+    It covers the sockets of the box's own Python process only: a name is still looked up through this computer's
+    resolver, and a program the box starts (mpv given a Streams address) is not held."""
     import errno
     import socket as so
 
@@ -183,7 +185,11 @@ def private_env(tmp):
     for k in [k for k in os.environ if k.startswith("PVJ_")]:
         del os.environ[k]
     folders = {"PVJ_RUNTIME_DIR": "runtime", "PVJ_USB_BASE": "usb", "PVJ_SYSD_DIR": "sysd", "PVJ_SUPPORTD_DIR": "supportd",
-               "PVJ_SOUND_DIR": "sound", "PVJ_NETD_DIR": "netd", "PVJ_NDI_CONFIG_DIR": "ndi-config", "PVJ_NDI_PIPE_DIR": "ndi-pipe"}
+               "PVJ_SOUND_DIR": "sound", "PVJ_NETD_DIR": "netd", "PVJ_NDI_CONFIG_DIR": "ndi-config", "PVJ_NDI_PIPE_DIR": "ndi-pipe",
+               # the NDI helper, the discovery server and the Ableton Link follower (D117): without these the panel
+               # falls back to /run/pvj-ndi and /run/pvj-link, a real helper's socket on this computer (the second
+               # review of #155). An NDI folder set means "set up for NDI": the sandbox shows the helper not running.
+               "PVJ_NDI_DIR": "ndi", "PVJ_NDISC_DIR": "ndisc", "PVJ_LINK_DIR": "link"}
     for k, rel in folders.items():                       # folders the panel looks in: there, and empty
         path = os.path.join(tmp, rel)
         os.makedirs(path, mode=0o700, exist_ok=True)

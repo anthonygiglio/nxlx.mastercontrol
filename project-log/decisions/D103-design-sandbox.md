@@ -31,3 +31,9 @@
 - **A taken port left an empty log** (Low): the port is bound before anything is made.
 - **Two loads at once both answered as the winner** (Low): a second load while one runs is refused (409).
 - Also fixed: other writers to the box's stdout (a program it runs) can no longer spoil or block its two-line handshake. The real stdout is kept for those lines (`os.dup`), and fd 1 is stderr. The tests use their own temporary folder and free ports.
+
+**Amended after the second review (2026-11-06, the coordinator's, on bringing #155 up to master).**
+
+- **The Ableton Link follower's folder was not the box's own** (Medium). D117 came after the sandbox: without `PVJ_LINK_DIR` the panel looks in `/run/pvj-link`, so the Owner's "Follow Ableton Link" in the sandbox could reach a real follower on this computer and read its state. `private_env` now gives the box its own folders for Link, the NDI helper (`PVJ_NDI_DIR`) and the NDI discovery server (`PVJ_NDISC_DIR`). With an NDI folder set the panel takes the box as set up for NDI, so the sandbox's NDI page shows the helper as not running. A test checks every helper folder and socket the panel can name, and fails without the Link folder.
+- **What the loopback hold covers is said** (Low): the box's own Python sockets. A name is still looked up through this computer's resolver, and a program the box starts (mpv, given a Streams address) is not held. Said in `box.loopback_only`, the README and here, rather than stubbing name lookups.
+- **Two tests could leave things behind or wait too long** (Low): the class that sets `TMPDIR` and `PVJ_ALLOWED_HOSTS` now puts them back even when its box fails to start, and the switcher's lines are read on a thread so a hung box cannot hold a test past its 120 s.

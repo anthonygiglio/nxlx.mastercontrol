@@ -24,9 +24,11 @@ a window". Stop it with Ctrl+C.
   (a listener on every address is put on 127.0.0.1, and a connection or a message to any other address is refused). So
   switching OSC, DMX or Boxes in step on in the sandbox opens nothing to the network, and a leader's broadcast goes
   nowhere. The projectors are fakes on this computer, the network is a fake, and no address of a node is used.
+  The hold covers the panel's own sockets only: a name is still looked up through this computer's resolver, and a
+  program the box starts (mpv, given a Streams address) can reach that address.
 - The box reads nothing of this computer's own: the `PVJ_` variables of your shell are not passed on, a webcam or a MIDI
-  controller plugged in is not seen, and USB sticks, update results and helper sockets are looked for in the box's own
-  folder (empty).
+  controller plugged in is not seen, and USB sticks, update results and helper sockets (sound, NDI, Ableton Link) are
+  looked for in the box's own folder (empty).
 - Stop it with Ctrl+C (or a kill): the box, its player and its folder go with it. Only one scenario loads at a time; a
   second one asked meanwhile is refused until the first is ready.
 - Each role's port acts as that role for anything on this computer that connects to it: that is what it is for. Keep
