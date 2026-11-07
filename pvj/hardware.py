@@ -44,7 +44,8 @@ def pi_kind(model):
 
 def tier(kind):
     """How much a board is asked to do: "lean" (Pi 3 class), "standard" (Pi 4 class), "full" (Pi 5, x86) or "unknown"
-    (a Pi below the floor, an ARM board the node cannot name). Nothing reads it for a limit yet except renderer.chosen."""
+    (a Pi below the floor, an ARM board the node cannot name). Only renderer.gles2_only reads it for a limit, and it
+    treats the Pi 1 class (pi-other) as lean for that one purpose: the same OpenGL ES 2 chip."""
     return {"pi3": "lean", "pi4": "standard", "pi5": "full", "x86": "full"}.get(kind, "unknown")
 
 
@@ -129,7 +130,7 @@ def playback_profile(board, has_desktop):
     if kind == "pi5":
         notes.append("Pi 5 has no hardware H.264 decode; use HEVC files or expect software decode.")
     if kind == "pi3":
-        notes.append("Pi 3 is the weakest supported board; check heavy files with pvj-selftest first.")
+        notes.append("Pi 3 class is the weakest supported board; check heavy files with pvj-selftest first.")
     return {"mpv_args": args, "notes": notes}
 
 

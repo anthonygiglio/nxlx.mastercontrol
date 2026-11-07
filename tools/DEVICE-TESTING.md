@@ -1094,8 +1094,8 @@ With New chosen, a box that boots with no screen falls back to classic mpv; when
 
 | Row | Do | Good | Bad |
 |---|---|---|---|
-| BT1 | On a real Pi 3B (not yet run): Setup > Renderer: choose New, then `journalctl -u pvj-player -n 20` and `pgrep -x pvj-render` | Classic draws at once, with no "pvj-render did not start" lines and no pvj-render process; the Renderer card says pvj-render needs OpenGL ES 3 and this node's graphics chip only has version 2; the choice still reads New | pvj-render started and failed twice before classic, or the card reads Classic |
-| BT2 | The same Pi 3B: `curl -s localhost/api/system \| grep -i board` (or the System card) | The exact model "Raspberry Pi 3 Model B ..." shown, kind pi3 | A different kind |
+| BT1 | On a real Pi 3B (not yet run): Setup > Renderer: choose New, then `journalctl -u pvj-player -n 20` and `pgrep -x pvj-render` | Classic draws at once, with no "pvj-render did not start" lines and no pvj-render process; the Renderer card says "New was chosen; classic mpv is drawing: pvj-render needs OpenGL ES 3 ..."; choosing New again from a Pi 3 is refused with that reason; the choice still reads New | pvj-render started and failed twice before classic, or the card reads Classic |
+| BT2 | The same Pi 3B: the System card for the model, or `/api/status` (its `system.board` has the kind) | The exact model "Raspberry Pi 3 Model B ..." shown, kind pi3 | A different kind |
 | BT3 | The Pi 4 node (regression): choose New, then `tr '\0' ' ' < /proc/$(pgrep -x pvj-render)/cmdline` | pvj-render draws as before, with `--detail=540 --fast --skip-deblock --sources=4`; no tier reason on the card | Classic drawing, a reason on the card, or a changed argument |
 | BT4 | Move the Pi 3B's saved card to the Pi 4 (or restore its settings there) | The Pi 4 draws New with no new choice | New lost on the move |
 

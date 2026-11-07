@@ -342,15 +342,15 @@ class ChoiceTest(Base):
         os.chmod(self.standin, 0o644)
         self.assertIn("not built", self.chosen({"use": "new"})[2], "not executable")
 
-    def test_a_lean_board_gets_classic_at_once_and_keeps_the_wish(self):
-        for kind in ("pi3",):
+    def test_a_gles2_board_gets_classic_at_once_and_keeps_the_wish(self):
+        for kind in ("pi3", "pi-other"):
             got = self.chosen({"use": "new", "detail": 720}, board_kind=kind)
             self.assertEqual(got[:2], ("classic", 720), kind)
             self.assertIn("OpenGL ES 3", got[2])
         self.assertEqual(renderer.clean(screenmode.read_json(renderer.wanted_path(dict(self.env, PVJ_STATE_DIR=os.path.join(self.dir, "state")))))["use"], "new",
                          "the choice stays saved, for a card moved to a Pi 4")
         self.assertEqual(self.chosen({"use": "classic"}, board_kind="pi3"), ("classic", "auto", ""), "nothing to explain")
-        for kind in ("pi4", "pi5", "x86", "pi-other", "arm-other"):
+        for kind in ("pi4", "pi5", "x86", "arm-other"):
             self.assertEqual(self.chosen({"use": "new", "detail": 720}, board_kind=kind), ("new", 720, ""), kind)
 
     def test_a_pi_400_and_a_cm4_command_is_a_pi_4s(self):
@@ -839,6 +839,23 @@ class PanelTest(CareBase):
         self.api.renderer.sync()
         self.assertEqual(screenmode.read_json(self.api.renderer.wanted_file), renderer.DEFAULT)
         self.assertEqual(len(self.quits), 2)
+
+    def test_new_is_refused_on_a_gles2_node_and_not_restarted_for_it(self):
+        self.api.board = {"kind": "pi3", "model": "Raspberry Pi 3 Model B Rev 1.2", "arch": "aarch64"}
+        st, body = self.r("POST", "/api/renderer", {"use": "new"})
+        self.assertEqual(st, 409, body)
+        self.assertIn("OpenGL ES 3", json.dumps(body))
+        self.assertEqual((self.quits, self.settings.data["renderer"].get("use", "classic")), ([], "classic"))
+        # a New restored from another node: choosing it again must not restart the player over the ES 2 reason
+        self.api.board = {"kind": "pi4", "model": "Raspberry Pi 4 Model B Rev 1.4", "arch": "aarch64"}
+        self.r("POST", "/api/renderer", {"use": "new"})
+        n = len(self.quits)
+        with mock.patch.object(self.api.renderer, "drawing", lambda: ("classic", renderer.GLES2_WHY)):
+            self.r("POST", "/api/renderer", {"use": "new"})
+        self.assertEqual(len(self.quits), n)
+        with mock.patch.object(self.api.renderer, "drawing", lambda: ("classic", "pvj-render did not start (exit 2)")):
+            self.r("POST", "/api/renderer", {"use": "new"})
+        self.assertEqual(len(self.quits), n + 1, "other reasons still restart")
 
 
 if __name__ == "__main__":
