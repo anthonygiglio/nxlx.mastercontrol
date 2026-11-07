@@ -3434,7 +3434,8 @@
       body.appendChild(h('div', { class: 'state', id: 'renderline', text: 'Drawing now: ' + (RENDERER_NAMES[d.drawing] || d.drawing) + '.' }));
       if (d.profile) {
         // the tier this node is in and what it gives, each with its reason (pvj/profile.py)
-        body.appendChild(h('div', { class: 'state', id: 'renderprofile', text: 'Settings for this node: ' + (d.profile.tier_words || d.profile.tier) + (d.profile.model ? ' (' + d.profile.model + ')' : '') }));
+        body.appendChild(h('div', { class: 'state', id: 'rendertier', text: 'Settings for this node: ' + (d.profile.tier_words || d.profile.tier) + (d.profile.model ? ' (' + d.profile.model + ')' : '') }));
+        if (d.profile_note) body.appendChild(h('div', { class: 'hint warn', id: 'rendertiernote', role: 'status', text: d.profile_note }));
         body.appendChild(h('div', { class: 'list', id: 'renderprofilelist' }, (d.profile.values || []).map(function (v) {
           return h('div', { class: 'hint', text: v.name + ': ' + v.value + '. ' + v.why });
         })));

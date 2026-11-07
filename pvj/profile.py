@@ -78,9 +78,14 @@ _TIER_WORDS = {"lean": "lean (Pi 3 class)", "standard": "standard (Pi 4 class)",
                "unknown": "unknown (not measured, careful values)"}
 
 
-def describe(kind, model=""):
+TIER_WORDS = _TIER_WORDS
+
+
+def describe(kind, model="", saved=None):
     """{"tier", "kind", "model", "values": [{"name", "value", "why"}]}: the settings this node's tier gives, in plain
-    words, each with its reason."""
+    words, each with its reason. `saved` is the Renderer section of the settings (renderer.clean's): a detail, final
+    pass or number of sources the Owner chose, or renderer.deblock (D120), replaces the tier's Automatic rule in its
+    row, with the choice as the reason, so the rows say what is in effect."""
     p = of(kind)
     tier = hardware.tier(kind)
     on = "on" if p["small"] else "off"
@@ -113,4 +118,23 @@ def describe(kind, model=""):
     if tier == "unknown":
         for v in values[:7]:
             v["why"] = careful
-    return {"tier": tier, "tier_words": _TIER_WORDS[tier], "kind": kind, "model": model or "", "values": values}
+    saved = saved if isinstance(saved, dict) else {}
+
+    def put(i, value, why, name=None):
+        values[i] = {"name": name or values[i]["name"], "value": value, "why": why}
+    detail = saved.get("detail")
+    if detail not in (None, "auto") and not isinstance(detail, bool):
+        put(0, "%d lines" % detail if isinstance(detail, int) else "the screen's own size", "Chosen on the Renderer card.", "Picture detail inside")
+    if saved.get("deblock") is True and p["small"]:
+        put(2, "off", "The video's deblocking is kept: renderer.deblock is true in the settings (D120).", "Video deblocking (new renderer)")
+    final = saved.get("final")
+    if final == 720 and not isinstance(final, bool):
+        put(3, "720 lines", "Chosen on the Renderer card.", "Final picture (new renderer)")
+    elif final == "full":
+        put(3, "always the screen's size", "Chosen on the Renderer card.", "Final picture (new renderer)")
+    n = saved.get("sources")
+    if isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= SOURCES_MAX:
+        eff = min(n, p["sources_cap"])
+        put(4, str(eff), "Chosen on the Renderer card." if eff == n else
+            "You chose %d; the most this node takes is %d, so it starts %d." % (n, p["sources_cap"], eff), "Sources in use")
+    return {"tier": tier, "tier_words": TIER_WORDS[tier], "kind": kind, "model": model or "", "values": values}

@@ -232,10 +232,11 @@ def chosen(rundir, extra_args, windowed, env=None, board_kind=None):
 
 
 def board_profile():
-    """The tier and each value of this node's profile with its reason (profile.describe), or None if the board cannot be read."""
+    """The tier and each value of this node's profile with its reason (profile.describe), as the wish says it is in
+    effect, or None if the board cannot be read."""
     try:
         board = hardware.detect_board()
-        return profile.describe(board.get("kind", ""), board.get("model", ""))
+        return profile.describe(board.get("kind", ""), board.get("model", ""), clean(screenmode.read_json(wanted_path())))
     except Exception:
         return None
 
@@ -514,7 +515,7 @@ def clean_profile(data):
     def words(v):
         return screenmode._WHY.sub("", v)[:REPORT_WORDS] if isinstance(v, str) else ""
     rows = [{k: words(r.get(k)) for k in ("name", "value", "why")} for r in (data.get("values") if isinstance(data.get("values"), list) else [])[:PROFILE_ROWS] if isinstance(r, dict)]
-    return {"tier": data["tier"], "model": words(data.get("model")), "values": rows}
+    return {"tier": data["tier"], "tier_words": profile.TIER_WORDS[data["tier"]], "model": words(data.get("model")), "values": rows}
 
 
 
@@ -615,12 +616,20 @@ class Renderer:
         board = getattr(self.api, "board", None)
         return board.get("kind", "") if isinstance(board, dict) else hardware.detect_board().get("kind", "")
 
-    def profile(self):
-        """This node's tier and each value with its reason (profile.describe), for the card; from the board the panel
-        itself read, not from the report."""
+    def settings_profile(self, drawing=None):
+        """(profile, note) for the card: this node's tier and each value with its reason (profile.describe), from the
+        board the panel read and the settings saved. While pvj-render draws it is the report's own (what the player
+        started with); the note says so in one line when the two differ."""
         board = getattr(self.api, "board", None)
         board = board if isinstance(board, dict) else {}
-        return profile.describe(board.get("kind", ""), board.get("model", ""))
+        own = profile.describe(board.get("kind", ""), board.get("model", ""), self.saved())
+        rep = self.report() if drawing == "new" else None
+        if rep and rep.get("profile"):
+            theirs = rep["profile"]
+            if (theirs["tier"], theirs["model"]) != (own["tier"], own["model"]):
+                return theirs, "The player reports %s (%s); this panel reads %s (%s)." % (theirs["tier"], theirs["model"], own["tier"], own["model"])
+            return theirs, ""
+        return own, ""
 
     def sources(self):
         """What the page says of sources (D101): the Owner's number or None (the board's own), this board's default
@@ -634,7 +643,10 @@ class Renderer:
         drawing, why = self.drawing()
         out = {"use": saved["use"], "detail": saved["detail"], "drawing": drawing, "available": available(self.env),
                "uses": list(USES), "details": list(DETAILS), "sources": self.sources(),
-               "final": saved.get("final", "auto"), "finals": list(FINALS), "profile": self.profile()}
+               "final": saved.get("final", "auto"), "finals": list(FINALS)}
+        out["profile"], note = self.settings_profile(drawing)
+        if note:
+            out["profile_note"] = note
         if saved["use"] == "new" and drawing == "classic":
             out["why"] = why or "the player has not started pvj-render yet"
         rep = self.report()

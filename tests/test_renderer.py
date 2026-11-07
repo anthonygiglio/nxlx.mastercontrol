@@ -891,6 +891,21 @@ class PanelTest(CareBase):
         self.assertEqual(self.r("GET", "/api/renderer")[1]["profile"]["tier"], "full")
 
 
+    def test_the_card_shows_the_reports_profile_while_new_draws_and_says_when_it_differs(self):
+        self.api.board = {"kind": "pi4", "model": "Raspberry Pi 4 Model B Rev 1.4", "arch": "aarch64"}
+        rep = {"chosen": "new", "drawing": "new", "why": "", "pid": 1, "profile": {"tier": "lean", "model": "Raspberry Pi 3 Model B", "values": []}}
+        self.api.renderer.drawing = lambda: ("new", "")
+        self.api.renderer.report = lambda: renderer.clean_report(rep)
+        body = self.r("GET", "/api/renderer")[1]
+        self.assertEqual((body["profile"]["tier"], body["profile"]["model"]), ("lean", "Raspberry Pi 3 Model B"))
+        self.assertIn("Raspberry Pi 4 Model B", body["profile_note"])
+        rep["profile"] = dict(rep["profile"], tier="standard", model="Raspberry Pi 4 Model B Rev 1.4")
+        body = self.r("GET", "/api/renderer")[1]
+        self.assertNotIn("profile_note", body)
+        self.api.renderer.drawing = lambda: ("classic", "")
+        body = self.r("GET", "/api/renderer")[1]
+        self.assertEqual(body["profile"]["tier"], "standard", "classic: the panel's own")
+
 
 if __name__ == "__main__":
     unittest.main()

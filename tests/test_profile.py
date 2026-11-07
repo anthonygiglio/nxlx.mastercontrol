@@ -111,6 +111,23 @@ class TableTest(unittest.TestCase):
                 self.assertNotIn("\u2014", json.dumps(v))
             json.dumps(d)
 
+    def test_the_rows_say_what_is_in_effect(self):
+        def rows(kind, saved):
+            return {v["name"]: v for v in profile.describe(kind, "m", saved)["values"]}
+        auto = rows("pi4", {"use": "new", "detail": "auto"})
+        self.assertEqual(auto["Video deblocking skipped (new renderer)"]["value"], "on")
+        r = rows("pi4", {"use": "new", "detail": 720, "final": 720, "sources": 3, "deblock": True})
+        self.assertEqual(r["Video deblocking (new renderer)"]["value"], "off")
+        self.assertIn("D120", r["Video deblocking (new renderer)"]["why"])
+        self.assertEqual((r["Picture detail inside"]["value"], r["Final picture (new renderer)"]["value"], r["Sources in use"]["value"]),
+                         ("720 lines", "720 lines", "3"))
+        self.assertEqual(rows("pi4", {"detail": "output"})["Picture detail inside"]["value"], "the screen's own size")
+        clamped = rows("pi-other", {"sources": 6})["Sources in use"]
+        self.assertEqual(clamped["value"], "2")
+        self.assertIn("You chose 6", clamped["why"])
+        for bad in (None, "x", 3, {"detail": True, "sources": True, "final": 5, "deblock": "yes"}):
+            self.assertEqual(profile.describe("pi4", "m", bad)["values"], profile.describe("pi4", "m")["values"], bad)
+
 
 if __name__ == "__main__":
     unittest.main()
