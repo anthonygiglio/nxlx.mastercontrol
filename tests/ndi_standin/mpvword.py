@@ -835,7 +835,7 @@ def case_sound_delay(rig, picture, voice, ms=-OFFSET_MS):
 
 
 SOUND_ONLY_WORDS = "sends sound and no picture"                  # not chosen, and found to carry no picture (the helper's word)
-SOUND_SOURCE_WORDS = "is where this box's NDI sound comes from"   # chosen as the box's sound source (the panel's own refusal)
+SOUND_SOURCE_WORDS = "is where this node's NDI sound comes from"   # chosen as the box's sound source (the panel's own refusal)
 NOT_TOUCHED_WORDS = "what plays was not touched"
 
 

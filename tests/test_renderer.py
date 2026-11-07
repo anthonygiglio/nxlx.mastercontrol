@@ -710,10 +710,10 @@ class PanelTest(CareBase):
         pid = 4321
         self.api.player.ipc = mock.Mock(request=mock.Mock(return_value=pid))
         screenmode.write_json(self.api.renderer.report_file, {"chosen": "new", "drawing": "new", "why": "", "detail": "auto", "pid": os.getpid(),
-                                                              "final": 720, "final_why": "the box was busy: 21 in 100 frames came late with a load of 5"})
+                                                              "final": 720, "final_why": "the node was busy: 21 in 100 frames came late with a load of 5"})
         with mock.patch.object(self.api.renderer, "_same_run", return_value=True):
             st, body = self.r("GET", "/api/renderer")
-        self.assertEqual(body["final_now"], {"final": 720, "why": "the box was busy: 21 in 100 frames came late with a load of 5"})
+        self.assertEqual(body["final_now"], {"final": 720, "why": "the node was busy: 21 in 100 frames came late with a load of 5"})
 
     def test_choosing_new_again_after_a_fall_back_tries_pvj_render_again(self):
         self.r("POST", "/api/renderer", {"use": "new", "detail": 720})

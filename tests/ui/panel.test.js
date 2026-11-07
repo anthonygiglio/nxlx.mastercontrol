@@ -515,7 +515,7 @@ function startServer(env) {          // env: more for the harness's environment 
       assert.strictEqual(await page.$eval('#renderfinal', (s) => s.value), 'auto');
       assert.deepStrictEqual(await page.$$eval('#renderfinal option', (os) => os.map((o) => o.value)), ['auto', 'full', '720']);
       assert.strictEqual(await page.$('#renderfinalnow'), null, 'classic draws: no word about a final pass');
-      let answer = Object.assign({}, now, { final: 'auto', final_now: { final: 720, why: 'the box was busy: 21 in 100 frames came late with a load of 5' } });
+      let answer = Object.assign({}, now, { final: 'auto', final_now: { final: 720, why: 'the node was busy: 21 in 100 frames came late with a load of 5' } });
       await page.route('**/api/renderer', (route) => {
         if (route.request().method() !== 'POST') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(answer) });
         sent = JSON.parse(route.request().postData());
