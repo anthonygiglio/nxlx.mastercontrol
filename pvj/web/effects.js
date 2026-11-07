@@ -44,8 +44,8 @@
     if (!w) {
       if (det.value === 'full') return 'Effects work at the clip\'s full size.';
       if (det.value !== 'auto') return 'Effects work at ' + det.value + ' lines at most. A smaller clip is left as it is.';
-      if (!det.auto) return 'Automatic works at full size on this box: nothing was measured on this board.';
-      return 'Automatic works at ' + det.auto.lines + ' lines at most on this box' +
+      if (!det.auto) return 'Automatic works at full size on this node: nothing was measured on this board.';
+      return 'Automatic works at ' + det.auto.lines + ' lines at most on this node' +
         (det.auto.other < det.auto.lines ? ' (' + det.auto.other + ' for the heaviest effects and for ones you add)' : '') + '. A smaller clip is left as it is.';
     }
     var lead = w.auto ? 'Automatic: working at ' : 'Working at ';
@@ -93,7 +93,7 @@
   // controller) are done by the box's worker a moment later, so the state is asked for again then.
   function send(c, path, body, after) {
     return c.api('POST', path, body).then(function (r) {
-      if (!r.ok) c.say(r.data.error || 'The box did not take it.', true);
+      if (!r.ok) c.say(r.data.error || 'The node did not take it.', true);
       else {
         c.say('');
         if (r.data && r.data.effects) { X.data = r.data; X.at = Date.now(); drawAll(c); c.poll(); } else soon(c, 700);
@@ -243,7 +243,7 @@
           } });
       }));
     var lib = h('div', { class: 'fxlib' }, h('div', { class: 'field', text: 'Effects' }), filter, weights,
-      h('div', { class: 'hint', id: 'fxworknote', text: 'How much work an effect is was measured on a Raspberry Pi 4 for the ones that come with the box, and is counted from its text for one you add. It grows with the size of the clip: Effect detail makes the effect work on a smaller copy of the picture.' }),
+      h('div', { class: 'hint', id: 'fxworknote', text: 'How much work an effect is was measured on a Raspberry Pi 4 for the ones that come with the node, and is counted from its text for one you add. It grows with the size of the clip: Effect detail makes the effect work on a smaller copy of the picture.' }),
       h('div', { class: 'list', id: 'fxlist' }), h('div', { id: 'fxadd' }));
     box.appendChild(h('div', { class: 'fxgrid' }, stage, lib));
     if (X.data) setTimeout(function () { if (box.isConnected && X.data) drawCard(c, X.data, box); }, 0);
@@ -312,7 +312,7 @@
     if (shape !== card.det && !busyIn(el)) {
       card.det = shape;
       el.textContent = '';
-      var name = function (v) { return DETAIL[v] + (v === 'auto' && det['default'] === 'auto' ? ' (recommended on this box)' : ''); };
+      var name = function (v) { return DETAIL[v] + (v === 'auto' && det['default'] === 'auto' ? ' (recommended on this node)' : ''); };
       var pick = null;
       if (full) {
         pick = h('select', { class: 'text-input', id: 'fxdetailpick', 'aria-label': 'Effect detail' }, det.choices.map(function (v) {
@@ -328,7 +328,7 @@
       el.appendChild(h('div', { class: 'row between wrap' }, h('div', { class: 'field', text: 'Effect detail' }),
         pick || h('span', { id: 'fxdetailnow', text: name(det.value) })));
       el.appendChild(h('div', { class: 'hint', id: 'fxworking', role: 'status' }));
-      el.appendChild(h('div', { class: 'hint', id: 'fxdetailnote', text: 'A lower detail is lighter for the box. The picture is softer, and fine patterns (dots, lines, tiles) look larger when an effect works at a lower size.' }));
+      el.appendChild(h('div', { class: 'hint', id: 'fxdetailnote', text: 'A lower detail is lighter for the node. The picture is softer, and fine patterns (dots, lines, tiles) look larger when an effect works at a lower size.' }));
     }
     var line = document.getElementById('fxworking'), words = workingWords(d);
     if (line && line.textContent !== words) line.textContent = words;
@@ -362,7 +362,7 @@
     if (typeof s.speed_max === 'number') {
       add({ common: 'speed', ctl: numberControl(c, rig, { key: 'speed', id: 'fx-speed', label: 'Speed', min: 0, max: s.speed_max, value: Math.min(on.controls.speed, s.speed_max), reset: 1, text: times,
         hint: s.speed_max <= 1 ? 'This effect moves by itself' + (s.flashes ? ' and may flash' : '') + ': it is kept at its own pace or slower. (Faster is the owner\'s switch on the Shaders page.)'
-          : 'Faster than 1× is allowed on this box: mind people who are sensitive to flashing light.' }) });
+          : 'Faster than 1× is allowed on this node: mind people who are sensitive to flashing light.' }) });
     }
     var knob = k.knobOf(s.inputs);
     s.inputs.forEach(function (i) {
@@ -420,7 +420,7 @@
     if (shape === card.list || busyIn(el)) return;
     card.list = shape;
     el.textContent = '';
-    if (!rows.length) { el.appendChild(h('div', { class: 'hint', id: 'fxnone', text: d.effects.length ? 'No effect matches. Clear the name or choose All.' : 'No effects on this box.' })); return; }
+    if (!rows.length) { el.appendChild(h('div', { class: 'hint', id: 'fxnone', text: d.effects.length ? 'No effect matches. Clear the name or choose All.' : 'No effects on this node.' })); return; }
     rows.forEach(function (s) {
       var name = nice(s.name), isOn = s.id === onId;
       var facts = [work(s), s.moves ? 'moves by itself' : '', s.flashes ? 'may flash' : '',
@@ -430,8 +430,8 @@
           h('span', { class: 'hint', text: facts }),
           s.description ? h('span', { class: 'hint fxdesc', text: s.description }) : null,
           s.error ? h('span', { class: 'msg err', text: 'This file cannot be used: ' + s.error }) : null,
-          s.refused ? h('span', { class: 'msg err', text: 'The GPU of this box refused it: ' + s.refused })
-            : (s.refused_pair ? h('span', { class: 'msg err', text: 'The GPU of this box refused it over this shader: ' + s.refused_pair }) : null)),
+          s.refused ? h('span', { class: 'msg err', text: 'The GPU of this node refused it: ' + s.refused })
+            : (s.refused_pair ? h('span', { class: 'msg err', text: 'The GPU of this node refused it over this shader: ' + s.refused_pair }) : null)),
         h('div', { class: 'row' },
           live && !s.error ? (isOn ? h('button', { class: 'btn', 'data-off': s.id, text: 'Off', 'aria-label': 'Take ' + name + ' off', onclick: function () { send(c, '/api/effects', { off: true }); } })
             : h('button', { class: 'btn', 'data-put': s.id, text: 'Put on', 'aria-label': 'Put ' + name + ' on', disabled: !d.available, onclick: function (ev) {
@@ -439,7 +439,7 @@
               send(c, '/api/effects', { id: s.id }).then(function (r) { if (!r.ok) { card.list = ''; drawList(c, X.data); } });
             } })) : null,
           full && s.source === 'uploaded' ? h('button', { class: 'btn', text: 'Remove', 'aria-label': 'Remove ' + name, onclick: function (ev) {
-            c.confirmRow('Remove ' + name + ' and its presets from the box?', 'Remove', 'Keep it', function () { send(c, '/api/effects/library', { action: 'delete', id: s.id }); }, ev.target);
+            c.confirmRow('Remove ' + name + ' and its presets from the node?', 'Remove', 'Keep it', function () { send(c, '/api/effects/library', { action: 'delete', id: s.id }); }, ev.target);
           } }) : null));
       el.appendChild(item);
     });
@@ -461,7 +461,7 @@
       reader.onerror = function () { told(file.name + ' was not added: it could not be read.', true); };
       reader.onload = function () {
         c.api('POST', '/api/effects/library', { action: 'upload', name: file.name, source: String(reader.result) }).then(function (r) {
-          if (!r.ok) return told(file.name + ' was not added: ' + (r.data.error || 'the box did not take it') + '.', true);
+          if (!r.ok) return told(file.name + ' was not added: ' + (r.data.error || 'the node did not take it') + '.', true);
           X.data = r.data;
           told(file.name + ' was added. It is in the list of effects.', false);
           drawAll(c);

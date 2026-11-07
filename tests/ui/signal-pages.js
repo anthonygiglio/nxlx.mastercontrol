@@ -241,7 +241,7 @@ function sysPages() {
   // the row's name, the picture's name, what shows that the page has its data
   return [['Health', 'health', '#healthpower'], ['Room', 'room-settings', '#roomsetup'], ['Schedule', 'schedule', '.sched-entry'],
     ['People and codes', 'people', '#devicelist'], ['At power-up', 'power-up', '#autosave'],
-    ['Streams', 'streams', '.stream-entry'], ['NDI\u00ae input', 'ndi', '#ndiruntime'], ['Boxes in step', 'boxes-in-step', '#syncline'],
+    ['Streams', 'streams', '.stream-entry'], ['NDI\u00ae input', 'ndi', '#ndiruntime'], ['Nodes in step', 'boxes-in-step', '#syncline'],
     ['DMX lighting desk', 'dmx', '#dmxchannels'], ['OSC', 'osc', '#oscport'], ['Network', 'network', '#netiface'], ['Updates', 'updates', '#updateversion'],
     ['Remote support', 'support', '#supportline'], ['Secure connection', 'secure-connection', '#httpsline'], ['Backup and reset', 'backup', '#resetcard'], ['Look', 'look', '#lookthemes'], ['About and power', 'about', '#boxcard .kvv']];
 }
