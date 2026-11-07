@@ -1579,6 +1579,7 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.route('**/api/projectors', moving);
       const more = page.locator('.proj-entry .lacts button.morebtn').first();
       const box = await more.boundingBox();
+      await page.focus('.proj-entry .proj-power');                       // a control that stays: its blur at the press is not a release
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
       await page.mouse.down();
       const held = await more.elementHandle();
