@@ -285,6 +285,7 @@ class Player:
         """Another mpv than the one last heard from (it crashed and its service started a new one, or the panel
         ended it): its screen began empty, which is a clearing for whatever was asked for before (see `clears`).
         Every play and every status asks for the pid, so it is noticed by whoever comes first."""
+        crashed = False
         with self._pid_lock:                # status polls come from several threads, unlocked: one restart is counted once
             if self._seen_pid is None or pid != self._seen_pid:
                 if self._own_start:         # a player this side has just started: fresh, with nothing to widen (and
@@ -301,12 +302,19 @@ class Player:
                 else:
                     self.clears += 1
                     self.cleared_by = "restart"
+                    crashed = True
             self._seen_pid = pid
+        if crashed and self.on_restart:
+            try:
+                self.on_restart()           # the event log (D125): the player started again that nobody here asked to end
+            except Exception:
+                pass
         if self._widen_due and not self._pipe_loading:
             self._widen()
         return pid
 
     _widen_due, _pipe_loading, _own_start = False, False, False
+    on_restart = None
 
     def _widen(self):
         """The narrowing for the NDI stream with sound (MKV_ONLY) is a property of the whole mpv, taken back from an

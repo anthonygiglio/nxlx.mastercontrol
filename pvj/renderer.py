@@ -582,6 +582,9 @@ class Renderer:
 
     def _restart(self, why):
         self.log("pvj-web: renderer: restarting the player (%s)" % why)
+        note = getattr(self.api, "event", None)
+        if note:
+            note("player", "The player was restarted: %s." % why, urgent=False)
         try:
             self.api.player.quit()
         except Exception as e:

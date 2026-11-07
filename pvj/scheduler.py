@@ -187,6 +187,12 @@ class Scheduler:
         result["at"] = minute.strftime("%Y-%m-%d %H:%M")
         self.last[entry["id"]] = result
         self.log("pvj-web: schedule %s %s at %s: %s" % (entry["id"], action, result["at"], result["message"]))
+        if action == "scene" or not result["ok"]:       # the event log (D125): a scene that ran, and any entry that failed
+            what = "scene" if action == "scene" else action.replace("_", " ")
+            text = ("A scheduled %s ran." % what) if result["ok"] else ("A scheduled %s failed: %s" % (what, result["message"]))
+            note = getattr(self.api, "event", None)
+            if note:
+                note("scene", text, who=entry.get("label") or None)
 
     def start(self):
         if self._thread:
