@@ -348,7 +348,7 @@
     var body = h('div', { class: 'list sp', id: 'supportbody' }, h('div', { class: 'hint', text: 'Loading...' }));
     var card = h('div', { class: 'card', id: 'supportcard' }, h('h2', { text: 'Remote support' }), body);
     var timer = null;
-    function refresh() { api('GET', '/api/support').then(function (r) { if (document.getElementById('supportcard') && r.ok) { if (asking(body)) { timer = setTimeout(refresh, 5000); return; } if (held('support', refresh)) return; draw(r.data); } }); }
+    function refresh() { api('GET', '/api/support').then(function (r) { if (card.isConnected && r.ok) { if (asking(body)) { timer = setTimeout(refresh, 5000); return; } if (held('support', refresh)) return; draw(r.data); } }); }
     function post(path, b) { return act('POST', path, b, function (data) { say(''); draw(data); poll(); }); }
     var ROLES = { full: 'check and change everything', live: 'play and mix only', view: 'watch only' };
     function draw(d) {
@@ -2747,12 +2747,15 @@
         act('POST', '/api/access/screen', { show: true, items: ['address'], seconds: 120 }, function () { say('The address is on the display for 2 minutes.'); });
       } })));
     }
-    function refresh() {
+    // A look queued by an old card (a timer, or held() for after a press) does nothing: the new card's timer is not
+    // touched. The first look is made before the card is on the page, so it is look() itself.
+    function refresh() { if (card.isConnected) look(); }
+    function look() {
       clearTimeout(healthTimer);
-      healthTimer = setTimeout(function () { if (document.getElementById('healthcard')) refresh(); }, 5000);
-      api('GET', '/api/health').then(function (r) { if (r.ok && document.getElementById('healthcard') && !held('health', refresh)) draw(r.data); });
+      healthTimer = setTimeout(function () { if (card.isConnected) refresh(); }, 5000);
+      api('GET', '/api/health').then(function (r) { if (r.ok && card.isConnected && !held('health', refresh)) draw(r.data); });
     }
-    refresh();
+    look();
     return card;
   }
 
@@ -3334,10 +3337,11 @@
     var body = h('div', { class: 'list sp', id: 'screenbody' }, h('div', { class: 'state', text: 'Loading...' }));
     var card = h('div', { class: 'card', id: 'screencard' }, h('h2', { text: 'Screen output' }), body);
     var out = h('div', { class: 'msg inmsg', id: 'screenmsg', role: 'status' });
-    function refresh() {
+    function refresh() { if (card.isConnected) look(); }      // as in Health
+    function look() {
       clearTimeout(screenTimer);
       api('GET', '/api/screen').then(function (r) {
-        if (!document.getElementById('screencard')) return;
+        if (!card.isConnected) return;
         if (asking(card)) { screenTimer = setTimeout(refresh, 1000); return; }      // a question is open: not wiped
         if (held('screen', refresh)) return;
         if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'hint', id: 'screenerr', text: (r.data.error || 'Not available') + '. Open the page again in a moment.' })); return; }
@@ -3398,7 +3402,7 @@
       body.appendChild(h('div', { class: 'hint', text: 'Colour bars at the screen\'s own size, with a grid, a red border one pixel wide at the very edge and the mode in words, in place of what plays. A border you cannot see means the projector cuts the edge off.' }));
       body.appendChild(h('div', { class: 'row' }, testPattern()));
     }
-    refresh();
+    look();
     return card;
   }
   // ---- the renderer (D95) -----------------------------------------------
@@ -4979,7 +4983,7 @@
     function refresh() {
       var n = posts;
       api('GET', '/api/sync').then(function (r) {
-        if (!document.getElementById('synccard') || !r.ok) return;
+        if (!card.isConnected || !r.ok) return;
         if (n !== posts) return refresh();
         if (held('sync', refresh)) return;
         draw(r.data);
@@ -5678,10 +5682,11 @@
     var mode = netForm.mode;
     var out = { iface: null, address: null, prefix: null, gateway: null, dns: null, ssid: null, pass: null, security: null,
       hidden: null, band: null, secs: null, preview: null, msg: null };
-    function refresh() {
+    function refresh() { if (card.isConnected) look(); }      // as in Health
+    function look() {
       clearTimeout(netTimer);
       api('GET', '/api/network').then(function (r) {
-        if (!document.getElementById('netcard')) return;
+        if (!card.isConnected) return;
         if (held('network', refresh)) return;
         if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'hint', id: 'netmsg', text: (r.data.error || 'Not available') + '. Open the page again in a moment.' })); return; }
         draw(r.data);
@@ -5901,7 +5906,7 @@
           } }))));
       netTimer = setTimeout(refresh, 1000);
     }
-    refresh();
+    look();
     return card;
   }
   var oscForm = { port: null, allow: null }, oscAdv = false, oscTimer = null;
