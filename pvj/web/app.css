@@ -1418,8 +1418,8 @@ html[data-style="signal"] .seg .segbtn { min-width: 44px; }
    title used to be (the area's name in the display face, the screen's job under it); the open tab, the chosen
    screen in the row of tabs and the open area's button of the rail are that colour too. The strip's buttons are 56 px on a phone (staff
    press them), and from 600 px the four that are always there are 56 and the rest 44. ---- */
-html[data-style="signal"] .wshead { padding: 20px 16px 14px; background: var(--ac); color: var(--on); align-items: flex-end; }
-html[data-style="signal"] .wstitle { font: var(--tk-tw, 900) clamp(34px, 11cqw, 44px)/1.05 var(--display); text-transform: var(--tk-case, uppercase); overflow-wrap: anywhere; }
+html[data-style="signal"] .wshead { padding: 12px 16px 10px; background: var(--ac); color: var(--on); align-items: flex-end; }
+html[data-style="signal"] .wstitle { font: var(--tk-tw, 900) clamp(28px, 8cqw, 34px)/1.05 var(--display); text-transform: var(--tk-case, uppercase); overflow-wrap: anywhere; }
 html[data-style="signal"] .wsjob { margin-top: 4px; font: 600 15px/1.35 var(--sans); color: var(--on); }
 html[data-style="signal"] .wsbrand { font: 500 13px/1.35 var(--mono); color: var(--on); }
 html[data-style="signal"] .wssub { padding: 12px 16px 0; }
@@ -1476,11 +1476,11 @@ html[data-style="signal"] .navrow.on .navname { color: var(--fg); text-decoratio
 html[data-style="signal"] .syshead h1, html[data-style="signal"] .syshead h2 { flex-basis: auto; min-width: 0; overflow-wrap: break-word; }
 html[data-style="signal"] .wstitle { overflow-wrap: break-word; }
 /* The title bar is the same on every screen (2026-11-07): the area's name and one line under it, which a page with
-   its own heading fills with its name. On a phone the line keeps room for two lines, so the bar, the tabs under it
-   and the screen start at the same place on every screen; a longer job is cut after the second line (its whole text
-   is the line's title). From 1200 px the line is beside the name, and starts at the same place for every area. */
+   its own heading fills with its name. On a phone the bar is compact (the owner, 2026-11-07: "Banner is too tall"):
+   the line is one line, cut with dots where it is longer (its whole text is the line's title), so the bar, the tabs
+   under it and the screen start at the same place on every screen. From 1200 px the line is beside the name, and starts at the same place for every area. */
 @container app (max-width: 599px) {
-  html[data-style="signal"] .wsjob:not(.all):not([hidden]) { min-height: calc(2em * 1.35); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+  html[data-style="signal"] .wsjob:not(.all):not([hidden]) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 }
 @container app (min-width: 1200px) {
   html[data-style="signal"] .wstitle { min-width: 100px; }

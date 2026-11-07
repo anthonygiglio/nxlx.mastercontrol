@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import stat
 import subprocess
 import tempfile
@@ -579,7 +580,8 @@ class Api:
         if last:
             mix["last"] = dict(last)
         return {"player": player, "mix": mix,
-                "system": {"board": self.board["kind"], "model": self.board["model"],
+                # name: the node's own name, its host name's first label in lower case ("nxlx-node-01"), which the title bar shows
+                "system": {"board": self.board["kind"], "model": self.board["model"], "name": socket.gethostname().split(".")[0].lower(),
                            "temp_c": max((t["celsius"] for t in temps), default=None)},
                 "device": device, "support": self.support.banner(), "guest_controls": self.guests.state(),
                 "reach": policy.reach(device, self.guests.locked()),

@@ -4462,7 +4462,7 @@ function startServer(env) {          // env: more for the harness's environment 
       await go(page, 'play/pads');
       await page.waitForSelector('.pads');
       const liveTitle = await page.evaluate(() => { const t = document.getElementById('wstitle'), j = document.getElementById('wsjob'), bar = document.getElementById('wshead');
-          return [t.tagName, t.textContent, getComputedStyle(t).textTransform, parseFloat(getComputedStyle(t).fontSize) >= 34, getComputedStyle(j).fontSize, /^Pads: /.test(j.textContent), getComputedStyle(bar).backgroundColor, getComputedStyle(t, '::before').content, getComputedStyle(t, '::after').content]; });
+          return [t.tagName, t.textContent, getComputedStyle(t).textTransform, parseFloat(getComputedStyle(t).fontSize) >= 28, getComputedStyle(j).fontSize, /^Pads: /.test(j.textContent), getComputedStyle(bar).backgroundColor, getComputedStyle(t, '::before').content, getComputedStyle(t, '::after').content]; });
       assert.deepStrictEqual(liveTitle, ['H1', 'Play', 'uppercase', true, '15px', true, AREA.clips, 'none', 'none'], 'in Signal the title bar is a block of the area\'s colour with the area\'s name in large capitals (real text, nothing written by the stylesheet) and the screen\'s job small under it: ' + JSON.stringify(liveTitle));
       await go(page, 'shape/picture');
       await page.waitForSelector('#fliph');
