@@ -538,4 +538,6 @@ phone). It reads Health, the sources and the room every 5 s, and the rows of Set
   own words for its state, a chip, and On and Off (Off asks first; the pair waits while one is on its way), for an
   Owner or an Operator in the room, not a support login below full; a node with no walls lists its projectors
   (`#nowproj-<id>`); All on, All off (asks first), Open the walls.
-
+- **The node** (`#nownodecard`): the Clock (`#nownode-clock`, D116 and D117): the tempo and who set it, Link's peers, and Tap,
+  for an Owner or an Operator (Tap not through a support login); then Power, Temperature, the Player, the load and the
+  address from Health, and Sound reactivity, Network and Remote support as their rows of Setup say them, with Open.

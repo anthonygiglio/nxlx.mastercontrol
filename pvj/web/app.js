@@ -7036,10 +7036,15 @@
         hasRoom ? h('button', { class: 'btn small', id: 'nowtowalls', text: 'Open the walls', onclick: function () { go('room/walls'); } }) : null));
     var nodeList = h('div', { class: 'list', id: 'nownode' });
     // the node's clock (D116) and Ableton Link (D117), with Tap: a line of its own, drawn when its answer comes
-    var clockRow = nowRow('nownode-clock', 'Clock', { chip: null, text: 'Checking...' }, live ? ['Tap', function () {
-      act('POST', '/api/tempo/tap', {}, function (d) { if (d && d.bpm) say('Tapped: ' + d.bpm + ' BPM'); else say('Tapped. Tap again in time.'); askClock(); });
-    }] : null);
-    var node = h('div', { class: 'card', id: 'nownodecard' }, h('h2', { text: 'The node' }), h('div', { class: 'list', id: 'nowclock' }, clockRow), nodeList);
+    // (read by an owner or an operator; Tap only in the room: the node refuses it to a support login, D116)
+    var clockRow = canOp() ? nowRow('nownode-clock', 'Clock', { chip: null, text: 'Checking...' }, canOp() && !(S.device && S.device.remote) ? ['Tap', function () {
+      act('POST', '/api/tempo/tap', {}, function (d) {
+        var bpm = d && d.clock && d.clock.bpm;
+        say(bpm ? 'Tapped: ' + bpm + ' BPM' : 'Tapped. Tap again in time.');
+        askClock();
+      });
+    }] : null) : null;
+    var node = h('div', { class: 'card', id: 'nownodecard' }, h('h2', { text: 'The node' }), clockRow ? h('div', { class: 'list', id: 'nowclock' }, clockRow) : null, nodeList);
     var todayList = h('div', { class: 'list', id: 'nowtoday' });
     var today = h('div', { class: 'card', id: 'nowtodaycard' }, h('h2', { text: 'Today' }), todayList);
     var root = h('div', { class: 'screen nowscreen', id: 'nowscreen' }, needs, h('div', { class: 'nowgrid' }, screens, room, node, today));
@@ -7198,9 +7203,10 @@
     }
     // the clock: its tempo, who set it, and Link's peers (GET /api/tempo), drawn into its own line
     function askClock() {
-      if (!canOp()) return;
+      if (!clockRow) return;
       api('GET', '/api/tempo').then(function (r) {
-        if (!root.isConnected || !r.ok || pressing()) return;
+        if (!root.isConnected || pressing()) return;
+        if (!r.ok) { showState(clockRow.querySelector('.chip'), clockRow.querySelector('.navstate'), { chip: null, text: 'Not answering' }); return; }
         var c = r.data.clock || {}, l = r.data.link || {};
         var words = c.state === 'running' ? c.bpm + ' BPM' + (c.source ? ', ' + (CLOCK_FROM[c.source] || c.source) : '') : 'No tempo yet: tap it, or let the sound or Link set it';
         if (l.on) words += l.peers ? ' \u00b7 following Ableton Link, ' + plural(l.peers, 'peer') : ' \u00b7 Ableton Link on, no peers yet';
