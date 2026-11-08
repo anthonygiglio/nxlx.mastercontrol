@@ -1843,6 +1843,9 @@ function startServer(env) {          // env: more for the harness's environment 
         .catch(async () => { throw new Error('the clock line says the tapped tempo: ' + await page.textContent('#nownode-clock .navstate')); });
       await page.waitForSelector('#nownode-support');
       assert.strictEqual(await page.locator('#nowtoday-support').count(), 0, 'remote support is under The node, not Today');
+      // who is here and the last change (D126): this device, and the tap just made, by "you"
+      await page.waitForFunction(() => /\d+ here: .*\(you\)/.test((document.querySelector('#nowhere .navstate') || {}).textContent || ''), null, { timeout: 10000 });
+      await page.waitForFunction(() => [...document.querySelectorAll('[id^="nowchange-"]')].some((r) => /^Tempo/.test(r.textContent) && /Changed by you, \d+ (s|min) ago/.test(r.textContent)), null, { timeout: 10000 });
       assert.strictEqual(await page.textContent('[id^="nowneed-proj-"] button'), 'Try again', 'a projector that needs you has Try again');
       await page.click('[id^="nowneed-proj-"] button');
       await page.waitForFunction(() => /asked again/.test(document.getElementById('msg').textContent), null, { timeout: 15000 });
