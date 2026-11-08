@@ -1918,6 +1918,17 @@ function startServer(env) {          // env: more for the harness's environment 
     if (await pjlink(info.projector_ports[0], 'secret1', 'INPT ?') !== '31') problems.push('the source button did not switch the main wall to input 31');
     await page.click('button[aria-label="Main wall: Sound on"]');
     await page.waitForFunction(() => !/muted/.test(document.querySelector('.room-group .room-text').textContent), null, { timeout: 15000 });
+    // Now's room has the walls: each with its state in a line, and On and Off
+    {
+      await go(page, 'now/now');
+      const wall = '[id^="nowwall-"]:has(.lname:text-is("Main wall"))';
+      await page.waitForSelector(wall + ' .navstate:has-text("On")', { timeout: 15000 });
+      assert.deepStrictEqual(await page.$$eval(wall + ' button', (bs) => bs.map((b) => b.textContent)), ['On', 'Off'], 'a wall on Now has On and Off');
+      await page.click(wall + ' button[data-action="on"]');
+      await page.waitForFunction(() => /Main wall: On, started/.test(document.getElementById('msg').textContent), null, { timeout: 15000 });
+      await go(page, 'room/walls');
+      await page.waitForSelector('.room-group:has-text("Main wall")');
+    }
     // A guest sees the state and no button that does anything; a presenter starts on Now and has the buttons on the Room screen
     const roomTokens = await page.evaluate(() => Promise.all(['view', 'live'].map((role) => fetch('/api/devices/invite', { method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify({ name: 'room ' + role, role: role }) }).then((r) => r.json()).then((d) => d.token))));

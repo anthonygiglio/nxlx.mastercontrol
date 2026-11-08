@@ -6992,6 +6992,8 @@
     return function () { openSys(id, 'now'); };
   }
   var HEALTH_STATE = { ok: 'ready', warn: 'check', bad: 'problem', unknown: null };
+  // a wall's state (pvj/room.py) as a chip: on, off, on its way, some on and some off, a projector that does not answer
+  var WALL_STATE = { on: 'active', off: 'off', 'warming up': 'setup', 'cooling down': 'setup', mixed: 'check', 'no answer': 'problem', checking: null, empty: null };
   var TRANSITION_WORDS = { cut: 'Cut', dip: 'Dip to black', crossfade: 'Crossfade', 'wipe-from-left': 'Wipe from left', 'wipe-from-right': 'Wipe from right',
     'wipe-from-top': 'Wipe from top', 'wipe-from-bottom': 'Wipe from bottom', 'slide-left': 'Slide off left', 'slide-right': 'Slide off right', 'slide-up': 'Slide off up', 'slide-down': 'Slide off down' };
   function nowPart() {
@@ -7120,6 +7122,21 @@
       });
       keepCursor(wallsList, function () {
         wallsList.textContent = '';
+        // the walls (the Room's groups), each with its state in a line and On and Off, as the Room's Walls screen
+        // has them; a node with no walls (or no Room module) lists its projectors instead
+        var walls = hasRoom && rd && rd.groups ? rd.groups.filter(function (g) { return g.projectors.length; }) : [];
+        if (walls.length) {
+          walls.forEach(function (g) {
+            var row = nowRow('nowwall-' + g.id, g.name, { chip: WALL_STATE[g.state] === undefined ? null : WALL_STATE[g.state], text: g.text }, null);
+            if (live) ['On', 'Off'].forEach(function (w) {
+              row.querySelector('.row').appendChild(h('button', { class: 'btn small', text: w, 'data-action': w.toLowerCase(), 'aria-label': g.name + ': ' + w, onclick: function () {
+                act('POST', '/api/room/group', { group: g.id, action: w.toLowerCase() }, function () { say(g.name + ': ' + w + ', started'); refresh(); });
+              } }));
+            });
+            wallsList.appendChild(row);
+          });
+          return;
+        }
         ((hd && hd.projectors) || []).forEach(function (x) {
           wallsList.appendChild(nowRow('nowproj-' + x.id, x.name, { chip: HEALTH_STATE[x.state] || null, text: x.text }, canOp() ? ['Open', nowOpen('projectors')] : null));
         });
