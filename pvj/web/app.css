@@ -1425,8 +1425,17 @@ html[data-style="signal"] .wsbrand { font: 500 13px/1.35 var(--mono); color: var
 html[data-style="signal"] .wssub { padding: 12px 16px 0; }
 html[data-style="signal"] .wssub .segbtn { min-height: var(--tk-ch, 44px); padding: 4px 2px; font-size: 14px; letter-spacing: 0; }
 html[data-style="signal"] .deskcol > .screen > .syshead:first-child, html[data-style="signal"] .deskcol > .screen > .row:first-child { margin-top: 0; }
-html[data-style="signal"] .wsdock { border-top: var(--rule) solid var(--fg); }
-html[data-style="signal"] .tp { border-top: 0; padding: 8px 12px; }
+/* The strip stands apart from the page it floats over (the owner, 2026-11-08: "it is too hard to distinguish the bottom
+   control banner from the rest of the page"): the surface colour, not the page's; the accent line on top, in the
+   area's colour where it reads as a line (--ink); and a shadow cast up over the screen that scrolls under it. The area tabs under
+   it on a phone keep the page colour. As in the Figma kit. */
+html[data-style="signal"] .wsdock { border-top: var(--rule) solid var(--ink); box-shadow: 0 -10px 24px rgba(0, 0, 0, .55); }
+/* (2026-11-08, his next word: "a slight colour tint, matched to the main page the user is on, but i may want just a
+   single colour"): the surface tinted with the area's colour; a theme can give the strip one colour of its own
+   in --tk-strip. Its buttons are in capitals ("make all the buttons in the bottom banner all caps, but do not
+   change the clip name"); what plays and its time are not buttons and keep their case. */
+html[data-style="signal"] .tp { border-top: 0; padding: 8px 12px; background: var(--cd); background: var(--tk-strip, color-mix(in srgb, var(--ac) 20%, var(--cd))); }
+html[data-style="signal"] .tp button { text-transform: uppercase; }
 html[data-style="signal"] .tp .tpb { min-height: var(--tk-chl, 56px); padding: 4px 2px; font-size: 14px; letter-spacing: 0; }
 html[data-style="signal"] .tp button.tpx { min-height: var(--tk-ch, 44px); }
 html[data-style="signal"] .tp .tpmore { min-height: var(--tk-ch, 44px); font-size: 14px; }
