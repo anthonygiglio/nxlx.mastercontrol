@@ -1139,6 +1139,24 @@ With New chosen, a box that boots with no screen falls back to classic mpv; when
 | EV7 | Operator and Guest: `GET /api/events` | 403 for both | Any list |
 | EV8 | Choose New on the Pi 3B card (or unplug the projector for a minute with its check running) | "The new renderer fell back to classic mpv: ..." at once; "A projector did not answer." within about a minute | No line, or a second line for the same fall back |
 
+### Nodes find each other (D127, pvj/FLEET.md): not yet run on a node
+
+Needs two nodes on one switch or one Wi-Fi network: node-01 (the Pi 4, 192.168.0.169) and node-02 (the Pi 3B). Both on this release. `NODE` is each node's address; the token is an Owner's or an Operator's.
+
+| Row | Do | Good | Bad |
+|---|---|---|---|
+| FD1 | On each node: `cat /etc/avahi/services/nxlx-mastercontrol.service; ls -l /etc/avahi/services/nxlx-mastercontrol.service; cat /var/lib/pvj/node-id` | A service-group with `_nxlx._tcp`, port 80 (or 443 with a certificate loaded), TXT records `txtvers`, `id` (equal to node-id), `name` (the host name), `tier` (`standard` on the Pi 4, `lean` on the Pi 3B), `version`, `https`; mode `-rw-r--r-- root root`; the two nodes' ids differ | No file; mode 0640; two equal ids |
+| FD2 | `curl -s -H "Authorization: Bearer <token>" http://NODE/api/nodes` on node-01, then on node-02 | Each lists the other (and only the other) within the first answer or the second (the first call can take up to about 2 seconds): id, name, address (the other's real address), port, tier, version, `seen_seconds_ago` 0 to 10; `discovery.state` is `announcing`; `self` is its own | An empty list after 30 seconds; itself in the list; an address that is not the other node's |
+| FD3 | Same call with a Guest's token, and with none | 403, then 401 | A list |
+| FD4 | On node-02: `sudo hostnamectl set-hostname node-02b`, wait 20 seconds, call `/api/nodes` on node-01. Then set it back | The row's name changes to the new one within about 45 seconds; the id is the same as before; the service file on node-02 holds the new name within 20 seconds | A new id; the old name for more than a minute |
+| FD5 | On node-02: `sudo systemctl stop avahi-daemon`. Wait 40 seconds. Call `/api/nodes` on node-02 and on node-01 | node-01's list no longer has node-02 (35 seconds after the last answer); node-02's own call within a minute says `discovery.state` `avahi-stopped` and the log (`journalctl -u pvj-web`) has "discovery of other nodes: avahi-stopped"; node-02's panel otherwise works, and its call may still list node-01. Then `sudo systemctl start avahi-daemon`: node-02 is back in node-01's list within a minute | An error page; the panel slow; node-02 still listed after a minute |
+| FD6 | On a node without avahi (`sudo apt-get remove avahi-daemon` is the owner's to do; or a desktop machine) | `discovery.state` `no-avahi`; no file written; the event log has a line "Other nodes cannot see this one: avahi-daemon is not installed."; nothing else changes | A crash, or a package installed by the node |
+| FD7 | As Owner: `curl -s -X POST -H "X-PVJ-Request: 1" -H "Content-Type: application/json" -H "Authorization: Bearer <owner token>" -d '{"on": false}' http://NODE/api/nodes/discovery`, then `ls /etc/avahi/services/`; then `{"on": true}` | Off: the service file is gone at once, `/api/nodes` has an empty list and state `off`, and `sudo tcpdump -ni any udp port 5353` on the node shows no questions from it when asked; the setting is still off after `sudo systemctl restart pvj-web`; On: the file is back within a second | The file stays; questions keep going out |
+| FD8 | An Operator's token on the same POST | 403 | Accepted |
+| FD9 | `systemctl show pvj-sysd -p ReadWritePaths` after an update | `/run/pvj-sysd` and `-/etc/avahi/services` | Anything else added |
+| FD10 | Cost on the Pi 3B: `top -b -n1 | head -15` while calling `/api/nodes` every 11 seconds for two minutes, and `ps -o pid,rss,cmd -C python3` before and after | pvj-web's CPU does not change visibly between calls; no new process stays; memory within a few MB of before | A rise that stays |
+| FD11 | `sudo tcpdump -ni any -c 20 udp port 5353` on node-01 while idle for a minute | Only avahi's own traffic; no questions from the panel's account unless `/api/nodes` was called | Questions every few seconds with nobody asking |
+
 ## Safety
 
 - The workflow starts by **manual dispatch only**, and only for the repository owner. It never runs for pushes, pull requests or forks, so nobody else's code reaches the Pi. Keep it that way.
