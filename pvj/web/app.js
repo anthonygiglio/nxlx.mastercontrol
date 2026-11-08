@@ -7056,7 +7056,7 @@
       if (hd) {
         [['power', 'Power'], ['temperature', 'Temperature'], ['player', 'Player']].forEach(function (k) {
           if (!troubled(hd[k[0]])) return;
-          need('node-' + k[0], k[1], hd[k[0]], k[0] === 'player' && full ? ['Restart player', function (e) {
+          need('node-' + k[0], k[1], hd[k[0]], k[0] === 'player' && full && hd.player.state === 'bad' ? ['Restart player', function (e) {
             confirmRow('Restart the player? The picture stops for a few seconds.', 'Restart player', 'Not now', function () {
               act('POST', '/api/player/restart', {}, function () { say('The player is restarting. It is back in a few seconds.'); refresh(); });
             }, e.currentTarget);
@@ -7075,11 +7075,13 @@
       }
       sysRows().filter(rowShown).forEach(function (r) {
         if (r.id === 'health' || r.id === 'projectors') return;
+        if (r.id === 'osc' && hd && hd.osc_open && full) return;      // (said above, from Health: one line, not two)
         var s = sysState(r);
         if (s.chip === 'problem' || s.chip === 'check') needRows.push({ id: r.id, name: r.name, s: s, fix: ['Open', nowOpen(r.id)] });
       });
       needRows.sort(function (a, b) { return (a.s.chip === 'problem' ? 0 : 1) - (b.s.chip === 'problem' ? 0 : 1); });
-      keepCursor(needsList, function () {
+      // (a question open on a line, Restart player's, is not wiped by the next look: the list waits for its answer)
+      if (!asking(needsList)) keepCursor(needsList, function () {
         needsList.textContent = '';
         needRows.forEach(function (x) { needsList.appendChild(nowRow('nowneed-' + x.id, x.name, x.s, x.fix)); });
         if (!needRows.length) needsList.appendChild(h('div', { class: 'state', id: 'nownothing', text: 'Nothing needs you.' }));
