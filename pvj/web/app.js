@@ -2082,6 +2082,9 @@
     var best = schedNextEntry(d);
     return best ? (best.off === 0 ? '' : best.day + ' ') + best.e.time + ' ' + schedWhat(best.e) : '';
   }
+  // A storage line of Health ("Storage: 1.4 GB free on the media disk (5 percent): running low. ..."), its words
+  // without the leading "Storage: ", for a place that names it Storage already.
+  function storageLine(x) { return { state: x.state, text: String(x.text || '').replace(/^Storage: /, '') }; }
   var SYS_STATE = {
     https: httpsState,
     health: function (d) {
@@ -2089,6 +2092,7 @@
       var lines = [['Power', d.power], ['Temperature', d.temperature], ['Player', d.player]];
       (d.helpers || []).forEach(function (x) { if (!x.running && x.name !== 'pvj-netd') lines.push([x.label, { state: 'bad', text: 'Not running' }]); });
       (d.projectors || []).forEach(function (x) { lines.push(['Projector ' + x.name, x]); });
+      (d.storage || []).forEach(function (x) { lines.push(['Storage', storageLine(x)]); });      // free space on each disk (pvj/health.py)
       if (d.osc_open) lines.push(['OSC', { state: 'warn', text: 'open, anyone on this network can control the node' }]);    // D83
       var worst = lines.filter(function (l) { return l[1] && l[1].state === 'bad'; })[0] || lines.filter(function (l) { return l[1] && l[1].state === 'warn'; })[0];
       if (!worst) return st(null, name + ' · all well');
@@ -2795,6 +2799,7 @@
           x.running ? 'Running' : (x.name === 'pvj-netd' ? 'Not running (only needed for network settings)' : 'Not running')));
       });
       (d.projectors || []).forEach(function (x) { body.appendChild(row('healthproj-' + x.id, 'Projector: ' + x.name, x.state, x.text)); });
+      (d.storage || []).forEach(function (x) { var l = storageLine(x); body.appendChild(row('healthstorage-' + String(x.id).replace(/\W/g, '-'), 'Storage', l.state, l.text)); });
       // D83: OSC on with every lock off. An Owner and an Operator are told (the box leaves it out for a Guest); the
       // locks are the Owner's, on Setup > OSC, so an Operator reads who can switch one on.
       if (d.osc_open) body.appendChild(row('healthosc', 'OSC', d.osc_open.state, can('full') ? d.osc_open.text.replace(/\.$/, '') + ' on the OSC page of Setup.' : d.osc_open.text.replace(/ Switch on a lock\.$/, '') + ' The owner can switch on a lock.'));
@@ -7072,6 +7077,13 @@
           need('proj-' + x.id, x.name, x, live ? ['Try again', function () {        // asks the projector how it is, now
             act('POST', '/api/projector', { id: x.id, action: 'state' }, function () { say(x.name + ': asked again.'); refresh(); });
           }] : null);
+        });
+        // a disk running low or full (pvj/health.py): clips are removed in the Library (Delete is the owner's), so the
+        // media disk's line opens it for an owner; any other disk, or for an operator, opens Health
+        (hd.storage || []).forEach(function (x) {
+          if (!troubled(x)) return;
+          var media = (x.folders || []).indexOf('media') >= 0 && full && hasScreen('play/library');
+          need('storage-' + String(x.id).replace(/\W/g, '-'), 'Storage', storageLine(x), media ? ['Open the library', function () { go('play/library'); }] : ['Open', nowOpen('health')]);
         });
         if (hd.osc_open && full) need('osc', 'OSC', hd.osc_open, ['Open', nowOpen('osc')]);
       }
