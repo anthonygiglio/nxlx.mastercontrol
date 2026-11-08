@@ -7090,8 +7090,12 @@
       var sd = last.sources, md = last.mapper;
       NOW_SURF = {};
       if (md && md.enabled && md.on && (md.surfaces || []).length) {
-        for (var k = 1; k <= Math.max(1, (sd && sd.count) || 1); k++) {
-          var on = md.surfaces.filter(function (s) { return s.on !== false && (s.source || 1) === k; }).map(function (s) { return s.name; });
+        // the node's own rule (D101, mapper.py shown_source): a surface draws its own source only when the player
+        // has that many sources (the mapper's `sources`), and Source 1 otherwise
+        var has = Math.max(1, md.sources || 1);
+        var shown = function (s) { return s.source > 1 && s.source <= has ? s.source : 1; };
+        for (var k = 1; k <= Math.max(has, (sd && sd.count) || 1); k++) {
+          var on = md.surfaces.filter(function (s) { return s.on !== false && shown(s) === k; }).map(function (s) { return s.name; });
           NOW_SURF[k] = on.length ? 'on ' + on.join(', ') : 'on no surface';
         }
       }
@@ -7157,7 +7161,7 @@
       if (Date.now() - nowRowsAt > 30000) askRows().then(function () { if (root.isConnected && !held('now', refresh)) draw(); });
       Promise.all([
         api('GET', '/api/health'), api('GET', '/api/sources'), hasRoom ? api('GET', '/api/room') : Promise.resolve(null),
-        moduleOn('mapper') ? api('GET', '/api/mapper') : Promise.resolve(null)
+        moduleOn('mapper') && can('view') ? api('GET', '/api/mapper') : Promise.resolve(null)
       ]).then(function (rs) {
         if (!root.isConnected) return;
         nowTimer = setTimeout(refresh, 5000);
@@ -7166,7 +7170,7 @@
         if (rs[0] && rs[0].ok) keepAnswer({ id: 'health' }, rs[0]);
         last.sources = rs[1] && rs[1].ok ? rs[1].data : null;
         last.room = rs[2] && rs[2].ok ? rs[2].data : last.room;
-        last.mapper = rs[3] && rs[3].ok ? rs[3].data : (moduleOn('mapper') ? last.mapper : null);
+        last.mapper = rs[3] && rs[3].ok ? rs[3].data : null;      // a failed answer says nothing old about the surfaces
         draw();
       });
     }

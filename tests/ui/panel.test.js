@@ -2426,18 +2426,36 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.click('#mapon');
     await page.waitForSelector('#mapstatus:has-text("Mapping is on")', { timeout: 20000 });
     if (shots) await page.screenshot({ path: path.join(shots, '7-mapper.png'), fullPage: true });
-    // Now says which surfaces each source is on: the Quad on the source the box says it is on (classic answers say
-    // Source 1), the others on no surface. The sources' answer is changed on the way to three, Source 3 playing.
+    // Now says which surfaces each source is on, by the node's rule (D101): a surface draws its own source when the
+    // player has that many, Source 1 otherwise; a hidden surface is left out; with the mapping off nothing is said.
+    // The node's answers are changed on the way: the sources to three (Source 3 playing), the mapping as each case needs.
     {
-      const quadOn = (await get('/api/mapper')).surfaces.filter((x) => x.name === 'Quad')[0].source || 1;
       const threeSrc = (route) => route.fulfill({ json: { count: 3, sources: [{ source: 1, idle: false, name: 'intro.mkv' }, { source: 2, idle: true }, { source: 3, idle: false, name: 'tunnel.mkv' }] } });
+      let mapCase = null;
+      const mapRoute = async (route) => {
+        const res = await route.fetch();
+        const data = await res.json();
+        Object.assign(data, mapCase);
+        await route.fulfill({ response: res, json: data });
+      };
+      const surfaces = [{ id: 's1', type: 'quad', name: 'Quad', on: true, source: 2 }, { id: 's2', type: 'quad', name: 'Hidden', on: false, source: 2 },
+        { id: 's3', type: 'quad', name: 'Left', on: true, source: 3 }, { id: 's4', type: 'quad', name: 'Centre', on: true, source: 3 }];
       await page.route('**/api/sources', threeSrc);
+      await page.route('**/api/mapper', mapRoute);
+      const says = async (want, why) => {
+        for (const k of [1, 2, 3]) {
+          await page.waitForFunction(([id, re]) => new RegExp(re).test((document.querySelector('#' + id + ' .navstate') || {}).textContent || ''), ['nowsrc-' + k, want[k - 1].source], { timeout: 15000 })
+            .catch(async () => { throw new Error(why + ': Source ' + k + ' on Now does not end with ' + want[k - 1] + ' but says "' + await page.textContent('#nowsrc-' + k + ' .navstate') + '"'); });
+        }
+      };
+      mapCase = { enabled: true, on: true, sources: 3, surfaces };
       await go(page, 'now/now');
-      for (const k of [1, 2, 3]) {
-        const want = k === quadOn ? / \u00b7 on Quad$/ : / \u00b7 on no surface$/;
-        await page.waitForFunction(([id, re]) => new RegExp(re).test((document.querySelector('#' + id + ' .navstate') || {}).textContent || ''), ['nowsrc-' + k, want.source], { timeout: 15000 })
-          .catch(() => { throw new Error('Source ' + k + ' on Now does not end with ' + want + ' (the Quad is on Source ' + quadOn + ')'); });
-      }
+      await says([/ \u00b7 on no surface$/, / \u00b7 on Quad$/, /^tunnel\.mkv \u00b7 on Left, Centre$/], 'three sources');
+      mapCase = { enabled: true, on: true, sources: 1, surfaces };          // a player with one source: every surface shows Source 1
+      await says([/ \u00b7 on Quad, Left, Centre$/, / \u00b7 on no surface$/, / \u00b7 on no surface$/], 'one source');
+      mapCase = { enabled: true, on: false, sources: 3, surfaces };         // the mapping off: the whole screen, nothing said
+      await says([/^((?! \u00b7 on ).)*$/, /^Nothing loaded$/, /^tunnel\.mkv$/], 'the mapping off');
+      await page.unroute('**/api/mapper', mapRoute);
       await page.unroute('**/api/sources', threeSrc);
       await sys('Projection mapping');
       await page.waitForSelector('#mapstatus:has-text("Mapping is on")', { timeout: 20000 });
