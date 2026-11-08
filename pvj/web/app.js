@@ -7246,7 +7246,7 @@
   // Who is connected now and the last changes (D126), as the node tells this device (it leaves out what this role
   // may not know: an Operator is told the Owner's device by its role, a support login no names). Calm: two lines and
   // up to three changes, under Today, kept up to date by the status the panel already asks for every second.
-  function agoWords(s) { return s < 60 ? s + ' s ago' : s < 3600 ? Math.round(s / 60) + ' min ago' : Math.round(s / 3600) + ' h ago'; }
+  function presenceAgo(s) { return s < 60 ? s + ' s ago' : s < 3600 ? Math.round(s / 60) + ' min ago' : Math.round(s / 3600) + ' h ago'; }      // (its own name: agoWords is the OSC page's)
   function nowPresence(p) {
     var box = document.getElementById('nowpresence');
     if (!box || !p) return;
@@ -7256,7 +7256,7 @@
     var lines = [nowRow('nowhere', 'Connected now', { chip: null, text: (p.count || 0) + ' here' + (who.length ? ': ' + who.join(', ') : '') }, null)];
     (p.changes || []).slice(0, 3).forEach(function (c, i) {
       var by = c.you ? 'you' : c.by ? c.by + (c.role ? ' (' + c.role + ')' : '') : c.role || 'someone';
-      lines.push(nowRow('nowchange-' + i, c.area, { chip: null, text: 'Changed by ' + by + ', ' + agoWords(c.seconds_ago) }, null));
+      lines.push(nowRow('nowchange-' + i, c.area, { chip: null, text: 'Changed by ' + by + ', ' + presenceAgo(c.seconds_ago) }, null));
     });
     var words = lines.map(function (l) { return l.textContent; }).join('|');
     if (box.dataset.words === words) return;                  // the same as a second ago: nothing is drawn again

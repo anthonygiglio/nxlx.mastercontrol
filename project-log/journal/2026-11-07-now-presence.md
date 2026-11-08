@@ -8,3 +8,5 @@
   - Up to three of the last changes: the area and "Changed by FireTab (Operator), 12 s ago", or "by you".
 - **No new request.** It is drawn from the status the panel already asks for every second, and drawn again only when its words change.
 - **Test.** panel.test.js on Now: this device is "here (you)", and the tap just made on the clock is the change "Tempo, Changed by you".
+- **Found by the full run.** The first version named its helper for "N s ago" `agoWords`. The OSC page has a function of that name, and the later declaration replaced it, so OSC said "1 min ago" where it says "1 minute ago". Renamed `presenceAgo`.
+- **Run on the HP's WSL:** tests/ui/panel.test.js passes, run alone, on the whole stack over master.
