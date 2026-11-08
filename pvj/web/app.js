@@ -992,7 +992,9 @@
     nowLive(np.textContent, pl, st.mix || {});
     var temp = typeof sys.temp_c === 'number' ? Math.round(sys.temp_c) + '°C' : '';
     var pill = document.getElementById('pill');
-    if (pill) pill.textContent = [sys.board, temp, pl.running ? 'OK' : 'No player'].filter(Boolean).join(' · ');
+    // the node's own name (the owner, 2026-11-07: "show the node's name"), without the nxlx- every node's name starts with
+    var nodeName = String(sys.name || '').replace(/^nxlx-/i, '');
+    if (pill) pill.textContent = [nodeName || sys.board, temp, pl.running ? 'OK' : 'No player'].filter(Boolean).join(' · ');
     var f = document.getElementById('freeze'); if (f) f.textContent = pl.paused ? 'Resume' : 'Freeze';
     fadeShow(document.getElementById('fade'), st.mix);
     var b = document.getElementById('black'); if (b) { var on = st.mix && st.mix.blackout; b.classList.toggle('flash', !!on); b.textContent = on ? 'Show' : 'Blackout'; }      // flashing for as long as it is on, as the fade button is (D75)
