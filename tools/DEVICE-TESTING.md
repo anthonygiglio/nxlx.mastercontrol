@@ -1143,9 +1143,9 @@ With New chosen, a box that boots with no screen falls back to classic mpv; when
 
 | Row | Do | Good | Bad |
 |---|---|---|---|
-| DH1 | On the node: `curl -s -H "Authorization: Bearer <token>" http://NODE/api/system/health` (the Health report) and `df -h /var/lib/pvj /var/lib/pvj/video` | `storage` has one row per distinct disk; its `free_bytes` is close to `df`'s Avail; the text reads "Storage: N GB free on ..." | A row for a disk that is not there, or numbers far from `df` |
+| DH1 | On the node: `curl -s -H "Authorization: Bearer <token>" http://NODE/api/health` (the Health report) and `df -h /var/lib/pvj /var/lib/pvj/video` | `storage` has one row per distinct disk; its `free_bytes` is close to `df`'s Avail; the text reads "Storage: N GB free on ..." | A row for a disk that is not there, or numbers far from `df` |
 | DH2 | With the media on a USB drive: `storage` has two rows (the media disk and the system disk) | Two rows; unplug the drive and the media row says the folder is missing or cannot be read (a warning) | An error or an empty reply |
-| DH3 | Fill the media disk to under 2 GB free (a test node only), then under 500 MB | The row turns `warn` and then `bad`, `overall` follows, and the panel's Needs you shows it | No change of state |
+| DH3 | Fill the media disk to under 2 GB free (a test node only), then under 500 MB, and read `/api/health` each time | The `storage` row turns `warn` and then `bad`, and `overall` follows, so the navigation badge changes. The text on the panel's Health card and Needs you follows in the panel PR | No change of state in `/api/health` |
 
 ## Safety
 

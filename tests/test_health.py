@@ -71,7 +71,8 @@ class PowerTest(unittest.TestCase):
 class ReportTest(unittest.TestCase):
     def test_load_memory_addresses_and_overall(self):
         sysfs, proc, run = tree(alarm=False)
-        h = health.Health(Api(), run, sysfs=sysfs, proc=proc, log=lambda *_: None)
+        roomy = lambda path: mock.Mock(f_frsize=4096, f_blocks=(100 * health.GB) // 4096, f_bavail=(60 * health.GB) // 4096)       # plenty free, whatever the runner has
+        h = health.Health(Api(), run, sysfs=sysfs, proc=proc, log=lambda *_: None, statvfs=roomy)
         with mock.patch("pvj.hardware.temperatures", lambda *a, **k: [{"celsius": 55.0}]), mock.patch.dict(os.environ, {"PVJ_STATE_DIR": run}):
             r = h.report()
         self.assertEqual((r["cpu_percent"], r["memory_percent"], r["memory_mb"]), (50, 25, 3906))
