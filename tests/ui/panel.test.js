@@ -1830,6 +1830,13 @@ function startServer(env) {          // env: more for the harness's environment 
       await go(page, 'now/now');
       await page.waitForSelector('#nownode .nowrow', { timeout: 15000 });
       assert.strictEqual(await page.textContent('#nowfade'), await page.textContent('#fade'), 'Now\'s fade button says what the strip\'s says (D75: out, then in)');
+      // The node: the clock with Tap, and remote support (no longer under Today)
+      await page.waitForFunction(() => !/Checking/.test((document.querySelector('#nownode-clock .navstate') || {}).textContent || 'Checking'), null, { timeout: 15000 });
+      const tapped = page.waitForResponse((r) => r.url().endsWith('/api/tempo/tap') && r.request().method() === 'POST');
+      await page.click('#nownode-clock button');
+      assert.strictEqual((await tapped).status(), 200, 'Tap on Now taps the node\'s clock');
+      await page.waitForSelector('#nownode-support');
+      assert.strictEqual(await page.locator('#nowtoday-support').count(), 0, 'remote support is under The node, not Today');
       assert.strictEqual(await page.textContent('[id^="nowneed-proj-"] button'), 'Try again', 'a projector that needs you has Try again');
       await page.click('[id^="nowneed-proj-"] button');
       await page.waitForFunction(() => /asked again/.test(document.getElementById('msg').textContent), null, { timeout: 15000 });
