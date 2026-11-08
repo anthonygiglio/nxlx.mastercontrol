@@ -22,7 +22,7 @@ import threading
 import time
 import unicodedata
 
-from . import dmx as dmx_mod, hardware, midi as midi_mod, netcfg, osc as osc_mod, presets, profile as tiers_mod, streams as streams_mod, themes as themes_mod
+from . import dmx as dmx_mod, hardware, midi as midi_mod, netcfg, osc as osc_mod, presence as presence_mod, presets, profile as tiers_mod, streams as streams_mod, themes as themes_mod
 from . import auth as auth_mod
 from . import locks, paths
 from . import policy
@@ -252,6 +252,8 @@ class Api:
         from . import controllercode as controllercode_mod
         self.controller_codes = controllercode_mod.ControllerCodes(self, log=lambda line: self.log(line))   # a code on the display from a MIDI controller (D61)
         self.sysd = None          # SysdClient or None (reboot, power off, set the clock)
+        self.presence = presence_mod.Presence(controllers=policy.CONTROLLERS)    # who is connected now and what each changed (D126), memory only
+        auth.on_revoke = lambda ident: self.presence.forget(ident)           # a removed device is gone from it at once
         self.events = None        # EventLog or None (pvj/events.py, D125): what happened on this node
         self.https = None         # httpsbox.HttpsBox or None: the secure connection (D79), set in server.build
         self.capture = None       # Capture or None (live input from a USB capture device)
@@ -584,7 +586,8 @@ class Api:
                 "device": device, "support": self.support.banner(), "guest_controls": self.guests.state(),
                 "reach": policy.reach(device, self.guests.locked()),
                 "screen": self.screen.brief(),           # the mode in use, the one asked for, and why they differ (D90)
-                "renderer": self.renderer.brief()}       # which program draws, the one chosen, and why they differ (D95)
+                "renderer": self.renderer.brief(),       # which program draws, the one chosen, and why they differ (D95)
+                "presence": self.presence.view(device)}  # who is connected and what changed last, as this device may be told (D126)
 
     def access_on_screen(self):
         """True while the PIN or join codes are drawn on the display (on request, or the first-run screen)."""
@@ -5528,6 +5531,7 @@ class Api:
         return {"guest_controls": out}
 
     def handle(self, method, path, body, device, client):
+        self.presence.seen(device)               # a request from this device: connected now (D126)
         try:
             m = re.match(r"^/api/modules/([^/]+)$", path)
             if m and method == "POST":
@@ -5548,6 +5552,8 @@ class Api:
                 for finish in after:
                     finish(done)
             self.support.used(device, method, path)      # D84: what a support login changed is in its session's log
+            if self._still_paired(device):               # not one that this very request removed (a revoke, a reset)
+                self.presence.changed(device, method, path, body)  # D126: which control area it changed, for "changed by ... 12 s ago"
             return 200, out
         except ApiError as e:
             payload = dict(getattr(e, "extra", None) or {}, error=e.message)

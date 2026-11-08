@@ -1156,6 +1156,17 @@ Each row needs the hardware named. Whether the owner has a composite cable and a
 | OUT9 | node-01 or node-02 with the read-only root on (`sudo pvj-rootfs enable`, restart): OUT4 again | The boot files are changed and the change is still there after a restart (the boot partition is not under the overlay) | The change lost at the restart |
 | OUT10 | A node with the late-screen watcher in play (New renderer chosen, projector off at boot) and AV on: boot with the HDMI projector off | The AV output counts as a screen (the node does not wait for HDMI); note what happens when the projector warms up (the watcher only restarts for a node with no screen at all) | Anything other than what the test notes say |
 
+### Presence: who is connected, and what changed last (D126): not yet run on a node
+
+| Row | Do | Good | Bad |
+|---|---|---|---|
+| PR1 | Open the panel on a laptop (Owner) and a phone (Operator), then `curl -s -H "Authorization: Bearer <owner token>" http://NODE/api/status` | `presence.devices` lists both by name and role, each `seconds_ago` 0 to 1, `you` true for the asking device; no address, token or id anywhere in it | An address or id |
+| PR2 | Leave the phone's tab in the background for 40 seconds, then look at the laptop's status | The phone is gone from `devices` (and `count`) after about 30 seconds, and back with its next request | Still listed after a minute |
+| PR3 | From the phone change the Mix (a fade time), then read the laptop's status | `changes[0]` is `{"area": "Mix", "by": "<the phone's name>", "role": "Operator", "seconds_ago": small}` | No change, or the wrong area |
+| PR4 | Pair a Guest phone; read status as that Guest, then as the Operator | The Guest sees `devices: []` and a count; the Operator sees the Owner and Operators by name and `guests: 1`, and the Guest's change as `by: null, role: "Guest"` | The Guest's name shown to the Operator or anything shown to the Guest |
+| PR5 | Start a remote support session and log in as support | The Owner sees an entry named "Remote support"; the Operator and the Guest do not | Support shown to them |
+| PR6 | `sudo systemctl restart pvj-web`; check `ls -la /var/lib/pvj` before and after the use above | Presence is empty after the restart, and no file in the state folder gained a presence entry | A file written for presence |
+
 ## Safety
 
 - The workflow starts by **manual dispatch only**, and only for the repository owner. It never runs for pushes, pull requests or forks, so nobody else's code reaches the Pi. Keep it that way.
