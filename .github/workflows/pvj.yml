@@ -4,10 +4,15 @@ name: pvj platform layer
 
 on:
   push:
+    branches: [master]
   pull_request:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Every job has an end, and every step that downloads has an earlier one. On 2026-10-05 a panel-ui job spent more
 # than twenty minutes in "Install mpv and a browser" (usually 45 seconds): that runner got its packages at about
