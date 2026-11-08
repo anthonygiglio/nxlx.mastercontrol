@@ -22,6 +22,7 @@ import signal
 import socket
 import sys
 import threading
+import time
 import traceback
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -648,9 +649,13 @@ def build_fleet(api, settings, state, board):
         return {"id": own_id, "name": fleet_mod.clean_hostname(socket.gethostname()), "tier": tier, "version": __version__,
                 "port": port, "https": secure}
 
+    known = [0.0, []]
+
     def addresses():
-        return [a["local"] for e in api._ip_json() if e.get("ifname") not in ("lo", "wg-pvj")
-                for a in e.get("addr_info", []) if a.get("family") == "inet" and a.get("local")]
+        if time.monotonic() - known[0] >= fleet_mod.CACHE_SECONDS or not known[1]:       # `ip` is run at most once per listing
+            known[:] = [time.monotonic(), [a["local"] for e in api._ip_json() if e.get("ifname") not in ("lo", "wg-pvj")
+                                           for a in e.get("addr_info", []) if a.get("family") == "inet" and a.get("local")]]
+        return list(known[1])
 
     return fleet_mod.Fleet(describe, lambda: fleet_mod.stored_on(settings.data.get("fleet")), api.sysd,
                            lambda: fleet_mod.scan(fleet_mod.net_transport(addresses)),

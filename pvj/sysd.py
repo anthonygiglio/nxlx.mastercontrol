@@ -54,6 +54,7 @@ class SysService:
         self.runner, self.log = runner, log
         self.avahi_services = avahi_services or self.AVAHI_SERVICES
         self.avahi_socket = avahi_socket or self.AVAHI_SOCKET
+        self._fleet_fail = None
         self._schedule = schedule or (lambda delay, fn: threading.Timer(delay, fn).start())
         self.lock = threading.Lock()
         self.rundir = rundir
@@ -267,39 +268,51 @@ class SysService:
                 "    <txt-record>https=" + ("1" if secure else "0") + "</txt-record>\n"
                 "  </service>\n</service-group>\n")
         final = os.path.join(self.avahi_services, self.FLEET_FILE)
-        try:
-            with open(final, "r", encoding="utf-8") as f:
-                if f.read(len(text) + 1) == text:
-                    return {"ok": True, "avahi": state}
-        except OSError:
-            pass
-        tmp = os.path.join(self.avahi_services, ".nxlx-mastercontrol.tmp")      # avahi reads only names ending in .service
-        try:
-            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o644)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(text)
-                os.fchmod(f.fileno(), 0o644)            # the unit's UMask would make it 0640, which avahi's own account cannot read
-            os.replace(tmp, final)
-        except OSError as e:
+        with self.lock:                          # one writer at a time: the temporary name is fixed
             try:
-                os.unlink(tmp)
+                with open(final, "r", encoding="utf-8") as f:
+                    if f.read(len(text) + 1) == text:
+                        self._fleet_fail = None
+                        return {"ok": True, "avahi": state}
             except OSError:
                 pass
-            self.log("pvj-sysd: the avahi service file was not written: %s" % e)
-            return {"ok": False, "error": "the service file could not be written"}
+            tmp = os.path.join(self.avahi_services, ".nxlx-mastercontrol.tmp")      # avahi reads only names ending in .service
+            try:
+                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o644)
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(text)
+                    os.fchmod(f.fileno(), 0o644)            # the unit's UMask would make it 0640, which avahi's own account cannot read
+                os.replace(tmp, final)
+            except OSError as e:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+                self._fleet_failed("the avahi service file was not written: %s" % e)
+                return {"ok": False, "error": "the service file could not be written"}
+            self._fleet_fail = None
         self.log("pvj-sysd: announcing this node as %s (id %s)" % (name, ident[:8]))
         return {"ok": True, "avahi": state}
 
+    def _fleet_failed(self, text):
+        """A failure to write or remove the file, logged once per change of reason: the panel asks again every minute
+        (on a read-only root every time would be the same line)."""
+        if text != self._fleet_fail:
+            self._fleet_fail = text
+            self.log("pvj-sysd: " + text)
+
     def fleet_withdraw(self):
         """Remove the service file (the switch is off). Nothing to do is also ok."""
-        try:
-            os.unlink(os.path.join(self.avahi_services, self.FLEET_FILE))
-            self.log("pvj-sysd: no longer announcing this node")
-        except FileNotFoundError:
-            pass
-        except OSError as e:
-            self.log("pvj-sysd: the avahi service file was not removed: %s" % e)
-            return {"ok": False, "error": "the service file could not be removed"}
+        with self.lock:
+            try:
+                os.unlink(os.path.join(self.avahi_services, self.FLEET_FILE))
+                self.log("pvj-sysd: no longer announcing this node")
+            except FileNotFoundError:
+                pass
+            except OSError as e:
+                self._fleet_failed("the avahi service file was not removed: %s" % e)
+                return {"ok": False, "error": "the service file could not be removed"}
+            self._fleet_fail = None
         return {"ok": True}
 
     def handle(self, message):

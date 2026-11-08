@@ -266,9 +266,14 @@ def scan(transport, window=SCAN_SECONDS):
                     txt.setdefault(owner, items)
 
     take(transport([build_query(SERVICE, 12)], window))
-    missing = [i for i in instances if i not in srv or i not in txt][:16]
-    if missing:
-        take(transport([build_query(i, 255) for i in missing], window / 2))
+    follow = []
+    for i in [i for i in instances if i not in srv or i not in txt][:16]:
+        try:
+            follow.append(build_query(i, 255))
+        except FleetError:                       # a name that cannot be asked for again (a label that grows when re-encoded): that node is skipped
+            instances.pop(i, None)
+    if follow:
+        take(transport(follow, window / 2))
     rows = {}
     for instance, address in instances.items():
         if instance in srv and instance in txt:
@@ -370,7 +375,12 @@ class Browser:
                 return
             self._running, self._started = True, t
             self._done.clear()
-        threading.Thread(target=self._work, name="fleet-scan", daemon=True).start()
+        try:
+            threading.Thread(target=self._work, name="fleet-scan", daemon=True).start()
+        except BaseException:                    # no thread to give: the next request may try again
+            with self._lock:
+                self._running = False
+            raise
 
     def nodes(self, wait=FIRST_WAIT):
         """{"nodes": [...], "scanning": bool, "error": None | text}. Asking starts a scan when the last one is older than
@@ -401,7 +411,14 @@ class Fleet:
         self.state = "off"
         self._sent = _UNSET          # the record last written (None: withdrawn), to tell a change
         self._tried = None
+        self._last_why = None
         self._lock = threading.Lock()
+
+    def _why(self, text):
+        """The reason an attempt failed, in the log once per change of reason: the attempt is repeated every minute."""
+        if text != self._last_why:
+            self._last_why = text
+            self._log("pvj-web: " + text)
 
     def _set_state(self, state):
         if state != self.state:
@@ -437,16 +454,16 @@ class Fleet:
         try:
             reply = self.sysd.request(dict(want, cmd="fleet_announce") if want else {"cmd": "fleet_withdraw"})
         except OSError as e:
-            self._log("pvj-web: the system helper did not take the announcement: %s" % e)
+            self._why("the system helper did not take the announcement: %s" % e)
             self._sent = _UNSET
             self._set_state("no-helper")
             return
         if not reply.get("ok"):
-            self._log("pvj-web: the announcement was refused: %s" % reply.get("error"))
+            self._why("the announcement was refused: %s" % reply.get("error"))
             self._sent = _UNSET
             self._set_state("error")
             return
-        self._sent = want
+        self._sent, self._last_why = want, None
         if want is None:
             self._set_state("off")
         else:

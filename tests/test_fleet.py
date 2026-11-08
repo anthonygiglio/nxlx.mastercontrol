@@ -142,6 +142,19 @@ class ReadingTest(unittest.TestCase):
         bye = packet(node_records("node-09", ID1, ptr_ttl=0))
         self.assertEqual(fleet.scan(Transport([(LAN, p1), (LAN, bye)])), [])
 
+    def test_one_odd_name_does_not_blank_the_list(self):
+        """A PTR-only answer whose label grows past 63 bytes when read and written again (bytes that are not UTF-8 become
+        three bytes each; U+0130 grows when lower-cased) once made the whole scan raise, and real nodes aged out."""
+        def ptr_only(raw_label):
+            owner = name(["_nxlx", "_tcp", "local"])
+            target = bytes([len(raw_label)]) + raw_label + name(["_nxlx", "_tcp", "local"])
+            rec = owner + struct.pack(">HHIH", 12, 1, 10, len(target)) + target
+            return struct.pack(">HHHHHH", 0, 0x8400, 0, 1, 0, 0) + rec
+        for label in (b"\xff" * 63, ("\u0130" * 31).encode()):
+            good = packet(node_records("node-01", ID1))
+            rows = fleet.scan(Transport([(LAN2, ptr_only(label)), (LAN, good)]))
+            self.assertEqual([r["id"] for r in rows], [ID1], label)
+
     def test_the_list_is_bounded(self):
         many = [(LAN, packet(*[node_records("n%d" % i, "%032x" % (i + 1)) for i in range(20)])) for _ in range(20)]
         self.assertLessEqual(len(fleet.scan(Transport(many))), fleet.MAX_ROWS)
@@ -228,6 +241,15 @@ class BrowserTest(unittest.TestCase):
         self.assertEqual((v["nodes"], v["error"]), ([], "the network could not be asked"))
         self.assertNotIn("unreachable", json.dumps(v), "the system's text is for the log")
         self.assertEqual(len(self.lines), 1)
+
+    def test_a_thread_that_cannot_start_does_not_stop_later_scans(self):
+        from unittest import mock
+        b = self.make(lambda: [row(ID1, "node-01")])
+        with mock.patch("threading.Thread.start", side_effect=RuntimeError("can't start new thread")):
+            with self.assertRaises(RuntimeError):
+                b.nodes(wait=0)
+        self.clock.t += 11
+        self.assertEqual([n["name"] for n in b.nodes()["nodes"]], ["node-01"])
 
     def test_two_rows_with_one_id_at_two_addresses_both_show(self):
         b = self.make(lambda: [row(ID1, "node-01", LAN), row(ID1, "node-01", LAN2)])
@@ -346,6 +368,13 @@ class FleetTest(unittest.TestCase):
         self.assertEqual(f.state, "error")
         self.assertNotIn("/", f.view()["discovery"]["detail"])
 
+    def test_a_failure_that_repeats_is_logged_once_not_every_minute(self):
+        f = self.make(sysd=FakeSysd(fail=OSError("the system helper (pvj-sysd) is not running")))
+        for _ in range(4):
+            f.tick()
+            self.clock.t += 61
+        self.assertEqual(len([l for l in self.lines if "did not take" in l]), 1, self.lines)
+
     def test_the_view_has_the_nodes_own_facts_and_not_a_path_or_a_secret(self):
         f = self.make(scanner=lambda: [row(ID1, "node-02")])
         v = f.view()
@@ -438,6 +467,24 @@ class ServiceFileTest(unittest.TestCase):
         self.assertEqual(s.handle(self.msg), {"ok": True, "avahi": "missing"})
         self.assertEqual(s.handle({"cmd": "fleet_withdraw"}), {"ok": True})
         self.assertFalse(os.path.exists(os.path.join(self.dir, "none")))
+
+    def test_a_write_that_fails_the_same_way_again_is_logged_once(self):
+        os.chmod(self.services, 0o500)
+        self.addCleanup(os.chmod, self.services, 0o700)
+        if os.geteuid() == 0:
+            self.skipTest("root can write anywhere")
+        for _ in range(3):
+            self.assertFalse(self.s.handle(self.msg)["ok"])
+        self.assertEqual(len([l for l in self.lines if "not written" in l]), 1, self.lines)
+
+    def test_two_announcements_at_once_leave_one_good_file(self):
+        threads = [threading.Thread(target=self.s.handle, args=(dict(self.msg, name="node-%02d" % i),)) for i in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(10)
+        self.assertEqual(os.listdir(self.services), ["nxlx-mastercontrol.service"])
+        self.assertRegex(self.read(), r"name=node-0\d")
 
     def test_withdraw_removes_the_file_and_is_safe_twice(self):
         self.s.handle(self.msg)

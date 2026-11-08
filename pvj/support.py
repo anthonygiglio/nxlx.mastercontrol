@@ -96,6 +96,7 @@ REMOTE_DENY_PREFIX_WHY = {
     "/api/https": "the node's key and certificate, and the switch that could shut the owner's devices out (D79)",
     "/api/recovery": "the owner's ways back in (D81)",
     "/api/ndi/discovery": "the NDI discovery server's own settings: a listener on the network is the owner's, in the room (D85)",
+    "/api/nodes": "what this node announces to the local network and which other nodes it lists: network things stay in the room (D85, D127)",
 }
 REMOTE_DENY_PREFIX = tuple(REMOTE_DENY_PREFIX_WHY)
 # Modules no support session switches ON, whatever its role, by the route or by a settings file (D84 meeting D85):

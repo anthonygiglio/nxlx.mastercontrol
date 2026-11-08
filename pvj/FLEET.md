@@ -22,7 +22,7 @@ Without `avahi-daemon` the node works as before, announces nothing, and says why
 
 ## Listing the other nodes
 
-`GET /api/nodes` (Operator and Owner; a Guest has no access) answers:
+`GET /api/nodes` (Operator and Owner; a Guest has no access, and neither has a remote support session: network things stay in the room) answers:
 
 ```
 {"self": {"id", "name", "tier", "version"},
