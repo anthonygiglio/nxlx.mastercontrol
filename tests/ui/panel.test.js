@@ -1801,7 +1801,9 @@ function startServer(env) {          // env: more for the harness's environment 
       assert.strictEqual(menus, 'NOW', 'Now is the first area of the menu');
       assert(await page.isVisible('#nowscreens') && await page.isVisible('#nownodecard') && await page.isVisible('#nowtodaycard') && await page.isVisible('#nowsrc-1'), 'Now has the screens, the node and today');
       await page.waitForSelector('#nowproj-1, [id^="nowproj-"]', { timeout: 15000 });
-      await page.waitForSelector('#nowneed-projectors .chip-problem, #nowneed-projectors .chip-check', { timeout: 40000 });
+      // each problem by itself: the projector with its warning, from Health, and no Health or Projectors row beside it
+      await page.waitForSelector('[id^="nowneed-proj-"] .chip-problem, [id^="nowneed-proj-"] .chip-check', { timeout: 40000 });
+      assert.strictEqual(await page.locator('#nowneed-health, #nowneed-projectors').count(), 0, 'Needs you does not say the Health or Projectors row again');
       assert(/^Needs you \(\d+\)$/.test(await page.textContent('#nowneedshead')), 'Needs you counts what needs you');
       // what happened (D125): the node's last events under Today, the whole log on Health
       // (a fresh harness node may have nothing in it yet: then each place says so)
@@ -1828,7 +1830,28 @@ function startServer(env) {          // env: more for the harness's environment 
       await go(page, 'now/now');
       await page.waitForSelector('#nownode .nowrow', { timeout: 15000 });
       assert.strictEqual(await page.textContent('#nowfade'), await page.textContent('#fade'), 'Now\'s fade button says what the strip\'s says (D75: out, then in)');
-      await page.click('#nowneed-projectors button');
+      assert.strictEqual(await page.locator('[id^="nowneed-proj-"] button').first().textContent(), 'Try again', 'a projector that needs you has Try again');
+      await page.locator('[id^="nowneed-proj-"] button').first().click();
+      await page.waitForFunction(() => /asked again/.test(document.getElementById('msg').textContent), null, { timeout: 15000 });
+      {
+        const downAndOpen = async (route) => {
+          const res = await route.fetch(); const d = await res.json();
+          d.player = { state: 'bad', text: 'The player is not running.' };
+          d.osc_open = { state: 'warn', text: 'OSC is open: anyone on this network can control the node. Switch on a lock.' };
+          await route.fulfill({ response: res, json: d });
+        };
+        await page.route('**/api/health', downAndOpen);
+        await page.waitForSelector('#nowneed-node-player button:text-is("Restart player")', { timeout: 15000 });
+        assert.strictEqual(await page.locator('[id="nowneed-osc"]').count(), 1, 'OSC open is one line in Needs you, not two');
+        await page.click('#nowneed-node-player button');
+        await page.waitForSelector('#nowneedslist #confirmrow');
+        await page.waitForTimeout(6500);                                   // longer than a look (5 s)
+        assert(await page.isVisible('#nowneedslist #confirmrow'), 'the question of Restart player is not wiped by the next look');
+        await page.click('#confirmrow button:text-is("Not now")');
+        await page.waitForSelector('#nowneedslist #confirmrow', { state: 'detached' });
+        await page.unroute('**/api/health', downAndOpen);
+      }
+      await page.click('#nowtohealth');
       await page.waitForSelector('#sysback:text-is("Back to Now")');
       await page.click('#sysback');
       await page.waitForSelector('#nowscreen');
