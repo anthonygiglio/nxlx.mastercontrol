@@ -1139,6 +1139,23 @@ With New chosen, a box that boots with no screen falls back to classic mpv; when
 | EV7 | Operator and Guest: `GET /api/events` | 403 for both | Any list |
 | EV8 | Choose New on the Pi 3B card (or unplug the projector for a minute with its check running) | "The new renderer fell back to classic mpv: ..." at once; "A projector did not answer." within about a minute | No line, or a second line for the same fall back |
 
+### The output and the AV (composite) output (D128): NOT YET RUN on any node
+
+Each row needs the hardware named. Whether the owner has a composite cable and a screen for it decides which rows can be run. A row is never marked as run until it was.
+
+| Row | Do | Good | Bad |
+|---|---|---|---|
+| OUT1 | node-01 (Pi 4, two HDMI ports; one screen on HDMI 1): `GET /api/output` as the Owner, then the player's argument list `tr '\0' ' ' < /proc/$(pgrep -x mpv)/cmdline` | `outputs` lists the connectors the kernel shows (`ls /sys/class/drm`), writeback left out; `saved` is `auto`; the argument list is `--drm-device=/dev/dri/card1 --drm-connector=HDMI-A-1 --drm-mode=...` exactly as before this change | A different argument list with Automatic |
+| OUT2 | node-01 with a screen on HDMI 2 as well: `POST /api/output {"output": "HDMI-A-2"}` | The player restarts once; the picture is on the HDMI 2 screen; the argument list names `HDMI-A-2`; choose `auto` and it goes back to HDMI 1 | The picture on the wrong screen, or two restarts |
+| OUT3 | node-01 with HDMI 2 unplugged: `POST /api/output {"output": "HDMI-A-2"}` | The picture stays on HDMI 1; `GET /api/output` says "HDMI 2 is not connected, so Automatic is used for now"; plugging HDMI 2 in later does NOT move the picture (no flapping); `POST /api/player/restart` or the next start then takes it | The screen going dark, or the picture jumping when HDMI 2 is plugged in |
+| OUT4 | node-01 (Pi 4), only after a screen with an AV lead is ready on the 3.5 mm jack: read `GET /api/output` `av` (costs, `hdmi_off` true), then `POST /api/output/av {"enable": true, "norm": "NTSC", "confirm": "av"}`, then `sudo cat /boot/firmware/config.txt /boot/firmware/cmdline.txt; ls /boot/firmware | grep nxlx` | `dtoverlay=vc4-kms-v3d,composite` and the marked block with `enable_tvout=1` in config.txt, `vc4.tv_norm=NTSC` in cmdline.txt, `.nxlx-original` and a timestamped backup beside each; `av.restart_needed` is true | Any other line changed, or no backup |
+| OUT5 | node-01 after OUT4: restart the node (Restart on the power page, or `POST /api/system/reboot`) | HDMI shows nothing (documented: HDMI is off with composite on a Pi 4); the screen on the AV jack shows the boot and then the panel's picture; `ls /sys/class/drm` lists `Composite-1`; `GET /api/output` shows it connected with `720x480i`; `av.restart_needed` is false | No picture on AV, or HDMI still on (then note what the kernel lists) |
+| OUT6 | node-01 after OUT5: `POST /api/output {"output": "Composite-1"}` then `POST /api/output/av {"enable": false, "confirm": "av"}` and restart | The player uses `--drm-connector=Composite-1 --drm-mode=720x480@59.94`; after the second restart config.txt and cmdline.txt are exactly as before OUT4 (compare with `.nxlx-original`) and HDMI works again | The files differ from the original, or no HDMI after |
+| OUT7 | node-02 (Pi 3B, one HDMI): `POST /api/output/av {"enable": true, "norm": "PAL", "confirm": "av"}` with a PAL screen ready on the AV jack; restart | HDMI stays on (documented for a Pi 3); `Composite-1` is listed; choosing it shows 720x576 at 50 Hz; `av.hdmi_off` was false in the read | HDMI off, or NTSC on a PAL standard |
+| OUT8 | Any node: `POST /api/output/av` as an Operator and as a Guest, and as a support login | 403 each; the Owner's read works for the support login (a helper may read the list) | A write accepted |
+| OUT9 | node-01 or node-02 with the read-only root on (`sudo pvj-rootfs enable`, restart): OUT4 again | The boot files are changed and the change is still there after a restart (the boot partition is not under the overlay) | The change lost at the restart |
+| OUT10 | A node with the late-screen watcher in play (New renderer chosen, projector off at boot) and AV on: boot with the HDMI projector off | The AV output counts as a screen (the node does not wait for HDMI); note what happens when the projector warms up (the watcher only restarts for a node with no screen at all) | Anything other than what the test notes say |
+
 ### Presence: who is connected, and what changed last (D126): not yet run on a node
 
 | Row | Do | Good | Bad |
@@ -1149,6 +1166,14 @@ With New chosen, a box that boots with no screen falls back to classic mpv; when
 | PR4 | Pair a Guest phone; read status as that Guest, then as the Operator | The Guest sees `devices: []` and a count; the Operator sees the Owner and Operators by name and `guests: 1`, and the Guest's change as `by: null, role: "Guest"` | The Guest's name shown to the Operator or anything shown to the Guest |
 | PR5 | Start a remote support session and log in as support | The Owner sees an entry named "Remote support"; the Operator and the Guest do not | Support shown to them |
 | PR6 | `sudo systemctl restart pvj-web`; check `ls -la /var/lib/pvj` before and after the use above | Presence is empty after the restart, and no file in the state folder gained a presence entry | A file written for presence |
+
+### Health: free disk space: not yet run on a node
+
+| Row | Do | Good | Bad |
+|---|---|---|---|
+| DH1 | On the node: `curl -s -H "Authorization: Bearer <token>" http://NODE/api/health` (the Health report) and `df -h /var/lib/pvj /var/lib/pvj/video` | `storage` has one row per distinct disk; its `free_bytes` is close to `df`'s Avail; the text reads "Storage: N GB free on ..." | A row for a disk that is not there, or numbers far from `df` |
+| DH2 | With the media on a USB drive: `storage` has two rows (the media disk and the system disk) | Two rows; unplug the drive and the media row says the folder is missing or cannot be read (a warning) | An error or an empty reply |
+| DH3 | Fill the media disk to under 2 GB free (a test node only), then under 500 MB, and read `/api/health` each time | The `storage` row turns `warn` and then `bad`, and `overall` follows, so the navigation badge changes. The text on the panel's Health card and Needs you follows in the panel PR | No change of state in `/api/health` |
 
 ## Safety
 

@@ -114,6 +114,36 @@ def drm_connectors(root="/"):
     return result
 
 
+def connector_kind(name):
+    """"hdmi", "composite", "dsi", "dp", "vga", "dvi", "lvds" or "other" for a connector's kernel name (HDMI-A-1, Composite-1, DSI-1,
+    DP-2, eDP-1 ...)."""
+    n = str(name).lower()
+    for prefix, kind in (("hdmi", "hdmi"), ("composite", "composite"), ("dsi", "dsi"), ("dp", "dp"), ("edp", "dp"), ("vga", "vga"),
+                         ("dvi", "dvi"), ("lvds", "lvds")):
+        if n.startswith(prefix):
+            return kind
+    return "other"
+
+
+def output_label(name):
+    """The name a person reads for a connector: "HDMI 1", "AV (composite)", "DSI 1", "DisplayPort 2"."""
+    kind = connector_kind(name)
+    num = re.search(r"-([0-9]+)$", str(name))
+    n = num.group(1) if num else ""
+    return {"hdmi": "HDMI " + n, "composite": "AV (composite)" + (" " + n if n not in ("", "1") else ""), "dsi": "DSI " + n,
+            "dp": ("eDP " if str(name).lower().startswith("edp") else "DisplayPort ") + n}.get(kind, str(name)).strip()
+
+
+def outputs(root="/"):
+    """Every display connector the kernel lists for this board, a writeback connector left out (it is not a screen)."""
+    return [c for c in drm_connectors(root) if not c["connector"].lower().startswith("writeback")]
+
+
+def av_capable(kind):
+    """True for a Raspberry Pi: the AV (composite) output exists on the board (a Pi 5's is a pad to solder to; a Pi Zero's, a header)."""
+    return kind in ("pi3", "pi4", "pi5", "pi-other")
+
+
 def playback_profile(board, has_desktop):
     """Suggested mpv settings for this board. Values are starting points that
     pvj-selftest verifies on the real device."""

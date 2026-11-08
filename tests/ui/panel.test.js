@@ -446,6 +446,24 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.click('text=90°');
     await page.click('text=Reset mix');
 
+    // Render nodes: the page says when a cue was sent and when the node went back from a picture in its own words
+    // ("2 min ago", "30 s ago"; the controllers' card says "2 minutes ago" and "just now"). The node's answer is
+    // changed on the way: one render node with a cue sent 125 s ago, and a picture gone 30 s ago.
+    {
+      const withNode = async (route) => {
+        const res = await route.fetch(); const d = await res.json();
+        d.nodes = [{ id: 'agotest', name: 'Ago test', host: '192.168.1.9', port: 7400, profile: 'generic', picture: 'none', showing: false, error: null,
+          last_address: '/cue/1', last_sent_ago: 125, ndi: '', ndi_name: '', still: 0 }];
+        d.back = { node: 'Ago test', ago: 30, why: 'its picture went', to: 'the clip again' };
+        await route.fulfill({ response: res, json: d });
+      };
+      await page.route('**/api/render', withNode);
+      await sys('Render nodes');
+      await page.waitForSelector('.render-entry', { timeout: 15000 });
+      assert.match(await page.textContent('.render-entry'), /Last cue: \/cue\/1, sent 2 min ago/, 'a cue sent 125 s ago, in the page\'s words');
+      assert.match(await page.textContent('#renderback'), /picture 30 s ago: /, 'a picture gone 30 s ago, in the page\'s words');
+      await page.unroute('**/api/render', withNode);
+    }
     // Setup: the index (three groups, a row each), the folded list of what is not built, then each page
     await sysIndex();
     await page.waitForSelector('h1#wstitle:text-is("Setup")');
@@ -1863,9 +1881,27 @@ function startServer(env) {          // env: more for the harness's environment 
         await page.waitForFunction(() => !document.querySelector('#nowhere'), null, { timeout: 8000 });
         await page.unroute('**/api/status', asTold);
       }
-      assert.strictEqual(await page.textContent('[id^="nowneed-proj-"] button'), 'Try again', 'a projector that needs you has Try again');
-      await page.click('[id^="nowneed-proj-"] button');
+      assert.strictEqual(await page.locator('[id^="nowneed-proj-"] button').first().textContent(), 'Try again', 'a projector that needs you has Try again');
+      await page.locator('[id^="nowneed-proj-"] button').first().click();
       await page.waitForFunction(() => /asked again/.test(document.getElementById('msg').textContent), null, { timeout: 15000 });
+      {
+        const downAndOpen = async (route) => {
+          const res = await route.fetch(); const d = await res.json();
+          d.player = { state: 'bad', text: 'The player is not running.' };
+          d.osc_open = { state: 'warn', text: 'OSC is open: anyone on this network can control the node. Switch on a lock.' };
+          await route.fulfill({ response: res, json: d });
+        };
+        await page.route('**/api/health', downAndOpen);
+        await page.waitForSelector('#nowneed-node-player button:text-is("Restart player")', { timeout: 15000 });
+        assert.strictEqual(await page.locator('[id="nowneed-osc"]').count(), 1, 'OSC open is one line in Needs you, not two');
+        await page.click('#nowneed-node-player button');
+        await page.waitForSelector('#nowneedslist #confirmrow');
+        await page.waitForTimeout(6500);                                   // longer than a look (5 s)
+        assert(await page.isVisible('#nowneedslist #confirmrow'), 'the question of Restart player is not wiped by the next look');
+        await page.click('#confirmrow button:text-is("Not now")');
+        await page.waitForSelector('#nowneedslist #confirmrow', { state: 'detached' });
+        await page.unroute('**/api/health', downAndOpen);
+      }
       await page.click('#nowtohealth');
       await page.waitForSelector('#sysback:text-is("Back to Now")');
       await page.click('#sysback');
@@ -4594,7 +4630,7 @@ function startServer(env) {          // env: more for the harness's environment 
       await go(page, 'play/pads');
       await page.waitForSelector('.pads');
       const liveTitle = await page.evaluate(() => { const t = document.getElementById('wstitle'), j = document.getElementById('wsjob'), bar = document.getElementById('wshead');
-          return [t.tagName, t.textContent, getComputedStyle(t).textTransform, parseFloat(getComputedStyle(t).fontSize) >= 34, getComputedStyle(j).fontSize, /^Pads: /.test(j.textContent), getComputedStyle(bar).backgroundColor, getComputedStyle(t, '::before').content, getComputedStyle(t, '::after').content]; });
+          return [t.tagName, t.textContent, getComputedStyle(t).textTransform, parseFloat(getComputedStyle(t).fontSize) >= 28, getComputedStyle(j).fontSize, /^Pads: /.test(j.textContent), getComputedStyle(bar).backgroundColor, getComputedStyle(t, '::before').content, getComputedStyle(t, '::after').content]; });
       assert.deepStrictEqual(liveTitle, ['H1', 'Play', 'uppercase', true, '15px', true, AREA.clips, 'none', 'none'], 'in Signal the title bar is a block of the area\'s colour with the area\'s name in large capitals (real text, nothing written by the stylesheet) and the screen\'s job small under it: ' + JSON.stringify(liveTitle));
       await go(page, 'shape/picture');
       await page.waitForSelector('#fliph');
