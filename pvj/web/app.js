@@ -2717,8 +2717,9 @@
     return cards;
   }
   // ---- What happened (D125): the node's own log of events, the Owner's (GET /api/events) ----------------------
-  // Newest first: when, what kind, the node's own short sentence, how many times, and (for the Owner, never over a
-  // support login) the device or address it was about. The whole log is on Health; Now shows the last few.
+  // Newest first: when (in the time of the device the panel is on), what kind, the node's own short sentence, how
+  // many times, and (for the Owner, never over a support login) the device or address it was about. The whole log is
+  // on Health; Now shows the last few.
   var EVENT_KINDS = { boot: 'Node', player: 'Player', renderer: 'Renderer', update: 'Update', projector: 'Projector', network: 'Network', signin: 'Sign-in', scene: 'Scene' };
   function eventWhen(t) {
     var d = new Date(t * 1000), now = new Date(), two = function (n) { return (n < 10 ? '0' : '') + n; };
@@ -2747,14 +2748,20 @@
       });
       note.textContent = last.note || '';
     }
+    function again() { clearTimeout(timer); timer = setTimeout(function () { if (card.isConnected) look(); }, 30000); }
     function look() {
       clearTimeout(timer);
+      if (document.visibilityState === 'hidden') return again();          // a hidden tab asks nothing (as poll() does)
       api('GET', '/api/events').then(function (r) {
         if (!card.isConnected && card.dataset.shown) return;              // the page was left: nothing more is asked
         card.dataset.shown = '1';
-        timer = setTimeout(function () { if (card.isConnected) look(); }, 30000);
+        again();                                                          // (one timer, however often Refresh is pressed)
         if (held('events', look)) return;
-        if (!r.ok) { list.textContent = ''; list.appendChild(h('div', { class: 'hint', id: 'eventerr', text: (r.data.error || 'Not available') + '.' })); return; }
+        if (!r.ok) {                                                      // nothing of an older answer is left standing
+          last = null; more.hidden = true; note.textContent = '';
+          list.textContent = ''; list.appendChild(h('div', { class: 'hint', id: 'eventerr', text: (r.data.error || 'Not available') + '.' }));
+          return;
+        }
         last = r.data;
         draw();
       });
@@ -7036,7 +7043,7 @@
       var asked = {};
       return Promise.all(rows().map(function (row) {
         return (asked[row.url] = asked[row.url] || api('GET', row.url)).then(function (r) { keepAnswer(row, r); });
-      }).concat(full ? [api('GET', '/api/events').then(function (r) { last.events = r.ok ? r.data.events : null; })] : []));
+      }).concat(full ? [api('GET', '/api/events').then(function (r) { if (r.ok) last.events = r.data.events; })] : []));      // (a failed look keeps the last rows)
     }
     function draw() {
       var hd = last.health;

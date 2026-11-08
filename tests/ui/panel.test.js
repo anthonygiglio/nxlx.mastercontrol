@@ -1810,6 +1810,21 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.click('#nowtoevents');
       await page.waitForSelector('#eventscard #eventlist .eventrow, #eventscard #eventnone', { timeout: 15000 });
       assert(/kept|memory/.test(await page.textContent('#eventnote')), 'the log says where it is kept');
+      // 20 at first, Show more for the rest, and a repeated event with its count (answers routed: a harness node
+      // has few events of its own)
+      {
+        const evs = Array.from({ length: 25 }, (_, i) => Object.assign({ t: Math.floor(Date.now() / 1000) - i * 60, kind: i % 2 ? 'projector' : 'player', text: 'Test event ' + i }, i === 0 ? { n: 3 } : {}));
+        const evRoute = (route) => route.fulfill({ json: { events: evs, cap: 500, kept: true, note: 'The last 500 events are kept in the panel\'s state folder and survive a restart.' } });
+        await page.route('**/api/events', evRoute);
+        await page.click('#eventrefresh');
+        await page.waitForFunction(() => document.querySelectorAll('#eventlist .eventrow').length === 20, null, { timeout: 8000 });
+        assert(await page.isVisible('#eventmore'), 'Show more is there while more events are kept than shown');
+        assert(/^Test event 0 \(3 times\)/.test(await page.textContent('#event-0 .navstate')), 'a repeated event says how many times: ' + await page.textContent('#event-0 .navstate'));
+        await page.click('#eventmore');
+        await page.waitForFunction(() => document.querySelectorAll('#eventlist .eventrow').length === 25, null, { timeout: 8000 });
+        assert(!(await page.isVisible('#eventmore')), 'Show more goes once every event is shown');
+        await page.unroute('**/api/events', evRoute);
+      }
       await go(page, 'now/now');
       await page.waitForSelector('#nownode .nowrow', { timeout: 15000 });
       assert.strictEqual(await page.textContent('#nowfade'), await page.textContent('#fade'), 'Now\'s fade button says what the strip\'s says (D75: out, then in)');
