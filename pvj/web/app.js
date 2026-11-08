@@ -1999,7 +1999,7 @@
         body: function () { return [networkCard()]; } },
       { id: 'screen', group: 'box', name: 'Screen output', role: 'full', url: '/api/screen', urlRole: 'full',
         blurb: 'The size and rate the node sends to the screen or projector. Automatic picks the screen\'s own mode up to 1920 x 1200 at 60 Hz. A change is tried and goes back by itself unless you keep it.',
-        body: function () { return [screenCard(), rendererCard()]; } },
+        body: function () { return [screenCard(), outputCard(), rendererCard()]; } },
       { id: 'updates', group: 'box', name: 'Updates', role: 'full', url: '/api/system',
         blurb: 'Install a newer version from a USB stick or an upload. Only updates signed with your key are taken, and a failed one goes back by itself.',
         body: function () { return [updateCard()]; } },
@@ -3334,6 +3334,65 @@
     return m[1] + ' x ' + m[2] + ' at ' + String(parseFloat(m[3])) + ' Hz';
   }
   var screenTimer = null, screenPick = null;
+  // ---- the output (D128): which connector the picture goes to, and the AV output of a Pi. The Owner's; through remote
+  // support it is shown and not changed (the node refuses both writes there). A choice of connector is taken at the
+  // player's next start; the AV output is in the boot files and needs a restart, and its costs are read before it is sent.
+  function outputLabel(d, conn) {
+    var o = (d.outputs || []).filter(function (x) { return x.connector === conn; })[0];
+    return o ? o.label : conn || '';
+  }
+  function outputCard() {
+    var body = h('div', { class: 'list sp', id: 'outputbody' }, h('div', { class: 'hint', text: 'Loading...' }));
+    var out = h('div', { class: 'msg inmsg', id: 'outputmsg', role: 'status' });
+    var card = h('div', { class: 'card', id: 'outputcard' }, h('h2', { text: 'Output' }), body, out);
+    var remote = !!(S.device && S.device.remote), picked = null;
+    function draw(d) {
+      keepCursor(body, function () {
+        body.textContent = '';
+        body.appendChild(h('div', { class: 'state', id: 'outputline', text: 'In use: ' + (d.using ? outputLabel(d, d.using) : 'no output') +
+          (d.saved === 'auto' ? ', chosen automatically.' : ', chosen by hand: ' + outputLabel(d, d.saved) + '.') }));
+        if (d.why) body.appendChild(h('div', { class: 'hint warn', id: 'outputwhy', text: d.why }));
+        if (d.note) body.appendChild(h('div', { class: 'hint', id: 'outputnote', text: d.note }));
+        var pick = h('select', { class: 'text-input', id: 'outputpick', 'aria-label': 'The output the picture goes to', disabled: remote },
+          [h('option', { value: 'auto', text: 'Automatic (an HDMI output that has a screen first)', selected: (picked || d.saved) === 'auto' })].concat((d.outputs || []).map(function (o) {
+            return h('option', { value: o.connector, text: o.label + (o.connected ? '' : ' (nothing connected)'), selected: (picked || d.saved) === o.connector });
+          })));
+        pick.addEventListener('change', function () { picked = pick.value; });
+        body.appendChild(h('div', { class: 'row' }, pick, remote ? null : h('button', { class: 'btn', id: 'outputuse', text: 'Use', onclick: function () {
+          act('POST', '/api/output', { output: pick.value }, function (data) {
+            picked = null; draw(data);
+            sayAt(out, 'Saved: ' + (pick.value === 'auto' ? 'Automatic' : outputLabel(data, pick.value)) + '. The player takes it at its next start.');
+          });
+        } })));
+        if (remote) body.appendChild(h('div', { class: 'hint', id: 'outputremote', text: 'The output is changed in the room, not through remote support.' }));
+        // the AV output (composite), on a Pi
+        var av = d.av || {};
+        body.appendChild(h('div', { class: 'k', text: 'AV output (composite)' }));
+        if (!av.supported) { body.appendChild(h('div', { class: 'hint', id: 'outputavwhy', text: av.why || 'This node has no AV output to switch.' })); return; }
+        body.appendChild(h('div', { class: 'state', id: 'outputavstate', text: av.enabled ? (av.active ? 'On.' : 'On after the next restart.') : (av.active ? 'Off after the next restart.' : 'Off.') }));
+        if (av.restart_needed) body.appendChild(h('div', { class: 'hint warn', id: 'outputavrestart', text: 'A restart of the node is needed for this to take effect (About and power).' }));
+        if (remote) return;
+        if (!av.helper) { body.appendChild(h('div', { class: 'hint warn', id: 'outputavhelper', text: 'The system helper is not running, so the boot files cannot be changed now.' })); return; }
+        var norm = av.enabled ? null : h('select', { class: 'text-input', id: 'outputavnorm', 'aria-label': 'The TV standard of the AV output' },
+          (av.norms || []).map(function (n) { return h('option', { value: n, text: n + (n === av.default_norm ? ' (the usual one)' : ''), selected: n === (av.norm || av.default_norm) }); }));
+        var on = !av.enabled;
+        body.appendChild(h('div', { class: 'row' }, norm, h('button', { class: 'btn', id: 'outputav', text: on ? 'Turn the AV output on' : 'Turn the AV output off', onclick: function (e) {
+          var words = (av.costs || []).join(' ');
+          if (on && av.hdmi_off && !/over the network/.test(words)) words += ' After the restart there is no HDMI picture; this panel still works over the network, to turn the AV output off again.';
+          confirmRow(words, on ? 'Turn it on' : 'Turn it off', 'Not now', function () {
+            var body2 = { enable: on, confirm: 'av' };
+            if (on && norm) body2.norm = norm.value;
+            act('POST', '/api/output/av', body2, function (data) { draw(data); sayAt(out, data.note || (on ? 'The AV output is on in the boot files.' : 'The AV output is off in the boot files.')); });
+          }, e.currentTarget);
+        } })));
+      });
+    }
+    api('GET', '/api/output').then(function (r) {
+      if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'hint', id: 'outputerr', text: (r.data.error || 'Not available') + '.' })); return; }
+      draw(r.data);
+    });
+    return card;
+  }
   function screenCard() {
     clearTimeout(screenTimer);
     var body = h('div', { class: 'list sp', id: 'screenbody' }, h('div', { class: 'state', text: 'Loading...' }));
@@ -6980,7 +7039,7 @@
     var todayList = h('div', { class: 'list', id: 'nowtoday' });
     var today = h('div', { class: 'card', id: 'nowtodaycard' }, h('h2', { text: 'Today' }), todayList);
     var root = h('div', { class: 'screen nowscreen', id: 'nowscreen' }, needs, h('div', { class: 'nowgrid' }, screens, room, node, today));
-    var last = { health: null, sources: null, room: null };
+    var last = { health: null, sources: null, room: null, output: null };
 
     function rows() {               // the rows of Setup that Now reads, each from its own page's answer
       return sysRows().filter(function (r) { return rowShown(r) && rowFetchable(r); });
@@ -6990,7 +7049,7 @@
       var asked = {};
       return Promise.all(rows().map(function (row) {
         return (asked[row.url] = asked[row.url] || api('GET', row.url)).then(function (r) { keepAnswer(row, r); });
-      }));
+      }).concat(full ? [api('GET', '/api/output').then(function (r) { last.output = r.ok ? r.data : null; })] : []));
     }
     function draw() {
       var hd = last.health;
@@ -7042,6 +7101,10 @@
         var busy = hd.cpu_percent !== null && hd.cpu_percent >= 90;
         nodeList.appendChild(nowRow('nownode-load', 'Load', { chip: busy ? 'check' : 'ready', text: hd.cpu_percent === null ? '?' : hd.cpu_percent + '% of all cores' }, null));
         if (hd.addresses && hd.addresses.length) nodeList.appendChild(nowRow('nownode-address', 'Address', { chip: null, text: hd.addresses[0] }, null));
+        // the output the picture goes to (D128), the Owner's: chosen on Screen output
+        var od = last.output;
+        if (full && od) nodeList.appendChild(nowRow('nownode-output', 'Output', { chip: null, text: (od.using ? outputLabel(od, od.using) : 'No output') +
+          (od.saved === 'auto' ? ', automatic' : '') + (od.av && od.av.restart_needed ? ' \u00b7 the AV output needs a restart' : '') }, ['Open', nowOpen('screen')]));
         nodeList.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn small', id: 'nowtohealth', text: 'Open Health', onclick: nowOpen('health') })));
       });
       // Today: who is connected, the schedule, remote support, updates (each row of Setup as the index says it)

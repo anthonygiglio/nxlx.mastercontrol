@@ -446,6 +446,48 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.click('text=90°');
     await page.click('text=Reset mix');
 
+    // The output (D128), on Screen output and under The node on Now: the connector chosen, and the AV output turned on
+    // after its costs are read (the node's answers routed: the harness has no screens of its own)
+    {
+      let od = { saved: 'auto', using: 'HDMI-A-1', why: '', note: '',
+        outputs: [{ connector: 'HDMI-A-1', label: 'HDMI 1', kind: 'hdmi', connected: true, modes: [], card: 'card1', saved: false, using: true },
+          { connector: 'Composite-1', label: 'AV (composite)', kind: 'composite', connected: false, modes: [], card: 'card1', saved: false, using: false }],
+        av: { supported: true, why: '', enabled: false, active: false, restart_needed: false, norm: 'NTSC', norms: ['NTSC', 'PAL'], default_norm: 'NTSC', hdmi_off: true,
+          costs: ['Turning the AV output on switches the HDMI outputs off on this model.', 'A restart of the node is needed to turn it on or off.'], helper: true } };
+      const sent = [];
+      const outRoute = async (route) => {
+        const req = route.request();
+        if (req.method() === 'POST') {
+          const b = JSON.parse(req.postData() || '{}');
+          sent.push([req.url().replace(/^.*\/api/, '/api'), b]);
+          if (b.output) od = Object.assign({}, od, { saved: b.output });
+          if ('enable' in b) od = Object.assign({}, od, { av: Object.assign({}, od.av, { enabled: b.enable, restart_needed: true, norm: b.norm || od.av.norm }), changed: true, note: 'The AV output is on in the boot files. A restart of the node is needed.' });
+        }
+        await route.fulfill({ json: od });
+      };
+      await page.route('**/api/output', outRoute);
+      await page.route('**/api/output/av', outRoute);
+      await sys('Screen output');
+      await page.waitForSelector('#outputline:text-is("In use: HDMI 1, chosen automatically.")', { timeout: 15000 });
+      await page.selectOption('#outputpick', 'Composite-1');
+      await page.click('#outputuse');
+      await page.waitForFunction(() => /next start/.test(document.getElementById('outputmsg').textContent), null, { timeout: 8000 });
+      assert.deepStrictEqual(sent[0], ['/api/output', { output: 'Composite-1' }], 'Use sends the connector chosen');
+      await page.selectOption('#outputavnorm', 'PAL');
+      await page.click('#outputav');
+      await page.waitForSelector('#confirmrow');
+      assert.match(await page.textContent('#confirmrow'), /HDMI outputs off/, 'the costs are read before the AV output is turned on');
+      assert.match(await page.textContent('#confirmrow'), /over the network/, 'and that the panel still works over the network');
+      await page.click('#confirmrow button:text-is("Turn it on")');
+      await page.waitForSelector('#outputavrestart', { timeout: 8000 });
+      assert.deepStrictEqual(sent[1], ['/api/output/av', { enable: true, confirm: 'av', norm: 'PAL' }], 'the AV output is sent with the confirm and the standard');
+      assert.strictEqual(await page.textContent('#outputavstate'), 'On after the next restart.');
+      await go(page, 'now/now');
+      await page.waitForSelector('#nownode-output', { timeout: 40000 });
+      assert.match(await page.textContent('#nownode-output .navstate'), /^HDMI 1 \u00b7 the AV output needs a restart$/, 'The node on Now says the output and the restart');
+      await page.unroute('**/api/output', outRoute);
+      await page.unroute('**/api/output/av', outRoute);
+    }
     // Setup: the index (three groups, a row each), the folded list of what is not built, then each page
     await sysIndex();
     await page.waitForSelector('h1#wstitle:text-is("Setup")');
