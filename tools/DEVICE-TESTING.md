@@ -1139,6 +1139,17 @@ With New chosen, a box that boots with no screen falls back to classic mpv; when
 | EV7 | Operator and Guest: `GET /api/events` | 403 for both | Any list |
 | EV8 | Choose New on the Pi 3B card (or unplug the projector for a minute with its check running) | "The new renderer fell back to classic mpv: ..." at once; "A projector did not answer." within about a minute | No line, or a second line for the same fall back |
 
+### Presence: who is connected, and what changed last (D126): not yet run on a node
+
+| Row | Do | Good | Bad |
+|---|---|---|---|
+| PR1 | Open the panel on a laptop (Owner) and a phone (Operator), then `curl -s -H "Authorization: Bearer <owner token>" http://NODE/api/status` | `presence.devices` lists both by name and role, each `seconds_ago` 0 to 1, `you` true for the asking device; no address, token or id anywhere in it | An address or id |
+| PR2 | Leave the phone's tab in the background for 40 seconds, then look at the laptop's status | The phone is gone from `devices` (and `count`) after about 30 seconds, and back with its next request | Still listed after a minute |
+| PR3 | From the phone change the Mix (a fade time), then read the laptop's status | `changes[0]` is `{"area": "Mix", "by": "<the phone's name>", "role": "Operator", "seconds_ago": small}` | No change, or the wrong area |
+| PR4 | Pair a Guest phone; read status as that Guest, then as the Operator | The Guest sees `devices: []` and a count; the Operator sees the Owner and Operators by name and `guests: 1`, and the Guest's change as `by: null, role: "Guest"` | The Guest's name shown to the Operator or anything shown to the Guest |
+| PR5 | Start a remote support session and log in as support | The Owner sees an entry named "Remote support"; the Operator and the Guest do not | Support shown to them |
+| PR6 | `sudo systemctl restart pvj-web`; check `ls -la /var/lib/pvj` before and after the use above | Presence is empty after the restart, and no file in the state folder gained a presence entry | A file written for presence |
+
 ### Health: free disk space: not yet run on a node
 
 | Row | Do | Good | Bad |

@@ -263,8 +263,8 @@ function pages() {
   }, { done: closeOthers });
 
   // ---- Room: Scenes, Walls, Guests ----
-  // (go() waits for the screen that the press draws, not the one that was there: a presenter is on Room already
-  // when the page opens, and a fold opened on the screen about to be replaced was closed again by the redraw.)
+  // (go() waits for the screen that the press draws, not the one that was there: a presenter is on Now when the page
+  // opens, and a fold opened on the screen about to be replaced was closed again by the redraw.)
   const wall = '.room-group:has-text("' + WALLS[0] + '")';
   add('scenes', 'room', async (t) => {                  // ambience playing, and the scenes
     await post(t, '/api/vibes', { on: true });
@@ -284,9 +284,10 @@ function pages() {
     await t.page.click('#roomalloff');
     await t.page.waitForSelector('#roomallask');
   }, { room: true, quick: true, light: true });
-  add('scenes-presenter', 'room', async (t) => {        // where staff land: no set-up, the scenes and ambience
+  add('scenes-presenter', 'room', async (t) => {        // an operator's Room: no set-up, the scenes and ambience
     const pg = await other(t, '#token=' + t.presenterToken);
-    await pg.waitForSelector('main.ws[data-screen="room/scenes"]');
+    await pg.waitForSelector('main.ws[data-screen="now/now"]');      // an operator starts on Now (2026-11-07)
+    await go(pg, 'room/scenes');
     await has(t, pg, '#roomscenes .btn');
     return pg;
   }, { room: true, done: closeOthers });

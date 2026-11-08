@@ -152,8 +152,10 @@ function startServer(env) {          // env: more for the harness's environment 
     // right PIN
     for (let i = 0; i < 4; i++) await page.fill(`input[aria-label="PIN digit ${i + 1}"]`, info.pin[i]);
     await page.click('#pairbtn');
+    await page.waitForSelector('#nowscreen');
+    assert.strictEqual(await at(page), 'now/now', 'the owner starts on Now');
+    await go(page, 'play/pads');
     await page.waitForSelector('.pads');
-    assert.strictEqual(await at(page), 'play/pads', 'the owner starts on Play > Pads');
     await stripOpen(page);            // a phone: the place in the clip, back and forward 10 s, the fades and Freeze are under More
 
     // Pads: assign a pad, then play it
@@ -1887,7 +1889,7 @@ function startServer(env) {          // env: more for the harness's environment 
     if (await pjlink(info.projector_ports[0], 'secret1', 'INPT ?') !== '31') problems.push('the source button did not switch the main wall to input 31');
     await page.click('button[aria-label="Main wall: Sound on"]');
     await page.waitForFunction(() => !/muted/.test(document.querySelector('.room-group .room-text').textContent), null, { timeout: 15000 });
-    // A guest sees the state and no button that does anything; a presenter starts on the Room screen with the buttons
+    // A guest sees the state and no button that does anything; a presenter starts on Now and has the buttons on the Room screen
     const roomTokens = await page.evaluate(() => Promise.all(['view', 'live'].map((role) => fetch('/api/devices/invite', { method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify({ name: 'room ' + role, role: role }) }).then((r) => r.json()).then((d) => d.token))));
     for (const [n, role] of [[0, 'view'], [1, 'live']]) {
@@ -1897,7 +1899,8 @@ function startServer(env) {          // env: more for the harness's environment 
       staff.on('pageerror', (e) => problems.push('room ' + role + ' pageerror: ' + e.message));
       await staff.goto(base + '/#token=' + roomTokens[n]);
       await staff.waitForFunction(() => !!document.querySelector('main.ws'), null, { timeout: 15000 });
-      assert.strictEqual(await at(staff), 'room/scenes', role + ': starts on the Room screens');
+      assert.strictEqual(await at(staff), role === 'live' ? 'now/now' : 'room/scenes', role + ': starts on ' + (role === 'live' ? 'Now' : 'the Room screens'));
+      if (role === 'live') await go(staff, 'room/scenes');
       await staff.waitForSelector('#roomscreen .room-scene');
       // (D80: a guest taps a scene too while guest controls are open, on the same buttons, and his card holds no second list)
       assert(!(await staff.isDisabled('.room-scene')), role + ': the scene button is for tapping');
@@ -2523,7 +2526,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await lost.fill('#recoverycode', codes2[2].toLowerCase());
     assert.strictEqual(await lost.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true, 'the pairing screen fits at 320 with the code and the help open');
     await lost.click('#recoverybtn');
-    await lost.waitForSelector('.pads');
+    await lost.waitForSelector('#nowscreen');                   // an owner starts on Now
     const lostDev = (await lost.evaluate(() => fetch('/api/status').then((r) => r.json()))).device;
     assert.strictEqual(lostDev.role, 'full', 'a recovery code pairs an owner');
     assert.strictEqual((await lost.evaluate(() => fetch('/api/recovery').then((r) => r.json()))).codes.left, 7, 'one code is burnt');
@@ -2554,7 +2557,7 @@ function startServer(env) {          // env: more for the harness's environment 
     const pins = await onHttp.$$('input.pin');
     for (let i = 0; i < 4; i++) await pins[i].fill(info.pin[i]);
     await onHttp.click('#pairbtn');
-    await onHttp.waitForSelector('.pads');
+    await onHttp.waitForSelector('#nowscreen');
     await go(onHttp, 'setup/index');                                 // an owner logs out under People and codes (a guest's Log out is on About and power)
     await onHttp.click(rowOf('People and codes'));
     await onHttp.waitForSelector('#logoutbtn');
@@ -3599,8 +3602,10 @@ function startServer(env) {          // env: more for the harness's environment 
     presenter.on('console', (m) => { if (['error'].includes(m.type()) && !expected.test(m.text())) problems.push('presenter: ' + m.text()); });
     presenter.on('pageerror', (e) => problems.push('presenter pageerror: ' + e.message));
     await presenter.goto(base + '/#token=' + presenterToken);
+    await presenter.waitForSelector('#nowscreen');
+    assert.strictEqual(await at(presenter), 'now/now', 'a presenter starts on Now');
+    await go(presenter, 'play/pads');
     await presenter.waitForSelector('.pads');
-    assert.strictEqual(await at(presenter), 'play/pads', 'with Room off a presenter starts on Play > Pads');
     // A presenter's Shaders page: start, stop, skip, play one and move sliders; no switches, no settings, no upload
     await presenter.waitForSelector('#vibes');
     assert(!(await presenter.isDisabled('#vibes')), 'a presenter can use the Vibes button');
@@ -3772,6 +3777,8 @@ function startServer(env) {          // env: more for the harness's environment 
         pg.on('console', (m) => { if (['error'].includes(m.type()) && !expected.test(m.text())) problems.push(who + ': ' + m.text()); });
         pg.on('pageerror', (e) => problems.push(who + ' pageerror: ' + e.message));
         await pg.goto(base + '/#token=' + token);
+        await pg.waitForSelector('main.ws', { timeout: 15000 });
+        if ((await at(pg)) === 'now/now') await go(pg, 'room/scenes');      // a presenter starts on Now
         await pg.waitForSelector('#roomscreen #roomambience', { timeout: 15000 });
         return pg;
       };

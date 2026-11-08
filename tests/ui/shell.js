@@ -795,8 +795,8 @@ async function roles(pages, post) {
       throw new Error('the panel of a ' + who + ' has no Room area: ' + JSON.stringify(had));
     }
     const s = await see(pg);
-    // staff and guests land on the Room; the owner on the pads
-    assert.strictEqual(s.screen, who === 'owner' ? 'play/pads' : 'room/scenes', 'where a ' + who + ' lands');
+    // an owner and a presenter land on Now, a guest on the Room
+    assert.strictEqual(s.screen, who === 'guest' ? 'room/scenes' : 'now/now', 'where a ' + who + ' lands');
     assert.deepStrictEqual(s.tabNames, (who === 'guest' ? [] : ['Now']).concat(['Play', 'Shape', 'Room', 'Setup']), 'the areas a ' + who + ' has (Now for whoever runs the night)');
     // a guest, guest controls being open (D80, the default): Stop and Blackout are his, Previous and Next with a
     // playlist, and every other control of the strip is disabled; locked, all of them (panel.test.js locks and looks)

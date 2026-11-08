@@ -1301,6 +1301,7 @@ class BoxCare:
                 raise ApiError(500, "the settings could not be saved, so the node was not reset: %s" % (e.strerror or e))
             auth.last_seen.clear()
             auth._joins.clear()
+            auth._revoked(None)             # nobody is connected after a reset, and nothing is told of what they changed (D126)
         return pin
 
     def factory_reset(self, body, device, client):
