@@ -2426,6 +2426,22 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.click('#mapon');
     await page.waitForSelector('#mapstatus:has-text("Mapping is on")', { timeout: 20000 });
     if (shots) await page.screenshot({ path: path.join(shots, '7-mapper.png'), fullPage: true });
+    // Now says which surfaces each source is on: the Quad on the source the box says it is on (classic answers say
+    // Source 1), the others on no surface. The sources' answer is changed on the way to three, Source 3 playing.
+    {
+      const quadOn = (await get('/api/mapper')).surfaces.filter((x) => x.name === 'Quad')[0].source || 1;
+      const threeSrc = (route) => route.fulfill({ json: { count: 3, sources: [{ source: 1, idle: false, name: 'intro.mkv' }, { source: 2, idle: true }, { source: 3, idle: false, name: 'tunnel.mkv' }] } });
+      await page.route('**/api/sources', threeSrc);
+      await go(page, 'now/now');
+      for (const k of [1, 2, 3]) {
+        const want = k === quadOn ? / \u00b7 on Quad$/ : / \u00b7 on no surface$/;
+        await page.waitForFunction(([id, re]) => new RegExp(re).test((document.querySelector('#' + id + ' .navstate') || {}).textContent || ''), ['nowsrc-' + k, want.source], { timeout: 15000 })
+          .catch(() => { throw new Error('Source ' + k + ' on Now does not end with ' + want + ' (the Quad is on Source ' + quadOn + ')'); });
+      }
+      await page.unroute('**/api/sources', threeSrc);
+      await sys('Projection mapping');
+      await page.waitForSelector('#mapstatus:has-text("Mapping is on")', { timeout: 20000 });
+    }
     await page.click('#mapon');
     await page.waitForSelector('#mapstatus:has-text("Mapping is off")');
     await page.click('.map-entry >> button:has-text("Remove")');

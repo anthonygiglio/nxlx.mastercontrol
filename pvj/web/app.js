@@ -6978,7 +6978,7 @@
   // what the node answers to the pages that own it (health, sources, room, each Setup row's own state), every 5 s
   // for the live parts and every 30 s for the rows of Setup; nothing is drawn under a finger (held), and an answer to
   // a Now that was left is dropped (its own element, not an id).
-  var nowTimer = null, nowRowsAt = 0;
+  var nowTimer = null, nowRowsAt = 0, NOW_SURF = {};      // NOW_SURF: the surfaces each source is on, in words
   var NOW_TODAY = ['access', 'schedule', 'support', 'updates'];
   function nowRow(id, name, state, open) {
     var chip = h('span', { class: 'chip' }), text = h('span', { class: 'navstate' });
@@ -7033,7 +7033,7 @@
     var todayList = h('div', { class: 'list', id: 'nowtoday' });
     var today = h('div', { class: 'card', id: 'nowtodaycard' }, h('h2', { text: 'Today' }), todayList);
     var root = h('div', { class: 'screen nowscreen', id: 'nowscreen' }, needs, h('div', { class: 'nowgrid' }, screens, room, node, today));
-    var last = { health: null, sources: null, room: null, events: null };
+    var last = { health: null, sources: null, room: null, events: null, mapper: null };
 
     function rows() {               // the rows of Setup that Now reads, each from its own page's answer
       return sysRows().filter(function (r) { return rowShown(r) && rowFetchable(r); });
@@ -7085,12 +7085,21 @@
         if (!needRows.length) needsList.appendChild(h('div', { class: 'state', id: 'nownothing', text: 'Nothing needs you.' }));
       });
       document.getElementById('nowneedshead') && (document.getElementById('nowneedshead').textContent = needRows.length ? 'Needs you (' + needRows.length + ')' : 'Needs you');
-      // On the screens: each source and what it plays (Source 1 follows the strip, every second)
-      var sd = last.sources;
+      // On the screens: each source and what it plays (Source 1 follows the strip, every second), and the surfaces
+      // it is on where the mapping is on (D101: a surface shows Source 1 unless it names another)
+      var sd = last.sources, md = last.mapper;
+      NOW_SURF = {};
+      if (md && md.enabled && md.on && (md.surfaces || []).length) {
+        for (var k = 1; k <= Math.max(1, (sd && sd.count) || 1); k++) {
+          var on = md.surfaces.filter(function (s) { return s.on !== false && (s.source || 1) === k; }).map(function (s) { return s.name; });
+          NOW_SURF[k] = on.length ? 'on ' + on.join(', ') : 'on no surface';
+        }
+      }
       keepCursor(srcList, function () {
         Array.prototype.slice.call(srcList.querySelectorAll('.nowrow:not(#nowsrc-1)')).forEach(function (el) { el.remove(); });
         (sd && sd.count >= 2 ? sd.sources : []).filter(function (x) { return x.source > 1; }).forEach(function (x) {
-          srcList.appendChild(nowRow('nowsrc-' + x.source, 'Source ' + x.source, x.idle ? { chip: 'off', text: 'Nothing loaded' } : { chip: 'active', text: x.name || 'Playing' }, null));
+          var words = (x.idle ? 'Nothing loaded' : x.name || 'Playing') + (NOW_SURF[x.source] ? ' \u00b7 ' + NOW_SURF[x.source] : '');
+          srcList.appendChild(nowRow('nowsrc-' + x.source, 'Source ' + x.source, { chip: x.idle ? 'off' : 'active', text: words }, null));
         });
       });
       // The room: the scenes, and one line for each projector
@@ -7147,7 +7156,8 @@
       // the rows of Setup every 30 s, on their own: a slow one does not hold up the 5 s looks
       if (Date.now() - nowRowsAt > 30000) askRows().then(function () { if (root.isConnected && !held('now', refresh)) draw(); });
       Promise.all([
-        api('GET', '/api/health'), api('GET', '/api/sources'), hasRoom ? api('GET', '/api/room') : Promise.resolve(null)
+        api('GET', '/api/health'), api('GET', '/api/sources'), hasRoom ? api('GET', '/api/room') : Promise.resolve(null),
+        moduleOn('mapper') ? api('GET', '/api/mapper') : Promise.resolve(null)
       ]).then(function (rs) {
         if (!root.isConnected) return;
         nowTimer = setTimeout(refresh, 5000);
@@ -7156,6 +7166,7 @@
         if (rs[0] && rs[0].ok) keepAnswer({ id: 'health' }, rs[0]);
         last.sources = rs[1] && rs[1].ok ? rs[1].data : null;
         last.room = rs[2] && rs[2].ok ? rs[2].data : last.room;
+        last.mapper = rs[3] && rs[3].ok ? rs[3].data : (moduleOn('mapper') ? last.mapper : null);
         draw();
       });
     }
@@ -7172,7 +7183,7 @@
     var name = what || (np ? np.textContent : '');
     var place = pl.duration > 0 ? clock(pl.position) + ' / ' + clock(pl.duration) : '';
     var how = mix.transition ? (TRANSITION_WORDS[mix.transition] || mix.transition) + (mix.duration ? ', ' + mix.duration + ' s' : '') : '';
-    showState(row.querySelector('.chip'), row.querySelector('.navstate'), { chip: pl.running && pl.path ? 'active' : 'off', text: [name, place, how].filter(Boolean).join(' · ') });
+    showState(row.querySelector('.chip'), row.querySelector('.navstate'), { chip: pl.running && pl.path ? 'active' : 'off', text: [name, place, how, NOW_SURF[1]].filter(Boolean).join(' · ') });
     fadeShow(document.getElementById('nowfade'), mix);
   }
   // ---- the Workspace shell (D65, D72) ----------------------------------
