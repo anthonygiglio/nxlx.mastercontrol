@@ -1846,6 +1846,23 @@ function startServer(env) {          // env: more for the harness's environment 
       // who is here and the last change (D126): this device, and the tap just made, by "you"
       await page.waitForFunction(() => /\d+ here: .*\(you\)/.test((document.querySelector('#nowhere .navstate') || {}).textContent || ''), null, { timeout: 10000 });
       await page.waitForFunction(() => [...document.querySelectorAll('[id^="nowchange-"]')].some((r) => /^Tempo/.test(r.textContent) && /Changed by you, \d+ (s|min) ago/.test(r.textContent)), null, { timeout: 10000 });
+      // what the node tells a Guest (counted, nobody listed, no names), and an Operator (guests counted, not listed):
+      // the status's presence changed on the way to this page
+      {
+        let shape = null;
+        const asTold = async (route) => { const res = await route.fetch(); const d = await res.json(); d.presence = shape; await route.fulfill({ response: res, json: d }); };
+        await page.route('**/api/status', asTold);
+        shape = { window_seconds: 30, count: 3, guests: 0, devices: [], changes: [{ area: 'Mix', by: null, role: null, you: false, seconds_ago: 12 }] };
+        await page.waitForFunction(() => (document.querySelector('#nowhere .navstate') || {}).textContent === '3 here', null, { timeout: 8000 })
+          .catch(async () => { throw new Error('as a Guest is told: "3 here", not "' + await page.textContent('#nowhere .navstate') + '"'); });
+        assert.strictEqual(await page.textContent('#nowchange-0 .navstate'), 'Changed by someone, 12 s ago');
+        shape = { window_seconds: 30, count: 4, guests: 2, devices: [{ name: 'FireTab', role: 'Operator', you: true, seconds_ago: 0 }, { name: null, role: 'Owner', you: false, seconds_ago: 3 }], changes: [] };
+        await page.waitForFunction(() => (document.querySelector('#nowhere .navstate') || {}).textContent === '4 here: FireTab (you), Owner, 2 guests', null, { timeout: 8000 })
+          .catch(async () => { throw new Error('as an Operator is told: not "' + await page.textContent('#nowhere .navstate') + '"'); });
+        shape = null;                                                       // no presence in the answer: nothing old stays
+        await page.waitForFunction(() => !document.querySelector('#nowhere'), null, { timeout: 8000 });
+        await page.unroute('**/api/status', asTold);
+      }
       assert.strictEqual(await page.textContent('[id^="nowneed-proj-"] button'), 'Try again', 'a projector that needs you has Try again');
       await page.click('[id^="nowneed-proj-"] button');
       await page.waitForFunction(() => /asked again/.test(document.getElementById('msg').textContent), null, { timeout: 15000 });
