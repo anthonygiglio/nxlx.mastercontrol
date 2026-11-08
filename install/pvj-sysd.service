@@ -24,8 +24,9 @@ ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
-# D127: the one avahi service file that announces the node to the local network (pvj/FLEET.md). "-": no error where avahi is not installed.
-ReadWritePaths=/run/pvj-sysd -/etc/avahi/services
+# D127: the one avahi service file that announces the node to the local network (pvj/FLEET.md). D128: the Pi's boot files, for the AV output choice.
+# "-": no error where avahi is not installed or the boot folder is not there.
+ReadWritePaths=/run/pvj-sysd -/etc/avahi/services -/boot/firmware
 PrivateNetwork=yes
 IPAddressDeny=any
 MemoryDenyWriteExecute=yes

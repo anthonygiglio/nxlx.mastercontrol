@@ -15,6 +15,8 @@ with SO_PEERCRED), and runs only these fixed commands, as argument lists, never 
   and a bounded time window (the panel is deliberately not in the systemd-journal group, so this is how it reads them);
 * fleet_announce, fleet_withdraw (D127): write or remove the one avahi service file that announces the node as `_nxlx._tcp`
   (fields checked against fixed patterns, a fixed template, nothing run; the only file outside /run this helper writes);
+* av_output: turn the AV (composite) output on or off in the Raspberry Pi's boot files (pvj/bootcfg.py), with backups; it
+  takes effect at the next start of the node;
 * update: start pvj-update-usb@V.service or pvj-update-inbox@V.service (fixed template units, V a checked version: pvj-update checks the signature,
   refuses older versions and rolls back by itself).
 
@@ -165,6 +167,30 @@ class SysService:
                 return {"ok": False, "error": "the clock was set but moved again (to %s UTC); a saved clock may be ahead"
                         % datetime.datetime.fromtimestamp(now, datetime.timezone.utc).strftime("%Y-%m-%d %H:%M")}
             return {"ok": True, "now": now}
+
+    def av_output(self, enable, norm):
+        """Turn the AV output on or off in config.txt and cmdline.txt (bootcfg.apply: backups first, nothing else touched).
+        `norm` is one of bootcfg.NORMS (NTSC when none is sent) and counts only for on."""
+        from . import bootcfg
+        if not isinstance(enable, bool):
+            return {"ok": False, "error": "enable must be true or false"}
+        norm = bootcfg.DEFAULT_NORM if norm is None else norm
+        if enable and (not isinstance(norm, str) or norm not in bootcfg.NORMS):
+            return {"ok": False, "error": "the TV standard must be one of %s" % ", ".join(bootcfg.NORMS)}
+        with self.lock:
+            try:
+                res = bootcfg.apply(enable, norm if enable else None, root=self.boot_root, now=self._now)
+            except bootcfg.BootError as e:
+                out = {"ok": False, "error": str(e)}
+                if e.state:
+                    out["state"] = e.state          # a file may have been left changed: the panel can show what the boot files say now
+                return out
+        self.log("pvj-sysd: AV output %s%s by the panel; backups %s" % ("on (%s)" % norm if enable else "off", "" if res["changed"] else " (nothing to change)",
+                                                                       ", ".join(res["backups"]) or "none"))
+        return {"ok": True, "changed": res["changed"], "backups": res["backups"], "restart_needed": res["changed"],
+                "enabled": res["state"]["composite"], "norm": res["state"]["norm"]}
+
+    boot_root = "/"
 
     @staticmethod
     def _bounded(value, low, high, default):
@@ -327,6 +353,8 @@ class SysService:
             return self.set_time(message.get("epoch"))
         if cmd == "update":
             return self.update(message.get("source"), message.get("version"))
+        if cmd == "av_output":
+            return self.av_output(message.get("enable"), message.get("norm"))
         if cmd == "journal":
             return self.journal(message.get("lines"), message.get("hours"), message.get("boot"))
         if cmd == "fleet_announce":
