@@ -1835,6 +1835,7 @@ function startServer(env) {          // env: more for the harness's environment 
       const tapped = page.waitForResponse((r) => r.url().endsWith('/api/tempo/tap') && r.request().method() === 'POST');
       await page.click('#nownode-clock button');
       assert.strictEqual((await tapped).status(), 200, 'Tap on Now taps the node\'s clock');
+      await page.waitForTimeout(500);                                  // half a second after the first: 120 BPM, within 30 to 300
       await page.click('#nownode-clock button');                      // a second tap in time: the node has a tempo
       await page.waitForFunction(() => /^Tapped: \d+(\.\d+)? BPM$/.test(document.getElementById('msg').textContent), null, { timeout: 10000 })
         .catch(async () => { throw new Error('two taps say the tempo: ' + await page.textContent('#msg')); });
