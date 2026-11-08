@@ -1926,6 +1926,23 @@ function startServer(env) {          // env: more for the harness's environment 
       assert.deepStrictEqual(await page.$$eval(wall + ' button', (bs) => bs.map((b) => b.textContent)), ['On', 'Off'], 'a wall on Now has On and Off');
       await page.click(wall + ' button[data-action="on"]');
       await page.waitForFunction(() => /Main wall: On, started/.test(document.getElementById('msg').textContent), null, { timeout: 15000 });
+      // Off asks first; Not now sends nothing (the wall stays on for the steps after this)
+      let offSent = false;
+      const offWatch = (req) => { if (req.url().endsWith('/api/room/group') && /"off"/.test(req.postData() || '')) offSent = true; };
+      page.on('request', offWatch);
+      await page.click(wall + ' button[data-action="off"]');
+      await page.waitForSelector('#confirmrow:has-text("Switch Main wall off?")');
+      await page.click('#confirmrow button:text-is("Not now")');
+      await page.waitForSelector('#confirmrow', { state: 'detached' });
+      await page.waitForTimeout(500);
+      page.off('request', offWatch);
+      assert.strictEqual(offSent, false, 'Not now sends no Off');
+      // a node with no walls lists its projectors instead (the room's answer changed on the way)
+      const noWalls = async (route) => { const res = await route.fetch(); const d = await res.json(); d.groups = []; await route.fulfill({ response: res, json: d }); };
+      await page.route('**/api/room', noWalls);
+      await page.waitForSelector('[id^="nowproj-"]', { timeout: 15000 });
+      assert.strictEqual(await page.locator('[id^="nowwall-"]').count(), 0, 'no walls: the projectors are listed');
+      await page.unroute('**/api/room', noWalls);
       await go(page, 'room/walls');
       await page.waitForSelector('.room-group:has-text("Main wall")');
     }

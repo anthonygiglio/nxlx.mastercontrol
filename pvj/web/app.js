@@ -6999,6 +6999,8 @@
   function nowPart() {
     clearTimeout(nowTimer);
     var live = can('live'), full = can('full');
+    // switching projectors is for an owner or an operator in the room: the node refuses it to a support login below full
+    var hands = canOp() && !(S.device && S.device.remote);
     var needsList = h('div', { class: 'list', id: 'nowneedslist' }, h('div', { class: 'hint', text: 'Checking...' }));
     var needs = h('div', { class: 'card nowneeds', id: 'nowneeds' }, h('h2', { id: 'nowneedshead', text: 'Needs you' }), needsList);
     var srcList = h('div', { class: 'list', id: 'nowsources' },
@@ -7021,10 +7023,10 @@
     var room = h('div', { class: 'card', id: 'nowroom' }, h('h2', { text: 'The room' }),
       hasRoom ? scenesRow : null, wallsList,
       h('div', { class: 'row' },
-        h('button', { class: 'btn small grow', id: 'nowallon', text: 'All on', disabled: !live || !hasRoom, onclick: function () {
+        h('button', { class: 'btn small grow', id: 'nowallon', text: 'All on', disabled: !hands || !hasRoom, onclick: function () {
           act('POST', '/api/room/group', { group: 'all', action: 'on' }, function () { say('Everything: on, started'); refresh(); });
         } }),
-        h('button', { class: 'btn small grow', id: 'nowalloff', text: 'All off', disabled: !live || !hasRoom, onclick: function (e) {
+        h('button', { class: 'btn small grow', id: 'nowalloff', text: 'All off', disabled: !hands || !hasRoom, onclick: function (e) {
           confirmRow('Switch every projector off?', 'All off', 'Not now', function () {
             act('POST', '/api/room/group', { group: 'all', action: 'off' }, function () { say('Everything: off, started'); refresh(); });
           }, e.currentTarget);
@@ -7128,11 +7130,24 @@
         if (walls.length) {
           walls.forEach(function (g) {
             var row = nowRow('nowwall-' + g.id, g.name, { chip: WALL_STATE[g.state] === undefined ? null : WALL_STATE[g.state], text: g.text }, null);
-            if (live) ['On', 'Off'].forEach(function (w) {
-              row.querySelector('.row').appendChild(h('button', { class: 'btn small', text: w, 'data-action': w.toLowerCase(), 'aria-label': g.name + ': ' + w, onclick: function () {
-                act('POST', '/api/room/group', { group: g.id, action: w.toLowerCase() }, function () { say(g.name + ': ' + w + ', started'); refresh(); });
-              } }));
-            });
+            if (hands) {
+              // On and Off as the Walls screen sends them; Off asks first (a projector needs a minute to cool), and the
+              // pair waits while one is on its way
+              var pair = [];
+              var send = function (w) {
+                pair.forEach(function (b) { b.disabled = true; });
+                act('POST', '/api/room/group', { group: g.id, action: w.toLowerCase() }, function () { say(g.name + ': ' + w + ', started'); refresh(); })
+                  .then(function () { pair.forEach(function (b) { b.disabled = false; }); });
+              };
+              ['On', 'Off'].forEach(function (w) {
+                var b = h('button', { class: 'btn small', text: w, 'data-action': w.toLowerCase(), 'aria-label': g.name + ': ' + w, onclick: function (e) {
+                  if (w === 'On') return send(w);
+                  confirmRow('Switch ' + g.name + ' off? Its projectors need about a minute to cool before they can come on again.', 'Off', 'Not now', function () { send(w); }, e.currentTarget);
+                } });
+                pair.push(b);
+                row.querySelector('.row').appendChild(b);
+              });
+            }
             wallsList.appendChild(row);
           });
           return;

@@ -32,6 +32,7 @@ Keep it true: a change to a screen changes its section here in the same pull req
 13. Design tokens
 14. Accessibility facts
 15. Routes and the role each needs
+16. Now (2026-11-07): what is on and what needs you
 
 ## 1. Who
 
@@ -526,3 +527,15 @@ From the route table in `pvj/api.py` and `policy.OUTSIDE` (a Guest's extra forms
   streams' changes, render nodes' changes, sound reactivity's device, boxes in step, adding and changing projectors
   (`/api/projectors`), mapping mode's switch, remote support's settings, start and extend, HTTPS (every route), settings
   export and import, diagnostics, factory reset, adding and removing looks.
+
+## 16. Now (2026-11-07): what is on and what needs you
+
+The first area for an Owner and an Operator (a Guest has none), and where they land. One screen, `#nowscreen`: Needs
+you across the top, then On the screens, The room, The node and Today (four columns on a laptop, two on a tablet, one on a
+phone). It reads Health, the sources and the room every 5 s, and the rows of Setup every 30 s; nothing under a finger.
+
+- **The room** (`#nowroom`): the scenes as the Room's blocks; each wall with projectors (`#nowwall-<id>`) with the Room's
+  own words for its state, a chip, and On and Off (Off asks first; the pair waits while one is on its way), for an
+  Owner or an Operator in the room, not a support login below full; a node with no walls lists its projectors
+  (`#nowproj-<id>`); All on, All off (asks first), Open the walls.
+
