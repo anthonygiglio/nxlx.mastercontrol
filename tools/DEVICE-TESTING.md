@@ -1139,6 +1139,14 @@ With New chosen, a box that boots with no screen falls back to classic mpv; when
 | EV7 | Operator and Guest: `GET /api/events` | 403 for both | Any list |
 | EV8 | Choose New on the Pi 3B card (or unplug the projector for a minute with its check running) | "The new renderer fell back to classic mpv: ..." at once; "A projector did not answer." within about a minute | No line, or a second line for the same fall back |
 
+### Health: free disk space: not yet run on a node
+
+| Row | Do | Good | Bad |
+|---|---|---|---|
+| DH1 | On the node: `curl -s -H "Authorization: Bearer <token>" http://NODE/api/system/health` (the Health report) and `df -h /var/lib/pvj /var/lib/pvj/video` | `storage` has one row per distinct disk; its `free_bytes` is close to `df`'s Avail; the text reads "Storage: N GB free on ..." | A row for a disk that is not there, or numbers far from `df` |
+| DH2 | With the media on a USB drive: `storage` has two rows (the media disk and the system disk) | Two rows; unplug the drive and the media row says the folder is missing or cannot be read (a warning) | An error or an empty reply |
+| DH3 | Fill the media disk to under 2 GB free (a test node only), then under 500 MB | The row turns `warn` and then `bad`, `overall` follows, and the panel's Needs you shows it | No change of state |
+
 ## Safety
 
 - The workflow starts by **manual dispatch only**, and only for the repository owner. It never runs for pushes, pull requests or forks, so nobody else's code reaches the Pi. Keep it that way.
