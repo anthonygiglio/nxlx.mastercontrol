@@ -3709,13 +3709,14 @@
   var renderForm = { name: '', host: '', port: '7400', ndi: '', profile: 'max' };
   var RENDER_PICTURE = { none: 'No NDI picture chosen', off: 'NDI input is off', not_allowed: 'Its NDI source is not allowed any more',
     unknown: 'The node cannot tell whether its picture is there', here: 'Its picture is on the network', away: 'Its picture is not on the network now' };
-  function agoWords(s) { return s == null ? '' : s < 60 ? s + ' s ago' : s < 7200 ? Math.round(s / 60) + ' min ago' : Math.round(s / 3600) + ' h ago'; }
+  // (its own name: the controllers' card has an agoWords of its own, declared later, which would win: 2026-11-08)
+  function renderAgo(s) { return s == null ? '' : s < 60 ? s + ' s ago' : s < 7200 ? Math.round(s / 60) + ' min ago' : Math.round(s / 3600) + ' h ago'; }
   function renderState(n) {
     if (n.showing) return st('active', 'Its picture is on the screen');
     if (n.error) return st('problem', n.error);
     if (n.picture === 'away' || n.picture === 'not_allowed' || n.picture === 'unknown') return st('check', RENDER_PICTURE[n.picture]);
     if (n.picture === 'none' || n.picture === 'off') return st('setup', RENDER_PICTURE[n.picture]);
-    return st('ready', n.last_sent_ago != null ? 'Cue sent ' + agoWords(n.last_sent_ago) + ' (no reply over UDP)' : RENDER_PICTURE.here);
+    return st('ready', n.last_sent_ago != null ? 'Cue sent ' + renderAgo(n.last_sent_ago) + ' (no reply over UDP)' : RENDER_PICTURE.here);
   }
   // A cue's arguments as the person types them: one row each, a type and a value, at most `max`.
   function argRows(args, max, idp) {
@@ -4015,14 +4016,14 @@
     var sendState = { node: '', address: '', args: [], show: false };
     function draw(d) {
       body.textContent = '';
-      if (d.back) body.appendChild(h('div', { class: 'hint warn', id: 'renderback', role: 'status', text: 'Went back from ' + d.back.node + '\'s picture ' + agoWords(d.back.ago) + ': ' + d.back.why + '; ' + d.back.to + '.' }));
+      if (d.back) body.appendChild(h('div', { class: 'hint warn', id: 'renderback', role: 'status', text: 'Went back from ' + d.back.node + '\'s picture ' + renderAgo(d.back.ago) + ': ' + d.back.why + '; ' + d.back.to + '.' }));
       if (!d.nodes.length) body.appendChild(h('div', { class: 'empty', id: 'renderempty', text: 'No render nodes yet.' + (full ? ' Add one below: its name, its address on this network and its OSC port.' : ' The owner adds them.') }));
       d.nodes.forEach(function (n) {
         var s = renderState(n);
         body.appendChild(listRow({ cls: 'render-entry', data: n.id, name: n.name, key: 'render-' + n.id, redraw: function () { draw(d); },
           sub: [full && n.host ? n.host + ' : ' + n.port : '', n.ndi_name ? 'NDI: ' + n.ndi_name : '', n.profile !== 'generic' && d.profiles[n.profile] ? d.profiles[n.profile].name : ''].filter(Boolean).join(' · '),
           state: h('div', { class: 'state' }, h('span', { class: 'chip chip-' + s.chip, text: CHIPS[s.chip] || '' }), ' ', h('span', { text: s.text })),
-          note: n.last_address ? 'Last cue: ' + n.last_address + ', sent ' + agoWords(n.last_sent_ago) : null,
+          note: n.last_address ? 'Last cue: ' + n.last_address + (n.last_sent_ago != null ? ', sent ' + renderAgo(n.last_sent_ago) : '') : null,
           more: full ? [h('button', { class: 'btn', text: n.still ? 'Never count a still picture as gone' : 'A still picture counts as gone after ' + d.still.default + ' s',
             onclick: function () { act('POST', '/api/render', { update: { id: n.id, still: n.still ? 0 : d.still.default } }, function (data) { draw(data); }); } }),
             h('button', { class: 'btn', text: 'Remove', 'aria-label': 'Remove ' + n.name, onclick: function (e) {

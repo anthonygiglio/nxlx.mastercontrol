@@ -446,6 +446,24 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.click('text=90°');
     await page.click('text=Reset mix');
 
+    // Render nodes: the page says when a cue was sent and when the node went back from a picture in its own words
+    // ("2 min ago", "30 s ago"; the controllers' card says "2 minutes ago" and "just now"). The node's answer is
+    // changed on the way: one render node with a cue sent 125 s ago, and a picture gone 30 s ago.
+    {
+      const withNode = async (route) => {
+        const res = await route.fetch(); const d = await res.json();
+        d.nodes = [{ id: 'agotest', name: 'Ago test', host: '192.168.1.9', port: 7400, profile: 'generic', picture: 'none', showing: false, error: null,
+          last_address: '/cue/1', last_sent_ago: 125, ndi: '', ndi_name: '', still: 0 }];
+        d.back = { node: 'Ago test', ago: 30, why: 'its picture went', to: 'the clip again' };
+        await route.fulfill({ response: res, json: d });
+      };
+      await page.route('**/api/render', withNode);
+      await sys('Render nodes');
+      await page.waitForSelector('.render-entry', { timeout: 15000 });
+      assert.match(await page.textContent('.render-entry'), /Last cue: \/cue\/1, sent 2 min ago/, 'a cue sent 125 s ago, in the page\'s words');
+      assert.match(await page.textContent('#renderback'), /picture 30 s ago: /, 'a picture gone 30 s ago, in the page\'s words');
+      await page.unroute('**/api/render', withNode);
+    }
     // Setup: the index (three groups, a row each), the folded list of what is not built, then each page
     await sysIndex();
     await page.waitForSelector('h1#wstitle:text-is("Setup")');
