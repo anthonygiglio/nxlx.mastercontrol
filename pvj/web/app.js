@@ -3714,13 +3714,14 @@
   var renderForm = { name: '', host: '', port: '7400', ndi: '', profile: 'max' };
   var RENDER_PICTURE = { none: 'No NDI picture chosen', off: 'NDI input is off', not_allowed: 'Its NDI source is not allowed any more',
     unknown: 'The node cannot tell whether its picture is there', here: 'Its picture is on the network', away: 'Its picture is not on the network now' };
-  function agoWords(s) { return s == null ? '' : s < 60 ? s + ' s ago' : s < 7200 ? Math.round(s / 60) + ' min ago' : Math.round(s / 3600) + ' h ago'; }
+  // (its own name: the controllers' card has an agoWords of its own, declared later, which would win: 2026-11-08)
+  function renderAgo(s) { return s == null ? '' : s < 60 ? s + ' s ago' : s < 7200 ? Math.round(s / 60) + ' min ago' : Math.round(s / 3600) + ' h ago'; }
   function renderState(n) {
     if (n.showing) return st('active', 'Its picture is on the screen');
     if (n.error) return st('problem', n.error);
     if (n.picture === 'away' || n.picture === 'not_allowed' || n.picture === 'unknown') return st('check', RENDER_PICTURE[n.picture]);
     if (n.picture === 'none' || n.picture === 'off') return st('setup', RENDER_PICTURE[n.picture]);
-    return st('ready', n.last_sent_ago != null ? 'Cue sent ' + agoWords(n.last_sent_ago) + ' (no reply over UDP)' : RENDER_PICTURE.here);
+    return st('ready', n.last_sent_ago != null ? 'Cue sent ' + renderAgo(n.last_sent_ago) + ' (no reply over UDP)' : RENDER_PICTURE.here);
   }
   // A cue's arguments as the person types them: one row each, a type and a value, at most `max`.
   function argRows(args, max, idp) {
@@ -4020,14 +4021,14 @@
     var sendState = { node: '', address: '', args: [], show: false };
     function draw(d) {
       body.textContent = '';
-      if (d.back) body.appendChild(h('div', { class: 'hint warn', id: 'renderback', role: 'status', text: 'Went back from ' + d.back.node + '\'s picture ' + agoWords(d.back.ago) + ': ' + d.back.why + '; ' + d.back.to + '.' }));
+      if (d.back) body.appendChild(h('div', { class: 'hint warn', id: 'renderback', role: 'status', text: 'Went back from ' + d.back.node + '\'s picture ' + renderAgo(d.back.ago) + ': ' + d.back.why + '; ' + d.back.to + '.' }));
       if (!d.nodes.length) body.appendChild(h('div', { class: 'empty', id: 'renderempty', text: 'No render nodes yet.' + (full ? ' Add one below: its name, its address on this network and its OSC port.' : ' The owner adds them.') }));
       d.nodes.forEach(function (n) {
         var s = renderState(n);
         body.appendChild(listRow({ cls: 'render-entry', data: n.id, name: n.name, key: 'render-' + n.id, redraw: function () { draw(d); },
           sub: [full && n.host ? n.host + ' : ' + n.port : '', n.ndi_name ? 'NDI: ' + n.ndi_name : '', n.profile !== 'generic' && d.profiles[n.profile] ? d.profiles[n.profile].name : ''].filter(Boolean).join(' · '),
           state: h('div', { class: 'state' }, h('span', { class: 'chip chip-' + s.chip, text: CHIPS[s.chip] || '' }), ' ', h('span', { text: s.text })),
-          note: n.last_address ? 'Last cue: ' + n.last_address + ', sent ' + agoWords(n.last_sent_ago) : null,
+          note: n.last_address ? 'Last cue: ' + n.last_address + (n.last_sent_ago != null ? ', sent ' + renderAgo(n.last_sent_ago) : '') : null,
           more: full ? [h('button', { class: 'btn', text: n.still ? 'Never count a still picture as gone' : 'A still picture counts as gone after ' + d.still.default + ' s',
             onclick: function () { act('POST', '/api/render', { update: { id: n.id, still: n.still ? 0 : d.still.default } }, function (data) { draw(data); }); } }),
             h('button', { class: 'btn', text: 'Remove', 'aria-label': 'Remove ' + n.name, onclick: function (e) {
@@ -6985,7 +6986,7 @@
   // what the node answers to the pages that own it (health, sources, room, each Setup row's own state), every 5 s
   // for the live parts and every 30 s for the rows of Setup; nothing is drawn under a finger (held), and an answer to
   // a Now that was left is dropped (its own element, not an id).
-  var nowTimer = null, nowRowsAt = 0;
+  var nowTimer = null, nowRowsAt = 0, NOW_SURF = {};      // NOW_SURF: the surfaces each source is on, in words
   var NOW_TODAY = ['access', 'schedule', 'support', 'updates'];
   function nowRow(id, name, state, open) {
     var chip = h('span', { class: 'chip' }), text = h('span', { class: 'navstate' });
@@ -6999,11 +7000,15 @@
     return function () { openSys(id, 'now'); };
   }
   var HEALTH_STATE = { ok: 'ready', warn: 'check', bad: 'problem', unknown: null };
+  // a wall's state (pvj/room.py) as a chip: on, off, on its way, some on and some off, a projector that does not answer
+  var WALL_STATE = { on: 'active', off: 'off', 'warming up': 'setup', 'cooling down': 'setup', mixed: 'check', 'no answer': 'problem', checking: null, empty: null };
   var TRANSITION_WORDS = { cut: 'Cut', dip: 'Dip to black', crossfade: 'Crossfade', 'wipe-from-left': 'Wipe from left', 'wipe-from-right': 'Wipe from right',
     'wipe-from-top': 'Wipe from top', 'wipe-from-bottom': 'Wipe from bottom', 'slide-left': 'Slide off left', 'slide-right': 'Slide off right', 'slide-up': 'Slide off up', 'slide-down': 'Slide off down' };
   function nowPart() {
     clearTimeout(nowTimer);
     var live = can('live'), full = can('full');
+    // switching projectors is for an owner or an operator in the room: the node refuses it to a support login below full
+    var hands = canOp() && !(S.device && S.device.remote);
     var needsList = h('div', { class: 'list', id: 'nowneedslist' }, h('div', { class: 'hint', text: 'Checking...' }));
     var needs = h('div', { class: 'card nowneeds', id: 'nowneeds' }, h('h2', { id: 'nowneedshead', text: 'Needs you' }), needsList);
     var srcList = h('div', { class: 'list', id: 'nowsources' },
@@ -7026,10 +7031,10 @@
     var room = h('div', { class: 'card', id: 'nowroom' }, h('h2', { text: 'The room' }),
       hasRoom ? scenesRow : null, wallsList,
       h('div', { class: 'row' },
-        h('button', { class: 'btn small grow', id: 'nowallon', text: 'All on', disabled: !live || !hasRoom, onclick: function () {
+        h('button', { class: 'btn small grow', id: 'nowallon', text: 'All on', disabled: !hands || !hasRoom, onclick: function () {
           act('POST', '/api/room/group', { group: 'all', action: 'on' }, function () { say('Everything: on, started'); refresh(); });
         } }),
-        h('button', { class: 'btn small grow', id: 'nowalloff', text: 'All off', disabled: !live || !hasRoom, onclick: function (e) {
+        h('button', { class: 'btn small grow', id: 'nowalloff', text: 'All off', disabled: !hands || !hasRoom, onclick: function (e) {
           confirmRow('Switch every projector off?', 'All off', 'Not now', function () {
             act('POST', '/api/room/group', { group: 'all', action: 'off' }, function () { say('Everything: off, started'); refresh(); });
           }, e.currentTarget);
@@ -7040,7 +7045,7 @@
     var todayList = h('div', { class: 'list', id: 'nowtoday' });
     var today = h('div', { class: 'card', id: 'nowtodaycard' }, h('h2', { text: 'Today' }), todayList);
     var root = h('div', { class: 'screen nowscreen', id: 'nowscreen' }, needs, h('div', { class: 'nowgrid' }, screens, room, node, today));
-    var last = { health: null, sources: null, room: null, events: null };
+    var last = { health: null, sources: null, room: null, events: null, mapper: null };
 
     function rows() {               // the rows of Setup that Now reads, each from its own page's answer
       return sysRows().filter(function (r) { return rowShown(r) && rowFetchable(r); });
@@ -7101,12 +7106,25 @@
         if (!needRows.length) needsList.appendChild(h('div', { class: 'state', id: 'nownothing', text: 'Nothing needs you.' }));
       });
       document.getElementById('nowneedshead') && (document.getElementById('nowneedshead').textContent = needRows.length ? 'Needs you (' + needRows.length + ')' : 'Needs you');
-      // On the screens: each source and what it plays (Source 1 follows the strip, every second)
-      var sd = last.sources;
+      // On the screens: each source and what it plays (Source 1 follows the strip, every second), and the surfaces
+      // it is on where the mapping is on (D101: a surface shows Source 1 unless it names another)
+      var sd = last.sources, md = last.mapper;
+      NOW_SURF = {};
+      if (md && md.enabled && md.on && (md.surfaces || []).length) {
+        // the node's own rule (D101, mapper.py shown_source): a surface draws its own source only when the player
+        // has that many sources (the mapper's `sources`), and Source 1 otherwise
+        var has = Math.max(1, md.sources || 1);
+        var shown = function (s) { return s.source > 1 && s.source <= has ? s.source : 1; };
+        for (var k = 1; k <= Math.max(has, (sd && sd.count) || 1); k++) {
+          var on = md.surfaces.filter(function (s) { return s.on !== false && shown(s) === k; }).map(function (s) { return s.name; });
+          NOW_SURF[k] = on.length ? 'on ' + on.join(', ') : 'on no surface';
+        }
+      }
       keepCursor(srcList, function () {
         Array.prototype.slice.call(srcList.querySelectorAll('.nowrow:not(#nowsrc-1)')).forEach(function (el) { el.remove(); });
         (sd && sd.count >= 2 ? sd.sources : []).filter(function (x) { return x.source > 1; }).forEach(function (x) {
-          srcList.appendChild(nowRow('nowsrc-' + x.source, 'Source ' + x.source, x.idle ? { chip: 'off', text: 'Nothing loaded' } : { chip: 'active', text: x.name || 'Playing' }, null));
+          var words = (x.idle ? 'Nothing loaded' : x.name || 'Playing') + (NOW_SURF[x.source] ? ' \u00b7 ' + NOW_SURF[x.source] : '');
+          srcList.appendChild(nowRow('nowsrc-' + x.source, 'Source ' + x.source, { chip: x.idle ? 'off' : 'active', text: words }, null));
         });
       });
       // The room: the scenes, and one line for each projector
@@ -7123,6 +7141,34 @@
       });
       keepCursor(wallsList, function () {
         wallsList.textContent = '';
+        // the walls (the Room's groups), each with its state in a line and On and Off, as the Room's Walls screen
+        // has them; a node with no walls (or no Room module) lists its projectors instead
+        var walls = hasRoom && rd && rd.groups ? rd.groups.filter(function (g) { return g.projectors.length; }) : [];
+        if (walls.length) {
+          walls.forEach(function (g) {
+            var row = nowRow('nowwall-' + g.id, g.name, { chip: WALL_STATE[g.state] === undefined ? null : WALL_STATE[g.state], text: g.text }, null);
+            if (hands) {
+              // On and Off as the Walls screen sends them; Off asks first (a projector needs a minute to cool), and the
+              // pair waits while one is on its way
+              var pair = [];
+              var send = function (w) {
+                pair.forEach(function (b) { b.disabled = true; });
+                act('POST', '/api/room/group', { group: g.id, action: w.toLowerCase() }, function () { say(g.name + ': ' + w + ', started'); refresh(); })
+                  .then(function () { pair.forEach(function (b) { b.disabled = false; }); });
+              };
+              ['On', 'Off'].forEach(function (w) {
+                var b = h('button', { class: 'btn small', text: w, 'data-action': w.toLowerCase(), 'aria-label': g.name + ': ' + w, onclick: function (e) {
+                  if (w === 'On') return send(w);
+                  confirmRow('Switch ' + g.name + ' off? Its projectors need about a minute to cool before they can come on again.', 'Off', 'Not now', function () { send(w); }, e.currentTarget);
+                } });
+                pair.push(b);
+                row.querySelector('.row').appendChild(b);
+              });
+            }
+            wallsList.appendChild(row);
+          });
+          return;
+        }
         ((hd && hd.projectors) || []).forEach(function (x) {
           wallsList.appendChild(nowRow('nowproj-' + x.id, x.name, { chip: HEALTH_STATE[x.state] || null, text: x.text }, canOp() ? ['Open', nowOpen('projectors')] : null));
         });
@@ -7163,7 +7209,8 @@
       // the rows of Setup every 30 s, on their own: a slow one does not hold up the 5 s looks
       if (Date.now() - nowRowsAt > 30000) askRows().then(function () { if (root.isConnected && !held('now', refresh)) draw(); });
       Promise.all([
-        api('GET', '/api/health'), api('GET', '/api/sources'), hasRoom ? api('GET', '/api/room') : Promise.resolve(null)
+        api('GET', '/api/health'), api('GET', '/api/sources'), hasRoom ? api('GET', '/api/room') : Promise.resolve(null),
+        moduleOn('mapper') && can('view') ? api('GET', '/api/mapper') : Promise.resolve(null)
       ]).then(function (rs) {
         if (!root.isConnected) return;
         nowTimer = setTimeout(refresh, 5000);
@@ -7172,6 +7219,7 @@
         if (rs[0] && rs[0].ok) keepAnswer({ id: 'health' }, rs[0]);
         last.sources = rs[1] && rs[1].ok ? rs[1].data : null;
         last.room = rs[2] && rs[2].ok ? rs[2].data : last.room;
+        last.mapper = rs[3] && rs[3].ok ? rs[3].data : null;      // a failed answer says nothing old about the surfaces
         draw();
       });
     }
@@ -7188,7 +7236,7 @@
     var name = what || (np ? np.textContent : '');
     var place = pl.duration > 0 ? clock(pl.position) + ' / ' + clock(pl.duration) : '';
     var how = mix.transition ? (TRANSITION_WORDS[mix.transition] || mix.transition) + (mix.duration ? ', ' + mix.duration + ' s' : '') : '';
-    showState(row.querySelector('.chip'), row.querySelector('.navstate'), { chip: pl.running && pl.path ? 'active' : 'off', text: [name, place, how].filter(Boolean).join(' · ') });
+    showState(row.querySelector('.chip'), row.querySelector('.navstate'), { chip: pl.running && pl.path ? 'active' : 'off', text: [name, place, how, NOW_SURF[1]].filter(Boolean).join(' · ') });
     fadeShow(document.getElementById('nowfade'), mix);
   }
   // ---- the Workspace shell (D65, D72) ----------------------------------

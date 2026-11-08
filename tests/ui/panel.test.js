@@ -446,6 +446,24 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.click('text=90°');
     await page.click('text=Reset mix');
 
+    // Render nodes: the page says when a cue was sent and when the node went back from a picture in its own words
+    // ("2 min ago", "30 s ago"; the controllers' card says "2 minutes ago" and "just now"). The node's answer is
+    // changed on the way: one render node with a cue sent 125 s ago, and a picture gone 30 s ago.
+    {
+      const withNode = async (route) => {
+        const res = await route.fetch(); const d = await res.json();
+        d.nodes = [{ id: 'agotest', name: 'Ago test', host: '192.168.1.9', port: 7400, profile: 'generic', picture: 'none', showing: false, error: null,
+          last_address: '/cue/1', last_sent_ago: 125, ndi: '', ndi_name: '', still: 0 }];
+        d.back = { node: 'Ago test', ago: 30, why: 'its picture went', to: 'the clip again' };
+        await route.fulfill({ response: res, json: d });
+      };
+      await page.route('**/api/render', withNode);
+      await sys('Render nodes');
+      await page.waitForSelector('.render-entry', { timeout: 15000 });
+      assert.match(await page.textContent('.render-entry'), /Last cue: \/cue\/1, sent 2 min ago/, 'a cue sent 125 s ago, in the page\'s words');
+      assert.match(await page.textContent('#renderback'), /picture 30 s ago: /, 'a picture gone 30 s ago, in the page\'s words');
+      await page.unroute('**/api/render', withNode);
+    }
     // Setup: the index (three groups, a row each), the folded list of what is not built, then each page
     await sysIndex();
     await page.waitForSelector('h1#wstitle:text-is("Setup")');
@@ -1945,6 +1963,34 @@ function startServer(env) {          // env: more for the harness's environment 
     if (await pjlink(info.projector_ports[0], 'secret1', 'INPT ?') !== '31') problems.push('the source button did not switch the main wall to input 31');
     await page.click('button[aria-label="Main wall: Sound on"]');
     await page.waitForFunction(() => !/muted/.test(document.querySelector('.room-group .room-text').textContent), null, { timeout: 15000 });
+    // Now's room has the walls: each with its state in a line, and On and Off
+    {
+      await go(page, 'now/now');
+      const wall = '[id^="nowwall-"]:has(.lname:text-is("Main wall"))';
+      await page.waitForSelector(wall + ' .navstate:has-text("On")', { timeout: 15000 });
+      assert.deepStrictEqual(await page.$$eval(wall + ' button', (bs) => bs.map((b) => b.textContent)), ['On', 'Off'], 'a wall on Now has On and Off');
+      await page.click(wall + ' button[data-action="on"]');
+      await page.waitForFunction(() => /Main wall: On, started/.test(document.getElementById('msg').textContent), null, { timeout: 15000 });
+      // Off asks first; Not now sends nothing (the wall stays on for the steps after this)
+      let offSent = false;
+      const offWatch = (req) => { if (req.url().endsWith('/api/room/group') && /"off"/.test(req.postData() || '')) offSent = true; };
+      page.on('request', offWatch);
+      await page.click(wall + ' button[data-action="off"]');
+      await page.waitForSelector('#confirmrow:has-text("Switch Main wall off?")');
+      await page.click('#confirmrow button:text-is("Not now")');
+      await page.waitForSelector('#confirmrow', { state: 'detached' });
+      await page.waitForTimeout(500);
+      page.off('request', offWatch);
+      assert.strictEqual(offSent, false, 'Not now sends no Off');
+      // a node with no walls lists its projectors instead (the room's answer changed on the way)
+      const noWalls = async (route) => { const res = await route.fetch(); const d = await res.json(); d.groups = []; await route.fulfill({ response: res, json: d }); };
+      await page.route('**/api/room', noWalls);
+      await page.waitForSelector('[id^="nowproj-"]', { timeout: 15000 });
+      assert.strictEqual(await page.locator('[id^="nowwall-"]').count(), 0, 'no walls: the projectors are listed');
+      await page.unroute('**/api/room', noWalls);
+      await go(page, 'room/walls');
+      await page.waitForSelector('.room-group:has-text("Main wall")');
+    }
     // A guest sees the state and no button that does anything; a presenter starts on Now and has the buttons on the Room screen
     const roomTokens = await page.evaluate(() => Promise.all(['view', 'live'].map((role) => fetch('/api/devices/invite', { method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify({ name: 'room ' + role, role: role }) }).then((r) => r.json()).then((d) => d.token))));
@@ -2453,6 +2499,40 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.click('#mapon');
     await page.waitForSelector('#mapstatus:has-text("Mapping is on")', { timeout: 20000 });
     if (shots) await page.screenshot({ path: path.join(shots, '7-mapper.png'), fullPage: true });
+    // Now says which surfaces each source is on, by the node's rule (D101): a surface draws its own source when the
+    // player has that many, Source 1 otherwise; a hidden surface is left out; with the mapping off nothing is said.
+    // The node's answers are changed on the way: the sources to three (Source 3 playing), the mapping as each case needs.
+    {
+      const threeSrc = (route) => route.fulfill({ json: { count: 3, sources: [{ source: 1, idle: false, name: 'intro.mkv' }, { source: 2, idle: true }, { source: 3, idle: false, name: 'tunnel.mkv' }] } });
+      let mapCase = null;
+      const mapRoute = async (route) => {
+        const res = await route.fetch();
+        const data = await res.json();
+        Object.assign(data, mapCase);
+        await route.fulfill({ response: res, json: data });
+      };
+      const surfaces = [{ id: 's1', type: 'quad', name: 'Quad', on: true, source: 2 }, { id: 's2', type: 'quad', name: 'Hidden', on: false, source: 2 },
+        { id: 's3', type: 'quad', name: 'Left', on: true, source: 3 }, { id: 's4', type: 'quad', name: 'Centre', on: true, source: 3 }];
+      await page.route('**/api/sources', threeSrc);
+      await page.route('**/api/mapper', mapRoute);
+      const says = async (want, why) => {
+        for (const k of [1, 2, 3]) {
+          await page.waitForFunction(([id, re]) => new RegExp(re).test((document.querySelector('#' + id + ' .navstate') || {}).textContent || ''), ['nowsrc-' + k, want[k - 1].source], { timeout: 15000 })
+            .catch(async () => { throw new Error(why + ': Source ' + k + ' on Now does not end with ' + want[k - 1] + ' but says "' + await page.textContent('#nowsrc-' + k + ' .navstate') + '"'); });
+        }
+      };
+      mapCase = { enabled: true, on: true, sources: 3, surfaces };
+      await go(page, 'now/now');
+      await says([/ \u00b7 on no surface$/, / \u00b7 on Quad$/, /^tunnel\.mkv \u00b7 on Left, Centre$/], 'three sources');
+      mapCase = { enabled: true, on: true, sources: 1, surfaces };          // a player with one source: every surface shows Source 1
+      await says([/ \u00b7 on Quad, Left, Centre$/, / \u00b7 on no surface$/, / \u00b7 on no surface$/], 'one source');
+      mapCase = { enabled: true, on: false, sources: 3, surfaces };         // the mapping off: the whole screen, nothing said
+      await says([/^((?! \u00b7 on ).)*$/, /^Nothing loaded$/, /^tunnel\.mkv$/], 'the mapping off');
+      await page.unroute('**/api/mapper', mapRoute);
+      await page.unroute('**/api/sources', threeSrc);
+      await sys('Projection mapping');
+      await page.waitForSelector('#mapstatus:has-text("Mapping is on")', { timeout: 20000 });
+    }
     await page.click('#mapon');
     await page.waitForSelector('#mapstatus:has-text("Mapping is off")');
     await page.click('.map-entry >> button:has-text("Remove")');

@@ -8,6 +8,9 @@ at 75 Hz, the costliest size there is for a Pi 4 and an uneven beat for 29.97 an
 * **Automatic** (the default): the screen's own mode if it is at most 1920 x 1200 and drawn about 60 times a second;
   otherwise the largest mode the screen lists that is at most 1920 x 1200, of the same shape as its own mode if there
   is one (else 1920 x 1080, else the largest), at about 60 Hz (50 only if it lists no 60 there). See `automatic`.
+* **The output** (D128): Automatic (HDMI first) or one named connector (HDMI-A-2, Composite-1, DSI-1 ...), saved with the
+  mode. A chosen output that is not connected at the start is said so, and Automatic is used for that start; the player
+  never moves to it later by itself (no flapping): the next start of the player takes it.
 * **A mode chosen by hand** on System > Screen output, from the screen's own list. It is tried for KEEP_SECONDS and
   goes back by itself unless it is confirmed, as a network change does.
 
@@ -65,6 +68,7 @@ _WHY = re.compile(r"[^A-Za-z0-9 .,:;()'@x/-]")
 # The screen's arguments for mpv, each as the player may pass it and the panel may read it back (D91, D92).
 MODE_ARG = re.compile(r"--drm-mode=([0-9]{1,3}|%s)" % MODE_TEXT.pattern)
 CONNECTOR_ARG = re.compile(r"--drm-connector=[A-Za-z0-9_-]{1,32}")
+OUTPUT_NAME = re.compile(r"[A-Za-z0-9_-]{1,32}")        # a connector's kernel name: HDMI-A-1, Composite-1, DSI-1, DP-2, eDP-1
 DEVICE_ARG = re.compile(r"--drm-device=/dev/dri/card[0-9]{1,2}")
 
 
@@ -181,6 +185,12 @@ def valid_mode(value):
     return value == AUTO or (isinstance(value, str) and MODE_TEXT.fullmatch(value) is not None)
 
 
+def valid_output(value):
+    """"auto" or the kernel's name of a connector (the list is the board's own; this only checks the shape)."""
+    return value == AUTO or (isinstance(value, str) and OUTPUT_NAME.fullmatch(value) is not None
+                             and not value.lower().startswith("writeback"))
+
+
 def boot_id(path="/proc/sys/kernel/random/boot_id"):
     try:
         with open(path) as f:
@@ -275,6 +285,8 @@ def clean_wanted(data):
     that wrote it is the one that passed a wrong connector (D91), so honouring it would bar the right arguments for the
     boot. Dropping it costs at most one more try of the same arguments, which then earns a skip of the new shape."""
     out = {"mode": data.get("mode") if valid_mode(data.get("mode")) else AUTO}
+    if valid_output(data.get("output")) and data["output"] != AUTO:
+        out["output"] = data["output"]              # no key is Automatic: a file of before the output setting is as it was
 
     def entry(part):
         return isinstance(part, dict) and valid_mode(part.get("mode")) and isinstance(part.get("boot"), str) \
@@ -324,7 +336,14 @@ def decide(wanted, screens, problem, sysfs, boot):
     # is its place in libdrm's list of devices, which `--drm-connector` does not read at all (mpv 0.37 and 0.40 take
     # a bare name there and pick the card themselves, or take `--drm-device=PATH`). /sys/class/drm/cardN-NAME is
     # /dev/dri/cardN: on a Pi 4 that is card1 (card0 is v3d, which draws but has no outputs).
-    screen = next((s for s in screens if s["connector"].upper().startswith("HDMI")), screens[0])
+    want_out = wanted.get("output")
+    screen = next((s for s in screens if s["connector"] == want_out), None) if want_out else None
+    rep["output"], rep["output_why"] = want_out or AUTO, ""
+    if want_out and screen is None:
+        rep["output_why"] = "%s is not connected, so Automatic is used for now; the player takes %s at its next start once it is" % (
+            hardware.output_label(want_out), hardware.output_label(want_out))
+    if screen is None:
+        screen = next((s for s in screens if s["connector"].upper().startswith("HDMI")), screens[0])
     modes = screen["modes"]
     rep["connector"] = screen["connector"]
     cards = sorted({c["card"] for c in connected if c["connector"] == screen["connector"] and isinstance(c.get("card"), int)})
@@ -333,9 +352,15 @@ def decide(wanted, screens, problem, sysfs, boot):
     prog = progressive(modes)
     rep["own"] = prog[0]["text"] if prog else None
     auto, auto_why = automatic(modes)
+    composite = hardware.connector_kind(screen["connector"]) == "composite"
+    if composite and not prog and modes:
+        # The AV output lists interlaced modes only (720x480i for NTSC, 720x576i for PAL), and the TV standard in the boot
+        # files decides which: its own first mode is the one to use, whatever size was chosen for an HDMI screen.
+        auto, auto_why = modes[0], "the AV output's own mode, which the TV standard sets"
+        rep["own"] = modes[0]["text"]
     rep["automatic"] = auto["text"] if auto else None
     chosen, why = None, ""
-    if asked != AUTO:
+    if asked != AUTO and not composite:
         chosen = next((m for m in prog if m["text"] == asked), None)
         if chosen is None:
             why = "%s is not offered by this screen now, so Automatic is used: %s" % (text_words(asked), words(auto))
@@ -349,6 +374,10 @@ def decide(wanted, screens, problem, sysfs, boot):
             device, conn = "--drm-device=/dev/dri/card%d" % rep["card"], "--drm-connector=" + screen["connector"]
             if DEVICE_ARG.fullmatch(device) and CONNECTOR_ARG.fullmatch(conn):     # as the panel reads them back (D92)
                 cand.update(device_arg=device, connector_arg=conn)
+        elif want_out and screen["connector"] == want_out:      # a screen chosen by name: mpv takes the name and finds its card
+            conn = "--drm-connector=" + screen["connector"]
+            if CONNECTOR_ARG.fullmatch(conn):
+                cand["connector_arg"] = conn
         # A skip bars these very arguments for the boot, not the mode alone (D92): one earned with another device or
         # connector (a release that passed a wrong one) does not stop the right ones being tried.
         if barred(wanted, boot, screen_args(cand)):
@@ -382,6 +411,8 @@ def prepare(extra_args, rundir, mpv_bin="mpv", env=None, run=subprocess.run, sys
         rep = {"asked": AUTO, "trial": False, "used": None, "arg": None, "why": "the mode was not chosen (%s)" % type(e).__name__,
                "connector": None, "modes": [], "own": None, "automatic": None}
     rep.update(pid=os.getpid(), boot=boot or "", at=int(time.time()))
+    if rep.get("output_why"):
+        log("pvj-player: screen output: %s" % rep["output_why"])
     if rep["why"]:
         log("pvj-player: screen output: %s" % rep["why"])
     args = screen_args(rep)
@@ -428,6 +459,7 @@ def clean_report(data):
             "card": data.get("card") if isinstance(data.get("card"), int) and not isinstance(data.get("card"), bool) else None,
             "why": text(data.get("why")), "auto_why": text(data.get("auto_why")),
             "connector": text(data.get("connector"), 32) or None, "modes": modes,
+            "output": data.get("output") if valid_output(data.get("output")) else AUTO, "output_why": text(data.get("output_why")),
             "own": mode(data.get("own")), "automatic": mode(data.get("automatic")),
             "pid": pid if isinstance(pid, int) and not isinstance(pid, bool) else None,
             "boot": text(data.get("boot"), 64), "at": data.get("at") if isinstance(data.get("at"), int) else None}
@@ -483,6 +515,18 @@ class Screen:
         mode = section.get("mode", AUTO) if isinstance(section, dict) else AUTO      # a wrong kind is no setting (L4)
         return mode if valid_mode(mode) else AUTO
 
+    def saved_output(self):
+        section = self.settings.data.get("screen")
+        out = section.get("output", AUTO) if isinstance(section, dict) else AUTO
+        return out if valid_output(out) else AUTO
+
+    def _base(self, mode):
+        """What WANTED holds beside a trial or a skip: the mode and, when one is chosen, the output."""
+        out = {"mode": mode}
+        if self.saved_output() != AUTO:
+            out["output"] = self.saved_output()
+        return out
+
     def _wanted(self):
         return clean_wanted(read_json(self.wanted_file))
 
@@ -523,7 +567,7 @@ class Screen:
         except Exception:
             have, boot = {}, ""
         trial = have.get("trial")
-        want = {"mode": self.saved()}
+        want = self._base(self.saved())
         mine = [s for s in have.get("skip", []) if s["boot"] == boot]
         if mine:
             want["skip"] = mine
@@ -546,9 +590,9 @@ class Screen:
         self._end_pending()
         self._drop_retry()
         have = self._wanted()
-        if have.get("mode") == self.saved() and "trial" not in have:
+        if have.get("mode") == self.saved() and have.get("output", AUTO) == self.saved_output() and "trial" not in have:
             return
-        self._write({"mode": self.saved()})
+        self._write(self._base(self.saved()))
         self._restart("the settings changed")
 
     # -- a change, its try and its confirm ---------------------------------------
@@ -569,7 +613,7 @@ class Screen:
         if same:
             return self.state()
         try:
-            self._write({"mode": previous, "trial": {"mode": mode, "boot": self._boot()}})
+            self._write(dict(self._base(previous), trial={"mode": mode, "boot": self._boot()}))
         except OSError as e:
             with self._lock:
                 self.pending = None
@@ -579,6 +623,77 @@ class Screen:
         self._arm(START_SECONDS)
         self._restart("trying %s" % text_words(mode))
         return self.state()
+
+    # -- the output ------------------------------------------------------------
+    def set_output(self, output):
+        """Save the output (auto or a connector the board lists) and restart the player, which reads it at its start.
+        A connector that is not connected now is allowed (a projector not yet switched on): the player says so and uses
+        Automatic until the next start. The AV output is offered only once the kernel lists it."""
+        if not valid_output(output):
+            raise ScreenError(400, "output must be auto or the name of one of this node's outputs, such as HDMI-A-1")
+        if output != AUTO:
+            names = [c["connector"] for c in self._connectors() if not c["connector"].lower().startswith("writeback")]
+            if output not in names:
+                if hardware.connector_kind(output) == "composite":
+                    raise ScreenError(409, "the AV output is off on this node: turn it on first (it needs a restart), then choose it")
+                raise ScreenError(409, "this node has no output called %s" % output)
+        with self._lock:
+            if self.pending is not None:
+                raise ScreenError(409, "a mode is being tried: keep it or go back first")
+        if output == self.saved_output():
+            return self.outputs()
+        with self._step:
+            with self.settings.lock:
+                before = self.settings.data.get("screen")
+                section = dict(before if isinstance(before, dict) else {})
+                if output == AUTO:
+                    section.pop("output", None)
+                else:
+                    section["output"] = output
+                self.settings.data["screen"] = section
+                try:
+                    self.settings.save()
+                except OSError as e:
+                    if before is None:
+                        self.settings.data.pop("screen", None)
+                    else:
+                        self.settings.data["screen"] = before
+                    raise ScreenError(500, "could not save: %s" % (e.strerror or e))
+            try:
+                self._write(self._base(self.saved()))      # also drops this boot's skips: they were earned with another screen
+            except OSError as e:
+                self.log("pvj-web: screen output: %s not written (%s)" % (self.wanted_file, e))
+        self._drop_retry()
+        self.note = ""
+        self.log("pvj-web: screen output: the output is now %s" % ("Automatic" if output == AUTO else output))
+        self._restart("the output is now %s" % ("Automatic" if output == AUTO else output))
+        return self.outputs()
+
+    def outputs(self):
+        """The Output page: {"saved", "using", "why", "note", "outputs": [{"connector", "label", "kind", "connected", "modes",
+        "card", "saved", "using"}], "av": {...}}. The list is the kernel's, writeback left out; `using` is what the player
+        said it is drawing on."""
+        rep = self.report()
+        using = (rep or {}).get("connector")
+        saved = self.saved_output()
+        rows = []
+        try:
+            conns = [c for c in self._connectors() if not c["connector"].lower().startswith("writeback")]
+        except Exception:
+            conns = []
+        for c in conns:
+            modes = []
+            for m in c.get("modes") or []:
+                if m not in modes and isinstance(m, str) and len(m) <= 16:
+                    modes.append(m)
+            rows.append({"connector": c["connector"], "label": hardware.output_label(c["connector"]),
+                         "kind": hardware.connector_kind(c["connector"]), "connected": c.get("status") == "connected",
+                         "modes": modes[:12], "card": c.get("card"), "saved": c["connector"] == saved,
+                         "using": c["connector"] == using})
+        why = (rep or {}).get("output_why", "")
+        if saved != AUTO and not any(r["connector"] == saved for r in rows):
+            why = why or "%s is not listed by this node now (the AV output needs to be turned on and the node restarted), so Automatic is used" % saved
+        return {"saved": saved, "using": using, "why": why, "note": self.note, "outputs": rows}
 
     def _arm(self, seconds):
         if self._timer is not None:
@@ -609,7 +724,7 @@ class Screen:
                     raise ScreenError(409, "the player is still starting with that mode; look at the screen first")
             with self.settings.lock:
                 before = self.settings.data.get("screen")
-                self.settings.data["screen"] = {"mode": p["mode"]}
+                self.settings.data["screen"] = dict(before if isinstance(before, dict) else {}, mode=p["mode"])
                 try:
                     self.settings.save()
                 except OSError as e:
@@ -619,7 +734,7 @@ class Screen:
                         self.settings.data["screen"] = before
                     raise ScreenError(500, "could not save: %s" % (e.strerror or e))
             try:
-                self._write({"mode": p["mode"]})
+                self._write(self._base(p["mode"]))
             except OSError as e:
                 self.log("pvj-web: screen output: %s not written (%s)" % (self.wanted_file, e))
             self._end_pending()
@@ -645,7 +760,7 @@ class Screen:
                 self._timer = None
             self._retry = None                  # under _step already (see _drop_retry)
             try:
-                self._write({"mode": p["previous"]})
+                self._write(self._base(p["previous"]))
             except OSError as e:
                 self.log("pvj-web: screen output: %s not written (%s)" % (self.wanted_file, e))
             self.note = note or "Went back to %s." % ("Automatic" if p["previous"] == AUTO else text_words(p["previous"]))
@@ -884,7 +999,8 @@ class Screen:
                 "auto_why": (rep or {}).get("auto_why", ""),
                 "automatic": (rep or {}).get("automatic"), "own": (rep or {}).get("own"),
                 "connector": (rep or {}).get("connector"), "modes": modes, "display": self.display(),
-                "connected": live["connected"], "keep_seconds": self.keep}
+                "connected": live["connected"], "keep_seconds": self.keep,
+                "output": {"saved": self.saved_output(), "using": (rep or {}).get("connector"), "why": (rep or {}).get("output_why", "")}}
 
     @staticmethod
     def _sysfs_signature():
