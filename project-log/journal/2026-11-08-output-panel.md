@@ -20,3 +20,9 @@
   - the AV output's question reads the costs, HDMI off and "over the network", and sends enable, confirm and the standard;
   - the restart is said, and The node on Now says the output and the restart.
 - **Run on the HP's WSL:** tests/ui/panel.test.js passes, run alone; tests.test_modules_themes passes.
+- **Review of the PR.**
+  - A refusal (400, 409, 503) is said in the card, which is read again (a refusal carries no state).
+  - The button that sent a write, with its choice, waits for the answer, so a second press opens no second question and sends nothing more.
+  - The question of the AV output waits 30 s (its costs are long; confirmRow takes a time now), asks plainly where the node gives no costs, and says HDMI comes back when turning it off.
+  - The node's note is not said twice, and no sentence ends in two full stops.
+  - The test also answers Not now (nothing sent), turns the AV output off, shows a refusal in the card, and shows a node without AV (its reason, no switch) and without the system helper (no writes).

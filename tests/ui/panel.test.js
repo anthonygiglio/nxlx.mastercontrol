@@ -455,8 +455,10 @@ function startServer(env) {          // env: more for the harness's environment 
         av: { supported: true, why: '', enabled: false, active: false, restart_needed: false, norm: 'NTSC', norms: ['NTSC', 'PAL'], default_norm: 'NTSC', hdmi_off: true,
           costs: ['Turning the AV output on switches the HDMI outputs off on this model.', 'A restart of the node is needed to turn it on or off.'], helper: true } };
       const sent = [];
+      let failNext = false;
       const outRoute = async (route) => {
         const req = route.request();
+        if (req.method() === 'POST' && failNext) { failNext = false; return route.fulfill({ status: 409, json: { error: 'That output is not listed' } }); }
         if (req.method() === 'POST') {
           const b = JSON.parse(req.postData() || '{}');
           sent.push([req.url().replace(/^.*\/api/, '/api'), b]);
@@ -473,6 +475,12 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.click('#outputuse');
       await page.waitForFunction(() => /next start/.test(document.getElementById('outputmsg').textContent), null, { timeout: 8000 });
       assert.deepStrictEqual(sent[0], ['/api/output', { output: 'Composite-1' }], 'Use sends the connector chosen');
+      // Not now sends nothing
+      await page.click('#outputav');
+      await page.waitForSelector('#confirmrow');
+      await page.click('#confirmrow button:text-is("Not now")');
+      await page.waitForSelector('#confirmrow', { state: 'detached' });
+      assert.strictEqual(sent.length, 1, 'Not now sends nothing');
       await page.selectOption('#outputavnorm', 'PAL');
       await page.click('#outputav');
       await page.waitForSelector('#confirmrow');
@@ -482,6 +490,29 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.waitForSelector('#outputavrestart', { timeout: 8000 });
       assert.deepStrictEqual(sent[1], ['/api/output/av', { enable: true, confirm: 'av', norm: 'PAL' }], 'the AV output is sent with the confirm and the standard');
       assert.strictEqual(await page.textContent('#outputavstate'), 'On after the next restart.');
+      // turning it off says HDMI comes back, and sends enable false with the confirm
+      await page.click('#outputav');
+      await page.waitForSelector('#confirmrow');
+      assert.match(await page.textContent('#confirmrow'), /HDMI output comes back/, 'turning it off says HDMI comes back after the restart');
+      await page.click('#confirmrow button:text-is("Turn it off")');
+      await page.waitForSelector('#outputav:text-is("Turn the AV output on")', { timeout: 8000 });
+      assert.deepStrictEqual(sent[2], ['/api/output/av', { enable: false, confirm: 'av' }], 'turning it off sends enable false with the confirm');
+      // a refusal is said in the card, and the card is read again
+      failNext = true;
+      await page.selectOption('#outputpick', 'HDMI-A-1');
+      await page.click('#outputuse');
+      await page.waitForSelector('#outputmsg.err:text-is("That output is not listed.")', { timeout: 8000 });
+      assert(!(await page.isDisabled('#outputuse')), 'after a refusal the card is drawn again, its button ready');
+      // no AV output on this node: its reason and no switch; no system helper: nothing to write
+      od = Object.assign({}, od, { av: { supported: false, why: 'This model has no AV output the node can switch' } });
+      await sys('Screen output');
+      await page.waitForSelector('#outputavwhy:text-is("This model has no AV output the node can switch.")', { timeout: 15000 });
+      assert.strictEqual(await page.locator('#outputav').count(), 0, 'no switch where the AV output is not supported');
+      od = Object.assign({}, od, { av: { supported: true, why: '', enabled: false, active: false, restart_needed: false, norm: 'NTSC', norms: ['NTSC'], default_norm: 'NTSC', hdmi_off: true, costs: [], helper: false } });
+      await sys('Screen output');
+      await page.waitForSelector('#outputavhelper', { timeout: 15000 });
+      assert.strictEqual(await page.locator('#outputav').count(), 0, 'no switch without the system helper');
+      od = Object.assign({}, od, { av: Object.assign({}, od.av, { restart_needed: true }) });      // a change waiting for a restart, for Now
       await go(page, 'now/now');
       await page.waitForSelector('#nownode-output', { timeout: 40000 });
       assert.match(await page.textContent('#nownode-output .navstate'), /^HDMI 1 \u00b7 the AV output needs a restart$/, 'The node on Now says the output and the restart');

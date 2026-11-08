@@ -2513,7 +2513,7 @@
   }
   // Replaces the tapped control's row with a question, a danger button and a plain one; "no", or 8 seconds, puts it
   // back (and calls onNo, when the caller is waiting for an answer).
-  function confirmRow(question, yesText, noText, onYes, control, onNo) {
+  function confirmRow(question, yesText, noText, onYes, control, onNo, ms) {      // ms: how long the question waits (8 s)
     var row = control.closest('.row') || control.parentNode;
     clearTimeout(confirmTimer);
     var box = h('div', { class: 'confirm', id: 'confirmrow', role: 'alert' }, h('span', { text: question }));
@@ -2524,7 +2524,7 @@
       h('button', { class: 'btn grow', id: 'confirmno', text: noText, onclick: no })));
     row.hidden = true;
     row.parentNode.insertBefore(box, row.nextSibling);
-    confirmTimer = setTimeout(no, 8000);
+    confirmTimer = setTimeout(no, ms || 8000);
   }
   // A card that redraws by itself waits while a question is open in it, so the question is not wiped.
   function asking(el) { return !!(el && el.querySelector('#confirmrow')); }
@@ -3346,29 +3346,50 @@
     var out = h('div', { class: 'msg inmsg', id: 'outputmsg', role: 'status' });
     var card = h('div', { class: 'card', id: 'outputcard' }, h('h2', { text: 'Output' }), body, out);
     var remote = !!(S.device && S.device.remote), picked = null;
+    var stop = function (t) { t = String(t || '').trim(); return /[.!?]$/.test(t) ? t : t + '.'; };
+    function load() {
+      api('GET', '/api/output').then(function (r) {
+        if (!card.isConnected && card.dataset.shown) return;
+        card.dataset.shown = '1';
+        if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'hint', id: 'outputerr', text: stop(r.data.error || 'Not available') })); return; }
+        draw(r.data);
+      });
+    }
+    // a write: the controls that sent it wait for the answer; a refusal is said in the card, and the card is read
+    // again (a refusal carries no state)
+    function send(path, payload, controls, done) {
+      controls.forEach(function (c) { if (c) c.disabled = true; });
+      api('POST', path, payload).then(function (r) {
+        if (!r.ok) { sayAt(out, stop(r.data.error || 'Not changed'), true); load(); return; }
+        draw(r.data);
+        done(r.data);
+      });
+    }
     function draw(d) {
       keepCursor(body, function () {
         body.textContent = '';
         body.appendChild(h('div', { class: 'state', id: 'outputline', text: 'In use: ' + (d.using ? outputLabel(d, d.using) : 'no output') +
-          (d.saved === 'auto' ? ', chosen automatically.' : ', chosen by hand: ' + outputLabel(d, d.saved) + '.') }));
-        if (d.why) body.appendChild(h('div', { class: 'hint warn', id: 'outputwhy', text: d.why }));
-        if (d.note) body.appendChild(h('div', { class: 'hint', id: 'outputnote', text: d.note }));
+          (d.saved === 'auto' ? ', chosen automatically.' : ', chosen by hand: ' + stop(outputLabel(d, d.saved))) }));
+        if (d.why) body.appendChild(h('div', { class: 'hint warn', id: 'outputwhy', text: stop(d.why) }));
+        if (d.note) body.appendChild(h('div', { class: 'hint', id: 'outputnote', text: stop(d.note) }));
         var pick = h('select', { class: 'text-input', id: 'outputpick', 'aria-label': 'The output the picture goes to', disabled: remote },
           [h('option', { value: 'auto', text: 'Automatic (an HDMI output that has a screen first)', selected: (picked || d.saved) === 'auto' })].concat((d.outputs || []).map(function (o) {
             return h('option', { value: o.connector, text: o.label + (o.connected ? '' : ' (nothing connected)'), selected: (picked || d.saved) === o.connector });
           })));
         pick.addEventListener('change', function () { picked = pick.value; });
-        body.appendChild(h('div', { class: 'row' }, pick, remote ? null : h('button', { class: 'btn', id: 'outputuse', text: 'Use', onclick: function () {
-          act('POST', '/api/output', { output: pick.value }, function (data) {
-            picked = null; draw(data);
-            sayAt(out, 'Saved: ' + (pick.value === 'auto' ? 'Automatic' : outputLabel(data, pick.value)) + '. The player takes it at its next start.');
+        var use = remote ? null : h('button', { class: 'btn', id: 'outputuse', text: 'Use', onclick: function () {
+          var want = pick.value;
+          send('/api/output', { output: want }, [use, pick], function (data) {
+            picked = null;
+            sayAt(out, 'Saved: ' + (want === 'auto' ? 'Automatic' : outputLabel(data, want)) + '. The player takes it at its next start.');
           });
-        } })));
+        } });
+        body.appendChild(h('div', { class: 'row' }, pick, use));
         if (remote) body.appendChild(h('div', { class: 'hint', id: 'outputremote', text: 'The output is changed in the room, not through remote support.' }));
         // the AV output (composite), on a Pi
         var av = d.av || {};
         body.appendChild(h('div', { class: 'k', text: 'AV output (composite)' }));
-        if (!av.supported) { body.appendChild(h('div', { class: 'hint', id: 'outputavwhy', text: av.why || 'This node has no AV output to switch.' })); return; }
+        if (!av.supported) { body.appendChild(h('div', { class: 'hint', id: 'outputavwhy', text: stop(av.why || 'This node has no AV output to switch') })); return; }
         body.appendChild(h('div', { class: 'state', id: 'outputavstate', text: av.enabled ? (av.active ? 'On.' : 'On after the next restart.') : (av.active ? 'Off after the next restart.' : 'Off.') }));
         if (av.restart_needed) body.appendChild(h('div', { class: 'hint warn', id: 'outputavrestart', text: 'A restart of the node is needed for this to take effect (About and power).' }));
         if (remote) return;
@@ -3376,21 +3397,23 @@
         var norm = av.enabled ? null : h('select', { class: 'text-input', id: 'outputavnorm', 'aria-label': 'The TV standard of the AV output' },
           (av.norms || []).map(function (n) { return h('option', { value: n, text: n + (n === av.default_norm ? ' (the usual one)' : ''), selected: n === (av.norm || av.default_norm) }); }));
         var on = !av.enabled;
-        body.appendChild(h('div', { class: 'row' }, norm, h('button', { class: 'btn', id: 'outputav', text: on ? 'Turn the AV output on' : 'Turn the AV output off', onclick: function (e) {
-          var words = (av.costs || []).join(' ');
+        var avb = h('button', { class: 'btn', id: 'outputav', text: on ? 'Turn the AV output on' : 'Turn the AV output off', onclick: function (e) {
+          var words = (av.costs || []).join(' ') || (on ? 'Turn the AV output on? A restart of the node is needed for it.' : 'Turn the AV output off? A restart of the node is needed for it.');
           if (on && av.hdmi_off && !/over the network/.test(words)) words += ' After the restart there is no HDMI picture; this panel still works over the network, to turn the AV output off again.';
+          if (!on && av.hdmi_off) words += ' After the restart the HDMI output comes back.';
           confirmRow(words, on ? 'Turn it on' : 'Turn it off', 'Not now', function () {
-            var body2 = { enable: on, confirm: 'av' };
-            if (on && norm) body2.norm = norm.value;
-            act('POST', '/api/output/av', body2, function (data) { draw(data); sayAt(out, data.note || (on ? 'The AV output is on in the boot files.' : 'The AV output is off in the boot files.')); });
-          }, e.currentTarget);
-        } })));
+            var payload = { enable: on, confirm: 'av' };
+            if (on && norm) payload.norm = norm.value;
+            send('/api/output/av', payload, [avb, norm], function (data) {
+              // (the node's note is on the card already: the line under the card only says it was sent)
+              sayAt(out, data.note ? '' : (on ? 'The AV output is on in the boot files.' : 'The AV output is off in the boot files.'));
+            });
+          }, e.currentTarget, null, 30000);                                 // (the costs are long: 30 s to read them)
+        } });
+        body.appendChild(h('div', { class: 'row' }, norm, avb));
       });
     }
-    api('GET', '/api/output').then(function (r) {
-      if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'hint', id: 'outputerr', text: (r.data.error || 'Not available') + '.' })); return; }
-      draw(r.data);
-    });
+    load();
     return card;
   }
   function screenCard() {
