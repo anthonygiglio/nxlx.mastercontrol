@@ -2510,6 +2510,76 @@ class Api:
             raise bad("send use (classic or new) and, if you like, detail, sources and final")
         return self._renderer_call(self.renderer.choose, body["use"], body.get("detail"), body.get("sources"), body.get("final"))
 
+    # --- the output (D127): which connector the picture goes to, and the AV (composite) output ---------------------------
+    AV_COSTS_HDMI_OFF = ("Turning the AV output on switches the HDMI outputs off on this model until it is turned off again "
+                         "(the Raspberry Pi documentation: composite output is only available with enable_tvout=1, which also disables "
+                         "HDMI output). Without a screen on the AV connector there is then no picture; this panel still works over the network "
+                         "and turns AV off again.")
+    AV_COSTS_PI5 = "A Raspberry Pi 5 has the composite signal on a pad (J7) next to the HDMI socket, not on a socket: a lead has to be soldered to it."
+    AV_COSTS_KEEPS_HDMI = "HDMI stays on. The AV connector is the 3.5 mm jack, which also carries analogue sound."
+    AV_RESTART = "A restart of the node is needed to turn it on or off: the boot files are read at start."
+
+    def _av_state(self):
+        """The AV output as the Output page needs it: what the boot files say, what the kernel lists now, and what it costs."""
+        from . import bootcfg
+        kind = self.board["kind"]
+        st = bootcfg.state()
+        listed = any(hardware.connector_kind(c["connector"]) == "composite" for c in hardware.outputs())
+        why = ""
+        if not hardware.av_capable(kind):
+            why = "this node is not a Raspberry Pi, so it has no AV output"
+        elif not st["found"]:
+            why = "the boot configuration (config.txt) was not found on this node"
+        elif not st["kms"]:
+            why = "this node does not use the full KMS driver (vc4-kms-v3d), so the AV output cannot be switched here"
+        enabled = bool(st["composite"])
+        changed_now = getattr(self, "_av_boot", None) not in (None, "") and self._av_boot == screenmode.boot_id()
+        costs = []
+        if not why:
+            costs = [self.AV_COSTS_HDMI_OFF if kind in ("pi4", "pi5") else self.AV_COSTS_KEEPS_HDMI, self.AV_RESTART]
+            if kind == "pi5":
+                costs.append(self.AV_COSTS_PI5)
+        return {"supported": not why, "why": why, "enabled": enabled, "active": listed, "restart_needed": enabled != listed or changed_now,
+                "norm": st["norm"] or bootcfg.DEFAULT_NORM, "norms": list(bootcfg.NORMS), "default_norm": bootcfg.DEFAULT_NORM,
+                "hdmi_off": bool(kind in ("pi4", "pi5") and not why), "costs": costs, "helper": self.sysd is not None}
+
+    def get_output(self, body, device, client):
+        """The Output page: {"saved", "using", "why", "note", "outputs": [{connector, label, kind, connected, modes, card, saved, using}],
+        "av": {supported, why, enabled, active, restart_needed, norm, norms, default_norm, hdmi_off, costs, helper}}."""
+        out = self.screen.outputs()
+        out["av"] = self._av_state()
+        return out
+
+    def choose_output(self, body, device, client):
+        """{"output": "auto" | "HDMI-A-2" | ...}: saved, and the player restarts to use it."""
+        if set(body) != {"output"}:
+            raise bad("send output: auto or the name of one of this node's outputs")
+        self._screen_call(self.screen.set_output, body["output"])
+        return self.get_output({}, device, client)
+
+    def choose_av(self, body, device, client):
+        """{"enable": true | false, "norm"?: "NTSC" | "PAL" | ..., "confirm": "av"}: the boot files are changed (with backups) by the
+        system helper, and a restart of the node applies it. Never through the support tunnel."""
+        from . import bootcfg
+        if not set(body) <= {"enable", "norm", "confirm"} or not isinstance(body.get("enable"), bool):
+            raise bad("send enable (true or false), norm for on, and confirm: av")
+        if body.get("confirm") != "av":
+            raise bad("this changes the node's boot files; send confirm: av once you have read what it costs")
+        norm = body.get("norm")
+        if norm is not None and (not isinstance(norm, str) or norm not in bootcfg.NORMS):
+            raise bad("norm must be one of %s" % ", ".join(bootcfg.NORMS))
+        state = self._av_state()
+        if not state["supported"]:
+            raise ApiError(409, state["why"])
+        reply = self._sysd({"cmd": "av_output", "enable": body["enable"], "norm": norm or (state["norm"] if state["enabled"] else bootcfg.DEFAULT_NORM)})
+        if reply.get("changed"):
+            self._av_boot = screenmode.boot_id()
+        out = self.get_output({}, device, client)
+        out.update(changed=bool(reply.get("changed")), backups=list(reply.get("backups") or []))
+        out["note"] = ("The AV output is %s in the boot files. %s" % ("on" if body["enable"] else "off", self.AV_RESTART)) if reply.get("changed") \
+            else "Nothing needed changing in the boot files."
+        return out
+
     def confirm_screen(self, body, device, client):
         return self._screen_call(self.screen.confirm)
 
@@ -5273,6 +5343,9 @@ class Api:
             ("GET", "/api/screen"): ("full", self.get_screen),          # the screen's mode (D90): the Owner's
             ("POST", "/api/screen"): ("full", self.set_screen),
             ("POST", "/api/screen/confirm"): ("full", self.confirm_screen),     # never through the support tunnel (D84)
+            ("GET", "/api/output"): ("full", self.get_output),                  # which connector the picture goes to, and the AV output (D127)
+            ("POST", "/api/output"): ("full", self.choose_output),
+            ("POST", "/api/output/av"): ("full", self.choose_av),
             ("POST", "/api/screen/revert"): ("full", self.revert_screen),
             ("GET", "/api/renderer"): ("full", self.get_renderer),      # which program draws (D95): the Owner's
             ("POST", "/api/renderer"): ("full", self.set_renderer),     # never through the support tunnel (D84)

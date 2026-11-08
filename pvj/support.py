@@ -84,6 +84,10 @@ REMOTE_DENY = {
     # the renderer (D95): which program draws outlives the session, and unlike a screen mode nothing takes it back by
     # itself; so the switch is the Owner's in the room. A helper may read it.
     ("POST", "/api/renderer"): "which program draws the screen is chosen by the owner, who sees the screen in the room",
+    # the output (D127): which socket the picture goes to, and the AV output's boot files. A wrong choice leaves the room dark
+    # and a helper cannot see the room; the Owner in the room chooses it. A helper may read the list.
+    ("POST", "/api/output"): "which output the picture goes to is chosen by the owner, who sees the screen in the room",
+    ("POST", "/api/output/av"): "the AV output changes the node's boot files; the owner does that in the room",
     # the NDI discovery server (D85): a program listening on the network is opened by the Owner in the room. Its
     # switch is here; its own routes are under a prefix below.
     ("POST", "/api/modules/ndi-discovery"): "a program that listens on the network is switched by the owner in the room (D85)",
