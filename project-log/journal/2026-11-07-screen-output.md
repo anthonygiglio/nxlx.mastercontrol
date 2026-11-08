@@ -1,6 +1,6 @@
 <!-- SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
      SPDX-License-Identifier: Apache-2.0 -->
-## 2026-11-07, The output: pick the connector, and switch the AV output on (D127)
+## 2026-11-07, The output: pick the connector, and switch the AV output on (D128)
 
 - `screen.output` (Automatic by default) rides in WANTED beside the mode; `screenmode.decide` takes the named connector when it is connected, else Automatic with a plain reason in the report (`output_why`), and a named output without a known card still passes its name. The Pi 4's Automatic arguments are unchanged (a test holds them). A composite connector lists interlaced modes only; its first mode (set by the TV standard) is used.
 - `GET /api/output`, `POST /api/output`, `POST /api/output/av` (Owner only; the writes are in `support.REMOTE_DENY`). `Screen.set_output` saves, writes WANTED and restarts the player once; `Screen.choose/confirm/revert/start/sync` keep the output.

@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""The Raspberry Pi's boot files for the AV (composite) output, edited with a backup (D127).
+"""The Raspberry Pi's boot files for the AV (composite) output, edited with a backup (D128).
 
 Under the full KMS driver the composite video output is off by default. The Raspberry Pi documentation (config.txt,
 video options) says it is on only with `enable_tvout=1` (which, on a Pi 4 and a Pi 5, also disables the HDMI outputs: "On
@@ -13,35 +13,43 @@ output (disables all other outputs)" on a Pi 4. A change takes effect at the nex
 This module is root's: pvj-sysd calls `apply` when the Owner asks (the panel never writes these files), and the panel
 only reads them (`state`). It changes nothing but these, and only these ways:
 
-* config.txt: `,composite` appended to the parameters of each active `dtoverlay=vc4-kms-v3d` (or `-pi4`) line, and a
-  small marked block `[all]` / `enable_tvout=1` at the end. Turning it off takes both out again, and nothing else.
-* cmdline.txt: `vc4.tv_norm=<norm>` set (the one line stays one line); turning it off removes it.
+* config.txt: `,composite` appended to the parameters of each active `dtoverlay=vc4-kms-v3d` (or `-pi4`, `-pi5`) line, and a
+  small marked block `[all]` / `enable_tvout=1` at the end. Turning it off puts our changes back: the marked block goes and
+  every `composite` parameter on those lines goes (an owner's own `composite` there too). The `.nxlx-original` copy is the
+  exact original; the file after off is the original less normalisations (an end of line kept, trailing blank lines of
+  the block taken out).
+* cmdline.txt: `vc4.tv_norm=<norm>` set (the one line stays one line, its other words as they were); turning it off removes it.
+* A change that is already in force is no change: nothing is written and no backup is made.
 * Before a file is changed it is copied beside itself as `<name>.nxlx-<seconds>` (the newest KEEP of those are kept),
   and the first time also as `<name>.nxlx-original`, which is never removed. The new text is written to a file beside
   it and renamed over the old one. The boot partition is its own filesystem, so this holds under the read-only root too.
 
-A node that does not use the full KMS driver (no `vc4-kms-v3d` line) is refused with a plain sentence, and nothing is
-written."""
+A config.txt with no `vc4-kms-v3d` line this node knows (`vc4-kms-v3d`, `-pi4`, `-pi5`) is refused with a plain sentence, and
+nothing is written. Only /boot/firmware is edited (Raspberry Pi OS Bookworm and later)."""
 
 import os
 import re
 import shutil
 import time
 
-CONFIG_PATHS = ("/boot/firmware/config.txt", "/boot/config.txt")
-CMDLINE_PATHS = ("/boot/firmware/cmdline.txt", "/boot/cmdline.txt")
+CONFIG_PATHS = ("/boot/firmware/config.txt",)          # Raspberry Pi OS Bookworm and later; the older /boot is not edited
+CMDLINE_PATHS = ("/boot/firmware/cmdline.txt",)
 NORMS = ("NTSC", "NTSC-J", "NTSC-443", "PAL", "PAL-M", "PAL-N", "PAL60", "SECAM")
 DEFAULT_NORM = "NTSC"              # the owner is in Canada; it is also the kernel's own default
 KEEP = 3                           # timestamped backups kept for each file
 MAX_BYTES = 256 * 1024             # a config file bigger than this is not one of ours to edit
 BEGIN = "# nxlx.mastercontrol AV output: begin (taken out again when the AV output is turned off)"
 END = "# nxlx.mastercontrol AV output: end"
-_OVERLAY = re.compile(r"^(\s*dtoverlay\s*=\s*)(vc4-kms-v3d(?:-pi4)?)((?:,[^#\s]*)?)(\s*(?:#.*)?)$")
+_OVERLAY = re.compile(r"^(\s*dtoverlay\s*=\s*)(vc4-kms-v3d(?:-pi4|-pi5)?)((?:,[^#\s]*)?)(\s*(?:#.*)?)$")
 _NORM = re.compile(r"^vc4\.tv_norm=([A-Za-z0-9-]+)$")
 
 
 class BootError(Exception):
-    """A change that was refused, in plain words."""
+    """A change that was refused, in plain words. `state` is the boot files' state when some file may have been left changed."""
+
+    def __init__(self, message, state=None):
+        super().__init__(message)
+        self.state = state
 
 
 def _find(paths, root):
@@ -53,11 +61,15 @@ def _find(paths, root):
 
 
 def _read(path):
-    with open(path, "r", encoding="utf-8", errors="strict") as f:
+    with open(path, "r", encoding="utf-8", errors="surrogateescape", newline="") as f:       # any bytes read come back as they were
         text = f.read(MAX_BYTES + 1)
     if len(text) > MAX_BYTES:
         raise BootError("%s is too large to be a boot configuration" % os.path.basename(path))
     return text
+
+
+def _eol(text):
+    return "\r\n" if "\r\n" in text else "\n"
 
 
 def _tokens(params):
@@ -100,8 +112,8 @@ def cmdline_norm(text):
 def edit_config(text, enable):
     """The config text with the AV output on or off. Raises BootError where the file is not one that can be edited."""
     if not has_kms(text):
-        raise BootError("this node does not use the full KMS driver (no dtoverlay=vc4-kms-v3d line in config.txt), so the AV "
-                        "output cannot be switched here")
+        raise BootError("config.txt has no dtoverlay line for a vc4-kms-v3d driver this node knows (vc4-kms-v3d, -pi4 or -pi5), so the "
+                        "AV output cannot be switched here")
     out = []
     skipping = removed = False
     for line in text.splitlines():
@@ -126,18 +138,34 @@ def edit_config(text, enable):
             out.pop()
     if enable:
         out += ["", BEGIN, "[all]", "enable_tvout=1", END]
-    return "\n".join(out) + "\n"
+    return _eol(text).join(out) + _eol(text)
+
+
+def block_present(text):
+    return any(line.strip() == BEGIN for line in text.splitlines())
+
+
+def config_in_state(text, enable):
+    """True when config.txt already is as `enable` wants it (the AV output on: composite on the overlay and our block; off: neither)."""
+    if enable:
+        return config_enabled(text) and block_present(text)
+    return not block_present(text) and not any(
+        m and any(_is_composite_any(t) for t in _tokens(m.group(3))) for m in (_OVERLAY.match(l) for l in text.splitlines()))
+
+
+def cmdline_in_state(text, norm):
+    return cmdline_norm(text) == norm
 
 
 def edit_cmdline(text, norm):
-    """The one line of cmdline.txt with vc4.tv_norm set to `norm` (None takes it out)."""
+    """The one line of cmdline.txt with vc4.tv_norm set to `norm` (None takes it out). The rest of the line is left as it is."""
     lines = [l for l in text.splitlines() if l.strip()]
     if len(lines) != 1:
         raise BootError("cmdline.txt does not hold exactly one line, so it is not changed")
-    tokens = [t for t in lines[0].split() if not _NORM.match(t)]
+    line = re.sub(r"(?:^|\s+)vc4\.tv_norm=\S*", "", lines[0]).rstrip()
     if norm:
-        tokens.append("vc4.tv_norm=" + norm)
-    return " ".join(tokens) + "\n"
+        line += " vc4.tv_norm=" + norm
+    return line + _eol(text)
 
 
 def state(root="/"):
@@ -157,15 +185,24 @@ def state(root="/"):
 
 
 def _backup(path, now):
-    """A copy beside the file; the original once, the newest KEEP timestamped ones. Returns the new copy's path."""
+    """A copy beside the file; the original once, the newest KEEP timestamped ones. Returns the new copy's path. Two copies in one
+    second get a counter (`.nxlx-<seconds>-<n>`); the oldest are told by those numbers, not by their letters."""
     original = path + ".nxlx-original"
     if not os.path.exists(original):
         shutil.copy2(path, original)
-    mine = path + ".nxlx-%d" % int(now)
+    seconds, n = int(now), 1
+    mine = path + ".nxlx-%d" % seconds
+    while os.path.exists(mine):
+        n += 1
+        mine = path + ".nxlx-%d-%d" % (seconds, n)
     shutil.copy2(path, mine)
-    olds = sorted(p for p in (os.path.join(os.path.dirname(path), n) for n in os.listdir(os.path.dirname(path)))
-                  if re.fullmatch(re.escape(path) + r"\.nxlx-[0-9]+", p))
-    for p in olds[:-KEEP]:
+    folder, base = os.path.dirname(path), os.path.basename(path)
+    found = []
+    for name in os.listdir(folder):
+        m = re.fullmatch(re.escape(base) + r"\.nxlx-([0-9]+)(?:-([0-9]+))?", name)
+        if m:
+            found.append(((int(m.group(1)), int(m.group(2) or 1)), os.path.join(folder, name)))
+    for _, p in sorted(found)[:-KEEP]:
         try:
             os.unlink(p)
         except OSError:
@@ -175,7 +212,7 @@ def _backup(path, now):
 
 def _replace(path, text):
     tmp = path + ".nxlx-tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
+    with open(tmp, "w", encoding="utf-8", errors="surrogateescape", newline="") as f:
         f.write(text)
         f.flush()
         os.fsync(f.fileno())
@@ -187,35 +224,43 @@ def _replace(path, text):
 
 
 def apply(enable, norm=None, root="/", now=time.time):
-    """Turn the AV output on or off in the boot files. Returns {"changed", "backups", "state"}. Raises BootError."""
+    """Turn the AV output on or off in the boot files. Returns {"changed", "backups", "state"}. Raises BootError.
+
+    cmdline.txt is written first and config.txt second: a vc4.tv_norm= left alone does nothing, while config.txt carries the change
+    that switches HDMI off. If the second write fails, the first is put back; if that fails too, the error says which file
+    was left changed, under which backup name, and carries the state of the boot files."""
     config, cmdline = _find(CONFIG_PATHS, root), _find(CMDLINE_PATHS, root)
     if not config or not cmdline:
-        raise BootError("this node has no boot configuration to change (not a Raspberry Pi, or its boot files are elsewhere)")
+        raise BootError("this node has no boot configuration to change (not a Raspberry Pi on a recent OS, or its boot files are elsewhere)")
     if enable and norm not in NORMS:
         raise BootError("the TV standard must be one of %s" % ", ".join(NORMS))
     try:
         old_config, old_cmdline = _read(config), _read(cmdline)
     except (OSError, ValueError) as e:
         raise BootError("the boot files could not be read (%s)" % (getattr(e, "strerror", None) or type(e).__name__))
-    new_config = edit_config(old_config, enable)
-    new_cmdline = edit_cmdline(old_cmdline, norm if enable else None)
-    new_config = old_config if new_config.rstrip("\n") == old_config.rstrip("\n") else new_config       # a missing last newline is no change
-    new_cmdline = old_cmdline if new_cmdline.rstrip("\n") == old_cmdline.rstrip("\n") else new_cmdline
-    backups, changed = [], False
+    new_config = old_config if config_in_state(old_config, enable) else edit_config(old_config, enable)
+    new_cmdline = old_cmdline if cmdline_in_state(old_cmdline, norm if enable else None) else edit_cmdline(old_cmdline, norm if enable else None)
+    steps = [(cmdline, old_cmdline, new_cmdline), (config, old_config, new_config)]
+    backups, written = [], []                      # written: (path, old text, backup name)
     try:
-        if new_config != old_config:
-            backups.append(_backup(config, now()))
-            _replace(config, new_config)
-            changed = True
-        if new_cmdline != old_cmdline:
-            backups.append(_backup(cmdline, now()))
-            _replace(cmdline, new_cmdline)
-            changed = True
+        for path, old, new in steps:
+            if new == old:
+                continue
+            backup = _backup(path, now())
+            backups.append(os.path.basename(backup))
+            _replace(path, new)
+            written.append((path, old, os.path.basename(backup)))
     except OSError as e:
-        try:                                    # the first file was written and the second was not: put the first back
-            if new_config != old_config:
-                _replace(config, old_config)
-        except OSError:
-            pass
-        raise BootError("the boot files could not be written (%s); nothing was left changed" % (getattr(e, "strerror", None) or type(e).__name__))
-    return {"changed": changed, "backups": [os.path.basename(b) for b in backups], "state": state(root)}
+        why = getattr(e, "strerror", None) or type(e).__name__
+        stuck = []
+        for path, old, backup in reversed(written):
+            try:
+                _replace(path, old)
+            except OSError:
+                stuck.append((os.path.basename(path), backup))
+        if stuck:
+            left = "; ".join("%s was left changed (the copy from before is %s beside it)" % pair for pair in stuck)
+            raise BootError("the boot files could not be written (%s), and putting back failed: %s. Check them before restarting the node." % (why, left),
+                            state=state(root))
+        raise BootError("the boot files could not be written (%s); nothing was left changed" % why, state=state(root))
+    return {"changed": bool(written), "backups": backups, "state": state(root)}

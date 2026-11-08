@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""The output (D127): which connector the picture goes to, and the AV (composite) output on a Raspberry Pi.
+"""The output (D128): which connector the picture goes to, and the AV (composite) output on a Raspberry Pi.
 
 Fake /sys/class/drm trees stand for a Pi 4 (two HDMI and composite), a Pi 3B (one HDMI and composite), a Pi 5 (outputs on
 two cards) and a desktop; the boot files are fake folders; the helper is driven with a fake runner. Nothing here was run on a
@@ -390,7 +390,7 @@ class BootConfigTest(unittest.TestCase):
         text = "#dtoverlay=vc4-kms-v3d\ndtoverlay=vc4-fkms-v3d\n"
         with self.assertRaises(bootcfg.BootError) as e:
             bootcfg.edit_config(text, True)
-        self.assertIn("full KMS driver", str(e.exception))
+        self.assertIn("vc4-kms-v3d driver this node knows", str(e.exception))
         self.assertFalse(bootcfg.has_kms(text))
         self.assertEqual(bootcfg.edit_config(text + "dtoverlay=vc4-kms-v3d\n", False).splitlines()[:2], text.splitlines())
 
@@ -421,12 +421,12 @@ class BootConfigTest(unittest.TestCase):
         clock = iter(range(1000, 2000))
         res = bootcfg.apply(True, "NTSC", root=root, now=lambda: next(clock))
         self.assertTrue(res["changed"])
-        self.assertEqual(sorted(res["backups"]), ["cmdline.txt.nxlx-1001", "config.txt.nxlx-1000"])
+        self.assertEqual(sorted(res["backups"]), ["cmdline.txt.nxlx-1000", "config.txt.nxlx-1001"], "cmdline.txt first, config.txt second")
         self.assertTrue(res["state"]["composite"] and res["state"]["tvout"] and res["state"]["kms"])
         self.assertEqual(res["state"]["norm"], "NTSC")
         self.assertEqual(self.read(root, "config.txt.nxlx-original"), PI4_CONFIG)
         self.assertEqual(self.read(root, "cmdline.txt.nxlx-original"), CMDLINE)
-        self.assertEqual(self.read(root, "config.txt.nxlx-1000"), PI4_CONFIG)
+        self.assertEqual(self.read(root, "config.txt.nxlx-1001"), PI4_CONFIG)
         again = bootcfg.apply(True, "NTSC", root=root, now=lambda: next(clock))
         self.assertEqual((again["changed"], again["backups"]), (False, []), "nothing to change: nothing written, no backup")
         pal = bootcfg.apply(True, "PAL", root=root, now=lambda: next(clock))
@@ -461,15 +461,107 @@ class BootConfigTest(unittest.TestCase):
     def test_a_second_file_that_cannot_be_written_puts_the_first_back(self):
         root = self.files()
         real = bootcfg._replace
+        order = []
 
         def flaky(path, text):
-            if path.endswith("cmdline.txt"):
+            order.append(os.path.basename(path))
+            if path.endswith("config.txt"):
                 raise OSError(30, "Read-only file system")
             return real(path, text)
         with mock.patch.object(bootcfg, "_replace", flaky), self.assertRaises(bootcfg.BootError) as e:
             bootcfg.apply(True, "NTSC", root=root)
         self.assertIn("nothing was left changed", str(e.exception))
+        self.assertEqual(order[:2], ["cmdline.txt", "config.txt"], "cmdline.txt is written first")
+        self.assertEqual((self.read(root, "config.txt"), self.read(root, "cmdline.txt")), (PI4_CONFIG, CMDLINE))
+        self.assertFalse(e.exception.state["composite"])
+
+    def test_when_the_put_back_fails_too_the_error_says_which_file_was_left_changed(self):
+        root = self.files()
+        real = bootcfg._replace
+        calls = []
+
+        def flaky(path, text):
+            calls.append(os.path.basename(path))
+            if path.endswith("config.txt") or (path.endswith("cmdline.txt") and calls.count("cmdline.txt") > 1):
+                raise OSError(5, "Input/output error")
+            return real(path, text)
+        with mock.patch.object(bootcfg, "_replace", flaky), self.assertRaises(bootcfg.BootError) as e:
+            bootcfg.apply(True, "PAL", root=root, now=lambda: 4242)
+        msg = str(e.exception)
+        self.assertNotIn("nothing was left changed", msg)
+        self.assertIn("putting back failed", msg)
+        self.assertIn("cmdline.txt was left changed", msg)
+        self.assertIn("cmdline.txt.nxlx-4242", msg, "the copy from before is named")
+        self.assertEqual(e.exception.state["norm"], "PAL", "the state of the boot files now, not what was meant")
+        self.assertFalse(e.exception.state["composite"], "config.txt was never changed: HDMI is not switched off")
         self.assertEqual(self.read(root, "config.txt"), PI4_CONFIG)
+        self.assertEqual(self.read(root, "cmdline.txt.nxlx-4242"), CMDLINE)
+
+    def test_the_helper_carries_the_state_of_a_failed_change(self):
+        s, root, _ = HelperCommandTest().make()
+        real = bootcfg._replace
+
+        def flaky(path, text):
+            if path.endswith("config.txt"):
+                raise OSError(30, "Read-only file system")
+            return real(path, text)
+        with mock.patch.object(bootcfg, "_replace", flaky):
+            r = s.handle({"cmd": "av_output", "enable": True, "norm": "NTSC"})
+        self.assertFalse(r["ok"])
+        self.assertIn("nothing was left changed", r["error"])
+        self.assertEqual(r["state"]["composite"], False)
+
+    def test_a_change_already_in_force_and_a_difference_of_form_only_are_no_change(self):
+        root = self.files(config=PI4_CONFIG.rstrip("\n") + "\n\n\n", cmdline=CMDLINE.rstrip("\n"))
+        res = bootcfg.apply(False, root=root)
+        self.assertEqual((res["changed"], res["backups"]), (False, []), "nothing of ours was there: no write, no backup")
+        self.assertEqual(sorted(n for n in os.listdir(os.path.join(root, "boot/firmware")) if "nxlx" in n), [])
+        self.assertEqual(self.read(root, "config.txt"), PI4_CONFIG.rstrip("\n") + "\n\n\n")
+
+    def test_the_end_of_line_and_the_spaces_of_a_line_are_kept(self):
+        crlf = PI4_CONFIG.replace("\n", "\r\n")
+        spaced = "console=tty1   root=/dev/x  quiet\n"
+        root = self.files(config=crlf, cmdline=spaced)
+        bootcfg.apply(True, "PAL", root=root)
+        with open(os.path.join(root, "boot/firmware/config.txt"), newline="") as f:
+            on = f.read()
+        self.assertNotIn("\r\n\n", on.replace("\r\n", ""))
+        self.assertEqual(on.count("\n"), on.count("\r\n"), "every line ends as the file's lines did")
+        self.assertEqual(self.read(root, "cmdline.txt"), "console=tty1   root=/dev/x  quiet vc4.tv_norm=PAL\n")
+        bootcfg.apply(False, root=root)
+        with open(os.path.join(root, "boot/firmware/config.txt"), newline="") as f:
+            self.assertEqual(f.read(), crlf)
+        self.assertEqual(self.read(root, "cmdline.txt"), spaced)
+
+    def test_a_config_that_is_not_utf8_is_read_and_comes_back_byte_for_byte(self):
+        root = tree([], {"/boot/firmware/cmdline.txt": CMDLINE})
+        raw = b"dtoverlay=vc4-kms-v3d\n# caf\xe9 \xff\n"
+        with open(os.path.join(root, "boot/firmware/config.txt"), "wb") as f:
+            f.write(raw)
+        st = bootcfg.state(root)
+        self.assertTrue(st["found"] and st["kms"], "found, not 'not found'")
+        bootcfg.apply(True, "NTSC", root=root)
+        self.assertTrue(bootcfg.state(root)["composite"])
+        bootcfg.apply(False, root=root)
+        with open(os.path.join(root, "boot/firmware/config.txt"), "rb") as f:
+            self.assertEqual(f.read(), raw)
+
+    def test_the_pi_5_overlay_name_is_known(self):
+        text = "dtoverlay=vc4-kms-v3d-pi5,noaudio\n"
+        self.assertTrue(bootcfg.has_kms(text))
+        self.assertIn("dtoverlay=vc4-kms-v3d-pi5,noaudio,composite", bootcfg.edit_config(text, True))
+        self.assertFalse(bootcfg.has_kms("dtoverlay=vc4-kms-v3d-pi6\n"))
+
+    def test_two_backups_in_one_second_and_the_oldest_told_by_their_numbers(self):
+        root = self.files()
+        bootcfg.apply(True, "PAL", root=root, now=lambda: 9)
+        bootcfg.apply(True, "NTSC", root=root, now=lambda: 9)
+        names = sorted(n for n in os.listdir(os.path.join(root, "boot/firmware")) if n.startswith("cmdline.txt.nxlx-") and "original" not in n)
+        self.assertEqual(names, ["cmdline.txt.nxlx-9", "cmdline.txt.nxlx-9-2"], "the second keeps the first")
+        for t, norm in ((10, "PAL"), (11, "NTSC"), (12, "PAL"), (13, "NTSC")):
+            bootcfg.apply(True, norm, root=root, now=lambda t=t: t)
+        names = sorted(n for n in os.listdir(os.path.join(root, "boot/firmware")) if n.startswith("cmdline.txt.nxlx-") and "original" not in n)
+        self.assertEqual(names, ["cmdline.txt.nxlx-11", "cmdline.txt.nxlx-12", "cmdline.txt.nxlx-13"], "10 is not older than 9 by its letters")
 
     def test_no_boot_files_and_a_bad_standard(self):
         with self.assertRaises(bootcfg.BootError):
@@ -479,11 +571,11 @@ class BootConfigTest(unittest.TestCase):
         self.assertEqual(bootcfg.state(tree([]))["found"], False)
         self.assertEqual(bootcfg.state(self.files())["composite"], False)
 
-    def test_the_older_boot_folder_is_found_too(self):
+    def test_the_older_boot_folder_is_not_edited(self):
         root = tree([], {"/boot/config.txt": PI4_CONFIG, "/boot/cmdline.txt": CMDLINE})
-        self.assertTrue(bootcfg.apply(True, "NTSC", root=root)["changed"])
-        with open(os.path.join(root, "boot/config.txt")) as f:
-            self.assertIn("composite", f.read())
+        self.assertFalse(bootcfg.state(root)["found"])
+        with self.assertRaises(bootcfg.BootError):
+            bootcfg.apply(True, "NTSC", root=root)
 
     def test_the_norms_are_the_kernels_list(self):
         self.assertEqual(bootcfg.NORMS, ("NTSC", "NTSC-J", "NTSC-443", "PAL", "PAL-M", "PAL-N", "PAL60", "SECAM"))
@@ -527,7 +619,7 @@ class HelperCommandTest(unittest.TestCase):
     def test_the_unit_may_write_the_boot_folder_and_nothing_more_of_the_system(self):
         with open(os.path.join(os.path.dirname(sysd.__file__), "..", "install", "pvj-sysd.service")) as f:
             unit = f.read()
-        self.assertIn("ReadWritePaths=/run/pvj-sysd -/boot/firmware -/boot", unit)
+        self.assertIn("ReadWritePaths=/run/pvj-sysd -/boot/firmware\n", unit)
         self.assertIn("ProtectSystem=strict", unit)
 
 
@@ -628,7 +720,7 @@ class ApiTest(CareBase):
         helper = FakeSysd()
         self.api.sysd = helper
         for kind, found, kms, word in (("x86", True, True, "not a Raspberry Pi"), ("pi4", False, False, "was not found"),
-                                       ("pi4", True, False, "full KMS driver")):
+                                       ("pi4", True, False, "vc4-kms-v3d line this node knows")):
             self.api.board = dict(self.api.board, kind=kind)
             self.boot.update(found=found, kms=kms)
             av = self.get()["av"]
@@ -652,6 +744,7 @@ class ApiTest(CareBase):
             self.assertEqual(av["hdmi_off"], hdmi_off, kind)
             self.assertEqual(any("soldered" in c for c in av["costs"]), pad, kind)
             self.assertEqual(any("HDMI stays on" in c for c in av["costs"]), not hdmi_off, kind)
+            self.assertEqual(any("stays on AV until it is restarted" in c for c in av["costs"]), not hdmi_off, kind)
             self.assertTrue(any("restart of the node" in c for c in av["costs"]))
 
     def test_after_the_change_a_restart_is_pending_until_the_node_has_restarted(self):

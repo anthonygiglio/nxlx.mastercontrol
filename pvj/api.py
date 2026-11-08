@@ -2510,13 +2510,14 @@ class Api:
             raise bad("send use (classic or new) and, if you like, detail, sources and final")
         return self._renderer_call(self.renderer.choose, body["use"], body.get("detail"), body.get("sources"), body.get("final"))
 
-    # --- the output (D127): which connector the picture goes to, and the AV (composite) output ---------------------------
+    # --- the output (D128): which connector the picture goes to, and the AV (composite) output ---------------------------
     AV_COSTS_HDMI_OFF = ("Turning the AV output on switches the HDMI outputs off on this model until it is turned off again "
                          "(the Raspberry Pi documentation: composite output is only available with enable_tvout=1, which also disables "
                          "HDMI output). Without a screen on the AV connector there is then no picture; this panel still works over the network "
                          "and turns AV off again.")
     AV_COSTS_PI5 = "A Raspberry Pi 5 has the composite signal on a pad (J7) next to the HDMI socket, not on a socket: a lead has to be soldered to it."
-    AV_COSTS_KEEPS_HDMI = "HDMI stays on. The AV connector is the 3.5 mm jack, which also carries analogue sound."
+    AV_COSTS_KEEPS_HDMI = ("HDMI stays on. The AV connector is the 3.5 mm jack, which also carries analogue sound. With AV on, the kernel "
+                           "always reports the AV output as connected, so a node started with the HDMI projector off stays on AV until it is restarted.")
     AV_RESTART = "A restart of the node is needed to turn it on or off: the boot files are read at start."
 
     def _av_state(self):
@@ -2531,7 +2532,7 @@ class Api:
         elif not st["found"]:
             why = "the boot configuration (config.txt) was not found on this node"
         elif not st["kms"]:
-            why = "this node does not use the full KMS driver (vc4-kms-v3d), so the AV output cannot be switched here"
+            why = "config.txt has no vc4-kms-v3d line this node knows (vc4-kms-v3d, -pi4 or -pi5), so the AV output cannot be switched here"
         enabled = bool(st["composite"])
         changed_now = getattr(self, "_av_boot", None) not in (None, "") and self._av_boot == screenmode.boot_id()
         costs = []
@@ -5343,7 +5344,7 @@ class Api:
             ("GET", "/api/screen"): ("full", self.get_screen),          # the screen's mode (D90): the Owner's
             ("POST", "/api/screen"): ("full", self.set_screen),
             ("POST", "/api/screen/confirm"): ("full", self.confirm_screen),     # never through the support tunnel (D84)
-            ("GET", "/api/output"): ("full", self.get_output),                  # which connector the picture goes to, and the AV output (D127)
+            ("GET", "/api/output"): ("full", self.get_output),                  # which connector the picture goes to, and the AV output (D128)
             ("POST", "/api/output"): ("full", self.choose_output),
             ("POST", "/api/output/av"): ("full", self.choose_av),
             ("POST", "/api/screen/revert"): ("full", self.revert_screen),

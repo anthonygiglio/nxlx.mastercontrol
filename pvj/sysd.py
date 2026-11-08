@@ -175,7 +175,10 @@ class SysService:
             try:
                 res = bootcfg.apply(enable, norm if enable else None, root=self.boot_root, now=self._now)
             except bootcfg.BootError as e:
-                return {"ok": False, "error": str(e)}
+                out = {"ok": False, "error": str(e)}
+                if e.state:
+                    out["state"] = e.state          # a file may have been left changed: the panel can show what the boot files say now
+                return out
         self.log("pvj-sysd: AV output %s%s by the panel; backups %s" % ("on (%s)" % norm if enable else "off", "" if res["changed"] else " (nothing to change)",
                                                                        ", ".join(res["backups"]) or "none"))
         return {"ok": True, "changed": res["changed"], "backups": res["backups"], "restart_needed": res["changed"],

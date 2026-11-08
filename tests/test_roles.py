@@ -218,7 +218,7 @@ ROWS = {
     ("GET", "/api/system/diagnostics"): KINDS["owner"],
     ("GET", "/api/events"): KINDS["owner"],
     ("GET", "/api/output"): KINDS["owner"],
-    ("POST", "/api/output"): at_the_studio("owner"),            # D127: never through the support tunnel
+    ("POST", "/api/output"): at_the_studio("owner"),            # D128: never through the support tunnel
     ("POST", "/api/output/av"): at_the_studio("owner"),
     ("POST", "/api/system/factory-reset"): STUDIO("owner"),
     # D75 (#115), met in a merge. The one fade button: an Operator's, a presenter's before, so the controllers keep it;

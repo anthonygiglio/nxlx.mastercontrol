@@ -8,7 +8,7 @@ at 75 Hz, the costliest size there is for a Pi 4 and an uneven beat for 29.97 an
 * **Automatic** (the default): the screen's own mode if it is at most 1920 x 1200 and drawn about 60 times a second;
   otherwise the largest mode the screen lists that is at most 1920 x 1200, of the same shape as its own mode if there
   is one (else 1920 x 1080, else the largest), at about 60 Hz (50 only if it lists no 60 there). See `automatic`.
-* **The output** (D127): Automatic (HDMI first) or one named connector (HDMI-A-2, Composite-1, DSI-1 ...), saved with the
+* **The output** (D128): Automatic (HDMI first) or one named connector (HDMI-A-2, Composite-1, DSI-1 ...), saved with the
   mode. A chosen output that is not connected at the start is said so, and Automatic is used for that start; the player
   never moves to it later by itself (no flapping): the next start of the player takes it.
 * **A mode chosen by hand** on System > Screen output, from the screen's own list. It is tried for KEEP_SECONDS and

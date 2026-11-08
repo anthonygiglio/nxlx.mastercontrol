@@ -1139,7 +1139,7 @@ With New chosen, a box that boots with no screen falls back to classic mpv; when
 | EV7 | Operator and Guest: `GET /api/events` | 403 for both | Any list |
 | EV8 | Choose New on the Pi 3B card (or unplug the projector for a minute with its check running) | "The new renderer fell back to classic mpv: ..." at once; "A projector did not answer." within about a minute | No line, or a second line for the same fall back |
 
-### The output and the AV (composite) output (D127): NOT YET RUN on any node
+### The output and the AV (composite) output (D128): NOT YET RUN on any node
 
 Each row needs the hardware named. Whether the owner has a composite cable and a screen for it decides which rows can be run. A row is never marked as run until it was.
 
