@@ -342,6 +342,7 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                     result = api.update_upload(name, length, self.rfile.read1, check=still_paired)
                 else:
                     result = api.upload(name, length, self.rfile.read1, replace, check=still_paired)
+                api.presence.changed(device, "POST", "/api/system/update/upload" if update else "/api/media/upload")      # D126
                 # D84: what a support login changed is in its session's log (these two paths are answered here)
                 from . import support as support_mod
                 if update:              # never displaced: which bundle, by name and sha256
@@ -377,7 +378,9 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                     raise ApiError(413, "the file is too large for a settings file")
                 raw = self.rfile.read(length)
                 confirm = (parse_qs(urlsplit(self.path).query).get("confirm") or [""])[0]
-                self._json(200, api.boxcare.import_settings(raw, confirm, device, self.client_address[0]))
+                out = api.boxcare.import_settings(raw, confirm, device, self.client_address[0])
+                api.presence.changed(device, "POST", "/api/system/settings/import")           # D126
+                self._json(200, out)
             except ApiError as e:
                 self.close_connection = True  # an unread body must not be parsed as the next request
                 self._json(e.status, {"error": e.message})
@@ -494,6 +497,7 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
             gate = self._gate(device, path)                 # D79: owner access only over the secure connection
             if gate:
                 raise ApiError(403, gate)
+            api.presence.seen(device)                       # a request answered outside Api.handle is still a request (D126)
             return device
 
         def _api(self, method, path, body):

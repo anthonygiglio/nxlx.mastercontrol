@@ -992,7 +992,9 @@
     nowLive(np.textContent, pl, st.mix || {});
     var temp = typeof sys.temp_c === 'number' ? Math.round(sys.temp_c) + '°C' : '';
     var pill = document.getElementById('pill');
-    if (pill) pill.textContent = [sys.board, temp, pl.running ? 'OK' : 'No player'].filter(Boolean).join(' · ');
+    // the node's own name (the owner, 2026-11-07: "show the node's name"), without the nxlx- every node's name starts with
+    var nodeName = String(sys.name || '').replace(/^nxlx-/i, '');
+    if (pill) pill.textContent = [nodeName || sys.board, temp, pl.running ? 'OK' : 'No player'].filter(Boolean).join(' · ');
     var f = document.getElementById('freeze'); if (f) f.textContent = pl.paused ? 'Resume' : 'Freeze';
     fadeShow(document.getElementById('fade'), st.mix);
     var b = document.getElementById('black'); if (b) { var on = st.mix && st.mix.blackout; b.classList.toggle('flash', !!on); b.textContent = on ? 'Show' : 'Blackout'; }      // flashing for as long as it is on, as the fade button is (D75)
@@ -2358,6 +2360,7 @@
   // (Back then returns there). replace: the page takes the place of the one that is open, so Back does not stop at
   // it; that is also how one page of Setup follows another from the index beside it.
   function openSys(id, from, replace) {
+    S.landing = false;
     var home = HOMES[id] && screenList().filter(function (x) { return x.key === HOMES[id]; })[0];
     if (home && home.part && home.tab === S.tab && from !== 'index') return go(home.key);     // a column of the build that is on the page
     var other = S.tab !== 'system';
@@ -7249,6 +7252,7 @@
   // again (where the columns stand side by side it is brought into view and given the cursor's place); anything
   // else reads the box's state and draws, as a tap on a tab always did.
   function go(key) {
+    S.landing = false;              // a screen chosen by hand is never taken back by the start screen (Now)
     key = OLD_TABS[key] || key;
     var list = screenList(), sc = list.filter(function (x) { return x.key === key; })[0];
     if (!sc && key === 'shape/effect') sc = list.filter(function (x) { return x.key === 'shape/picture'; })[0];      // (no effects on this box: the area's next screen)
@@ -7392,11 +7396,13 @@
     var held = dock && a && dock.el.contains(a) ? a : null;      // a control of the strip, which is kept across the redraw
     app.textContent = '';
     if (!S.device) { S.landing = true; dock = null; app.appendChild(connect()); return; }
-    // The Room area (room.js) is there while its module is on. A presenter or a guest starts on it when the page is
-    // first loaded or the device has just been paired; nobody already on another screen is ever moved.
+    // Where a device starts when the page is first loaded or the device has just been paired (nobody already on
+    // another screen is ever moved): an owner or an operator on Now, what is on and what needs them (the owner,
+    // 2026-11-07: "open on Now"); a guest on the Room area (room.js) while its module is on.
     var landing = S.landing !== false;
     if (S.modules.length) S.landing = false;      // decided once the modules are known, not by a render that came before them
-    if (window.pvjRoom && moduleOn('room') && landing && !can('full')) S.tab = 'room';
+    if (landing && canOp() && hasScreen('now/now')) S.tab = 'now';
+    else if (window.pvjRoom && moduleOn('room') && landing && !can('full')) S.tab = 'room';
     settle();
     markArea();        // again: the screen may just have been decided
     var desk = S.tab === 'system' ? system() : areaDesk();
