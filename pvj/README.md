@@ -108,6 +108,8 @@ Tested with fake tools and fake `/proc/mounts`. Not tested on a real device: the
 
 **OSC** is built, off by default, receive-only and limited to private networks; see [OSC.md](OSC.md) for the addresses and the safety rules.
 
+**Nodes that find each other** (D127): each node announces its name, model and version by mDNS (`_nxlx._tcp`) and lists the others at `GET /api/nodes`; no package is installed, and the Owner can switch it off; see [FLEET.md](FLEET.md). Not yet run on hardware.
+
 **Wired network settings** (System, Network; a beta module, off by default, needs NetworkManager): DHCP, fixed address, direct cable (link-local) or serving addresses, changed through a small root helper (`pvj-netd`) with a confirm-or-revert timer so a wrong setting cannot lock you out; see [NETWORK.md](NETWORK.md). Never tested against a real NetworkManager or a real device.
 
 **Known limits:** "Restart player now" asks the player to quit and relies on systemd to bring it back; if mpv is completely wedged and ignores that request, restart it from a terminal (`sudo systemctl restart pvj-player`), because the panel runs unprivileged by design. A hardware watchdog for that case is not built. The server caps simultaneous connections at 64 and closes any connection after 30 seconds, so a flood of slow clients cannot exhaust it, but it does not replace a private network.
