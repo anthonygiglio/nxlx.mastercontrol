@@ -717,16 +717,17 @@ static void take_hook(void)
     pthread_mutex_unlock(&app.lock);
 }
 
-// One mix of the outgoing and the incoming layer at `share` (0: all outgoing, 1: all incoming), at the inside size.
-static void mix_pass(const Layer *outgoing, const Layer *incoming, float share, int blend)
+// One mix of the outgoing and the incoming picture at `share` (0: all outgoing, 1: all incoming), at the inside size.
+// A picture is a layer's texture, or its generator's when the layer has one (D130).
+static void mix_pass(GLuint outgoing, GLuint incoming, float share, int blend)
 {
     reset_gl();
     glBindFramebuffer(GL_FRAMEBUFFER, mix_fbo);
     glViewport(0, 0, app.in_w, app.in_h);
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, outgoing->tex);
+    glBindTexture(GL_TEXTURE_2D, outgoing);
     glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, incoming->tex);
+    glBindTexture(GL_TEXTURE_2D, incoming);
     glUseProgram(p_mix);
     glUniform1f(loc_share, share);
     glUniform1i(loc_blend, blend);
@@ -740,7 +741,7 @@ static void mix_pass(const Layer *outgoing, const Layer *incoming, float share, 
 // where the panel's still had it (transitions.Move.gone): that share of the columns or rows, rounded, no softness. Two
 // scissored draws, one from each layer, so a pixel reads one texture where the mix reads two; the texture's last
 // picture need not be read in first, so that is said (the same saving as the final pass's, D106 and D108).
-static void move_pass(const Move *m, const Layer *outgoing, const Layer *incoming, float share)
+static void move_pass(const Move *m, GLuint outgoing, GLuint incoming, float share)
 {
     static const GLenum colour = GL_COLOR_ATTACHMENT0;
     int size = m->axis ? app.in_h : app.in_w;
@@ -757,7 +758,7 @@ static void move_pass(const Move *m, const Layer *outgoing, const Layer *incomin
         if (to <= from) continue;
         if (m->axis) glScissor(0, from, app.in_w, to - from);
         else glScissor(from, 0, to - from, app.in_h);
-        glBindTexture(GL_TEXTURE_2D, in ? incoming->tex : outgoing->tex);
+        glBindTexture(GL_TEXTURE_2D, in ? incoming : outgoing);
         glUniform2f(loc_shift, in || m->axis ? 0.0f : shift, in || !m->axis ? 0.0f : shift);
         quad();
     }
@@ -1213,7 +1214,20 @@ int main(int argc, char **argv)
             text.dirty = 0;
         }
         text_was = text_on;
-        GLuint picture = front->tex;
+        // Source 1's layers each have a picture of their own: a generator's (D130), when the layer has one, else libmpv's.
+        // The outgoing layer's generator goes on drawing for as long as the fade lasts; it is taken off at its end.
+        GLuint front_pic = front->tex, back_pic = back->tex;
+        int ran = 0;
+        GLuint gt = fx_layer_picture(fi, now, &ran);
+        if (gt) front_pic = gt;
+        if (ran) fresh = 1;
+        if (phase != FADE_OFF) {
+            gt = fx_layer_picture(1 - fi, now, &ran);
+            if (gt) back_pic = gt;
+            if (ran) fresh = 1;
+        }
+        int ended = 0;
+        GLuint picture = front_pic;
         if (phase != FADE_OFF) {
             float share = 0.0f;
             if (phase == FADE_RUNNING) {
@@ -1231,6 +1245,7 @@ int main(int argc, char **argv)
                     app.fade.progress = 1.0;
                     app.fades_done++;
                     stop_outgoing(back->h, 1 - fi);
+                    ended = 1;
                 }
                 pthread_mutex_unlock(&app.lock);
             } else {
@@ -1245,12 +1260,12 @@ int main(int argc, char **argv)
                 }
                 pthread_mutex_unlock(&app.lock);
                 if (!same) {
-                    picture = front->tex;
+                    picture = front_pic;
                 } else if (share <= 0.0f) {
-                    picture = back->tex;        // waiting for the incoming clip: the outgoing picture, with no mix
+                    picture = back_pic;         // waiting for the incoming clip: the outgoing picture, with no mix
                 } else {
-                    if (move) move_pass(move, back, front, share);  // the edge where the clock says
-                    else mix_pass(back, front, share, BLEND_NORMAL);    // the incoming layer at the clock's opacity
+                    if (move) move_pass(move, back_pic, front_pic, share);  // the edge where the clock says
+                    else mix_pass(back_pic, front_pic, share, BLEND_NORMAL);    // the incoming layer at the clock's opacity
                     picture = mix_tex;
                     fresh = 1;
                 }
@@ -1259,8 +1274,11 @@ int main(int argc, char **argv)
         // the renderer's own programs on source 1 (D106): a generator in place of the picture, an effect over it
         // source 1 with nothing to show (its clip ended, a Stop) runs no effect over black either, unless a
         // generator is its picture (the carrier plays under it)
-        if (!(__atomic_load_n(&app.idle[fi], __ATOMIC_ACQUIRE) && phase == FADE_OFF && !fx_has_generator(0)))
+        if (!(__atomic_load_n(&app.idle[fi], __ATOMIC_ACQUIRE) && phase == FADE_OFF && !fx_layer_has_generator(fi)))
             picture = fx_source(0, picture, fresh, __atomic_load_n(&app.paused[fi], __ATOMIC_ACQUIRE), now);
+        // The fade ended in this turn: the outgoing layer's generator goes with its clip (its GL objects are freed here, on
+        // this thread, after its last picture was mixed). Its picture is not read again: the mix has been drawn.
+        if (ended) fx_layer_end(1 - fi);
         int draw_w, draw_h;
         out_draw_size(&draw_w, &draw_h);                    // this frame's size, whole: it goes out with the plane's for it (D108)
         final_pass(out_target(), app.out_h, draw_w, draw_h, picture, text_on, level);

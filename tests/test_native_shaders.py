@@ -1497,5 +1497,237 @@ class GeneratorSourceApiTest(unittest.TestCase):
         self.assertEqual(e.exception.status, 409)
 
 
+def solid(r, g, b):
+    """A generator that is one colour (each 0 to 1)."""
+    return "/*{}*/\nvoid main() { gl_FragColor = vec4(%s, %s, %s, 1.0); }\n" % (r, g, b)
+
+
+# the blue is an input, so a value set on the socket shows which layer's generator it reached
+LEVEL = "/*{\"INPUTS\": [{\"NAME\": \"level\", \"TYPE\": \"float\", \"DEFAULT\": 0.2}]}*/\n" \
+        "void main() { gl_FragColor = vec4(0.0, 0.0, level, 1.0); }\n"
+FULL = 204          # 0.8 of 255, the colour of the solids below
+
+
+class LayerGeneratorTest(NativeBase):
+    """D130, slice 1: each of source 1's two video layers can hold a generator of its own. The layer's picture is its
+    generator's, and a crossfade or a wipe mixes the two pictures, both moving. Slot 0 of source 1 on the socket is the
+    front layer's generator (the incoming one from the moment a fade starts); the outgoing layer's generator runs on to
+    the end of the fade and is freed with it, on the render thread. Nothing here is the panel: that is slice 3."""
+
+    SECONDS = 8.0
+
+    def setUp(self):
+        super().setUp()
+        self.blue = os.path.join(self.tmp, "blue.png")
+        png(self.blue, W, H, lambda x, y: BLUE)
+
+    def st(self):
+        return self.r("get_property", "pvj-render")
+
+    def objects(self):
+        return self.st()["fx-gl-objects"]
+
+    def red_on_the_screen(self):
+        """A clip playing in the front layer (the panel's carrier) and a red generator on it: the state before a fade."""
+        self.carrier()
+        self.r("pvj-shader", "load", 1, 0, self.generator(solid(0.8, 0, 0)))
+        self.assertTrue(self.r.wait(lambda: self.r.pixel(10, 10)[0] > FULL - 8, 5), self.r.pixel(10, 10))
+
+    def fade(self, move=None, seconds=None):
+        args = ["pvj-crossfade", self.blue, seconds or self.SECONDS, "keep-open=no,image-display-duration=inf"]
+        self.r(*(args + ([move] if move else [])))
+
+    def running(self, low=0.25, high=0.7):
+        look = lambda: self.st()
+        self.assertTrue(self.r.wait(lambda: look()["fade"] == "running" and low < look()["fade-progress"] < high, 15, 0.02), look())
+
+    def settled(self):
+        self.assertTrue(self.r.wait(lambda: self.st()["fade"] == "off", self.SECONDS + 10, 0.05), self.st())
+
+    def both(self, wait_running=True):
+        """Red on the outgoing layer, a fade begun, and a second generator loaded for the incoming one (slot 0 now means
+        the front layer, which is the incoming one)."""
+        self.red_on_the_screen()
+        one = self.objects()
+        self.fade("wipe-from-left" if self._move else None)
+        self.r("pvj-shader", "load", 1, 0, self.generator(LEVEL if self._level else solid(0, 0, 0.8)))
+        return one
+
+    _move = False
+    _level = False
+
+    def test_the_two_generators_are_mixed_by_the_share_and_the_outgoing_one_is_freed_at_the_end(self):
+        one = self.both()
+        self.running()
+        p0 = self.st()["fade-progress"]
+        shot = self.r.capture()
+        p1 = self.st()["fade-progress"]
+        r, g, b = self.r.pixel(W // 2, H // 2, shot)
+        p = 1 - r / FULL                  # red goes from FULL to 0 as the share goes from 0 to 1
+        self.assertTrue(p0 - 0.05 <= p <= p1 + 0.05, "the share by the red %.3f, by the clock %.3f to %.3f: %s" % (p, p0, p1, (r, g, b)))
+        self.assertLessEqual(abs(b - FULL * p), 8, (r, g, b))
+        self.assertLessEqual(g, 4, (r, g, b))
+        self.assertEqual(self.objects(), 2 * one, "two programs alive for the length of the fade")
+        self.settled()
+        self.assertTrue(self.r.wait(lambda: self.objects() == one, 5), "the outgoing program was not freed: %s" % self.objects())
+        px = self.r.pixel(W // 2, H // 2)
+        self.assertTrue(px[2] > FULL - 8 and px[0] < 6 and px[1] < 6, px)
+        slot = self.r("get_property", "pvj-shaders")[0]
+        self.assertEqual((slot["kind"], slot["state"]), ("generator", "on"))     # the incoming one, now the only one
+        st = self.st()
+        self.assertEqual((st["fades-done"], st["fades-cut"], st["layer-generators"]), (1, 0, True))
+
+    def test_a_wipe_has_a_generator_on_each_side_of_its_edge(self):
+        self._move = True
+        try:
+            self.both()
+        finally:
+            self._move = False
+        self.running(0.3, 0.6)
+        shot = self.r.capture()
+        left, right = self.r.pixel(4, H // 2, shot), self.r.pixel(W - 4, H // 2, shot)
+        self.assertTrue(left[2] > FULL - 8 and left[0] < 6, "the incoming generator on the left: %s" % (left,))
+        self.assertTrue(right[0] > FULL - 8 and right[2] < 6, "the outgoing generator on the right: %s" % (right,))
+        self.settled()
+
+    def test_a_value_goes_to_the_incoming_generator_and_the_outgoing_one_is_left_alone(self):
+        self._move = True
+        self._level = True
+        try:
+            self.both()
+        finally:
+            self._move = self._level = False
+        self.running(0.3, 0.6)
+        self.r("pvj-shader", "set", 1, 0, {"level": 0.9})
+        self.assertTrue(self.r.wait(lambda: self.r.pixel(4, H // 2)[2] > 220, 5), self.r.pixel(4, H // 2))
+        right = self.r.pixel(W - 4, H // 2)
+        self.assertTrue(right[0] > FULL - 8 and right[2] < 6, "the outgoing generator (right of the edge) moved: %s" % (right,))
+        self.assertEqual(self.r("get_property", "pvj-shaders")[0]["inputs"], 1)
+        self.settled()
+
+    def test_both_generators_keep_drawing_through_the_fade(self):
+        self.red_on_the_screen()
+
+        def passes(seconds):
+            before, t0 = self.st()["fx-passes"], time.monotonic()
+            time.sleep(seconds)
+            return (self.st()["fx-passes"] - before) / (time.monotonic() - t0)
+        alone = passes(1.5)
+        self.assertGreater(alone, 20, alone)                # --fx-fps 30 by default
+        self.fade()
+        self.r("pvj-shader", "load", 1, 0, self.generator(solid(0, 0, 0.8)))
+        self.running(0.1, 0.5)
+        both = passes(1.5)
+        self.assertGreater(both, 1.6 * alone, "the outgoing generator stopped drawing: %.1f a second, one alone drew %.1f" % (both, alone))
+        self.settled()
+
+    def test_a_generator_out_to_a_clip_runs_to_the_end_of_the_fade_and_is_freed(self):
+        self.red_on_the_screen()
+        self.fade()
+        self.running()
+        shot = self.r.capture()
+        r, g, b = self.r.pixel(W // 2, H // 2, shot)
+        self.assertTrue(r > 20 and b > 20 and g < 6, "a mix of the red generator and the blue clip: %s" % ((r, g, b),))
+        self.assertEqual(self.objects() > 0, True)
+        self.settled()
+        self.assertTrue(self.r.wait(lambda: self.objects() == 0, 5), self.objects())
+        slot = self.r("get_property", "pvj-shaders")[0]
+        self.assertEqual(slot["state"], "off")
+        px = self.r.pixel(W // 2, H // 2)
+        self.assertTrue(px[2] > 240 and px[0] < 6, px)
+
+    def test_a_load_or_a_new_crossfade_in_the_middle_of_a_fade_takes_the_outgoing_generator_off(self):
+        one = self.both()
+        self.running()
+        self.assertEqual(self.objects(), 2 * one)
+        self.r("loadfile", self.blue, "replace")                 # a load ends the fade on its incoming side (D98)
+        self.assertTrue(self.r.wait(lambda: self.objects() == one, 5), self.objects())
+        st = self.st()
+        self.assertEqual((st["fade"], st["fades-cut"]), ("off", 1))
+        px = self.r.pixel(W // 2, H // 2)
+        self.assertTrue(px[2] > FULL - 8 and px[0] < 6, "the incoming generator is the picture: %s" % (px,))
+        # and a new crossfade does the same: red out, blue in, then asked again while that runs
+        self.r("pvj-shader", "load", 1, 0, self.generator(solid(0.8, 0, 0)))
+        self.fade()
+        self.r("pvj-shader", "load", 1, 0, self.generator(solid(0, 0, 0.8)))
+        self.running(0.05, 0.5)
+        self.assertEqual(self.objects(), 2 * one)
+        self.fade(seconds=3.0)
+        # the red went with the fade it was cut from; the blue is the outgoing picture of this one, and goes at its end
+        self.assertTrue(self.r.wait(lambda: self.objects() == one, 5), self.objects())
+        self.assertEqual(self.r("get_property", "pvj-shaders")[0]["state"], "off")      # slot 0 is the (new) front layer's: none yet
+        self.settled()
+        self.assertTrue(self.r.wait(lambda: self.objects() == 0, 5), self.objects())
+
+    def test_a_refused_program_in_a_fade_leaves_both_pictures_as_they_were(self):
+        one = self.both()
+        self.running()
+        with self.assertRaises(PlayerError):
+            self.r("pvj-shader", "load", 1, 0, self.write("//!PVJ 1\n//!KIND generator\n//!SIZE 320 180\n//!CODE\nvoid pvj_main() { not glsl }\n"))
+        self.assertEqual(self.objects(), 2 * one)
+        self.assertEqual(self.st()["fade"], "running")
+        self.settled()
+
+    def test_a_fade_on_nothing_but_clips_is_what_it_was(self):
+        """No generator in either layer: the pictures are the layers' own, as before this step."""
+        a = os.path.join(self.tmp, "red.png")
+        png(a, W, H, lambda x, y: RED)
+        self.r.load(a)
+        self.fade()
+        self.running(0.3, 0.7)
+        r, g, b = self.r.pixel(W // 2, H // 2)
+        self.assertTrue(r > 50 and b > 50 and g < 40, (r, g, b))
+        self.settled()
+        self.assertEqual(self.objects(), 0)
+        self.assertFalse(self.r("get_property", "pvj-shaders")[0]["state"] != "off")
+
+
+class ManyLayerFadesTest(NativeBase):
+    """A show fades between shaders all night: fades with a generator on each side, some cut short by the next, leave no
+    program, texture, descriptor or thread behind. Bounded by a deadline."""
+
+    FADES = int(os.environ.get("PVJ_LAYER_FADES", "160"))     # 160 in CI (about 80 s); the design's 2,000 by hand
+    LIMIT = max(420.0, FADES * 0.7)
+
+    def test_fades_between_generators_leave_nothing_behind(self):
+        deadline = time.monotonic() + self.LIMIT
+        pics = [os.path.join(self.tmp, "p%d.png" % i) for i in range(2)]
+        png(pics[0], W, H, lambda x, y: RED)
+        png(pics[1], W, H, lambda x, y: BLUE)
+        gens = [self.generator(solid(0.8, 0, 0)), self.generator(solid(0, 0, 0.8))]
+        st = lambda: self.r("get_property", "pvj-render")
+        self.carrier()
+        self.r("pvj-shader", "load", 1, 0, gens[0])
+        one = st()["fx-gl-objects"]
+        self.assertGreater(one, 0)
+        marks = []
+        for i in range(self.FADES):
+            self.assertLess(time.monotonic(), deadline, "the bounded run of fades took too long (%d done)" % i)
+            long_one = i % 3 == 1                               # this one is cut short by the next
+            before = st()["fades"]
+            self.r("pvj-crossfade", pics[i % 2], 30.0 if long_one else 0.03, "keep-open=no,image-display-duration=inf")
+            self.r("pvj-shader", "load", 1, 0, gens[(i + 1) % 2])
+            if not long_one:
+                self.assertTrue(self.r.wait(lambda: st()["fade"] == "off", 15, 0.01), "fade %d: %s\n%s" % (i, st(), self.r.stderr()))
+            self.assertEqual(st()["fades"], before + 1)
+            if i in (self.FADES // 4 - 1, self.FADES // 2 - 1, self.FADES * 3 // 4 - 1, self.FADES - 1):
+                # at rest: one fade in the next is ended by its successor, so end the last one by hand and look
+                if long_one:
+                    self.r("loadfile", pics[0], "replace")
+                self.assertTrue(self.r.wait(lambda: st()["fade"] == "off" and st()["fx-gl-objects"] == one, 10), st())
+                time.sleep(0.6)
+                marks.append((fd_count(self.r.pid), thread_count(self.r.pid), st()["fx-gl-objects"], st()["gl-objects"]))
+        self.assertEqual({m[2] for m in marks}, {one}, marks)
+        for m in marks[1:]:
+            self.assertEqual(m[0], marks[0][0], marks)
+            self.assertLessEqual(abs(m[1] - marks[0][1]), 2, marks)
+            self.assertLessEqual(abs(m[3] - marks[0][3]), 6, marks)       # libmpv's pools move by a few with fades (D98)
+        self.assertIsNone(self.r.proc.poll())
+        self.assertNotIn("Export failed", self.r.stderr())
+        self.r("pvj-shader", "clear", 1, 0)
+        self.assertEqual(st()["fx-gl-objects"], 0)
+        print("\n%d fades with a generator on each side: fds, threads, program objects, libmpv objects at rest %s" % (self.FADES, marks))
+
+
 if __name__ == "__main__":
     unittest.main()

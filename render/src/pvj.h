@@ -13,7 +13,7 @@
 #include <GLES3/gl3.h>
 #include <mpv/client.h>
 
-#define PVJ_VERSION "0.8.0"
+#define PVJ_VERSION "0.9.0"
 #define MAX_SHADERS 16
 #define LAYERS 2                    // source 1's video layers (phase 2, D98): the one on screen and the one a crossfade comes in on
 #define MAX_SOURCES 8               // sources (D101): source 1 is LAYERS layers, each other source one layer
@@ -160,6 +160,10 @@ typedef struct {
     // panel's `brightness`) is drawn by the renderer after the programs, so an effect that adds light cannot undo a
     // Blackout; libmpv's own brightness on source 1's layers is then held at 0.
     FxSlot fx[MAX_SOURCES][FX_SLOTS];   // by source index (0 is source 1) and slot
+    // Source 1's generators, one for each video layer (D130): slot 0 of source 1 on the socket means the front layer's
+    // (app.gen[front]); app.fx[0][0] is never used. A generator belongs to its layer: it is that layer's picture, mixed
+    // or wiped with the other layer's, and it is cleared with the layer when a fade ends.
+    FxSlot gen[LAYERS];
     int native[MAX_SOURCES];        // the source has a program on (the render thread says, under app.lock)
     int level_native[MAX_SOURCES];  // the socket's side: the source's layers have brightness 0, its level is drawn here
     double level[MAX_SOURCES];      // each source's brightness as last set on the socket, -100 to 100 (D101: the panel's
@@ -239,6 +243,12 @@ void fx_init(void);
 void fx_take(void);
 GLuint fx_source(int s, GLuint picture, int fresh, int paused, double now);
 int fx_has_generator(int s);
+// Source 1's per-layer generators (D130, render thread only): the layer's generator texture (0: it has none), run when
+// it is due; *ran is set when it drew a new picture this turn. fx_layer_end takes a layer's generator off (the end of a
+// fade, on the outgoing layer).
+GLuint fx_layer_picture(int layer, double now, int *ran);
+int fx_layer_has_generator(int layer);
+void fx_layer_end(int layer);
 void fx_free_all(void);
 
 // pictures to files (still.c): rows of RGB, top row first

@@ -321,6 +321,13 @@ static void end_fade(void)
     if (was) {
         app.fade.phase = FADE_OFF;
         app.fades_cut++;
+        // the outgoing layer's generator (D130) is asked off too: this thread only asks, the render thread frees its GL
+        // objects at the top of its next turn (fx_take). A load that was waiting for that layer is dropped with it.
+        FxSlot *g = &app.gen[back];
+        fx_prog_free(g->pending);
+        g->pending = NULL;
+        g->pending_clear = 1;
+        g->asked++;
     }
     pthread_mutex_unlock(&app.lock);
     if (was) {
@@ -776,9 +783,15 @@ static void set_shaders(int fd, const mpv_node *id, const mpv_node *val)
 //                                              all of one set are taken in one frame. Nothing is built again.
 // SOURCE is 1 to the number of sources; slot 0 is a source's generator (step d: on sources 2 to N it is the source's
 // whole picture, its clip layer idle), slots 1 to 3 are its effects, run in that order (step b).
-static int fx_answered_s, fx_answered_k;
+// Slot 0 of source 1 is the FRONT video layer's generator (D130; the property's `layer-generators`): the picture of that
+// layer, mixed or wiped with the other layer's through a fade. The front layer is the incoming one from the moment a
+// fade starts, so a load, a clear or a value set then goes to the incoming program, and the outgoing layer's generator
+// goes on as it was until the fade ends (or is cut), when it is taken off. With no fade there is one layer in use and this
+// is what it always was. Which layer is looked at under app.lock, in the same look that stores the request, so a request is
+// never split between two layers.
+static const FxSlot *fx_answered_slot;
 static long fx_wait_for;
-static int fx_answered(void) { return app.fx[fx_answered_s][fx_answered_k].answered >= fx_wait_for; }
+static int fx_answered(void) { return fx_answered_slot->answered >= fx_wait_for; }
 
 // The video layers of source index s: source 1's two, or source k's one (layer k).
 static int source_layers(int s, int *first)
@@ -833,7 +846,7 @@ static void shader_command(int fd, const mpv_node *id, const mpv_node *cmd)
             return;
         }
         pthread_mutex_lock(&app.lock);
-        FxSlot *s = &app.fx[si][k];
+        FxSlot *s = si == 0 && k == 0 ? &app.gen[app.front] : &app.fx[si][k];
         // all or nothing: checked on a copy first
         FxSlot copy;
         memcpy(copy.val, s->val, sizeof copy.val);
@@ -872,7 +885,7 @@ static void shader_command(int fd, const mpv_node *id, const mpv_node *cmd)
     }
     pthread_mutex_lock(&fx_lock);
     pthread_mutex_lock(&app.lock);
-    FxSlot *s = &app.fx[si][k];
+    FxSlot *s = si == 0 && k == 0 ? &app.gen[app.front] : &app.fx[si][k];
     fx_prog_free(s->pending);
     s->pending = p;
     s->pending_clear = p == NULL;
@@ -880,8 +893,7 @@ static void shader_command(int fd, const mpv_node *id, const mpv_node *cmd)
     pthread_mutex_unlock(&app.lock);
     wake_render();
     pthread_mutex_lock(&app.lock);
-    fx_answered_s = si;
-    fx_answered_k = k;
+    fx_answered_slot = s;
     fx_wait_for = mine;
     int done = wait_render(fx_answered, 3.0);
     char answer[sizeof s->answer];
@@ -909,7 +921,7 @@ static void shaders_property(int fd, const mpv_node *id)
     pthread_mutex_lock(&app.lock);
     for (int i = 0; i < ni; i++) {
         int si = i / FX_SLOTS, k = i % FX_SLOTS;
-        const FxSlot *s = &app.fx[si][k];
+        const FxSlot *s = si == 0 && k == 0 ? &app.gen[app.front] : &app.fx[si][k];     // source 1's slot 0: the front layer's
         snprintf(states[i], sizeof states[i], "%s", s->on ? s->state : "off");
         snprintf(paths[i], sizeof paths[i], "%s", s->on ? s->path : "");
         int w = s->w, h = s->h;
@@ -1082,6 +1094,7 @@ static void get_property(int fd, const mpv_node *id, const char *name)
             load += !__atomic_load_n(&app.idle[s == 0 ? front : s + 1], __ATOMIC_ACQUIRE);
             for (int k = 0; k < FX_SLOTS; k++) load += app.fx[s][k].on != 0;
         }
+        for (int l = 0; l < LAYERS; l++) load += app.gen[l].on != 0;     // source 1's generators, one for each layer (D130)
         char final_why[sizeof app.final_why];
         memcpy(final_why, app.final_why, sizeof final_why);
         pthread_mutex_unlock(&app.lock);
@@ -1092,8 +1105,8 @@ static void get_property(int fd, const mpv_node *id, const char *name)
                                             "fade-seconds", "fades", "fades-done", "fades-cut", "back-drawn", "gl-objects",
                                             "back-idle", "fades-from-nothing", "sound-held", "sources", "shaders", "fx-fps",
                                             "fx-gl-objects", "fx-passes", "fx-passes-per-second", "load", "final-lines",
-                                            "final-switches", "final-why", "moves", "fade-kind", "fade-steps" };
-        mpv_node vals[40] = { node_str(PVJ_VERSION), node_int(app.in_w), node_int(app.in_h), node_int(app.out_w), node_int(app.out_h),
+                                            "final-switches", "final-why", "moves", "fade-kind", "fade-steps", "layer-generators" };
+        mpv_node vals[41] = { node_str(PVJ_VERSION), node_int(app.in_w), node_int(app.in_h), node_int(app.out_w), node_int(app.out_h),
                               node_dbl(app.out_hz), node_int(flips), node_int(drawn), node_int(missed), node_str(state),
                               { .format = MPV_FORMAT_FLAG }, node_str(app.cfg->hwdec), node_int(fences), node_int(freed),
                               node_int(LAYERS), node_int(front), node_str(PHASES[phase]), node_dbl(progress), node_dbl(seconds),
@@ -1104,11 +1117,12 @@ static void get_property(int fd, const mpv_node *id, const char *name)
                               node_int(__atomic_load_n(&app.fx_passes, __ATOMIC_RELAXED)), node_dbl(passes_rate), node_int(load),
                               node_int(__atomic_load_n(&app.final_lines, __ATOMIC_ACQUIRE)),
                               node_int(__atomic_load_n(&app.final_switches, __ATOMIC_RELAXED)), node_str(final_why),
-                              { .format = MPV_FORMAT_FLAG }, node_str(kind), node_int(steps) };
+                              { .format = MPV_FORMAT_FLAG }, node_str(kind), node_int(steps), { .format = MPV_FORMAT_FLAG } };
         vals[10].u.flag = osd;
         vals[24].u.flag = back_idle;
         vals[37].u.flag = 1;                // wipes and slides are drawn here (D111): the panel asks this once per process
-        mpv_node_list list = { .num = 40, .values = vals, .keys = (char **)keys };
+        vals[40].u.flag = 1;                // source 1's layers each hold a generator (D130): asked once per process too
+        mpv_node_list list = { .num = 41, .values = vals, .keys = (char **)keys };
         d.format = MPV_FORMAT_NODE_MAP;
         d.u.list = &list;
         reply(fd, id, "success", &d);
