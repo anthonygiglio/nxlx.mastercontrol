@@ -702,7 +702,7 @@ function startServer(env) {          // env: more for the harness's environment 
         assert.strictEqual(await page.getAttribute('#graphic-1-anchor-br', 'aria-pressed'), 'true');
         assert.strictEqual(await page.getAttribute('#graphic-1-anchor-tl', 'aria-pressed'), 'false');
         await page.click('#graphic-1-motion-scroll');
-        await page.waitForSelector('#graphic-1-anchorhint');
+        await page.waitForFunction(() => { const n = document.getElementById('graphic-1-anchorhint'); return n && /only the column counts/.test(n.textContent); }, null, { timeout: 8000 });
         assert(/only the column counts/.test(await page.textContent('#graphic-1-anchorhint')));
         assert(await page.isDisabled('#graphic-1-y') && !(await page.isDisabled('#graphic-1-x')));
         assert.strictEqual(await page.getAttribute('#graphic-1-anchor-br', 'aria-pressed'), 'true');
