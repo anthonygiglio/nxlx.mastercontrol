@@ -1889,11 +1889,20 @@ function startServer(env) {          // env: more for the harness's environment 
           const res = await route.fetch(); const d = await res.json();
           d.player = { state: 'bad', text: 'The player is not running.' };
           d.osc_open = { state: 'warn', text: 'OSC is open: anyone on this network can control the node. Switch on a lock.' };
+          d.storage = [{ id: 'media', name: 'the media disk', folders: ['media'], state: 'warn', free_bytes: 14e8, total_bytes: 28e9, free_percent: 5,
+            text: 'Storage: 1.4 GB free on the media disk (5 percent): running low. Remove clips you no longer need, or move them to a bigger drive.' },
+            { id: 'state', name: 'the system disk (settings and logs)', folders: ['state'], state: 'ok', free_bytes: 9e9, total_bytes: 16e9, free_percent: 56,
+            text: 'Storage: 9.0 GB free on the system disk (settings and logs) (56 percent).' }];
           await route.fulfill({ response: res, json: d });
         };
         await page.route('**/api/health', downAndOpen);
         await page.waitForSelector('#nowneed-node-player button:text-is("Restart player")', { timeout: 15000 });
         assert.strictEqual(await page.locator('[id="nowneed-osc"]').count(), 1, 'OSC open is one line in Needs you, not two');
+        // low storage reaches Needs you, one line for the disk that is low (not the one with room), with the Library to free it
+        await page.waitForSelector('#nowneed-storage-media .chip-check', { timeout: 15000 });
+        assert.strictEqual(await page.locator('[id="nowneed-storage-state"]').count(), 0, 'a disk with room is not in Needs you');
+        assert(/^1\.4 GB free on the media disk/.test(await page.textContent('#nowneed-storage-media .navstate')), 'the storage line says what is free, once (no "Storage: Storage:")');
+        assert.strictEqual(await page.textContent('#nowneed-storage-media button'), 'Open the library', 'low media storage opens the Library, where clips are deleted');
         await page.click('#nowneed-node-player button');
         await page.waitForSelector('#nowneedslist #confirmrow');
         await page.waitForTimeout(6500);                                   // longer than a look (5 s)
