@@ -789,7 +789,8 @@
     if (!card) return;
     var shown = card.querySelector('#mixfallbackwhy');
     var want = m.fallback ? 'This node is not doing that transition now: ' + m.fallback + '.' : '';
-    if ((shown ? shown.textContent : '') === want) return;
+    var cut = card.querySelector('#mixshadercut');           // the note about a node that cuts into a shader follows the poll too
+    if ((shown ? shown.textContent : '') === want && (cut ? cut.textContent : '') === (m.shader_cut || '')) return;
     card.parentNode.replaceChild(transitionCard(), card);
   }
   // The one transport strip (D65, the owner's choice of D63; D72): what is playing, the place in it, Speed and Loop,

@@ -2737,5 +2737,36 @@ class EngineFadeTest(NativeBase):
         self.assertIsNone(self.api._shader_fade())
 
 
+class MixCardAfterRestartTest(NativeBase):
+    """The Mix card's note about a node that cuts is there after a restart, before anything has played: the status asks
+    the player once, and does not ask again for five seconds when it is down."""
+
+    def setUp(self):
+        EngineFadeTest.setUp(self)
+
+    def test_the_note_is_asked_for_once_after_a_restart(self):
+        self.player._gens_seen = self.player._layers_seen = None
+        self.api._fade_asked = -1e9
+        self.assertIsNone(self.player.shaders_fade())
+        self.assertNotIn("shader_cut", self.api._mix_settings())          # the New renderer fades: no note
+        self.assertIs(self.player.shaders_fade(), True)
+
+    def test_a_classic_player_gets_the_note_without_anything_playing(self):
+        real = self.player.ipc.request
+
+        def classic(*command, **kw):
+            if command[:2] == ("get_property", "pvj-render"):
+                raise PlayerError("mpv: property not found")
+            return real(*command, **kw)
+        self.player.ipc.request = classic
+        self.player._gens_seen = self.player._layers_seen = None
+        self.api._fade_asked = -1e9
+        self.assertIn("cut", self.api._mix_settings()["shader_cut"])
+        asked = []
+        self.player.ipc.request = lambda *c, **k: (asked.append(c), classic(*c, **k))[1]
+        self.assertIn("cut", self.api._mix_settings()["shader_cut"])       # known now: asks nothing more
+        self.assertEqual(asked, [])
+
+
 if __name__ == "__main__":
     unittest.main()

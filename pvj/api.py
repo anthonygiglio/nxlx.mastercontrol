@@ -423,6 +423,8 @@ class Api:
             self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
             return True
 
+    _fade_asked = -1e9
+
     def _mix_settings(self):
         """The Mix settings as the API gives them: the transition by its name (see pvj/transitions.py for how it is
         kept), the duration, and `fallback` with the reason while the box dips instead of a crossfade."""
@@ -436,6 +438,14 @@ class Api:
         # a shader pad takes this transition on the New renderer (D130); where the player is known not to do that (classic
         # mpv, so every Pi 3, or a renderer from before it), it still cuts into a shader, and the Mix card says so
         fades = getattr(self.player, "shaders_fade", None)
+        if fades is not None and fades() is None and time.monotonic() - self._fade_asked > 5.0:
+            # not asked yet in this player process (a restart of the panel or of the player): ask once, cached per process
+            # by the player; a player that is down is asked again at most every 5 seconds
+            self._fade_asked = time.monotonic()
+            try:
+                self.player.layer_generators(ask=True)
+            except Exception:
+                pass
         if out["transition"] in transitions_mod.STYLES and fades is not None and fades() is False:
             out["shader_cut"] = "On this node a shader pad still arrives with a cut, whatever is chosen here."
         return out
