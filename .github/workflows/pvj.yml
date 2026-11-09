@@ -366,7 +366,7 @@ jobs:
       - name: pvj-render for real, headless, and the player's side (a skip is a failure)
         timeout-minutes: 15
         run: |
-          run="PVJ_RENDER_TEST=1 LIBGL_ALWAYS_SOFTWARE=1 python3 -X faulthandler -m unittest -v tests.test_pvj_render tests.test_renderer tests.test_graphics_gpu"
+          run="PVJ_RENDER_TEST=1 LIBGL_ALWAYS_SOFTWARE=1 python3 -X faulthandler -m unittest -v tests.test_pvj_render tests.test_renderer tests.test_graphics_gpu tests.test_graphics_position"
           if [ -n "${{ matrix.container }}" ]; then prlimit --rtprio=1:1 --pid $$     # as LimitRTPRIO=1 in pvj-player.service
           else sudo prlimit --rtprio=1:1 --pid $$; fi
           echo "real-time limit: $(ulimit -r)"

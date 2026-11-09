@@ -1430,6 +1430,16 @@
     }
     function sw(label, on, set, id) { return toggle(id, label, on, set); }
 
+    // A scroll rises from below the screen to above it, so where it sits across the screen is what the grid's column and the
+    // nudge across say; its height is its journey. A crawl runs across the screen, so only the grid's row and the nudge
+    // down say anything. Said under the grid, and the nudge that does nothing is greyed out.
+    function movesAcross(it) { return it.motion.kind === 'crawl' && (d.motions || []).indexOf('crawl') >= 0; }
+    function movesUp(it) { return it.motion.kind === 'scroll' && (d.motions || []).indexOf('scroll') >= 0; }
+    function anchorHint(it, id) {
+      if (movesAcross(it)) return h('div', { class: 'hint', id: id + '-anchorhint', text: 'A crawl runs right across the screen, so only the row counts here: top, middle or bottom, and Nudge down. Left, centre and right matter again with another motion.' });
+      if (movesUp(it)) return h('div', { class: 'hint', id: id + '-anchorhint', text: 'A scroll rises from below the screen to above it, so only the column counts here: left, centre or right, and Nudge across. Top, middle and bottom matter again with another motion.' });
+      return null;
+    }
     function anchorGrid(it, id) {
       var grid = h('div', { class: 'anchorgrid', role: 'group', 'aria-label': 'Where ' + it.name + ' sits' });
       GFX_ANCHORS.forEach(function (a) {
@@ -1440,9 +1450,11 @@
     }
     function placeSliders(it, id) {
       var put = function (key) { return function (v) { var p = {}; p[key] = v; post({ id: it.id, set: { place: p } }, { quiet: true, preview: it.id }); }; };
-      return [slider(id + '-x', 'Nudge across', -100, 100, 1, it.place.x, function (v) { return v + '%'; }, put('x')),
-        slider(id + '-y', 'Nudge down', -100, 100, 1, it.place.y, function (v) { return v + '%'; }, put('y')),
-        slider(id + '-opacity', 'Opacity', 0, 100, 1, it.place.opacity, function (v) { return v + '%'; }, put('opacity'))];
+      var nx = slider(id + '-x', 'Nudge across', -100, 100, 1, it.place.x, function (v) { return v + '%'; }, put('x'));
+      var ny = slider(id + '-y', 'Nudge down', -100, 100, 1, it.place.y, function (v) { return v + '%'; }, put('y'));
+      if (movesAcross(it)) nx.querySelector('input').disabled = true;       // a crawl crosses the whole screen: across means nothing
+      if (movesUp(it)) ny.querySelector('input').disabled = true;           // a scroll goes from the bottom to the top: down means nothing
+      return [nx, ny, slider(id + '-opacity', 'Opacity', 0, 100, 1, it.place.opacity, function (v) { return v + '%'; }, put('opacity'))];
     }
     function colourRow(it, id, value, label, send) {
       var row = h('div', { class: 'swatches', role: 'group', 'aria-label': label });
@@ -1578,7 +1590,7 @@
       var set = h('details', { class: 'fold', id: id + '-settings', open: !!gfxOpen[it.id] },
         h('summary', { text: 'Look, place, motion and saved lines' }),
         h('div', { class: 'list gfxsettings' }, [labelled('Name', name)].concat(text ? textForm(it, id) : logoForm(it, id),
-          [h('div', { class: 'k', text: 'Where on the screen' }), anchorGrid(it, id)], placeSliders(it, id), motionForm(it, id),
+          [h('div', { class: 'k', text: 'Where on the screen' }), anchorGrid(it, id), anchorHint(it, id)].filter(Boolean), placeSliders(it, id), motionForm(it, id),
           text ? linesForm(it, id) : [],
           [h('div', { class: 'hint', text: 'Drawn over the screen. ' + 'Keys and effects' + ', and showing it over or as one source, come in later releases.' })])));
       set.addEventListener('toggle', function () { gfxOpen[it.id] = set.open; });

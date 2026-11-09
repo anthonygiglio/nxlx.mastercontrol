@@ -585,6 +585,21 @@ def _typed(base, w, h, lines, ext, p):
     return out
 
 
+class _Work(set):
+    """The ids the worker is to look at. `ver` goes up with every addition, so the worker can tell, when it has finished a
+    pass, whether anything was asked for while it ran: removing what it had taken at the start would remove a request made
+    since for the same id (the lost update that left a picture at its old place when two changes came close together)."""
+    ver = 0
+
+    def add(self, x):
+        self.ver += 1
+        super().add(x)
+
+    def update(self, *others):
+        self.ver += 1
+        super().update(*others)
+
+
 # ---- the engine --------------------------------------------------------------------------------------------------------------
 class Graphics:
     """Holds the graphics and puts them on the screen. `change(body)` is the one way in from the panel and from OSC;
@@ -602,7 +617,7 @@ class Graphics:
         self._thread = None
         self._serial = 0
         self._gen = {}              # id -> counts every change that needs a new picture (an overtaken build is dropped)
-        self._work = set()          # ids to look at
+        self._work = _Work()        # ids to look at
         self._last = {}             # id -> time its last build began
         self._last_any = 0.0
         self._built = {}            # id -> {"key", "path", "w", "h", "x", "y", "bytes", "missing"}
@@ -697,7 +712,8 @@ class Graphics:
             if k not in known:
                 raise bad("no such request: %r" % k)
         touched, soft, replay = set(), set(), set()
-        allowed = self.motions() if isinstance(body.get("set"), dict) and "motion" in body["set"] else None      # (asks the player: not under the settings' lock)
+        s = body.get("set")
+        allowed = self.motions() if isinstance(s, dict) and ("motion" in s or "place" in s) else None      # (asks the player: not under the settings' lock)
         with self.api.settings.lock:
             cfg = self.api.settings.data.get("graphics") or {}
             items = items_of(cfg)
@@ -742,6 +758,8 @@ class Graphics:
                     it = apply_set(it, body["set"], allowed)
                     items[idx] = it
                     touched.add(it["id"])
+                    if "place" in body["set"] and it["on"] and allowed and it["motion"]["kind"] in ("scroll", "crawl") and it["motion"]["kind"] in allowed:
+                        replay.add(it["id"])        # a scroll or a crawl that has run off is not on the screen to show the new place: it goes across again
                 if "text" in body:
                     if it["kind"] != "text":
                         raise bad("this graphic is a logo, not a text")
@@ -979,6 +997,8 @@ class Graphics:
             except Exception as e:              # never leave the worker dead: say so and look again in a second
                 self.log("pvj-web: graphics: %s" % e)
                 delay = 1.0
+            if delay is None and self.busy():
+                delay = 0.0                 # something was asked for while that pass ran
             if self._save_owed:
                 delay = SAVE_INTERVAL if delay is None else min(delay, SAVE_INTERVAL)
                 if self.clock() - self._saved_at >= SAVE_INTERVAL:
@@ -994,12 +1014,14 @@ class Graphics:
         nothing to do, else the seconds to wait before the next try (0 for more now)."""
         with self._lock:
             work = set(self._work)
+            ver = self._work.ver
         if not work:
             return None
 
         def finished():
             with self._lock:
-                self._work -= work           # not clear(): a change that came in meanwhile is for the next round
+                if self._work.ver == ver:    # (a request made since stays, for the next pass: _loop looks again at once)
+                    self._work -= work
 
         cfg = self._cfg()
         items = items_of(cfg)
