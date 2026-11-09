@@ -519,6 +519,7 @@ _PRESSES = {"/pvj/fade": "fade", "/pvj/clip/next": "clip_next", "/pvj/clip/prev"
 _LEVELS = {"/pvj/position/x": ("position", 1.0), "/pvj/position/y": ("position_y", 1.0), "/pvj/effect/amount": ("effect_amount", 0.01),
            "/pvj/shader/speed": ("shader_speed", 1.0), "/pvj/shader/hue": ("shader_hue", 1.0), "/pvj/shader/brightness": ("shader_brightness", 1.0)}
 _SLOT = re.compile(r"/pvj/(shader|effect)/(control|preset)/([1-8])")
+_GRAPHIC = re.compile(r"/pvj/graphic/([1-8])(?:/(text|send))?")
 _SHADER_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,79}")
 
 
@@ -603,6 +604,21 @@ def _reach(a, args):
         if what == "nudge":                             # two whole numbers: steps to the right and steps down
             return (actions.NUDGE, {"steps": whole}) if len(whole) == 2 and len(args) >= 2 else None
         return None
+    if a == "/pvj/graphic/hide":                        # Hide all (D129, design 8.3): the emergency button
+        return ("/api/graphics", {"all": False}) if pressed(args) else None
+    m = _GRAPHIC.fullmatch(a)
+    if m:
+        slot, what = int(m.group(1)), m.group(2)
+        if what is None:                                # switch over, or set on or off
+            if not args:
+                return "/api/graphics", {"slot": slot, "on": "toggle"}
+            return ("/api/graphics", {"slot": slot, "on": flag}) if flag is not None else None
+        if not isinstance(v, str):
+            return None
+        v = v[:2000]                                    # more is cut by the box anyway (280 characters); this keeps a flood cheap
+        if what == "text":                              # set the text; it shows if the graphic is on
+            return "/api/graphics", {"slot": slot, "text": v}
+        return "/api/graphics", {"slot": slot, "text": v, "on": True}       # send: the text, and on, in one message
     if a == "/pvj/shader":                              # a shader by its name, with ".fs" or without
         if not isinstance(v, str) or not _SHADER_NAME.fullmatch(v):
             return None

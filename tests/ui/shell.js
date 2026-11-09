@@ -65,7 +65,7 @@ const DESK = 1200;                 // from this width of the panel an area's scr
 // the screens that are columns of one page there (the others have the whole width: Mapping, Setup's pages, and
 // Play's Shaders up to 1699 px, which joins the desk from 1700: D72 as changed on 2026-10-10; SIZES stop at 1366)
 const DESKS = { play: ['pads', 'library'], shape: ['effect', 'picture', 'sound'], room: ['scenes', 'walls', 'guests'] };
-const HOMES = ['vibes', 'mapping', 'sound'];      // rows of the Setup index that open a screen of another area
+const HOMES = ['vibes', 'mapping', 'sound', 'graphics'];      // rows of the Setup index that open a screen of another area
 const STRIP = ['prev', 'back10', 'fwd10', 'next', 'fade', 'freeze', 'stop', 'black'];      // (one fade button since D75: out, then in)
 const SPEED = ['mv', 'loop'];      // Speed and Loop, on the strip since D72 (Loop has no id: it is found by its class)
 const ALWAYS = ['freeze', 'stop', 'black'];      // a phone's closed strip: these and More (Previous and Next are behind More there)
@@ -260,7 +260,7 @@ async function menus(pg) {
     assert.deepStrictEqual(p.cols, wide ? ['pads', 'library'] : ['pads'], at + 'the columns of Play');
     if (wide) {
       assert.deepStrictEqual(p.colHeads, ['Pads', 'Library'], at + 'the headings of Play\'s columns');
-      assert.deepStrictEqual(p.subs, ['sub-play-desk', 'sub-play-shaders'], at + 'the tabs of Play: the desk, and Shaders');
+      assert.deepStrictEqual(p.subs, ['sub-play-desk', 'sub-play-shaders', 'sub-play-graphics'], at + 'the tabs of Play: the desk, Shaders, and Graphics (D129, a screen of its own)');
       await go(pg, 'play/shaders');
       const q = await see(pg);
       assert.deepStrictEqual(q.cols, ['shaders'], at + 'the Shaders tab has the whole width');
@@ -771,11 +771,12 @@ async function stripText(pg, post, get) {
 // device, which the panel calls an Operator since D80: he has the daily pages of Setup (Room's set-up, Schedule, At
 // power-up, MIDI controller) and the Mapping page, and none that is the Owner's; a guest has no way to let anyone in.
 const PLAY = ['play/pads', 'play/library', 'play/shaders'];
+const PLAY_RUN = ['play/pads', 'play/library', 'play/shaders', 'play/graphics'];      // Graphics (D129) is for whoever runs the night: the Owner and an Operator, never a Guest
 const SHAPE = ['shape/effect', 'shape/picture', 'shape/sound', 'shape/mapping'];
 const MENUS = {
-  owner: ['now/now'].concat(PLAY, SHAPE, ['room/scenes', 'room/walls', 'room/guests'], ['index', 'health', 'projectors', 'room', 'schedule', 'access', 'autostart', 'streams', 'ndi', 'render', 'soundin', 'ndisc', 'sync', 'midi', 'dmx', 'osc',
+  owner: ['now/now'].concat(PLAY_RUN, SHAPE, ['room/scenes', 'room/walls', 'room/guests'], ['index', 'health', 'projectors', 'room', 'schedule', 'access', 'autostart', 'streams', 'ndi', 'render', 'soundin', 'ndisc', 'sync', 'midi', 'dmx', 'osc',
     'network', 'screen', 'updates', 'support', 'nodes', 'https', 'backup', 'look', 'about'].map((x) => 'setup/' + x)),
-  presenter: ['now/now'].concat(PLAY, SHAPE, ['room/scenes', 'room/walls', 'room/guests'], ['index', 'health', 'projectors', 'room', 'schedule', 'access', 'autostart', 'streams', 'ndi', 'render', 'soundin', 'sync', 'midi', 'about'].map((x) => 'setup/' + x)),
+  presenter: ['now/now'].concat(PLAY_RUN, SHAPE, ['room/scenes', 'room/walls', 'room/guests'], ['index', 'health', 'projectors', 'room', 'schedule', 'access', 'autostart', 'streams', 'ndi', 'render', 'soundin', 'sync', 'midi', 'about'].map((x) => 'setup/' + x)),
   guest: PLAY.concat(SHAPE, ['room/scenes', 'room/walls'], ['index', 'health', 'about'].map((x) => 'setup/' + x)),
 };
 // pages: { owner, presenter, guest }, each a page that has just been loaded. post(url, body): as the owner.

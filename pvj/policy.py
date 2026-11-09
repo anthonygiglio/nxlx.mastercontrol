@@ -33,6 +33,8 @@ OUTSIDE = {
     ("POST", "/api/media/upload"): "live",
     ("POST", "/api/graphics/upload"): "live",       # D129: logos; decoded by pvj-raster only
     ("GET", "/api/graphics/thumb"): "live",
+    ("GET", "/api/graphics/preview.png"): "live",     # D129: the node-made picture of one graphic
+    ("POST", "/api/graphics/preview.png"): "live",    # D129: the same for a line as typed, which travels in the body and not in the address
     ("POST", "/api/system/update/upload"): "full",
     ("POST", "/api/system/settings/import"): "full",
     # the secure connection's own routes (D79, server._https_route): the Owner's, every one that asks who is there
@@ -51,11 +53,12 @@ OUTSIDE = {
 # secure connection, so a page over plain http can find out if its device trusts the box. Nothing else belongs here.
 NO_GATE = frozenset([("GET", "/api/https/probe")])
 
-# Every route a presenter (or less) could use on master before D80, 2026-10-10. Frozen: do not add to it. It is worked
-# out from master's route table (every route whose minimum there is none, view or live, and the two paths the server
-# answered itself), not written by judgment; the last time was at master a549c89, which had gained D75's two:
-# the one fade button (/api/fade) and mapping mode from a controller (/api/mapper/nudge, which does nothing unless
-# the Owner's switch is on and answers only MIDI and OSC).
+# Every route a presenter (or less) could use on master before D80, 2026-10-10, as it was worked out from master's route
+# table (every route whose minimum there is none, view or live, and the two paths the server answered itself) at master
+# a549c89, which had gained D75's two: the one fade button (/api/fade) and mapping mode from a controller
+# (/api/mapper/nudge, which does nothing unless the Owner's switch is on and answers only MIDI and OSC). One route has
+# been added since, on purpose and with its reason beside it: /api/graphics (D129, text from OSC behind the Owner's
+# "Controllers may push text" switch). Anything else that is added needs the same: a comment that says why.
 LEGACY_LIVE = frozenset(
     [("GET", p) for p in (
         "/api/hello", "/api/status", "/api/media", "/api/pads", "/api/modules", "/api/theme", "/api/osc",
@@ -67,6 +70,7 @@ LEGACY_LIVE = frozenset(
         "/api/pair", "/api/session", "/api/logout", "/api/support/login", "/api/play", "/api/control",
         "/api/blackout", "/api/fadeout", "/api/fadein", "/api/fade", "/api/mapper/nudge", "/api/testpattern", "/api/testtone", "/api/media/info",
         "/api/mix", "/api/access/code", "/api/access/cancel", "/api/access/screen", "/api/overlay",
+        "/api/graphics",        # D129 (8 November 2026), added on purpose: OSC pushes a line of text (/pvj/graphic/N/send) behind the owner's OSC switch and the three locks
         "/api/support/stop", "/api/shaders/play", "/api/shaders/values", "/api/shaders/step", "/api/shaders/preset",
         "/api/vibes", "/api/effects", "/api/effects/values", "/api/effects/step", "/api/effects/preset",
         "/api/projector", "/api/room/scene", "/api/room/group", "/api/autostart/test",

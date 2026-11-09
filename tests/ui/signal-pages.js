@@ -334,6 +334,20 @@ function pages() {
     await soft(t, 'Delete', t.page.locator('.item:has-text("logo.png") button:text-is("Delete")').first().click({ timeout: 8000 }));
   }, { quick: true, done: async (t) => { await t.page.unroute('**/api/media'); } });
 
+  add('graphics', 'clips', async (t) => {               // Play > Graphics: a text on the screen with its settings open, and a logo graphic with no file yet
+    await post(t, '/api/graphics', { add: 'text' });
+    await post(t, '/api/graphics', { slot: 1, set: { text: { lines: ['THANK YOU, SASKATOON'], outline: { on: true } } } });
+    await post(t, '/api/graphics', { slot: 1, text: 'NEXT UP: DJ MARA', on: true });
+    await post(t, '/api/graphics', { add: 'logo' });
+    await go(t.page, 'play/graphics');
+    await has(t, t.page, '#graphic-1-text');
+    await soft(t, 'the settings of the text', t.page.evaluate(() => { document.querySelectorAll('.graphicitem details').forEach((d) => { d.open = true; }); }));
+    await t.page.waitForTimeout(800);                  // the previews arrive
+  }, { done: async (t) => {
+    const all = await get(t, '/api/graphics');
+    for (const it of all.items || []) await post(t, '/api/graphics', { id: it.id, remove: true });
+  } });
+
   // ---- Shape: Effect, Picture, Sound, and Mapping ----
   add('effect-idle', 'mix', async (t) => {              // nothing playing: empty states, the Effects card saying why
     await post(t, '/api/vibes', { on: false });

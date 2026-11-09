@@ -32,6 +32,7 @@ MAX_FILES = 64
 MAX_TOTAL_BYTES = 100 * 1024 * 1024
 UPLOADS_PER_MINUTE = 5
 THUMB_SIDE = 256
+MAX_GRAPHIC_PIXELS = 9_000_000             # one finished graphic: 36 MB of B G R A (the helper's own limit)
 JOB_SECONDS = 20.0                          # the helper kills itself at 15
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
@@ -143,10 +144,11 @@ class Client:
     `exec_bin` (or PVJ_RASTER_EXEC) runs the program directly with its own ceilings instead; that is for tests and
     for a developer's desk. No unit of the node sets it."""
 
-    def __init__(self, socket_path=None, exec_bin=None, env=None):
+    def __init__(self, socket_path=None, exec_bin=None, env=None, fonts_dir=None):
         env = os.environ if env is None else env
         self.socket_path = socket_path or paths.raster_socket(env)
         self.exec_bin = exec_bin or env.get("PVJ_RASTER_EXEC") or None
+        self.fonts_dir = fonts_dir or paths.fonts_dir(env)       # only for the direct run: the unit passes its own
 
     def available(self):
         if self.exec_bin:
@@ -156,7 +158,7 @@ class Client:
     def _run(self, request, payload):
         if self.exec_bin:
             try:
-                done = subprocess.run([self.exec_bin, "--self-limit"], input=request + payload, capture_output=True,
+                done = subprocess.run([self.exec_bin, "--self-limit", "--fonts", self.fonts_dir], input=request + payload, capture_output=True,
                                       timeout=JOB_SECONDS, env={"PATH": "/usr/bin:/bin"})
             except subprocess.TimeoutExpired:
                 raise RasterError(422, "This picture took too long to read; use a simpler or smaller one.")
@@ -212,6 +214,35 @@ class Client:
     def normalise(self, data):
         """({width, height, alpha}, png bytes) for an uploaded PNG, JPEG or SVG."""
         return self._parse(self._run(b"RASTER1 IMG %d\n" % len(data), data))
+
+    def graphic(self, params, payload=b""):
+        """Draw a text or a logo (design 4 and 5): `params` is the helper's parameter text (pvj/graphics.py makes it),
+        `payload` a stored PNG for a logo. Returns {w, h, missing, data, png}: data is premultiplied B G R A for the
+        player, or a PNG for a preview (out png). Raises RasterError with words for the person."""
+        body = params.encode("utf-8")
+        try:
+            out = self._run(b"RASTER1 GFX %d %d\n" % (len(body), len(payload)) + body, payload)
+        except RasterError as e:
+            if e.status == 503:           # not running: said for what this is for, not for uploading
+                raise RasterError(503, "Text and logos cannot be drawn: the picture helper is not running on this node.")
+            raise
+        head, _, data = out.partition(b"\n")
+        text = head.decode("utf-8", "replace")
+        if text.startswith("ERR "):
+            raise RasterError(422, text[4:][:300].strip() or "This could not be drawn.")
+        if not out:
+            raise RasterError(413, "This is too big to draw; make it smaller.")
+        m = re.fullmatch(r"OK(RAW|PNG) (\d+) (\d+) (\d+) (\d+)", text)
+        if not m:
+            raise RasterError(502, "The picture helper gave no answer.")
+        png, w, h, missing, length = m.group(1) == "PNG", int(m.group(2)), int(m.group(3)), int(m.group(4)), int(m.group(5))
+        if len(data) != length or not (1 <= w <= 4096 and 1 <= h <= 4096) or w * h > MAX_GRAPHIC_PIXELS:
+            raise RasterError(502, "The picture helper gave a wrong answer.")
+        if png and (not data.startswith(PNG_MAGIC) or png_size(data) != (w, h)):
+            raise RasterError(502, "The picture helper gave a wrong answer.")
+        if not png and length != w * h * 4:
+            raise RasterError(502, "The picture helper gave a wrong answer.")
+        return {"w": w, "h": h, "missing": missing, "data": data, "png": png}
 
     def thumbnail(self, png, side=THUMB_SIDE):
         return self._parse(self._run(b"RASTER1 THUMB %d %d\n" % (side, len(png)), png))[1]

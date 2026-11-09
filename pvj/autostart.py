@@ -229,6 +229,12 @@ class Autostart:
                 masks.watch()
             except Exception as e:
                 self.log("pvj-web: masks: %s" % e)
+        gfx = getattr(self.api, "gfx", None)
+        if gfx is not None and pid is not None and pid == self.seen_pid:
+            try:                            # the screen's size changed, or a logo's file was replaced or deleted (D129)
+                gfx.watch()
+            except Exception as e:
+                self.log("pvj-web: graphics: %s" % e)
         if self._level_owed and pid is not None and pid == self.seen_pid:
             self._restore_level()           # it did not land when the player was first seen
         if self.settings.data["autostart"].get("mode") != "usb":
@@ -253,6 +259,12 @@ class Autostart:
                 apply_overlay()
             except Exception as e:
                 self.log("pvj-web: could not put the overlay back: %s" % e)
+        apply_graphics = getattr(getattr(self.api, "gfx", None), "apply", None)
+        if apply_graphics and self.settings.data.get("graphics", {}).get("items"):    # and the text and logos
+            try:
+                apply_graphics(restarted=True)
+            except Exception as e:
+                self.log("pvj-web: could not put the graphics back: %s" % e)
         sync = getattr(self.api, "sync", None)
         if sync is not None:                 # a restarted player lost the wall crop
             try:

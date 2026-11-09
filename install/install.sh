@@ -211,11 +211,11 @@ if [ ${#link_need[@]} -gt 0 ] && command -v dpkg-query >/dev/null; then
 	fi
 fi
 
-# The picture helper (D129): uploaded logos are decoded by pvj-raster, built here from its source against libpng and
-# libjpeg (and the vendored SVG reader). It is on every board, lean or full. Missing build tools are installed when the
+# The picture helper (D129): uploaded logos are decoded, and text and logos are drawn, by pvj-raster, built here from its source
+# against libpng, libjpeg and FreeType (and the vendored SVG reader). It is on every board, lean or full. Missing build tools are installed when the
 # network allows; without them it is not built, the panel says picture upload is not available, and nothing else changes.
 raster_need=()
-for p in gcc make pkg-config libc6-dev libpng-dev libjpeg-dev; do
+for p in gcc make pkg-config libc6-dev libpng-dev libjpeg-dev libfreetype-dev; do
 	dpkg-query -W -f '${Status}' "$p" 2>/dev/null | grep -q 'install ok installed' || raster_need+=("$p")
 done
 if [ ${#raster_need[@]} -gt 0 ] && command -v dpkg-query >/dev/null; then
@@ -345,7 +345,7 @@ if [ "$DRY" = 0 ]; then
 	# uploading logos is not available, and the unit's condition leaves the socket alone.
 	if [ "$REAL" = 1 ] && [ -f "$RELEASE.new/render/Makefile" ]; then
 		rm -f "$RELEASE.new/render/pvj-raster"
-		if command -v make >/dev/null && command -v pkg-config >/dev/null && pkg-config --exists libpng libjpeg; then
+		if command -v make >/dev/null && command -v pkg-config >/dev/null && pkg-config --exists libpng libjpeg freetype2; then
 			log "building pvj-raster"
 			if nice -n 10 timeout 600 make -C "$RELEASE.new/render" pvj-raster > "$RELEASE.new/render/raster-build.log" 2>&1; then
 				log "pvj-raster built"
@@ -353,7 +353,7 @@ if [ "$DRY" = 0 ]; then
 				log "pvj-raster was not built (render/raster-build.log in the release); uploading logos stays unavailable"
 			fi
 		else
-			log "pvj-raster was not built: the build tools or the libpng and libjpeg headers are missing; uploading logos stays unavailable"
+			log "pvj-raster was not built: the build tools or the libpng, libjpeg and FreeType headers are missing; uploading logos and drawing text stay unavailable"
 		fi
 	fi
 fi

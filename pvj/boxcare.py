@@ -927,6 +927,7 @@ class BoxCare:
                         manager.apply()
         for label, fn in (("OSC", api.osc.apply if api.osc else None), ("DMX and MIDI", control), ("Sync", api.sync.apply),
                           ("Mapper", api.mapper.apply), ("Picture over the video", api.apply_overlay),
+                          ("Text and logos", getattr(getattr(api, "gfx", None), "apply", None)),
                           ("Sound output", api.apply_audio), ("Projectors", api.projectors.apply),
                           # the screen's mode (D90) is no section of a file; a reset puts it back to Automatic
                           ("Screen output", getattr(getattr(api, "screen", None), "sync", None)),
