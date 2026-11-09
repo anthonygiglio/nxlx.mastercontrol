@@ -913,7 +913,8 @@ html { scroll-padding-top: calc(var(--head, 0px) + var(--sub, 0px)); scroll-padd
 
 /* The node switcher (fleet step 2b): the list opens as a full-width line of the title bar, in every look. */
 .nodesbtn { flex: none; }
-.wshead .nodespop { flex: 1 0 100%; margin: 6px 0 4px; max-height: 60vh; overflow: auto; color: var(--fg); text-align: left; }
+/* The list is a card of its own in the page colours, so its text reads on any title bar (Signal colours the bar by area) */
+.wshead .nodespop { flex: 1 0 100%; margin: 6px 0 4px; padding: 12px; max-height: 60vh; overflow: auto; background: var(--bg); color: var(--fg); border: 1.5px solid var(--ln); border-radius: 6px; text-align: left; }
 .nodespop .nodeswhere { overflow-wrap: anywhere; }
 
 /* Graphics (D129, slice 2): text and logos the node draws on the screen. A graphic's preview is a picture the node made
@@ -1545,6 +1546,7 @@ html[data-style="signal"] .nowscreen .room-scene { font-size: 15px; }
    colours of its pill, since the bar is the area colour and a page-coloured button would not read on it. */
 html[data-style="signal"] .wshead .nodesbtn { background: var(--on); color: var(--ac); border-color: var(--on); }
 html[data-style="signal"] .wshead .nodesbtn[aria-expanded="true"] { background: var(--ac); color: var(--on); border-color: var(--on); }
+html[data-style="signal"] .wshead .nodespop { background: var(--bg); color: var(--fg); padding: 12px; border: var(--rule, 3px) solid var(--on); border-radius: var(--tk-r, 0); }
 
 /* Graphics in Signal (the layout is before this block, for every look): the ink rule, edges and colours. */
 html[data-style="signal"] .graphicitem { border-top: var(--rule, 3px) solid var(--fg); }
