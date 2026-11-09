@@ -6740,6 +6740,12 @@
     if (!S.themes.length) return;                 // not read yet (the connect screen): what the server wrote stays
     var style = th && STYLES.indexOf(th.style) >= 0 ? th.style : null;
     if (style) root.setAttribute('data-style', style); else root.removeAttribute('data-style');
+    // light or dark, from the look's page colour: what is drawn in shade (the strip's shadow) is gentler on a light page
+    var bg = th && th.look && th.look.tokens && /^#([0-9a-f]{6})$/i.exec(th.look.tokens.bg || '');
+    if (bg) {
+      var n = parseInt(bg[1], 16), lum = (0.2126 * (n >> 16) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255;
+      root.setAttribute('data-tone', lum > 0.5 ? 'light' : 'dark');
+    } else root.removeAttribute('data-tone');
   }
   // A style that draws a slider itself needs to know how full it is: --fill on each slider, from its value. Set
   // through the script (the policy allows that, not a style attribute) in the same turn as the value: on every
