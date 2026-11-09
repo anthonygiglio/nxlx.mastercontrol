@@ -1120,6 +1120,10 @@ def default_config():
     return {"dwell": DWELL_DEFAULT, "vary": True, "height": DEFAULT_HEIGHT, "disabled": []}
 
 
+class FadeRefused(Exception):
+    """The renderer's GPU refused a program that was to fade in (the words are the message); the screen is unchanged."""
+
+
 class Engine:
     LOCK = "shaders.engine"        # the place of this engine's lock among the locks (pvj/locks.py)
     """The library of shaders and the one that is on screen. Everything the player reads is written to its runtime
@@ -1486,13 +1490,15 @@ class Engine:
         return ("ok" if drawn else "unknown"), ""
 
     def on_screen(self):
-        """The shader that is on the screen now, or None: the player must still be playing the carrier it was given."""
+        """The shader that is on the screen now, or None: the player must still be playing the carrier it was given (on
+        the New renderer, which loads no carrier, its stand-in name: Player.path_now)."""
         p = self.playing            # read once; nothing is written here (it runs from every status poll, unlocked)
         if p is None:
             return None
         player = self.api.player
         try:
-            if player.source_epoch != p["epoch"] or player.ipc.request("get_property", "path") != p["carrier"]:
+            now = getattr(player, "path_now", None)
+            if player.source_epoch != p["epoch"] or (now() if now else player.ipc.request("get_property", "path")) != p["carrier"]:
                 return None
         except Exception:
             return None
@@ -1535,6 +1541,8 @@ class Engine:
                 raise ApiError(422, "%s: %s" % (sid, e))
             player = self.api.player
             before = self.on_screen()
+            kept = None                 # the GPU's words, if the renderer refused a program that was to fade in
+            fade = self._fade_for(before, sid, cut, native)
             try:
                 out = self._write(text)
             except OSError as e:
@@ -1557,8 +1565,11 @@ class Engine:
                     # newest wish. A clip's transition does not go on over it, and a clip that was still on its way
                     # (its still being taken) looks under this same lock and does not load over it (Api.play).
                     with (getattr(player, "_lock", None) or locks.make("player")):
-                        new = None if (alive is not None and not alive()) else \
-                            player.play_source(out, carrier, epoch, getattr(self.api, "spawn", False))
+                        try:
+                            new = None if (alive is not None and not alive()) else \
+                                self._take_screen(player, out, carrier, epoch, fade)
+                        except FadeRefused as e:
+                            new, kept = None, str(e)
                         if new is not None:
                             self._made(new)         # at once, before the GPU's look: see LiveEngine.play_job
                             if alive is not None and not alive():
@@ -1571,6 +1582,15 @@ class Engine:
                 except PlayerError as e:
                     self._cleanup({before["path"]} if before else set())
                     raise ApiError(503, str(e))
+                if kept is not None:
+                    # A fade into the program was refused (D130): nothing changed on the screen, which still shows what it
+                    # showed (a fade that was running has ended on its incoming side, which is what `before` already is).
+                    self._cleanup({before["path"]} if before else set())
+                    self.error = {"id": sid, "message": kept, "at": time.strftime("%Y-%m-%d %H:%M:%S")}
+                    self.refused(sid, digest, kept)
+                    self.log("pvj-web: shader %s refused by the player: %s" % (sid, kept))
+                    return {"ok": False, "epoch": player.source_epoch, "id": sid, "error": kept, "kept": True,
+                            "showing": before["id"] if before else None}
                 if new is None:                         # something else was played meanwhile: it keeps the screen
                     self._cleanup({before["path"]} if before else set())
                     return None
@@ -1625,6 +1645,34 @@ class Engine:
                     self.api._apply_opacity(0 if self.api.mix["blackout"] else self.api.mix["opacity"])
             self.api._started_playing()
             return {"ok": True, "epoch": new, "id": sid}
+
+    def _fade_for(self, before, sid, cut, native):
+        """(seconds, style) of the fade a shader chosen by hand takes the screen with, or None for a cut (D130): on the New
+        renderer, when a different picture is on the screen and the Mix has a transition (Api._shader_fade). The same
+        shader shown again (a slider) is exchanged in place; a rotation (`cut` False) waits for the budget slice."""
+        if not (cut and native) or (before is not None and before["id"] == sid):
+            return None
+        ask = getattr(self.api, "_shader_fade", None)
+        try:
+            return ask() if ask else None
+        except Exception:
+            return None
+
+    def _take_screen(self, player, out, carrier, epoch, fade):
+        """The player takes the program file `out` as the picture, by a fade where `fade` is given and the renderer does it,
+        else a cut. Raises FadeRefused where the GPU refused the program in a fade. Under the player's lock."""
+        spawn = getattr(self.api, "spawn", False)
+        if fade is not None:
+            try:
+                return player.fade_to_program(out, fade[0], fade[1], epoch, spawn, standin=carrier)
+            except PlayerError as e:
+                verdict = player.native_verdict(out)
+                if verdict and verdict[0] == "refused":
+                    raise FadeRefused(verdict[1])
+                if "the layer was ended" in str(e):
+                    return None                 # a Stop or a newer play ended the build: it keeps the screen, as for a stale epoch
+                self.log("pvj-web: no %s into the shader on the new renderer, a cut instead: %s" % (fade[1], e))
+        return player.play_source(out, carrier, epoch, spawn)
 
     def _made(self, epoch):
         """This call has just moved the player's epoch to `epoch` itself (see LiveEngine, whose queue goes by it)."""

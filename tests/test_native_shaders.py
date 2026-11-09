@@ -2298,5 +2298,444 @@ class PlayerProgramFadeTest(ProgramFadeBase):
         p._pipe = False
 
 
+ENDED = "the layer was ended before the load took effect"
+
+
+class ProgramBuildDoesNotHoldTheLayersTest(ProgramFadeBase):
+    """The review of #240: pvj-fade-to-program used to hold layer_lock across the build (up to 3 s), so a Stop, a load, a
+    level or a crossfade from the panel waited behind it past the player's 2 s timeout and raised there while still running
+    in the renderer. Now the lock is let go while the program builds; a command that ends a fade ends the build too, and the
+    fade command answers that the layer was ended."""
+
+    def start(self, ms):
+        need_program(self)
+        if "with test hooks" not in subprocess.run([BIN, "--version"], capture_output=True, text=True).stdout:
+            if STRICT:
+                self.fail("PVJ_RENDER_TEST=1 and pvj-render was built without its test hooks: make -C render TEST_HOOKS=1")
+            self.skipTest("pvj-render was built without its test hooks")
+        self.tmp = tempfile.mkdtemp(prefix="pvj-native-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.r = Renderer(env={"PVJ_RENDER_TEST_SLOW_BUILD": str(ms)})
+        self.addCleanup(lambda: self.r.close())
+        self.r("set_property", "image-display-duration", "inf")
+        self.n = 0
+
+    def setUp(self):
+        pass
+
+    def ask_in_background(self, program, seconds=4.0):
+        said = {}
+
+        def ask():
+            t0 = time.monotonic()
+            try:
+                Ipc(self.r.sock, timeout=12.0).request("pvj-fade-to-program", program, seconds, wait=8.0)
+                said["answer"] = "success"
+            except PlayerError as e:
+                said["answer"] = str(e)
+            said["seconds"] = time.monotonic() - t0
+        th = threading.Thread(target=ask)
+        th.start()
+        time.sleep(0.3)                     # the build is under way (the hook makes it 2.5 s)
+        return th, said
+
+    def test_a_stop_from_a_second_client_is_answered_at_once_and_ends_the_build(self):
+        self.start(2500)
+        self.moving_clip()
+        th, said = self.ask_in_background(self.generator(solid(0, 0, 0.8)))
+        t0 = time.monotonic()
+        Ipc(self.r.sock, timeout=2.0).request("stop")      # the player's own timeout: it must not be reached
+        took = time.monotonic() - t0
+        self.assertLess(took, 1.0, "the Stop waited %.2f s behind the build" % took)
+        th.join(15)
+        self.assertFalse(th.is_alive())
+        self.assertIn(ENDED, said["answer"])
+        self.assertTrue(self.r.wait(lambda: self.objects() == 0, 10), self.objects())
+        st = self.st()
+        self.assertEqual((st["fade"], st["fades"]), ("off", 0), st)
+        self.assertEqual(self.r("get_property", "pvj-shaders")[0]["state"], "off")
+        self.assertIsNone(self.r.proc.poll())
+
+    def test_a_load_a_level_and_a_crossfade_are_served_while_the_program_builds(self):
+        self.start(2500)
+        self.moving_clip()
+        red = self.pic("red", RED)
+        th, said = self.ask_in_background(self.generator(solid(0, 0, 0.8)))
+        ipc = Ipc(self.r.sock, timeout=2.0)
+        t0 = time.monotonic()
+        ipc.request("set_property", "brightness", -10)       # a level does not end the build
+        ipc.request("get_property", "pvj-render")
+        self.assertLess(time.monotonic() - t0, 1.0)
+        t0 = time.monotonic()
+        ipc.request("pvj-crossfade", red, 0.2, KEEP)         # a transition does: the program is asked off
+        self.assertLess(time.monotonic() - t0, 1.0)
+        th.join(15)
+        self.assertIn(ENDED, said["answer"])
+        self.settled(2.0)
+        self.assertTrue(self.r.wait(lambda: self.objects() == 0, 10), self.objects())
+        px = self.r.pixel(W // 2, H // 2)
+        self.assertTrue(px[0] > 200 and px[2] < 20, "the clip asked meanwhile is the picture, not the late program: %s" % (px,))
+
+    def test_a_level_alone_leaves_the_build_to_finish_into_its_fade(self):
+        self.start(1200)
+        self.moving_clip()
+        th, said = self.ask_in_background(self.generator(solid(0, 0, 0.8)), 3.0)
+        Ipc(self.r.sock, timeout=2.0).request("set_property", "brightness", -5)
+        th.join(15)
+        self.assertEqual(said["answer"], "success", said)
+        self.assertEqual(self.st()["program-fades"], 1)
+        self.running(0.0, 0.9)
+        self.settled(3.0)
+        px = self.r.pixel(W // 2, H // 2)
+        self.assertGreater(px[2], 100, px)
+
+    def test_a_fade_asked_after_the_cut_build_is_not_mistaken_for_it(self):
+        self.start(900)
+        self.moving_clip()
+        prog = self.generator(solid(0, 0, 0.8))
+        th, said = self.ask_in_background(prog, 0.2)
+        Ipc(self.r.sock, timeout=2.0).request("stop")
+        th.join(15)
+        self.assertIn(ENDED, said["answer"])
+        self.moving_clip()
+        self.to_program(prog, 0.2)                          # asked again: the first one's end does not spoil this one
+        self.settled(1.0)
+        self.assertEqual(self.st()["program-fades"], 1)
+        px = self.r.pixel(W // 2, H // 2)
+        self.assertGreater(px[2], 150, px)
+
+
+class TwoClientStressTest(ProgramFadeBase):
+    """The reviewer's stress of #240 (review240/stress.py), bounded: two clients mix fades into programs, crossfades, loads,
+    levels, sets, clears and stops. The renderer must live, every answer must be success or a refusal in the renderer's words,
+    no program or object may be left after a stop and a clear, and descriptors and threads must be flat."""
+
+    SECONDS = float(os.environ.get("PVJ_STRESS_SECONDS", "10"))
+
+    def test_the_back_to_back_fade_the_instant_the_last_one_ends_is_never_refused(self):
+        red = self.pic("red", RED)
+        gens = [self.generator(solid(0, 0, 0.8)), self.generator(solid(0, 0.8, 0))]
+        self.r.load(red)
+        refused = []
+        for i in range(int(os.environ.get("PVJ_ENDED_TRIES", "25"))):
+            self.to_program(gens[i % 2], 0.03)
+            self.assertTrue(self.r.wait(lambda: self.st()["fade"] == "off", 20, 0.002), self.st())
+            try:
+                self.to_program(gens[(i + 1) % 2], 0.03)
+            except PlayerError as e:
+                refused.append(str(e))
+            self.assertTrue(self.r.wait(lambda: self.st()["fade"] == "off", 20, 0.002), self.st())
+        self.assertEqual(refused, [])
+        self.assertIsNone(self.r.proc.poll())
+
+    def test_two_clients_mix_everything_and_nothing_is_left_behind(self):
+        import random
+        red, blue, green = self.pic("red", RED), self.pic("blue", BLUE), self.pic("green", GREEN)
+        gens = [self.generator(solid(0.8, 0, 0)), self.generator(solid(0, 0, 0.8)), self.generator(LEVEL)]
+        bad = self.write(BAD_PROGRAM)
+        self.r.load(red)
+        start = (fd_count(self.r.pid), thread_count(self.r.pid))
+        errors, slow, counts = [], [], {"a": 0, "b": 0}
+        stop_at = time.monotonic() + self.SECONDS
+        allowed = ("invalid parameter", "GPU refused", ENDED, "did not build")
+
+        def client(name, ops):
+            ipc = Ipc(self.r.sock, timeout=12.0)
+            rnd = random.Random(name)
+            while time.monotonic() < stop_at:
+                op = rnd.choice(ops)
+                t0 = time.monotonic()
+                try:
+                    op(ipc, rnd)
+                    counts[name] += 1
+                except PlayerError as e:
+                    if not any(w in str(e) for w in allowed):
+                        errors.append("%s %s: %s" % (name, op.__name__, e))
+                except Exception as e:                      # noqa: BLE001
+                    errors.append("%s %s: %r" % (name, op.__name__, e))
+                    return
+                if time.monotonic() - t0 > 1.5:
+                    slow.append((name, op.__name__, round(time.monotonic() - t0, 2)))
+                time.sleep(rnd.uniform(0, 0.02))
+
+        def a_fade_prog(ipc, rnd):
+            args = ["pvj-fade-to-program", rnd.choice(gens + [bad]), rnd.choice([0.03, 0.1, 0.5, 2.0])]
+            if rnd.random() < 0.4:
+                args.append(rnd.choice(["wipe-from-left", "slide-from-top", "wipe-from-bottom"]))
+            ipc.request(*args, wait=8.0)
+
+        def a_load(ipc, rnd):
+            ipc.request("pvj-shader", "load", 1, 0, rnd.choice(gens + [bad]), wait=8.0)
+
+        def a_set(ipc, rnd):
+            ipc.request("pvj-shader", "set", 1, 0, {"level": rnd.random()})
+
+        def a_clear(ipc, rnd):
+            ipc.request("pvj-shader", "clear", 1, 0, wait=8.0)
+
+        def b_fade(ipc, rnd):
+            args = ["pvj-crossfade", rnd.choice([red, blue, green]), rnd.choice([0.03, 0.1, 0.5, 2.0]), KEEP]
+            if rnd.random() < 0.4:
+                args.append(rnd.choice(["wipe-from-left", "slide-from-top"]))
+            ipc.request(*args)
+
+        def b_fade_prog(ipc, rnd):
+            ipc.request("pvj-fade-to-program", rnd.choice(gens), rnd.choice([0.03, 0.3, 1.0]), wait=8.0)
+
+        def b_load(ipc, rnd):
+            ipc.request("loadfile", rnd.choice([red, blue, green]), "replace")
+
+        def b_stop(ipc, rnd):
+            ipc.request("stop")
+
+        def b_set(ipc, rnd):
+            ipc.request("set_property", "brightness", rnd.choice([0, -20, 10]))
+
+        def b_look(ipc, rnd):
+            ipc.request("get_property", "pvj-shaders")
+            ipc.request("get_property", "pvj-render")
+
+        ta = threading.Thread(target=client, args=("a", [a_fade_prog, a_fade_prog, a_fade_prog, a_load, a_set, a_set, a_clear]))
+        tb = threading.Thread(target=client, args=("b", [b_fade, b_fade, b_fade_prog, b_load, b_stop, b_set, b_look]))
+        ta.start()
+        tb.start()
+        ta.join(self.SECONDS + 60)
+        tb.join(self.SECONDS + 60)
+        self.assertFalse(ta.is_alive() or tb.is_alive(), "a client thread did not end")
+        self.assertIsNone(self.r.proc.poll(), "the renderer died: " + self.r.stderr())
+        self.assertTrue(self.r.wait(lambda: self.st()["fade"] == "off", 20), self.st())
+        self.assertEqual(errors, [], errors[:10])
+        self.assertEqual(slow, [], "answers that took over 1.5 s (a lock held across a build): %s" % slow[:8])
+        self.assertGreater(counts["a"] + counts["b"], 20)
+        self.r("stop")
+        self.r("pvj-shader", "clear", 1, 0)
+        self.assertTrue(self.r.wait(lambda: self.objects() == 0, 10), "programs left alive after stop and clear: %d" % self.objects())
+        time.sleep(0.5)
+        self.assertLessEqual(fd_count(self.r.pid), start[0])
+        self.assertLessEqual(thread_count(self.r.pid), start[1] + 1)
+        self.assertNotIn("Export failed", self.r.stderr())
+
+
+class PlayerShaderLayerTest(ProgramFadeBase):
+    """D130, slice 3, the player (pvj/player.py): a shader on the New renderer is the front layer's picture with no blank
+    clip under it, the stand-in name keeps the panel's checks working, the lists are touched, and a fade whose answer is lost
+    is reconciled with what the renderer holds."""
+
+    def setUp(self):
+        super().setUp()
+        d = tempfile.mkdtemp(prefix="pvj-native-run-")
+        self.addCleanup(shutil.rmtree, d, True)
+        os.symlink(self.r.sock, os.path.join(d, paths.PLAYER_SOCKET))
+        self.player = Player(rundir=d)
+        self.carrier_name = S.carrier_url((W, H), False)
+
+    def test_a_cut_into_a_shader_loads_no_carrier_and_the_clip_is_stopped(self):
+        p = self.player
+        self.r.load(self.pic("red", RED))
+        prog = self.generator(solid(0, 0, 0.8))
+        epoch = p.play_source(prog, self.carrier_name)
+        self.assertIsNotNone(epoch)
+        self.assertEqual((p.source_shader, p._carrier), (prog, None))
+        self.assertTrue(self.r.wait(lambda: self.r.playing() is None, 5), "the clip under the shader was left playing")
+        px = self.r.pixel(W // 2, H // 2)
+        self.assertTrue(px[2] > FULL - 8 and px[0] < 6, px)
+        self.assertEqual(p.status()["path"], self.carrier_name)       # the stand-in for the panel's "is a shader playing" checks
+        self.assertEqual(p.path_now(), self.carrier_name)
+        self.assertTrue(p.clear_source(epoch))
+        self.assertTrue(self.r.wait(lambda: self.slot(0)["state"] == "off", 5))
+
+    def test_the_stand_in_goes_with_the_shader(self):
+        p = self.player
+        self.r.load(self.pic("red", RED))
+        p.fade_to_program(self.generator(solid(0, 0, 0.8)), 0.2, standin=self.carrier_name)
+        self.settled(0.2)
+        self.assertEqual(p.path_now(), self.carrier_name)
+        green = self.pic("green", GREEN)
+        p.play([green], fade=0.2)
+        self.settled(0.2)
+        self.assertIsNone(p.source_shader)
+        self.assertEqual(p.status()["path"], green)
+
+    def test_a_fade_touches_the_lists_as_a_crossfade_does(self):
+        p = self.player
+        touched = []
+
+        class Lists:
+            def any(self):
+                return True
+
+            def touch(self, path):
+                touched.append(path)
+        p.lists = Lists()
+        clip = self.pic("red", RED)
+        self.r.load(clip)
+        p.fade_to_program(self.generator(solid(0, 0, 0.8)), 0.2)
+        self.assertEqual(touched, [clip])
+
+    def test_a_lost_answer_is_reconciled_with_what_the_renderer_holds(self):
+        p = self.player
+        self.r.load(self.pic("red", RED))
+        prog = self.generator(solid(0, 0, 0.8))
+        real = p.ipc.request
+
+        def lost(*command, **kw):
+            out = real(*command, **kw)
+            if command and command[0] == "pvj-fade-to-program":
+                raise PlayerError("no answer from the player")
+            return out
+        p.ipc.request = lost
+        epoch = p.fade_to_program(prog, 0.3, standin=self.carrier_name)
+        p.ipc.request = real
+        self.assertIsNotNone(epoch)
+        self.assertEqual((p.source_shader, p._native_loaded[0][0]), (prog, prog))     # the renderer took it: this side knows
+
+    def test_a_fade_that_never_reached_the_renderer_leaves_its_record_to_be_reloaded(self):
+        p = self.player
+        self.r.load(self.pic("red", RED))
+        first = self.generator(solid(0.8, 0, 0))
+        p.fade_to_program(first, 0.1)
+        self.settled(0.1)
+        self.assertEqual(p._native_loaded[0][0], first)
+        real = p.ipc.request
+
+        def lost(*command, **kw):
+            if command and command[0] == "pvj-fade-to-program":
+                raise PlayerError("no answer from the player")
+            return real(*command, **kw)
+        p.ipc.request = lost
+        with self.assertRaises(PlayerError):
+            p.fade_to_program(self.generator(solid(0, 0, 0.8)), 0.3)
+        p.ipc.request = real
+        self.assertEqual(p.source_shader, first)
+        self.assertIsNone(p._native_loaded[0])                       # unknown: the next push loads this side's source again
+
+    def test_a_value_refused_during_a_shader_to_clip_fade_is_not_an_error(self):
+        p = self.player
+        self.r.load(self.pic("red", RED))
+        prog = self.generator(LEVEL)
+        p.fade_to_program(prog, 0.2)
+        self.settled(0.2)
+        epoch = p.source_epoch
+        self.assertTrue(p.native_values(0, {"level": 0.5}, epoch=epoch))
+        p.play([self.pic("green", GREEN)], fade=4.0)
+        # this side lets go of the program at the play; the value worker's epoch is gone and it says False, not an error
+        self.assertFalse(p.native_values(0, {"level": 0.9}, epoch=epoch))
+        # and if a set does reach the renderer while the outgoing generator draws, the renderer refuses it: not raised
+        p._source, p._source_pid, p._native_loaded[0] = prog, p._seen_pid, (prog, p._seen_pid)
+        self.assertFalse(p.native_values(0, {"level": 0.9}, epoch=p.source_epoch))
+
+
+class EngineFadeTest(NativeBase):
+    """D130, slice 3, the panel's engine on the real renderer: a shader chosen by hand or by a pad takes the Mix transition
+    into and out of the shader, with no carrier, and a refusal says why without changing the screen."""
+
+    def setUp(self):
+        EngineTest.setUp(self)
+        self.red = os.path.join(self.tmp, "red.png")
+        png(self.red, W, H, lambda x, y: RED)
+        self.green = os.path.join(self.tmp, "green.png")
+        png(self.green, W, H, lambda x, y: GREEN)
+        for n, p in (("red.png", self.red), ("green.png", self.green)):
+            shutil.copy(p, os.path.join(self.api.media_dir, n))
+        self.T = __import__("pvj.transitions", fromlist=["stored"])
+        self.api.settings.data["mix"] = self.T.stored("crossfade", 3.0)
+
+    def st(self):
+        return self.r("get_property", "pvj-render")
+
+    def settled(self):
+        self.assertTrue(self.r.wait(lambda: self.st()["fade"] == "off", 15, 0.05), self.st())
+
+    def test_a_clip_to_a_shader_to_a_shader_to_a_clip_with_the_chosen_mix(self):
+        self.api.play({"file": "red.png"}, None, "t")
+        self.assertTrue(self.r.wait(lambda: self.r.playing() is not None, 5))
+        out = self.api.shaders.play("nxlx-bloom.fs")
+        self.assertTrue(out["ok"], out)
+        st = self.st()
+        self.assertEqual((st["program-fades"], st["fades"]), (1, 1), st)
+        self.assertIn(st["fade"], ("waiting", "running"))
+        self.assertEqual(self.player._carrier, None)
+        self.assertEqual(self.api.shaders.on_screen()["id"], "nxlx-bloom.fs")
+        self.assertEqual(self.player.status()["path"], self.api.shaders.playing["carrier"])
+        self.settled()
+        self.assertTrue(self.r.wait(lambda: self.r.playing() is None, 5), "the clip is still decoding under the shader")
+        # shader to shader
+        out = self.api.shaders.play("nxlx-aurora.fs")
+        self.assertTrue(out["ok"], out)
+        self.assertEqual(self.st()["program-fades"], 2)
+        self.assertEqual(self.api.shaders.on_screen()["id"], "nxlx-aurora.fs")
+        self.settled()
+        self.assertEqual(self.st()["fades-cut"], 0)
+        # shader to clip
+        self.api.play({"file": "green.png"}, None, "t")
+        self.assertEqual(self.st()["fades"], 3)
+        self.assertIsNone(self.player.source_shader)
+        self.assertEqual(self.player.fade_refused, "")
+        self.settled()
+        self.assertTrue(self.r.wait(lambda: self.slot(0)["state"] == "off", 5))
+        px = self.r.pixel(W // 2, H // 2)
+        self.assertTrue(px[1] > 240 and px[0] < 6, px)
+
+    def test_a_wipe_is_the_chosen_style_and_a_cut_stays_a_cut(self):
+        self.api.settings.data["mix"] = self.T.stored("wipe-from-left", 3.0)
+        self.api.play({"file": "red.png"}, None, "t")
+        self.api.shaders.play("nxlx-bloom.fs")
+        self.assertEqual(self.st()["fade-kind"], "wipe-from-left")
+        self.settled()
+        self.api.settings.data["mix"] = self.T.stored("cut", 1.0)
+        fades = self.st()["fades"]
+        self.api.shaders.play("nxlx-aurora.fs")
+        self.assertEqual(self.st()["fades"], fades)               # a cut: no fade
+        self.assertEqual(self.api.shaders.on_screen()["id"], "nxlx-aurora.fs")
+
+    def test_the_same_shader_shown_again_is_exchanged_in_place(self):
+        self.api.play({"file": "red.png"}, None, "t")
+        self.api.shaders.play("nxlx-bloom.fs")
+        self.settled()
+        fades = self.st()["fades"]
+        self.api.shaders.play("nxlx-bloom.fs", values={})
+        self.assertEqual(self.st()["fades"], fades)
+
+    def test_a_tap_in_the_middle_of_a_fade_finishes_it_and_fades_to_the_new_pad(self):
+        self.api.settings.data["mix"] = self.T.stored("crossfade", 5.0)
+        self.api.play({"file": "red.png"}, None, "t")
+        self.api.shaders.play("nxlx-bloom.fs")
+        self.assertTrue(self.r.wait(lambda: self.st()["fade"] == "running" and self.st()["fade-progress"] > 0.1, 10, 0.02), self.st())
+        self.api.shaders.play("nxlx-aurora.fs")
+        st = self.st()
+        self.assertEqual((st["fades"], st["fades-cut"], st["program-fades"]), (2, 1, 2), st)
+        self.assertEqual(self.api.shaders.on_screen()["id"], "nxlx-aurora.fs")
+
+    def test_a_shader_the_gpu_refuses_leaves_the_screen_and_says_why(self):
+        from pvj.api import ApiError
+        self.api.play({"file": "red.png"}, None, "t")
+        self.api.shaders.play("nxlx-bloom.fs")
+        self.settled()
+        broken = "/*{}*/\nvoid main() { gl_FragColor = vec4(nonsense, 1.0); }\n"
+        self.api.shaders.upload("broken.fs", broken)
+        with self.assertRaises(ApiError) as e:
+            self.api.shaders.play("broken.fs")
+        self.assertEqual(e.exception.status, 422)
+        self.assertIn("nonsense", e.exception.message)
+        self.assertIn("The shader before it stays on", e.exception.message)
+        self.assertEqual(self.api.shaders.on_screen()["id"], "nxlx-bloom.fs")
+        self.assertEqual(self.slot(0)["state"], "on")
+        self.assertEqual(self.st()["fades"], 1)
+        # from a clip: the clip stays
+        self.player.clear()
+        self.api.play({"file": "red.png"}, None, "t")
+        with self.assertRaises(ApiError) as e:
+            self.api.shaders.play("broken.fs")
+        self.assertIn("The picture before it stays on", e.exception.message)
+        self.assertTrue(self.r.pixel(W // 2, H // 2)[0] > 240)
+
+    def test_a_node_that_cuts_says_so_on_the_mix_card_and_cuts(self):
+        self.api.play({"file": "red.png"}, None, "t")
+        self.assertIsNone(self.api._mix_settings().get("shader_cut"))
+        self.player._gens_seen = (self.player._seen_pid, False)     # a renderer from before layer generators, or classic
+        self.assertIn("cut", self.api._mix_settings()["shader_cut"])
+        self.assertIsNone(self.api._shader_fade())
+
+
 if __name__ == "__main__":
     unittest.main()
