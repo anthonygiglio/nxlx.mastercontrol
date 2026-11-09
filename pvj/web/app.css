@@ -256,7 +256,7 @@ details.fold { display: block; }
 @media (prefers-reduced-motion: no-preference) { .switch::after { transition: left .12s ease-out; } }
 .confirm { flex: 1 1 100%; display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1.5px solid #b00020; border-radius: 6px; background: var(--cd); font-weight: 600; font-size: 14px; }
 .btn.danger { background: #b00020; border-color: #b00020; color: #fff; }
-.danger-h { margin: 8px 0 0; font-size: 15px; color: #d32f4a; grid-column: 1 / -1; }
+.danger-h { margin: 8px 0 0; font-size: 15px; color: var(--ac); grid-column: 1 / -1; }      /* (as the other error lines: the look's own colour, which reads on its page; a fixed red was 3.8:1 on Dark stage) */
 #sysstate .hint { min-width: 0; }
 
 /* Live: the Vibes button is the big one, full width on a phone; under it the shader before and the next one, the set
