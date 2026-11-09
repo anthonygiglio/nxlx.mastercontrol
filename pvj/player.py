@@ -425,13 +425,86 @@ class Player:
         Without `fade` nothing here differs from before."""
         with self._lock:
             from_clip = self.fades_from_clip()
+            # Out of a program of the renderer's own (D130): its generator is the outgoing layer's picture and goes on
+            # drawing to the end of the fade, so the source is not taken off first; the renderer frees it with the layer.
+            # The panel does not ask for this before its slice 3 (it takes D71's still out of a shader).
+            from_program = fade is not None and not from_clip and self._from_program()
             # a second guard: the panel asks fades_from_clip first and takes D71's still out of the others
-            self.fade_refused = "" if from_clip else "not from a plain clip (a generator or a live input)"
+            self.fade_refused = "" if (from_clip or from_program) else "not from a plain clip (a generator or a live input)"
+            if from_program:
+                if self._crossfade(paths, loop, ending, fade, style):
+                    self._forget_source()
+                    return None
+                # refused: nothing changed on the screen, and the cut below is the plain load (it takes the program off)
             self._end_source()
             self._pipe, self._pipe_gone = False, None
             if fade is not None and from_clip and self._crossfade(paths, loop, ending, fade, style):
                 return None
             return self._play(paths, loop, audio_device, windowed, spawn, ending, image_seconds)
+
+    def _from_program(self):
+        """A program of the renderer's own is what plays (a generator in the front layer) and the renderer fades out of
+        one (D130). Takes the player's lock; asks the player."""
+        self._check_source()
+        return (self._source is not None and is_program(self._source) and self._source_pid == self._seen_pid
+                and self.fades_native())
+
+    def _forget_source(self):
+        """The program that was the outgoing picture of a fade is the renderer's to free: this side lets go of it and
+        of the carrier under it, without clearing the slot (the front layer is the clip that came in)."""
+        self.source_epoch += 1
+        self._source = self._carrier = None
+        self._native_loaded[0] = None
+        try:
+            self._push_shaders()
+            self._apply_fbo()
+        except PlayerError:
+            pass
+
+    def fade_to_program(self, path, seconds, style="crossfade", epoch=None, spawn=False):
+        """Fade from what is on the screen (a clip, or another program) into the program file `path`, drawn by the renderer
+        itself (D130: `pvj-fade-to-program`): the program is built into the idle layer's generator, and the fade begins
+        when its first picture is drawn, both sides moving. `style`: "crossfade" or a wipe's or a slide's name. With
+        `epoch`, only if nothing else has been played since it was handed out (None is returned and nothing changes).
+        Returns the new epoch. Raises PlayerError where the renderer cannot or would not, with nothing changed on the
+        screen: a GPU's refusal is also written down for native_verdict, and the caller cuts or shows the words. Not
+        asked by the panel before its slice 3."""
+        with self._lock:
+            if epoch is not None and epoch != self.source_epoch:
+                return None
+            if not self.is_running():
+                if not spawn:
+                    raise PlayerError("player service is not running (systemctl start pvj-player)")
+                self._spawn(None, False)
+            self._check_source()
+            if not self.fades_native():
+                raise PlayerError("the player cannot fade into a shader")
+            if style != "crossfade" and not self.moves():
+                raise PlayerError("the player does not draw this transition")
+            if not is_program(path):
+                raise PlayerError("only the renderer's own programs fade in")
+            self._undo_pipe_globals()
+            if getattr(self, "_pipe_globals", None):
+                raise PlayerError("a live input's settings could not be taken back")
+            seconds = max(0.0, min(60.0, float(seconds)))
+            tail = [] if style == "crossfade" else [style]
+            pid = self.ipc.request("get_property", "pid")
+            try:
+                self.ipc.request("pvj-fade-to-program", path, seconds, *tail, wait=self.NATIVE_LOAD_WAIT)
+            except PlayerError as e:
+                message = str(e)
+                message = message[5:] if message.startswith("mpv: ") else message
+                if message.startswith("the GPU refused") or message == "invalid parameter":
+                    self._native_verdicts[path] = ("refused", message)
+                raise PlayerError(message)
+            self._pipe, self._pipe_gone = False, None
+            self._source, self._source_pid = path, pid
+            self._carrier = None            # the program is the layer's picture: no blank clip is drawn over for it
+            self._native_loaded[0] = (path, pid)
+            self._native_verdicts[path] = ("ok", "")
+            self.fade_refused = ""
+            self.source_epoch += 1
+            return self.source_epoch
 
     def fades_from_clip(self):
         """True when what this side loaded last is a plain clip: no generator (its shader and carrier), no live
@@ -442,6 +515,7 @@ class Player:
 
     _layers_seen = None             # (pid, True or False): does that player process mix two video layers (D98)
     _moves_seen = None              # (pid, True or False): does that player process draw the wipes and slides (D111)
+    _gens_seen = None               # (pid, True or False): do source 1's layers hold generators, with a fade into a program (D130)
     fade_refused = ""               # why the last crossfade asked of the renderer became a cut, for the log
 
     def crossfades(self, ask=True):
@@ -464,12 +538,38 @@ class Player:
             if str(e).startswith("mpv: ") and pid is not None:
                 self._layers_seen = (pid, False)        # mpv's own refusal: this player has no layers
                 self._moves_seen = (pid, False)         # and draws no wipes of its own
+                self._gens_seen = (pid, False)          # and no generator in a layer
             return False
         layers = state.get("layers") if isinstance(state, dict) else None
         ok = isinstance(layers, int) and not isinstance(layers, bool) and layers >= 2
         self._layers_seen = (pid, ok)
         self._moves_seen = (pid, isinstance(state, dict) and state.get("moves") is True)
+        # a renderer that holds a generator in each layer AND has the command that fades into one (`program-fades` is its
+        # count, there from version 0.10.0): a 0.9.0 has the first and not the second
+        pf = state.get("program-fades") if isinstance(state, dict) else None
+        self._gens_seen = (pid, isinstance(state, dict) and state.get("layer-generators") is True
+                           and isinstance(pf, int) and not isinstance(pf, bool))
         return ok
+
+    def layer_generators(self, ask=True):
+        """True if the player that answers now is pvj-render with a generator in each of source 1's video layers and the
+        command that fades into a program (D130, `layer-generators` and `program-fades`). Asked once per player process,
+        in the same request as `crossfades`; classic mpv, and a renderer before slice 2, answer False. With `ask` False,
+        only what is known already."""
+        known = self._gens_seen
+        if known is not None and known[0] == self._seen_pid:
+            return known[1]
+        if not ask:
+            return False
+        self.crossfades()
+        known = self._gens_seen
+        return bool(known and known[0] == self._seen_pid and known[1])
+
+    def fades_native(self, ask=True):
+        """True when a shader may be faded into or out of by the renderer itself (D130): it holds a generator in each
+        layer, and neither side is a live input's pipe (NDI and capture keep D62's hand-over and with it D71's still).
+        Not yet asked by the panel: it chooses with fades_from_clip until the panel's slice (3) of the design."""
+        return not self._pipe and self.layer_generators(ask)
 
     def moves(self, ask=True):
         """True if the player that answers now draws the wipes and the slides itself, as the same stage as the crossfade

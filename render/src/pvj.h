@@ -13,7 +13,7 @@
 #include <GLES3/gl3.h>
 #include <mpv/client.h>
 
-#define PVJ_VERSION "0.9.0"
+#define PVJ_VERSION "0.10.0"
 #define MAX_SHADERS 16
 #define LAYERS 2                    // source 1's video layers (phase 2, D98): the one on screen and the one a crossfade comes in on
 #define MAX_SOURCES 8               // sources (D101): source 1 is LAYERS layers, each other source one layer
@@ -139,9 +139,11 @@ typedef struct {
         int base_starts;            // the incoming layer's count of started files before its load (see Layer)
         const Move *move;           // a wipe or a slide; NULL: the crossfade's mix
         long steps;                 // pictures drawn with both layers in them, in this transition or the last
+        int program;                // the incoming layer's picture is a generator (pvj-fade-to-program, D130): the clock starts at its first drawn frame
     } fade;
     long fades, fades_done, fades_cut;  // crossfades asked; run to their end; ended early (a load, a stop, a new fade)
     long fades_from_nothing;        // crossfades asked with nothing on the screen: loaded as a cut instead
+    long program_fades;             // fades into a program asked (pvj-fade-to-program), whether they ran or were a cut from nothing
     long sound_held;                // crossfades whose outgoing core had not closed its sound output in time
     // per video layer, kept by its event thread (atomics): files started so far, and which of those starts the last
     // playback restart (a first frame ready, after a load or a seek) and the last failed load belong to. libmpv sends
@@ -249,6 +251,7 @@ int fx_has_generator(int s);
 // fade, on the outgoing layer).
 GLuint fx_layer_picture(int layer, double now, int *ran);
 int fx_layer_has_generator(int layer);
+int fx_layer_started(int layer);     // the layer's generator has drawn a picture (a fade into a program starts its clock then)
 void fx_layer_end(int layer);
 void fx_free_all(void);
 

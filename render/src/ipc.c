@@ -442,8 +442,11 @@ static void crossfade(int fd, const mpv_node *id, const mpv_node *cmd)
     int out = front_layer(), in = 1 - out;
     mpv_handle *H = app.layer[in], *O = app.layer[out];
     int idle = 0;
-    if (mpv_get_property(O, "idle-active", MPV_FORMAT_FLAG, &idle) >= 0 && idle) {
-        // nothing on the screen to fade from: a cut, into the front layer
+    pthread_mutex_lock(&app.lock);
+    int out_gen = app.gen[out].on;      // the outgoing layer's picture is a generator: there is something to fade from (D130)
+    pthread_mutex_unlock(&app.lock);
+    if (mpv_get_property(O, "idle-active", MPV_FORMAT_FLAG, &idle) >= 0 && idle && !out_gen) {
+        // nothing on the screen to fade from (no clip, no generator): a cut, into the front layer
         set_str(O, "pause", "no");
         set_str(O, "keep-open", "no");
         int r = apply_options(O, opts);
@@ -503,6 +506,7 @@ static void crossfade(int fd, const mpv_node *id, const mpv_node *cmd)
     app.fade.base_starts = base;
     app.fade.move = move;
     app.fade.steps = 0;
+    app.fade.program = 0;
     app.fades++;
     __atomic_store_n(&app.front, in, __ATOMIC_RELEASE);
     pthread_mutex_unlock(&app.lock);
@@ -913,6 +917,130 @@ static void shader_command(int fd, const mpv_node *id, const mpv_node *cmd)
     else reply(fd, id, answer[0] ? answer : "success", NULL);
 }
 
+// ["pvj-fade-to-program", PATH, SECONDS, MOVE?]   (D130, slice 2; the property's `program-fades` says the renderer has it)
+// The program file PATH (a generator, read by fx.c's reader as `pvj-shader load` reads it) is built into the IDLE layer's
+// generator, that layer becomes the front, and the fade begins: the mix, or a wipe or a slide if MOVE names one (the
+// panel's names, MOVE_LIST). Answered when the program is built (at most 3 s, as a load is): "success" once the fade is
+// under way, or why not, and then nothing has changed on the screen except that a fade that was running has ended on
+// its incoming side (D98, the rule for every load: the idle layer is the running fade's outgoing one and cannot be built
+// into while it draws). The outgoing picture, a clip or a generator, plays on while the program builds, and the fade's
+// clock starts at the program's first drawn frame (main.c), as a fade into a clip starts at the clip's first frame.
+// With nothing on the screen (no clip, no generator in the front layer) there is nothing to fade from: the program is
+// built into the front layer, a cut from black, as a clip is (D98). The outgoing clip's sound is taken off at the
+// command (a program has none), and its last frame is kept if it ends in the fade.
+// Lock order: fx_lock, then layer_lock (as pvj-shader's level_sync), so a load and this command never wait on each other.
+// layer_lock is held across the build (the idle layer must not be taken by a crossfade meanwhile); the build is bounded.
+static void fade_to_program(int fd, const mpv_node *id, const mpv_node *cmd)
+{
+    int nargs = cmd->u.list->num;
+    const char *path = arg_str(cmd, 1);
+    const mpv_node *secs = arg(cmd, 2);
+    const char *word = nargs == 4 ? arg_str(cmd, 3) : NULL;
+    const Move *move = NULL;
+    for (int i = 0; word && i < MOVES; i++) if (!strcmp(word, MOVE_LIST[i].name)) move = &MOVE_LIST[i];
+    double s = is_num(secs) ? num(secs) : -1;
+    if (!path || path[0] != '/' || strlen(path) >= 4000 || !(s >= 0 && s <= FADE_MAX_SECONDS) || (nargs == 4 && !move)) {
+        reply(fd, id, "invalid parameter", NULL);
+        return;
+    }
+    FxProg *p = NULL;
+    char err[300] = "";
+    if (fx_read(path, &p, err, sizeof err)) {
+        LOG("pvj-fade-to-program: %s refused: %s", path, err);
+        reply(fd, id, "invalid parameter", NULL);
+        return;
+    }
+    if (fx_prog_kind(p) != FX_GENERATOR) {
+        fx_prog_free(p);
+        reply(fd, id, "invalid parameter", NULL);       // an effect is not a picture
+        return;
+    }
+    pthread_mutex_lock(&fx_lock);
+    pthread_mutex_lock(&layer_lock);
+    end_fade();
+    int out = front_layer(), in = 1 - out;
+    mpv_handle *O = app.layer[out];
+    pthread_mutex_lock(&app.lock);
+    int out_gen = app.gen[out].on;
+    pthread_mutex_unlock(&app.lock);
+    int idle = 0;
+    int nothing = mpv_get_property(O, "idle-active", MPV_FORMAT_FLAG, &idle) >= 0 && idle && !out_gen;
+    int target = nothing ? out : in;                    // the layer whose generator takes the program
+    if (!nothing) wait_for_stop(in);                    // the stop that ended the last fade there has run, as a crossfade waits
+    FxSlot *sl = &app.gen[target];
+    pthread_mutex_lock(&app.lock);
+    fx_prog_free(sl->pending);
+    sl->pending = p;                                    // a clear asked first (end_fade's) stays and is done first (#239)
+    long mine = ++sl->asked;
+    pthread_mutex_unlock(&app.lock);
+    wake_render();
+    pthread_mutex_lock(&app.lock);
+    fx_answered_slot = sl;
+    fx_wait_for = mine;
+    int done = wait_render(fx_answered, 3.0);
+    char answer[sizeof sl->answer];
+    memcpy(answer, sl->answer, sizeof answer);
+    int ended = sl->dropped >= mine;
+    if (!done) {
+        // never built in time: it must not appear later on a layer that is not the front (it would be there at the
+        // next fade). Asked off, as end_fade asks a layer's generator off; a build that is under way is cleared after.
+        fx_prog_free(sl->pending);
+        sl->pending = NULL;
+        sl->pending_clear = 1;
+        sl->asked++;
+    }
+    pthread_mutex_unlock(&app.lock);
+    if (!done || ended || answer[0]) {
+        level_sync(0);
+        pthread_mutex_unlock(&layer_lock);
+        pthread_mutex_unlock(&fx_lock);
+        if (!done) {
+            wake_render();
+            reply(fd, id, "the renderer did not build the program in time", NULL);
+        } else if (ended) {
+            reply(fd, id, "the layer was ended before the load took effect", NULL);
+        } else {
+            reply(fd, id, answer, NULL);                // the GPU's words: nothing changed on the screen
+        }
+        return;
+    }
+    if (nothing) {
+        pthread_mutex_lock(&app.lock);
+        app.program_fades++;
+        app.fades_from_nothing++;
+        app.fade.move = move;                           // `fade-kind` says this cut's kind
+        app.fade.steps = 0;
+        pthread_mutex_unlock(&app.lock);
+        level_sync(0);
+        pthread_mutex_unlock(&layer_lock);
+        pthread_mutex_unlock(&fx_lock);
+        reply(fd, id, "success", NULL);
+        return;
+    }
+    // the outgoing clip keeps its last frame if it ends during the fade, and its sound stops at the command
+    set_str(O, "keep-open", "yes");
+    int ro = set_str(O, "aid", "no");
+    if (ro < 0) LOG("ipc: pvj-fade-to-program: the outgoing clip's sound could not be taken off: %s", mpv_error_string(ro));
+    pthread_mutex_lock(&app.lock);
+    app.fade.phase = FADE_WAITING;
+    app.fade.seconds = s;
+    app.fade.asked = now_s();
+    app.fade.progress = 0.0;
+    app.fade.base_starts = __atomic_load_n(&app.starts[in], __ATOMIC_ACQUIRE);
+    app.fade.move = move;
+    app.fade.steps = 0;
+    app.fade.program = 1;
+    app.fades++;
+    app.program_fades++;
+    __atomic_store_n(&app.front, in, __ATOMIC_RELEASE);
+    pthread_mutex_unlock(&app.lock);
+    level_sync(0);
+    pthread_mutex_unlock(&layer_lock);
+    pthread_mutex_unlock(&fx_lock);
+    wake_render();
+    reply(fd, id, "success", NULL);
+}
+
 // get_property pvj-shaders: one map a slot, source 1's first (slots 0 to 3), then each other source's.
 static void shaders_property(int fd, const mpv_node *id)
 {
@@ -1086,7 +1214,7 @@ static void get_property(int fd, const mpv_node *id, const char *name)
         // 0.40: 63 flips a second measured on a clock of 60). The other layer's idleness comes from its event thread.
         long flips = app.flips, missed = app.missed, drawn = app.drawn, fences = app.fences, freed = app.fences_freed;
         long back = app.back_drawn, fades = app.fades, done = app.fades_done, cut = app.fades_cut;
-        long nothing = app.fades_from_nothing, held = app.sound_held;
+        long nothing = app.fades_from_nothing, held = app.sound_held, pfades = app.program_fades;
         double passes_rate = app.fx_passes_rate;
         int osd = app.overlays != 0 || now_s() < app.text_until;
         int phase = app.fade.phase, front = app.front;
@@ -1111,8 +1239,8 @@ static void get_property(int fd, const mpv_node *id, const char *name)
                                             "fade-seconds", "fades", "fades-done", "fades-cut", "back-drawn", "gl-objects",
                                             "back-idle", "fades-from-nothing", "sound-held", "sources", "shaders", "fx-fps",
                                             "fx-gl-objects", "fx-passes", "fx-passes-per-second", "load", "final-lines",
-                                            "final-switches", "final-why", "moves", "fade-kind", "fade-steps", "layer-generators" };
-        mpv_node vals[41] = { node_str(PVJ_VERSION), node_int(app.in_w), node_int(app.in_h), node_int(app.out_w), node_int(app.out_h),
+                                            "final-switches", "final-why", "moves", "fade-kind", "fade-steps", "layer-generators", "program-fades" };
+        mpv_node vals[42] = { node_str(PVJ_VERSION), node_int(app.in_w), node_int(app.in_h), node_int(app.out_w), node_int(app.out_h),
                               node_dbl(app.out_hz), node_int(flips), node_int(drawn), node_int(missed), node_str(state),
                               { .format = MPV_FORMAT_FLAG }, node_str(app.cfg->hwdec), node_int(fences), node_int(freed),
                               node_int(LAYERS), node_int(front), node_str(PHASES[phase]), node_dbl(progress), node_dbl(seconds),
@@ -1123,12 +1251,12 @@ static void get_property(int fd, const mpv_node *id, const char *name)
                               node_int(__atomic_load_n(&app.fx_passes, __ATOMIC_RELAXED)), node_dbl(passes_rate), node_int(load),
                               node_int(__atomic_load_n(&app.final_lines, __ATOMIC_ACQUIRE)),
                               node_int(__atomic_load_n(&app.final_switches, __ATOMIC_RELAXED)), node_str(final_why),
-                              { .format = MPV_FORMAT_FLAG }, node_str(kind), node_int(steps), { .format = MPV_FORMAT_FLAG } };
+                              { .format = MPV_FORMAT_FLAG }, node_str(kind), node_int(steps), { .format = MPV_FORMAT_FLAG }, node_int(pfades) };
         vals[10].u.flag = osd;
         vals[24].u.flag = back_idle;
         vals[37].u.flag = 1;                // wipes and slides are drawn here (D111): the panel asks this once per process
         vals[40].u.flag = 1;                // source 1's layers each hold a generator (D130): asked once per process too
-        mpv_node_list list = { .num = 41, .values = vals, .keys = (char **)keys };
+        mpv_node_list list = { .num = 42, .values = vals, .keys = (char **)keys };
         d.format = MPV_FORMAT_NODE_MAP;
         d.u.list = &list;
         reply(fd, id, "success", &d);
@@ -1293,6 +1421,8 @@ static void handle(int fd, const char *line, size_t len)
         source_command(fd, id, cmd);
     } else if (!strcmp(name, "pvj-crossfade") && nargs >= 3 && nargs <= 5) {
         crossfade(fd, id, cmd);
+    } else if (!strcmp(name, "pvj-fade-to-program") && nargs >= 3 && nargs <= 4) {
+        fade_to_program(fd, id, cmd);
     } else if ((!strcmp(name, "stop") || !strcmp(name, "playlist-shuffle")) && nargs == 1) {
         forward_front(fd, id, cmd, !strcmp(name, "stop"));
     } else if ((!strcmp(name, "playlist-next") || !strcmp(name, "playlist-prev")) && nargs <= 2) {

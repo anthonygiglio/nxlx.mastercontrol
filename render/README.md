@@ -59,6 +59,14 @@ fade ends (or is cut by a load, a stop or another crossfade), when the render th
 stay after the mix. `layer-generators` in the `pvj-render` property says a renderer does this. With no generator in
 either layer nothing differs from 0.8.0, and the panel does not use it yet.
 
+Shader transitions, slice 2 (D130, version 0.10.0): `["pvj-fade-to-program", PATH, SECONDS, MOVE?]` builds the generator program
+file PATH into the idle layer and fades to it, from a clip or from another program (the mix, or a wipe or slide named as for
+`pvj-crossfade`). It is answered when the program is built (at most 3 s) or refused with the GPU's words; the old picture
+plays on until then, the fade's clock starts at the new program's first drawn frame, and a refusal leaves the screen as it
+was. A `pvj-crossfade` out of a layer that holds a generator is a fade even when that layer's clip is idle. `program-fades`
+in the `pvj-render` property counts the fades into a program asked and says a renderer has the command. The panel does not use
+it yet.
+
 **Licence:** GPL-3.0-or-later (this folder only; `LICENSE`). It links libmpv, which is GPLv2 or later as Debian
 builds it. The rest of nxlx.mastercontrol is Apache-2.0 and only starts this program and talks to it over a socket.
 
