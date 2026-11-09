@@ -52,6 +52,8 @@ REFUSED = {
     ("POST", "/api/output"), ("POST", "/api/output/av"),
     # the NDI discovery server on this box (D85): a listener on the network is the owner's, in the room
     ("GET", "/api/ndi/discovery"), ("POST", "/api/ndi/discovery"),
+    # the other nodes on the network and the switch for announcing this one (D127): network things stay in the room
+    ("GET", "/api/nodes"), ("POST", "/api/nodes/discovery"),
 }
 # and one module's switch, which the table of routes holds only as /api/modules/*
 REFUSED_MODULES = {("POST", "/api/modules/ndi-discovery")}
