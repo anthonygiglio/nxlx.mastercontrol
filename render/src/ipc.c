@@ -719,7 +719,7 @@ static void sources_property(int fd, const mpv_node *id)
 // ["pvj-graphic", "load", N, PATH, W, H, LINES]  a graphic's picture (D129, gfx.c): PATH is an absolute file of W x H pixels
 //                                    of premultiplied B G R A (the rasteriser's), LINES the lines of text in it (1 to 6)
 // ["pvj-graphic", "set", N, {x, y, motion, seconds, out, speed, loop, opacity}]   place and motion; all or nothing
-// ["pvj-graphic", "show" | "hide" | "replay" | "clear", N]
+// ["pvj-graphic", "show" | "hide" | "replay" | "clear", N]   ("show" may take a fourth word, "still": the fade or typing is not played)
 // N is the slot, 1 to 8. get_property pvj-graphics says what each slot holds and how often it was drawn. Every handler
 // here takes app.lock alone and briefly (gfx.c), so any number of clients may speak at once and none waits on another.
 static int gfx_motion_of(const char *s)
@@ -777,8 +777,9 @@ static void graphic_command(int fd, const mpv_node *id, const mpv_node *cmd)
         if (!ok) { reply(fd, id, "invalid parameter", NULL); return; }
         gfx_set(slot, &g);
         reply(fd, id, "success", NULL);
-    } else if (nargs == 3 && (!strcmp(what, "show") || !strcmp(what, "hide") || !strcmp(what, "replay") || !strcmp(what, "clear"))) {
-        if (!strcmp(what, "show")) gfx_show(slot);
+    } else if ((nargs == 3 || (nargs == 4 && !strcmp(what, "show") && arg_str(cmd, 3) && !strcmp(arg_str(cmd, 3), "still")))
+               && (!strcmp(what, "show") || !strcmp(what, "hide") || !strcmp(what, "replay") || !strcmp(what, "clear"))) {
+        if (!strcmp(what, "show")) gfx_show(slot, nargs == 4);
         else if (!strcmp(what, "hide")) gfx_hide(slot);
         else if (!strcmp(what, "replay")) gfx_replay(slot);
         else gfx_clear(slot);
@@ -800,7 +801,7 @@ static void graphics_property(int fd, const mpv_node *id)
     pthread_mutex_lock(&app.lock);
     for (int i = 0; i < GFX_SLOTS; i++) {
         const GfxSlot *s = &app.gfx[i];
-        bytes += (long)s->want_w * s->want_h * 4;
+        bytes += gfx_slot_bytes(s);
         mpv_node *v = vals[i];
         v[0] = node_int(i + 1);
         v[1] = (mpv_node){ .format = MPV_FORMAT_FLAG };

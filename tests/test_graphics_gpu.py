@@ -262,13 +262,63 @@ class RefusalTest(Base):
         with self.assertRaises(PlayerError):
             self.g("load", 1, self.make(4096, 4096), 4096, 4096, 1)   # 64 MB by itself
         self.assertEqual(self.slots()["bytes"], 48 * 1024 * 1024, "a refused load changed nothing")
-        self.g("load", 1, self.make(100, 100), 100, 100, 1)           # a smaller picture in slot 1 makes room
+        self.g("load", 1, self.make(100, 100), 100, 100, 1)           # a smaller picture in slot 1 makes room, once it has replaced the big one
+        self.assertTrue(self.r.wait(lambda: self.slot(1)["width"] == 100, 20), self.r.stderr())
         self.g("load", 3, self.make(64, 64), 64, 64, 1)
         self.assertTrue(self.r.wait(lambda: all(self.slot(n)["loaded"] for n in (1, 2, 3)), 20), self.r.stderr())
         self.assertEqual(self.slots()["bytes"], 100 * 100 * 4 + 4096 * 1024 * 4 + 64 * 64 * 4)
         for n in (1, 2, 3):
             self.g("clear", n)
         self.assertTrue(self.r.wait(lambda: self.slots()["gl-objects"] == 0 and self.slots()["bytes"] == 0, 10))
+
+
+class ReviewTest(Base):
+    def test_the_budget_is_looked_at_before_the_file_is_read(self):
+        self.g("load", 1, self.make(4096, 2048), 4096, 2048, 1)
+        self.g("load", 2, self.make(4096, 1024), 4096, 1024, 1)
+        with self.assertRaises(PlayerError) as e:
+            self.g("load", 3, "/no/such/file.bgra", 64, 64, 1)       # not read at all: the memory is what is said
+        self.assertIn("memory", str(e.exception))
+
+    def test_a_slot_counts_the_larger_of_what_it_holds_and_what_waits(self):
+        self.g("load", 1, self.make(4096, 2048), 4096, 2048, 1)
+        self.loaded(1, 20)
+        self.g("load", 1, self.make(10, 10), 10, 10, 1)
+        self.assertTrue(self.r.wait(lambda: self.slot(1)["width"] == 10, 10))
+        self.assertEqual(self.slots()["bytes"], 400, "after the swap only the new picture")
+        self.g("clear", 1)
+        self.assertTrue(self.r.wait(lambda: self.slots()["bytes"] == 0 and self.slots()["gl-objects"] == 0, 10))
+
+    def test_a_shown_still_is_all_there_and_a_show_during_a_fade_out_starts_where_it_is(self):
+        self.put(1, 100, 60, 50, 50, WHITE_BGRA, motion="fade", seconds=4.0, out=6.0)
+        self.g("show", 1, "still")
+        self.assertTrue(self.r.wait(lambda: self.slot(1)["alpha"] == 1.0, 5), "no fade in played")
+        self.g("hide", 1)
+        time.sleep(1.5)
+        self.assertGreater(self.slot(1)["alpha"], 0.2)
+        self.g("show", 1)
+        time.sleep(0.2)
+        a = self.slot(1)["alpha"]
+        self.assertGreater(a, 0.5, "it goes up from where the fade out had got to, not from nothing: %s" % a)
+        self.assertLess(a, 1.0)
+        with self.assertRaises(PlayerError):
+            self.g("show", 1, "slowly")
+
+    def test_nothing_loaded_and_nothing_waiting_costs_no_draws_and_a_later_load_still_draws(self):
+        time.sleep(0.3)
+        self.assertEqual(self.slots()["draws"], 0)
+        self.put(1, 40, 40, 10, 10)
+        self.g("show", 1)
+        self.drawn(1)
+        self.g("clear", 1)
+        self.assertTrue(self.r.wait(lambda: not self.slot(1)["loaded"], 5))
+        d = self.slots()["draws"]
+        time.sleep(0.3)
+        self.assertEqual(self.slots()["draws"], d)
+        self.assertEqual(self.r.pixel(20, 20), (0, 0, 0))
+        self.put(1, 40, 40, 10, 10)
+        self.g("show", 1)
+        self.assertTrue(self.r.wait(lambda: self.r.pixel(20, 20) == (255, 0, 0), 5))
 
 
 class SmallTextureTest(Base):
@@ -509,10 +559,14 @@ class PaceTest(Base):
         self.put(4, 100, 40, 100, 100, WHITE_BGRA, lines=2, motion="typewriter", seconds=1.5)
         for n in (1, 2, 3, 4):
             self.g("show", n)
+        before = self.r("get_property", "pvj-render")["missed-vblanks"]
         flips = self.rate(3.0)
         self.assertGreater(flips, 0.85 * 60, "flips a second with four graphics: %.1f\n%s" % (flips, self.r.stderr()))
         self.assertLessEqual(flips, 62)
-        self.assertEqual(self.r("get_property", "pvj-render")["missed-vblanks"] < 30, True)
+        # (missed vblanks are judged in the window and against the flips: a slow runner may miss some, but flips above 85
+        # percent of 60 are already asserted, and a stage that cost the frame its time would show in both)
+        missed = self.r("get_property", "pvj-render")["missed-vblanks"] - before
+        self.assertLess(missed, 0.25 * flips * 3.0, "vblanks missed in the 3 s: %d" % missed)
 
 
 class ManyClientsTest(Base):
@@ -659,15 +713,17 @@ class PlayerSideTest(Base):
                 return PlayerError("player is not running")
             return pid[0] if c[1] == "pid" else {"graphics": 8, "graphics-side": 4096}
         p, calls = self.fake(answers)
-        self.assertIsNone(p.graphics_stage())
-        self.assertIsNone(p.graphics_stage())
+        for _ in range(2):
+            with self.assertRaises(PlayerError):
+                p.graphics_stage()                  # no answer is not "no stage"
         self.assertEqual(len(calls), 2, "asked again, not remembered as no")
         down[0] = False
         self.assertEqual(p.graphics_stage(), {"slots": 8, "side": 4096})
         pid[0] = 8
         p._note_pid(8)
         down[0] = True
-        self.assertIsNone(p.graphics_stage(), "another mpv: what the last said does not hold")
+        with self.assertRaises(PlayerError):
+            p.graphics_stage()                      # another mpv: what the last said does not hold
 
 
 if __name__ == "__main__":

@@ -630,7 +630,8 @@ class Player:
         """{"slots": n, "side": s} if the player that answers now is a pvj-render with the graphics stage (D129, slice 3:
         its `graphics` and `graphics-side`, there from version 0.11.0), else None: classic mpv answers "property not
         found", and a renderer from before answers without the keys. Asked once per player process, as `crossfades`; a
-        player that does not answer is asked again next time. With `ask` False, only what is known already. The text
+        player that does not answer raises PlayerError (that is not "no stage") and is asked again next time. With `ask`
+        False, only what is known already. The text
         and logos are drawn by the renderer's GPU where this says yes, and by mpv's overlays (still, with stepped fades
         and typing) where it says None."""
         known, pid = self._stage_seen, self._seen_pid
@@ -644,8 +645,9 @@ class Player:
             state = self.ipc.request("get_property", "pvj-render")
         except PlayerError as e:
             if str(e).startswith("mpv: ") and pid is not None:
-                self._stage_seen = (pid, None)
-            return None
+                self._stage_seen = (pid, None)      # mpv's own refusal: classic, and it says so
+                return None
+            raise                                   # no reply: not "no stage" (the caller keeps what it knew)
         n = state.get("graphics") if isinstance(state, dict) else None
         side = state.get("graphics-side") if isinstance(state, dict) else None
         ok = all(isinstance(v, int) and not isinstance(v, bool) for v in (n, side)) and n >= 1 and side >= 64

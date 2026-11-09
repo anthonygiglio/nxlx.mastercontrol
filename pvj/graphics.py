@@ -616,6 +616,8 @@ class Graphics:
         self._failed = {}           # id -> the key of a build that failed: not tried again until something changes
         self._held = False          # a pairing code or the PIN is on the screen: the graphics are held back (design 3.1)
         self._mode_drawn = None     # "gpu" or "overlay": what the screen was last drawn with
+        self._stage_last = None     # what the player last said of its graphics stage (a lost answer keeps it)
+        self._hold_keep = set()     # ids that were on the screen when a code came up: they come back still
         self._mode_now = "overlay"  # what the worker found at the top of its last pass
         self._gpu = {}              # slot -> {"gid", "token", "cfg", "on"}: what the renderer's stage holds
         self._fading = {}           # slot -> (gid, due): a fade out the renderer is running; the picture is cleared when it is done
@@ -650,12 +652,16 @@ class Graphics:
 
     def _stage(self):
         """{"slots", "side"} when the player has the renderer's graphics stage, else None (classic mpv, a renderer before
-        0.11.0, or a player that does not answer)."""
+        0.11.0). A player that does not answer gives what it last said."""
         ask = getattr(self._player(), "graphics_stage", None)
-        try:
-            return ask() if ask is not None else None
-        except Exception:
+        if ask is None:
             return None
+        try:
+            stage = ask()
+        except Exception:
+            return self._stage_last         # no reply (a busy or restarting player) is not a fall back: what it said last stands
+        self._stage_last = stage
+        return stage
 
     def mode(self):
         """"gpu" where the renderer's stage draws the graphics, "overlay" where mpv's overlays do."""
@@ -1022,7 +1028,7 @@ class Graphics:
             for _, it in wanted:
                 self._status[it["id"]] = {"state": "held", "message": "Held back while a pairing code is on the screen.", "missing": 0}
             finished()
-            self._draw(items, [])
+            self._draw(items, [], held=True)
             return None
         size = self._screen()
         self._need_size = bool(wanted) and size is None
@@ -1177,6 +1183,7 @@ class Graphics:
         """(under _apply) Off the screen at once: its overlay or its slot, its stepping, its replay."""
         self._tasks.pop(gid, None)
         self._once.discard(gid)
+        self._hold_keep.discard(gid)
         self._replay.discard(gid)
         for oid, s in list(self._shown.items()):
             if s[0] == gid:
@@ -1224,14 +1231,18 @@ class Graphics:
         return oid is not None and self._start_task(gid, "out", oid, b, m["out"])
 
     # -- drawing: what the player is told ------------------------------------------------------------------------------
-    def _draw(self, items, wanted):
+    def _draw(self, items, wanted, held=False):
         """Tell the player what to show: each wanted graphic whose picture is ready, nothing at the other places. Where the
         player has the renderer's stage that is a slot each; on classic mpv an overlay each."""
         mode = self._mode_now
         with self._apply:
+            if held:
+                self._hold_keep |= self._once       # what was on the screen comes back as it was: no motion plays again
             if mode != self._mode_drawn:
                 self._switch(mode)
             not_drawn = self._draw_gpu(wanted) if mode == "gpu" else self._draw_overlay(wanted)
+            if not held:
+                self._hold_keep.clear()
             self._cleanup(keep={b["path"] for b in self._built.values()})
         return not_drawn
 
@@ -1246,6 +1257,8 @@ class Graphics:
                     self._player().overlay_remove(oid)
                 except Exception:
                     pass
+        for n in list(self._gpu):
+            self._gpu_clear(n)              # (best effort: if the renderer is still there it must not go on drawing under the overlays)
         self._shown.clear()
         self._drawn.clear()
         self._tasks.clear()
@@ -1296,7 +1309,10 @@ class Graphics:
                     st["cfg"] = cfg
                 self._fading.pop(n, None)       # shown again while it faded out: it fades in from nothing (the renderer's show)
                 if not st["on"]:
-                    player.graphic("show", n)
+                    if gid in self._hold_keep and cfg["motion"] in ("fade", "typewriter"):
+                        player.graphic("show", n, "still")      # back from a hold: it is simply there
+                    else:
+                        player.graphic("show", n)
                     st["on"] = True
                 elif gid in self._replay:
                     player.graphic("replay", n)
@@ -1350,7 +1366,7 @@ class Graphics:
             task = self._tasks.pop(gid, None)
             level0 = task["level"] if task is not None and task["kind"] == "out" else 0.0
             kind = motion_for(it, "overlay")
-            new = gid not in self._once or again or level0 > 0.0
+            new = (gid not in self._once and gid not in self._hold_keep) or again or level0 > 0.0
             started = False
             if new and kind in ("fade", "typewriter"):
                 started = self._start_task(gid, "in" if kind == "fade" else "type", oid, b, it["motion"]["seconds"], level0)

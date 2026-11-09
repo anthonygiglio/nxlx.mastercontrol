@@ -300,7 +300,7 @@ typedef struct { unsigned mask; int motion, loop; double x, y, opacity, seconds,
 #define GS_OUT 64u
 #define GS_SPEED 128u
 void gfx_set(int slot, const GfxSet *s);
-void gfx_show(int slot);            // on; a graphic that is on already is not restarted
+void gfx_show(int slot, int still); // on; a graphic that is on already is not restarted. still: a fade or typing is not played (it is all there)
 void gfx_replay(int slot);          // on, and the motion starts again
 void gfx_hide(int slot);
 void gfx_clear(int slot);
@@ -310,6 +310,7 @@ void gfx_frame(double now);         // this frame's look at every slot
 void gfx_draw(void);                // over the final pass's picture, below the text layer
 void gfx_free_all(void);
 extern long gfx_draws_total, gfx_uploads_total, gfx_gl_objects;      // atomics
+long gfx_slot_bytes(const GfxSlot *s);     // under app.lock: what a slot holds or is about to (the larger of the texture and the newest picture)
 extern const char *const GFX_MOTIONS[GM_N];
 void gl_quad(void);                 // the unit quad (main.c)
 

@@ -73,7 +73,7 @@ the text layer, which puts the graphics in screenshots and captures too). A grap
 list (a later slot over an earlier). Commands: `["pvj-graphic", "load", N, PATH, W, H, LINES]` (PATH: an absolute regular file,
 never a link, of W x H premultiplied B G R A, at most the GPU's texture size, 4096 at most; LINES: the lines of text in it, for
 the typewriter), `["pvj-graphic", "set", N, {x, y, motion, seconds, out, speed, loop, opacity}]` (all or nothing; motion is `none`,
-`fade`, `typewriter`, `scroll` or `crawl`), `show`, `hide`, `replay`, `clear` (`["pvj-graphic", WHAT, N]`). Properties: `pvj-render`
+`fade`, `typewriter`, `scroll` or `crawl`), `show`, `hide`, `replay`, `clear` (`["pvj-graphic", WHAT, N]`; `show` may take a fourth word, `still`, and then a fade or typing is not played; a show during a fade out starts at the level the fade out had reached). Properties: `pvj-render`
 gains `graphics` (8) and `graphics-side` (the texture limit); `pvj-graphics` says what each slot holds (`loaded`, `width`,
 `height`, `on`, `motion`, `alpha`, `draws`, `loads`, `waiting`), `bytes` against `bytes-max` (48 MB for all the pictures, loaded
 and waiting), `draws`, `uploads` and `gl-objects`. A picture is read and its lines' ink measured by the client's thread, and

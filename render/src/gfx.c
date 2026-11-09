@@ -135,12 +135,21 @@ static void measure(const uint8_t *px, int w, int h, int lines, float ext[GFX_LI
     }
 }
 
+long gfx_slot_bytes(const GfxSlot *s)
+{
+    long want = (long)s->want_w * s->want_h * 4, held = s->loaded ? (long)s->w * s->h * 4 : 0;
+    return want > held ? want : held;       // while a new picture waits the old texture is still on the GPU
+}
+
 static long gfx_bytes(void)       // under app.lock
 {
     long total = 0;
-    for (int i = 0; i < GFX_SLOTS; i++) total += (long)app.gfx[i].want_w * app.gfx[i].want_h * 4;
+    for (int i = 0; i < GFX_SLOTS; i++) total += gfx_slot_bytes(&app.gfx[i]);
     return total;
 }
+
+static int pending_flag;                // atomics: something is waiting for the render thread (a picture or a clear)
+static int loaded_count;                // atomics: slots with a texture, so a frame with none does no work
 
 // Read `path` (a regular file, never through a link) as w x h of B G R A. Answers NULL, or the words why not. The file is read
 // and measured before the lock is taken; under it only the slot's pointer changes.
@@ -151,6 +160,11 @@ const char *gfx_load(int slot, const char *path, int w, int h, int lines)
         return "this picture is larger than this node can hold (its limit is on the renderer's graphics property)";
     size_t bytes = (size_t)w * (size_t)h * 4;
     if (bytes > GFX_BYTES_MAX) return "this picture needs more memory than all the graphics may use together";
+    // a cheap look at the budget before any memory is taken or file read; asked again below, after the read
+    pthread_mutex_lock(&app.lock);
+    long room = (long)GFX_BYTES_MAX - (gfx_bytes() - gfx_slot_bytes(&app.gfx[slot]));
+    pthread_mutex_unlock(&app.lock);
+    if ((long)bytes > room) return "all the graphics together would use more memory than this node allows";
     int fd = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
     if (fd < 0) return "invalid parameter";
     struct stat sb;
@@ -170,7 +184,7 @@ const char *gfx_load(int slot, const char *path, int w, int h, int lines)
     measure(px, w, h, lines, ext);
     pthread_mutex_lock(&app.lock);
     GfxSlot *s = &app.gfx[slot];
-    long others = gfx_bytes() - (long)s->want_w * s->want_h * 4;
+    long others = gfx_bytes() - gfx_slot_bytes(s);
     if (others + (long)bytes > (long)GFX_BYTES_MAX) {
         pthread_mutex_unlock(&app.lock);
         free(px);
@@ -185,10 +199,13 @@ const char *gfx_load(int slot, const char *path, int w, int h, int lines)
     s->want_w = w;
     s->want_h = h;
     s->loads++;
+    __atomic_store_n(&pending_flag, 1, __ATOMIC_RELEASE);
     pthread_mutex_unlock(&app.lock);
     wake_render();
     return NULL;
 }
+
+static double unit_(double v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
 
 void gfx_set(int slot, const GfxSet *g)
 {
@@ -207,14 +224,20 @@ void gfx_set(int slot, const GfxSet *g)
     wake_render();
 }
 
-void gfx_show(int slot)
+void gfx_show(int slot, int still)
 {
     if (slot < 0 || slot >= GFX_SLOTS) return;
     pthread_mutex_lock(&app.lock);
     GfxSlot *s = &app.gfx[slot];
     if (!s->on) {
+        double now = now_s(), level = 0.0;
+        if (s->motion == GM_FADE && s->out > 0.0f && s->hidden_at > 0.0 && s->seconds > 0.0f) {
+            // shown again while it fades out: the fade in begins at the level the fade out had reached
+            double at_hide = unit_((s->hidden_at - s->shown_at) / s->seconds), k = 1.0 - (now - s->hidden_at) / s->out;
+            level = k > 0.0 ? at_hide * k : 0.0;
+        }
         s->on = 1;
-        s->shown_at = now_s();
+        s->shown_at = still ? now - 2.0 * GFX_SECONDS_MAX : now - level * s->seconds;   // (still: long enough ago that a fade or typing is done)
         s->hidden_at = 0;
     }
     pthread_mutex_unlock(&app.lock);
@@ -255,6 +278,7 @@ void gfx_clear(int slot)
     s->pending = NULL;
     s->want_w = s->want_h = 0;
     s->clear = 1;
+    __atomic_store_n(&pending_flag, 1, __ATOMIC_RELEASE);
     defaults(s);
     pthread_mutex_unlock(&app.lock);
     wake_render();
@@ -276,6 +300,7 @@ static void free_texture(int i)
 
 void gfx_take(void)
 {
+    if (!__atomic_load_n(&pending_flag, __ATOMIC_ACQUIRE)) return;      // the usual frame: nothing waits, no lock taken
     int uploads = 0;
     for (int i = 0; i < GFX_SLOTS; i++) {
         uint8_t *px = NULL;
@@ -298,7 +323,9 @@ void gfx_take(void)
         if (do_clear) {
             free_texture(i);
             pthread_mutex_lock(&app.lock);
+            if (s->loaded) __atomic_sub_fetch(&loaded_count, 1, __ATOMIC_RELAXED);
             s->loaded = 0;
+            s->alpha = 0.0f;
             pthread_mutex_unlock(&app.lock);
         }
         if (!px) continue;
@@ -325,8 +352,11 @@ void gfx_take(void)
         pthread_mutex_lock(&app.lock);
         if (bad) {
             LOG("graphics: the GPU did not take a %dx%d picture", w, h);
+            if (s->loaded) __atomic_sub_fetch(&loaded_count, 1, __ATOMIC_RELAXED);
             s->loaded = 0;
+            if (!s->pending) s->want_w = s->want_h = 0;     // nothing newer waits: the refused picture holds no memory
         } else {
+            if (!s->loaded) __atomic_add_fetch(&loaded_count, 1, __ATOMIC_RELAXED);
             s->loaded = 1;
             s->w = w;
             s->h = h;
@@ -337,6 +367,11 @@ void gfx_take(void)
         pthread_mutex_unlock(&app.lock);
         if (bad) free_texture(i);
     }
+    int more = 0;
+    pthread_mutex_lock(&app.lock);
+    for (int i = 0; i < GFX_SLOTS; i++) more |= app.gfx[i].pending != NULL || app.gfx[i].clear;
+    __atomic_store_n(&pending_flag, more, __ATOMIC_RELEASE);        // (under the lock a load sets it under: none is lost)
+    pthread_mutex_unlock(&app.lock);
 }
 
 static double unit(double v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
@@ -346,6 +381,7 @@ static double unit(double v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
 void gfx_frame(double now)
 {
     frame_any = 0;
+    if (!__atomic_load_n(&loaded_count, __ATOMIC_ACQUIRE)) return;      // nothing is loaded: nothing to look at
     const float ow = (float)app.out_w, oh = (float)app.out_h;
     pthread_mutex_lock(&app.lock);
     for (int i = 0; i < GFX_SLOTS; i++) {

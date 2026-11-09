@@ -221,6 +221,102 @@ class GpuPathTest(MotionBase):
         self.assertEqual([s for s in self.sent if s[0] == "load"], [])
 
 
+class LostAnswerTest(MotionBase):
+    """A player that does not answer is not a node that fell back (review of the first version)."""
+
+    def test_a_lost_answer_keeps_the_mode_and_nothing_is_drawn_twice_or_played_again(self):
+        gid = self.add(on=True)
+        self.motion(gid, kind="fade", seconds=2)
+        n_sent, n_parts = len(self.sent), len(self.parts())
+        answers = [True]
+
+        def stage(ask=True):
+            if not answers[0]:
+                raise PlayerError("no reply from mpv")
+            return self.stage
+        self.api.player.graphics_stage = stage
+        answers[0] = False
+        self.gfx.watch()
+        self.gfx.apply()                                    # a pass of the worker too
+        self.assertEqual(self.gfx.state()["mode"], "gpu", "the last word stands")
+        self.assertEqual(len(self.parts()), n_parts, "no overlay is drawn over the GPU's picture")
+        self.assertNotIn("clear", [s[0] for s in self.sent[n_sent:]])
+        answers[0] = True
+        self.gfx.watch()
+        new = [s[:2] for s in self.sent[n_sent:]]
+        self.assertNotIn(("show", 1), new, "and nothing starts again when it answers")
+        self.assertNotIn(("replay", 1), new)
+        self.assertEqual(len(self.parts()), n_parts)
+
+    def test_a_real_fall_back_clears_the_slots_it_leaves(self):
+        self.add(on=True)
+        self.add(text="TWO", on=True)
+        n = len(self.sent)
+        self.stage = None
+        self.gfx.watch()
+        cleared = sorted(s[1] for s in self.sent[n:] if s[0] == "clear")
+        self.assertEqual(cleared, [1, 2], "the renderer, if it is still there, stops drawing them")
+        self.assertEqual(len(self.parts()), 2)
+
+
+class HoldReturnTest(MotionBase):
+    """Back from a PIN or pairing code a graphic is simply there: its fade or typing does not play again."""
+
+    def hold(self, up):
+        self.api.access_on_screen = lambda: up
+        self.gfx.watch()
+
+    def test_gpu_a_graphic_comes_back_still_and_replay_still_plays_it(self):
+        gid = self.add(on=True)
+        self.motion(gid, kind="fade", seconds=2)
+        self.hold(True)
+        n = len(self.sent)
+        self.hold(False)
+        shows = [s for s in self.sent[n:] if s[0] == "show"]
+        self.assertEqual(shows, [("show", 1, "still")])
+        n = len(self.sent)
+        self.assertEqual(self.post({"id": gid, "replay": True})[0], 200)
+        self.assertEqual([s[:2] for s in self.sent[n:]], [("replay", 1)])
+
+    def test_gpu_a_graphic_shown_while_the_code_was_up_plays_its_entrance(self):
+        gid = self.add()
+        self.motion(gid, kind="fade", seconds=2)
+        self.hold(True)
+        self.post({"id": gid, "on": True})
+        n = len(self.sent)
+        self.hold(False)
+        self.assertEqual([s for s in self.sent[n:] if s[0] == "show"], [("show", 1)])
+
+    def test_gpu_a_scroll_is_not_made_still(self):
+        gid = self.add(on=True)
+        self.motion(gid, kind="scroll")
+        self.hold(True)
+        n = len(self.sent)
+        self.hold(False)
+        self.assertEqual([s for s in self.sent[n:] if s[0] == "show"], [("show", 1)], "a motion that is the whole point goes on")
+
+
+class HoldReturnOverlayTest(MotionBase):
+    GPU = False
+
+    def test_classic_a_graphic_comes_back_in_one_piece_with_no_steps(self):
+        gid = self.add()
+        self.motion(gid, kind="typewriter", seconds=3)
+        self.post({"id": gid, "on": True})
+        self.advance(4.0)
+        self.assertEqual(self.gfx._tasks, {})
+        self.api.access_on_screen = lambda: True
+        self.gfx.watch()
+        self.api.access_on_screen = lambda: False
+        n = len(self.parts())
+        self.gfx.watch()
+        self.assertEqual(len(self.parts()), n + 1)
+        self.assertEqual(self.gfx._tasks, {}, "no typing again")
+        self.assertTrue(self.parts()[-1][2].endswith(".bgra"))
+        with open(self.parts()[-1][2], "rb") as f:
+            self.assertEqual(f.read(4)[3], 255)
+
+
 class TickerTest(MotionBase):
     def test_a_crawl_is_one_wide_line_that_may_not_be_made_smaller(self):
         gid = self.add(text="ONE\nTWO\nTHREE", on=True)
@@ -272,7 +368,9 @@ class FallbackTest(MotionBase):
         self.motion(gid, kind="fade", seconds=2, out=1)
         self.assertEqual(self.parts(), [])
         self.stage = None                       # the renderer went; classic mpv answered
+        n_sent = len(self.sent)
         self.assertTrue(self.gfx.watch(), "the tick notices")
+        self.assertIn(("clear", 1), [s[:2] for s in self.sent[n_sent:]], "and leaves nothing of its own on the GPU")
         parts = self.parts()
         self.assertEqual(len(parts), 1, "drawn through the overlay")
         self.assertEqual(parts[0][1], 20)
