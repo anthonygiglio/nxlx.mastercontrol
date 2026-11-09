@@ -642,8 +642,80 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.waitForFunction(() => document.getElementById('graphic-1-text').value === 'THANK YOU, SASKATOON', null, { timeout: 8000 });
       assert.strictEqual((await get('/api/graphics')).items[0].text.value, 'THANK YOU, SASKATOON', 'a saved line goes to the screen with one tap');
       // the words for what does not exist yet
-      assert(/come in later releases/.test(await page.textContent('#graphic-1-settings')), 'motion, keys and effects are said to come later, not offered');
-      assert.strictEqual(await page.locator('#graphic-1-settings :is([id*="motion"], [id*="chroma"], [id*="luma"])').count(), 0, 'and there is no control for them');
+      assert(/Keys and effects, and showing it over or as one source, come in later releases/.test(await page.textContent('#graphic-1-settings')), 'keys and effects are said to come later, not offered');
+      assert.strictEqual(await page.locator('#graphic-1-settings :is([id*="chroma"], [id*="luma"])').count(), 0, 'and there is no control for them');
+      // motion (slice 3). The harness's player is classic mpv: None, Fade and Typewriter (stepped), Scroll and Crawl greyed out with the reason.
+      assert.strictEqual(await page.locator('#graphic-1-motion button').count(), 5, 'five motions are listed');
+      for (const k of ['none', 'fade', 'typewriter']) assert(await page.isEnabled('#graphic-1-motion-' + k), k + ' is offered on a node without the New renderer');
+      for (const k of ['scroll', 'crawl']) {
+        assert(await page.isDisabled('#graphic-1-motion-' + k), k + ' is greyed out');
+        assert.strictEqual(await page.getAttribute('#graphic-1-motion-' + k, 'title'), 'Needs the New renderer.');
+      }
+      assert.strictEqual(await page.getAttribute('#graphic-1-motion-none', 'aria-pressed'), 'true');
+      assert.strictEqual(await page.textContent('#graphic-1-motionnote'), 'This node draws graphics without the New renderer: only None, Fade and Typewriter, with steps.');
+      assert(await page.isDisabled('#graphic-1-replay'), 'with no motion there is nothing to replay');
+      const motionPosts = [];
+      page.on('request', (r) => { if (r.method() === 'POST' && r.url().endsWith('/api/graphics')) motionPosts.push(JSON.parse(r.postData() || '{}')); });
+      await page.click('#graphic-1-motion-fade');
+      await page.waitForSelector('#graphic-1-fadein');
+      assert.strictEqual(await page.getAttribute('#graphic-1-motion-fade', 'aria-pressed'), 'true');
+      assert.strictEqual((await get('/api/graphics')).items[0].motion.kind, 'fade');
+      assert(/fades in when it is shown/.test(await page.textContent('#graphic-1-motionhint')), 'what the motion does is said');
+      assert.strictEqual(await page.locator('#graphic-1-speed, #graphic-1-loop').count(), 0, 'a fade has no speed and no loop');
+      const moveSlider = (id, v) => page.evaluate(([i, x]) => { const r = document.getElementById(i); r.value = String(x); r.dispatchEvent(new Event('input', { bubbles: true })); r.dispatchEvent(new Event('change', { bubbles: true })); return r.value; }, [id, v]);
+      await moveSlider('graphic-1-fadein', 2.5);
+      await moveSlider('graphic-1-fadeout', 1.5);
+      await page.waitForFunction(async () => { const m = (await fetch('/api/graphics').then((r) => r.json())).items[0].motion; return m.seconds === 2.5 && m.out === 1.5; }, null, { timeout: 8000 });
+      assert.strictEqual(await page.textContent('label[for="graphic-1-fadein"] .k'), '2.5 s', 'the time is said in seconds');
+      await page.waitForFunction(() => !document.getElementById('graphic-1-replay').disabled, null, { timeout: 8000 });
+      motionPosts.length = 0;
+      await page.click('#graphic-1-replay');
+      await page.waitForFunction(() => true);
+      assert.deepStrictEqual(motionPosts.map((b) => Object.keys(b).sort().join()), ['id,replay'], 'Replay sends one replay of that graphic');
+      assert.strictEqual(motionPosts[0].replay, true);
+      assert.strictEqual(await post('/api/graphics', { id: (await get('/api/graphics')).items[0].id, set: { motion: { kind: 'crawl' } } }), 400, 'and the node refuses a crawl in words');
+      await page.click('#graphic-1-motion-typewriter');
+      await page.waitForSelector('#graphic-1-typetime');
+      assert.strictEqual(await page.locator('#graphic-1-fadein, #graphic-1-fadeout').count(), 0, 'the fade times go with the fade');
+      await moveSlider('graphic-1-typetime', 4);
+      await page.waitForFunction(async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].motion.seconds === 4, null, { timeout: 8000 });
+      // the same screen on a node with the New renderer's stage (the harness switches on the file): all five, speed and loop
+      const stageFile = path.join(path.dirname(info.midi_dir), 'gpu-stage');
+      require('fs').writeFileSync(stageFile, '');
+      try {
+        await go(page, 'play/pads');
+        await go(page, 'play/graphics');
+        await page.waitForSelector('#graphic-1-motion');
+        for (const k of ['none', 'fade', 'typewriter', 'scroll', 'crawl']) assert(await page.isEnabled('#graphic-1-motion-' + k), k + ' is offered on a node with the New renderer');
+        assert.strictEqual(await page.locator('#graphic-1-motionnote').count(), 0, 'and there is no note about steps');
+        await page.click('#graphic-1-motion-crawl');
+        await page.waitForSelector('#graphic-1-speed');
+        assert.strictEqual(await page.locator('#graphic-1-typetime').count(), 0);
+        assert(/like a ticker/.test(await page.textContent('#graphic-1-motionhint')));
+        await moveSlider('graphic-1-speed', 40);
+        await page.waitForFunction(async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].motion.speed === 40, null, { timeout: 8000 });
+        assert.strictEqual(await page.textContent('label[for="graphic-1-speed"] .k'), '40% of the screen a second');
+        assert.strictEqual(await page.getAttribute('#graphic-1-loop', 'aria-checked'), 'false');
+        await page.click('#graphic-1-loop');
+        await page.waitForFunction(async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].motion.loop === true, null, { timeout: 8000 });
+        await page.click('#graphic-1-motion-scroll');
+        await page.waitForSelector('#graphic-1-speed');
+        assert.strictEqual((await get('/api/graphics')).items[0].motion.kind, 'scroll');
+        assert(/rises from the bottom/.test(await page.textContent('#graphic-1-motionhint')));
+        await fitsCard('#graphicscard', 'Graphics, motion open');
+        await fitsPhone('Graphics, motion open');
+      } finally {
+        require('fs').unlinkSync(stageFile);
+      }
+      // the stage went again (a node that fell back to classic): the scroll chosen is kept and said to be shown still
+      await go(page, 'play/pads');
+      await go(page, 'play/graphics');
+      await page.waitForSelector('#graphic-1-motionstill');
+      assert(/cannot draw scroll\. It is shown still/.test(await page.textContent('#graphic-1-motionstill')));
+      assert(await page.isDisabled('#graphic-1-replay'), 'a motion this node cannot draw is not replayed');
+      assert.strictEqual((await get('/api/graphics')).items[0].motion.kind, 'scroll', 'and it is kept');
+      await page.click('#graphic-1-motion-none');
+      await page.waitForFunction(async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].motion.kind === 'none', null, { timeout: 8000 });
       await fitsCard('#graphicscard', 'Graphics, settings open');
       await fitsPhone('Graphics, settings open');
       // logo files: a text file is refused in words, a PNG is kept and gets a thumbnail

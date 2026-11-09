@@ -45,6 +45,7 @@ typedef struct {
 	double sh_x, sh_y, sh_blur; uint32_t sh_c; int sh_a;
 	double pl_pad; uint32_t pl_c; int pl_a;
 	int maxw, maxh, opacity;
+	int nofit;                      // refuse a text that would have to be made smaller to fit (a ticker, D129 slice 3)
 	int canvas, cw, ch, cx, cy;
 	double width, rotate; int mirror;
 	char *text; size_t text_len;
@@ -121,6 +122,7 @@ static void gfx_parse(char *buf, size_t n, Gfx *g) {
 			g->pl_pad = clampd(x1, 0, 2); g->pl_a = (int)clampd(x2, 0, 100);
 		}
 		else if (!strcmp(w, "limit")) { if (sscanf(line, "limit %lf %lf", &x1, &x2) == 2) { g->maxw = (int)clampd(x1, 16, 4096); g->maxh = (int)clampd(x2, 16, 4096); } }
+		else if (!strcmp(w, "nofit")) { if (sscanf(line, "nofit %lf", &x1) == 1) g->nofit = x1 != 0; }
 		else if (!strcmp(w, "opacity")) { if (sscanf(line, "opacity %lf", &x1) == 1) g->opacity = (int)clampd(x1, 0, 100); }
 		else if (!strcmp(w, "canvas")) {
 			if (sscanf(line, "canvas %lf %lf %lf %lf", &x1, &x2, &x3, &x4) == 4) {
@@ -391,6 +393,7 @@ static Pic draw_text(const Gfx *g, const char *fonts, int *missing) {
 		if (fh * scale > g->maxh) scale = (double)g->maxh / fh;
 		if (fw * fh * scale * scale > (double)GFX_MAX_PIXELS) scale = sqrt((double)GFX_MAX_PIXELS / (fw * fh));
 		if (scale >= 0.9999) break;
+		if (g->nofit) refuse("Too long for this node's ticker at this size: shorten it or lower the size.");
 		layout_free(&L);
 		px *= scale * 0.995;
 		if (px < GFX_MIN_SIZE) refuse("there is too much text to fit the screen at a size that can be read; use fewer words");

@@ -1326,14 +1326,24 @@
 
   // ---- Graphics (D129, slice 2): text and logos the node draws on the screen --------------------------------------
   // Play > Graphics (a page of Setup that is also a screen of Play, as Mapping is a screen of Shape). Two cards: the
-  // graphics themselves (up to 8, each a text or a logo, each with its own Show / Hide, and a big Hide all at the top)
-  // and the logo files (upload, thumbnails, rename, delete). The node makes a small picture of each graphic with
-  // pvj-raster and the player draws it over the screen; this release draws them still, so motion, keys, effects and
-  // "over or as a source" are said to come later, in words, and not offered. A typed line is previewed by the node (the
-  // preview is a picture the node makes, so it is what the wall gets) without being saved or shown until Send.
+  // graphics themselves (up to 8, each a text or a logo, each with its own Show / Hide and Replay, and a big Hide all at
+  // the top) and the logo files (upload, thumbnails, rename, delete). The node makes a small picture of each graphic with
+  // pvj-raster; the New renderer's GPU draws it and moves it (fade, typewriter, scroll, crawl), and on classic mpv the
+  // fade and the typewriter are stepped about twelve times a second and scroll and crawl are not offered (the node says
+  // which it is: `mode` and `note`). Keys, effects and "over or as a source" are said to come later, in words, and not
+  // offered. A typed line is previewed by the node (the preview is a picture the node makes, so it is what the wall gets)
+  // without being saved or shown until Send.
   // It is an Operator's and an Owner's: the box refuses a Guest every route, and the screen is not offered to one.
   var GFX_COLOURS = [['#ffffff', 'White'], ['#ffd400', 'Yellow'], ['#ff4fa3', 'Pink'], ['#39e08c', 'Green'], ['#4fb3ff', 'Blue'], ['#ff5a36', 'Orange'], ['#000000', 'Black']];
   var GFX_ANCHORS = [['tl', 'Top left'], ['tc', 'Top centre'], ['tr', 'Top right'], ['ml', 'Middle left'], ['mc', 'Centre'], ['mr', 'Middle right'], ['bl', 'Bottom left'], ['bc', 'Bottom centre'], ['br', 'Bottom right']];
+  var GFX_MOTIONS = [['none', 'None'], ['fade', 'Fade'], ['typewriter', 'Typewriter'], ['scroll', 'Scroll'], ['crawl', 'Crawl']];
+  var GFX_MOTION_HINTS = {
+    none: 'It appears and goes at once.',
+    fade: 'It fades in when it is shown and out when it is hidden. A new line fades in again.',
+    typewriter: 'It is typed out, line after line, when it is shown and for each new line.',
+    scroll: 'It rises from the bottom of the screen to the top, like credits, and is gone.',
+    crawl: 'It runs from the right edge to the left, like a ticker, as one line. A line too long for this node\'s ticker at this size is refused with the reason.'
+  };
   var gfxOpen = {};               // which graphics have their settings open: kept when the cards are drawn again
   var gfxTimers = {};             // a preview waiting for the typing to stop, by graphic
   var gfxSeq = 0, gfxNext = 0;
@@ -1344,8 +1354,9 @@
     if (s.state === 'building') return 'Drawing...';
     if (s.state === 'held') return s.message || 'Held back while a code is on the screen.';
     if (s.state !== 'on') return 'Off';
-    return 'On the screen' + (s.missing ? '. ' + plural(s.missing, 'character') + ' cannot be drawn.' : '');
+    return 'On the screen' + (s.missing ? '. ' + plural(s.missing, 'character') + ' cannot be drawn.' : '') + (s.message ? '. ' + s.message : '');
   }
+  function gfxSeconds(v) { return (Math.round(v * 10) / 10).toFixed(1) + ' s'; }
   function graphicsCards() {
     var d = null, timer = null, live = can('live');
     var body = h('div', { class: 'list', id: 'graphicsbody' }, h('div', { class: 'k', text: 'Loading...' }));
@@ -1384,6 +1395,8 @@
         if (s) { s.textContent = gfxStatusWords(it); s.className = 'state' + (it.status.state === 'error' ? ' err' : ''); }
         var b = document.getElementById('graphic-' + it.slot + '-show'), shown = it.on && d.on;
         if (b) { b.textContent = shown ? 'Hide' : 'Show'; b.classList.toggle('on', shown); b.setAttribute('aria-pressed', shown ? 'true' : 'false'); b.setAttribute('aria-label', (shown ? 'Hide ' : 'Show ') + it.name); }
+        var rp = document.getElementById('graphic-' + it.slot + '-replay');
+        if (rp) rp.disabled = !live || !canReplay(it);
       });
       if (d.items.some(function (i) { return i.status.state === 'building'; })) { clearTimeout(timer); timer = setTimeout(load, 500); }
     }
@@ -1467,6 +1480,31 @@
         slider(id + '-plateopacity', 'Plate opacity', 0, 100, 1, t.plate.opacity, function (v) { return v + '%'; }, function (v) { post({ id: it.id, set: { text: { plate: { opacity: v } } } }, { quiet: true, preview: it.id }); }));
       return out;
     }
+    // Replay plays the motion again: for a graphic that is on, whose motion this node draws
+    function canReplay(it) { return it.on && d.on && it.status.state === 'on' && it.motion.kind !== 'none' && (d.motions || []).indexOf(it.motion.kind) >= 0; }
+    // The motion of a graphic. The kinds this node cannot draw are greyed out with the reason (classic mpv draws no scroll
+    // and no crawl); a motion chosen earlier that this node cannot draw is said to be drawn still.
+    function motionForm(it, id) {
+      var m = it.motion, allowed = d.motions || ['none'];
+      var put = function (patch) { post({ id: it.id, set: { motion: patch } }); };
+      var putQuiet = function (key) { return function (v) { var p = {}; p[key] = v; post({ id: it.id, set: { motion: p } }, { quiet: true }); }; };
+      var kinds = h('div', { class: 'seg', role: 'group', 'aria-label': 'Motion', id: id + '-motion' }, GFX_MOTIONS.map(function (k) {
+        var ok = allowed.indexOf(k[0]) >= 0;
+        return h('button', { class: 'btn segbtn' + (m.kind === k[0] ? ' on' : ''), id: id + '-motion-' + k[0], 'aria-pressed': m.kind === k[0] ? 'true' : 'false', text: k[1],
+          disabled: !live || !ok, title: ok ? '' : 'Needs the New renderer.', onclick: function () { put({ kind: k[0] }); } });
+      }));
+      var out = [h('div', { class: 'k', text: 'Motion' }), kinds];
+      if (d.mode !== 'gpu' && d.note) out.push(h('div', { class: 'hint', id: id + '-motionnote', text: d.note }));
+      if (allowed.indexOf(m.kind) < 0) out.push(h('div', { class: 'hint', id: id + '-motionstill', text: 'This node cannot draw ' + m.kind + '. It is shown still. Choose one of the motions above.' }));
+      else out.push(h('div', { class: 'hint', id: id + '-motionhint', text: GFX_MOTION_HINTS[m.kind] }));
+      if (m.kind === 'fade') out.push(slider(id + '-fadein', 'Fade in', 0.1, 30, 0.1, m.seconds, gfxSeconds, putQuiet('seconds')),
+        slider(id + '-fadeout', 'Fade out', 0, 30, 0.1, m.out, gfxSeconds, putQuiet('out')));
+      if (m.kind === 'typewriter') out.push(slider(id + '-typetime', 'Time to type it all', 0.1, 30, 0.1, m.seconds, gfxSeconds, putQuiet('seconds')));
+      if (m.kind === 'scroll' || m.kind === 'crawl') out.push(
+        slider(id + '-speed', 'Speed', 2, 100, 1, m.speed, function (v) { return v + '% of the screen a second'; }, putQuiet('speed')),
+        sw('Loop', m.loop, function (v) { put({ loop: v }); }, id + '-loop'));
+      return [h('div', { class: 'gfxmotion', id: id + '-motionbox' }, out)];
+    }
     function linesForm(it, id) {
       var lines = it.text.lines, list = h('div', { class: 'list', id: id + '-lines' });
       lines.forEach(function (l, i) {
@@ -1522,7 +1560,9 @@
       preview.addEventListener('load', function () { preview.classList.remove('none'); });
       var frame = h('div', { class: 'gfxframe', id: id + '-frame' }, preview, h('div', { class: 'gfxwait hint', id: id + '-nopreview', text: text ? 'Type a line to see it here.' : 'Choose a logo to see it here.' }));
       if (d.screen) frame.style.setProperty('--shape', String(d.screen.width / Math.max(1, d.screen.height)));
-      var kids = [top, h('div', { class: 'row' }, showBtn)];
+      var replayBtn = h('button', { class: 'btn big', id: id + '-replay', text: 'Replay', 'aria-label': 'Play the motion of ' + it.name + ' again', disabled: !live || !canReplay(it),
+        onclick: function () { post({ id: it.id, replay: true }); } });
+      var kids = [top, h('div', { class: 'row' }, showBtn, replayBtn)];
       if (text) {
         var line = h('textarea', { class: 'text-input gfxtext', id: id + '-text', rows: 2, maxlength: d.limits.text, 'aria-label': 'Text of ' + it.name, placeholder: 'Type a line, e.g. NEXT UP: DJ MARA', disabled: !live });
         line.value = it.text.value;
@@ -1536,11 +1576,11 @@
       var name = h('input', { class: 'text-input', id: id + '-name', value: it.name, maxlength: 40, 'aria-label': 'Name of this graphic', autocomplete: 'off', disabled: !live });
       name.addEventListener('change', function () { if (name.value.trim() && name.value.trim() !== it.name) post({ id: it.id, set: { name: name.value.trim() } }); else name.value = it.name; });
       var set = h('details', { class: 'fold', id: id + '-settings', open: !!gfxOpen[it.id] },
-        h('summary', { text: 'Look, place and saved lines' }),
+        h('summary', { text: 'Look, place, motion and saved lines' }),
         h('div', { class: 'list gfxsettings' }, [labelled('Name', name)].concat(text ? textForm(it, id) : logoForm(it, id),
-          [h('div', { class: 'k', text: 'Where on the screen' }), anchorGrid(it, id)], placeSliders(it, id),
+          [h('div', { class: 'k', text: 'Where on the screen' }), anchorGrid(it, id)], placeSliders(it, id), motionForm(it, id),
           text ? linesForm(it, id) : [],
-          [h('div', { class: 'hint', text: 'Drawn over the screen, still. ' + (text ? 'Fade, typewriter, scroll and crawl' : 'Keys, effects') + ', and showing it over or as one source, come in later releases.' })])));
+          [h('div', { class: 'hint', text: 'Drawn over the screen. ' + 'Keys and effects' + ', and showing it over or as one source, come in later releases.' })])));
       set.addEventListener('toggle', function () { gfxOpen[it.id] = set.open; });
       kids.push(set, h('div', { class: 'row wrap' }, up, down, remove));
       var el = h('div', { class: 'graphicitem', id: id, 'data-id': it.id }, kids);
