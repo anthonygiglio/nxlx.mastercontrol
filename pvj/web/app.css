@@ -911,6 +911,11 @@ html { scroll-padding-top: calc(var(--head, 0px) + var(--sub, 0px)); scroll-padd
 @container ws (min-width: 600px) { .nowgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @container ws (min-width: 1100px) { .nowgrid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 
+/* The node switcher (fleet step 2b): the list opens as a full-width line of the title bar, in every look. */
+.nodesbtn { flex: none; }
+.wshead .nodespop { flex: 1 0 100%; margin: 6px 0 4px; max-height: 60vh; overflow: auto; color: var(--fg); text-align: left; }
+.nodespop .nodeswhere { overflow-wrap: anywhere; }
+
 /* ==== STYLE: signal ==================================================================================================
    Everything from here to the end of the file belongs to the style "signal" (D54) and applies only while the root
    element carries data-style="signal", which the server writes for a theme that names that style. The look above is
@@ -1507,6 +1512,11 @@ html[data-style="signal"] .tp #black.flash { background: var(--st-problem, var(-
 }
 /* Now in this look: the scene blocks in a column of Now take a smaller face than on the Room screen */
 html[data-style="signal"] .nowscreen .room-scene { font-size: 15px; }
+
+/* The node switcher in Signal (its layout is before this block, for every look): Nodes on the title bar in the
+   colours of its pill, since the bar is the area colour and a page-coloured button would not read on it. */
+html[data-style="signal"] .wshead .nodesbtn { background: var(--on); color: var(--ac); border-color: var(--on); }
+html[data-style="signal"] .wshead .nodesbtn[aria-expanded="true"] { background: var(--ac); color: var(--on); border-color: var(--on); }
 
 /* Columns scroll on their own (the owner, 2026-11-08: "the columns all scroll together except for the really short
    ones. it is not a good UX"). Where the screens of an area stand side by side, on a Setup page beside its index, and
