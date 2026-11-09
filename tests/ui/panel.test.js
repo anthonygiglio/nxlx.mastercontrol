@@ -1848,6 +1848,19 @@ function startServer(env) {          // env: more for the harness's environment 
       await go(page, 'now/now');
       await page.waitForSelector('#nownode .nowrow', { timeout: 15000 });
       assert.strictEqual(await page.textContent('#nowfade'), await page.textContent('#fade'), 'Now\'s fade button says what the strip\'s says (D75: out, then in)');
+      // The node: the clock with Tap, and remote support (no longer under Today)
+      await page.waitForFunction(() => !/Checking/.test((document.querySelector('#nownode-clock .navstate') || {}).textContent || 'Checking'), null, { timeout: 15000 });
+      const tapped = page.waitForResponse((r) => r.url().endsWith('/api/tempo/tap') && r.request().method() === 'POST');
+      await page.click('#nownode-clock button');
+      assert.strictEqual((await tapped).status(), 200, 'Tap on Now taps the node\'s clock');
+      await page.waitForTimeout(500);                                  // half a second after the first: 120 BPM, within 30 to 300
+      await page.click('#nownode-clock button');                      // a second tap in time: the node has a tempo
+      await page.waitForFunction(() => /^Tapped: \d+(\.\d+)? BPM$/.test(document.getElementById('msg').textContent), null, { timeout: 10000 })
+        .catch(async () => { throw new Error('two taps say the tempo: ' + await page.textContent('#msg')); });
+      await page.waitForFunction(() => /^\d+(\.\d+)? BPM, tapped/.test((document.querySelector('#nownode-clock .navstate') || {}).textContent || ''), null, { timeout: 10000 })
+        .catch(async () => { throw new Error('the clock line says the tapped tempo: ' + await page.textContent('#nownode-clock .navstate')); });
+      await page.waitForSelector('#nownode-support');
+      assert.strictEqual(await page.locator('#nowtoday-support').count(), 0, 'remote support is under The node, not Today');
       assert.strictEqual(await page.locator('[id^="nowneed-proj-"] button').first().textContent(), 'Try again', 'a projector that needs you has Try again');
       await page.locator('[id^="nowneed-proj-"] button').first().click();
       await page.waitForFunction(() => /asked again/.test(document.getElementById('msg').textContent), null, { timeout: 15000 });
@@ -3731,6 +3744,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await presenter.goto(base + '/#token=' + presenterToken);
     await presenter.waitForSelector('#nowscreen');
     assert.strictEqual(await at(presenter), 'now/now', 'a presenter starts on Now');
+    await presenter.waitForSelector('#nownode-clock button:text-is("Tap")');      // an operator reads the clock and taps it (a Guest has no Now)
     await go(presenter, 'play/pads');
     await presenter.waitForSelector('.pads');
     // A presenter's Shaders page: start, stop, skip, play one and move sliders; no switches, no settings, no upload

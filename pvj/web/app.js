@@ -6982,7 +6982,9 @@
   // for the live parts and every 30 s for the rows of Setup; nothing is drawn under a finger (held), and an answer to
   // a Now that was left is dropped (its own element, not an id).
   var nowTimer = null, nowRowsAt = 0, NOW_SURF = {};      // NOW_SURF: the surfaces each source is on, in words
-  var NOW_TODAY = ['access', 'schedule', 'support', 'updates'];
+  var NOW_TODAY = ['access', 'schedule', 'updates'];
+  var NOW_NODE = ['soundin', 'network', 'support'];       // rows of Setup that are the node's own, under The node
+  var CLOCK_FROM = { tap: 'tapped', sound: 'from the sound', link: 'from Ableton Link', osc: 'from OSC' };
   function nowRow(id, name, state, open) {
     var chip = h('span', { class: 'chip' }), text = h('span', { class: 'navstate' });
     showState(chip, text, state);
@@ -7036,7 +7038,16 @@
         } }),
         hasRoom ? h('button', { class: 'btn small', id: 'nowtowalls', text: 'Open the walls', onclick: function () { go('room/walls'); } }) : null));
     var nodeList = h('div', { class: 'list', id: 'nownode' });
-    var node = h('div', { class: 'card', id: 'nownodecard' }, h('h2', { text: 'The node' }), nodeList);
+    // the node's clock (D116) and Ableton Link (D117), with Tap: a line of its own, drawn when its answer comes
+    // (read by an owner or an operator; Tap only in the room: the node refuses it to a support login, D116)
+    var clockRow = canOp() ? nowRow('nownode-clock', 'Clock', { chip: null, text: 'Checking...' }, canOp() && !(S.device && S.device.remote) ? ['Tap', function () {
+      act('POST', '/api/tempo/tap', {}, function (d) {
+        var bpm = d && d.clock && d.clock.bpm;
+        say(bpm ? 'Tapped: ' + bpm + ' BPM' : 'Tapped. Tap again in time.');
+        askClock();
+      });
+    }] : null) : null;
+    var node = h('div', { class: 'card', id: 'nownodecard' }, h('h2', { text: 'The node' }), clockRow ? h('div', { class: 'list', id: 'nowclock' }, clockRow) : null, nodeList);
     var todayList = h('div', { class: 'list', id: 'nowtoday' });
     var today = h('div', { class: 'card', id: 'nowtodaycard' }, h('h2', { text: 'Today' }), todayList);
     var root = h('div', { class: 'screen nowscreen', id: 'nowscreen' }, needs, h('div', { class: 'nowgrid' }, screens, room, node, today));
@@ -7172,6 +7183,11 @@
         var busy = hd.cpu_percent !== null && hd.cpu_percent >= 90;
         nodeList.appendChild(nowRow('nownode-load', 'Load', { chip: busy ? 'check' : 'ready', text: hd.cpu_percent === null ? '?' : hd.cpu_percent + '% of all cores' }, null));
         if (hd.addresses && hd.addresses.length) nodeList.appendChild(nowRow('nownode-address', 'Address', { chip: null, text: hd.addresses[0] }, null));
+        // sound in, the network and remote support, each as its row of Setup says it
+        NOW_NODE.forEach(function (id) {
+          var r = sysRows().filter(function (x) { return x.id === id; })[0];
+          if (r && rowShown(r)) nodeList.appendChild(nowRow('nownode-' + id, r.name, sysState(r), ['Open', nowOpen(id)]));
+        });
         nodeList.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn small', id: 'nowtohealth', text: 'Open Health', onclick: nowOpen('health') })));
       });
       // Today: who is connected, the schedule, remote support, updates (each row of Setup as the index says it)
@@ -7190,8 +7206,21 @@
         todayList.appendChild(ev);
       });
     }
+    // the clock: its tempo, who set it, and Link's peers (GET /api/tempo), drawn into its own line
+    function askClock() {
+      if (!clockRow) return;
+      api('GET', '/api/tempo').then(function (r) {
+        if (!root.isConnected || pressing()) return;
+        if (!r.ok) { showState(clockRow.querySelector('.chip'), clockRow.querySelector('.navstate'), { chip: null, text: 'Not answering' }); return; }
+        var c = r.data.clock || {}, l = r.data.link || {};
+        var words = c.state === 'running' ? c.bpm + ' BPM' + (c.source ? ', ' + (CLOCK_FROM[c.source] || c.source) : '') : 'No tempo yet: tap it, or let the sound or Link set it';
+        if (l.on) words += l.peers ? ' \u00b7 following Ableton Link, ' + plural(l.peers, 'peer') : ' \u00b7 Ableton Link on, no peers yet';
+        showState(clockRow.querySelector('.chip'), clockRow.querySelector('.navstate'), { chip: c.state === 'running' ? 'active' : 'off', text: words });
+      });
+    }
     function look() {
       clearTimeout(nowTimer);
+      if (document.visibilityState !== 'hidden') askClock();
       // a hidden tab asks nothing (as poll() does): it looks again in 5 s, and asks once it is shown
       if (document.visibilityState === 'hidden') { nowTimer = setTimeout(refresh, 5000); return; }
       // the rows of Setup every 30 s, on their own: a slow one does not hold up the 5 s looks
