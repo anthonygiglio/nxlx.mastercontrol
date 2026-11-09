@@ -2,7 +2,7 @@
      SPDX-License-Identifier: Apache-2.0 -->
 # Text and logo sources: a design (2026-11-08)
 
-Status: design only, no code. Proposed decision: D129 (`project-log/decisions/D129-text-and-logo-graphics.md`).
+Status: design, decided by Anthony on 8 November 2026 (all five answers in section 12). Slice 1 is being built. Decision: D129 (`project-log/decisions/D129-text-and-logo-graphics.md`).
 Written for Anthony (owner). Plain words first; the builders' detail is in the sections after "What you do".
 
 ## 0. The ask, and why it is built in
@@ -509,19 +509,21 @@ also need the frame cost numbers in their descriptions.
 - **Clock and flips on a Pi 3** with overlay-add at 12 steps a second are cheap for small bitmaps but have not been
   measured; slice 2 measures them.
 
-## 12. Open questions for Anthony (at most five)
+## 12. Open questions for Anthony: decided on 8 November 2026
 
-1. **Where do graphics live, and do the masks stay separate?** Recommended: yes. A new Play > Graphics screen, masks
+Anthony accepted all five recommended answers on 8 November 2026. Nothing here is open any more.
+
+1. **Where do graphics live, and do the masks stay separate?** Decided: yes. A new Play > Graphics screen, masks
    stay in Shape > Picture, and the words in the panel say which is which. Merging can come later.
-2. **May a Guest push text?** Recommended: no. Operators and the Owner only; a phone with an Operator code (or a
+2. **May a Guest push text?** Decided: no. Operators and the Owner only; a phone with an Operator code (or a
    TouchOSC layout, with OSC on) can push a line.
-3. **Fonts: bundled list only for now?** Recommended: yes. The 11 fonts in section 4.2 (name any you want struck or
-   added; the rule is open licence); uploading fonts waits, Owner only, as slice 7 if you ever need a house font.
-4. **SVG logos: is it fine that the SVG is turned into a PNG and not kept?** Recommended: yes. It is the safe way, and
+3. **Fonts: bundled list only for now?** Decided: yes. The 11 fonts in section 4.2 (open licence only); uploading
+   fonts waits, Owner only, as slice 7 if he ever needs a house font.
+4. **SVG logos: is it fine that the SVG is turned into a PNG and not kept?** Decided: yes. It is the safe way, and
    2048 px is enough for a wall; text inside an SVG must be converted to outlines first.
-5. **Does *As Source N* using up a source slot on a Pi 4 (two sources) suit you?** Recommended: yes, and make *Over the
-   screen* the default so most shows never spend a source. If you want text sources and two clips at once on a Pi 4,
-   that needs more sources on that board, which is a measured, separate change (D122).
+5. **Does *As Source N* using up a source slot on a Pi 4 (two sources) suit you?** Decided: yes. *As Source N* may use a
+   source slot, and *Over the screen* is the default so most shows never spend a source. Text sources plus two clips
+   at once on a Pi 4 would need more sources on that board, which is a measured, separate change (D122).
 
 ## 13. What this design could not settle
 
