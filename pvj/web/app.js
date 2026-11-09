@@ -775,6 +775,8 @@
       m.fallback ? h('div', { class: 'mixfallback', id: 'mixfallback', role: 'status' },
         h('div', { class: 'hint warn', id: 'mixfallbackwhy', text: 'This node is not doing that transition now: ' + m.fallback + '.' }),
         can('live') ? h('button', { class: 'btn small', id: 'mixretry', text: 'Try again', onclick: function () { setMix({}); } }) : null) : null,
+      // classic mpv (every Pi 3) cuts into a shader whatever is chosen here (D73); the New renderer takes the transition
+      m.shader_cut ? h('div', { class: 'hint', id: 'mixshadercut', text: m.shader_cut }) : null,
       h('div', { class: 'k', text: 'Duration' }),
       choice([0.5, 1, 2, 5].map(function (d) { return { label: d + 's', value: d }; }), m.duration, function (v) { setMix({ duration: v }); }));
     return card;
@@ -787,7 +789,8 @@
     if (!card) return;
     var shown = card.querySelector('#mixfallbackwhy');
     var want = m.fallback ? 'This node is not doing that transition now: ' + m.fallback + '.' : '';
-    if ((shown ? shown.textContent : '') === want) return;
+    var cut = card.querySelector('#mixshadercut');           // the note about a node that cuts into a shader follows the poll too
+    if ((shown ? shown.textContent : '') === want && (cut ? cut.textContent : '') === (m.shader_cut || '')) return;
     card.parentNode.replaceChild(transitionCard(), card);
   }
   // The one transport strip (D65, the owner's choice of D63; D72): what is playing, the place in it, Speed and Loop,

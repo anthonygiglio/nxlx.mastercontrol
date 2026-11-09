@@ -314,9 +314,23 @@ static int set_str(mpv_handle *h, const char *name, const char *v) { return mpv_
 // A crossfade that is on its way ends now (under layer_lock): its incoming clip is the picture from here on, the
 // outgoing layer is stopped and idle. Called before anything that changes what the front plays (a load, a stop, a
 // step in its list, a new crossfade), so nothing is ever mixed with a picture nobody asked for.
+// The layer a pvj-fade-to-program is building a program into while layer_lock is let go (D130, slice 3), or -1. Under
+// layer_lock. Every command that ends a fade ends the build too (end_fade): the builder finds -1 when it takes the lock
+// again, answers that the layer was ended, and the program is asked off.
+static int building = -1;
+
 static void end_fade(void)
 {
     pthread_mutex_lock(&app.lock);
+    if (building >= 0) {
+        FxSlot *b = &app.gen[building];
+        if (b->pending) b->dropped = b->asked;
+        fx_prog_free(b->pending);
+        b->pending = NULL;
+        b->pending_clear = 1;
+        b->asked++;
+        building = -1;
+    }
     int was = app.fade.phase != FADE_OFF, back = 1 - app.front;
     if (was) {
         app.fade.phase = FADE_OFF;
@@ -929,7 +943,10 @@ static void shader_command(int fd, const mpv_node *id, const mpv_node *cmd)
 // built into the front layer, a cut from black, as a clip is (D98). The outgoing clip's sound is taken off at the
 // command (a program has none), and its last frame is kept if it ends in the fade.
 // Lock order: fx_lock, then layer_lock (as pvj-shader's level_sync), so a load and this command never wait on each other.
-// layer_lock is held across the build (the idle layer must not be taken by a crossfade meanwhile); the build is bounded.
+// layer_lock is NOT held across the build (up to 3 s): a Stop, a load, a step in a list, a level or a crossfade from another
+// client is served at once, and the player's 2 s timeout is not reached (the review of #240). `building` names the layer being
+// built into; a command that ends a fade ends the build (end_fade), and this command finds that when it takes the lock again,
+// re-checks, and answers "the layer was ended before the load took effect". fx_lock stays held: one load at a time.
 static void fade_to_program(int fd, const mpv_node *id, const mpv_node *cmd)
 {
     int nargs = cmd->u.list->num;
@@ -973,6 +990,8 @@ static void fade_to_program(int fd, const mpv_node *id, const mpv_node *cmd)
     sl->pending = p;                                    // a clear asked first (end_fade's) stays and is done first (#239)
     long mine = ++sl->asked;
     pthread_mutex_unlock(&app.lock);
+    building = target;
+    pthread_mutex_unlock(&layer_lock);
     wake_render();
     pthread_mutex_lock(&app.lock);
     fx_answered_slot = sl;
@@ -980,8 +999,13 @@ static void fade_to_program(int fd, const mpv_node *id, const mpv_node *cmd)
     int done = wait_render(fx_answered, 3.0);
     char answer[sizeof sl->answer];
     memcpy(answer, sl->answer, sizeof answer);
-    int ended = sl->dropped >= mine;
-    if (!done) {
+    pthread_mutex_unlock(&app.lock);
+    pthread_mutex_lock(&layer_lock);
+    pthread_mutex_lock(&app.lock);
+    int cut = building != target;                       // a command ended the fade (and asked this program off) while it built
+    building = -1;
+    int ended = cut || sl->dropped >= mine;
+    if (!done && !cut) {
         // never built in time: it must not appear later on a layer that is not the front (it would be there at the
         // next fade). Asked off, as end_fade asks a layer's generator off; a build that is under way is cleared after.
         fx_prog_free(sl->pending);
@@ -994,7 +1018,10 @@ static void fade_to_program(int fd, const mpv_node *id, const mpv_node *cmd)
         level_sync(0);
         pthread_mutex_unlock(&layer_lock);
         pthread_mutex_unlock(&fx_lock);
-        if (!done) {
+        if (cut) {
+            wake_render();
+            reply(fd, id, "the layer was ended before the load took effect", NULL);
+        } else if (!done) {
             wake_render();
             reply(fd, id, "the renderer did not build the program in time", NULL);
         } else if (ended) {

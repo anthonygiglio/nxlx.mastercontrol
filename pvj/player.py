@@ -427,9 +427,9 @@ class Player:
             from_clip = self.fades_from_clip()
             # Out of a program of the renderer's own (D130): its generator is the outgoing layer's picture and goes on
             # drawing to the end of the fade, so the source is not taken off first; the renderer frees it with the layer.
-            # The panel does not ask for this before its slice 3 (it takes D71's still out of a shader).
+            # The panel asks for this since its slice 3 (Api._layered_fade): D71's still is no longer taken out of a shader.
             from_program = fade is not None and not from_clip and self._from_program()
-            # a second guard: the panel asks fades_from_clip first and takes D71's still out of the others
+            # a second guard: the panel asks first (Api._layered_fade) and takes D71's still out of a live input
             self.fade_refused = "" if (from_clip or from_program) else "not from a plain clip (a generator or a live input)"
             if from_program:
                 if self._crossfade(paths, loop, ending, fade, style):
@@ -461,14 +461,16 @@ class Player:
         except PlayerError:
             pass
 
-    def fade_to_program(self, path, seconds, style="crossfade", epoch=None, spawn=False):
+    def fade_to_program(self, path, seconds, style="crossfade", epoch=None, spawn=False, standin=None):
         """Fade from what is on the screen (a clip, or another program) into the program file `path`, drawn by the renderer
         itself (D130: `pvj-fade-to-program`): the program is built into the idle layer's generator, and the fade begins
         when its first picture is drawn, both sides moving. `style`: "crossfade" or a wipe's or a slide's name. With
         `epoch`, only if nothing else has been played since it was handed out (None is returned and nothing changes).
         Returns the new epoch. Raises PlayerError where the renderer cannot or would not, with nothing changed on the
-        screen: a GPU's refusal is also written down for native_verdict, and the caller cuts or shows the words. Not
-        asked by the panel before its slice 3."""
+        screen: a GPU's refusal is also written down for native_verdict, and the caller shows the words (a fade that was
+        running has by then ended on its incoming side: the renderer's documented deviation, D98). `standin` is the name
+        the shader engine gives the picture in place of the blank clip's path (see path_now). Asked by the panel since its
+        slice 3 (the shader engine, for a shader pad with a Mix transition chosen)."""
         with self._lock:
             if epoch is not None and epoch != self.source_epoch:
                 return None
@@ -489,6 +491,11 @@ class Player:
             seconds = max(0.0, min(60.0, float(seconds)))
             tail = [] if style == "crossfade" else [style]
             pid = self.ipc.request("get_property", "pid")
+            if self.lists is not None and self.lists.any():
+                try:
+                    self.lists.touch(self.ipc.direct("get_property", "path"))     # it plays on under the fade (looplist.GRACE)
+                except PlayerError:
+                    pass
             try:
                 self.ipc.request("pvj-fade-to-program", path, seconds, *tail, wait=self.NATIVE_LOAD_WAIT)
             except PlayerError as e:
@@ -496,15 +503,53 @@ class Player:
                 message = message[5:] if message.startswith("mpv: ") else message
                 if message.startswith("the GPU refused") or message == "invalid parameter":
                     self._native_verdicts[path] = ("refused", message)
-                raise PlayerError(message)
+                    raise PlayerError(message)
+                # No word (the socket timed out), or the renderer said it did not build in time or that the layer was
+                # ended: the renderer may have taken the program all the same. It is asked; if it holds it, this is a
+                # success. If it does not, the slot is held to be unknown, so the next push or value loads this side's
+                # source again (and what the renderer holds is replaced by what this side believes).
+                if message in ("the layer was ended before the load took effect", "the renderer did not build the program in time"):
+                    raise PlayerError(message)          # the renderer's own word: nothing took effect
+                if not self._program_in_slot(path):
+                    self._native_loaded[0] = None
+                    raise PlayerError(message)
             self._pipe, self._pipe_gone = False, None
             self._source, self._source_pid = path, pid
+            self._standin = standin
             self._carrier = None            # the program is the layer's picture: no blank clip is drawn over for it
             self._native_loaded[0] = (path, pid)
             self._native_verdicts[path] = ("ok", "")
             self.fade_refused = ""
             self.source_epoch += 1
             return self.source_epoch
+
+    def _program_in_slot(self, path):
+        """The renderer says the program file `path` is source 1's generator now (asked after a fade whose answer was lost)."""
+        try:
+            rows = self.ipc.request("get_property", "pvj-shaders")
+            return any(isinstance(r, dict) and r.get("source") == 1 and r.get("slot") == 0 and r.get("path") == path
+                       and r.get("state") not in (None, "off") for r in rows)
+        except (PlayerError, TypeError, AttributeError):
+            return False
+
+    _standin = None                 # the name the shader engine gave a program that is the front layer's picture, with no clip
+
+    def _standin_up(self):
+        """A program of the renderer's own is the picture and no blank clip is loaded under it (the New renderer, D130)."""
+        return (self._source is not None and self._carrier is None and self._standin is not None and not self._pipe
+                and self._source_pid is not None and self._source_pid == self._seen_pid)
+
+    def path_now(self):
+        """mpv's `path` of the picture on the screen. Where a program of the renderer's own is the picture and its layer
+        holds no clip (idle), that is the stand-in name the shader engine gave the program, which the panel's checks
+        (is it a shader that plays?) read as the carrier's path on classic. Raises PlayerError where `path` cannot be read."""
+        try:
+            path = self.ipc.request("get_property", "path")
+        except PlayerError:
+            if self._standin_up():
+                return self._standin
+            raise
+        return self._standin if path is None and self._standin_up() else path
 
     def fades_from_clip(self):
         """True when what this side loaded last is a plain clip: no generator (its shader and carrier), no live
@@ -551,6 +596,14 @@ class Player:
                            and isinstance(pf, int) and not isinstance(pf, bool))
         return ok
 
+    def shaders_fade(self):
+        """True or False once this player process has been asked whether a shader fades in and out (D130: `layer_generators`),
+        None before that. Asks nothing: for a status, which shows the Mix card's note about a node that cuts into a shader."""
+        known = self._gens_seen
+        if known is None or known[0] != self._seen_pid:
+            return None
+        return bool(known[1])
+
     def layer_generators(self, ask=True):
         """True if the player that answers now is pvj-render with a generator in each of source 1's video layers and the
         command that fades into a program (D130, `layer-generators` and `program-fades`). Asked once per player process,
@@ -568,7 +621,7 @@ class Player:
     def fades_native(self, ask=True):
         """True when a shader may be faded into or out of by the renderer itself (D130): it holds a generator in each
         layer, and neither side is a live input's pipe (NDI and capture keep D62's hand-over and with it D71's still).
-        Not yet asked by the panel: it chooses with fades_from_clip until the panel's slice (3) of the design."""
+        The panel chooses with this since slice 3: a shader on the screen no longer makes it false."""
         return not self._pipe and self.layer_generators(ask)
 
     def moves(self, ask=True):
@@ -1618,7 +1671,15 @@ class Player:
                 have = self._native_loaded[slot]
             if not have or have[0] != path or have[1] != self._seen_pid:
                 return False
-            self.ipc.request("pvj-shader", "set", 1, slot, values)
+            try:
+                self.ipc.request("pvj-shader", "set", 1, slot, values)
+            except PlayerError as e:
+                # During a shader to clip fade the generator that still draws is the outgoing layer's, and slot 0 is the
+                # front (clip) layer's, which has none: the renderer refuses ("invalid parameter"). Expected, not a failure:
+                # the value is not set, and the shader is on its way out (D130, slice 1 review).
+                if slot == 0 and str(e).endswith("invalid parameter"):
+                    return False
+                raise
             return True
 
     # --- the effect layer (pvj/effects.py) ------------------------------------
@@ -1727,7 +1788,7 @@ class Player:
         """Stop the carrier and its shader, only if `epoch` is still current and a carrier is what plays. True if done.
         The check and the stop are one step: a clip started in between is never stopped."""
         with self._lock:
-            if epoch != self.source_epoch or self._carrier is None:
+            if epoch != self.source_epoch or (self._carrier is None and not self._standin_up()):
                 return False
             self.clear("cleared")
             return True
@@ -1761,23 +1822,37 @@ class Player:
                 # dropped must be loaded again. When the two disagree it is loaded, which costs a restart of a
                 # blank picture and nothing else.
                 mine = self._carrier == carrier and self._source_pid == pid
+                native = is_program(shader) and self.fades_native()
                 self._source, self._source_pid = shader, pid
                 self._push_shaders()
                 self._apply_fbo()
-                try:
-                    current = self.ipc.request("get_property", "path")
-                except PlayerError:
-                    current = None
-                if not mine or current != carrier:
-                    self.ipc.request("loadfile", carrier, "replace")
-                    self._wait_for_path(carrier)
-                    if self.ipc.request("get_property", "path") != carrier:
-                        raise PlayerError("the player did not start the blank picture the shader is drawn on")
-                    self.ipc.request("set_property", "keep-open", "no")     # only once the carrier is what plays
-                self._carrier = carrier
-                self.ipc.request("set_property", "pause", False)
-                self.ipc.request("set_property", "loop-file", "no")
-                self.ipc.request("set_property", "loop-playlist", "no")
+                if native:
+                    # The New renderer (D130): the program is the front layer's picture and no blank clip is loaded under it.
+                    # A clip that was there is stopped once the program is in (a program the GPU refused leaves it: the caller
+                    # then puts black or the shader before in its place, as for a carrier). A cut.
+                    verdict = self._native_verdicts.get(shader)
+                    if (previous is None or not is_program(previous) or self._carrier is not None) and not (verdict and verdict[0] == "refused"):
+                        try:
+                            self.ipc.request("stop")
+                        except PlayerError:
+                            pass
+                    self._standin = carrier
+                    self._carrier = None
+                else:
+                    try:
+                        current = self.ipc.request("get_property", "path")
+                    except PlayerError:
+                        current = None
+                    if not mine or current != carrier:
+                        self.ipc.request("loadfile", carrier, "replace")
+                        self._wait_for_path(carrier)
+                        if self.ipc.request("get_property", "path") != carrier:
+                            raise PlayerError("the player did not start the blank picture the shader is drawn on")
+                        self.ipc.request("set_property", "keep-open", "no")     # only once the carrier is what plays
+                    self._carrier = carrier
+                    self.ipc.request("set_property", "pause", False)
+                    self.ipc.request("set_property", "loop-file", "no")
+                    self.ipc.request("set_property", "loop-playlist", "no")
             except PlayerError:
                 self._source = previous if previous != shader else None
                 if self._source is None:
@@ -1874,6 +1949,7 @@ class Player:
         if not self.is_running():
             return {"running": False}
         out = {"running": True}
+        with_path = self._standin_up()
         for key, prop in (("path", "path"), ("position", "time-pos"), ("duration", "duration"),
                           ("paused", "pause"), ("speed", "speed"), ("volume", "volume"), ("muted", "mute"), ("loop_file", "loop-file"), ("loop_playlist", "loop-playlist"),
                           ("playlist_pos", "playlist-pos"), ("playlist_count", "playlist-count")):
@@ -1881,6 +1957,8 @@ class Player:
                 out[key] = self.ipc.request("get_property", prop)
             except PlayerError:
                 out[key] = None
+        if with_path and out.get("path") is None and self._standin_up():
+            out["path"] = self._standin         # a program that is the picture, in a layer with no clip: see path_now
         return out
 
     def playlist_files(self, limit=500):

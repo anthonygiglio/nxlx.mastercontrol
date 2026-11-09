@@ -1214,15 +1214,21 @@ class Effects(S.Engine):
             ipc = self.api.player.ipc
             params = ipc.request("get_property", "video-params")
         except Exception:
-            return None
+            params = None
         if not isinstance(params, dict):
-            return None
+            # On the New renderer a shader is the front layer's picture and no clip is loaded under it (D130), so libmpv
+            # has no video-params: the generator's picture is RGB at full range, as the carrier's was.
+            up = getattr(self.api.player, "_standin_up", None)
+            if up is None or not up():
+                return None
+            params = {"colormatrix": "rgb", "colorlevels": "full"}
         decoded = params
         w, h = params.get("w"), params.get("h")       # as it is stored; the arithmetic of the cap is the same turned
         if all(isinstance(n, int) and not isinstance(n, bool) and 0 < n <= 16384 for n in (w, h)):
             self.size = (w, h)
         try:
-            carrier = S.is_carrier(ipc.request("get_property", "path"))
+            now = getattr(self.api.player, "path_now", None)
+            carrier = S.is_carrier(now() if now else ipc.request("get_property", "path"))
         except Exception:
             carrier = False
         if carrier:

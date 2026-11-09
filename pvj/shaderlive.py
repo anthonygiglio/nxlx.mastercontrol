@@ -1705,7 +1705,8 @@ class LiveEngine(S.Engine):
             return None                             # the screen went to something else: it keeps it
         if not result["ok"]:
             stopped = None
-            if not result["showing"]:
+            kept = result.get("kept")                   # a fade the GPU refused: nothing changed on the screen (D130)
+            if not result["showing"] and not kept:
                 stopped = self.off(result["epoch"])     # nothing to go back to: stop, which leaves the screen black
             # For the Live page (Api.status, `shader_refused`): the refusal is news while the screen is as the
             # refusal left it. The player's epoch of now is kept with it; a clip, another shader, a Stop or Vibes
@@ -1715,8 +1716,9 @@ class LiveEngine(S.Engine):
             # What is true of the screen now: the shader before it, black (this stopped it), or whatever was played
             # while the GPU was looking, which took the screen and keeps it.
             raise ApiError(422, "the player refused %s: %s. %s" % (
-                result["id"], result["error"], "The shader before it is back on." if result["showing"]
-                else ("The screen is black." if stopped is not None else "What was played meanwhile stays on the screen.")))
+                result["id"], result["error"], ("The shader before it stays on." if result["showing"] else "The picture before it stays on.") if kept
+                else ("The shader before it is back on." if result["showing"]
+                      else ("The screen is black." if stopped is not None else "What was played meanwhile stays on the screen."))))
         self._refusals.pop(self.playing["digest"] if self.playing else None, None)
         return result
 

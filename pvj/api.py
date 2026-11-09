@@ -423,6 +423,8 @@ class Api:
             self._apply_opacity(0 if self.mix["blackout"] else self.mix["opacity"])
             return True
 
+    _fade_asked = -1e9
+
     def _mix_settings(self):
         """The Mix settings as the API gives them: the transition by its name (see pvj/transitions.py for how it is
         kept), the duration, and `fallback` with the reason while the box dips instead of a crossfade."""
@@ -433,6 +435,19 @@ class Api:
             why = ""                    # the new renderer's own takes no still, so nothing of the still's gives it up
         if why:
             out["fallback"] = why
+        # a shader pad takes this transition on the New renderer (D130); where the player is known not to do that (classic
+        # mpv, so every Pi 3, or a renderer from before it), it still cuts into a shader, and the Mix card says so
+        fades = getattr(self.player, "shaders_fade", None)
+        if fades is not None and fades() is None and time.monotonic() - self._fade_asked > 5.0:
+            # not asked yet in this player process (a restart of the panel or of the player): ask once, cached per process
+            # by the player; a player that is down is asked again at most every 5 seconds
+            self._fade_asked = time.monotonic()
+            try:
+                self.player.layer_generators(ask=True)
+            except Exception:
+                pass
+        if out["transition"] in transitions_mod.STYLES and fades is not None and fades() is False:
+            out["shader_cut"] = "On this node a shader pad still arrives with a cut, whatever is chosen here."
         return out
 
     def _layered_fade(self, ask=True, kind="crossfade"):
@@ -443,12 +458,37 @@ class Api:
         the still is what the transition would use."""
         probe = getattr(self.player, "crossfades" if kind == "crossfade" else "moves", None)
         plain = getattr(self.player, "fades_from_clip", None)
+        native = getattr(self.player, "fades_native", None)
         if probe is None or plain is None:
             return False
         try:
-            return plain() is True and probe(ask) is True
+            # a plain clip, or (D130) anything the New renderer holds a generator for: a shader no longer makes it false,
+            # only a live input's pipe does
+            return (plain() is True or (native is not None and native(ask) is True)) and probe(ask) is True
         except Exception:
             return False
+
+    def _shader_fade(self):
+        """(seconds, style) of the transition a shader chosen by hand takes the screen with, or None for a cut (D130).
+        Only on the New renderer (Player.fades_native), with a crossfade, wipe or slide chosen, a picture on the screen to
+        fade from (a live input's pipe, a Blackout, a screen faded out, a dark mix: nothing to blend from), and the style
+        drawn by the renderer. Classic mpv and the Pi 3 are never asked: they cut into a shader, as D73 says."""
+        mix = self.settings.data["mix"]
+        kind = transitions_mod.named(mix)
+        if kind not in transitions_mod.STYLES or self.mix["blackout"] or self.mix["opacity"] <= 0:
+            return None
+        if getattr(self.fader, "label", None) == "out":
+            return None
+        player = self.player
+        native, moves = getattr(player, "fades_native", None), getattr(player, "moves", None)
+        if native is None or moves is None or native() is not True or (kind != "crossfade" and moves() is not True):
+            return None
+        try:
+            if not player.status().get("path"):         # nothing on the screen: the shader comes in from black
+                return None
+        except PlayerError:
+            return None
+        return float(mix["duration"]), kind
 
     def _apply_opacity(self, percent):
         try:

@@ -427,6 +427,23 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.unroute('**/api/status');
       await page.setViewportSize(before);
     }
+    // The Mix card says a shader pad still cuts on a node that cuts (mix.shader_cut), and says nothing otherwise.
+    {
+      let cuts = true;
+      await page.route('**/api/status', async (route) => {
+        const response = await route.fetch();
+        const body = await response.json();
+        if (cuts) body.mix.shader_cut = 'On this node a shader pad still arrives with a cut, whatever is chosen here.';
+        else delete body.mix.shader_cut;
+        await route.fulfill({ response, json: body });
+      });
+      await page.click('#transitioncard button:has-text("Crossfade")');
+      await page.waitForSelector('#mixshadercut', { timeout: 15000 });
+      assert.strictEqual(await page.textContent('#mixshadercut'), 'On this node a shader pad still arrives with a cut, whatever is chosen here.');
+      cuts = false;
+      await page.waitForFunction(() => !document.getElementById('mixshadercut'), null, { timeout: 15000 });
+      await page.unroute('**/api/status');
+    }
     await page.click('button:has-text("Dip to black")');
     await page.waitForFunction(() => fetch('/api/status').then((r) => r.json()).then((j) => j.mix.transition === 'dip'));
     await page.waitForSelector('button.on:has-text("Dip to black")');
