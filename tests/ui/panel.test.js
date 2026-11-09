@@ -5175,6 +5175,25 @@ function startServer(env) {          // env: more for the harness's environment 
           assert.deepStrictEqual(pos, ['static', 'static', 'sticky'], 'on Room at 1440 only the Walls name is stuck (scenes, guests, walls): ' + JSON.stringify(pos));
         }
         const call = (url, body) => page.evaluate(([u, b]) => fetch(u, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify(b || {}) }).then((r) => r.json().catch(() => ({}))), [url, body]);
+        {
+          // The keyboard's ring on the title bar can be seen in Signal, where the bar is the area's colour: the ring is
+          // the bar's ink there, not the area's colour (it was the same colour as the bar)
+          const was = (await page.evaluate(() => fetch('/api/theme', { credentials: 'same-origin' }).then((r) => r.json()))).theme || { name: 'dark-stage', accent: null };
+          await call('/api/theme', { name: 'signal', accent: null });
+          await page.reload();
+          await page.waitForSelector('#nodesbtn');
+          await page.focus('#nodesbtn');
+          await page.keyboard.press('Shift+Tab');
+          await page.keyboard.press('Tab');
+          const ring = await page.evaluate(() => {
+            const b = document.activeElement, cs = getComputedStyle(b), bar = getComputedStyle(document.getElementById('wshead'));
+            return { id: b.id, style: cs.outlineStyle, ring: cs.outlineColor, bar: bar.backgroundColor };
+          });
+          assert(ring.id === 'nodesbtn' && ring.style === 'solid' && ring.ring !== ring.bar, 'the focus ring on Nodes is not the title bar\'s colour in Signal: ' + JSON.stringify(ring));
+          await call('/api/theme', { name: was.name, accent: was.accent || null });
+          await page.reload();
+          await page.waitForSelector('#wsmain');
+        }
         // no text overruns on any screen at 320, 390, 600 and 768 px, on a phone held sideways and at the desk's
         // widths (1200, 1366, 1440 and 1920 px), in both looks, with long names in the box's answers (2026-10-09)
         const narrowBegan = Date.now();

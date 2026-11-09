@@ -8,7 +8,8 @@ body {
   -webkit-tap-highlight-color: transparent; touch-action: manipulation;
 }
 button, input, select { font: inherit; color: inherit; }
-button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid var(--ac); outline-offset: 2px; }
+/* (every control the keyboard reaches has the same ring: dropdowns, folds and text boxes as well, not the browser's own) */
+button:focus-visible, input:focus-visible, a:focus-visible, select:focus-visible, summary:focus-visible, textarea:focus-visible { outline: 3px solid var(--ac); outline-offset: 2px; }
 .k { font: 500 11px ui-monospace, "SF Mono", Menlo, Consolas, monospace; letter-spacing: .08em; text-transform: uppercase; color: var(--mu); }
 .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
 
@@ -996,6 +997,8 @@ html[data-style="signal"] .ctlnote.pending { color: var(--ink); }
 html[data-style="signal"] button:focus-visible, html[data-style="signal"] input:focus-visible, html[data-style="signal"] a:focus-visible, html[data-style="signal"] select:focus-visible, html[data-style="signal"] summary:focus-visible, html[data-style="signal"] .xypad:focus-visible, html[data-style="signal"] canvas.mapcanvas:focus-visible, html[data-style="signal"] .ctl:focus-visible {
   outline: 3px solid var(--ink); outline-offset: 2px;
 }
+/* (on the title bar, which is the area's colour, the ring is the bar's ink: in the area's colour it could not be seen) */
+html[data-style="signal"] .wshead :focus-visible { outline-color: var(--on); }
 
 /* -- the title block: the area's colour, full width, the screen's name in very large capitals -- */
 html[data-style="signal"] .screen { gap: 16px; }
