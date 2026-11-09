@@ -5,6 +5,12 @@
 `link/` beside this holds another program, pvj-link, the Ableton Link follower (D117, pvj/SOUND.md). It is C++, shares
 nothing with pvj-render, and is built only by `make pvj-link`.
 
+`raster/` holds pvj-raster (D129), the one program that decodes a picture somebody uploaded (PNG, JPEG, SVG) and writes
+a clean PNG. It shares nothing with pvj-render, needs only libpng and libjpeg headers, and is built only by
+`make pvj-raster` (the installer does that on every board). It reads one request on standard input and answers on
+standard output; systemd runs it for each job with no network and hard limits (`install/pvj-raster@.service`). Its SVG
+reader, nanosvg, is vendored unchanged in `raster/vendor/`.
+
 The box's own renderer (project-log/DECISIONS.md, D95). Phase 1 takes the place of the one mpv behind the same JSON
 socket: one video layer drawn by libmpv at an internal size, the projection mapping and the scale to the screen as one
 final pass, and overlays and on-screen text over it. Chosen on Setup > Screen output (Renderer); classic mpv stays the

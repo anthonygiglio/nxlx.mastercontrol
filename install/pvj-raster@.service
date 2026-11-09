@@ -1,0 +1,59 @@
+# SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+# SPDX-License-Identifier: Apache-2.0
+[Unit]
+Description=nxlx.mastercontrol picture helper (one uploaded picture, then it exits; D129)
+ConditionPathExists=@PVJ_DIR@/render/pvj-raster
+
+[Service]
+# Started by pvj-raster.socket for each connection, with the connection as its standard input and output. It reads one
+# PNG, JPEG or SVG and writes one clean PNG (design/text-and-logo-sources_2026-11-08.md section 7). This is the one
+# part that decodes a file from a phone or a laptop, and C decoders have a long history of memory bugs, so it is given
+# nothing: its own account, no network, none of the box's files, no way to gain rights, a syscall list, and hard ceilings.
+User=pvj-raster
+Group=pvj-raster
+UMask=0077
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+Environment=HOME=/nonexistent
+ExecStart=@PVJ_DIR@/render/pvj-raster
+# A job that is not done in 15 seconds is killed from outside as well as by the program's own alarm.
+RuntimeMaxSec=15
+
+# Sandbox. No capabilities, no network (it keeps the connection it was given and can make no other), a read-only
+# system, no home, no devices, no sight of the settings, the PIN or any other service's folder.
+CapabilityBoundingSet=
+NoNewPrivileges=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectProc=invisible
+ProcSubset=pid
+InaccessiblePaths=-/var/lib/pvj -/var/lib/pvj-player -/etc/pvj -/run/pvj -/run/pvj-sound -/run/pvj-ndi -/run/pvj-sysd -/run/pvj-supportd -/run/pvj-link -/media
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+# What a decoder needs (read, write, memory, signals, the timer) and not what a hijacked one would want: no
+# privileged calls, no limits to raise, no sockets of its own, no shared memory with others, no keyring.
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @network-io @ipc @keyring @chown @setuid
+# Ceilings. The address space and CPU limits are the design's (512 MB, 10 s); the memory limit is the unit's as a whole.
+LimitAS=512M
+LimitCPU=10
+LimitNOFILE=16
+LimitCORE=0
+MemoryMax=256M
+MemorySwapMax=0
+TasksMax=2

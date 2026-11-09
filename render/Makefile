@@ -52,7 +52,14 @@ pvj-link: link/pvj-link.cpp
 pvj-link-peer: link/link-peer.cpp
 	$(CXX) -std=c++17 $(CXXFLAGS) $(LINK_DEFS) $(LINK_WARN) $(HARDEN) $(LDFLAGS) $(LDHARDEN) -o $@ $< -pthread -latomic
 
+# pvj-raster (D129): the one program that decodes an uploaded picture, run by systemd as a throwaway process with no
+# network and hard limits (install/pvj-raster@.service). Plain make does not build it: make pvj-raster. Needs libpng and
+# libjpeg headers (Debian and Ubuntu: libpng-dev libjpeg-dev). The SVG reader is nanosvg, vendored unchanged in
+# raster/vendor with its licence; -isystem keeps its own warnings out of ours.
+pvj-raster: raster/pvj-raster.c raster/vendor/nanosvg.h raster/vendor/nanosvgrast.h
+	$(CC) -std=c11 $(CFLAGS) $(WARN) $(HARDEN) -isystem raster/vendor $$($(PKG_CONFIG) --cflags libpng libjpeg) $(LDFLAGS) $(LDHARDEN) -o $@ $< $$($(PKG_CONFIG) --libs libpng libjpeg) -lm
+
 clean:
-	rm -f pvj-render pvj-link pvj-link-peer $(OBJ)
+	rm -f pvj-render pvj-link pvj-link-peer pvj-raster $(OBJ)
 
 .PHONY: clean

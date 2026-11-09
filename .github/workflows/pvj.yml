@@ -435,6 +435,48 @@ jobs:
           grep -q -E "^Ran [1-9]" /tmp/link.txt || { echo "::error::no test ran"; exit 1; }
           exit "${code:-0}"
 
+  pvj-raster:
+    # The picture helper (render/raster/, D129): built with every warning an error against Debian 13's own libpng and
+    # libjpeg (the Pi's distribution), then run for real on good, damaged and hostile pictures (tests/test_raster.py with
+    # PVJ_RASTER_TEST=1). A skip here is a failure. Other jobs run the same module without the program, where the real
+    # tests skip and the checks around them still run.
+    name: pvj-raster (Debian 13)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    container:
+      image: debian:trixie
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      PKGS: gcc make pkg-config libc6-dev libpng-dev libjpeg-dev python3 binutils git ca-certificates
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the compiler and the picture libraries' headers (three tries; a slow mirror is given up on)
+        timeout-minutes: 10
+        run: |
+          for n in 1 2 3; do
+            if apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 update && apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 install -y --no-install-recommends $PKGS; then
+              exit 0
+            fi
+            echo "attempt $n failed"
+            sleep 5
+          done
+          exit 1
+      - name: Build pvj-raster (every warning an error)
+        run: |
+          dpkg-query -W -f '${Package} ${Version}\n' libpng-dev libjpeg62-turbo-dev
+          make -C render WERROR=1 pvj-raster
+      - name: pvj-raster for real, on good, damaged and hostile pictures (a skip is a failure)
+        timeout-minutes: 8
+        run: |
+          PVJ_RASTER_TEST=1 python3 -X faulthandler -m unittest -v tests.test_raster > /tmp/raster.txt 2>&1 || code=$?
+          cat /tmp/raster.txt
+          if grep -q -E "skipped|OK \(skipped" /tmp/raster.txt; then
+            echo "::error::a test of pvj-raster was skipped: it judges nothing here"
+            exit 1
+          fi
+          grep -q -E "^Ran [1-9]" /tmp/raster.txt || { echo "::error::no test ran"; exit 1; }
+          exit "${code:-0}"
+
   panel-ui:
     runs-on: ubuntu-24.04
     timeout-minutes: 30       # about seven

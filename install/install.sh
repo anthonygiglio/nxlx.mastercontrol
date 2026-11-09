@@ -90,6 +90,8 @@ SYS_UNIT="$ROOT/etc/systemd/system/pvj-sysd.service"
 SUP_UNIT="$ROOT/etc/systemd/system/pvj-supportd.service"
 SOUND_UNIT="$ROOT/etc/systemd/system/pvj-sound.service"      # sound analysis (D96): on every box, idle until the Owner chooses a device
 LINK_UNIT="$ROOT/etc/systemd/system/pvj-link.service"        # the Ableton Link follower (D117): on every box that could build it, off until the Owner says
+RASTER_UNIT="$ROOT/etc/systemd/system/pvj-raster@.service"   # the picture helper (D129): decodes uploaded logos, one process per job
+RASTER_SOCKET_UNIT="$ROOT/etc/systemd/system/pvj-raster.socket"
 # The NDI input is opt-in per box (D62): none of these four files exists unless root ran "pvj-ndi-runtime install"
 # at the box (pvj/ndisetup.py). The panel's drop-in is the mark of that; this installer never writes it.
 NDI_UNIT="$ROOT/etc/systemd/system/pvj-ndi.service"
@@ -123,13 +125,14 @@ uninstall() {
 		systemctl disable --now pvj-ndi-discovery.service 2>/dev/null || true
 		systemctl disable --now pvj-sound.service 2>/dev/null || true
 		systemctl disable --now pvj-link.service 2>/dev/null || true
+		systemctl disable --now pvj-raster.socket 2>/dev/null || true
 	fi
 	# The discovery server's set-up, where there is one: its mark first (it lies in the same folder as the NDI mark).
 	run rm -f "$NDISC_MARK" "$NDISC_UNIT" "$NDISC_WANTS" || log "WARNING: could not remove everything of the discovery server's set-up; look at $NDISC_MARK and $NDISC_UNIT and remove them by hand"
 	# A box that was set up for NDI: the mark first, then the rest; the two folders only if nothing else is in them.
 	run rm -f "$NDI_MARK" "$NDI_PLAYER_DROPIN" "$NDI_TMPFILES" "$NDI_UNIT" "$NDI_WANTS" "$BIN_LINKS/pvj-ndi-runtime" || log "WARNING: could not remove everything of the NDI helper; look at $NDI_MARK, $NDI_PLAYER_DROPIN and $NDI_UNIT and remove them by hand"
 	if [ "$DRY" = 0 ]; then rmdir "$(dirname "$NDI_MARK")" "$(dirname "$NDI_PLAYER_DROPIN")" 2>/dev/null || true; fi
-	run rm -f "$SUP_UNIT" "$SOUND_UNIT" "$LINK_UNIT" "$WG_LOAD" "$UPD_USB_UNIT" "$UPD_INBOX_UNIT" "$JOURNAL_CONF" "$TMPFILES"
+	run rm -f "$SUP_UNIT" "$SOUND_UNIT" "$LINK_UNIT" "$RASTER_UNIT" "$RASTER_SOCKET_UNIT" "$WG_LOAD" "$UPD_USB_UNIT" "$UPD_INBOX_UNIT" "$JOURNAL_CONF" "$TMPFILES"
 	run rm -f "$UNIT" "$WEB_UNIT" "$NET_UNIT" "$SYS_UNIT" "$USB_UNIT" "$USB_RULE" "$BIN_LINKS/pvj-player" "$BIN_LINKS/pvj-selftest" "$BIN_LINKS/pvj-usb" "$BIN_LINKS/pvj-rootfs" "$BIN_LINKS/pvj-pin" "$BIN_LINKS/pvj-update"
 	run rm -rf "${ROOT}${PREFIX:?}"
 	[ "$PURGE" = 1 ] && run rm -rf "$ETC"
@@ -139,7 +142,7 @@ uninstall() {
 	if [ "$PURGE" = 1 ]; then run rm -rf "${ROOT}/opt/pvj-ndi-server"; fi
 	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then systemctl daemon-reload; fi
 	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && command -v udevadm >/dev/null; then udevadm control --reload || true; fi
-	log "done. Kept ${ETC}, media and /opt/pvj-ndi (your copy of the NDI runtime, if this box was set up for NDI) unless --purge; the users (pvj-web, pvj-sound, pvj-link, the player's, and pvj-ndi on a box that was set up for NDI) and the groups pvj and pvj-ndi are left in place, the group pvj-link too (remove them with deluser and delgroup if you want them gone)."
+	log "done. Kept ${ETC}, media and /opt/pvj-ndi (your copy of the NDI runtime, if this box was set up for NDI) unless --purge; the users (pvj-web, pvj-sound, pvj-link, pvj-raster, the player's, and pvj-ndi on a box that was set up for NDI) and the groups pvj and pvj-ndi are left in place, the groups pvj-link and pvj-raster too (remove them with deluser and delgroup if you want them gone)."
 }
 
 if [ "$UNINSTALL" = 1 ]; then uninstall; exit 0; fi
@@ -208,6 +211,22 @@ if [ ${#link_need[@]} -gt 0 ] && command -v dpkg-query >/dev/null; then
 	fi
 fi
 
+# The picture helper (D129): uploaded logos are decoded by pvj-raster, built here from its source against libpng and
+# libjpeg (and the vendored SVG reader). It is on every board, lean or full. Missing build tools are installed when the
+# network allows; without them it is not built, the panel says picture upload is not available, and nothing else changes.
+raster_need=()
+for p in gcc make pkg-config libc6-dev libpng-dev libjpeg-dev; do
+	dpkg-query -W -f '${Status}' "$p" 2>/dev/null | grep -q 'install ok installed' || raster_need+=("$p")
+done
+if [ ${#raster_need[@]} -gt 0 ] && command -v dpkg-query >/dev/null; then
+	if [ "$OFFLINE" = 1 ] || [ "$REAL" = 0 ] || ! command -v apt-get >/dev/null; then
+		log "uploading logos will be unavailable until these are installed: ${raster_need[*]}"
+	else
+		log "installing ${raster_need[*]} (to build pvj-raster)"
+		run apt-get install -y --no-install-recommends "${raster_need[@]}" || log "could not install ${raster_need[*]}; uploading logos stays unavailable"
+	fi
+fi
+
 # Optional: sound reactivity (D96) reads a capture device with arecord, from alsa-utils (in Raspberry Pi OS already).
 # Without it the sound service idles and the panel says arecord is missing.
 if ! command -v arecord >/dev/null && [ ! -x /usr/bin/arecord ]; then
@@ -271,6 +290,14 @@ if [ "$REAL" = 1 ]; then
 		run useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --gid pvj-link pvj-link
 	fi
 	run usermod -aG pvj-link pvj-web
+	# The picture helper (D129) decodes files from phones and laptops, so it too runs as its own account in its own group,
+	# with nothing else of the box's. The panel joins that group to reach its socket, and nobody else does.
+	getent group pvj-raster >/dev/null || run groupadd --system pvj-raster
+	if ! id pvj-raster >/dev/null 2>&1; then
+		log "creating system user pvj-raster"
+		run useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --gid pvj-raster pvj-raster
+	fi
+	run usermod -aG pvj-raster pvj-web
 fi
 
 # --- program files: releases/<version>, "current" points at the active one --
@@ -312,6 +339,21 @@ if [ "$DRY" = 0 ]; then
 			fi
 		else
 			log "pvj-link was not built: g++ or the headers of ableton-link-dev are missing; Ableton Link stays unavailable"
+		fi
+	fi
+	# The picture helper (D129), built the same way and never a reason to stop an install: without it the panel says
+	# uploading logos is not available, and the unit's condition leaves the socket alone.
+	if [ "$REAL" = 1 ] && [ -f "$RELEASE.new/render/Makefile" ]; then
+		rm -f "$RELEASE.new/render/pvj-raster"
+		if command -v make >/dev/null && command -v pkg-config >/dev/null && pkg-config --exists libpng libjpeg; then
+			log "building pvj-raster"
+			if nice -n 10 timeout 600 make -C "$RELEASE.new/render" pvj-raster > "$RELEASE.new/render/raster-build.log" 2>&1; then
+				log "pvj-raster built"
+			else
+				log "pvj-raster was not built (render/raster-build.log in the release); uploading logos stays unavailable"
+			fi
+		else
+			log "pvj-raster was not built: the build tools or the libpng and libjpeg headers are missing; uploading logos stays unavailable"
 		fi
 	fi
 fi
@@ -393,6 +435,8 @@ if [ "$DRY" = 0 ]; then
 	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-supportd.service" > "$SUP_UNIT"
 	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-sound.service" > "$SOUND_UNIT"
 	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-link.service" > "$LINK_UNIT"
+	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-raster@.service" > "$RASTER_UNIT"
+	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-raster.socket" > "$RASTER_SOCKET_UNIT"
 	# Updates from the panel: started on request by pvj-sysd, never enabled.
 	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-update-usb@.service" > "$UPD_USB_UNIT"
 	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-update-inbox@.service" > "$UPD_INBOX_UNIT"
@@ -568,6 +612,12 @@ if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then
 	systemctl enable pvj-link.service || log "could not enable the Ableton Link service"
 	if [ "$START" = 1 ]; then systemctl restart pvj-link.service || log "the Ableton Link service did not start; see: journalctl -u pvj-link -n 30"
 	else systemctl try-restart pvj-link.service || true; systemctl start pvj-link.service 2>/dev/null || true; fi
+	# The picture helper's socket, on every board (D129). systemd starts one helper process behind it for each job, so there
+	# is nothing to restart: a socket that is listening is moved to the new program by the next job. Where the program
+	# could not be built, the socket's condition skips it, which is no failure.
+	systemctl enable pvj-raster.socket || log "could not enable the picture helper's socket"
+	if [ "$START" = 1 ]; then systemctl restart pvj-raster.socket || log "the picture helper's socket did not start; see: journalctl -u pvj-raster.socket -n 30"
+	else systemctl start pvj-raster.socket 2>/dev/null || true; fi
 	# The network helper only makes sense with NetworkManager (Raspberry Pi OS, most desktops).
 	if command -v nmcli >/dev/null; then
 		systemctl enable pvj-netd.service

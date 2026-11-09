@@ -97,3 +97,16 @@ path = [
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2007 Free Software Foundation, Inc. <https://fsf.org/>"
 SPDX-License-Identifier = "GPL-3.0-or-later"
+
+# nanosvg (https://github.com/memononen/nanosvg, zlib licence), vendored unchanged in render/raster/vendor for pvj-raster
+# (D129): the SVG reader that has no scripts, entities, external fetches, images or text. The upstream commit is in
+# THIRD_PARTY_LICENSES.md. The rest of render/raster is this project's, GPL-3.0-or-later, with its own header.
+[[annotations]]
+path = [
+  "render/raster/vendor/nanosvg.h",
+  "render/raster/vendor/nanosvgrast.h",
+  "render/raster/vendor/LICENSE.nanosvg",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2013-14 Mikko Mononen <memon@inside.org>"
+SPDX-License-Identifier = "Zlib"
