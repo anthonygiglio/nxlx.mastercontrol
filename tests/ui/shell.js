@@ -774,7 +774,7 @@ const PLAY = ['play/pads', 'play/library', 'play/shaders'];
 const SHAPE = ['shape/effect', 'shape/picture', 'shape/sound', 'shape/mapping'];
 const MENUS = {
   owner: ['now/now'].concat(PLAY, SHAPE, ['room/scenes', 'room/walls', 'room/guests'], ['index', 'health', 'projectors', 'room', 'schedule', 'access', 'autostart', 'streams', 'ndi', 'render', 'soundin', 'ndisc', 'sync', 'midi', 'dmx', 'osc',
-    'network', 'screen', 'updates', 'support', 'https', 'backup', 'look', 'about'].map((x) => 'setup/' + x)),
+    'network', 'screen', 'updates', 'support', 'nodes', 'https', 'backup', 'look', 'about'].map((x) => 'setup/' + x)),
   presenter: ['now/now'].concat(PLAY, SHAPE, ['room/scenes', 'room/walls', 'room/guests'], ['index', 'health', 'projectors', 'room', 'schedule', 'access', 'autostart', 'streams', 'ndi', 'render', 'soundin', 'sync', 'midi', 'about'].map((x) => 'setup/' + x)),
   guest: PLAY.concat(SHAPE, ['room/scenes', 'room/walls'], ['index', 'health', 'about'].map((x) => 'setup/' + x)),
 };
@@ -798,6 +798,8 @@ async function roles(pages, post) {
     // an owner and a presenter land on Now, a guest on the Room
     assert.strictEqual(s.screen, who === 'guest' ? 'room/scenes' : 'now/now', 'where a ' + who + ' lands');
     assert.deepStrictEqual(s.tabNames, (who === 'guest' ? [] : ['Now']).concat(['Play', 'Shape', 'Room', 'Setup']), 'the areas a ' + who + ' has (Now for whoever runs the night)');
+    // the node switcher (D127): an Owner's and an Operator's ("presenter" here is the live device, an Operator since D80); a guest has none
+    assert.strictEqual(await pg.locator('#nodesbtn').count(), who === 'guest' ? 0 : 1, 'Nodes in the title bar for a ' + who);
     // a guest, guest controls being open (D80, the default): Stop and Blackout are his, Previous and Next with a
     // playlist, and every other control of the strip is disabled; locked, all of them (panel.test.js locks and looks)
     const steps = s.disabled.filter((b) => b === 'prev' || b === 'next');
