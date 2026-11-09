@@ -324,6 +324,7 @@ static void end_fade(void)
         // the outgoing layer's generator (D130) is asked off too: this thread only asks, the render thread frees its GL
         // objects at the top of its next turn (fx_take). A load that was waiting for that layer is dropped with it.
         FxSlot *g = &app.gen[back];
+        if (g->pending) g->dropped = g->asked;      // the load waiting there is told it was not built
         fx_prog_free(g->pending);
         g->pending = NULL;
         g->pending_clear = 1;
@@ -888,7 +889,9 @@ static void shader_command(int fd, const mpv_node *id, const mpv_node *cmd)
     FxSlot *s = si == 0 && k == 0 ? &app.gen[app.front] : &app.fx[si][k];
     fx_prog_free(s->pending);
     s->pending = p;
-    s->pending_clear = p == NULL;
+    // A clear already asked (end_fade's, for a layer that went out) stays: the render thread does it first and builds this
+    // load after it, so a refused load cannot leave the old program running (the review of #239).
+    if (!p) s->pending_clear = 1;
     long mine = ++s->asked;
     pthread_mutex_unlock(&app.lock);
     wake_render();
@@ -898,12 +901,15 @@ static void shader_command(int fd, const mpv_node *id, const mpv_node *cmd)
     int done = wait_render(fx_answered, 3.0);
     char answer[sizeof s->answer];
     memcpy(answer, s->answer, sizeof answer);
+    // the layer was ended while this load waited: the render thread answered the cut, not the load
+    int ended = p && s->dropped >= mine;
     pthread_mutex_unlock(&app.lock);
     pthread_mutex_lock(&layer_lock);
     level_sync(si);
     pthread_mutex_unlock(&layer_lock);
     pthread_mutex_unlock(&fx_lock);
     if (!done) reply(fd, id, "the renderer did not build the program in time", NULL);
+    else if (ended) reply(fd, id, "the layer was ended before the load took effect", NULL);
     else reply(fd, id, answer[0] ? answer : "success", NULL);
 }
 

@@ -29,12 +29,13 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 
 import tests        # the run's own temp folder (tests/__init__.py)
 from pvj import effects as E, paths, shaders as S
-from pvj.player import Player, PlayerError, is_program
+from pvj.player import Ipc, Player, PlayerError, is_program
 from pvj.transitions import read_still
 from tests.test_pvj_render import (BIN, BLACK, BLUE, GREEN, H, RED, STRICT, W, Renderer, SourcesBase, fd_count, need_program, png,
                                    thread_count)
@@ -1668,6 +1669,39 @@ class LayerGeneratorTest(NativeBase):
         self.assertEqual(self.st()["fade"], "running")
         self.settled()
 
+    BAD = "//!PVJ 1\n//!KIND generator\n//!SIZE 320 180\n//!CODE\nvoid pvj_main() { not glsl }\n"
+    TRIES = int(os.environ.get("PVJ_LOST_CLEAR_TRIES", "6"))
+
+    def test_a_cut_then_a_refused_load_at_once_still_takes_the_outgoing_generator_off(self):
+        """The review of #239 (High): a crossfade that cuts a fade between two generators asks the outgoing layer's
+        generator off (end_fade), and a load that lands before the render thread's next turn used to overwrite that
+        clear; if the load was then refused, the old generator stayed as the new front picture and was never freed.
+        Timing dependent, so it is tried TRIES times (PVJ_LOST_CLEAR_TRIES)."""
+        green = os.path.join(self.tmp, "green.png")
+        png(green, W, H, lambda x, y: GREEN)
+        self.carrier()
+        for i in range(self.TRIES):
+            self.r("pvj-shader", "load", 1, 0, self.generator(solid(0.8, 0, 0)))
+            self.assertTrue(self.r.wait(lambda: self.r.pixel(10, 10)[0] > FULL - 8, 5), self.r.pixel(10, 10))
+            one = self.objects()
+            self.fade(seconds=8.0)
+            self.r("pvj-shader", "load", 1, 0, self.generator(solid(0, 0, 0.8)))
+            self.running(0.1, 0.8)
+            self.assertEqual(self.objects(), 2 * one)
+            # the cut and the refused load, back to back
+            args = ["pvj-crossfade", green, 2.0, "keep-open=no,image-display-duration=inf"]
+            self.r(*args)
+            with self.assertRaises(PlayerError):
+                self.r("pvj-shader", "load", 1, 0, self.write(self.BAD))
+            self.settled()
+            self.assertTrue(self.r.wait(lambda: self.objects() == 0, 5), "try %d: objects %d" % (i, self.objects()))
+            self.assertEqual(self.slot(0)["state"], "off", "try %d" % i)
+            px = self.r.pixel(W // 2, H // 2)
+            self.assertTrue(px[1] > FULL - 8 and px[0] < 20 and px[2] < 20, "try %d: the clip is the picture: %s" % (i, px))
+            self.r("stop")
+            self.assertTrue(self.r.wait(lambda: self.objects() == 0 and self.st()["fade"] == "off", 5), self.st())
+            self.carrier()
+
     def test_a_fade_on_nothing_but_clips_is_what_it_was(self):
         """No generator in either layer: the pictures are the layers' own, as before this step."""
         a = os.path.join(self.tmp, "red.png")
@@ -1680,6 +1714,57 @@ class LayerGeneratorTest(NativeBase):
         self.settled()
         self.assertEqual(self.objects(), 0)
         self.assertFalse(self.r("get_property", "pvj-shaders")[0]["state"] != "off")
+
+
+class LayerLoadAnswerTest(NativeBase):
+    """The review of #239 (Medium): a load that waits for the render thread while its layer is cut (the layer goes out and
+    its generator is taken off before the load was built) is not answered "success" with the slot off; it is told the
+    layer was ended first. Two clients, and a slow build (a test hook) to keep the render thread busy for the window."""
+
+    def setUp(self):
+        need_program(self)
+        if "with test hooks" not in subprocess.run([BIN, "--version"], capture_output=True, text=True).stdout:
+            if STRICT:
+                self.fail("PVJ_RENDER_TEST=1 and pvj-render was built without its test hooks: make -C render TEST_HOOKS=1")
+            self.skipTest("pvj-render was built without its test hooks")
+        self.tmp = tempfile.mkdtemp(prefix="pvj-native-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.r = Renderer(env={"PVJ_RENDER_TEST_SLOW_BUILD": "3500"})
+        self.addCleanup(lambda: self.r.close())
+        self.r("set_property", "image-display-duration", "inf")
+        self.n = 0
+
+    def test_a_load_cut_with_its_layer_while_it_waits_is_not_answered_success(self):
+        green = os.path.join(self.tmp, "green.png")
+        png(green, W, H, lambda x, y: GREEN)
+        self.carrier()
+        said = {}
+
+        def load(name, path):
+            ipc = Ipc(self.r.sock, timeout=12.0)
+            try:
+                ipc.request("pvj-shader", "load", 1, 0, path, wait=6.0)
+                said[name] = "success"
+            except PlayerError as e:
+                said[name] = str(e)
+
+        a = threading.Thread(target=load, args=("a", self.generator(solid(0.8, 0, 0))))
+        a.start()                                   # client 1: its build holds the render thread for 3.5 s; it times out at 3 s
+        time.sleep(3.1)
+        b = threading.Thread(target=load, args=("b", self.generator(solid(0, 0, 0.8))))
+        b.start()                                   # client 2: waits behind that build, on the same layer
+        time.sleep(0.1)
+        keep = "keep-open=no,image-display-duration=inf"
+        self.r("pvj-crossfade", green, 20.0, keep)          # the load's layer goes out ...
+        self.r("pvj-crossfade", green, 0.2, keep)           # ... and a new crossfade cuts that fade: end_fade drops the waiting load
+        a.join(15)
+        b.join(15)
+        self.assertFalse(a.is_alive() or b.is_alive())
+        self.assertTrue(self.r.wait(lambda: self.r("get_property", "pvj-render")["fade"] == "off", 20, 0.1))
+        self.assertNotEqual(said.get("b"), "success", said)
+        self.assertIn("ended", said.get("b", ""), said)
+        self.assertTrue(self.r.wait(lambda: self.r("get_property", "pvj-render")["fx-gl-objects"] == 0, 8), self.r("get_property", "pvj-render"))
+        self.assertEqual(self.slot(0)["state"], "off")
 
 
 class ManyLayerFadesTest(NativeBase):

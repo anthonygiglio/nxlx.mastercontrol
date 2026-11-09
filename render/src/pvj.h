@@ -54,6 +54,7 @@ typedef struct {
     FxProg *pending;                // a load the render thread has not taken yet
     int pending_clear;
     long asked, answered;           // loads and clears asked; the last the render thread has answered
+    long dropped;                   // the last request a layer's end threw away unbuilt (a load waiting for it was never built)
     char answer[480];               // its answer: empty when it was done, else why not
     int on, constants, kind, ninputs;
     FxValue val[FX_MAX_INPUTS];     // the values now: the socket sets them, the render thread copies them each frame

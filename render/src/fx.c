@@ -812,16 +812,17 @@ static void take_slot(int s, int k, int layer)
     char err[sizeof sl->answer] = "";
     int ok = 1;
     FxGL *f = program(s, k, layer);
-    if (clear) {
-        fx_prog_free(p);                // a clear that came after a load takes its place; the load is not built
-        fx_off(f);
-    } else if (fx_build(f, s, k, p, err, sizeof err)) {
+    // A clear asked first is done first, then the load (if any) is built: a clear and a load that meet in one mailbox are
+    // both kept, so a load that is refused leaves the slot off, never the program the clear was asked for (D130, #239).
+    // A clear that came after a load drops that load at the socket (pending is NULL then).
+    if (clear) fx_off(f);
+    if (p && fx_build(f, s, k, p, err, sizeof err)) {
         ok = 0;
         fx_prog_free(p);
         LOG("program in source %d slot %d refused: %s", s + 1, k, err);
     }
     pthread_mutex_lock(&app.lock);
-    if (ok) {
+    if (ok || clear) {              // a refused load after a clear leaves the slot off: its state says so
         sl->on = f->on;
         sl->constants = f->constants;
         if (sl->on) {
@@ -842,16 +843,17 @@ static void take_slot(int s, int k, int layer)
         snprintf(sl->state, sizeof sl->state, "%s%s", sl->on ? (sl->constants ? "constants" : "on") : "off",
                  sl->on && f->float_low ? "; its FLOAT buffers are 8-bit on this GPU" : "");
         sl->answer[0] = 0;
+        if (!ok) snprintf(sl->answer, sizeof sl->answer, "%s", err);
     } else {
         snprintf(sl->answer, sizeof sl->answer, "%s", err);
     }
     sl->answered = asked;
     int was = app.native[s];
     app.native[s] = source_on(s);
-    if (was != app.native[s]) app.level_resync = 1;     // whoever asks next brings the layers' level along
+    if (was != app.native[s]) __atomic_store_n(&app.level_resync, 1, __ATOMIC_RELEASE);     // whoever asks next brings the layers' level along
     sl->w = f->w;
     sl->h = f->h;
-    if (ok) snprintf(sl->path, sizeof sl->path, "%s", f->on ? fx_prog_path(f->src) : "");
+    if (ok || clear) snprintf(sl->path, sizeof sl->path, "%s", f->on ? fx_prog_path(f->src) : "");
     pthread_cond_broadcast(&app.cond);
     pthread_mutex_unlock(&app.lock);
 }
@@ -877,6 +879,7 @@ void fx_layer_end(int layer)
 {
     pthread_mutex_lock(&app.lock);
     FxSlot *sl = &app.gen[layer];
+    if (sl->pending) sl->dropped = sl->asked;
     fx_prog_free(sl->pending);
     sl->pending = NULL;
     sl->pending_clear = 1;
