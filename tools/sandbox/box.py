@@ -242,7 +242,7 @@ def run(sc, tmp, first_port, stop):
     os.environ.update(PVJ_STATE_DIR=tmp, PVJ_MEDIA_DIR=media, PVJ_DEV_SPAWN="1")
 
     from pvj import server, capture
-    from pvj.player import Player
+    from pvj.player import Player, PlayerError
     from tests.test_server import make_test_video
 
     has_mpv = bool(shutil.which("mpv"))
@@ -264,6 +264,13 @@ def run(sc, tmp, first_port, stop):
     try:                                       # from here on, whatever happens, mpv is stopped and the ports closed
         api, auth, _ = server.build(os.environ, player=player)
         api.capture = capture.Capture(rundir, mpv, lister=lambda: [])     # no webcam or capture stick of this computer
+        if has_mpv:
+            # A node's player runs from the moment the node starts; dev mode would start it only on the first play,
+            # so an idle scenario said NO PLAYER and Health showed a problem a real node would not have (PROPOSALS 10).
+            try:
+                player._spawn()
+            except PlayerError as e:
+                print("sandbox: the player did not start (%s); the scenario goes on without it" % e, file=sys.stderr)
         serve_box(sc, tmp, first_port, stop, api, auth, rundir, has_mpv, servers, fakes)
     finally:
         for httpd in servers.values():
@@ -285,6 +292,12 @@ def serve_box(sc, tmp, first_port, stop, api, auth, rundir, has_mpv, servers, fa
     from tests.test_screenmode import MONITOR, connected
     report = screenmode.decide({"mode": "auto"}, screenmode.parse_help(MONITOR), "", connected(), "sandbox")
     screenmode.write_json(os.path.join(rundir, screenmode.REPORT), dict(report, pid=None, boot="sandbox", at=0))
+    # A headless mpv draws on no screen, so it knows no size, and the masks never got past it to "Combining"
+    # (PROPOSALS 11). The player says it draws at the mode the report says is used, as a node's would.
+    used = re.match(r"(\d+)x(\d+)", report.get("used") or "")
+    if used:
+        size = (int(used.group(1)), int(used.group(2)))
+        api.player.osd_size = lambda: size
     from tests.test_netd import FakeNm, make_sysfs
     from pvj.netd import NetService
     nm = FakeNm()
