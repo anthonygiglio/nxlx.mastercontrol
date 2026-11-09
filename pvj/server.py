@@ -22,6 +22,7 @@ import signal
 import socket
 import sys
 import threading
+import time
 import traceback
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -638,6 +639,33 @@ def supportd_max_seconds():
     return supportd.MAX_TOTAL_MINUTES * 60
 
 
+def build_fleet(api, settings, state, board):
+    """The node's announcement and its list of other nodes (pvj/fleet.py, D127). Nothing is sent or asked here."""
+    from . import __version__, fleet as fleet_mod
+    own_id, kept = fleet_mod.node_id(state)
+    if not kept:
+        print("pvj-web: the node id could not be kept in %s; it will be new at the next start" % state, file=sys.stderr)
+    tier = hardware.tier(board["kind"])
+
+    def describe():
+        secure = api.https.context is not None and bool(api.https.port)
+        port = api.https.port if secure else (api.support.panel_port or 80)
+        return {"id": own_id, "name": fleet_mod.clean_hostname(socket.gethostname()), "tier": tier, "version": __version__,
+                "port": port, "https": secure}
+
+    known = [0.0, []]
+
+    def addresses():
+        if time.monotonic() - known[0] >= fleet_mod.CACHE_SECONDS or not known[1]:       # `ip` is run at most once per listing
+            known[:] = [time.monotonic(), [a["local"] for e in api._ip_json() if e.get("ifname") not in ("lo", "wg-pvj")
+                                           for a in e.get("addr_info", []) if a.get("family") == "inet" and a.get("local")]]
+        return list(known[1])
+
+    return fleet_mod.Fleet(describe, lambda: fleet_mod.stored_on(settings.data.get("fleet")), api.sysd,
+                           lambda: fleet_mod.scan(fleet_mod.net_transport(addresses)),
+                           log=lambda m: print(m, file=sys.stderr), event=api.event)
+
+
 def build(env=None, player=None):
     env = os.environ if env is None else env
     state = env.get("PVJ_STATE_DIR", "/var/lib/pvj")
@@ -693,6 +721,7 @@ def build(env=None, player=None):
                                                          for a in e.get("addr_info", []) if a.get("family") == "inet" and a.get("local")],
                                       clock_trusted=lambda: api.clock_status().get("clock_from_network"), log=api.log)
     api.https.load()                         # a certificate that will not load leaves HTTP as it is, with the reason on the page
+    api.fleet = build_fleet(api, settings, state, board)         # other nodes on the network (D127); the first announcement is in main()
     from . import supportd as supportd_mod
     api.support.client = supportd_mod.SupportdClient(paths.supportd_socket())
     api.support.panel_port = int(env.get("PVJ_PORT", "8080"))
@@ -766,6 +795,8 @@ def main(argv=None):
     api.scheduler.start()
     api.autostart.start()
     api.pinscreen.start()
+    if api.fleet is not None:
+        api.fleet.tick()                     # the announcement, now that the ports are known (D127)
     ndi_stop = threading.Event()
 
     def ndi_watch():                         # a sender that changes size: the helper says so, the pipe is loaded again
@@ -782,6 +813,8 @@ def main(argv=None):
                 api.events_tick()            # the update result, the renderer's fall back, a projector without an answer (D125)
             except Exception as e:
                 print("pvj-web: event watch: %s" % e, file=sys.stderr)
+            if n % 15 == 0 and api.fleet is not None:
+                api.fleet.tick()             # a new name, version or port, or a retry: nothing is sent when nothing changed (D127)
             try:
                 api.render_tick()            # a render node's picture that went: back to what played before (D94)
             except Exception as e:

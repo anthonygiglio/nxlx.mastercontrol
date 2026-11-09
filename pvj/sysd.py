@@ -13,6 +13,8 @@ with SO_PEERCRED), and runs only these fixed commands, as argument lists, never 
 * status: whether the clock is set from the network;
 * journal: the node's own pvj-* log lines, read with `journalctl` for a fixed list of units, a capped number of lines
   and a bounded time window (the panel is deliberately not in the systemd-journal group, so this is how it reads them);
+* fleet_announce, fleet_withdraw (D127): write or remove the one avahi service file that announces the node as `_nxlx._tcp`
+  (fields checked against fixed patterns, a fixed template, nothing run; the only file outside /run this helper writes);
 * av_output: turn the AV (composite) output on or off in the Raspberry Pi's boot files (pvj/bootcfg.py), with backups; it
   takes effect at the next start of the node;
 * update: start pvj-update-usb@V.service or pvj-update-inbox@V.service (fixed template units, V a checked version: pvj-update checks the signature,
@@ -49,8 +51,12 @@ STATUS_CACHE = 5.0
 
 
 class SysService:
-    def __init__(self, runner=subprocess.run, schedule=None, log=print, rundir=None, clock=time.monotonic, now=time.time):
+    def __init__(self, runner=subprocess.run, schedule=None, log=print, rundir=None, clock=time.monotonic, now=time.time,
+                 avahi_services=None, avahi_socket=None):
         self.runner, self.log = runner, log
+        self.avahi_services = avahi_services or self.AVAHI_SERVICES
+        self.avahi_socket = avahi_socket or self.AVAHI_SOCKET
+        self._fleet_fail = None
         self._schedule = schedule or (lambda delay, fn: threading.Timer(delay, fn).start())
         self.lock = threading.Lock()
         self.rundir = rundir
@@ -246,6 +252,95 @@ class SysService:
         self.log("pvj-sysd: update to %s from %s started by the panel" % (version, source))
         return {"ok": True, "started": source, "version": version}
 
+    # --- announcing the node to the local network (D127) ------------------------------------------------------------
+    AVAHI_SERVICES = "/etc/avahi/services"
+    AVAHI_SOCKET = "/run/avahi-daemon/socket"
+    FLEET_FILE = "nxlx-mastercontrol.service"
+    FLEET_TIERS = ("lean", "standard", "full", "unknown")
+    FLEET_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,62}")
+    FLEET_ID = re.compile(r"[0-9a-f]{32}")
+    FLEET_VERSION = re.compile(r"[0-9A-Za-z][0-9A-Za-z.+-]{0,19}")
+
+    def _avahi(self):
+        """"missing" (no folder for service files), "stopped" (the folder, no running daemon) or "running"."""
+        if not os.path.isdir(self.avahi_services):
+            return "missing"
+        return "running" if os.path.exists(self.avahi_socket) else "stopped"
+
+    def fleet_announce(self, message):
+        """Write the one avahi service file that says `_nxlx._tcp` with the node's id, name, tier and version. Every field
+        is checked against a fixed pattern here, whatever the panel sent, and the file is rendered from a fixed template:
+        nothing from the request is a path or a command, and nothing runs (avahi-daemon watches its folder and picks the
+        file up). The file is replaced whole by a rename and left alone when it would not change."""
+        ident, name, tier, version, port = (message.get(k) for k in ("id", "name", "tier", "version", "port"))
+        secure = message.get("https")
+        if not (isinstance(ident, str) and self.FLEET_ID.fullmatch(ident) and isinstance(name, str) and self.FLEET_NAME.fullmatch(name)
+                and tier in self.FLEET_TIERS and isinstance(version, str) and self.FLEET_VERSION.fullmatch(version)
+                and isinstance(port, int) and not isinstance(port, bool) and 1 <= port <= 65535 and isinstance(secure, bool)):
+            return {"ok": False, "error": "the announcement has a field that is not valid"}
+        state = self._avahi()
+        if state == "missing":
+            return {"ok": True, "avahi": "missing"}
+        text = ("<?xml version=\"1.0\" standalone='no'?>\n"
+                "<!DOCTYPE service-group SYSTEM \"avahi-service.dtd\">\n"
+                "<!-- Written by pvj-sysd for nxlx.mastercontrol; the panel's discovery switch removes it. -->\n"
+                "<service-group>\n  <name replace-wildcards=\"yes\">%h</name>\n  <service>\n    <type>_nxlx._tcp</type>\n"
+                "    <port>" + str(port) + "</port>\n"
+                "    <txt-record>txtvers=1</txt-record>\n"
+                "    <txt-record>id=" + ident + "</txt-record>\n"
+                "    <txt-record>name=" + name + "</txt-record>\n"
+                "    <txt-record>tier=" + tier + "</txt-record>\n"
+                "    <txt-record>version=" + version + "</txt-record>\n"
+                "    <txt-record>https=" + ("1" if secure else "0") + "</txt-record>\n"
+                "  </service>\n</service-group>\n")
+        final = os.path.join(self.avahi_services, self.FLEET_FILE)
+        with self.lock:                          # one writer at a time: the temporary name is fixed
+            try:
+                with open(final, "r", encoding="utf-8") as f:
+                    if f.read(len(text) + 1) == text:
+                        self._fleet_fail = None
+                        return {"ok": True, "avahi": state}
+            except OSError:
+                pass
+            tmp = os.path.join(self.avahi_services, ".nxlx-mastercontrol.tmp")      # avahi reads only names ending in .service
+            try:
+                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o644)
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(text)
+                    os.fchmod(f.fileno(), 0o644)            # the unit's UMask would make it 0640, which avahi's own account cannot read
+                os.replace(tmp, final)
+            except OSError as e:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+                self._fleet_failed("the avahi service file was not written: %s" % e)
+                return {"ok": False, "error": "the service file could not be written"}
+            self._fleet_fail = None
+        self.log("pvj-sysd: announcing this node as %s (id %s)" % (name, ident[:8]))
+        return {"ok": True, "avahi": state}
+
+    def _fleet_failed(self, text):
+        """A failure to write or remove the file, logged once per change of reason: the panel asks again every minute
+        (on a read-only root every time would be the same line)."""
+        if text != self._fleet_fail:
+            self._fleet_fail = text
+            self.log("pvj-sysd: " + text)
+
+    def fleet_withdraw(self):
+        """Remove the service file (the switch is off). Nothing to do is also ok."""
+        with self.lock:
+            try:
+                os.unlink(os.path.join(self.avahi_services, self.FLEET_FILE))
+                self.log("pvj-sysd: no longer announcing this node")
+            except FileNotFoundError:
+                pass
+            except OSError as e:
+                self._fleet_failed("the avahi service file was not removed: %s" % e)
+                return {"ok": False, "error": "the service file could not be removed"}
+            self._fleet_fail = None
+        return {"ok": True}
+
     def handle(self, message):
         if not isinstance(message, dict):
             return {"ok": False, "error": "bad request"}
@@ -262,6 +357,10 @@ class SysService:
             return self.av_output(message.get("enable"), message.get("norm"))
         if cmd == "journal":
             return self.journal(message.get("lines"), message.get("hours"), message.get("boot"))
+        if cmd == "fleet_announce":
+            return self.fleet_announce(message)
+        if cmd == "fleet_withdraw":
+            return self.fleet_withdraw()
         return {"ok": False, "error": "unknown command"}
 
 
