@@ -86,6 +86,109 @@ precedence = "aggregate"
 SPDX-FileCopyrightText = "2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)"
 SPDX-License-Identifier = "OFL-1.1"
 
+# Fonts the node draws text with (pvj/fonts, D129 slice 2 of design/text-and-logo-sources_2026-11-08.md). Eleven families, each
+# the unchanged TrueType file of the release in https://github.com/google/fonts (commit and checksums in THIRD_PARTY_LICENSES.md), each with
+# its own OFL.txt beside it, read from the same release. None is this project's work; all are SIL OFL 1.1. They are read by pvj-raster,
+# never sent to a browser.
+[[annotations]]
+path = [
+  "pvj/fonts/archivo.ttf",
+  "pvj/fonts/OFL-Archivo.txt",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2020 The Archivo Project Authors (https://github.com/Omnibus-Type/Archivo)"
+SPDX-License-Identifier = "OFL-1.1"
+
+[[annotations]]
+path = [
+  "pvj/fonts/jetbrains-mono.ttf",
+  "pvj/fonts/OFL-JetBrainsMono.txt",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)"
+SPDX-License-Identifier = "OFL-1.1"
+
+[[annotations]]
+path = [
+  "pvj/fonts/inter.ttf",
+  "pvj/fonts/OFL-Inter.txt",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2020 The Inter Project Authors (https://github.com/rsms/inter)"
+SPDX-License-Identifier = "OFL-1.1"
+
+[[annotations]]
+path = [
+  "pvj/fonts/bebas-neue.ttf",
+  "pvj/fonts/OFL-BebasNeue.txt",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2010 by Dharma Type"
+SPDX-License-Identifier = "OFL-1.1"
+
+[[annotations]]
+path = [
+  "pvj/fonts/oswald.ttf",
+  "pvj/fonts/OFL-Oswald.txt",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2016 The Oswald Project Authors (https://github.com/googlefonts/OswaldFont)"
+SPDX-License-Identifier = "OFL-1.1"
+
+[[annotations]]
+path = [
+  "pvj/fonts/anton.ttf",
+  "pvj/fonts/OFL-Anton.txt",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2020 The Anton Project Authors (https://github.com/googlefonts/AntonFont.git)"
+SPDX-License-Identifier = "OFL-1.1"
+
+[[annotations]]
+path = [
+  "pvj/fonts/montserrat.ttf",
+  "pvj/fonts/OFL-Montserrat.txt",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2024 The Montserrat.Git Project Authors (https://github.com/JulietaUla/Montserrat.git)"
+SPDX-License-Identifier = "OFL-1.1"
+
+[[annotations]]
+path = [
+  "pvj/fonts/orbitron.ttf",
+  "pvj/fonts/OFL-Orbitron.txt",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2018 The Orbitron Project Authors (https://github.com/theleagueof/orbitron), with Reserved Font Name \"Orbitron\""
+SPDX-License-Identifier = "OFL-1.1"
+
+[[annotations]]
+path = [
+  "pvj/fonts/press-start-2p.ttf",
+  "pvj/fonts/OFL-PressStart2P.txt",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2012 The Press Start 2P Project Authors (cody@zone38.net), with Reserved Font Name \"Press Start 2P\""
+SPDX-License-Identifier = "OFL-1.1"
+
+[[annotations]]
+path = [
+  "pvj/fonts/roboto-condensed.ttf",
+  "pvj/fonts/OFL-RobotoCondensed.txt",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2011 The Roboto Project Authors (https://github.com/googlefonts/roboto-classic)"
+SPDX-License-Identifier = "OFL-1.1"
+
+[[annotations]]
+path = [
+  "pvj/fonts/noto-sans.ttf",
+  "pvj/fonts/OFL-NotoSans.txt",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2022 The Noto Project Authors (https://github.com/notofonts/latin-greek-cyrillic)"
+SPDX-License-Identifier = "OFL-1.1"
+
 # pvj-render (render/, D95): the box's own renderer, a separate program that links libmpv (GPLv2 or later as Debian
 # builds it), so the folder is GPL-3.0-or-later while the rest of the tree stays Apache-2.0. Every source file in it
 # carries its own SPDX header; the licence's text, as the Free Software Foundation publishes it, is beside it.

@@ -928,5 +928,230 @@ class RealRasterTest(unittest.TestCase):
         self.assertIn(b"memory", done.stdout)
 
 
+
+# --- 5. the real program's text and logo jobs (D129, slice 2) ----------------------------------------------------------------
+def text_params(text, font="archivo", size=100, extra="", limit="1920 1080", out="raw", weight=None):
+    lines = ["kind text", "out " + out, "font " + font, "size %s" % size, "colour ffffff", "limit " + limit]
+    if weight:
+        lines.append("weight %d" % weight)
+    return "\n".join(lines + ([extra] if extra else []) + ["TEXT", text])
+
+
+def logo_params(extra="", out="raw", limit="1920 1080"):
+    return "\n".join(["kind logo", "out " + out, "limit " + limit] + ([extra] if extra else []))
+
+
+def bgra_pixels(done):
+    d = done["data"]
+    return [tuple(d[i:i + 4]) for i in range(0, len(d), 4)]
+
+
+@unittest.skipUnless(REAL, "PVJ_RASTER_TEST=1 runs the real pvj-raster")
+class RealGraphicsTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if not os.access(HELPER, os.X_OK):
+            raise unittest.SkipTest("make -C render pvj-raster first")
+
+    def setUp(self):
+        self.client = raster.Client(exec_bin=HELPER, env={})
+
+    def draw(self, params, payload=b""):
+        started = time.monotonic()
+        done = self.client.graphic(params, payload)
+        self.assertLess(time.monotonic() - started, 16)
+        return done
+
+    def refused(self, params, words, payload=b""):
+        with self.assertRaises(raster.RasterError) as cm:
+            self.client.graphic(params, payload)
+        self.assertEqual(cm.exception.status, 422, cm.exception.message)
+        self.assertIn(words, cm.exception.message)
+
+    # text
+    def test_a_text_is_premultiplied_blue_green_red_alpha_and_cut_to_the_ink(self):
+        done = self.draw(text_params("HELLO", size=120, extra="colour ff8000"))
+        self.assertFalse(done["png"])
+        w, h, px = done["w"], done["h"], bgra_pixels(done)
+        self.assertEqual(len(px), w * h)
+        self.assertTrue(40 < h < 200 and 150 < w < 700, (w, h))
+        solid = [p for p in px if p[3] == 255]
+        self.assertTrue(solid)
+        self.assertTrue(all(p[:3] == (0, 128, 255) for p in solid), "orange, blue first: B G R A")
+        self.assertTrue(all(p[0] <= p[3] and p[1] <= p[3] and p[2] <= p[3] for p in px), "premultiplied: no colour above its alpha")
+        edge = [p for p in px if 0 < p[3] < 255]
+        self.assertTrue(edge, "antialiased edges")
+        self.assertTrue(any(px[i * w + j][3] for i in range(h) for j in (0, w - 1)) and any(px[j * w + i][3] for i in range(w) for j in (0, h - 1)),
+                        "no empty margin: the picture is cut to the ink on every side")
+
+    def test_every_bundled_font_draws_and_a_weight_changes_a_variable_one(self):
+        from pvj import graphics
+        for f in graphics.FONTS:
+            done = self.draw(text_params("AaBbCc 0123", font=f["id"], size=80))
+            self.assertEqual(done["missing"], 0, f["id"])
+            self.assertGreater(done["w"], 100, f["id"])
+        light = self.draw(text_params("HHHH", font="oswald", weight=200))
+        bold = self.draw(text_params("HHHH", font="oswald", weight=700))
+        self.assertLess(sum(p[3] for p in bgra_pixels(light)), sum(p[3] for p in bgra_pixels(bold)), "a heavier weight has more ink")
+        again = self.draw(text_params("HHHH", font="oswald", weight=700))
+        self.assertEqual(again["data"], bold["data"], "the same request draws the same picture")
+        clamped = self.draw(text_params("HHHH", font="oswald", weight=999))
+        self.assertEqual(clamped["data"], bold["data"], "a weight outside the font's own is the nearest it has")
+
+    def test_latin_with_accents_cyrillic_and_greek_draw_and_what_no_font_has_is_counted(self):
+        for text in ("École à la plage", "Жара Мара", "Ωμέγα Αθήνα"):
+            for font in ("bebas-neue", "archivo", "press-start-2p"):
+                self.assertEqual(self.draw(text_params(text, font=font))["missing"], 0, (text, font))     # a missing letter comes from Noto Sans
+        self.assertEqual(self.draw(text_params("ok \U0001F600 \U0001F680"))["missing"], 2, "emoji are not in the first release")
+        self.assertEqual(self.draw(text_params("a​b﻿c"))["missing"], 0, "invisible marks are skipped, not boxes")
+
+    def test_a_long_text_is_made_smaller_to_fit_the_screen_and_never_cut(self):
+        done = self.draw(text_params("W" * 120, size=200, limit="1728 972"))
+        self.assertLessEqual(done["w"], 1728)
+        self.assertGreater(done["w"], 1500, "it was made smaller, not cut: it still fills the width")
+        tall = self.draw(text_params("\n".join(["MMM"] * 6), size=400, limit="1728 972"))
+        self.assertLessEqual(tall["h"], 972)
+        self.refused(text_params("\n".join(["x"] * 7)), "6 lines")
+        self.refused(text_params("W" * 140, size=200, limit="16 16"), "too much text")
+
+    def test_there_is_no_markup_a_tag_or_a_brace_is_a_letter(self):
+        plain = self.draw(text_params("hi"))
+        tagged = self.draw(text_params("{\\an8}{\\fs200}<b>hi</b>"))
+        self.assertGreater(tagged["w"], plain["w"] * 3, "every character of it is drawn")
+        # a typed line cannot become a setting: it is only ever after the line that ends the settings
+        sneaky = self.draw(text_params("a\nfont nonexistent\nsize 4000\ncolour 00ff00", size=50))
+        self.assertLess(sneaky["h"], 400)
+        self.assertEqual(sneaky["missing"], 0)
+
+    def test_outline_shadow_and_plate_add_to_the_picture_in_their_colours(self):
+        base = self.draw(text_params("OO", size=100))
+        outlined = self.draw(text_params("OO", size=100, extra="outline 0.06 ff0000"))
+        self.assertGreater(outlined["w"], base["w"] + 6)
+        self.assertTrue(any(p[:3] == (0, 0, 255) for p in bgra_pixels(outlined)), "red ink in the ring (blue first)")
+        shadow = self.draw(text_params("OO", size=100, extra="shadow 0.05 0.05 0.04 000000 80"))
+        self.assertGreater(shadow["w"], base["w"])
+        self.assertTrue(any(0 < p[3] < 255 and p[:3] == (0, 0, 0) for p in bgra_pixels(shadow)), "a soft black shadow")
+        plate = self.draw(text_params("OO", size=100, extra="plate 0.3 0000ff 50"))
+        self.assertGreater(plate["w"], base["w"] + 30)
+        px = bgra_pixels(plate)
+        self.assertEqual(px[0], (128, 0, 0, 128), "a half-clear blue plate, premultiplied, blue first: the corner is the plate")
+
+    def test_alignment_places_a_short_line_under_a_long_one(self):
+        def ink_left(align):
+            done = self.draw(text_params("WWWWWWWW\nW", size=60, extra="align " + align))
+            w, h, px = done["w"], done["h"], bgra_pixels(done)
+            cols = [j for j in range(w) if any(px[i * w + j][3] > 200 for i in range(h // 2 + 2, h))]       # the second line fills the lower half
+            return cols[0], w
+        left, w = ink_left("left")
+        centre, _ = ink_left("center")
+        right, _ = ink_left("right")
+        self.assertLess(left, 6)
+        self.assertTrue(left + 20 < centre < right - 20, (left, centre, right))
+
+    def test_opacity_scales_every_channel_and_a_preview_is_a_png_in_a_canvas_with_straight_alpha(self):
+        full = self.draw(text_params("HH", size=80))
+        half = self.draw(text_params("HH", size=80, extra="opacity 50"))
+        self.assertEqual(max(p[3] for p in bgra_pixels(half)), 128)
+        self.assertTrue(all(p[0] <= p[3] for p in bgra_pixels(half)))
+        self.assertEqual((full["w"], full["h"]), (half["w"], half["h"]))
+        prev = self.draw(text_params("HH", size=80, extra="canvas 320 180 100 60", out="png"))
+        self.assertTrue(prev["png"])
+        img = read_png(prev["data"])
+        self.assertEqual((img[0], img[1]), (320, 180))
+        self.assertEqual(pixel_at(img, 0, 0), (0, 0, 0, 0), "a clear canvas")
+        solid = [(x, y) for y in range(180) for x in range(320) if pixel_at(img, x, y)[3] == 255]
+        self.assertTrue(solid)
+        self.assertTrue(all(pixel_at(img, x, y)[:3] == (255, 255, 255) for x, y in solid), "straight, not premultiplied")
+        self.assertGreaterEqual(min(x for x, _ in solid), 100)
+        self.assertGreaterEqual(min(y for _, y in solid), 60)
+
+    def test_what_is_not_understood_is_refused_in_words(self):
+        for params, words in ((text_params("x", font="nonexistent"), "not on this node"), (text_params("x", font="../etc/passwd"), "not on this node"),
+                              (text_params("x", font="ARCHIVO"), "not on this node"), (text_params("x", font="a b"), "not on this node"),
+                              (text_params("x", extra="colour red"), "colour"), (text_params("x", extra="outline 0.1 zzzzzz"), "outline"),
+                              (text_params("x", extra="shadow 1 2"), "shadow"), (text_params("x", extra="plate 0.1"), "back plate"),
+                              (text_params(""), "no text"), ("kind text\nfont archivo\n", "no text")):
+            self.refused(params, words)
+        self.refused(text_params("x" * 2000), "too long")
+        self.refused("kind logo\nout raw\n", "no logo")
+        self.refused(logo_params(), "stored PNG", payload=JPEG_RGB)
+        self.refused(logo_params(), "stored PNG", payload=b"not a picture at all")
+
+    def test_a_text_job_without_fonts_says_so_and_a_font_file_is_read_only_by_its_checked_name(self):
+        request = text_params("hi").encode()
+        done = subprocess.run([HELPER, "--self-limit"], input=b"RASTER1 GFX %d 0\n" % len(request) + request, capture_output=True, timeout=20, env={})
+        self.assertIn(b"no fonts", done.stdout)
+        with tempfile.TemporaryDirectory() as folder:
+            os.symlink("/etc/hostname", os.path.join(folder, "x.ttf"))
+            done = subprocess.run([HELPER, "--self-limit", "--fonts", folder], input=b"RASTER1 GFX %d 0\n" % len(request) + request.replace(b"font archivo", b"font x"),
+                                  capture_output=True, timeout=20, env={})
+            self.assertTrue(done.stdout.startswith(b"ERR "), done.stdout[:80])
+            with open(os.path.join(folder, "bad.ttf"), "wb") as f:
+                f.write(b"\x00\x01\x00\x00" + b"\xff" * 4000)
+            done = subprocess.run([HELPER, "--self-limit", "--fonts", folder], input=b"RASTER1 GFX %d 0\n" % len(request) + request.replace(b"font archivo", b"font bad"),
+                                  capture_output=True, timeout=20, env={})
+            self.assertTrue(done.stdout.startswith(b"ERR "), done.stdout[:80])
+
+    def test_a_picture_is_never_bigger_than_the_cap_and_a_huge_request_ends_in_words_in_time(self):
+        started = time.monotonic()
+        done = self.draw(text_params("\n".join(["MMMMMMMMMMMMMM"] * 6), size=900, limit="4096 4096"))
+        self.assertLessEqual(done["w"] * done["h"], 9_000_000)
+        self.assertLess(time.monotonic() - started, 16)
+
+    # logos
+    def logo(self, w=8, h=4):
+        return png(w, h, lambda x, y: (255, 0, 0, 255) if x < w // 2 else (0, 0, 255, 128), color=6)
+
+    def test_a_logo_is_scaled_to_the_width_asked_and_keeps_its_shape_and_its_transparency(self):
+        done = self.draw(logo_params("width 64"), self.logo())
+        self.assertEqual((done["w"], done["h"]), (64, 32))
+        px = bgra_pixels(done)
+        self.assertEqual(px[0], (0, 0, 255, 255), "red, opaque (blue first)")
+        self.assertEqual(px[63][3], 128)
+        self.assertTrue(all(p[0] <= p[3] and p[1] <= p[3] and p[2] <= p[3] for p in px), "premultiplied")
+        self.assertEqual(px[63][:3], (128, 0, 0), "the half-clear blue, premultiplied")
+        small = self.draw(logo_params("width 4"), self.logo(64, 32))
+        self.assertEqual((small["w"], small["h"]), (4, 2), "made smaller by averaging, not by dropping pixels")
+
+    def test_a_logo_turns_and_mirrors_and_a_logo_too_big_for_the_screen_is_made_smaller(self):
+        quarter = self.draw(logo_params("width 64\nrotate 90"), self.logo())
+        self.assertEqual((quarter["w"], quarter["h"]), (32, 64))
+        turned = self.draw(logo_params("width 64\nrotate 45"), self.logo())
+        self.assertTrue(turned["w"] > 64 and turned["h"] > 32, "the box of a turned picture is bigger")
+        px = bgra_pixels(turned)
+        self.assertEqual(px[0][3], 0, "a corner of the turned box is clear")
+        mirrored = self.draw(logo_params("width 64\nmirror 1"), self.logo())
+        mp = bgra_pixels(mirrored)
+        self.assertEqual((mp[0][3], mp[63][:3]), (128, (0, 0, 255)), "left and right swapped")
+        fit = self.draw(logo_params("width 4000\nrotate 30", limit="800 600"), self.logo())
+        self.assertTrue(fit["w"] <= 800 and fit["h"] <= 600, (fit["w"], fit["h"]))
+
+    def test_a_logo_has_opacity_and_a_preview_of_it(self):
+        half = self.draw(logo_params("width 16\nopacity 50"), self.logo())
+        self.assertEqual(max(p[3] for p in bgra_pixels(half)), 128)
+        prev = self.draw(logo_params("width 16\ncanvas 64 32 8 4", out="png"), self.logo())
+        img = read_png(prev["data"])
+        self.assertEqual((img[0], img[1]), (64, 32))
+        self.assertEqual(pixel_at(img, 8, 4), (255, 0, 0, 255))
+        self.assertEqual(pixel_at(img, 0, 0)[3], 0)
+
+    def test_a_damaged_logo_file_is_refused_not_drawn(self):
+        good = self.logo()
+        for bad in (good[:40], good[:-20], good[:-1]):
+            with self.assertRaises(raster.RasterError):
+                self.client.graphic(logo_params("width 16"), bad)
+        self.assertEqual(self.draw(logo_params("width 16"), good)["w"], 16)
+
+    def test_the_programs_graphics_code_opens_only_the_fonts_it_is_given_by_checked_name(self):
+        with open(os.path.join(HERE, "render", "raster", "gfx.inc.c")) as f:
+            code = re.sub(r"/\*.*?\*/", "", re.sub(r"//[^\n]*", "", f.read()), flags=re.S)
+        self.assertEqual(len(re.findall(r"\bfopen\(", code)), 1)
+        self.assertIn('"%s/%s.ttf"', code)
+        for banned in (r"\bopen\(", r"\bsocket\(", r"\bconnect\(", r"\bsystem\(", r"\bpopen\(", r"\bexec[a-z]*\(", r"\bgetenv\(", r"\bdlopen\(",
+                       r"\bfork\(", r"\bchdir\(", r"\bunlink\(", r"\bwritefile\b", r"\bfopen\([^)]*\"w"):
+            self.assertIsNone(re.search(banned, code), banned)
+        self.assertRegex(code, r"'a' && \*q <= 'z'.*'0' && \*q <= '9'.*== '-'")
+
+
 if __name__ == "__main__":
     unittest.main()

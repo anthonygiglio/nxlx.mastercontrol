@@ -232,6 +232,12 @@ def link_state(env=None):
 RASTER_SOCKET = "/run/pvj-raster.sock"   # pvj-raster (render/raster/, D129): systemd listens here and starts a helper per job
 
 
+def fonts_dir(env=None):
+    """The folder of the bundled fonts (pvj/fonts: open-licence fonts only, D129). The picture helper reads them by name
+    from here; no browser is ever sent one."""
+    return _env(env).get("PVJ_FONTS_DIR") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
+
+
 def raster_socket(env=None):
     """The picture helper's socket (install/pvj-raster.socket). Group pvj-raster may connect: the panel alone is in it."""
     return _env(env).get("PVJ_RASTER_SOCKET") or RASTER_SOCKET

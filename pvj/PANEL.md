@@ -33,6 +33,7 @@ Keep it true: a change to a screen changes its section here in the same pull req
 14. Accessibility facts
 15. Routes and the role each needs
 16. Now (2026-11-07): what is on and what needs you
+17. Graphics (D129): text and logos on the screen
 
 ## 1. Who
 
@@ -154,7 +155,8 @@ choices). A pad is its own button (`.pad`). The pad editor is a sheet from the b
 
 ## 5. Play
 
-Colour: `clips` (green in Signal). Screens: Pads, Library, and Shaders (when the Shaders and Vibes module is on).
+Colour: `clips` (green in Signal). Screens: Pads, Library, and Shaders (when the Shaders and Vibes module is on); and, for an Owner
+and an Operator, Graphics (section 17), a tab beside the desk as Shaders is, which is a page of Setup that is also a screen of Play.
 
 ### Pads (`#padsscreen`)
 
@@ -275,6 +277,7 @@ not built yet, is in a fold at the foot (Owner only).
 | Render nodes | Show tools | Operator and up | | Render nodes (add, the Owner's), Send a cue | Showing x; No render nodes yet |
 | Sound reactivity | Show tools | Operator and up | | Sound reactivity (device, gain: the Owner's; the level, the beat and "About N BPM"), Follow Ableton Link (the Owner's, off by default, D117; a line says off, joining, no peers or "following N peers at N BPM"), A shader input that follows the sound (smoothing 0.05 to 10 s) | Listening: -18 dB |
 | NDI discovery server | Show tools | Owner, never through support | module | The discovery server this box runs, Where it listens, What this is | Listening on address:port |
+| Graphics | Show tools | Operator and up (no module) | | Play > Graphics (section 17) | No graphics yet; 2 graphics on the screen; Problem: name and why |
 | Projection mapping | Show tools | Operator and up (module `mapper`) | module (asks when the mapping is on screen) | Shape > Mapping (section 11) | On the screen; Being placed |
 | Boxes in step | Show tools | Operator and up (module `wall`) | module (asks when it leads or follows) | Boxes in step: lead or follow, the group, a tile of a video wall; changing it is the Owner's | Leads group x; Following x |
 | MIDI controller | Show tools | Operator and up (module `control-midi`) | module and its flag | the controllers plugged in (layouts, lights, levels), Mappings (learn, map, remove) | 2 controllers: names; No controller plugged in |
@@ -541,3 +544,39 @@ phone). It reads Health, the sources and the room every 5 s, and the rows of Set
 - **The node** (`#nownodecard`): the Clock (`#nownode-clock`, D116 and D117): the tempo and who set it, Link's peers, and Tap,
   for an Owner or an Operator (Tap not through a support login); then Power, Temperature, the Player, the load and the
   address from Health, and Sound reactivity, Network and Remote support as their rows of Setup say them, with Open.
+
+## 17. Graphics (D129): text and logos on the screen
+
+Play > Graphics (`play/graphics`, `#graphicscard` and `#logofilescard`), Owner and Operator only (a Guest has neither the
+screen nor the Setup row, and the box refuses every route). It is a page of Setup (`id: graphics`, group Show tools, role
+`op`; a row that opens the screen of Play, like Mapping, via `HOMES`). Colour `clips`. Slice 2 draws a graphic over the
+screen, still, on every tier; motion, keys, effects and "over or as a source" are said in words to come later and have no
+control (design/text-and-logo-sources_2026-11-08.md sections 3 and 10).
+
+| Part | What it does | Server | States | Roles |
+| --- | --- | --- | --- | --- |
+| Headline (`#graphicsstatus`) and Hide all (`#graphicshideall`, big) | "N graphics on the screen", "Nothing on the screen", "No graphics yet", "Hidden with Hide all. Show a graphic to bring them back.", or "The picture helper is not running on this node, so text and logos cannot be drawn." Hide all switches the stage off; each graphic keeps its own switch | `POST /api/graphics {all: false}` | nothing to hide (disabled), shown, hidden | Operator, Owner |
+| Add text (`#graphicaddtext`), Add logo (`#graphicaddlogo`) | a new graphic in the lowest free slot (1 to 8), its settings open | `POST /api/graphics {add}` | at most 8 ("Up to 8 graphics. Remove one to add another.", `#graphicsfull`, both disabled) | same |
+| A graphic (`#graphic-N`, N is its slot) | its name and a state line (`#graphic-N-state`: Off, Drawing..., On the screen, the helper's refusal in its words, or "N characters cannot be drawn"), the big Show or Hide (`#graphic-N-show`, `aria-pressed`) | `POST /api/graphics {id, on}` | off, drawing, on, error | same |
+| Text (`#graphic-N-text`) and Send | a line typed in a box (Enter sends, Shift and Enter starts a line; 280 letters, 6 lines); the preview under it is the line as typed, made by the node, and nothing is saved or shown until Send, which saves the line and shows it | `GET /api/graphics/preview.png?id=&text=`, `POST /api/graphics {id, text, on: true}` | empty, typed, sent | same |
+| Preview (`#graphic-N-preview`, in a frame of the screen's shape on a checkerboard) | the node's own picture of the graphic, asked for after typing stops and one in 250 ms for all the graphics (the node makes five a second) | `GET /api/graphics/preview.png` | none yet ("Type a line to see it here."), picture | same |
+| Look, place and saved lines (a fold, `#graphic-N-settings`) | Name; for a text: Font (11 bundled, with a note each), Weight (a slider only for a font with several), Size (1 to 60 percent of the screen's height), Colour (seven swatches and a picker), Alignment, Outline (colour and width), Shadow (softness), Back plate (colour, opacity); for a logo: Logo file (from Logo files), Size (share of the screen's width), Rotate, Mirror; for both: a nine-point grid for where (an edge sits 5 percent in), Nudge across and down, Opacity; for a text, Saved lines (up to 20: a tap on one sends it at once, Remove, "Keep line") | `POST /api/graphics {id, set}` or `{id, line}` | a slider that is held is never drawn again under the hand | same |
+| Up, Down, Remove | the order of the list is the order of drawing (a later graphic over an earlier one); Remove asks first, in place | `POST /api/graphics {move}`, `{id, remove}` | first has no Up, last no Down | same |
+| Logo files (`#logofilescard`) | Upload a logo (`#logouploadbtn`, a PNG, JPEG or SVG, up to 10 MB), a row per file with a thumbnail, its size and "used by N graphics", Rename (in place), Delete (asks first, and says what it costs) | `POST /api/graphics/upload`, `GET`/`POST /api/graphics/file`, `GET /api/graphics/thumb` | none yet, list; a refusal in plain words (`#logoresult`); "The picture helper is not running" | same |
+
+Words the panel says (all plain, none says "layer"): "Masks (Shape > Picture) are full-screen pictures that never move. Graphics
+are text and logos you place on the screen. This node shows N graphics at a time." (4 on a Pi 3 and a Pi 4, 8 on a Pi 5 and a PC);
+"Drawn over the screen, still. Fade, typewriter, scroll and crawl (for a logo: Keys, effects), and showing it over or as one
+source, come in later releases."
+
+Facts for the builders. The state is `GET /api/graphics`: `on` (the stage), `items` (each with `id`, `slot`, `kind`, `name`, `on`,
+`where`, `place`, `text` or `logo`, `motion`, `key`, `fx` and a `status` of `state`, `message`, `missing`), `showing`, `max_items`,
+`max_on`, `tier`, the lists of what this release can do (`motions: ["none"]`, `keys: ["alpha"]`, `effects: []`, `where:
+["screen"]`), `fonts`, `files`, `available` (the picture helper answers), `screen`, `limits` and `anchors`. Place: `anchor` is one of
+`tl tc tr ml mc mr bl bc br`, `x` and `y` nudge by a share of the screen's width and height (down is positive), and the picture is
+kept on the screen. The settings are `graphics` in `settings.json` (no schema change). Drawing is mpv's `overlay-add` with ids 20
+to 27 in the order of the list, from a worker that builds one picture per change (newest change wins, 5 a second for one graphic and
+20 a second in all), on every tier; a graphic that is off has no picture, no file and no cost. Roles: every route is the Operator's
+and the Owner's (`tests/test_roles.py`); `GET /api/status` gives every role `graphics_on`. OSC: `/pvj/graphic/N`, `/text`, `/send`
+and `/pvj/graphic/hide` (pvj/OSC.md). The browser test is `tests/ui/panel.test.js` (the Graphics step, the row, the menus) and the
+page is in the list of `tests/ui/signal-pages.js`.

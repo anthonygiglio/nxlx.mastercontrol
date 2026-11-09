@@ -17,7 +17,11 @@
 // carried survives), scales down so the long side is at most 2048, and writes the PNG. An SVG is rasterised: it is
 // never kept, and a file that holds a script, an entity, an external reference or text is refused in plain words.
 //
-// It opens no file and makes no connection. ICC profiles are not applied (pictures are taken as sRGB); 16 bit
+// Two more requests make text and logos for the screen (render/raster/gfx.inc.c): "GFX" draws a text with a bundled font
+// (the only files it opens, by a name checked against letters, digits and hyphens, in the folder --fonts names) or a
+// stored logo at a size, an angle and an opacity. Both give a small premultiplied picture, never a file.
+//
+// It opens no other file and makes no connection. ICC profiles are not applied (pictures are taken as sRGB); 16 bit
 // becomes 8 bit; an animated PNG gives its first frame.
 
 #define _GNU_SOURCE
@@ -463,8 +467,10 @@ static int has_alpha(const Img *img) {
 	return 0;
 }
 
-static void answer(const Img *img) {
+// the PNG of a picture: RGB when nothing in it is transparent, else RGBA. *alpha_out says which.
+static Out encode_png(const Img *img, int *alpha_out) {
 	const volatile int alpha = has_alpha(img);
+	*alpha_out = alpha;
 	Out out = {NULL, 0, 0};
 	png_structp png = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, png_fail, png_warn);
 	png_infop info = png ? png_create_info_struct(png) : NULL;
@@ -494,11 +500,19 @@ static void answer(const Img *img) {
 	png_write_end(png, NULL);
 	png_destroy_write_struct(&png, &info);
 	free(rgb);
+	return out;
+}
+
+static void answer(const Img *img) {
+	int alpha = 0;
+	Out out = encode_png(img, &alpha);
 	char head[96];
 	int k = snprintf(head, sizeof head, "OK %u %u %d %zu\n", img->w, img->h, alpha, out.n);
 	if (!write_full((const uint8_t *)head, (size_t)k) || !write_full(out.p, out.n)) _exit(1);
 	free(out.p);
 }
+
+#include "gfx.inc.c"
 
 // ---- main ----------------------------------------------------------------------------------------------------------
 int main(int argc, char **argv) {
@@ -507,7 +521,13 @@ int main(int argc, char **argv) {
 	alarm(WALL_SECONDS);
 	prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
 	prctl(PR_SET_DUMPABLE, 0, 0, 0, 0);
-	if (argc > 1 && strcmp(argv[1], "--self-limit") == 0) {
+	const char *fonts = NULL;
+	int self_limit = 0;
+	for (int i = 1; i < argc; i++) {
+		if (strcmp(argv[i], "--self-limit") == 0) self_limit = 1;
+		else if (strcmp(argv[i], "--fonts") == 0 && i + 1 < argc) fonts = argv[++i];
+	}
+	if (self_limit) {
 		// run by hand or by a test (not by the unit, whose properties set these): the same ceilings
 		struct rlimit as = {512u << 20, 512u << 20}, cpu = {10, 10}, core = {0, 0}, nof = {16, 16};
 		setrlimit(RLIMIT_AS, &as);
@@ -518,10 +538,15 @@ int main(int argc, char **argv) {
 	char line[96];
 	if (!read_line(line, sizeof line)) refuse("no request");
 	char mode[8] = "";
-	unsigned long side = 0, length = 0;
+	unsigned long side = 0, length = 0, paylen = 0;
 	int ok = 0;
 	if (sscanf(line, "RASTER1 %7s", mode) == 1) {
 		if (strcmp(mode, "IMG") == 0) ok = sscanf(line, "RASTER1 IMG %lu", &length) == 1;
+		else if (strcmp(mode, "GFX") == 0) {
+			if (sscanf(line, "RASTER1 GFX %lu %lu", &length, &paylen) != 2) refuse("the request is not understood");
+			gfx_job(length, paylen, fonts);
+			return 0;
+		}
 		else if (strcmp(mode, "THUMB") == 0) ok = sscanf(line, "RASTER1 THUMB %lu %lu", &side, &length) == 2 && side >= 16 && side <= MAX_THUMB;
 	}
 	if (!ok) refuse("the request is not understood");

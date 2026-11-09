@@ -32,11 +32,37 @@ for name in ("intro.mkv", "tunnel.mkv"):
 rundir = os.path.join(tmp, "run")
 os.makedirs(rundir, mode=0o700)
 os.environ.update(PVJ_STATE_DIR=tmp, PVJ_MEDIA_DIR=media, PVJ_DEV_SPAWN="1")
+# The picture helper (D129): a stand-in that answers with plain blocks of the right shape, so the browser test judges the
+# panel and does not need a compiler. PVJ_HARNESS_REAL_RASTER=1 uses the real program (make -C render pvj-raster).
+if os.environ.get("PVJ_HARNESS_REAL_RASTER"):
+    os.environ.setdefault("PVJ_RASTER_EXEC", os.path.join(os.path.dirname(__file__), "..", "..", "render", "pvj-raster"))
+else:
+    os.environ["PVJ_RASTER_EXEC"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "raster-stand-in.py")
 # PVJ_HARNESS_NO_PLAYER=1: a box whose player is not there (the panel says "Player not running"). The control
 # inventory (tests/ui/inventory.js) is taken that way, as its fixture was made on a machine without mpv.
 _mpv = os.path.join(tmp, "no-such-mpv") if os.environ.get("PVJ_HARNESS_NO_PLAYER") else "mpv"
 player = Player(mpv_bin=_mpv, extra_args=["--vo=null", "--ao=null"], rundir=rundir)
 api, auth, _ = server.build(os.environ, player=player)
+
+
+# Text and logos (D129): the player here draws to no screen (--vo=null), so it has no screen size to give and its overlay
+# commands judge nothing. The graphics engine is given a screen of 1920 x 1080 and a player that takes what it is told to
+# draw, so the panel's Graphics screen shows what a node with a screen would; tests/test_graphics.py holds the engine
+# against a fake player and a real mpv.
+class _GfxPlayer:
+    rundir = rundir
+
+    def osd_size(self):
+        return (1920, 1080)
+
+    def overlay_part(self, *args):
+        pass
+
+    def overlay_remove(self, *args):
+        pass
+
+
+api.gfx._player = lambda: _GfxPlayer()
 # D90: the report a player on the owner's 1440p monitor writes (the list of tests/test_screenmode.py), so Setup >
 # Screen output has a screen's modes to show; the real player here draws to no screen (--vo=null). No pid: the panel
 # never takes this for the player it talks to, so nothing is restarted for it.

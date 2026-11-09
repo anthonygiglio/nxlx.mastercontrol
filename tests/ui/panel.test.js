@@ -132,8 +132,8 @@ function startServer(env) {          // env: more for the harness's environment 
     // The 401 before pairing, the 403 for the wrong PIN, the 400 for a refused upload, the 409 for a value sent to a
     // shader that has left the screen and the 503 for a screen preview from a harness player with no window are
     // provoked on purpose; so is the 502 for "Try again" on a projector that nothing answers for.
-    // And the 422 for a theme file the box refuses (its text cannot be read, or it holds CSS).
-    const expected = /status of (400|401|403|409|422|502|503)/;
+    // And the 422 for a theme file the box refuses (its text cannot be read, or it holds CSS), and the 415 for a logo that is a text file.
+    const expected = /status of (400|401|403|409|415|422|502|503)/;
     page.on('console', (m) => { if (['error', 'warning'].includes(m.type()) && !expected.test(m.text())) problems.push(m.text()); });
     page.on('pageerror', (e) => problems.push('pageerror: ' + e.message));
     const fontRequests = [];             // the default look must never ask for a font file; Signal asks the box itself
@@ -469,7 +469,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.waitForSelector('h1#wstitle:text-is("Setup")');
     assert.deepStrictEqual(await page.$$eval('.navhead', (hs) => hs.map((x) => x.textContent)), ['Everyday', 'Show tools', 'This node']);
     assert.deepStrictEqual(await page.$$eval('.navname', (ns) => ns.map((x) => x.textContent)), ['Health', 'Projectors', 'Room', 'Schedule', 'Shaders and Vibes', 'People and codes', 'Sound',
-      'At power-up', 'Streams', 'NDI\u00ae input', 'Render nodes', 'Sound reactivity', 'NDI\u00ae discovery server', 'Projection mapping', 'Nodes in step', 'MIDI controller', 'DMX lighting desk', 'OSC',
+      'At power-up', 'Streams', 'NDI\u00ae input', 'Render nodes', 'Sound reactivity', 'NDI\u00ae discovery server', 'Projection mapping', 'Graphics', 'Nodes in step', 'MIDI controller', 'DMX lighting desk', 'OSC',
       'Network', 'Screen output', 'Updates', 'Remote support', 'Secure connection', 'Backup and reset', 'Look', 'About and power'], 'the rows a full-access device sees');
     const low = await page.$$eval('.navrow', (rs) => rs.filter((r) => r.getBoundingClientRect().height < 56).map((r) => r.textContent));
     assert.deepStrictEqual(low, [], 'every row is at least 56 px high');
@@ -486,6 +486,130 @@ function startServer(env) {          // env: more for the harness's environment 
     await chip('At power-up', 'Off');
     await fitsCard('.card', 'System index');
     await fitsPhone('System index');
+    // Graphics (D129, slice 2): Play > Graphics, opened from its row of the Setup index as Mapping is. A text is typed (the
+    // node previews the line as typed and keeps nothing), sent, hidden and shown, set (a font, a place, an outline, saved
+    // lines), a logo file is uploaded (a PNG kept, a text file refused in words), chosen by a logo graphic and deleted
+    // from under it, Hide all hides everything and a Show brings it back, and a ninth graphic is refused. The harness
+    // draws to no screen and has a stand-in for the picture helper; tests/test_graphics.py and tests/test_raster.py hold
+    // the engine, the routes and the real program.
+    {
+      await chip('Graphics', 'Set up');
+      assert(/No graphics yet/.test(await page.textContent(rowOf('Graphics') + ' .navstate')), 'the row says there is nothing yet');
+      await sys('Graphics');
+      assert.strictEqual(await at(page), 'play/graphics', 'Graphics is a screen of Play, opened from its row');
+      await page.waitForSelector('#graphicaddtext');
+      assert.strictEqual(await page.textContent('#graphicsstatus'), 'No graphics yet');
+      assert(await page.isDisabled('#graphicshideall'), 'nothing to hide yet');
+      await fitsCard('#graphicscard, #logofilescard', 'Graphics');
+      await fitsPhone('Graphics');
+      const previews = [];
+      page.on('request', (r) => { if (r.url().includes('/api/graphics/preview.png')) previews.push(decodeURIComponent(r.url())); });
+      await page.click('#graphicaddtext');
+      await page.waitForSelector('#graphic-1-text');
+      assert.strictEqual(await page.textContent('#graphic-1-state'), 'Off');
+      assert.strictEqual(await page.getAttribute('#graphic-1-settings', 'open'), '', 'a graphic that was just added has its settings open');
+      await page.fill('#graphic-1-text', 'NEXT UP: DJ MARA');
+      await page.waitForFunction(() => { const i = document.getElementById('graphic-1-preview'); return i && i.complete && i.naturalWidth > 0 && !i.classList.contains('none'); }, null, { timeout: 10000 });
+      assert(previews.some((u) => /text=NEXT UP: DJ MARA/.test(u)), 'the preview is of the line as typed: ' + previews.join(' | '));
+      let gfx = await get('/api/graphics');
+      assert.deepStrictEqual([gfx.items[0].text.value, gfx.items[0].on, gfx.showing], ['', false, 0], 'typing keeps nothing and shows nothing');
+      await page.click('#graphic-1-send');
+      await page.waitForFunction(() => document.getElementById('graphic-1-state').textContent === 'On the screen', null, { timeout: 10000 });
+      gfx = await get('/api/graphics');
+      assert.deepStrictEqual([gfx.items[0].text.value, gfx.items[0].on, gfx.showing], ['NEXT UP: DJ MARA', true, 1], 'Send keeps the line and shows it');
+      assert.strictEqual(await page.textContent('#graphicsstatus'), '1 graphic on the screen');
+      assert.strictEqual((await get('/api/status')).graphics_on, 1, 'every role\'s status says how many are on');
+      assert.strictEqual(await page.getAttribute('#graphic-1-show', 'aria-pressed'), 'true');
+      assert.strictEqual(await page.textContent('#graphic-1-show'), 'Hide');
+      await page.click('#graphic-1-show');
+      await page.waitForFunction(() => document.getElementById('graphic-1-state').textContent === 'Off' && document.getElementById('graphic-1-show').textContent === 'Show');
+      assert.strictEqual((await get('/api/graphics')).showing, 0, 'the same button hides it');
+      await page.click('#graphic-1-show');
+      await page.waitForFunction(() => document.getElementById('graphic-1-state').textContent === 'On the screen', null, { timeout: 10000 });
+      // its settings: a font with one weight has no weight slider, one with many has; a place; an outline and its width
+      await page.selectOption('#graphic-1-font', 'oswald');
+      await page.waitForSelector('#graphic-1-weight', { timeout: 8000 });
+      await page.selectOption('#graphic-1-font', 'bebas-neue');
+      await page.waitForFunction(() => !document.getElementById('graphic-1-weight') && document.getElementById('graphic-1-font').value === 'bebas-neue', null, { timeout: 8000 });
+      assert.strictEqual((await get('/api/graphics')).items[0].text.font, 'bebas-neue');
+      assert.strictEqual(await page.inputValue('#graphic-1-text'), 'NEXT UP: DJ MARA', 'what is typed survives a change of font');
+      await page.click('#graphic-1-anchor-tl');
+      await page.waitForFunction(() => document.getElementById('graphic-1-anchor-tl').getAttribute('aria-pressed') === 'true' && document.getElementById('graphic-1-anchor-bc').getAttribute('aria-pressed') === 'false');
+      await page.click('#graphic-1-outline');
+      await page.waitForSelector('#graphic-1-outlinewidth', { timeout: 8000 });
+      const slid = await page.evaluate(() => { const r = document.getElementById('graphic-1-size'); r.value = '20'; r.dispatchEvent(new Event('input', { bubbles: true })); r.dispatchEvent(new Event('change', { bubbles: true })); return r.value; });
+      assert.strictEqual(slid, '20');
+      await page.waitForFunction(async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].text.size === 20, null, { timeout: 8000 });
+      gfx = await get('/api/graphics');
+      assert.deepStrictEqual([gfx.items[0].place.anchor, gfx.items[0].text.outline.on, gfx.items[0].text.size], ['tl', true, 20]);
+      assert.strictEqual(await page.inputValue('#graphic-1-size'), '20', 'a slider that was moved stays where it was put (the card is not drawn again under the hand)');
+      // saved lines: kept, then one tap sends it
+      await page.fill('#graphic-1-newline', 'THANK YOU, SASKATOON');
+      await page.press('#graphic-1-newline', 'Enter');
+      await page.waitForSelector('#graphic-1-line-0');
+      await page.click('#graphic-1-line-0');
+      await page.waitForFunction(() => document.getElementById('graphic-1-text').value === 'THANK YOU, SASKATOON', null, { timeout: 8000 });
+      assert.strictEqual((await get('/api/graphics')).items[0].text.value, 'THANK YOU, SASKATOON', 'a saved line goes to the screen with one tap');
+      // the words for what does not exist yet
+      assert(/come in later releases/.test(await page.textContent('#graphic-1-settings')), 'motion, keys and effects are said to come later, not offered');
+      assert.strictEqual(await page.locator('#graphic-1-settings :is([id*="motion"], [id*="chroma"], [id*="luma"])').count(), 0, 'and there is no control for them');
+      await fitsCard('#graphicscard', 'Graphics, settings open');
+      await fitsPhone('Graphics, settings open');
+      // logo files: a text file is refused in words, a PNG is kept and gets a thumbnail
+      const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+      await page.setInputFiles('#logopick', { name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('hello') });
+      await page.waitForFunction(() => /Only PNG, JPEG and SVG pictures are accepted/.test(document.getElementById('logoresult').textContent), null, { timeout: 8000 });
+      assert.strictEqual(await page.locator('#logofiles .logorow').count(), 0, 'a refused file is not kept');
+      await page.setInputFiles('#logopick', { name: 'mara-logo.png', mimeType: 'image/png', buffer: PNG });
+      await page.waitForSelector('#logofile-0');
+      assert(/mara-logo\.png is stored as mara-logo\.png \(1 x 1\)/.test(await page.textContent('#logoresult')), 'what was kept is said: ' + await page.textContent('#logoresult'));
+      await page.waitForFunction(() => { const i = document.querySelector('#logofile-0 img.logothumb'); return i && i.complete && i.naturalWidth > 0; }, null, { timeout: 8000 });
+      await fitsCard('#logofilescard', 'Logo files');
+      // a logo graphic chooses it, shows it, and loses it when the file is deleted
+      await page.click('#graphicaddlogo');
+      await page.waitForSelector('#graphic-2-file');
+      assert.strictEqual(await page.textContent('#graphic-2-state'), 'Off');
+      await page.selectOption('#graphic-2-file', 'mara-logo.png');
+      await page.waitForFunction(async () => (await fetch('/api/graphics').then((r) => r.json())).items[1].logo.file === 'mara-logo.png', null, { timeout: 8000 });
+      await page.click('#graphic-2-show');
+      await page.waitForFunction(() => document.getElementById('graphic-2-state').textContent === 'On the screen', null, { timeout: 10000 });
+      assert.strictEqual((await get('/api/graphics')).showing, 2);
+      assert.strictEqual(await page.textContent('#graphicsstatus'), '2 graphics on the screen');
+      assert(/used by 1 graphic/.test(await page.textContent('#logofile-0')), 'a file says what uses it');
+      await page.click('#logofile-0-delete');
+      await page.waitForSelector('#confirmrow:has-text("Delete mara-logo.png?")');
+      assert(/1 graphic uses it and will be taken off the screen/.test(await page.textContent('#confirmrow')), 'the question says what the deletion costs');
+      await page.click('#confirmyes');
+      await page.waitForFunction(() => /not in the graphics store/.test(document.getElementById('graphic-2-state').textContent), null, { timeout: 10000 });
+      assert.strictEqual((await get('/api/graphics')).files.length, 0);
+      // Hide all: everything is hidden, each keeps its own switch, and a Show brings the stage back
+      await page.click('#graphicshideall');
+      await page.waitForFunction(() => /Hidden with Hide all/.test(document.getElementById('graphicsstatus').textContent));
+      gfx = await get('/api/graphics');
+      assert.deepStrictEqual([gfx.on, gfx.showing, gfx.items[0].on], [false, 0, true]);
+      assert.strictEqual((await get('/api/status')).graphics_on, 0);
+      assert(await page.isDisabled('#graphicshideall'));
+      assert.strictEqual(await page.textContent('#graphic-1-show'), 'Show');
+      await page.click('#graphic-1-show');
+      await page.waitForFunction(() => document.getElementById('graphic-1-state').textContent === 'On the screen' && document.getElementById('graphicsstatus').textContent === '1 graphic on the screen', null, { timeout: 10000 });
+      // a graphic is removed with the question in place
+      await page.click('#graphic-2-remove');
+      await page.waitForSelector('#confirmrow:has-text("Take")');
+      await page.click('#confirmyes');
+      await page.waitForFunction(() => !document.getElementById('graphic-2'));
+      assert.strictEqual((await get('/api/graphics')).items.length, 1);
+      // up to eight
+      for (let i = 0; i < 7; i++) assert.strictEqual(await post('/api/graphics', { add: 'text' }), 200);
+      await go(page, 'play/pads');
+      await go(page, 'play/graphics');
+      await page.waitForSelector('#graphicsfull');
+      assert(await page.isDisabled('#graphicaddtext') && await page.isDisabled('#graphicaddlogo'), 'a ninth is not offered');
+      assert.strictEqual(await post('/api/graphics', { add: 'text' }), 400, 'and the node refuses it');
+      // the box as it was for the rest of the test
+      for (const it of (await get('/api/graphics')).items) assert.strictEqual(await post('/api/graphics', { id: it.id, remove: true }), 200);
+      await sysIndex();
+      await chip('Graphics', 'Set up');
+    }
     // Screen output (D90): the screen's own list (the harness writes the report a player on the owner's 1440p monitor
     // would write), Automatic first with what it chose; a try is asked in place first, and Cancel sends nothing
     await chip('Screen output', 'Ready');

@@ -447,7 +447,7 @@ jobs:
       image: debian:trixie
     env:
       DEBIAN_FRONTEND: noninteractive
-      PKGS: gcc make pkg-config libc6-dev libpng-dev libjpeg-dev python3 binutils git ca-certificates
+      PKGS: gcc make pkg-config libc6-dev libpng-dev libjpeg-dev libfreetype-dev python3 binutils git ca-certificates
     steps:
       - uses: actions/checkout@v4
       - name: Install the compiler and the picture libraries' headers (three tries; a slow mirror is given up on)
@@ -463,7 +463,7 @@ jobs:
           exit 1
       - name: Build pvj-raster (every warning an error)
         run: |
-          dpkg-query -W -f '${Package} ${Version}\n' libpng-dev libjpeg62-turbo-dev
+          dpkg-query -W -f '${Package} ${Version}\n' libpng-dev libjpeg62-turbo-dev libfreetype-dev
           make -C render WERROR=1 pvj-raster
       - name: pvj-raster for real, on good, damaged and hostile pictures (a skip is a failure)
         timeout-minutes: 8

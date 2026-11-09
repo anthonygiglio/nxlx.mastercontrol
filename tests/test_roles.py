@@ -148,6 +148,12 @@ ROWS = {
     ("POST", "/api/graphics/file"): KINDS["op"],
     ("POST", "/api/graphics/upload"): KINDS["op"],
     ("GET", "/api/graphics/thumb"): KINDS["op"],
+    # text and logos on the screen (D129, slice 2): the Operator's and the Owner's; no Guest, ever (a decision of 8 November 2026).
+    # The one change route is also a controller's, on purpose: OSC pushes a line (/pvj/graphic/N/send), behind the owner's OSC switch.
+    ("GET", "/api/graphics"): KINDS["op"],
+    ("POST", "/api/graphics"): KINDS["live"],
+    ("GET", "/api/graphics/fonts"): KINDS["op"],
+    ("GET", "/api/graphics/preview.png"): KINDS["op"],
     ("POST", "/api/media/import"): KINDS["op"],
     ("POST", "/api/media/import/cancel"): KINDS["op"],
     ("POST", "/api/media/delete"): KINDS["op"],

@@ -78,6 +78,16 @@ def bad(message):
     return ApiError(400, message)
 
 
+def graphics_showing(settings):
+    """How many graphics are on the screen by the settings (the stage on and a graphic on)."""
+    from . import graphics as graphics_mod
+    try:
+        with settings.lock:
+            return graphics_mod.showing(settings.data.get("graphics"))
+    except Exception:
+        return 0
+
+
 def number(body, key, lo, hi, integer=False):
     v = body.get(key)
     if isinstance(v, bool) or not isinstance(v, (int, float)) or v != v or not lo <= v <= hi:
@@ -277,6 +287,8 @@ class Api:
             valid_name, raster_mod.Client(), free_space=lambda: self._free_space())
         from . import overlay as overlay_mod
         self.masks = overlay_mod.Masks(self)                       # the masks over the video, combined in a worker (D100)
+        from . import graphics as graphics_mod
+        self.gfx = graphics_mod.Graphics(self, log=lambda line: self.log(line))     # text and logos on the screen, built in a worker (D129)
         from . import shaderlive as shaders_mod, vibes as vibes_mod
         self.shaders = shaders_mod.LiveEngine(self)                 # ISF shader sources (see shaders.py, shaderlive.py)
         self.vibes = vibes_mod.Vibes(self, self.shaders)            # the endless rotation; its thread starts on demand
@@ -596,7 +608,8 @@ class Api:
                 "reach": policy.reach(device, self.guests.locked()),
                 "screen": self.screen.brief(),           # the mode in use, the one asked for, and why they differ (D90)
                 "renderer": self.renderer.brief(),       # which program draws, the one chosen, and why they differ (D95)
-                "presence": self.presence.view(device)}  # who is connected and what changed last, as this device may be told (D126)
+                "presence": self.presence.view(device),  # who is connected and what changed last, as this device may be told (D126)
+                "graphics_on": graphics_showing(self.settings)}   # how many graphics (text, logos) are on the screen; for every role's header (D129)
 
     def access_on_screen(self):
         """True while the PIN or join codes are drawn on the display (on request, or the first-run screen)."""
@@ -954,6 +967,34 @@ class Api:
 
     def graphics_files(self, body, device, client):
         return self.graphics.state()
+
+    # --- text and logos on the screen (D129, slice 2): Operator and up; a Guest never reaches any of it ----------------
+    def get_graphics(self, body, device, client):
+        """GET /api/graphics: the stage, every graphic with its status, the limits, what this node can do, the fonts and
+        the files of the graphics store."""
+        return self.gfx.state()
+
+    def set_graphics(self, body, device, client):
+        """POST /api/graphics: add, change, show, hide, move and remove graphics, and Hide all (design 8.2). A text the
+        person typed is cleaned and never interpreted (pvj/graphics.py)."""
+        from . import graphics as graphics_mod
+        try:
+            return self.gfx.change(body)
+        except graphics_mod.GraphicsError as e:
+            raise ApiError(e.status, e.message)
+
+    def graphics_fonts(self, body, device, client):
+        from . import graphics as graphics_mod
+        return {"fonts": [dict(f) for f in graphics_mod.FONTS]}
+
+    def graphics_preview(self, ident, text=None):
+        """GET /api/graphics/preview.png?id=[&text=]: the node-made picture of one graphic, rate limited (5 a second).
+        `text` is a line as typed and not yet sent: it is drawn in the preview and kept nowhere."""
+        from . import graphics as graphics_mod
+        try:
+            return self.gfx.preview(ident, text)
+        except graphics_mod.GraphicsError as e:
+            raise ApiError(e.status, e.message)
 
     def graphics_file_change(self, body, device, client):
         """POST /api/graphics/file: {"delete": "name.png"} or {"rename": "name.png", "new": "other.png"}."""
@@ -5539,6 +5580,9 @@ class Api:
             ("POST", "/api/network/confirm"): ("full", self.confirm_network),
             ("POST", "/api/network/revert"): ("full", self.revert_network),
             ("POST", "/api/network/scan"): ("full", self.scan_wifi),
+            ("GET", "/api/graphics"): ("live", self.get_graphics),
+            ("POST", "/api/graphics"): ("live", self.set_graphics),
+            ("GET", "/api/graphics/fonts"): ("live", self.graphics_fonts),
             ("GET", "/api/graphics/file"): ("live", self.graphics_files),
             ("POST", "/api/graphics/file"): ("live", self.graphics_file_change),
             ("POST", "/api/media/delete"): ("live", self.delete_media),

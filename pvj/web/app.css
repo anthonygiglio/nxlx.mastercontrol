@@ -1507,3 +1507,35 @@ html[data-style="signal"] .tp #black.flash { background: var(--st-problem, var(-
 }
 /* Now in this look: the scene blocks in a column of Now take a smaller face than on the Room screen */
 html[data-style="signal"] .nowscreen .room-scene { font-size: 15px; }
+
+/* Graphics (D129, slice 2): text and logos the node draws on the screen. A graphic's preview is a picture the node made
+   (the same code that draws the wall), shown on a checkerboard in the shape of the screen, so what is clear shows. */
+.graphicitem { display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 8px; text-align: left; border-top: 1.5px solid var(--ln); padding: 12px 0 4px; min-width: 0; }
+html[data-style="signal"] .graphicitem { border-top: var(--rule, 3px) solid var(--fg); }
+.gfxframe { position: relative; width: 100%; aspect-ratio: var(--shape, 1.7778); background: repeating-conic-gradient(var(--ln) 0 25%, var(--cd) 0 50%) 0 0 / 16px 16px; border: 1.5px solid var(--ln); border-radius: 6px; overflow: hidden; }
+.gfxpreview { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.gfxpreview.none { display: none; }
+.gfxwait { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; text-align: center; padding: 8px; background: var(--cd); margin: 0; }
+.gfxpreview.none ~ .gfxwait { display: flex; }
+.gfxtext { flex: 1 1 auto; min-width: 0; min-height: 64px; resize: vertical; }
+.gfxsaved { display: flex; gap: 8px; align-items: center; }
+.linebtn { text-align: left; overflow-wrap: anywhere; justify-content: flex-start; }
+.gfxsettings { display: flex; flex-direction: column; gap: 8px; padding-bottom: 8px; }
+.anchorgrid { display: grid; grid-template-columns: repeat(3, 44px); gap: 6px; }
+.anchorgrid .btn { padding: 0; min-width: 44px; display: flex; align-items: center; justify-content: center; }
+.anchorgrid .dot { display: block; width: 10px; height: 10px; border-radius: 50%; background: currentColor; }
+.swatches { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.swatch { width: 44px; height: 44px; padding: 0; border: 1.5px solid var(--ln); border-radius: 6px; cursor: pointer; }
+.swatch.on { outline: 3px solid var(--ink, var(--ac)); outline-offset: 2px; }
+.swatch:disabled { opacity: .5; cursor: not-allowed; }
+.logorow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.logothumb { flex: none; width: 64px; height: 64px; object-fit: contain; border: 1.5px solid var(--ln); border-radius: 6px; background: repeating-conic-gradient(var(--ln) 0 25%, var(--cd) 0 50%) 0 0 / 12px 12px; }
+.state.err { color: var(--ac); font-weight: 600; }
+html[data-style="signal"] .state.err { color: var(--err); }
+html[data-style="signal"] .swatch { border: var(--rule, 2px) solid var(--fg); border-radius: 0; }
+html[data-style="signal"] .gfxframe, html[data-style="signal"] .logothumb { border: var(--rule, 2px) solid var(--fg); border-radius: 0; }
+.graphicitem > .row { justify-content: stretch; margin-left: 0; width: 100%; }
+.graphicitem .row > .grow, .graphicitem .row > .gfxtext { flex: 1 1 0; min-width: 0; }
+.graphicitem .gfxframe { max-width: 560px; }
+.graphicitem > .row.wrap { justify-content: flex-start; }
+textarea.gfxtext { font: inherit; color: inherit; padding: 8px 10px; }

@@ -279,6 +279,21 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                 traceback.print_exc()
                 self._json(500, {"error": "internal error"})
 
+        def _graphics_preview(self):
+            """GET /api/graphics/preview.png?id=g1234: the node-made picture of one graphic (Operator and up), at most 5 a
+            second. Only a PNG that pvj-raster wrote is ever sent."""
+            try:
+                self._who("GET", "/api/graphics/preview.png")
+                query = parse_qs(urlsplit(self.path).query)
+                ident = (query.get("id") or [""])[0]
+                typed = (query.get("text") or [None])[0]          # a line as typed, not yet sent: drawn in the preview only
+                self._send(200, api.graphics_preview(ident, typed[:2000] if typed is not None else None), "image/png")
+            except ApiError as e:
+                self._json(e.status, {"error": e.message})
+            except Exception:
+                traceback.print_exc()
+                self._json(500, {"error": "internal error"})
+
         def _qr(self):
             """GET /api/qr.svg?for=panel|view|live: a QR code to print or show. A presenter gets the panel address
             and the guest code; the presenter code needs full access (checked in access_qr)."""
@@ -306,6 +321,8 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                 return self._qr()
             if path == "/api/graphics/thumb":
                 return self._graphics_thumb()
+            if path == "/api/graphics/preview.png":
+                return self._graphics_preview()
             if path == "/api/https" or path.startswith("/api/https/"):
                 return self._https_route("GET", path, {})
             if path.startswith("/api/"):

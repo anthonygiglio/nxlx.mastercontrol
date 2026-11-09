@@ -33,6 +33,7 @@ OUTSIDE = {
     ("POST", "/api/media/upload"): "live",
     ("POST", "/api/graphics/upload"): "live",       # D129: logos; decoded by pvj-raster only
     ("GET", "/api/graphics/thumb"): "live",
+    ("GET", "/api/graphics/preview.png"): "live",     # D129: the node-made picture of one graphic
     ("POST", "/api/system/update/upload"): "full",
     ("POST", "/api/system/settings/import"): "full",
     # the secure connection's own routes (D79, server._https_route): the Owner's, every one that asks who is there
@@ -67,6 +68,7 @@ LEGACY_LIVE = frozenset(
         "/api/pair", "/api/session", "/api/logout", "/api/support/login", "/api/play", "/api/control",
         "/api/blackout", "/api/fadeout", "/api/fadein", "/api/fade", "/api/mapper/nudge", "/api/testpattern", "/api/testtone", "/api/media/info",
         "/api/mix", "/api/access/code", "/api/access/cancel", "/api/access/screen", "/api/overlay",
+        "/api/graphics",        # D129 (8 November 2026), added on purpose: OSC pushes a line of text (/pvj/graphic/N/send) behind the owner's OSC switch and the three locks
         "/api/support/stop", "/api/shaders/play", "/api/shaders/values", "/api/shaders/step", "/api/shaders/preset",
         "/api/vibes", "/api/effects", "/api/effects/values", "/api/effects/step", "/api/effects/preset",
         "/api/projector", "/api/room/scene", "/api/room/group", "/api/autostart/test",
