@@ -2,7 +2,7 @@
      SPDX-License-Identifier: Apache-2.0 -->
 # Shader transitions: generators as layers, a design (2026-11-08)
 
-Status: design for reading, with numbers measured on node-01. Nothing here is built. Proposed decision: D130 (`project-log/decisions/D130-shader-layers-transitions.md`).
+Status: design, accepted by the owner on 2026-11-08 (all four recommendations, section 9). Nothing here is built yet. Decision: D130 (`project-log/decisions/D130-shader-layers-transitions.md`).
 Written for Anthony (owner). Plain words first; the builders' detail follows.
 
 ## 0. What you will see, in plain words
@@ -50,7 +50,7 @@ Only the pvj-render property gains a word and the socket gains one command. A re
 - `["pvj-fade-to-program", PATH, SECONDS, MOVE?]`: load the program file at PATH (read by `fx.c`'s reader, same rules as `pvj-shader load`) into the idle layer's generator, make that layer the front, and start the fade (a mix, or a wipe or slide if MOVE names one). Answered when the program is built. If the GPU refuses it, the answer carries the compiler's words and nothing changes on the screen. It is a separate command and not a flavour of `pvj-crossfade` because a clip goes through the hardened libmpv load and a program does not.
 - `["pvj-crossfade", URL, SECONDS, OPTIONS, MOVE?]` (clip in) works as now, and when the outgoing layer holds a generator it keeps that generator running until the end of the fade, then clears it. This is shader to clip.
 - `["pvj-shader", "set"|"load"|"clear", 1, 0, ...]`: slot 0 of Source 1 now means "the front layer's generator". A value that moves goes to the incoming program (the front layer is the incoming one from the moment a fade starts). The panel's value worker therefore needs no change.
-- The rule of D98 is kept: a load, a stop or a new transition while a fade runs ends that fade at once on its incoming side, then the new one starts from that. See open question 3.
+- The rule of D98 is kept: a load, a stop or a new transition while a fade runs ends that fade at once on its incoming side, then the new one starts from that. See question 2 in section 9 (decided).
 
 ### 2.3 In the panel (Python)
 
@@ -153,12 +153,12 @@ Slices 1 and 2 are the risky ones (render thread, GL objects). A fresh independe
 | LT8 | The same rows on a Pi 5 and on a desktop | the numbers recorded; the budget limit set from them |
 | LT9 | A Pi 3 on classic | a cut into a shader and the still out of one, as before, and the Mix card says so |
 
-## 9. Open questions for Anthony (four, each with a recommendation)
+## 9. Questions for Anthony (four, all decided on 2026-11-08: he accepted every recommendation)
 
-1. **When two medium shaders meet, what should the fade do?** Options: the outgoing one slows to half speed of drawing but keeps moving; it freezes; or it cuts. Recommendation: slow it (section 7, step 1), because a fade that is a little steppier on the way out is much less noticeable than a screen dropping to 40 frames a second.
-2. **Should a tap on another pad in the middle of a fade jump to the new picture first?** Two layers can only hold two pictures, so a third has to wait. Recommendation: yes, finish the first fade at once, then fade to the new one (the same as clips do today). A true "blend from wherever it is" needs a third layer and costs another pass and another generator; revisit if you find the jump annoying.
-3. **Should Vibes (the automatic rotation) use your chosen Mix transition between shaders?** Today it dips by level. Recommendation: yes, but only after slice 4 and one soak, since a rotation runs for hours and each fade is two shaders at once.
-4. **The Pi 3: keep the cut, or give it a dip to black?** Classic can already dip. Recommendation: keep the cut; classic is frozen (D105) and a dip would be a new look to test on a board you are retiring.
+1. **When two medium shaders meet, what should the fade do?** DECIDED: the outgoing one keeps drawing at half rate. Options: the outgoing one slows to half speed of drawing but keeps moving; it freezes; or it cuts. Recommendation: slow it (section 7, step 1), because a fade that is a little steppier on the way out is much less noticeable than a screen dropping to 40 frames a second.
+2. **Should a tap on another pad in the middle of a fade jump to the new picture first?** DECIDED: yes, the running fade finishes at once, then fades to the new pad. Two layers can only hold two pictures, so a third has to wait. Recommendation: yes, finish the first fade at once, then fade to the new one (the same as clips do today). A true "blend from wherever it is" needs a third layer and costs another pass and another generator; revisit if you find the jump annoying.
+3. **Should Vibes (the automatic rotation) use your chosen Mix transition between shaders?** DECIDED: yes, but only after slice 4 and a soak. Today it dips by level. Recommendation: yes, but only after slice 4 and one soak, since a rotation runs for hours and each fade is two shaders at once.
+4. **The Pi 3: keep the cut, or give it a dip to black?** DECIDED: keep the cut. Classic can already dip. Recommendation: keep the cut; classic is frozen (D105) and a dip would be a new look to test on a board you are retiring.
 
 ## 10. Risks
 

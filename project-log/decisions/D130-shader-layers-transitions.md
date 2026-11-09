@@ -1,8 +1,8 @@
 <!-- SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
      SPDX-License-Identifier: Apache-2.0 -->
-## D130. Shader pads take the Mix transition: a generator belongs to a video layer of Source 1, on the New renderer (2026-11-08, proposed)
+## D130. Shader pads take the Mix transition: a generator belongs to a video layer of Source 1, on the New renderer (2026-11-08, decided)
 
-Proposed, not yet decided by the owner. Transitions are his top priority (2026-10-09). Full design and the node-01 numbers: `design/shader-transitions_2026-11-08.md`.
+Decided by the owner on 2026-11-08: he accepted all four recommendations (two medium shaders: the outgoing one keeps drawing at half rate; a tap mid-fade finishes the running fade at once, then fades to the new pad; Vibes uses the chosen Mix transition between shaders only after slice 4 and a soak; the Pi 3 keeps the cut). Slice 1 starts now, with an independent review of slices 1 and 2 before slice 3. Transitions are his top priority (2026-10-09). Full design and the node-01 numbers: `design/shader-transitions_2026-11-08.md`.
 
 What: on the New renderer (Pi 4, Pi 5, desktop) Source 1's two video layers each get a generator slot. Shader to shader, clip to shader and shader to clip then use the chosen Mix transition (crossfade, wipe, slide) with both sides moving and no frozen still. A new command `pvj-fade-to-program` starts a fade into a shader; `pvj-crossfade` keeps an outgoing generator running; `pvj-shader` slot 0 of Source 1 means the front layer's generator. The panel stops carrying a shader on a blank clip on the New renderer. D71's still stays for classic (so every Pi 3), a live input on either side, a renderer that does not say `layer-generators`, and a fade the renderer just refused.
 
@@ -12,4 +12,4 @@ Why: shader pads were the one kind of pad that did not transition, and a clip af
 
 Measured on node-01 (Pi 4, 540 inside, 1080p60, Automatic final pass): one shader of any class and any two light shaders, or a medium and a light, hold 60 flips a second at 30 runs a second with at most 5 missed vblanks in 12 s; two medium shaders (Nebula with Aurora, Nebula with Ridgelines) fall to 45 and 40 flips a second with 22.5 and 20 runs a second. Rule proposed: weight light 1, medium 2, heavy 3, full rate up to a total of 3; above that, the outgoing generator runs at half rate for the fade, and freezes only if the fade is still overloaded. Pi 5 and desktop are not measured.
 
-Cost / rules out: two programs alive during a fade (GPU and buffer memory), a longer wait before a never-shown shader fades in (the build, up to 3 s, with the old picture moving meanwhile), a tap in the middle of a fade ends the running fade at once, and the Pi 3 stays a cut. Four slices, with a review of the C diff before the panel slice. Open questions for the owner are in the design, section 9.
+Cost / rules out: two programs alive during a fade (GPU and buffer memory), a longer wait before a never-shown shader fades in (the build, up to 3 s, with the old picture moving meanwhile), a tap in the middle of a fade ends the running fade at once, and the Pi 3 stays a cut. Four slices, with a review of the C diff before the panel slice. The four questions in the design, section 9, are decided.
