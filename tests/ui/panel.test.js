@@ -701,6 +701,36 @@ function startServer(env) {          // env: more for the harness's environment 
         await page.waitForFunction(async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].place.anchor === 'br', null, { timeout: 8000 });
         assert.strictEqual(await page.getAttribute('#graphic-1-anchor-br', 'aria-pressed'), 'true');
         assert.strictEqual(await page.getAttribute('#graphic-1-anchor-tl', 'aria-pressed'), 'false');
+        // a card refresh (a GET) that was asked before a tap and answers after it must not draw the old place again
+        {
+          let held = 0, release = null;
+          const gate = new Promise((res) => { release = res; });
+          await page.route('**/api/graphics', async (route) => {
+            if (route.request().method() === 'GET' && held === 0) {
+              held++;
+              const resp = await route.fetch();               // answered now, with the place as it is now ...
+              await gate;                                      // ... and delivered after the next tap
+              await route.fulfill({ response: resp });
+            } else await route.continue();
+          });
+          await page.click('#graphic-1-anchor-tl');
+          await page.waitForFunction(async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].place.anchor === 'tl', null, { timeout: 8000 });
+          const wasOn = (await get('/api/graphics')).controllers_text;
+          await page.click('#graphicsctl');                    // its answer is followed by a GET of the card: the one held
+          await page.waitForFunction(() => true);
+          for (let i = 0; i < 100 && held === 0; i++) await new Promise((r) => setTimeout(r, 50));
+          assert.strictEqual(held, 1, 'a refresh of the card was held');
+          await page.click('#graphic-1-anchor-br');
+          await page.waitForFunction(async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].place.anchor === 'br', null, { timeout: 8000 });
+          release();
+          await new Promise((r) => setTimeout(r, 2000));
+          assert.strictEqual((await get('/api/graphics')).items[0].place.anchor, 'br');
+          assert.strictEqual(await page.getAttribute('#graphic-1-anchor-br', 'aria-pressed'), 'true', 'the selector shows the last tap, not the older refresh');
+          assert.strictEqual(await page.getAttribute('#graphic-1-anchor-tl', 'aria-pressed'), 'false');
+          await page.unroute('**/api/graphics');
+          if (wasOn !== (await get('/api/graphics')).controllers_text) await page.click('#graphicsctl');    // the Owner's switch as it was
+          await page.waitForFunction(async (w) => (await fetch('/api/graphics').then((r) => r.json())).controllers_text === w, wasOn, { timeout: 8000 });
+        }
         await page.click('#graphic-1-motion-scroll');
         await page.waitForFunction(() => { const n = document.getElementById('graphic-1-anchorhint'); return n && /only the column counts/.test(n.textContent); }, null, { timeout: 8000 });
         assert(/only the column counts/.test(await page.textContent('#graphic-1-anchorhint')));

@@ -1347,6 +1347,7 @@
   var gfxOpen = {};               // which graphics have their settings open: kept when the cards are drawn again
   var gfxTimers = {};             // a preview waiting for the typing to stop, by graphic
   var gfxSeq = 0, gfxNext = 0;
+  var gfxPostSeq = 0, gfxPostApplied = 0, gfxPostsOpen = 0;     // the answers of POSTs apply in the order they were sent; a GET sent before a POST, or while one is out, never overwrites it
   var gfxLast = {};               // the picture last asked for, by graphic: what it was made from, and its address (a redraw shows it again without asking)
   function gfxStatusWords(it) {
     var s = it.status || {};
@@ -1368,13 +1369,17 @@
 
     function post(change, opts) {          // opts.quiet: a slider is in a hand, so the cards are not drawn again; opts.preview: a graphic whose picture changed
       opts = opts || {};
+      var mine = ++gfxPostSeq;
+      gfxPostsOpen++;
       return act('POST', '/api/graphics', change, function (data) {
         say('');
+        if (mine < gfxPostApplied) return;          // a later tap has been answered already: this one is older news
+        gfxPostApplied = mine;
         d = data;
         if (opts.openNew && data.items.length) gfxOpen[data.items[data.items.length - 1].id] = true;      // a graphic just added opens its settings
         if (opts.quiet) patch(); else draw(true);
         if (opts.preview) previewSoon(opts.preview, 150);
-      }).then(function (r) { if (!r.ok && !opts.quiet) load(); return r; });
+      }).then(function (r) { gfxPostsOpen--; if (!r.ok && !opts.quiet) load(); return r; }, function (e) { gfxPostsOpen--; throw e; });
     }
     // how many are on the screen: the stage is on and the graphic is switched on and did not fail (one that failed says so on its card)
     function shownCount() { return d.on ? d.items.filter(function (i) { return i.on && i.status.state !== 'error'; }).length : 0; }
@@ -1690,8 +1695,10 @@
     function load(force, first) {
       clearTimeout(timer);
       if (!first && document.getElementById('graphicscard') !== card) return;
+      var sentAt = gfxPostSeq;
       api('GET', '/api/graphics').then(function (r) {
         if (document.getElementById('graphicscard') !== card && !first) return;
+        if (!first && (gfxPostSeq !== sentAt || gfxPostsOpen > 0)) return;      // a change was sent since (or is out): its answer is the newer one
         if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'k', text: r.data.error || 'Not available' })); return; }
         d = r.data;
         if (force === true || !inUse(card)) draw(!!force); else patch();

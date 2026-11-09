@@ -161,6 +161,68 @@ class LostRequestTest(MotionBase):
         self.assertFalse(self.gfx.busy())
 
 
+class MotionChosenTest(Base):
+    """Choosing a crawl, or a scroll that is not looped, for a graphic that is already on the screen shows it crossing once
+    (the first version drew nothing: the new motion was measured from the old one's clock, long past its end)."""
+
+    def start(self, size="320x180"):
+        need_program(self)
+        self.r = Renderer("--headless=" + size)
+        self.addCleanup(self.r.close)
+        ipc = Ipc(self.r.sock, timeout=10.0)
+        p = self.api.player
+        p.osd_size = lambda: (self.r("get_property", "osd-width"), self.r("get_property", "osd-height"))
+        p.graphics_stage = lambda ask=True: {"slots": 8, "side": 4096}
+        p.graphic = lambda what, slot, *a: ipc.request("pvj-graphic", what, slot, *a)
+        self.gfx.synchronous = False
+        self.addCleanup(self.gfx.stop)
+
+    def frames_with_ink(self, seconds):
+        seen, end = [], time.monotonic() + seconds
+        while time.monotonic() < end:
+            seen.append(lit_box(self.r.capture()))
+        return seen
+
+    def test_a_crawl_chosen_on_a_shown_graphic_crosses_the_screen_once(self):
+        self.start()
+        gid = self.add(text="THANKS", on=True)
+        time.sleep(1.5)                             # well past any pass of a motion
+        self.assertIsNotNone(lit_box(self.r.capture()), "it is there, still")
+        self.post({"id": gid, "set": {"motion": {"kind": "crawl", "speed": 100, "loop": False}}})
+        seen = self.frames_with_ink(2.2)
+        inked = [s for s in seen if s]
+        self.assertGreater(len(inked), 3, "it crawled across (frames with ink: %d of %d)" % (len(inked), len(seen)))
+        lefts = [s[0] for s in inked]
+        start = next((i for i, x in enumerate(lefts) if x > 250), None)           # (the first frames may still show the graphic where it sat)
+        self.assertIsNotNone(start, "it came in from the right edge: %s" % lefts)
+        lefts = lefts[start:]
+        self.assertTrue(all(b <= a + 1 for a, b in zip(lefts, lefts[1:])), "and went left: %s" % lefts)
+        self.assertIsNone(seen[-1], "and is gone once it has crossed (not looped)")
+
+    def test_a_scroll_chosen_on_a_shown_graphic_rises_once(self):
+        self.start()
+        gid = self.add(text="THANKS", on=True)
+        time.sleep(1.5)
+        self.post({"id": gid, "set": {"motion": {"kind": "scroll", "speed": 100, "loop": False}}})
+        seen = self.frames_with_ink(2.2)
+        inked = [s for s in seen if s]
+        self.assertGreater(len(inked), 3, "it rose (frames with ink: %d of %d)" % (len(inked), len(seen)))
+        tops = [s[1] for s in inked]
+        self.assertTrue(all(b <= a + 1 for a, b in zip(tops, tops[1:])), "and went up: %s" % tops)
+
+    def test_a_looped_crawl_keeps_going_when_the_place_changes_and_does_not_jump_back(self):
+        self.start()
+        gid = self.add(text="THANKS", on=True)
+        self.post({"id": gid, "set": {"motion": {"kind": "crawl", "speed": 30, "loop": True}}})
+        time.sleep(1.0)
+        for a in ("tl", "tc", "tr"):
+            self.post({"id": gid, "set": {"place": {"anchor": a}}})
+        time.sleep(1.0)
+        lefts = [s[0] for s in self.frames_with_ink(1.0) if s]
+        jumps = sum(1 for a, b in zip(lefts, lefts[1:]) if b > a + 30)
+        self.assertLessEqual(jumps, 1, "only the loop's own turn at the edge, not one a tap: %s" % lefts)
+
+
 class PlaceReplaysTest(MotionBase):
     def test_a_new_place_sends_a_moving_graphic_across_again_and_leaves_a_still_one_alone(self):
         gid = self.add(on=True)
@@ -181,6 +243,69 @@ class PlaceReplaysTest(MotionBase):
         n = len(self.sent)
         self.post({"id": gid, "set": {"place": {"anchor": "bl"}}})
         self.assertNotIn("replay", [s[0] for s in self.sent[n:]], "nothing is replayed for a graphic that is off")
+
+    def test_a_looped_one_is_not_sent_back_by_a_tap_or_a_slider(self):
+        gid = self.add(on=True)
+        self.motion(gid, kind="crawl", speed=50, loop=True)
+        for place in ({"anchor": "tl"}, {"y": 5}, {"y": 6}, {"y": 7}):
+            n = len(self.sent)
+            self.post({"id": gid, "set": {"place": place}})
+            self.assertNotIn("replay", [s[0] for s in self.sent[n:]], place)
+
+    def test_the_nudge_a_motion_ignores_neither_rebuilds_nor_replays(self):
+        gid = self.add(on=True)
+        self.motion(gid, kind="crawl", speed=50)
+        jobs, n = len(self.client.jobs), len(self.sent)
+        self.post({"id": gid, "set": {"place": {"x": 20}}})
+        self.assertEqual(len(self.client.jobs), jobs, "a crawl crosses the whole screen: across is not in the picture")
+        self.assertNotIn("replay", [s[0] for s in self.sent[n:]])
+        self.post({"id": gid, "set": {"place": {"y": 20}}})
+        self.assertGreater(len(self.client.jobs), jobs, "the height is")
+        self.assertIn("replay", [s[0] for s in self.sent[n:]])
+        self.motion(gid, kind="scroll")
+        jobs, n = len(self.client.jobs), len(self.sent)
+        self.post({"id": gid, "set": {"place": {"y": 30}}})
+        self.assertEqual(len(self.client.jobs), jobs, "and a scroll's height is not")
+        self.assertNotIn("replay", [s[0] for s in self.sent[n:]])
+        self.post({"id": gid, "set": {"place": {"x": 30}}})
+        self.assertIn("replay", [s[0] for s in self.sent[n:]])
+        self.motion(gid, kind="none")
+        jobs = len(self.client.jobs)
+        self.post({"id": gid, "set": {"place": {"y": 40}}})
+        self.assertGreater(len(self.client.jobs), jobs, "with no motion both nudges are in the picture again")
+
+    def test_choosing_a_scroll_or_a_crawl_on_a_graphic_that_is_on_starts_it(self):
+        gid = self.add(on=True)
+        n = len(self.sent)
+        self.motion(gid, kind="crawl")
+        self.assertIn(("replay", 1), [s[:2] for s in self.sent[n:]])
+        n = len(self.sent)
+        self.motion(gid, kind="crawl", speed=40)
+        self.assertNotIn("replay", [s[0] for s in self.sent[n:]], "the same motion with another speed does not restart it")
+        self.motion(gid, kind="none")
+        self.post({"id": gid, "on": False})
+        n = len(self.sent)
+        self.motion(gid, kind="scroll")
+        self.assertNotIn("replay", [s[0] for s in self.sent[n:]], "a graphic that is off starts with its show")
+
+    def test_the_preview_of_a_crawl_is_one_line_unfitted_on_its_row(self):
+        gid = self.add(text="ONE\nTWO", on=True)
+        self.motion(gid, kind="crawl")
+        self.client.jobs.clear()
+        self.gfx.preview(gid)
+        first, second = [j[0] for j in self.client.jobs[-2:]]
+        for params in (first, second):
+            head, _, typed = params.partition("\nTEXT\n")
+            self.assertEqual(typed, "ONE  TWO", "one line")
+            self.assertNotIn("nofit 1", head.split("\n"), "a preview shows the line, it does not refuse it")
+            self.assertIn("limit 4096 ", head)
+        import re
+        m = re.search(r"canvas (\d+) (\d+) (-?\d+) (-?\d+)", second)
+        self.assertEqual(m.group(3), "0", "it starts at the edge of its run, not at the grid's column")
+        self.motion(gid, kind="none")
+        self.client.jobs.clear()
+        self.gfx.preview(gid)
+        self.assertIn("ONE\nTWO", self.client.jobs[-1][0], "any other motion previews the fitted picture")
 
 
 class OverlayPlaceTest(MotionBase):

@@ -212,7 +212,11 @@ void gfx_set(int slot, const GfxSet *g)
     if (slot < 0 || slot >= GFX_SLOTS) return;
     pthread_mutex_lock(&app.lock);
     GfxSlot *s = &app.gfx[slot];
-    if (g->mask & GS_MOTION) s->motion = g->motion;
+    if (g->mask & GS_MOTION) {
+        // a scroll or a crawl chosen on a graphic that is on starts now: measured from the old motion's clock it would be past its end
+        if (g->motion != s->motion && (g->motion == GM_SCROLL || g->motion == GM_CRAWL) && s->on) s->shown_at = now_s();
+        s->motion = g->motion;
+    }
     if (g->mask & GS_LOOP) s->loop = g->loop;
     if (g->mask & GS_X) s->x = (float)g->x;
     if (g->mask & GS_Y) s->y = (float)g->y;

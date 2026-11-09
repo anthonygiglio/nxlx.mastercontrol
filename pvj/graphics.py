@@ -485,7 +485,7 @@ def _hex(c):
     return c.lstrip("#")
 
 
-def params_for(item, sw, sh, png=False, canvas=None, ticker=0):
+def params_for(item, sw, sh, png=False, canvas=None, ticker=0, refuse=True):
     """The request for pvj-raster for `item` on a screen sw x sh: (parameter text, ok). The size of everything follows
     the screen's height (text) or width (logo), so the preview at a third of the size is the same picture. `ticker`: the
     widest picture the GPU can hold, for a text that crawls: one line, as wide as it needs to be, and a text that would
@@ -493,7 +493,7 @@ def params_for(item, sw, sh, png=False, canvas=None, ticker=0):
     place = item["place"]
     lines = ["kind %s" % item["kind"], "out %s" % ("png" if png else "raw"), "opacity %d" % place["opacity"],
              "limit %d %d" % (ticker or int(sw * (1 - 2 * SAFE)), int(sh * (1 - 2 * SAFE)))]
-    if ticker and item["kind"] == "text":
+    if ticker and item["kind"] == "text" and refuse:
         lines.append("nofit 1")
     if canvas:
         lines.append("canvas %d %d %d %d" % canvas)
@@ -519,10 +519,23 @@ def params_for(item, sw, sh, png=False, canvas=None, ticker=0):
     return "\n".join(lines), None
 
 
-def render_key(item, sw, sh, logo_sig=None, ticker=0):
+def moving_axis(item, mode):
+    """"crawl" or "scroll" when the motion this node draws for `item` is one of those, else "": a crawl crosses the whole
+    screen, so where it sits across (place x) means nothing; a scroll goes from the bottom to the top, so its height (place y) does not."""
+    kind = motion_for(item, mode)
+    return kind if kind in ("scroll", "crawl") else ""
+
+
+def render_key(item, sw, sh, logo_sig=None, ticker=0, moving=""):
     """What a built picture was made from: the same key means the same picture. Not the on-switch or the name, and not
-    the motion (the speed and the times are the player's), except that a crawling text is made as one wide line."""
-    body = {"kind": item["kind"], "place": item["place"], "text": item.get("text"), "logo": item.get("logo"), "sig": logo_sig, "screen": [sw, sh]}
+    the motion (the speed and the times are the player's), except that a crawling text is made as one wide line, and that
+    the nudge a moving motion ignores is left out (moving it rebuilds nothing)."""
+    place = dict(item["place"])
+    if moving == "crawl":
+        place["x"] = 0
+    elif moving == "scroll":
+        place["y"] = 0
+    body = {"kind": item["kind"], "place": place, "text": item.get("text"), "logo": item.get("logo"), "sig": logo_sig, "screen": [sw, sh]}
     if ticker:
         body["ticker"] = ticker
     return hashlib.sha1(json.dumps(body, sort_keys=True).encode()).hexdigest()
@@ -755,11 +768,21 @@ class Graphics:
                     raise bad("say which graphic: id or slot")
                 idx = items.index(it)
                 if "set" in body:
+                    before = it["motion"]["kind"]
                     it = apply_set(it, body["set"], allowed)
                     items[idx] = it
                     touched.add(it["id"])
-                    if "place" in body["set"] and it["on"] and allowed and it["motion"]["kind"] in ("scroll", "crawl") and it["motion"]["kind"] in allowed:
-                        replay.add(it["id"])        # a scroll or a crawl that has run off is not on the screen to show the new place: it goes across again
+                    kind = it["motion"]["kind"]
+                    drawn = it["on"] and on and bool(allowed) and kind in ("scroll", "crawl") and kind in allowed
+                    if drawn and kind != before:
+                        replay.add(it["id"])        # chosen on a graphic that is on: it starts now (the clock of the old motion has run past its end)
+                    elif drawn and isinstance(body["set"].get("place"), dict) and not it["motion"]["loop"]:
+                        # a new place for one that is not looped and has run off the screen is shown by sending it across again (a looped
+                        # one comes round by itself, and must not jump back with every tick of a slider). The nudge on the axis the
+                        # motion ignores (across for a crawl, down for a scroll) changes nothing on the screen.
+                        ignored = {"x"} if kind == "crawl" else {"y"}
+                        if set(body["set"]["place"]) - ignored:
+                            replay.add(it["id"])
                 if "text" in body:
                     if it["kind"] != "text":
                         raise bad("this graphic is a logo, not a text")
@@ -980,7 +1003,7 @@ class Graphics:
         else:
             for it in items_of(cfg):
                 b = self._built.get(it["id"])
-                if it["on"] and b is not None and it["kind"] == "logo" and render_key(it, size[0], size[1], self._logo_sig(it)) != b["key"]:
+                if it["on"] and b is not None and it["kind"] == "logo" and render_key(it, size[0], size[1], self._logo_sig(it), 0, moving_axis(it, self._mode_drawn or "overlay")) != b["key"]:
                     want = True
         if want:
             with self._lock:
@@ -1067,7 +1090,7 @@ class Graphics:
         now = self.clock()
         for _, it in wanted:
             ticker = stage["side"] if stage and it["kind"] == "text" and motion_for(it, mode) == "crawl" else 0
-            key = render_key(it, size[0], size[1], self._logo_sig(it), ticker)
+            key = render_key(it, size[0], size[1], self._logo_sig(it), ticker, moving_axis(it, mode))
             b = self._built.get(it["id"])
             if b is not None and b["key"] == key:
                 continue
@@ -1633,9 +1656,14 @@ class Graphics:
             with open(os.path.join(self.api.graphics.folder, name), "rb") as f:
                 payload = f.read(raster_mod.MAX_PICTURE_BYTES + 1)
         client = self.api.graphics.client
+        # a crawl is one line, as long as it is, on its row: the preview shows it that way (at the start of its run), not fitted
+        crawl = it["kind"] == "text" and moving_axis(it, self.mode()) == "crawl"
+        ticker = 4096 if crawl else 0
         try:
-            first = client.graphic(params_for(it, pw, ph)[0], payload)
+            first = client.graphic(params_for(it, pw, ph, ticker=ticker, refuse=False)[0], payload)
             x, y = position(it["place"]["anchor"], it["place"]["x"], it["place"]["y"], first["w"], first["h"], pw, ph)
-            return client.graphic(params_for(it, pw, ph, png=True, canvas=(pw, ph, x, y))[0], payload)["data"]
+            if crawl:
+                x = 0
+            return client.graphic(params_for(it, pw, ph, png=True, canvas=(pw, ph, x, y), ticker=ticker, refuse=False)[0], payload)["data"]
         except raster_mod.RasterError as e:
             raise GraphicsError(e.status, e.message)

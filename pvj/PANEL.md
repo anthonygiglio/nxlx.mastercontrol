@@ -583,8 +583,10 @@ loop}` (seconds: the fade in, or the whole typing; out: the fade out; speed: per
 (crawl) a second); a kind this node cannot draw is kept and drawn still. Place: `anchor` is one of
 `tl tc tr ml mc mr bl bc br`, `x` and `y` nudge by a share of the screen's width and height (down is positive), and the picture is
 kept on the screen. A crawl crosses the whole screen, so for it only the row of the grid and the nudge down count (`#graphic-N-anchorhint` says so
-and the nudge across is disabled); a scroll rises from below the screen to above it, so only the column and the nudge across count. A change of place
-sent to a graphic that is on with a scroll or a crawl sends it across again, so the new place is seen (one that had run off was nothing on the screen). The settings are `graphics` in `settings.json` (no schema change). Drawing: a worker builds one picture per
+and the nudge across is disabled); a scroll rises from below the screen to above it, so only the column and the nudge across count. A scroll or crawl chosen
+for a graphic that is on starts at once; a change of place sent to one that is not looped sends it across again, so the new place is seen (one that had
+run off was nothing on the screen), but not for the nudge it ignores and never for a looped one. The preview of a crawl is its one line on its row. The
+card applies the answers of its changes in the order they were sent and never lets a refresh asked before a change (or while one is out) overwrite it. The settings are `graphics` in `settings.json` (no schema change). Drawing: a worker builds one picture per
 change (newest change wins, 5 a second for one graphic and 20 a second in all); a graphic that is off has no picture, no file and no
 cost. With the renderer's stage (`Player.graphics_stage()`, pvj-render 0.11.0 on) each graphic is a slot there, in the order of the
 list: the picture is loaded once (`pvj-graphic load`), its place and motion are numbers (`set`), `show`, `hide` and `replay` start
