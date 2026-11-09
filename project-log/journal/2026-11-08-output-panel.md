@@ -26,3 +26,5 @@
   - The question of the AV output waits 30 s (its costs are long; confirmRow takes a time now), asks plainly where the node gives no costs, and says HDMI comes back when turning it off.
   - The node's note is not said twice, and no sentence ends in two full stops.
   - The test also answers Not now (nothing sent), turns the AV output off, shows a refusal in the card, and shows a node without AV (its reason, no switch) and without the system helper (no writes).
+
+- panel-ui flake on the Screen output page: Rotate, Flip and Mute redraw their column 200 ms after the press, and when the person had already left that page redrawPart drew everything, wiping the Output card (its Saved line went with it). Those timed redraws now draw only if the column is still on the page.

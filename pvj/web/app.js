@@ -1190,7 +1190,7 @@
   function picturePart() {
     var m = (S.status && S.status.mix) || {};
     var ctl = function (action) { return function (value) { act('POST', '/api/control', { action: action, value: value }); }; };
-    var again = function () { poll(); setTimeout(function () { redrawPart('picture'); }, 200); };
+    var again = function () { poll(); setTimeout(function () { redrawPartIfShown('picture'); }, 200); };
     return h('div', { class: 'screen', id: 'picturescreen' },
       h('div', { class: 'grid2' },
         slider('mo', 'Opacity', 0, 100, 1, m.opacity === undefined ? 100 : m.opacity, function (v) { return v + '%'; }, ctl('opacity')),
@@ -1208,7 +1208,7 @@
       h('div', { class: 'card' },
         h('div', { class: 'k', text: 'Rotate' }),
         choice([0, 90, 180, 270].map(function (d) { return { label: d + '°', value: d }; }), m.rotate === undefined ? 0 : m.rotate,
-          function (v) { ctl('rotate')(v); setTimeout(function () { poll(); redrawPart('picture'); }, 200); })),
+          function (v) { ctl('rotate')(v); setTimeout(function () { poll(); redrawPartIfShown('picture'); }, 200); })),
       h('div', { class: 'row' },
         // (Test pattern is on Shape > Mapping; a device that has no Mapping screen, its module being off, keeps it here)
         hasScreen('shape/mapping') ? null : testPattern(),
@@ -1232,7 +1232,7 @@
         function (v) { act('POST', '/api/control', { action: 'volume', value: v }); }),
       h('div', { class: 'row' },
         h('button', { class: 'btn grow', text: 'Audio: ' + (pl.muted ? 'mute' : 'on'), disabled: !can('live'),
-          onclick: function () { act('POST', '/api/control', { action: 'mute', value: !pl.muted }, function () { poll(); setTimeout(function () { redrawPart('sound'); }, 200); }); } }))];
+          onclick: function () { act('POST', '/api/control', { action: 'mute', value: !pl.muted }, function () { poll(); setTimeout(function () { redrawPartIfShown('sound'); }, 200); }); } }))];
   }
 
   // Pictures over the video (D100): a list of PNGs from the media folder (logo, watermark, masks), each with its own
@@ -7511,6 +7511,11 @@
   // One column of the area that is built is drawn again, and the others stay as they are: a bank of pads, a flip
   // of the picture or the list of clips must not wipe a name that is being typed in the column beside it. Where
   // that column is not on the page, everything is drawn.
+  // For a redraw a moment after a press: if the person has gone to another page in that moment, the column is not on
+  // the page and nothing is drawn. (redrawPart would draw everything then, and wipe the page that was just opened.)
+  function redrawPartIfShown(part) {
+    if (S.device && app.querySelector('main.ws > .desk > .deskcol[data-col="' + part + '"]')) redrawPart(part);
+  }
   function redrawPart(part) {
     var col = S.device && PARTS[S.tab] && PARTS[S.tab][part] && app.querySelector('main.ws > .desk > .deskcol[data-col="' + part + '"]');
     if (!col) return render();
