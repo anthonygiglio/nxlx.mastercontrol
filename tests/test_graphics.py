@@ -600,15 +600,25 @@ class PreviewTest(Base):
 
     def test_a_line_as_typed_is_drawn_in_the_preview_and_kept_nowhere(self):
         gid = self.add(text="saved line")
-        st, body, _ = self.call("GET", "/api/graphics/preview.png?id=%s&text=%s" % (gid, "typed%20%E2%80%AE%20line"), token=self.op)
+        st, body, _ = self.call("POST", "/api/graphics/preview.png", {"id": gid, "text": "typed \u202e line"}, token=self.op)
         self.assertEqual(st, 200)
+        self.assertEqual(body[:8], b"\x89PNG\r\n\x1a\n")
         self.assertTrue(self.client.jobs[-1][0].endswith("\nTEXT\ntyped  line"), self.client.jobs[-1][0][-30:])
         self.assertEqual(self.item(gid)["text"]["value"], "saved line")
         self.assertEqual(self.settings.data["graphics"]["items"][0]["text"]["value"], "saved line")
-        st, body, _ = self.call("GET", "/api/graphics/preview.png?id=%s&text=%s" % (gid, "%20%20"), token=self.op)
+        st, body, _ = self.call("POST", "/api/graphics/preview.png", {"id": gid, "text": "  "}, token=self.op)
         self.assertEqual((st, body["error"]), (409, "Type a line to see it."))
-        self.call("GET", "/api/graphics/preview.png?id=%s&text=%s" % (gid, "x" * 9000), token=self.op)
+        self.call("POST", "/api/graphics/preview.png", {"id": gid, "text": "x" * 9000}, token=self.op)
         self.assertLessEqual(len(self.client.jobs[-1][0].split("\nTEXT\n", 1)[1]), 280)
+
+    def test_the_typed_line_is_not_taken_from_the_address(self):
+        gid = self.add(text="saved line")
+        self.call("GET", "/api/graphics/preview.png?id=%s&text=in%%20the%%20address" % gid, token=self.op)
+        self.assertTrue(self.client.jobs[-1][0].endswith("\nTEXT\nsaved line"), "an address cannot carry a line any more")
+        for token, want in ((self.guest_token, 403), (None, 401)):
+            self.assertEqual(self.call("POST", "/api/graphics/preview.png", {"id": gid, "text": "x"}, token=token)[0], want)
+        self.assertEqual(self.call("POST", "/api/graphics/preview.png", {"id": 5}, token=self.op)[0], 404)
+        self.assertEqual(self.call("POST", "/api/graphics/preview.png", {}, token=self.op)[0], 404)
 
     def test_a_node_without_the_helper_says_so_for_text_and_logos(self):
         c = raster.Client(socket_path=os.path.join(self.tmp, "no-such.sock"), env={})
@@ -637,7 +647,84 @@ class PreviewTest(Base):
 
 
 # --- 3. OSC and the controllers ----------------------------------------------------------------------------------------
+class OverlayOrderTest(Base):
+    """Design 3.1: the pairing codes and the masks stay on top of the graphics."""
+
+    def test_graphics_are_under_the_masks_and_the_masks_under_the_pairing_codes(self):
+        from pvj import overlay, pinscreen, transitions
+        top_graphic = graphics.OVERLAY_BASE + graphics.MAX_ITEMS - 1
+        self.assertEqual((graphics.OVERLAY_BASE, top_graphic), (20, 27))
+        self.assertEqual(overlay.OVERLAY_ID, 30)
+        self.assertEqual(sorted(pinscreen.QR_IDS.values()), [40, 41, 42, 43])
+        self.assertLess(top_graphic, overlay.OVERLAY_ID)
+        self.assertLess(overlay.OVERLAY_ID, min(pinscreen.QR_IDS.values()))
+        self.assertLess(max(pinscreen.QR_IDS.values()), transitions.OVERLAY_ID)
+        used = list(range(graphics.OVERLAY_BASE, top_graphic + 1)) + [overlay.OVERLAY_ID, transitions.OVERLAY_ID] + list(pinscreen.QR_IDS.values())
+        self.assertEqual(len(used), len(set(used)), "no two draw at the same id")
+        self.assertTrue(all(0 <= i < 64 for i in used), "the player takes ids 0 to 63")
+
+    def test_graphics_are_held_back_while_a_code_is_on_the_screen_and_come_back_without_a_new_picture(self):
+        gid = self.add(on=True)
+        self.assertEqual(len(self.parts()), 1)
+        jobs = len(self.client.jobs)
+        up = [True]
+        self.api.access_on_screen = lambda: up[0]
+        self.assertTrue(self.gfx.watch(), "the tick notices the code")
+        self.assertEqual(self.overlays()[-1][:2], ("overlay_remove", 20))
+        it = self.item(gid)
+        self.assertEqual((it["on"], it["status"]["state"]), (True, "held"), "still on in the settings, held back on the screen")
+        self.assertTrue(self.get()[1]["held"])
+        parts = len(self.parts())
+        self.assertFalse(self.gfx.watch(), "nothing changed: nothing to do")
+        self.assertEqual(len(self.parts()), parts)
+        up[0] = False
+        self.assertTrue(self.gfx.watch())
+        self.assertEqual(self.parts()[-1][1], 20, "back at its own id")
+        self.assertEqual(self.item(gid)["status"]["state"], "on")
+        self.assertEqual(len(self.client.jobs), jobs, "the picture built before is drawn again, not made again")
+        self.assertFalse(self.get()[1]["held"])
+
+    def test_a_graphic_switched_on_while_a_code_is_up_waits_for_it_to_go(self):
+        self.api.access_on_screen = lambda: True
+        self.add(on=True)
+        self.assertEqual(self.parts(), [])
+        self.api.access_on_screen = lambda: False
+        self.assertTrue(self.gfx.watch())
+        self.assertEqual(self.parts()[-1][1], 20)
+
+
+class FailedBuildTest(Base):
+    """A picture that cannot be written, or a player with nowhere to draw from, is not tried again until something changes."""
+
+    def test_no_run_folder_and_a_failed_write_are_tried_once_and_not_five_times_a_second(self):
+        player = self.api.player
+        was = getattr(player, "rundir", None)
+        self.addCleanup(setattr, player, "rundir", was)
+        for label, rundir, words in (("no folder", None, "no folder"), ("write fails", os.path.join(self.tmp, "not-there", "deeper"), "Could not write")):
+            player.rundir = rundir
+            gid = self.add(text="line for " + label, on=True)
+            jobs = [c for c in self.client.jobs if "line for " + label in c[0]]
+            self.assertEqual(len(jobs), 1, label)
+            self.assertIn(words, self.item(gid)["status"]["message"])
+            self.assertEqual(self.item(gid)["status"]["state"], "error")
+            self.assertIn(gid, self.gfx._failed)
+            for _ in range(5):
+                self.gfx.watch()
+                self.gfx.process(final=True)
+            self.assertEqual(len([c for c in self.client.jobs if "line for " + label in c[0]]), 1, "%s: not built again" % label)
+            self.assertEqual(self.item(gid)["status"]["state"], "error", label)
+            # a restarted player clears it, and the picture is made again
+            player.rundir = was
+            self.gfx.apply(restarted=True)
+            self.assertEqual(self.item(gid)["status"]["state"], "on", label)
+            self.assertEqual(self.post({"id": gid, "remove": True})[0], 200)
+
+
 class OscTest(Base):
+    def allow_text(self, on=True):
+        st, body, _ = self.call("POST", "/api/graphics/remote", {"allow": on}, token=self.full)
+        self.assertEqual(st, 200, body)
+
     def test_text_send_and_hide_map_to_the_graphics_route(self):
         self.assertEqual(osc.translate("/pvj/graphic/2/text", ["NEXT UP"]), ("/api/graphics", {"slot": 2, "text": "NEXT UP"}))
         self.assertEqual(osc.translate("/pvj/graphic/1/send", ["THANK YOU"]), ("/api/graphics", {"slot": 1, "text": "THANK YOU", "on": True}))
@@ -653,6 +740,7 @@ class OscTest(Base):
         self.assertEqual(len(long), 2000)
 
     def test_an_osc_line_reaches_the_screen_and_a_burst_keeps_the_last(self):
+        self.allow_text()
         gid = self.add(text="old")
         slot = self.item(gid)["slot"]
         mapped = osc.translate("/pvj/graphic/%d/send" % slot, ["  PUSHED ‮ FROM TOUCHOSC "])
@@ -674,7 +762,52 @@ class OscTest(Base):
         self.assertTrue(self.gfx.stop())
         self.assertEqual(self.settings.data["graphics"]["items"][0]["text"]["value"], "burst 59", "stop writes what was owed")
 
+    def test_osc_text_is_refused_until_the_owner_switches_it_on_and_showing_needs_no_switch(self):
+        gid = self.add(text="kept")
+        slot = self.item(gid)["slot"]
+        for address in ("text", "send"):
+            m = osc.translate("/pvj/graphic/%d/%s" % (slot, address), ["pushed by osc"])
+            st, body = self.h("POST", m[0], m[1], osc.OSC_DEVICE, "osc")
+            self.assertEqual(st, 403, address)
+            self.assertIn("may not push text", body["error"])
+        self.assertEqual(self.item(gid)["text"]["value"], "kept")
+        self.assertEqual([c for c in self.client.jobs if "pushed by osc" in c[0]], [])
+        self.assertFalse(self.item(gid)["on"])
+        self.assertFalse(self.get()[1]["controllers_text"], "off by default")
+        # showing, hiding and Hide all are not text: they go through
+        for body in ({"slot": slot, "on": True}, {"slot": slot, "on": False}, {"all": False}):
+            self.assertEqual(self.h("POST", "/api/graphics", body, osc.OSC_DEVICE, "osc")[0], 200, body)
+        # the panel's own pushes, by an Operator, are not asked
+        self.assertEqual(self.post({"id": gid, "text": "from the panel"})[0], 200)
+        self.assertEqual(self.item(gid)["text"]["value"], "from the panel")
+        # the Owner switches it on
+        self.allow_text()
+        self.assertTrue(self.get()[1]["controllers_text"])
+        m = osc.translate("/pvj/graphic/%d/send" % slot, ["pushed by osc"])
+        self.assertEqual(self.h("POST", m[0], m[1], osc.OSC_DEVICE, "osc")[0], 200)
+        self.assertEqual((self.item(gid)["text"]["value"], self.item(gid)["on"]), ("pushed by osc", True))
+        # and off again
+        self.allow_text(False)
+        m = osc.translate("/pvj/graphic/%d/text" % slot, ["after off"])
+        self.assertEqual(self.h("POST", m[0], m[1], osc.OSC_DEVICE, "osc")[0], 403)
+        self.assertEqual(self.item(gid)["text"]["value"], "pushed by osc")
+        self.assertNotIn("graphics", self.settings.data.get("control", {}), "off is stored as nothing")
+
+    def test_the_text_switch_is_the_owners_only(self):
+        for who, token in (("operator", self.op), ("guest", self.guest_token), ("none", None)):
+            st = self.call("POST", "/api/graphics/remote", {"allow": True}, token=token)[0]
+            self.assertIn(st, (401, 403), who)
+        for device, name in ((osc.OSC_DEVICE, "osc"), ({"id": "midi", "name": "MIDI", "role": "live"}, "midi")):
+            self.assertEqual(self.h("POST", "/api/graphics/remote", {"allow": True}, device, name)[0], 403, name)
+        self.assertFalse(self.get()[1]["controllers_text"])
+        self.assertEqual(self.call("POST", "/api/graphics/remote", {"allow": "yes"}, token=self.full)[0], 400)
+        self.assertEqual(self.call("POST", "/api/graphics/remote", {"allow": True, "x": 1}, token=self.full)[0], 400)
+        self.allow_text()
+        self.assertTrue(self.api.settings.data["control"]["graphics"])
+        self.assertNotIn(("POST", "/api/graphics/remote"), policy.LEGACY_LIVE)
+
     def test_a_controller_may_push_a_line_but_a_guest_never_and_a_slot_with_nothing_is_a_plain_404(self):
+        self.allow_text()
         self.add(text="x")
         for who in (osc.OSC_DEVICE,):
             self.assertEqual(self.h("POST", "/api/graphics", {"slot": 1, "text": "ok"}, who, "osc")[0], 200)

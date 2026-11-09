@@ -978,8 +978,20 @@ class Api:
         """POST /api/graphics: add, change, show, hide, move and remove graphics, and Hide all (design 8.2). A text the
         person typed is cleaned and never interpreted (pvj/graphics.py)."""
         from . import graphics as graphics_mod
+        if isinstance(device, dict) and device.get("id") in CONTROLLERS and "text" in body and not self.gfx.controllers_may_push():
+            raise ApiError(403, "controllers may not push text (the switch on the OSC page is off)")
         try:
             return self.gfx.change(body)
+        except graphics_mod.GraphicsError as e:
+            raise ApiError(e.status, e.message)
+
+    def graphics_controllers(self, body, device, client):
+        """{"allow": true | false}: the owner's switch "Controllers may push text" (full access). Off unless switched on."""
+        from . import graphics as graphics_mod
+        if set(body) != {"allow"}:
+            raise bad("send allow: true or false")
+        try:
+            return self.gfx.set_controllers(body["allow"])
         except graphics_mod.GraphicsError as e:
             raise ApiError(e.status, e.message)
 
@@ -3120,6 +3132,8 @@ class Api:
             raise ApiError(404, "OSC is not available")
         full = Auth.allows(device, "full")
         out = self.osc.status(full=full, studio=full)      # D84: a support session of the Owner's role reads the targets too
+        if full:
+            out["graphics_text"] = self.gfx.controllers_may_push()      # D129: the Owner's switch "Controllers may push text"
         if not Auth.allows(device, "live"):         # D83: a Guest is not told that OSC is open (the review of #124)
             out.pop("open", None)
             out.pop("open_text", None)
@@ -5582,6 +5596,7 @@ class Api:
             ("POST", "/api/network/scan"): ("full", self.scan_wifi),
             ("GET", "/api/graphics"): ("live", self.get_graphics),
             ("POST", "/api/graphics"): ("live", self.set_graphics),
+            ("POST", "/api/graphics/remote"): ("full", self.graphics_controllers),
             ("GET", "/api/graphics/fonts"): ("live", self.graphics_fonts),
             ("GET", "/api/graphics/file"): ("live", self.graphics_files),
             ("POST", "/api/graphics/file"): ("live", self.graphics_file_change),

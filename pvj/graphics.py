@@ -38,7 +38,7 @@ import unicodedata
 
 from . import locks, raster as raster_mod
 
-OVERLAY_BASE = 20               # ids 20 to 27; the masks keep 10, the pairing code 1 to 4 and transitions 63 (design 9)
+OVERLAY_BASE = 20               # ids 20 to 27; the masks are 30 and the pairing codes 40 to 43, above these, and transitions 63 (design 3.1)
 MAX_ITEMS = 8
 MAX_ON = {"lean": 4, "standard": 4, "full": 8, "unknown": 4}      # on at once, by tier (design 3.2)
 MAX_TEXT = 280
@@ -496,6 +496,7 @@ class Graphics:
         self._save_owed = False
         self._need_size = False     # a graphic waits for the player to say how big the screen is
         self._failed = {}           # id -> the key of a build that failed: not tried again until something changes
+        self._held = False          # a pairing code or the PIN is on the screen: the graphics are held back (design 3.1)
         self._pid = os.getpid()
         self.synchronous = False    # a test builds in the caller's thread
         self._cleanup(keep=())
@@ -707,6 +708,33 @@ class Graphics:
         self._kick()
         return self.state()
 
+    def _access_up(self):
+        """True while the PIN or a pairing code is on the display. The PIN text is drawn by the OSD before any overlay, so
+        the only way to keep it readable is to take the graphics off for that time (design 3.1: codes stay on top)."""
+        try:
+            return bool(self.api.access_on_screen())
+        except Exception:
+            return True                 # when unsure, hold back: a code that cannot be read is worse than a late logo
+
+    def controllers_may_push(self):
+        """The Owner's switch "Controllers may push text": OSC (and any other controller) may set a line of text only
+        while it is on. Off unless switched on. The panel's own pushes, by an Operator or the Owner, never ask it."""
+        control = self.api.settings.data.get("control")
+        return isinstance(control, dict) and control.get("graphics") is True
+
+    def set_controllers(self, allow):
+        if not isinstance(allow, bool):
+            raise bad("allow must be true or false")
+        settings = self.api.settings
+        with settings.lock:
+            control = settings.data.setdefault("control", {})
+            if allow:
+                control["graphics"] = True
+            else:
+                control.pop("graphics", None)
+            settings.save()
+        return {"allow": allow}
+
     def hide_all(self):
         return self.change({"all": False})
 
@@ -740,6 +768,12 @@ class Graphics:
         """Called regularly (pvj/autostart.py's tick): build again when the screen's size changed (D90 to D92) or a
         logo's file was replaced or deleted."""
         cfg = self._cfg()
+        held = self._access_up()
+        if held != self._held:                  # a code came on the screen or went: draw again (hide or bring back)
+            with self._lock:
+                self._work.add("*")
+            self._kick()
+            return True
         if not showing(cfg):
             return False
         size = self._screen()
@@ -799,6 +833,7 @@ class Graphics:
         for gid in [g for g in list(self._status) if g not in known]:
             self._status.pop(gid, None)
         on = stage_on(cfg)
+        held = self._held = self._access_up()
         limit = self.max_on()
         wanted, count = [], 0
         for idx, it in enumerate(items):
@@ -809,6 +844,13 @@ class Graphics:
                 if it["id"] in self._built:
                     self._drop(it["id"])
                 self._status[it["id"]] = {"state": "off", "message": "", "missing": 0}
+        if held and wanted:
+            # a code is on the screen: nothing of ours is drawn (the pictures built stay, ready to come back)
+            for _, it in wanted:
+                self._status[it["id"]] = {"state": "held", "message": "Held back while a pairing code is on the screen.", "missing": 0}
+            finished()
+            self._draw(items, [])
+            return None
         size = self._screen()
         self._need_size = bool(wanted) and size is None
         if wanted and size is None:
@@ -896,6 +938,7 @@ class Graphics:
         rundir = getattr(self._player(), "rundir", None)
         if not rundir:
             self._status[gid] = {"state": "error", "message": "The player has no folder to draw from.", "missing": 0}
+            self._failed[gid] = key                 # not tried again until something changes (a restarted player clears this: apply)
             return
         with self._lock:
             self._serial += 1
@@ -909,6 +952,7 @@ class Graphics:
         except OSError as e:
             _unlink(path)
             self._status[gid] = {"state": "error", "message": "Could not write the picture: %s" % (e.strerror or e), "missing": 0}
+            self._failed[gid] = key
             return
         x, y = position(it["place"]["anchor"], it["place"]["x"], it["place"]["y"], done["w"], done["h"], size[0], size[1])
         with self._apply:
@@ -1017,7 +1061,9 @@ class Graphics:
             it = json.loads(json.dumps(it))
             st = dict(self._status.get(it["id"]) or {"state": "off", "message": "", "missing": 0})
             shown = it["on"] and stage_on(cfg)
-            if shown and st["state"] == "off":
+            if shown and self._held:
+                st = {"state": "held", "message": "Held back while a pairing code is on the screen.", "missing": 0}
+            elif shown and st["state"] == "off":
                 st = {"state": "building", "message": "", "missing": 0}         # switched on, and the worker has not got to it yet
             elif not shown:
                 st = {"state": "off", "message": "", "missing": 0}
@@ -1034,7 +1080,7 @@ class Graphics:
                 "fonts": [dict(f) for f in FONTS], "files": store.files(), "available": store.client.available(),
                 "screen": {"width": size[0], "height": size[1]} if size else None,
                 "limits": {"text": MAX_TEXT, "lines": MAX_TEXT_LINES, "saved_lines": MAX_SAVED_LINES, "memory": MEMORY_BUDGET, "used": used},
-                "anchors": list(ANCHORS)}
+                "anchors": list(ANCHORS), "controllers_text": self.controllers_may_push(), "held": self._held}
 
     def preview(self, ident, text=None):
         """The PNG of one graphic as it will look, on a screen of the same shape at most PREVIEW_SIDE wide, made by the

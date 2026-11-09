@@ -576,14 +576,15 @@ function startServer(env) {          // env: more for the harness's environment 
       await fitsCard('#graphicscard, #logofilescard', 'Graphics');
       await fitsPhone('Graphics');
       const previews = [];
-      page.on('request', (r) => { if (r.url().includes('/api/graphics/preview.png')) previews.push(decodeURIComponent(r.url())); });
+      page.on('request', (r) => { if (r.url().includes('/api/graphics/preview.png')) previews.push({ method: r.method(), url: decodeURIComponent(r.url()), body: r.postData() || '' }); });
       await page.click('#graphicaddtext');
       await page.waitForSelector('#graphic-1-text');
       assert.strictEqual(await page.textContent('#graphic-1-state'), 'Off');
       assert.strictEqual(await page.getAttribute('#graphic-1-settings', 'open'), '', 'a graphic that was just added has its settings open');
       await page.fill('#graphic-1-text', 'NEXT UP: DJ MARA');
       await page.waitForFunction(() => { const i = document.getElementById('graphic-1-preview'); return i && i.complete && i.naturalWidth > 0 && !i.classList.contains('none'); }, null, { timeout: 10000 });
-      assert(previews.some((u) => /text=NEXT UP: DJ MARA/.test(u)), 'the preview is of the line as typed: ' + previews.join(' | '));
+      assert(previews.some((p) => p.method === 'POST' && /NEXT UP: DJ MARA/.test(p.body)), 'the preview is of the line as typed, in the body: ' + JSON.stringify(previews));
+      assert(!previews.some((p) => /NEXT UP|text=/.test(p.url)), 'and the line is never in the address (the access log keeps addresses): ' + JSON.stringify(previews));
       let gfx = await get('/api/graphics');
       assert.deepStrictEqual([gfx.items[0].text.value, gfx.items[0].on, gfx.showing], ['', false, 0], 'typing keeps nothing and shows nothing');
       await page.click('#graphic-1-send');

@@ -154,6 +154,8 @@ ROWS = {
     ("POST", "/api/graphics"): KINDS["live"],
     ("GET", "/api/graphics/fonts"): KINDS["op"],
     ("GET", "/api/graphics/preview.png"): KINDS["op"],
+    ("POST", "/api/graphics/preview.png"): KINDS["op"],         # the same picture for a line as typed: the line is in the body, not the address
+    ("POST", "/api/graphics/remote"): KINDS["owner"],           # the Owner's switch "Controllers may push text"; a controller reaches it with a 403
     ("POST", "/api/media/import"): KINDS["op"],
     ("POST", "/api/media/import/cancel"): KINDS["op"],
     ("POST", "/api/media/delete"): KINDS["op"],

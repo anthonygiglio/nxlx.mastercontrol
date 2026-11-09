@@ -1339,6 +1339,7 @@
     var s = it.status || {};
     if (s.state === 'error') return s.message || 'This could not be drawn.';
     if (s.state === 'building') return 'Drawing...';
+    if (s.state === 'held') return s.message || 'Held back while a code is on the screen.';
     if (s.state !== 'on') return 'Off';
     return 'On the screen' + (s.missing ? '. ' + plural(s.missing, 'character') + ' cannot be drawn.' : '');
   }
@@ -1394,10 +1395,21 @@
         if (!img) return;
         var field = document.getElementById('graphic-' + it.slot + '-text'), typed = field ? field.value : '';
         if (field ? !typed.trim() : (!it.logo.file || it.logo.missing)) { img.classList.add('none'); delete gfxLast[id]; return; }      // nothing to draw yet
-        var url = '/api/graphics/preview.png?id=' + encodeURIComponent(id) + '&n=' + (++gfxSeq);
-        if (field) url += '&text=' + encodeURIComponent(typed);
-        gfxLast[id] = { made: madeFrom(it, typed), url: url };
-        img.src = url;
+        // the typed line goes in the body of a POST, never in the address (the node's access log keeps addresses)
+        var mine = { made: madeFrom(it, typed), url: '' }, ask = { id: id };
+        if (field) ask.text = typed;
+        gfxLast[id] = mine;
+        fetch('/api/graphics/preview.png', { method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify(ask) }).then(function (r) {
+          if (!r.ok) throw new Error('no picture');
+          return r.blob();
+        }).then(function (blob) {
+          if (gfxLast[id] !== mine) return;          // a newer ask overtook this one
+          var rd = new FileReader();                 // a data: address (the page's img-src allows self and data:, not blob:)
+          rd.onload = function () { if (gfxLast[id] === mine) { mine.url = rd.result; img.src = mine.url; } };
+          rd.onerror = function () { if (gfxLast[id] === mine) img.classList.add('none'); };
+          rd.readAsDataURL(blob);
+        }, function () { if (gfxLast[id] === mine) img.classList.add('none'); });
       }, Math.max(0, at - Date.now()));
     }
     function sw(label, on, set, id) { return toggle(id, label, on, set); }
@@ -1549,6 +1561,13 @@
           h('button', { class: 'btn on pri grow', id: 'graphicaddlogo', text: 'Add logo', disabled: !live || full, onclick: function () { post({ add: 'logo' }, { openNew: true }); } })));
         if (full) body.appendChild(h('div', { class: 'hint', id: 'graphicsfull', text: 'Up to ' + d.max_items + ' graphics. Remove one to add another.' }));
         d.items.forEach(function (it, i) { body.appendChild(itemCard(it, i)); });
+        if (!can('full')) body.appendChild(h('div', { class: 'hint', id: 'graphicsctlstate', text: 'Controllers may push text: ' + (d.controllers_text ? 'on' : 'off') + '. The owner switches it.' }));
+        else body.appendChild(toggle('graphicsctl', 'Controllers may push text', !!d.controllers_text, function (v) {
+          api('POST', '/api/graphics/remote', { allow: v }).then(function (r) {
+            if (!r.ok) { say(r.data.error || 'Could not change that', true); load(); return; }
+            say(v ? 'OSC can now put a line of text on the screen.' : 'OSC can no longer put text on the screen.'); load();
+          });
+        }, 'Off unless you switch it on. With it on, a device that passes the OSC locks can set the text of a graphic (/pvj/graphic/N/text and /send). Showing and hiding a graphic over OSC does not need it.'));
         body.appendChild(h('div', { class: 'hint', id: 'graphicsnote', text: 'Masks (Shape > Picture) are full-screen pictures that never move. Graphics are text and logos you place on the screen. This node shows ' + plural(d.max_on, 'graphic') + ' at a time.' }));
       });
       drawFiles();
@@ -6498,6 +6517,13 @@
     oscSenders(box.querySelector('#oscsenders'), d, set);
     if (oscLogOpen) oscMessages(log);
     box.set = set;
+    // 4. the Owner's switch for text from a controller (D129): off unless switched on; not one of the three locks
+    if (typeof d.graphics_text === 'boolean') box.appendChild(toggle('oscgfxtext', 'Controllers may push text', d.graphics_text, function (v) {
+      api('POST', '/api/graphics/remote', { allow: v }).then(function (r) {
+        if (r.ok) say('Saved'); else say((r.data.error || 'Could not save') + '. Nothing was changed.', true);
+        api('GET', '/api/osc').then(function (g) { if (g.ok) redraw(g.data); });
+      });
+    }, 'Off unless you switch it on. With it on, a device that passes the locks above can put words on the screen with /pvj/graphic/N/text and /send. Showing, hiding and Hide all over OSC do not need it.'));
     return box;
   }
   function oscPairedText(d) {

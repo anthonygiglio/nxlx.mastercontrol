@@ -1126,6 +1126,22 @@ class RealGraphicsTest(unittest.TestCase):
         fit = self.draw(logo_params("width 4000\nrotate 30", limit="800 600"), self.logo())
         self.assertTrue(fit["w"] <= 800 and fit["h"] <= 600, (fit["w"], fit["h"]))
 
+    def test_nan_in_a_number_gives_the_lowest_value_on_every_limit_and_alpha(self):
+        plain = self.draw(text_params("HH", size=80))
+        gone = self.draw(text_params("HH", size=80, extra="opacity nan"))
+        self.assertEqual(max(p[3] for p in bgra_pixels(gone)), 0, "opacity nan is 0, not garbage")
+        for extra in ("shadow nan nan nan 000000 nan", "plate nan 000000 nan", "outline nan 000000"):
+            done = self.draw(text_params("HH", size=80, extra=extra))
+            self.assertEqual((done["w"], done["h"]), (plain["w"], plain["h"]), extra)
+            self.assertEqual(done["data"], plain["data"], "%s adds nothing" % extra)
+        small = self.draw(text_params("HH", size="nan"))                 # a size of nan is the smallest size
+        self.assertLess(small["h"], 8)
+        self.refused(text_params("HH", size=80, extra="limit nan nan"), "does not fit")      # a limit of nan is the smallest limit, 16 by 16
+        for extra in ("weight nan", "leading nan", "rotate nan"):
+            done = self.draw(text_params("HH", size=80, extra=extra))
+            self.assertTrue(done["w"] > 0 and done["h"] > 0, extra)
+            self.assertTrue(all(p[0] <= p[3] and p[1] <= p[3] and p[2] <= p[3] for p in bgra_pixels(done)), "%s stays premultiplied" % extra)
+
     def test_a_logo_has_opacity_and_a_preview_of_it(self):
         half = self.draw(logo_params("width 16\nopacity 50"), self.logo())
         self.assertEqual(max(p[3] for p in bgra_pixels(half)), 128)

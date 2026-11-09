@@ -51,7 +51,8 @@ typedef struct {
 	int have_text;
 } Gfx;
 
-static double clampd(double v, double lo, double hi) { return v < lo ? lo : (v > hi ? hi : v); }
+/* NaN compares false with everything, so it would pass a plain min/max: it gives `lo`, on every limit and every alpha. */
+static double clampd(double v, double lo, double hi) { if (v != v) return lo; return v < lo ? lo : (v > hi ? hi : v); }
 
 static int hex6(const char *s, uint32_t *out) {
 	if (strlen(s) != 6) return 0;

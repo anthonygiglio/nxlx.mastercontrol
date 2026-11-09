@@ -279,14 +279,21 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                 traceback.print_exc()
                 self._json(500, {"error": "internal error"})
 
-        def _graphics_preview(self):
-            """GET /api/graphics/preview.png?id=g1234: the node-made picture of one graphic (Operator and up), at most 5 a
-            second. Only a PNG that pvj-raster wrote is ever sent."""
+        def _graphics_preview(self, body=None):
+            """GET /api/graphics/preview.png?id=g1234: the node-made picture of one graphic as it is saved. POST the same
+            path with {"id", "text"} for a line as typed and not yet sent: the line travels in the body, so it is not in
+            the address or the access log. Operator and up, at most 5 a second. Only a PNG that pvj-raster wrote is ever sent."""
             try:
-                self._who("GET", "/api/graphics/preview.png")
-                query = parse_qs(urlsplit(self.path).query)
-                ident = (query.get("id") or [""])[0]
-                typed = (query.get("text") or [None])[0]          # a line as typed, not yet sent: drawn in the preview only
+                if body is not None:
+                    self._who("POST", "/api/graphics/preview.png")
+                else:
+                    self._who("GET", "/api/graphics/preview.png")
+                if body is not None:
+                    ident = body.get("id") if isinstance(body.get("id"), str) else ""
+                    typed = body.get("text") if isinstance(body.get("text"), str) else None      # drawn in the preview only
+                else:
+                    ident = (parse_qs(urlsplit(self.path).query).get("id") or [""])[0]
+                    typed = None
                 self._send(200, api.graphics_preview(ident, typed[:2000] if typed is not None else None), "image/png")
             except ApiError as e:
                 self._json(e.status, {"error": e.message})
@@ -481,6 +488,8 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                 return self._json(err[0], {"error": err[1]})
             if path.startswith("/api/https/"):
                 return self._https_route("POST", path, body)
+            if path == "/api/graphics/preview.png":
+                return self._graphics_preview(body)
             self._api("POST", path, body)
 
         def _https_route(self, method, path, body):
