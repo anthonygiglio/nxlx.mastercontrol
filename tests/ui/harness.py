@@ -55,6 +55,14 @@ class _GfxPlayer:
     def osd_size(self):
         return (1920, 1080)
 
+    def graphics_stage(self, ask=True):
+        """The renderer's graphics stage (slice 3): a node with it while the file <state dir>/gpu-stage exists, so the browser
+        test can see the panel on both kinds of node. Without the file this is classic mpv (stepped fade and typewriter)."""
+        return {"slots": 8, "side": 4096} if os.path.exists(os.path.join(tmp, "gpu-stage")) else None
+
+    def graphic(self, *args):
+        pass
+
     def overlay_part(self, *args):
         pass
 

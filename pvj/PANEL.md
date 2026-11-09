@@ -550,15 +550,19 @@ phone). It reads Health, the sources and the room every 5 s, and the rows of Set
 
 Play > Graphics (`play/graphics`, `#graphicscard` and `#logofilescard`), Owner and Operator only (a Guest has neither the
 screen nor the Setup row, and the box refuses every route). It is a page of Setup (`id: graphics`, group Show tools, role
-`op`; a row that opens the screen of Play, like Mapping, via `HOMES`). Colour `clips`. Slice 2 draws a graphic over the
-screen, still, on every tier; motion, keys, effects and "over or as a source" are said in words to come later and have no
-control (design/text-and-logo-sources_2026-11-08.md sections 3 and 10).
+`op`; a row that opens the screen of Play, like Mapping, via `HOMES`). Colour `clips`. A graphic is drawn over the screen on
+every tier. Slice 3 adds motion: where the player has the New renderer's graphics stage (a Pi 4, a Pi 5, a computer; the
+state says `mode: "gpu"`) a graphic fades, types, scrolls or crawls, worked out by the renderer every frame; on classic mpv
+(`mode: "overlay"`, a Pi 3 or a node that fell back) only None, Fade and Typewriter exist, stepped about twelve times a
+second, and Scroll and Crawl are greyed out with the reason. Keys, effects and "over or as a source" are still said in words to
+come later and have no control (design/text-and-logo-sources_2026-11-08.md sections 3 and 10).
 
 | Part | What it does | Server | States | Roles |
 | --- | --- | --- | --- | --- |
 | Headline (`#graphicsstatus`) and Hide all (`#graphicshideall`, big) | "N graphics on the screen", "Nothing on the screen", "No graphics yet", "Hidden with Hide all. Show a graphic to bring them back.", or "The picture helper is not running on this node, so text and logos cannot be drawn." Hide all switches the stage off; each graphic keeps its own switch | `POST /api/graphics {all: false}` | nothing to hide (disabled), shown, hidden | Operator, Owner |
 | Add text (`#graphicaddtext`), Add logo (`#graphicaddlogo`) | a new graphic in the lowest free slot (1 to 8), its settings open | `POST /api/graphics {add}` | at most 8 ("Up to 8 graphics. Remove one to add another.", `#graphicsfull`, both disabled) | same |
-| A graphic (`#graphic-N`, N is its slot) | its name and a state line (`#graphic-N-state`: Off, Drawing..., On the screen, the helper's refusal in its words, or "N characters cannot be drawn"), the big Show or Hide (`#graphic-N-show`, `aria-pressed`) | `POST /api/graphics {id, on}` | off, drawing, on, error | same |
+| A graphic (`#graphic-N`, N is its slot) | its name and a state line (`#graphic-N-state`: Off, Drawing..., On the screen, the helper's refusal in its words, or "N characters cannot be drawn"), the big Show or Hide (`#graphic-N-show`, `aria-pressed`), and Replay (`#graphic-N-replay`, big: plays the motion again; disabled unless the graphic is on and has a motion this node draws). A motion that was chosen and this node cannot draw adds "Drawn still: scroll and crawl need the New renderer." to the state line | `POST /api/graphics {id, on}`, `{id, replay: true}` | off, drawing, on, error, held | same |
+| Motion (inside the fold, `#graphic-N-motionbox`) | five buttons in a group (`#graphic-N-motion`: None, Fade, Typewriter, Scroll, Crawl; `aria-pressed`; one that this node cannot draw is disabled with the title "Needs the New renderer."); under them a note on a classic node (`#graphic-N-motionnote`: "This node draws graphics without the New renderer: only None, Fade and Typewriter, with steps.") and a line on what the chosen motion does (`#graphic-N-motionhint`, or `#graphic-N-motionstill` when the chosen one cannot be drawn here: "This node cannot draw crawl. It is shown still. Choose one of the motions above."). Fade: Fade in and Fade out (`#graphic-N-fadein`, `#graphic-N-fadeout`, 0.1 to 30 s, out may be 0). Typewriter: the time to type it all (`#graphic-N-typetime`, 0.1 to 30 s). Scroll and Crawl: Speed (`#graphic-N-speed`, 2 to 100 percent of the screen's height or width a second) and Loop (`#graphic-N-loop`, `role=switch`) | `POST /api/graphics {id, set: {motion: {kind, seconds, out, speed, loop}}}` | a slider that is held is never drawn again under the hand; a refusal (a Scroll on a classic node) is the box's sentence in the message line | same |
 | Text (`#graphic-N-text`) and Send | a line typed in a box (Enter sends, Shift and Enter starts a line; 280 letters, 6 lines); the preview under it is the line as typed, made by the node, and nothing is saved or shown until Send, which saves the line and shows it | `GET /api/graphics/preview.png?id=&text=`, `POST /api/graphics {id, text, on: true}` | empty, typed, sent | same |
 | Preview (`#graphic-N-preview`, in a frame of the screen's shape on a checkerboard) | the node's own picture of the graphic, asked for after typing stops and one in 250 ms for all the graphics (the node makes five a second) | `GET /api/graphics/preview.png` | none yet ("Type a line to see it here."), picture | same |
 | Look, place and saved lines (a fold, `#graphic-N-settings`) | Name; for a text: Font (11 bundled, with a note each), Weight (a slider only for a font with several), Size (1 to 60 percent of the screen's height), Colour (seven swatches and a picker), Alignment, Outline (colour and width), Shadow (softness), Back plate (colour, opacity); for a logo: Logo file (from Logo files), Size (share of the screen's width), Rotate, Mirror; for both: a nine-point grid for where (an edge sits 5 percent in), Nudge across and down, Opacity; for a text, Saved lines (up to 20: a tap on one sends it at once, Remove, "Keep line") | `POST /api/graphics {id, set}` or `{id, line}` | a slider that is held is never drawn again under the hand | same |
@@ -567,17 +571,34 @@ control (design/text-and-logo-sources_2026-11-08.md sections 3 and 10).
 
 Words the panel says (all plain, none says "layer"): "Masks (Shape > Picture) are full-screen pictures that never move. Graphics
 are text and logos you place on the screen. This node shows N graphics at a time." (4 on a Pi 3 and a Pi 4, 8 on a Pi 5 and a PC);
-"Drawn over the screen, still. Fade, typewriter, scroll and crawl (for a logo: Keys, effects), and showing it over or as one
-source, come in later releases."
+"Drawn over the screen. Keys and effects, and showing it over or as one source, come in later releases." The section's fold is
+called "Look, place, motion and saved lines".
 
 Facts for the builders. The state is `GET /api/graphics`: `on` (the stage), `items` (each with `id`, `slot`, `kind`, `name`, `on`,
 `where`, `place`, `text` or `logo`, `motion`, `key`, `fx` and a `status` of `state`, `message`, `missing`), `showing`, `max_items`,
-`max_on`, `tier`, the lists of what this release can do (`motions: ["none"]`, `keys: ["alpha"]`, `effects: []`, `where:
-["screen"]`), `fonts`, `files`, `available` (the picture helper answers), `screen`, `limits` and `anchors`. Place: `anchor` is one of
+`max_on`, `tier`, `mode` (`"gpu"` or `"overlay"`), `stage` (`{slots, side}` of the renderer's graphics stage, or null), `note` (the
+sentence for a node without the stage), `step_hz` (12), the lists of what this node can do (`motions`: all five with the stage,
+`["none", "fade", "typewriter"]` without it; `keys: ["alpha"]`, `effects: []`, `where: ["screen"]`), `fonts`, `files`,
+`available` (the picture helper answers), `screen`, `limits` and `anchors`. A motion is stored as `{kind, seconds, out, speed,
+loop}` (seconds: the fade in, or the whole typing; out: the fade out; speed: percent of the screen's height (scroll) or width
+(crawl) a second); a kind this node cannot draw is kept and drawn still. Place: `anchor` is one of
 `tl tc tr ml mc mr bl bc br`, `x` and `y` nudge by a share of the screen's width and height (down is positive), and the picture is
-kept on the screen. The settings are `graphics` in `settings.json` (no schema change). Drawing is mpv's `overlay-add` with ids 20
-to 27 in the order of the list, from a worker that builds one picture per change (newest change wins, 5 a second for one graphic and
-20 a second in all), on every tier; a graphic that is off has no picture, no file and no cost. Roles: every route is the Operator's
+kept on the screen. The settings are `graphics` in `settings.json` (no schema change). Drawing: a worker builds one picture per
+change (newest change wins, 5 a second for one graphic and 20 a second in all); a graphic that is off has no picture, no file and no
+cost. With the renderer's stage (`Player.graphics_stage()`, pvj-render 0.11.0 on) each graphic is a slot there, in the order of the
+list: the picture is loaded once (`pvj-graphic load`), its place and motion are numbers (`set`), `show`, `hide` and `replay` start
+and stop it, and the renderer draws it over the final picture, under the text layer, so the masks (id 30) and the pairing codes
+(40 to 43) stay on top; nothing is sent while a motion runs. Without it, mpv's `overlay-add` with ids 20 to 27 draws the picture
+still, and a stepping thread (about twelve steps a second, each motion finite, the pictures stepped at once bounded at 12 MB) writes
+a faded or part-typed copy of the picture for a fade or a typewriter; Scroll and Crawl are refused in words. A crawling text is made
+as one wide line, no wider than the chip's texture limit, and refused in the helper's words when it would have to be made smaller.
+A new line sent to a graphic that is on plays its motion again. Graphics are held while the PIN or a pairing code is on the display,
+and the pin screen tells the graphics at once when one comes or goes. A node that falls back to classic mid-show keeps the graphics
+on, still (nothing plays again); when the renderer comes back each motion starts as a show does. A player that does not answer for a moment
+is not a fall back: the mode last known stands. After a hold a graphic comes back as it was, with no fade or typing played again (a scroll or
+crawl simply goes on); Replay plays it. Things to know: moving a graphic in the list replays its motion (it is drawn again in its new
+slot); a fade out already running finishes while a code is on the screen (the hold takes the others off at once); a graphic shown again
+during its fade out fades in from the level the fade out had reached, on both kinds of node. Roles: every route is the Operator's
 and the Owner's (`tests/test_roles.py`); `GET /api/status` gives every role `graphics_on`. OSC: `/pvj/graphic/N`, `/text`, `/send`
 and `/pvj/graphic/hide` (pvj/OSC.md). The browser test is `tests/ui/panel.test.js` (the Graphics step, the row, the menus) and the
 page is in the list of `tests/ui/signal-pages.js`.

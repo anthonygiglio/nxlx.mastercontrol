@@ -156,7 +156,9 @@ class StoredTest(unittest.TestCase):
         t = it["text"]
         self.assertEqual((t["value"], t["font"], t["size"], t["colour"], t["align"], t["weight"]), ("xy", "archivo", 60, "#ffffff", "center", 100))
         self.assertEqual((t["outline"]["on"], t["outline"]["width"], len(t["lines"])), (False, 20, graphics.MAX_SAVED_LINES))
-        self.assertEqual((it["where"], it["motion"], it["key"], it["fx"]), ({"mode": "screen"}, {"kind": "none"}, {"kind": "alpha"}, []))
+        # (a motion is kept as it was chosen, even one this node cannot draw: it is drawn still there and says so)
+        self.assertEqual((it["where"], it["motion"], it["key"], it["fx"]),
+                         ({"mode": "screen"}, {"kind": "crawl", "seconds": 1.0, "out": 0.5, "speed": 12, "loop": False}, {"kind": "alpha"}, []))
 
     def test_a_logo_name_that_is_a_path_is_not_a_logo_file(self):
         for name in ("../x.png", "a/b.png", ".hid.png", "a.jpg", "x" * 200 + ".png", 3):
@@ -215,7 +217,10 @@ class SetTest(unittest.TestCase):
         self.refused(self.logo, {"logo": {"size": 0}}, "logo.size")
 
     def test_what_comes_in_later_slices_is_refused_in_words_not_ignored(self):
-        self.refused(self.text, {"motion": {"kind": "crawl"}}, "comes in a later release")
+        with self.assertRaises(graphics.GraphicsError) as cm:
+            graphics.apply_set(self.text, {"motion": {"kind": "crawl"}}, graphics.MOTIONS_OVERLAY)
+        self.assertIn("need the New renderer", cm.exception.message)
+        self.assertEqual(graphics.apply_set(self.text, {"motion": {"kind": "crawl"}}, graphics.MOTIONS)["motion"]["kind"], "crawl")
         self.refused(self.text, {"where": {"mode": "over", "source": 2}}, "over a source")
         self.refused(self.logo, {"key": {"kind": "chroma"}}, "keys")
         self.refused(self.logo, {"fx": [{"id": "glow"}]}, "Effects")
@@ -263,7 +268,7 @@ class RoutesTest(Base):
         for token in (self.full, self.op):
             st, body, _ = self.get(token)
             self.assertEqual(st, 200, body)
-            self.assertEqual((body["on"], body["items"], body["max_items"], body["motions"], body["effects"], body["where"]), (True, [], 8, ["none"], [], ["screen"]))
+            self.assertEqual((body["on"], body["items"], body["max_items"], body["motions"], body["effects"], body["where"]), (True, [], 8, ["none", "fade", "typewriter"], [], ["screen"]))
             self.assertEqual(self.call("GET", "/api/graphics/fonts", token=token)[1]["fonts"][0]["id"], "archivo")
         gid = self.add()
         for token, want in ((self.guest_token, 403), (None, 401)):
@@ -426,7 +431,7 @@ class RoutesTest(Base):
 
     def test_what_comes_later_is_said_not_silently_dropped(self):
         gid = self.add()
-        for patch, words in (({"motion": {"kind": "typewriter"}}, "later release"), ({"where": {"mode": "as", "source": 2}}, "a source")):
+        for patch, words in (({"motion": {"kind": "crawl"}}, "New renderer"), ({"where": {"mode": "as", "source": 2}}, "a source")):
             st, body, _ = self.post({"id": gid, "set": patch})
             self.assertEqual(st, 400)
             self.assertIn(words, body["error"])
