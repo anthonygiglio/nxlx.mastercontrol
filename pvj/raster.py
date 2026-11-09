@@ -193,6 +193,11 @@ class Client:
         text = head.decode("utf-8", "replace")
         if text.startswith("ERR "):
             raise RasterError(422, text[4:][:300].strip() or "This picture could not be read.")
+        if not out:
+            # the helper ended with nothing to say: the unit's memory ceiling (256 MB) is below the address-space one
+            # (512 MB), so a decode that runs out of memory is killed by the system with no answer. To the person it
+            # is the same plain refusal as for a picture over the size limits.
+            raise RasterError(413, "This picture is too big to process; try a smaller one.")
         m = re.fullmatch(r"OK (\d+) (\d+) ([01]) (\d+)", text)
         if not m:
             raise RasterError(502, "The picture helper gave no answer.")
@@ -305,10 +310,20 @@ class Store:
         thumb = self.client.thumbnail(png)
         try:
             os.makedirs(self._thumbs(), mode=0o750, exist_ok=True)
-            tmp = os.path.join(self._thumbs(), ".new-%d" % os.getpid())
-            with open(tmp, "wb") as f:
-                f.write(thumb)
-            os.replace(tmp, cached)
+            # a name of its own for each call (as store() does): the server is threaded, and two first-time
+            # thumbnails made at once must not write to one file. The replace is atomic, so a reader sees all or none.
+            tmp = os.path.join(self._thumbs(), ".new-%d-%d-%s" % (os.getpid(), threading.get_ident(), os.urandom(4).hex()))
+            try:
+                with open(tmp, "wb") as f:
+                    f.write(thumb)
+                os.replace(tmp, cached)
+                tmp = None
+            finally:
+                if tmp:
+                    try:
+                        os.unlink(tmp)
+                    except OSError:
+                        pass
         except OSError:
             pass                  # a thumbnail that cannot be kept is still shown
         return thumb
@@ -342,6 +357,10 @@ class Store:
             if not exists and len(self._recent) >= UPLOADS_PER_MINUTE:
                 raise RasterError(429, "Too many new graphics in a minute; wait a little and try again.")
         meta, png = self.client.normalise(data)        # outside the lock: it can take seconds
+        if len(png) > MAX_PICTURE_BYTES:
+            # what is stored can always be thumbnailed: the helper reads at most MAX_PICTURE_BYTES for a thumbnail, so
+            # nothing bigger than that is kept (a 2048 pixel PNG of noise can be; that one is refused in words)
+            raise RasterError(413, "This picture is too detailed to keep (over %d MB once cleaned); use a simpler or smaller one." % (MAX_PICTURE_BYTES // (1024 * 1024)))
         with self._lock:
             old = os.path.getsize(final) if os.path.isfile(final) else 0
             if self.total_bytes() - old + len(png) > MAX_TOTAL_BYTES:

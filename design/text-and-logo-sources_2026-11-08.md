@@ -403,7 +403,7 @@ out, as masks do (`overlay.masks_of`).
 | `POST /api/graphics` | `{add: "text"\|"logo"}`, `{id, set: {...}}`, `{id, remove: true}`, `{id, on: true\|false\|"toggle"}`, `{id, text: "..."}`, `{id, line: N\|"next"\|"prev"}`, `{id, replay: true}`, `{move: id, dir: "up"\|"down"}`, `{all: false}` (Hide all) | Operator and up |
 | `POST /api/graphics/upload?name=` | the raw file, then the pipeline of section 7; the answer is the stored name or the plain reason | Operator and up |
 | `GET /api/graphics/file` | the file list with sizes | Operator and up |
-| `GET /api/graphics/file/<name>.png` | thumbnail | Operator and up |
+| `GET /api/graphics/thumb?name=<name>.png` | thumbnail (the name is in the query because the role table holds exact paths) | Operator and up |
 | `POST /api/graphics/file` | `{rename}`, `{delete}` | Operator and up |
 | `GET /api/graphics/preview.png?id=` | the node-made preview of one graphic, rate limited (5 a second) | Operator and up |
 | `GET /api/graphics/fonts` | the bundled list: id, name, licence | Operator and up |

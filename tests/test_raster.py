@@ -19,6 +19,7 @@ import shutil
 import struct
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 import zlib
@@ -122,6 +123,13 @@ JPEG_GREY = base64.b64decode(
     "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgICAgMCAgIDAwMDBAYEBAQEBAgGBgUGCQgKCgkICQkKDA8MCgsOCwkJDRENDg8QEBEQCgwSExIQEw8QEBD/wAALCAAIABABAREA/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/9oACAEBAAA/APzfr94K/9k=")
 JPEG_CMYK = base64.b64decode(
     "/9j/7gAOQWRvYmUAZAAAAAAA/9sAQwADAgICAgIDAgICAwMDAwQGBAQEBAQIBgYFBgkICgoJCAkJCgwPDAoLDgsJCQ0RDQ4PEBAREAoMEhMSEBMPEBAQ/8AAFAgAEAAQBEMRAE0RAFkRAEsRAP/EAB8AAAEFAQEBAQEBAAAAAAAAAAABAgMEBQYHCAkKC//EALUQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+v/aAA4EQwBNAFkASwAAPwD836/N+vzfr836/eCv3gr94K/eCvwfr8H6/B+vwfr94K/eCv3gr94K/9k=")
+
+
+def jpeg_with_xmp_then_orientation(jpeg, value):
+    """Like jpeg_with_orientation, but an XMP block (also an APP1) comes first, as many phones and editors write it."""
+    xmp = b"http://ns.adobe.com/xap/1.0/\x00" + b"<x:xmpmeta/>"
+    exif = jpeg_with_orientation(jpeg, value)
+    return exif[:2] + b"\xff\xe1" + struct.pack(">H", len(xmp) + 2) + xmp + exif[2:]
 
 
 def jpeg_with_orientation(jpeg, value):
@@ -336,6 +344,66 @@ class StoreTest(StoreBase):
         with self.assertRaises(raster.RasterError) as cm:
             self.store.delete("b.png")
         self.assertEqual(cm.exception.status, 404)
+
+    def test_two_first_time_thumbnails_at_once_each_get_their_own_file(self):
+        self.store.store("seed.png", png(2, 2))                       # makes the folder
+        red, blue = png(2, 2, lambda x, y: (255, 0, 0)), png(2, 2, lambda x, y: (0, 0, 255))
+        thumbs = {red: png(3, 3, lambda x, y: (250, 0, 0)), blue: png(3, 3, lambda x, y: (0, 0, 250))}
+        for name, data in (("red.png", red), ("blue.png", blue)):
+            with open(os.path.join(self.folder, name), "wb") as f:
+                f.write(data)
+        both = threading.Barrier(2, timeout=10)
+
+        class Meeting(FakeClient):
+            def thumbnail(me, png_bytes, side=raster.THUMB_SIDE):
+                both.wait()                                           # both are inside at once, then both write
+                return thumbs[png_bytes]
+        self.store.client = Meeting()
+        got, errors = {}, []
+
+        def make(name):
+            try:
+                got[name] = self.store.thumbnail(name)
+            except Exception as e:                                    # reported below, not lost in the thread
+                errors.append(e)
+        threads = [threading.Thread(target=make, args=(n,)) for n in ("red.png", "blue.png")]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(20)
+        self.assertEqual(errors, [])
+        self.assertEqual(got, {"red.png": thumbs[red], "blue.png": thumbs[blue]})
+        kept = os.path.join(self.folder, ".thumbs")
+        for name, data in (("red.png", thumbs[red]), ("blue.png", thumbs[blue])):
+            with open(os.path.join(kept, name), "rb") as f:
+                self.assertEqual(f.read(), data)
+        self.assertEqual(sorted(n for n in os.listdir(kept) if n.startswith(".")), [])   # no temp file left
+
+    def test_nothing_is_stored_that_cannot_be_thumbnailed(self):
+        big = PIXEL_PNG + b"\0" * raster.MAX_PICTURE_BYTES
+        self.store.client = FakeClient(answer=big)
+        with self.assertRaises(raster.RasterError) as cm:
+            self.store.store("a.png", png(2, 2))
+        self.assertEqual(cm.exception.status, 413)
+        self.assertEqual(self.listing(), [])
+        self.store.client = FakeClient(answer=PIXEL_PNG + b"\0" * (raster.MAX_PICTURE_BYTES - len(PIXEL_PNG)))
+        self.store.store("b.png", png(2, 2))                          # exactly the limit is kept, and can be thumbnailed
+        self.assertEqual(self.listing(), ["b.png"])
+
+    def test_a_helper_that_ends_with_no_answer_is_a_plain_too_big_not_a_502(self):
+        with self.assertRaises(raster.RasterError) as cm:
+            raster.Client._parse(b"")
+        self.assertEqual(cm.exception.status, 413)
+        self.assertEqual(cm.exception.message, "This picture is too big to process; try a smaller one.")
+        killed = os.path.join(self.tmp, "killed")                     # a program the system killed: no output at all
+        with open(killed, "w") as f:
+            f.write("#!/bin/sh\nkill -9 $$\n")
+        os.chmod(killed, 0o755)
+        client = raster.Client(exec_bin=killed, env={})
+        with self.assertRaises(raster.RasterError) as cm:
+            client.normalise(png(2, 2))
+        self.assertEqual(cm.exception.status, 413)
+        self.assertIn("try a smaller one", cm.exception.message)
 
     def test_limits_on_the_number_of_files_the_space_and_the_rate(self):
         for i in range(raster.UPLOADS_PER_MINUTE):
@@ -693,6 +761,8 @@ class RealRasterTest(unittest.TestCase):
         self.assertGreater(pixel_at(img, 3, 8)[2], 200)
         _, img, _ = self.run_ok(jpeg_with_orientation(JPEG_RGB, 99))                                    # nonsense is ignored
         self.assertGreater(pixel_at(img, 3, 8)[0], 200)
+        _, img, _ = self.run_ok(jpeg_with_xmp_then_orientation(JPEG_RGB, 6))                            # an XMP APP1 first: the Exif one is still used
+        self.assertEqual((img[0], img[1]), (16, 32))
 
     def test_svg_is_drawn_to_2048_and_not_kept(self):
         meta, img, _ = self.run_ok(SVG_OK)

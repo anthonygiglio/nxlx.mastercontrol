@@ -48,6 +48,7 @@
 #define MAX_PIXELS 40000000u                      // and width times height (the same limits as a mask, D100)
 #define OUT_SIDE 2048u                            // the long side of what is stored
 #define MAX_THUMB 512u
+#define MAX_APP1_SEGMENTS 16                      // APP1 segments looked at for the Exif block
 #define MAX_SVG_POINTS 20000
 #define WALL_SECONDS 15
 #define SVG_SECONDS 5
@@ -251,8 +252,13 @@ static Img decode_jpeg(const uint8_t *data, size_t len, int *orient) {
 	if (cinfo.data_precision != 8) { jpeg_destroy_decompress(&cinfo); refuse("only 8-bit JPEG files are supported"); }
 	check_size(cinfo.image_width, cinfo.image_height);
 	*orient = 1;
-	for (jpeg_saved_marker_ptr mk = cinfo.marker_list; mk; mk = mk->next)
-		if (mk->marker == JPEG_APP0 + 1) { *orient = exif_orientation(mk->data, mk->data_length); break; }
+	// the first APP1 that is Exif (an XMP block may come before it), looking at no more than MAX_APP1_SEGMENTS
+	int seen = 0;
+	for (jpeg_saved_marker_ptr mk = cinfo.marker_list; mk && seen < MAX_APP1_SEGMENTS; mk = mk->next) {
+		if (mk->marker != JPEG_APP0 + 1) continue;
+		seen++;
+		if (mk->data_length >= 6 && memcmp(mk->data, "Exif\0\0", 6) == 0) { *orient = exif_orientation(mk->data, mk->data_length); break; }
+	}
 	cinfo.out_color_space = JCS_RGB;
 	// let the decoder drop 1/2, 1/4 or 1/8 of the size while it works when the result is still larger than we keep
 	uint32_t longest = cinfo.image_width > cinfo.image_height ? cinfo.image_width : cinfo.image_height;
