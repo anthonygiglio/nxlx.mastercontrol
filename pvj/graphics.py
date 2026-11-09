@@ -863,7 +863,8 @@ class Graphics:
         drawn: restarted=True, and every overlay is drawn again from the pictures already built). Never raises."""
         if restarted:
             with self._apply:
-                self._shown.clear()         # a new player has nothing: the pictures are drawn again, still (nothing plays twice)
+                self._shown.clear()         # a new player has nothing: the pictures are drawn again (on classic, still; on the GPU path a
+                                            # graphic's entrance plays, as the screen came from nothing)
                 self._drawn.clear()
                 self._gpu.clear()
                 self._fading.clear()
@@ -1236,8 +1237,9 @@ class Graphics:
 
     def _switch(self, mode):
         """(under _apply) The player draws another way now (the renderer went, or came back): what the old way showed is
-        forgotten and the new way draws everything again from the same picture files. Nothing plays twice: _once keeps
-        what had been shown, so a node that falls back to classic mid-show shows the graphics still, not fading in again."""
+        forgotten and the new way draws everything again from the same picture files. _once keeps what had been shown, so
+        a node that falls back to classic mid-show shows the graphics still, not fading in again; when the renderer comes
+        back a graphic's motion starts as it does when it is shown."""
         if self._mode_drawn == "overlay":
             for oid in list(self._shown):
                 try:

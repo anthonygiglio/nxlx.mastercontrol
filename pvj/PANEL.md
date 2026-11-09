@@ -593,7 +593,7 @@ a faded or part-typed copy of the picture for a fade or a typewriter; Scroll and
 as one wide line, no wider than the chip's texture limit, and refused in the helper's words when it would have to be made smaller.
 A new line sent to a graphic that is on plays its motion again. Graphics are held while the PIN or a pairing code is on the display,
 and the pin screen tells the graphics at once when one comes or goes. A node that falls back to classic mid-show keeps the graphics
-on, still (nothing plays again). Roles: every route is the Operator's
+on, still (nothing plays again); when the renderer comes back each motion starts as a show does. Roles: every route is the Operator's
 and the Owner's (`tests/test_roles.py`); `GET /api/status` gives every role `graphics_on`. OSC: `/pvj/graphic/N`, `/text`, `/send`
 and `/pvj/graphic/hide` (pvj/OSC.md). The browser test is `tests/ui/panel.test.js` (the Graphics step, the row, the menus) and the
 page is in the list of `tests/ui/signal-pages.js`.

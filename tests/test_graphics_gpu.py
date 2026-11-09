@@ -25,7 +25,7 @@ import time
 import unittest
 
 import tests        # the run's own temp folder (tests/__init__.py)
-from pvj.player import Ipc, PlayerError
+from pvj.player import Ipc, Player, PlayerError
 from tests.test_pvj_render import BIN, H, STRICT, W, Renderer, fd_count, need_program, thread_count
 
 import subprocess
@@ -597,6 +597,77 @@ class ManyClientsTest(Base):
             self.assertIn((s["width"], s["height"]), ((100, 100), (200, 50)))
             self.assertEqual(self.slots()["bytes"], s["width"] * s["height"] * 4)
         self.assertEqual(self.slots()["gl-objects"], 1)
+
+
+class PlayerSideTest(Base):
+    """pvj/player.py's side: how the panel finds the stage and speaks to it (graphics_stage and graphic)."""
+
+    def player(self):
+        p = Player(rundir=self.tmp)
+        p.socket_path = self.r.sock
+        p.ipc = Ipc(self.r.sock, timeout=10.0)
+        return p
+
+    def test_the_player_finds_the_stage_once_and_speaks_to_it(self):
+        p = self.player()
+        self.assertIsNone(p.graphics_stage(ask=False), "nothing known yet, nothing asked")
+        st = p.graphics_stage()
+        self.assertEqual(st["slots"], 8)
+        self.assertGreaterEqual(st["side"], 1024)
+        self.assertEqual(p.graphics_stage(ask=False), st)
+        p.graphic("load", 1, self.make(30, 30), 30, 30, 1)
+        p.graphic("set", 1, {"x": 5, "y": 5, "motion": "fade", "seconds": 0.2})
+        p.graphic("show", 1)
+        self.assertTrue(self.r.wait(lambda: self.slot(1)["draws"] > 2, 5), self.r.stderr())
+        with self.assertRaises(PlayerError) as e:
+            p.graphic("load", 9, self.make(30, 30), 30, 30, 1)
+        self.assertIn("invalid parameter", str(e.exception))
+        p.graphic("clear", 1)
+
+    def fake(self, answers):
+        calls = []
+
+        class FakeIpc:
+            def request(self, *command):
+                calls.append(command)
+                a = answers(command)
+                if isinstance(a, Exception):
+                    raise a
+                return a
+        p = Player(rundir=self.tmp)
+        p.ipc = FakeIpc()
+        return p, calls
+
+    def test_classic_mpv_and_a_renderer_from_before_have_no_stage_and_are_asked_once(self):
+        classic, calls = self.fake(lambda c: 7 if c[1] == "pid" else PlayerError("mpv: property not found"))
+        self.assertIsNone(classic.graphics_stage())
+        self.assertIsNone(classic.graphics_stage())
+        self.assertEqual(len([c for c in calls if c[1] == "pvj-render"]), 1, "asked once for this process")
+        old, calls = self.fake(lambda c: 7 if c[1] == "pid" else {"version": "0.10.0", "layers": 2, "program-fades": 0})
+        self.assertIsNone(old.graphics_stage(), "a 0.10.0 renderer has no stage")
+        self.assertIsNone(old.graphics_stage())
+        self.assertEqual(len([c for c in calls if c[1] == "pvj-render"]), 1)
+        odd, _ = self.fake(lambda c: 7 if c[1] == "pid" else {"graphics": True, "graphics-side": "big"})
+        self.assertIsNone(odd.graphics_stage(), "words that are not numbers are not a stage")
+
+    def test_a_player_that_does_not_answer_is_asked_again_and_a_new_player_is_asked_afresh(self):
+        down = [True]
+        pid = [7]
+
+        def answers(c):
+            if down[0]:
+                return PlayerError("player is not running")
+            return pid[0] if c[1] == "pid" else {"graphics": 8, "graphics-side": 4096}
+        p, calls = self.fake(answers)
+        self.assertIsNone(p.graphics_stage())
+        self.assertIsNone(p.graphics_stage())
+        self.assertEqual(len(calls), 2, "asked again, not remembered as no")
+        down[0] = False
+        self.assertEqual(p.graphics_stage(), {"slots": 8, "side": 4096})
+        pid[0] = 8
+        p._note_pid(8)
+        down[0] = True
+        self.assertIsNone(p.graphics_stage(), "another mpv: what the last said does not hold")
 
 
 if __name__ == "__main__":
