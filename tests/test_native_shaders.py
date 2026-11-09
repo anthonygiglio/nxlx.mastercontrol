@@ -1814,5 +1814,489 @@ class ManyLayerFadesTest(NativeBase):
         print("\n%d fades with a generator on each side: fds, threads, program objects, libmpv objects at rest %s" % (self.FADES, marks))
 
 
+# ---- D130, slice 2: pvj-fade-to-program, and clip to shader and shader to clip as fades --------------------------------
+
+# a clip whose red moves (a sine over its frame number) and a generator whose green moves (a sine over TIME): while both
+# are in a fade, the mix has both moving. No comma outside a function: the address is a lavfi graph.
+MOVING = "av://lavfi:color=c=black:size=%dx%d:rate=30,format=gbrp,geq=r=140+110*sin(N/5):g=0:b=0,format=rgb0" % (W, H)
+MOVER = "/*{}*/\nvoid main() { gl_FragColor = vec4(0.0, 0.5 + 0.45 * sin(TIME * 6.0), 0.0, 1.0); }\n"
+BAD_PROGRAM = "//!PVJ 1\n//!KIND generator\n//!SIZE 320 180\n//!CODE\nvoid pvj_main() { not glsl }\n"
+MOVES = ("wipe-from-left", "wipe-from-right", "wipe-from-top", "wipe-from-bottom",
+         "slide-left", "slide-right", "slide-up", "slide-down")
+KEEP = "keep-open=no,image-display-duration=inf"
+
+
+class ProgramFadeBase(NativeBase):
+    SECONDS = 8.0
+
+    def st(self):
+        return self.r("get_property", "pvj-render")
+
+    def objects(self):
+        return self.st()["fx-gl-objects"]
+
+    def pic(self, name, colour):
+        p = os.path.join(self.tmp, name + ".png")
+        png(p, W, H, lambda x, y: colour)
+        return p
+
+    def moving_clip(self):
+        self.r("loadfile", MOVING, "replace")
+        self.assertTrue(self.r.wait(lambda: self.r.playing() is not None))
+        time.sleep(0.3)
+
+    def to_program(self, program, seconds=None, move=None):
+        args = ["pvj-fade-to-program", program, self.SECONDS if seconds is None else seconds]
+        return self.r(*(args + ([move] if move else [])))
+
+    def to_clip(self, url, seconds=None, move=None):
+        args = ["pvj-crossfade", url, self.SECONDS if seconds is None else seconds, KEEP]
+        return self.r(*(args + ([move] if move else [])))
+
+    def running(self, low=0.25, high=0.7, step=0.02):
+        look = lambda: self.st()
+        self.assertTrue(self.r.wait(lambda: look()["fade"] == "running" and low < look()["fade-progress"] < high, 15, step), look())
+
+    def settled(self, seconds=None):
+        self.assertTrue(self.r.wait(lambda: self.st()["fade"] == "off", (seconds or self.SECONDS) + 10, 0.05), self.st())
+
+    def samples(self, n=6, gap=0.12):
+        """n pictures from inside a fade: (red, green, blue of the middle, the fade's progress before and after)."""
+        out = []
+        for _ in range(n):
+            p0 = self.st()["fade-progress"]
+            shot = self.r.capture()
+            p1 = self.st()["fade-progress"]
+            out.append((self.r.pixel(W // 2, H // 2, shot), p0, p1))
+            time.sleep(gap)
+        return out
+
+
+class ProgramFadeTest(ProgramFadeBase):
+    """D130, slice 2. pvj-fade-to-program builds a generator into the idle layer and fades to it, from a clip or from
+    another generator; a pvj-crossfade out of a layer that holds a generator is a fade whether or not a clip plays under
+    it. Both sides move through the fade; the outgoing layer's picture is freed at its end; a program the GPU refuses
+    changes nothing on the screen."""
+
+    def test_a_clip_fades_into_a_program_by_the_share_and_the_clip_layer_is_left_idle(self):
+        self.r.load(self.pic("red", RED))
+        self.assertEqual(self.objects(), 0)
+        self.to_program(self.generator(solid(0, 0, 0.8)))
+        self.running()
+        p0 = self.st()["fade-progress"]
+        shot = self.r.capture()
+        p1 = self.st()["fade-progress"]
+        r, g, b = self.r.pixel(W // 2, H // 2, shot)
+        p = b / FULL                                    # blue goes from 0 to FULL as the share goes from 0 to 1
+        self.assertTrue(p0 - 0.05 <= p <= p1 + 0.05, "the share by the blue %.3f, by the clock %.3f to %.3f: %s" % (p, p0, p1, (r, g, b)))
+        self.assertLessEqual(abs(r - 255 * (1 - p)), 8, (r, g, b))
+        self.assertLessEqual(g, 4, (r, g, b))
+        alive = self.objects()
+        self.assertGreater(alive, 0)                    # one program: the clip has none
+        self.settled()
+        self.assertEqual(self.objects(), alive)
+        px = self.r.pixel(W // 2, H // 2)
+        self.assertTrue(px[2] > FULL - 8 and px[0] < 6 and px[1] < 6, px)
+        st = self.st()
+        self.assertEqual((st["fades"], st["fades-done"], st["fades-cut"], st["program-fades"], st["fades-from-nothing"]), (1, 1, 0, 1, 0))
+        self.assertTrue(st["layer-generators"])
+        self.assertEqual(self.slot(0)["state"], "on")
+
+    def test_both_sides_move_while_a_clip_fades_into_a_program(self):
+        self.moving_clip()
+        self.to_program(self.generator(MOVER))
+        self.running(0.1, 0.4)
+        shots = self.samples()
+        self.assertTrue(all(0.05 < s[1] and s[2] < 0.9 for s in shots), shots)
+        reds, greens = [s[0][0] for s in shots], [s[0][1] for s in shots]
+        self.assertGreater(max(reds) - min(reds), 20, "the clip stands still under the fade: %s" % reds)
+        self.assertGreater(max(greens) - min(greens), 20, "the program stands still in the fade: %s" % greens)
+        self.assertEqual(self.st()["fade"], "running")
+        self.settled()
+
+    def test_a_program_fades_out_to_a_moving_clip_with_no_clip_under_it_and_both_move(self):
+        """The case slice 3 makes the usual one: no blank clip carries the shader, so the front layer's clip is idle and
+        only its generator is the picture. The first program is a cut from black; the clip then fades in over it."""
+        self.to_program(self.generator(MOVER), 1.0)
+        st = self.st()
+        self.assertEqual((st["fade"], st["fades"], st["fades-from-nothing"], st["program-fades"]), ("off", 0, 1, 1))
+        self.assertTrue(self.r.wait(lambda: self.r.pixel(W // 2, H // 2)[1] > 20, 5), self.r.pixel(W // 2, H // 2))
+        one = self.objects()
+        self.to_clip(MOVING)
+        self.running(0.1, 0.4)
+        st = self.st()
+        self.assertEqual((st["fades"], st["fades-from-nothing"]), (1, 1), "a fade, not a cut: %s" % st)
+        shots = self.samples()
+        reds, greens = [s[0][0] for s in shots], [s[0][1] for s in shots]
+        self.assertGreater(max(reds) - min(reds), 20, "the clip stands still: %s" % reds)
+        self.assertGreater(max(greens) - min(greens), 20, "the outgoing program stands still: %s" % greens)
+        self.assertEqual(self.objects(), one)
+        self.settled()
+        self.assertTrue(self.r.wait(lambda: self.objects() == 0, 5), self.objects())
+        self.assertEqual(self.slot(0)["state"], "off")
+        px = self.r.pixel(W // 2, H // 2)
+        self.assertTrue(px[0] > 20 and px[1] < 6, "the clip alone: %s" % (px,))
+
+    def test_a_program_fades_into_a_program_and_the_outgoing_one_is_freed(self):
+        self.to_program(self.generator(solid(0.8, 0, 0)), 1.0)
+        self.assertTrue(self.r.wait(lambda: self.r.pixel(10, 10)[0] > FULL - 8, 5), self.r.pixel(10, 10))
+        one = self.objects()
+        self.to_program(self.generator(solid(0, 0, 0.8)))
+        self.running()
+        shot = self.r.capture()
+        r, g, b = self.r.pixel(W // 2, H // 2, shot)
+        self.assertTrue(r > 20 and b > 20 and g < 6, (r, g, b))
+        self.assertEqual(self.objects(), 2 * one, "two programs alive for the length of the fade")
+        self.settled()
+        self.assertTrue(self.r.wait(lambda: self.objects() == one, 5), self.objects())
+        px = self.r.pixel(W // 2, H // 2)
+        self.assertTrue(px[2] > FULL - 8 and px[0] < 6, px)
+
+    def test_every_wipe_and_slide_has_a_program_on_one_side_of_its_edge_both_ways(self):
+        """Eight wipes and slides, a clip into a program and the program back out to the clip: the four sides of the picture
+        are each the incoming or the outgoing picture whole, never a mix, and both are there."""
+        red = self.pic("red", RED)
+        self.r.load(red)
+        prog = self.generator(solid(0, 0, 0.8))
+        spots = [(12, H // 2), (W - 13, H // 2), (W // 2, 8), (W // 2, H - 9)]
+        for move in MOVES:
+            for into in (True, False):
+                if into:
+                    self.to_program(prog, 3.0, move)
+                else:
+                    self.to_clip(red, 3.0, move)
+                self.running(0.25, 0.55)
+                p0 = self.st()["fade-progress"]
+                shot = self.r.capture()
+                self.assertLess(self.st()["fade-progress"], 0.85, "%s: the picture was taken late" % move)
+                look = [self.r.pixel(x, y, shot) for x, y in spots]
+                pure = []
+                for px in look:
+                    clip = px[0] > 230 and px[1] < 20 and px[2] < 20
+                    program = px[2] > FULL - 12 and px[0] < 20 and px[1] < 20
+                    self.assertTrue(clip or program, "%s %s: a mixed pixel %s of %s (progress %.2f)" % (move, "in" if into else "out", px, look, p0))
+                    pure.append(clip)
+                self.assertTrue(any(pure) and not all(pure), "%s: one picture only: %s" % (move, look))
+                self.settled(3.0)
+                self.assertEqual(self.st()["fades-cut"], 0)
+                if not into:
+                    self.assertTrue(self.r.wait(lambda: self.objects() == 0, 5), self.objects())
+        st = self.st()
+        self.assertEqual((st["fades"], st["fades-done"], st["program-fades"]), (16, 16, 8))
+
+    def test_a_refused_program_changes_nothing_and_a_refused_one_in_a_fade_ends_that_fade_on_its_incoming_side(self):
+        self.r.load(self.pic("red", RED))
+        with self.assertRaises(PlayerError) as e:
+            self.to_program(self.write(BAD_PROGRAM))
+        self.assertNotIn("success", str(e.exception))
+        st = self.st()
+        self.assertEqual((st["fade"], st["fades"], st["program-fades"], st["front"]), ("off", 0, 0, 0))
+        self.assertEqual(self.objects(), 0)
+        px = self.r.pixel(W // 2, H // 2)
+        self.assertTrue(px[0] > 240 and px[2] < 6, "the clip is still the picture: %s" % (px,))
+        # a good fade, then a refused one in the middle of it: the running fade ends at once on its incoming side
+        self.to_program(self.generator(solid(0, 0, 0.8)))
+        self.running()
+        one = self.objects()
+        with self.assertRaises(PlayerError):
+            self.to_program(self.write(BAD_PROGRAM))
+        st = self.st()
+        self.assertEqual((st["fade"], st["fades-cut"], st["program-fades"]), ("off", 1, 1), st)
+        self.assertTrue(self.r.wait(lambda: self.objects() == one, 5), self.objects())
+        px = self.r.pixel(W // 2, H // 2)
+        self.assertTrue(px[2] > FULL - 8 and px[0] < 6, "the incoming program is the picture, not black: %s" % (px,))
+        self.assertEqual(self.slot(0)["state"], "on")
+        # and the renderer goes on taking fades
+        self.to_program(self.generator(solid(0, 0.8, 0)), 0.2)
+        self.settled(1)
+        self.assertTrue(self.r.wait(lambda: self.objects() == one, 5), self.objects())
+        px = self.r.pixel(W // 2, H // 2)
+        self.assertTrue(px[1] > FULL - 8 and px[2] < 6, px)
+        self.assertEqual(self.st()["program-fades"], 2)
+        self.assertIsNone(self.r.proc.poll())
+
+    def test_what_is_not_a_program_to_fade_to_is_an_invalid_parameter_and_changes_nothing(self):
+        self.r.load(self.pic("red", RED))
+        good = self.generator(solid(0, 0, 0.8))
+        for args in ([os.path.basename(good), 1.0], ["/does/not/exist.prog", 1.0], [good, -1], [good, 61], [good, 1.0, "wobble"],
+                     [self.effect(INVERT), 1.0], [5, 1.0], [good, "x"]):
+            with self.assertRaises(PlayerError) as e:
+                self.r("pvj-fade-to-program", *args)
+            self.assertIn("invalid parameter", str(e.exception), args)
+        st = self.st()
+        self.assertEqual((st["fade"], st["fades"], st["program-fades"]), ("off", 0, 0))
+        self.assertEqual(self.objects(), 0)
+
+    def test_a_tap_in_the_middle_of_a_fade_finishes_it_and_fades_to_the_new_picture(self):
+        self.r.load(self.pic("red", RED))
+        self.to_program(self.generator(solid(0, 0, 0.8)))
+        self.running()
+        one = self.objects()
+        self.to_program(self.generator(solid(0, 0.8, 0)), 3.0)
+        self.assertEqual(self.st()["fades-cut"], 1)
+        shot = self.r.capture()
+        r, g, b = self.r.pixel(W // 2, H // 2, shot)
+        self.assertTrue(b > 100 and r < 20, "the first program is the outgoing picture of the new fade: %s" % ((r, g, b),))
+        self.assertEqual(self.objects(), 2 * one)
+        self.settled(3.0)
+        self.assertTrue(self.r.wait(lambda: self.objects() == one, 5), self.objects())
+        px = self.r.pixel(W // 2, H // 2)
+        self.assertTrue(px[1] > FULL - 8 and px[2] < 6, px)
+
+    def test_a_clip_asked_in_the_middle_of_a_fade_into_a_program_fades_out_of_that_program(self):
+        red, green = self.pic("red", RED), self.pic("green", GREEN)
+        self.r.load(red)
+        self.to_program(self.generator(solid(0, 0, 0.8)))
+        self.running()
+        one = self.objects()
+        self.to_clip(green, 3.0)
+        self.running(0.2, 0.7, 0.01)
+        st = self.st()
+        self.assertEqual((st["fades"], st["fades-cut"], st["fades-from-nothing"]), (2, 1, 0), "a fade out of the program, not a cut: %s" % st)
+        r, g, b = self.r.pixel(W // 2, H // 2)
+        self.assertTrue(b > 20 and g > 20 and r < 20, ((r, g, b), "blue program and green clip"))
+        self.assertEqual(self.objects(), one)
+        self.settled(3.0)
+        self.assertTrue(self.r.wait(lambda: self.objects() == 0, 5), self.objects())
+        px = self.r.pixel(W // 2, H // 2)
+        self.assertTrue(px[1] > 240 and px[2] < 6, px)
+
+    def test_a_value_set_to_slot_0_during_a_program_out_to_a_clip_is_refused_and_the_fade_is_left_alone(self):
+        self.to_program(self.generator(LEVEL), 1.0)
+        self.to_clip(self.pic("green", GREEN))
+        self.running(0.1, 0.8)
+        one = self.objects()
+        self.assertGreater(one, 0)
+        with self.assertRaises(PlayerError) as e:
+            self.r("pvj-shader", "set", 1, 0, {"level": 0.9})
+        self.assertIn("invalid parameter", str(e.exception))
+        self.assertEqual(self.st()["fade"], "running")
+        self.assertEqual(self.objects(), one)
+        self.settled()
+        self.assertTrue(self.r.wait(lambda: self.objects() == 0, 5), self.objects())
+
+    def test_a_program_asked_with_nothing_on_the_screen_is_a_cut_from_black(self):
+        self.to_program(self.generator(solid(0, 0.8, 0)), 2.0)
+        st = self.st()
+        self.assertEqual((st["fade"], st["fades"], st["fades-from-nothing"], st["program-fades"]), ("off", 0, 1, 1))
+        self.assertTrue(self.r.wait(lambda: self.r.pixel(W // 2, H // 2)[1] > FULL - 8, 5), self.r.pixel(W // 2, H // 2))
+        self.assertEqual(self.slot(0)["state"], "on")
+
+    def test_the_fade_waits_for_the_programs_first_picture_and_the_outgoing_clip_goes_on_under_it(self):
+        """The old picture keeps moving until the new one is drawn, and the fade's clock starts only then: a fade of 6 s
+        asked as the property says is at its start (not 1 s in) when the answer is hardly home."""
+        self.moving_clip()
+        t0 = time.monotonic()
+        self.to_program(self.generator(solid(0, 0, 0.8)), 6.0)
+        took = time.monotonic() - t0
+        st = self.st()
+        elapsed = time.monotonic() - t0
+        self.assertLessEqual(st["fade-progress"] * 6.0, elapsed - 0.0 + 0.05, (st["fade-progress"], elapsed))
+        self.assertLess(took, 3.0)
+        self.settled(6.0)
+
+
+class ProgramFadeSlowBuildTest(ProgramFadeBase):
+    """With a slow compiler (a test hook, make TEST_HOOKS=1): the outgoing picture plays on while the program builds,
+    the fade starts after it, and a build that outlasts the renderer's wait is answered so and leaves nothing behind."""
+
+    def start(self, ms):
+        need_program(self)
+        if "with test hooks" not in subprocess.run([BIN, "--version"], capture_output=True, text=True).stdout:
+            if STRICT:
+                self.fail("PVJ_RENDER_TEST=1 and pvj-render was built without its test hooks: make -C render TEST_HOOKS=1")
+            self.skipTest("pvj-render was built without its test hooks")
+        self.tmp = tempfile.mkdtemp(prefix="pvj-native-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.r = Renderer(env={"PVJ_RENDER_TEST_SLOW_BUILD": str(ms)})
+        self.addCleanup(lambda: self.r.close())
+        self.r("set_property", "image-display-duration", "inf")
+        self.n = 0
+
+    def setUp(self):
+        pass
+
+    def test_the_outgoing_clip_moves_while_the_program_builds_and_the_clock_starts_after(self):
+        self.start(900)
+        self.moving_clip()
+        said = {}
+
+        def ask():
+            said["t0"] = time.monotonic()
+            Ipc(self.r.sock, timeout=12.0).request("pvj-fade-to-program", self.generator(solid(0, 0, 0.8)), 8.0, wait=6.0)
+            said["t1"] = time.monotonic()
+        th = threading.Thread(target=ask)
+        th.start()
+        time.sleep(0.1)
+        self.assertEqual(self.st()["fade"], "off", "the fade must not begin before the program is built")
+        looks = []
+        while th.is_alive() and len(looks) < 12:
+            try:
+                looks.append((self.r.pixel(W // 2, H // 2), self.st()["fade"]))
+            except PlayerError:
+                pass
+            time.sleep(0.05)
+        th.join(15)
+        self.assertFalse(th.is_alive())
+        self.assertGreaterEqual(said["t1"] - said["t0"], 0.8)
+        self.assertTrue(looks, "no look at the screen while it built")
+        for px, fade in looks[:-1]:
+            self.assertTrue(px[2] < 6 and px[0] > 20, "the outgoing clip alone while the program builds: %s" % (px,))
+        elapsed = time.monotonic() - said["t1"]
+        st = self.st()
+        self.assertLessEqual(st["fade-progress"] * 8.0, elapsed + 0.15, "the clock began before the program was drawn: %s" % st)
+        self.running(0.05, 0.5)
+        self.settled()
+
+    def test_a_build_that_outlasts_the_wait_is_answered_so_and_the_program_never_appears(self):
+        self.start(3500)
+        self.moving_clip()
+        with self.assertRaises(PlayerError) as e:
+            self.to_program(self.generator(solid(0, 0, 0.8)))
+        self.assertIn("in time", str(e.exception))
+        # the build finishes after the answer; the program it made is cleared, and the screen never changed
+        self.assertTrue(self.r.wait(lambda: self.objects() == 0, 10), self.objects())
+        st = self.st()
+        self.assertEqual((st["fade"], st["fades"], st["program-fades"]), ("off", 0, 0))
+        px = self.r.pixel(W // 2, H // 2)
+        self.assertTrue(px[2] < 6 and px[0] > 20, "the clip is still the picture: %s" % (px,))
+
+
+class ManyProgramFadesTest(ProgramFadeBase):
+    """A show fades between clips and shaders all night: fades into and out of programs, some cut short by the next, leave
+    no program, texture, descriptor or thread behind. Bounded by a deadline."""
+
+    FADES = int(os.environ.get("PVJ_PROGRAM_FADES", "120"))
+    LIMIT = max(420.0, FADES * 0.8)
+
+    def test_fades_into_and_out_of_programs_leave_nothing_behind(self):
+        deadline = time.monotonic() + self.LIMIT
+        clips = [self.pic("a", RED), self.pic("b", GREEN)]
+        gens = [self.generator(solid(0.8, 0, 0)), self.generator(solid(0, 0, 0.8))]
+        st = lambda: self.r("get_property", "pvj-render")
+        self.r.load(clips[0])
+        marks = []
+        one = None
+        for i in range(self.FADES):
+            self.assertLess(time.monotonic(), deadline, "the bounded run of fades took too long (%d done)" % i)
+            step = i % 4
+            before = st()["fades"]
+            if step == 0:
+                self.to_program(gens[(i // 4) % 2], 0.03)
+            elif step == 1:
+                self.to_clip(clips[(i // 4) % 2], 0.03)
+            elif step == 2:
+                self.to_program(gens[0], 30.0)              # cut short by the next
+            else:
+                self.to_program(gens[1], 0.03)              # ... which is a program fading out of a program
+            self.assertEqual(st()["fades"], before + 1, "fade %d" % i)
+            if step != 2:
+                self.assertTrue(self.r.wait(lambda: st()["fade"] == "off", 15, 0.01), "fade %d: %s\n%s" % (i, st(), self.r.stderr()))
+            if step == 3 and one is None:
+                one = st()["fx-gl-objects"]
+                self.assertGreater(one, 0)
+            if step == 1 and i // 4 in (self.FADES // 16, self.FADES // 8, self.FADES * 3 // 16, self.FADES // 4 - 1):
+                self.assertTrue(self.r.wait(lambda: st()["fade"] == "off" and st()["fx-gl-objects"] == 0, 10), st())
+                time.sleep(0.6)
+                marks.append((fd_count(self.r.pid), thread_count(self.r.pid), st()["fx-gl-objects"], st()["gl-objects"]))
+        self.assertGreaterEqual(len(marks), 3, marks)
+        self.assertEqual({m[2] for m in marks}, {0}, marks)
+        for m in marks[1:]:
+            self.assertEqual(m[0], marks[0][0], marks)
+            self.assertLessEqual(abs(m[1] - marks[0][1]), 2, marks)
+            self.assertLessEqual(abs(m[3] - marks[0][3]), 6, marks)
+        self.assertIsNone(self.r.proc.poll())
+        self.assertNotIn("Export failed", self.r.stderr())
+        print("\n%d fades into and out of programs: fds, threads, program objects, libmpv objects at rest %s" % (self.FADES, marks))
+
+
+class PlayerProgramFadeTest(ProgramFadeBase):
+    """The panel's player (pvj/player.py) over the real renderer: fade_to_program, and play() out of a program. Not asked by
+    the panel before its slice 3, so these are the only callers."""
+
+    def setUp(self):
+        super().setUp()
+        d = tempfile.mkdtemp(prefix="pvj-native-run-")
+        self.addCleanup(shutil.rmtree, d, True)
+        os.symlink(self.r.sock, os.path.join(d, paths.PLAYER_SOCKET))
+        self.player = Player(rundir=d)
+
+    def test_a_clip_into_a_program_and_the_program_out_to_a_clip(self):
+        p = self.player
+        self.r.load(self.pic("red", RED))
+        self.assertTrue(p.fades_native())
+        self.assertTrue(p.layer_generators())
+        prog = self.generator(solid(0, 0, 0.8))
+        before = p.source_epoch
+        epoch = p.fade_to_program(prog, 3.0)
+        self.assertEqual(epoch, before + 1)
+        self.assertEqual((p.source_shader, p._carrier), (prog, None))
+        self.assertFalse(p.fades_from_clip())
+        self.assertEqual(p.native_verdict(prog), ("ok", ""))
+        self.running(0.1, 0.8)
+        self.settled(3.0)
+        px = self.r.pixel(W // 2, H // 2)
+        self.assertTrue(px[2] > FULL - 8 and px[0] < 6, px)
+        # out of the program to a clip: a fade, the program is the renderer's to free and this side lets go of it
+        green = self.pic("green", GREEN)
+        epoch = p.source_epoch
+        self.assertIsNone(p.play([green], fade=3.0))
+        self.assertEqual(p.fade_refused, "")
+        self.assertIsNone(p.source_shader)
+        self.assertGreater(p.source_epoch, epoch)
+        st = self.st()
+        self.assertEqual((st["fades"], st["fades-from-nothing"]), (2, 0), st)
+        self.running(0.1, 0.9, 0.01)
+        r, g, b = self.r.pixel(W // 2, H // 2)
+        self.assertTrue(b > 10 and g > 10, "both the program and the clip are in it: %s" % ((r, g, b),))
+        self.settled(3.0)
+        self.assertTrue(self.r.wait(lambda: self.objects() == 0, 5), self.objects())
+        px = self.r.pixel(W // 2, H // 2)
+        self.assertTrue(px[1] > 240 and px[2] < 6, px)
+
+    def test_a_wipe_style_reaches_the_renderer(self):
+        p = self.player
+        self.r.load(self.pic("red", RED))
+        p.fade_to_program(self.generator(solid(0, 0, 0.8)), 3.0, "wipe-from-left")
+        self.assertEqual(self.st()["fade-kind"], "wipe-from-left")
+        self.settled(3.0)
+
+    def test_a_refused_program_changes_nothing_here_either(self):
+        p = self.player
+        self.r.load(self.pic("red", RED))
+        bad = self.write(BAD_PROGRAM)
+        epoch = p.source_epoch
+        with self.assertRaises(PlayerError):
+            p.fade_to_program(bad, 2.0)
+        self.assertEqual(p.native_verdict(bad)[0], "refused")
+        self.assertEqual((p.source_epoch, p.source_shader), (epoch, None))
+        self.assertTrue(p.fades_from_clip())
+        self.assertEqual(self.st()["program-fades"], 0)
+
+    def test_an_epoch_that_has_gone_by_asks_the_renderer_nothing(self):
+        p = self.player
+        self.r.load(self.pic("red", RED))
+        self.assertIsNone(p.fade_to_program(self.generator(solid(0, 0, 0.8)), 1.0, epoch=p.source_epoch - 1))
+        self.assertEqual(self.st()["program-fades"], 0)
+
+    def test_a_renderer_without_the_command_is_not_asked_for_it(self):
+        p = self.player
+        self.r.load(self.pic("red", RED))
+        p.crossfades()
+        p._gens_seen = (p._seen_pid, False)                 # a renderer of slice 1: the property says layer-generators only
+        self.assertFalse(p.fades_native())
+        with self.assertRaises(PlayerError):
+            p.fade_to_program(self.generator(solid(0, 0, 0.8)), 1.0)
+        self.assertEqual(self.st()["program-fades"], 0)
+
+    def test_a_live_inputs_pipe_keeps_the_stills_hand_over(self):
+        p = self.player
+        p.crossfades()
+        self.assertTrue(p.fades_native())
+        p._pipe = True
+        self.assertFalse(p.fades_native())
+        p._pipe = False
+
+
 if __name__ == "__main__":
     unittest.main()

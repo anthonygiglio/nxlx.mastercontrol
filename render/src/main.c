@@ -1127,6 +1127,7 @@ int main(int argc, char **argv)
         int fi = app.front, phase = app.fade.phase, base = app.fade.base_starts;
         double asked = app.fade.asked, t0 = app.fade.t0, len = app.fade.seconds;
         const Move *move = app.fade.move;
+        int into_program = app.fade.program;        // the incoming layer's picture is a generator (pvj-fade-to-program)
         memcpy(frame_opacity, app.opacity, sizeof frame_opacity);     // the sources' mix, read once for this frame
         // each source's level: while it has a program on, or while its layers still have brightness 0 (ipc.c, level_sync)
         for (int s = 0; s < MAX_SOURCES; s++)
@@ -1154,9 +1155,22 @@ int main(int argc, char **argv)
         if (ut & MPV_RENDER_UPDATE_FRAME) text.dirty = 1;
         if (text_on && !text_was) text.dirty = 1;          // never a stale text for a frame
         double now = now_s();
+        // Source 1's layers each have a picture of their own: a generator's (D130), when the layer has one, else libmpv's.
+        // The front layer's generator is drawn first, before the fade's clock is looked at: a fade into a program starts
+        // its clock at that generator's first drawn frame, as a fade into a clip starts at the clip's first frame.
+        GLuint front_pic = front->tex, back_pic = back->tex;
+        int ran = 0;
+        GLuint gt = fx_layer_picture(fi, now, &ran);
+        if (gt) front_pic = gt;
+        if (ran) fresh = 1;
         if (phase == FADE_WAITING) {
             int restarted = __atomic_load_n(&app.restart_of[fi], __ATOMIC_ACQUIRE) > base;
             int failed_load = __atomic_load_n(&app.failed_of[fi], __ATOMIC_ACQUIRE) > base;
+            if (into_program) {
+                // the layer under the program has no clip: its events say nothing about the fade
+                restarted = fx_layer_started(fi);
+                failed_load = 0;
+            }
             if (restarted || failed_load || now - asked > FADE_FIRST_FRAME) {
                 // the incoming clip's first frame is ready (it is drawn below, in this turn), its load failed (the
                 // fade goes on to its empty picture, as a cut to it would), or it never came in time (as D71 did)
@@ -1214,13 +1228,7 @@ int main(int argc, char **argv)
             text.dirty = 0;
         }
         text_was = text_on;
-        // Source 1's layers each have a picture of their own: a generator's (D130), when the layer has one, else libmpv's.
         // The outgoing layer's generator goes on drawing for as long as the fade lasts; it is taken off at its end.
-        GLuint front_pic = front->tex, back_pic = back->tex;
-        int ran = 0;
-        GLuint gt = fx_layer_picture(fi, now, &ran);
-        if (gt) front_pic = gt;
-        if (ran) fresh = 1;
         if (phase != FADE_OFF) {
             gt = fx_layer_picture(1 - fi, now, &ran);
             if (gt) back_pic = gt;

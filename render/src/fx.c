@@ -1069,6 +1069,7 @@ GLuint fx_layer_picture(int layer, double now, int *ran)
 }
 
 int fx_layer_has_generator(int layer) { return gen[layer].on; }
+int fx_layer_started(int layer) { return gen[layer].on && gen[layer].last_run > 0; }
 
 // One source's picture after its programs (render thread, once a frame): `s` is the source's index (0 is source 1),
 // `picture` what its layers made (source 1: the front layer, or the crossfade's mix, with each layer's own generator
