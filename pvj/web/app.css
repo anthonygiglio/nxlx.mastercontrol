@@ -1507,3 +1507,28 @@ html[data-style="signal"] .tp #black.flash { background: var(--st-problem, var(-
 }
 /* Now in this look: the scene blocks in a column of Now take a smaller face than on the Room screen */
 html[data-style="signal"] .nowscreen .room-scene { font-size: 15px; }
+
+/* Columns scroll on their own (the owner, 2026-11-08: "the columns all scroll together except for the really short
+   ones. it is not a good UX"). Where the screens of an area stand side by side, on a Setup page beside its index, and
+   in the four columns of Now, each column is a scroll of its own between the title bar (with its tabs) and the strip.
+   The page itself hardly scrolls, so a short column stays where it is and a long one scrolls under the pointer;
+   nothing is pinned in one column while the others move. A low window keeps the one page scroll: there is no room. */
+@media (min-height: 600px) {
+  @container app (min-width: 1200px) {
+    .desk:not([data-cols="1"]) > .deskcol:not([data-col="scenes"]):not([data-col="guests"]), .setupdesk > .deskcol.cur {
+      position: sticky; top: calc(var(--head, 0px) + var(--sub, 0px));
+      max-height: calc(100dvh - var(--head, 0px) - var(--sub, 0px) - var(--dock, 120px));
+      overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
+    .setupdesk > .deskcol.ix { top: calc(var(--head, 0px) + var(--sub, 0px)); max-height: calc(100dvh - var(--head, 0px) - var(--sub, 0px) - var(--dock, 120px)); overscroll-behavior: contain; }
+    /* inside a column that scrolls, what stuck below the title bar sticks to the top of its column */
+    .deskcol .col-lib, .deskcol .splitside, .deskcol .maptools { top: 0; }
+    /* and the name of each column stays at its top while it scrolls, on a band of the page colour across the column */
+    .desk:not([data-cols="1"]) > .deskcol > .deskhead { position: sticky; top: 16px; z-index: 3;
+      box-shadow: 0 0 0 100vmax var(--bg); clip-path: inset(-16px -100vmax -10px -100vmax); }
+  }
+  @container ws (min-width: 1100px) {
+    .nowgrid > .card { position: sticky; top: calc(var(--head, 0px) + var(--sub, 0px) + 8px);
+      max-height: calc(100dvh - var(--head, 0px) - var(--sub, 0px) - var(--dock, 120px) - 16px);
+      overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
+  }
+}
