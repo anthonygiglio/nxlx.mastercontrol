@@ -1507,3 +1507,12 @@ html[data-style="signal"] .tp #black.flash { background: var(--st-problem, var(-
 }
 /* Now in this look: the scene blocks in a column of Now take a smaller face than on the Room screen */
 html[data-style="signal"] .nowscreen .room-scene { font-size: 15px; }
+
+/* The node switcher (fleet step 2b): the list opens as a full-width line of the title bar, so it is in place at
+   every width and scrolls with the screen like the bar. Its words are the page's, not the bar's area colours. */
+.nodesbtn { flex: none; }
+.wshead .nodespop { flex: 1 0 100%; margin: 6px 0 4px; max-height: 60vh; overflow: auto; color: var(--fg); text-align: left; }
+.nodespop .nodeswhere { overflow-wrap: anywhere; }
+/* (on the title bar, in the colours of its pill: the bar is the area colour, and a page-coloured button would not read on it) */
+html[data-style="signal"] .wshead .nodesbtn { background: var(--on); color: var(--ac); border-color: var(--on); }
+html[data-style="signal"] .wshead .nodesbtn[aria-expanded="true"] { background: var(--ac); color: var(--on); border-color: var(--on); }

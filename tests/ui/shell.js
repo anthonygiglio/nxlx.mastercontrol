@@ -774,7 +774,7 @@ const PLAY = ['play/pads', 'play/library', 'play/shaders'];
 const SHAPE = ['shape/effect', 'shape/picture', 'shape/sound', 'shape/mapping'];
 const MENUS = {
   owner: ['now/now'].concat(PLAY, SHAPE, ['room/scenes', 'room/walls', 'room/guests'], ['index', 'health', 'projectors', 'room', 'schedule', 'access', 'autostart', 'streams', 'ndi', 'render', 'soundin', 'ndisc', 'sync', 'midi', 'dmx', 'osc',
-    'network', 'screen', 'updates', 'support', 'https', 'backup', 'look', 'about'].map((x) => 'setup/' + x)),
+    'network', 'screen', 'updates', 'support', 'nodes', 'https', 'backup', 'look', 'about'].map((x) => 'setup/' + x)),
   presenter: ['now/now'].concat(PLAY, SHAPE, ['room/scenes', 'room/walls', 'room/guests'], ['index', 'health', 'projectors', 'room', 'schedule', 'access', 'autostart', 'streams', 'ndi', 'render', 'soundin', 'sync', 'midi', 'about'].map((x) => 'setup/' + x)),
   guest: PLAY.concat(SHAPE, ['room/scenes', 'room/walls'], ['index', 'health', 'about'].map((x) => 'setup/' + x)),
 };

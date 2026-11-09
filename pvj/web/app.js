@@ -2013,6 +2013,9 @@
         steps: full && !remote ? [flagStep('support', '/api/support', function (d) { return !!(d.config && d.config.allowed); }, function (v) { return { allowed: v }; }, '/api/support/config')] : null,
         bodyWhenOff: true,
         body: function () { return [supportCard()]; } },
+      { id: 'nodes', group: 'box', name: 'Nodes on this network', role: 'full',
+        blurb: 'Whether this node tells other nodes on the network it is here and looks for them, for the Nodes list in the title bar. Each node keeps its own pairing.',
+        body: function () { return [nodesSetupCard()]; } },
       { id: 'https', group: 'box', name: 'Secure connection', role: 'full', url: '/api/https',
         blurb: 'The panel over https://, with a certificate you sign yourself and a root your own devices install once. Guests stay on http://.',
         body: httpsCards },
@@ -2043,6 +2046,7 @@
   function rowShown(row) {
     if (row.id === 'access' && S.device && S.device.remote) return false;      // codes are refused through the support connection, whatever the role
     if (row.id === 'ndisc' && S.device && S.device.remote) return false;       // a listener on the network is opened by the Owner in the room (D85)
+    if (row.id === 'nodes' && S.device && S.device.remote) return false;       // the node refuses the list over remote support (D127)
     if (!can(row.role) && !(row.id === 'support' && S.device && S.device.remote)) return false;
     if (!row.module) return true;
     var m = mod(row.module);
@@ -7515,7 +7519,8 @@
         h('p', { class: 'wsjob' + (cur && cur.part && desk.length ? ' one' : ''), id: 'wsjob', text: job, title: job || false, hidden: !job }),
         cur && cur.part && desk.length ? h('p', { class: 'wsjob all', id: 'wsjoball', text: AREA_JOBS[area] }) : null),
       h('span', { class: 'wsbrand', text: 'nxlx.mastercontrol' }),
-      h('div', { class: 'pill k', id: 'pill' }));
+      h('div', { class: 'pill k', id: 'pill' }),
+      nodesShown() ? h('button', { class: 'btn small nodesbtn', id: 'nodesbtn', text: 'Nodes', 'aria-expanded': 'false', 'aria-controls': 'nodespop', onclick: nodesToggle }) : null);
     // The tabs. Where the area is a desk, its columns are one tab ("Effect · Picture · Sound") beside the tools
     // that need the whole width; an area whose screens all share the page has no tabs there at all. Play's Shaders
     // column is the exception (D72, changed 2026-10-10): up to 1699 px the desk is Pads and Library and Shaders is a
@@ -7536,6 +7541,129 @@
     var side = h('nav', { class: 'wsside', id: 'wsside', 'aria-label': 'Areas' }, areas.map(function (a) { return area1(a, 'wsar', 'side-'); }));
     var tabs = h('nav', { class: 'tabs wstabs', id: 'wstabs', 'aria-label': 'Areas' }, areas.map(function (a) { return area1(a, 'btn', 'tab-'); }));
     return { head: head, sub: sub, side: side, tabs: tabs, key: key };
+  }
+  // ---- the node switcher (fleet step 2b, D127; the owner approved the device plan on 2026-11-07) ----------------
+  // Nodes on this network, from GET /api/nodes, under the title bar. It is asked only when Nodes is pressed or Look
+  // again: never before, and never on a timer. A node opens in a new tab over its own secure connection, with a
+  // plain link: nothing of this node (its token, its PIN, the page's address) goes with it, and the other node asks
+  // for its own pairing. What the list says is what other devices on the network say, so names are text only, a
+  // row is keyed by the node's id with its address beside the name, one id or one name at two addresses is a
+  // conflict with no Open, and a node without a secure connection has no Open either. This device remembers by id
+  // where it opened a node before, and says when that node's address changed. The browser checks the certificate
+  // against the root installed on this device; the panel cannot, so it says to stop at a certificate warning.
+  // Operator and Owner, not over remote support (the node refuses it there: network things stay in the room).
+  var NODES_KEY = 'pvj.nodes.opened';
+  function nodesShown() { return canOp() && !(S.device && S.device.remote); }
+  function nodesMemory() { try { return JSON.parse(localStorage.getItem(NODES_KEY) || '{}') || {}; } catch (e) { return {}; } }
+  function nodesRemember(n) {
+    try { var m = nodesMemory(); m[n.id] = { address: n.address, port: n.port }; localStorage.setItem(NODES_KEY, JSON.stringify(m)); } catch (e) { /* private window: nothing kept */ }
+  }
+  function nodeHost(n) {             // an address as a URL takes it; anything else is not a link
+    var a = String(n.address || '');
+    if (/^[0-9.]+$/.test(a)) return a;
+    if (/^[0-9a-fA-F:]+$/.test(a) && a.indexOf(':') >= 0) return '[' + a + ']';
+    return null;
+  }
+  function nodeWhere(n) { return n.address + (n.port && n.port !== 443 && n.port !== 80 ? ':' + n.port : ''); }
+  var NODE_TIERS = { lean: 'Pi 3 class', standard: 'Pi 4', full: 'Pi 5 or computer' };
+  // Looking for nodes, on or off (the Owner's; POST /api/nodes/discovery). Off also stops the announcement, so it is
+  // asked first.
+  function nodesDiscovery(on, control, after) {
+    if (on) return act('POST', '/api/nodes/discovery', { on: true }, after);
+    confirmRow('Stop looking? This node also stops telling other nodes it is here.', 'Stop', 'Keep looking', function () {
+      act('POST', '/api/nodes/discovery', { on: false }, after);
+    }, control);
+  }
+  var NODES_STATE = { on: 'On: this node tells other nodes it is here, and looks for them.', off: 'Off: this node neither tells other nodes it is here nor looks for them.',
+    'no-avahi': 'On, but this node cannot tell others it is here: its announcing service (avahi) is not installed. It still looks for other nodes.',
+    'avahi-stopped': 'On, but this node cannot tell others it is here: its announcing service (avahi) is stopped. It still looks for other nodes.' };
+  // The Setup page: the switch, what it does now, and the way to the list. The list is asked once, when the page opens.
+  function nodesSetupCard() {
+    var state = h('div', { class: 'hint', id: 'nodessetstate', role: 'status', text: 'Looking...' });
+    var row = h('div', { class: 'row', id: 'nodessetrow' });
+    var card = h('div', { class: 'card', id: 'nodessetcard' }, h('h2', { text: 'Looking for other nodes' }), state, row,
+      h('div', { class: 'hint', id: 'nodessetnote', text: 'Nodes on one network find each other by multicast DNS, the way node-01.local works. Only the name, kind, version and an id go out; no settings and no clip names. A venue network that blocks multicast, or Wi-Fi with client isolation, shows no nodes. The choice is this node\'s own: a settings import does not carry it.' }));
+    function draw(r) {
+      row.textContent = '';
+      if (!r.ok) { state.textContent = 'This node could not say. Open the page again.'; return; }
+      var dv = (r.data || {}).discovery || {};
+      state.textContent = (NODES_STATE[dv.state] || (dv.on ? 'On.' : 'Off.')) + (dv.detail && !NODES_STATE[dv.state] ? ' ' + dv.detail : '');
+      row.appendChild(h('button', { class: 'btn' + (dv.on ? '' : ' on pri') + ' grow', id: 'nodessetswitch', text: dv.on ? 'Stop looking for nodes' : 'Look for nodes', onclick: function (e) {
+        nodesDiscovery(!dv.on, e.currentTarget, look);
+      } }));
+      if (dv.on && document.getElementById('nodesbtn')) row.appendChild(h('button', { class: 'btn grow', id: 'nodessetlist', text: 'Show the nodes', onclick: function () {
+        if (!document.getElementById('nodespop')) nodesToggle();
+        window.scrollTo(0, 0);
+      } }));
+    }
+    function look() { api('GET', '/api/nodes').then(function (r) { if (card.isConnected) draw(r); }); }
+    setTimeout(look, 0);       // (asked once the card is on the page)
+    return card;
+  }
+  function nodesToggle() {
+    var btn = document.getElementById('nodesbtn'), open = document.getElementById('nodespop');
+    if (open) { open.remove(); if (btn) { btn.setAttribute('aria-expanded', 'false'); btn.focus(); } return; }
+    var head = document.getElementById('wshead');
+    if (!head) return;
+    head.appendChild(nodesPanel());
+    if (btn) btn.setAttribute('aria-expanded', 'true');
+  }
+  function nodesPanel() {
+    var full = can('full');
+    var list = h('div', { class: 'list', id: 'nodeslist' }, h('div', { class: 'hint', text: 'Looking for nodes on this network...' }));
+    var self = h('p', { class: 'hint', id: 'nodesself' });
+    var disc = h('div', { class: 'row', id: 'nodesdiscrow' });
+    var pop = h('section', { class: 'card nodespop', id: 'nodespop', 'aria-label': 'Nodes on this network', onkeydown: function (e) { if (e.key === 'Escape') nodesToggle(); } },
+      h('h2', { text: 'Nodes on this network' }), self, list,
+      h('p', { class: 'hint', id: 'nodesnote', text: 'A node opens in a new tab over its secure connection and asks for its own pairing. If your device warns about its certificate, stop there: it is not one of your nodes, or it has changed.' }),
+      disc,
+      h('div', { class: 'row' },
+        h('button', { class: 'btn small grow', id: 'nodesagain', text: 'Look again', onclick: look }),
+        h('button', { class: 'btn small grow', id: 'nodesclose', text: 'Close', onclick: nodesToggle })));
+    function line(n, groupsId, groupsName, mem) {
+      var name = n.name || 'A node with no name', where = nodeWhere(n), host = nodeHost(n);
+      var conflict = groupsId[n.id] > 1 || groupsName[String(n.name || '').toLowerCase()] > 1;
+      var was = mem[n.id] && (mem[n.id].address !== n.address || mem[n.id].port !== n.port) ? mem[n.id] : null;
+      var state = conflict ? { chip: 'problem', text: 'Two nodes answer as this one. Check them before opening either.' }
+        : !n.https ? { chip: 'check', text: 'No secure connection yet, so it is not opened from here.' }
+        : !host ? { chip: 'check', text: 'Its address cannot be opened from here.' } : null;
+      var url = !state ? 'https://' + host + (n.port && n.port !== 443 ? ':' + n.port : '') + '/' : null;
+      var chip = h('span', { class: 'chip' }), words = h('span', { class: 'navstate' });
+      showState(chip, words, state || { chip: null, text: '' });
+      return h('div', { class: 'item nowrow nodesrow', id: 'node-' + String(n.id).replace(/\W/g, '') + '-' + String(n.address).replace(/\W/g, '-') },
+        h('div', { class: 'nowwords' },
+          h('div', { class: 'lname', text: name }),
+          h('span', { class: 'navstate mono nodeswhere', text: where }),
+          h('span', { class: 'navstate', text: [NODE_TIERS[n.tier], n.version].filter(Boolean).join(' · ') }),
+          state ? words : null,
+          was ? h('span', { class: 'navstate nodesmoved', text: 'Its address changed: you opened it at ' + nodeWhere(was) + ' before.' }) : null),
+        h('div', { class: 'row' }, state ? chip : null,
+          url ? h('a', { class: 'btn small', href: url, target: '_blank', rel: 'noopener noreferrer', referrerpolicy: 'no-referrer', text: 'Open', 'aria-label': 'Open ' + name + ' in a new tab',
+            onclick: function () { nodesRemember(n); } }) : null));
+    }
+    function draw(r) {
+      list.textContent = ''; disc.textContent = '';
+      if (!r.ok) { list.appendChild(h('div', { class: 'hint', text: 'The list could not be read from this node. Try again.' })); return; }
+      var d = r.data || {}, dv = d.discovery || {}, nodes = d.nodes || [], mem = nodesMemory();
+      self.textContent = d.self && d.self.name ? 'This node: ' + d.self.name : '';
+      var groupsId = {}, groupsName = {}, seen = {};
+      nodes.forEach(function (n) {
+        groupsId[n.id] = (groupsId[n.id] || 0) + 1;
+        var k = String(n.name || '').toLowerCase(), at = k + ' ' + n.address;
+        if (k && !seen[at]) { seen[at] = 1; groupsName[k] = (groupsName[k] || 0) + 1; }
+      });
+      nodes.slice().sort(function (a, b) { return String(a.name).localeCompare(String(b.name)) || String(a.address).localeCompare(String(b.address)); })
+        .forEach(function (n) { list.appendChild(line(n, groupsId, groupsName, mem)); });
+      if (!dv.on) list.appendChild(h('div', { class: 'state', id: 'nodesoff', text: 'Looking for other nodes is off on this node' + (full ? '.' : ': the owner can switch it on here.') }));
+      else if (!nodes.length) list.appendChild(h('div', { class: 'state', id: 'nodesnone', text: 'No other node answers on this network.' + (dv.detail ? ' ' + dv.detail : '') }));
+      if (d.error) list.appendChild(h('div', { class: 'hint', text: String(d.error) }));
+      if (full) disc.appendChild(h('button', { class: 'btn small', id: 'nodesdisc', text: dv.on ? 'Stop looking for nodes' : 'Look for nodes', onclick: function (e) {
+        nodesDiscovery(!dv.on, e.currentTarget, look);
+      } }));
+    }
+    function look() { api('GET', '/api/nodes').then(function (r) { if (pop.isConnected) draw(r); }); }
+    look();
+    return pop;
   }
   var NAV_ID = /^(side-|sub-|tab-|nav-)/;
   // The menus are drawn again in place (another column of the build was chosen, or a page of Setup was opened): the
