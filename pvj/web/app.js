@@ -852,6 +852,7 @@
           act('POST', '/api/blackout', { on: on }, poll);
         })));
     el.addEventListener('scroll', moreBelow);
+    keepScroll(el, { when: function () { return el.classList.contains('open'); } });      // (More open: a panel over the page)
     dock = { key: key, el: el };
     return el;
   }
@@ -1015,7 +1016,8 @@
       followFallback(st.mix || {});
     }
   }
-  function openSheet(bank, index) { S.sheet = { bank: bank, index: index }; app.appendChild(sheet()); }
+  function openSheet(bank, index) { S.sheet = { bank: bank, index: index }; app.appendChild(heldSheet()); }
+  function heldSheet() { var el = sheet(); return keepScroll(el, { box: el.querySelector('.sheet') }); }      // (a dialog: the page behind it never scrolls)
   var ENDINGS = [['loop', 'Loop'], ['stop', 'Play once, then black'], ['hold', 'Play once, hold the last frame']];
   // The pad editor's choice between a clip and a shader (D73), put into the sheet that `sheet` has built: two
   // buttons under the heading, and a second list beside the clips'. The clip's own parts (the ending and the list)
@@ -8074,6 +8076,34 @@
     head.appendChild(nodesPanel());
     if (btn) btn.setAttribute('aria-expanded', 'true');
   }
+  // A scroll over a box that sits over the page stays in the box: it scrolls the box while the box has further to
+  // go, and then nothing, never the page behind it (the owner, 2026-11-09: "i notice the page underneath moving").
+  // overscroll-behavior does that only for a box that can scroll; a short one hands the wheel and the finger to the
+  // page, so they are held here. el: where the wheel and the finger are listened to; o.box: the box that scrolls (el
+  // itself by default; over el but outside the box, as on a dialog's backdrop, nothing scrolls at all); o.when: only
+  // while it says so (the strip, while More is open). A slider, and a text box with more in it than it shows, keep
+  // their own gestures, and Ctrl with the wheel (zoom) is left alone.
+  function keepScroll(el, o) {
+    o = o || {};
+    var box = o.box || el, y = null;
+    function held(e, dy) {
+      if (o.when && !o.when()) return false;
+      var t = e.target;
+      var own = t && t.closest && t.closest('input[type=range], textarea');
+      if (own && (own.tagName !== 'TEXTAREA' || own.scrollHeight > own.clientHeight)) return false;
+      if (!box.contains(t)) return true;
+      return dy > 0 ? box.scrollTop + box.clientHeight >= box.scrollHeight - 1 : dy < 0 ? box.scrollTop <= 0 : false;
+    }
+    el.addEventListener('wheel', function (e) { if (!e.ctrlKey && held(e, e.deltaY)) e.preventDefault(); }, { passive: false });
+    el.addEventListener('touchstart', function (e) { y = e.touches.length === 1 ? e.touches[0].clientY : null; }, { passive: true });
+    el.addEventListener('touchmove', function (e) {
+      if (y === null || e.touches.length !== 1) return;
+      var now = e.touches[0].clientY, dy = y - now;
+      y = now;
+      if (held(e, dy) && e.cancelable) e.preventDefault();
+    }, { passive: false });
+    return el;
+  }
   function nodesPanel() {
     var full = can('full');
     var list = h('div', { class: 'list', id: 'nodeslist' }, h('div', { class: 'hint', text: 'Looking for nodes on this network...' }));
@@ -8086,6 +8116,7 @@
       h('div', { class: 'row' },
         h('button', { class: 'btn small grow', id: 'nodesagain', text: 'Look again', onclick: look }),
         h('button', { class: 'btn small grow', id: 'nodesclose', text: 'Close', onclick: nodesToggle })));
+    keepScroll(pop);
     function line(n, groupsId, groupsName, mem) {
       var name = n.name || 'A node with no name', where = nodeWhere(n), host = nodeHost(n);
       var conflict = groupsId[n.id] > 1 || groupsName[String(n.name || '').toLowerCase()] > 1;
@@ -8216,7 +8247,7 @@
         h('main', { class: 'ws', id: 'wsmain', 'data-screen': c.key, tabindex: -1 },
           h('div', { id: 'msg', class: 'msg' + (S.msgErr ? ' err' : ''), role: 'status', text: S.msg }), desk),
         h('div', { class: 'wsdock', id: 'wsdock' }, transport(), c.tabs))));
-    if (S.sheet) app.appendChild(sheet());
+    if (S.sheet) app.appendChild(heldSheet());
     markArea();        // once more, now that the columns are on the page
     patchLive();
     dockHeight();

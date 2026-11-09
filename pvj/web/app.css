@@ -914,7 +914,7 @@ html { scroll-padding-top: calc(var(--head, 0px) + var(--sub, 0px)); scroll-padd
 /* The node switcher (fleet step 2b): the list opens as a full-width line of the title bar, in every look. */
 .nodesbtn { flex: none; }
 /* The list is a card of its own in the page colours, so its text reads on any title bar (Signal colours the bar by area) */
-.wshead .nodespop { flex: 1 0 100%; margin: 6px 0 4px; padding: 12px; max-height: 60vh; overflow: auto; background: var(--bg); color: var(--fg); border: 1.5px solid var(--ln); border-radius: 6px; text-align: left; }
+.wshead .nodespop { flex: 1 0 100%; margin: 6px 0 4px; padding: 12px; max-height: 60vh; overflow: auto; overscroll-behavior: contain; background: var(--bg); color: var(--fg); border: 1.5px solid var(--ln); border-radius: 6px; text-align: left; }
 .nodespop .nodeswhere { overflow-wrap: anywhere; }
 
 /* Graphics (D129, slice 2): text and logos the node draws on the screen. A graphic's preview is a picture the node made
