@@ -51,6 +51,14 @@ sources, and a generator stays source 1's slot 0). While a program
 is on, source 1's brightness is drawn after it (libmpv's own is held at 0) and a screenshot is the renderer's own
 picture (PNG or JPEG by the file's ending, `src/still.c`).
 
+Shader transitions, slice 1 (D130, version 0.9.0): each of source 1's two video layers can hold a generator of its own.
+Slot 0 of source 1 in `pvj-shader` now means the front layer's generator, and the front layer is the incoming one from
+the moment a fade starts, so a load, a clear or a value reaches the incoming program. A layer with a generator shows
+the generator's picture in the crossfade and in the wipes and slides; the outgoing generator goes on drawing until the
+fade ends (or is cut by a load, a stop or another crossfade), when the render thread frees it. The effects (slots 1 to 3)
+stay after the mix. `layer-generators` in the `pvj-render` property says a renderer does this. With no generator in
+either layer nothing differs from 0.8.0, and the panel does not use it yet.
+
 **Licence:** GPL-3.0-or-later (this folder only; `LICENSE`). It links libmpv, which is GPLv2 or later as Debian
 builds it. The rest of nxlx.mastercontrol is Apache-2.0 and only starts this program and talks to it over a socket.
 

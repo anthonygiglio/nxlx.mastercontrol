@@ -1245,3 +1245,22 @@ Slice 2 draws a text or a logo still, over the screen, on every tier, through mp
 | GT14 | NOT YET RUN. node-02 (and node-01): `python3 tools/osd-ass-spike.py`, and `mpv --version` | The last line says whether mpv's `osd-overlay` advances the ASS clock. On a PC with mpv 0.41 it says NO for `\move` and `\fad`, so scroll and crawl stay refused on the lean tier. If a Pi's mpv says YES, slice 3 can use it | |
 | GT15 | NOT YET RUN. A Guest paired with a guest code, guest controls open and locked: `GET` and `POST /api/graphics`, `/api/graphics/fonts`, `/api/graphics/preview.png`; and `GET /api/status` | 403 on every route; the status gives the number on the screen (`graphics_on`) and nothing else about them | Any of them 200 |
 | GT16 | NOT YET RUN. node-01: roll back to the release before this one (Update, previous) with graphics defined | The panel works; the settings key `graphics` is ignored; masks are unaffected | A panel that does not start |
+
+
+### Shader transitions: a generator on each video layer of source 1 (D130, design/shader-transitions_2026-11-08.md): NOT YET RUN on any node
+
+Rows LT1 to LT9 of the design, one table for all four slices. Slice 1 (renderer only) is built; LT1 and LT2 are its rows. No pad or button uses it before slice 3, so LT1 and LT2 drive the renderer's socket by hand. On the node, as a user that can reach the player's socket (for example `sudo -u pvj-player python3` from the installed `pvj` folder): `from pvj.player import Ipc`, then `r = Ipc("/run/pvj/player/mpv.sock").request`. With a clip playing in the front layer: `r("pvj-shader", "load", 1, 0, PATH)` puts a program file in the front layer's generator; `r("pvj-crossfade", URL, 2.0, "keep-open=no,image-display-duration=inf", MOVE)` starts a fade (MOVE is optional: `wipe-from-left`, `slide-from-left` and the others of the panel's names); a second `r("pvj-shader", "load", 1, 0, PATH2)` straight after it loads the incoming layer's generator. Program files are what `shaders.translate_native` writes for the bundled shaders (section 6 of the design). Read `r("get_property", "pvj-render")` (`flips`, `missed-vblanks`, `fade-steps`, `fx-gl-objects`, `layer-generators`) and `r("get_property", "pvj-shaders")` over each fade. Also look at `fx-gl-objects` after each fade: it must be one program's worth again within a second of the end, and 0 after a shader out to a clip. Do not run these on a node another session is deploying to.
+
+| Row | Slice | What | Passes when |
+|---|---|---|---|
+| LT1 | 1 | Shader to shader, every Mix transition (crossfade, four wipes, four slides), light pair | 60 flips a second, 0 to 3 missed, both shaders visibly moving by eye at the output, no frozen frame, `fade-steps` near 120 for 2 s |
+| LT2 | 1 | The same with a medium and a light | 59 or more flips, at most 8 missed |
+| LT3 | 2 | Clip to shader and shader to clip, each style | no `still_ms` in `transitions.last`, the clip keeps playing under the shader, no freeze before it |
+| LT4 | 2 | A shader the GPU refuses, as the target | screen unchanged, GPU's words in the panel, no black |
+| LT5 | 3 | Tap another shader pad during a fade; Stop; Blackout; a preset change in the middle | no crash, no black, the level is right, the new picture is what the last tap chose |
+| LT6 | 3 | Shader pads from MIDI and OSC at 10 taps a second for 20 s | no stuck fade, GL objects and threads flat |
+| LT7 | 4 | Medium and medium: the ladder | half-rate outgoing seen, `fades-degraded` counted, flips at least 55 |
+| LT8 | 4 | The same rows on a Pi 5 and on a desktop | the numbers recorded; the budget limit set from them |
+| LT9 | 3 | A Pi 3 on classic | a cut into a shader and the still out of one, as before, and the Mix card says so |
+
+The shader rows of slice 1 on the node are not the whole of what was tested: the headless tests (tests/test_native_shaders.py, LayerGeneratorTest and ManyLayerFadesTest) cover the pixels, the lifetimes and the cut paths on Mesa's software GPU, and say nothing about the V3D's speed.
