@@ -642,8 +642,80 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.waitForFunction(() => document.getElementById('graphic-1-text').value === 'THANK YOU, SASKATOON', null, { timeout: 8000 });
       assert.strictEqual((await get('/api/graphics')).items[0].text.value, 'THANK YOU, SASKATOON', 'a saved line goes to the screen with one tap');
       // the words for what does not exist yet
-      assert(/come in later releases/.test(await page.textContent('#graphic-1-settings')), 'motion, keys and effects are said to come later, not offered');
-      assert.strictEqual(await page.locator('#graphic-1-settings :is([id*="motion"], [id*="chroma"], [id*="luma"])').count(), 0, 'and there is no control for them');
+      assert(/Keys and effects, and showing it over or as one source, come in later releases/.test(await page.textContent('#graphic-1-settings')), 'keys and effects are said to come later, not offered');
+      assert.strictEqual(await page.locator('#graphic-1-settings :is([id*="chroma"], [id*="luma"])').count(), 0, 'and there is no control for them');
+      // motion (slice 3). The harness's player is classic mpv: None, Fade and Typewriter (stepped), Scroll and Crawl greyed out with the reason.
+      assert.strictEqual(await page.locator('#graphic-1-motion button').count(), 5, 'five motions are listed');
+      for (const k of ['none', 'fade', 'typewriter']) assert(await page.isEnabled('#graphic-1-motion-' + k), k + ' is offered on a node without the New renderer');
+      for (const k of ['scroll', 'crawl']) {
+        assert(await page.isDisabled('#graphic-1-motion-' + k), k + ' is greyed out');
+        assert.strictEqual(await page.getAttribute('#graphic-1-motion-' + k, 'title'), 'Needs the New renderer.');
+      }
+      assert.strictEqual(await page.getAttribute('#graphic-1-motion-none', 'aria-pressed'), 'true');
+      assert.strictEqual(await page.textContent('#graphic-1-motionnote'), 'This node draws graphics without the New renderer: only None, Fade and Typewriter, with steps.');
+      assert(await page.isDisabled('#graphic-1-replay'), 'with no motion there is nothing to replay');
+      const motionPosts = [];
+      page.on('request', (r) => { if (r.method() === 'POST' && r.url().endsWith('/api/graphics')) motionPosts.push(JSON.parse(r.postData() || '{}')); });
+      await page.click('#graphic-1-motion-fade');
+      await page.waitForSelector('#graphic-1-fadein');
+      assert.strictEqual(await page.getAttribute('#graphic-1-motion-fade', 'aria-pressed'), 'true');
+      assert.strictEqual((await get('/api/graphics')).items[0].motion.kind, 'fade');
+      assert(/fades in when it is shown/.test(await page.textContent('#graphic-1-motionhint')), 'what the motion does is said');
+      assert.strictEqual(await page.locator('#graphic-1-speed, #graphic-1-loop').count(), 0, 'a fade has no speed and no loop');
+      const moveSlider = (id, v) => page.evaluate(([i, x]) => { const r = document.getElementById(i); r.value = String(x); r.dispatchEvent(new Event('input', { bubbles: true })); r.dispatchEvent(new Event('change', { bubbles: true })); return r.value; }, [id, v]);
+      await moveSlider('graphic-1-fadein', 2.5);
+      await moveSlider('graphic-1-fadeout', 1.5);
+      await page.waitForFunction(async () => { const m = (await fetch('/api/graphics').then((r) => r.json())).items[0].motion; return m.seconds === 2.5 && m.out === 1.5; }, null, { timeout: 8000 });
+      assert.strictEqual(await page.textContent('label[for="graphic-1-fadein"] .k'), '2.5 s', 'the time is said in seconds');
+      await page.waitForFunction(() => !document.getElementById('graphic-1-replay').disabled, null, { timeout: 8000 });
+      motionPosts.length = 0;
+      await page.click('#graphic-1-replay');
+      await page.waitForFunction(() => true);
+      assert.deepStrictEqual(motionPosts.map((b) => Object.keys(b).sort().join()), ['id,replay'], 'Replay sends one replay of that graphic');
+      assert.strictEqual(motionPosts[0].replay, true);
+      assert.strictEqual(await post('/api/graphics', { id: (await get('/api/graphics')).items[0].id, set: { motion: { kind: 'crawl' } } }), 400, 'and the node refuses a crawl in words');
+      await page.click('#graphic-1-motion-typewriter');
+      await page.waitForSelector('#graphic-1-typetime');
+      assert.strictEqual(await page.locator('#graphic-1-fadein, #graphic-1-fadeout').count(), 0, 'the fade times go with the fade');
+      await moveSlider('graphic-1-typetime', 4);
+      await page.waitForFunction(async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].motion.seconds === 4, null, { timeout: 8000 });
+      // the same screen on a node with the New renderer's stage (the harness switches on the file): all five, speed and loop
+      const stageFile = path.join(path.dirname(info.midi_dir), 'gpu-stage');
+      require('fs').writeFileSync(stageFile, '');
+      try {
+        await go(page, 'play/pads');
+        await go(page, 'play/graphics');
+        await page.waitForSelector('#graphic-1-motion');
+        for (const k of ['none', 'fade', 'typewriter', 'scroll', 'crawl']) assert(await page.isEnabled('#graphic-1-motion-' + k), k + ' is offered on a node with the New renderer');
+        assert.strictEqual(await page.locator('#graphic-1-motionnote').count(), 0, 'and there is no note about steps');
+        await page.click('#graphic-1-motion-crawl');
+        await page.waitForSelector('#graphic-1-speed');
+        assert.strictEqual(await page.locator('#graphic-1-typetime').count(), 0);
+        assert(/like a ticker/.test(await page.textContent('#graphic-1-motionhint')));
+        await moveSlider('graphic-1-speed', 40);
+        await page.waitForFunction(async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].motion.speed === 40, null, { timeout: 8000 });
+        assert.strictEqual(await page.textContent('label[for="graphic-1-speed"] .k'), '40% of the screen a second');
+        assert.strictEqual(await page.getAttribute('#graphic-1-loop', 'aria-checked'), 'false');
+        await page.click('#graphic-1-loop');
+        await page.waitForFunction(async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].motion.loop === true, null, { timeout: 8000 });
+        await page.click('#graphic-1-motion-scroll');
+        await page.waitForSelector('#graphic-1-speed');
+        assert.strictEqual((await get('/api/graphics')).items[0].motion.kind, 'scroll');
+        assert(/rises from the bottom/.test(await page.textContent('#graphic-1-motionhint')));
+        await fitsCard('#graphicscard', 'Graphics, motion open');
+        await fitsPhone('Graphics, motion open');
+      } finally {
+        require('fs').unlinkSync(stageFile);
+      }
+      // the stage went again (a node that fell back to classic): the scroll chosen is kept and said to be shown still
+      await go(page, 'play/pads');
+      await go(page, 'play/graphics');
+      await page.waitForSelector('#graphic-1-motionstill');
+      assert(/cannot draw scroll\. It is shown still/.test(await page.textContent('#graphic-1-motionstill')));
+      assert(await page.isDisabled('#graphic-1-replay'), 'a motion this node cannot draw is not replayed');
+      assert.strictEqual((await get('/api/graphics')).items[0].motion.kind, 'scroll', 'and it is kept');
+      await page.click('#graphic-1-motion-none');
+      await page.waitForFunction(async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].motion.kind === 'none', null, { timeout: 8000 });
       await fitsCard('#graphicscard', 'Graphics, settings open');
       await fitsPhone('Graphics, settings open');
       // logo files: a text file is refused in words, a PNG is kept and gets a thumbnail
@@ -2189,7 +2261,9 @@ function startServer(env) {          // env: more for the harness's environment 
         {
           await page.evaluate(() => localStorage.setItem('pvj.nodes.opened', JSON.stringify({ x: { address: '8.8.8.8', port: 443 }, ['9'.repeat(32)]: { address: '192.168.0.9', port: '1@e' } })));
           await page.click('#nodesagain');
-          await page.waitForFunction(() => document.querySelectorAll('#nodeslist .nodesrow').length === 12);
+          // (the list already has 12 rows before Look again redraws it: wait for the answer, then for the redraw)
+          for (let i = 0; i < 100 && asked < 3; i++) await page.waitForTimeout(100);
+          await page.waitForFunction(() => document.querySelectorAll('#nodeslist .nodesrow').length === 12 && !document.querySelector('.nodesmoved'), null, { timeout: 5000 }).catch(() => {});
           assert.strictEqual(await page.locator('.nodesmoved').count(), 0, 'a remembered entry that is not well formed is ignored');
           await page.evaluate(() => localStorage.removeItem('pvj.nodes.opened'));
         }
@@ -2627,6 +2701,17 @@ function startServer(env) {          // env: more for the harness's environment 
     const nameField = () => page.evaluate(() => { const a = document.activeElement, f = document.getElementById('mapsetname'); return { cursorIn: a ? a.id : '', text: f ? f.value : null }; });
     await press('mapsave');
     await fitsCard('#mapcard', 'Mapping card');
+    {
+      // The display draws in the look's colours (PROPOSALS 6): its background is the page's --bg, not a fixed black.
+      const px = await page.evaluate(() => {
+        const c = document.getElementById('mapcanvas'), d = c.getContext('2d').getImageData(1, 1, 1, 1).data;
+        const probe = document.createElement('canvas').getContext('2d');
+        probe.fillStyle = getComputedStyle(c).getPropertyValue('--bg').trim(); probe.fillRect(0, 0, 1, 1);
+        const want = probe.getImageData(0, 0, 1, 1).data;
+        return { got: [d[0], d[1], d[2]], want: [want[0], want[1], want[2]] };
+      });
+      assert.deepStrictEqual(px.got, px.want, 'the mapping display is drawn on the look\'s --bg: ' + JSON.stringify(px));
+    }
     await page.waitForSelector('#mapsets >> option:has-text("Main stage")', { state: 'attached' });
     // Review of #86, finding 2b. The saved name is gone from the field, and stays gone through later redraws: put
     // back by a redraw it would be shown while a second Save sent an empty name, which the box refuses.
@@ -5079,6 +5164,16 @@ function startServer(env) {          // env: more for the harness's environment 
         const walked = await ws.tabWalk(page);
         await ws.menus(page);
         await ws.strip(page);
+        {
+          // Room at a desk (1440 x 900): Scenes and Guests stay in the page, so their names are not stuck (a stuck
+          // name's band of page colour covered the Walls column beside them); Walls scrolls by itself and keeps its name
+          await page.setViewportSize({ width: 1440, height: 900 });
+          await go(page, 'room/scenes');
+          await page.waitForSelector('.deskcol[data-col="guests"] > .deskhead');
+          const pos = await page.evaluate(() => ['scenes', 'guests', 'walls'].map((c) => {
+            const x = document.querySelector('.deskcol[data-col="' + c + '"] > .deskhead'); return x ? getComputedStyle(x).position : null; }));
+          assert.deepStrictEqual(pos, ['static', 'static', 'sticky'], 'on Room at 1440 only the Walls name is stuck (scenes, guests, walls): ' + JSON.stringify(pos));
+        }
         const call = (url, body) => page.evaluate(([u, b]) => fetch(u, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify(b || {}) }).then((r) => r.json().catch(() => ({}))), [url, body]);
         // no text overruns on any screen at 320, 390, 600 and 768 px, on a phone held sideways and at the desk's
         // widths (1200, 1366, 1440 and 1920 px), in both looks, with long names in the box's answers (2026-10-09)

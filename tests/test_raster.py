@@ -1014,6 +1014,17 @@ class RealGraphicsTest(unittest.TestCase):
         self.refused(text_params("\n".join(["x"] * 7)), "6 lines")
         self.refused(text_params("W" * 140, size=200, limit="16 16"), "too much text")
 
+    def test_a_ticker_may_not_be_made_smaller_it_is_refused_in_words_and_one_that_fits_is_drawn_as_it_is(self):
+        # D129 slice 3: a crawl is one wide line limited by the chip's texture size; "nofit" asks for a refusal where
+        # the ordinary request would have shrunk the text to fit
+        shrunk = self.draw(text_params("W" * 120, size=100, limit="4096 972"))
+        self.assertLessEqual(shrunk["w"], 4096)
+        self.refused(text_params("W" * 120, size=100, extra="nofit 1", limit="1024 972"), "Too long for this node's ticker")
+        fits = self.draw(text_params("WWWW", size=100, extra="nofit 1", limit="4096 972"))
+        plain = self.draw(text_params("WWWW", size=100, limit="4096 972"))
+        self.assertEqual(fits["data"], plain["data"], "nofit changes nothing for a text that fits")
+        self.assertEqual(self.draw(text_params("W" * 120, size=100, extra="nofit 0", limit="1024 972"))["w"] <= 1024, True)
+
     def test_there_is_no_markup_a_tag_or_a_brace_is_a_letter(self):
         plain = self.draw(text_params("hi"))
         tagged = self.draw(text_params("{\\an8}{\\fs200}<b>hi</b>"))

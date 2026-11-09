@@ -139,7 +139,9 @@ class PinScreen:
                         made.append(code)
             self.manual = {"until": self._clock() + seconds, "items": list(items)}
             self.tick()
-            return self.status()
+            out = self.status()
+        self._graphics_watch()
+        return out
 
     def hide(self, only=None):
         """Take the access details off the display. `only` (a presenter's request): just these items go; what a
@@ -151,10 +153,24 @@ class PinScreen:
                 self.manual = {"until": m["until"], "items": rest}
                 self._qr_sig = None           # the QR codes are drawn again without the one that went
                 self.tick()
-                return self.status()
-            self.manual = None
-            self.clear()
-            return self.status()
+                out = self.status()
+            else:
+                self.manual = None
+                self.clear()
+                out = self.status()
+        self._graphics_watch()
+        return out
+
+    def _graphics_watch(self):
+        """Tell the graphics at once that a code came on the display or went (they are held back while one is up, D129),
+        instead of leaving them to the 2 second tick. Called with no lock of ours held: the graphics ask us back."""
+        gfx = getattr(self.api, "gfx", None)
+        if gfx is None:
+            return
+        try:
+            gfx.watch()
+        except Exception as e:
+            self.log("pvj-web: graphics: %s" % e)
 
     def _current(self):
         """The request being shown, or None (an expired one counts as None). Reads only; tick() does the clearing."""
