@@ -256,6 +256,7 @@ class Api:
         self.presence = presence_mod.Presence(controllers=policy.CONTROLLERS)    # who is connected now and what each changed (D126), memory only
         auth.on_revoke = lambda ident: self.presence.forget(ident)           # a removed device is gone from it at once
         self.events = None        # EventLog or None (pvj/events.py, D125): what happened on this node
+        self.fleet = None         # fleet.Fleet or None (pvj/fleet.py, D127): the other nodes on the network, and this one's announcement
         self.https = None         # httpsbox.HttpsBox or None: the secure connection (D79), set in server.build
         self.capture = None       # Capture or None (live input from a USB capture device)
         self.ndi = None           # ndi.Input or None (the NDI helper's client; D62)
@@ -3449,6 +3450,29 @@ class Api:
     def support_login(self, body, device, client):
         return self._support(lambda b, d, c: self.support.login(b, c), body, device, client)
 
+    # --- other nodes on the network (D127, pvj/FLEET.md) --------------------------------------
+    def get_nodes(self, body, device, client):
+        """The other nodes this one can see by mDNS, and the state of its own announcement. An Operator's and an
+        Owner's; a Guest has no route. Names, addresses, ports, tiers and versions that strangers on the network
+        announced: nothing from this node's files, settings or devices."""
+        if self.fleet is None:
+            return {"self": None, "nodes": [], "scanning": False, "error": None, "discovery": {"on": False, "state": "off", "detail": ""}}
+        return self.fleet.view()
+
+    def set_nodes_discovery(self, body, device, client):
+        """{"on": bool}: the Owner's switch for announcing this node and looking for others (off removes the avahi
+        service file and stops the questions)."""
+        if not isinstance(body, dict) or set(body) != {"on"} or not isinstance(body["on"], bool):
+            raise bad('send {"on": true} or {"on": false}')
+        with self.settings.lock:
+            self.settings.data["fleet"] = {"discovery": body["on"]}
+            self.settings.save()
+        self.event("network", "Discovery of other nodes was switched %s." % ("on" if body["on"] else "off"))
+        if self.fleet is None:
+            return {"on": body["on"], "state": "off", "detail": ""}
+        self.fleet.tick(force=True)
+        return self.fleet.status()
+
     # --- multi-box sync and the video wall (see sync.py) ------------------------------------
     def get_sync(self, body, device, client):
         return self.sync.status()
@@ -5446,6 +5470,8 @@ class Api:
             ("GET", "/api/overlay"): ("view", self.get_overlay),
             ("POST", "/api/overlay"): ("live", self.set_overlay),
             ("GET", "/api/health"): ("view", self.get_health),
+            ("GET", "/api/nodes"): ("live", self.get_nodes),                       # D127: Operator and Owner; not a controller or a support login
+            ("POST", "/api/nodes/discovery"): ("full", self.set_nodes_discovery),
             ("GET", "/api/support"): ("view", self.get_support),
             ("POST", "/api/support/config"): ("full", self.set_support),
             ("POST", "/api/support/start"): ("full", self.start_support),

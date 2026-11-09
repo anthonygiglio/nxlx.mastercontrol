@@ -1848,6 +1848,39 @@ function startServer(env) {          // env: more for the harness's environment 
       await go(page, 'now/now');
       await page.waitForSelector('#nownode .nowrow', { timeout: 15000 });
       assert.strictEqual(await page.textContent('#nowfade'), await page.textContent('#fade'), 'Now\'s fade button says what the strip\'s says (D75: out, then in)');
+      // The node: the clock with Tap, and remote support (no longer under Today)
+      await page.waitForFunction(() => !/Checking/.test((document.querySelector('#nownode-clock .navstate') || {}).textContent || 'Checking'), null, { timeout: 15000 });
+      const tapped = page.waitForResponse((r) => r.url().endsWith('/api/tempo/tap') && r.request().method() === 'POST');
+      await page.click('#nownode-clock button');
+      assert.strictEqual((await tapped).status(), 200, 'Tap on Now taps the node\'s clock');
+      await page.waitForTimeout(500);                                  // half a second after the first: 120 BPM, within 30 to 300
+      await page.click('#nownode-clock button');                      // a second tap in time: the node has a tempo
+      await page.waitForFunction(() => /^Tapped: \d+(\.\d+)? BPM$/.test(document.getElementById('msg').textContent), null, { timeout: 10000 })
+        .catch(async () => { throw new Error('two taps say the tempo: ' + await page.textContent('#msg')); });
+      await page.waitForFunction(() => /^\d+(\.\d+)? BPM, tapped/.test((document.querySelector('#nownode-clock .navstate') || {}).textContent || ''), null, { timeout: 10000 })
+        .catch(async () => { throw new Error('the clock line says the tapped tempo: ' + await page.textContent('#nownode-clock .navstate')); });
+      await page.waitForSelector('#nownode-support');
+      assert.strictEqual(await page.locator('#nowtoday-support').count(), 0, 'remote support is under The node, not Today');
+      // who is here and the last change (D126): this device, and the tap just made, by "you"
+      await page.waitForFunction(() => /\d+ here: .*\(you\)/.test((document.querySelector('#nowhere .navstate') || {}).textContent || ''), null, { timeout: 10000 });
+      await page.waitForFunction(() => [...document.querySelectorAll('[id^="nowchange-"]')].some((r) => /^Tempo/.test(r.textContent) && /Changed by you, \d+ (s|min) ago/.test(r.textContent)), null, { timeout: 10000 });
+      // what the node tells a Guest (counted, nobody listed, no names), and an Operator (guests counted, not listed):
+      // the status's presence changed on the way to this page
+      {
+        let shape = null;
+        const asTold = async (route) => { const res = await route.fetch(); const d = await res.json(); d.presence = shape; await route.fulfill({ response: res, json: d }); };
+        await page.route('**/api/status', asTold);
+        shape = { window_seconds: 30, count: 3, guests: 0, devices: [], changes: [{ area: 'Mix', by: null, role: null, you: false, seconds_ago: 12 }] };
+        await page.waitForFunction(() => (document.querySelector('#nowhere .navstate') || {}).textContent === '3 here', null, { timeout: 8000 })
+          .catch(async () => { throw new Error('as a Guest is told: "3 here", not "' + await page.textContent('#nowhere .navstate') + '"'); });
+        assert.strictEqual(await page.textContent('#nowchange-0 .navstate'), 'Changed by someone, 12 s ago');
+        shape = { window_seconds: 30, count: 4, guests: 2, devices: [{ name: 'FireTab', role: 'Operator', you: true, seconds_ago: 0 }, { name: null, role: 'Owner', you: false, seconds_ago: 3 }], changes: [] };
+        await page.waitForFunction(() => (document.querySelector('#nowhere .navstate') || {}).textContent === '4 here: FireTab (you), Owner, 2 guests', null, { timeout: 8000 })
+          .catch(async () => { throw new Error('as an Operator is told: not "' + await page.textContent('#nowhere .navstate') + '"'); });
+        shape = null;                                                       // no presence in the answer: nothing old stays
+        await page.waitForFunction(() => !document.querySelector('#nowhere'), null, { timeout: 8000 });
+        await page.unroute('**/api/status', asTold);
+      }
       assert.strictEqual(await page.locator('[id^="nowneed-proj-"] button').first().textContent(), 'Try again', 'a projector that needs you has Try again');
       await page.locator('[id^="nowneed-proj-"] button').first().click();
       await page.waitForFunction(() => /asked again/.test(document.getElementById('msg').textContent), null, { timeout: 15000 });
@@ -1856,11 +1889,20 @@ function startServer(env) {          // env: more for the harness's environment 
           const res = await route.fetch(); const d = await res.json();
           d.player = { state: 'bad', text: 'The player is not running.' };
           d.osc_open = { state: 'warn', text: 'OSC is open: anyone on this network can control the node. Switch on a lock.' };
+          d.storage = [{ id: 'media', name: 'the media disk', folders: ['media'], state: 'warn', free_bytes: 14e8, total_bytes: 28e9, free_percent: 5,
+            text: 'Storage: 1.4 GB free on the media disk (5 percent): running low. Remove clips you no longer need, or move them to a bigger drive.' },
+            { id: 'state', name: 'the system disk (settings and logs)', folders: ['state'], state: 'ok', free_bytes: 9e9, total_bytes: 16e9, free_percent: 56,
+            text: 'Storage: 9.0 GB free on the system disk (settings and logs) (56 percent).' }];
           await route.fulfill({ response: res, json: d });
         };
         await page.route('**/api/health', downAndOpen);
         await page.waitForSelector('#nowneed-node-player button:text-is("Restart player")', { timeout: 15000 });
         assert.strictEqual(await page.locator('[id="nowneed-osc"]').count(), 1, 'OSC open is one line in Needs you, not two');
+        // low storage reaches Needs you, one line for the disk that is low (not the one with room), with the Library to free it
+        await page.waitForSelector('#nowneed-storage-media .chip-check', { timeout: 15000 });
+        assert.strictEqual(await page.locator('[id="nowneed-storage-state"]').count(), 0, 'a disk with room is not in Needs you');
+        assert(/^1\.4 GB free on the media disk/.test(await page.textContent('#nowneed-storage-media .navstate')), 'the storage line says what is free, once (no "Storage: Storage:")');
+        assert.strictEqual(await page.textContent('#nowneed-storage-media button'), 'Open the library', 'low media storage opens the Library, where clips are deleted');
         await page.click('#nowneed-node-player button');
         await page.waitForSelector('#nowneedslist #confirmrow');
         await page.waitForTimeout(6500);                                   // longer than a look (5 s)
@@ -3731,6 +3773,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await presenter.goto(base + '/#token=' + presenterToken);
     await presenter.waitForSelector('#nowscreen');
     assert.strictEqual(await at(presenter), 'now/now', 'a presenter starts on Now');
+    await presenter.waitForSelector('#nownode-clock button:text-is("Tap")');      // an operator reads the clock and taps it (a Guest has no Now)
     await go(presenter, 'play/pads');
     await presenter.waitForSelector('.pads');
     // A presenter's Shaders page: start, stop, skip, play one and move sliders; no switches, no settings, no upload

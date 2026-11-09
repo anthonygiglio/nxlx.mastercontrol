@@ -990,6 +990,7 @@
     if (pl.effect && window.pvjEffects && pl.running) np.textContent += ' \u00b7 effect: ' + window.pvjEffects.nice(pl.effect);
     np.title = np.textContent;          // the line is cut with dots where it is long: the whole of it is here
     nowLive(np.textContent, pl, st.mix || {});
+    nowPresence(st.presence);
     var temp = typeof sys.temp_c === 'number' ? Math.round(sys.temp_c) + '°C' : '';
     var pill = document.getElementById('pill');
     // the node's own name (the owner, 2026-11-07: "show the node's name"), without the nxlx- every node's name starts with
@@ -2082,6 +2083,9 @@
     var best = schedNextEntry(d);
     return best ? (best.off === 0 ? '' : best.day + ' ') + best.e.time + ' ' + schedWhat(best.e) : '';
   }
+  // A storage line of Health ("Storage: 1.4 GB free on the media disk (5 percent): running low. ..."), its words
+  // without the leading "Storage: ", for a place that names it Storage already.
+  function storageLine(x) { return { state: x.state, text: String(x.text || '').replace(/^Storage: /, '') }; }
   var SYS_STATE = {
     https: httpsState,
     health: function (d) {
@@ -2089,6 +2093,7 @@
       var lines = [['Power', d.power], ['Temperature', d.temperature], ['Player', d.player]];
       (d.helpers || []).forEach(function (x) { if (!x.running && x.name !== 'pvj-netd') lines.push([x.label, { state: 'bad', text: 'Not running' }]); });
       (d.projectors || []).forEach(function (x) { lines.push(['Projector ' + x.name, x]); });
+      (d.storage || []).forEach(function (x) { lines.push(['Storage', storageLine(x)]); });      // free space on each disk (pvj/health.py)
       if (d.osc_open) lines.push(['OSC', { state: 'warn', text: 'open, anyone on this network can control the node' }]);    // D83
       var worst = lines.filter(function (l) { return l[1] && l[1].state === 'bad'; })[0] || lines.filter(function (l) { return l[1] && l[1].state === 'warn'; })[0];
       if (!worst) return st(null, name + ' · all well');
@@ -2795,6 +2800,7 @@
           x.running ? 'Running' : (x.name === 'pvj-netd' ? 'Not running (only needed for network settings)' : 'Not running')));
       });
       (d.projectors || []).forEach(function (x) { body.appendChild(row('healthproj-' + x.id, 'Projector: ' + x.name, x.state, x.text)); });
+      (d.storage || []).forEach(function (x) { var l = storageLine(x); body.appendChild(row('healthstorage-' + String(x.id).replace(/\W/g, '-'), 'Storage', l.state, l.text)); });
       // D83: OSC on with every lock off. An Owner and an Operator are told (the box leaves it out for a Guest); the
       // locks are the Owner's, on Setup > OSC, so an Operator reads who can switch one on.
       if (d.osc_open) body.appendChild(row('healthosc', 'OSC', d.osc_open.state, can('full') ? d.osc_open.text.replace(/\.$/, '') + ' on the OSC page of Setup.' : d.osc_open.text.replace(/ Switch on a lock\.$/, '') + ' The owner can switch on a lock.'));
@@ -6982,7 +6988,9 @@
   // for the live parts and every 30 s for the rows of Setup; nothing is drawn under a finger (held), and an answer to
   // a Now that was left is dropped (its own element, not an id).
   var nowTimer = null, nowRowsAt = 0, NOW_SURF = {};      // NOW_SURF: the surfaces each source is on, in words
-  var NOW_TODAY = ['access', 'schedule', 'support', 'updates'];
+  var NOW_TODAY = ['access', 'schedule', 'updates'];
+  var NOW_NODE = ['soundin', 'network', 'support'];       // rows of Setup that are the node's own, under The node
+  var CLOCK_FROM = { tap: 'tapped', sound: 'from the sound', link: 'from Ableton Link', osc: 'from OSC' };
   function nowRow(id, name, state, open) {
     var chip = h('span', { class: 'chip' }), text = h('span', { class: 'navstate' });
     showState(chip, text, state);
@@ -7036,9 +7044,20 @@
         } }),
         hasRoom ? h('button', { class: 'btn small', id: 'nowtowalls', text: 'Open the walls', onclick: function () { go('room/walls'); } }) : null));
     var nodeList = h('div', { class: 'list', id: 'nownode' });
-    var node = h('div', { class: 'card', id: 'nownodecard' }, h('h2', { text: 'The node' }), nodeList);
+    // the node's clock (D116) and Ableton Link (D117), with Tap: a line of its own, drawn when its answer comes
+    // (read by an owner or an operator; Tap only in the room: the node refuses it to a support login, D116)
+    var clockRow = canOp() ? nowRow('nownode-clock', 'Clock', { chip: null, text: 'Checking...' }, canOp() && !(S.device && S.device.remote) ? ['Tap', function () {
+      act('POST', '/api/tempo/tap', {}, function (d) {
+        var bpm = d && d.clock && d.clock.bpm;
+        say(bpm ? 'Tapped: ' + bpm + ' BPM' : 'Tapped. Tap again in time.');
+        askClock();
+      });
+    }] : null) : null;
+    var node = h('div', { class: 'card', id: 'nownodecard' }, h('h2', { text: 'The node' }), clockRow ? h('div', { class: 'list', id: 'nowclock' }, clockRow) : null, nodeList);
     var todayList = h('div', { class: 'list', id: 'nowtoday' });
-    var today = h('div', { class: 'card', id: 'nowtodaycard' }, h('h2', { text: 'Today' }), todayList);
+    // who is here and what they last changed (D126): drawn from the status the panel asks for every second
+    var presence = h('div', { class: 'list', id: 'nowpresence' });
+    var today = h('div', { class: 'card', id: 'nowtodaycard' }, h('h2', { text: 'Today' }), presence, todayList);
     var root = h('div', { class: 'screen nowscreen', id: 'nowscreen' }, needs, h('div', { class: 'nowgrid' }, screens, room, node, today));
     var last = { health: null, sources: null, room: null, events: null, mapper: null };
 
@@ -7077,6 +7096,13 @@
           need('proj-' + x.id, x.name, x, live ? ['Try again', function () {        // asks the projector how it is, now
             act('POST', '/api/projector', { id: x.id, action: 'state' }, function () { say(x.name + ': asked again.'); refresh(); });
           }] : null);
+        });
+        // a disk running low or full (pvj/health.py): clips are removed in the Library (Delete is the owner's), so the
+        // media disk's line opens it for an owner; any other disk, or for an operator, opens Health
+        (hd.storage || []).forEach(function (x) {
+          if (!troubled(x)) return;
+          var media = (x.folders || []).indexOf('media') >= 0 && full && hasScreen('play/library');
+          need('storage-' + String(x.id).replace(/\W/g, '-'), 'Storage', storageLine(x), media ? ['Open the library', function () { go('play/library'); }] : ['Open', nowOpen('health')]);
         });
         if (hd.osc_open && full) need('osc', 'OSC', hd.osc_open, ['Open', nowOpen('osc')]);
       }
@@ -7172,6 +7198,11 @@
         var busy = hd.cpu_percent !== null && hd.cpu_percent >= 90;
         nodeList.appendChild(nowRow('nownode-load', 'Load', { chip: busy ? 'check' : 'ready', text: hd.cpu_percent === null ? '?' : hd.cpu_percent + '% of all cores' }, null));
         if (hd.addresses && hd.addresses.length) nodeList.appendChild(nowRow('nownode-address', 'Address', { chip: null, text: hd.addresses[0] }, null));
+        // sound in, the network and remote support, each as its row of Setup says it
+        NOW_NODE.forEach(function (id) {
+          var r = sysRows().filter(function (x) { return x.id === id; })[0];
+          if (r && rowShown(r)) nodeList.appendChild(nowRow('nownode-' + id, r.name, sysState(r), ['Open', nowOpen(id)]));
+        });
         nodeList.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn small', id: 'nowtohealth', text: 'Open Health', onclick: nowOpen('health') })));
       });
       // Today: who is connected, the schedule, remote support, updates (each row of Setup as the index says it)
@@ -7190,8 +7221,21 @@
         todayList.appendChild(ev);
       });
     }
+    // the clock: its tempo, who set it, and Link's peers (GET /api/tempo), drawn into its own line
+    function askClock() {
+      if (!clockRow) return;
+      api('GET', '/api/tempo').then(function (r) {
+        if (!root.isConnected || pressing()) return;
+        if (!r.ok) { showState(clockRow.querySelector('.chip'), clockRow.querySelector('.navstate'), { chip: null, text: 'Not answering' }); return; }
+        var c = r.data.clock || {}, l = r.data.link || {};
+        var words = c.state === 'running' ? c.bpm + ' BPM' + (c.source ? ', ' + (CLOCK_FROM[c.source] || c.source) : '') : 'No tempo yet: tap it, or let the sound or Link set it';
+        if (l.on) words += l.peers ? ' \u00b7 following Ableton Link, ' + plural(l.peers, 'peer') : ' \u00b7 Ableton Link on, no peers yet';
+        showState(clockRow.querySelector('.chip'), clockRow.querySelector('.navstate'), { chip: c.state === 'running' ? 'active' : 'off', text: words });
+      });
+    }
     function look() {
       clearTimeout(nowTimer);
+      if (document.visibilityState !== 'hidden') askClock();
       // a hidden tab asks nothing (as poll() does): it looks again in 5 s, and asks once it is shown
       if (document.visibilityState === 'hidden') { nowTimer = setTimeout(refresh, 5000); return; }
       // the rows of Setup every 30 s, on their own: a slow one does not hold up the 5 s looks
@@ -7215,6 +7259,31 @@
     nowRowsAt = 0;
     look();
     return root;
+  }
+  // Who is connected now and the last changes (D126), as the node tells this device (it leaves out what this role
+  // may not know: an Operator is told the Owner's device by its role, a support login no names). Calm: two lines and
+  // up to three changes, under Today, kept up to date by the status the panel already asks for every second.
+  function presenceAgo(s) { if (typeof s !== 'number' || !(s >= 0)) return ''; return s < 60 ? s + ' s ago' : s < 3600 ? Math.round(s / 60) + ' min ago' : Math.round(s / 3600) + ' h ago'; }      // (its own name: agoWords is the OSC page's)
+  function nowPresence(p) {
+    var box = document.getElementById('nowpresence');
+    if (!box) return;
+    if (!p) { box.textContent = ''; box.dataset.words = ''; return; }      // no presence in the answer: nothing old is left
+    var devices = Array.isArray(p.devices) ? p.devices : [], changes = Array.isArray(p.changes) ? p.changes : [];
+    var who = devices.map(function (d) { return (d.name || d.role) + (d.you ? ' (you)' : ''); });
+    // the guests the node counts and does not list to this device (the Owner's list has them by name already)
+    var guests = Math.max(0, (p.guests || 0) - devices.filter(function (d) { return d.role === 'Guest'; }).length);
+    if (guests) who.push(plural(guests, 'guest'));
+    var lines = [nowRow('nowhere', 'Connected now', { chip: null, text: (p.count || 0) + ' here' + (who.length ? ': ' + who.join(', ') : '') }, null)];
+    changes.slice(0, 3).forEach(function (c, i) {
+      var by = c.you ? 'you' : c.by ? c.by + (c.role ? ' (' + c.role + ')' : '') : c.role || 'someone';
+      var when = presenceAgo(c.seconds_ago);
+      lines.push(nowRow('nowchange-' + i, c.area, { chip: null, text: 'Changed by ' + by + (when ? ', ' + when : '') }, null));
+    });
+    var words = lines.map(function (l) { return l.textContent; }).join('|');
+    if (box.dataset.words === words) return;                  // the same as a second ago: nothing is drawn again
+    box.dataset.words = words;
+    box.textContent = '';
+    lines.forEach(function (l) { box.appendChild(l); });
   }
   // Source 1's line on Now: what the strip says plays, the place in the clip and the transition (patchLive, every second)
   function nowLive(what, pl, mix) {
