@@ -992,7 +992,9 @@
     nowLive(np.textContent, pl, st.mix || {});
     var temp = typeof sys.temp_c === 'number' ? Math.round(sys.temp_c) + '°C' : '';
     var pill = document.getElementById('pill');
-    if (pill) pill.textContent = [sys.board, temp, pl.running ? 'OK' : 'No player'].filter(Boolean).join(' · ');
+    // the node's own name (the owner, 2026-11-07: "show the node's name"), without the nxlx- every node's name starts with
+    var nodeName = String(sys.name || '').replace(/^nxlx-/i, '');
+    if (pill) pill.textContent = [nodeName || sys.board, temp, pl.running ? 'OK' : 'No player'].filter(Boolean).join(' · ');
     var f = document.getElementById('freeze'); if (f) f.textContent = pl.paused ? 'Resume' : 'Freeze';
     fadeShow(document.getElementById('fade'), st.mix);
     var b = document.getElementById('black'); if (b) { var on = st.mix && st.mix.blackout; b.classList.toggle('flash', !!on); b.textContent = on ? 'Show' : 'Blackout'; }      // flashing for as long as it is on, as the fade button is (D75)
@@ -1922,7 +1924,7 @@
     var rows = [
       { id: 'health', group: 'top', name: 'Health', role: 'view', url: '/api/health',
         blurb: 'Whether the node is well: its power supply, temperature, the player and the helpers it needs, and each projector\'s own warnings.',
-        body: function () { return [healthCard()]; } },
+        body: function () { return can('full') ? [healthCard(), eventsCard()] : [healthCard()]; } },
       { id: 'projectors', group: 'everyday', name: 'Projectors', role: 'live', module: 'projector', url: '/api/projectors',
         blurb: 'Switch the projectors on the network on and off, choose their input, mute them, and see their state, lamp hours and warnings. On an Epson also freeze, brightness, Eco and the colour mode.',
         confirmOff: function (ask) { ask('The node stops checking the projectors. They stay as they are.'); },
@@ -2715,6 +2717,59 @@
         } }))));
     }
     return cards;
+  }
+  // ---- What happened (D125): the node's own log of events, the Owner's (GET /api/events) ----------------------
+  // Newest first: when (in the time of the device the panel is on), what kind, the node's own short sentence, how
+  // many times, and (for the Owner, never over a support login) the device or address it was about. The whole log is
+  // on Health; Now shows the last few.
+  var EVENT_KINDS = { boot: 'Node', player: 'Player', renderer: 'Renderer', update: 'Update', projector: 'Projector', network: 'Network', signin: 'Sign-in', scene: 'Scene' };
+  function eventWhen(t) {
+    var d = new Date(t * 1000), now = new Date(), two = function (n) { return (n < 10 ? '0' : '') + n; };
+    var hm = two(d.getHours()) + ':' + two(d.getMinutes());
+    return d.toDateString() === now.toDateString() ? hm : d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }) + ', ' + hm;
+  }
+  function eventRow(e, id) {
+    return h('div', { class: 'item nowrow eventrow', id: id },
+      h('div', { class: 'nowwords' }, h('div', { class: 'lname', text: (EVENT_KINDS[e.kind] || e.kind) + ' \u00b7 ' + eventWhen(e.t) }),
+        h('span', { class: 'navstate', text: e.text + (e.n > 1 ? ' (' + e.n + ' times)' : '') + (e.who ? ' \u00b7 ' + e.who : '') })));
+  }
+  function eventsCard() {
+    var list = h('div', { class: 'list', id: 'eventlist' }, h('div', { class: 'hint', text: 'Loading...' }));
+    var note = h('div', { class: 'hint', id: 'eventnote' });
+    var shown = 20, last = null, timer = null;
+    var more = h('button', { class: 'btn small', id: 'eventmore', text: 'Show more', hidden: true, onclick: function () { shown += 50; draw(); } });
+    var card = h('div', { class: 'card', id: 'eventscard' }, h('h2', { text: 'What happened' }), list,
+      h('div', { class: 'row' }, more, h('button', { class: 'btn small', id: 'eventrefresh', text: 'Refresh', onclick: function () { look(); } })), note);
+    function draw() {
+      keepCursor(list, function () {
+        list.textContent = '';
+        var rows = last.events || [];
+        rows.slice(0, shown).forEach(function (e, i) { list.appendChild(eventRow(e, 'event-' + i)); });
+        if (!rows.length) list.appendChild(h('div', { class: 'state', id: 'eventnone', text: 'Nothing has happened yet that the node keeps.' }));
+        more.hidden = rows.length <= shown;
+      });
+      note.textContent = last.note || '';
+    }
+    function again() { clearTimeout(timer); timer = setTimeout(function () { if (card.isConnected) look(); }, 30000); }
+    function look() {
+      clearTimeout(timer);
+      if (document.visibilityState === 'hidden') return again();          // a hidden tab asks nothing (as poll() does)
+      api('GET', '/api/events').then(function (r) {
+        if (!card.isConnected && card.dataset.shown) return;              // the page was left: nothing more is asked
+        card.dataset.shown = '1';
+        again();                                                          // (one timer, however often Refresh is pressed)
+        if (held('events', look)) return;
+        if (!r.ok) {                                                      // nothing of an older answer is left standing
+          last = null; more.hidden = true; note.textContent = '';
+          list.textContent = ''; list.appendChild(h('div', { class: 'hint', id: 'eventerr', text: (r.data.error || 'Not available') + '.' }));
+          return;
+        }
+        last = r.data;
+        draw();
+      });
+    }
+    look();
+    return card;
   }
   // ---- health (the old Powersupply, Check Services and GPU Usage buttons, in plain words) ----
   var healthTimer = null;
@@ -3736,13 +3791,14 @@
   var renderForm = { name: '', host: '', port: '7400', ndi: '', profile: 'max' };
   var RENDER_PICTURE = { none: 'No NDI picture chosen', off: 'NDI input is off', not_allowed: 'Its NDI source is not allowed any more',
     unknown: 'The node cannot tell whether its picture is there', here: 'Its picture is on the network', away: 'Its picture is not on the network now' };
-  function agoWords(s) { return s == null ? '' : s < 60 ? s + ' s ago' : s < 7200 ? Math.round(s / 60) + ' min ago' : Math.round(s / 3600) + ' h ago'; }
+  // (its own name: the controllers' card has an agoWords of its own, declared later, which would win: 2026-11-08)
+  function renderAgo(s) { return s == null ? '' : s < 60 ? s + ' s ago' : s < 7200 ? Math.round(s / 60) + ' min ago' : Math.round(s / 3600) + ' h ago'; }
   function renderState(n) {
     if (n.showing) return st('active', 'Its picture is on the screen');
     if (n.error) return st('problem', n.error);
     if (n.picture === 'away' || n.picture === 'not_allowed' || n.picture === 'unknown') return st('check', RENDER_PICTURE[n.picture]);
     if (n.picture === 'none' || n.picture === 'off') return st('setup', RENDER_PICTURE[n.picture]);
-    return st('ready', n.last_sent_ago != null ? 'Cue sent ' + agoWords(n.last_sent_ago) + ' (no reply over UDP)' : RENDER_PICTURE.here);
+    return st('ready', n.last_sent_ago != null ? 'Cue sent ' + renderAgo(n.last_sent_ago) + ' (no reply over UDP)' : RENDER_PICTURE.here);
   }
   // A cue's arguments as the person types them: one row each, a type and a value, at most `max`.
   function argRows(args, max, idp) {
@@ -4042,14 +4098,14 @@
     var sendState = { node: '', address: '', args: [], show: false };
     function draw(d) {
       body.textContent = '';
-      if (d.back) body.appendChild(h('div', { class: 'hint warn', id: 'renderback', role: 'status', text: 'Went back from ' + d.back.node + '\'s picture ' + agoWords(d.back.ago) + ': ' + d.back.why + '; ' + d.back.to + '.' }));
+      if (d.back) body.appendChild(h('div', { class: 'hint warn', id: 'renderback', role: 'status', text: 'Went back from ' + d.back.node + '\'s picture ' + renderAgo(d.back.ago) + ': ' + d.back.why + '; ' + d.back.to + '.' }));
       if (!d.nodes.length) body.appendChild(h('div', { class: 'empty', id: 'renderempty', text: 'No render nodes yet.' + (full ? ' Add one below: its name, its address on this network and its OSC port.' : ' The owner adds them.') }));
       d.nodes.forEach(function (n) {
         var s = renderState(n);
         body.appendChild(listRow({ cls: 'render-entry', data: n.id, name: n.name, key: 'render-' + n.id, redraw: function () { draw(d); },
           sub: [full && n.host ? n.host + ' : ' + n.port : '', n.ndi_name ? 'NDI: ' + n.ndi_name : '', n.profile !== 'generic' && d.profiles[n.profile] ? d.profiles[n.profile].name : ''].filter(Boolean).join(' · '),
           state: h('div', { class: 'state' }, h('span', { class: 'chip chip-' + s.chip, text: CHIPS[s.chip] || '' }), ' ', h('span', { text: s.text })),
-          note: n.last_address ? 'Last cue: ' + n.last_address + ', sent ' + agoWords(n.last_sent_ago) : null,
+          note: n.last_address ? 'Last cue: ' + n.last_address + (n.last_sent_ago != null ? ', sent ' + renderAgo(n.last_sent_ago) : '') : null,
           more: full ? [h('button', { class: 'btn', text: n.still ? 'Never count a still picture as gone' : 'A still picture counts as gone after ' + d.still.default + ' s',
             onclick: function () { act('POST', '/api/render', { update: { id: n.id, still: n.still ? 0 : d.still.default } }, function (data) { draw(data); }); } }),
             h('button', { class: 'btn', text: 'Remove', 'aria-label': 'Remove ' + n.name, onclick: function (e) {
@@ -7062,7 +7118,7 @@
     var todayList = h('div', { class: 'list', id: 'nowtoday' });
     var today = h('div', { class: 'card', id: 'nowtodaycard' }, h('h2', { text: 'Today' }), todayList);
     var root = h('div', { class: 'screen nowscreen', id: 'nowscreen' }, needs, h('div', { class: 'nowgrid' }, screens, room, node, today));
-    var last = { health: null, sources: null, room: null, output: null };
+    var last = { health: null, sources: null, room: null, output: null, events: null };
 
     function rows() {               // the rows of Setup that Now reads, each from its own page's answer
       return sysRows().filter(function (r) { return rowShown(r) && rowFetchable(r); });
@@ -7072,7 +7128,8 @@
       var asked = {};
       return Promise.all(rows().map(function (row) {
         return (asked[row.url] = asked[row.url] || api('GET', row.url)).then(function (r) { keepAnswer(row, r); });
-      }).concat(full ? [api('GET', '/api/output').then(function (r) { last.output = r.ok ? r.data : null; })] : []));
+      }).concat(full ? [api('GET', '/api/output').then(function (r) { last.output = r.ok ? r.data : null; }),
+                        api('GET', '/api/events').then(function (r) { if (r.ok) last.events = r.data.events; })] : []));      // (a failed look keeps the last rows)
     }
     function draw() {
       var hd = last.health;
@@ -7137,6 +7194,13 @@
           var r = sysRows().filter(function (x) { return x.id === id; })[0];
           if (r && rowShown(r)) todayList.appendChild(nowRow('nowtoday-' + id, r.name, sysState(r), ['Open', nowOpen(id)]));
         });
+        // what happened: the node's last five events (D125), the whole log on Health
+        if (!full) return;
+        var ev = h('div', { class: 'list', id: 'nowevents' }, h('div', { class: 'k', text: 'What happened' }));
+        (last.events || []).slice(0, 5).forEach(function (e, i) { ev.appendChild(eventRow(e, 'nowevent-' + i)); });
+        if (last.events && !last.events.length) ev.appendChild(h('div', { class: 'state', text: 'Nothing yet.' }));
+        ev.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn small', id: 'nowtoevents', text: 'The whole log', onclick: nowOpen('health') })));
+        todayList.appendChild(ev);
       });
     }
     function look() {

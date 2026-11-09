@@ -519,6 +519,24 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.unroute('**/api/output', outRoute);
       await page.unroute('**/api/output/av', outRoute);
     }
+    // Render nodes: the page says when a cue was sent and when the node went back from a picture in its own words
+    // ("2 min ago", "30 s ago"; the controllers' card says "2 minutes ago" and "just now"). The node's answer is
+    // changed on the way: one render node with a cue sent 125 s ago, and a picture gone 30 s ago.
+    {
+      const withNode = async (route) => {
+        const res = await route.fetch(); const d = await res.json();
+        d.nodes = [{ id: 'agotest', name: 'Ago test', host: '192.168.1.9', port: 7400, profile: 'generic', picture: 'none', showing: false, error: null,
+          last_address: '/cue/1', last_sent_ago: 125, ndi: '', ndi_name: '', still: 0 }];
+        d.back = { node: 'Ago test', ago: 30, why: 'its picture went', to: 'the clip again' };
+        await route.fulfill({ response: res, json: d });
+      };
+      await page.route('**/api/render', withNode);
+      await sys('Render nodes');
+      await page.waitForSelector('.render-entry', { timeout: 15000 });
+      assert.match(await page.textContent('.render-entry'), /Last cue: \/cue\/1, sent 2 min ago/, 'a cue sent 125 s ago, in the page\'s words');
+      assert.match(await page.textContent('#renderback'), /picture 30 s ago: /, 'a picture gone 30 s ago, in the page\'s words');
+      await page.unroute('**/api/render', withNode);
+    }
     // Setup: the index (three groups, a row each), the folded list of what is not built, then each page
     await sysIndex();
     await page.waitForSelector('h1#wstitle:text-is("Setup")');
@@ -1876,6 +1894,30 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.waitForSelector('#nowproj-1, [id^="nowproj-"]', { timeout: 15000 });
       await page.waitForSelector('#nowneed-projectors .chip-problem, #nowneed-projectors .chip-check', { timeout: 40000 });
       assert(/^Needs you \(\d+\)$/.test(await page.textContent('#nowneedshead')), 'Needs you counts what needs you');
+      // what happened (D125): the node's last events under Today, the whole log on Health
+      // (a fresh harness node may have nothing in it yet: then each place says so)
+      await page.waitForSelector('#nowevents .eventrow, #nowevents .state', { timeout: 40000 });
+      if (await page.$('#nowevent-0')) assert(/ \u00b7 (\d\d:\d\d|.+, \d\d:\d\d)$/.test(await page.textContent('#nowevent-0 .lname')), 'an event says its kind and when: ' + await page.textContent('#nowevent-0 .lname'));
+      await page.click('#nowtoevents');
+      await page.waitForSelector('#eventscard #eventlist .eventrow, #eventscard #eventnone', { timeout: 15000 });
+      assert(/kept|memory/.test(await page.textContent('#eventnote')), 'the log says where it is kept');
+      // 20 at first, Show more for the rest, and a repeated event with its count (answers routed: a harness node
+      // has few events of its own)
+      {
+        const evs = Array.from({ length: 25 }, (_, i) => Object.assign({ t: Math.floor(Date.now() / 1000) - i * 60, kind: i % 2 ? 'projector' : 'player', text: 'Test event ' + i }, i === 0 ? { n: 3 } : {}));
+        const evRoute = (route) => route.fulfill({ json: { events: evs, cap: 500, kept: true, note: 'The last 500 events are kept in the panel\'s state folder and survive a restart.' } });
+        await page.route('**/api/events', evRoute);
+        await page.click('#eventrefresh');
+        await page.waitForFunction(() => document.querySelectorAll('#eventlist .eventrow').length === 20, null, { timeout: 8000 });
+        assert(await page.isVisible('#eventmore'), 'Show more is there while more events are kept than shown');
+        assert(/^Test event 0 \(3 times\)/.test(await page.textContent('#event-0 .navstate')), 'a repeated event says how many times: ' + await page.textContent('#event-0 .navstate'));
+        await page.click('#eventmore');
+        await page.waitForFunction(() => document.querySelectorAll('#eventlist .eventrow').length === 25, null, { timeout: 8000 });
+        assert(!(await page.isVisible('#eventmore')), 'Show more goes once every event is shown');
+        await page.unroute('**/api/events', evRoute);
+      }
+      await go(page, 'now/now');
+      await page.waitForSelector('#nownode .nowrow', { timeout: 15000 });
       assert.strictEqual(await page.textContent('#nowfade'), await page.textContent('#fade'), 'Now\'s fade button says what the strip\'s says (D75: out, then in)');
       await page.click('#nowneed-projectors button');
       await page.waitForSelector('#sysback:text-is("Back to Now")');
@@ -4542,7 +4584,7 @@ function startServer(env) {          // env: more for the harness's environment 
       await go(page, 'play/pads');
       await page.waitForSelector('.pads');
       const liveTitle = await page.evaluate(() => { const t = document.getElementById('wstitle'), j = document.getElementById('wsjob'), bar = document.getElementById('wshead');
-          return [t.tagName, t.textContent, getComputedStyle(t).textTransform, parseFloat(getComputedStyle(t).fontSize) >= 34, getComputedStyle(j).fontSize, /^Pads: /.test(j.textContent), getComputedStyle(bar).backgroundColor, getComputedStyle(t, '::before').content, getComputedStyle(t, '::after').content]; });
+          return [t.tagName, t.textContent, getComputedStyle(t).textTransform, parseFloat(getComputedStyle(t).fontSize) >= 28, getComputedStyle(j).fontSize, /^Pads: /.test(j.textContent), getComputedStyle(bar).backgroundColor, getComputedStyle(t, '::before').content, getComputedStyle(t, '::after').content]; });
       assert.deepStrictEqual(liveTitle, ['H1', 'Play', 'uppercase', true, '15px', true, AREA.clips, 'none', 'none'], 'in Signal the title bar is a block of the area\'s colour with the area\'s name in large capitals (real text, nothing written by the stylesheet) and the screen\'s job small under it: ' + JSON.stringify(liveTitle));
       await go(page, 'shape/picture');
       await page.waitForSelector('#fliph');

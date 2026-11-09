@@ -12,6 +12,8 @@ blamed undervoltage for Wi-Fi drops, the rainbow square and damaged SD cards. He
 * CPU load and memory, from /proc;
 * the player: running, hardware decode, dropped frames a second while playing;
 * the helpers (network, system, remote support): answering or not;
+* storage: free space on the media folder's disk and the state folder's disk, one line for each distinct filesystem (statvfs,
+  no program started), with plain-word warnings before clips stop fitting;
 * the projectors (when that module is on): lamp hours and their own warnings, as last read in the background;
 * the box's addresses, to open the panel from another device.
 
@@ -27,6 +29,17 @@ import time
 from . import paths
 
 CHECK_EVERY = 5.0
+# Storage thresholds, for clips: a 1080p H.264 clip is about 75 to 150 MB a minute and a ProRes one several times that, so 2 GB
+# is a few minutes to an hour of room for the next upload, and 500 MB is less than one more clip. The percentage matters on a
+# small card (a 16 GB card at 10 percent is 1.6 GB), and not on a big drive (10 percent of 4 TB is 400 GB, far more than needed),
+# so the percentage counts only while the free space is also small: a warning under 10 percent only below 20 GB free, and
+# "bad" under 3 percent only below 2 GB free. 1 GB is 10**9 bytes, as drives are sold and as a person reads it.
+GB = 10 ** 9
+WARN_FREE, BAD_FREE = 2 * GB, GB // 2
+WARN_PERCENT, BAD_PERCENT = 10, 3
+WARN_PERCENT_BELOW = 20 * GB        # the percentage rules, and only while free space is under these
+BAD_PERCENT_BELOW = WARN_FREE
+STORAGE_CACHE = 10.0                # seconds: the answer is kept this long, so a poll every second asks the disk once in ten
 WARM_C, HOT_C = 80.0, 85.0          # a Pi 4 starts to slow down around 80 C and slows hard at 85 C
 
 
@@ -36,6 +49,21 @@ def _read(path):
             return f.read().strip()
     except OSError:
         return None
+
+
+def size_words(n):
+    """12.3 GB, or 450 MB under a GB, as a person reads it."""
+    return ("%.1f GB" % (n / GB)) if n >= GB else ("%d MB" % round(n / 10 ** 6))
+
+
+def storage_state(free, total):
+    """"ok", "warn" or "bad" for `free` of `total` bytes (see the thresholds above)."""
+    percent = 100.0 * free / total if total else 100.0
+    if free < BAD_FREE or (free < BAD_PERCENT_BELOW and percent < BAD_PERCENT):
+        return "bad"
+    if free < WARN_FREE or (free < WARN_PERCENT_BELOW and percent < WARN_PERCENT):
+        return "warn"
+    return "ok"
 
 
 def undervoltage_alarm(sysfs="/sys"):
@@ -71,8 +99,10 @@ def memory(proc="/proc"):
 
 
 class Health:
-    def __init__(self, api, rundir, sysfs="/sys", proc="/proc", clock=time.monotonic, log=print):
+    def __init__(self, api, rundir, sysfs="/sys", proc="/proc", clock=time.monotonic, log=print, statvfs=os.statvfs, stat=os.stat):
         self.api, self.rundir, self.sysfs, self.proc, self._clock, self.log = api, rundir, sysfs, proc, clock, log
+        self._statvfs, self._stat = statvfs, stat
+        self._storage = None          # (time, rows)
         self._stop = threading.Event()
         self._thread = None
         self._drops = None            # (time, count) for a rate
@@ -194,6 +224,64 @@ class Health:
             pass
         return out
 
+    def _folders(self):
+        """[(id, label, path)] of the folders whose disks are looked at: the clips' and the state folder (settings, the event
+        log), the latter from pvj/paths.py."""
+        out = []
+        media = getattr(self.api, "media_dir", None)
+        if isinstance(media, str) and media:
+            out.append(("media", "media", media))
+        out.append(("state", "state", paths.state_dir()))
+        return out
+
+    def storage(self):
+        """One row for each distinct filesystem under those folders (by st_dev): {"id", "name", "folders", "state", "text",
+        "free_bytes", "total_bytes", "free_percent"}. A missing or unreadable folder gets a row that says so, and nothing
+        here raises. Kept for STORAGE_CACHE seconds."""
+        now = self._clock()
+        with self.lock:
+            if self._storage and now - self._storage[0] < STORAGE_CACHE:
+                return [dict(r) for r in self._storage[1]]
+        rows, by_dev = [], {}
+        for ident, label, path in self._folders():
+            try:
+                dev = self._stat(path).st_dev
+                v = self._statvfs(path)
+                total, free = v.f_blocks * v.f_frsize, v.f_bavail * v.f_frsize
+            except (OSError, ValueError, OverflowError, AttributeError):
+                rows.append({"id": ident, "name": "the %s folder" % label, "folders": [ident], "state": "warn", "free_bytes": None,
+                             "total_bytes": None, "free_percent": None,
+                             "text": "Storage: the %s folder is missing or cannot be read." % label})
+                continue
+            if dev in by_dev:                       # the same filesystem as an earlier folder: one line for both
+                by_dev[dev]["folders"].append(ident)
+                continue
+            row = {"id": ident, "folders": [ident], "free_bytes": free, "total_bytes": total,
+                   "free_percent": round(100.0 * free / total) if total else None}
+            by_dev[dev] = row
+            rows.append(row)
+        for row in rows:
+            if row.get("text"):
+                continue
+            folders = row["folders"]
+            row["id"] = "+".join(folders)
+            row["name"] = ("the node's disk (clips and settings)" if len(folders) > 1 else
+                           "the media disk" if folders == ["media"] else "the system disk (settings and logs)")
+            if not row["total_bytes"]:
+                row.update(state="unknown", text="Storage: the size of %s is not reported." % row["name"])
+                continue
+            row["state"] = storage_state(row["free_bytes"], row["total_bytes"])
+            text = "Storage: %s free on %s" % (size_words(row["free_bytes"]), row["name"])
+            if row["state"] == "ok":
+                row["text"] = "%s (%d percent)." % (text, row["free_percent"])
+            elif row["state"] == "warn":
+                row["text"] = "%s (%d percent): running low. Remove clips you no longer need, or move them to a bigger drive." % (text, row["free_percent"])
+            else:
+                row["text"] = "%s (%d percent): almost full. New clips and settings may fail to save. Free space now." % (text, row["free_percent"])
+        with self.lock:
+            self._storage = (now, [dict(r) for r in rows])
+        return rows
+
     def projectors(self):
         """The projectors' last known state and warnings (lamp hours, fan, lamp, temperature, cover, filter),
         from the background check; nothing is asked here. Empty while the Projector control module is off."""
@@ -207,10 +295,11 @@ class Health:
         mem, total = memory(self.proc)
         parts = {"power": self.power(), "temperature": self.temperature(), "player": self.player(),
                  "cpu_percent": load, "memory_percent": mem, "memory_mb": total,
-                 "helpers": self.helpers(), "addresses": self.addresses(), "projectors": self.projectors()}
+                 "helpers": self.helpers(), "addresses": self.addresses(), "projectors": self.projectors(), "storage": self.storage()}
         states = [parts[k]["state"] for k in ("power", "temperature", "player")]
         states += ["bad" for h in parts["helpers"] if not h["running"] and h["name"] != "pvj-netd"]
         states += [p["state"] for p in parts["projectors"]]      # a projector's own warning or error; "unknown" (no answer) is not one
+        states += [r["state"] for r in parts["storage"]]         # free space running low or out
         parts["overall"] = "bad" if "bad" in states else ("warn" if "warn" in states else "ok")
         return parts
 
