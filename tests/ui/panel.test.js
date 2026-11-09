@@ -5079,6 +5079,16 @@ function startServer(env) {          // env: more for the harness's environment 
         const walked = await ws.tabWalk(page);
         await ws.menus(page);
         await ws.strip(page);
+        {
+          // Room at a desk (1440 x 900): Scenes and Guests stay in the page, so their names are not stuck (a stuck
+          // name's band of page colour covered the Walls column beside them); Walls scrolls by itself and keeps its name
+          await page.setViewportSize({ width: 1440, height: 900 });
+          await go(page, 'room/scenes');
+          await page.waitForSelector('.deskcol[data-col="guests"] > .deskhead');
+          const pos = await page.evaluate(() => ['scenes', 'guests', 'walls'].map((c) => {
+            const x = document.querySelector('.deskcol[data-col="' + c + '"] > .deskhead'); return x ? getComputedStyle(x).position : null; }));
+          assert.deepStrictEqual(pos, ['static', 'static', 'sticky'], 'on Room at 1440 only the Walls name is stuck (scenes, guests, walls): ' + JSON.stringify(pos));
+        }
         const call = (url, body) => page.evaluate(([u, b]) => fetch(u, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify(b || {}) }).then((r) => r.json().catch(() => ({}))), [url, body]);
         // no text overruns on any screen at 320, 390, 600 and 768 px, on a phone held sideways and at the desk's
         // widths (1200, 1366, 1440 and 1920 px), in both looks, with long names in the box's answers (2026-10-09)
