@@ -2189,7 +2189,9 @@ function startServer(env) {          // env: more for the harness's environment 
         {
           await page.evaluate(() => localStorage.setItem('pvj.nodes.opened', JSON.stringify({ x: { address: '8.8.8.8', port: 443 }, ['9'.repeat(32)]: { address: '192.168.0.9', port: '1@e' } })));
           await page.click('#nodesagain');
-          await page.waitForFunction(() => document.querySelectorAll('#nodeslist .nodesrow').length === 12);
+          // (the list already has 12 rows before Look again redraws it: wait for the answer, then for the redraw)
+          for (let i = 0; i < 100 && asked < 3; i++) await page.waitForTimeout(100);
+          await page.waitForFunction(() => document.querySelectorAll('#nodeslist .nodesrow').length === 12 && !document.querySelector('.nodesmoved'), null, { timeout: 5000 }).catch(() => {});
           assert.strictEqual(await page.locator('.nodesmoved').count(), 0, 'a remembered entry that is not well formed is ignored');
           await page.evaluate(() => localStorage.removeItem('pvj.nodes.opened'));
         }

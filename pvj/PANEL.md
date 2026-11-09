@@ -75,7 +75,7 @@ display. From 1100 px some pages gain a third column (the Shaders page's sets an
 
 The transport strip folds its controls into More by width, in this order of leaving: back and forward 10 s first, then
 Fade, Speed, Loop, Previous and Next. Shown on one line from: Previous and Next 800, Loop 940, Speed 1080, Fade 1280,
-back and forward 10 s 1440. More is gone from 1440. Freeze, Stop and Blackout are never folded.
+back and forward 10 s 1400. More is gone from 1400. Freeze, Stop and Blackout are never folded.
 
 Heights: under 600 and under 480 px of height the strip and the open More are held to part of the window and scroll
 inside; a short window keeps the strip.
@@ -93,8 +93,9 @@ inside; a short window keeps the strip.
 buttons at 1440). It is a useful check, not a frame of its own.
 
 The widths are the panel's, not the window's. Measured in the design sandbox (D103) on Windows: Chrome draws a classic
-15 px scrollbar inside a 1440 window, so the panel is 1425 wide and the strip still shows More. On a Mac the scrollbars
-float over the page, so a 1440 window is a 1440 panel. A Figma frame has no scrollbar: 1440 there is the full strip.
+15 px scrollbar inside a 1440 window, so the panel is 1425 wide. The strip used to keep More there; since PROPOSALS 8
+its last line is at 1400, so a 1440 window shows the whole strip on Windows and on a Mac, where the scrollbars
+float over the page and a 1440 window is a 1440 panel. A Figma frame has no scrollbar: 1440 there is the full strip.
 
 ## 3. The frame around every screen
 

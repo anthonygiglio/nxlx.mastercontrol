@@ -751,12 +751,14 @@ main.ws:focus, .deskcol:focus { outline: none; }
 @container app (min-width: 940px) { .tp .fold.f-loop { order: 0; } .tp:not(.open) .fold.f-loop { display: inline-block; } }
 @container app (min-width: 1080px) { .tp .fold.f-speed { order: 0; } .tp:not(.open) .fold.f-speed { display: flex; } }
 @container app (min-width: 1280px) { .tp .fold.f-fades { order: 0; } .tp:not(.open) .fold.f-fades { display: inline-block; } }
-@container app (min-width: 1440px) { .tp .fold.f-ten { order: 0; } .tp:not(.open) .fold.f-ten { display: inline-block; } }
-/* (from 1440 px the line is at its fullest until the place in the clip joins it: it gives a little everywhere) */
-@container app (min-width: 1440px) and (max-width: 1639px) { .tp { column-gap: 6px; } .tp .tpb { padding: 0 8px; } }
-/* (from 1440 px every button is on the line and nothing is left for More; from 1640 px the place in the clip is on
+/* (back and forward 10 s from 1400 px, not 1440 (PROPOSALS 8): a 1440 window on Windows gives the panel 1425 px, its
+   classic scrollbar taking 15, and a Mac at 1440 showed every control where Windows kept More) */
+@container app (min-width: 1400px) { .tp .fold.f-ten { order: 0; } .tp:not(.open) .fold.f-ten { display: inline-block; } }
+/* (from 1400 px the line is at its fullest until the place in the clip joins it: it gives a little everywhere) */
+@container app (min-width: 1400px) and (max-width: 1639px) { .tp { column-gap: 6px; } .tp .tpb { padding: 0 8px; } }
+/* (from 1400 px every button is on the line and nothing is left for More; from 1640 px the place in the clip is on
    the line as well, a slider like the others) */
-@container app (min-width: 1440px) { .tp .tpmore { display: none; } }
+@container app (min-width: 1400px) { .tp .tpmore { display: none; } }
 /* A desk, from 1200 px of panel (D72): the columns of the area that is built stand side by side, all of them
    equally live, each under its name. 1200 px is where the narrowest column is no narrower than a phone: beside the
    96 px rail the workspace has 1104 px, and its columns come to 344, 345 and 414 px in Play, 453, 325 and 325 px
