@@ -2961,6 +2961,10 @@
     return chosen ? chosen.value : '';
   }
   function keepCursor(container, rebuild) {
+    // A question open in it (confirmRow) is never wiped by a redraw: the list is left as it is until the question is
+    // answered or goes by itself, and the next redraw after that brings it up to date (Now's walls were rebuilt every
+    // 5 s, so Not now slipped away under the finger, and the browser test's click on it failed, 2026-11-09)
+    if (asking(container)) return;
     var a = document.activeElement, keep = null;
     if (a && a.id && container.contains(a)) {
       var field = /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.type !== 'range';
