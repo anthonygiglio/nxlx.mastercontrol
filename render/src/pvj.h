@@ -13,7 +13,7 @@
 #include <GLES3/gl3.h>
 #include <mpv/client.h>
 
-#define PVJ_VERSION "0.10.0"
+#define PVJ_VERSION "0.11.0"
 #define MAX_SHADERS 16
 #define LAYERS 2                    // source 1's video layers (phase 2, D98): the one on screen and the one a crossfade comes in on
 #define MAX_SOURCES 8               // sources (D101): source 1 is LAYERS layers, each other source one layer
@@ -68,6 +68,35 @@ typedef struct {
     char path[1024];                // the file it was built from (the panel tells a slow build from a refusal by it)
     char state[160];
 } FxSlot;
+
+// The graphics stage (D129, slice 3, gfx.c): text and logos drawn over the final picture, below the text layer. One slot
+// a graphic, 1 to GFX_SLOTS (the order of the panel's list: a later slot is drawn over an earlier one). The socket's
+// threads write a slot under app.lock; the render thread reads it once a frame (gfx_frame) and uploads a picture that
+// was loaded (gfx_take). The picture is a premultiplied B G R A file the panel's rasteriser wrote.
+#define GFX_SLOTS 8
+#define GFX_LINES 6                 // lines of text a typewriter reveals one after the other
+#define GFX_BYTES_MAX (48u << 20)   // all the pictures together, loaded or waiting (design 3.2)
+#define GFX_SIDE_MAX 4096           // a picture's side, and never more than the GPU's own limit
+#define GFX_SECONDS_MAX 60.0
+enum { GM_NONE, GM_FADE, GM_TYPE, GM_SCROLL, GM_CRAWL, GM_N };
+typedef struct {
+    // the socket's side (under app.lock)
+    uint8_t *pending;               // a picture waiting for the render thread: w x h x 4 bytes, B G R A
+    int pw, ph, plines;
+    float pext[GFX_LINES][2];       // each line's ink from left to right, as parts of the width
+    int clear;                      // asked: the render thread deletes the texture
+    int want_w, want_h;             // the newest picture's size, loaded or waiting (the budget)
+    long loads;
+    int motion, loop, on;
+    float x, y, opacity;            // where the picture's top left corner is, in pixels of the screen, and a multiplier
+    float seconds, out, speed;      // fade in or typewriter time; fade out time; scroll and crawl speed (percent of the screen a second)
+    double shown_at, hidden_at;     // monotonic seconds: the last show or replay; the last hide (0: it is on)
+    // the render thread's word (under app.lock)
+    int loaded, w, h, lines;
+    float ext[GFX_LINES][2];
+    float alpha;                    // the last frame's
+    long draws;
+} GfxSlot;
 
 typedef struct {
     const char *socket_path;
@@ -167,6 +196,7 @@ typedef struct {
     // (app.gen[front]); app.fx[0][0] is never used. A generator belongs to its layer: it is that layer's picture, mixed
     // or wiped with the other layer's, and it is cleared with the layer when a fade ends.
     FxSlot gen[LAYERS];
+    GfxSlot gfx[GFX_SLOTS];         // the graphics stage (D129, gfx.c)
     int native[MAX_SOURCES];        // the source has a program on (the render thread says, under app.lock)
     int level_native[MAX_SOURCES];  // the socket's side: the source's layers have brightness 0, its level is drawn here
     double level[MAX_SOURCES];      // each source's brightness as last set on the socket, -100 to 100 (D101: the panel's
@@ -254,6 +284,34 @@ int fx_layer_has_generator(int layer);
 int fx_layer_started(int layer);     // the layer's generator has drawn a picture (a fade into a program starts its clock then)
 void fx_layer_end(int layer);
 void fx_free_all(void);
+
+// the graphics stage (gfx.c)
+void gfx_init(void);                // render thread, once the GL context is current
+int gfx_side_max(void);
+// socket threads (each takes app.lock itself). gfx_load answers NULL, or why not in words.
+const char *gfx_load(int slot, const char *path, int w, int h, int lines);
+typedef struct { unsigned mask; int motion, loop; double x, y, opacity, seconds, out, speed; } GfxSet;
+#define GS_MOTION 1u
+#define GS_LOOP 2u
+#define GS_X 4u
+#define GS_Y 8u
+#define GS_OPACITY 16u
+#define GS_SECONDS 32u
+#define GS_OUT 64u
+#define GS_SPEED 128u
+void gfx_set(int slot, const GfxSet *s);
+void gfx_show(int slot);            // on; a graphic that is on already is not restarted
+void gfx_replay(int slot);          // on, and the motion starts again
+void gfx_hide(int slot);
+void gfx_clear(int slot);
+// render thread
+void gfx_take(void);                // upload the pictures that were loaded, delete the cleared
+void gfx_frame(double now);         // this frame's look at every slot
+void gfx_draw(void);                // over the final pass's picture, below the text layer
+void gfx_free_all(void);
+extern long gfx_draws_total, gfx_uploads_total, gfx_gl_objects;      // atomics
+extern const char *const GFX_MOTIONS[GM_N];
+void gl_quad(void);                 // the unit quad (main.c)
 
 // pictures to files (still.c): rows of RGB, top row first
 int still_png(int fd, const unsigned char *rgb, int w, int h);

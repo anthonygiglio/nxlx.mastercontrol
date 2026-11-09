@@ -1,12 +1,20 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""Text and logos on the screen (D129, slice 2 of design/text-and-logo-sources_2026-11-08.md).
+"""Text and logos on the screen (D129, slices 2 and 3 of design/text-and-logo-sources_2026-11-08.md).
 
-A graphic is a text or a logo that the node draws over the picture. This slice draws them still, on every tier, the one
-way that works on every board: pvj-raster (render/raster/, its own process with its own limits) makes each graphic into
-one small premultiplied picture, and the player draws it with mpv's `overlay-add` (ids OVERLAY_BASE to OVERLAY_BASE + 7,
-in the order of the list: a later graphic over an earlier one). Motion, keys and effects, and drawing over or as a
-source, come in later slices; this one says so in words where the panel asks.
+A graphic is a text or a logo that the node draws over the picture. pvj-raster (render/raster/, its own process with its
+own limits) makes each graphic into one small premultiplied picture; what draws it depends on the player:
+
+* the New renderer (pvj-render 0.11.0 on, `Player.graphics_stage()`; Pi 4, Pi 5, desktop): its GPU stage, one slot a
+  graphic in the order of the list (a later one over an earlier). The picture is loaded once; the fade, the typewriter,
+  the scroll and the crawl are worked out by the renderer every frame, so nothing is sent while they run;
+* classic mpv (a Pi 3, or a node that fell back): `overlay-add` (ids OVERLAY_BASE to OVERLAY_BASE + 7), still. mpv's
+  osd-overlay cannot animate (D129 addendum, slice 2's spike), so the fade and the typewriter are stepped here, about
+  STEP_HZ times a second, by a thread that has a finite job: it stops when a motion is done or the graphic is hidden.
+  Scroll and crawl need the GPU stage and are refused in words on this path.
+
+A node that falls back to classic mid-show keeps showing the graphics, still (the pictures are the same files).
+Keys and effects, and drawing over or as a source, come in later slices; this one says so in words where the panel asks.
 
 What is stored, in settings.json under "graphics" (no schema change: read with defaults everywhere, as D100 did):
 
@@ -25,6 +33,8 @@ graphic and 20 a second in all; a burst keeps the last.
 | ---------------- | ---------------------------------------------------------------------------------------- |
 | `_apply`         | graphics.apply: the check of the newest build and its draw into the player, together     |
 | `_lock`          | graphics.state: the counters, the work to do and the status; never held over a call      |
+
+The stepping thread takes `_apply` for each step (it draws into the player) and `_lock` inside it, as a build does.
 """
 import collections
 import hashlib
@@ -46,6 +56,10 @@ MAX_TEXT_LINES = 6
 MAX_SAVED_LINES = 20
 MEMORY_BUDGET = 48 * 1024 * 1024        # all the pictures that are on, together (design 3.2)
 SAFE = 0.05                             # an edge anchor sits this far in from the edge of the screen
+STEP_HZ = 12                            # a stepped fade or typewriter on the classic path (mpv cannot animate an overlay)
+STEP_MAX_BYTES = 6 * 1024 * 1024        # a picture larger than this is shown at once, not stepped (each step writes the whole picture)
+STEP_TOTAL_BYTES = 12 * 1024 * 1024     # and the pictures being stepped at once, together
+MOTION_SECONDS_MAX = 30
 PER_ITEM_INTERVAL = 0.2                 # at most 5 builds a second for one graphic
 ALL_INTERVAL = 0.05                     # and 20 a second in all
 SAVE_INTERVAL = 0.5                     # settings.json is written at most twice a second however fast OSC pushes lines
@@ -56,11 +70,15 @@ ALIGNS = ("left", "center", "right")
 FILE_RE = r"graphic-([a-z0-9]+)-(\d+)-(\d+)\.bgra"
 
 # What this slice can do. The panel greys out what is not here, with the reason (design 3 and 11).
-MOTIONS = ("none",)
+MOTION_KINDS = ("none", "fade", "typewriter", "scroll", "crawl")
+MOTIONS_OVERLAY = ("none", "fade", "typewriter")        # classic mpv: still, and stepped
+MOTIONS = MOTION_KINDS                                  # the New renderer's GPU stage
 KEYS = ("alpha",)
 EFFECTS = ()
 WHERE = ("screen",)
-LATER = "comes in a later release; for now a graphic is drawn over the screen, still"
+LATER = "comes in a later release; for now a graphic is drawn over the screen"
+OVERLAY_NOTE = "This node draws graphics without the New renderer: only None, Fade and Typewriter, with steps."
+NEEDS_RENDERER = "Scroll and crawl need the New renderer. " + OVERLAY_NOTE
 
 
 class GraphicsError(Exception):
@@ -192,6 +210,36 @@ def text_of(raw):
             "lines": lines, "line": _int(raw.get("line"), -1, max(-1, len(lines) - 1), -1) if lines else -1}
 
 
+def default_motion():
+    return {"kind": "none", "seconds": 1.0, "out": 0.5, "speed": 12, "loop": False}
+
+
+def motion_of(raw):
+    """A motion section as stored: every key present, every value in range. seconds is the fade in, or the whole typing;
+    out is the fade out (the fade only); speed is how much of the screen's height (scroll) or width (crawl) goes by in a
+    second, in percent; loop sends a scroll or a crawl round again."""
+    raw = raw if isinstance(raw, dict) else {}
+    d = default_motion()
+    return {"kind": raw.get("kind") if raw.get("kind") in MOTION_KINDS else "none",
+            "seconds": round(_num(raw.get("seconds"), 0.1, MOTION_SECONDS_MAX, d["seconds"]), 2),
+            "out": round(_num(raw.get("out"), 0, MOTION_SECONDS_MAX, d["out"]), 2),
+            "speed": _int(raw.get("speed"), 2, 100, d["speed"]), "loop": _bool(raw.get("loop"), False)}
+
+
+def motion_for(item, mode):
+    """The motion a graphic is drawn with on a node whose drawing is `mode` ("gpu" or "overlay"): what was chosen if this
+    node can do it, else none (the graphic is still there, still)."""
+    kind = item["motion"]["kind"]
+    return kind if kind in (MOTIONS if mode == "gpu" else MOTIONS_OVERLAY) else "none"
+
+
+def lines_of(item):
+    """Lines of text in a picture (the typewriter goes line after line); a logo is one."""
+    if item["kind"] != "text":
+        return 1
+    return max(1, min(MAX_TEXT_LINES, item["text"]["value"].count("\n") + 1))
+
+
 def place_of(raw, kind):
     raw = raw if isinstance(raw, dict) else {}
     d = default_place(kind)
@@ -202,9 +250,9 @@ def place_of(raw, kind):
 
 
 def item_of(raw):
-    """One item as stored, or None for something that is not one. Slice 2 draws everything over the screen, still: what
-    a later release wrote for another place or another motion is read as that (and is kept when the file is saved only
-    if it was never touched here: the panel writes what this slice knows)."""
+    """One item as stored, or None for something that is not one. This release draws everything over the screen and
+    with the alpha the picture has: what a later release wrote for another place or key is read as that. A motion is kept
+    as chosen, even one this node cannot draw (it is drawn still there, and says so)."""
     if not isinstance(raw, dict) or raw.get("kind") not in ("text", "logo"):
         return None
     kind = raw["kind"]
@@ -214,7 +262,7 @@ def item_of(raw):
     out = {"id": gid, "slot": _int(raw.get("slot"), 1, MAX_ITEMS, 0), "kind": kind,
            "name": _name(raw.get("name"), "Text" if kind == "text" else "Logo"), "on": raw.get("on") is True,
            "where": {"mode": "screen"}, "place": place_of(raw.get("place"), kind),
-           "motion": {"kind": "none"}, "key": {"kind": "alpha"}, "fx": []}
+           "motion": motion_of(raw.get("motion")), "key": {"kind": "alpha"}, "fx": []}
     if kind == "text":
         out["text"] = text_of(raw.get("text"))
     else:
@@ -273,7 +321,7 @@ def new_item(kind, items):
     slots = {i["slot"] for i in items}
     slot = next(n for n in range(1, MAX_ITEMS + 1) if n not in slots)
     it = {"id": gid, "slot": slot, "kind": kind, "name": ("Text %d" if kind == "text" else "Logo %d") % slot, "on": False,
-          "where": {"mode": "screen"}, "place": default_place(kind), "motion": {"kind": "none"}, "key": {"kind": "alpha"}, "fx": []}
+          "where": {"mode": "screen"}, "place": default_place(kind), "motion": default_motion(), "key": {"kind": "alpha"}, "fx": []}
     if kind == "text":
         it["text"] = default_text()
     else:
@@ -304,9 +352,10 @@ def _check_num(v, lo, hi, what):
         raise bad("%s must be a number from %s to %s" % (what, lo, hi))
 
 
-def apply_set(item, patch):
+def apply_set(item, patch, motions=None):
     """A copy of `item` with `patch` applied, or a GraphicsError saying what is wrong. Strict, where reading is lenient:
-    a name or a value that is not understood is refused, not dropped."""
+    a name or a value that is not understood is refused, not dropped. `motions`: the kinds of motion this node can draw
+    (the GPU stage's, or the overlay path's three); None: any that exists."""
     _only(patch, ("name", "place", "text", "logo", "where", "motion", "key", "fx"), "set")
     out = json.loads(json.dumps(item))
     if "name" in patch:
@@ -330,8 +379,17 @@ def apply_set(item, patch):
             raise bad("Showing over a source, or as a source, %s" % LATER)
     if "motion" in patch:
         m = patch["motion"]
-        if not isinstance(m, dict) or m.get("kind") not in MOTIONS:
-            raise bad("Motion (fade, typewriter, scroll, crawl) %s" % LATER)
+        _only(m, ("kind", "seconds", "out", "speed", "loop"), "motion")
+        if "kind" in m:
+            _check_enum(m["kind"], MOTION_KINDS, "motion.kind")
+            if motions is not None and m["kind"] not in motions:
+                raise bad(NEEDS_RENDERER)
+        for k, (lo, hi) in {"seconds": (0.1, MOTION_SECONDS_MAX), "out": (0, MOTION_SECONDS_MAX), "speed": (2, 100)}.items():
+            if k in m:
+                _check_num(m[k], lo, hi, "motion." + k)
+        if "loop" in m and not isinstance(m["loop"], bool):
+            raise bad("motion.loop must be true or false")
+        out["motion"] = motion_of(dict(out["motion"], **m))
     if "key" in patch:
         k = patch["key"]
         if not isinstance(k, dict) or k.get("kind") not in KEYS:
@@ -427,12 +485,16 @@ def _hex(c):
     return c.lstrip("#")
 
 
-def params_for(item, sw, sh, png=False, canvas=None):
+def params_for(item, sw, sh, png=False, canvas=None, ticker=0):
     """The request for pvj-raster for `item` on a screen sw x sh: (parameter text, ok). The size of everything follows
-    the screen's height (text) or width (logo), so the preview at a third of the size is the same picture."""
+    the screen's height (text) or width (logo), so the preview at a third of the size is the same picture. `ticker`: the
+    widest picture the GPU can hold, for a text that crawls: one line, as wide as it needs to be, and a text that would
+    have to be made smaller to fit is refused (in words) instead."""
     place = item["place"]
     lines = ["kind %s" % item["kind"], "out %s" % ("png" if png else "raw"), "opacity %d" % place["opacity"],
-             "limit %d %d" % (int(sw * (1 - 2 * SAFE)), int(sh * (1 - 2 * SAFE)))]
+             "limit %d %d" % (ticker or int(sw * (1 - 2 * SAFE)), int(sh * (1 - 2 * SAFE)))]
+    if ticker and item["kind"] == "text":
+        lines.append("nofit 1")
     if canvas:
         lines.append("canvas %d %d %d %d" % canvas)
     if item["kind"] == "text":
@@ -446,7 +508,10 @@ def params_for(item, sw, sh, png=False, canvas=None):
             lines.append("shadow 0.04 0.04 %.4f %s 75" % (t["shadow"]["soft"] / 100.0 * 0.12, _hex(t["shadow"]["colour"])))
         if t["plate"]["on"]:
             lines.append("plate %.4f %s %d" % (t["plate"]["pad"] / 100.0, _hex(t["plate"]["colour"]), t["plate"]["opacity"]))
-        lines += ["TEXT", t["value"]]
+        value = t["value"]
+        if ticker:
+            value = "  ".join(x for x in value.split("\n") if x)
+        lines += ["TEXT", value]
         return "\n".join(lines), None
     lg = item["logo"]
     lines += ["width %.2f" % max(1.0, lg["size"] / 100.0 * sw * place["scale"] / 100.0), "rotate %.1f" % place["rotate"],
@@ -454,9 +519,12 @@ def params_for(item, sw, sh, png=False, canvas=None):
     return "\n".join(lines), None
 
 
-def render_key(item, sw, sh, logo_sig=None):
-    """What a built picture was made from: the same key means the same picture. Not the on-switch or the name."""
+def render_key(item, sw, sh, logo_sig=None, ticker=0):
+    """What a built picture was made from: the same key means the same picture. Not the on-switch or the name, and not
+    the motion (the speed and the times are the player's), except that a crawling text is made as one wide line."""
     body = {"kind": item["kind"], "place": item["place"], "text": item.get("text"), "logo": item.get("logo"), "sig": logo_sig, "screen": [sw, sh]}
+    if ticker:
+        body["ticker"] = ticker
     return hashlib.sha1(json.dumps(body, sort_keys=True).encode()).hexdigest()
 
 
@@ -465,6 +533,56 @@ def _unlink(path):
         os.unlink(path)
     except OSError:
         pass
+
+
+# ---- the stepped motions' pictures (the classic path; plain bytes work, no imaging library on the node) ------------------------------------
+_INK = bytes(0 if v < 12 else 1 for v in range(256))
+
+
+def _faded(base, level):
+    """The picture (premultiplied B G R A) at `level` of its strength: every byte scaled, which keeps it premultiplied."""
+    level = max(0.0, min(1.0, level))
+    return base.translate(bytes(min(255, int(v * level + 0.5)) for v in range(256)))
+
+
+def _ink_extents(base, w, h, lines):
+    """(first, last + 1) column with ink, for each of `lines` equal bands of rows (a band with none: 0, 0)."""
+    stride, out = w * 4, []
+    for li in range(lines):
+        lo, hi = w, -1
+        for y in range(h * li // lines, h * (li + 1) // lines):
+            a = base[y * stride + 3:(y + 1) * stride:4].translate(_INK)
+            first = a.find(1)
+            if first >= 0:
+                lo, hi = min(lo, first), max(hi, a.rfind(1))
+        out.append((lo, hi + 1) if hi >= lo else (0, 0))
+    return out
+
+
+def _typed(base, w, h, lines, ext, p):
+    """The picture with only the first `p` of its ink showing: line after line, each from its left edge, at one pace
+    along the ink (so lines share the time by their widths). What is not shown is transparent."""
+    stride = w * 4
+    out = bytearray(base)
+    left = p * sum(max(0, e1 - e0) for e0, e1 in ext)
+    for li in range(lines):
+        x0, x1 = ext[li]
+        if x1 <= x0:
+            continue
+        if left >= x1 - x0:
+            left -= x1 - x0
+            continue
+        y0, y1 = h * li // lines, h * (li + 1) // lines
+        if left <= 0:
+            out[y0 * stride:y1 * stride] = bytes((y1 - y0) * stride)
+        else:
+            edge = x0 + int(left)
+            zero = bytes(stride - edge * 4)
+            for y in range(y0, y1):
+                o = y * stride
+                out[o + edge * 4:o + stride] = zero
+            left = 0
+    return out
 
 
 # ---- the engine --------------------------------------------------------------------------------------------------------------
@@ -497,6 +615,17 @@ class Graphics:
         self._need_size = False     # a graphic waits for the player to say how big the screen is
         self._failed = {}           # id -> the key of a build that failed: not tried again until something changes
         self._held = False          # a pairing code or the PIN is on the screen: the graphics are held back (design 3.1)
+        self._mode_drawn = None     # "gpu" or "overlay": what the screen was last drawn with
+        self._mode_now = "overlay"  # what the worker found at the top of its last pass
+        self._gpu = {}              # slot -> {"gid", "token", "cfg", "on"}: what the renderer's stage holds
+        self._fading = {}           # slot -> (gid, due): a fade out the renderer is running; the picture is cleared when it is done
+        self._drawn = {}            # overlay id -> (id, token, x, y): the picture the classic path was last told to show
+        self._once = set()          # ids drawn and not taken off since: a draw of one that is not here is a show (its motion plays)
+        self._replay = set()        # ids whose motion plays again at their next draw (a new line, or the Replay button)
+        self._tasks = {}            # id -> the stepped motion that is running on the classic path
+        self._timers = []           # (due, kind, args): in _lock
+        self._ticker = None         # the thread that steps the motions and runs the timers
+        self._tick_wake = threading.Event()
         self._pid = os.getpid()
         self.synchronous = False    # a test builds in the caller's thread
         self._cleanup(keep=())
@@ -518,6 +647,22 @@ class Graphics:
 
     def _player(self):
         return self.api.player
+
+    def _stage(self):
+        """{"slots", "side"} when the player has the renderer's graphics stage, else None (classic mpv, a renderer before
+        0.11.0, or a player that does not answer)."""
+        ask = getattr(self._player(), "graphics_stage", None)
+        try:
+            return ask() if ask is not None else None
+        except Exception:
+            return None
+
+    def mode(self):
+        """"gpu" where the renderer's stage draws the graphics, "overlay" where mpv's overlays do."""
+        return "gpu" if self._stage() else "overlay"
+
+    def motions(self):
+        return list(MOTIONS if self.mode() == "gpu" else MOTIONS_OVERLAY)
 
     def _screen(self):
         try:
@@ -541,11 +686,12 @@ class Graphics:
         together; they are done in this order: add, set, text, line, on, move, remove, all."""
         if not isinstance(body, dict):
             raise bad("send an object")
-        known = ("add", "id", "slot", "set", "remove", "on", "text", "line", "move", "dir", "all", "toggle")
+        known = ("add", "id", "slot", "set", "remove", "on", "text", "line", "move", "dir", "all", "toggle", "replay")
         for k in body:
             if k not in known:
                 raise bad("no such request: %r" % k)
-        touched = set()
+        touched, soft, replay = set(), set(), set()
+        allowed = self.motions() if isinstance(body.get("set"), dict) and "motion" in body["set"] else None      # (asks the player: not under the settings' lock)
         with self.api.settings.lock:
             cfg = self.api.settings.data.get("graphics") or {}
             items = items_of(cfg)
@@ -571,7 +717,7 @@ class Graphics:
                     raise bad("Up to %d graphics; remove one first." % MAX_ITEMS)
                 items.append(new_item(body["add"], items))
                 touched.add(items[-1]["id"])
-            target_keys = [k for k in ("set", "text", "line", "on", "remove") if k in body]
+            target_keys = [k for k in ("set", "text", "line", "on", "remove", "replay") if k in body]
             if "move" in body:
                 it = find("move")
                 i = items.index(it)
@@ -587,7 +733,7 @@ class Graphics:
                     raise bad("say which graphic: id or slot")
                 idx = items.index(it)
                 if "set" in body:
-                    it = apply_set(it, body["set"])
+                    it = apply_set(it, body["set"], allowed)
                     items[idx] = it
                     touched.add(it["id"])
                 if "text" in body:
@@ -598,10 +744,13 @@ class Graphics:
                         raise bad("text must be some words")
                     clean, note = clean_text(value)
                     it = json.loads(json.dumps(it))
+                    changed = it["text"]["value"] != clean
                     it["text"]["value"] = clean
                     it["text"]["line"] = -1
                     items[idx] = it
                     touched.add(it["id"])
+                    if changed and it["on"]:
+                        replay.add(it["id"])            # a new line on the screen plays its motion again
                 if "line" in body:
                     if it["kind"] != "text":
                         raise bad("this graphic is a logo, not a text")
@@ -618,9 +767,12 @@ class Graphics:
                     else:
                         raise bad("line must be a number from 0 to %d, next or prev" % (len(lines) - 1))
                     it = json.loads(json.dumps(it))
+                    changed = it["text"]["value"] != lines[n]
                     it["text"]["value"], it["text"]["line"] = lines[n], n
                     items[idx] = it
                     touched.add(it["id"])
+                    if changed and it["on"]:
+                        replay.add(it["id"])
                     if "on" not in body:
                         body = dict(body, on=True)          # tapping a line sends it to the screen at once
                 if body.get("toggle") is True and "on" not in body:
@@ -644,6 +796,13 @@ class Graphics:
                     touched.add(it["id"])
                     if v:
                         on = True                            # showing one brings the stage back after Hide all
+                if "replay" in body:
+                    if body["replay"] is not True:
+                        raise bad("replay must be true")
+                    if not it["on"] or not on:
+                        raise bad("Show it first; then Replay plays its motion again.")
+                    replay.add(it["id"])
+                    soft.add(it["id"])
                 if "remove" in body:
                     if body["remove"] is not True:
                         raise bad("remove must be true")
@@ -657,7 +816,9 @@ class Graphics:
                 on = body["all"]
             self.api.settings.data["graphics"] = stored(items, on)
             self._persist()
-        self._after(touched)
+        with self._lock:
+            self._replay |= replay
+        self._after(touched, soft)
         return self.state()
 
     def _persist(self):
@@ -688,11 +849,12 @@ class Graphics:
             self._saved_at, self._save_owed = self.clock(), False
         return True
 
-    def _after(self, touched):
+    def _after(self, touched, soft=()):
         with self._lock:
             for gid in touched:
                 self._gen[gid] = self._gen.get(gid, 0) + 1
             self._work.update(touched)
+            self._work.update(soft)         # (looked at again, but no new picture is owed)
             self._work.add("*")            # the overlay list is looked at again: ids follow the order
         self._kick()
 
@@ -701,7 +863,11 @@ class Graphics:
         drawn: restarted=True, and every overlay is drawn again from the pictures already built). Never raises."""
         if restarted:
             with self._apply:
-                self._shown.clear()
+                self._shown.clear()         # a new player has nothing: the pictures are drawn again, still (nothing plays twice)
+                self._drawn.clear()
+                self._gpu.clear()
+                self._fading.clear()
+                self._tasks.clear()
         self._failed.clear()                # what failed is tried again
         with self._lock:
             self._work.add("*")
@@ -753,12 +919,14 @@ class Graphics:
     def stop(self, wait=5.0):
         self._stop.set()
         self._wake.set()
+        self._tick_wake.set()
         self.flush()
-        t = self._thread
-        if t is not None and t is not threading.current_thread():
-            t.join(wait)
-            return not t.is_alive()
-        return True
+        done = True
+        for t in (self._thread, self._ticker):
+            if t is not None and t is not threading.current_thread():
+                t.join(wait)
+                done = done and not t.is_alive()
+        return done
 
     def busy(self):
         with self._lock:
@@ -782,6 +950,8 @@ class Graphics:
         want = False
         if size != self._size or self._need_size:
             want = True
+        elif self._mode_drawn is not None and self.mode() != self._mode_drawn:
+            want = True                                 # the renderer went (or came): draw again with what the player has now
         else:
             for it in items_of(cfg):
                 b = self._built.get(it["id"])
@@ -835,6 +1005,8 @@ class Graphics:
         on = stage_on(cfg)
         held = self._held = self._access_up()
         limit = self.max_on()
+        stage = self._stage()
+        mode = self._mode_now = "gpu" if stage else "overlay"
         wanted, count = [], 0
         for idx, it in enumerate(items):
             if on and it["on"] and count < limit:
@@ -842,7 +1014,7 @@ class Graphics:
                 count += 1
             else:
                 if it["id"] in self._built:
-                    self._drop(it["id"])
+                    self._drop(it["id"], it if on else None)       # (Hide all cuts; a graphic switched off fades out if it has chosen to)
                 self._status[it["id"]] = {"state": "off", "message": "", "missing": 0}
         if held and wanted:
             # a code is on the screen: nothing of ours is drawn (the pictures built stay, ready to come back)
@@ -865,7 +1037,8 @@ class Graphics:
         delay = None
         now = self.clock()
         for _, it in wanted:
-            key = render_key(it, size[0], size[1], self._logo_sig(it))
+            ticker = stage["side"] if stage and it["kind"] == "text" and motion_for(it, mode) == "crawl" else 0
+            key = render_key(it, size[0], size[1], self._logo_sig(it), ticker)
             b = self._built.get(it["id"])
             if b is not None and b["key"] == key:
                 continue
@@ -878,7 +1051,7 @@ class Graphics:
                 continue
             self._last[it["id"]] = now
             self._last_any = now
-            self._build(it, key, size, wanted)
+            self._build(it, key, size, wanted, ticker)
             return 0.0
         if delay is not None:
             return delay
@@ -887,10 +1060,11 @@ class Graphics:
         for _, it in wanted:
             b = self._built.get(it["id"])
             if b is not None and it["id"] not in not_drawn and it["id"] not in self._failed:
-                self._status[it["id"]] = {"state": "on", "message": "", "missing": b.get("missing", 0)}
+                still = it["motion"]["kind"] in ("scroll", "crawl") and mode != "gpu"
+                self._status[it["id"]] = {"state": "on", "message": "Drawn still: scroll and crawl need the New renderer." if still else "", "missing": b.get("missing", 0)}
         return None
 
-    def _build(self, it, key, size, wanted):
+    def _build(self, it, key, size, wanted, ticker=0):
         gid = it["id"]
         with self._lock:
             gen = self._gen.get(gid, 0)
@@ -906,7 +1080,7 @@ class Graphics:
             else:
                 if not it["text"]["value"]:
                     raise GraphicsError(400, "Type a line first.")
-            params, _ = params_for(it, size[0], size[1])
+            params, _ = params_for(it, size[0], size[1], ticker=ticker)
             done = self.api.graphics.client.graphic(params, payload)
         except GraphicsError as e:
             self._status[gid] = {"state": "error", "message": e.message, "missing": 0}
@@ -926,6 +1100,13 @@ class Graphics:
         with self._lock:
             if gen != self._gen.get(gid, 0):
                 return                              # a newer change overtook this one: it is built next
+        stage = self._stage() if self._mode_now == "gpu" else None
+        if stage and (done["w"] > stage["side"] or done["h"] > stage["side"]):
+            self._status[gid] = {"state": "error", "missing": 0,
+                                 "message": "Too big for this node's graphics chip (%d pixels on a side at most): make it smaller." % stage["side"]}
+            self._drop(gid)
+            self._failed[gid] = key
+            return
         used = sum(b["bytes"] for g, b in self._built.items() if g != gid)
         need = done["w"] * done["h"] * 4
         if used + need > MEMORY_BUDGET:
@@ -962,7 +1143,7 @@ class Graphics:
                     return
             old = self._built.get(gid)
             self._built[gid] = {"key": key, "path": path, "w": done["w"], "h": done["h"], "x": x, "y": y, "bytes": need,
-                                "missing": done.get("missing", 0), "drawn": False}
+                                "missing": done.get("missing", 0), "drawn": False, "lines": 1 if ticker else lines_of(it), "token": serial}
             if old is not None:
                 self._retire(old["path"])
         self._status[gid] = {"state": "on", "message": "", "missing": done.get("missing", 0)}
@@ -972,53 +1153,348 @@ class Graphics:
         if path and not any(s[1] == path for s in self._shown.values()) and not any(b["path"] == path for b in self._built.values()):
             _unlink(path)
 
-    def _drop(self, gid):
+    def _slot_of(self, gid):
+        return next((n for n, st in self._gpu.items() if st["gid"] == gid), None)
+
+    def _is_fading(self, gid):
+        t = self._tasks.get(gid)
+        return (t is not None and t["kind"] == "out") or any(f[0] == gid for f in self._fading.values())
+
+    def _drop(self, gid, item=None):
+        """Take a graphic off the screen and forget its picture. With `item` (it was switched off, not removed, and the
+        stage is on) a fade out that it has chosen plays first, and the picture goes when that is done."""
         with self._apply:
-            b = self._built.pop(gid, None)
-            for oid, s in list(self._shown.items()):
-                if s[0] == gid:
-                    try:
-                        self._player().overlay_remove(oid)
-                    except Exception:
-                        pass
-                    self._shown.pop(oid, None)
+            b = self._built.get(gid)
+            if item is not None and b is not None and self._fade_out(gid, item, b):
+                return
+            self._built.pop(gid, None)
+            self._drop_drawn(gid)
             if b is not None:
                 _unlink(b["path"])
 
-    def _draw(self, items, wanted):
-        """Tell the player what to show: each wanted graphic whose picture is ready at its id, nothing at the other ids."""
-        not_drawn = set()
-        with self._apply:
-            want_ids = {}
-            for oid, it in wanted:
-                b = self._built.get(it["id"])
-                if b is not None:
-                    want_ids[oid] = (it["id"], b)
-            for oid in list(self._shown):
-                s = self._shown[oid]
-                w = want_ids.get(oid)
-                if w is None or w[0] != s[0]:
-                    try:
-                        self._player().overlay_remove(oid)
-                    except Exception:
-                        pass
-                    self._shown.pop(oid, None)
-            for oid, (gid, b) in sorted(want_ids.items()):
-                s = (gid, b["path"], b["x"], b["y"])
-                if self._shown.get(oid) == s:
-                    continue
+    def _drop_drawn(self, gid):
+        """(under _apply) Off the screen at once: its overlay or its slot, its stepping, its replay."""
+        self._tasks.pop(gid, None)
+        self._once.discard(gid)
+        self._replay.discard(gid)
+        for oid, s in list(self._shown.items()):
+            if s[0] == gid:
                 try:
-                    self._player().overlay_part(oid, b["path"], b["x"], b["y"], 0, b["w"], b["h"], b["w"] * 4)
-                except Exception as e:      # the player is down or restarting: it gets them when it comes back (apply)
-                    self._status[gid] = {"state": "error", "message": "The player did not take this (%s); it is drawn when the player restarts." % e, "missing": 0}
-                    not_drawn.add(gid)
-                    continue
-                old = self._shown.get(oid)
-                self._shown[oid] = s
-                if old is not None:
-                    self._retire(old[1])
+                    self._player().overlay_remove(oid)
+                except Exception:
+                    pass
+                self._shown.pop(oid, None)
+                self._drawn.pop(oid, None)
+                self._retire(s[1])
+        for n, st in list(self._gpu.items()):
+            if st["gid"] == gid:
+                self._gpu_clear(n)
+
+    def _gpu_clear(self, n):
+        self._gpu.pop(n, None)
+        self._fading.pop(n, None)
+        try:
+            self._player().graphic("clear", n)
+        except Exception:
+            pass                            # a player that is down has lost it
+
+    def _fade_out(self, gid, item, b):
+        """(under _apply) Begin the fade out `item` has chosen, if there is one and the graphic is on the screen. True
+        when the picture has to stay for it; asking again while it runs also says True."""
+        if self._is_fading(gid):
+            return True
+        m = item["motion"]
+        if self._mode_drawn is None or motion_for(item, self._mode_drawn) != "fade" or m["out"] <= 0:
+            return False
+        n = self._slot_of(gid)
+        if n is not None:
+            if not self._gpu[n]["on"]:
+                return False
+            try:
+                self._player().graphic("hide", n)
+            except Exception:
+                return False
+            self._gpu[n]["on"] = False
+            due = self.clock() + m["out"] + 0.25
+            self._fading[n] = (gid, due)
+            self._timer(due, "slot", n, gid)
+            return True
+        oid = next((o for o, s in self._shown.items() if s[0] == gid), None)
+        return oid is not None and self._start_task(gid, "out", oid, b, m["out"])
+
+    # -- drawing: what the player is told ------------------------------------------------------------------------------
+    def _draw(self, items, wanted):
+        """Tell the player what to show: each wanted graphic whose picture is ready, nothing at the other places. Where the
+        player has the renderer's stage that is a slot each; on classic mpv an overlay each."""
+        mode = self._mode_now
+        with self._apply:
+            if mode != self._mode_drawn:
+                self._switch(mode)
+            not_drawn = self._draw_gpu(wanted) if mode == "gpu" else self._draw_overlay(wanted)
             self._cleanup(keep={b["path"] for b in self._built.values()})
         return not_drawn
+
+    def _switch(self, mode):
+        """(under _apply) The player draws another way now (the renderer went, or came back): what the old way showed is
+        forgotten and the new way draws everything again from the same picture files. Nothing plays twice: _once keeps
+        what had been shown, so a node that falls back to classic mid-show shows the graphics still, not fading in again."""
+        if self._mode_drawn == "overlay":
+            for oid in list(self._shown):
+                try:
+                    self._player().overlay_remove(oid)
+                except Exception:
+                    pass
+        self._shown.clear()
+        self._drawn.clear()
+        self._tasks.clear()
+        self._gpu.clear()
+        self._fading.clear()
+        with self._lock:
+            self._timers = []
+        self._mode_drawn = mode
+
+    def _refused(self, gid, e):
+        words = str(e)[5:] if str(e).startswith("mpv: ") else str(e)
+        if words in ("invalid parameter", ""):
+            words = "the renderer did not take the picture"
+        self._status[gid] = {"state": "error", "message": "The player did not take this (%s); it is drawn when the player restarts." % words, "missing": 0}
+
+    def _draw_gpu(self, wanted):
+        not_drawn = set()
+        player = self._player()
+        now = self.clock()
+        want = {}
+        for oid, it in wanted:
+            b = self._built.get(it["id"])
+            if b is not None:
+                want[oid - OVERLAY_BASE + 1] = (it, b)
+        for n in list(self._gpu):
+            st, w = self._gpu[n], want.get(n)
+            if w is not None and w[0]["id"] == st["gid"]:
+                continue
+            fd = self._fading.get(n)
+            if w is None and fd is not None and fd[0] == st["gid"] and fd[1] > now:
+                continue                    # a fade out is running there: the timer clears it
+            self._gpu_clear(n)
+        for n, (it, b) in sorted(want.items()):
+            gid = it["id"]
+            old = self._gpu.get(n)
+            try:
+                if old is None or old["token"] != b["token"]:
+                    player.graphic("load", n, b["path"], b["w"], b["h"], b["lines"])
+                    same = old is not None and old["gid"] == gid
+                    st = self._gpu[n] = {"gid": gid, "token": b["token"], "cfg": old["cfg"] if same else None, "on": old["on"] if same else False}
+                else:
+                    st = old
+                m = it["motion"]
+                cfg = {"x": b["x"], "y": b["y"], "motion": motion_for(it, "gpu"), "seconds": m["seconds"], "out": m["out"],
+                       "speed": m["speed"], "loop": m["loop"]}
+                if cfg != st["cfg"]:
+                    player.graphic("set", n, cfg)
+                    st["cfg"] = cfg
+                self._fading.pop(n, None)       # shown again while it faded out: it fades in from nothing (the renderer's show)
+                if not st["on"]:
+                    player.graphic("show", n)
+                    st["on"] = True
+                elif gid in self._replay:
+                    player.graphic("replay", n)
+                self._replay.discard(gid)
+                self._once.add(gid)
+            except Exception as e:          # the player is down or restarting: it gets them when it comes back (apply)
+                self._refused(gid, e)
+                self._gpu.pop(n, None)
+                not_drawn.add(gid)
+        return not_drawn
+
+    def _put(self, oid, gid, path, b):
+        """(under _apply) Show `path` (the picture, or a step of it) as overlay `oid`; the file it replaces goes."""
+        self._player().overlay_part(oid, path, b["x"], b["y"], 0, b["w"], b["h"], b["w"] * 4)
+        old = self._shown.get(oid)
+        self._shown[oid] = (gid, path, b["x"], b["y"])
+        if old is not None and old[1] != path:
+            self._retire(old[1])
+
+    def _draw_overlay(self, wanted):
+        not_drawn = set()
+        want_ids = {}
+        for oid, it in wanted:
+            b = self._built.get(it["id"])
+            if b is not None:
+                want_ids[oid] = (it, b)
+        for oid in list(self._shown):
+            s = self._shown[oid]
+            w = want_ids.get(oid)
+            if w is None or w[0]["id"] != s[0]:
+                t = self._tasks.get(s[0])
+                if w is None and t is not None and t["kind"] == "out":
+                    continue                # it is fading out, a step at a time: the last step takes it off
+                try:
+                    self._player().overlay_remove(oid)
+                except Exception:
+                    pass
+                self._shown.pop(oid, None)
+                self._drawn.pop(oid, None)
+                self._tasks.pop(s[0], None)
+                self._once.discard(s[0])
+                self._retire(s[1])
+        for oid, (it, b) in sorted(want_ids.items()):
+            gid = it["id"]
+            sig = (gid, b["token"], b["x"], b["y"])
+            again = gid in self._replay
+            fading = self._tasks.get(gid)
+            fading = fading is not None and fading["kind"] == "out"
+            if self._drawn.get(oid) == sig and not again and not fading:
+                continue
+            task = self._tasks.pop(gid, None)
+            level0 = task["level"] if task is not None and task["kind"] == "out" else 0.0
+            kind = motion_for(it, "overlay")
+            new = gid not in self._once or again or level0 > 0.0
+            started = False
+            if new and kind in ("fade", "typewriter"):
+                started = self._start_task(gid, "in" if kind == "fade" else "type", oid, b, it["motion"]["seconds"], level0)
+            if not started:
+                try:
+                    self._put(oid, gid, b["path"], b)
+                except Exception as e:      # the player is down or restarting: it gets them when it comes back (apply)
+                    self._refused(gid, e)
+                    not_drawn.add(gid)
+                    continue
+            self._drawn[oid] = sig
+            self._once.add(gid)
+            self._replay.discard(gid)
+        return not_drawn
+
+    # -- the stepped motions of the classic path ------------------------------------------------------------------------
+    def _start_task(self, gid, kind, oid, b, seconds, level0=0.0):
+        """(under _apply) Begin a fade in ("in"), a fade out ("out") or a typing ("type") of the picture `b` as overlay
+        `oid`, drawing its first step now. False (and nothing begun) when the picture is too large to step, the steps
+        already running would be too much, or the first step did not go: the caller draws the picture still."""
+        if seconds <= 0 or b["bytes"] > STEP_MAX_BYTES:
+            return False
+        if sum(t["b"]["bytes"] for t in self._tasks.values()) + b["bytes"] > STEP_TOTAL_BYTES:
+            return False
+        if kind == "out":
+            t = self._tasks.get(gid)
+            level0 = t["level"] if t is not None else 1.0
+        try:
+            with open(b["path"], "rb") as f:
+                base = f.read(b["bytes"] + 1)
+        except OSError:
+            return False
+        if len(base) != b["w"] * b["h"] * 4:
+            return False
+        task = {"gid": gid, "kind": kind, "oid": oid, "b": b, "base": base, "t0": self.clock(), "dur": float(seconds),
+                "level0": level0, "level": level0, "ext": _ink_extents(base, b["w"], b["h"], b["lines"]) if kind == "type" else None}
+        self._tasks[gid] = task
+        if not self._step_task(task, task["t0"]):
+            self._tasks.pop(gid, None)
+            return False
+        self._kick_ticker()
+        return True
+
+    def _step_task(self, task, now):
+        """(under _apply) One step. True if it is on the screen (or the motion ended); False if the player did not take it."""
+        gid, oid, b, kind = task["gid"], task["oid"], task["b"], task["kind"]
+        p = min(1.0, max(0.0, (now - task["t0"]) / task["dur"]))
+        try:
+            if kind == "out":
+                task["level"] = task["level0"] * (1.0 - p)
+                if p >= 1.0:
+                    self._tasks.pop(gid, None)
+                    self._drop_drawn(gid)
+                    done = self._built.pop(gid, None)
+                    if done is not None:
+                        _unlink(done["path"])
+                    return True
+                data = _faded(task["base"], task["level"])
+            elif p >= 1.0:
+                task["level"] = 1.0
+                self._tasks.pop(gid, None)
+                self._put(oid, gid, b["path"], b)       # the picture itself, from its own file
+                return True
+            elif kind == "in":
+                task["level"] = task["level0"] + (1.0 - task["level0"]) * p
+                data = _faded(task["base"], task["level"])
+            else:
+                task["level"] = p
+                data = _typed(task["base"], b["w"], b["h"], b["lines"], task["ext"], p)
+            with self._lock:
+                self._serial += 1
+                serial = self._serial
+            rundir = getattr(self._player(), "rundir", None)
+            path = os.path.join(rundir, "graphic-%s-%d-%d.bgra" % (gid, self._pid, serial))
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o640)
+            with os.fdopen(fd, "wb") as f:
+                os.fchmod(f.fileno(), 0o640)
+                f.write(data)
+            try:
+                self._put(oid, gid, path, b)
+            except Exception:
+                _unlink(path)
+                raise
+            return True
+        except Exception as e:
+            self.log("pvj-web: graphics: a step of %s did not go: %s" % (kind, e))
+            return False
+
+    def _timer(self, due, kind, *args):
+        with self._lock:
+            self._timers.append((due, kind) + args)
+        self._kick_ticker()
+
+    def _kick_ticker(self):
+        if self.synchronous:
+            return                          # a test steps by hand: step()
+        with self._lock:
+            if self._ticker is None or not self._ticker.is_alive():
+                self._ticker = threading.Thread(target=self._tick_loop, name="graphics-motion", daemon=True)
+                self._ticker.start()
+        self._tick_wake.set()
+
+    def _tick_loop(self):
+        while not self._stop.is_set():
+            began = time.monotonic()
+            try:
+                wait = self.step()
+            except Exception as e:          # never leave the stepper dead
+                self.log("pvj-web: graphics: %s" % e)
+                wait = 1.0
+            wait = 5.0 if wait is None else max(0.005, wait - (time.monotonic() - began))
+            self._tick_wake.wait(wait)
+            self._tick_wake.clear()
+
+    def step(self, now=None):
+        """Run the timers that are due and one step of every running motion (the stepping thread calls this about STEP_HZ
+        times a second while one runs; a test calls it by hand). Returns the seconds until it is next wanted, None when
+        nothing is running. A motion has an end, so the thread idles by itself."""
+        now = self.clock() if now is None else now
+        with self._lock:
+            due = [t for t in self._timers if t[0] <= now]
+            self._timers = [t for t in self._timers if t[0] > now]
+        with self._apply:
+            for t in due:
+                if t[1] == "slot":
+                    n, gid = t[2], t[3]
+                    fd = self._fading.get(n)
+                    if fd is not None and fd[0] == gid:     # nobody showed it again: the picture goes
+                        self._gpu_clear(n)
+                        self._once.discard(gid)
+                        done = self._built.pop(gid, None)
+                        if done is not None:
+                            _unlink(done["path"])
+            for gid, task in list(self._tasks.items()):
+                if self._tasks.get(gid) is not task:
+                    continue
+                if not self._step_task(task, now):
+                    self._tasks.pop(gid, None)
+                    self._status[gid] = {"state": "error", "message": "The player did not take a step of this; it is drawn when the player restarts.", "missing": 0}
+            running = bool(self._tasks)
+        with self._lock:
+            nxt = min((t[0] for t in self._timers), default=None)
+        waits = [1.0 / STEP_HZ] if running else []
+        if nxt is not None:
+            waits.append(max(0.0, nxt - now))
+        return min(waits) if waits else None
 
     def _cleanup(self, keep):
         """Remove the pictures this process wrote that nothing uses, and every one an earlier run left."""
@@ -1075,8 +1551,10 @@ class Graphics:
             out.append(it)
         size = self._screen() or self._size
         used = sum(b["bytes"] for b in self._built.values())
+        stage = self._stage()
         return {"on": stage_on(cfg), "items": out, "showing": showing(cfg), "max_items": MAX_ITEMS, "max_on": self.max_on(), "tier": self._tier(),
-                "motions": list(MOTIONS), "keys": list(KEYS), "effects": list(EFFECTS), "where": list(WHERE), "later": LATER,
+                "mode": "gpu" if stage else "overlay", "stage": stage, "note": "" if stage else OVERLAY_NOTE, "step_hz": STEP_HZ,
+                "motions": list(MOTIONS if stage else MOTIONS_OVERLAY), "keys": list(KEYS), "effects": list(EFFECTS), "where": list(WHERE), "later": LATER,
                 "fonts": [dict(f) for f in FONTS], "files": store.files(), "available": store.client.available(),
                 "screen": {"width": size[0], "height": size[1]} if size else None,
                 "limits": {"text": MAX_TEXT, "lines": MAX_TEXT_LINES, "saved_lines": MAX_SAVED_LINES, "memory": MEMORY_BUDGET, "used": used},

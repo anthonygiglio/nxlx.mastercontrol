@@ -624,6 +624,40 @@ class Player:
         The panel chooses with this since slice 3: a shader on the screen no longer makes it false."""
         return not self._pipe and self.layer_generators(ask)
 
+    _stage_seen = None              # (pid, None or {"slots", "side"}): does that player process have the graphics stage (D129)
+
+    def graphics_stage(self, ask=True):
+        """{"slots": n, "side": s} if the player that answers now is a pvj-render with the graphics stage (D129, slice 3:
+        its `graphics` and `graphics-side`, there from version 0.11.0), else None: classic mpv answers "property not
+        found", and a renderer from before answers without the keys. Asked once per player process, as `crossfades`; a
+        player that does not answer is asked again next time. With `ask` False, only what is known already. The text
+        and logos are drawn by the renderer's GPU where this says yes, and by mpv's overlays (still, with stepped fades
+        and typing) where it says None."""
+        known, pid = self._stage_seen, self._seen_pid
+        if known is not None and known[0] == pid:
+            return known[1]
+        if not ask:
+            return None
+        try:
+            if pid is None:
+                pid = self._note_pid(self.ipc.request("get_property", "pid"))
+            state = self.ipc.request("get_property", "pvj-render")
+        except PlayerError as e:
+            if str(e).startswith("mpv: ") and pid is not None:
+                self._stage_seen = (pid, None)
+            return None
+        n = state.get("graphics") if isinstance(state, dict) else None
+        side = state.get("graphics-side") if isinstance(state, dict) else None
+        ok = all(isinstance(v, int) and not isinstance(v, bool) for v in (n, side)) and n >= 1 and side >= 64
+        stage = {"slots": n, "side": side} if ok else None
+        self._stage_seen = (pid, stage)
+        return stage
+
+    def graphic(self, what, slot, *args):
+        """One command of the renderer's graphics stage (pvj-render's `pvj-graphic`): load, set, show, hide, replay or
+        clear, on slot 1 to 8. Raises PlayerError, with the renderer's words when it refused."""
+        return self.ipc.request("pvj-graphic", what, int(slot), *args)
+
     def moves(self, ask=True):
         """True if the player that answers now draws the wipes and the slides itself, as the same stage as the crossfade
         (D111): pvj-render's `moves`. Asked once per player process, as `crossfades`; classic mpv and a pvj-render from

@@ -716,6 +716,123 @@ static void sources_property(int fd, const mpv_node *id)
     for (int s = 0; s < ns; s++) mpv_free(paths[s]);
 }
 
+// ["pvj-graphic", "load", N, PATH, W, H, LINES]  a graphic's picture (D129, gfx.c): PATH is an absolute file of W x H pixels
+//                                    of premultiplied B G R A (the rasteriser's), LINES the lines of text in it (1 to 6)
+// ["pvj-graphic", "set", N, {x, y, motion, seconds, out, speed, loop, opacity}]   place and motion; all or nothing
+// ["pvj-graphic", "show" | "hide" | "replay" | "clear", N]
+// N is the slot, 1 to 8. get_property pvj-graphics says what each slot holds and how often it was drawn. Every handler
+// here takes app.lock alone and briefly (gfx.c), so any number of clients may speak at once and none waits on another.
+static int gfx_motion_of(const char *s)
+{
+    for (int i = 0; i < GM_N; i++)
+        if (!strcmp(s, GFX_MOTIONS[i])) return i;
+    return -1;
+}
+
+static int gfx_num(const mpv_node *v, double lo, double hi, double *out)
+{
+    if (!is_num(v)) return 0;
+    double d = num(v);
+    if (!(d >= lo && d <= hi)) return 0;           // (NaN is refused here: it is in neither range)
+    *out = d;
+    return 1;
+}
+
+static void graphic_command(int fd, const mpv_node *id, const mpv_node *cmd)
+{
+    int nargs = cmd->u.list->num;
+    const char *what = arg_str(cmd, 1);
+    const mpv_node *n = arg(cmd, 2);
+    if (!what || !n || n->format != MPV_FORMAT_INT64 || n->u.int64 < 1 || n->u.int64 > GFX_SLOTS) { reply(fd, id, "invalid parameter", NULL); return; }
+    int slot = (int)n->u.int64 - 1;
+    if (!strcmp(what, "load") && nargs == 7) {
+        const mpv_node *w = arg(cmd, 4), *h = arg(cmd, 5), *l = arg(cmd, 6);
+        if (!arg_str(cmd, 3) || w->format != MPV_FORMAT_INT64 || h->format != MPV_FORMAT_INT64 || l->format != MPV_FORMAT_INT64
+            || w->u.int64 < 1 || h->u.int64 < 1 || w->u.int64 > 65536 || h->u.int64 > 65536 || l->u.int64 < 1 || l->u.int64 > GFX_LINES) {
+            reply(fd, id, "invalid parameter", NULL);
+            return;
+        }
+        const char *why = gfx_load(slot, arg_str(cmd, 3), (int)w->u.int64, (int)h->u.int64, (int)l->u.int64);
+        reply(fd, id, why ? why : "success", NULL);
+    } else if (!strcmp(what, "set") && nargs == 4) {
+        const mpv_node *m = arg(cmd, 3);
+        if (m->format != MPV_FORMAT_NODE_MAP || m->u.list->num < 1 || m->u.list->num > 8) { reply(fd, id, "invalid parameter", NULL); return; }
+        GfxSet g = { 0 };
+        int ok = 1;
+        for (int i = 0; ok && i < m->u.list->num; i++) {
+            const char *k = m->u.list->keys[i];
+            const mpv_node *v = &m->u.list->values[i];
+            if (!strcmp(k, "x")) { ok = gfx_num(v, -16384, 16384, &g.x); g.mask |= GS_X; }
+            else if (!strcmp(k, "y")) { ok = gfx_num(v, -16384, 16384, &g.y); g.mask |= GS_Y; }
+            else if (!strcmp(k, "opacity")) { ok = gfx_num(v, 0, 1, &g.opacity); g.mask |= GS_OPACITY; }
+            else if (!strcmp(k, "seconds")) { ok = gfx_num(v, 0, GFX_SECONDS_MAX, &g.seconds); g.mask |= GS_SECONDS; }
+            else if (!strcmp(k, "out")) { ok = gfx_num(v, 0, GFX_SECONDS_MAX, &g.out); g.mask |= GS_OUT; }
+            else if (!strcmp(k, "speed")) { ok = gfx_num(v, 1, 300, &g.speed); g.mask |= GS_SPEED; }
+            else if (!strcmp(k, "loop")) { ok = v->format == MPV_FORMAT_FLAG; g.loop = ok && v->u.flag; g.mask |= GS_LOOP; }
+            else if (!strcmp(k, "motion")) {
+                ok = v->format == MPV_FORMAT_STRING && (g.motion = gfx_motion_of(v->u.string)) >= 0;
+                g.mask |= GS_MOTION;
+            } else ok = 0;
+        }
+        if (!ok) { reply(fd, id, "invalid parameter", NULL); return; }
+        gfx_set(slot, &g);
+        reply(fd, id, "success", NULL);
+    } else if (nargs == 3 && (!strcmp(what, "show") || !strcmp(what, "hide") || !strcmp(what, "replay") || !strcmp(what, "clear"))) {
+        if (!strcmp(what, "show")) gfx_show(slot);
+        else if (!strcmp(what, "hide")) gfx_hide(slot);
+        else if (!strcmp(what, "replay")) gfx_replay(slot);
+        else gfx_clear(slot);
+        reply(fd, id, "success", NULL);
+    } else {
+        reply(fd, id, "invalid parameter", NULL);
+    }
+}
+
+// get_property pvj-graphics: the limits, and one map a slot (from 1): what it holds, whether it is on, the alpha it was drawn
+// with last and the frames it was drawn in.
+static void graphics_property(int fd, const mpv_node *id)
+{
+    static const char *const skeys[] = { "slot", "loaded", "width", "height", "on", "motion", "alpha", "draws", "loads", "waiting" };
+    static const char *const keys[] = { "slots", "side", "bytes", "bytes-max", "draws", "uploads", "gl-objects", "list" };
+    mpv_node maps[GFX_SLOTS], vals[GFX_SLOTS][10];
+    mpv_node_list lists[GFX_SLOTS];
+    long bytes = 0;
+    pthread_mutex_lock(&app.lock);
+    for (int i = 0; i < GFX_SLOTS; i++) {
+        const GfxSlot *s = &app.gfx[i];
+        bytes += (long)s->want_w * s->want_h * 4;
+        mpv_node *v = vals[i];
+        v[0] = node_int(i + 1);
+        v[1] = (mpv_node){ .format = MPV_FORMAT_FLAG };
+        v[1].u.flag = s->loaded;
+        v[2] = node_int(s->loaded ? s->w : 0);
+        v[3] = node_int(s->loaded ? s->h : 0);
+        v[4] = (mpv_node){ .format = MPV_FORMAT_FLAG };
+        v[4].u.flag = s->on;
+        v[5] = node_str(GFX_MOTIONS[s->motion]);
+        v[6] = node_dbl(s->alpha);
+        v[7] = node_int(s->draws);
+        v[8] = node_int(s->loads);
+        v[9] = (mpv_node){ .format = MPV_FORMAT_FLAG };
+        v[9].u.flag = s->pending != NULL;
+        lists[i] = (mpv_node_list){ .num = 10, .values = v, .keys = (char **)skeys };
+        maps[i].format = MPV_FORMAT_NODE_MAP;
+        maps[i].u.list = &lists[i];
+    }
+    pthread_mutex_unlock(&app.lock);
+    mpv_node_list slots = { .num = GFX_SLOTS, .values = maps };
+    mpv_node arr = { .format = MPV_FORMAT_NODE_ARRAY };
+    arr.u.list = &slots;
+    mpv_node top[8] = { node_int(GFX_SLOTS), node_int(gfx_side_max()), node_int(bytes), node_int(GFX_BYTES_MAX),
+                        node_int(__atomic_load_n(&gfx_draws_total, __ATOMIC_RELAXED)),
+                        node_int(__atomic_load_n(&gfx_uploads_total, __ATOMIC_RELAXED)),
+                        node_int(__atomic_load_n(&gfx_gl_objects, __ATOMIC_RELAXED)), arr };
+    mpv_node_list all = { .num = 8, .values = top, .keys = (char **)keys };
+    mpv_node d = { .format = MPV_FORMAT_NODE_MAP };
+    d.u.list = &all;
+    reply(fd, id, "success", &d);
+}
+
 /* ---- the render thread's parts ------------------------------------------------------------------------------------ */
 static int wait_render(int (*done)(void), double seconds)
 {
@@ -1218,6 +1335,7 @@ static void get_property(int fd, const mpv_node *id, const char *name)
     }
     if (!strcmp(name, "pvj-sources")) { sources_property(fd, id); return; }
     if (!strcmp(name, "pvj-shaders")) { shaders_property(fd, id); return; }
+    if (!strcmp(name, "pvj-graphics")) { graphics_property(fd, id); return; }
     pthread_mutex_lock(&app.lock);
     int level_native = app.level_native[0];
     double level = app.level[0];
@@ -1266,8 +1384,9 @@ static void get_property(int fd, const mpv_node *id, const char *name)
                                             "fade-seconds", "fades", "fades-done", "fades-cut", "back-drawn", "gl-objects",
                                             "back-idle", "fades-from-nothing", "sound-held", "sources", "shaders", "fx-fps",
                                             "fx-gl-objects", "fx-passes", "fx-passes-per-second", "load", "final-lines",
-                                            "final-switches", "final-why", "moves", "fade-kind", "fade-steps", "layer-generators", "program-fades" };
-        mpv_node vals[42] = { node_str(PVJ_VERSION), node_int(app.in_w), node_int(app.in_h), node_int(app.out_w), node_int(app.out_h),
+                                            "final-switches", "final-why", "moves", "fade-kind", "fade-steps", "layer-generators", "program-fades",
+                                            "graphics", "graphics-side" };
+        mpv_node vals[44] = { node_str(PVJ_VERSION), node_int(app.in_w), node_int(app.in_h), node_int(app.out_w), node_int(app.out_h),
                               node_dbl(app.out_hz), node_int(flips), node_int(drawn), node_int(missed), node_str(state),
                               { .format = MPV_FORMAT_FLAG }, node_str(app.cfg->hwdec), node_int(fences), node_int(freed),
                               node_int(LAYERS), node_int(front), node_str(PHASES[phase]), node_dbl(progress), node_dbl(seconds),
@@ -1278,12 +1397,13 @@ static void get_property(int fd, const mpv_node *id, const char *name)
                               node_int(__atomic_load_n(&app.fx_passes, __ATOMIC_RELAXED)), node_dbl(passes_rate), node_int(load),
                               node_int(__atomic_load_n(&app.final_lines, __ATOMIC_ACQUIRE)),
                               node_int(__atomic_load_n(&app.final_switches, __ATOMIC_RELAXED)), node_str(final_why),
-                              { .format = MPV_FORMAT_FLAG }, node_str(kind), node_int(steps), { .format = MPV_FORMAT_FLAG }, node_int(pfades) };
+                              { .format = MPV_FORMAT_FLAG }, node_str(kind), node_int(steps), { .format = MPV_FORMAT_FLAG }, node_int(pfades),
+                              node_int(GFX_SLOTS), node_int(gfx_side_max()) };
         vals[10].u.flag = osd;
         vals[24].u.flag = back_idle;
         vals[37].u.flag = 1;                // wipes and slides are drawn here (D111): the panel asks this once per process
         vals[40].u.flag = 1;                // source 1's layers each hold a generator (D130): asked once per process too
-        mpv_node_list list = { .num = 42, .values = vals, .keys = (char **)keys };
+        mpv_node_list list = { .num = 44, .values = vals, .keys = (char **)keys };
         d.format = MPV_FORMAT_NODE_MAP;
         d.u.list = &list;
         reply(fd, id, "success", &d);
@@ -1444,6 +1564,8 @@ static void handle(int fd, const char *line, size_t len)
         else reply(fd, id, "invalid parameter", NULL);
     } else if (!strcmp(name, "pvj-shader") && nargs >= 4 && nargs <= 5) {
         shader_command(fd, id, cmd);
+    } else if (!strcmp(name, "pvj-graphic") && nargs >= 3 && nargs <= 7) {
+        graphic_command(fd, id, cmd);
     } else if (!strcmp(name, "pvj-source") && nargs >= 3) {
         source_command(fd, id, cmd);
     } else if (!strcmp(name, "pvj-crossfade") && nargs >= 3 && nargs <= 5) {
