@@ -543,7 +543,7 @@ function startServer(env) {          // env: more for the harness's environment 
     assert.deepStrictEqual(await page.$$eval('.navhead', (hs) => hs.map((x) => x.textContent)), ['Everyday', 'Show tools', 'This node']);
     assert.deepStrictEqual(await page.$$eval('.navname', (ns) => ns.map((x) => x.textContent)), ['Health', 'Projectors', 'Room', 'Schedule', 'Shaders and Vibes', 'People and codes', 'Sound',
       'At power-up', 'Streams', 'NDI\u00ae input', 'Render nodes', 'Sound reactivity', 'NDI\u00ae discovery server', 'Projection mapping', 'Graphics', 'Nodes in step', 'MIDI controller', 'DMX lighting desk', 'OSC',
-      'Network', 'Screen output', 'Updates', 'Remote support', 'Secure connection', 'Backup and reset', 'Look', 'About and power'], 'the rows a full-access device sees');
+      'Network', 'Screen output', 'Updates', 'Remote support', 'Nodes on this network', 'Secure connection', 'Backup and reset', 'Look', 'About and power'], 'the rows a full-access device sees');
     const low = await page.$$eval('.navrow', (rs) => rs.filter((r) => r.getBoundingClientRect().height < 56).map((r) => r.textContent));
     assert.deepStrictEqual(low, [], 'every row is at least 56 px high');
     assert.strictEqual(await page.textContent('#notbuilt summary'), 'Not built yet (4)');
@@ -2113,6 +2113,110 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.waitForSelector('#sysback:text-is("Back to Now")');
       await page.click('#sysback');
       await page.waitForSelector('#nowscreen');
+      // The node switcher (fleet step 2b): asked only when pressed; a node opens by a plain https link in a new tab;
+      // a conflict (one id at two addresses) and a node without a secure connection have no Open; names are text;
+      // a node opened before at another address says so
+      {
+        let asked = 0;
+        const fleet = async (route) => {
+          asked++;
+          await route.fulfill({ json: { self: { id: 'a'.repeat(32), name: 'nxlx-node-01', tier: 'standard', version: '1.0' },
+            discovery: { on: true, state: 'on', detail: '' }, scanning: false, error: null, nodes: [
+              { id: 'b'.repeat(32), name: 'nxlx-node-02', address: '192.168.0.170', port: 443, tier: 'full', version: '1.0', https: true, seen_seconds_ago: 1 },
+              { id: 'c'.repeat(32), name: '<b>bold</b>', address: '192.168.0.171', port: 8443, tier: 'lean', version: '1.0', https: true, seen_seconds_ago: 2 },
+              { id: 'd'.repeat(32), name: 'nxlx-plain', address: '192.168.0.172', port: 80, tier: 'standard', version: '1.0', https: false, seen_seconds_ago: 3 },
+              { id: 'e'.repeat(32), name: 'nxlx-twin', address: '192.168.0.173', port: 443, tier: 'standard', version: '1.0', https: true, seen_seconds_ago: 1 },
+              { id: 'e'.repeat(32), name: 'nxlx-twin', address: '192.168.0.174', port: 443, tier: 'standard', version: '1.0', https: true, seen_seconds_ago: 1 },
+              // hostile rows (the review of #238): what other devices say is checked by the panel too
+              { id: 'f'.repeat(32), name: 'nxlx-port', address: '192.168.0.175', port: '443@evil.example', tier: 'standard', version: '1.0', https: true, seen_seconds_ago: 1 },
+              { id: '1'.repeat(32), name: 'nxlx-short', address: '1.2.3', port: 443, tier: 'standard', version: '1.0', https: true, seen_seconds_ago: 1 },
+              { id: '2'.repeat(32), name: 'nxlx-dots', address: '....', port: 443, tier: 'standard', version: '1.0', https: true, seen_seconds_ago: 1 },
+              { id: '3'.repeat(32), name: 'nxlx-public', address: '8.8.8.8', port: 443, tier: 'standard', version: '1.0', https: true, seen_seconds_ago: 1 },
+              { id: '4'.repeat(32), name: 'nxlx-node-O2', address: '192.168.0.176', port: 443, tier: 'standard', version: '1.0', https: true, seen_seconds_ago: 1 },
+              { id: '5'.repeat(32), name: 'constructor', address: '192.168.0.177', port: 443, tier: 'standard', version: '1.0', https: true, seen_seconds_ago: 1 },
+              { id: '6'.repeat(32), name: 'constructor', address: '192.168.0.178', port: 443, tier: 'standard', version: '1.0', https: true, seen_seconds_ago: 1 }] } });
+        };
+        await page.route('**/api/nodes', fleet);
+        await page.evaluate((id) => localStorage.setItem('pvj.nodes.opened', JSON.stringify({ [id]: { address: '192.168.0.99', port: 443 } })), 'b'.repeat(32));
+        await page.waitForTimeout(1500);
+        assert.strictEqual(asked, 0, 'the node list is not asked for before Nodes is pressed');
+        await page.click('#nodesbtn');
+        await page.waitForSelector('#nodeslist .nodesrow');
+        assert.strictEqual(asked, 1, 'pressing Nodes asks once');
+        const rows = await page.$$eval('#nodeslist .nodesrow', (els) => els.map((el) => ({ name: el.querySelector('.lname').textContent,
+          where: el.querySelector('.nodeswhere').textContent, href: el.querySelector('a') ? el.querySelector('a').getAttribute('href') : null,
+          rel: el.querySelector('a') ? el.querySelector('a').getAttribute('rel') : null, target: el.querySelector('a') ? el.querySelector('a').getAttribute('target') : null,
+          moved: !!el.querySelector('.nodesmoved'), bold: !!el.querySelector('.lname b') })));
+        const by = (n) => rows.filter((r) => r.name === n);
+        assert.strictEqual(by('nxlx-node-02')[0].href, 'https://192.168.0.170/', 'a node opens at its own https address, with nothing of this node in the link');
+        assert(/noopener/.test(by('nxlx-node-02')[0].rel) && /noreferrer/.test(by('nxlx-node-02')[0].rel) && by('nxlx-node-02')[0].target === '_blank', 'it opens in a new tab with no opener and no referrer');
+        assert(by('nxlx-node-02')[0].moved, 'a node opened before at another address says its address changed');
+        assert.strictEqual(by('<b>bold</b>')[0].href, 'https://192.168.0.171:8443/', 'a port other than 443 is in the link');
+        assert(!by('<b>bold</b>')[0].bold, 'a name is text, never markup');
+        assert.strictEqual(by('nxlx-plain')[0].href, null, 'a node without a secure connection has no Open');
+        assert.strictEqual(by('nxlx-twin').length, 2, 'one id at two addresses is two rows, each with its address');
+        assert(by('nxlx-twin').every((r) => r.href === null), 'a conflict has no Open');
+        assert(rows.every((r) => !/token|pin/i.test(r.href || '')), 'no link carries a token or a PIN');
+        assert.strictEqual(by('nxlx-port')[0].href, null, 'a port that is not a whole number from 1 to 65535 makes no link (443@evil.example)');
+        assert.strictEqual(by('nxlx-short')[0].href, null, 'an address of three numbers makes no link');
+        assert.strictEqual(by('nxlx-dots')[0].href, null, 'an address of dots makes no link');
+        assert.strictEqual(by('nxlx-public')[0].href, null, 'a public address makes no link');
+        assert(rows.every((r) => r.href === null || /^https:\/\/(10|172\.(1[6-9]|2\d|3[01])|192\.168)\.\d+\.\d+(:\d+)?\/$/.test(r.href)), 'every link is https to a private address and a port, nothing else');
+        assert.strictEqual(by('nxlx-node-O2')[0].where, '192.168.0.176', 'a lookalike name stands as its own row, with its own address beside it');
+        assert.strictEqual(by('nxlx-node-02')[0].where, '192.168.0.170', 'and the real one keeps its address');
+        assert(by('constructor').length === 2 && by('constructor').every((r) => r.href === null), 'a name like "constructor" is grouped too: two at two addresses are a conflict');
+        assert(await page.isVisible('#nodesdisc'), 'the owner has the switch for looking');
+        await page.click('#nodesagain');
+        await page.waitForFunction(() => document.querySelectorAll('#nodeslist .nodesrow').length === 12);
+        assert.strictEqual(asked, 2, 'Look again asks again');
+        {
+          await page.evaluate(() => localStorage.setItem('pvj.nodes.opened', JSON.stringify({ x: { address: '8.8.8.8', port: 443 }, ['9'.repeat(32)]: { address: '192.168.0.9', port: '1@e' } })));
+          await page.click('#nodesagain');
+          await page.waitForFunction(() => document.querySelectorAll('#nodeslist .nodesrow').length === 12);
+          assert.strictEqual(await page.locator('.nodesmoved').count(), 0, 'a remembered entry that is not well formed is ignored');
+          await page.evaluate(() => localStorage.removeItem('pvj.nodes.opened'));
+        }
+        await page.click('#nodesclose');
+        await page.waitForSelector('#nodespop', { state: 'detached' });
+        await page.waitForTimeout(1500);
+        assert.strictEqual(asked, 3, 'nothing is asked after the list is closed (two Look agains)');
+        await page.unroute('**/api/nodes', fleet);
+        const remote = async (route) => { const res = await route.fetch(); const d = await res.json(); if (d.device) d.device.remote = true; await route.fulfill({ response: res, json: d }); };
+        await page.route('**/api/status', remote);
+        await page.reload();
+        await page.waitForSelector('#wshead');
+        await page.waitForTimeout(1500);
+        assert.strictEqual(await page.locator('#nodesbtn').count(), 0, 'an Owner over remote support has no Nodes');
+        await page.unroute('**/api/status', remote);
+        await page.reload();
+        await page.waitForSelector('#nodesbtn');
+        await go(page, 'now/now');
+      }
+    }
+    // The discovery switch on its own Setup page (This node > Nodes on this network): it says what it does now, Stop
+    // is asked first, and the answer is shown (the node itself is not changed: the requests are answered here)
+    {
+      let on = true, posted = null;
+      const answer = () => ({ self: { id: 'a'.repeat(32), name: 'nxlx-node-01', tier: 'standard', version: '1.0' },
+        discovery: { on, state: on ? 'on' : 'off', detail: '' }, nodes: [], scanning: false, error: null });
+      const list = async (route) => route.fulfill({ json: answer() });
+      const flip = async (route) => { posted = route.request().postDataJSON(); on = !!posted.on; await route.fulfill({ json: answer() }); };
+      await page.route('**/api/nodes', list);
+      await page.route('**/api/nodes/discovery', flip);
+      await sys('Nodes on this network');
+      await page.waitForSelector('#nodessetswitch');
+      assert(/^On: /.test(await page.textContent('#nodessetstate')), 'the page says looking is on');
+      await page.click('#nodessetswitch');
+      await page.waitForSelector('#nodessetcard #confirmrow');
+      assert.strictEqual(posted, null, 'Stop looking is asked first');
+      await page.click('#confirmrow button:text-is("Stop")');
+      await page.waitForFunction(() => /^Off: /.test(document.getElementById('nodessetstate').textContent), null, { timeout: 15000 });
+      assert.deepStrictEqual(posted, { on: false }, 'Stop sends on: false');
+      await page.click('#nodessetswitch');
+      await page.waitForFunction(() => /^On: /.test(document.getElementById('nodessetstate').textContent), null, { timeout: 15000 });
+      assert.deepStrictEqual(posted, { on: true }, 'Look for nodes sends on: true, without a question');
+      await page.unroute('**/api/nodes/discovery', flip);
+      await page.unroute('**/api/nodes', list);
     }
     await sys('Projectors');
     await page.waitForSelector('.proj-entry');
