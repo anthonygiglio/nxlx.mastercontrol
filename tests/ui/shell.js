@@ -25,7 +25,7 @@
 //                         Blackout at its right end and at least 180 px for the name of what plays. What else
 //                         is on the line, by the owner's order of who has the room first: Previous and Next
 //                         from 800 px, Loop from 940, Speed from 1080, the fades from 1280, back and forward
-//                         10 s from 1440; the rest is behind More, which opens it under the line. The place in
+//                         10 s from 1400; the rest is behind More, which opens it under the line. The place in
 //                         the clip is never behind More: a slim bar along the strip's top edge under 1640 px
 //                         (the same one control, 24 px of target), on the line from there; on a phone four buttons, and More opens the rest in place,
 //                         stays open on the next screen, and closes
@@ -72,7 +72,7 @@ const ALWAYS = ['freeze', 'stop', 'black'];      // a phone's closed strip: thes
 // From which width of the panel each control is on the strip's one line (under it: behind More). The owner's order
 // of who has the room first (D72): Blackout, Stop, Freeze; Previous and Next; Loop; Speed; Fade; back and
 // forward 10 s; the place in the clip.
-const ON_LINE = { freeze: 600, stop: 600, black: 600, prev: 800, next: 800, loop: 940, mv: 1080, fade: 1280, back10: 1440, fwd10: 1440 };
+const ON_LINE = { freeze: 600, stop: 600, black: 600, prev: 800, next: 800, loop: 940, mv: 1080, fade: 1280, back10: 1400, fwd10: 1400 };
 // The place in the clip is never behind More: under this width it is a slim bar along the strip's top edge (the same
 // one control), from it a slider on the line.
 const SEEK_LINE = 1640;
@@ -363,7 +363,7 @@ async function strip(pg) {
   // From 600 px: one line, whatever is folded; each control is on it from its width and behind More under that
   const ALL = STRIP.concat(SPEED);
   for (const [width, height] of [[600, 900], [667, 375], [768, 1024], [799, 900], [800, 900], [939, 900], [940, 900], [1079, 800], [1080, 800], [1199, 800], [1200, 800], [1279, 800], [1280, 800],
-    [1366, 768], [1439, 900], [1440, 900], [1639, 900], [1640, 900], [1920, 1080]]) {
+    [1366, 768], [1399, 900], [1400, 900], [1425, 900], [1440, 900], [1639, 900], [1640, 900], [1920, 1080]]) {
     await pg.setViewportSize({ width, height });
     await frames(pg);
     const s = await see(pg), l = await pg.evaluate(lie, ALL);
@@ -375,7 +375,7 @@ async function strip(pg) {
     assert(l.page <= l.vw + 1, where + 'does not make the page scroll sideways (' + l.page + ' px)');
     assert(l.name >= NAME, where + 'leaves ' + NAME + ' px for what plays: ' + l.name + ' px');
     Object.keys(ON_LINE).forEach((b) => assert.strictEqual(s.buttons[b], width >= ON_LINE[b], where + (width >= ON_LINE[b] ? 'shows ' : 'folds ') + b));
-    assert.strictEqual(s.buttons.wsmore, width < 1440, where + (width < 1440 ? 'has More' : 'has no More: nothing is folded'));
+    assert.strictEqual(s.buttons.wsmore, width < 1400, where + (width < 1400 ? 'has More' : 'has no More: nothing is folded'));
     // the place in the clip: shown at every width, once; along the top edge under 1640 px, on the line from there
     const k = await pg.evaluate(edge);
     assert.deepStrictEqual([k.count, k.shown, k.label], [1, true, 'Position in the clip'], where + 'has the place in the clip, once, with its name: ' + JSON.stringify(k));
