@@ -65,7 +65,7 @@ const DESK = 1200;                 // from this width of the panel an area's scr
 // the screens that are columns of one page there (the others have the whole width: Mapping, Setup's pages, and
 // Play's Shaders up to 1699 px, which joins the desk from 1700: D72 as changed on 2026-10-10; SIZES stop at 1366)
 const DESKS = { play: ['pads', 'library'], shape: ['effect', 'picture', 'sound'], room: ['scenes', 'walls', 'guests'] };
-const HOMES = ['vibes', 'mapping', 'sound'];      // rows of the Setup index that open a screen of another area
+const HOMES = ['vibes', 'mapping', 'sound', 'graphics'];      // rows of the Setup index that open a screen of another area
 const STRIP = ['prev', 'back10', 'fwd10', 'next', 'fade', 'freeze', 'stop', 'black'];      // (one fade button since D75: out, then in)
 const SPEED = ['mv', 'loop'];      // Speed and Loop, on the strip since D72 (Loop has no id: it is found by its class)
 const ALWAYS = ['freeze', 'stop', 'black'];      // a phone's closed strip: these and More (Previous and Next are behind More there)
@@ -260,7 +260,7 @@ async function menus(pg) {
     assert.deepStrictEqual(p.cols, wide ? ['pads', 'library'] : ['pads'], at + 'the columns of Play');
     if (wide) {
       assert.deepStrictEqual(p.colHeads, ['Pads', 'Library'], at + 'the headings of Play\'s columns');
-      assert.deepStrictEqual(p.subs, ['sub-play-desk', 'sub-play-shaders'], at + 'the tabs of Play: the desk, and Shaders');
+      assert.deepStrictEqual(p.subs, ['sub-play-desk', 'sub-play-shaders', 'sub-play-graphics'], at + 'the tabs of Play: the desk, Shaders, and Graphics (D129, a screen of its own)');
       await go(pg, 'play/shaders');
       const q = await see(pg);
       assert.deepStrictEqual(q.cols, ['shaders'], at + 'the Shaders tab has the whole width');

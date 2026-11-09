@@ -1419,7 +1419,7 @@
     function colourRow(it, id, value, label, send) {
       var row = h('div', { class: 'swatches', role: 'group', 'aria-label': label });
       GFX_COLOURS.forEach(function (c) {
-        var b = h('button', { class: 'swatch' + (value.toLowerCase() === c[0] ? ' on' : ''), id: id + '-' + c[0].slice(1), 'aria-label': c[1], 'aria-pressed': value.toLowerCase() === c[0] ? 'true' : 'false', title: c[1], disabled: !live,
+        var b = h('button', { class: 'gfxswatch' + (value.toLowerCase() === c[0] ? ' on' : ''), id: id + '-' + c[0].slice(1), 'aria-label': c[1], 'aria-pressed': value.toLowerCase() === c[0] ? 'true' : 'false', title: c[1], disabled: !live,
           onclick: function () { send(c[0]); } });
         b.style.background = c[0];
         row.appendChild(b);

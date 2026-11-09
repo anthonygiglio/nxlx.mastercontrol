@@ -4603,8 +4603,8 @@ function startServer(env) {          // env: more for the harness's environment 
     await go(page, 'play/pads');
     {
       const three = await deskNow();
-      assert(three.pads.right <= three.library.left && three.library.right <= three.shaders.left && three.shaders.right <= three.vw && three.sub.width === 0 && three.ctl.left >= three.shaders.left,
-        'from 1700 px the pads, the library and the shaders share the page, with no tabs: ' + JSON.stringify(three));
+      assert(three.pads.right <= three.library.left && three.library.right <= three.shaders.left && three.shaders.right <= three.vw && three.sub.width > 0 && three.ctl.left >= three.shaders.left,
+        'from 1700 px the pads, the library and the shaders share the page, and the bar of tabs holds only the desk and Graphics (Graphics is a screen of its own, D129): ' + JSON.stringify(three));
       assert(Math.min(three.pads.width, three.library.width, three.shaders.width) >= 320, 'no column of the desk is narrower than a phone: ' + JSON.stringify(three));
     }
     await page.setViewportSize({ width: 1920, height: 1080 });
