@@ -143,6 +143,11 @@ ROWS = {
     ("GET", "/api/qr.svg"): STUDIO("live"),
     ("POST", "/api/guests"): KINDS["op"],          # D84: a support session of the Owner's role too
     ("POST", "/api/media/upload"): KINDS["op"],
+    # logos (D129): the Operator's and the Owner's, as the clip upload; a Guest, a controller and a view-only support login have none of it
+    ("GET", "/api/graphics/file"): KINDS["op"],
+    ("POST", "/api/graphics/file"): KINDS["op"],
+    ("POST", "/api/graphics/upload"): KINDS["op"],
+    ("GET", "/api/graphics/thumb"): KINDS["op"],
     ("POST", "/api/media/import"): KINDS["op"],
     ("POST", "/api/media/import/cancel"): KINDS["op"],
     ("POST", "/api/media/delete"): KINDS["op"],

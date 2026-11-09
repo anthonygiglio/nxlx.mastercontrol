@@ -269,6 +269,12 @@ class Api:
         self._care_busy = None    # "an import" or "a factory reset" while boxcare runs one (set and read under _import_lock)
         from . import mapper as mapper_mod
         self.mapper = mapper_mod.Engine(self)
+        from . import raster as raster_mod
+        self.raster = raster_mod
+        self.graphics = raster_mod.Store(      # the logos people upload (D129): the helper's PNGs, beside settings.json
+            os.environ.get("PVJ_GRAPHICS_DIR") or os.path.join(
+                os.path.dirname(getattr(settings, "path", "") or "") or os.path.dirname(os.path.realpath(media_dir)), "graphics"),
+            valid_name, raster_mod.Client(), free_space=lambda: self._free_space())
         from . import overlay as overlay_mod
         self.masks = overlay_mod.Masks(self)                       # the masks over the video, combined in a worker (D100)
         from . import shaderlive as shaders_mod, vibes as vibes_mod
@@ -902,6 +908,69 @@ class Api:
                 except OSError:
                     pass
             self._upload_lock.release()
+
+    # --- logos and other pictures (D129): received here, decoded only by pvj-raster ---------------------------------
+    def graphics_upload(self, name, length, read, replace=False, check=None, clock=time.monotonic):
+        """Receive a PNG, JPEG or SVG from a stream and store it as a clean PNG. Nothing is decoded in this process:
+        pvj/raster.py checks the type, the size and the header's dimensions, then asks pvj-raster. `read(n)` returns up
+        to n bytes (b'' at the end); `check()` may raise ApiError to abandon the upload (device revoked)."""
+        raster = self.raster
+        try:
+            self.graphics.stored_name(name)       # a name that cannot be stored is refused before a byte is read
+        except raster.RasterError as e:
+            raise ApiError(e.status, e.message)
+        if not isinstance(length, int) or length <= 0:
+            raise ApiError(411, "Content-Length required")
+        if length > raster.MAX_PICTURE_BYTES:
+            raise ApiError(413, "A picture may be at most %d MB." % (raster.MAX_PICTURE_BYTES // (1024 * 1024)))
+        if not self._upload_lock.acquire(blocking=False):
+            raise ApiError(409, "another upload is in progress")
+        try:
+            if length + FREE_SPACE_RESERVE > self._free_space():
+                raise ApiError(507, "not enough free space on the node")
+            data, started = bytearray(), clock()
+            while len(data) < length:
+                if check:
+                    check()
+                chunk = read(min(CHUNK, length - len(data)))
+                if not chunk:
+                    break
+                data += chunk
+                if len(data) >= min(length, 512) and length > raster.MAX_SVG_BYTES and raster.sniff(bytes(data[:512])) == "svg":
+                    raise ApiError(413, "An SVG file may be at most 1 MB.")       # told before the rest is read
+                elapsed = clock() - started
+                if elapsed > RATE_GRACE_SECONDS and len(data) / elapsed < MIN_UPLOAD_RATE:
+                    raise ApiError(408, "upload too slow (under %d KB/s); try again on a better connection" % (MIN_UPLOAD_RATE // 1024))
+            if len(data) != length:
+                raise ApiError(400, "upload was cut short (%d of %d bytes)" % (len(data), length))
+            try:
+                return self.graphics.store(name, bytes(data), replace=replace)
+            except raster.RasterError as e:
+                raise ApiError(e.status, e.message)
+        except (TimeoutError, ConnectionError):
+            raise ApiError(400, "upload interrupted")
+        finally:
+            self._upload_lock.release()
+
+    def graphics_files(self, body, device, client):
+        return self.graphics.state()
+
+    def graphics_file_change(self, body, device, client):
+        """POST /api/graphics/file: {"delete": "name.png"} or {"rename": "name.png", "new": "other.png"}."""
+        try:
+            if isinstance(body.get("delete"), str) and "rename" not in body:
+                return self.graphics.delete(body["delete"])
+            if isinstance(body.get("rename"), str) and "delete" not in body:
+                return self.graphics.rename(body["rename"], body.get("new"))
+        except self.raster.RasterError as e:
+            raise ApiError(e.status, e.message)
+        raise bad("send {delete: name} or {rename: name, new: name}")
+
+    def graphics_thumb(self, name):
+        try:
+            return self.graphics.thumbnail(name)
+        except self.raster.RasterError as e:
+            raise ApiError(e.status, e.message)
 
     # --- copy a clip from a USB drive into the media folder (the old "Loading from USB to internal") ---------
     def import_usb(self, body, device, client):
@@ -5470,6 +5539,8 @@ class Api:
             ("POST", "/api/network/confirm"): ("full", self.confirm_network),
             ("POST", "/api/network/revert"): ("full", self.revert_network),
             ("POST", "/api/network/scan"): ("full", self.scan_wifi),
+            ("GET", "/api/graphics/file"): ("live", self.graphics_files),
+            ("POST", "/api/graphics/file"): ("live", self.graphics_file_change),
             ("POST", "/api/media/delete"): ("live", self.delete_media),
             ("POST", "/api/media/rename"): ("live", self.rename_media),
             ("POST", "/api/pads"): ("live", self.set_pad),

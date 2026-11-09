@@ -266,6 +266,19 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
             except ApiError as e:
                 self._json(e.status, {"error": e.message})
 
+        def _graphics_thumb(self):
+            """GET /api/graphics/thumb?name=logo.png: the thumbnail PNG of a stored graphic (Operator and up). The only
+            picture the panel serves from the graphics store is a PNG that pvj-raster wrote."""
+            try:
+                self._who("GET", "/api/graphics/thumb")
+                name = (parse_qs(urlsplit(self.path).query).get("name") or [""])[0]
+                self._send(200, api.graphics_thumb(name), "image/png")
+            except ApiError as e:
+                self._json(e.status, {"error": e.message})
+            except Exception:
+                traceback.print_exc()
+                self._json(500, {"error": "internal error"})
+
         def _qr(self):
             """GET /api/qr.svg?for=panel|view|live: a QR code to print or show. A presenter gets the panel address
             and the guest code; the presenter code needs full access (checked in access_qr)."""
@@ -291,6 +304,8 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                 return self._preview()
             if path == "/api/qr.svg":
                 return self._qr()
+            if path == "/api/graphics/thumb":
+                return self._graphics_thumb()
             if path == "/api/https" or path.startswith("/api/https/"):
                 return self._https_route("GET", path, {})
             if path.startswith("/api/"):
@@ -360,6 +375,43 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                 self.close_connection = True
                 self._json(500, {"error": "internal error"})
 
+        def _graphics_upload(self):
+            """Raw-body upload: POST /api/graphics/upload?name=logo.png[&replace=1]. A PNG, JPEG or SVG; the answer is the
+            stored PNG's name, or the plain reason. Nothing is decoded here (pvj/raster.py, pvj-raster)."""
+            query = parse_qs(urlsplit(self.path).query)
+            try:
+                device = self._who("POST", "/api/graphics/upload")
+                if (self.headers.get("Content-Type") or "").split(";")[0].strip() != "application/octet-stream":
+                    raise ApiError(415, "send application/octet-stream")
+                try:
+                    length = int(self.headers.get("Content-Length", ""))
+                except ValueError:
+                    length = None
+                if self.headers.get("Transfer-Encoding"):
+                    raise ApiError(501, "chunked uploads are not supported; send Content-Length")
+                name = (query.get("name") or [""])[0]
+                replace = (query.get("replace") or ["0"])[0] == "1"
+                token = self._token()
+
+                def still_paired():
+                    if (auth.authenticate(token) or api.support.authenticate(token)) is None:
+                        raise ApiError(403, "this device was removed")
+                self._reaper.cancel()
+                self.connection.settimeout(30)
+                result = api.graphics_upload(name, length, self.rfile.read1, replace, check=still_paired)
+                api.presence.changed(device, "POST", "/api/graphics/upload")
+                api.support.note(device, "uploaded a graphic", major=False, detail=result.get("name", ""))
+                self._json(200, result)
+            except ApiError as e:
+                self.close_connection = True  # an unread body must not be parsed as the next request
+                self._json(e.status, {"error": e.message})
+            except (OSError, ValueError):
+                self.close_connection = True
+            except Exception:
+                traceback.print_exc()
+                self.close_connection = True
+                self._json(500, {"error": "internal error"})
+
         def _settings_import(self):
             """POST /api/system/settings/import?confirm=import: the body is the exported file itself. It is read
             here as bytes (larger than MAX_BODY allows) and parsed once, strictly, by boxcare."""
@@ -403,6 +455,8 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                 return self._upload()
             if path == "/api/system/update/upload":
                 return self._upload(update=True)
+            if path == "/api/graphics/upload":
+                return self._graphics_upload()
             if path == "/api/system/settings/import":
                 return self._settings_import()
             body, err = self._body()

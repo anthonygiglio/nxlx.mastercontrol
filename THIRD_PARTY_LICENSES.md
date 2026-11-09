@@ -24,6 +24,8 @@ Inventory of components bundled with or fetched by the legacy code. Licences are
 | libmpv (mpv), linked by pvj-render; not shipped, the box's own package | `render/` builds against it | GPLv2 or later as Debian builds it (see below) |
 | Mesa's EGL, OpenGL ES and GBM, libdrm, glibc: linked by pvj-render; not shipped | `render/` builds against them | MIT (Mesa, libdrm), LGPL-2.1 (glibc) |
 | Ableton Link and asio, compiled into pvj-link at install; not shipped, the box's own packages | `render/link/` builds against them | GPL-2.0-or-later (Link), BSL-1.0 (asio) (see below) |
+| nanosvg (Mikko Mononen), the SVG reader of pvj-raster, vendored unchanged | `render/raster/vendor/` | zlib (verified, see below) |
+| libpng, libjpeg-turbo: linked by pvj-raster; not shipped, the box's own packages | `render/raster/` builds against them | libpng licence, IJG / BSD-3-Clause / zlib (libjpeg-turbo) |
 
 ## Not bundled: jit.ndi for the Max render node patch (D94)
 
@@ -260,3 +262,24 @@ and nothing else changes.
 | asio, standalone, headers only | `libasio-dev` | Debian 13's | BSL-1.0 |
 
 The name "Ableton Link" says what the box can join. It carries no logo, and this project is not made by or with Ableton.
+
+## pvj-raster, nanosvg, libpng and libjpeg (D129)
+
+`render/raster/pvj-raster.c` is a program of this project, written for the box, under **GPL-3.0-or-later** like the rest of
+`render/`. It decodes the pictures people upload (PNG with libpng, JPEG with libjpeg-turbo, SVG with nanosvg) and writes a
+clean PNG. libpng and libjpeg-turbo are the box's own packages (`libpng-dev`, `libjpeg-dev`), linked and not shipped, with
+their copyright files at `/usr/share/doc/<package>/copyright`.
+
+nanosvg is single-header C code by Mikko Mononen under the **zlib licence**, which is compatible with the GPL. Its two
+headers are in this repository unchanged, so that the box builds the same code the tests ran, and its licence text is
+kept beside them. It has no scripting, no entities, no external fetch, no `<image>` and no text, which is why it was
+chosen over a full SVG library.
+
+| File | What it is | SHA-256 |
+| --- | --- | --- |
+| `render/raster/vendor/nanosvg.h` | nanosvg, the parser | `e34fd5d084be106cea972d19ce5d27fd96d17ba89f8d06bdceee058420c8b2b0` |
+| `render/raster/vendor/nanosvgrast.h` | nanosvg's rasteriser | `79a9c5f4db19debf9f3a648a1589e96d92854f245a5cb4f3d823f263785234d8` |
+| `render/raster/vendor/LICENSE.nanosvg` | its licence, as upstream's `LICENSE.txt` | `e82bc3dd03400aecabe12201219ba14750dbc4b36faab58663a7a6068548d372` |
+
+Taken on 2026-11-08 from <https://github.com/memononen/nanosvg> at commit `239e102ec2c691f2902e20ace2ed36ee4a35cfe6`
+(the head of `master`, 2026-07-09), files `src/nanosvg.h`, `src/nanosvgrast.h` and `LICENSE.txt`.

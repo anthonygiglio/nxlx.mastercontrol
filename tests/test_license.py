@@ -249,8 +249,11 @@ class LicenseTest(unittest.TestCase):
         outside it says GPL, and the licence text beside it is the FSF's, unchanged."""
         files = [p for p in tracked() if p.startswith("render/")]
         self.assertIn("render/Makefile", files)
+        vendored = [p for p in files if p.startswith("render/raster/vendor/")]
+        for p in vendored:      # nanosvg, unchanged upstream code under its own zlib licence (D129), declared in REUSE.toml
+            self.assertTrue(any(lic == "Zlib" and p in paths for lic, paths in annotations()), p)
         for p in files:
-            if p == "render/LICENSE":
+            if p == "render/LICENSE" or p in vendored:
                 continue
             with open(os.path.join(REPO, p), encoding="utf-8") as f:
                 head = f.read(400)

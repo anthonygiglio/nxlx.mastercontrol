@@ -31,6 +31,8 @@ OUTSIDE = {
     ("GET", "/api/preview.jpg"): "view",
     ("GET", "/api/qr.svg"): "live",
     ("POST", "/api/media/upload"): "live",
+    ("POST", "/api/graphics/upload"): "live",       # D129: logos; decoded by pvj-raster only
+    ("GET", "/api/graphics/thumb"): "live",
     ("POST", "/api/system/update/upload"): "full",
     ("POST", "/api/system/settings/import"): "full",
     # the secure connection's own routes (D79, server._https_route): the Owner's, every one that asks who is there

@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+# SPDX-License-Identifier: Apache-2.0
+[Unit]
+Description=nxlx.mastercontrol picture helper socket (uploaded logos are decoded behind it, D129)
+# The program is built at install (render/raster/pvj-raster.c, from libpng and libjpeg headers). Where it could not be
+# built, or after a rollback to a release from before D129, this unit is here and its program is not: the socket is then
+# skipped, once, and the panel says picture upload is not available. That is no failure.
+ConditionPathExists=@PVJ_DIR@/render/pvj-raster
+
+[Socket]
+# One helper process per connection (pvj-raster@.service), so a hijacked decoder has seen one file and nothing else.
+# The socket is root's, in group pvj-raster, and only the panel is in that group (the same way as pvj-link's folder).
+ListenStream=/run/pvj-raster.sock
+SocketUser=root
+SocketGroup=pvj-raster
+SocketMode=0660
+Accept=yes
+# Four decoders at once on the most; the panel itself takes one upload at a time.
+MaxConnections=4
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

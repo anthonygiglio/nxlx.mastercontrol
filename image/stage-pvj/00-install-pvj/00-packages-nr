@@ -16,3 +16,5 @@ alsa-utils
 g++
 ableton-link-dev
 libasio-dev
+libpng-dev
+libjpeg-dev

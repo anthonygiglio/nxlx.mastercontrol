@@ -18,6 +18,8 @@ On a box each service has a folder of its own that only it can write, under a pa
                                                    neither unlink nor replace it, so the name the player opens is
                                                    always that pipe (the review of 2026-10-11, M3)
     /run/pvj-update         root:root       0755   the update units: result.json, update.lock
+    /run/pvj-raster.sock    root:pvj-raster 0660   pvj-raster.socket (D129): the picture helper, started per job; only the
+                                                   panel is in group pvj-raster
 
 A folder is a `RuntimeDirectory=` of exactly one unit, so systemd never hands it to another account. Before this
 the player, the panel and the network helper shared `RuntimeDirectory=pvj`, and systemd gave the whole folder,
@@ -225,6 +227,14 @@ def link_socket(env=None):
 
 def link_state(env=None):
     return os.path.join(link_dir(env), LINK_STATE)
+
+
+RASTER_SOCKET = "/run/pvj-raster.sock"   # pvj-raster (render/raster/, D129): systemd listens here and starts a helper per job
+
+
+def raster_socket(env=None):
+    """The picture helper's socket (install/pvj-raster.socket). Group pvj-raster may connect: the panel alone is in it."""
+    return _env(env).get("PVJ_RASTER_SOCKET") or RASTER_SOCKET
 
 
 def ndi_fifo(env=None):
