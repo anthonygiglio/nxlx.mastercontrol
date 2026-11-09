@@ -2001,7 +2001,15 @@ function startServer(env) {          // env: more for the harness's environment 
               { id: 'c'.repeat(32), name: '<b>bold</b>', address: '192.168.0.171', port: 8443, tier: 'lean', version: '1.0', https: true, seen_seconds_ago: 2 },
               { id: 'd'.repeat(32), name: 'nxlx-plain', address: '192.168.0.172', port: 80, tier: 'standard', version: '1.0', https: false, seen_seconds_ago: 3 },
               { id: 'e'.repeat(32), name: 'nxlx-twin', address: '192.168.0.173', port: 443, tier: 'standard', version: '1.0', https: true, seen_seconds_ago: 1 },
-              { id: 'e'.repeat(32), name: 'nxlx-twin', address: '192.168.0.174', port: 443, tier: 'standard', version: '1.0', https: true, seen_seconds_ago: 1 }] } });
+              { id: 'e'.repeat(32), name: 'nxlx-twin', address: '192.168.0.174', port: 443, tier: 'standard', version: '1.0', https: true, seen_seconds_ago: 1 },
+              // hostile rows (the review of #238): what other devices say is checked by the panel too
+              { id: 'f'.repeat(32), name: 'nxlx-port', address: '192.168.0.175', port: '443@evil.example', tier: 'standard', version: '1.0', https: true, seen_seconds_ago: 1 },
+              { id: '1'.repeat(32), name: 'nxlx-short', address: '1.2.3', port: 443, tier: 'standard', version: '1.0', https: true, seen_seconds_ago: 1 },
+              { id: '2'.repeat(32), name: 'nxlx-dots', address: '....', port: 443, tier: 'standard', version: '1.0', https: true, seen_seconds_ago: 1 },
+              { id: '3'.repeat(32), name: 'nxlx-public', address: '8.8.8.8', port: 443, tier: 'standard', version: '1.0', https: true, seen_seconds_ago: 1 },
+              { id: '4'.repeat(32), name: 'nxlx-node-O2', address: '192.168.0.176', port: 443, tier: 'standard', version: '1.0', https: true, seen_seconds_ago: 1 },
+              { id: '5'.repeat(32), name: 'constructor', address: '192.168.0.177', port: 443, tier: 'standard', version: '1.0', https: true, seen_seconds_ago: 1 },
+              { id: '6'.repeat(32), name: 'constructor', address: '192.168.0.178', port: 443, tier: 'standard', version: '1.0', https: true, seen_seconds_ago: 1 }] } });
         };
         await page.route('**/api/nodes', fleet);
         await page.evaluate((id) => localStorage.setItem('pvj.nodes.opened', JSON.stringify({ [id]: { address: '192.168.0.99', port: 443 } })), 'b'.repeat(32));
@@ -2024,15 +2032,40 @@ function startServer(env) {          // env: more for the harness's environment 
         assert.strictEqual(by('nxlx-twin').length, 2, 'one id at two addresses is two rows, each with its address');
         assert(by('nxlx-twin').every((r) => r.href === null), 'a conflict has no Open');
         assert(rows.every((r) => !/token|pin/i.test(r.href || '')), 'no link carries a token or a PIN');
+        assert.strictEqual(by('nxlx-port')[0].href, null, 'a port that is not a whole number from 1 to 65535 makes no link (443@evil.example)');
+        assert.strictEqual(by('nxlx-short')[0].href, null, 'an address of three numbers makes no link');
+        assert.strictEqual(by('nxlx-dots')[0].href, null, 'an address of dots makes no link');
+        assert.strictEqual(by('nxlx-public')[0].href, null, 'a public address makes no link');
+        assert(rows.every((r) => r.href === null || /^https:\/\/(10|172\.(1[6-9]|2\d|3[01])|192\.168)\.\d+\.\d+(:\d+)?\/$/.test(r.href)), 'every link is https to a private address and a port, nothing else');
+        assert.strictEqual(by('nxlx-node-O2')[0].where, '192.168.0.176', 'a lookalike name stands as its own row, with its own address beside it');
+        assert.strictEqual(by('nxlx-node-02')[0].where, '192.168.0.170', 'and the real one keeps its address');
+        assert(by('constructor').length === 2 && by('constructor').every((r) => r.href === null), 'a name like "constructor" is grouped too: two at two addresses are a conflict');
         assert(await page.isVisible('#nodesdisc'), 'the owner has the switch for looking');
         await page.click('#nodesagain');
-        await page.waitForFunction(() => document.querySelectorAll('#nodeslist .nodesrow').length === 5);
+        await page.waitForFunction(() => document.querySelectorAll('#nodeslist .nodesrow').length === 12);
         assert.strictEqual(asked, 2, 'Look again asks again');
+        {
+          await page.evaluate(() => localStorage.setItem('pvj.nodes.opened', JSON.stringify({ x: { address: '8.8.8.8', port: 443 }, ['9'.repeat(32)]: { address: '192.168.0.9', port: '1@e' } })));
+          await page.click('#nodesagain');
+          await page.waitForFunction(() => document.querySelectorAll('#nodeslist .nodesrow').length === 12);
+          assert.strictEqual(await page.locator('.nodesmoved').count(), 0, 'a remembered entry that is not well formed is ignored');
+          await page.evaluate(() => localStorage.removeItem('pvj.nodes.opened'));
+        }
         await page.click('#nodesclose');
         await page.waitForSelector('#nodespop', { state: 'detached' });
         await page.waitForTimeout(1500);
-        assert.strictEqual(asked, 2, 'nothing is asked after the list is closed');
+        assert.strictEqual(asked, 3, 'nothing is asked after the list is closed (two Look agains)');
         await page.unroute('**/api/nodes', fleet);
+        const remote = async (route) => { const res = await route.fetch(); const d = await res.json(); if (d.device) d.device.remote = true; await route.fulfill({ response: res, json: d }); };
+        await page.route('**/api/status', remote);
+        await page.reload();
+        await page.waitForSelector('#wshead');
+        await page.waitForTimeout(1500);
+        assert.strictEqual(await page.locator('#nodesbtn').count(), 0, 'an Owner over remote support has no Nodes');
+        await page.unroute('**/api/status', remote);
+        await page.reload();
+        await page.waitForSelector('#nodesbtn');
+        await go(page, 'now/now');
       }
     }
     // The discovery switch on its own Setup page (This node > Nodes on this network): it says what it does now, Stop

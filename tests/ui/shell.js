@@ -798,6 +798,8 @@ async function roles(pages, post) {
     // an owner and a presenter land on Now, a guest on the Room
     assert.strictEqual(s.screen, who === 'guest' ? 'room/scenes' : 'now/now', 'where a ' + who + ' lands');
     assert.deepStrictEqual(s.tabNames, (who === 'guest' ? [] : ['Now']).concat(['Play', 'Shape', 'Room', 'Setup']), 'the areas a ' + who + ' has (Now for whoever runs the night)');
+    // the node switcher (D127): an Owner's and an Operator's ("presenter" here is the live device, an Operator since D80); a guest has none
+    assert.strictEqual(await pg.locator('#nodesbtn').count(), who === 'guest' ? 0 : 1, 'Nodes in the title bar for a ' + who);
     // a guest, guest controls being open (D80, the default): Stop and Blackout are his, Previous and Next with a
     // playlist, and every other control of the strip is disabled; locked, all of them (panel.test.js locks and looks)
     const steps = s.disabled.filter((b) => b === 'prev' || b === 'next');
