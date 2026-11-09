@@ -67,6 +67,24 @@ was. A `pvj-crossfade` out of a layer that holds a generator is a fade even when
 in the `pvj-render` property counts the fades into a program asked and says a renderer has the command. The panel does not use
 it yet.
 
+Graphics stage (D129 slice 3, version 0.11.0, `src/gfx.c`): text and logos drawn by the GPU over the final picture, below the text
+layer (so the masks, id 30, and the pairing codes, 40 to 43, stay on top; `final_pass` calls `gfx_draw` between the picture and
+the text layer, which puts the graphics in screenshots and captures too). A graphic is a slot, 1 to 8, in the order of the panel's
+list (a later slot over an earlier). Commands: `["pvj-graphic", "load", N, PATH, W, H, LINES]` (PATH: an absolute regular file,
+never a link, of W x H premultiplied B G R A, at most the GPU's texture size, 4096 at most; LINES: the lines of text in it, for
+the typewriter), `["pvj-graphic", "set", N, {x, y, motion, seconds, out, speed, loop, opacity}]` (all or nothing; motion is `none`,
+`fade`, `typewriter`, `scroll` or `crawl`), `show`, `hide`, `replay`, `clear` (`["pvj-graphic", WHAT, N]`). Properties: `pvj-render`
+gains `graphics` (8) and `graphics-side` (the texture limit); `pvj-graphics` says what each slot holds (`loaded`, `width`,
+`height`, `on`, `motion`, `alpha`, `draws`, `loads`, `waiting`), `bytes` against `bytes-max` (48 MB for all the pictures, loaded
+and waiting), `draws`, `uploads` and `gl-objects`. A picture is read and its lines' ink measured by the client's thread, and
+uploaded by the render thread (at most two a frame); each frame the render thread takes `app.lock` once to work out every slot's
+alpha, place and reveal from the clock, so nothing is sent while a motion runs. Fade: the alpha rises over `seconds` from `show`,
+and a hide with `out` keeps it drawn while it falls from where it was; typewriter: line after line along the ink, soft edge; scroll
+(from below the screen to above, `speed` percent of the screen's height a second) and crawl (from the right edge to the left, of
+its width) once or looped. A scroll or crawl that has run off is done until `replay`. Every handler takes `app.lock` alone, so any
+number of clients may speak at once; the lock order of `ipc.c` is kept. Test hook: `PVJ_RENDER_TEST_MAX_TEXTURE=N` (TEST_HOOKS
+builds) makes the limit small.
+
 **Licence:** GPL-3.0-or-later (this folder only; `LICENSE`). It links libmpv, which is GPLv2 or later as Debian
 builds it. The rest of nxlx.mastercontrol is Apache-2.0 and only starts this program and talks to it over a socket.
 

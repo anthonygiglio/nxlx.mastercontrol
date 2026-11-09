@@ -19,10 +19,12 @@ renderer itself is tests/test_graphics_gpu.py):
 import os
 import threading
 import time
+import unittest
 
 import tests  # noqa: F401  (the package: ranked locks and a temp folder of its own, as every test module)
-from pvj import graphics
+from pvj import graphics, pinscreen
 from pvj.player import PlayerError
+from tests import test_pinscreen
 from tests.test_graphics import Base, wait
 
 
@@ -546,3 +548,39 @@ class SteppingThreadTest(MotionBase):
         self.assertIsNone(self.gfx._ticker)
         self.assertTrue(self.gfx.stop(5))
         self.assertEqual([t.name for t in threading.enumerate() if t.name == "graphics-motion"], [])
+
+
+class PinScreenTellsTest(unittest.TestCase):
+    """The pin screen tells the graphics the moment a code goes up or comes down, with none of its own locks held (the
+    graphics ask it back), instead of leaving them to the 2 second tick."""
+
+    def test_show_and_hide_call_watch_at_once_outside_the_lock(self):
+        api, auth = test_pinscreen.Api(), test_pinscreen.Auth()
+        auth.list_joins = lambda: []
+        p = pinscreen.PinScreen(api, auth, log=lambda *_: None, hostname="h")
+        seen = []
+
+        class Spy:
+            def watch(self):
+                free = []
+                t = threading.Thread(target=lambda: free.append(p._lock.acquire(timeout=2) and (p._lock.release() or True)))
+                t.start()
+                t.join(5)
+                seen.append(bool(free and free[0]))
+        api.gfx = Spy()
+        p.show(["pin"], seconds=30)
+        p.hide()
+        self.assertEqual(seen, [True, True])
+
+    def test_a_graphics_engine_that_fails_does_not_fail_the_screen(self):
+        api, auth = test_pinscreen.Api(), test_pinscreen.Auth()
+        auth.list_joins = lambda: []
+        logged = []
+        p = pinscreen.PinScreen(api, auth, log=logged.append, hostname="h")
+
+        class Broken:
+            def watch(self):
+                raise RuntimeError("boom")
+        api.gfx = Broken()
+        p.show(["pin"], seconds=30)
+        self.assertTrue(any("boom" in line for line in logged))

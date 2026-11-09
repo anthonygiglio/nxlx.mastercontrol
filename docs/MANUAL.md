@@ -201,6 +201,23 @@ Power matters as much as the clip: a weak power supply makes a Pi stutter, drop 
 
 ![Mix screen](images/ui/mix.png)
 
+### Text and logos on the screen (Play > Graphics)
+
+**Play > Graphics** puts words and logos on the wall. Tap **Add text**, type a line, and tap **Send**; the preview under the box is a picture the node itself draws, so it is what the wall gets. Pick a font, a size, a colour, an outline, a shadow or a back plate, and where on the screen it sits (nine places and two nudges). **Add logo** uses a picture you upload under **Logo files** (a PNG, JPEG or SVG; the node turns it into a clean PNG and keeps no SVG). A big **Show** or **Hide** sits on each graphic and **Hide all** at the top. An Operator or the Owner does this; a Guest cannot. A line can also be sent from a controller over OSC, once the Owner switches on **Controllers may push text**.
+
+**Motion.** Each graphic has a **Motion** under its settings:
+
+- **None**: it appears and goes at once.
+- **Fade**: it fades in over the time you set when it is shown, and out over a second time when it is hidden. A new line sent to a graphic that is showing fades in again. **Hide all** and a pairing code on the screen cut at once.
+- **Typewriter**: it is typed out line after line over the time you set, at one pace along the letters, and again for each new line.
+- **Scroll**: it rises from the bottom of the screen to the top like credits, at the speed you set, once or looped.
+- **Crawl**: one line runs from the right edge to the left like a ticker, once or looped. A line too long for this node at that size is refused with the reason ("Too long for this node's ticker at this size: shorten it or lower the size."); shorten it or lower the size.
+- **Replay** plays the motion again.
+
+On a Pi 4, a Pi 5 or a computer with the New renderer the graphics chip does all of this, one frame at a time. On a Pi 3, or a node using the classic player, an overlay cannot move, so only **None**, **Fade** and **Typewriter** are offered, and they move in about twelve steps a second; Scroll and Crawl are greyed out with the words "This node draws graphics without the New renderer: only None, Fade and Typewriter, with steps." If a node falls back to the classic player in the middle of a show, the graphics stay on the screen, still, and a motion chosen earlier is kept and said to be shown still. While the PIN or a pairing code is on the screen the graphics are held back and come back by themselves.
+
+**What has and has not been tried.** The motion has run in the project's tests on a software graphics chip, never on a Raspberry Pi or a projector, and nobody has watched it on a wall. How smooth a crawl looks, how the classic steps look, and what they cost a Pi 3 are not known yet: the rows are in `tools/DEVICE-TESTING.md` (GM1 on), all marked NOT YET RUN. Keys, effects, and drawing over or as a source come in later releases.
+
 ## 5. Optional modules (Setup)
 
 Setup opens on a short list in three groups, with **Health** above them:
