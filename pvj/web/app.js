@@ -7776,12 +7776,12 @@
     if (canOp()) list.push(scr('now', 'now', 'Now', 'What is on, and what needs you.', 'now', { part: 'now' }));
     list.push(
       scr('play', 'pads', 'Pads', 'Start what sits on a pad.', 'play', { part: 'pads' }),
-      scr('play', 'library', 'Library', 'Find a clip, a picture or a live input and play it; keep the files.', 'play', { part: 'library' }));
+      scr('play', 'library', 'Library', 'Play clips, pictures and live inputs.', 'play', { part: 'library' }));
     if (has('vibes')) list.push(scr('play', 'shaders', 'Shaders', 'Pick a shader, or let Vibes play a set.', 'play', { part: 'shaders' }));
     if (has('graphics')) list.push(scr('play', 'graphics', 'Graphics', 'Put text and logos on the screen.', 'system', { sys: 'graphics' }));
-    if (window.pvjEffects && moduleOn('shaders')) list.push(scr('shape', 'effect', 'Effect', 'Put one effect over the picture and set how much.', 'shape', { part: 'effect' }));
+    if (window.pvjEffects && moduleOn('shaders')) list.push(scr('shape', 'effect', 'Effect', 'Put an effect over the picture.', 'shape', { part: 'effect' }));
     list.push(scr('shape', 'picture', 'Picture', 'Set how the picture looks and where it sits.', 'shape', { part: 'picture' }));
-    if (has('sound')) list.push(scr('shape', 'sound', 'Sound', 'Set how loud it is and where the sound comes out.', 'shape', { part: 'sound' }));
+    if (has('sound')) list.push(scr('shape', 'sound', 'Sound', 'How loud, and where it comes out.', 'shape', { part: 'sound' }));
     if (has('mapping')) list.push(scr('shape', 'mapping', 'Mapping', 'Fit the picture to the wall.', 'system', { sys: 'mapping' }));
     if (window.pvjRoom && moduleOn('room')) {
       list.push(scr('room', 'scenes', 'Scenes', 'Set the whole room with one tap.', 'room', { part: 'scenes' }));
