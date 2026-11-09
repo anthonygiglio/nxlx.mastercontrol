@@ -2701,6 +2701,17 @@ function startServer(env) {          // env: more for the harness's environment 
     const nameField = () => page.evaluate(() => { const a = document.activeElement, f = document.getElementById('mapsetname'); return { cursorIn: a ? a.id : '', text: f ? f.value : null }; });
     await press('mapsave');
     await fitsCard('#mapcard', 'Mapping card');
+    {
+      // The display draws in the look's colours (PROPOSALS 6): its background is the page's --bg, not a fixed black.
+      const px = await page.evaluate(() => {
+        const c = document.getElementById('mapcanvas'), d = c.getContext('2d').getImageData(1, 1, 1, 1).data;
+        const probe = document.createElement('canvas').getContext('2d');
+        probe.fillStyle = getComputedStyle(c).getPropertyValue('--bg').trim(); probe.fillRect(0, 0, 1, 1);
+        const want = probe.getImageData(0, 0, 1, 1).data;
+        return { got: [d[0], d[1], d[2]], want: [want[0], want[1], want[2]] };
+      });
+      assert.deepStrictEqual(px.got, px.want, 'the mapping display is drawn on the look\'s --bg: ' + JSON.stringify(px));
+    }
     await page.waitForSelector('#mapsets >> option:has-text("Main stage")', { state: 'attached' });
     // Review of #86, finding 2b. The saved name is gone from the field, and stays gone through later redraws: put
     // back by a redraw it would be shown while a second Save sent an empty name, which the box refuses.

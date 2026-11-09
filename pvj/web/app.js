@@ -1747,27 +1747,41 @@
       return { pic: pic, cw: cw, ch: ch, sx: cw / (pic ? 1 : d.screen[0]), sy: ch / (pic ? 1 : d.screen[1]) };
     }
     function corners(s, pic) { return pic ? s.tex : s.vertices; }
+    // The display draws in the look's colours (PROPOSALS 6): the page behind, the text, the quiet text and the area's
+    // accent, read from the CSS at each paint, so a change of look or area follows at once.
+    function mapColours(el) {
+      var cs = getComputedStyle(el), v = function (n, d) { return (cs.getPropertyValue(n) || '').trim() || d; };
+      return { bg: v('--bg', '#111'), fg: v('--fg', '#eee'), mu: v('--mu', '#808080'), ac: v('--ac', '#ffd800'), ink: v('--ink', '') || v('--ac', '#ffd800'), sans: v('--sans', 'sans-serif') };
+    }
     function paint() {
       if (!canvas || !d) return;
       var gm = geometry(), dpr = window.devicePixelRatio || 1;
       canvas.width = Math.round(gm.cw * dpr); canvas.height = Math.round(gm.ch * dpr); canvas.style.height = gm.ch + 'px';
-      var g = canvas.getContext('2d');
+      var g = canvas.getContext('2d'), k = mapColours(canvas);
       g.setTransform(dpr, 0, 0, dpr, 0, 0);
-      g.fillStyle = '#111'; g.fillRect(0, 0, gm.cw, gm.ch);
-      if (gm.pic) { g.fillStyle = '#9aa0a6'; g.font = '12px sans-serif'; g.fillText('The picture: drag the corners of the part this surface shows', 8, 16); }
+      g.fillStyle = k.bg; g.fillRect(0, 0, gm.cw, gm.ch);
+      if (gm.pic) { g.fillStyle = k.mu; g.font = '12px ' + k.sans; g.fillText('The picture: drag the corners of the part this surface shows', 8, 16); }
       d.surfaces.slice().reverse().forEach(function (s) {
         var sel = s.id === d.edit.selected;
         if (gm.pic && !sel) return;
         var pts = gm.pic ? s.tex : mapOutline(s);
-        g.strokeStyle = sel ? '#ffd800' : (s.on ? '#00ccff' : '#808080'); g.lineWidth = sel ? 2 : 1;
         g.beginPath();
         pts.forEach(function (p, i) { if (i) g.lineTo(p[0] * gm.sx, p[1] * gm.sy); else g.moveTo(p[0] * gm.sx, p[1] * gm.sy); });
-        g.closePath(); g.stroke();
-        if (!gm.pic) { g.fillStyle = g.strokeStyle; g.font = '11px sans-serif'; g.fillText(s.name, pts[0][0] * gm.sx + 6, pts[0][1] * gm.sy + 14); }
+        g.closePath();
+        // the chosen surface: a band of the area's colour under a line of --ink, the colour that reads as a thin line
+        // (Signal light's accent alone is too faint on its page); one that is on: the text colour; one that is off:
+        // quiet and dashed, so it does not rest on colour
+        if (sel) { g.strokeStyle = k.ac; g.lineWidth = 5; g.stroke(); }
+        g.strokeStyle = sel ? k.ink : (s.on ? k.fg : k.mu); g.lineWidth = sel ? 1.5 : 1;
+        g.setLineDash(sel || s.on ? [] : [4, 4]);
+        g.stroke();
+        g.setLineDash([]);
+        if (!gm.pic) { g.fillStyle = sel ? k.ink : g.strokeStyle; g.font = '11px ' + k.sans; g.fillText(s.name, pts[0][0] * gm.sx + 6, pts[0][1] * gm.sy + 14); }
         if (sel) corners(s, gm.pic).forEach(function (p, i) {
           var on = !mapUi.whole && i === d.edit.corner;
-          g.fillStyle = on ? '#ff2878' : '#ffd800';
+          g.fillStyle = on ? k.fg : k.ac;                // (a corner: the area's colour ringed in --ink; the one being moved: the text colour, larger)
           g.beginPath(); g.arc(p[0] * gm.sx, p[1] * gm.sy, on ? 7 : 4, 0, 7); g.fill();
+          g.strokeStyle = on ? k.ac : k.ink; g.lineWidth = on ? 2 : 1.5; g.stroke();
         });
       });
     }
