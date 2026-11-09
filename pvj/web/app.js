@@ -990,6 +990,7 @@
     if (pl.effect && window.pvjEffects && pl.running) np.textContent += ' \u00b7 effect: ' + window.pvjEffects.nice(pl.effect);
     np.title = np.textContent;          // the line is cut with dots where it is long: the whole of it is here
     nowLive(np.textContent, pl, st.mix || {});
+    nowPresence(st.presence);
     var temp = typeof sys.temp_c === 'number' ? Math.round(sys.temp_c) + '°C' : '';
     var pill = document.getElementById('pill');
     // the node's own name (the owner, 2026-11-07: "show the node's name"), without the nxlx- every node's name starts with
@@ -7049,7 +7050,9 @@
     }] : null) : null;
     var node = h('div', { class: 'card', id: 'nownodecard' }, h('h2', { text: 'The node' }), clockRow ? h('div', { class: 'list', id: 'nowclock' }, clockRow) : null, nodeList);
     var todayList = h('div', { class: 'list', id: 'nowtoday' });
-    var today = h('div', { class: 'card', id: 'nowtodaycard' }, h('h2', { text: 'Today' }), todayList);
+    // who is here and what they last changed (D126): drawn from the status the panel asks for every second
+    var presence = h('div', { class: 'list', id: 'nowpresence' });
+    var today = h('div', { class: 'card', id: 'nowtodaycard' }, h('h2', { text: 'Today' }), presence, todayList);
     var root = h('div', { class: 'screen nowscreen', id: 'nowscreen' }, needs, h('div', { class: 'nowgrid' }, screens, room, node, today));
     var last = { health: null, sources: null, room: null, events: null, mapper: null };
 
@@ -7244,6 +7247,31 @@
     nowRowsAt = 0;
     look();
     return root;
+  }
+  // Who is connected now and the last changes (D126), as the node tells this device (it leaves out what this role
+  // may not know: an Operator is told the Owner's device by its role, a support login no names). Calm: two lines and
+  // up to three changes, under Today, kept up to date by the status the panel already asks for every second.
+  function presenceAgo(s) { if (typeof s !== 'number' || !(s >= 0)) return ''; return s < 60 ? s + ' s ago' : s < 3600 ? Math.round(s / 60) + ' min ago' : Math.round(s / 3600) + ' h ago'; }      // (its own name: agoWords is the OSC page's)
+  function nowPresence(p) {
+    var box = document.getElementById('nowpresence');
+    if (!box) return;
+    if (!p) { box.textContent = ''; box.dataset.words = ''; return; }      // no presence in the answer: nothing old is left
+    var devices = Array.isArray(p.devices) ? p.devices : [], changes = Array.isArray(p.changes) ? p.changes : [];
+    var who = devices.map(function (d) { return (d.name || d.role) + (d.you ? ' (you)' : ''); });
+    // the guests the node counts and does not list to this device (the Owner's list has them by name already)
+    var guests = Math.max(0, (p.guests || 0) - devices.filter(function (d) { return d.role === 'Guest'; }).length);
+    if (guests) who.push(plural(guests, 'guest'));
+    var lines = [nowRow('nowhere', 'Connected now', { chip: null, text: (p.count || 0) + ' here' + (who.length ? ': ' + who.join(', ') : '') }, null)];
+    changes.slice(0, 3).forEach(function (c, i) {
+      var by = c.you ? 'you' : c.by ? c.by + (c.role ? ' (' + c.role + ')' : '') : c.role || 'someone';
+      var when = presenceAgo(c.seconds_ago);
+      lines.push(nowRow('nowchange-' + i, c.area, { chip: null, text: 'Changed by ' + by + (when ? ', ' + when : '') }, null));
+    });
+    var words = lines.map(function (l) { return l.textContent; }).join('|');
+    if (box.dataset.words === words) return;                  // the same as a second ago: nothing is drawn again
+    box.dataset.words = words;
+    box.textContent = '';
+    lines.forEach(function (l) { box.appendChild(l); });
   }
   // Source 1's line on Now: what the strip says plays, the place in the clip and the transition (patchLive, every second)
   function nowLive(what, pl, mix) {
