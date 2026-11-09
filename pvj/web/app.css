@@ -1470,6 +1470,8 @@ html[data-style="signal"] .deskcol > .screen > .syshead:first-child, html[data-s
    area's colour where it reads as a line (--ink); and a shadow cast up over the screen that scrolls under it. The area tabs under
    it on a phone keep the page colour. As in the Figma kit. */
 html[data-style="signal"] .wsdock { border-top: var(--rule) solid var(--ink); box-shadow: 0 -10px 24px rgba(0, 0, 0, .55); }
+/* (on a light page that shadow was a grey band over what scrolls under the strip: a short, soft one there) */
+html[data-style="signal"][data-tone="light"] .wsdock { box-shadow: 0 -4px 12px rgba(0, 0, 0, .12); }
 /* (2026-11-08, his next word: "a slight colour tint, matched to the main page the user is on, but i may want just a
    single colour"): the surface tinted with the area's colour; a theme can give the strip one colour of its own
    in --tk-strip. Its buttons are in capitals ("make all the buttons in the bottom banner all caps, but do not

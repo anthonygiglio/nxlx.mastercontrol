@@ -154,6 +154,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.click('#pairbtn');
     await page.waitForSelector('#nowscreen');
     assert.strictEqual(await at(page), 'now/now', 'the owner starts on Now');
+    assert.strictEqual(await page.evaluate(() => document.documentElement.getAttribute('data-tone')), 'dark', 'the root says the look is dark (Dark stage), for what is drawn in shade');
     await go(page, 'play/pads');
     await page.waitForSelector('.pads');
     await stripOpen(page);            // a phone: the place in the clip, back and forward 10 s, the fades and Freeze are under More
