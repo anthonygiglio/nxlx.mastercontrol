@@ -8081,18 +8081,26 @@
   // overscroll-behavior does that only for a box that can scroll; a short one hands the wheel and the finger to the
   // page, so they are held here. el: where the wheel and the finger are listened to; o.box: the box that scrolls (el
   // itself by default; over el but outside the box, as on a dialog's backdrop, nothing scrolls at all); o.when: only
-  // while it says so (the strip, while More is open). A slider, and a text box with more in it than it shows, keep
-  // their own gestures, and Ctrl with the wheel (zoom) is left alone.
+  // while it says so (the strip, while More is open). A list or a text box inside the box that can still scroll that
+  // way takes the scroll first, as the box itself does; a slider keeps its own drag; Ctrl with the wheel (zoom) is
+  // left alone.
   function keepScroll(el, o) {
     o = o || {};
     var box = o.box || el, y = null;
     function held(e, dy) {
       if (o.when && !o.when()) return false;
       var t = e.target;
-      var own = t && t.closest && t.closest('input[type=range], textarea');
-      if (own && (own.tagName !== 'TEXTAREA' || own.scrollHeight > own.clientHeight)) return false;
+      if (t && t.closest && t.closest('input[type=range]')) return false;
       if (!box.contains(t)) return true;
-      return dy > 0 ? box.scrollTop + box.clientHeight >= box.scrollHeight - 1 : dy < 0 ? box.scrollTop <= 0 : false;
+      if (!dy) return false;
+      // from what is under the pointer or the finger up to the box: the first that can still go that way scrolls
+      // (a list or a text box inside the box, or the box itself); when none can, the scroll is held
+      for (var e2 = t.nodeType === 1 ? t : t.parentElement; e2; e2 = e2.parentElement) {
+        var can = e2 === box || (e2.scrollHeight > e2.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(e2).overflowY));
+        if (can && (dy > 0 ? e2.scrollTop + e2.clientHeight < e2.scrollHeight - 1 : e2.scrollTop > 0)) return false;
+        if (e2 === box) break;
+      }
+      return true;
     }
     el.addEventListener('wheel', function (e) { if (!e.ctrlKey && held(e, e.deltaY)) e.preventDefault(); }, { passive: false });
     el.addEventListener('touchstart', function (e) { y = e.touches.length === 1 ? e.touches[0].clientY : null; }, { passive: true });

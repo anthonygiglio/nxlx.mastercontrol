@@ -172,6 +172,22 @@ function startServer(env) {          // env: more for the harness's environment 
         await page.waitForTimeout(300);
         assert.strictEqual(await page.evaluate(() => window.scrollY), 0, 'a scroll over ' + where + ' of the pad dialog leaves the page where it is');
       }
+      // a list inside the dialog that scrolls takes the scroll first, even with the sheet at its end (made so here:
+      // the clip list three lines tall), and still not the page
+      const inner = await page.evaluate(() => {
+        const l = document.querySelector('.picker .sheet .list');
+        l.style.maxHeight = '60px'; l.style.overflowY = 'auto';
+        const sh = document.querySelector('.picker .sheet'); sh.scrollTop = sh.scrollHeight;
+        return { room: l.scrollHeight - l.clientHeight };
+      });
+      assert(inner.room > 0, 'the clip list is made to scroll for this check: ' + JSON.stringify(inner));
+      const lb = await page.locator('.picker .sheet .list >> nth=0').boundingBox();
+      await page.mouse.move(lb.x + lb.width / 2, lb.y + lb.height / 2);
+      for (let i = 0; i < 4; i++) { await page.mouse.wheel(0, 200); await page.waitForTimeout(40); }
+      await page.waitForTimeout(300);
+      const after = await page.evaluate(() => ({ list: document.querySelector('.picker .sheet .list').scrollTop, page: window.scrollY }));
+      assert(after.list > 0 && after.page === 0, 'the wheel over a list inside the pad dialog scrolls that list, not the page: ' + JSON.stringify(after));
+      await page.evaluate(() => { const l = document.querySelector('.picker .sheet .list'); l.style.maxHeight = ''; l.style.overflowY = ''; });
     }
     await page.click('.sheet >> text=intro.mkv');
     await page.click('text=Done editing');
