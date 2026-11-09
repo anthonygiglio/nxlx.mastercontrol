@@ -21,6 +21,8 @@ Inventory of components bundled with or fetched by the legacy code. Licences are
 | ISF-Files filter shaders, for effects (VIDVOX and contributors) | `pvj/effects.d/isf-files/` | MIT (verified, see below) |
 | Archivo (The Archivo Project Authors), a Latin subset | `pvj/web/fonts/` | SIL OFL 1.1 (verified, see below) |
 | JetBrains Mono (The JetBrains Mono Project Authors), a Latin subset of the Medium weight | `pvj/web/fonts/` | SIL OFL 1.1 (verified, see below) |
+| Eleven fonts for text on the screen (Archivo, JetBrains Mono, Inter, Bebas Neue, Oswald, Anton, Montserrat, Orbitron, Press Start 2P, Roboto Condensed, Noto Sans), unchanged TrueType files | `pvj/fonts/` | SIL OFL 1.1, each read from its own release (verified, see below) |
+| FreeType: linked by pvj-raster to draw text; not shipped, the box's own package | `render/raster/` builds against it | FreeType licence (FTL) or GPL-2.0, at the user's choice |
 | libmpv (mpv), linked by pvj-render; not shipped, the box's own package | `render/` builds against it | GPLv2 or later as Debian builds it (see below) |
 | Mesa's EGL, OpenGL ES and GBM, libdrm, glibc: linked by pvj-render; not shipped | `render/` builds against them | MIT (Mesa, libdrm), LGPL-2.1 (glibc) |
 | Ableton Link and asio, compiled into pvj-link at install; not shipped, the box's own packages | `render/link/` builds against them | GPL-2.0-or-later (Link), BSL-1.0 (asio) (see below) |
@@ -50,6 +52,36 @@ Two typefaces are shipped with the panel, in `pvj/web/fonts/`, for the look call
 - The licence asks that the fonts are not sold by themselves and that the copyright notice and the licence travel with every copy: the two `OFL-*.txt` files are in the same folder, so they are in every release bundle and on every box (a release holds only `pvj/`, `bin/` and `install/`). The licence text for REUSE is `LICENSES/OFL-1.1.txt`; both families are declared in `REUSE.toml`.
 - Each font's file name holds the first eight digits of its SHA-256, because the box lets a browser keep a font for a day: a font that is ever rebuilt gets a new name (rename the file, and the name in `pvj/web/app.css`, `REUSE.toml`, this file and the tests).
 - A test (`tests/test_license.py`) pins the four checksums, the name and the declaration.
+
+## Fonts for text on the screen (D129, slice 2)
+
+The node draws text itself (design/text-and-logo-sources_2026-11-08.md). Eleven open-licence families are bundled in `pvj/fonts/`, one unchanged TrueType file each, and are read by `pvj-raster` (render/raster/gfx.inc.c) to make a picture of a line of text. They are **not** this project's work and are not under its Apache-2.0 licence. They are never sent to a browser: the panel previews with pictures the node makes.
+
+- Source: https://github.com/google/fonts at commit `9710da1eacb3be272583c3224dcb70f9da6eadbb` (the commit the two panel fonts above were read from), folder `ofl/<family>/`, read on 8 November 2026. The font file and the family's `OFL.txt` were fetched from that one commit; each `OFL.txt` was read in full and each begins with the copyright line below and "This Font Software is licensed under the SIL Open Font License, Version 1.1". **None of the files was changed** (not subset, not instanced, not renamed inside); only the file names here are ours (lower case, no brackets).
+- The design document of 8 November expected the Apache licence 2.0 for Roboto Condensed. The release says SIL OFL 1.1 (copyright line below), so that is what is recorded. Licences were taken from the releases, not from the design.
+- Reserved Font Names are declared by two families: **Orbitron** ("Orbitron") and **Press Start 2P** ("Press Start 2P"). The files are bundled unchanged, so nothing is reused under another name. The other nine declare none.
+- The licence asks that the fonts are not sold by themselves and that the copyright notice and the licence travel with every copy: each family's `OFL-<Family>.txt` is in `pvj/fonts/` beside the font, so it is in every release bundle and on every node. The licence text for REUSE is `LICENSES/OFL-1.1.txt`; every file is declared in `REUSE.toml`. The two OFL files of Archivo and JetBrains Mono are the same files as in `pvj/web/fonts/` (the same checksums).
+- Axes. The variable fonts keep all their axes; the node sets only the weight (`wght`) and leaves every other axis at its default. A static font has the one weight.
+
+| File | Family, copyright line from its `OFL.txt` | Weights | SHA-256 of the file | SHA-256 of its `OFL-*.txt` |
+| --- | --- | --- | --- | --- |
+| `archivo.ttf` (658596 bytes), from `ofl/archivo/Archivo[wdth,wght].ttf` | Archivo: "Copyright 2020 The Archivo Project Authors (https://github.com/Omnibus-Type/Archivo)" | weight 100 to 900, width 62 to 125 (the width is left at 100) | `0e094a7d3c7c4c25cf1310c4b30014f1dae9332220b1c2c88f4fa996f0b05053` | `108b4e57c9c796d3d38d0428ca7ee39de47ad93187302718d9b2d8864b9b716b` (`OFL-Archivo.txt`) |
+| `jetbrains-mono.ttf` (187208 bytes), from `ofl/jetbrainsmono/JetBrainsMono[wght].ttf` | JetBrains Mono: "Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)" | weight 100 to 800 | `48715a42ec242c21e9f02692891e147d022299a52e48d5e413e1a942193ffeda` | `b2fe5e8987594e9ffd1d2ca52a2f5d73eb8335243893c5d6254b5ad69269591d` (`OFL-JetBrainsMono.txt`) |
+| `inter.ttf` (876576 bytes), from `ofl/inter/Inter[opsz,wght].ttf` | Inter: "Copyright 2020 The Inter Project Authors (https://github.com/rsms/inter)" | weight 100 to 900, optical size 14 to 32 (left at 14) | `29160a80ff49ddcab2c97711247e08b1fab27a484a329ce8b813d820dc559031` | `5b9321a4298cfeb6b34354164a1c3afc3db114569984c502b9b35d988fd58c57` (`OFL-Inter.txt`) |
+| `bebas-neue.ttf` (61400 bytes), from `ofl/bebasneue/BebasNeue-Regular.ttf` | Bebas Neue: "Copyright © 2010 by Dharma Type." | one weight (Regular) | `08e4623805102d819f58601e46e345648846075e363b2ceb23313c2d1c83ec73` | `72082f6cb4d04be2ecf7cc7d9e1e7d73787f0af8a5a278a47cade70c16b78341` (`OFL-BebasNeue.txt`) |
+| `oswald.ttf` (172088 bytes), from `ofl/oswald/Oswald[wght].ttf` | Oswald: "Copyright 2016 The Oswald Project Authors (https://github.com/googlefonts/OswaldFont)" | weight 200 to 700 | `5b38c246e255a12f5712d640d56bcced0472466fc68983d2d0410ec0457c2817` | `0fd731a904b729a4e02eaf5e8ebd06783edd9abe400e8882760160230675b652` (`OFL-Oswald.txt`) |
+| `anton.ttf` (170812 bytes), from `ofl/anton/Anton-Regular.ttf` | Anton: "Copyright 2020 The Anton Project Authors (https://github.com/googlefonts/AntonFont.git)" | one weight (Regular) | `a4ba3a92350ebb031da0cb47630ac49eb265082ca1bc0450442f4a83ab947cab` | `ee67e6ee22790b7929f1a3769ca2801d565c64b5a9096942c1adf5596de9c9e4` (`OFL-Anton.txt`) |
+| `montserrat.ttf` (744936 bytes), from `ofl/montserrat/Montserrat[wght].ttf` | Montserrat: "Copyright 2024 The Montserrat.Git Project Authors (https://github.com/JulietaUla/Montserrat.git)" | weight 100 to 900 | `0f7b311b2f3279e4eef9b2f968bcdbab6e28f4daeb1f049f4f278a902bcd82f7` | `8b7141c03fa4f8d44e6345d5d4931709290f0f67875e452e95ac1fd3a027802e` (`OFL-Montserrat.txt`) |
+| `orbitron.ttf` (38576 bytes), from `ofl/orbitron/Orbitron[wght].ttf` | Orbitron: "Copyright 2018 The Orbitron Project Authors (https://github.com/theleagueof/orbitron), with Reserved Font Name: "Orbitron"" | weight 400 to 900 | `f42db2dd16e642258e35782916eceb1dcdbea06fb958d77ad71dc5963587e8fd` | `ab609b0e110d622435ff337cdf233288556e011bbf9bd0550be98846c0630819` (`OFL-Orbitron.txt`) |
+| `press-start-2p.ttf` (118204 bytes), from `ofl/pressstart2p/PressStart2P-Regular.ttf` | Press Start 2P: "Copyright 2012 The Press Start 2P Project Authors (cody@zone38.net), with Reserved Font Name "Press Start 2P"." | one weight (Regular) | `034c77f1f05ec89421e4a63f0e3a4ca1ecf852cc6d2bf611f126f275728e017d` | `705960c3281a5765ecc0b59bd4ed7ca59eed165748076bc2fc3e8fdbfeb944b0` (`OFL-PressStart2P.txt`) |
+| `roboto-condensed.ttf` (371616 bytes), from `ofl/robotocondensed/RobotoCondensed[wght].ttf` | Roboto Condensed: "Copyright 2011 The Roboto Project Authors (https://github.com/googlefonts/roboto-classic)" | weight 100 to 900 | `dace262afcee68a5276f200d8026c57221735c0118ab5fda8c2c0d3dc409a8d0` | `0e4cc6ece88573545be2ed25835363662a6182ba4a4c1b5c8feda52add30e8a6` (`OFL-RobotoCondensed.txt`) |
+| `noto-sans.ttf` (2049096 bytes), from `ofl/notosans/NotoSans[wdth,wght].ttf` | Noto Sans: "Copyright 2022 The Noto Project Authors (https://github.com/notofonts/latin-greek-cyrillic)" | weight 100 to 900, width 62.5 to 100 (left at 100) | `bfb7bb691513f12e734dc346c03a03f784912432d7e3fa8e56efcf906fe86b3d` | `cee9892f9f0cc8fe882c9e9537ee6a89621d86ee7ceaf70b02e2b2b1c25c061a` (`OFL-NotoSans.txt`) |
+
+- Orbitron: It declares the Reserved Font Name "Orbitron": it is bundled unchanged, so the name is not reused for a modified copy.
+- Press Start 2P: It declares the Reserved Font Name "Press Start 2P": it is bundled unchanged, so the name is not reused for a modified copy.
+- Roboto Condensed: The design document expected the Apache licence 2.0 for this one; the release says SIL OFL 1.1, and that is what is recorded.
+- Total size of the font files: 5.2 MB (the design expected 1.5 to 3 MB; the variable files of Noto Sans, Inter and Montserrat are the large ones, and none was cut down so that all stay the releases' own).
+- A test (`tests/test_graphics.py`, `FontsTest`) pins every checksum above, the licence text's heading and copyright line, and the `REUSE.toml` entry of each file.
 
 ## Shader pack: ISF-Files (new code's side of the tree)
 
@@ -269,6 +301,11 @@ The name "Ableton Link" says what the box can join. It carries no logo, and this
 `render/`. It decodes the pictures people upload (PNG with libpng, JPEG with libjpeg-turbo, SVG with nanosvg) and writes a
 clean PNG. libpng and libjpeg-turbo are the box's own packages (`libpng-dev`, `libjpeg-dev`), linked and not shipped, with
 their copyright files at `/usr/share/doc/<package>/copyright`.
+
+Since slice 2 the same program also draws text and logos for the screen (`render/raster/gfx.inc.c`, part of the same
+program), with **FreeType**, the box's own package (`libfreetype-dev`; linked and not shipped; its licence is the FreeType
+Licence or the GPL version 2, at the user's choice, and its copyright file is at `/usr/share/doc/libfreetype6/copyright`),
+and the eleven fonts of the section above. The picture of a logo is scaled and turned by code of this project.
 
 nanosvg is single-header C code by Mikko Mononen under the **zlib licence**, which is compatible with the GPL. Its two
 headers are in this repository unchanged, so that the box builds the same code the tests ran, and its licence text is

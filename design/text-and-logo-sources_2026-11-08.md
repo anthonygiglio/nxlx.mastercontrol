@@ -31,7 +31,7 @@ Words used in this document:
 | --- | --- |
 | Sources 2 to 8 are one libmpv core each in `pvj-render`; source 1 is the player. The mapping picks a source per surface. | D101, `pvj/PANEL.md` section 12 |
 | Generators (ISF shaders) and effects are drawn by `pvj-render` itself, with values set every frame; each source has a chain of up to 3 effects. | D106, D74, D55 |
-| One overlay picture (mpv `overlay-add`, id 10) is the mask list: up to 8 PNGs combined by mpv into one premultiplied BGRA picture at screen size, in a worker thread, newest change wins. Works on classic mpv too. | D100, `pvj/overlay.py` |
+| One overlay picture (mpv `overlay-add`, id 30 after the review of slice 2; it was 10) is the mask list: up to 8 PNGs combined by mpv into one premultiplied BGRA picture at screen size, in a worker thread, newest change wins. Works on classic mpv too. | D100, `pvj/overlay.py` |
 | `pvj-render` has a "text layer": a second libmpv that plays nothing and draws overlays and `show-text` above everything. | `render/src/main.c` |
 | Media upload: Operator and up, one at a time, hidden temp file, size and rate limits, extension list `VIDEO + IMAGE + AUDIO`. Images are `.png .jpg .jpeg .bmp .gif` and are playable as clips. There are no thumbnails. | `pvj/api.py`, `pvj/player.py` |
 | Fonts on the node: Archivo and JetBrains Mono (OFL), bundled for the panel's Signal look as web fonts only. `LICENSES/OFL-1.1.txt` is in the repo. | `pvj/web/fonts`, D54 |
@@ -463,7 +463,7 @@ list graphics to show, like it lists a shader, as a later add-on; not in this pl
   the Pi 3 pay for a GPU feature. They do overlap (a logo can be a mask), so the panel says it: *Masks: full-screen
   pictures that never move. Graphics: logos and text you place, move and key.* The one thing that is shared is the
   mechanism of the build worker (`Masks` pattern) and the overlay draw call on the classic path (graphics use mpv
-  overlay ids 20 to 27; the masks keep 10, the pairing code 1 to 4 and transitions 63). If, after use, Anthony finds
+  overlay ids 20 to 27; the masks are 30 and the pairing codes 40 to 43 since the review of slice 2 and transitions 63). If, after use, Anthony finds
   two lists confusing, a later PR can show masks as a "Full-screen" kind inside Graphics; the settings keys can be read
   into either.
 - **D101 (sources).** *As Source N* and *Over Source N* use D101's source texture and its mapping, so a surface can show

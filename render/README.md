@@ -9,7 +9,11 @@ nothing with pvj-render, and is built only by `make pvj-link`.
 a clean PNG. It shares nothing with pvj-render, needs only libpng and libjpeg headers, and is built only by
 `make pvj-raster` (the installer does that on every board). It reads one request on standard input and answers on
 standard output; systemd runs it for each job with no network and hard limits (`install/pvj-raster@.service`). Its SVG
-reader, nanosvg, is vendored unchanged in `raster/vendor/`.
+reader, nanosvg, is vendored unchanged in `raster/vendor/`. Since slice 2 of D129 it also draws the text and the logos that
+go on the screen (`raster/gfx.inc.c`, part of the same program, one more request: `RASTER1 GFX`): a line of text in one of the
+eleven bundled fonts (`pvj/fonts`, FreeType; the program reads a font by a checked name from the folder `--fonts` names, and no
+other file), or a stored logo scaled, turned and made clearer or fainter, as one small premultiplied picture. It needs the
+FreeType headers as well (`libfreetype-dev`).
 
 The box's own renderer (project-log/DECISIONS.md, D95). Phase 1 takes the place of the one mpv behind the same JSON
 socket: one video layer drawn by libmpv at an internal size, the projection mapping and the scale to the screen as one

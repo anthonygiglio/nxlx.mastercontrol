@@ -33,7 +33,7 @@ import time
 
 from . import locks
 
-OVERLAY_ID = 10                 # pvj/transitions.py's still is 63; the pairing codes are 1 to 4 (pinscreen.QR_IDS)
+OVERLAY_ID = 30                 # above the graphics (20 to 27, pvj/graphics.py) and under the pairing codes (40 to 43, pinscreen.QR_IDS); transitions.py's still is 63
 MAX_SIDE = 4096                 # one picture: what the single-mask path took before D100
 MAX_MASKS = 8
 MAX_WIDTH, MAX_HEIGHT = 3840, 2160      # several masks: the combined picture is at most this

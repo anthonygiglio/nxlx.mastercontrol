@@ -381,7 +381,7 @@ class WorkerTest(Base):
 
 class CrossfadeSlotTest(unittest.TestCase):
     def test_the_crossfade_still_and_the_pairing_codes_never_use_the_masks_slot(self):
-        self.assertEqual(overlay.OVERLAY_ID, 10)
+        self.assertEqual(overlay.OVERLAY_ID, 30)
         self.assertEqual(transitions.OVERLAY_ID, 63)
         self.assertNotIn(overlay.OVERLAY_ID, pinscreen.QR_IDS.values())
 

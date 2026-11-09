@@ -1321,6 +1321,332 @@
     return card;
   }
 
+  // ---- Graphics (D129, slice 2): text and logos the node draws on the screen --------------------------------------
+  // Play > Graphics (a page of Setup that is also a screen of Play, as Mapping is a screen of Shape). Two cards: the
+  // graphics themselves (up to 8, each a text or a logo, each with its own Show / Hide, and a big Hide all at the top)
+  // and the logo files (upload, thumbnails, rename, delete). The node makes a small picture of each graphic with
+  // pvj-raster and the player draws it over the screen; this release draws them still, so motion, keys, effects and
+  // "over or as a source" are said to come later, in words, and not offered. A typed line is previewed by the node (the
+  // preview is a picture the node makes, so it is what the wall gets) without being saved or shown until Send.
+  // It is an Operator's and an Owner's: the box refuses a Guest every route, and the screen is not offered to one.
+  var GFX_COLOURS = [['#ffffff', 'White'], ['#ffd400', 'Yellow'], ['#ff4fa3', 'Pink'], ['#39e08c', 'Green'], ['#4fb3ff', 'Blue'], ['#ff5a36', 'Orange'], ['#000000', 'Black']];
+  var GFX_ANCHORS = [['tl', 'Top left'], ['tc', 'Top centre'], ['tr', 'Top right'], ['ml', 'Middle left'], ['mc', 'Centre'], ['mr', 'Middle right'], ['bl', 'Bottom left'], ['bc', 'Bottom centre'], ['br', 'Bottom right']];
+  var gfxOpen = {};               // which graphics have their settings open: kept when the cards are drawn again
+  var gfxTimers = {};             // a preview waiting for the typing to stop, by graphic
+  var gfxSeq = 0, gfxNext = 0;
+  var gfxLast = {};               // the picture last asked for, by graphic: what it was made from, and its address (a redraw shows it again without asking)
+  function gfxStatusWords(it) {
+    var s = it.status || {};
+    if (s.state === 'error') return s.message || 'This could not be drawn.';
+    if (s.state === 'building') return 'Drawing...';
+    if (s.state === 'held') return s.message || 'Held back while a code is on the screen.';
+    if (s.state !== 'on') return 'Off';
+    return 'On the screen' + (s.missing ? '. ' + plural(s.missing, 'character') + ' cannot be drawn.' : '');
+  }
+  function graphicsCards() {
+    var d = null, timer = null, live = can('live');
+    var body = h('div', { class: 'list', id: 'graphicsbody' }, h('div', { class: 'k', text: 'Loading...' }));
+    var card = h('div', { class: 'card', id: 'graphicscard' }, h('div', { class: 'k sent', text: 'Text and logos on the screen' }), body);
+    var filesBody = h('div', { class: 'list', id: 'logofiles' });
+    var filesNote = h('div', { class: 'msg inmsg', id: 'logoresult', role: 'status' });
+    var filesCard = h('div', { class: 'card', id: 'logofilescard' }, h('div', { class: 'k sent', text: 'Logo files' }), filesBody, filesNote);
+    var uploading = false;
+
+    function post(change, opts) {          // opts.quiet: a slider is in a hand, so the cards are not drawn again; opts.preview: a graphic whose picture changed
+      opts = opts || {};
+      return act('POST', '/api/graphics', change, function (data) {
+        say('');
+        d = data;
+        if (opts.openNew && data.items.length) gfxOpen[data.items[data.items.length - 1].id] = true;      // a graphic just added opens its settings
+        if (opts.quiet) patch(); else draw(true);
+        if (opts.preview) previewSoon(opts.preview, 150);
+      }).then(function (r) { if (!r.ok && !opts.quiet) load(); return r; });
+    }
+    // how many are on the screen: the stage is on and the graphic is switched on and did not fail (one that failed says so on its card)
+    function shownCount() { return d.on ? d.items.filter(function (i) { return i.on && i.status.state !== 'error'; }).length : 0; }
+    function headline() {
+      if (!d.available) return 'The picture helper is not running on this node, so text and logos cannot be drawn.';
+      if (shownCount()) return plural(shownCount(), 'graphic') + ' on the screen';
+      if (!d.on && d.items.some(function (i) { return i.on; })) return 'Hidden with Hide all. Show a graphic to bring them back.';
+      return d.items.length ? 'Nothing on the screen' : 'No graphics yet';
+    }
+    // what changed without a redraw: the headline, each graphic's words, and the buttons that follow them
+    function patch() {
+      var line = document.getElementById('graphicsstatus');
+      if (line) line.textContent = headline();
+      var hide = document.getElementById('graphicshideall');
+      if (hide) hide.disabled = !live || !shownCount();
+      d.items.forEach(function (it) {
+        var s = document.getElementById('graphic-' + it.slot + '-state');
+        if (s) { s.textContent = gfxStatusWords(it); s.className = 'state' + (it.status.state === 'error' ? ' err' : ''); }
+        var b = document.getElementById('graphic-' + it.slot + '-show'), shown = it.on && d.on;
+        if (b) { b.textContent = shown ? 'Hide' : 'Show'; b.classList.toggle('on', shown); b.setAttribute('aria-pressed', shown ? 'true' : 'false'); b.setAttribute('aria-label', (shown ? 'Hide ' : 'Show ') + it.name); }
+      });
+      if (d.items.some(function (i) { return i.status.state === 'building'; })) { clearTimeout(timer); timer = setTimeout(load, 500); }
+    }
+    // The picture of a graphic as the node will draw it, with the line as typed (not saved): after the typing stops.
+    function madeFrom(it, typed) { return JSON.stringify([it.kind, it.place, it.kind === 'text' ? [it.text.font, it.text.weight, it.text.size, it.text.colour, it.text.align, it.text.leading, it.text.outline, it.text.shadow, it.text.plate, typed] : it.logo, d.screen]); }
+    function previewSoon(id, wait) {
+      clearTimeout(gfxTimers[id]);
+      var at = Math.max(Date.now() + (wait === undefined ? 400 : wait), gfxNext);      // one preview in each 250 ms for all the graphics: the node makes five a second at most
+      gfxNext = at + 250;
+      gfxTimers[id] = setTimeout(function () {
+        var it = d && d.items.filter(function (x) { return x.id === id; })[0], img = it && document.getElementById('graphic-' + it.slot + '-preview');
+        if (!img) return;
+        var field = document.getElementById('graphic-' + it.slot + '-text'), typed = field ? field.value : '';
+        if (field ? !typed.trim() : (!it.logo.file || it.logo.missing)) { img.classList.add('none'); delete gfxLast[id]; return; }      // nothing to draw yet
+        // the typed line goes in the body of a POST, never in the address (the node's access log keeps addresses)
+        var mine = { made: madeFrom(it, typed), url: '' }, ask = { id: id };
+        if (field) ask.text = typed;
+        gfxLast[id] = mine;
+        fetch('/api/graphics/preview.png', { method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify(ask) }).then(function (r) {
+          if (!r.ok) throw new Error('no picture');
+          return r.blob();
+        }).then(function (blob) {
+          if (gfxLast[id] !== mine) return;          // a newer ask overtook this one
+          var rd = new FileReader();                 // a data: address (the page's img-src allows self and data:, not blob:)
+          rd.onload = function () { if (gfxLast[id] === mine) { mine.url = rd.result; img.src = mine.url; } };
+          rd.onerror = function () { if (gfxLast[id] === mine) img.classList.add('none'); };
+          rd.readAsDataURL(blob);
+        }, function () { if (gfxLast[id] === mine) img.classList.add('none'); });
+      }, Math.max(0, at - Date.now()));
+    }
+    function sw(label, on, set, id) { return toggle(id, label, on, set); }
+
+    function anchorGrid(it, id) {
+      var grid = h('div', { class: 'anchorgrid', role: 'group', 'aria-label': 'Where ' + it.name + ' sits' });
+      GFX_ANCHORS.forEach(function (a) {
+        grid.appendChild(h('button', { class: 'btn' + (it.place.anchor === a[0] ? ' on' : ''), id: id + '-anchor-' + a[0], 'aria-label': a[1], 'aria-pressed': it.place.anchor === a[0] ? 'true' : 'false',
+          title: a[1], disabled: !live, onclick: function () { post({ id: it.id, set: { place: { anchor: a[0] } } }, { preview: it.id }); } }, h('span', { class: 'dot', 'aria-hidden': 'true' })));
+      });
+      return grid;
+    }
+    function placeSliders(it, id) {
+      var put = function (key) { return function (v) { var p = {}; p[key] = v; post({ id: it.id, set: { place: p } }, { quiet: true, preview: it.id }); }; };
+      return [slider(id + '-x', 'Nudge across', -100, 100, 1, it.place.x, function (v) { return v + '%'; }, put('x')),
+        slider(id + '-y', 'Nudge down', -100, 100, 1, it.place.y, function (v) { return v + '%'; }, put('y')),
+        slider(id + '-opacity', 'Opacity', 0, 100, 1, it.place.opacity, function (v) { return v + '%'; }, put('opacity'))];
+    }
+    function colourRow(it, id, value, label, send) {
+      var row = h('div', { class: 'swatches', role: 'group', 'aria-label': label });
+      GFX_COLOURS.forEach(function (c) {
+        var b = h('button', { class: 'gfxswatch' + (value.toLowerCase() === c[0] ? ' on' : ''), id: id + '-' + c[0].slice(1), 'aria-label': c[1], 'aria-pressed': value.toLowerCase() === c[0] ? 'true' : 'false', title: c[1], disabled: !live,
+          onclick: function () { send(c[0]); } });
+        b.style.background = c[0];
+        row.appendChild(b);
+      });
+      var pick = h('input', { type: 'color', class: 'swatchpick', id: id + '-custom', value: value, 'aria-label': label + ': another colour', disabled: !live });
+      pick.addEventListener('change', function () { send(pick.value); });
+      row.appendChild(pick);
+      return row;
+    }
+    function textForm(it, id) {
+      var t = it.text, font = d.fonts.filter(function (f) { return f.id === t.font; })[0] || d.fonts[0];
+      var put = function (patch) { post({ id: it.id, set: { text: patch } }, { preview: it.id }); };
+      var putQuiet = function (key) { return function (v) { var p = {}; p[key] = v; post({ id: it.id, set: { text: p } }, { quiet: true, preview: it.id }); }; };
+      var fontSel = h('select', { class: 'text-input', id: id + '-font', 'aria-label': 'Font', disabled: !live }, d.fonts.map(function (f) { return h('option', { value: f.id, text: f.name, selected: f.id === t.font }); }));
+      fontSel.addEventListener('change', function () { put({ font: fontSel.value }); });
+      var out = [labelled('Font', fontSel, font.note)];
+      if (font.min !== font.max) out.push(slider(id + '-weight', 'Weight', font.min, font.max, 10, t.weight, function (v) { return String(v); }, putQuiet('weight')));
+      out.push(slider(id + '-size', 'Size (share of the screen\'s height)', 1, 60, 0.5, t.size, function (v) { return v + '%'; }, putQuiet('size')));
+      out.push(h('div', { class: 'k', text: 'Colour' }), colourRow(it, id + '-colour', t.colour, 'Text colour', function (c) { put({ colour: c }); }));
+      out.push(h('div', { class: 'seg', role: 'group', 'aria-label': 'Alignment' }, [['left', 'Left'], ['center', 'Centre'], ['right', 'Right']].map(function (a) {
+        return h('button', { class: 'btn segbtn' + (t.align === a[0] ? ' on' : ''), id: id + '-align-' + a[0], 'aria-pressed': t.align === a[0] ? 'true' : 'false', text: a[1], disabled: !live, onclick: function () { put({ align: a[0] }); } });
+      })));
+      out.push(sw('Outline', t.outline.on, function (v) { put({ outline: { on: v } }); }, id + '-outline'));
+      if (t.outline.on) out.push(colourRow(it, id + '-outlinecolour', t.outline.colour, 'Outline colour', function (c) { put({ outline: { colour: c } }); }),
+        slider(id + '-outlinewidth', 'Outline width', 1, 20, 0.5, t.outline.width, function (v) { return v + '%'; }, function (v) { post({ id: it.id, set: { text: { outline: { width: v } } } }, { quiet: true, preview: it.id }); }));
+      out.push(sw('Shadow', t.shadow.on, function (v) { put({ shadow: { on: v } }); }, id + '-shadow'));
+      if (t.shadow.on) out.push(slider(id + '-shadowsoft', 'Shadow softness', 0, 100, 1, t.shadow.soft, function (v) { return v + '%'; }, function (v) { post({ id: it.id, set: { text: { shadow: { soft: v } } } }, { quiet: true, preview: it.id }); }));
+      out.push(sw('Back plate', t.plate.on, function (v) { put({ plate: { on: v } }); }, id + '-plate'));
+      if (t.plate.on) out.push(colourRow(it, id + '-platecolour', t.plate.colour, 'Plate colour', function (c) { put({ plate: { colour: c } }); }),
+        slider(id + '-plateopacity', 'Plate opacity', 0, 100, 1, t.plate.opacity, function (v) { return v + '%'; }, function (v) { post({ id: it.id, set: { text: { plate: { opacity: v } } } }, { quiet: true, preview: it.id }); }));
+      return out;
+    }
+    function linesForm(it, id) {
+      var lines = it.text.lines, list = h('div', { class: 'list', id: id + '-lines' });
+      lines.forEach(function (l, i) {
+        var remove = h('button', { class: 'btn small', id: id + '-line-' + i + '-remove', text: 'Remove', 'aria-label': 'Remove the line ' + l, disabled: !live, onclick: function () {
+          var next = lines.slice(); next.splice(i, 1);
+          post({ id: it.id, set: { text: { lines: next } } });
+        } });
+        list.appendChild(h('div', { class: 'item gfxsaved' },
+          h('button', { class: 'btn grow linebtn' + (it.text.line === i ? ' on' : ''), id: id + '-line-' + i, text: l, 'aria-label': 'Send the line ' + l, disabled: !live, onclick: function () { post({ id: it.id, line: i }); } }),
+          remove));
+      });
+      if (!lines.length) list.appendChild(h('div', { class: 'hint', text: 'No saved lines yet. A saved line goes to the screen with one tap.' }));
+      var add = h('input', { class: 'text-input grow', id: id + '-newline', maxlength: d.limits.text, 'aria-label': 'A line to save', placeholder: 'A line to keep, e.g. THANK YOU, SASKATOON', autocomplete: 'off', disabled: !live });
+      function keep() {
+        var v = add.value.trim();
+        if (!v) return;
+        if (lines.length >= d.limits.saved_lines) return say('Up to ' + d.limits.saved_lines + ' saved lines. Remove one first.', true);
+        post({ id: it.id, set: { text: { lines: lines.concat([v]) } } });
+      }
+      add.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); keep(); } });
+      return [h('div', { class: 'k', text: 'Saved lines (' + lines.length + ' of ' + d.limits.saved_lines + ')' }), list,
+        h('div', { class: 'row' }, add, h('button', { class: 'btn', id: id + '-addline', text: 'Keep line', disabled: !live, onclick: keep }))];
+    }
+    function logoForm(it, id) {
+      var files = d.files, out = [];
+      if (!files.length) {
+        out.push(h('div', { class: 'hint', id: id + '-nofiles', text: 'No logo files yet. Upload one in Logo files below.' }));
+      } else {
+        var sel = h('select', { class: 'text-input', id: id + '-file', 'aria-label': 'Logo file', disabled: !live },
+          [h('option', { value: '', text: it.logo.file ? '(none)' : 'Choose a logo', selected: !it.logo.file })].concat(files.map(function (f) { return h('option', { value: f.name, text: f.name, selected: f.name === it.logo.file }); })));
+        sel.addEventListener('change', function () { if (sel.value) post({ id: it.id, set: { logo: { file: sel.value } } }, { preview: it.id }); });
+        out.push(labelled('Logo file', sel, it.logo.missing ? it.logo.file + ' is not in the graphics store any more.' : ''));
+      }
+      out.push(slider(id + '-size', 'Size (share of the screen\'s width)', 1, 100, 1, it.logo.size, function (v) { return v + '%'; }, function (v) { post({ id: it.id, set: { logo: { size: v } } }, { quiet: true, preview: it.id }); }));
+      out.push(slider(id + '-rotate', 'Rotate', -180, 180, 1, it.place.rotate, function (v) { return v + '°'; }, function (v) { post({ id: it.id, set: { place: { rotate: v } } }, { quiet: true, preview: it.id }); }));
+      out.push(sw('Mirror', it.place.mirror, function (v) { post({ id: it.id, set: { place: { mirror: v } } }, { preview: it.id }); }, id + '-mirror'));
+      out.push(h('div', { class: 'hint', text: 'It uses the transparency the file already has. Luma and chroma keys and effects come in a later release.' }));
+      return out;
+    }
+    function itemCard(it, i) {
+      var id = 'graphic-' + it.slot, shown = it.on && d.on, text = it.kind === 'text';
+      var top = h('div', { class: 'lhead' }, h('div', { class: 'lname', text: it.name + ' (slot ' + it.slot + ')' }),
+        h('div', { class: 'state' + (it.status.state === 'error' ? ' err' : ''), id: id + '-state', role: 'status', text: gfxStatusWords(it) }));
+      var showBtn = h('button', { class: 'btn pri big grow' + (shown ? ' on' : ''), id: id + '-show', 'aria-pressed': shown ? 'true' : 'false', 'aria-label': (shown ? 'Hide ' : 'Show ') + it.name, text: shown ? 'Hide' : 'Show',
+        disabled: !live, onclick: function () { post({ id: it.id, on: !shown }); } });
+      var up = h('button', { class: 'btn small', id: id + '-up', text: 'Up', 'aria-label': 'Move ' + it.name + ' up', disabled: !live || i === 0, onclick: function () { post({ move: it.id, dir: 'up' }); } });
+      var down = h('button', { class: 'btn small', id: id + '-down', text: 'Down', 'aria-label': 'Move ' + it.name + ' down', disabled: !live || i === d.items.length - 1, onclick: function () { post({ move: it.id, dir: 'down' }); } });
+      var remove = h('button', { class: 'btn small', id: id + '-remove', text: 'Remove', 'aria-label': 'Remove ' + it.name, disabled: !live, onclick: function (e) {
+        confirmRow('Take ' + it.name + ' off the screen and remove it?', 'Remove', 'Keep', function () { post({ id: it.id, remove: true }); }, e.currentTarget);
+      } });
+      var preview = h('img', { class: 'gfxpreview none', id: id + '-preview', alt: 'How ' + it.name + ' looks on the screen. It is made by the node.', width: 640, height: 360 });
+      preview.addEventListener('error', function () { preview.classList.add('none'); });
+      preview.addEventListener('load', function () { preview.classList.remove('none'); });
+      var frame = h('div', { class: 'gfxframe', id: id + '-frame' }, preview, h('div', { class: 'gfxwait hint', id: id + '-nopreview', text: text ? 'Type a line to see it here.' : 'Choose a logo to see it here.' }));
+      if (d.screen) frame.style.setProperty('--shape', String(d.screen.width / Math.max(1, d.screen.height)));
+      var kids = [top, h('div', { class: 'row' }, showBtn)];
+      if (text) {
+        var line = h('textarea', { class: 'text-input gfxtext', id: id + '-text', rows: 2, maxlength: d.limits.text, 'aria-label': 'Text of ' + it.name, placeholder: 'Type a line, e.g. NEXT UP: DJ MARA', disabled: !live });
+        line.value = it.text.value;
+        var sendNow = function () { post({ id: it.id, text: line.value, on: true }); };
+        line.addEventListener('keydown', function (ev) { if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); sendNow(); } });
+        line.addEventListener('input', function () { previewSoon(it.id); });
+        kids.push(h('div', { class: 'row' }, line, h('button', { class: 'btn on pri', id: id + '-send', text: 'Send', 'aria-label': 'Send this line to the screen', disabled: !live, onclick: sendNow })),
+          h('div', { class: 'hint', text: 'Enter sends the line to the screen; Shift and Enter starts a new line (up to ' + d.limits.lines + ' lines, ' + d.limits.text + ' letters).' }));
+      }
+      kids.push(frame);
+      var name = h('input', { class: 'text-input', id: id + '-name', value: it.name, maxlength: 40, 'aria-label': 'Name of this graphic', autocomplete: 'off', disabled: !live });
+      name.addEventListener('change', function () { if (name.value.trim() && name.value.trim() !== it.name) post({ id: it.id, set: { name: name.value.trim() } }); else name.value = it.name; });
+      var set = h('details', { class: 'fold', id: id + '-settings', open: !!gfxOpen[it.id] },
+        h('summary', { text: 'Look, place and saved lines' }),
+        h('div', { class: 'list gfxsettings' }, [labelled('Name', name)].concat(text ? textForm(it, id) : logoForm(it, id),
+          [h('div', { class: 'k', text: 'Where on the screen' }), anchorGrid(it, id)], placeSliders(it, id),
+          text ? linesForm(it, id) : [],
+          [h('div', { class: 'hint', text: 'Drawn over the screen, still. ' + (text ? 'Fade, typewriter, scroll and crawl' : 'Keys, effects') + ', and showing it over or as one source, come in later releases.' })])));
+      set.addEventListener('toggle', function () { gfxOpen[it.id] = set.open; });
+      kids.push(set, h('div', { class: 'row wrap' }, up, down, remove));
+      var el = h('div', { class: 'graphicitem', id: id, 'data-id': it.id }, kids);
+      var last = gfxLast[it.id];
+      if (last && last.made === madeFrom(it, text ? it.text.value : '')) preview.src = last.url;       // nothing it is made from changed: the same picture
+      else previewSoon(it.id, 30);
+      return el;
+    }
+    function draw(force) {
+      clearTimeout(timer);
+      if (!force && inUse(card)) { timer = setTimeout(load, 1000); return; }
+      if (asking(card)) { timer = setTimeout(load, 1000); return; }
+      keepCursor(body, function () {
+        body.textContent = '';
+        body.appendChild(h('div', { class: 'row wrap' },
+          h('div', { class: 'hint grow', id: 'graphicsstatus', role: 'status', text: headline() }),
+          h('button', { class: 'btn big', id: 'graphicshideall', text: 'Hide all', disabled: !live || !shownCount(), onclick: function () { post({ all: false }); } })));
+        var full = d.items.length >= d.max_items;
+        body.appendChild(h('div', { class: 'row wrap' },
+          h('button', { class: 'btn on pri grow', id: 'graphicaddtext', text: 'Add text', disabled: !live || full, onclick: function () { post({ add: 'text' }, { openNew: true }); } }),
+          h('button', { class: 'btn on pri grow', id: 'graphicaddlogo', text: 'Add logo', disabled: !live || full, onclick: function () { post({ add: 'logo' }, { openNew: true }); } })));
+        if (full) body.appendChild(h('div', { class: 'hint', id: 'graphicsfull', text: 'Up to ' + d.max_items + ' graphics. Remove one to add another.' }));
+        d.items.forEach(function (it, i) { body.appendChild(itemCard(it, i)); });
+        if (!can('full')) body.appendChild(h('div', { class: 'hint', id: 'graphicsctlstate', text: 'Controllers may push text: ' + (d.controllers_text ? 'on' : 'off') + '. The owner switches it.' }));
+        else body.appendChild(toggle('graphicsctl', 'Controllers may push text', !!d.controllers_text, function (v) {
+          api('POST', '/api/graphics/remote', { allow: v }).then(function (r) {
+            if (!r.ok) { say(r.data.error || 'Could not change that', true); load(); return; }
+            say(v ? 'OSC can now put a line of text on the screen.' : 'OSC can no longer put text on the screen.'); load();
+          });
+        }, 'Off unless you switch it on. With it on, a device that passes the OSC locks can set the text of a graphic (/pvj/graphic/N/text and /send). Showing and hiding a graphic over OSC does not need it.'));
+        body.appendChild(h('div', { class: 'hint', id: 'graphicsnote', text: 'Masks (Shape > Picture) are full-screen pictures that never move. Graphics are text and logos you place on the screen. This node shows ' + plural(d.max_on, 'graphic') + ' at a time.' }));
+      });
+      drawFiles();
+      patch();
+    }
+    // ---- the logo files ----
+    function say2(text, isErr) { filesNote.textContent = text || ''; filesNote.className = 'msg inmsg' + (isErr ? ' err' : ''); say(text, isErr); }
+    function upload(file) {
+      var name = file.name;
+      uploading = true;
+      say2('Sending ' + name + '...');
+      var replace = d && d.files.some(function (f) { return f.name === name.replace(/\.[^.]*$/, '') + '.png'; });
+      return fetch('/api/graphics/upload?name=' + encodeURIComponent(name) + (replace ? '&replace=1' : ''), { method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/octet-stream', 'X-PVJ-Request': '1' }, body: file }).then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (data) {
+          uploading = false;
+          if (r.ok) say2(name + ' is stored as ' + data.name + ' (' + data.width + ' x ' + data.height + ').');
+          else say2(data.error || 'The upload failed.', true);
+          load(true);
+        });
+      }, function () { uploading = false; say2('No connection: the upload did not finish.', true); });
+    }
+    function drawFiles() {
+      filesBody.textContent = '';
+      var files = d ? d.files : [];
+      var picker = h('input', { type: 'file', id: 'logopick', hidden: true, 'aria-label': 'Choose a logo: PNG, JPEG or SVG', accept: 'image/png,image/jpeg,image/svg+xml,.png,.jpg,.jpeg,.svg' });
+      picker.addEventListener('change', function () { var f = picker.files[0]; picker.value = ''; if (f) upload(f); });
+      filesBody.appendChild(h('div', { class: 'row' }, picker, h('button', { class: 'btn on pri grow', id: 'logouploadbtn', text: 'Upload a logo', disabled: !live || !(d && d.available), onclick: function () { picker.click(); } })));
+      filesBody.appendChild(h('div', { class: 'hint', text: 'A PNG, a JPEG or an SVG (text in an SVG must be turned into outlines first). The node checks it, draws it again as a clean PNG and keeps only that. Up to 10 MB.' }));
+      var list = h('div', { class: 'list', id: 'logolist' });
+      files.forEach(function (f, i) {
+        var used = d.items.filter(function (it) { return it.kind === 'logo' && it.logo.file === f.name; }).length;
+        var row = h('div', { class: 'item logorow', id: 'logofile-' + i },
+          h('img', { class: 'logothumb', src: '/api/graphics/thumb?name=' + encodeURIComponent(f.name) + '&m=' + f.modified, alt: 'A small picture of ' + f.name, width: 64, height: 64, loading: 'lazy' }),
+          h('span', { class: 'grow' }, f.name, h('br'), h('span', { class: 'k', text: f.width + ' x ' + f.height + ', ' + Math.max(1, Math.round(f.size / 1024)) + ' KB' + (used ? ', used by ' + plural(used, 'graphic') : '') })),
+          h('span', { class: 'row' },
+            h('button', { class: 'btn small', id: 'logofile-' + i + '-rename', text: 'Rename', 'aria-label': 'Rename ' + f.name, disabled: !live, onclick: function (e) {
+              var rrow = e.currentTarget.closest('.row');
+              var to = h('input', { class: 'text-input', 'aria-label': 'New name for ' + f.name, value: f.name, autocomplete: 'off' });
+              function back() { if (box.parentNode) box.parentNode.removeChild(box); rrow.hidden = false; }
+              var box = h('div', { class: 'confirm renamebox' }, h('span', { text: 'New name (it ends in .png)' }), to, h('div', { class: 'row' },
+                h('button', { class: 'btn on pri grow', text: 'Rename', onclick: function () {
+                  var nn = to.value.trim();
+                  if (!nn || nn === f.name) return back();
+                  if (!/\.png$/i.test(nn)) nn += '.png';
+                  act('POST', '/api/graphics/file', { rename: f.name, 'new': nn }, function () { say2('Renamed to ' + nn + '. A graphic that used ' + f.name + ' needs the file chosen again.'); load(true); });
+                } }),
+                h('button', { class: 'btn grow', text: 'Cancel', onclick: back })));
+              rrow.hidden = true;
+              rrow.parentNode.insertBefore(box, rrow.nextSibling);
+              to.focus();
+            } }),
+            h('button', { class: 'btn small', id: 'logofile-' + i + '-delete', text: 'Delete', 'aria-label': 'Delete ' + f.name, disabled: !live, onclick: function (e) {
+              confirmRow('Delete ' + f.name + '?' + (used ? ' ' + plural(used, 'graphic') + ' uses it and will be taken off the screen.' : ''), 'Delete', 'Keep', function () {
+                act('POST', '/api/graphics/file', { 'delete': f.name }, function () { say2(f.name + ' is deleted.'); load(true); });
+              }, e.currentTarget);
+            } })));
+        list.appendChild(row);
+      });
+      if (!files.length) list.appendChild(h('div', { class: 'k', id: 'lognone', text: 'No logo files yet.' }));
+      filesBody.appendChild(list);
+      if (d && !d.available) filesBody.appendChild(h('div', { class: 'hint warn', id: 'lognothelper', text: 'The picture helper is not running on this node, so a logo cannot be uploaded or drawn.' }));
+    }
+    // Asked again only while the card is on the page (a redraw of the page makes new cards, which ask for themselves).
+    function load(force, first) {
+      clearTimeout(timer);
+      if (!first && document.getElementById('graphicscard') !== card) return;
+      api('GET', '/api/graphics').then(function (r) {
+        if (document.getElementById('graphicscard') !== card && !first) return;
+        if (!r.ok) { body.textContent = ''; body.appendChild(h('div', { class: 'k', text: r.data.error || 'Not available' })); return; }
+        d = r.data;
+        if (force === true || !inUse(card)) draw(!!force); else patch();
+        if (d.items.some(function (i) { return i.status.state === 'building'; })) { clearTimeout(timer); timer = setTimeout(load, 600); }
+      });
+    }
+    load(true, true);
+    return [card, filesCard];
+  }
+
   // ---- projection mapping (the old Mapping tab) ------------------------
   // The screen is drawn small on a canvas; drag a corner, or pick one and nudge it. Edit on screen shows outlines on
   // the display itself. Screen corners are pixels of the display; picture corners are parts of the picture (0 to 1).
@@ -1981,6 +2307,9 @@
         confirmOff: function (ask) { api('GET', '/api/mapper').then(function (r) { ask(r.ok && r.data.on ? 'The mapping comes off the screen now.' : null); }); },
         plain: function () { return [mapperCard()]; },         // a presenter had the card on Mix, without the page; Test pattern is in it
         body: function () { return [mapperCard()]; } },
+      { id: 'graphics', group: 'show', name: 'Graphics', role: 'op', url: '/api/graphics', urlRole: 'live',
+        blurb: 'Text and logos the node draws on the screen: a line to push from a phone, a DJ\'s name, a logo in a corner. Up to 8, each with its own Show and Hide, and Hide all for an emergency. Not yet tried on a real node.',
+        body: function () { return graphicsCards(); } },
       { id: 'sync', group: 'show', name: 'Nodes in step', role: 'live', module: 'wall', url: '/api/sync',
         blurb: 'Several nodes play together: one server leads and the clients follow its clip, position, pause and blackout. Each node can also show one tile of a video wall.',
         confirmOff: function (ask) { api('GET', '/api/sync').then(function (r) { ask(r.ok && r.data.config.role !== 'off' ? 'The other nodes stop following.' : null); }); },
@@ -2195,6 +2524,15 @@
       if (p && p.state === 'waiting') return st('check', 'Waiting for ' + p.name);
       if (p) return st('active', 'Showing: ' + p.name);
       return st('ready', d.sources.length ? plural(d.sources.length, 'source') + ' found' : 'No sources found yet');
+    },
+    graphics: function (d) {
+      if (!d.available) return st('problem', 'The picture helper is not running');
+      var bad = d.items.filter(function (i) { return i.status && i.status.state === 'error'; })[0];
+      if (bad && bad.on) return st('problem', bad.name + ': ' + bad.status.message);
+      var shown = d.on ? d.items.filter(function (i) { return i.on && i.status && i.status.state !== 'error'; }).length : 0;
+      if (shown) return st('active', plural(shown, 'graphic') + ' on the screen');
+      if (!d.items.length) return st('setup', 'No graphics yet');
+      return st('ready', plural(d.items.length, 'graphic') + ', none on the screen');
     },
     mapping: function (d) {
       var state = (d.status || {}).state;
@@ -6183,6 +6521,13 @@
     oscSenders(box.querySelector('#oscsenders'), d, set);
     if (oscLogOpen) oscMessages(log);
     box.set = set;
+    // 4. the Owner's switch for text from a controller (D129): off unless switched on; not one of the three locks
+    if (typeof d.graphics_text === 'boolean') box.appendChild(toggle('oscgfxtext', 'Controllers may push text', d.graphics_text, function (v) {
+      api('POST', '/api/graphics/remote', { allow: v }).then(function (r) {
+        if (r.ok) say('Saved'); else say((r.data.error || 'Could not save') + '. Nothing was changed.', true);
+        api('GET', '/api/osc').then(function (g) { if (g.ok) redraw(g.data); });
+      });
+    }, 'Off unless you switch it on. With it on, a device that passes the locks above can put words on the screen with /pvj/graphic/N/text and /send. Showing, hiding and Hide all over OSC do not need it.'));
     return box;
   }
   function oscPairedText(d) {
@@ -7402,7 +7747,7 @@
   // what the title bar says where an area's screens share the page
   var AREA_JOBS = { play: 'Start a pad, a clip or a shader.', shape: 'Put an effect on, set the picture and the sound.', room: 'Run the room: scenes, walls and guests.' };
   // pages of the old System that are a screen of another area now (the Setup index still lists them, and opens them there)
-  var HOMES = { vibes: 'play/shaders', mapping: 'shape/mapping', sound: 'shape/sound' };
+  var HOMES = { vibes: 'play/shaders', mapping: 'shape/mapping', sound: 'shape/sound', graphics: 'play/graphics' };
   var BACK_NAMES = { now: 'Now', play: 'Play', shape: 'Shape', room: 'Room', index: 'Setup' };
   function hasScreen(key) { return screenList().some(function (x) { return x.key === key; }); }
   function screenKey() {            // the open screen, from what is built: 'area/screen'
@@ -7430,6 +7775,7 @@
       scr('play', 'pads', 'Pads', 'Start what sits on a pad.', 'play', { part: 'pads' }),
       scr('play', 'library', 'Library', 'Find a clip, a picture or a live input and play it; keep the files.', 'play', { part: 'library' }));
     if (has('vibes')) list.push(scr('play', 'shaders', 'Shaders', 'Pick a shader, or let Vibes play a set.', 'play', { part: 'shaders' }));
+    if (has('graphics')) list.push(scr('play', 'graphics', 'Graphics', 'Put text and logos on the screen.', 'system', { sys: 'graphics' }));
     if (window.pvjEffects && moduleOn('shaders')) list.push(scr('shape', 'effect', 'Effect', 'Put one effect over the picture and set how much.', 'shape', { part: 'effect' }));
     list.push(scr('shape', 'picture', 'Picture', 'Set how the picture looks and where it sits.', 'shape', { part: 'picture' }));
     if (has('sound')) list.push(scr('shape', 'sound', 'Sound', 'Set how loud it is and where the sound comes out.', 'shape', { part: 'sound' }));

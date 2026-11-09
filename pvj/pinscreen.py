@@ -47,7 +47,7 @@ def lines(pin, hostname, addresses):
     return out
 
 
-QR_IDS = {"view": 1, "live": 2, "pin": 3, "controller": 4}       # overlay ids on the player
+QR_IDS = {"view": 40, "live": 41, "pin": 42, "controller": 43}     # overlay ids on the player: above the masks (30) and the graphics (20 to 27), so a code is never covered
 QR_REFRESH = 15.0
 QR_MAX_SCALE = 16                                # pixels per module; bounds the bitmap whatever size the player reports                                # a player that restarted has lost its overlays: draw them again after this long
 MANUAL_ITEMS = ("pin", "view", "live", "address")    # "address": only where to open the panel
