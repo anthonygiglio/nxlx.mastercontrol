@@ -2110,6 +2110,10 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.waitForSelector('[id^="nowneed-proj-"] .chip-problem, [id^="nowneed-proj-"] .chip-check', { timeout: 40000 });
       assert.strictEqual(await page.locator('#nowneed-health, #nowneed-projectors').count(), 0, 'Needs you does not say the Health or Projectors row again');
       assert(/^Needs you \(\d+\)$/.test(await page.textContent('#nowneedshead')), 'Needs you counts what needs you');
+      // each line of Needs you, its name and what it says, begins with a capital: they are sentences, made by the node
+      const lower = await page.$$eval('#nowneedslist .nowrow', (rows) => rows.map((r) => [r.querySelector('.lname'), r.querySelector('.navstate')])
+        .flat().filter(Boolean).map((e) => e.textContent.trim()).filter((t) => t && /^[a-z]/.test(t)));
+      assert.deepStrictEqual(lower, [], 'every line of Needs you begins with a capital');
       // what happened (D125): the node's last events under Today, the whole log on Health
       // (a fresh harness node may have nothing in it yet: then each place says so)
       await page.waitForSelector('#nowevents .eventrow, #nowevents .state', { timeout: 40000 });
