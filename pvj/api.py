@@ -271,6 +271,7 @@ class Api:
         self.handover = None      # handover.Handover or None (pvj/handover.py, D132): the fleet list, acceptances, the deny file
         self.peers = None         # peer.Peers or None (pvj/peer.py, D132): checked calls to the nodes this one approves
         self.tickets = None       # ticket.Tickets or None (pvj/ticket.py, D132): one-time tickets for opening another node signed in
+        self.leases = None        # lease.Leases or None (pvj/lease.py, D132 slice 4b): the lease on carried devices, pokes, the 24 hour lapse
         self.request = threading.local()    # what the server knows about the request being handled on this thread: .secure
         self.capture = None       # Capture or None (live input from a USB capture device)
         self.ndi = None           # ndi.Input or None (the NDI helper's client; D62)

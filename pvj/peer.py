@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
 """The peer channel (D132, design/node-handover_2026-11-09.md section 3.2 and slices 3 and 4a): how one node talks to another
-it approves. Nothing here signs a device in (pvj/ticket.py does, over this channel); leases and pokes are slice 4b. What is here:
+it approves. Nothing here signs a device in (pvj/ticket.py does, over this channel); the lease and the poke (pvj/lease.py, slice 4b)
+use it too. What is here:
 
 * **The peer port (4a).** Calls between nodes go to a dedicated TLS listener (`PVJ_PEER_PORT`, 8443 on every node unless the
   discovery row says another), which asks the caller for a certificate (CERT_REQUIRED, the pinned root the only CA) and
@@ -139,14 +140,17 @@ class Peers:
         self._last_pull = {}
 
     # -- budgets --
-    def _fail_out(self, target):
+    def _fail_out(self, target, node=True):
+        """A failed outbound call. `node=False` (lease checks and pokes, slice 4b) charges the target alone: a node that
+        hangs or keeps poking must not use up this node's budget for every other call."""
         with self.lock:
-            self._out_node.count()
+            if node:
+                self._out_node.count()
             self._out_target.get(target).count()
 
-    def _out_blocked(self, target):
+    def _out_blocked(self, target, node=True):
         with self.lock:
-            return self._out_node.over() or self._out_target.over(target)
+            return (node and self._out_node.over()) or self._out_target.over(target)
 
     def _fail_in(self, source):
         with self.lock:
@@ -193,13 +197,13 @@ class Peers:
                 out.append((address, port, name, via))
         return out[:MAX_ADDRESSES]
 
-    def _open(self, address, port, keys, name, started, client=False):
+    def _open(self, address, port, keys, name, started, client=False, budget=True):
         """A connection to this address whose certificate passed every check, with the certificate's DER and key hash.
         `keys`: the key hashes that are acceptable, or None to take whatever key it shows (only to read a card). `client`:
         show this node's own certificate (the peer port asks for it)."""
         if not local_enough(address):
             raise PeerError("that address is not on a private network")
-        if self._out_blocked((address, port)):
+        if self._out_blocked((address, port), budget):
             raise PeerError("too many calls have failed lately: wait a minute", 429)
         left = TOTAL_SECONDS - (self.now() - started)
         if left <= 0:
@@ -241,7 +245,7 @@ class Peers:
         except PeerError as e:
             conn.close()
             if e.status != 429:
-                self._fail_out((address, port))
+                self._fail_out((address, port), budget)
             raise
         except BaseException:
             conn.close()
@@ -275,7 +279,7 @@ class Peers:
             raise PeerError("the node refused (%d): %s" % (resp.status, str(payload.get("error", ""))[:120]), 502, refused=True)
         return payload
 
-    def _through(self, node_id, keys, method, path, body, label, peer=False, count_refusals=True):
+    def _through(self, node_id, keys, method, path, body, label, peer=False, count_refusals=True, budget=True):
         """Try each address in turn; the first connection that passes the checks carries the call. Returns (payload, key,
         target) where target is the (address, port) that answered. `peer`: the call goes to the peer port, showing this
         node's certificate; otherwise to the panel's own port (the card)."""
@@ -287,7 +291,7 @@ class Peers:
             if peer:
                 port = via
             try:
-                conn, der, key = self._open(address, port, keys, name, started, client=peer)
+                conn, der, key = self._open(address, port, keys, name, started, client=peer, budget=budget)
             except PeerError as e:
                 last = e
                 if e.check:
@@ -297,7 +301,7 @@ class Peers:
                 return self._http(conn, method, path, body, started), key, (address, port)
             except PeerError as e:
                 if count_refusals or not e.refused:
-                    self._fail_out((address, port))
+                    self._fail_out((address, port), budget)
                 raise
             finally:
                 conn.close()
@@ -369,7 +373,7 @@ class Peers:
                 out.append({"id": node_id, "name": name, "ok": False, "error": e.message})
         return out
 
-    def call_once(self, node_id, path, body):
+    def call_once(self, node_id, path, body, budget=True):
         """One POST to the peer port of an approved node, with the checks of 3.2 and nothing else added to the body, made once: a
         call that fails after it was sent is not tried again at another address (a ticket may be spent). A refusal the node
         answers is not counted as a failed call. Returns (payload, the key the node showed). Raises PeerError."""
@@ -378,7 +382,7 @@ class Peers:
         if not keys:
             raise PeerError("that node is not approved", 403)
         with self._slot(node_id):
-            payload, key, _target = self._through(node_id, keys, "POST", path, dict(body or {}), h.name_of(node_id) or "a node", peer=True, count_refusals=False)
+            payload, key, _target = self._through(node_id, keys, "POST", path, dict(body or {}), h.name_of(node_id) or "a node", peer=True, count_refusals=False, budget=budget)
         return payload, key
 
     def panel_address(self, node_id):

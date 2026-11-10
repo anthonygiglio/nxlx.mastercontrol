@@ -798,6 +798,7 @@ def make_peer_handler(api, max_lifetime=30.0):
     certificate, and the answers below decide with that key, never with what the body claims."""
     from .peer import PeerError
     from .ticket import TicketError
+    from .lease import LeaseError
 
     class PeerHandler(BaseHTTPRequestHandler):
         server_version = "pvj"
@@ -844,7 +845,7 @@ def make_peer_handler(api, max_lifetime=30.0):
 
         def do_POST(self):
             path = urlsplit(self.path).path
-            if path not in ("/api/fleet/peer", "/api/handover/redeem") or api.peers is None:
+            if path not in ("/api/fleet/peer", "/api/handover/redeem", "/api/handover/lease", "/api/handover/poke") or api.peers is None:
                 return self._not_found()
             source = self.client_address[0]
             try:
@@ -871,11 +872,16 @@ def make_peer_handler(api, max_lifetime=30.0):
                     raise PeerError("JSON object expected", 400)
                 if path == "/api/fleet/peer":
                     out = api.peers.handle_peer(body, source, key)
+                elif path in ("/api/handover/lease", "/api/handover/poke"):
+                    leases = getattr(api, "leases", None)
+                    if leases is None:
+                        return self._not_found()
+                    out = leases.answer(body, key, source) if path.endswith("/lease") else leases.poked(body, key, source)
                 elif api.tickets is None:
                     return self._not_found()
                 else:
                     out = api.tickets.redeem(body, key, source)
-            except (PeerError, TicketError) as e:
+            except (PeerError, TicketError, LeaseError) as e:
                 self.close_connection = True
                 return self._json(e.status, {"error": e.message})
             except Exception:
@@ -971,6 +977,11 @@ def build_handover(api, settings, state, env):
     api.peers = peer_mod.Peers(hv, api.https, lookup, log=api.log, peer_port=peer_port(env))
     from . import ticket as ticket_mod
     api.tickets = ticket_mod.Tickets(hv, api.peers, api.auth, api.https, event=api.event, log=api.log)
+    from . import lease as lease_mod, screenmode
+    api.leases = lease_mod.Leases(hv, api.peers, api.auth, api.https, event=api.event, log=api.log, boot=screenmode.boot_id)
+    api.tickets.leases = api.leases                      # a hand-over gives the device a lease (D132, slice 4b)
+    api.auth.on_lent_gone = api.leases.poke              # a device lent to other nodes that is removed here: they are poked
+    hv.on_change = api.leases.sweep                      # the list, an acceptance or the deny list changed: what is no longer approved goes at once
     return hv
 
 
@@ -1111,8 +1122,10 @@ def main(argv=None):
     api.scheduler.start()
     api.autostart.start()
     api.pinscreen.start()
+    if api.leases is not None:
+        api.leases.start()                   # the check of carried devices, the 24 hour lapse and the sweep (D132, slice 4b)
     if api.fleet is not None:
-        api.fleet.tick()                     # the announcement, now that the ports are known (D127)
+        api.fleet.tick()                   # the announcement, now that the ports are known (D127)
     ndi_stop = threading.Event()
 
     def ndi_watch():                         # a sender that changes size: the helper says so, the pipe is loaded again
@@ -1161,6 +1174,8 @@ def main(argv=None):
             api.events.flush()
         api.autostart.stop()
         api.pinscreen.stop()
+        if api.leases is not None:
+            api.leases.stop()
         if api.capture:
             api.capture.stop()
         ndi_stop.set()

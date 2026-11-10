@@ -101,7 +101,7 @@ class PeerNode:
         self.calls = []                                       # what reached this node's servers: (method, path)
         self.port = None
         self.peer_port = None
-        self.api = types.SimpleNamespace(peers=self.peers, tickets=None)       # what the real peer handler reads
+        self.api = types.SimpleNamespace(peers=self.peers, tickets=None, leases=None)       # what the real peer handler reads
         if serve:
             self._serve()
             self._serve_peers()
