@@ -49,9 +49,22 @@ OUTSIDE = {
     ("POST", "/api/https/owner-only"): "full",
 }
 
-# Answered by the server before anyone is asked who they are (D79): it says only whether this request came over the
-# secure connection, so a page over plain http can find out if its device trusts the box. Nothing else belongs here.
-NO_GATE = frozenset([("GET", "/api/https/probe")])
+# Answered by the server before anyone is asked who they are, and nothing else belongs here:
+#   the probe (D79) says only whether this request came over the secure connection, so a page over plain http can find
+#   out if its device trusts the box;
+#   the fleet card (D132) says what mDNS already announces (this node's id and name) and the hash of its public key, over
+#   the secure connection only, so the owner's tool can add the node to a fleet list. Nothing secret. It answers 404 while
+#   discovery is switched off (a node that announces nothing gives its id and name to nobody): then add the node with
+#   `boxcert.py fleet add --cert FILE --id ID --name NAME`, or switch discovery on for a minute.
+#   (The peer calls, another node's hello and a ticket to be redeemed, are not here and not on the panel's port at all since
+#   D132 slice 4a: they are answered by a listener of their own, pvj/server.py PeerServer, which asks every caller for a
+#   certificate from the pinned root and proves who it is before anything is read.)
+NO_GATE = frozenset([("GET", "/api/https/probe"), ("GET", "/api/fleet/card")])
+
+# What the peer listener answers (D132 slice 4a, server.PeerServer), and the panel's ports never do. It asks nobody for a token: the
+# caller is another node, proved by the client certificate of the handshake (chain to the pinned root, clientAuth, the key hash
+# of an approved node), and what each route then does is decided by pvj/peer.py and pvj/ticket.py with that key.
+PEER_ONLY = frozenset([("POST", "/api/fleet/peer"), ("POST", "/api/handover/redeem")])
 
 # Every route a presenter (or less) could use on master before D80, 2026-10-10, as it was worked out from master's route
 # table (every route whose minimum there is none, view or live, and the two paths the server answered itself) at master

@@ -13,8 +13,11 @@ Security model, in one place:
   the box's own https:// origin (page_csp), so the Secure connection page can ask whether this device trusts the box
 * the same panel and API answer on a second, TLS listener when PVJ_HTTPS_PORT is set (D79, pvj/httpsbox.py): there
   the cookie is __Host-pvj_token with Secure; a switch keeps owner access off plain HTTP (the gate below)
+* the nodes talk to each other on a third listener, when PVJ_PEER_PORT is set (D132, PeerServer): TLS with a client
+  certificate required (the pinned root the only CA); it answers two POSTs and nothing else
 """
 
+import html
 import json
 import os
 import re
@@ -330,7 +333,7 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                 return self._graphics_thumb()
             if path == "/api/graphics/preview.png":
                 return self._graphics_preview()
-            if path == "/api/https" or path.startswith("/api/https/"):
+            if path == "/api/https" or path.startswith("/api/https/") or path == "/api/fleet/card":
                 return self._https_route("GET", path, {})
             if path.startswith("/api/"):
                 return self._api("GET", path, {})
@@ -471,6 +474,8 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
             if not self._host_ok():
                 return
             path = urlsplit(self.path).path
+            if path in ("/handover", "/handover/switch"):
+                return self._handover_form(path)                # D132: a browser form, not an API call (no JSON, no X-PVJ-Request)
             if not path.startswith("/api/"):
                 return self._json(404, {"error": "not found"})
             if not self._csrf_ok():
@@ -506,6 +511,13 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                     if method != "GET":
                         raise ApiError(405, "method not allowed")
                     return self._json(200, {"https": self._secure()})
+                if path == "/api/fleet/card":               # D132: the facts mDNS announces and the hash of the public key; over TLS only
+                    if method != "GET" or not self._secure():
+                        raise ApiError(404, "not found")
+                    card = api.handover.card() if api.handover is not None else None
+                    if card is None:
+                        raise ApiError(404, "not found")
+                    return self._json(200, card)
                 device = self._who(method, path)
                 api.require(device, "full")
                 if method == "GET":
@@ -554,6 +566,69 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                 traceback.print_exc()
                 self._json(500, {"error": "internal error"})
 
+        def _page(self, status, title, lines, extra=None, script=None, form=None):
+            """A tiny page of this node's own (no inline script or style: the policy forbids them). `lines`: plain sentences."""
+            parts = ["<!doctype html>", '<html lang="en"><head><meta charset="utf-8"><title>%s</title></head><body>' % html.escape(title)]
+            parts += ["<p>%s</p>" % html.escape(line) for line in lines]
+            if form:
+                parts.append('<form method="post" action="%s"><input type="hidden" name="handle" value="%s"><button type="submit">%s</button></form>'
+                             % (html.escape(form[0]), html.escape(form[1]), html.escape(form[2])))
+            if script:
+                parts.append('<script src="%s"></script>' % html.escape(script))
+            parts.append('<p><a href="/">Open the panel</a></p></body></html>')
+            self._send(status, "".join(parts).encode("utf-8"), TYPES[".html"], extra)
+
+        def _handover_form(self, path):
+            """POST /handover and POST /handover/switch (D132, design 5): the form a browser posts to this node with a ticket from
+            another node, and the confirm button of the page that answers when this device is already signed in here as
+            something higher. TLS only; plain http answers 404 and names the https address (no redirect). Every failure ends
+            at a page with one sentence and a link to the panel, where the PIN works as before."""
+            box = self._https()
+            if not self._secure() or api.tickets is None or api.handover is None:
+                return self._json(404, {"error": "not found", "https": box.https_address(self.headers.get("Host")) if box is not None else None})
+            node = (api.handover.own()[1] or "This node")
+            source = self.client_address[0]
+
+            def refused(sentence):
+                self._page(403, "Not signed in", ["%s did not accept the hand-over: %s. Use the PIN." % (node, sentence.rstrip("."))])
+            if api.support.is_remote(source):
+                return refused("a hand-over is not taken through a support session")
+            if (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/x-www-form-urlencoded" \
+                    or self.headers.get("Transfer-Encoding"):
+                return refused("that was not a hand-over form")
+            try:
+                length = int(self.headers.get("Content-Length", ""))
+            except ValueError:
+                return refused("that was not a hand-over form")
+            if length < 0 or length > 2048:
+                return refused("that was not a hand-over form")
+            try:
+                found = parse_qs(self.rfile.read(length).decode("ascii"), keep_blank_values=True, strict_parsing=True, max_num_fields=8)
+            except (ValueError, UnicodeDecodeError):
+                return refused("that was not a hand-over form")
+            if any(len(v) != 1 for v in found.values()):
+                return refused("that was not a hand-over form")
+            fields = {k: v[0] for k, v in found.items()}
+            token = self._token()
+            here = auth.authenticate(token) if token else None
+            origin = self.headers.get("Origin")
+            if path == "/handover/switch":
+                # the button of our own page: same origin, and the cookie that proves this is the browser that was signed in here
+                host = (self.headers.get("Host") or "").lower()
+                parts = urlsplit(origin) if origin else None
+                if here is None or parts is None or parts.scheme != "https" or not host or parts.netloc.lower() != host or set(fields) != {"handle"}:
+                    return refused("that switch was not made from this node's own page")
+                result = api.tickets.confirm(fields["handle"], source)
+            else:
+                result = api.tickets.signin(fields, origin, source, here["role"] if here else None)
+            if result["result"] == "signed-in":
+                cookie = ("Set-Cookie", self._cookie_set(result["token"], 31536000))
+                return self._page(200, "Signed in", ["Signed in to %s as %s." % (node, result["name"])], [cookie], script="/handover.js")
+            if result["result"] == "confirm":
+                return self._page(200, "Switch?", ["You are already signed in here as %s. Switch to %s from %s?" % (result["have"], result["would"], result["from"])],
+                                  form=("/handover/switch", result["handle"], "Switch"))
+            refused(result["sentence"])
+
         def _method_not_allowed(self):
             self._json(405, {"error": "method not allowed"}, [("Allow", "GET, POST")])
 
@@ -592,6 +667,8 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                 # a 6-digit code (a guest or presenter, or the code from a controller) is still taken over plain http
                 return self._json(403, {"error": "the PIN pairs an owner over the secure connection only: open %s and pair there"
                                         % box.https_address(), "https": box.https_address()})
+            api.request.secure = self._secure()                # which listener this request came in on, for the routes that need TLS (D132)
+            api.request.host = self.headers.get("Host")        # and the Host it was asked for, for the one that names this node's origin (a ticket)
             try:
                 status, payload = api.handle(method, path, body, device, self.client_address[0])
             except Exception:
@@ -686,9 +763,21 @@ class TlsServer(PvjServer):
         self.box = box
         box.port = self.server_address[1]
 
+    def _context(self):
+        return self.box.context
+
+    def handle_error(self, request, client_address):
+        """A client that walked away or was turned away (a reset, a closed connection, a failed handshake) is not worth a traceback
+        in the journal: another node checks this node's certificate and closes the connection (D132), and a scan of the peer port
+        ends this way every time."""
+        import ssl
+        if isinstance(sys.exc_info()[1], (OSError, ssl.SSLError)):
+            return
+        super().handle_error(request, client_address)
+
     def process_request_thread(self, request, client_address):
         import ssl
-        ctx = self.box.context
+        ctx = self._context()
         if ctx is None:
             self.shutdown_request(request)
             self._slots.release()
@@ -701,6 +790,115 @@ class TlsServer(PvjServer):
             self._slots.release()
             return
         super().process_request_thread(request, client_address)
+
+
+def make_peer_handler(api, max_lifetime=30.0):
+    """The peer listener's handler (D132): two POSTs and nothing else. The caller is proved by the handshake (the certificate
+    it showed chains to the pinned root); `Peers.authenticate` then reads the key usage, the dates and the key hash from that
+    certificate, and the answers below decide with that key, never with what the body claims."""
+    from .peer import PeerError
+    from .ticket import TicketError
+
+    class PeerHandler(BaseHTTPRequestHandler):
+        server_version = "pvj"
+        sys_version = ""
+        timeout = 10
+
+        def setup(self):
+            super().setup()
+            self._reaper = threading.Timer(max_lifetime, self._kill)
+            self._reaper.daemon = True
+            self._reaper.start()
+
+        def _kill(self):
+            try:
+                self.connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+        def finish(self):
+            self._reaper.cancel()
+            super().finish()
+
+        def log_message(self, fmt, *args):
+            sys.stderr.write("%s %s\n" % (self.client_address[0], fmt % args))
+
+        def _json(self, status, payload):
+            data = json.dumps(payload).encode()
+            try:
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.end_headers()
+                if self.command != "HEAD":
+                    self.wfile.write(data)
+            except OSError:
+                self.close_connection = True
+
+        def _not_found(self):
+            self._json(404, {"error": "not found"})
+
+        do_GET = do_HEAD = do_PUT = do_DELETE = do_PATCH = _not_found
+
+        def do_POST(self):
+            path = urlsplit(self.path).path
+            if path not in ("/api/fleet/peer", "/api/handover/redeem") or api.peers is None:
+                return self._not_found()
+            source = self.client_address[0]
+            try:
+                der = self.connection.getpeercert(binary_form=True)
+            except (AttributeError, ValueError):
+                der = None
+            try:
+                if not der:
+                    raise PeerError("a certificate is needed", 403)
+                key = api.peers.authenticate(der, source)
+                try:
+                    length = int(self.headers.get("Content-Length", ""))
+                except ValueError:
+                    raise PeerError("Content-Length required", 411)
+                if length < 0 or length > MAX_BODY:
+                    raise PeerError("body too large", 413)
+                if not (self.headers.get("Content-Type") or "").startswith("application/json") or self.headers.get("Transfer-Encoding"):
+                    raise PeerError("send application/json with a Content-Length", 415)
+                try:
+                    body = json.loads(self.rfile.read(length) or b"{}")
+                except (ValueError, RecursionError):
+                    raise PeerError("invalid JSON", 400)
+                if not isinstance(body, dict):
+                    raise PeerError("JSON object expected", 400)
+                if path == "/api/fleet/peer":
+                    out = api.peers.handle_peer(body, source, key)
+                elif api.tickets is None:
+                    return self._not_found()
+                else:
+                    out = api.tickets.redeem(body, key, source)
+            except (PeerError, TicketError) as e:
+                self.close_connection = True
+                return self._json(e.status, {"error": e.message})
+            except Exception:
+                traceback.print_exc()
+                self.close_connection = True
+                return self._json(500, {"error": "internal error"})
+            self._json(200, out)
+
+    return PeerHandler
+
+
+class PeerServer(TlsServer):
+    """The listener the nodes call each other on (D132, slice 4a): TLS that asks every caller for a certificate and accepts only
+    one that chains to the pinned root (HttpsBox.peer_context). A browser, a scanner or a node without a certificate of the
+    root's never gets past the handshake. With no certificate or no root, every connection is closed at once. It does not
+    set the panel's port on the box."""
+
+    def __init__(self, address, handler, box, max_connections=32):
+        PvjServer.__init__(self, address, handler, max_connections)
+        self.box = box
+
+    def _context(self):
+        return self.box.peer_context()
 
 
 def write_pin_file(rundir, pin):
@@ -725,6 +923,7 @@ def build_fleet(api, settings, state, board):
     own_id, kept = fleet_mod.node_id(state)
     if not kept:
         print("pvj-web: the node id could not be kept in %s; it will be new at the next start" % state, file=sys.stderr)
+    api.node_id = own_id                     # the one id this node has: the fleet card says the same as the announcement
     tier = hardware.tier(board["kind"])
 
     def describe():
@@ -744,6 +943,35 @@ def build_fleet(api, settings, state, board):
     return fleet_mod.Fleet(describe, lambda: fleet_mod.stored_on(settings.data.get("fleet")), api.sysd,
                            lambda: fleet_mod.scan(fleet_mod.net_transport(addresses)),
                            log=lambda m: print(m, file=sys.stderr), event=api.event)
+
+
+def peer_port(env):
+    """The port the nodes call each other on: PVJ_PEER_PORT, the same on every node (the unit sets 8443); the default of the
+    peer client is the same number, so a node that does not listen still knows where to call the others."""
+    from . import peer as peer_mod
+    try:
+        return int(env.get("PVJ_PEER_PORT", "") or 0) or peer_mod.DEFAULT_PEER_PORT
+    except ValueError:
+        return peer_mod.DEFAULT_PEER_PORT
+
+
+def build_handover(api, settings, state, env):
+    """The fleet list, the acceptances and the deny file beside tls/ (pvj/handover.py, D132). Reads files, calls nobody."""
+    from . import fleet as fleet_mod, handover as handover_mod
+    own_id = getattr(api, "node_id", None) or fleet_mod.node_id(state)[0]
+    hv = handover_mod.Handover(state, api.https, settings, lambda: {"id": own_id, "name": fleet_mod.clean_hostname(socket.gethostname())},
+                               event=api.event, log=api.log, openssl=env.get("PVJ_OPENSSL", "openssl"))
+    hv.load()
+    from . import peer as peer_mod
+
+    def lookup(node_id):
+        view = api.fleet.view() if api.fleet is not None else {}
+        return [(r["address"], r["port"], r.get("name")) for r in view.get("nodes", []) if r.get("id") == node_id and r.get("https")]
+
+    api.peers = peer_mod.Peers(hv, api.https, lookup, log=api.log, peer_port=peer_port(env))
+    from . import ticket as ticket_mod
+    api.tickets = ticket_mod.Tickets(hv, api.peers, api.auth, api.https, event=api.event, log=api.log)
+    return hv
 
 
 def build(env=None, player=None):
@@ -802,6 +1030,7 @@ def build(env=None, player=None):
                                       clock_trusted=lambda: api.clock_status().get("clock_from_network"), log=api.log)
     api.https.load()                         # a certificate that will not load leaves HTTP as it is, with the reason on the page
     api.fleet = build_fleet(api, settings, state, board)         # other nodes on the network (D127); the first announcement is in main()
+    api.handover = build_handover(api, settings, state, env)     # who this node trusts to carry devices (D132): files only, no call to another node
     from . import supportd as supportd_mod
     api.support.client = supportd_mod.SupportdClient(paths.supportd_socket())
     api.support.panel_port = int(env.get("PVJ_PORT", "8080"))
@@ -872,6 +1101,13 @@ def main(argv=None):
             threading.Thread(target=tlsd.serve_forever, name="pvj-https", daemon=True).start()
         except OSError as e:                 # the port in use or not allowed: the plain panel still comes up
             print("pvj-web: https not listening on %s:%d: %s" % (host, tls_port, e), file=sys.stderr)
+    peerd = None
+    if int(env.get("PVJ_PEER_PORT", "0") or 0):
+        try:
+            peerd = PeerServer((host, peer_port(env)), make_peer_handler(api), api.https)
+            threading.Thread(target=peerd.serve_forever, name="pvj-peer", daemon=True).start()
+        except OSError as e:                 # the port in use: the panel still comes up, and this node can call the others
+            print("pvj-web: the peer port is not listening on %s:%d: %s" % (host, peer_port(env), e), file=sys.stderr)
     api.scheduler.start()
     api.autostart.start()
     api.pinscreen.start()
@@ -917,6 +1153,9 @@ def main(argv=None):
         if tlsd:
             tlsd.shutdown()
             tlsd.server_close()
+        if peerd:
+            peerd.shutdown()
+            peerd.server_close()
         api.scheduler.stop()
         if api.events is not None:
             api.events.flush()

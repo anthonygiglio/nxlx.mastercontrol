@@ -691,7 +691,7 @@ class HttpsTest(HttpsBase):
             self.assertEqual(self.call("POST", "/api/https/nothing", {}, token=token)[0], 403)
         self.assertEqual(self.call("GET", "/api/https/nothing")[0], 401)
         # the probe asks nobody who they are and says one thing
-        self.assertEqual(sorted(policy.NO_GATE), [("GET", "/api/https/probe")])
+        self.assertEqual(sorted(policy.NO_GATE), [("GET", "/api/fleet/card"), ("GET", "/api/https/probe")])
         self.assertEqual(tuple(self.call("GET", "/api/https/probe")[:2]), (200, {"https": False}))
 
         from pvj import support as support_mod

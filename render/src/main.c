@@ -570,6 +570,18 @@ static void layer_render(Layer *l)
     render_last_fence = NULL;
     last_call_delete = 0;
     int r = mpv_render_context_render(l->rc, rp);
+#ifdef PVJ_RENDER_TEST_HOOKS
+    // Tests only: a draw of a video layer that leaves the middle of its picture black is counted (pvj-test-blank), so a
+    // test with a clip that has no black there sees a blank picture even when it is on the screen for one flip.
+    if (r >= 0 && l->index >= 0 && l->index < LAYERS) {
+        unsigned char px[8 * 8 * 4];
+        glBindFramebuffer(GL_FRAMEBUFFER, l->fbo);
+        glReadPixels(l->w / 2 - 4, l->h_ / 2 - 4, 8, 8, GL_RGBA, GL_UNSIGNED_BYTE, px);
+        int lit = 0;
+        for (int k = 0; k < 8 * 8; k++) lit |= px[k * 4] > 8 || px[k * 4 + 1] > 8 || px[k * 4 + 2] > 8;
+        if (!lit) __atomic_add_fetch(&app.blank_draws, 1, __ATOMIC_RELAXED);
+    }
+#endif
     // the frame's fence mpv will never delete (see count_fence_sync)
     if (r >= 0 && render_last_fence && !render_last_after_delete && real_delete_sync) {
         real_delete_sync(render_last_fence);

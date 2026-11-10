@@ -268,6 +268,10 @@ class Api:
         self.events = None        # EventLog or None (pvj/events.py, D125): what happened on this node
         self.fleet = None         # fleet.Fleet or None (pvj/fleet.py, D127): the other nodes on the network, and this one's announcement
         self.https = None         # httpsbox.HttpsBox or None: the secure connection (D79), set in server.build
+        self.handover = None      # handover.Handover or None (pvj/handover.py, D132): the fleet list, acceptances, the deny file
+        self.peers = None         # peer.Peers or None (pvj/peer.py, D132): checked calls to the nodes this one approves
+        self.tickets = None       # ticket.Tickets or None (pvj/ticket.py, D132): one-time tickets for opening another node signed in
+        self.request = threading.local()    # what the server knows about the request being handled on this thread: .secure
         self.capture = None       # Capture or None (live input from a USB capture device)
         self.ndi = None           # ndi.Input or None (the NDI helper's client; D62)
         self.ndisc = None         # ndiscovery.Manager or None (the NDI discovery server's supervisor; D85)
@@ -3560,13 +3564,106 @@ class Api:
         if not isinstance(body, dict) or set(body) != {"on"} or not isinstance(body["on"], bool):
             raise bad('send {"on": true} or {"on": false}')
         with self.settings.lock:
-            self.settings.data["fleet"] = {"discovery": body["on"]}
+            section = self.settings.data.get("fleet")
+            self.settings.data["fleet"] = dict(section if isinstance(section, dict) else {}, discovery=body["on"])
             self.settings.save()
         self.event("network", "Discovery of other nodes was switched %s." % ("on" if body["on"] else "off"))
         if self.fleet is None:
             return {"on": body["on"], "state": "off", "detail": ""}
         self.fleet.tick(force=True)
         return self.fleet.status()
+
+    # --- which other nodes this one trusts (D132, pvj/handover.py): the Owner's, over the secure connection only -------
+    def _handover(self):
+        if self.handover is None:
+            raise ApiError(404, "not available on this node")
+        if not getattr(self.request, "secure", False):
+            raise ApiError(403, "this is done over the secure connection only: open the node's https address")
+        return self.handover
+
+    @staticmethod
+    def _handover_call(fn, *args, **kw):
+        from .handover import HandoverError
+        from .peer import PeerError
+        from .ticket import TicketError
+        try:
+            return fn(*args, **kw)
+        except (HandoverError, PeerError, TicketError) as e:
+            raise ApiError(e.status, e.message)
+
+    def _peers(self):
+        self._handover()
+        if self.peers is None:
+            raise ApiError(404, "not available on this node")
+        return self.peers
+
+    @staticmethod
+    def _node_id(body, keys):
+        from . import fleetlist
+        if not isinstance(body, dict) or set(body) != keys or not isinstance(body.get("id"), str) or not fleetlist.ID_WORD.fullmatch(body["id"]):
+            raise bad("send: %s (the id is the node's 32 hex digits, as the Nodes list shows it)" % ", ".join(sorted(keys)))
+        return body["id"]
+
+    def get_fleet(self, body, device, client):
+        """The Owner's view of the trust between nodes: names, the list's serial, this node's own fingerprint and the
+        switch. No key of another node, no signature, no ticket."""
+        return self._handover().status()
+
+    def set_fleet_accept(self, body, device, client):
+        """{"on": bool}: "Accept devices from other nodes", off by default. Only an Owner (a carried Owner too); this is the lock
+        on pairing from other nodes. Turning it off signs out every device carried here at once; the list and the
+        acceptances stay."""
+        h = self._handover()
+        if not isinstance(body, dict) or set(body) != {"on"} or not isinstance(body["on"], bool):
+            raise bad('send {"on": true} or {"on": false}')
+        h.set_accepting(body["on"])
+        gone = 0 if body["on"] else self.auth.revoke_node_devices()
+        self.event("handover", "Accepting devices from other nodes was switched %s%s." % (
+            "on" if body["on"] else "off", (" (%d carried device%s signed out)" % (gone, "" if gone == 1 else "s")) if gone else ""), device.get("name"))
+        return h.status()
+
+    def post_handover_ticket(self, body, device, client):
+        """{"to": node id, "proof": sha-256 of a value only the page keeps}: a one-time ticket, good for 60 seconds, for this device
+        to open that node signed in (D132). An Operator or an Owner paired over https; never a support login. The node is one
+        this node approves and has just checked; the answer says where to post the form."""
+        self._handover()
+        if self.tickets is None:
+            raise ApiError(404, "not available on this node")
+        return self._handover_call(self.tickets.make, device, body, getattr(self.request, "host", None))
+
+    def post_fleet_list(self, body, device, client):
+        """{"list": text of fleet.json, "sig": text of fleet.sig}: the owner's signed list, checked against the pinned root."""
+        h = self._handover()
+        if not isinstance(body, dict) or set(body) != {"list", "sig"} or not all(isinstance(body[k], str) for k in body):
+            raise bad('send {"list": the text of fleet.json, "sig": the text of fleet.sig}')
+        return self._handover_call(h.take_list, body["list"].encode("utf-8", "surrogatepass"), body["sig"], device.get("name"))
+
+    def post_fleet_accepted(self, body, device, client):
+        """{"id", "carry", "typed"}: accept another node by the fingerprint of its key. The name and the key come from the
+        node's own card, fetched over a connection this node checks (its certificate from the pinned root, covering the
+        address, matching the card); the caller never supplies them. `typed` is what the Owner read on THAT node's own panel."""
+        peers = self._peers()
+        node_id = self._node_id(body, {"id", "carry", "typed"})
+        return self._handover_call(peers.accept, node_id, body["carry"], body["typed"], device.get("name"))
+
+    def post_fleet_accepted_look(self, body, device, client):
+        """{"id"}: the name and key fingerprint of a node on the network, from its card over the checked connection, for the
+        Owner to compare with what that node's own panel shows. Accepting still needs the fingerprint typed."""
+        peers = self._peers()
+        return self._handover_call(peers.look, self._node_id(body, {"id"}))
+
+    def post_fleet_sync(self, body, device, client):
+        """Hello to every approved node: lists and removals catch up. Returns one line per node."""
+        peers = self._peers()
+        if not isinstance(body, dict) or body:
+            raise bad("send {}")
+        return {"nodes": self._handover_call(peers.sync)}
+
+    def post_fleet_accepted_remove(self, body, device, client):
+        h = self._handover()
+        if not isinstance(body, dict) or set(body) != {"id"} or not isinstance(body["id"], str):
+            raise bad('send {"id": the node\'s id}')
+        return self._handover_call(h.remove_acceptance, body["id"], device.get("name"))
 
     # --- multi-box sync and the video wall (see sync.py) ------------------------------------
     def get_sync(self, body, device, client):
@@ -5567,6 +5664,14 @@ class Api:
             ("GET", "/api/health"): ("view", self.get_health),
             ("GET", "/api/nodes"): ("live", self.get_nodes),                       # D127: Operator and Owner; not a controller or a support login
             ("POST", "/api/nodes/discovery"): ("full", self.set_nodes_discovery),
+            ("GET", "/api/fleet"): ("full", self.get_fleet),                        # D132: the Owner's, over https; the card is the server's (policy.NO_GATE)
+            ("POST", "/api/fleet/accept"): ("full", self.set_fleet_accept),
+            ("POST", "/api/fleet/list"): ("full", self.post_fleet_list),
+            ("POST", "/api/fleet/accepted"): ("full", self.post_fleet_accepted),
+            ("POST", "/api/fleet/accepted/remove"): ("full", self.post_fleet_accepted_remove),
+            ("POST", "/api/fleet/accepted/look"): ("full", self.post_fleet_accepted_look),
+            ("POST", "/api/fleet/sync"): ("full", self.post_fleet_sync),
+            ("POST", "/api/handover/ticket"): ("live", self.post_handover_ticket),     # D132 4a: Operator and Owner, over https, never a controller or a support login
             ("GET", "/api/support"): ("view", self.get_support),
             ("POST", "/api/support/config"): ("full", self.set_support),
             ("POST", "/api/support/start"): ("full", self.start_support),

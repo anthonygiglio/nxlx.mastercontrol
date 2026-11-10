@@ -93,12 +93,21 @@
     }, function () {
       S.failures++;
       if (S.failures >= 2) offlineBanner.hidden = false;
-      return { ok: false, status: 0, data: { error: 'no connection' } };
+      return { ok: false, status: 0, data: { error: 'no connection to the node' } };
     });
   }
-  function say(text, isErr) { S.msg = text || ''; S.msgErr = !!isErr; var m = document.getElementById('msg'); if (m) { m.textContent = S.msg; m.className = 'msg' + (isErr ? ' err' : ''); } }
+  // An error the node gives is a phrase ("the player is restarting"): where the panel shows one as a line of its
+  // own it begins with a capital, as every line of the panel does
+  function sentence(t) { t = String(t || ''); return t.charAt(0).toUpperCase() + t.slice(1); }
+  function say(text, isErr) { S.msg = isErr ? sentence(text) : (text || ''); S.msgErr = !!isErr; var m = document.getElementById('msg'); if (m) { m.textContent = S.msg; m.className = 'msg' + (isErr ? ' err' : ''); } }
+  // A press the node is slow to answer says so after a moment, in place of whatever the line said before; the answer
+  // (or its error) then takes the line as usual, and a quiet answer clears the waiting words
+  var WAITING = 'Waiting for the node...';
   function act(method, path, body, after) {
+    var slow = setTimeout(function () { say(WAITING); }, 1500);
     return api(method, path, body).then(function (r) {
+      clearTimeout(slow);
+      if (S.msg === WAITING && !S.msgErr) say('');
       if (!r.ok) say(r.data.error || 'Something went wrong', true);
       else if (after) after(r.data);
       return r;
@@ -146,9 +155,10 @@
   // press is down, and then `again` (the look itself, so the drawing is of fresh data) runs just after the release.
   function whenFree(key, fn) { if (pressing()) afterPress[key] = fn; else fn(); }
   function held(key, again) { if (!pressing()) return false; afterPress[key] = again; return true; }
+  // Gives back the promise of the answer, so a card that draws itself from S.status can wait for it
   function poll() {
-    if (!S.device || document.visibilityState === 'hidden') return;
-    api('GET', '/api/status').then(function (r) {
+    if (!S.device || document.visibilityState === 'hidden') return Promise.resolve();
+    return api('GET', '/api/status').then(function (r) {
       if (r.ok) {
         var was = !!(S.status && S.status.support && S.status.support.active), reached = reach();
         S.status = r.data;
@@ -758,7 +768,12 @@
     var setMix = function (patch) {
       var next = { transition: m.transition, duration: m.duration };
       Object.keys(patch).forEach(function (k) { next[k] = patch[k]; });
-      act('POST', '/api/mix', next, function () { poll(); setTimeout(function () { if (card.isConnected) card.parentNode.replaceChild(transitionCard(), card); }, 150); });
+      // drawn again once the node's new status is in: a fixed 150 ms drew the old choice when the status was slower,
+      // and the card then showed the old transition as chosen until the page was opened again
+      act('POST', '/api/mix', next, function () {
+        var redraw = function () { if (card.isConnected) card.parentNode.replaceChild(transitionCard(), card); };
+        poll().then(redraw, redraw);
+      });
     };
     var card = h('div', { class: 'card', id: 'transitioncard' },
       h('div', { class: 'k', text: 'Transition between clips' }),
@@ -3075,7 +3090,7 @@
   function playingNow() { var pl = (S.status && S.status.player) || {}; return !!(pl.running && (pl.path || pl.vibes || pl.stream || pl.ndi)); }
   // A result said beside the control that caused it, as well as in the page's message line.
   function sayAt(el, text, isErr) {
-    if (el) { el.textContent = text || ''; el.className = 'msg inmsg' + (isErr ? ' err' : ''); }
+    if (el) { el.textContent = isErr ? sentence(text) : (text || ''); el.className = 'msg inmsg' + (isErr ? ' err' : ''); }
     say(text, isErr);
   }
   function flipSwitch(opts, steps, on, control) {
@@ -3155,7 +3170,7 @@
   // Newest first: when (in the time of the device the panel is on), what kind, the node's own short sentence, how
   // many times, and (for the Owner, never over a support login) the device or address it was about. The whole log is
   // on Health; Now shows the last few.
-  var EVENT_KINDS = { boot: 'Node', player: 'Player', renderer: 'Renderer', update: 'Update', projector: 'Projector', network: 'Network', signin: 'Sign-in', scene: 'Scene' };
+  var EVENT_KINDS = { boot: 'Node', player: 'Player', renderer: 'Renderer', update: 'Update', projector: 'Projector', network: 'Network', signin: 'Sign-in', scene: 'Scene', handover: 'Other nodes' };
   function eventWhen(t) {
     var d = new Date(t * 1000), now = new Date(), two = function (n) { return (n < 10 ? '0' : '') + n; };
     var hm = two(d.getHours()) + ':' + two(d.getMinutes());
@@ -5450,7 +5465,7 @@
       fetch('/api/system/settings/import?confirm=import', { method: 'POST', credentials: 'same-origin',
         headers: { 'X-PVJ-Request': '1', 'Content-Type': 'application/json' }, body: f })
         .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, status: r.status, data: j }; }); },
-          function () { return { ok: false, status: 0, data: { error: 'no connection' } }; })
+          function () { return { ok: false, status: 0, data: { error: 'no connection to the node' } }; })
         .then(function (r) {
           if (!r.ok) return sayAt(document.getElementById('importresult'), (r.data.error || 'The import failed (HTTP ' + r.status + ')') + '. Nothing was changed. Choose a settings file this node or another one exported.', true);
           var lines = (r.data.problems || []).map(function (t) { return 'Check: ' + t; }).concat(r.data.notes || []);
@@ -8386,6 +8401,44 @@
     if (!el || !el.getClientRects().length) el = document.getElementById('wsmain');
     if (el) el.focus({ preventScroll: true });
   }
+  // iPhone and iPad (WebKit on iOS) only, a no-op everywhere else. The owner, 2026-11-09, in the Home Screen app on an
+  // up-to-date iPhone: the strip came away from the foot and scrolled with the page, on Now and on Play, each time with
+  // a text box, a dropdown or the Nodes list just used. iOS can leave the visual viewport offset after the keyboard or
+  // a picker has gone (visualViewport.offsetTop not back to 0, or its height not the window's again), and the sticky
+  // strip and title bar are then laid out against the wrong viewport. When the keyboard is gone (nothing is being typed
+  // in) and the viewport still disagrees with the window, the page is nudged (a scroll of one pixel there and back) and
+  // the two bars are laid out again (a class on them for one frame). A pinch zoom is left alone: there the viewport is
+  // smaller on purpose. Each nudge is counted on the root (data-vvfix) for the tests.
+  var IOS_WEBKIT = /iP(hone|ad|od)/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+  (function () {
+    var vv = window.visualViewport;
+    if (!IOS_WEBKIT || !vv) return;
+    var wait = null;
+    function typing() {
+      var a = document.activeElement;
+      return !!(a && (a.isContentEditable || (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && !/^(button|checkbox|radio|range|color|file|submit|reset)$/.test(a.type || ''))));
+    }
+    function settle() {
+      wait = null;
+      if (typing() || vv.scale > 1.01) return;
+      if (Math.abs(vv.offsetTop) < 1 && Math.abs(vv.height - window.innerHeight) < 2) return;
+      var x = window.scrollX, y = window.scrollY;
+      window.scrollTo(x, y > 0 ? y - 1 : y + 1);
+      window.scrollTo(x, y);
+      var bars = document.querySelectorAll('.wsdock, .wshead');
+      Array.prototype.forEach.call(bars, function (b) { b.classList.add('vvfix'); });
+      void document.body.offsetHeight;
+      requestAnimationFrame(function () { Array.prototype.forEach.call(bars, function (b) { b.classList.remove('vvfix'); }); dockHeight(); });
+      var root = document.documentElement;
+      root.setAttribute('data-vvfix', String((+root.getAttribute('data-vvfix') || 0) + 1));
+    }
+    function later() { clearTimeout(wait); wait = setTimeout(settle, 350); }
+    document.addEventListener('focusout', later, true);
+    document.addEventListener('change', later, true);         // a dropdown's picker closes with its choice
+    vv.addEventListener('resize', later);
+    vv.addEventListener('scroll', later);
+    window.addEventListener('pageshow', later);
+  })();
   var dockWatch = null, widthWatch = null;
   function dockHeight() {           // how tall the strip and the tabs are: what floats above them (a message) clears them
     var d = document.getElementById('wsdock');

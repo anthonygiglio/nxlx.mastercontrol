@@ -14,12 +14,24 @@ OpenSSL from Homebrew, both work; Linux; Windows with OpenSSL on the path). Noth
   boxcert.py list [--dir DIR]             what this root has signed, and what is due
   boxcert.py root [--dir DIR]             the root's SHA-256 fingerprint, to compare with the box's page once
 
+  The fleet list: which of your nodes may open each other without pairing again (D132). Sign it here, load it on a node.
+  boxcert.py fleet new --name NAME        start a list (once)
+  boxcert.py fleet add HOST --carry full|live|none     add or change a node: asks it for its card over https and trusts
+                                          only your root; or --card FILE, or --cert FILE --id ID --name NAME
+  boxcert.py fleet remove NODE            take a node (name or id) off the working list
+  boxcert.py fleet clear NODE|KEYHASH ... allow a removed node again, for every node, in the next signed list
+  boxcert.py fleet sign [--serial N]      sign the working list with the root (asks the passphrase; serial goes up by one)
+  boxcert.py fleet show                   the signed list and what the working copy changes
+  boxcert.py fleet verify [--list F --sig F]    does your root's signature hold (also for a list taken off a node)
+  boxcert.py fleet push HOST [--port N] [--token-file F]    send the signed list to a node over https (asks its PIN once)
+
 The folder (default ~/nxlx-root-ca) holds root.key (encrypted with your passphrase), root.pem (public: this is what
 your devices install) and signed.json (box, names, serial, start, end). Back the folder up. Never put root.key on
 a box. Every extension goes through a configuration file, because LibreSSL has no -addext.
 """
 
 import argparse
+import base64
 import datetime
 import getpass
 import json
@@ -237,7 +249,7 @@ def read_cert(exe, path):
 def leaf_config(dns, ips):
     san = ", ".join(["DNS:%s" % d for d in dns] + ["IP:%s" % i for i in ips])
     return "\n".join(["[v3_leaf]", "basicConstraints = CA:FALSE", "keyUsage = critical, digitalSignature",
-                      "extendedKeyUsage = serverAuth", "subjectKeyIdentifier = hash", "authorityKeyIdentifier = keyid",
+                      "extendedKeyUsage = serverAuth, clientAuth", "subjectKeyIdentifier = hash", "authorityKeyIdentifier = keyid",
                       "subjectAltName = " + san]) + "\n"
 
 
@@ -426,6 +438,452 @@ def list_signed(folder, out=print, now=None):
     return rows
 
 
+# --- the fleet list (D132, docs/HTTPS.md "Letting your nodes open each other") ----------------------------------------------
+FLEET_DRAFT, FLEET_JSON, FLEET_SIG = "fleet-draft.json", "fleet.json", "fleet.sig"
+_FLEETLIST = []
+
+
+def fleetlist():
+    """pvj/fleetlist.py, the file format and the check a node makes, loaded by its path from the same checkout so the
+    tool and the node can never read a list differently."""
+    if not _FLEETLIST:
+        import importlib.util
+        path = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "pvj", "fleetlist.py"))
+        if not os.path.isfile(path):
+            raise BoxcertError("the fleet commands need pvj/fleetlist.py from the same checkout as this tool (not found at %s)" % path)
+        spec = importlib.util.spec_from_file_location("nxlx_fleetlist", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _FLEETLIST.append(mod)
+    return _FLEETLIST[0]
+
+
+def _fleet_call(fn, *args, **kw):
+    """A call into the module with its refusals turned into the tool's own."""
+    FL = fleetlist()
+    try:
+        return fn(*args, **kw)
+    except FL.FleetError as e:
+        raise BoxcertError(e.message)
+
+
+def _write_file(path, data):
+    tmp = path + ".tmp"
+    with open(tmp, "wb") as f:
+        f.write(data)
+    os.replace(tmp, path)
+
+
+def _read_file(path, limit):
+    try:
+        with open(path, "rb") as f:
+            data = f.read(limit + 1)
+    except OSError as e:
+        raise BoxcertError("could not read %s: %s" % (path, e.strerror or e))
+    if len(data) > limit:
+        raise BoxcertError("%s is longer than %d bytes, which no fleet file is" % (path, limit))
+    return data
+
+
+def _root_pem_text(folder):
+    pem = os.path.join(folder, ROOT_PEM)
+    if not os.path.isfile(pem):
+        raise BoxcertError("%s is missing: make the root first (boxcert.py make-root), or point --dir at its folder" % pem)
+    return _read_file(pem, 65536).decode("utf-8", "replace")
+
+
+def signed_list(exe, folder):
+    """The list this folder has signed, checked against its root again, or None when there is none."""
+    FL = fleetlist()
+    jpath, spath = os.path.join(folder, FLEET_JSON), os.path.join(folder, FLEET_SIG)
+    if not os.path.exists(jpath) and not os.path.exists(spath):
+        return None
+    if not (os.path.isfile(jpath) and os.path.isfile(spath)):
+        raise BoxcertError("%s and %s must both be in %s and one is missing. Restore the pair from your backup of this folder "
+                           "(boxcert.py fleet verify checks a pair). If there is no backup, remove the half that is left and then sign with "
+                           "--serial N, N above the serial in %s (a node refuses a lower one). Do not make a new list with `fleet new`: "
+                           "it gets a new fleet id, which every node refuses." % (FLEET_JSON, FLEET_SIG, folder, FLEET_DRAFT))
+    body = _read_file(jpath, FL.MAX_BYTES)
+    sig = _read_file(spath, FL.MAX_SIG_TEXT)
+    try:
+        return FL.verify(body, sig, _root_pem_text(folder), exe)
+    except FL.FleetError as e:
+        raise BoxcertError("the signed list in %s does not check out against your root (%s); it was changed or is not yours. "
+                           "Restore %s and %s from your backup of this folder (boxcert.py fleet verify checks a pair). Do not make a new list "
+                           "with `fleet new`: it gets a new fleet id, which every node refuses." % (folder, e.message, FLEET_JSON, FLEET_SIG))
+
+
+def _load_draft(exe, folder):
+    """The working copy as a dict; made from the signed list when only that is there."""
+    path = os.path.join(folder, FLEET_DRAFT)
+    if os.path.isfile(path):
+        try:
+            data = json.loads(_read_file(path, 262144).decode("utf-8"))
+        except ValueError:
+            raise BoxcertError("%s is not a list I wrote (not valid JSON); fix it or move it away" % path)
+        if not isinstance(data, dict) or not isinstance(data.get("nodes"), list):
+            raise BoxcertError("%s is not a list I wrote; fix it or move it away" % path)
+        data.setdefault("clear", [])
+        return data
+    done = signed_list(exe, folder)
+    if done is None:
+        raise BoxcertError("there is no fleet list in %s yet: start one with `boxcert.py fleet new`" % folder)
+    data = done.as_dict()
+    data.setdefault("clear", [])
+    return data
+
+
+def _save_draft(folder, data):
+    os.makedirs(folder, mode=0o700, exist_ok=True)
+    _write_file(os.path.join(folder, FLEET_DRAFT), (json.dumps(data, indent=1, ensure_ascii=True) + "\n").encode("ascii"))
+
+
+def fleet_new(exe, folder, name, out=print):
+    FL = fleetlist()
+    if os.path.lexists(os.path.join(folder, FLEET_DRAFT)) or os.path.lexists(os.path.join(folder, FLEET_JSON)):
+        raise BoxcertError("there is a fleet list in %s already. A fleet id is made once; to start over, move the old %s, %s and %s away first."
+                           % (folder, FLEET_DRAFT, FLEET_JSON, FLEET_SIG))
+    _root_pem_text(folder)
+    try:
+        FL._plain_text(name, "the fleet's name", 64)
+    except FL.FleetError as e:
+        raise BoxcertError(e.message)
+    data = {"v": FL.VERSION, "fleet": secrets.token_hex(8), "name": name, "serial": 0, "issued": "", "nodes": [], "clear": []}
+    _save_draft(folder, data)
+    out("Fleet list started: %s  (fleet id %s)" % (name, data["fleet"]))
+    out("Next: boxcert.py fleet add <node's .local name> --carry full|live|none   (for each node), then: boxcert.py fleet sign")
+    return data
+
+
+def _check_host(host):
+    h = (host or "").strip().lower().rstrip(".")
+    if not (valid_dns(h) or valid_ip(h)):
+        raise BoxcertError("not a host name or address: %r" % host)
+    return h
+
+
+def fetch_card(folder, host, port=443, timeout=6):
+    """Ask a node for its fleet card over https, trusting only your root (root.pem in the folder), and check that the key
+    hash it states is that of the certificate it showed. Returns the card (id, name, key)."""
+    import http.client
+    import ssl
+    FL = fleetlist()
+    host = _check_host(host)
+    pem = os.path.join(folder, ROOT_PEM)
+    _root_pem_text(folder)
+    ctx = ssl.create_default_context(cafile=pem)
+    conn = http.client.HTTPSConnection(host, port, timeout=timeout, context=ctx)
+    try:
+        conn.request("GET", "/api/fleet/card", headers={"Accept": "application/json", "User-Agent": "boxcert"})
+        der = conn.sock.getpeercert(binary_form=True) if conn.sock else None      # before the answer: a closed connection forgets it
+        resp = conn.getresponse()
+        body = resp.read(4097)
+    except ssl.SSLCertVerificationError as e:
+        raise BoxcertError("%s showed a certificate your root did not sign, or one that does not cover that name (%s). "
+                           "Nothing was added." % (host, e.verify_message))
+    except (OSError, http.client.HTTPException) as e:
+        raise BoxcertError("could not ask %s:%d for its card: %s" % (host, port, e))
+    finally:
+        conn.close()
+    if resp.status == 404:
+        raise BoxcertError("%s does not give a fleet card: its software is older than this tool, or discovery is switched off on it "
+                           "(the card is given only while discovery is on). Use --cert with its certificate file, --id and --name, "
+                           "or --card with a card file, or switch discovery on for a minute." % host)
+    if resp.status != 200 or not der:
+        raise BoxcertError("%s answered %d to its card request; nothing was added" % (host, resp.status))
+    card = _fleet_call(FL.parse_card, body)
+    if card["key"] != _fleet_call(FL.key_hash, der):
+        raise BoxcertError("%s's card states a key that is not the key of the certificate it showed; nothing was added" % host)
+    return card
+
+
+def card_from_files(exe, folder, card_path, cert_path, node_id, name):
+    FL = fleetlist()
+    if card_path:
+        return _fleet_call(FL.parse_card, _read_file(card_path, 4096))
+    _root_pem_text(folder)
+    info = read_cert(exe, cert_path)
+    # the certificate must be one your root signed for a server (dates left out, as a node judges it: the key is what counts)
+    code, text, err = run(exe, ["verify", "-CAfile", os.path.join(folder, ROOT_PEM), "-purpose", "sslserver",
+                                "-attime", str(int(info["start"].timestamp()) + 60), cert_path])
+    if code or ": OK" not in text:
+        raise BoxcertError("%s is not a certificate your root signed (%s). Nothing was added." % (cert_path, (err.strip() or text.strip()).splitlines()[-1] if (err.strip() or text.strip()) else "no reason given"))
+    der = _fleet_call(FL.certificate_der, _read_file(cert_path, 65536).decode("utf-8", "replace"))
+    try:
+        card = _fleet_call(FL.parse_card, json.dumps({"id": node_id, "name": name, "key": _fleet_call(FL.key_hash, der)}).encode())
+    except BoxcertError as e:
+        raise BoxcertError("with --cert, --id must be the node's 32 hex digit id and --name its host name (%s)" % e)
+    return card
+
+
+CARRY_WORDS = {"full": "Owners carry in full", "live": "Operators at most", "none": "takes nobody in"}
+
+
+def fleet_add(exe, folder, card, carry, replace_key=False, out=print):
+    FL = fleetlist()
+    if carry not in FL.CARRY:
+        raise BoxcertError("--carry is one of: %s" % ", ".join(FL.CARRY))
+    data = _load_draft(exe, folder)
+    nodes = data["nodes"]
+    same = [n for n in nodes if n.get("id") == card["id"]]
+    row = {"id": card["id"], "name": card["name"], "key": card["key"], "carry": carry}
+    if same:
+        old = same[0]
+        if old["key"] != card["key"] and not replace_key:
+            raise BoxcertError("%s is on the list with another key. A new key means a new decision: if you know why it changed "
+                               "(a new key was made on purpose), run this again with --replace-key." % old["name"])
+        if any(n.get("name", "").lower() == card["name"].lower() for n in nodes if n is not old):
+            raise BoxcertError("another node on the list is already called %s" % card["name"])
+        for n in nodes:
+            if n is not old and n.get("key") == card["key"]:
+                raise BoxcertError("%s already has that key; two nodes cannot share one" % n["name"])
+        nodes[nodes.index(old)] = row
+        what = "updated"
+    else:
+        if len(nodes) >= FL.MAX_NODES:
+            raise BoxcertError("a list holds %d nodes at most" % FL.MAX_NODES)
+        for n in nodes:
+            if n.get("key") == card["key"]:
+                raise BoxcertError("%s already has that key; two nodes cannot share one" % n["name"])
+        if any(n.get("name", "").lower() == card["name"].lower() for n in nodes):
+            raise BoxcertError("another node on the list is already called %s" % card["name"])
+        nodes.append(row)
+        what = "added"
+    _save_draft(folder, data)
+    out("%s %s: %s  carry %s (%s)  key %s" % (card["name"], what, card["id"], carry, CARRY_WORDS[carry], card["key"][:16] + "..."))
+    out("This is the working copy. Nothing is signed until you run: boxcert.py fleet sign")
+    return row
+
+
+def _find_node(data, which):
+    which = (which or "").strip().lower()
+    hits = [n for n in data["nodes"] if which in (n.get("id", "").lower(), n.get("name", "").lower()) or (len(which) >= 8 and n.get("key", "").startswith(which))]
+    if not hits:
+        raise BoxcertError("no node on the working list is called or has the id %r (boxcert.py fleet show lists them)" % which)
+    if len(hits) > 1:
+        raise BoxcertError("%r matches more than one node; use its id" % which)
+    return hits[0]
+
+
+def fleet_remove(exe, folder, which, out=print):
+    data = _load_draft(exe, folder)
+    node = _find_node(data, which)
+    data["nodes"].remove(node)
+    _save_draft(folder, data)
+    out("%s removed from the working list. Sign a new list to make it final; until then nodes keep trusting what you signed before." % node["name"])
+    out("A node that was stolen or lost needs more than this: press 'Remove a node from this cluster' on a node (docs/HTTPS.md).")
+    return node
+
+
+def fleet_clear(exe, folder, whats, undo=False, out=print):
+    """Put key hashes into the list's `clear` field: the one cluster-wide way to lift the denies nodes have pushed on
+    each other. A key hash, or the name or id of a node on the working list."""
+    FL = fleetlist()
+    data = _load_draft(exe, folder)
+    clear = list(data.get("clear") or [])
+    for w in whats:
+        w = (w or "").strip().lower()
+        key = w if FL.KEY_WORD.fullmatch(w) else _find_node(data, w)["key"]
+        if undo:
+            if key not in clear:
+                raise BoxcertError("%s is not in clear" % key[:16])
+            clear.remove(key)
+            out("%s taken out of clear." % key[:16])
+        elif key in clear:
+            out("%s is in clear already." % key[:16])
+        else:
+            if len(clear) >= FL.MAX_CLEAR:
+                raise BoxcertError("clear holds %d keys at most" % FL.MAX_CLEAR)
+            clear.append(key)
+            out("%s will be allowed again by every node that loads the next signed list." % key[:16])
+    data["clear"] = sorted(clear)
+    _save_draft(folder, data)
+    out("This is the working copy. Sign it (boxcert.py fleet sign) with a higher serial, then load it on one node; it spreads.")
+    return clear
+
+
+def fleet_sign(exe, folder, ask, serial=None, out=print, now=None):
+    FL = fleetlist()
+    key = os.path.join(folder, ROOT_KEY)
+    if not os.path.isfile(key):
+        raise BoxcertError("%s is missing: this folder has no root key to sign with" % key)
+    root_text = _root_pem_text(folder)
+    data = _load_draft(exe, folder)
+    done = signed_list(exe, folder)
+    if done is not None and done.fleet != data.get("fleet"):
+        raise BoxcertError("the working list is fleet %s but the signed one is fleet %s; move one of them away" % (data.get("fleet"), done.fleet))
+    drafted = data.get("serial") if isinstance(data.get("serial"), int) else 0
+    low = max(done.serial if done else 0, drafted)
+    if done is None and drafted > 0 and serial is None:
+        raise BoxcertError("the working copy was last signed at serial %d but the signed pair is not in %s. Restore %s and %s from your "
+                           "backup. If they are gone for good, sign with --serial N, N above %d (a serial must be higher than any a node "
+                           "may hold) and load the result on every node." % (drafted, folder, FLEET_JSON, FLEET_SIG, drafted))
+    if serial is not None and not (isinstance(serial, int) and not isinstance(serial, bool) and serial > low):
+        raise BoxcertError("--serial must be above the last signed serial (%d): a serial only counts up" % low)
+    if serial is not None and serial > FL.MAX_SERIAL - 100000:
+        raise BoxcertError("--serial %d is too high: the most a serial can be is %d, and jumping close to it leaves no room to go on; "
+                           "use a number just above %d" % (serial, FL.MAX_SERIAL, low))
+    data["serial"] = serial if serial is not None else low + 1
+    data["issued"] = (now or datetime.datetime.now(datetime.timezone.utc)).date().isoformat()
+    if not data["nodes"]:
+        raise BoxcertError("the list names no nodes; add some first")
+    body = _fleet_call(FL.canonical, data)
+    message = _fleet_call(FL.signed_bytes, data["fleet"], data["serial"], body)
+    out("Signing fleet %s \"%s\", serial %d, %d node(s):" % (data["fleet"], data["name"], data["serial"], len(data["nodes"])))
+    for n in sorted(data["nodes"], key=lambda n: n["name"].lower()):
+        out("  %-20s carry %-4s %s" % (n["name"], n["carry"], n["id"]))
+    if data.get("clear"):
+        out("  and lifts the removal of %d key(s)" % len(data["clear"]))
+    passphrase = ask("Passphrase of the root key: ")
+    code, _, err = run(exe, ["pkey", "-in", key, "-passin", "stdin", "-noout"], passphrase)
+    if code:
+        raise BoxcertError("wrong passphrase (or %s is damaged); nothing was signed" % key)
+    with tempfile.TemporaryDirectory() as tmp:
+        os.chmod(tmp, 0o700)
+        msg, sig = os.path.join(tmp, "message"), os.path.join(tmp, "signature")
+        with open(msg, "wb") as f:
+            f.write(message)
+        code, _, err = run(exe, ["dgst", "-sha256", "-sign", key, "-passin", "stdin", "-out", sig, msg], passphrase)
+        if code or not os.path.isfile(sig):
+            _fail("signing failed", err)
+        with open(sig, "rb") as f:
+            sig_text = base64.encodebytes(f.read()).decode("ascii")
+    # the signature is checked the way a node will check it, before anything is written
+    _fleet_call(FL.verify, body, sig_text, root_text, exe, fleet=data["fleet"], current=done)
+    # the signature first: a crash between the two leaves a signature that matches no list, which no node accepts and the
+    # next signing replaces; the other order would leave a new list with the old signature
+    _write_file(os.path.join(folder, FLEET_SIG), sig_text.encode("ascii"))
+    _write_file(os.path.join(folder, FLEET_JSON), body)
+    _save_draft(folder, data)
+    out("Signed: %s and %s in %s" % (FLEET_JSON, FLEET_SIG, folder))
+    out("Load both on each node (Setup > Nodes on this network). A node that holds a list ignores one with a lower serial.")
+    return data["serial"]
+
+
+def fleet_push(exe, folder, host, port, ask, token_file=None, out=print, timeout=10):
+    """Send the signed pair to a node (POST /api/fleet/list) over https, trusting only your root. The node wants an Owner:
+    by default the tool pairs as one with the node's PIN (asked on the prompt, never on the command line, and the device it
+    makes is logged out again at the end), or it uses a token from --token-file. Nothing is kept."""
+    import http.client
+    import ssl
+    FL = fleetlist()
+    done = signed_list(exe, folder)
+    if done is None:
+        raise BoxcertError("nothing is signed yet in %s: run `fleet sign` first" % folder)
+    body = _read_file(os.path.join(folder, FLEET_JSON), FL.MAX_BYTES)
+    sig = _read_file(os.path.join(folder, FLEET_SIG), FL.MAX_SIG_TEXT)
+    host = _check_host(host)
+    _root_pem_text(folder)
+    token = None
+    if token_file:
+        token = _read_file(token_file, 512).decode("utf-8", "replace").strip()
+        if not token or len(token.split()) != 1:
+            raise BoxcertError("%s should hold one token and nothing else" % token_file)
+    ctx = ssl.create_default_context(cafile=os.path.join(folder, ROOT_PEM))
+    conn = http.client.HTTPSConnection(host, port, timeout=timeout, context=ctx)
+
+    def call(method, path, payload, tok):
+        headers = {"Content-Type": "application/json", "X-PVJ-Request": "1", "Accept": "application/json", "User-Agent": "boxcert"}
+        if tok:
+            headers["Authorization"] = "Bearer " + tok
+        conn.request(method, path, body=json.dumps(payload).encode("utf-8"), headers=headers)
+        resp = conn.getresponse()
+        raw = resp.read(262145)
+        try:
+            data = json.loads(raw.decode("utf-8")) if raw else {}
+        except ValueError:
+            data = {}
+        return resp.status, data if isinstance(data, dict) else {}
+
+    def log_out(tok):
+        """Take the device this tool paired off the node again; one plain line if that did not work."""
+        try:
+            gone = call("POST", "/api/logout", {}, tok)[0] == 200
+        except Exception:
+            gone = False
+        if not gone:
+            out("Could not log boxcert's device out on %s. Remove \"boxcert push\" under People on that node." % host)
+
+    paired = False
+    try:
+        conn.connect()                      # the node's certificate is checked against your root BEFORE anything is asked or sent
+        if token is None:
+            pin = ask("PIN of %s (on its display, or `sudo pvj-pin`; used once, not kept): " % host)
+            st, res = call("POST", "/api/pair", {"pin": pin, "name": "boxcert push"}, None)
+            if st != 200 or not res.get("token"):
+                raise BoxcertError("%s did not pair this computer (%s). Nothing was sent." % (host, res.get("error") or "answered %d" % st))
+            if (res.get("device") or {}).get("role") != "full":
+                log_out(res["token"])
+                raise BoxcertError("that code pairs a device that is not an Owner, and only an Owner may load a list. Nothing was sent.")
+            token, paired = res["token"], True
+        st, res = call("POST", "/api/fleet/list", {"list": body.decode("utf-8"), "sig": sig.decode("ascii")}, token)
+        if st != 200:
+            raise BoxcertError("%s did not take the list (%d): %s" % (host, st, res.get("error") or "no reason given"))
+        lst = res.get("list") or {}
+        out("%s took the list: fleet %s, serial %s, %d node(s)." % (host, lst.get("fleet"), lst.get("serial"), len(lst.get("nodes") or [])))
+        return True
+    except ssl.SSLCertVerificationError as e:
+        raise BoxcertError("%s showed a certificate your root did not sign, or one that does not cover that name (%s). "
+                           "Nothing was sent." % (host, e.verify_message))
+    except (OSError, http.client.HTTPException) as e:
+        raise BoxcertError("could not reach %s:%d: %s" % (host, port, e))
+    finally:
+        if paired:
+            log_out(token)                                       # the device this made is removed again
+        conn.close()
+
+
+def _describe(lst, out):
+    out("  fleet   : %s  \"%s\"" % (lst["fleet"], lst["name"]))
+    out("  serial  : %s  (issued %s; dates are for you, nodes never judge them)" % (lst["serial"], lst.get("issued") or "-"))
+    for n in sorted(lst["nodes"], key=lambda n: n["name"].lower()):
+        out("  node    : %-20s carry %-4s id %s  key %s" % (n["name"], n["carry"], n["id"], n["key"][:16] + "..."))
+    if lst.get("clear"):
+        out("  clear   : %s" % ", ".join(k[:16] + "..." for k in lst["clear"]))
+
+
+def fleet_show(exe, folder, out=print):
+    done = signed_list(exe, folder)
+    if done is not None:
+        out("Signed list (checked against your root just now):")
+        _describe(done.as_dict(), out)
+    else:
+        out("No list has been signed in %s yet." % folder)
+    path = os.path.join(folder, FLEET_DRAFT)
+    if os.path.isfile(path):
+        draft = _load_draft(exe, folder)
+        if done is None:
+            out("Working copy:")
+            _describe(draft, out)
+        else:
+            was = {n["id"]: n for n in done.nodes}
+            now_ = {n["id"]: n for n in draft["nodes"]}
+            changes = ["+ %s (carry %s)" % (n["name"], n["carry"]) for i, n in now_.items() if i not in was]
+            changes += ["- %s" % n["name"] for i, n in was.items() if i not in now_]
+            changes += ["~ %s: carry %s to %s" % (n["name"], was[i]["carry"], n["carry"]) for i, n in now_.items() if i in was and was[i]["carry"] != n["carry"]]
+            changes += ["~ %s: new key" % n["name"] for i, n in now_.items() if i in was and was[i]["key"] != n["key"]]
+            if sorted(draft.get("clear") or []) != sorted(done.clear):
+                changes.append("~ clear changed")
+            out("Working copy: %s" % ("same as the signed list" if not changes else "differs, and is not signed yet:"))
+            for c in changes:
+                out("    " + c)
+    return done
+
+
+def fleet_verify(exe, folder, list_path, sig_path, fleet=None, out=print):
+    FL = fleetlist()
+    list_path = list_path or os.path.join(folder, FLEET_JSON)
+    sig_path = sig_path or os.path.join(folder, FLEET_SIG)
+    body, sig = _read_file(list_path, FL.MAX_BYTES), _read_file(sig_path, FL.MAX_SIG_TEXT)
+    try:
+        lst = FL.verify(body, sig, _root_pem_text(folder), exe, fleet=fleet)
+    except FL.FleetError as e:
+        out("%s: NOT good: %s" % (list_path, e.message))
+        return False
+    out("%s: signed by this root, fleet %s, serial %d, %d node(s)" % (list_path, lst.fleet, lst.serial, len(lst.nodes)))
+    return True
+
+
 # --- command line -----------------------------------------------------------------------------------------------------
 def main(argv=None, ask=None, out=print):
     ask = ask or getpass.getpass
@@ -450,9 +908,51 @@ def main(argv=None, ask=None, out=print):
     sub.add_parser("verify").add_argument("cert")
     sub.add_parser("list")
     sub.add_parser("root", help="the root's fingerprint, to compare with the box's page")
+    f = sub.add_parser("fleet", help="the fleet list: which nodes may open each other without pairing again (D132)",
+                       description="The fleet list names the nodes you trust to carry your devices between them. You make it here, "
+                                   "sign it with your root (the passphrase is asked), and load it on a node. The root key never "
+                                   "goes on a node. Dates are shown to you and never judged; a serial only counts up. Read "
+                                   "'Letting your nodes open each other' in docs/HTTPS.md first.")
+    fs = f.add_subparsers(dest="fleet_cmd")
+    x = fs.add_parser("new", help="start a list (once; it gets its own fleet id)")
+    x.add_argument("--name", required=True, help="a name for the fleet, as the panels show it, e.g. \"Anthony's rig\"")
+    x = fs.add_parser("add", help="add a node to the working list, or change its carry")
+    x.add_argument("host", nargs="?", help="the node's .local name or address; it is asked for its card over https")
+    x.add_argument("--port", type=int, default=443, help="the node's https port (default 443)")
+    x.add_argument("--carry", required=True, choices=("full", "live", "none"),
+                   help="the highest role this node gives a device that arrives from another node on the list: "
+                        "full (Owner), live (Operator), none (takes nobody in). Choose it on purpose: a venue's node says live or none")
+    x.add_argument("--card", help="a card file instead of asking the node (id, name, key)")
+    x.add_argument("--cert", help="the node's certificate file instead of asking it; needs --id and --name")
+    x.add_argument("--id", help="with --cert: the node's id (32 hex digits, on its panel and in the Nodes list)")
+    x.add_argument("--name", help="with --cert: the node's host name")
+    x.add_argument("--replace-key", action="store_true", help="the node is on the list with another key and you know why (it made a new one)")
+    x = fs.add_parser("remove", help="take a node off the working list")
+    x.add_argument("node", help="its name or id")
+    x = fs.add_parser("clear", help="lift the removal of nodes for every node, in the next signed list")
+    x.add_argument("what", nargs="+", help="a node on the working list, or a key hash (64 hex digits)")
+    x.add_argument("--undo", action="store_true", help="take these out of clear again")
+    x = fs.add_parser("sign", help="sign the working list with the root")
+    x.add_argument("--serial", type=int, default=None, help="the serial to use (default: one above the last signed); never lower")
+    fs.add_parser("show", help="the signed list, and what the working copy changes")
+    x = fs.add_parser("push", help="send the signed list to a node over https",
+                      description="Posts fleet.json and fleet.sig to the node (POST /api/fleet/list). Only your root is trusted for the "
+                                  "connection. The node wants an Owner: the tool asks for the node's PIN on the prompt (never on the "
+                                  "command line), pairs as an Owner, sends the list and logs that device out again; or give --token-file "
+                                  "with a token of an Owner device. Nothing is kept on this computer.")
+    x.add_argument("host", help="the node's .local name or address")
+    x.add_argument("--port", type=int, default=443, help="the node's https port (default 443)")
+    x.add_argument("--token-file", default=None, help="a file holding an Owner device's token, instead of the PIN")
+    x = fs.add_parser("verify", help="does the root's signature hold")
+    x.add_argument("--list", default=None, help="the list file (default: fleet.json in the folder)")
+    x.add_argument("--sig", default=None, help="the signature file (default: fleet.sig in the folder)")
+    x.add_argument("--fleet", default=None, help="also require this fleet id")
     a = p.parse_args(argv)
     if not a.cmd:
         p.print_help()
+        return 2
+    if a.cmd == "fleet" and not a.fleet_cmd:
+        f.print_help()
         return 2
     try:
         exe = openssl_bin(a.openssl)
@@ -469,6 +969,29 @@ def main(argv=None, ask=None, out=print):
             list_signed(a.dir, out)
         elif a.cmd == "root":
             root_fingerprint(exe, a.dir, out)
+        elif a.cmd == "fleet":
+            c = a.fleet_cmd
+            if c == "new":
+                fleet_new(exe, a.dir, a.name, out)
+            elif c == "add":
+                if sum(bool(v) for v in (a.host, a.card, a.cert)) != 1:
+                    raise BoxcertError("give exactly one of: the node's name or address, --card FILE, --cert FILE")
+                if a.cert and not (a.id and a.name):
+                    raise BoxcertError("--cert needs --id and --name as well")
+                card = card_from_files(exe, a.dir, a.card, a.cert, a.id, a.name) if (a.card or a.cert) else fetch_card(a.dir, a.host, a.port)
+                fleet_add(exe, a.dir, card, a.carry, a.replace_key, out)
+            elif c == "remove":
+                fleet_remove(exe, a.dir, a.node, out)
+            elif c == "clear":
+                fleet_clear(exe, a.dir, a.what, a.undo, out)
+            elif c == "sign":
+                fleet_sign(exe, a.dir, ask, a.serial, out)
+            elif c == "show":
+                fleet_show(exe, a.dir, out)
+            elif c == "push":
+                fleet_push(exe, a.dir, a.host, a.port, ask, a.token_file, out)
+            elif c == "verify":
+                return 0 if fleet_verify(exe, a.dir, a.list, a.sig, a.fleet, out) else 1
         return 0
     except BoxcertError as e:
         print("boxcert: %s" % e, file=sys.stderr)

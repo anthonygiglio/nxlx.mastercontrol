@@ -1352,7 +1352,7 @@ class Graphics:
                 if cfg != st["cfg"]:
                     player.graphic("set", n, cfg)
                     st["cfg"] = cfg
-                self._fading.pop(n, None)       # shown again while it faded out: it fades in from nothing (the renderer's show)
+                self._fading.pop(n, None)       # shown again while it faded out: the renderer's show (gfx_show) fades it in from the level the fade out had reached
                 if not st["on"]:
                     if gid in self._hold_keep and cfg["motion"] in ("fade", "typewriter"):
                         player.graphic("show", n, "still")      # back from a hold: it is simply there

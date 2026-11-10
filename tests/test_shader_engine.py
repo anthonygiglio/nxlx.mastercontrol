@@ -429,6 +429,23 @@ class AutoDetailTest(Live):
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertEqual(json.loads(run.stdout.strip().splitlines()[-1]), [540, 540])
 
+    def test_the_new_renderer_never_draws_above_the_boxs_height_under_automatic(self):
+        """Hardware pass of 2026-11-09 (node-01, Pi 4): the settings said 540 with Automatic on, and the program on the
+        screen was //!SIZE 1280 720, because the table (measured on classic, one shader at a time) lets nxlx-silk go to
+        720. The New renderer draws two programs during a fade, and two shaders at 720 hold only about 41 flips a second
+        where 540 holds 60 (D130 was measured at 540). So the box's height caps Automatic there; classic keeps D93."""
+        self.assertEqual((self.engine.config()["height"], self.engine.config()[L.HEIGHT_AUTO]), (540, True))
+        self.assertEqual(self.engine.height_for("nxlx-silk.fs"), 720)               # classic: Automatic as measured (D93)
+        self.player.native_shaders = lambda: True
+        for sid in ("nxlx-silk.fs", "nxlx-tunnel.fs", "nxlx-aurora.fs", "mine.fs"):
+            self.assertEqual(self.engine.height_for(sid), 540, sid)
+            self.assertEqual(S.render_size((1920, 1080), self.engine.height_for(sid)), (960, 540), sid)
+        self.assertEqual(self.row("nxlx-silk.fs")["lines"], 540)                    # and the library says what is drawn
+        self.settings.data["shaders"] = {"height": 720, L.HEIGHT_AUTO: False}      # chosen by hand: the choice wins
+        self.assertEqual(self.engine.height_for("nxlx-silk.fs"), 720)
+        self.settings.data["shaders"] = {"height": 540, L.HEIGHT_AUTO: False}
+        self.assertEqual(self.engine.height_for("nxlx-silk.fs"), 540)
+
     def test_a_heavy_mark_under_automatic_belongs_to_the_shaders_own_height(self):
         self.engine.note_heavy("nxlx-nebula.fs", {"drops_per_second": 2.0})
         self.engine.note_heavy("nxlx-silk.fs", {"drops_per_second": 1.0})

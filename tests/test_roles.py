@@ -79,6 +79,14 @@ ROWS = {
     ("GET", "/api/ndi"): KINDS["op"],
     ("GET", "/api/nodes"): STUDIO("op"),                    # D127: the other nodes on the network
     ("POST", "/api/nodes/discovery"): STUDIO("owner"),
+    ("GET", "/api/fleet"): STUDIO("owner"),                 # D132: which nodes this one trusts; the Owner's, over https, never through the tunnel
+    ("POST", "/api/fleet/accept"): STUDIO("owner"),
+    ("POST", "/api/fleet/list"): STUDIO("owner"),
+    ("POST", "/api/fleet/accepted"): STUDIO("owner"),
+    ("POST", "/api/fleet/accepted/remove"): STUDIO("owner"),
+    ("POST", "/api/fleet/accepted/look"): STUDIO("owner"),
+    ("POST", "/api/fleet/sync"): STUDIO("owner"),
+    ("POST", "/api/handover/ticket"): STUDIO("op"),         # D132 4a: a ticket to open another node signed in; an Operator or an Owner, over https, never through the tunnel
     ("POST", "/api/ndi"): KINDS["owner"],
     # the NDI discovery server on the box (D85): the Owner's, and never through the support tunnel (support.REMOTE_DENY_PREFIX)
     ("GET", "/api/ndi/discovery"): STUDIO("owner"),
@@ -423,7 +431,7 @@ class GateTableTest(RolesBase):
         self.assertEqual(len(re.findall(r"self\._who\(method, path\)", source)), 1)
         self.assertIn("device = self._who(method, path)", route)
         before = route[:route.index("device = self._who(method, path)")]
-        self.assertEqual(re.findall(r'"(/api/[^"]+)"', before), [p for _m, p in policy.NO_GATE])
+        self.assertEqual(sorted(re.findall(r'"(/api/[^"]+)"', before)), sorted(p for _m, p in policy.NO_GATE))
         # and a request gets its device in two places only: _who (the gate) and _api (Api.handle, the gate again)
         self.assertEqual(len(re.findall(r"device = auth\.authenticate\(", source)), 2)
         self.assertEqual(sorted(routes - set(ROWS)), [], "routes without a row in tests/test_roles.py: decide who may use them")
@@ -1376,7 +1384,10 @@ class ReviewTest(RolesBase):
         """The gate is asked by `_who` for the paths server.py answers itself; a new branch there that forgets `_who`
         would be a path with no check. Every "/api/..." in its source must be a route (answered by Api.handle, which is
         the gate) or a key of policy.OUTSIDE (and then `_who` is asked for it: see the test of the table)."""
-        known = {p for _m, p in self.api.routes()} | {p for _m, p in policy.OUTSIDE} | {p for _m, p in policy.NO_GATE}
+        known = {p for _m, p in self.api.routes()} | {p for _m, p in policy.OUTSIDE} | {p for _m, p in policy.NO_GATE} | {p for _m, p in policy.PEER_ONLY}
+        for route in policy.PEER_ONLY:                      # the peer listener's two routes are on no other port: not in the table, not outside it
+            self.assertNotIn(route, self.api.routes())
+            self.assertNotIn(route, policy.OUTSIDE)
         named = set(re.findall(r'"(/api/[^"]+)"', inspect.getsource(server))) - {"/api/https/"}      # a prefix: all of it is _https_route's
         self.assertGreaterEqual(len(named), 9)
         self.assertEqual(sorted(named - known), [])

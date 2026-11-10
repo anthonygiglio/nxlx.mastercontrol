@@ -1351,6 +1351,13 @@ static void get_property(int fd, const mpv_node *id, const char *name)
         reply(fd, id, "success", &d);
         return;
     }
+#ifdef PVJ_RENDER_TEST_HOOKS
+    if (!strcmp(name, "pvj-test-blank")) {
+        d = node_int(__atomic_load_n(&app.blank_draws, __ATOMIC_RELAXED));
+        reply(fd, id, "success", &d);
+        return;
+    }
+#endif
     if (!strcmp(name, "pvj-render")) {
         pthread_mutex_lock(&app.lock);
         char state[sizeof app.hook_state];

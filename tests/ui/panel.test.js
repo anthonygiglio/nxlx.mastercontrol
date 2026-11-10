@@ -129,7 +129,7 @@ function startServer(env) {          // env: more for the harness's environment 
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
     const page = await ctx.newPage();
     const problems = [];
-    // The 401 before pairing, the 403 for the wrong PIN, the 400 for a refused upload, the 409 for a value sent to a
+    // The 401 before pairing, the 403 for the wrong PIN, the 400 for a refused upload, the 409 for a Freeze refused on purpose and for a value sent to a
     // shader that has left the screen and the 503 for a screen preview from a harness player with no window are
     // provoked on purpose; so is the 502 for "Try again" on a projector that nothing answers for.
     // And the 422 for a theme file the box refuses (its text cannot be read, or it holds CSS), and the 415 for a logo that is a text file.
@@ -196,6 +196,28 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.click('.pad >> nth=0');
     await page.waitForFunction(() => /intro/.test(document.getElementById('np').textContent), null, { timeout: 8000 });
     await page.waitForSelector('.pad.on');
+    {
+      // What the message line says when a press goes wrong (2026-11-09): the node's reason as a sentence, with a
+      // capital; and a press the node is slow to answer says so after a moment, then gives the line back
+      const refuse = (route) => route.request().method() === 'POST' ? route.fulfill({ status: 409, json: { error: 'the player is restarting' } }) : route.continue();
+      await page.route('**/api/control', refuse);
+      await stripOpen(page);
+      await page.click('#freeze');
+      await page.waitForFunction(() => document.getElementById('msg').textContent === 'The player is restarting', null, { timeout: 5000 })
+        .catch(async () => { throw new Error('a refusal is said as a sentence: ' + JSON.stringify(await page.textContent('#msg'))); });
+      await page.unroute('**/api/control', refuse);
+      let free;
+      const slow = (route) => route.request().method() === 'POST' ? new Promise((res) => { free = () => { route.continue().then(res, res); }; }) : route.continue();
+      await page.route('**/api/control', slow);
+      await page.click('#freeze');
+      await page.waitForFunction(() => document.getElementById('msg').textContent === 'Waiting for the node...', null, { timeout: 4000 })
+        .catch(async () => { throw new Error('a slow press says it is waiting: ' + JSON.stringify(await page.textContent('#msg'))); });
+      free();
+      await page.waitForFunction(() => document.getElementById('msg').textContent !== 'Waiting for the node...', null, { timeout: 5000 });
+      await page.unroute('**/api/control', slow);
+      if ((await page.textContent('#freeze')) === 'Resume') await page.click('#freeze');      // (the second press froze it: back as it was)
+      await page.waitForFunction(() => document.getElementById('freeze').textContent === 'Freeze', null, { timeout: 5000 });
+    }
     if (shots) await page.screenshot({ path: path.join(shots, '2-live.png') });
     // Screen snapshot: one picture on request. The harness player has no real window (--vo=null), so no picture can be
     // made here; the panel must say so instead of showing a broken image, and must not keep asking by itself.
@@ -414,6 +436,15 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.click('#transitioncard button:has-text("Crossfade")');
     await page.waitForFunction(() => fetch('/api/status').then((r) => r.json()).then((j) => j.mix.transition === 'crossfade'));
     await page.waitForSelector('button.on:has-text("Crossfade")');
+    {
+      // a slow status answer: the chosen transition is still the one shown as chosen once the answer is in
+      const slow = async (route) => { await new Promise((r) => setTimeout(r, 600)); await route.continue().catch(() => {}); };
+      await page.route('**/api/status', slow);
+      await page.click('button:has-text("Wipe from right")');
+      await page.waitForSelector('button.on:has-text("Wipe from right")', { timeout: 5000 })
+        .catch(async () => { throw new Error('a slow status leaves the old transition shown as chosen: ' + await page.textContent('#transitioncard button.on')); });
+      await page.unroute('**/api/status', slow);
+    }
     for (const [label, value] of [['Wipe from left', 'wipe-from-left'], ['Wipe from bottom', 'wipe-from-bottom'], ['Slide off left', 'slide-left'], ['Slide off down', 'slide-down']]) {
       await page.click('button:has-text("' + label + '")');
       await page.waitForFunction((v) => fetch('/api/status').then((r) => r.json()).then((j) => j.mix.transition === v), value);
@@ -1272,7 +1303,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.selectOption('#autofile', { index: 0 });
     await page.fill('#autodelay', '999');
     await page.click('#autosave');
-    await page.waitForFunction(() => /delay must be/.test(document.getElementById('msg').textContent));
+    await page.waitForFunction(() => /Delay must be/.test(document.getElementById('msg').textContent));
     await page.fill('#autodelay', '3');
     await page.selectOption('#automode', 'all');
     await page.click('#autosave');
@@ -2463,6 +2494,10 @@ function startServer(env) {          // env: more for the harness's environment 
         await page.reload();
         await page.waitForSelector('#nodesbtn');
         await go(page, 'now/now');
+        // the iOS nudge (app.js IOS_WEBKIT) is not set up outside iOS: a viewport event here counts nothing
+        await page.evaluate(() => { window.visualViewport.dispatchEvent(new Event('resize')); document.body.dispatchEvent(new FocusEvent('focusout', { bubbles: true })); });
+        await page.waitForTimeout(600);
+        assert.strictEqual(await page.getAttribute('html', 'data-vvfix'), null, 'the iOS viewport nudge is never set up in Chromium');
       }
     }
     // The discovery switch on its own Setup page (This node > Nodes on this network): it says what it does now, Stop
