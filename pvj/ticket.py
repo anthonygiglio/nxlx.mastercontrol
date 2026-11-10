@@ -33,7 +33,6 @@ TICKET_SECONDS = 60
 MAX_TICKETS = 64
 TICKETS_PER_MINUTE = 6          # per device
 FORM_ATTEMPTS = 6               # forms one source address may post to /handover in a minute, good or bad (B)
-PEER_REDEEM_FAILS = 20          # refused redeems a minute from one approved peer, counted against that peer only (A)
 PENDING_SECONDS = 120
 MAX_PENDING = 8
 NAMES = {"view": "Guest", "live": "Operator", "full": "Owner"}
@@ -73,7 +72,6 @@ class Tickets:
         # Four counters that never touch each other, and none of them is node-wide: whoever is on the network can post junk, and
         # junk must not stop a real hand-over from another device, nor this node's own role as the node that answers.
         self._a_source = peer_mod.Buckets(peer_mod.SOURCE_FAILS, now)         # A: redeems that failed, from callers that are not approved (by address)
-        self._a_peer = peer_mod.Buckets(PEER_REDEEM_FAILS, now)               # A: redeems an approved peer had refused (by that peer's key)
         self._b_source = peer_mod.Buckets(peer_mod.SOURCE_FAILS, now)         # B: forms that failed (by address)
         self._b_attempts = peer_mod.Buckets(FORM_ATTEMPTS, now)               # B: forms posted, whatever came of them (by address), before A is called
 
@@ -182,15 +180,15 @@ class Tickets:
             and isinstance(body["secret"], str) and _SECRET.fullmatch(body["secret"]) and isinstance(body["to"], str) \
             and fleetlist.ID_WORD.fullmatch(body["to"]) and isinstance(body["key"], str) and fleetlist.KEY_WORD.fullmatch(body["key"]) \
             and (body["serial"] == "pairing" or (isinstance(body["serial"], int) and not isinstance(body["serial"], bool) and body["serial"] >= 1))
-        # An approved peer's refusals are counted against that peer alone; anything else against the sender's address alone.
-        peer = caller_key if ok and h.approved(body["to"], caller_key) is not None else None
+        # A refusal to an approved, authenticated peer is never throttled: the ticket is 128 bits and spent on the first try, so a
+        # count protects nothing, and anyone on the network could use it to stop every genuine hand-over (the event line stays).
+        # A caller A does not approve is counted against its own address alone.
+        peer = ok and h.approved(body["to"], caller_key) is not None
 
         def failed():
-            if peer is not None:
-                self._hit(self._a_peer, peer)
-            else:
+            if not peer:
                 self._hit(self._a_source, source)
-        if (peer is not None and self._over(self._a_peer, peer)) or (peer is None and self._over(self._a_source, source)):
+        if not peer and self._over(self._a_source, source):
             raise TicketError("too many calls have failed lately: wait a minute", 429)
         if not ok:
             failed()

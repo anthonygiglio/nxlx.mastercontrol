@@ -495,23 +495,24 @@ class Redeeming(Rig):
         self.clock.t += 61
         self.assertEqual(self.go(*self.ask(self.a, dev), source="10.5.5.5")["result"], "signed-in")
 
-    def test_failures_at_a_are_counted_per_approved_peer_or_per_address_never_for_the_whole_node(self):
+    def test_an_approved_peers_refused_redeems_are_never_throttled_at_a(self):
         self.pair()
         junk = {"ticket": "0" * 32, "secret": new_secret(), "to": B_ID, "key": self.b.key, "serial": 1}
-        for i in range(T.PEER_REDEEM_FAILS):                                        # an approved peer's refusals: its own counter, many allowed
+        for i in range(60):
             with self.assertRaises(T.TicketError) as cm:
                 self.a.tickets.redeem(dict(junk), self.b.key, "10.9.9.%d" % (i % 3))
-            self.assertEqual(cm.exception.status, 403)
+            self.assertEqual(cm.exception.status, 403)                              # refused every time, never 429
         out, secret = self.ask(self.a, self.device(self.a))
         good = {"ticket": out["ticket"], "secret": secret, "to": B_ID, "key": self.b.key, "serial": 1}
-        with self.assertRaises(T.TicketError) as cm:
-            self.a.tickets.redeem(dict(good), self.b.key, "10.4.4.4")
-        self.assertEqual(cm.exception.status, 429)
-        self.assertEqual(len(self.a.tickets._tickets), 1)                           # a blocked peer does not even spend the ticket
-        self.clock.t += 61
-        out, secret = self.ask(self.a, self.device(self.a, name="later"))
-        fresh = {"ticket": out["ticket"], "secret": secret, "to": B_ID, "key": self.b.key, "serial": 1}
-        self.assertEqual(self.a.tickets.redeem(fresh, self.b.key, "10.4.4.4")["role"], "full")
+        self.assertEqual(self.a.tickets.redeem(good, self.b.key, "10.9.9.1")["role"], "full")
+
+    def test_junk_forms_through_b_from_many_addresses_never_stop_a_real_hand_over(self):
+        self.pair()
+        for n in range(8):                                                           # eight addresses, each at its limit for the minute
+            for i in range(T.FORM_ATTEMPTS):
+                self.b.tickets.signin({"ticket": "%032x" % (n * 10 + i), "secret": new_secret(), "from": A_ID}, "https://127.0.0.1:1", "10.20.0.%d" % n)
+        out, secret = self.ask(self.a, self.device(self.a))
+        self.assertEqual(self.go(out, secret)["result"], "signed-in")                # b may still call a, and a still answers b
 
     def test_malformed_and_unapproved_calls_at_a_cost_only_their_own_address(self):
         self.pair()

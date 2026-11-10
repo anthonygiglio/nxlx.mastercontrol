@@ -1,5 +1,9 @@
 <!-- SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
      SPDX-License-Identifier: Apache-2.0 -->
+## 2026-11-10, last residual of the review (PR 269)
+
+- At A, refused redeems from an approved, authenticated peer are no longer counted at all (the 20 a minute per peer is gone): four addresses posting junk forms to B could still fill it and block every real hand-over. The event line stays; callers A does not approve still count against their own address. Test: junk forms through B over eight addresses, then a real hand-over works.
+
 ## 2026-11-10, review fixes for slice 4a (PR 269)
 
 - M1: `NO_CHECK_TIME` was 0x200000000 (bit 33), which OpenSSL ignores; the real flag is 0x200000. The peer handshake therefore judged dates and a node with a wrong clock could not hand over. Fixed, and a test makes a handshake with an expired and a not-yet-valid certificate (signed with `openssl ca` dates): it passes while `clock_trusted()` is false and is refused afterwards when it is true. The 32-bit remark in design section 19.3 and the addendum is gone.
