@@ -130,13 +130,15 @@ Built once by `render()` and `chrome()` in `app.js`:
   while on, flashing). All go to `POST /api/control` except Fade (`/api/fade`) and Blackout (`/api/blackout`). Enabled
   for Operator and up; a Guest with open controls gets Previous, Next, Stop and Blackout only; a watching device gets
   none. The strip is built once and kept across redraws, so a finger on a slider is never cut off.
-- **Node sheet** (`#nodesheet`, 2026-11-09): opened by a swipe up on the strip (48 px, more up than sideways, not on
-  a slider) or a press on the pill, which is a button. Status (this node, its address, temperature and player; what is
-  on the screen; Health with Open), This device (name, role, secure or not), Nodes (opens the list in the title bar;
-  Owner and Operator), Tools (Reload, Full screen and Keep the screen on where the browser can, Look for the Owner, Log
-  out), and the version line. Closes with Close, Escape, a press around it or a swipe down on its bar. Inside the FireTab
-  launcher (user agent `NXLXLauncher/`, root `data-launcher`) the swipe is off and the strip keeps 28 px clear at its
-  foot for the launcher's own swipe strip.
+- **Node sheet** (`#nodesheet`, 2026-11-09): a dialog called Nodes that comes down from the top. Nodes in the title bar
+  opens it, and so does the pill, which is a button. There is no swipe (the owner: "I do not like the swipe up panel").
+  Nodes on this network first (the list itself, with Look again and the switch for looking; Owner and Operator, and
+  the sheet is called This node without it), This node (its address, temperature and player; what is on the screen;
+  Health with Open), This device (name, role, secure or not), Tools (Reload, Full screen and Keep the screen on where the browser can, Look for the
+  Owner, Log out), and the version line. Closes with Close, Escape or a press around it; Tab stays inside it. Nothing
+  opens inside the title bar, so it keeps its height. Inside the FireTab launcher (user agent `NXLXLauncher/`, root
+  `data-launcher`) the strip keeps 28 px clear at its foot for the launcher's own swipe strip; the swipe up from the
+  bottom edge is the launcher's drawer, a different thing.
 
 ## 4. The shared patterns
 

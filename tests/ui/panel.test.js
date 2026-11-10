@@ -2327,9 +2327,20 @@ function startServer(env) {          // env: more for the harness's environment 
         await page.evaluate((id) => localStorage.setItem('pvj.nodes.opened', JSON.stringify({ [id]: { address: '192.168.0.99', port: 443 } })), 'b'.repeat(32));
         await page.waitForTimeout(1500);
         assert.strictEqual(asked, 0, 'the node list is not asked for before Nodes is pressed');
+        const headBefore = await page.evaluate(() => document.getElementById('wshead').getBoundingClientRect().height);
         await page.click('#nodesbtn');
-        await page.waitForSelector('#nodeslist .nodesrow');
+        await page.waitForSelector('#nodesheet #nodeslist .nodesrow');
         assert.strictEqual(asked, 1, 'pressing Nodes asks once');
+        {
+          // Nodes opens the This node sheet at its list (the owner, 2026-11-09): the title bar does not grow (the list
+          // used to open inside it, which then scrolled with the page), and the button says the sheet is open
+          assert.strictEqual(await page.evaluate(() => document.getElementById('wshead').getBoundingClientRect().height), headBefore, 'the title bar keeps its height while the nodes are shown');
+          assert.strictEqual(await page.evaluate(() => !!document.querySelector('#wshead #nodespop')), false, 'the list is not in the title bar');
+          assert.strictEqual(await page.getAttribute('#nodesbtn', 'aria-expanded'), 'true', 'Nodes says the sheet is open');
+          assert.strictEqual(await page.getAttribute('#nodesbtn', 'aria-haspopup'), 'dialog', 'Nodes says it opens a dialog');
+          assert.strictEqual(await page.textContent('#nshead'), 'Nodes', 'the sheet is called Nodes');
+          assert.strictEqual(await page.$eval('#nodesheet h3', (e) => e.textContent), 'Nodes on this network', 'the list of nodes comes first');
+        }
         const rows = await page.$$eval('#nodeslist .nodesrow', (els) => els.map((el) => ({ name: el.querySelector('.lname').textContent,
           where: el.querySelector('.nodeswhere').textContent, href: el.querySelector('a') ? el.querySelector('a').getAttribute('href') : null,
           rel: el.querySelector('a') ? el.querySelector('a').getAttribute('rel') : null, target: el.querySelector('a') ? el.querySelector('a').getAttribute('target') : null,
@@ -2357,16 +2368,18 @@ function startServer(env) {          // env: more for the harness's environment 
         await page.waitForFunction(() => document.querySelectorAll('#nodeslist .nodesrow').length === 12);
         assert.strictEqual(asked, 2, 'Look again asks again');
         {
-          // A scroll over the open list stays in it (the owner, 2026-11-09: "i notice the page underneath moving"):
-          // the list scrolls to its end, and the page behind it does not move, then or after
-          const box = await page.locator('#nodespop').boundingBox();
+          // A scroll over the list stays in the sheet (the owner, 2026-11-09: "i notice the page underneath moving"):
+          // the sheet scrolls to its end, and the page behind it does not move, then or after
+          // Clicking Look again (at the foot of the list) scrolled the sheet to bring it into view, so the top of the
+          // list was above the screen and the pointer would land outside the sheet: the sheet starts at its top
+          await page.evaluate(() => { document.getElementById('nodesheet').scrollTop = 0; });
+          const box = await page.locator('#nodeslist').boundingBox();
           const y0 = await page.evaluate(() => window.scrollY);
           await page.mouse.move(box.x + box.width / 2, box.y + Math.min(box.height / 2, 150));
           for (let i = 0; i < 10; i++) { await page.mouse.wheel(0, 400); await page.waitForTimeout(40); }
           await page.waitForTimeout(400);
-          const sc = await page.evaluate(() => { const p = document.getElementById('nodespop'); return { page: window.scrollY, end: p.scrollTop + p.clientHeight >= p.scrollHeight - 1 }; });
-          assert.deepStrictEqual(sc, { page: y0, end: true }, 'a scroll over the Nodes list scrolls the list to its end and not the page: ' + JSON.stringify(sc));
-          await page.evaluate(() => { document.getElementById('nodespop').scrollTop = 0; });
+          const sc = await page.evaluate(() => { const p = document.getElementById('nodesheet'); return { page: window.scrollY, end: p.scrollTop + p.clientHeight >= p.scrollHeight - 1 }; });
+          assert.deepStrictEqual(sc, { page: y0, end: true }, 'a scroll over the Nodes list scrolls the sheet to its end and not the page: ' + JSON.stringify(sc));
         }
         {
           await page.evaluate(() => localStorage.setItem('pvj.nodes.opened', JSON.stringify({ x: { address: '8.8.8.8', port: 443 }, ['9'.repeat(32)]: { address: '192.168.0.9', port: '1@e' } })));
@@ -2377,17 +2390,19 @@ function startServer(env) {          // env: more for the harness's environment 
           assert.strictEqual(await page.locator('.nodesmoved').count(), 0, 'a remembered entry that is not well formed is ignored');
           await page.evaluate(() => localStorage.removeItem('pvj.nodes.opened'));
         }
-        await page.click('#nodesclose');
+        await page.click('#nsclose');
         await page.waitForSelector('#nodespop', { state: 'detached' });
+        assert.strictEqual(await page.evaluate(() => document.activeElement.id), 'nodesbtn', 'Close puts the cursor back on Nodes');
+        assert.strictEqual(await page.getAttribute('#nodesbtn', 'aria-expanded'), 'false', 'Nodes says the sheet is closed');
         {
-          // The node sheet (2026-11-09): the pill opens it, with the cursor on Close; it says how this node is, this
-          // device, the nodes and the tools; Nodes on this network opens the list; Escape closes it and the cursor
-          // goes back to the pill; a press on the dark around it closes it too
+          // The node sheet (2026-11-09): the pill opens it too, with the cursor on Close; it has the nodes, how this
+          // node is, this device and the tools; Escape closes it and the cursor goes back to the pill; a
+          // press on the dark around it closes it too
           assert.strictEqual(await page.getAttribute('#pill', 'role'), 'button', 'the pill is a button');
           await page.click('#pill');
           await page.waitForSelector('#nodesheet');
           assert.strictEqual(await page.evaluate(() => document.activeElement.id), 'nsclose', 'the sheet opens with the cursor on Close');
-          assert.deepStrictEqual(await page.$$eval('#nodesheet h3', (x) => x.map((e) => e.textContent)), ['Status', 'This device', 'Nodes', 'Tools'], 'what the sheet has, for the Owner');
+          assert.deepStrictEqual(await page.$$eval('#nodesheet h3', (x) => x.map((e) => e.textContent)), ['Nodes on this network', 'This node', 'This device', 'Tools'], 'what the sheet has, for the Owner');
           assert(await page.isVisible('#ns-node') && await page.isVisible('#ns-me') && await page.isVisible('#nslogout') && await page.isVisible('#nslook'), 'the node, this device, Log out and Look');
           await page.waitForFunction(() => /^nxlx\.mastercontrol \S+/.test(document.getElementById('nsversion').textContent), null, { timeout: 5000 });
           await page.keyboard.press('Escape');
@@ -2406,11 +2421,13 @@ function startServer(env) {          // env: more for the harness's environment 
             assert(await inSheet(), 'Shift+Tab from the first control stays in the sheet');
             assert.notStrictEqual(await page.evaluate(() => document.activeElement.id), 'nsclose', 'Shift+Tab from Close goes round to the last control');
           }
-          await page.mouse.click(5, 5);
+          // (the sheet hangs from the top, at most 88% of the screen: the dark is below it)
+          await page.mouse.click(5, await page.evaluate(() => innerHeight - 5));
           await page.waitForSelector('#nodesheetback', { state: 'detached' });
           {
-            // A finger swipe up that starts on Blackout or Stop opens the sheet and presses neither (real touch events,
-            // so Chrome's own rules decide whether a click follows the touch)
+            // There is no swipe up any more (the owner, 2026-11-09: "I do not like the swipe up panel"): a finger that
+            // goes up from Blackout or Stop opens nothing and presses neither (real touch events, so Chrome's own
+            // rules decide whether a click follows the touch)
             const cdp = await ctx.newCDPSession(page);
             const touch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] });
             const pressed = [];
@@ -2422,25 +2439,19 @@ function startServer(env) {          // env: more for the harness's environment 
               await touch('touchStart', b.x, b.y);
               for (let i = 1; i <= 8; i++) { await touch('touchMove', b.x, b.y - i * 15); await page.waitForTimeout(16); }
               await touch('touchEnd');
-              await page.waitForSelector('#nodesheet');
               await page.waitForTimeout(600);
-              assert(await page.isVisible('#nodesheet'), 'a swipe up from #' + id + ' leaves the sheet open');
+              assert.strictEqual(await page.locator('#nodesheet').count(), 0, 'a swipe up from #' + id + ' opens nothing');
               assert.deepStrictEqual(pressed, [], 'a swipe up that starts on #' + id + ' does not press it');
-              await page.keyboard.press('Escape');
-              await page.waitForSelector('#nodesheetback', { state: 'detached' });
             }
             page.off('request', seen);
             await cdp.detach();
           }
-          await page.click('#pill');
-          await page.click('#nsnodes');
-          await page.waitForSelector('#nodespop');
-          assert(!(await page.$('#nodesheetback')), 'Nodes on this network closes the sheet and opens the list');
-          await page.click('#nodesclose');
-          await page.waitForSelector('#nodespop', { state: 'detached' });
         }
-        await page.waitForTimeout(1500);
-        assert.strictEqual(asked, 4, 'nothing is asked after the list is closed (two Look agains, and once more from the node sheet)');
+        {
+          const was = asked;
+          await page.waitForTimeout(1500);
+          assert.strictEqual(asked, was, 'nothing is asked after the sheet is closed');
+        }
         await page.unroute('**/api/nodes', fleet);
         const remote = async (route) => { const res = await route.fetch(); const d = await res.json(); if (d.device) d.device.remote = true; await route.fulfill({ response: res, json: d }); };
         await page.route('**/api/status', remote);
