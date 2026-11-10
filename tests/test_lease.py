@@ -401,6 +401,33 @@ class Restarting(LeaseRig):
         leases2.sweep()
         self.assertIsNone(auth2.authenticate(res["token"]))
 
+    def test_after_a_restart_a_failed_first_check_is_tried_again_at_the_next_tick_inside_the_grace(self):
+        self.pair()
+        _dev, res, _ = self.carry()
+        auth2, leases2 = self.reboot()
+        self.b.directory[A_ID] = [self.dead().where]                              # the home node is still booting
+        self.clock.t += L.TICK_EVERY
+        leases2.tick()
+        self.assertEqual(auth2.node_records()[0]["lease"]["b"], "boot-1")        # nothing answered
+        self.b.directory[A_ID] = [self.a.named()]                                 # a minute later it is up
+        self.clock.t += L.TICK_EVERY
+        leases2.tick()
+        self.assertEqual(auth2.node_records()[0]["lease"]["b"], "boot-2")        # renewed, well inside the grace
+        self.clock.t += L.CLOCK_GRACE
+        leases2.sweep()
+        self.assertIsNotNone(auth2.authenticate(res["token"]))
+
+    def test_with_no_boot_id_a_record_the_home_node_just_renewed_is_not_signed_out_at_the_end_of_the_grace(self):
+        self.pair()
+        self.boot = ""
+        _dev, res, _ = self.carry()
+        self.clock.t += 700
+        self.assertTrue(self.b.leases.check_node(A_ID))                           # answered in this process
+        self.clock.t += L.CLOCK_GRACE
+        self.b.leases.started = 0.0
+        self.b.leases.sweep()
+        self.assertTrue(self.alive(res["token"]))
+
     def test_an_empty_boot_id_cannot_tell_one_boot_from_another(self):
         self.pair()
         self.boot = ""

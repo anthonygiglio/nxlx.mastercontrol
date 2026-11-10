@@ -104,6 +104,7 @@ class Leases:
         self._stranger = peer_mod.Buckets(STRANGER_FAILS, now)           # failures of callers this node does not approve, by address
         self._poke_checks = peer_mod.Throttle(POKE_CHECKS_PER_MINUTE, 60.0, now)    # B: checks that pokes started, all nodes together
         self._poke_sent = peer_mod.Throttle(OUT_POKES_PER_MINUTE, 60.0, now)       # A: pokes sent, all nodes together
+        self._renewed = set()                               # B: record ids a home node answered for in THIS process (their stamp is good even without a boot id)
         self._stop = None
         self._thread = None
 
@@ -145,13 +146,15 @@ class Leases:
             out["h"] = handle
         return out
 
-    def _age(self, lease):
+    def _age(self, lease, answered_here=False):
         """Seconds since the home node last answered, or None when that cannot be told. The wall clock is used only while it was
         trusted when the record was stamped AND is trusted now; otherwise the monotonic clock, and only inside the boot it
         was stamped in (the monotonic clock starts again at boot)."""
         if lease.get("t") is True and self._trusted() and isinstance(lease.get("ok"), int):
             return max(0.0, self.wall() - lease["ok"])
         boot = self.boot() or ""
+        if answered_here and isinstance(lease.get("m"), (int, float)):                  # stamped by an answer in this very process
+            return max(0.0, self.now() - lease["m"])
         if boot and isinstance(lease.get("m"), (int, float)) and lease.get("b") == boot:      # an empty boot id cannot tell one boot from another
             return max(0.0, self.now() - lease["m"])
         return None
@@ -314,7 +317,7 @@ class Leases:
         if not records:
             return False
         with self.lock:
-            self._next_check[node_id] = self.now() + CHECK_EVERY
+            self._next_check[node_id] = self.now() + TICK_EVERY        # (until it has answered: a failed call is tried again at the next tick)
             self._dirty.discard(node_id)
         records = records[:MAX_HANDLES]
         h = self.handover
@@ -335,6 +338,7 @@ class Leases:
             return False
         with self.lock:
             self._down.discard(node_id)
+            self._next_check[node_id] = self.now() + CHECK_EVERY
         stamp = self.stamp()
         changes, lowered_to = [], {}
         for record, item in zip(records, items):
@@ -348,6 +352,8 @@ class Leases:
             if decision[1]:
                 lowered_to[record["id"]] = decision[1]
         done = self.auth.apply_node_updates(changes) if changes else {}
+        with self.lock:
+            self._renewed |= set(done)
         self._lower_events(records, lowered_to, done, lambda r: "%s now gives it that" % self._node_name(r))
         return True
 
@@ -356,7 +362,7 @@ class Leases:
             first = node_id not in self._down
             self._down.add(node_id)
         if first:
-            self.event("handover", "%s did not answer a check of its carried devices; they stay signed in until 24 hours after its last answer." % name)
+            self.event("handover", "%s did not answer a check of its carried devices; they stay signed in until it has been silent for 24 hours (after a restart, for 10 minutes of this node running)." % name)
 
     # ------------------------------------------------------------------------------------------------------------------
     # Node B: the sweep (no network)
@@ -411,7 +417,7 @@ class Leases:
             if not lease:                                   # a record made before leases: its 24 hours start now
                 stamps.append({"id": r["id"], "h": None, "stamp": self.stamp()})
                 continue
-            age = self._age(lease)
+            age = self._age(lease, r["id"] in self._renewed)
             name = self._node_name(r)
             if age is None:
                 if self.now() - self.started < CLOCK_GRACE:
