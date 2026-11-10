@@ -8234,7 +8234,17 @@
       nodesShown() ? h('button', { class: 'btn nsnodes', id: 'nsnodes', text: 'Nodes on this network', onclick: function () { nodeSheetShow(false); if (!document.getElementById('nodespop')) nodesToggle(); } }) : null,
       h('h3', { class: 'k', text: 'Tools' }), tools, out, ver);
     var back = h('div', { class: 'nsback', id: 'nodesheetback', onclick: function (e) { if (e.target === back) nodeSheetShow(false); },
-      onkeydown: function (e) { if (e.key === 'Escape') { e.stopPropagation(); nodeSheetShow(false); } } }, box);
+      onkeydown: function (e) {
+        if (e.key === 'Escape') { e.stopPropagation(); nodeSheetShow(false); return; }
+        // Tab stays in the sheet (it is a modal dialog): past the last control it goes round to the first, and back
+        if (e.key !== 'Tab') return;
+        var f = Array.prototype.filter.call(box.querySelectorAll('button, a[href], input, select, textarea, [tabindex]'), function (x) {
+          return !x.disabled && x.tabIndex >= 0 && x.getClientRects().length > 0;
+        });
+        if (!f.length) return;
+        var a = document.activeElement, first = f[0], last = f[f.length - 1];
+        if (e.shiftKey ? (a === first || !box.contains(a)) : (a === last || !box.contains(a))) { e.preventDefault(); (e.shiftKey ? last : first).focus(); }
+      } }, box);
     keepScroll(back, { box: box });
     // a swipe down on its bar closes it, as a swipe up opened it
     var y0 = null;

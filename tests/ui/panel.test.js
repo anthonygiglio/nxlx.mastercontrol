@@ -2396,8 +2396,42 @@ function startServer(env) {          // env: more for the harness's environment 
           await page.focus('#pill');
           await page.keyboard.press('Enter');
           await page.waitForSelector('#nodesheet');
+          {
+            // Tab stays in the sheet: round from the last control to the first, and Shift+Tab back again
+            const inSheet = () => page.evaluate(() => !!document.activeElement.closest('#nodesheet'));
+            const n = await page.$$eval('#nodesheet :is(button, a[href], input, select, textarea, [tabindex])', (x) => x.filter((e) => !e.disabled && e.tabIndex >= 0 && e.getClientRects().length).length);
+            for (let i = 0; i < n + 2; i++) { await page.keyboard.press('Tab'); assert(await inSheet(), 'Tab ' + (i + 1) + ' stays in the sheet'); }
+            await page.focus('#nsclose');
+            await page.keyboard.press('Shift+Tab');
+            assert(await inSheet(), 'Shift+Tab from the first control stays in the sheet');
+            assert.notStrictEqual(await page.evaluate(() => document.activeElement.id), 'nsclose', 'Shift+Tab from Close goes round to the last control');
+          }
           await page.mouse.click(5, 5);
           await page.waitForSelector('#nodesheetback', { state: 'detached' });
+          {
+            // A finger swipe up that starts on Blackout or Stop opens the sheet and presses neither (real touch events,
+            // so Chrome's own rules decide whether a click follows the touch)
+            const cdp = await ctx.newCDPSession(page);
+            const touch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] });
+            const pressed = [];
+            const seen = (q) => { if (q.method() === 'POST' && /\/api\/control/.test(q.url())) pressed.push(q.postData()); };
+            page.on('request', seen);
+            for (const id of ['black', 'stop']) {
+              assert(await page.isVisible('#' + id), '#' + id + ' is on the strip');
+              const b = await page.$eval('#' + id, (e) => { const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
+              await touch('touchStart', b.x, b.y);
+              for (let i = 1; i <= 8; i++) { await touch('touchMove', b.x, b.y - i * 15); await page.waitForTimeout(16); }
+              await touch('touchEnd');
+              await page.waitForSelector('#nodesheet');
+              await page.waitForTimeout(600);
+              assert(await page.isVisible('#nodesheet'), 'a swipe up from #' + id + ' leaves the sheet open');
+              assert.deepStrictEqual(pressed, [], 'a swipe up that starts on #' + id + ' does not press it');
+              await page.keyboard.press('Escape');
+              await page.waitForSelector('#nodesheetback', { state: 'detached' });
+            }
+            page.off('request', seen);
+            await cdp.detach();
+          }
           await page.click('#pill');
           await page.click('#nsnodes');
           await page.waitForSelector('#nodespop');
