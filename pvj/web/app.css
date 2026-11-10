@@ -919,6 +919,18 @@ html { scroll-padding-top: calc(var(--head, 0px) + var(--sub, 0px)); scroll-padd
 /* The list is a card of its own in the page colours, so its text reads on any title bar (Signal colours the bar by area) */
 .wshead .nodespop { flex: 1 0 100%; margin: 6px 0 4px; padding: 12px; max-height: 60vh; overflow: auto; overscroll-behavior: contain; background: var(--bg); color: var(--fg); border: 1.5px solid var(--ln); border-radius: 6px; text-align: left; }
 .nodespop .nodeswhere { overflow-wrap: anywhere; }
+/* The node sheet (2026-11-09): from the foot of the screen, over the page, in the page colours. */
+#pill[role="button"] { cursor: pointer; }
+.nsback { position: fixed; inset: 0; z-index: 21; display: flex; align-items: flex-end; justify-content: center; background: rgba(0, 0, 0, .55); }
+.nssheet { width: 100%; max-width: 1100px; max-height: 88dvh; overflow-y: auto; overscroll-behavior: contain; padding: 0 16px 24px; background: var(--bg); color: var(--fg); border: 1.5px solid var(--ln); border-bottom: 0; border-radius: 12px 12px 0 0; text-align: left; }
+.nsbar { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 -16px; padding: 12px 16px; background: var(--bg); }
+.nsbar h2 { margin: 0; font-size: 17px; }
+.nssheet h3.k { margin: 18px 0 6px; font-weight: 500; }
+.nstools { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.nssheet .nsnodes { width: 100%; }
+.nssheet .nsver { margin: 18px 0 0; }
+/* inside the FireTab launcher its swipe strip lies over the bottom 28 px of the screen: nothing of the strip under it */
+html[data-launcher] .wsdock { padding-bottom: 28px; }
 
 /* Graphics (D129, slice 2): text and logos the node draws on the screen. A graphic's preview is a picture the node made
    (the same code that draws the wall), shown on a checkerboard in the shape of the screen, so what is clear shows. */
@@ -1558,6 +1570,11 @@ html[data-style="signal"] .nowscreen .room-scene { font-size: 15px; }
 html[data-style="signal"] .wshead .nodesbtn { background: var(--on); color: var(--ac); border-color: var(--on); }
 html[data-style="signal"] .wshead .nodesbtn[aria-expanded="true"] { background: var(--ac); color: var(--on); border-color: var(--on); }
 html[data-style="signal"] .wshead .nodespop { background: var(--bg); color: var(--fg); padding: 12px; border: var(--rule, 3px) solid var(--on); border-radius: var(--tk-r, 0); }
+html[data-style="signal"] .nssheet { border: var(--rule, 3px) solid var(--fg); border-bottom: 0; border-radius: var(--tk-r, 0) var(--tk-r, 0) 0 0; }
+html[data-style="signal"] .nsbar { background: var(--ar-system, #7aa2ff); color: var(--ar-system-on, #0b0b0d); }      /* (Setup's blue in every area, as the FireTab launcher's drawer has: the two read as one kind of sheet) */
+html[data-style="signal"] .nsbar h2 { font: 900 20px/1.2 var(--sans); letter-spacing: .04em; text-transform: uppercase; }
+html[data-style="signal"] .nsbar .btn { background: transparent; color: var(--ar-system-on, #0b0b0d); border-color: var(--ar-system-on, #0b0b0d); }
+html[data-style="signal"] .nsbar :focus-visible { outline-color: var(--ar-system-on, #0b0b0d); }
 
 /* Graphics in Signal (the layout is before this block, for every look): the ink rule, edges and colours. */
 html[data-style="signal"] .graphicitem { border-top: var(--rule, 3px) solid var(--fg); }

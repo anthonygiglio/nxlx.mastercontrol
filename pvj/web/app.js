@@ -8053,7 +8053,9 @@
         h('p', { class: 'wsjob' + (cur && cur.part && desk.length ? ' one' : ''), id: 'wsjob', text: job, title: job || false, hidden: !job }),
         cur && cur.part && desk.length ? h('p', { class: 'wsjob all', id: 'wsjoball', text: AREA_JOBS[area] }) : null),
       h('span', { class: 'wsbrand', text: 'nxlx.mastercontrol' }),
-      h('div', { class: 'pill k', id: 'pill' }),
+      h('div', { class: 'pill k', id: 'pill', role: 'button', tabindex: '0', 'aria-haspopup': 'dialog', title: 'This node: status, this device, nodes and tools',
+        onclick: function (e) { nodeSheetShow(true, e.currentTarget); },
+        onkeydown: function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); nodeSheetShow(true, e.currentTarget); } } }),
       nodesShown() ? h('button', { class: 'btn small nodesbtn', id: 'nodesbtn', text: 'Nodes', 'aria-expanded': 'false', 'aria-controls': 'nodespop', onclick: nodesToggle }) : null);
     // The tabs. Where the area is a desk, its columns are one tab ("Effect · Picture · Sound") beside the tools
     // that need the whole width; an area whose screens all share the page has no tabs there at all. Play's Shaders
@@ -8159,6 +8161,104 @@
     setTimeout(look, 0);       // (asked once the card is on the page)
     return card;
   }
+  // ---- The node sheet (the owner, 2026-11-09: "being able to swipe up from the bottom of the screen and seeing
+  // info like status, device details, nodes, tools", as the FireTab launcher's drawer does) ----------------------
+  // A sheet from the foot of the screen: how this node is, this device, the nodes, and a few tools. It opens with a
+  // swipe up on the strip (a phone or a tablet) or a press on the pill in the title bar (any width), and closes with
+  // Close, Escape, a press on the dark around it, or a swipe down on its bar. Inside the FireTab launcher, whose own
+  // drawer answers a swipe up from the bottom edge, the swipe here is off (the launcher says so in its user agent),
+  // and the strip keeps clear of the launcher's edge.
+  var IN_LAUNCHER = /NXLXLauncher\//.test(navigator.userAgent);
+  if (IN_LAUNCHER) document.documentElement.setAttribute('data-launcher', '');
+  var nsWake = null, nsFrom = null;
+  function nodeSheetShow(open, from) {
+    var was = document.getElementById('nodesheetback');
+    if (!open) {
+      S.nodeSheet = false;
+      if (was) was.parentNode.removeChild(was);
+      if (nsFrom && nsFrom.isConnected) nsFrom.focus(); else { var p = document.getElementById('pill'); if (p) p.focus(); }
+      nsFrom = null;
+      return;
+    }
+    if (was) return;
+    S.nodeSheet = true;
+    nsFrom = from || document.activeElement;
+    app.appendChild(nodeSheet());
+    var c = document.getElementById('nsclose'); if (c) c.focus();
+  }
+  function nodeSheet() {
+    var st = S.status || {}, sys = st.system || {}, pl = st.player || {}, dev = S.device || {};
+    var close = h('button', { class: 'btn small', id: 'nsclose', text: 'Close', onclick: function () { nodeSheetShow(false); } });
+    var name = String(sys.name || '').replace(/^nxlx-/i, '') || sys.board || 'This node';
+    var temp = typeof sys.temp_c === 'number' ? Math.round(sys.temp_c) + ' C' : '';
+    var np = document.getElementById('np');
+    var status = h('div', { class: 'list', id: 'nsstatus' },
+      nowRow('ns-node', name, { chip: pl.running ? 'ready' : 'problem', text: location.host + (temp ? ' · ' + temp : '') + ' · ' + (pl.running ? 'The player is running.' : 'The player is not running.') }, null),
+      nowRow('ns-playing', 'On the screen', { chip: null, text: (np && np.textContent) || 'Nothing.' }, null));
+    var health = sysRows().filter(function (r) { return r.id === 'health'; })[0];
+    if (health && rowShown(health)) status.appendChild(nowRow('ns-health', 'Health', sysState(health), canOp() ? ['Open', function () { nodeSheetShow(false); go('now/now'); }] : ['Open', function () { nodeSheetShow(false); openSys('health', 'index'); }]));
+    var device = h('div', { class: 'list', id: 'nsdevice' },
+      nowRow('ns-me', dev.name || 'This device', { chip: null, text: roleName(dev.role) + (dev.remote ? ' · remote support' : '') }, null),
+      nowRow('ns-link', 'Connection', location.protocol === 'https:' ? { chip: 'ready', text: 'Secure (https).' } : { chip: 'check', text: 'Not secure (http): the node can be set up for https under Setup > Secure connection.' }, null));
+    var tools = h('div', { class: 'nstools', id: 'nstools' },
+      h('button', { class: 'btn', id: 'nsreload', text: 'Reload the panel', onclick: function () { location.reload(); } }));
+    if (document.fullscreenEnabled) {
+      var full = h('button', { class: 'btn', id: 'nsfull', 'aria-pressed': document.fullscreenElement ? 'true' : 'false', text: document.fullscreenElement ? 'Leave full screen' : 'Full screen', onclick: function () {
+        var p = document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+        if (p && p.then) p.then(function () { nodeSheetShow(false); }, function () { sayAt(out, 'This browser did not allow full screen.', true); });
+      } });
+      tools.appendChild(full);
+    }
+    if ('wakeLock' in navigator) {
+      var wake = h('button', { class: 'btn', id: 'nswake', 'aria-pressed': nsWake ? 'true' : 'false', text: nsWake ? 'Let the screen sleep' : 'Keep the screen on', onclick: function () {
+        if (nsWake) { nsWake.release(); nsWake = null; wake.textContent = 'Keep the screen on'; wake.setAttribute('aria-pressed', 'false'); return; }
+        navigator.wakeLock.request('screen').then(function (l) {
+          nsWake = l; l.addEventListener('release', function () { if (nsWake === l) nsWake = null; });
+          wake.textContent = 'Let the screen sleep'; wake.setAttribute('aria-pressed', 'true');
+        }, function () { sayAt(out, 'This browser did not allow keeping the screen on.', true); });
+      } });
+      tools.appendChild(wake);
+    }
+    if (can('full')) tools.appendChild(h('button', { class: 'btn', id: 'nslook', text: 'Look', onclick: function () { nodeSheetShow(false); go('setup/look'); } }));
+    var logout = h('button', { class: 'btn', id: 'nslogout', text: 'Log out', onclick: function () { logOutHere(logout, 'Log out on this device? The node forgets it. You will need a code, a link or the PIN to get back in.'); } });
+    tools.appendChild(logout);
+    var out = h('div', { class: 'msg inmsg', id: 'nsmsg', role: 'status' });
+    var ver = h('p', { class: 'k nsver', id: 'nsversion', text: 'nxlx.mastercontrol' });
+    api('GET', '/api/system').then(function (r) { if (r.ok && r.data && r.data.version && ver.isConnected) ver.textContent = 'nxlx.mastercontrol ' + r.data.version; });
+    var bar = h('div', { class: 'nsbar' }, h('h2', { id: 'nshead', text: 'This node' }), close);
+    var box = h('div', { class: 'nssheet', id: 'nodesheet', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'nshead' },
+      bar,
+      h('h3', { class: 'k', text: 'Status' }), status,
+      h('h3', { class: 'k', text: 'This device' }), device,
+      nodesShown() ? h('h3', { class: 'k', text: 'Nodes' }) : null,
+      nodesShown() ? h('button', { class: 'btn nsnodes', id: 'nsnodes', text: 'Nodes on this network', onclick: function () { nodeSheetShow(false); if (!document.getElementById('nodespop')) nodesToggle(); } }) : null,
+      h('h3', { class: 'k', text: 'Tools' }), tools, out, ver);
+    var back = h('div', { class: 'nsback', id: 'nodesheetback', onclick: function (e) { if (e.target === back) nodeSheetShow(false); },
+      onkeydown: function (e) { if (e.key === 'Escape') { e.stopPropagation(); nodeSheetShow(false); } } }, box);
+    keepScroll(back, { box: box });
+    // a swipe down on its bar closes it, as a swipe up opened it
+    var y0 = null;
+    bar.addEventListener('touchstart', function (e) { y0 = e.touches.length === 1 ? e.touches[0].clientY : null; }, { passive: true });
+    bar.addEventListener('touchmove', function (e) { if (y0 !== null && e.touches[0].clientY - y0 > 48) { y0 = null; nodeSheetShow(false); } }, { passive: true });
+    return back;
+  }
+  // The swipe up on the strip: a finger that starts on the strip (not on one of its sliders) and goes up 48 px, more
+  // up than sideways, opens the sheet; a press that does not move is still the button's. Off in the launcher.
+  (function () {
+    var t0 = null;
+    document.addEventListener('touchstart', function (e) {
+      t0 = null;
+      if (IN_LAUNCHER || e.touches.length !== 1 || !S.device) return;
+      var t = e.target;
+      if (!t.closest || !t.closest('#wsdock') || t.closest('input[type=range]') || document.getElementById('nodesheetback')) return;
+      t0 = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    }, { passive: true });
+    document.addEventListener('touchmove', function (e) {
+      if (!t0 || e.touches.length !== 1) return;
+      var dx = e.touches[0].clientX - t0.x, dy = t0.y - e.touches[0].clientY;
+      if (dy > 48 && Math.abs(dx) < dy / 2) { t0 = null; if (e.cancelable) e.preventDefault(); nodeSheetShow(true, document.getElementById('pill')); }
+    }, { passive: false });
+  })();
   function nodesToggle() {
     var btn = document.getElementById('nodesbtn'), open = document.getElementById('nodespop');
     if (open) { open.remove(); if (btn) { btn.setAttribute('aria-expanded', 'false'); btn.focus(); } return; }
@@ -8347,6 +8447,7 @@
           h('div', { id: 'msg', class: 'msg' + (S.msgErr ? ' err' : ''), role: 'status', text: S.msg }), desk),
         h('div', { class: 'wsdock', id: 'wsdock' }, transport(), c.tabs))));
     if (S.sheet) app.appendChild(heldSheet());
+    if (S.nodeSheet && !document.getElementById('nodesheetback')) app.appendChild(nodeSheet());
     markArea();        // once more, now that the columns are on the page
     patchLive();
     dockHeight();

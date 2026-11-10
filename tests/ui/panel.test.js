@@ -2375,8 +2375,34 @@ function startServer(env) {          // env: more for the harness's environment 
         }
         await page.click('#nodesclose');
         await page.waitForSelector('#nodespop', { state: 'detached' });
+        {
+          // The node sheet (2026-11-09): the pill opens it, with the cursor on Close; it says how this node is, this
+          // device, the nodes and the tools; Nodes on this network opens the list; Escape closes it and the cursor
+          // goes back to the pill; a press on the dark around it closes it too
+          assert.strictEqual(await page.getAttribute('#pill', 'role'), 'button', 'the pill is a button');
+          await page.click('#pill');
+          await page.waitForSelector('#nodesheet');
+          assert.strictEqual(await page.evaluate(() => document.activeElement.id), 'nsclose', 'the sheet opens with the cursor on Close');
+          assert.deepStrictEqual(await page.$$eval('#nodesheet h3', (x) => x.map((e) => e.textContent)), ['Status', 'This device', 'Nodes', 'Tools'], 'what the sheet has, for the Owner');
+          assert(await page.isVisible('#ns-node') && await page.isVisible('#ns-me') && await page.isVisible('#nslogout') && await page.isVisible('#nslook'), 'the node, this device, Log out and Look');
+          await page.waitForFunction(() => /^nxlx\.mastercontrol \S+/.test(document.getElementById('nsversion').textContent), null, { timeout: 5000 });
+          await page.keyboard.press('Escape');
+          await page.waitForSelector('#nodesheetback', { state: 'detached' });
+          assert.strictEqual(await page.evaluate(() => document.activeElement.id), 'pill', 'Escape closes the sheet and the cursor is back on the pill');
+          await page.focus('#pill');
+          await page.keyboard.press('Enter');
+          await page.waitForSelector('#nodesheet');
+          await page.mouse.click(5, 5);
+          await page.waitForSelector('#nodesheetback', { state: 'detached' });
+          await page.click('#pill');
+          await page.click('#nsnodes');
+          await page.waitForSelector('#nodespop');
+          assert(!(await page.$('#nodesheetback')), 'Nodes on this network closes the sheet and opens the list');
+          await page.click('#nodesclose');
+          await page.waitForSelector('#nodespop', { state: 'detached' });
+        }
         await page.waitForTimeout(1500);
-        assert.strictEqual(asked, 3, 'nothing is asked after the list is closed (two Look agains)');
+        assert.strictEqual(asked, 4, 'nothing is asked after the list is closed (two Look agains, and once more from the node sheet)');
         await page.unroute('**/api/nodes', fleet);
         const remote = async (route) => { const res = await route.fetch(); const d = await res.json(); if (d.device) d.device.remote = true; await route.fulfill({ response: res, json: d }); };
         await page.route('**/api/status', remote);
