@@ -609,6 +609,43 @@ class PeerRoute(FleetApiBase):
         self.assertEqual(self.scall("POST", "/api/fleet/accepted/look", {"id": B_ID}, token=self.full)[0], 200)      # ...this node is not
         self.assertEqual(self.scall("POST", "/api/fleet/sync", {}, token=self.full)[1]["nodes"][0]["ok"], True)
 
+    def dated_node(self, start, end):
+        """A node certificate the right root signed with the given dates (YYYYMMDDHHMMSSZ), by `openssl ca`: both server and client use."""
+        from tests.test_boxcert import make_request
+        work = self.workdir()
+        key, csr = make_request(self.exe, work, ["node-08.local"], ["127.0.0.1"], cn="node-08.local")
+        for name, text in (("index.txt", ""), ("serial", "0A\n")):
+            with open(os.path.join(work, name), "w") as f:
+                f.write(text)
+        with open(os.path.join(work, "ca.cnf"), "w") as f:
+            f.write("[ca]\ndefault_ca=c\n[c]\ndatabase=%s/index.txt\nnew_certs_dir=%s\nserial=%s/serial\ndefault_md=sha256\npolicy=p\nunique_subject=no\n[p]\ncommonName=optional\n"
+                    % (work, work, work))
+        with open(os.path.join(work, "ext.cnf"), "w") as f:
+            f.write("basicConstraints=CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth,clientAuth\nsubjectAltName=DNS:node-08.local,IP:127.0.0.1\n")
+        cert = os.path.join(work, "cert.pem")
+        r = subprocess.run([self.exe, "ca", "-config", os.path.join(work, "ca.cnf"), "-batch", "-notext", "-in", csr, "-cert", os.path.join(self.ca, "root.pem"),
+                            "-keyfile", os.path.join(self.ca, "root.key"), "-passin", "pass:" + PASS, "-startdate", start, "-enddate", end,
+                            "-extfile", os.path.join(work, "ext.cnf"), "-out", cert], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return type("N", (), {"cert_path": cert, "key_path": key})(), FL.key_hash(FL.certificate_der(raw(cert).decode()))
+
+    def test_the_dates_of_a_node_certificate_are_not_judged_in_the_handshake_and_only_while_the_clock_is_trusted(self):
+        """A Pi has no battery clock (HO9): an expired or not-yet-valid certificate gets past the handshake, and is refused afterwards
+        only when this node's clock was set from the network."""
+        self.pair_lists()
+        for label, start, end, why in (("expired", "20190101000000Z", "20200101000000Z", "run out"),
+                                       ("not valid yet", "20990101000000Z", "21000101000000Z", "not valid yet")):
+            node, key = self.dated_node(start, end)
+            body = {"from": "c" * 32, "key": key, "serial": 1, "deny": "0" * 16}
+            self.trusted = False
+            st, out = self.pcall(node, "/api/fleet/peer", body)                      # (the handshake passed: this is the handler's answer)
+            self.assertEqual((st, out["error"]), (403, "not approved"), label)
+            self.trusted = True
+            st, out = self.pcall(node, "/api/fleet/peer", body)
+            self.assertEqual(st, 403, label)
+            self.assertIn(why, out["error"], label)
+        self.trusted = True
+
     def other_root(self):
         """(folder, root text) of a second, unrelated root."""
         from tests.peerfix import make_root

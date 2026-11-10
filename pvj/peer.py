@@ -424,15 +424,19 @@ class Peers:
         try:
             info = httpsbox.read_certificate(der)
             key = fleetlist.key_hash(der)
-        except (ValueError, IndexError, fleetlist.FleetError):
+        except (ValueError, IndexError, OverflowError, UnicodeDecodeError, TypeError, fleetlist.FleetError):
             self._fail_in(source)
             raise PeerError("not a usable certificate", 403)
         if not info["client_auth"]:
             self._fail_in(source)
             raise PeerError("that certificate is not for a client: it was signed before nodes called each other and must be signed again", 403)
-        if self.https is not None and self.https.clock_trusted() and info["not_after"] < int(self.wall()):
-            self._fail_in(source)
-            raise PeerError("that certificate has run out", 403)
+        if self.https is not None and self.https.clock_trusted():
+            if info["not_after"] < int(self.wall()):
+                self._fail_in(source)
+                raise PeerError("that certificate has run out", 403)
+            if info["not_before"] > int(self.wall()):
+                self._fail_in(source)
+                raise PeerError("that certificate is not valid yet", 403)
         return key
 
     def handle_peer(self, body, source, peer_key):

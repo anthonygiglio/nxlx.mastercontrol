@@ -70,8 +70,11 @@ class Rig(PeerBase):
         out = a.tickets.make(dev, {"to": to, "proof": T.proof_of(secret)}, host)
         return out, secret
 
-    def go(self, out, secret, b=None, frm=A_ID, origin=None, source=SOURCE, current_role=None):
+    def go(self, out, secret, b=None, frm=A_ID, origin=None, source=None, current_role=None):
         b = b or self.b
+        if source is None:                                     # a fresh address each time, unless a test is about one address
+            self._n = getattr(self, "_n", 0) + 1
+            source = "10.0.%d.%d" % divmod(self._n, 250)
         return b.tickets.signin({"ticket": out["ticket"], "secret": secret, "from": frm}, out["origin"] if origin is None else origin, source, current_role)
 
     def carried(self, node):
@@ -449,51 +452,82 @@ class Redeeming(Rig):
             self.assertEqual(res["result"], "refused", fields)
         self.assertEqual(self.a.calls, [])
 
-    def test_failures_are_throttled_at_b_per_source_and_per_node_and_good_ones_are_not(self):
+    def test_junk_forms_from_one_address_never_block_a_real_hand_over_from_another_device(self):
         self.pair()
         for _ in range(T.peer_mod.SOURCE_FAILS):
             self.b.tickets.signin({"nonsense": 1}, "https://x.example", "10.9.9.9")
         out, secret = self.ask(self.a, self.device(self.a))
         blocked = self.go(out, secret, source="10.9.9.9")
         self.assertIn("wait a minute", blocked["sentence"])
-        self.assertEqual(len(self.a.calls), 0)                                      # refused locally
-        self.assertEqual(self.go(out, secret, source="10.8.8.8")["result"], "signed-in")        # another source is fine
+        self.assertEqual(len(self.a.calls), 0)                                      # refused locally, a was not asked
+        for i in range(40):                                                         # junk from forty other addresses...
+            self.b.tickets.signin({"nonsense": 1}, "https://x.example", "10.7.%d.1" % i)
+        self.assertEqual(self.go(out, secret, source="10.8.8.8")["result"], "signed-in")     # ...there is no count for the whole node to run out
         self.clock.t += 61
         out, secret = self.ask(self.a, self.device(self.a, name="later"))
         self.assertEqual(self.go(out, secret, source="10.9.9.9")["result"], "signed-in")
-        for i in range(T.peer_mod.NODE_FAILS):                                                    # ten failures from ten sources stop the node
-            self.b.tickets.signin({"nonsense": 1}, "https://x.example", "10.7.7.%d" % i)
-        out, secret = self.ask(self.a, self.device(self.a, name="third"))
-        self.assertIn("wait a minute", self.go(out, secret, source="10.6.6.6")["sentence"])
-        self.clock.t += 61                                                                        # the ticket ended meanwhile; a new one is fine
-        out, secret = self.ask(self.a, self.device(self.a, name="fourth"))
-        self.assertEqual(self.go(out, secret, source="10.6.6.6")["result"], "signed-in")
 
-    def test_failures_are_throttled_at_a_per_source_and_per_node_and_what_b_sees_is_a_refusal(self):
+    def test_junk_that_looks_like_a_form_and_is_passed_on_to_a_does_not_block_b_as_a_caller(self):
+        self.pair()
+        for i in range(T.FORM_ATTEMPTS):                                            # the most one address may post in a minute
+            res = self.b.tickets.signin({"ticket": "%032x" % i, "secret": new_secret(), "from": A_ID}, "https://%s" % "127.0.0.1:1", "10.9.9.9")
+            self.assertEqual(res["result"], "refused")
+        self.assertIn("wait a minute", self.b.tickets.signin({"ticket": "0" * 32, "secret": new_secret(), "from": A_ID}, "https://127.0.0.1:1", "10.9.9.9")["sentence"])
+        calls = len([c for c in self.a.calls if c[1] == "/api/handover/redeem"])
+        self.assertLessEqual(calls, T.FORM_ATTEMPTS)                                # a was asked at most that many times by this address
+        out, secret = self.ask(self.a, self.device(self.a))
+        self.assertEqual(self.go(out, secret)["result"], "signed-in")               # b may still call a: a counted those against b's own counter, which is far higher
+        for _ in range(2):                                                           # two more addresses doing the same
+            for i in range(T.FORM_ATTEMPTS):
+                self.b.tickets.signin({"ticket": "%032x" % i, "secret": new_secret(), "from": A_ID}, "https://127.0.0.1:1", "10.6.6.%d" % (_ + 1))
+        out, secret = self.ask(self.a, self.device(self.a, name="again"))
+        self.assertEqual(self.go(out, secret)["result"], "signed-in")
+
+    def test_attempts_count_not_only_failures_six_a_minute_from_one_address(self):
+        self.pair()
+        dev = self.device(self.a)
+        for _ in range(T.FORM_ATTEMPTS):
+            self.assertEqual(self.go(*self.ask(self.a, dev), source="10.5.5.5")["result"], "signed-in")
+            self.clock.t += 1
+        out, secret = self.ask(self.a, self.device(self.a, name="seventh"))
+        self.assertIn("wait a minute", self.go(out, secret, source="10.5.5.5")["sentence"])
+        self.assertEqual(self.go(out, secret, source="10.5.5.6")["result"], "signed-in")
+        self.clock.t += 61
+        self.assertEqual(self.go(*self.ask(self.a, dev), source="10.5.5.5")["result"], "signed-in")
+
+    def test_failures_at_a_are_counted_per_approved_peer_or_per_address_never_for_the_whole_node(self):
         self.pair()
         junk = {"ticket": "0" * 32, "secret": new_secret(), "to": B_ID, "key": self.b.key, "serial": 1}
-        for _ in range(T.peer_mod.SOURCE_FAILS):
+        for i in range(T.PEER_REDEEM_FAILS):                                        # an approved peer's refusals: its own counter, many allowed
             with self.assertRaises(T.TicketError) as cm:
-                self.a.tickets.redeem(dict(junk), self.b.key, "10.9.9.9")
+                self.a.tickets.redeem(dict(junk), self.b.key, "10.9.9.%d" % (i % 3))
             self.assertEqual(cm.exception.status, 403)
         out, secret = self.ask(self.a, self.device(self.a))
         good = {"ticket": out["ticket"], "secret": secret, "to": B_ID, "key": self.b.key, "serial": 1}
         with self.assertRaises(T.TicketError) as cm:
-            self.a.tickets.redeem(dict(good), self.b.key, "10.9.9.9")
-        self.assertEqual(cm.exception.status, 429)
-        self.assertEqual(len(self.a.tickets._tickets), 1)                           # a blocked source does not even spend the ticket
-        for i in range(T.peer_mod.NODE_FAILS):
-            try:
-                self.a.tickets.redeem(dict(junk), self.b.key, "10.5.5.%d" % i)
-            except T.TicketError:
-                pass
-        with self.assertRaises(T.TicketError) as cm:
             self.a.tickets.redeem(dict(good), self.b.key, "10.4.4.4")
         self.assertEqual(cm.exception.status, 429)
+        self.assertEqual(len(self.a.tickets._tickets), 1)                           # a blocked peer does not even spend the ticket
         self.clock.t += 61
         out, secret = self.ask(self.a, self.device(self.a, name="later"))
         fresh = {"ticket": out["ticket"], "secret": secret, "to": B_ID, "key": self.b.key, "serial": 1}
         self.assertEqual(self.a.tickets.redeem(fresh, self.b.key, "10.4.4.4")["role"], "full")
+
+    def test_malformed_and_unapproved_calls_at_a_cost_only_their_own_address(self):
+        self.pair()
+        c = self.node("node-03", C_ID, now=self.clock)                              # a node of the root that a does not approve
+        for i in range(T.peer_mod.SOURCE_FAILS):
+            with self.assertRaises(T.TicketError):
+                self.a.tickets.redeem({"junk": 1}, c.key, "10.9.9.9")
+        with self.assertRaises(T.TicketError) as cm:
+            self.a.tickets.redeem({"junk": 1}, c.key, "10.9.9.9")
+        self.assertEqual(cm.exception.status, 429)
+        for i in range(40):                                                          # forty other addresses: no whole-node count to fill
+            with self.assertRaises(T.TicketError):
+                self.a.tickets.redeem({"junk": 1}, c.key, "10.3.%d.1" % i)
+        out, secret = self.ask(self.a, self.device(self.a))
+        good = {"ticket": out["ticket"], "secret": secret, "to": B_ID, "key": self.b.key, "serial": 1}
+        self.assertEqual(self.a.tickets.redeem(good, self.b.key, "10.9.9.9")["role"], "full")      # even from the blocked address: b is approved, b's counter is clean
 
     def test_a_refusal_from_a_counts_at_b_as_a_failure(self):
         self.pair()
@@ -546,6 +580,63 @@ class Redeeming(Rig):
         self.assertEqual(len(self.b.tickets._pending), T.MAX_PENDING)
         self.assertEqual(self.b.tickets.confirm(handles[0], SOURCE)["result"], "refused")          # the oldest was dropped
         self.assertEqual(self.b.tickets.confirm(handles[-1], SOURCE)["result"], "signed-in")
+
+    def test_a_confirm_asks_again_whether_the_node_is_still_approved(self):
+        self.pair()
+        out, secret = self.ask(self.a, self.device(self.a, role="live"))
+        res = self.go(out, secret, current_role="full")
+        self.b.handover.deny_add(self.a.key, "node-01", "someone")                  # after the confirm page was shown
+        done = self.b.tickets.confirm(res["handle"], SOURCE)
+        self.assertEqual(done["result"], "refused")
+        self.assertIn("no longer approved", done["sentence"])
+        self.assertEqual(self.carried(self.b), [])
+        self.b.handover.deny_remove(self.a.key)
+        out, secret = self.ask(self.a, self.device(self.a, role="live", name="again"))
+        res = self.go(out, secret, current_role="full")
+        self.list_for([(self.a, "full"), (self.b, "none")], 2)                      # b now gives nothing to a
+        self.assertEqual(self.b.tickets.confirm(res["handle"], SOURCE)["result"], "refused")
+
+    def test_the_switch_turned_off_while_the_call_was_in_flight_is_not_undone(self):
+        self.pair()
+        out, secret = self.ask(self.a, self.device(self.a))
+        real = self.b.peers.call_once
+
+        def then_off(node_id, path, body):
+            answer = real(node_id, path, body)
+            self.b.handover.set_accepting(False)                                   # the Owner switches it off while a was answering
+            return answer
+        self.b.peers.call_once = then_off
+        res = self.go(out, secret)
+        self.b.peers.call_once = real
+        self.assertEqual(res["result"], "refused")
+        self.assertIn("does not take devices from other nodes", res["sentence"])
+        self.assertEqual(self.carried(self.b), [])
+
+    def test_a_peer_certificate_is_judged_for_both_ends_of_its_dates_only_while_the_clock_is_trusted(self):
+        from pvj import fleetlist as FL
+        self.pair()
+        der = FL.certificate_der(self.a.cert_pem)
+        info = T.peer_mod.httpsbox.read_certificate(der)
+        peers = self.b.peers
+        peers.wall = lambda: info["not_before"] - 86400
+        self.b.trusted = False
+        self.assertEqual(peers.authenticate(der, "10.0.0.1"), self.a.key)           # a wrong clock: not judged
+        self.b.trusted = True
+        with self.assertRaises(T.peer_mod.PeerError) as cm:
+            peers.authenticate(der, "10.0.0.1")
+        self.assertIn("not valid yet", cm.exception.message)
+        peers.wall = lambda: info["not_after"] + 86400
+        with self.assertRaises(T.peer_mod.PeerError) as cm:
+            peers.authenticate(der, "10.0.0.2")
+        self.assertIn("run out", cm.exception.message)
+        peers.wall = lambda: info["not_before"] + 60
+        self.assertEqual(peers.authenticate(der, "10.0.0.3"), self.a.key)
+
+    def test_an_odd_certificate_is_a_403_not_a_crash(self):
+        for der in (b"", b"\x30\x03\x02\x01", b"\x30\x84\xff\xff\xff\xff" + b"x" * 20, b"not a certificate at all", "text"):
+            with self.assertRaises(T.peer_mod.PeerError) as cm:
+                self.b.peers.authenticate(der, "10.0.0.%d" % (len(str(der)) % 200))
+            self.assertEqual(cm.exception.status, 403)
 
     def test_b_does_not_retry_after_the_call_failed_the_ticket_is_probably_spent(self):
         self.pair()

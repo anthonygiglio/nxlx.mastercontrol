@@ -680,16 +680,19 @@ class Auth:
                 raise
         return token, self._public(device)
 
-    def add_node_device(self, name, role, node_id, device_id):
+    def add_node_device(self, name, role, node_id, device_id, allowed=None):
         """A device carried here from another node (D132, design 4): the record of an ordinary device of this node (its own
         token, made over https, so `secure`), with `via` "node" and `from` {node, device}. The same device of the same
         node tapping Open again gets the SAME record with a new token (matched by the two ids); a record from a different
         device of that node is a new one, at most NODE_DEVICES_PER_SOURCE per source node. They count in the shared pool
-        beside guests. Returns (token, public record)."""
+        beside guests. `allowed()` is asked under the settings lock, at the moment the record is written, so a switch turned off
+        while a hand-over was in flight is not undone. Returns (token, public record)."""
         if role not in ("live", "full"):
             raise AuthError("only an Operator or an Owner is carried from another node")
         token = secrets.token_urlsafe(24)
         with self.settings.lock:
+            if allowed is not None and not allowed():
+                raise AuthError("this node does not take devices from other nodes")
             devices = self.settings.data["devices"]
             for d in devices:
                 if d.get("via") == "node" and d.get("from") == {"node": node_id, "device": device_id}:

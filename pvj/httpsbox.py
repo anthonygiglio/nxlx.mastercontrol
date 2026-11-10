@@ -40,7 +40,7 @@ WARN_DAYS = 30
 MAX_NAMES = 12
 OID_CN, OID_SAN, OID_EKU, OID_BASIC = "2.5.4.3", "2.5.29.17", "2.5.29.37", "2.5.29.19"
 OID_SERVER_AUTH, OID_CLIENT_AUTH = "1.3.6.1.5.5.7.3.1", "1.3.6.1.5.5.7.3.2"
-NO_CHECK_TIME = 0x200000000        # OpenSSL's X509_V_FLAG_NO_CHECK_TIME: a 64-bit flag, so a 32-bit build cannot set it
+NO_CHECK_TIME = 0x200000           # OpenSSL's X509_V_FLAG_NO_CHECK_TIME (bit 21, x509_vfy.h)
 SETTINGS_KEY = "https"                 # {"owner_only": bool, "names": [extra names for the request]}; no schema change (D79)
 OPEN_WHILE_OWNER_ONLY = {"/api/hello", "/api/logout", "/api/https", "/api/https/probe"}   # a panel can still explain and log out
 RENEWAL_ROUTES = {"/api/https/request.csr", "/api/https/certificate"}     # open over plain http to a paired owner once the certificate has run out
@@ -582,7 +582,7 @@ class HttpsBox:
                 try:
                     ctx.verify_flags |= NO_CHECK_TIME
                 except (OverflowError, ValueError, ssl.SSLError):
-                    pass                      # a library that cannot leave the dates out judges them (a 32-bit build): a wrong clock then refuses a peer
+                    pass                      # a library that will not take the flag judges the dates itself: a wrong clock then refuses a peer
                 ctx.load_cert_chain(self.path(CERT), self.path(KEY))
             except (ssl.SSLError, OSError, ValueError):
                 return None

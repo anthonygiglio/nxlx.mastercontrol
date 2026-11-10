@@ -32,6 +32,8 @@ from .handover import carried_role
 TICKET_SECONDS = 60
 MAX_TICKETS = 64
 TICKETS_PER_MINUTE = 6          # per device
+FORM_ATTEMPTS = 6               # forms one source address may post to /handover in a minute, good or bad (B)
+PEER_REDEEM_FAILS = 20          # refused redeems a minute from one approved peer, counted against that peer only (A)
 PENDING_SECONDS = 120
 MAX_PENDING = 8
 NAMES = {"view": "Guest", "live": "Operator", "full": "Owner"}
@@ -68,18 +70,27 @@ class Tickets:
         self._tickets = {}                                  # hash of the ticket -> entry (memory only)
         self._device_asks = {}                              # device id -> deque of times a ticket was made
         self._pending = collections.OrderedDict()           # handle -> a carried device waiting for the confirm page
-        self._fail_node = peer_mod.Throttle(peer_mod.NODE_FAILS, peer_mod.FAIL_WINDOW, now)
-        self._fail_source = peer_mod.Buckets(peer_mod.SOURCE_FAILS, now)
+        # Four counters that never touch each other, and none of them is node-wide: whoever is on the network can post junk, and
+        # junk must not stop a real hand-over from another device, nor this node's own role as the node that answers.
+        self._a_source = peer_mod.Buckets(peer_mod.SOURCE_FAILS, now)         # A: redeems that failed, from callers that are not approved (by address)
+        self._a_peer = peer_mod.Buckets(PEER_REDEEM_FAILS, now)               # A: redeems an approved peer had refused (by that peer's key)
+        self._b_source = peer_mod.Buckets(peer_mod.SOURCE_FAILS, now)         # B: forms that failed (by address)
+        self._b_attempts = peer_mod.Buckets(FORM_ATTEMPTS, now)               # B: forms posted, whatever came of them (by address), before A is called
 
-    # -- throttles: failures count, attempts do not (design 7) --
-    def _blocked(self, source):
+    def _over(self, buckets, key):
         with self.lock:
-            return self._fail_node.over() or self._fail_source.over(source)
+            return buckets.over(key)
+
+    def _hit(self, buckets, key):
+        with self.lock:
+            buckets.get(key).count()
+
+    def _b_blocked(self, source):
+        return self._over(self._b_source, source) or self._over(self._b_attempts, source)
 
     def _fail(self, source):
-        with self.lock:
-            self._fail_node.count()
-            self._fail_source.get(source).count()
+        """A failure at B, charged to the sender's address only."""
+        self._hit(self._b_source, source)
 
     # ------------------------------------------------------------------------------------------------------------------
     # Node A: making a ticket
@@ -166,31 +177,39 @@ class Tickets:
         (the caller is proved). The ticket is taken out of the table first, under the lock, whether or not the rest passes. Raises
         TicketError; answers {"v", "name", "device", "role", "origin", "node"}."""
         h = self.handover
-        if self._blocked(source):
-            raise TicketError("too many calls have failed lately: wait a minute", 429)
         need = {"ticket", "secret", "to", "key", "serial"}
         ok = isinstance(body, dict) and set(body) == need and isinstance(body["ticket"], str) and _TICKET.fullmatch(body["ticket"]) \
             and isinstance(body["secret"], str) and _SECRET.fullmatch(body["secret"]) and isinstance(body["to"], str) \
             and fleetlist.ID_WORD.fullmatch(body["to"]) and isinstance(body["key"], str) and fleetlist.KEY_WORD.fullmatch(body["key"]) \
             and (body["serial"] == "pairing" or (isinstance(body["serial"], int) and not isinstance(body["serial"], bool) and body["serial"] >= 1))
+        # An approved peer's refusals are counted against that peer alone; anything else against the sender's address alone.
+        peer = caller_key if ok and h.approved(body["to"], caller_key) is not None else None
+
+        def failed():
+            if peer is not None:
+                self._hit(self._a_peer, peer)
+            else:
+                self._hit(self._a_source, source)
+        if (peer is not None and self._over(self._a_peer, peer)) or (peer is None and self._over(self._a_source, source)):
+            raise TicketError("too many calls have failed lately: wait a minute", 429)
         if not ok:
-            self._fail(source)
+            failed()
             raise TicketError("not a redeem call", 400)
         with self.lock:                                     # the look-up and the delete are one step: two calls cannot both win
             entry = self._tickets.pop(_hash(body["ticket"]), None)
             late = entry is not None and entry["end"] <= self.now()
         if entry is None:
-            self._fail(source)
+            failed()
             raise TicketError("that ticket is not good", 403)
         if late:
             self._say_redeem(entry, "the ticket had ended")
             raise TicketError("the ticket had ended", 403)
         if entry["to"] != body["to"] or entry["key"] != caller_key or body["key"] != caller_key:
-            self._fail(source)
+            failed()
             self._say_redeem(entry, "it was asked for by another node than the one it was made for")
             raise TicketError("that ticket is for another node", 403)
         if h.approved(entry["to"], caller_key) is None:
-            self._fail(source)
+            failed()
             self._say_redeem(entry, "that node is not approved")
             raise TicketError("that node is not approved", 403)
         lst = h.list
@@ -199,7 +218,7 @@ class Tickets:
             self._say_redeem(entry, "that node holds an older fleet list")
             raise TicketError("that node holds an older fleet list (serial %d, this node has %d)" % (body["serial"], mine), 409)
         if not hmac.compare_digest(proof_of(body["secret"]), entry["proof"]):
-            self._fail(source)
+            failed()
             self._say_redeem(entry, "the secret did not match")
             raise TicketError("that ticket is not good", 403)
         stored = self.auth.device(entry["device"])
@@ -232,8 +251,9 @@ class Tickets:
         {"result": "signed-in", "token", "name", "role", "from"}, {"result": "confirm", "handle", "have", "would", "from"} or
         {"result": "refused", "sentence"}. Never raises for a hand-over that fails: the tab ends at the PIN screen with the sentence."""
         h = self.handover
-        if self._blocked(source):
+        if self._b_blocked(source):
             return {"result": "refused", "sentence": "too many hand-overs have failed lately: wait a minute, or use the PIN"}
+        self._hit(self._b_attempts, source)                 # an attempt counts, before anything is called
         if not h.accepting():
             return self._refused(None, "this node does not take devices from other nodes")
         ok = isinstance(fields, dict) and set(fields) == {"ticket", "secret", "from"} and all(isinstance(v, str) for v in fields.values()) \
@@ -284,7 +304,7 @@ class Tickets:
 
     def _sign_in(self, label, role, frm, device_id, node_name, plain_name):
         try:
-            token, record = self.auth.add_node_device(label, role, frm, device_id)
+            token, record = self.auth.add_node_device(label, role, frm, device_id, allowed=self.handover.accepting)
         except AuthError as e:
             return self._refused(node_name, str(e))
         self.event("handover", "%s (%s) signed in from %s." % (plain_name, NAMES[role], node_name), record["name"])
@@ -304,8 +324,9 @@ class Tickets:
 
     def confirm(self, handle, source):
         """The person pressed Switch: the pending hand-over becomes a record. Once only; refused after PENDING_SECONDS."""
-        if self._blocked(source):
+        if self._b_blocked(source):
             return {"result": "refused", "sentence": "too many hand-overs have failed lately: wait a minute, or use the PIN"}
+        self._hit(self._b_attempts, source)
         with self.lock:
             entry = self._pending.pop(handle, None) if isinstance(handle, str) else None
             late = entry is not None and entry["end"] <= self.now()
@@ -313,8 +334,13 @@ class Tickets:
             return self._refused(None, "that switch has run out: tap Open on the other node again", None if late else source)
         if not self.handover.accepting():
             return self._refused(entry["node"], "this node does not take devices from other nodes")
+        h = self.handover
+        approved = [a for a in (h.approved(entry["from"], k) for k in h.expected_keys(entry["from"])) if a is not None]
+        role = carried_role(entry["role"], approved[0]["carry"]) if approved else None      # still approved, not denied, still giving something
+        if role is None:
+            return self._refused(entry["node"], "%s is no longer approved here" % entry["node"])
         plain = entry["label"].rsplit(", via ", 1)[0]
-        return self._sign_in(entry["label"], entry["role"], entry["from"], entry["device"], entry["node"], plain)
+        return self._sign_in(entry["label"], role, entry["from"], entry["device"], entry["node"], plain)
 
 
 def _rank(role):
