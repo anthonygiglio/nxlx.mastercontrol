@@ -674,6 +674,7 @@ static void quad(void)
 
 static void reset_gl(void);
 void gl_reset(void) { reset_gl(); }
+void gl_quad(void) { quad(); }
 
 static void reset_gl(void)
 {
@@ -821,6 +822,8 @@ static void final_pass(GLuint target, int target_h, int w, int h, GLuint picture
         glUniform1f(loc_scale_level, level);
     }
     quad();
+    // the graphics (D129): over the picture, after the mapping, under the text layer (the masks and the pairing codes stay on top)
+    gfx_draw();
     if (text_on) {
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, text.tex);
@@ -1073,6 +1076,7 @@ int main(int argc, char **argv)
     mix_fbo = mixer.fbo;
     app.fx_fps = cfg.fx_fps;
     fx_init();
+    gfx_init();
 
     // Both video layers are started now; the second plays nothing until a crossfade loads it (an idle libmpv core
     // decodes nothing and is not drawn: its cost is its threads asleep and a few megabytes).
@@ -1138,6 +1142,7 @@ int main(int argc, char **argv)
         if (quit) break;
         if (app.hook_pending) take_hook();
         fx_take();
+        gfx_take();
         Layer *front = &video[fi], *back = &video[1 - fi];
         int fresh = 0;                                      // source 1's picture is new this frame (D106)
 #ifdef PVJ_RENDER_TEST_HOOKS
@@ -1287,6 +1292,7 @@ int main(int argc, char **argv)
         // The fade ended in this turn: the outgoing layer's generator goes with its clip (its GL objects are freed here, on
         // this thread, after its last picture was mixed). Its picture is not read again: the mix has been drawn.
         if (ended) fx_layer_end(1 - fi);
+        gfx_frame(now_s());                                 // the graphics' look for this frame (D129)
         int draw_w, draw_h;
         out_draw_size(&draw_w, &draw_h);                    // this frame's size, whole: it goes out with the plane's for it (D108)
         final_pass(out_target(), app.out_h, draw_w, draw_h, picture, text_on, level);
@@ -1352,6 +1358,7 @@ int main(int argc, char **argv)
     ipc_close();
     if (have_hook) hookgl_free(&hook_gl);
     fx_free_all();
+    gfx_free_all();
     shot_free();
     layer_close(&text);
     for (int i = nlayers - 1; i >= 0; i--) layer_close(&video[i]);

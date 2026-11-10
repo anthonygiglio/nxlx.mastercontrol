@@ -8,7 +8,8 @@ body {
   -webkit-tap-highlight-color: transparent; touch-action: manipulation;
 }
 button, input, select { font: inherit; color: inherit; }
-button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid var(--ac); outline-offset: 2px; }
+/* (every control the keyboard reaches has the same ring: dropdowns, folds and text boxes as well, not the browser's own) */
+button:focus-visible, input:focus-visible, a:focus-visible, select:focus-visible, summary:focus-visible, textarea:focus-visible { outline: 3px solid var(--ac); outline-offset: 2px; }
 .k { font: 500 11px ui-monospace, "SF Mono", Menlo, Consolas, monospace; letter-spacing: .08em; text-transform: uppercase; color: var(--mu); }
 .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
 
@@ -255,7 +256,7 @@ details.fold { display: block; }
 @media (prefers-reduced-motion: no-preference) { .switch::after { transition: left .12s ease-out; } }
 .confirm { flex: 1 1 100%; display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1.5px solid #b00020; border-radius: 6px; background: var(--cd); font-weight: 600; font-size: 14px; }
 .btn.danger { background: #b00020; border-color: #b00020; color: #fff; }
-.danger-h { margin: 8px 0 0; font-size: 15px; color: #d32f4a; grid-column: 1 / -1; }
+.danger-h { margin: 8px 0 0; font-size: 15px; color: var(--ac); grid-column: 1 / -1; }      /* (as the other error lines: the look's own colour, which reads on its page; a fixed red was 3.8:1 on Dark stage) */
 #sysstate .hint { min-width: 0; }
 
 /* Live: the Vibes button is the big one, full width on a phone; under it the shader before and the next one, the set
@@ -751,12 +752,14 @@ main.ws:focus, .deskcol:focus { outline: none; }
 @container app (min-width: 940px) { .tp .fold.f-loop { order: 0; } .tp:not(.open) .fold.f-loop { display: inline-block; } }
 @container app (min-width: 1080px) { .tp .fold.f-speed { order: 0; } .tp:not(.open) .fold.f-speed { display: flex; } }
 @container app (min-width: 1280px) { .tp .fold.f-fades { order: 0; } .tp:not(.open) .fold.f-fades { display: inline-block; } }
-@container app (min-width: 1440px) { .tp .fold.f-ten { order: 0; } .tp:not(.open) .fold.f-ten { display: inline-block; } }
-/* (from 1440 px the line is at its fullest until the place in the clip joins it: it gives a little everywhere) */
-@container app (min-width: 1440px) and (max-width: 1639px) { .tp { column-gap: 6px; } .tp .tpb { padding: 0 8px; } }
-/* (from 1440 px every button is on the line and nothing is left for More; from 1640 px the place in the clip is on
+/* (back and forward 10 s from 1400 px, not 1440 (PROPOSALS 8): a 1440 window on Windows gives the panel 1425 px, its
+   classic scrollbar taking 15, and a Mac at 1440 showed every control where Windows kept More) */
+@container app (min-width: 1400px) { .tp .fold.f-ten { order: 0; } .tp:not(.open) .fold.f-ten { display: inline-block; } }
+/* (from 1400 px the line is at its fullest until the place in the clip joins it: it gives a little everywhere) */
+@container app (min-width: 1400px) and (max-width: 1639px) { .tp { column-gap: 6px; } .tp .tpb { padding: 0 8px; } }
+/* (from 1400 px every button is on the line and nothing is left for More; from 1640 px the place in the clip is on
    the line as well, a slider like the others) */
-@container app (min-width: 1440px) { .tp .tpmore { display: none; } }
+@container app (min-width: 1400px) { .tp .tpmore { display: none; } }
 /* A desk, from 1200 px of panel (D72): the columns of the area that is built stand side by side, all of them
    equally live, each under its name. 1200 px is where the narrowest column is no narrower than a phone: beside the
    96 px rail the workspace has 1104 px, and its columns come to 344, 345 and 414 px in Play, 453, 325 and 325 px
@@ -944,6 +947,10 @@ html { scroll-padding-top: calc(var(--head, 0px) + var(--sub, 0px)); scroll-padd
 .graphicitem .gfxframe { max-width: 560px; }
 .graphicitem > .row.wrap { justify-content: flex-start; }
 textarea.gfxtext { font: inherit; color: inherit; padding: 8px 10px; }
+/* motion (slice 3): the kinds wrap on a phone; the sliders under them are the cards they always are */
+.gfxmotion { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.gfxmotion .seg .segbtn { min-width: 5.5rem; }
+.gfxmotion .seg .segbtn:disabled { opacity: .5; cursor: not-allowed; }
 
 /* ==== STYLE: signal ==================================================================================================
    Everything from here to the end of the file belongs to the style "signal" (D54) and applies only while the root
@@ -992,6 +999,8 @@ html[data-style="signal"] .ctlnote.pending { color: var(--ink); }
 html[data-style="signal"] button:focus-visible, html[data-style="signal"] input:focus-visible, html[data-style="signal"] a:focus-visible, html[data-style="signal"] select:focus-visible, html[data-style="signal"] summary:focus-visible, html[data-style="signal"] .xypad:focus-visible, html[data-style="signal"] canvas.mapcanvas:focus-visible, html[data-style="signal"] .ctl:focus-visible {
   outline: 3px solid var(--ink); outline-offset: 2px;
 }
+/* (on the title bar, which is the area's colour, the ring is the bar's ink: in the area's colour it could not be seen) */
+html[data-style="signal"] .wshead :focus-visible { outline-color: var(--on); }
 
 /* -- the title block: the area's colour, full width, the screen's name in very large capitals -- */
 html[data-style="signal"] .screen { gap: 16px; }
@@ -1464,6 +1473,8 @@ html[data-style="signal"] .deskcol > .screen > .syshead:first-child, html[data-s
    area's colour where it reads as a line (--ink); and a shadow cast up over the screen that scrolls under it. The area tabs under
    it on a phone keep the page colour. As in the Figma kit. */
 html[data-style="signal"] .wsdock { border-top: var(--rule) solid var(--ink); box-shadow: 0 -10px 24px rgba(0, 0, 0, .55); }
+/* (on a light page that shadow was a grey band over what scrolls under the strip: a short, soft one there) */
+html[data-style="signal"][data-tone="light"] .wsdock { box-shadow: 0 -4px 12px rgba(0, 0, 0, .12); }
 /* (2026-11-08, his next word: "a slight colour tint, matched to the main page the user is on, but i may want just a
    single colour"): the surface tinted with the area's colour; a theme can give the strip one colour of its own
    in --tk-strip. Its buttons are in capitals ("make all the buttons in the bottom banner all caps, but do not
@@ -1550,6 +1561,7 @@ html[data-style="signal"] .wshead .nodespop { background: var(--bg); color: var(
 
 /* Graphics in Signal (the layout is before this block, for every look): the ink rule, edges and colours. */
 html[data-style="signal"] .graphicitem { border-top: var(--rule, 3px) solid var(--fg); }
+html[data-style="signal"] .gfxmotion .seg .segbtn:disabled { opacity: .5; cursor: not-allowed; text-decoration: line-through; }
 html[data-style="signal"] .state.err { color: var(--err); }
 html[data-style="signal"] .gfxswatch { border: var(--rule, 2px) solid var(--fg); border-radius: 0; }
 html[data-style="signal"] .gfxframe, html[data-style="signal"] .logothumb { border: var(--rule, 2px) solid var(--fg); border-radius: 0; }
@@ -1567,8 +1579,10 @@ html[data-style="signal"] .gfxframe, html[data-style="signal"] .logothumb { bord
     .setupdesk > .deskcol.ix { top: calc(var(--head, 0px) + var(--sub, 0px)); max-height: calc(100dvh - var(--head, 0px) - var(--sub, 0px) - var(--dock, 120px)); overscroll-behavior: contain; }
     /* inside a column that scrolls, what stuck below the title bar sticks to the top of its column */
     .deskcol .col-lib, .deskcol .splitside, .deskcol .maptools { top: 0; }
-    /* and the name of each column stays at its top while it scrolls, on a band of the page colour across the column */
-    .desk:not([data-cols="1"]) > .deskcol > .deskhead { position: sticky; top: 16px; z-index: 3;
+    /* and the name of each column stays at its top while it scrolls, on a band of the page colour across the column
+       (only a column that scrolls: Room keeps Scenes and Guests in the page, where a stuck name and its band
+       covered the Walls column beside them) */
+    .desk:not([data-cols="1"]) > .deskcol:not([data-col="scenes"]):not([data-col="guests"]) > .deskhead { position: sticky; top: 16px; z-index: 3;
       box-shadow: 0 0 0 100vmax var(--bg); clip-path: inset(-16px -100vmax -10px -100vmax); }
   }
   @container ws (min-width: 1100px) {
