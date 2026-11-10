@@ -1,5 +1,11 @@
 <!-- SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
      SPDX-License-Identifier: Apache-2.0 -->
+## 2026-11-09, Slice 3 review fixes
+
+- **Why.** The independent review of PR 268 found two Highs and some Mediums and Lows; the trust core held.
+- **What.** H1: two separate budgets. Junk sent to a node is charged to its sender's address only; this node's own failed calls count node-wide and per target (address and port); the Owner's look and accept and good hellos are never stopped by a flood. H2: the certificate may name the address or the `.local` name the Nodes list announced; the key hash from the list is still the binding. M1: the caller's signed list goes with the hello and the answerer takes it through `take_list` (two tries a minute per sender); being ahead is not a failure. M2/M3: peers may fill 192 of the 256 deny rows and give 64 an hour each; names from peers are cleaned; floods are an event and a status line; answers with the list or denies and the pulls a sender can start are capped per sender. M4 and the plan to authenticate callers in 4a are in design section 18. New node certificates carry clientAuth too (the two existing ones need signing again before 4a). Lows: bad answers are filed under the target that gave them; the 6 s budget spans addresses; the tables are keyed with the port and drop the least recently hit; a failed peer check writes an event; `unknown_calls` is under the lock.
+- **Checked.** The harness now uses a root with the production name constraints, runs pulls in threads as production does, and keeps its servers quiet. New tests for each point, with no assertions on private counters.
+
 ## 2026-11-09, Node hand-over slice 3: the peer channel
 
 - **Why.** D132, slice 3: one node talking to another it approves, with the checks of design 3.2, before any device is signed in. Nothing is deployed and no device is carried yet.

@@ -626,5 +626,56 @@ class Spreading(HandoverBase):
         self.assertEqual(cold.list_text()[0].encode(), body)
 
 
+class Bounds(HandoverBase):
+    """M2: an approved peer can not fill the deny file, so the Owner can still remove a node."""
+
+    def entries(self, n, start=1, name="n"):
+        return [{"key": "%064x" % (start + i), "name": "%s%d" % (name, i)} for i in range(n)]
+
+    def test_one_peer_gives_at_most_so_many_in_an_hour_and_a_flood_is_said(self):
+        added = self.me.take_denies(self.entries(200), "node-03", now=1000.0)
+        self.assertEqual(len(added), hv.PEER_HOURLY)
+        self.assertEqual(self.me.status()["removal_floods"], [{"name": "node-03", "sent": 200, "taken": hv.PEER_HOURLY}])
+        self.assertIn("node-03 sent 200 removals; this node took %d." % hv.PEER_HOURLY, [t for _k, t, _w in self.events.lines])
+        self.assertEqual(self.me.take_denies(self.entries(5, start=1000), "node-03", now=1500.0), [])          # still inside the hour
+        self.assertEqual(len(self.me.take_denies(self.entries(5, start=2000), "node-03", now=1000.0 + 3601)), 5)
+
+    def test_all_peers_together_leave_room_for_the_owners_own_removals(self):
+        for i, peer_name in enumerate(("node-03", "node-04", "node-05", "node-06")):
+            self.me.take_denies(self.entries(64, start=1 + i * 100), peer_name, now=1000.0)
+        rows = self.me.deny_entries()
+        self.assertEqual(sum(1 for r in rows if r.get("peer")), hv.PEER_DENY_CAP)
+        self.assertEqual(len(rows), hv.PEER_DENY_CAP)
+        for i in range(hv.MAX_DENY - hv.PEER_DENY_CAP):                        # the Owner can still remove nodes here
+            self.assertTrue(self.me.deny_add("%064x" % (9000 + i), "local%d" % i, "node-01"))
+        self.assertEqual(len(self.me.deny_entries()), hv.MAX_DENY)
+        cold = self.make(self.cert)
+        cold.load()
+        self.assertEqual(sum(1 for r in cold.deny_entries() if r.get("peer")), hv.PEER_DENY_CAP)       # the mark survives a restart
+
+    def test_a_modest_batch_is_taken_whole_and_is_no_flood(self):
+        self.assertEqual(len(self.me.take_denies(self.entries(hv.FLOOD_BATCH), "node-03", now=1000.0)), hv.FLOOD_BATCH)
+        self.assertEqual(self.me.status()["removal_floods"], [])
+
+    def test_names_from_a_peer_are_cleaned_to_host_names(self):
+        self.me.take_denies([{"key": "5" * 64, "name": "a b<script>\n\u202e"}, {"key": "6" * 64, "name": "\u202e\n"}, {"key": "7" * 64, "name": "x" * 500}], "node-03")
+        names = [r["name"] for r in self.me.deny_entries()]
+        self.assertEqual(names[0], "abscript")
+        self.assertEqual(names[1], "node")
+        self.assertEqual(len(names[2]), 63)
+        for n in names:
+            self.assertTrue(FL.NODE_NAME.fullmatch(n), n)
+        self.assertNotIn("\n", "".join(e[1] for e in self.events.lines))
+
+    def test_the_unknown_call_count_is_kept_under_the_lock(self):
+        import threading
+        threads = [threading.Thread(target=lambda: [self.me.count_unknown() for _ in range(500)]) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(self.me.unknown_calls, 2000)
+
+
 if __name__ == "__main__":
     unittest.main()

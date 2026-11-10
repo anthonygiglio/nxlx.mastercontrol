@@ -495,10 +495,9 @@ class PeerRoute(FleetApiBase):
     def test_a_node_that_is_ahead_is_adopted_by_this_node_through_a_pull(self):
         self.pair_lists(serial_a=1, serial_b=4)
         self.directory[B_ID] = [self.b.where]
-        with self.assertRaises(peer_mod.PeerError) as cm:        # b says it holds 4; this node answers that it holds 1, so b refuses it...
-            self.b.peers.hello(ME)
-        self.assertEqual(cm.exception.status, 409)
-        self.assertEqual(self.hv.list.serial, 4)                 # ...and the server asked b back at once and took the list
+        out = self.b.peers.hello(ME)                             # b carries its list in the hello; this node takes it (the signature decides)
+        self.assertEqual(out["serial"], 4)
+        self.assertEqual(self.hv.list.serial, 4)
 
     def test_over_plain_http_and_to_a_get_there_is_no_such_route(self):
         self.pair_lists()
@@ -526,6 +525,15 @@ class PeerRoute(FleetApiBase):
     def test_a_support_session_can_not_reach_the_peer_route_or_the_owners_routes(self):
         from pvj import support as sp
         self.assertTrue(any(p == "/api/fleet" for p in sp.REMOTE_DENY_PREFIX))
+
+    def test_junk_sent_to_the_real_route_does_not_stop_the_owners_look_or_sync(self):
+        self.pair_lists(serial_a=2, serial_b=2)
+        self.directory[B_ID] = [self.b.where]
+        for _ in range(15):
+            self.scall("POST", "/api/fleet/peer", {"nonsense": True})
+        self.assertEqual(self.scall("POST", "/api/fleet/peer", {"nonsense": True})[0], 429)        # the sender is stopped...
+        self.assertEqual(self.scall("POST", "/api/fleet/accepted/look", {"id": B_ID}, token=self.full)[0], 200)      # ...this node is not
+        self.assertEqual(self.scall("POST", "/api/fleet/sync", {}, token=self.full)[1]["nodes"][0]["ok"], True)
 
     def test_sync_reaches_every_approved_node_through_the_real_client(self):
         self.pair_lists(serial_a=2, serial_b=2)

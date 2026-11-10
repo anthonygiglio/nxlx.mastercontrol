@@ -20,7 +20,9 @@ PASS = "correct horse battery"
 
 
 def make_root(exe, folder, name="Test root"):
-    boxcert.make_root(exe, folder, name, ("local",), False, lambda prompt: PASS, lambda *a: None)
+    """A root with the production name constraints (.local names and the private ranges) plus loopback, where the tests listen."""
+    boxcert.make_root(exe, folder, name, ("local",), True, lambda prompt: PASS, lambda *a: None,
+                      ranges=tuple(boxcert.PRIVATE_RANGES) + ("127.0.0.0/255.0.0.0",))
     with open(os.path.join(folder, "root.pem")) as f:
         return f.read()
 
@@ -84,6 +86,7 @@ class PeerNode:
         self.handover.load()
         self.directory = {}
         self.pulls = []
+        self.threads = []
         kw = {}
         if now:
             kw["now"] = now
@@ -96,8 +99,16 @@ class PeerNode:
             self._serve()
 
     def _spawn(self, fn):
+        """A pull runs in a thread of its own, as in production; `settle()` waits for them."""
         self.pulls.append(fn)
-        fn()                                                  # in the test, a pull runs at once
+        t = threading.Thread(target=fn, daemon=True)
+        self.threads.append(t)
+        t.start()
+
+    def settle(self, seconds=10):
+        for t in list(self.threads):
+            t.join(seconds)
+        self.threads = [t for t in self.threads if t.is_alive()]
 
     def reissue(self, work, names, ips):
         """A new request for the SAME key as this node's (a renewal that keeps the key)."""
@@ -153,7 +164,11 @@ class PeerNode:
                 pass
 
         self.card_override = None
-        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        class Quiet(http.server.ThreadingHTTPServer):
+            def handle_error(self, request, client_address):      # a client that walked away mid-handshake is not a test failure
+                pass
+
+        server = Quiet(("127.0.0.1", 0), Handler)
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.load_cert_chain(bundle, self.key_path)
         server.socket = ctx.wrap_socket(server.socket, server_side=True)
@@ -167,6 +182,10 @@ class PeerNode:
     @property
     def where(self):
         return ("127.0.0.1", self.port)
+
+    def named(self, name=None):
+        """The same place as the Nodes list would give it, with the name the node announced."""
+        return ("127.0.0.1", self.port, name or self.name)
 
 
 class Silent:

@@ -23,8 +23,10 @@ status (names, serial, own fingerprint; no key of another node). A factory reset
 import hashlib
 import json
 import os
+import collections
 import re
 import threading
+import time
 
 from . import fleetlist
 from .fleet import stored_on as fleet_stored_on
@@ -33,6 +35,9 @@ LIST_FILE, SIG_FILE, DENY_FILE, PAIRINGS_FILE = "fleet.json", "fleet.sig", "deny
 FILES = (LIST_FILE, SIG_FILE, DENY_FILE, PAIRINGS_FILE)
 MAX_JSON = 65536
 MAX_DENY = 256
+PEER_DENY_CAP = 192              # rows a peer may have put in the deny file; the rest is room for the Owner's own removals
+PEER_HOURLY = 64                 # rows taken from one peer in an hour
+FLOOD_BATCH = 20                 # more new removals than this in one answer is a flood, said in an event and on the status
 MAX_PAIRINGS = fleetlist.MAX_NODES
 ROLE_RANK = {"view": 0, "live": 1, "full": 2}
 CARRY_ROLE = {"none": None, "live": "live", "full": "full"}
@@ -91,6 +96,8 @@ class Handover:
         self.unknown_calls = 0       # peer calls from a node this one does not approve: a count, never a log line
         self.removed = False         # a peer told this node that its own key was removed from the cluster
         self._inputs = None          # (root, own key) when the files on disk were last read, to retry when they change
+        self._taken = {}             # peer name -> times (wall clock) it gave this node a removal, within the hour
+        self.floods = {}             # peer name -> {"sent", "taken"}: a peer that sent a flood of removals
         self.problem = None          # why the files on disk are not in use, for the Owner's status
         self._deny = []
         self._pairings = []
@@ -361,7 +368,10 @@ class Handover:
             for r in rows[:MAX_DENY]:
                 if isinstance(r, dict) and isinstance(r.get("key"), str) and fleetlist.KEY_WORD.fullmatch(r["key"]) \
                         and isinstance(r.get("name"), str) and isinstance(r.get("by"), str) and isinstance(r.get("n"), int):
-                    out.append({"key": r["key"], "name": r["name"][:64], "by": r["by"][:64], "n": r["n"]})
+                    row = {"key": r["key"], "name": r["name"][:64], "by": r["by"][:64], "n": r["n"]}
+                    if r.get("peer") is True:
+                        row["peer"] = True                       # taken from a peer, not made here
+                    out.append(row)
             return out
         except (ValueError, KeyError, TypeError, UnicodeDecodeError):
             self.log("pvj-web: deny.json could not be read and is ignored")
@@ -464,14 +474,25 @@ class Handover:
         with self.lock:
             return [dict(r) for r in self._deny]
 
-    def take_denies(self, entries, by):
+    @staticmethod
+    def _clean_name(name):
+        """A name from a peer, as a host name and nothing else (it is shown to the Owner and goes into the event log)."""
+        text = re.sub(r"[^A-Za-z0-9._-]", "", name)[:63].lstrip("._-")
+        return text if fleetlist.NODE_NAME.fullmatch(text or "") else "node"
+
+    def take_denies(self, entries, by, now=None):
         """Take the denies an approved peer reported. Only additions: nothing here removes an entry, and a peer cannot make
-        this node approve anybody. A deny for this node's own key is not stored; the status says so. Returns the names added."""
+        this node approve anybody. A deny for this node's own key is not stored; the status says so. A peer may fill at most
+        PEER_DENY_CAP rows of the file (the rest is for this node's Owner) and gives at most PEER_HOURLY in an hour; more
+        than FLOOD_BATCH new ones at once, or any it could not take, is an event and a line on the status. Returns the
+        names added."""
         added = []
         if not isinstance(entries, list):
             return added
+        now = time.time() if now is None else now
         with self.lock:
             own = self.own_key()
+            new, seen = [], set(self.denied_keys())
             for e in entries[:MAX_DENY]:
                 if not isinstance(e, dict) or not isinstance(e.get("key"), str) or not fleetlist.KEY_WORD.fullmatch(e["key"]) \
                         or not isinstance(e.get("name"), str):
@@ -479,14 +500,39 @@ class Handover:
                 if e["key"] == own:
                     self.removed = True
                     continue
-                if e["key"] in self.denied_keys() or len(self._deny) >= MAX_DENY:
+                if e["key"] in seen:
                     continue
-                self._deny.append({"key": e["key"], "name": e["name"][:64], "by": str(by)[:64], "n": 1 + max([r["n"] for r in self._deny] or [0])})
-                added.append(e["name"][:64])
+                seen.add(e["key"])
+                new.append(e)
+            if not new:
+                return added
+            window = self._taken.setdefault(str(by), collections.deque())
+            while window and now - window[0] > 3600:
+                window.popleft()
+            room = min(PEER_DENY_CAP - sum(1 for r in self._deny if r.get("peer")), PEER_HOURLY - len(window), MAX_DENY - len(self._deny))
+            for e in new[:max(0, room)]:
+                self._deny.append({"key": e["key"], "name": self._clean_name(e["name"]), "by": str(by)[:64], "peer": True,
+                                   "n": 1 + max([r["n"] for r in self._deny] or [0])})
+                window.append(now)
+                added.append(self._deny[-1]["name"])
             if added:
                 self._save_deny()
+            if len(new) > FLOOD_BATCH or len(added) < len(new):
+                self.floods[str(by)] = {"sent": len(new), "taken": len(added)}
+                self.event("handover", "%s sent %d removals; this node took %d." % (by, len(new), len(added)))
+            elif added:
                 self.event("handover", "%s removed %s from this cluster." % (by, " and ".join(added) if len(added) < 3 else "%s and %d more" % (added[0], len(added) - 1)))
         return added
+
+    def count_unknown(self):
+        with self.lock:
+            self.unknown_calls += 1
+
+    def name_of(self, node_id):
+        """The name this node knows a node by (the list or an acceptance), or None."""
+        with self.lock:
+            cands = self._candidates(node_id)
+            return cands[0][2] if cands else None
 
     def list_text(self):
         """(list text, signature text) of the list in use, for a peer that is behind; None when there is none."""
@@ -519,6 +565,7 @@ class Handover:
                 "accepted": [{"id": r["id"], "name": r["name"], "carry": r["carry"]} for r in self._pairings],
                 "removed": [{"name": r["name"], "by": r["by"]} for r in self._deny],
                 "removed_from_cluster": self.removed,
+                "removal_floods": [{"name": k, "sent": v["sent"], "taken": v["taken"]} for k, v in sorted(self.floods.items())],
                 "unknown_calls": self.unknown_calls,
             }
 

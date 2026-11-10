@@ -249,7 +249,7 @@ def read_cert(exe, path):
 def leaf_config(dns, ips):
     san = ", ".join(["DNS:%s" % d for d in dns] + ["IP:%s" % i for i in ips])
     return "\n".join(["[v3_leaf]", "basicConstraints = CA:FALSE", "keyUsage = critical, digitalSignature",
-                      "extendedKeyUsage = serverAuth", "subjectKeyIdentifier = hash", "authorityKeyIdentifier = keyid",
+                      "extendedKeyUsage = serverAuth, clientAuth", "subjectKeyIdentifier = hash", "authorityKeyIdentifier = keyid",
                       "subjectAltName = " + san]) + "\n"
 
 

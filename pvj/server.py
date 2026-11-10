@@ -774,7 +774,7 @@ def build_handover(api, settings, state, env):
 
     def lookup(node_id):
         view = api.fleet.view() if api.fleet is not None else {}
-        return [(r["address"], r["port"]) for r in view.get("nodes", []) if r.get("id") == node_id and r.get("https")]
+        return [(r["address"], r["port"], r.get("name")) for r in view.get("nodes", []) if r.get("id") == node_id and r.get("https")]
 
     api.peers = peer_mod.Peers(hv, api.https, lookup, log=api.log)
     return hv
