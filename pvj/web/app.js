@@ -93,12 +93,21 @@
     }, function () {
       S.failures++;
       if (S.failures >= 2) offlineBanner.hidden = false;
-      return { ok: false, status: 0, data: { error: 'no connection' } };
+      return { ok: false, status: 0, data: { error: 'no connection to the node' } };
     });
   }
-  function say(text, isErr) { S.msg = text || ''; S.msgErr = !!isErr; var m = document.getElementById('msg'); if (m) { m.textContent = S.msg; m.className = 'msg' + (isErr ? ' err' : ''); } }
+  // An error the node gives is a phrase ("the player is restarting"): where the panel shows one as a line of its
+  // own it begins with a capital, as every line of the panel does
+  function sentence(t) { t = String(t || ''); return t.charAt(0).toUpperCase() + t.slice(1); }
+  function say(text, isErr) { S.msg = isErr ? sentence(text) : (text || ''); S.msgErr = !!isErr; var m = document.getElementById('msg'); if (m) { m.textContent = S.msg; m.className = 'msg' + (isErr ? ' err' : ''); } }
+  // A press the node is slow to answer says so after a moment, in place of whatever the line said before; the answer
+  // (or its error) then takes the line as usual, and a quiet answer clears the waiting words
+  var WAITING = 'Waiting for the node...';
   function act(method, path, body, after) {
+    var slow = setTimeout(function () { say(WAITING); }, 1500);
     return api(method, path, body).then(function (r) {
+      clearTimeout(slow);
+      if (S.msg === WAITING && !S.msgErr) say('');
       if (!r.ok) say(r.data.error || 'Something went wrong', true);
       else if (after) after(r.data);
       return r;
@@ -3081,7 +3090,7 @@
   function playingNow() { var pl = (S.status && S.status.player) || {}; return !!(pl.running && (pl.path || pl.vibes || pl.stream || pl.ndi)); }
   // A result said beside the control that caused it, as well as in the page's message line.
   function sayAt(el, text, isErr) {
-    if (el) { el.textContent = text || ''; el.className = 'msg inmsg' + (isErr ? ' err' : ''); }
+    if (el) { el.textContent = isErr ? sentence(text) : (text || ''); el.className = 'msg inmsg' + (isErr ? ' err' : ''); }
     say(text, isErr);
   }
   function flipSwitch(opts, steps, on, control) {
@@ -5456,7 +5465,7 @@
       fetch('/api/system/settings/import?confirm=import', { method: 'POST', credentials: 'same-origin',
         headers: { 'X-PVJ-Request': '1', 'Content-Type': 'application/json' }, body: f })
         .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, status: r.status, data: j }; }); },
-          function () { return { ok: false, status: 0, data: { error: 'no connection' } }; })
+          function () { return { ok: false, status: 0, data: { error: 'no connection to the node' } }; })
         .then(function (r) {
           if (!r.ok) return sayAt(document.getElementById('importresult'), (r.data.error || 'The import failed (HTTP ' + r.status + ')') + '. Nothing was changed. Choose a settings file this node or another one exported.', true);
           var lines = (r.data.problems || []).map(function (t) { return 'Check: ' + t; }).concat(r.data.notes || []);
