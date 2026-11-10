@@ -14,6 +14,12 @@ from an approved node (a record with `via: node`, made by Auth.add_node_device),
 * what is the Owner's stays the Owner's for a carried Operator and for an Owner whose node gave it only `live`: the switch
   "Accept devices from other nodes", the fleet list, the acceptances, and by name anything that removes or denies a node;
 * a carried device cannot make a ticket for any node (no chaining: a third node asks the home node, not this one);
+* the handler-level proof covers the routes listed in Handlers below (the ones that make permanent access, the Owner-only
+  switch, the ticket, People, GET /api/sound and GET /api/nodes); every other route is proved at the gate only. The records
+  the walk uses come from a node that is on no list: approval is enforced when a ticket is redeemed and by the sweep
+  (pvj/lease.py), not on each request, and other tests cover that (tests/test_ticket.py, tests/test_lease.py);
+* no code outside auth.py, ticket.py, lease.py and handover.py may branch on `via` being "node": a handler that treated
+  carried devices specially would not be seen by the walk, so the source is searched (Decisions);
 * a route without a decision here fails the test: CARRIED below must name every route the server has, so adding one
   means deciding what a carried device gets. A route that is simply the same as a local device of that role says SAME.
 """
@@ -270,6 +276,24 @@ class Decisions(WalkBase):
         self.assertEqual(sorted(k for k, v in CARRIED.items() if v != SAME), [("POST", "/api/handover/ticket")])
         self.assertEqual(set(CARRIED.values()), {SAME, NO_CHAIN})
 
+    def test_nothing_outside_the_four_files_branches_on_a_device_being_carried(self):
+        import glob
+        import os
+        import re
+        pvj_dir = os.path.dirname(policy.__file__)
+        near = re.compile(r"via\W{0,12}[\"']node[\"']|[\"']node[\"']\W{0,12}via|SHARED_VIA")
+        found = []
+        for path in sorted(glob.glob(os.path.join(pvj_dir, "*.py"))):
+            name = os.path.basename(path)
+            if name in ("auth.py", "ticket.py", "lease.py", "handover.py"):
+                continue
+            with open(path, encoding="utf-8") as f:
+                for n, line in enumerate(f, 1):
+                    if near.search(line):
+                        found.append("%s:%d: %s" % (name, n, line.strip()))
+        self.assertEqual(found, [], "a handler treats carried devices specially: the walk cannot see that; decide it in "
+                                    "tests/test_carried_roles.py or move it into auth.py")
+
     def test_the_handover_namespace_is_the_ticket_and_nothing_else_so_a_new_route_there_is_noticed(self):
         """The peer calls (hello, redeem, lease, poke) are on the peer listener, not in the route table (policy.PEER_ONLY)."""
         self.assertEqual(sorted(k for k in self.routes() if k[1].startswith("/api/handover")), [("POST", "/api/handover/ticket")])
@@ -425,6 +449,20 @@ class Handlers(HttpBase):
             self.assertEqual(self.scall("POST", "/api/devices/revoke", {"id": self.victim("full")}, token=token)[0], 403, who)    # never an Owner
             self.assertEqual(self.scall("POST", "/api/devices/revoke", {"id": self.victim("live")}, token=token)[0], 200, who)     # another Operator
             self.assertFalse(any(d["role"] == "full" for d in self.people(token)), who)       # and never sees an Owner
+
+    def test_what_a_handler_shows_a_carried_device_is_what_it_shows_a_local_one_of_that_role(self):
+        pairs = (("local operator", self.operator, "carried operator", self.carry("live", device="aa000001")),
+                 ("local owner", self.owner, "carried owner", self.carry("full", device="aa000002")))
+        for lname, local, cname, carried in pairs:
+            for path in ("/api/sound", "/api/nodes"):
+                ls, lout = self.scall("GET", path, token=local)[:2]
+                cs, cout = self.scall("GET", path, token=carried)[:2]
+                self.assertEqual(ls, cs, (path, lname))
+                self.assertEqual(json.dumps(lout, sort_keys=True), json.dumps(cout, sort_keys=True), (path, cname))
+        st, out = self.scall("GET", "/api/sound", token=self.carry("live", device="aa000003"))[:2]
+        if st == 200:                                       # the addresses are the Owner's to see
+            self.assertEqual(out["config"]["in_hosts"], [])
+        self.assertEqual(self.scall("GET", "/api/nodes", token=self.carry("live", device="aa000004"))[0], 200)
 
     def test_a_carried_device_signs_out_when_it_removes_its_own_way_in_and_cannot_remove_itself_as_an_operator(self):
         token = self.carry("live")
