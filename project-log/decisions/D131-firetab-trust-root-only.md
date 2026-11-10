@@ -12,6 +12,6 @@ The rules:
 
 Why: the tablet is a controller that sits on a wall or a desk and may be handled by staff, so it should not be a way onto the open web, and a lost or tampered link should not be able to move it off the nodes. Using the owner's root, which the nodes already use (HTTPS with his own CA), means no new trust to manage.
 
-Alternatives not taken: trusting the system roots as well as the owner's root (a public site could load, which a kiosk does not need); continuing past certificate errors (a controller would then accept a fake node).
+Alternatives not taken (as the README's design implies; no other option was written down at the time): trusting the system roots as well as the owner's root (a public site could load, which a kiosk does not need); continuing past certificate errors (a controller would then accept a fake node).
 
 Cost and what it rules out: the tablet's clock matters. After a power cut a wrong date makes every certificate look out of date, so the launcher says so in plain words and retries every 30 seconds and when Wi-Fi returns. Other refusals are not retried. Any page the panel needs from the internet would not load; the panel was checked on the device and needs none. The panel must keep using no confirm(), prompt() or alert(), or the launcher is changed first. Source: the launcher repo's README ("How trust works") and commits 2af8a6a and 74cd4f6.
