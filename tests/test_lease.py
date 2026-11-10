@@ -362,27 +362,54 @@ class Restarting(LeaseRig):
         leases2.sweep()
         self.assertIsNone(auth2.authenticate(res["token"]))
 
-    def test_after_a_restart_on_a_clock_that_is_not_trusted_the_age_cannot_be_told_and_starts_again_after_a_wait(self):
-        self.pair()
-        _dev, res, _ = self.carry()                                               # stamped by the monotonic clock of boot-1
-        s2, auth2 = self.reopen(self.b)
-        self.boot = "boot-2"
+    def reboot(self, boot="boot-2", node=None):
+        node = node or self.b
+        s2, auth2 = self.reopen(node)
+        self.boot = boot
         self.clock.t = 50.0                                                       # the monotonic clock started again
-        leases2 = L.Leases(self.b.handover, self.b.peers, auth2, self.b.box, event=self.b.events, now=self.clock, wall=self.wall, boot=lambda: self.boot)
+        return auth2, L.Leases(node.handover, node.peers, auth2, node.box, event=node.events, now=self.clock, wall=self.wall, boot=lambda: self.boot)
+
+    def test_after_a_restart_on_an_untrusted_clock_a_silent_home_node_means_signed_out_at_the_end_of_the_grace(self):
+        self.pair()
+        _dev, res, rec = self.carry()                                             # stamped by the monotonic clock of boot-1
+        auth2, leases2 = self.reboot()
+        self.b.directory[A_ID] = [self.dead().where]                              # the home node does not answer
         leases2.sweep()
         self.assertIsNotNone(auth2.authenticate(res["token"]))
         self.clock.t += L.CLOCK_GRACE - 1
         leases2.sweep()
-        self.assertEqual(auth2.node_records()[0]["lease"]["b"], "boot-1")        # still waiting for the clock
-        self.clock.t += 1
-        leases2.sweep()
-        self.assertEqual(auth2.node_records()[0]["lease"]["b"], "boot-2")        # the 24 hours start again
-        self.clock.t += DAY - 1
-        leases2.sweep()
-        self.assertIsNotNone(auth2.authenticate(res["token"]))
+        self.assertIsNotNone(auth2.authenticate(res["token"]))                    # still waiting for the clock
+        self.assertEqual(auth2.node_records()[0]["lease"], rec["lease"])         # and nothing was written without an answer
         self.clock.t += 1
         leases2.sweep()
         self.assertIsNone(auth2.authenticate(res["token"]))
+        self.assertIn("Anthony iPad, via node-01 was signed out: this node restarted and node-01 has not answered since.", self.said(self.b))
+
+    def test_after_a_restart_a_home_node_that_is_up_renews_at_the_first_tick_and_the_device_stays(self):
+        self.pair()
+        _dev, res, _ = self.carry()
+        auth2, leases2 = self.reboot()
+        leases2.tick()                                                            # asks at once: the answer is the only thing that stamps
+        self.assertEqual(auth2.node_records()[0]["lease"]["b"], "boot-2")
+        self.clock.t += L.CLOCK_GRACE + 100
+        leases2.sweep()
+        self.assertIsNotNone(auth2.authenticate(res["token"]))
+        self.clock.t += DAY - L.CLOCK_GRACE - 101
+        leases2.sweep()
+        self.assertIsNotNone(auth2.authenticate(res["token"]))
+        self.clock.t += L.CLOCK_GRACE + 101
+        leases2.sweep()
+        self.assertIsNone(auth2.authenticate(res["token"]))
+
+    def test_an_empty_boot_id_cannot_tell_one_boot_from_another(self):
+        self.pair()
+        self.boot = ""
+        _dev, res, _ = self.carry()
+        self.b.directory[A_ID] = [self.dead().where]
+        self.clock.t += L.CLOCK_GRACE
+        self.b.leases.started = 0.0
+        self.b.leases.sweep()
+        self.assertFalse(self.alive(res["token"]))
 
     def test_the_home_node_remembers_what_it_lent_across_a_restart(self):
         self.pair()
@@ -523,6 +550,91 @@ class Quiet(LeaseRig):
         self.assertNotIn(rec2["lease"]["h"], text)                                # node A keeps only the hash
         self.assertIn(L._hash(rec2["lease"]["h"]), text)
         self.assertNotIn(rec2["lease"]["h"], self.everything_said())
+
+
+class Review(LeaseRig):
+    def test_a_switch_hand_over_keeps_the_lease_handle_and_the_check_renews_it(self):
+        self.pair()
+        dev = self.device(self.a, role="live")
+        out, secret = self.ask(self.a, dev)
+        res = self.go(out, secret, current_role="full")                         # already an Owner here: the confirm page
+        self.assertEqual(res["result"], "confirm")
+        self.assertEqual(set(res), {"result", "handle", "have", "would", "from"})
+        done = self.b.tickets.confirm(res["handle"], SOURCE)
+        self.assertEqual(done["result"], "signed-in", done)
+        rec = self.record(dev["id"])
+        self.assertRegex(rec["lease"]["h"], r"^[0-9a-f]{32}$")
+        self.assertNotEqual(rec["lease"]["h"], res["handle"])                     # A's handle, not the confirm handle
+        self.assertNotIn(rec["lease"]["h"], json.dumps([res, done]))
+        self.clock.t += 700
+        self.assertTrue(self.b.leases.check_node(A_ID))
+        self.assertTrue(self.alive(done["token"]))
+        self.assertEqual(self.record(dev["id"])["lease"]["m"], 1700.0)
+
+    def test_a_device_that_opened_the_node_again_during_a_check_keeps_its_new_lease(self):
+        self.pair()
+        dev, _res, rec = self.carry()
+        old = rec["lease"]["h"]
+        out, secret = self.ask(self.a, self.a.auth.device(dev["id"]))
+        again = self.go(out, secret)
+        new = self.record(dev["id"])["lease"]
+        self.assertNotEqual(new["h"], old)
+        stale = [{"id": rec["id"], "h": old, "role": "live", "stamp": {"ok": 1, "t": False, "m": 1.0, "b": "x"}}]
+        self.assertEqual(self.b.auth.apply_node_updates(stale), {})              # the check read the record before the re-open: skipped
+        self.assertFalse(self.b.auth.revoke_node_if(rec["id"], old))
+        self.assertEqual(self.record(dev["id"])["lease"], new)
+        self.assertEqual(self.record(dev["id"])["role"], "full")
+        self.assertTrue(self.alive(again["token"]))
+
+    def test_one_check_is_one_save_for_all_the_devices(self):
+        self.pair()
+        for i in range(3):
+            self.carry(name="d%d" % i)
+        saves = []
+        real = self.b.settings.save
+        self.b.settings.save = lambda *a, **k: (saves.append(1), real(*a, **k))[1]
+        self.clock.t += 700
+        self.assertTrue(self.b.leases.check_node(A_ID))
+        self.assertEqual(len(saves), 1)
+
+    def test_a_lowered_role_is_said_once(self):
+        self.pair()
+        dev, _res, _ = self.carry()
+        self.set_role(self.a, dev["id"], "live")
+        self.b.leases.check_node(A_ID)
+        self.b.leases.sweep()
+        self.clock.t += 700
+        self.b.leases.check_node(A_ID)
+        self.b.leases.sweep()
+        self.assertEqual(len([t for t in self.said(self.b) if "was lowered" in t]), 1)
+
+    def test_a_node_that_keeps_poking_while_unreachable_cannot_block_this_nodes_other_calls(self):
+        c = self.node("node-03", C_ID, now=self.clock)
+        self.list_for([(self.a, "full"), (self.b, "full"), (c, "full")])
+        self.b.auth.add_node_device("x, via node-03", "live", C_ID, "ab12", lease=dict(self.b.leases.stamp("1" * 32)))
+        self.b.directory[C_ID] = [self.dead().where for _ in range(4)]            # four addresses, none answers
+        started = []
+        real = self.b.leases.check_node
+        self.b.leases.check_node = lambda node: (started.append(node), real(node))[1]
+        for _ in range(3):
+            self.clock.t += L.POKE_GAP + 1
+            self.b.leases.poked({"from": C_ID, "key": c.key}, c.key, SOURCE)
+        self.assertEqual(len(started), L.POKE_CHECKS_PER_MINUTE)                  # the third waits for the tick
+        self.assertIn(C_ID, self.b.leases._dirty)
+        for _ in range(3):
+            real(C_ID)
+        self.assertEqual(len(self.b.peers._out_node.hits), 0)                     # the node-wide budget was never charged
+        dev, res, _rec = self.carry()                                             # and a hand-over from node-01 still works
+        self.assertTrue(self.alive(res["token"]))
+
+    def test_removing_every_device_paces_its_pokes(self):
+        self.pair()
+        ids = {"%032x" % (i + 1) for i in range(L.OUT_POKES_PER_MINUTE + 10)}
+        self.a.leases.poke(ids)
+        self.assertEqual(len(self.a.leases._out_dirty), 10)                       # the rest wait their turn
+        self.clock.t += 61
+        self.a.leases.tick()
+        self.assertEqual(len(self.a.leases._out_dirty), 0)
 
 
 if __name__ == "__main__":

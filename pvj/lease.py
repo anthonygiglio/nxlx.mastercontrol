@@ -11,7 +11,7 @@ panel or a status.
 * **The check (B asks A).** About every ten minutes B asks A over the peer port, in one call for all the devices it holds
   from A: "is this device still paired, and with what role?". A good answer renews the lease. "Gone" signs the device out
   of B. A lower role (or a lower carry at B) lowers the record; a higher role is ignored (a carried role is never raised,
-  `Auth.update_node_device` enforces it). An answer that is not understood, a refusal and a node that does not answer renew
+  `Auth.apply_node_updates` enforces it, in one save for all the devices of a check). An answer that is not understood, a refusal and a node that does not answer renew
   nothing.
 * **The poke (A tells B).** When A removes a device it had lent, it sends each node it lent it to a poke over the peer port.
   The poke has no authority: B reacts only by asking A, so a forged poke can cause one extra question. It is limited by
@@ -21,9 +21,10 @@ panel or a status.
 * **The lapse.** A carried device stays signed in until 24 hours after its home node last answered (`LEASE_SECONDS`), then
   it is signed out, whether the home node is switched off, unreachable or refuses. The time is measured by the wall clock
   only while it is trusted (`HttpsBox.clock_trusted()`), otherwise by the monotonic clock since boot. A record is stamped
-  with both and the boot it was stamped in. After a restart on an untrusted clock the age cannot be told; for the first
-  `CLOCK_GRACE` seconds the record is neither lapsed nor renewed (the clock may be set from the network), after that its age
-  starts again from zero (stated in the design, section 20).
+  with both and the boot it was stamped in (an empty boot id cannot tell boots apart). After a restart on an untrusted clock
+  the age cannot be told; for the first `CLOCK_GRACE` seconds the record is neither lapsed nor renewed (the clock may be set
+  from the network, and a home node that is up renews at the first tick). If the home node has not answered by then, the
+  device is signed out. The stamp is never rewritten without an answer from the home node (design section 20).
 * **The sweep (no network).** Every tick, and at once when the list, an acceptance or the deny list changes: if the "Accept
   devices from other nodes" switch is off every carried device is signed out; every device from a node that is no longer
   approved (a deny always wins) is signed out; a device whose role is above the carry now is lowered; a lapsed device is
@@ -48,7 +49,9 @@ TICK_EVERY = 30.0               # the worker wakes this often
 CLOCK_GRACE = 600.0             # after a restart on a clock that is not trusted: seconds of uptime to wait before the age starts again
 POKE_GAP = 10.0                 # B: seconds between two checks that pokes started for one node
 OUT_POKE_GAP = 3.0              # A: seconds between two pokes to one node
-POKES_PER_MINUTE = 12           # B: pokes one approved node may send in a minute
+POKE_CHECKS_PER_MINUTE = 2      # B: checks that pokes may start in a minute, for all nodes together (the rest wait for the tick)
+OUT_POKES_PER_MINUTE = 20       # A: pokes this node sends in a minute, for all nodes together (a removal of every device waits its turn)
+POKES_PER_MINUTE = 12        # B: pokes one approved node may send in a minute
 LEASE_CALLS_PER_MINUTE = 30     # A: lease questions one approved node may ask in a minute
 STRANGER_FAILS = 5              # a call from a node this one does not approve: failures a minute, per source address
 MAX_HANDLES = NODE_DEVICES_PER_SOURCE
@@ -99,6 +102,8 @@ class Leases:
         self._poke_allow = peer_mod.Buckets(POKES_PER_MINUTE, now)       # by the approved caller's key
         self._lease_allow = peer_mod.Buckets(LEASE_CALLS_PER_MINUTE, now)  # by the approved caller's key
         self._stranger = peer_mod.Buckets(STRANGER_FAILS, now)           # failures of callers this node does not approve, by address
+        self._poke_checks = peer_mod.Throttle(POKE_CHECKS_PER_MINUTE, 60.0, now)    # B: checks that pokes started, all nodes together
+        self._poke_sent = peer_mod.Throttle(OUT_POKES_PER_MINUTE, 60.0, now)       # A: pokes sent, all nodes together
         self._stop = None
         self._thread = None
 
@@ -146,7 +151,8 @@ class Leases:
         was stamped in (the monotonic clock starts again at boot)."""
         if lease.get("t") is True and self._trusted() and isinstance(lease.get("ok"), int):
             return max(0.0, self.wall() - lease["ok"])
-        if isinstance(lease.get("m"), (int, float)) and (lease.get("b") or "") == (self.boot() or ""):
+        boot = self.boot() or ""
+        if boot and isinstance(lease.get("m"), (int, float)) and lease.get("b") == boot:      # an empty boot id cannot tell one boot from another
             return max(0.0, self.now() - lease["m"])
         return None
 
@@ -210,15 +216,16 @@ class Leases:
             with self.lock:
                 t = self.now()
                 due = [n for n in self._out_dirty if t - self._last_out.get(n, -OUT_POKE_GAP) >= OUT_POKE_GAP]
-                if not due:
+                if not due or self._poke_sent.over():           # a removal of every device waits its turn, a few pokes a tick
                     return
+                self._poke_sent.count()
                 node = due[0]
                 self._out_dirty.discard(node)
                 self._last_out[node] = t
                 if len(self._last_out) > 256:
                     self._last_out.pop(next(iter(self._last_out)))
             try:
-                self.peers.call_once(node, "/api/handover/poke", {"from": own_id, "key": h.own_key()})
+                self.peers.call_once(node, "/api/handover/poke", {"from": own_id, "key": h.own_key()}, budget=False)
             except PeerError as e:
                 if e.status == 429 and not e.refused:           # a call to that node was running: try again at the next tick
                     with self.lock:
@@ -249,10 +256,11 @@ class Leases:
             return {"v": 1}
         with self.lock:
             t = self.now()
-            if t - self._last_poked_check.get(node, -POKE_GAP) < POKE_GAP:
+            if t - self._last_poked_check.get(node, -POKE_GAP) < POKE_GAP or self._poke_checks.over():
                 self._dirty.add(node)                       # the next tick asks
                 return {"v": 1}
             self._last_poked_check[node] = t
+            self._poke_checks.count()                       # at most POKE_CHECKS_PER_MINUTE checks started by pokes, for all nodes together
         self.spawn(lambda: self.check_node(node))
         return {"v": 1}
 
@@ -274,33 +282,34 @@ class Leases:
         return None, None
 
     def _sign_out(self, record, why):
-        if self.auth.revoke(record["id"]):
+        """Sign a carried device out, but only if it still has the lease this decision was made about (a device that opened the
+        node again while the check ran has a new one)."""
+        if self.auth.revoke_node_if(record["id"], (record["lease"] or {}).get("h")):
             self.event("handover", "%s was signed out: %s." % (record["name"], why), record["name"])
 
-    def _renew(self, record, approved, item):
-        """One answer of the home node about one device."""
+    def _lower_events(self, records, approved_by_id, done, why):
+        for r in records:
+            if done.get(r["id"]):
+                new = approved_by_id[r["id"]]
+                self.event("handover", "%s was lowered to %s: %s." % (r["name"], NAMES[new], why(r)), r["name"])
+
+    def _decide(self, record, approved, item):
+        """One answer of the home node about one device: ("out", why), ("keep", role to lower to or None) or None (not understood)."""
         state = item.get("state") if isinstance(item, dict) else None
         name = self._node_name(record)
         if state == "gone":
-            self._sign_out(record, "%s no longer has it paired" % name)
-            return
+            return "out", "%s no longer has it paired" % name
         role = item.get("role") if state == "ok" else None
         if role not in ROLES:
-            return                                          # not understood: nothing is renewed
+            return None                                     # not understood: nothing is renewed
         new = carried_role(role, approved["carry"])
         if new is None:
-            self._sign_out(record, "%s no longer gives it a role that carries to other nodes" % name)
-            return
-        lowered = _rank(new) < _rank(record["role"])
-        lease = dict(record["lease"] or {})
-        lease.update(self.stamp())
-        self.auth.update_node_device(record["id"], role=new if lowered else None, lease=lease)
-        if lowered:
-            self.event("handover", "%s was lowered to %s: %s now gives it that." % (record["name"], NAMES[new], name), record["name"])
+            return "out", "%s no longer gives it a role that carries to other nodes" % name
+        return "keep", new if _rank(new) < _rank(record["role"]) else None
 
     def check_node(self, node_id):
         """Ask the home node about every device carried from it. A good answer renews and follows it downward; no answer renews
-        nothing (the lease runs on until the lapse). Returns True when the node answered."""
+        nothing (the lease runs on until the lapse). One save for all the devices. Returns True when the node answered."""
         records = [r for r in self.auth.node_records() if r["node"] == node_id and r["lease"] and r["lease"].get("h")]
         if not records:
             return False
@@ -312,21 +321,34 @@ class Leases:
         own_id, _ = h.own()
         name = h.name_of(node_id) or self._node_name(records[0])
         try:
+            # per-target budget only: a node that hangs, or keeps poking, cannot use up this node's budget for its other calls
             answer, key = self.peers.call_once(node_id, "/api/handover/lease", {
-                "handles": [r["lease"]["h"] for r in records], "to": own_id, "key": h.own_key()})
+                "handles": [r["lease"]["h"] for r in records], "to": own_id, "key": h.own_key()}, budget=False)
         except PeerError as e:
             if not (e.status == 429 and not e.refused):     # (a call already running is not news)
                 self._unanswered(node_id, name)
             return False
-        _key, approved = self._approval(node_id)
+        approved = h.approved(node_id, key)                 # the node as the key it showed is approved now
         items = answer.get("leases") if isinstance(answer, dict) else None
-        if approved is None or key != _key or not isinstance(items, list) or len(items) != len(records):
+        if approved is None or not isinstance(items, list) or len(items) != len(records):
             self._unanswered(node_id, name)
             return False
         with self.lock:
             self._down.discard(node_id)
+        stamp = self.stamp()
+        changes, lowered_to = [], {}
         for record, item in zip(records, items):
-            self._renew(record, approved, item)
+            decision = self._decide(record, approved, item)
+            if decision is None:
+                continue
+            if decision[0] == "out":
+                self._sign_out(record, decision[1])
+                continue
+            changes.append({"id": record["id"], "h": record["lease"]["h"], "role": decision[1], "stamp": stamp})
+            if decision[1]:
+                lowered_to[record["id"]] = decision[1]
+        done = self.auth.apply_node_updates(changes) if changes else {}
+        self._lower_events(records, lowered_to, done, lambda r: "%s now gives it that" % self._node_name(r))
         return True
 
     def _unanswered(self, node_id, name):
@@ -353,6 +375,7 @@ class Leases:
         total, nodes = 0, {}
         for r in records:
             nodes.setdefault(r["node"], []).append(r)
+        changes, lowered_to, lowered = [], {}, []
         for node_id, group in nodes.items():
             _key, approved = self._approval(node_id) if isinstance(node_id, str) else (None, None)
             if approved is None:                            # not on the list or accepted any more, or denied: a deny always wins
@@ -365,41 +388,41 @@ class Leases:
                     self.event("handover", "Signed out %d device%s carried from %s: that node is no longer approved here." % (
                         gone, "" if gone == 1 else "s", self._node_name(group[0])))
                 continue
-            for r in group:
-                total += self._follow_carry(r, approved)
+            for r in group:                                 # the role never rises; a lower carry now lowers the record, a carry of none ends it
+                new = carried_role(r["role"], approved["carry"])
+                if new is None:
+                    self._sign_out(r, "this node no longer takes devices from %s" % self._node_name(r))
+                    total += 1
+                elif _rank(new) < _rank(r["role"]):
+                    changes.append({"id": r["id"], "h": (r["lease"] or {}).get("h"), "role": new})
+                    lowered_to[r["id"]] = new
+                    lowered.append(r)
+        done = self.auth.apply_node_updates(changes) if changes else {}
+        self._lower_events(lowered, lowered_to, done, lambda r: "this node now gives %s that" % self._node_name(r))
         return total + self._lapse()
 
-    def _follow_carry(self, record, approved):
-        """The role never rises; a lower carry now lowers the record, and a carry of none ends it."""
-        new = carried_role(record["role"], approved["carry"])
-        name = self._node_name(record)
-        if new is None:
-            self._sign_out(record, "this node no longer takes devices from %s" % name)
-            return 1
-        if _rank(new) < _rank(record["role"]):
-            self.auth.update_node_device(record["id"], role=new)
-            self.event("handover", "%s was lowered to %s: this node now gives %s that." % (record["name"], NAMES[new], name), record["name"])
-        return 0
-
     def _lapse(self):
-        """24 hours after the home node last answered, the device is signed out."""
-        gone = 0
+        """24 hours after the home node last answered, the device is signed out. `ok` is never written without an answer from
+        the home node: a record that has none yet (made before leases) is stamped once, and one whose age cannot be told after a
+        restart is signed out when the grace is over and its home node still has not answered."""
+        gone, stamps = 0, []
         for r in self.auth.node_records():
             lease = r["lease"]
             if not lease:                                   # a record made before leases: its 24 hours start now
-                self.auth.update_node_device(r["id"], lease=self.stamp())
+                stamps.append({"id": r["id"], "h": None, "stamp": self.stamp()})
                 continue
             age = self._age(lease)
+            name = self._node_name(r)
             if age is None:
                 if self.now() - self.started < CLOCK_GRACE:
-                    continue                                # the clock may still be set from the network
-                fresh = dict(lease)
-                fresh.update(self.stamp())
-                self.auth.update_node_device(r["id"], lease=fresh)       # untellable: the 24 hours start again (design section 20)
-                continue
-            if age >= LEASE_SECONDS:
-                self._sign_out(r, "%s has not answered for 24 hours" % self._node_name(r))
+                    continue                                # the clock may still be set from the network, or the home node may answer
+                self._sign_out(r, "this node restarted and %s has not answered since" % name)
                 gone += 1
+            elif age >= LEASE_SECONDS:
+                self._sign_out(r, "%s has not answered for 24 hours" % name)
+                gone += 1
+        if stamps:
+            self.auth.apply_node_updates(stamps)
         return gone
 
     # ------------------------------------------------------------------------------------------------------------------

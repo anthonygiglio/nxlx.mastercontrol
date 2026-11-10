@@ -767,6 +767,46 @@ class Auth:
                     return True
         return False
 
+    def apply_node_updates(self, changes):
+        """Several changes to carried devices in ONE save. Each change is {"id", "h", "role", "stamp"}: `h` is the lease handle the
+        caller read the record with; the change is skipped when the record now has another one (the device opened the node again
+        while the check ran, and its fresh lease must not be undone). `role` only ever goes down. `stamp` is merged into the
+        lease (the handle stays). Returns {id: True if the role was lowered} for the changes that were applied."""
+        done = {}
+        with self.settings.lock:
+            for ch in changes:
+                for d in self.settings.data["devices"]:
+                    if d["id"] != ch["id"] or d.get("via") != "node":
+                        continue
+                    if "h" in ch and (d.get("lease") or {}).get("h") != ch["h"]:
+                        break
+                    lowered = False
+                    role = ch.get("role")
+                    if role is not None and role in ROLES and ROLES[role] < ROLES.get(d["role"], 0):
+                        d["role"], lowered = role, True
+                    if ch.get("stamp") is not None:
+                        lease = dict(d.get("lease") or {})
+                        lease.update(ch["stamp"])
+                        d["lease"] = lease
+                    done[d["id"]] = lowered
+                    break
+            if done:
+                self.settings.save()
+        return done
+
+    def revoke_node_if(self, device_id, handle):
+        """Sign out a carried device, but only if its lease handle is still `handle` (None: it has none). Returns True if it went."""
+        with self.settings.lock:
+            keep = [d for d in self.settings.data["devices"]
+                    if not (d["id"] == device_id and d.get("via") == "node" and (d.get("lease") or {}).get("h") == handle)]
+            if len(keep) == len(self.settings.data["devices"]):
+                return False
+            self.settings.data["devices"] = keep
+            self.settings.save()
+        self._addresses.pop(device_id, None)
+        self._revoked(device_id)
+        return True
+
     def lend(self, device_id, node_id, handle_hash):
         """Node A kept a lease for this device on that node (the hash of the handle it gave; one per device and node, a new one
         replaces the old). Stored with the record. Returns False when no device of this node (paired by the PIN or a recovery

@@ -323,15 +323,15 @@ class Tickets:
 
     def _wait(self, label, role, frm, device_id, node_name, have, handle=None):
         """The device is already signed in here as something higher: nothing is changed until the person says so."""
-        handle = secrets.token_hex(16)
+        pending = secrets.token_hex(16)                     # the confirm handle; `handle` stays A's lease handle
         with self.lock:
             t = self.now()
             for k in [k for k, v in self._pending.items() if v["end"] <= t]:
                 del self._pending[k]
             while len(self._pending) >= MAX_PENDING:
                 self._pending.popitem(last=False)
-            self._pending[handle] = {"label": label, "role": role, "from": frm, "device": device_id, "node": node_name, "lease": handle, "end": t + PENDING_SECONDS}
-        return {"result": "confirm", "handle": handle, "have": NAMES[have], "would": NAMES[role], "from": node_name}
+            self._pending[pending] = {"label": label, "role": role, "from": frm, "device": device_id, "node": node_name, "lease": handle, "end": t + PENDING_SECONDS}
+        return {"result": "confirm", "handle": pending, "have": NAMES[have], "would": NAMES[role], "from": node_name}
 
     def confirm(self, handle, source):
         """The person pressed Switch: the pending hand-over becomes a record. Once only; refused after PENDING_SECONDS."""
