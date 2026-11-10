@@ -929,7 +929,14 @@ class LiveEngine(S.Engine):
             table = self.auto_table(cfg)
         if table is None or sid is None:
             return cfg["height"]
-        return auto_lines(sid, table, S.heights_for(self.board()))
+        lines = auto_lines(sid, table, S.heights_for(self.board()))
+        if lines > cfg["height"] and self.native():
+            # The table was measured on the classic player, one shader at a time. The New renderer draws two programs
+            # for the length of a fade, and two shaders at 720 lines hold only about 41 flips a second on a Pi 4
+            # (60 at 540: the fade budget of D130 was set at 540). So there Automatic never goes above the box's one
+            # height (the board's default, 540 on a Pi 4).
+            return cfg["height"]
+        return lines
 
     # -- settings --
     def _saved(self):
