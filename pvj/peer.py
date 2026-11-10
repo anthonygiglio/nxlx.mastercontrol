@@ -50,7 +50,9 @@ MAX_ANSWER = 262144
 MAX_ADDRESSES = 4
 PULL_GAP = 10.0                 # seconds between two pulls from the same node
 MAX_SOURCES = 256
-MAX_CARRIED = 70000             # a list or signature carried in a call, in characters
+MAX_CARRIED = 30000             # a list or signature carried in a call, in characters: with quotes and line breaks escaped, a
+                                # hello stays well under the server's 65536 byte body limit; a longer list is not carried
+                                # (the answer path still brings it to a node that is behind)
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,62}")
 
 
@@ -290,7 +292,7 @@ class Peers:
         lst = h.list
         out = {"from": node_id, "key": h.own_key(), "serial": lst.serial if lst is not None else "pairing", "deny": h.deny_digest()}
         files = h.list_text()
-        if files is not None:                                  # the signed list goes with the call: a peer behind takes it
+        if files is not None and len(files[0]) <= MAX_CARRIED and len(files[1]) <= MAX_CARRIED:      # the signed list goes with the call
             out["list"], out["sig"] = files
         return out
 
@@ -379,7 +381,8 @@ class Peers:
         if isinstance(theirs, int) and "list" in body and "sig" in body and (lst is None or theirs > lst.serial) \
                 and self._spend(self._in_adopt, source):
             try:
-                h.take_list(body["list"].encode("utf-8", "surrogatepass"), body["sig"], source=approved["name"])
+                # nothing proves who is calling until 4a, so the event does not credit the sender
+                h.take_list(body["list"].encode("utf-8", "surrogatepass"), body["sig"], source="a hello claiming %s" % approved["name"])
             except HandoverError:
                 self._fail_in(source)                          # a list that fails the checks is a bad call, charged to its sender
             lst = h.list

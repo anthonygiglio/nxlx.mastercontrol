@@ -1,5 +1,12 @@
 <!-- SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
      SPDX-License-Identifier: Apache-2.0 -->
+## 2026-11-10, A slip in the slice 3 review fixes, put right
+
+- **What went wrong.** Commit 841da3e wrote a stale copy of `tests/test_boxcert_fleet.py` over the file, which silently removed eight passing tests (33 down to 26): `test_the_serial_cannot_start_again_when_the_signed_pair_is_gone`, `test_a_missing_half_of_the_pair_points_to_the_backup_not_to_a_new_list`, `test_a_serial_close_to_the_top_is_refused_in_plain_words`, `test_the_signature_is_written_before_the_list`, `test_replace_key_cannot_take_a_key_another_node_has`, `test_a_certificate_your_root_did_not_sign_is_not_taken_by_add_cert`, `test_a_certificate_from_the_root_that_does_not_cover_the_address_is_refused` and `test_the_tls_context_trusts_exactly_one_root_and_checks_the_name`. It also brought back the duplicate imports and a dead line, and took out a stderr redirect.
+- **Put right.** The file is restored from 8563138 and the new `NodeCertificates` class is added to it; 34 tests. Every test file was then compared by test name against 8563138 and against master: the only tests gone from `tests/test_peer.py` were renamed or replaced on purpose in the rewrite (the budgets, the carried list, the `.local` name check), and no other file lost one.
+- **Lesson.** Do not copy a scratch copy of a test file over the repository's: edit the repository file, and compare test names with `git diff` before a commit.
+- **Also in this commit.** The event for a list taken from a carried hello says "from a hello claiming node-01" (nothing proves the sender until 4a). A list over 30000 characters is not carried in a hello, so a hello stays under the server's body limit. The hourly window per peer is memory only; the 192 row cap survives a restart (design section 18).
+
 ## 2026-11-09, Slice 3 review fixes
 
 - **Why.** The independent review of PR 268 found two Highs and some Mediums and Lows; the trust core held.

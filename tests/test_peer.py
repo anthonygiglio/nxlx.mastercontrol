@@ -235,7 +235,8 @@ class Serials(PeerBase):
         out = self.a.peers.hello(B_ID)                          # no refusal, no second call: the list went with the hello
         self.assertEqual(out["serial"], 5)
         self.assertEqual(self.b.handover.list.serial, 5)
-        self.assertIn(("handover", "The fleet list (serial 5, 2 nodes) was taken from node-01.", None), self.b.events.lines)
+        # nothing proves who sent it until 4a, so the event does not credit node-01
+        self.assertIn(("handover", "The fleet list (serial 5, 2 nodes) was taken from a hello claiming node-01.", None), self.b.events.lines)
         self.assertEqual(self.b.calls, [("POST", "/api/fleet/peer")])
 
     def test_being_ahead_of_a_peer_that_cannot_take_the_list_is_refused_but_never_a_failure(self):
@@ -277,6 +278,22 @@ class Serials(PeerBase):
             self.b.peers.handle_peer(dict(call), "10.0.0.5")
         self.assertEqual(cm.exception.status, 429)
         self.assertEqual(self.b.peers.handle_peer(dict(call, serial=3, list="", sig=""), "10.0.0.6")["serial"], 3)     # another source is fine
+
+    def test_a_list_too_long_to_fit_a_hello_is_not_carried_and_the_hello_still_works(self):
+        self.hold(self.a, 5)
+        self.hold(self.b, 3)
+        self.link()
+        text, sig = self.a.handover.list_text()
+        self.a.handover.list_text = lambda: (text + " " * (peer.MAX_CARRIED + 1), sig)
+        pre = self.a.peers.preamble()
+        self.assertNotIn("list", pre)
+        self.assertNotIn("sig", pre)
+        with self.assertRaises(peer.PeerError) as cm:               # b did not get the list: it is behind, and refused for this call
+            self.a.peers.hello(B_ID)
+        self.assertEqual(cm.exception.status, 409)
+        self.assertEqual(self.b.handover.list.serial, 3)
+        self.a.handover.list_text = lambda: (text, sig)
+        self.assertLessEqual(len(text) + len(sig), 2 * peer.MAX_CARRIED)
 
     def test_a_list_of_another_fleet_carried_in_a_hello_is_not_taken(self):
         self.hold(self.b, 3)
