@@ -717,6 +717,63 @@ function startServer(env) {          // env: more for the harness's environment 
         await page.waitForSelector('#graphic-1-motion');
         for (const k of ['none', 'fade', 'typewriter', 'scroll', 'crawl']) assert(await page.isEnabled('#graphic-1-motion-' + k), k + ' is offered on a node with the New renderer');
         assert.strictEqual(await page.locator('#graphic-1-motionnote').count(), 0, 'and there is no note about steps');
+        // the position selector keeps what is stored through every motion change, and says what a moving one makes of it
+        await page.click('#graphic-1-anchor-tl');
+        await page.waitForFunction(async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].place.anchor === 'tl', null, { timeout: 8000 });
+        await page.click('#graphic-1-motion-crawl');
+        await page.waitForSelector('#graphic-1-speed');
+        assert.strictEqual(await page.getAttribute('#graphic-1-anchor-tl', 'aria-pressed'), 'true', 'the selector still shows the stored place after the motion changed');
+        assert.strictEqual((await get('/api/graphics')).items[0].place.anchor, 'tl');
+        assert(/only the row counts/.test(await page.textContent('#graphic-1-anchorhint')), 'a crawl says that only the row counts');
+        assert(await page.isDisabled('#graphic-1-x') && !(await page.isDisabled('#graphic-1-y')), 'the nudge across does nothing for a crawl, the nudge down does');
+        await page.click('#graphic-1-anchor-br');
+        await page.waitForFunction(async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].place.anchor === 'br', null, { timeout: 8000 });
+        assert.strictEqual(await page.getAttribute('#graphic-1-anchor-br', 'aria-pressed'), 'true');
+        assert.strictEqual(await page.getAttribute('#graphic-1-anchor-tl', 'aria-pressed'), 'false');
+        // a card refresh (a GET) that was asked before a tap and answers after it must not draw the old place again
+        {
+          // (the test looks at the box from outside the page: a look from inside would be held too)
+          const origin = new URL(page.url()).origin;
+          const peek = async () => (await page.request.get(origin + '/api/graphics')).json();
+          const until = async (ok) => { for (let i = 0; i < 160; i++) { if (ok(await peek())) return; await new Promise((r) => setTimeout(r, 50)); } assert.fail('the box did not get there'); };
+          let held = 0, release = null;
+          const gate = new Promise((res) => { release = res; });
+          await page.route('**/api/graphics', async (route) => {
+            if (route.request().method() === 'GET' && held === 0) {
+              held++;
+              const resp = await route.fetch();               // answered now, with the place as it is now ...
+              await gate;                                      // ... and delivered after the next tap
+              await route.fulfill({ response: resp });
+            } else await route.continue();
+          });
+          await page.click('#graphic-1-anchor-tl');
+          await until((g) => g.items[0].place.anchor === 'tl');
+          const wasOn = (await peek()).controllers_text;
+          await page.click('#graphicsctl');                    // its answer is followed by a GET of the card: the one held
+          await page.waitForFunction(() => true);
+          for (let i = 0; i < 100 && held === 0; i++) await new Promise((r) => setTimeout(r, 50));
+          assert.strictEqual(held, 1, 'a refresh of the card was held');
+          await page.click('#graphic-1-anchor-br');
+          await until((g) => g.items[0].place.anchor === 'br');
+          release();
+          await new Promise((r) => setTimeout(r, 2000));
+          assert.strictEqual((await peek()).items[0].place.anchor, 'br');
+          assert.strictEqual(await page.getAttribute('#graphic-1-anchor-br', 'aria-pressed'), 'true', 'the selector shows the last tap, not the older refresh');
+          assert.strictEqual(await page.getAttribute('#graphic-1-anchor-tl', 'aria-pressed'), 'false');
+          await page.unroute('**/api/graphics');
+          if (wasOn !== (await peek()).controllers_text) await page.click('#graphicsctl');    // the Owner's switch as it was
+          await until((g) => g.controllers_text === wasOn);
+        }
+        await page.click('#graphic-1-motion-scroll');
+        await page.waitForFunction(() => { const n = document.getElementById('graphic-1-anchorhint'); return n && /only the column counts/.test(n.textContent); }, null, { timeout: 8000 });
+        assert(/only the column counts/.test(await page.textContent('#graphic-1-anchorhint')));
+        assert(await page.isDisabled('#graphic-1-y') && !(await page.isDisabled('#graphic-1-x')));
+        assert.strictEqual(await page.getAttribute('#graphic-1-anchor-br', 'aria-pressed'), 'true');
+        await page.click('#graphic-1-motion-fade');
+        await page.waitForSelector('#graphic-1-fadein');
+        assert.strictEqual(await page.locator('#graphic-1-anchorhint').count(), 0, 'the note goes with the moving motion');
+        assert(!(await page.isDisabled('#graphic-1-x')) && !(await page.isDisabled('#graphic-1-y')), 'both nudges are back');
+        assert.strictEqual(await page.getAttribute('#graphic-1-anchor-br', 'aria-pressed'), 'true', 'and the place is as it was left');
         await page.click('#graphic-1-motion-crawl');
         await page.waitForSelector('#graphic-1-speed');
         assert.strictEqual(await page.locator('#graphic-1-typetime').count(), 0);

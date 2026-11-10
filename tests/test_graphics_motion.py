@@ -95,9 +95,12 @@ class GpuPathTest(MotionBase):
         self.assertEqual([s[0] for s in new], ["set"], new)
         self.assertEqual((new[0][2]["motion"], new[0][2]["seconds"], new[0][2]["out"]), ("fade", 2.5, 1.0))
         self.assertEqual(len(self.client.jobs), jobs, "no new picture for a new time")
+        n = len(self.sent)
         self.motion(gid, kind="scroll", speed=40, loop=True)
-        last = self.sent[-1][2]
+        new = self.sent[n:]
+        last = [s for s in new if s[0] == "set"][-1][2]
         self.assertEqual((last["motion"], last["speed"], last["loop"]), ("scroll", 40, True))
+        self.assertEqual([s[0] for s in new], ["set", "replay"], "and a scroll chosen on a graphic that is on starts at once (its old clock is past the end)")
         self.assertEqual(len(self.client.jobs), jobs)
 
     def test_a_new_line_on_the_screen_is_a_new_picture_and_plays_the_motion_again(self):
