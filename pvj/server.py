@@ -486,7 +486,7 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
             body, err = self._body()
             if err:
                 return self._json(err[0], {"error": err[1]})
-            if path.startswith("/api/https/"):
+            if path.startswith("/api/https/") or path == "/api/fleet/peer":
                 return self._https_route("POST", path, body)
             if path == "/api/graphics/preview.png":
                 return self._graphics_preview(body)
@@ -506,6 +506,14 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                     if method != "GET":
                         raise ApiError(405, "method not allowed")
                     return self._json(200, {"https": self._secure()})
+                if path == "/api/fleet/peer":               # D132: another node's hello; no authority, over TLS only (pvj/peer.py)
+                    from .peer import PeerError
+                    if method != "POST" or not self._secure() or api.peers is None:
+                        raise ApiError(404, "not found")
+                    try:
+                        return self._json(200, api.peers.handle_peer(body, self.client_address[0]))
+                    except PeerError as e:
+                        raise ApiError(e.status, e.message)
                 if path == "/api/fleet/card":               # D132: the facts mDNS announces and the hash of the public key; over TLS only
                     if method != "GET" or not self._secure():
                         raise ApiError(404, "not found")
@@ -762,6 +770,13 @@ def build_handover(api, settings, state, env):
     hv = handover_mod.Handover(state, api.https, settings, lambda: {"id": own_id, "name": fleet_mod.clean_hostname(socket.gethostname())},
                                event=api.event, log=api.log, openssl=env.get("PVJ_OPENSSL", "openssl"))
     hv.load()
+    from . import peer as peer_mod
+
+    def lookup(node_id):
+        view = api.fleet.view() if api.fleet is not None else {}
+        return [(r["address"], r["port"]) for r in view.get("nodes", []) if r.get("id") == node_id and r.get("https")]
+
+    api.peers = peer_mod.Peers(hv, api.https, lookup, log=api.log)
     return hv
 
 

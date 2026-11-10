@@ -10,13 +10,15 @@ import subprocess
 import unittest
 
 import tests  # noqa: F401  (the tests package, as every test module imports it: tests/test_lockrank.py)
-from pvj import events as events_mod, fleetlist as FL, handover as hv, policy
+from pvj import events as events_mod, fleetlist as FL, handover as hv, peer as peer_mod, policy
+from tests.peerfix import PeerNode, list_data, sign_list
 from tests.test_boxcert import openssls
 from tests.test_https import HttpsBase, PASS, boxcert
 
 ME = "a" * 32
 PEER = {"id": "b" * 32, "name": "leyline", "key": "2" * 64, "carry": "live"}
 THIRD = {"id": "c" * 32, "name": "third", "key": "3" * 64}
+B_ID = "b" * 32
 DENIED = "4" * 64
 
 def fake_screenshot(path, size, with_text):
@@ -30,7 +32,7 @@ def raw(path):
 
 
 ROUTES = [("GET", "/api/fleet"), ("POST", "/api/fleet/accept"), ("POST", "/api/fleet/list"), ("POST", "/api/fleet/accepted"),
-          ("POST", "/api/fleet/accepted/remove")]
+          ("POST", "/api/fleet/accepted/remove"), ("POST", "/api/fleet/accepted/look"), ("POST", "/api/fleet/sync")]
 
 
 @unittest.skipUnless(openssls(), "no openssl on this machine")
@@ -44,6 +46,27 @@ class FleetApiBase(HttpsBase):
         self.hv = hv.Handover(self.tmp, self.box, self.settings, lambda: {"id": ME, "name": "testbox"}, event=self.api.event, log=self.lines.append,
                               openssl=self.exe)
         self.api.handover = self.hv
+        self.directory = {}
+        self.peers = peer_mod.Peers(self.hv, self.box, lambda i: list(self.directory.get(i, [])), log=self.lines.append, spawn=lambda fn: fn())
+        self.api.peers = self.peers
+
+    def workdir(self):
+        self._n = getattr(self, "_n", 0) + 1
+        path = os.path.join(self.tmp, "w%d" % self._n)
+        os.mkdir(path)
+        return path
+
+    def peer_b(self, **kw):
+        """A second node (node-02) with a certificate from this test's root, listening on loopback, and known to this node."""
+        if getattr(self, "_b", None) is None or kw:
+            self._b = PeerNode(self, "node-02", B_ID, self.ca, raw(os.path.join(self.ca, "root.pem")).decode(), self.exe, passphrase=PASS, **kw)
+            self.directory[B_ID] = [self._b.where]
+        return self._b
+
+    def accept_b(self, **kw):
+        b = self.peer_b()
+        body = dict({"id": B_ID, "carry": "live", "typed": hv.fingerprint(b.key)}, **kw)
+        return self.scall("POST", "/api/fleet/accepted", body, token=self.full)[:2]
 
     def said(self):
         """The event log as (kind, text, who)."""
@@ -109,7 +132,7 @@ class Card(FleetApiBase):
         self.assertEqual(self.scall("GET", "/api/fleet/card")[0], 404)
 
     def test_the_card_is_the_one_route_outside_the_gate_besides_the_probe(self):
-        self.assertEqual(sorted(policy.NO_GATE), [("GET", "/api/fleet/card"), ("GET", "/api/https/probe")])
+        self.assertEqual(sorted(policy.NO_GATE), [("GET", "/api/fleet/card"), ("GET", "/api/https/probe"), ("POST", "/api/fleet/peer")])
         for route in ROUTES:
             self.assertNotIn(route, policy.NO_GATE)
 
@@ -290,6 +313,34 @@ class Push(FleetApiBase):
         self.assertIn("nothing is signed", self.errors)
         self.assertIsNone(self.hv.list)
 
+    def test_if_the_logout_fails_the_owner_is_told_which_device_to_remove(self):
+        from pvj.api import ApiError
+        self.with_certificate()
+        self.make_list()
+
+        def broken(body, device, client):
+            raise ApiError(500, "no")
+        self.api.logout = broken
+        self.assertEqual(self.tool("fleet", "push", "127.0.0.1", "--port", str(self.tls_port)), 0, self.errors)
+        said = "\n".join(self.out)
+        self.assertIn('Remove "boxcert push" under People', said)
+        self.assertEqual(said.count('under People'), 1)
+        # the same for a code that pairs less than an Owner: it is refused and the lesser device is logged out, or the owner is told
+        with self.settings.lock:
+            self.settings.data["controller_code"] = {"enabled": True, "owner": False}
+        self.auth.create_controller_code("join")
+        _kind, digits, _ = self.auth.controller_digits()
+        self.out = []
+        self.assertEqual(self.tool("fleet", "push", "127.0.0.1", "--port", str(self.tls_port), pin=digits), 1)
+        self.assertIn("not an Owner", self.errors)
+        self.assertIn('Remove "boxcert push" under People', "\n".join(self.out))
+
+    def test_when_the_logout_works_nothing_more_is_said(self):
+        self.with_certificate()
+        self.make_list()
+        self.assertEqual(self.tool("fleet", "push", "127.0.0.1", "--port", str(self.tls_port)), 0, self.errors)
+        self.assertNotIn("under People", "\n".join(self.out))
+
     def test_a_node_that_is_not_there_is_an_error(self):
         self.with_certificate()
         self.make_list()
@@ -357,33 +408,134 @@ class Switch(FleetApiBase):
 
 
 class Accepted(FleetApiBase):
-    def accept(self, **kw):
-        body = dict({"id": THIRD["id"], "name": "third", "key": THIRD["key"], "carry": "live", "typed": hv.fingerprint(THIRD["key"])}, **kw)
-        return self.scall("POST", "/api/fleet/accepted", body, token=self.full)[:2]
-
-    def test_an_acceptance_needs_the_fingerprint_typed_back(self):
+    def test_an_acceptance_takes_its_key_from_the_nodes_card_and_needs_the_fingerprint_typed_back(self):
         self.with_certificate()
-        st, out = self.accept(typed="0000")
+        b = self.peer_b()
+        st, out = self.accept_b(typed="0000")
         self.assertEqual(st, 400)
         self.assertIn("fingerprint typed does not match", out["error"])
         self.assertFalse(os.path.exists(os.path.join(self.tmp, "pairings.json")))
-        st, out = self.accept()
+        st, out = self.accept_b()
         self.assertEqual(st, 200, out)
-        self.assertEqual(out["accepted"], [{"id": THIRD["id"], "name": "third", "carry": "live"}])
-        self.assertNotIn(THIRD["key"], json.dumps(out))
-        self.assertEqual(self.hv.approved(THIRD["id"], THIRD["key"])["via"], "pairing")
-        for body in ({}, {"id": THIRD["id"]}, {"id": THIRD["id"], "name": "t", "key": THIRD["key"], "carry": "live", "typed": "x", "more": 1}):
+        self.assertEqual(out["accepted"], [{"id": B_ID, "name": "node-02", "carry": "live"}])
+        self.assertNotIn(b.key, json.dumps(out))
+        self.assertEqual(self.hv.approved(B_ID, b.key)["via"], "pairing")
+        self.assertIn(("GET", "/api/fleet/card"), b.calls)
+
+    def test_the_api_takes_no_key_and_no_name_from_the_caller(self):
+        self.with_certificate()
+        b = self.peer_b()
+        for extra in ({"key": b.key}, {"name": "node-02"}, {"key": "9" * 64, "name": "x"}):
+            body = dict({"id": B_ID, "carry": "live", "typed": hv.fingerprint(b.key)}, **extra)
+            self.assertEqual(self.scall("POST", "/api/fleet/accepted", body, token=self.full)[0], 400, extra)
+        for body in ({}, {"id": B_ID}, {"id": "short", "carry": "live", "typed": "x"}):
             self.assertEqual(self.scall("POST", "/api/fleet/accepted", body, token=self.full)[0], 400)
+        self.assertEqual(self.hv.status()["accepted"], [])
+
+    def test_a_card_that_lies_confirms_nothing_even_when_the_lie_is_typed_back(self):
+        self.with_certificate()
+        b = self.peer_b()
+        b.card_override = {"v": 1, "id": B_ID, "name": "node-02", "key": "9" * 64}
+        st, out = self.accept_b(typed=hv.fingerprint("9" * 64))
+        self.assertEqual(st, 502, out)
+        self.assertEqual(self.hv.status()["accepted"], [])
+
+    def test_look_shows_the_fingerprint_to_compare_and_stores_nothing(self):
+        self.with_certificate()
+        b = self.peer_b()
+        st, out = self.scall("POST", "/api/fleet/accepted/look", {"id": B_ID}, token=self.full)[:2]
+        self.assertEqual(st, 200, out)
+        self.assertEqual(out, {"id": B_ID, "name": "node-02", "fingerprint": hv.fingerprint(b.key)})
+        self.assertEqual(self.hv.status()["accepted"], [])
+        self.assertEqual(self.scall("POST", "/api/fleet/accepted/look", {"id": "c" * 32}, token=self.full)[0], 502)      # not on the network
+        self.assertEqual(self.scall("POST", "/api/fleet/accepted/look", {"id": B_ID}, token=self.operator)[0], 403)
 
     def test_removing_an_acceptance_and_who_may_do_it(self):
         self.with_certificate()
-        self.accept()
-        self.assertEqual(self.scall("POST", "/api/fleet/accepted/remove", {"id": THIRD["id"]}, token=self.operator)[0], 403)
-        self.assertIsNotNone(self.hv.approved(THIRD["id"], THIRD["key"]))
-        self.assertEqual(self.scall("POST", "/api/fleet/accepted/remove", {"id": THIRD["id"]}, token=self.full)[0], 200)
-        self.assertIsNone(self.hv.approved(THIRD["id"], THIRD["key"]))
-        self.assertEqual(self.scall("POST", "/api/fleet/accepted/remove", {"id": THIRD["id"]}, token=self.full)[0], 404)
+        b = self.peer_b()
+        self.accept_b()
+        self.assertEqual(self.scall("POST", "/api/fleet/accepted/remove", {"id": B_ID}, token=self.operator)[0], 403)
+        self.assertIsNotNone(self.hv.approved(B_ID, b.key))
+        self.assertEqual(self.scall("POST", "/api/fleet/accepted/remove", {"id": B_ID}, token=self.full)[0], 200)
+        self.assertIsNone(self.hv.approved(B_ID, b.key))
+        self.assertEqual(self.scall("POST", "/api/fleet/accepted/remove", {"id": B_ID}, token=self.full)[0], 404)
         self.assertEqual(self.scall("POST", "/api/fleet/accepted/remove", {}, token=self.full)[0], 400)
+
+
+class PeerRoute(FleetApiBase):
+    """POST /api/fleet/peer on the real TLS listener, called by a second node that uses the real client."""
+
+    def setUp(self):
+        super().setUp()
+        self.with_certificate()
+        self.b = self.peer_b()
+        self.b.directory[ME] = [("127.0.0.1", self.tls_port)]
+
+    def pair_lists(self, serial_a=1, serial_b=1):
+        nodes = [{"id": ME, "name": "testbox", "key": self.hv.own_key(), "carry": "full"},
+                 {"id": B_ID, "name": "node-02", "key": self.b.key, "carry": "full"}]
+        for who, serial in ((self.b, serial_b), (None, serial_a)):
+            data = {"v": 1, "fleet": "0123456789abcdef", "name": "Rig", "serial": serial, "issued": "2026-11-09", "nodes": nodes}
+            body, sig = sign_list(self.exe, self.ca, data, PASS)
+            if who is None:
+                self.assertEqual(self.post_list(body.decode(), sig)[0], 200)
+            else:
+                who.take(body, sig)
+
+    def test_an_approved_node_gets_an_answer_from_the_real_server_and_needs_no_token(self):
+        self.pair_lists()
+        out = self.b.peers.hello(ME)
+        self.assertEqual(out["serial"], 1)
+
+    def test_a_node_that_is_behind_is_sent_the_list_by_the_real_server(self):
+        self.pair_lists(serial_a=3, serial_b=1)
+        self.b.peers.hello(ME)
+        self.assertEqual(self.b.handover.list.serial, 3)
+
+    def test_a_node_that_is_ahead_is_adopted_by_this_node_through_a_pull(self):
+        self.pair_lists(serial_a=1, serial_b=4)
+        self.directory[B_ID] = [self.b.where]
+        with self.assertRaises(peer_mod.PeerError) as cm:        # b says it holds 4; this node answers that it holds 1, so b refuses it...
+            self.b.peers.hello(ME)
+        self.assertEqual(cm.exception.status, 409)
+        self.assertEqual(self.hv.list.serial, 4)                 # ...and the server asked b back at once and took the list
+
+    def test_over_plain_http_and_to_a_get_there_is_no_such_route(self):
+        self.pair_lists()
+        body = {"from": B_ID, "key": self.b.key, "serial": 1, "deny": self.b.handover.deny_digest()}
+        self.assertEqual(self.call("POST", "/api/fleet/peer", body)[0], 404)
+        self.assertEqual(self.scall("GET", "/api/fleet/peer")[0], 404)
+        self.assertEqual(self.scall("POST", "/api/fleet/peer", body)[0], 200)
+
+    def test_an_unknown_caller_is_refused_with_a_count_and_no_log_line_and_the_route_is_throttled_by_failures(self):
+        self.pair_lists()
+        before = len(self.lines)
+        said = len(self.said())
+        body = {"from": "c" * 32, "key": "5" * 64, "serial": 1, "deny": "0" * 16}
+        st, out = self.scall("POST", "/api/fleet/peer", body)[:2]
+        self.assertEqual(st, 403, out)
+        self.assertEqual(self.hv.unknown_calls, 1)
+        self.assertEqual(len(self.said()), said)
+        self.assertEqual(len(self.lines), before)
+        for _ in range(peer_mod.SOURCE_FAILS):
+            self.scall("POST", "/api/fleet/peer", {"nonsense": True})
+        self.assertEqual(self.scall("POST", "/api/fleet/peer", body)[0], 429)
+        good = {"from": B_ID, "key": self.b.key, "serial": 1, "deny": self.b.handover.deny_digest()}
+        self.assertEqual(self.scall("POST", "/api/fleet/peer", good)[0], 429)       # the same source stays stopped for the minute
+
+    def test_a_support_session_can_not_reach_the_peer_route_or_the_owners_routes(self):
+        from pvj import support as sp
+        self.assertTrue(any(p == "/api/fleet" for p in sp.REMOTE_DENY_PREFIX))
+
+    def test_sync_reaches_every_approved_node_through_the_real_client(self):
+        self.pair_lists(serial_a=2, serial_b=2)
+        self.directory[B_ID] = [self.b.where]
+        st, out = self.scall("POST", "/api/fleet/sync", {}, token=self.full)[:2]
+        self.assertEqual(st, 200, out)
+        self.assertEqual(out["nodes"], [{"id": B_ID, "name": "node-02", "ok": True, "serial": 2}])
+        self.assertEqual(self.scall("POST", "/api/fleet/sync", {"x": 1}, token=self.full)[0], 400)
+        self.assertEqual(self.scall("POST", "/api/fleet/sync", {}, token=self.operator)[0], 403)
+        self.assertEqual(self.hv.status()["unknown_calls"], 0)
 
 
 class Walk(FleetApiBase):
@@ -391,11 +543,11 @@ class Walk(FleetApiBase):
         self.with_certificate()
         text, sig = self.sign_list(3)
         self.assertEqual(self.post_list(text, sig)[0], 200)
-        self.assertEqual(Accepted.accept(self)[0], 200)
+        self.assertEqual(self.accept_b()[0], 200)
         self.hv.deny_add(DENIED, "gone", "leyline")
         self.hv.set_accepting(True)
         secrets = []
-        for key in (PEER["key"], THIRD["key"], DENIED):
+        for key in (PEER["key"], self.peer_b().key, DENIED):
             secrets += [key, hv.fingerprint(key), hv.fingerprint(key).upper(), key.upper()]
         secrets += ["".join(sig.split())[:40], "".join(sig.split())[-40:], "nxlx-fleet-v1"]
         seen = {"answers": 0}
@@ -454,7 +606,7 @@ class Reset(FleetApiBase):
     def test_a_factory_reset_takes_the_list_the_acceptances_the_deny_file_and_the_switch(self):
         self.with_certificate()
         self.post_list(*self.sign_list(2))
-        Accepted.accept(self)
+        self.accept_b()
         self.hv.deny_add(DENIED, "gone", "leyline")
         self.hv.set_accepting(True)
         secure = self.scall("POST", "/api/pair", {"pin": self.pin, "name": "owner, tls"})[1]["token"]

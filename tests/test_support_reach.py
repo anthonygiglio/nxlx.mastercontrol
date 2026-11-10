@@ -57,6 +57,7 @@ REFUSED = {
     # which nodes this one trusts to carry devices (D132): the Owner's, in the room
     ("GET", "/api/fleet"), ("POST", "/api/fleet/accept"), ("POST", "/api/fleet/list"),
     ("POST", "/api/fleet/accepted"), ("POST", "/api/fleet/accepted/remove"),
+    ("POST", "/api/fleet/accepted/look"), ("POST", "/api/fleet/sync"),
 }
 # and one module's switch, which the table of routes holds only as /api/modules/*
 REFUSED_MODULES = {("POST", "/api/modules/ndi-discovery")}

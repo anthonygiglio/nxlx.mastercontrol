@@ -269,6 +269,7 @@ class Api:
         self.fleet = None         # fleet.Fleet or None (pvj/fleet.py, D127): the other nodes on the network, and this one's announcement
         self.https = None         # httpsbox.HttpsBox or None: the secure connection (D79), set in server.build
         self.handover = None      # handover.Handover or None (pvj/handover.py, D132): the fleet list, acceptances, the deny file
+        self.peers = None         # peer.Peers or None (pvj/peer.py, D132): checked calls to the nodes this one approves
         self.request = threading.local()    # what the server knows about the request being handled on this thread: .secure
         self.capture = None       # Capture or None (live input from a USB capture device)
         self.ndi = None           # ndi.Input or None (the NDI helper's client; D62)
@@ -3582,10 +3583,24 @@ class Api:
     @staticmethod
     def _handover_call(fn, *args, **kw):
         from .handover import HandoverError
+        from .peer import PeerError
         try:
             return fn(*args, **kw)
-        except HandoverError as e:
+        except (HandoverError, PeerError) as e:
             raise ApiError(e.status, e.message)
+
+    def _peers(self):
+        self._handover()
+        if self.peers is None:
+            raise ApiError(404, "not available on this node")
+        return self.peers
+
+    @staticmethod
+    def _node_id(body, keys):
+        from . import fleetlist
+        if not isinstance(body, dict) or set(body) != keys or not isinstance(body.get("id"), str) or not fleetlist.ID_WORD.fullmatch(body["id"]):
+            raise bad("send: %s (the id is the node's 32 hex digits, as the Nodes list shows it)" % ", ".join(sorted(keys)))
+        return body["id"]
 
     def get_fleet(self, body, device, client):
         """The Owner's view of the trust between nodes: names, the list's serial, this node's own fingerprint and the
@@ -3610,12 +3625,25 @@ class Api:
         return self._handover_call(h.take_list, body["list"].encode("utf-8", "surrogatepass"), body["sig"], device.get("name"))
 
     def post_fleet_accepted(self, body, device, client):
-        """{"id", "name", "key", "carry", "typed"}: accept another node by the fingerprint of its key, typed back."""
-        h = self._handover()
-        keys = {"id", "name", "key", "carry", "typed"}
-        if not isinstance(body, dict) or set(body) != keys:
-            raise bad("send: id, name, key, carry and typed (the fingerprint, read from that node's own panel)")
-        return self._handover_call(h.accept_node, body["id"], body["name"], body["key"], body["carry"], body["typed"], device.get("name"))
+        """{"id", "carry", "typed"}: accept another node by the fingerprint of its key. The name and the key come from the
+        node's own card, fetched over a connection this node checks (its certificate from the pinned root, covering the
+        address, matching the card); the caller never supplies them. `typed` is what the Owner read on THAT node's own panel."""
+        peers = self._peers()
+        node_id = self._node_id(body, {"id", "carry", "typed"})
+        return self._handover_call(peers.accept, node_id, body["carry"], body["typed"], device.get("name"))
+
+    def post_fleet_accepted_look(self, body, device, client):
+        """{"id"}: the name and key fingerprint of a node on the network, from its card over the checked connection, for the
+        Owner to compare with what that node's own panel shows. Accepting still needs the fingerprint typed."""
+        peers = self._peers()
+        return self._handover_call(peers.look, self._node_id(body, {"id"}))
+
+    def post_fleet_sync(self, body, device, client):
+        """Hello to every approved node: lists and removals catch up. Returns one line per node."""
+        peers = self._peers()
+        if not isinstance(body, dict) or body:
+            raise bad("send {}")
+        return {"nodes": self._handover_call(peers.sync)}
 
     def post_fleet_accepted_remove(self, body, device, client):
         h = self._handover()
@@ -5627,6 +5655,8 @@ class Api:
             ("POST", "/api/fleet/list"): ("full", self.post_fleet_list),
             ("POST", "/api/fleet/accepted"): ("full", self.post_fleet_accepted),
             ("POST", "/api/fleet/accepted/remove"): ("full", self.post_fleet_accepted_remove),
+            ("POST", "/api/fleet/accepted/look"): ("full", self.post_fleet_accepted_look),
+            ("POST", "/api/fleet/sync"): ("full", self.post_fleet_sync),
             ("GET", "/api/support"): ("view", self.get_support),
             ("POST", "/api/support/config"): ("full", self.set_support),
             ("POST", "/api/support/start"): ("full", self.start_support),

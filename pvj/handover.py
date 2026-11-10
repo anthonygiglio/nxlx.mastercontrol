@@ -20,6 +20,7 @@ slice 3 on. What is here:
 None of these files is ever in a settings export, the diagnostics file or any API answer, except the Owner's own
 status (names, serial, own fingerprint; no key of another node). A factory reset removes them.
 """
+import hashlib
 import json
 import os
 import re
@@ -86,6 +87,10 @@ class Handover:
         self.lock = threading.RLock()
         self.list = None             # the FleetList that checked out at load or when it was taken, or None
         self.floor = None            # a Floor, when files on disk did not check out: the fleet and the highest serial they show
+        self.sig_text = None         # the signature text of the list in use (a peer that is behind is sent both)
+        self.unknown_calls = 0       # peer calls from a node this one does not approve: a count, never a log line
+        self.removed = False         # a peer told this node that its own key was removed from the cluster
+        self._inputs = None          # (root, own key) when the files on disk were last read, to retry when they change
         self.problem = None          # why the files on disk are not in use, for the Owner's status
         self._deny = []
         self._pairings = []
@@ -185,7 +190,12 @@ class Handover:
                         self.problem = "the fleet list is there without its signature (or the other way round), so it is not in use"
                     continue
                 try:
+                    earlier = self.problem
                     self.list, self.problem = self._check(body, sig, None), None
+                    self.sig_text = sig.decode("ascii", "replace")
+                    if suffix:                                 # a good list, but not the one the files say is current
+                        self.problem = "the previous list (serial %d) is in use: the current one is %s" % (
+                            self.list.serial, ("not usable (" + earlier + ")") if earlier else "missing")
                     break
                 except HandoverError as e:
                     self.problem = self.problem or e.message
@@ -196,6 +206,22 @@ class Handover:
                 self.problem += "; this node will not take a list of another fleet or one with a serial below %d" % self.floor.serial
             self._deny = self._load_deny()
             self._pairings = self._load_pairings()
+            self._inputs = self._now_inputs()
+
+    def _now_inputs(self):
+        root = self.https.root_pem() if self.https is not None else None
+        return (hashlib.sha256((root or "").encode("utf-8", "replace")).hexdigest(), self.own_key())
+
+    def _maybe_reload(self):
+        """A list on disk that did not check out at start (the root or the certificate was not there yet) is tried again
+        when the root or the certificate has changed since the last try; nothing is read otherwise."""
+        with self.lock:
+            if self.list is not None or self._inputs is None or self._inputs == self._now_inputs():
+                return
+            if not any(os.path.exists(self.path(n)) for n in (LIST_FILE, LIST_FILE + ".prev")):
+                self._inputs = self._now_inputs()
+                return
+            self.load()
 
     def _root(self):
         text = self.https.root_pem() if self.https is not None else None
@@ -231,11 +257,13 @@ class Handover:
     def take_list(self, body, sig, who=None, source=None):
         """Verify, then store. Everything is checked before anything is written. Returns the Owner's status."""
         with self.lock:
+            self._maybe_reload()
             lst = self._check(body, sig, self.list or self.floor)            # a list that did not check out at start still sets the floor
             same = self.list is not None and self.list.digest == lst.digest
             if not same:
                 self._store_pair(body, sig)
             self.list, self.problem, self.floor = lst, None, None
+            self.sig_text = sig.decode("ascii", "replace") if isinstance(sig, (bytes, bytearray)) else sig
             where = " taken from %s" % source if source else " loaded"
             if not same:
                 self.event("handover", "The fleet list (serial %d, %d nodes) was%s." % (lst.serial, len(lst.nodes), where), who)
@@ -378,25 +406,100 @@ class Handover:
         if not isinstance(node_id, str) or not isinstance(key, str):
             return None
         with self.lock:
-            if key in self.denied_keys():
-                return None
-            own_id, _ = self.own()
-            if node_id == own_id or key == self.own_key():
-                return None
-            lst = self.list
-            if lst is not None:
-                peer, me = lst.node(node_id), lst.node(own_id)
-                if peer is not None and me is not None and peer["key"] == key and me["key"] == self.own_key():
-                    return {"via": "list", "name": peer["name"], "carry": me["carry"]}
-            for r in self._pairings:
-                if r["id"] == node_id and r["key"] == key:
-                    return {"via": "pairing", "name": r["name"], "carry": r["carry"]}
+            self._maybe_reload()
+            for k, via, name, carry in self._candidates(node_id):
+                if k == key:
+                    return {"via": via, "name": name, "carry": carry}
         return None
+
+    def _candidates(self, node_id):
+        """(key, via, name, carry) for a node id, in the order they count: the held list first, then an acceptance. Never
+        a denied key, never this node's own."""
+        out = []
+        own_id, _ = self.own()
+        if not isinstance(node_id, str) or node_id == own_id:
+            return out
+        own_key = self.own_key()
+        lst = self.list
+        if lst is not None:
+            peer, me = lst.node(node_id), lst.node(own_id)
+            if peer is not None and me is not None and me["key"] == own_key:
+                out.append((peer["key"], "list", peer["name"], me["carry"]))
+        for r in self._pairings:
+            if r["id"] == node_id:
+                out.append((r["key"], "pairing", r["name"], r["carry"]))
+        denied = self.denied_keys()
+        return [c for c in out if c[0] not in denied and c[0] != own_key]
+
+    def expected_keys(self, node_id):
+        """The key hashes this node would take for that node id (what a connection to it must show), or []."""
+        with self.lock:
+            self._maybe_reload()
+            return [c[0] for c in self._candidates(node_id)]
+
+    def approved_nodes(self):
+        """[(id, name, key)] of every node this node approves, from the list and the acceptances, each id once."""
+        with self.lock:
+            self._maybe_reload()
+            ids = []
+            if self.list is not None:
+                ids += [n["id"] for n in self.list.nodes]
+            ids += [r["id"] for r in self._pairings]
+            out, seen = [], set()
+            for i in ids:
+                if i in seen:
+                    continue
+                seen.add(i)
+                for key, _via, name, _carry in self._candidates(i)[:1]:
+                    out.append((i, name, key))
+            return out
+
+    # -- the deny list as it spreads (design section 9): a deny is taken from an approved peer, an allow never is --
+    def deny_digest(self):
+        """A short digest of the denied keys, carried in every peer call: a peer that sees another one exchanges entries."""
+        keys = sorted(self.denied_keys())
+        return hashlib.sha256("\n".join(keys).encode("ascii")).hexdigest()[:16]
+
+    def deny_entries(self):
+        with self.lock:
+            return [dict(r) for r in self._deny]
+
+    def take_denies(self, entries, by):
+        """Take the denies an approved peer reported. Only additions: nothing here removes an entry, and a peer cannot make
+        this node approve anybody. A deny for this node's own key is not stored; the status says so. Returns the names added."""
+        added = []
+        if not isinstance(entries, list):
+            return added
+        with self.lock:
+            own = self.own_key()
+            for e in entries[:MAX_DENY]:
+                if not isinstance(e, dict) or not isinstance(e.get("key"), str) or not fleetlist.KEY_WORD.fullmatch(e["key"]) \
+                        or not isinstance(e.get("name"), str):
+                    continue
+                if e["key"] == own:
+                    self.removed = True
+                    continue
+                if e["key"] in self.denied_keys() or len(self._deny) >= MAX_DENY:
+                    continue
+                self._deny.append({"key": e["key"], "name": e["name"][:64], "by": str(by)[:64], "n": 1 + max([r["n"] for r in self._deny] or [0])})
+                added.append(e["name"][:64])
+            if added:
+                self._save_deny()
+                self.event("handover", "%s removed %s from this cluster." % (by, " and ".join(added) if len(added) < 3 else "%s and %d more" % (added[0], len(added) - 1)))
+        return added
+
+    def list_text(self):
+        """(list text, signature text) of the list in use, for a peer that is behind; None when there is none."""
+        with self.lock:
+            if self.list is None or self.sig_text is None:
+                return None
+            return self.list.body.decode("utf-8"), self.sig_text
 
     # -- what the Owner sees --
     def status(self):
         """The Owner's view: names, serial, ids and this node's own fingerprint. No key of another node, no signature."""
         with self.lock:
+            self._maybe_reload()
             node_id, name = self.own()
             key = self.own_key()
             lst = self.list
@@ -415,6 +518,8 @@ class Handover:
                 "list_problem": problem,
                 "accepted": [{"id": r["id"], "name": r["name"], "carry": r["carry"]} for r in self._pairings],
                 "removed": [{"name": r["name"], "by": r["by"]} for r in self._deny],
+                "removed_from_cluster": self.removed,
+                "unknown_calls": self.unknown_calls,
             }
 
     # -- a factory reset --
