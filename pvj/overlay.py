@@ -394,7 +394,7 @@ class Masks:
             try:
                 self._build(gen)
             except Exception as e:          # never leave the worker dead with _building set
-                self._set_status("error", "could not combine the masks: %s" % e, 0, gen)
+                self._set_status("error", "Could not combine the masks: %s" % e, 0, gen)
                 self.log("pvj-web: masks: %s" % e)
 
     def _build(self, gen):
@@ -407,7 +407,7 @@ class Masks:
                 return
             self._key = self._key_of(size, wanted) if size else None
         if size is None:
-            self._set_status("error", "the player has no screen size yet; the masks are drawn when it has one", 0, gen)
+            self._set_status("error", "The player has no screen size yet; the masks are drawn when it has one", 0, gen)
             return
         left_out, paths, sizes = [], [], []
         for name, path in wanted:
@@ -460,7 +460,7 @@ class Masks:
                     player.overlay_remove(OVERLAY_ID)
             except Exception as e:      # the player is down or restarting: it gets the masks when it comes back
                 if path:
-                    self._set_status("error", "the player did not take the masks (%s); they are drawn when it restarts" % e, 0, gen)
+                    self._set_status("error", "The player did not take the masks (%s); they are drawn when it restarts" % e, 0, gen)
                     self._cleanup(None, limit)
                     return False
             self._cleanup(path, limit)

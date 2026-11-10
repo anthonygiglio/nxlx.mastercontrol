@@ -1238,7 +1238,7 @@ class Engine:
                 self.api.player.set_mapping_mode(bool(path))
                 self.api.player.set_shaders([path] if path else [])
             except Exception as e:      # the player is down or restarting: it gets the mapping when it comes back
-                self._set_status("error", "the player did not take the mapping (%s); it is tried again when the player restarts" % e)
+                self._set_status("error", "The player did not take the mapping (%s); it is tried again when the player restarts" % e)
                 return False
             self._cleanup(path, limit)
             self._set_status(state, message)
@@ -1256,7 +1256,7 @@ class Engine:
         try:
             surfaces = validate_mapping({"surfaces": self.current()}) if self.enabled() else []
         except MapperError as e:
-            self._set_status("error", "the saved mapping does not fit this screen: %s" % e, gen)
+            self._set_status("error", "The saved mapping does not fit this screen: %s" % e, gen)
             return
         editing = self.edit["on"] and self.enabled()
         available = self.sources() if any(source_of(s) != 1 for s in surfaces) else 1
@@ -1268,7 +1268,7 @@ class Engine:
                 self._commit(gen, self._write(shader(surfaces, self.edit, available)), "editing")
                 return
         except Exception as e:
-            self._set_status("error", "could not write the mapping: %s" % e, gen)
+            self._set_status("error", "Could not write the mapping: %s" % e, gen)
             return
         self._set_status("building", "", gen)
         with self._lock:
@@ -1294,7 +1294,7 @@ class Engine:
                     continue                     # overtaken
                 self._commit(gen, self._write(warp_shader(*table, available=available)), "on")
             except Exception as e:
-                self._set_status("error", "could not build the mapping: %s" % e, gen)
+                self._set_status("error", "Could not build the mapping: %s" % e, gen)
                 self.log("pvj-web: mapper: %s" % e)
 
     # -- requests from the panel --
