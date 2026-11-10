@@ -146,9 +146,10 @@
   // press is down, and then `again` (the look itself, so the drawing is of fresh data) runs just after the release.
   function whenFree(key, fn) { if (pressing()) afterPress[key] = fn; else fn(); }
   function held(key, again) { if (!pressing()) return false; afterPress[key] = again; return true; }
+  // Gives back the promise of the answer, so a card that draws itself from S.status can wait for it
   function poll() {
-    if (!S.device || document.visibilityState === 'hidden') return;
-    api('GET', '/api/status').then(function (r) {
+    if (!S.device || document.visibilityState === 'hidden') return Promise.resolve();
+    return api('GET', '/api/status').then(function (r) {
       if (r.ok) {
         var was = !!(S.status && S.status.support && S.status.support.active), reached = reach();
         S.status = r.data;
@@ -758,7 +759,12 @@
     var setMix = function (patch) {
       var next = { transition: m.transition, duration: m.duration };
       Object.keys(patch).forEach(function (k) { next[k] = patch[k]; });
-      act('POST', '/api/mix', next, function () { poll(); setTimeout(function () { if (card.isConnected) card.parentNode.replaceChild(transitionCard(), card); }, 150); });
+      // drawn again once the node's new status is in: a fixed 150 ms drew the old choice when the status was slower,
+      // and the card then showed the old transition as chosen until the page was opened again
+      act('POST', '/api/mix', next, function () {
+        var redraw = function () { if (card.isConnected) card.parentNode.replaceChild(transitionCard(), card); };
+        poll().then(redraw, redraw);
+      });
     };
     var card = h('div', { class: 'card', id: 'transitioncard' },
       h('div', { class: 'k', text: 'Transition between clips' }),

@@ -386,6 +386,15 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.click('#transitioncard button:has-text("Crossfade")');
     await page.waitForFunction(() => fetch('/api/status').then((r) => r.json()).then((j) => j.mix.transition === 'crossfade'));
     await page.waitForSelector('button.on:has-text("Crossfade")');
+    {
+      // a slow status answer: the chosen transition is still the one shown as chosen once the answer is in
+      const slow = async (route) => { await new Promise((r) => setTimeout(r, 600)); await route.continue().catch(() => {}); };
+      await page.route('**/api/status', slow);
+      await page.click('button:has-text("Wipe from right")');
+      await page.waitForSelector('button.on:has-text("Wipe from right")', { timeout: 5000 })
+        .catch(async () => { throw new Error('a slow status leaves the old transition shown as chosen: ' + await page.textContent('#transitioncard button.on')); });
+      await page.unroute('**/api/status', slow);
+    }
     for (const [label, value] of [['Wipe from left', 'wipe-from-left'], ['Wipe from bottom', 'wipe-from-bottom'], ['Slide off left', 'slide-left'], ['Slide off down', 'slide-down']]) {
       await page.click('button:has-text("' + label + '")');
       await page.waitForFunction((v) => fetch('/api/status').then((r) => r.json()).then((j) => j.mix.transition === v), value);
