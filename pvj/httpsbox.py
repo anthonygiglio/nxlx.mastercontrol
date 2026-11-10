@@ -39,7 +39,8 @@ MAX_PEM = 32 * 1024                    # a certificate with its root is about 2 
 WARN_DAYS = 30
 MAX_NAMES = 12
 OID_CN, OID_SAN, OID_EKU, OID_BASIC = "2.5.4.3", "2.5.29.17", "2.5.29.37", "2.5.29.19"
-OID_SERVER_AUTH = "1.3.6.1.5.5.7.3.1"
+OID_SERVER_AUTH, OID_CLIENT_AUTH = "1.3.6.1.5.5.7.3.1", "1.3.6.1.5.5.7.3.2"
+NO_CHECK_TIME = 0x200000000        # OpenSSL's X509_V_FLAG_NO_CHECK_TIME: a 64-bit flag, so a 32-bit build cannot set it
 SETTINGS_KEY = "https"                 # {"owner_only": bool, "names": [extra names for the request]}; no schema change (D79)
 OPEN_WHILE_OWNER_ONLY = {"/api/hello", "/api/logout", "/api/https", "/api/https/probe"}   # a panel can still explain and log out
 RENEWAL_ROUTES = {"/api/https/request.csr", "/api/https/certificate"}     # open over plain http to a paired owner once the certificate has run out
@@ -132,7 +133,7 @@ def pem_certificates(text):
 
 
 def read_certificate(der):
-    """{serial, subject, issuer, not_before, not_after, dns, ips, server_auth, ca} from a DER certificate. Raises
+    """{serial, subject, issuer, not_before, not_after, dns, ips, server_auth, client_auth, ca} from a DER certificate. Raises
     ValueError for anything that is not one."""
     tag, cert_body, _ = _tlv(der, 0)
     if tag != 0x30:
@@ -146,7 +147,7 @@ def read_certificate(der):
     not_before, not_after = _time(*validity[0]), _time(*validity[1])
     subject = _name_cn(fields[i + 4][1])
     out = {"serial": serial, "subject": subject, "issuer": issuer, "not_before": not_before, "not_after": not_after,
-           "dns": [], "ips": [], "server_auth": False, "ca": False, "has_eku": False}
+           "dns": [], "ips": [], "server_auth": False, "client_auth": False, "ca": False, "has_eku": False}
     for tag, val in fields[i + 5:]:
         if tag != 0xA3:
             continue
@@ -165,7 +166,9 @@ def read_certificate(der):
                         out["ips"].append(socket.inet_ntop(socket.AF_INET if len(gval) == 4 else socket.AF_INET6, gval))
             elif oid == OID_EKU:
                 out["has_eku"] = True
-                out["server_auth"] = any(_oid(v) == OID_SERVER_AUTH for _, v in _children(inner))
+                usages = [_oid(v) for _, v in _children(inner)]
+                out["server_auth"] = OID_SERVER_AUTH in usages
+                out["client_auth"] = OID_CLIENT_AUTH in usages
             elif oid == OID_BASIC:
                 bc = _children(inner)
                 out["ca"] = bool(bc) and bc[0][0] == 0x01 and bc[0][1] != b"\x00"
@@ -263,6 +266,7 @@ class HttpsBox:
         self.chained = None          # does the certificate in use chain to the stored root (None: no root, or not known)
         self.port = None             # set by the server when it listens
         self._openssl_ok = None
+        self._peer_ctx = None        # (cert text, root text, SSLContext): the context of the peer listener (D132), made again when either changes
 
     # -- files --
     def path(self, name):
@@ -555,6 +559,46 @@ class HttpsBox:
         ctx.verify_mode = ssl.CERT_NONE                    # no client certificates
         ctx.options |= getattr(ssl, "OP_NO_COMPRESSION", 0) | getattr(ssl, "OP_NO_RENEGOTIATION", 0)
         return ctx
+
+    def peer_context(self):
+        """The context of the peer listener (D132, slice 4a): the same certificate and key as the panel's, but a client
+        MUST show a certificate, and the only CA is the pinned root (nothing from the system's store). The chain is
+        checked by the handshake; who the caller is (the key hash against the list or an acceptance), the key usage and
+        the dates are judged by the caller of this method from the certificate the handshake shows. The handshake
+        does not judge dates when the library can be told not to (a Pi has no battery clock; the dates are judged
+        afterwards, and only while the clock is trusted). None while there is no certificate or no root."""
+        with self.lock:
+            cert, root = self._read(CERT), self._read(ROOT)
+            if not cert or not root or not os.path.isfile(self.path(KEY)):
+                return None
+            if self._peer_ctx is not None and self._peer_ctx[0] == cert and self._peer_ctx[1] == root:
+                return self._peer_ctx[2]
+            try:
+                ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+                ctx.options |= getattr(ssl, "OP_NO_COMPRESSION", 0) | getattr(ssl, "OP_NO_RENEGOTIATION", 0)
+                ctx.verify_mode = ssl.CERT_REQUIRED
+                ctx.load_verify_locations(cadata=root)
+                try:
+                    ctx.verify_flags |= NO_CHECK_TIME
+                except (OverflowError, ValueError, ssl.SSLError):
+                    pass                      # a library that cannot leave the dates out judges them (a 32-bit build): a wrong clock then refuses a peer
+                ctx.load_cert_chain(self.path(CERT), self.path(KEY))
+            except (ssl.SSLError, OSError, ValueError):
+                return None
+            self._peer_ctx = (cert, root, ctx)
+            return ctx
+
+    def present_to_peer(self, ctx):
+        """Make this node's own certificate and key the client certificate of an outgoing context (the peer listener asks
+        for one). False when there is none."""
+        if not os.path.isfile(self.path(CERT)) or not os.path.isfile(self.path(KEY)):
+            return False
+        try:
+            ctx.load_cert_chain(self.path(CERT), self.path(KEY))
+        except (ssl.SSLError, OSError, ValueError):
+            return False
+        return True
 
     def clock_trusted(self):
         try:

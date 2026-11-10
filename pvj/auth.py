@@ -53,6 +53,8 @@ JOIN_MAKERS = ("owner", "presenter")
 PRESENTER_CODES_PER_HOUR = 6                    # guest codes made by presenters (all of them together) in any hour
 MAX_DEVICES = 200                               # paired devices in all
 FULL_RESERVED = 20                              # of those, places only a full-access device can take
+SHARED_VIA = ("controller", "node")             # a full-access device that came in this way is counted with the guests: the reserved places are for the PIN
+NODE_DEVICES_PER_SOURCE = 8                     # devices carried from one other node (D132): the ninth from a different device is refused
 GUEST_IDLE_DAYS = 7                             # a device that joined with a guest code goes when unused this long
 SEEN_EVERY = 86400                              # its last use is saved at most this often (seconds)
 CONTROLLER_KINDS = {"join": "view", "owner": "full"}    # a code shown from a controller: its kind -> the role it pairs. "join" is a
@@ -628,10 +630,10 @@ class Auth:
         and presenters, when it is added and ever after: the reserved places are for the PIN (and what else a
         full-access device at the box makes), and they hold in whatever order devices were paired."""
         devices = self.settings.data["devices"]
-        if role == "full" and via != "controller":
+        if role == "full" and via not in SHARED_VIA:
             return len(devices) < MAX_DEVICES
-        shared = sum(1 for d in devices if d["role"] != "full" or d.get("via") == "controller")
-        if role == "full" and len(devices) >= MAX_DEVICES:     # (via a controller) the list as a whole is full too
+        shared = sum(1 for d in devices if d["role"] != "full" or d.get("via") in SHARED_VIA)
+        if role == "full" and len(devices) >= MAX_DEVICES:     # (via a controller or another node) the list as a whole is full too
             return False
         return shared < MAX_DEVICES - FULL_RESERVED
 
@@ -677,6 +679,64 @@ class Auth:
                 self.settings.data["devices"] = [d for d in self.settings.data["devices"] if d is not device]
                 raise
         return token, self._public(device)
+
+    def add_node_device(self, name, role, node_id, device_id):
+        """A device carried here from another node (D132, design 4): the record of an ordinary device of this node (its own
+        token, made over https, so `secure`), with `via` "node" and `from` {node, device}. The same device of the same
+        node tapping Open again gets the SAME record with a new token (matched by the two ids); a record from a different
+        device of that node is a new one, at most NODE_DEVICES_PER_SOURCE per source node. They count in the shared pool
+        beside guests. Returns (token, public record)."""
+        if role not in ("live", "full"):
+            raise AuthError("only an Operator or an Owner is carried from another node")
+        token = secrets.token_urlsafe(24)
+        with self.settings.lock:
+            devices = self.settings.data["devices"]
+            for d in devices:
+                if d.get("via") == "node" and d.get("from") == {"node": node_id, "device": device_id}:
+                    d["token_hash"], d["role"], d["name"], d["secure"] = _token_hash(token), role, clean_name(name), True
+                    self.settings.save()
+                    return token, self._public(d)
+            if sum(1 for d in devices if d.get("via") == "node" and (d.get("from") or {}).get("node") == node_id) >= NODE_DEVICES_PER_SOURCE:
+                raise TooManyDevices("this node already holds %d devices carried from that node; remove one under People first" % NODE_DEVICES_PER_SOURCE)
+            device = {"id": secrets.token_hex(4), "name": clean_name(name), "role": role, "token_hash": _token_hash(token),
+                      "created": int(self._now()), "via": "node", "secure": True, "from": {"node": node_id, "device": device_id}}
+            if not self._room_for(role, "node"):
+                raise TooManyDevices(self.FULL_TEXT)
+            devices.append(device)
+            try:
+                self.settings.save()
+            except OSError:
+                self.settings.data["devices"] = [d for d in self.settings.data["devices"] if d is not device]
+                raise
+        return token, self._public(device)
+
+    def revoke_node_devices(self, node_id=None):
+        """Sign out every device carried from another node (from `node_id`, or from any). Returns how many went."""
+        gone = []
+        with self.settings.lock:
+            keep = []
+            for d in self.settings.data["devices"]:
+                if d.get("via") == "node" and (node_id is None or (d.get("from") or {}).get("node") == node_id):
+                    gone.append(d["id"])
+                else:
+                    keep.append(d)
+            if gone:
+                self.settings.data["devices"] = keep
+                self.settings.save()
+        for ident in gone:
+            self._addresses.pop(ident, None)
+            self._revoked(ident)
+        return len(gone)
+
+    def device(self, device_id):
+        """The stored record of a device (a copy with its role as role_of gives it, and whether it was made over https), or None.
+        For the checks that ask again whether a device is still paired and still what it was."""
+        for d in list(self.settings.data["devices"]):
+            if d["id"] == device_id:
+                out = self._public(d)
+                out["secure"] = d.get("secure") is True
+                return out
+        return None
 
     def authenticate(self, token, client=None):
         """The paired device of this token, or None. With `client` (the connection's own address) the device's last

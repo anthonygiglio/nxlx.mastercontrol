@@ -4,13 +4,16 @@
 acceptances and the switch "Accept devices from other nodes"; who may use them and where; and that the list, the
 acceptances and the deny file appear in no GET answer, no diagnostics file, no settings export or import and no log
 line (a walk like D79's). Needs openssl; skipped without it."""
+import http.client
 import json
 import os
+import ssl
 import subprocess
+import threading
 import unittest
 
 import tests  # noqa: F401  (the tests package, as every test module imports it: tests/test_lockrank.py)
-from pvj import events as events_mod, fleetlist as FL, handover as hv, peer as peer_mod, policy
+from pvj import events as events_mod, fleetlist as FL, handover as hv, peer as peer_mod, policy, server, ticket as ticket_mod
 from tests.peerfix import PeerNode, list_data, sign_list
 from tests.test_boxcert import openssls
 from tests.test_https import HttpsBase, PASS, boxcert
@@ -49,6 +52,32 @@ class FleetApiBase(HttpsBase):
         self.directory = {}
         self.peers = peer_mod.Peers(self.hv, self.box, lambda i: list(self.directory.get(i, [])), log=self.lines.append, spawn=lambda fn: fn())
         self.api.peers = self.peers
+        self.tickets = ticket_mod.Tickets(self.hv, self.peers, self.auth, self.box, event=self.api.event, log=self.lines.append)
+        self.api.tickets = self.tickets
+        self.peer_srv = server.PeerServer(("127.0.0.1", 0), server.make_peer_handler(self.api), self.box)     # the real peer listener (D132, 4a)
+        self.peer_port = self.peer_srv.server_address[1]
+        threading.Thread(target=self.peer_srv.serve_forever, daemon=True).start()
+        self.addCleanup(self.peer_srv.server_close)
+        self.addCleanup(self.peer_srv.shutdown)
+
+    def pcall(self, node, path, body, method="POST", trust_root=None):
+        """A call to the peer port with the certificate of `node` (a PeerNode), or with none. (status, payload)."""
+        ctx = ssl.create_default_context()
+        ctx.load_verify_locations(os.path.join(self.ca, "root.pem"))
+        if node is not None:
+            ctx.load_cert_chain(node.cert_path, node.key_path)
+        c = http.client.HTTPSConnection("127.0.0.1", self.peer_port, timeout=10, context=ctx)
+        try:
+            c.request(method, path, body=json.dumps(body).encode() if body is not None else None,
+                      headers={"Content-Type": "application/json"} if body is not None else {})
+            r = c.getresponse()
+            text = r.read()
+        finally:
+            c.close()
+        try:
+            return r.status, json.loads(text)
+        except ValueError:
+            return r.status, text
 
     def workdir(self):
         self._n = getattr(self, "_n", 0) + 1
@@ -132,7 +161,7 @@ class Card(FleetApiBase):
         self.assertEqual(self.scall("GET", "/api/fleet/card")[0], 404)
 
     def test_the_card_is_the_one_route_outside_the_gate_besides_the_probe(self):
-        self.assertEqual(sorted(policy.NO_GATE), [("GET", "/api/fleet/card"), ("GET", "/api/https/probe"), ("POST", "/api/fleet/peer")])
+        self.assertEqual(sorted(policy.NO_GATE), [("GET", "/api/fleet/card"), ("GET", "/api/https/probe")])      # the peer calls left the panel's port (4a)
         for route in ROUTES:
             self.assertNotIn(route, policy.NO_GATE)
 
@@ -469,7 +498,7 @@ class PeerRoute(FleetApiBase):
         super().setUp()
         self.with_certificate()
         self.b = self.peer_b()
-        self.b.directory[ME] = [("127.0.0.1", self.tls_port)]
+        self.b.directory[ME] = [("127.0.0.1", self.tls_port, None, self.peer_port)]
 
     def pair_lists(self, serial_a=1, serial_b=1):
         nodes = [{"id": ME, "name": "testbox", "key": self.hv.own_key(), "carry": "full"},
@@ -499,30 +528,75 @@ class PeerRoute(FleetApiBase):
         self.assertEqual(out["serial"], 4)
         self.assertEqual(self.hv.list.serial, 4)
 
-    def test_over_plain_http_and_to_a_get_there_is_no_such_route(self):
+    def test_the_panels_port_no_longer_answers_a_peer_call_at_all(self):
         self.pair_lists()
         body = {"from": B_ID, "key": self.b.key, "serial": 1, "deny": self.b.handover.deny_digest()}
-        self.assertEqual(self.call("POST", "/api/fleet/peer", body)[0], 404)
+        self.assertEqual(self.call("POST", "/api/fleet/peer", body)[0], 404)             # plain http
+        self.assertEqual(self.scall("POST", "/api/fleet/peer", body)[0], 404)            # the panel's own TLS port
         self.assertEqual(self.scall("GET", "/api/fleet/peer")[0], 404)
-        self.assertEqual(self.scall("POST", "/api/fleet/peer", body)[0], 200)
+        self.assertEqual(self.pcall(self.b, "/api/fleet/peer", body)[0], 200)            # the peer port, with b's certificate
+
+    def test_the_peer_port_answers_two_posts_and_nothing_else(self):
+        self.pair_lists()
+        self.assertEqual(self.pcall(self.b, "/api/fleet/peer", None, method="GET")[0], 404)
+        self.assertEqual(self.pcall(self.b, "/api/https", None, method="GET")[0], 404)
+        self.assertEqual(self.pcall(self.b, "/api/status", {})[0], 404)
+        self.assertEqual(self.pcall(self.b, "/api/pair", {"pin": self.pin, "name": "x"})[0], 404)
+        self.assertEqual(self.pcall(self.b, "/", None, method="GET")[0], 404)
+
+    def test_a_caller_without_a_certificate_never_gets_past_the_handshake(self):
+        self.pair_lists()
+        body = {"from": B_ID, "key": self.b.key, "serial": 1, "deny": self.b.handover.deny_digest()}
+        with self.assertRaises((ssl.SSLError, OSError, http.client.HTTPException)):
+            self.pcall(None, "/api/fleet/peer", body)
+        self.assertEqual(self.hv.unknown_calls, 0)
+
+    def test_a_caller_with_a_certificate_from_another_root_never_gets_past_the_handshake(self):
+        self.pair_lists()
+        from tests.peerfix import PASS as ROOT_PASS
+        evil = PeerNode(self, "node-02", B_ID, self.other_root()[0], raw(os.path.join(self.ca, "root.pem")).decode(), self.exe, passphrase=ROOT_PASS)
+        body = {"from": B_ID, "key": self.b.key, "serial": 1, "deny": self.b.handover.deny_digest()}
+        with self.assertRaises((ssl.SSLError, OSError, http.client.HTTPException)):
+            self.pcall(evil, "/api/fleet/peer", body)
+
+    def test_a_certificate_signed_for_servers_only_is_refused_even_from_the_right_root(self):
+        self.pair_lists()
+        server_only = self.server_only_node()
+        body = {"from": B_ID, "key": self.b.key, "serial": 1, "deny": self.b.handover.deny_digest()}
+        try:
+            st, out = self.pcall(server_only, "/api/fleet/peer", body)
+        except (ssl.SSLError, OSError, http.client.HTTPException):
+            return                                                       # refused in the handshake
+        self.assertEqual(st, 403, out)
+        self.assertIn("not for a client", out["error"])
+
+    def test_the_key_in_the_body_must_be_the_key_of_the_certificate_that_called(self):
+        self.pair_lists()
+        third = PeerNode(self, "node-03", "c" * 32, self.ca, raw(os.path.join(self.ca, "root.pem")).decode(), self.exe, passphrase=PASS)
+        body = {"from": B_ID, "key": self.b.key, "serial": 1, "deny": third.handover.deny_digest()}
+        st, out = self.pcall(third, "/api/fleet/peer", body)                 # a valid node of the root claims to be b
+        self.assertEqual(st, 403, out)
+        self.assertEqual(self.hv.unknown_calls, 1)
+        self.assertEqual(self.pcall(self.b, "/api/fleet/peer", body)[0], 200)          # b itself is answered
 
     def test_an_unknown_caller_is_refused_with_a_count_and_no_log_line_and_the_route_is_throttled_by_failures(self):
         self.pair_lists()
+        third = PeerNode(self, "node-03", "c" * 32, self.ca, raw(os.path.join(self.ca, "root.pem")).decode(), self.exe, passphrase=PASS)
         before = len(self.lines)
         said = len(self.said())
-        body = {"from": "c" * 32, "key": "5" * 64, "serial": 1, "deny": "0" * 16}
-        st, out = self.scall("POST", "/api/fleet/peer", body)[:2]
+        body = {"from": "c" * 32, "key": third.key, "serial": 1, "deny": "0" * 16}
+        st, out = self.pcall(third, "/api/fleet/peer", body)
         self.assertEqual(st, 403, out)
         self.assertEqual(self.hv.unknown_calls, 1)
         self.assertEqual(len(self.said()), said)
         self.assertEqual(len(self.lines), before)
         for _ in range(peer_mod.SOURCE_FAILS):
-            self.scall("POST", "/api/fleet/peer", {"nonsense": True})
-        self.assertEqual(self.scall("POST", "/api/fleet/peer", body)[0], 429)
+            self.pcall(third, "/api/fleet/peer", {"nonsense": True})
+        self.assertEqual(self.pcall(third, "/api/fleet/peer", body)[0], 429)
         good = {"from": B_ID, "key": self.b.key, "serial": 1, "deny": self.b.handover.deny_digest()}
-        self.assertEqual(self.scall("POST", "/api/fleet/peer", good)[0], 429)       # the same source stays stopped for the minute
+        self.assertEqual(self.pcall(self.b, "/api/fleet/peer", good)[0], 429)           # the same source stays stopped for the minute
 
-    def test_a_support_session_can_not_reach_the_peer_route_or_the_owners_routes(self):
+    def test_a_support_session_can_not_reach_the_owners_routes(self):
         from pvj import support as sp
         self.assertTrue(any(p == "/api/fleet" for p in sp.REMOTE_DENY_PREFIX))
 
@@ -530,10 +604,29 @@ class PeerRoute(FleetApiBase):
         self.pair_lists(serial_a=2, serial_b=2)
         self.directory[B_ID] = [self.b.where]
         for _ in range(15):
-            self.scall("POST", "/api/fleet/peer", {"nonsense": True})
-        self.assertEqual(self.scall("POST", "/api/fleet/peer", {"nonsense": True})[0], 429)        # the sender is stopped...
+            self.pcall(self.b, "/api/fleet/peer", {"nonsense": True})
+        self.assertEqual(self.pcall(self.b, "/api/fleet/peer", {"nonsense": True})[0], 429)        # the sender is stopped...
         self.assertEqual(self.scall("POST", "/api/fleet/accepted/look", {"id": B_ID}, token=self.full)[0], 200)      # ...this node is not
         self.assertEqual(self.scall("POST", "/api/fleet/sync", {}, token=self.full)[1]["nodes"][0]["ok"], True)
+
+    def other_root(self):
+        """(folder, root text) of a second, unrelated root."""
+        from tests.peerfix import make_root
+        folder = self.workdir()
+        return folder, make_root(self.exe, folder, "Other root")
+
+    def server_only_node(self):
+        """A node whose certificate the right root signed for serverAuth ONLY (as before D132 slice 4a)."""
+        from tests.test_boxcert import make_request
+        work = self.workdir()
+        key, csr = make_request(self.exe, work, ["node-09.local"], ["127.0.0.1"], cn="node-09.local")
+        cnf, cert = os.path.join(work, "ext.cnf"), os.path.join(work, "cert.pem")
+        with open(cnf, "w") as f:
+            f.write("basicConstraints=CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:node-09.local,IP:127.0.0.1\n")
+        r = subprocess.run([self.exe, "x509", "-req", "-in", csr, "-CA", os.path.join(self.ca, "root.pem"), "-CAkey", os.path.join(self.ca, "root.key"),
+                            "-passin", "pass:" + PASS, "-CAcreateserial", "-days", "30", "-extfile", cnf, "-out", cert], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return type("N", (), {"cert_path": cert, "key_path": key})()
 
     def test_sync_reaches_every_approved_node_through_the_real_client(self):
         self.pair_lists(serial_a=2, serial_b=2)

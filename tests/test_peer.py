@@ -15,7 +15,7 @@ import unittest
 
 import tests  # noqa: F401  (the tests package, as every test module imports it: tests/test_lockrank.py)
 from pvj import fleetlist as FL, handover as hv, peer
-from tests.peerfix import PeerNode, Silent, list_data, make_root, sign_list
+from tests.peerfix import PeerNode, Silent, answer, list_data, make_root, sign_list
 from tests.test_boxcert import openssls
 
 FLEET = "0123456789abcdef"
@@ -236,7 +236,7 @@ class Serials(PeerBase):
         self.assertEqual(out["serial"], 5)
         self.assertEqual(self.b.handover.list.serial, 5)
         # nothing proves who sent it until 4a, so the event does not credit node-01
-        self.assertIn(("handover", "The fleet list (serial 5, 2 nodes) was taken from a hello claiming node-01.", None), self.b.events.lines)
+        self.assertIn(("handover", "The fleet list (serial 5, 2 nodes) was taken from node-01.", None), self.b.events.lines)
         self.assertEqual(self.b.calls, [("POST", "/api/fleet/peer")])
 
     def test_being_ahead_of_a_peer_that_cannot_take_the_list_is_refused_but_never_a_failure(self):
@@ -267,17 +267,17 @@ class Serials(PeerBase):
         body, sig = self.sign(9, self.nodes, root="two")           # signed by a root this node does not pin
         call = {"from": A_ID, "key": self.a.key, "serial": 9, "deny": self.a.handover.deny_digest(), "list": body.decode(), "sig": sig}
         for _ in range(peer.SOURCE_FAILS):
-            self.b.peers.handle_peer(dict(call), "10.0.0.5")
+            answer(self.b.peers, dict(call), "10.0.0.5")
         self.assertEqual(self.b.handover.list.serial, 3)
         # (the list is tried only twice a minute per source, the rest are plain hellos: only bad lists and bad calls are failures)
         bad = {"from": A_ID, "key": self.a.key, "serial": "x", "deny": "0" * 16}
         for _ in range(peer.SOURCE_FAILS):
             with self.assertRaises(peer.PeerError):
-                self.b.peers.handle_peer(dict(bad), "10.0.0.5")
+                answer(self.b.peers, dict(bad), "10.0.0.5")
         with self.assertRaises(peer.PeerError) as cm:
-            self.b.peers.handle_peer(dict(call), "10.0.0.5")
+            answer(self.b.peers, dict(call), "10.0.0.5")
         self.assertEqual(cm.exception.status, 429)
-        self.assertEqual(self.b.peers.handle_peer(dict(call, serial=3, list="", sig=""), "10.0.0.6")["serial"], 3)     # another source is fine
+        self.assertEqual(answer(self.b.peers, dict(call, serial=3, list="", sig=""), "10.0.0.6")["serial"], 3)     # another source is fine
 
     def test_a_list_too_long_to_fit_a_hello_is_not_carried_and_the_hello_still_works(self):
         self.hold(self.a, 5)
@@ -298,7 +298,7 @@ class Serials(PeerBase):
     def test_a_list_of_another_fleet_carried_in_a_hello_is_not_taken(self):
         self.hold(self.b, 3)
         body, sig = self.sign(9, self.nodes, fleet="fedcba9876543210")
-        out = self.b.peers.handle_peer({"from": A_ID, "key": self.a.key, "serial": 9, "deny": self.a.handover.deny_digest(),
+        out = answer(self.b.peers, {"from": A_ID, "key": self.a.key, "serial": 9, "deny": self.a.handover.deny_digest(),
                                         "list": body.decode(), "sig": sig}, "10.0.0.5")
         self.assertEqual((out["serial"], self.b.handover.list.fleet), (3, FLEET))
 
@@ -422,7 +422,7 @@ class Limits(PeerBase):
 
     def test_a_bad_answer_is_filed_under_the_target_that_gave_it(self):
         real = self.b.peers.handle_peer
-        self.b.peers.handle_peer = lambda body, source: {"serial": "soon"}
+        self.b.peers.handle_peer = lambda body, source, key: {"serial": "soon"}
         for _ in range(peer.TARGET_FAILS):
             with self.assertRaises(peer.PeerError) as cm:
                 self.a.peers.hello(B_ID)
@@ -450,17 +450,17 @@ class Budgets(PeerBase):
         for source in ("10.0.0.1", "10.0.0.2"):
             for _ in range(50):
                 try:
-                    self.a.peers.handle_peer({"junk": True}, source)
+                    answer(self.a.peers, {"junk": True}, source)
                 except peer.PeerError:
                     pass
             with self.assertRaises(peer.PeerError) as cm:
-                self.a.peers.handle_peer({"junk": True}, source)
+                answer(self.a.peers, {"junk": True}, source)
             self.assertEqual(cm.exception.status, 429)          # the senders are stopped...
         c = self.node("node-03", C_ID)                          # ...and nothing else is
         self.a.directory[C_ID] = [c.where]
         self.assertEqual([r["ok"] for r in self.a.peers.sync() if r["name"] == "node-02"], [True])
         good = {"from": B_ID, "key": self.b.key, "serial": 2, "deny": self.b.handover.deny_digest()}
-        self.assertEqual(self.a.peers.handle_peer(dict(good), "10.0.0.3")["serial"], 2)
+        self.assertEqual(answer(self.a.peers, dict(good), "10.0.0.3")["serial"], 2)
         self.assertEqual(self.a.peers.look(C_ID)["id"], C_ID)
         self.a.peers.accept(C_ID, "live", c.key)
         self.assertIsNotNone(self.a.handover.approved(C_ID, c.key))
@@ -469,19 +469,19 @@ class Budgets(PeerBase):
         unknown = {"from": C_ID, "key": "9" * 64, "serial": 1, "deny": "0" * 16}
         for _ in range(peer.SOURCE_FAILS):
             with self.assertRaises(peer.PeerError):
-                self.a.peers.handle_peer(dict(unknown), "10.0.0.9")
+                answer(self.a.peers, dict(unknown), "10.0.0.9")
         with self.assertRaises(peer.PeerError) as cm:
-            self.a.peers.handle_peer(dict(unknown), "10.0.0.9")
+            answer(self.a.peers, dict(unknown), "10.0.0.9")
         self.assertEqual(cm.exception.status, 429)
         self.assertEqual(self.a.peers.hello(B_ID)["serial"], 2)          # this node's own call is unaffected
 
     def test_the_senders_budget_is_per_address_and_a_new_source_has_its_own(self):
         for i in range(peer.MAX_SOURCES + 20):                          # many sources: the table stays bounded
             try:
-                self.a.peers.handle_peer({}, "10.%d.%d.1" % (i // 250, i % 250))
+                answer(self.a.peers, {}, "10.%d.%d.1" % (i // 250, i % 250))
             except peer.PeerError:
                 pass
-        self.assertEqual(self.a.peers.handle_peer({"from": B_ID, "key": self.b.key, "serial": 2, "deny": self.b.handover.deny_digest()}, "10.9.9.9")["serial"], 2)
+        self.assertEqual(answer(self.a.peers, {"from": B_ID, "key": self.b.key, "serial": 2, "deny": self.b.handover.deny_digest()}, "10.9.9.9")["serial"], 2)
 
 
 class Inbound(PeerBase):
@@ -493,7 +493,7 @@ class Inbound(PeerBase):
 
     def hello(self, source="10.0.0.7", **kw):
         body = dict({"from": A_ID, "key": self.a.key, "serial": 2, "deny": self.a.handover.deny_digest()}, **kw)
-        return self.b.peers.handle_peer(body, source)
+        return answer(self.b.peers, body, source)
 
     def test_an_approved_caller_gets_the_serial_and_nothing_else_when_it_is_level(self):
         self.assertEqual(self.hello(), {"v": 1, "serial": 2, "deny": self.b.handover.deny_digest()})
@@ -543,15 +543,15 @@ class Inbound(PeerBase):
         for body in ({}, {"from": A_ID}, {"from": "x", "key": "y", "serial": 1, "deny": "z"}, [], "text",
                      {"from": A_ID, "key": self.a.key, "serial": True, "deny": "0" * 16}, {"from": A_ID, "key": self.a.key, "serial": 0, "deny": "0" * 16}):
             with self.assertRaises(peer.PeerError) as cm:
-                self.b.peers.handle_peer(body, "10.0.0.8")
+                answer(self.b.peers, body, "10.0.0.8")
             self.assertIn(cm.exception.status, (400, 429))
         with self.assertRaises(peer.PeerError) as cm:
-            self.b.peers.handle_peer({}, "10.0.0.8")
+            answer(self.b.peers, {}, "10.0.0.8")
         self.assertEqual(cm.exception.status, 429)
         self.assertEqual(self.hello()["serial"], 2)           # another source, and a good call, are not affected by it
         self.clock.t += peer.FAIL_WINDOW + 1
         with self.assertRaises(peer.PeerError) as cm:
-            self.b.peers.handle_peer({}, "10.0.0.8")
+            answer(self.b.peers, {}, "10.0.0.8")
         self.assertEqual(cm.exception.status, 400)
 
     def test_a_list_or_signature_that_is_not_text_or_is_huge_is_a_bad_call(self):

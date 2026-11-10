@@ -58,6 +58,8 @@ REFUSED = {
     ("GET", "/api/fleet"), ("POST", "/api/fleet/accept"), ("POST", "/api/fleet/list"),
     ("POST", "/api/fleet/accepted"), ("POST", "/api/fleet/accepted/remove"),
     ("POST", "/api/fleet/accepted/look"), ("POST", "/api/fleet/sync"),
+    # a ticket for a device paired here to open another node signed in (D132 4a): support stays at the node it was given to
+    ("POST", "/api/handover/ticket"),
 }
 # and one module's switch, which the table of routes holds only as /api/modules/*
 REFUSED_MODULES = {("POST", "/api/modules/ndi-discovery")}

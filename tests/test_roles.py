@@ -86,6 +86,7 @@ ROWS = {
     ("POST", "/api/fleet/accepted/remove"): STUDIO("owner"),
     ("POST", "/api/fleet/accepted/look"): STUDIO("owner"),
     ("POST", "/api/fleet/sync"): STUDIO("owner"),
+    ("POST", "/api/handover/ticket"): STUDIO("op"),         # D132 4a: a ticket to open another node signed in; an Operator or an Owner, over https, never through the tunnel
     ("POST", "/api/ndi"): KINDS["owner"],
     # the NDI discovery server on the box (D85): the Owner's, and never through the support tunnel (support.REMOTE_DENY_PREFIX)
     ("GET", "/api/ndi/discovery"): STUDIO("owner"),
@@ -1383,7 +1384,10 @@ class ReviewTest(RolesBase):
         """The gate is asked by `_who` for the paths server.py answers itself; a new branch there that forgets `_who`
         would be a path with no check. Every "/api/..." in its source must be a route (answered by Api.handle, which is
         the gate) or a key of policy.OUTSIDE (and then `_who` is asked for it: see the test of the table)."""
-        known = {p for _m, p in self.api.routes()} | {p for _m, p in policy.OUTSIDE} | {p for _m, p in policy.NO_GATE}
+        known = {p for _m, p in self.api.routes()} | {p for _m, p in policy.OUTSIDE} | {p for _m, p in policy.NO_GATE} | {p for _m, p in policy.PEER_ONLY}
+        for route in policy.PEER_ONLY:                      # the peer listener's two routes are on no other port: not in the table, not outside it
+            self.assertNotIn(route, self.api.routes())
+            self.assertNotIn(route, policy.OUTSIDE)
         named = set(re.findall(r'"(/api/[^"]+)"', inspect.getsource(server))) - {"/api/https/"}      # a prefix: all of it is _https_route's
         self.assertGreaterEqual(len(named), 9)
         self.assertEqual(sorted(named - known), [])

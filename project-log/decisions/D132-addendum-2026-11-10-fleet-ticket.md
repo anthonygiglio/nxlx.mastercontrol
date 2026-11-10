@@ -1,0 +1,8 @@
+<!-- SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+     SPDX-License-Identifier: Apache-2.0 -->
+## Addendum to D132 (2026-11-10): slice 4a, the ticket and a listener for the nodes' own calls
+
+- **Nodes call each other on a port of their own.** The peer calls (the hello of slice 3 and the redeem of a ticket) are answered only by a TLS listener that requires a client certificate from the pinned root (`PVJ_PEER_PORT`, 8443 on every node; not announced by mDNS in 4a). The panel's TLS port keeps the card and the form `POST /handover` and answers no peer call. Why: a call is then proved by the handshake and by the key hash of the certificate, not claimed in a body, and the panel's much larger surface is not reachable by a node's key. What it costs: a second port, and node certificates must carry clientAuth (signed by `boxcert.py` since slice 3; older ones must be signed again with the same key). What it rules out: peer calls over the panel's port.
+- **Dates are judged after the handshake**, only while the clock is trusted, where the library can leave them out of the handshake (a 64-bit flag; a 32-bit Python judges them itself and a wrong clock then refuses a peer, which falls back to the PIN).
+- **A ticket is spent by an attempt.** The look-up and the delete are one step; the wrong node, the wrong secret, a node that is no longer approved or an Origin that does not match all spend it. B calls A once and never retries. A refusal from A counts as a failure at B (5 a minute per source address, 10 for the node, as at A).
+- **Switch off signs out.** "Accept devices from other nodes" off removes every carried device at once; on does not bring them back. The Owner-only rule is the route's (`full`), so a carried Owner changes it too, as decided.

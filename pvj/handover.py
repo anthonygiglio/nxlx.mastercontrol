@@ -441,6 +441,18 @@ class Handover:
         denied = self.denied_keys()
         return [c for c in out if c[0] not in denied and c[0] != own_key]
 
+    def their_carry(self, node_id):
+        """What the held list says the OTHER node gives to devices from this one ("full", "live" or "none"), or None when that is not
+        known here: the node is not on the list, or is only accepted by its fingerprint (the carry it chose is its own and is
+        enforced by that node). For a quick no before a ticket is made; the other node decides for itself."""
+        with self.lock:
+            self._maybe_reload()
+            lst = self.list
+            if lst is None or any(r["id"] == node_id for r in self._pairings):
+                return None
+            row = lst.node(node_id)
+            return row["carry"] if row is not None else None
+
     def expected_keys(self, node_id):
         """The key hashes this node would take for that node id (what a connection to it must show), or []."""
         with self.lock:
