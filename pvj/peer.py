@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
 """The peer channel (D132, design/node-handover_2026-11-09.md section 3.2 and slices 3 and 4a): how one node talks to another
-it approves. Nothing here signs a device in (pvj/ticket.py does, over this channel); leases and pokes are slice 4b. What is here:
+it approves. Nothing here signs a device in (pvj/ticket.py does, over this channel); the lease and the poke (pvj/lease.py, slice 4b)
+use it too. What is here:
 
 * **The peer port (4a).** Calls between nodes go to a dedicated TLS listener (`PVJ_PEER_PORT`, 8443 on every node unless the
   discovery row says another), which asks the caller for a certificate (CERT_REQUIRED, the pinned root the only CA) and

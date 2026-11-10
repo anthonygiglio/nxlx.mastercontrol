@@ -11,9 +11,9 @@ it has now; B makes the device a record of its own (`via: node`) with the lowest
 higher, and gives it its own token.
 
 Only approved nodes count: on the signed list or accepted by fingerprint, and not on the deny list (a deny always wins).
-The "Accept devices from other nodes" switch of B is the lock, and only an Owner turns it. Leases (the 10 minute check, the
-24 hour lapse), pokes and the removal of a node from the cluster are slices 4b to 4d; nothing here blocks them: a record
-keeps the node and device ids it came from, and the answer of A has room for more fields.
+The "Accept devices from other nodes" switch of B is the lock, and only an Owner turns it. The lease (the 10 minute check, the
+poke, the 24 hour lapse) is pvj/lease.py (slice 4b): A's redeem answer carries the lease handle and B's record keeps it. The
+removal of a node from the cluster is slice 4d; nothing here blocks it.
 
 Nothing secret is logged or answered: not a ticket, not the secret, not a token, not a key.
 """
@@ -28,6 +28,7 @@ import time
 from . import fleetlist, peer as peer_mod
 from .auth import AuthError
 from .handover import carried_role
+from .lease import LeaseError
 
 TICKET_SECONDS = 60
 MAX_TICKETS = 64
@@ -39,6 +40,7 @@ NAMES = {"view": "Guest", "live": "Operator", "full": "Owner"}
 _TICKET = re.compile(r"[0-9a-f]{32}")
 _SECRET = re.compile(r"[A-Za-z0-9_-]{16,128}")
 _PROOF = re.compile(r"[0-9a-f]{64}")
+_HANDLE = re.compile(r"[0-9a-f]{32}")
 _ORIGIN = re.compile(r"https://(?:[a-z0-9.-]{1,253}|\[[0-9a-f:.]{2,45}\])(?::[0-9]{1,5})?")
 
 
@@ -65,8 +67,9 @@ class Tickets:
         self.event = event or (lambda kind, text, who=None: None)
         self.log = log or (lambda line: None)
         self.now = now
+        self.leases = None                                  # lease.Leases or None (slice 4b): the lease handle given at redemption, kept with the record
         self.lock = threading.Lock()
-        self._tickets = {}                                  # hash of the ticket -> entry (memory only)
+        self._tickets = {}                                # hash of the ticket -> entry (memory only)
         self._device_asks = {}                              # device id -> deque of times a ticket was made
         self._pending = collections.OrderedDict()           # handle -> a carried device waiting for the confirm page
         # Four counters that never touch each other, and none of them is node-wide: whoever is on the network can post junk, and
@@ -226,10 +229,18 @@ class Tickets:
         if stored["role"] not in ("live", "full") or stored.get("via") not in (None, "recovery") or not stored["secure"]:
             self._say_redeem(entry, "the device may no longer carry")
             raise TicketError("that device may no longer carry to other nodes", 403)
+        out = {"v": 1, "name": stored["name"], "device": stored["id"], "role": stored["role"], "origin": entry["origin"]}
+        if self.leases is not None:
+            try:
+                out["lease"] = self.leases.grant(stored["id"], entry["to"])      # the lease handle: B keeps it, this node keeps its hash
+            except LeaseError as e:
+                self._say_redeem(entry, e.message[:1].lower() + e.message[1:])
+                raise TicketError(e.message, e.status)
         node = h.name_of(entry["to"]) or "a node"
         self.event("handover", "%s (%s) was signed in to %s." % (stored["name"], NAMES[stored["role"]], node), stored["name"])
         own_id, _ = h.own()
-        return {"v": 1, "name": stored["name"], "device": stored["id"], "role": stored["role"], "origin": entry["origin"], "node": own_id}
+        out["node"] = own_id
+        return out
 
     def _say_redeem(self, entry, why):
         self.event("handover", "A ticket for %s was not redeemed: %s." % (self.handover.name_of(entry["to"]) or "a node", why), entry.get("name"))
@@ -291,24 +302,26 @@ class Tickets:
         if role is None:
             return self._refused(approved["name"], "this node takes nothing from %s" % approved["name"])
         label = self._label(answer["name"], approved["name"])
+        handle = answer.get("lease") if isinstance(answer.get("lease"), str) and _HANDLE.fullmatch(answer["lease"]) else None     # (a node with no leases gives none: the record lapses)
         if current_role is not None and _rank(current_role) > _rank(role):
-            return self._wait(label, role, frm, answer["device"], approved["name"], current_role)
-        return self._sign_in(label, role, frm, answer["device"], approved["name"], answer["name"])
+            return self._wait(label, role, frm, answer["device"], approved["name"], current_role, handle)
+        return self._sign_in(label, role, frm, answer["device"], approved["name"], answer["name"], handle)
 
     @staticmethod
     def _label(name, node_name):
         suffix = ", via %s" % node_name
         return (name or "device")[:max(1, 40 - len(suffix))] + suffix
 
-    def _sign_in(self, label, role, frm, device_id, node_name, plain_name):
+    def _sign_in(self, label, role, frm, device_id, node_name, plain_name, handle=None):
         try:
-            token, record = self.auth.add_node_device(label, role, frm, device_id, allowed=self.handover.accepting)
+            lease = self.leases.stamp(handle) if self.leases is not None else None       # the 24 hours start with this answer of the home node
+            token, record = self.auth.add_node_device(label, role, frm, device_id, allowed=self.handover.accepting, lease=lease)
         except AuthError as e:
             return self._refused(node_name, str(e))
         self.event("handover", "%s (%s) signed in from %s." % (plain_name, NAMES[role], node_name), record["name"])
         return {"result": "signed-in", "token": token, "name": record["name"], "role": role, "from": node_name, "device": record["id"]}
 
-    def _wait(self, label, role, frm, device_id, node_name, have):
+    def _wait(self, label, role, frm, device_id, node_name, have, handle=None):
         """The device is already signed in here as something higher: nothing is changed until the person says so."""
         handle = secrets.token_hex(16)
         with self.lock:
@@ -317,7 +330,7 @@ class Tickets:
                 del self._pending[k]
             while len(self._pending) >= MAX_PENDING:
                 self._pending.popitem(last=False)
-            self._pending[handle] = {"label": label, "role": role, "from": frm, "device": device_id, "node": node_name, "end": t + PENDING_SECONDS}
+            self._pending[handle] = {"label": label, "role": role, "from": frm, "device": device_id, "node": node_name, "lease": handle, "end": t + PENDING_SECONDS}
         return {"result": "confirm", "handle": handle, "have": NAMES[have], "would": NAMES[role], "from": node_name}
 
     def confirm(self, handle, source):
@@ -338,7 +351,7 @@ class Tickets:
         if role is None:
             return self._refused(entry["node"], "%s is no longer approved here" % entry["node"])
         plain = entry["label"].rsplit(", via ", 1)[0]
-        return self._sign_in(entry["label"], role, entry["from"], entry["device"], entry["node"], plain)
+        return self._sign_in(entry["label"], role, entry["from"], entry["device"], entry["node"], plain, entry.get("lease"))
 
 
 def _rank(role):

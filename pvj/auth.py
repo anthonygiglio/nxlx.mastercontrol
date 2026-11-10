@@ -55,6 +55,7 @@ MAX_DEVICES = 200                               # paired devices in all
 FULL_RESERVED = 20                              # of those, places only a full-access device can take
 SHARED_VIA = ("controller", "node")             # a full-access device that came in this way is counted with the guests: the reserved places are for the PIN
 NODE_DEVICES_PER_SOURCE = 8                     # devices carried from one other node (D132): the ninth from a different device is refused
+MAX_LENT = 16                                   # nodes one device may be lent to at once (D132 leases): the oldest is forgotten past this
 GUEST_IDLE_DAYS = 7                             # a device that joined with a guest code goes when unused this long
 SEEN_EVERY = 86400                              # its last use is saved at most this often (seconds)
 CONTROLLER_KINDS = {"join": "view", "owner": "full"}    # a code shown from a controller: its kind -> the role it pairs. "join" is a
@@ -680,13 +681,15 @@ class Auth:
                 raise
         return token, self._public(device)
 
-    def add_node_device(self, name, role, node_id, device_id, allowed=None):
+    def add_node_device(self, name, role, node_id, device_id, allowed=None, lease=None):
         """A device carried here from another node (D132, design 4): the record of an ordinary device of this node (its own
         token, made over https, so `secure`), with `via` "node" and `from` {node, device}. The same device of the same
         node tapping Open again gets the SAME record with a new token (matched by the two ids); a record from a different
         device of that node is a new one, at most NODE_DEVICES_PER_SOURCE per source node. They count in the shared pool
         beside guests. `allowed()` is asked under the settings lock, at the moment the record is written, so a switch turned off
-        while a hand-over was in flight is not undone. Returns (token, public record)."""
+        while a hand-over was in flight is not undone. `lease` (pvj/lease.py): what the record keeps of the lease its home node
+        gave (the handle and when that node last answered); it is stored with the record, so it survives a restart. Returns
+        (token, public record)."""
         if role not in ("live", "full"):
             raise AuthError("only an Operator or an Owner is carried from another node")
         token = secrets.token_urlsafe(24)
@@ -697,12 +700,18 @@ class Auth:
             for d in devices:
                 if d.get("via") == "node" and d.get("from") == {"node": node_id, "device": device_id}:
                     d["token_hash"], d["role"], d["name"], d["secure"] = _token_hash(token), role, clean_name(name), True
+                    if lease is not None:
+                        d["lease"] = dict(lease)
+                    else:
+                        d.pop("lease", None)
                     self.settings.save()
                     return token, self._public(d)
             if sum(1 for d in devices if d.get("via") == "node" and (d.get("from") or {}).get("node") == node_id) >= NODE_DEVICES_PER_SOURCE:
                 raise TooManyDevices("this node already holds %d devices carried from that node; remove one under People first" % NODE_DEVICES_PER_SOURCE)
             device = {"id": secrets.token_hex(4), "name": clean_name(name), "role": role, "token_hash": _token_hash(token),
                       "created": int(self._now()), "via": "node", "secure": True, "from": {"node": node_id, "device": device_id}}
+            if lease is not None:
+                device["lease"] = dict(lease)
             if not self._room_for(role, "node"):
                 raise TooManyDevices(self.FULL_TEXT)
             devices.append(device)
@@ -730,6 +739,70 @@ class Auth:
             self._addresses.pop(ident, None)
             self._revoked(ident)
         return len(gone)
+
+    # --- leases on carried devices (D132 slice 4b, pvj/lease.py) ---------------------------------
+    def node_records(self):
+        """Every device carried here from another node: {"id", "name", "role", "node", "device", "lease"} (a copy; the lease is
+        None for a record made before leases). The token hash is not in it."""
+        out = []
+        for d in list(self.settings.data["devices"]):
+            if d.get("via") == "node":
+                src = d.get("from") if isinstance(d.get("from"), dict) else {}
+                lease = d.get("lease")
+                out.append({"id": d["id"], "name": d["name"], "role": d["role"], "node": src.get("node"), "device": src.get("device"),
+                            "lease": dict(lease) if isinstance(lease, dict) else None})
+        return out
+
+    def update_node_device(self, device_id, role=None, lease=None):
+        """Change a carried device's record: its lease, and its role, which can only go DOWN (a carried role is never raised).
+        One save. Returns True when the record is there."""
+        with self.settings.lock:
+            for d in self.settings.data["devices"]:
+                if d["id"] == device_id and d.get("via") == "node":
+                    if role is not None and role in ROLES and ROLES[role] < ROLES.get(d["role"], 0):
+                        d["role"] = role
+                    if lease is not None:
+                        d["lease"] = dict(lease)
+                    self.settings.save()
+                    return True
+        return False
+
+    def lend(self, device_id, node_id, handle_hash):
+        """Node A kept a lease for this device on that node (the hash of the handle it gave; one per device and node, a new one
+        replaces the old). Stored with the record. Returns False when no device of this node (paired by the PIN or a recovery
+        code) has that id."""
+        with self.settings.lock:
+            for d in self.settings.data["devices"]:
+                if d["id"] == device_id and d.get("via") in (None, "recovery"):
+                    lent = [e for e in d.get("lent", []) if isinstance(e, dict) and e.get("n") != node_id]
+                    lent.append({"n": node_id, "h": handle_hash})
+                    d["lent"] = lent[-MAX_LENT:]
+                    self.settings.save()
+                    return True
+        return False
+
+    def lent_lookup(self, handle_hash, node_id):
+        """The device (as `device` gives it) that was lent to that node under that handle hash, or None."""
+        for d in list(self.settings.data["devices"]):
+            for e in d.get("lent", []) if isinstance(d.get("lent"), list) else []:
+                if isinstance(e, dict) and e.get("n") == node_id and isinstance(e.get("h"), str) and hmac.compare_digest(e["h"], handle_hash):
+                    out = self._public(d)
+                    out["secure"] = d.get("secure") is True
+                    return out
+        return None
+
+    on_lent_gone = None     # called with the set of node ids a removed device had been lent to (pokes them, pvj/lease.py)
+
+    def _lent_gone(self, nodes):
+        if nodes and self.on_lent_gone:
+            try:
+                self.on_lent_gone(set(nodes))
+            except Exception:
+                pass
+
+    @staticmethod
+    def _lent_nodes(devices):
+        return {e.get("n") for d in devices for e in (d.get("lent") if isinstance(d.get("lent"), list) else []) if isinstance(e, dict) and e.get("n")}
 
     def device(self, device_id):
         """The stored record of a device (a copy with its role as role_of gives it, and whether it was made over https), or None.
@@ -800,17 +873,22 @@ class Auth:
         self._revoked(device_id)
         with self.settings.lock:
             before = len(self.settings.data["devices"])
+            lent = self._lent_nodes([d for d in self.settings.data["devices"] if d["id"] == device_id])
             self.settings.data["devices"] = [d for d in self.settings.data["devices"] if d["id"] != device_id]
             changed = len(self.settings.data["devices"]) != before
             if changed:
                 self.settings.save()
-            return changed
+        if changed:
+            self._lent_gone(lent)           # the nodes it was lent to are told, after it is gone here
+        return changed
 
     def revoke_all(self):
         self._revoked(None)
         with self.settings.lock:
+            lent = self._lent_nodes(self.settings.data["devices"])
             self.settings.data["devices"] = []
             self.settings.save()
+        self._lent_gone(lent)
 
     def list_devices(self):
         return [dict(self._public(d), last_seen=self.last_seen.get(d["id"])) for d in self.settings.data["devices"]]

@@ -64,7 +64,8 @@ NO_GATE = frozenset([("GET", "/api/https/probe"), ("GET", "/api/fleet/card")])
 # What the peer listener answers (D132 slice 4a, server.PeerServer), and the panel's ports never do. It asks nobody for a token: the
 # caller is another node, proved by the client certificate of the handshake (chain to the pinned root, clientAuth, the key hash
 # of an approved node), and what each route then does is decided by pvj/peer.py and pvj/ticket.py with that key.
-PEER_ONLY = frozenset([("POST", "/api/fleet/peer"), ("POST", "/api/handover/redeem")])
+PEER_ONLY = frozenset([("POST", "/api/fleet/peer"), ("POST", "/api/handover/redeem"),
+                       ("POST", "/api/handover/lease"), ("POST", "/api/handover/poke")])        # slice 4b: the lease question and the poke
 
 # Every route a presenter (or less) could use on master before D80, 2026-10-10, as it was worked out from master's route
 # table (every route whose minimum there is none, view or live, and the two paths the server answered itself) at master

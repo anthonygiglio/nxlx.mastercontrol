@@ -101,6 +101,14 @@ class Handover:
         self.problem = None          # why the files on disk are not in use, for the Owner's status
         self._deny = []
         self._pairings = []
+        self.on_change = None        # called, with no lock held, after the list, an acceptance or the deny list changed (pvj/lease.py signs out what is no longer approved)
+
+    def _changed(self):
+        if self.on_change is not None:
+            try:
+                self.on_change()
+            except Exception as e:                     # whatever the sweep does, the change itself stands
+                self.log("pvj-web: the sweep after a change of trust failed: %s" % e)
 
     # -- files --
     def path(self, name):
@@ -274,7 +282,10 @@ class Handover:
             where = " taken from %s" % source if source else " loaded"
             if not same:
                 self.event("handover", "The fleet list (serial %d, %d nodes) was%s." % (lst.serial, len(lst.nodes), where), who)
-            return self.status()
+            status = self.status()
+        if not same:
+            self._changed()
+        return status
 
     def _store_pair(self, body, sig):
         """The signature and the list as a pair, the old pair kept as .prev until the new one is in place."""
@@ -355,7 +366,9 @@ class Handover:
             self._pairings = [r for r in self._pairings if r["id"] != node_id]
             self._save_pairings()
             self.event("handover", "The acceptance of %s was removed." % gone[0]["name"], who)
-            return self.status()
+            status = self.status()
+        self._changed()
+        return status
 
     # -- the deny file (storage only in slice 2) --
     def _load_deny(self):
@@ -397,7 +410,8 @@ class Handover:
                 raise HandoverError("the deny file is full")
             self._deny.append({"key": key, "name": str(name)[:64], "by": str(by)[:64], "n": 1 + max([r["n"] for r in self._deny] or [0])})
             self._save_deny()
-            return True
+        self._changed()                                  # a deny always wins: what the node carried is signed out at once
+        return True
 
     def deny_remove(self, key):
         with self.lock:
@@ -534,6 +548,8 @@ class Handover:
                 self.event("handover", "%s sent %d removals; this node took %d." % (by, len(new), len(added)))
             elif added:
                 self.event("handover", "%s removed %s from this cluster." % (by, " and ".join(added) if len(added) < 3 else "%s and %d more" % (added[0], len(added) - 1)))
+        if added:
+            self._changed()
         return added
 
     def count_unknown(self):
