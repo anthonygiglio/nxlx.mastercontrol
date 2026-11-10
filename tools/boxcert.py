@@ -498,14 +498,17 @@ def signed_list(exe, folder):
     if not os.path.exists(jpath) and not os.path.exists(spath):
         return None
     if not (os.path.isfile(jpath) and os.path.isfile(spath)):
-        raise BoxcertError("%s and %s must both be there (one is missing); move the other away to start again" % (FLEET_JSON, FLEET_SIG))
+        raise BoxcertError("%s and %s must both be in %s and one is missing. Restore the pair from your backup of this folder "
+                           "(boxcert.py fleet verify checks a pair). Do not make a new list with `fleet new`: it gets a new fleet id, "
+                           "which every node refuses." % (FLEET_JSON, FLEET_SIG, folder))
     body = _read_file(jpath, FL.MAX_BYTES)
     sig = _read_file(spath, FL.MAX_SIG_TEXT)
     try:
         return FL.verify(body, sig, _root_pem_text(folder), exe)
     except FL.FleetError as e:
         raise BoxcertError("the signed list in %s does not check out against your root (%s); it was changed or is not yours. "
-                           "Move %s and %s away, and make the list again with `fleet new`" % (folder, e.message, FLEET_JSON, FLEET_SIG))
+                           "Restore %s and %s from your backup of this folder (boxcert.py fleet verify checks a pair). Do not make a new list "
+                           "with `fleet new`: it gets a new fleet id, which every node refuses." % (folder, e.message, FLEET_JSON, FLEET_SIG))
 
 
 def _load_draft(exe, folder):
@@ -591,10 +594,17 @@ def fetch_card(folder, host, port=443, timeout=6):
     return card
 
 
-def card_from_files(card_path, cert_path, node_id, name):
+def card_from_files(exe, folder, card_path, cert_path, node_id, name):
     FL = fleetlist()
     if card_path:
         return _fleet_call(FL.parse_card, _read_file(card_path, 4096))
+    _root_pem_text(folder)
+    info = read_cert(exe, cert_path)
+    # the certificate must be one your root signed for a server (dates left out, as a node judges it: the key is what counts)
+    code, text, err = run(exe, ["verify", "-CAfile", os.path.join(folder, ROOT_PEM), "-purpose", "sslserver",
+                                "-attime", str(int(info["start"].timestamp()) + 60), cert_path])
+    if code or ": OK" not in text:
+        raise BoxcertError("%s is not a certificate your root signed (%s). Nothing was added." % (cert_path, (err.strip() or text.strip()).splitlines()[-1] if (err.strip() or text.strip()) else "no reason given"))
     der = _fleet_call(FL.certificate_der, _read_file(cert_path, 65536).decode("utf-8", "replace"))
     try:
         card = _fleet_call(FL.parse_card, json.dumps({"id": node_id, "name": name, "key": _fleet_call(FL.key_hash, der)}).encode())
@@ -621,6 +631,9 @@ def fleet_add(exe, folder, card, carry, replace_key=False, out=print):
                                "(a new key was made on purpose), run this again with --replace-key." % old["name"])
         if any(n.get("name", "").lower() == card["name"].lower() for n in nodes if n is not old):
             raise BoxcertError("another node on the list is already called %s" % card["name"])
+        for n in nodes:
+            if n is not old and n.get("key") == card["key"]:
+                raise BoxcertError("%s already has that key; two nodes cannot share one" % n["name"])
         nodes[nodes.index(old)] = row
         what = "updated"
     else:
@@ -696,9 +709,17 @@ def fleet_sign(exe, folder, ask, serial=None, out=print, now=None):
     done = signed_list(exe, folder)
     if done is not None and done.fleet != data.get("fleet"):
         raise BoxcertError("the working list is fleet %s but the signed one is fleet %s; move one of them away" % (data.get("fleet"), done.fleet))
-    low = done.serial if done else 0
-    if serial is not None and not (isinstance(serial, int) and serial > low):
+    drafted = data.get("serial") if isinstance(data.get("serial"), int) else 0
+    low = max(done.serial if done else 0, drafted)
+    if done is None and drafted > 0 and serial is None:
+        raise BoxcertError("the working copy was last signed at serial %d but the signed pair is not in %s. Restore %s and %s from your "
+                           "backup. If they are gone for good, sign with --serial N, N above %d (a serial must be higher than any a node "
+                           "may hold) and load the result on every node." % (drafted, folder, FLEET_JSON, FLEET_SIG, drafted))
+    if serial is not None and not (isinstance(serial, int) and not isinstance(serial, bool) and serial > low):
         raise BoxcertError("--serial must be above the last signed serial (%d): a serial only counts up" % low)
+    if serial is not None and serial > FL.MAX_SERIAL - 100000:
+        raise BoxcertError("--serial %d is too high: the most a serial can be is %d, and jumping close to it leaves no room to go on; "
+                           "use a number just above %d" % (serial, FL.MAX_SERIAL, low))
     data["serial"] = serial if serial is not None else low + 1
     data["issued"] = (now or datetime.datetime.now(datetime.timezone.utc)).date().isoformat()
     if not data["nodes"]:
@@ -726,8 +747,10 @@ def fleet_sign(exe, folder, ask, serial=None, out=print, now=None):
             sig_text = base64.encodebytes(f.read()).decode("ascii")
     # the signature is checked the way a node will check it, before anything is written
     _fleet_call(FL.verify, body, sig_text, root_text, exe, fleet=data["fleet"], current=done)
-    _write_file(os.path.join(folder, FLEET_JSON), body)
+    # the signature first: a crash between the two leaves a signature that matches no list, which no node accepts and the
+    # next signing replaces; the other order would leave a new list with the old signature
     _write_file(os.path.join(folder, FLEET_SIG), sig_text.encode("ascii"))
+    _write_file(os.path.join(folder, FLEET_JSON), body)
     _save_draft(folder, data)
     out("Signed: %s and %s in %s" % (FLEET_JSON, FLEET_SIG, folder))
     out("Load both on each node (Setup > Nodes on this network). A node that holds a list ignores one with a lower serial.")
@@ -871,7 +894,7 @@ def main(argv=None, ask=None, out=print):
                     raise BoxcertError("give exactly one of: the node's name or address, --card FILE, --cert FILE")
                 if a.cert and not (a.id and a.name):
                     raise BoxcertError("--cert needs --id and --name as well")
-                card = card_from_files(a.card, a.cert, a.id, a.name) if (a.card or a.cert) else fetch_card(a.dir, a.host, a.port)
+                card = card_from_files(exe, a.dir, a.card, a.cert, a.id, a.name) if (a.card or a.cert) else fetch_card(a.dir, a.host, a.port)
                 fleet_add(exe, a.dir, card, a.carry, a.replace_key, out)
             elif c == "remove":
                 fleet_remove(exe, a.dir, a.node, out)

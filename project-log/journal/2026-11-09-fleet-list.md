@@ -1,5 +1,11 @@
 <!-- SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
      SPDX-License-Identifier: Apache-2.0 -->
+## 2026-11-09, Slice 1 review fixes
+
+- **Why.** The independent review of PR 265 found no High items and these Medium and Low ones.
+- **What.** The serial can no longer restart: `fleet sign` uses the higher of the signed list and the working copy, and refuses when the signed pair is gone unless `--serial` is given above it; the error says to restore from backup, not `fleet new` (a new fleet id is refused by every node). `fleet add --cert` checks the certificate against the root first. `--replace-key` checks the new key against the other rows. A version of 1.0 is refused. The root's public key stays bytes in the checker. The signature file is written before the list. `--serial` close to the top of the range is refused. Design section 16 records what slice 1 settled.
+- **Checked.** New tests for each (a serial restart after the pair is moved, a stranger's certificate, both `--replace-key` branches, v=1.0, a certificate that does not cover the address, one CA and hostname checking in the TLS context).
+
 ## 2026-11-09, Node hand-over slice 1: the fleet list and its tool
 
 - **Why.** D132 (design/node-handover_2026-11-09.md, section 3.3 and the slice table): nodes trust each other only through a list you sign with your root. Slice 1 is the list, the way to make and sign it on your computer, and the check a node will make. It changes nothing on a node and nothing reads a list yet.

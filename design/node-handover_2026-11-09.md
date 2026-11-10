@@ -279,3 +279,17 @@ PIN pairing stays the way into a node with nothing else; roles, the guest lock a
 - The time a Pi 3B needs for the TLS connection to the Pi 4 plus an `openssl verify` (the figure for HO3 is the first measurement).
 - That `window.open('', name)` followed by `opener = null` works in the Fire launcher's WebView.
 - How many denies a bad node can push before the banner is noticed in a real show; the thresholds in section 9 (more than one entry a minute is red) are a first guess.
+
+## 16. Settled in slice 1 (PR 265)
+
+What the fleet list's builder had to choose where section 3.3 was silent. These now stand for the later slices.
+
+1. **The key hash** is the SHA-256 of the DER SubjectPublicKeyInfo of the node's certificate (the value `openssl x509 -pubkey | openssl pkey -pubin -outform DER | openssl dgst -sha256` gives). A renewal that keeps the key keeps the hash. `pvj/fleetlist.key_hash` computes it without openssl.
+2. **The signature** is the root's SHA-256 signature in OpenSSL's own DER form, written as base64 text in `fleet.sig`. A node checks it with `openssl x509 -pubkey` and `openssl dgst -sha256 -verify`, over the signed bytes of section 3.3. The checker reads the whole list as strict JSON: unknown or repeated fields, a repeated id, key or name, a carry that is not `full`, `live` or `none`, a version that is not the integer 1, and a file over 64 KiB (64 nodes, 256 clears at most) are refused even when signed.
+3. **Equal serials.** A lower serial is refused. The same serial with the same bytes is accepted (a node can be told twice). The same serial with other contents is refused.
+4. **Id lengths.** The fleet id is 16 hex digits. Node ids are 32 hex digits, as `pvj/fleet.py` makes them. Key hashes are 64.
+5. **The port.** `fleet add HOST` asks `https://HOST:443`; `--port` sets the node's TLS port.
+6. **`clear`** exists in the file format and in `boxcert.py fleet clear` from slice 1. The verifier accepts it and keeps it sorted. It has no effect until slice 4d.
+7. **Copying is binary.** The signature covers the file's exact bytes. `fleet.json` must travel as a binary file (no line-ending conversion, no editor, no mail program that rewraps). Slices that store the file, or send it between nodes, must keep the bytes.
+8. **Extra rules the tool and checker apply.** Two nodes on one list cannot share a key or a name (names compare without regard to case). `--carry` has no default. A node already on the list with another key needs `--replace-key`, and the new key may not be one another row has. `fleet add --cert` takes the key only from a certificate your root signed for a server. The serial restarts never: `sign` takes the higher of the signed list and the working copy, and refuses to sign when the signed pair is gone but the working copy says it was signed, unless `--serial` is given above it. `--serial` stays at least 100000 below the top of the range. The signature file is written before the list file.
+9. **Left for slice 2.** `GET /api/fleet/card` on the node, with the `policy.NO_GATE` test updates (`tests/test_https.py` and `tests/test_roles.py` assert that set holds the probe alone). `fleetlist.make_card` and `parse_card` are ready for it.

@@ -262,6 +262,7 @@ class Refusing(FleetListBase):
             "unknown top field": good(admin=True),
             "version 2": good(v=2),
             "version true": good(v=True),
+            "version float": good(v=1.0),
             "no fleet": {k: v for k, v in good().items() if k != "fleet"},
             "fleet upper case": good(fleet="0123456789ABCDEF"),
             "fleet short": good(fleet="0123456789abcde"),

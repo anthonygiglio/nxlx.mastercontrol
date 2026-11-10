@@ -160,7 +160,7 @@ def check_data(data):
     missing = sorted(TOP_KEYS - {"clear"} - set(data))
     if missing:
         raise FleetError("bad-list", "the list lacks: %s" % ", ".join(missing))
-    if data["v"] != VERSION or isinstance(data["v"], bool):
+    if type(data["v"]) is not int or data["v"] != VERSION:
         raise FleetError("bad-version", "the list is version %r; this node reads version %d" % (data["v"], VERSION))
     _word(data["fleet"], FLEET_WORD, "the fleet id")
     _plain_text(data["name"], "the fleet's name", 64)
@@ -268,13 +268,13 @@ def signature_ok(message, sig_text, root_pem, openssl="openssl"):
     if not isinstance(root_pem, str) or "-----BEGIN CERTIFICATE-----" not in root_pem or len(root_pem) > 65536:
         raise FleetError("no-root", "there is no root certificate to check the list against")
     r = _openssl(openssl, ["x509", "-noout", "-pubkey"], root_pem.encode("utf-8"))
-    pub = r.stdout.decode("ascii", "replace")
-    if r.returncode or "-----BEGIN PUBLIC KEY-----" not in pub:
+    pub = r.stdout
+    if r.returncode or b"-----BEGIN PUBLIC KEY-----" not in pub:
         raise FleetError("no-root", "the root certificate could not be read")
     with tempfile.TemporaryDirectory() as tmp:
         os.chmod(tmp, 0o700)
         pub_path, sig_path = os.path.join(tmp, "root.pub"), os.path.join(tmp, "list.sig")
-        with open(pub_path, "w") as f:
+        with open(pub_path, "wb") as f:
             f.write(pub)
         with open(sig_path, "wb") as f:
             f.write(raw)

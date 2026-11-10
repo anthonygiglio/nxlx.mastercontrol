@@ -5,10 +5,8 @@ make a list, add and remove nodes with their carry, sign it, show and verify it,
 serial that only counts up, and asking a node for its card over a local TLS server. The owner's real root is never
 touched. Skipped where there is no openssl."""
 import contextlib
-import contextlib
 import hashlib
 import http.server
-import io
 import io
 import json
 import os
@@ -135,7 +133,6 @@ class Making(FleetToolBase):
     def test_a_list_is_made_once_and_never_over_another(self):
         self.new()
         self.assertEqual(self.tool("fleet", "new", "--name", "Another"), 1)
-        self.assertIn("A fleet id is made once", "\n".join(self.errors) + self.say()) if False else None
         self.assertEqual(json.loads(slurp(os.path.join(self.dir, boxcert.FLEET_DRAFT)))["name"], "Anthony's rig")
 
     def test_remove_takes_a_node_off_and_the_next_list_lacks_it(self):
@@ -215,12 +212,89 @@ class Making(FleetToolBase):
         lst = self.signed()
         self.assertEqual((lst.serial, sorted(n["name"] for n in lst.nodes)), (2, ["leyline", "node-01"]))
 
+    def test_the_serial_cannot_start_again_when_the_signed_pair_is_gone(self):
+        self.new()
+        self.add(N1, "full")
+        self.tool("fleet", "sign")
+        old = self.signed()
+        for name in ("fleet.json", "fleet.sig"):
+            os.unlink(os.path.join(self.dir, name))
+        self.assertEqual(self.tool("fleet", "sign"), 1)                              # refused: restore the pair
+        self.assertIn("backup", self.errors)
+        self.assertNotIn("fleet.json", os.listdir(self.dir))
+        self.assertEqual(self.tool("fleet", "sign", "--serial", "1"), 1)             # not below what was signed
+        self.assertEqual(self.tool("fleet", "sign", "--serial", "2"), 0)
+        again = self.signed()
+        self.assertEqual((again.serial, again.fleet), (2, old.fleet))
+        FL.verify(again.body, slurp(os.path.join(self.dir, "fleet.sig")), slurp(os.path.join(self.dir, "root.pem")), self.exe, current=old)   # a node holding the old one takes it
+
+    def test_a_missing_half_of_the_pair_points_to_the_backup_not_to_a_new_list(self):
+        self.new()
+        self.add(N1, "full")
+        self.tool("fleet", "sign")
+        os.unlink(os.path.join(self.dir, "fleet.sig"))
+        self.assertEqual(self.tool("fleet", "show"), 1)
+        self.assertIn("fleet verify", self.errors)
+        self.assertIn("backup", self.errors)
+        self.assertNotIn("Move", self.errors)
+
+    def test_a_serial_close_to_the_top_is_refused_in_plain_words(self):
+        self.new()
+        self.add(N1, "full")
+        self.assertEqual(self.tool("fleet", "sign", "--serial", str(FL.MAX_SERIAL - 5)), 1)
+        self.assertIn("too high", self.errors)
+        self.assertFalse(os.path.exists(os.path.join(self.dir, "fleet.json")))
+        self.assertEqual(self.tool("fleet", "sign", "--serial", str(FL.MAX_SERIAL - 100000)), 0)
+
+    def test_the_signature_is_written_before_the_list(self):
+        self.new()
+        self.add(N1, "full")
+        order = []
+        real = boxcert._write_file
+        def spy(path, data):
+            order.append(os.path.basename(path))
+            return real(path, data)
+        boxcert._write_file = spy
+        try:
+            self.tool("fleet", "sign")
+        finally:
+            boxcert._write_file = real
+        self.assertEqual([n for n in order if n in ("fleet.json", "fleet.sig")], ["fleet.sig", "fleet.json"])
+
+    def test_replace_key_cannot_take_a_key_another_node_has(self):
+        self.new()
+        self.add(N1, "full")
+        self.add(N2, "live")
+        self.assertEqual(self.add(dict(N2, key=N1["key"]), "live", "--replace-key"), 1)      # the key of node-01
+        self.assertIn("already has that key", self.errors)
+        rows = {n["name"]: n["key"] for n in json.loads(slurp(os.path.join(self.dir, boxcert.FLEET_DRAFT)))["nodes"]}
+        self.assertEqual(rows, {"node-01": N1["key"], "leyline": N2["key"]})
+        self.assertEqual(self.add(dict(N2, key="8" * 64), "live", "--replace-key"), 0)        # a key nobody has
+        self.assertEqual({n["name"]: n["key"] for n in json.loads(slurp(os.path.join(self.dir, boxcert.FLEET_DRAFT)))["nodes"]}["leyline"], "8" * 64)
+
+    def test_a_certificate_your_root_did_not_sign_is_not_taken_by_add_cert(self):
+        self.new()
+        other = os.path.join(self.tmp, "stranger-ca")
+        boxcert.make_root(self.exe, other, "Stranger", ("local",), True, lambda p: PASS, lambda *a: None)
+        work = self.workdir()
+        _key, csr = make_request(self.exe, work, ["node-01.local"], [], cn="node-01.local")
+        cert = os.path.join(work, "cert.pem")
+        boxcert.sign(self.exe, other, csr, [], [], [], 30, cert, lambda p: PASS, out=lambda *a: None)
+        self.assertEqual(self.tool("fleet", "add", "--cert", cert, "--id", "c" * 32, "--name", "node-01", "--carry", "full"), 1)
+        self.assertIn("not a certificate your root signed", self.errors)
+        self.assertEqual(json.loads(slurp(os.path.join(self.dir, boxcert.FLEET_DRAFT)))["nodes"], [])
+        # a self-signed certificate and the root's own certificate are not a node's either
+        self.assertEqual(self.tool("fleet", "add", "--cert", os.path.join(self.dir, "root.pem"), "--id", "c" * 32, "--name", "node-01", "--carry", "full"), 1)
+        self.assertEqual(json.loads(slurp(os.path.join(self.dir, boxcert.FLEET_DRAFT)))["nodes"], [])
+
     def test_the_root_key_is_asked_for_only_when_signing(self):
         asked = []
         def ask(prompt):
             asked.append(prompt)
             return PASS
-        main = lambda *argv: boxcert.main(["--openssl", self.exe, "--dir", self.dir] + list(argv), ask=ask, out=lambda *a: None)    # noqa: E731
+        def main(*argv):
+            with contextlib.redirect_stderr(io.StringIO()):
+                return boxcert.main(["--openssl", self.exe, "--dir", self.dir] + list(argv), ask=ask, out=lambda *a: None)
         main("fleet", "new", "--name", "x")
         main("fleet", "add", "--card", self.card_file(N1), "--carry", "live")
         main("fleet", "remove", "node-01")
@@ -316,9 +390,9 @@ class Asking(FleetToolBase):
     constraints = False
 
 
-    def serve(self, ca_folder, card_for_cert=None, status=200, body_override=None):
+    def serve(self, ca_folder, card_for_cert=None, status=200, body_override=None, ips=("127.0.0.1",)):
         work = self.workdir()
-        key, csr = make_request(self.exe, work, ["localhost"], ["127.0.0.1"], cn="localhost")
+        key, csr = make_request(self.exe, work, ["localhost"], list(ips), cn="localhost")
         cert = os.path.join(work, "cert.pem")
         boxcert.sign(self.exe, ca_folder, csr, [], [], [], 30, cert, lambda p: PASS, out=lambda *a: None)
         der = FL.certificate_der(slurp(cert))
@@ -379,6 +453,34 @@ class Asking(FleetToolBase):
         self.assertEqual(self.tool("fleet", "add", "not a host!", "--carry", "full"), 1)
         self.assertEqual(json.loads(slurp(os.path.join(self.dir, boxcert.FLEET_DRAFT)))["nodes"], [])
 
+    def test_a_certificate_from_the_root_that_does_not_cover_the_address_is_refused(self):
+        self.new()
+        port, _card, _seen = self.serve(self.dir, ips=())                  # names localhost only; we ask by 127.0.0.1
+        self.assertEqual(self.tool("fleet", "add", "127.0.0.1", "--port", str(port), "--carry", "full"), 1)
+        self.assertEqual(json.loads(slurp(os.path.join(self.dir, boxcert.FLEET_DRAFT)))["nodes"], [])
+        self.assertEqual(self.tool("fleet", "add", "localhost", "--port", str(port), "--carry", "full"), 0, self.errors)    # the name it does cover
+
+    def test_the_tls_context_trusts_exactly_one_root_and_checks_the_name(self):
+        self.new()
+        port, _card, _seen = self.serve(self.dir)
+        made = []
+        real = ssl.create_default_context
+        def spy(*a, **kw):
+            ctx = real(*a, **kw)
+            made.append(ctx)
+            return ctx
+        ssl.create_default_context = spy
+        try:
+            self.assertEqual(self.tool("fleet", "add", "127.0.0.1", "--port", str(port), "--carry", "live"), 0, self.errors)
+        finally:
+            ssl.create_default_context = real
+        self.assertEqual(len(made), 1)
+        ctx = made[0]
+        self.assertTrue(ctx.check_hostname)
+        self.assertEqual(ctx.verify_mode, ssl.CERT_REQUIRED)
+        self.assertEqual(len(ctx.get_ca_certs()), 1)                          # your root, not the system's
+        self.assertEqual(ctx.get_ca_certs()[0]["subject"][0][0][1], "Test root")
+
     def test_a_node_that_is_not_there_is_an_error_not_a_hang(self):
         self.new()
         self.assertEqual(self.tool("fleet", "add", "127.0.0.1", "--port", "9", "--carry", "full"), 1)
@@ -404,7 +506,7 @@ class Separate(unittest.TestCase):
         text = slurp(os.path.join(here, os.pardir, "docs", "HTTPS.md"))
         for cmd in ("fleet new", "fleet add", "fleet remove", "fleet sign", "fleet show", "fleet verify", "fleet clear", "--carry", "--replace-key", "--serial"):
             self.assertIn(cmd, text)
-        self.assertNotIn("—", text[text.index("## Letting your nodes open each other"):text.index("## Moving the signing key")])
+        self.assertNotIn("\u2014", text[text.index("## Letting your nodes open each other"):text.index("## Moving the signing key")])
 
 
 if __name__ == "__main__":
