@@ -68,6 +68,31 @@ With the switch "Owner access only over the secure connection" on, a new phone o
 
 Steps 2 to 4 for the new box with the same root; its certificate is `~/nxlx-root-ca/<its host name>-cert.pem`. Nothing to do on your devices: they trust the root already. `python3 tools/boxcert.py list` shows every box signed, with its end date.
 
+## Letting your nodes open each other (the fleet list)
+
+Decision D132, design in `design/node-handover_2026-11-09.md`. **Only the first part is built: the list and its tool. No node reads a list yet, so nothing on a node changes and nothing opens without a PIN.** Later parts let a node load the list and let an Owner paired on one node open another without pairing again.
+
+The idea in plain words: you decide, once, on your own computer, which nodes may take each other's devices. You write that down in a **fleet list** and sign it with your root. A node will believe the list only if your root's signature on it holds. Having a certificate from your root is not enough for a node to be trusted this way, because a stolen or lent node still has one. The root key stays on your computer; it is used only to sign the list.
+
+**Make and sign a list** (the working copy and the signed files sit in the root's folder, `~/nxlx-root-ca`; back them up with it):
+
+1. `python3 tools/boxcert.py fleet new --name "My rig"` starts a list with a fleet id of its own. It is made once.
+2. For each node: `python3 tools/boxcert.py fleet add node-01.local --carry full`. The tool asks the node for its card (its id, its name and a hash of its public key) over https and trusts only your root while doing it, so a node showing someone else's certificate is refused and nothing is added. Nodes do not give the card yet; until a later release does, use the certificate you signed for that node: `fleet add --cert ~/nxlx-root-ca/node-01-cert.pem --id <the node's id> --name node-01 --carry full` (the id is on the node's panel and in the Nodes list), or `--card FILE` with a card you saved.
+3. `--carry` is required, and it is the highest role this node gives to a device that arrives from another node on the list: `full` (an Owner stays an Owner there), `live` (at most an Operator) or `none` (this node takes nobody in). Your own rig can say `full`; a venue's node should say `live` or `none`. Run `fleet add` again for the same node to change its carry.
+4. `python3 tools/boxcert.py fleet sign` shows what it will sign, asks for the root's passphrase, raises the serial by one and writes `fleet.json` and `fleet.sig`. A wrong passphrase writes nothing. `--serial N` sets a higher serial than the next one; a serial never goes down.
+5. `python3 tools/boxcert.py fleet show` shows the signed list and what the working copy would change. `fleet verify` checks the signature again; `fleet verify --list FILE --sig FILE` checks a copy taken from somewhere else.
+6. To take a node off: `fleet remove node-01`, then `fleet sign`. Until you sign, nodes keep trusting the list they hold.
+
+**Things that matter**
+
+- Do not edit `fleet.json` by hand and copy it as it is (as a binary file, not as text that an editor or a mail program may change). The signature covers every byte; one changed byte and a node refuses it.
+- A node's key is part of the list. A renewed certificate that keeps the node's key keeps working. If the node made a new key, `fleet add ... --replace-key` and sign again; the tool refuses to swap a key by accident.
+- A list for one fleet is never taken by a node of another fleet, and a node never goes back to a lower serial. Dates in the list are for you; nothing judges them, because a Pi has no battery clock.
+- **If a node is stolen or lost**, taking it off a list is not the cure by itself. A later release adds "Remove a node from this cluster" on every node's panel. `fleet clear NODE` (or a key hash) is the other half: it puts the node's key into the next signed list as allowed again, for the case where a node was wrongly removed. It only has an effect once nodes read lists.
+- The tool needs `openssl` and, for the fleet commands only, the file `pvj/fleetlist.py` of the same checkout: the tool and the nodes read a list with the same code. The first test on macOS (LibreSSL) and Windows has not been done.
+
+**For builders.** `fleet.json` is JSON (version 1: `fleet`, `name`, `serial`, `issued`, `nodes` with `id`, `name`, `key`, `carry`, and `clear` when it is not empty). The signature is the root key's SHA-256 signature over `"nxlx-fleet-v1" + newline + fleet id + newline + serial in decimal + newline + the exact bytes of fleet.json`, base64 in `fleet.sig`. `key` is the SHA-256 of the DER SubjectPublicKeyInfo of the node's certificate. A list holds up to 64 nodes and 256 clears and is at most 64 KiB. `pvj/fleetlist.py` parses it strictly (unknown fields, repeated fields, repeated ids, keys or names, bad carry values and oversized files are refused even when signed), verifies the signature with `openssl dgst -verify`, and compares the fleet id and the serial.
+
 ## Moving the signing key to another computer
 
 Copy the folder `~/nxlx-root-ca` (all of it: `root.key`, `root.pem`, `signed.json`) to the other computer, where Python 3 and `openssl` exist, and use `--dir` if you put it elsewhere. The key is the file plus the passphrase; nothing ties it to a machine. Keep one copy that is not on a computer you carry around.
