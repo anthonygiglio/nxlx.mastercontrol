@@ -223,6 +223,9 @@ typedef struct {
     long flips, missed, drawn, back_drawn;  // drawn: frames of the front layer converted; back_drawn: of the other
     long fences, fences_freed;      // GL fences libmpv made and has not deleted yet; the ones it left that we deleted
     long gl_objects;                // textures, framebuffers, renderbuffers and buffers libmpv holds now (atomics)
+#ifdef PVJ_RENDER_TEST_HOOKS
+    long blank_draws;               // tests only: draws of a video layer that left the middle of its picture black (atomics)
+#endif
 } App;
 
 extern App app;

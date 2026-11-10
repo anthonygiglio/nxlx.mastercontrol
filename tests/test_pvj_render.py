@@ -841,6 +841,72 @@ class ClipTest(Base):
         self.assertTrue(r.wait(lambda: r("get_property", "idle-active") is True, 10), r.stderr())
 
 
+def need_hooks(case):
+    """The renderer must be a TEST_HOOKS build (a skip without, a failure where PVJ_RENDER_TEST=1)."""
+    if "with test hooks" in subprocess.run([BIN, "--version"], capture_output=True, text=True, timeout=10).stdout:
+        return
+    if STRICT:
+        case.fail("PVJ_RENDER_TEST=1 and pvj-render was built without its test hooks: make -C render TEST_HOOKS=1")
+    case.skipTest("pvj-render was built without its test hooks (make -C render clean; make -C render TEST_HOOKS=1)")
+
+
+def make_clip_with_black_end(case, path, bright=2, black=0.2):
+    """A bright clip of `bright` seconds that ends in `black` seconds of black, as a clip cut from a longer piece may."""
+    maker = shutil.which("ffmpeg")
+    if not maker:
+        if STRICT:
+            case.fail("PVJ_RENDER_TEST=1 and no ffmpeg to make the clip")
+        case.skipTest("no ffmpeg to make a clip")
+    subprocess.run([maker, "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x40a0e0:s=320x180:r=30:d=%s" % bright,
+                    "-f", "lavfi", "-i", "color=c=black:s=320x180:r=30:d=%s" % black,
+                    "-filter_complex", "[0:v][1:v]concat=n=2:v=1[v]", "-map", "[v]", "-pix_fmt", "yuv420p",
+                    "-c:v", "libx264", "-g", "15", path], check=True, timeout=120, stdin=subprocess.DEVNULL)
+
+
+class LoopGapTest(Base):
+    """What a looping clip puts on the screen at its loop point (the finding of 2026-11-09 on node-01: 2 to 4 black
+    captured frames at every loop). The renderer holds a layer's last picture through a seek, so the picture at the loop
+    is the clip's own last frame until its first one is decoded. A black frame there is the clip's: the finding's clip
+    ends in one black frame, and the renderer only holds it while the decoder restarts. `pvj-test-blank` (TEST_HOOKS)
+    counts the draws that left the middle of the layer black, so a clip with a lit middle has none unless it is black."""
+
+    def setUp(self):
+        super().setUp()
+        need_hooks(self)
+        self.r("set_property", "loop-file", "inf")
+
+    def blank(self):
+        return self.r("get_property", "pvj-test-blank")
+
+    def count_passes(self, passes, seconds=20):
+        """Waits for `passes` wraps of the position (the clip's own loops) and returns how many were seen."""
+        seen, last = 0, 0.0
+        deadline = time.monotonic() + seconds
+        while seen < passes and time.monotonic() < deadline:
+            pos = self.r("get_property", "time-pos") or 0.0
+            if pos < last - 1.0:
+                seen += 1
+            last = pos
+            time.sleep(0.02)
+        return seen
+
+    def test_a_clip_with_a_lit_middle_never_goes_blank_at_its_loop(self):
+        clip = os.path.join(self.tmp, "bright.mp4")
+        make_clip(self, clip, seconds=2, source="color=c=0x40a0e0")
+        self.r.load(clip)
+        before = self.blank()
+        self.assertEqual(self.count_passes(3), 3, "the clip looped three times\n" + self.r.stderr())
+        self.assertEqual(self.blank() - before, 0, "a blank picture at a loop point\n" + self.r.stderr())
+
+    def test_a_black_end_in_the_clip_is_what_shows_at_its_loop(self):
+        clip = os.path.join(self.tmp, "black-end.mp4")
+        make_clip_with_black_end(self, clip)
+        self.r.load(clip)
+        before = self.blank()
+        self.assertEqual(self.count_passes(3), 3, "the clip looped three times\n" + self.r.stderr())
+        self.assertGreaterEqual(self.blank() - before, 1, "the clip's own black end was drawn, so the counter sees it")
+
+
 class FadeBase(Base):
     """Two video layers and the renderer's own crossfade (D98): ["pvj-crossfade", URL, SECONDS, OPTIONS]."""
 
@@ -2491,6 +2557,23 @@ class LoopListTest(Base):
         self.assertLess(st["position"], 2.0)
         self.assertEqual(self.r("get_property", "vd-queue-max-samples"), 6, "the queue is on for this file")
         self.assertEqual(self.r("get_property", "pvj-render")["fade"], "off")
+
+    def test_a_list_loop_draws_no_blank_at_its_joins(self):
+        # the panel's own loop (D118) of a clip with a lit middle: through three joins, no draw leaves the layer black
+        if not self.takes:
+            return
+        need_hooks(self)
+        bright = os.path.join(self.tmp, "bright.mp4")
+        make_clip(self, bright, seconds=2, source="color=c=0x40a0e0")
+        self.lists.for_clip(bright)
+        self.assertTrue(self.r.wait(lambda: self.lists._worker is None, 5))
+        p = self.player
+        p.play([bright], spawn=False)
+        self.assertTrue(self.plays_list())
+        self.assertTrue(self.r.wait(lambda: (self.position() or 0) > 0.5, 15), self.r.stderr())
+        before = self.r("get_property", "pvj-test-blank")
+        self.assertTrue(self.r.wait(lambda: (self.position() or 0) > 6.6, 20), self.r.stderr())
+        self.assertEqual(self.r("get_property", "pvj-test-blank") - before, 0, "a blank picture at a join\n" + self.r.stderr())
 
     def test_the_queue_is_that_files_alone(self):
         if not self.takes:
