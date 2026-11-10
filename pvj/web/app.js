@@ -8071,7 +8071,7 @@
       h('div', { class: 'pill k', id: 'pill', role: 'button', tabindex: '0', 'aria-haspopup': 'dialog', title: 'This node: status, this device, nodes and tools',
         onclick: function (e) { nodeSheetShow(true, e.currentTarget); },
         onkeydown: function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); nodeSheetShow(true, e.currentTarget); } } }),
-      nodesShown() ? h('button', { class: 'btn small nodesbtn', id: 'nodesbtn', text: 'Nodes', 'aria-expanded': 'false', 'aria-controls': 'nodespop', onclick: nodesToggle }) : null);
+      nodesShown() ? h('button', { class: 'btn small nodesbtn', id: 'nodesbtn', text: 'Nodes', 'aria-haspopup': 'dialog', 'aria-expanded': S.nodeSheet ? 'true' : 'false', onclick: nodesToggle }) : null);
     // The tabs. Where the area is a desk, its columns are one tab ("Effect · Picture · Sound") beside the tools
     // that need the whole width; an area whose screens all share the page has no tabs there at all. Play's Shaders
     // column is the exception (D72, changed 2026-10-10): up to 1699 px the desk is Pads and Library and Shaders is a
@@ -8169,28 +8169,28 @@
       } }));
       if (dv.on && document.getElementById('nodesbtn')) row.appendChild(h('button', { class: 'btn grow', id: 'nodessetlist', text: 'Show the nodes', onclick: function () {
         if (!document.getElementById('nodespop')) nodesToggle();
-        window.scrollTo(0, 0);
       } }));
     }
     function look() { api('GET', '/api/nodes').then(function (r) { if (card.isConnected) draw(r); }); }
     setTimeout(look, 0);       // (asked once the card is on the page)
     return card;
   }
-  // ---- The node sheet (the owner, 2026-11-09: "being able to swipe up from the bottom of the screen and seeing
-  // info like status, device details, nodes, tools", as the FireTab launcher's drawer does) ----------------------
-  // A sheet from the foot of the screen: how this node is, this device, the nodes, and a few tools. It opens with a
-  // swipe up on the strip (a phone or a tablet) or a press on the pill in the title bar (any width), and closes with
-  // Close, Escape, a press on the dark around it, or a swipe down on its bar. Inside the FireTab launcher, whose own
-  // drawer answers a swipe up from the bottom edge, the swipe here is off (the launcher says so in its user agent),
-  // and the strip keeps clear of the launcher's edge.
+  // ---- The node sheet (2026-11-09) -------------------------------------------------------------------------------
+  // A sheet from the top of the screen: the nodes on this network, how this node is, this device, and a few tools.
+  // Nodes in the title bar opens it, and so does the pill (the owner: "Make the new
+  // swipe up panel what appears when a user clicks on the node selector at the top"; there is no swipe: "I do not
+  // like the swipe up panel"). It closes with Close, Escape or a press on the dark around it. Inside the FireTab
+  // launcher (it says so in its user agent) the strip keeps clear of the launcher's own swipe edge at the foot.
   var IN_LAUNCHER = /NXLXLauncher\//.test(navigator.userAgent);
   if (IN_LAUNCHER) document.documentElement.setAttribute('data-launcher', '');
   var nsWake = null, nsFrom = null;
   function nodeSheetShow(open, from) {
-    var was = document.getElementById('nodesheetback');
+    var was = document.getElementById('nodesheetback'), nb = document.getElementById('nodesbtn');
+    if (nb) nb.setAttribute('aria-expanded', open ? 'true' : 'false');
     if (!open) {
       S.nodeSheet = false;
-      if (was) was.parentNode.removeChild(was);
+      if (!was) return;
+      was.parentNode.removeChild(was);
       if (nsFrom && nsFrom.isConnected) nsFrom.focus(); else { var p = document.getElementById('pill'); if (p) p.focus(); }
       nsFrom = null;
       return;
@@ -8199,7 +8199,7 @@
     S.nodeSheet = true;
     nsFrom = from || document.activeElement;
     app.appendChild(nodeSheet());
-    var c = document.getElementById('nsclose'); if (c) c.focus();
+    var c = document.getElementById('nsclose'); if (c) c.focus({ preventScroll: true });
   }
   function nodeSheet() {
     var st = S.status || {}, sys = st.system || {}, pl = st.player || {}, dev = S.device || {};
@@ -8240,47 +8240,35 @@
     var out = h('div', { class: 'msg inmsg', id: 'nsmsg', role: 'status' });
     var ver = h('p', { class: 'k nsver', id: 'nsversion', text: 'nxlx.mastercontrol' });
     api('GET', '/api/system').then(function (r) { if (r.ok && r.data && r.data.version && ver.isConnected) ver.textContent = 'nxlx.mastercontrol ' + r.data.version; });
-    var bar = h('div', { class: 'nsbar' }, h('h2', { id: 'nshead', text: 'This node' }), close);
+    // the nodes come first: Nodes in the title bar is what opens it (the pill opens the same sheet)
+    var bar = h('div', { class: 'nsbar' }, h('h2', { id: 'nshead', text: nodesShown() ? 'Nodes' : 'This node' }), close);
     var box = h('div', { class: 'nssheet', id: 'nodesheet', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'nshead' },
       bar,
-      h('h3', { class: 'k', text: 'Status' }), status,
+      nodesShown() ? h('h3', { class: 'k', id: 'nsnodeshead', text: 'Nodes on this network' }) : null,
+      nodesShown() ? nodesPanel() : null,
+      h('h3', { class: 'k', text: 'This node' }), status,
       h('h3', { class: 'k', text: 'This device' }), device,
-      nodesShown() ? h('h3', { class: 'k', text: 'Nodes' }) : null,
-      nodesShown() ? h('button', { class: 'btn nsnodes', id: 'nsnodes', text: 'Nodes on this network', onclick: function () { nodeSheetShow(false); if (!document.getElementById('nodespop')) nodesToggle(); } }) : null,
       h('h3', { class: 'k', text: 'Tools' }), tools, out, ver);
     var back = h('div', { class: 'nsback', id: 'nodesheetback', onclick: function (e) { if (e.target === back) nodeSheetShow(false); },
-      onkeydown: function (e) { if (e.key === 'Escape') { e.stopPropagation(); nodeSheetShow(false); } } }, box);
+      onkeydown: function (e) {
+        if (e.key === 'Escape') { e.stopPropagation(); nodeSheetShow(false); return; }
+        // Tab stays in the sheet (it is a modal dialog): past the last control it goes round to the first, and back
+        if (e.key !== 'Tab') return;
+        var f = Array.prototype.filter.call(box.querySelectorAll('button, a[href], input, select, textarea, [tabindex]'), function (x) {
+          return !x.disabled && x.tabIndex >= 0 && x.getClientRects().length > 0;
+        });
+        if (!f.length) return;
+        var a = document.activeElement, first = f[0], last = f[f.length - 1];
+        if (e.shiftKey ? (a === first || !box.contains(a)) : (a === last || !box.contains(a))) { e.preventDefault(); (e.shiftKey ? last : first).focus(); }
+      } }, box);
     keepScroll(back, { box: box });
-    // a swipe down on its bar closes it, as a swipe up opened it
-    var y0 = null;
-    bar.addEventListener('touchstart', function (e) { y0 = e.touches.length === 1 ? e.touches[0].clientY : null; }, { passive: true });
-    bar.addEventListener('touchmove', function (e) { if (y0 !== null && e.touches[0].clientY - y0 > 48) { y0 = null; nodeSheetShow(false); } }, { passive: true });
     return back;
   }
-  // The swipe up on the strip: a finger that starts on the strip (not on one of its sliders) and goes up 48 px, more
-  // up than sideways, opens the sheet; a press that does not move is still the button's. Off in the launcher.
-  (function () {
-    var t0 = null;
-    document.addEventListener('touchstart', function (e) {
-      t0 = null;
-      if (IN_LAUNCHER || e.touches.length !== 1 || !S.device) return;
-      var t = e.target;
-      if (!t.closest || !t.closest('#wsdock') || t.closest('input[type=range]') || document.getElementById('nodesheetback')) return;
-      t0 = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-    }, { passive: true });
-    document.addEventListener('touchmove', function (e) {
-      if (!t0 || e.touches.length !== 1) return;
-      var dx = e.touches[0].clientX - t0.x, dy = t0.y - e.touches[0].clientY;
-      if (dy > 48 && Math.abs(dx) < dy / 2) { t0 = null; if (e.cancelable) e.preventDefault(); nodeSheetShow(true, document.getElementById('pill')); }
-    }, { passive: false });
-  })();
+  // Nodes in the title bar opens the This node sheet at its list of nodes, and closes it again (the owner, 2026-11-09:
+  // the list used to open inside the title bar, which then grew past a quarter of a phone and scrolled with the page)
   function nodesToggle() {
-    var btn = document.getElementById('nodesbtn'), open = document.getElementById('nodespop');
-    if (open) { open.remove(); if (btn) { btn.setAttribute('aria-expanded', 'false'); btn.focus(); } return; }
-    var head = document.getElementById('wshead');
-    if (!head) return;
-    head.appendChild(nodesPanel());
-    if (btn) btn.setAttribute('aria-expanded', 'true');
+    if (document.getElementById('nodesheetback')) return nodeSheetShow(false);
+    nodeSheetShow(true, document.getElementById('nodesbtn'));
   }
   // A scroll over a box that sits over the page stays in the box: it scrolls the box while the box has further to
   // go, and then nothing, never the page behind it (the owner, 2026-11-09: "i notice the page underneath moving").
@@ -8323,14 +8311,12 @@
     var list = h('div', { class: 'list', id: 'nodeslist' }, h('div', { class: 'hint', text: 'Looking for nodes on this network...' }));
     var self = h('p', { class: 'hint', id: 'nodesself' });
     var disc = h('div', { class: 'row', id: 'nodesdiscrow' });
-    var pop = h('section', { class: 'card nodespop', id: 'nodespop', 'aria-label': 'Nodes on this network', onkeydown: function (e) { if (e.key === 'Escape') nodesToggle(); } },
-      h('h2', { text: 'Nodes on this network' }), self, list,
+    var pop = h('section', { class: 'nodespop', id: 'nodespop', 'aria-labelledby': 'nsnodeshead' },
+      self, list,
       h('p', { class: 'hint', id: 'nodesnote', text: 'A node opens in a new tab over its secure connection and asks for its own pairing. If your device warns about its certificate, stop there: it is not one of your nodes, or it has changed.' }),
       disc,
       h('div', { class: 'row' },
-        h('button', { class: 'btn small grow', id: 'nodesagain', text: 'Look again', onclick: look }),
-        h('button', { class: 'btn small grow', id: 'nodesclose', text: 'Close', onclick: nodesToggle })));
-    keepScroll(pop);
+        h('button', { class: 'btn small grow', id: 'nodesagain', text: 'Look again', onclick: look })));
     function line(n, groupsId, groupsName, mem) {
       var name = n.name || 'A node with no name', where = nodeWhere(n), host = nodeHost(n);
       var conflict = groupsId[n.id] > 1 || groupsName[String(n.name || '').toLowerCase()] > 1;
@@ -8477,8 +8463,12 @@
     keepSyncForm();
     var a = document.activeElement, focus = a && a.id, at = indexAt();
     var held = dock && a && dock.el.contains(a) ? a : null;      // a control of the strip, which is kept across the redraw
+    // the open Nodes sheet is kept across the redraw too, where it was scrolled to and with the cursor where it was
+    // (built again, it went back to its top and asked for the nodes again, under the finger)
+    var nsKept = S.nodeSheet ? document.getElementById('nodesheetback') : null;
+    var nsTop = nsKept ? nsKept.querySelector('#nodesheet').scrollTop : 0, nsFocus = nsKept && a && nsKept.contains(a) ? a : null;
     app.textContent = '';
-    if (!S.device) { S.landing = true; dock = null; app.appendChild(connect()); return; }
+    if (!S.device) { S.landing = true; S.nodeSheet = false; dock = null; app.appendChild(connect()); return; }
     // Where a device starts when the page is first loaded or the device has just been paired (nobody already on
     // another screen is ever moved): an owner or an operator on Now, what is on and what needs them (the owner,
     // 2026-11-07: "open on Now"); a guest on the Room area (room.js) while its module is on.
@@ -8500,7 +8490,11 @@
           h('div', { id: 'msg', class: 'msg' + (S.msgErr ? ' err' : ''), role: 'status', text: S.msg }), desk),
         h('div', { class: 'wsdock', id: 'wsdock' }, transport(), c.tabs))));
     if (S.sheet) app.appendChild(heldSheet());
-    if (S.nodeSheet && !document.getElementById('nodesheetback')) app.appendChild(nodeSheet());
+    if (S.nodeSheet && nsKept) {
+      app.appendChild(nsKept);
+      nsKept.querySelector('#nodesheet').scrollTop = nsTop;
+      if (nsFocus) nsFocus.focus({ preventScroll: true });
+    } else if (S.nodeSheet && !document.getElementById('nodesheetback')) app.appendChild(nodeSheet());
     markArea();        // once more, now that the columns are on the page
     patchLive();
     dockHeight();
