@@ -2961,6 +2961,10 @@
     return chosen ? chosen.value : '';
   }
   function keepCursor(container, rebuild) {
+    // A question open in it (confirmRow) is never wiped by a redraw: the list is left as it is until the question is
+    // answered or goes by itself, and the next redraw after that brings it up to date (Now's walls were rebuilt every
+    // 5 s, so Not now slipped away under the finger, and the browser test's click on it failed, 2026-11-09)
+    if (asking(container)) return;
     var a = document.activeElement, keep = null;
     if (a && a.id && container.contains(a)) {
       var field = /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.type !== 'range';
@@ -6740,6 +6744,12 @@
     if (!S.themes.length) return;                 // not read yet (the connect screen): what the server wrote stays
     var style = th && STYLES.indexOf(th.style) >= 0 ? th.style : null;
     if (style) root.setAttribute('data-style', style); else root.removeAttribute('data-style');
+    // light or dark, from the look's page colour: what is drawn in shade (the strip's shadow) is gentler on a light page
+    var bg = th && th.look && th.look.tokens && /^#([0-9a-f]{6})$/i.exec(th.look.tokens.bg || '');
+    if (bg) {
+      var n = parseInt(bg[1], 16), lum = (0.2126 * (n >> 16) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255;
+      root.setAttribute('data-tone', lum > 0.5 ? 'light' : 'dark');
+    } else root.removeAttribute('data-tone');
   }
   // A style that draws a slider itself needs to know how full it is: --fill on each slider, from its value. Set
   // through the script (the policy allows that, not a style attribute) in the same turn as the value: on every
@@ -7830,12 +7840,12 @@
     if (canOp()) list.push(scr('now', 'now', 'Now', 'What is on, and what needs you.', 'now', { part: 'now' }));
     list.push(
       scr('play', 'pads', 'Pads', 'Start what sits on a pad.', 'play', { part: 'pads' }),
-      scr('play', 'library', 'Library', 'Find a clip, a picture or a live input and play it; keep the files.', 'play', { part: 'library' }));
+      scr('play', 'library', 'Library', 'Play clips, pictures and live inputs.', 'play', { part: 'library' }));
     if (has('vibes')) list.push(scr('play', 'shaders', 'Shaders', 'Pick a shader, or let Vibes play a set.', 'play', { part: 'shaders' }));
     if (has('graphics')) list.push(scr('play', 'graphics', 'Graphics', 'Put text and logos on the screen.', 'system', { sys: 'graphics' }));
-    if (window.pvjEffects && moduleOn('shaders')) list.push(scr('shape', 'effect', 'Effect', 'Put one effect over the picture and set how much.', 'shape', { part: 'effect' }));
+    if (window.pvjEffects && moduleOn('shaders')) list.push(scr('shape', 'effect', 'Effect', 'Put an effect over the picture.', 'shape', { part: 'effect' }));
     list.push(scr('shape', 'picture', 'Picture', 'Set how the picture looks and where it sits.', 'shape', { part: 'picture' }));
-    if (has('sound')) list.push(scr('shape', 'sound', 'Sound', 'Set how loud it is and where the sound comes out.', 'shape', { part: 'sound' }));
+    if (has('sound')) list.push(scr('shape', 'sound', 'Sound', 'How loud, and where it comes out.', 'shape', { part: 'sound' }));
     if (has('mapping')) list.push(scr('shape', 'mapping', 'Mapping', 'Fit the picture to the wall.', 'system', { sys: 'mapping' }));
     if (window.pvjRoom && moduleOn('room')) {
       list.push(scr('room', 'scenes', 'Scenes', 'Set the whole room with one tap.', 'room', { part: 'scenes' }));
