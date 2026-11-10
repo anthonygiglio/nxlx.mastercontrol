@@ -2404,6 +2404,14 @@ function startServer(env) {          // env: more for the harness's environment 
       page.on('request', offWatch);
       await page.click(wall + ' button[data-action="off"]');
       await page.waitForSelector('#confirmrow:has-text("Switch Main wall off?")');
+      {
+        // the question stays put while Now looks again: Not now is the same button after a refresh of the walls
+        const before = await page.$('#confirmno');
+        await page.waitForRequest((q) => q.url().endsWith('/api/room') && q.method() === 'GET', { timeout: 7000 });
+        await page.waitForTimeout(600);
+        const same = await page.evaluate((b) => b.isConnected && b === document.getElementById('confirmno'), before);
+        assert.strictEqual(same, true, 'Not now on a wall of Now is the same button after Now looks again (it was rebuilt under the finger)');
+      }
       await page.click('#confirmrow button:text-is("Not now")');
       await page.waitForSelector('#confirmrow', { state: 'detached' });
       await page.waitForTimeout(500);
