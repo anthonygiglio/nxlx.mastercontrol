@@ -2704,13 +2704,24 @@ function startServer(env) {          // env: more for the harness's environment 
     {
       // The display draws in the look's colours (PROPOSALS 6): its background is the page's --bg, not a fixed black.
       const px = await page.evaluate(() => {
-        const c = document.getElementById('mapcanvas'), d = c.getContext('2d').getImageData(1, 1, 1, 1).data;
+        const c = document.getElementById('mapcanvas'), d = (() => { const t = document.createElement('canvas'); t.width = 4; t.height = 4; const g = t.getContext('2d', { willReadFrequently: true }); g.drawImage(c, -1, -1); return g.getImageData(0, 0, 1, 1).data; })();      // (read from a copy: the page's own canvas is not read back, which the browser warns of)
         const probe = document.createElement('canvas').getContext('2d');
         probe.fillStyle = getComputedStyle(c).getPropertyValue('--bg').trim(); probe.fillRect(0, 0, 1, 1);
         const want = probe.getImageData(0, 0, 1, 1).data;
         return { got: [d[0], d[1], d[2]], want: [want[0], want[1], want[2]] };
       });
       assert.deepStrictEqual(px.got, px.want, 'the mapping display is drawn on the look\'s --bg: ' + JSON.stringify(px));
+      // and drawn again when a new look's stylesheet has loaded ('pvj-look'), in the new colours
+      const again = await page.evaluate(() => {
+        const c = document.getElementById('mapcanvas'), read = () => Array.from((() => { const t = document.createElement('canvas'); t.width = 4; t.height = 4; const g = t.getContext('2d', { willReadFrequently: true }); g.drawImage(c, -1, -1); return g.getImageData(0, 0, 1, 1).data; })().slice(0, 3));
+        document.documentElement.style.setProperty('--bg', 'rgb(1, 2, 3)');
+        window.dispatchEvent(new Event('pvj-look'));
+        const got = read();
+        document.documentElement.style.removeProperty('--bg');
+        window.dispatchEvent(new Event('pvj-look'));
+        return got;
+      });
+      assert.deepStrictEqual(again, [1, 2, 3], 'a new look redraws the mapping display in its colours: ' + JSON.stringify(again));
     }
     await page.waitForSelector('#mapsets >> option:has-text("Main stage")', { state: 'attached' });
     // Review of #86, finding 2b. The saved name is gone from the field, and stays gone through later redraws: put

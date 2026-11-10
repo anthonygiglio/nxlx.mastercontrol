@@ -1703,6 +1703,9 @@
     for (k = r - 1; k > 0; k--) out.push(at(k, 0));
     return out;
   }
+  // When a new look's stylesheet has loaded ('pvj-look', from the Look page), the mapping display on the page, if
+  // any, draws again in its colours. One listener for the page; each display leaves its paint on its canvas.
+  window.addEventListener('pvj-look', function () { var c = document.getElementById('mapcanvas'); if (c && c.repaint) c.repaint(); });
   function mapperCard() {
     var body = h('div', { class: 'mapbody', id: 'mapbody' }, h('div', { class: 'card' }, h('div', { class: 'hint', text: 'Loading...' })));
     var card = h('div', { class: 'mapdesk', id: 'mapcard' }, body);
@@ -1871,6 +1874,7 @@
       var testRow = h('div', { class: 'row', id: 'maptest' }, testPattern(), h('span', { class: 'hint grow', text: 'Colour bars in place of what plays, to line the projector up' }));
       if (!full) { if (remote) stage.appendChild(remote); stage.appendChild(testRow); watch(); return; }
       canvas = h('canvas', { class: 'mapcanvas', id: 'mapcanvas', tabindex: '0', 'aria-label': 'Mapping editor: drag a corner, or use the arrows beside it' });
+      canvas.repaint = paint;          // (a new look: drawn again in its colours once its stylesheet has loaded, see the pvj-look listener above mapperCard)
       canvas.style.setProperty('--mapaspect', String(d.screen[0] / Math.max(1, d.screen[1])));
       stage.appendChild(canvas);
       if (remote) stage.appendChild(remote);
@@ -6838,7 +6842,11 @@
   function appearanceCard() {
     var t = S.theme || {};
     var fresh = function () {
-      document.querySelector('link[href^="/theme.css"]').setAttribute('href', '/theme.css?v=' + Date.now());
+      // The new look's colours arrive with the stylesheet, after this redraw: what the script draws in them (the
+      // mapping display) is told when it has loaded, and draws again ('pvj-look').
+      var link = document.querySelector('link[href^="/theme.css"]');
+      link.addEventListener('load', function () { window.dispatchEvent(new Event('pvj-look')); }, { once: true });
+      link.setAttribute('href', '/theme.css?v=' + Date.now());
       markLook();
       render();
       fillRanges();
