@@ -8,6 +8,8 @@ import os
 import re
 import unittest
 
+import tests  # noqa: F401  (the package: ranked locks and a temp folder of its own, as every test module)
+
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CALL = re.compile(r'_set_status\(\s*"[a-z_]+"\s*,\s*"(.)')
 
