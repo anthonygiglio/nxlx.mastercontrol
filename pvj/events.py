@@ -29,7 +29,7 @@ REPEAT_WRITE_SECONDS = 10       # a count going up on a line already written is 
 TEXT_MAX, WHO_MAX = 160, 80
 FILE = "events.json"
 
-KINDS = ("boot", "player", "renderer", "update", "projector", "network", "signin", "scene")
+KINDS = ("boot", "player", "renderer", "update", "projector", "network", "signin", "scene", "handover")
 URGENT = ("boot", "player", "renderer")     # written at once; an update is when it failed (add(..., urgent=True))
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]+")
 

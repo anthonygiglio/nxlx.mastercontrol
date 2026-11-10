@@ -23,6 +23,7 @@ OpenSSL from Homebrew, both work; Linux; Windows with OpenSSL on the path). Noth
   boxcert.py fleet sign [--serial N]      sign the working list with the root (asks the passphrase; serial goes up by one)
   boxcert.py fleet show                   the signed list and what the working copy changes
   boxcert.py fleet verify [--list F --sig F]    does your root's signature hold (also for a list taken off a node)
+  boxcert.py fleet push HOST [--port N] [--token-file F]    send the signed list to a node over https (asks its PIN once)
 
 The folder (default ~/nxlx-root-ca) holds root.key (encrypted with your passphrase), root.pem (public: this is what
 your devices install) and signed.json (box, names, serial, start, end). Back the folder up. Never put root.key on
@@ -499,8 +500,9 @@ def signed_list(exe, folder):
         return None
     if not (os.path.isfile(jpath) and os.path.isfile(spath)):
         raise BoxcertError("%s and %s must both be in %s and one is missing. Restore the pair from your backup of this folder "
-                           "(boxcert.py fleet verify checks a pair). Do not make a new list with `fleet new`: it gets a new fleet id, "
-                           "which every node refuses." % (FLEET_JSON, FLEET_SIG, folder))
+                           "(boxcert.py fleet verify checks a pair). If there is no backup, remove the half that is left and then sign with "
+                           "--serial N, N above the serial in %s (a node refuses a lower one). Do not make a new list with `fleet new`: "
+                           "it gets a new fleet id, which every node refuses." % (FLEET_JSON, FLEET_SIG, folder, FLEET_DRAFT))
     body = _read_file(jpath, FL.MAX_BYTES)
     sig = _read_file(spath, FL.MAX_SIG_TEXT)
     try:
@@ -584,8 +586,9 @@ def fetch_card(folder, host, port=443, timeout=6):
     finally:
         conn.close()
     if resp.status == 404:
-        raise BoxcertError("%s does not give a fleet card yet (the node's software is older than this tool). "
-                           "Use --card with a card file, or --cert with its certificate file, --id and --name." % host)
+        raise BoxcertError("%s does not give a fleet card: its software is older than this tool, or discovery is switched off on it "
+                           "(the card is given only while discovery is on). Use --cert with its certificate file, --id and --name, "
+                           "or --card with a card file, or switch discovery on for a minute." % host)
     if resp.status != 200 or not der:
         raise BoxcertError("%s answered %d to its card request; nothing was added" % (host, resp.status))
     card = _fleet_call(FL.parse_card, body)
@@ -757,6 +760,76 @@ def fleet_sign(exe, folder, ask, serial=None, out=print, now=None):
     return data["serial"]
 
 
+def fleet_push(exe, folder, host, port, ask, token_file=None, out=print, timeout=10):
+    """Send the signed pair to a node (POST /api/fleet/list) over https, trusting only your root. The node wants an Owner:
+    by default the tool pairs as one with the node's PIN (asked on the prompt, never on the command line, and the device it
+    makes is logged out again at the end), or it uses a token from --token-file. Nothing is kept."""
+    import http.client
+    import ssl
+    FL = fleetlist()
+    done = signed_list(exe, folder)
+    if done is None:
+        raise BoxcertError("nothing is signed yet in %s: run `fleet sign` first" % folder)
+    body = _read_file(os.path.join(folder, FLEET_JSON), FL.MAX_BYTES)
+    sig = _read_file(os.path.join(folder, FLEET_SIG), FL.MAX_SIG_TEXT)
+    host = _check_host(host)
+    _root_pem_text(folder)
+    token = None
+    if token_file:
+        token = _read_file(token_file, 512).decode("utf-8", "replace").strip()
+        if not token or len(token.split()) != 1:
+            raise BoxcertError("%s should hold one token and nothing else" % token_file)
+    ctx = ssl.create_default_context(cafile=os.path.join(folder, ROOT_PEM))
+    conn = http.client.HTTPSConnection(host, port, timeout=timeout, context=ctx)
+
+    def call(method, path, payload, tok):
+        headers = {"Content-Type": "application/json", "X-PVJ-Request": "1", "Accept": "application/json", "User-Agent": "boxcert"}
+        if tok:
+            headers["Authorization"] = "Bearer " + tok
+        conn.request(method, path, body=json.dumps(payload).encode("utf-8"), headers=headers)
+        resp = conn.getresponse()
+        raw = resp.read(262145)
+        try:
+            data = json.loads(raw.decode("utf-8")) if raw else {}
+        except ValueError:
+            data = {}
+        return resp.status, data if isinstance(data, dict) else {}
+
+    paired = False
+    try:
+        conn.connect()                      # the node's certificate is checked against your root BEFORE anything is asked or sent
+        if token is None:
+            pin = ask("PIN of %s (on its display, or `sudo pvj-pin`; used once, not kept): " % host)
+            st, res = call("POST", "/api/pair", {"pin": pin, "name": "boxcert push"}, None)
+            if st != 200 or not res.get("token"):
+                raise BoxcertError("%s did not pair this computer (%s). Nothing was sent." % (host, res.get("error") or "answered %d" % st))
+            if (res.get("device") or {}).get("role") != "full":
+                try:
+                    call("POST", "/api/logout", {}, res["token"])
+                except (OSError, http.client.HTTPException):
+                    pass
+                raise BoxcertError("that code pairs a device that is not an Owner, and only an Owner may load a list. Nothing was sent.")
+            token, paired = res["token"], True
+        st, res = call("POST", "/api/fleet/list", {"list": body.decode("utf-8"), "sig": sig.decode("ascii")}, token)
+        if st != 200:
+            raise BoxcertError("%s did not take the list (%d): %s" % (host, st, res.get("error") or "no reason given"))
+        lst = res.get("list") or {}
+        out("%s took the list: fleet %s, serial %s, %d node(s)." % (host, lst.get("fleet"), lst.get("serial"), len(lst.get("nodes") or [])))
+        return True
+    except ssl.SSLCertVerificationError as e:
+        raise BoxcertError("%s showed a certificate your root did not sign, or one that does not cover that name (%s). "
+                           "Nothing was sent." % (host, e.verify_message))
+    except (OSError, http.client.HTTPException) as e:
+        raise BoxcertError("could not reach %s:%d: %s" % (host, port, e))
+    finally:
+        if paired:
+            try:
+                call("POST", "/api/logout", {}, token)           # the device this made is removed again
+            except Exception:
+                pass
+        conn.close()
+
+
 def _describe(lst, out):
     out("  fleet   : %s  \"%s\"" % (lst["fleet"], lst["name"]))
     out("  serial  : %s  (issued %s; dates are for you, nodes never judge them)" % (lst["serial"], lst.get("issued") or "-"))
@@ -859,6 +932,14 @@ def main(argv=None, ask=None, out=print):
     x = fs.add_parser("sign", help="sign the working list with the root")
     x.add_argument("--serial", type=int, default=None, help="the serial to use (default: one above the last signed); never lower")
     fs.add_parser("show", help="the signed list, and what the working copy changes")
+    x = fs.add_parser("push", help="send the signed list to a node over https",
+                      description="Posts fleet.json and fleet.sig to the node (POST /api/fleet/list). Only your root is trusted for the "
+                                  "connection. The node wants an Owner: the tool asks for the node's PIN on the prompt (never on the "
+                                  "command line), pairs as an Owner, sends the list and logs that device out again; or give --token-file "
+                                  "with a token of an Owner device. Nothing is kept on this computer.")
+    x.add_argument("host", help="the node's .local name or address")
+    x.add_argument("--port", type=int, default=443, help="the node's https port (default 443)")
+    x.add_argument("--token-file", default=None, help="a file holding an Owner device's token, instead of the PIN")
     x = fs.add_parser("verify", help="does the root's signature hold")
     x.add_argument("--list", default=None, help="the list file (default: fleet.json in the folder)")
     x.add_argument("--sig", default=None, help="the signature file (default: fleet.sig in the folder)")
@@ -904,6 +985,8 @@ def main(argv=None, ask=None, out=print):
                 fleet_sign(exe, a.dir, ask, a.serial, out)
             elif c == "show":
                 fleet_show(exe, a.dir, out)
+            elif c == "push":
+                fleet_push(exe, a.dir, a.host, a.port, ask, a.token_file, out)
             elif c == "verify":
                 return 0 if fleet_verify(exe, a.dir, a.list, a.sig, a.fleet, out) else 1
         return 0

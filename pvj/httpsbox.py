@@ -505,6 +505,10 @@ class HttpsBox:
     def root_pem(self):
         return self._read(ROOT)
 
+    def cert_pem(self):
+        """The text of the certificate file in use (the node's own certificate, then the root), or None. Public."""
+        return self._read(CERT)
+
     # -- the certificate --
     def _try_load(self, cert_text):
         """A context for this certificate with the box's key, or an HttpsError that says why not."""
