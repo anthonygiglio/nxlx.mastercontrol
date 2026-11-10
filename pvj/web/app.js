@@ -3170,7 +3170,7 @@
   // Newest first: when (in the time of the device the panel is on), what kind, the node's own short sentence, how
   // many times, and (for the Owner, never over a support login) the device or address it was about. The whole log is
   // on Health; Now shows the last few.
-  var EVENT_KINDS = { boot: 'Node', player: 'Player', renderer: 'Renderer', update: 'Update', projector: 'Projector', network: 'Network', signin: 'Sign-in', scene: 'Scene' };
+  var EVENT_KINDS = { boot: 'Node', player: 'Player', renderer: 'Renderer', update: 'Update', projector: 'Projector', network: 'Network', signin: 'Sign-in', scene: 'Scene', handover: 'Other nodes' };
   function eventWhen(t) {
     var d = new Date(t * 1000), now = new Date(), two = function (n) { return (n < 10 ? '0' : '') + n; };
     var hm = two(d.getHours()) + ':' + two(d.getMinutes());
