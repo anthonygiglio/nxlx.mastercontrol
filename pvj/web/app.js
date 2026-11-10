@@ -8415,6 +8415,44 @@
     if (!el || !el.getClientRects().length) el = document.getElementById('wsmain');
     if (el) el.focus({ preventScroll: true });
   }
+  // iPhone and iPad (WebKit on iOS) only, a no-op everywhere else. The owner, 2026-11-09, in the Home Screen app on an
+  // up-to-date iPhone: the strip came away from the foot and scrolled with the page, on Now and on Play, each time with
+  // a text box, a dropdown or the Nodes list just used. iOS can leave the visual viewport offset after the keyboard or
+  // a picker has gone (visualViewport.offsetTop not back to 0, or its height not the window's again), and the sticky
+  // strip and title bar are then laid out against the wrong viewport. When the keyboard is gone (nothing is being typed
+  // in) and the viewport still disagrees with the window, the page is nudged (a scroll of one pixel there and back) and
+  // the two bars are laid out again (a class on them for one frame). A pinch zoom is left alone: there the viewport is
+  // smaller on purpose. Each nudge is counted on the root (data-vvfix) for the tests.
+  var IOS_WEBKIT = /iP(hone|ad|od)/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+  (function () {
+    var vv = window.visualViewport;
+    if (!IOS_WEBKIT || !vv) return;
+    var wait = null;
+    function typing() {
+      var a = document.activeElement;
+      return !!(a && (a.isContentEditable || (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && !/^(button|checkbox|radio|range|color|file|submit|reset)$/.test(a.type || ''))));
+    }
+    function settle() {
+      wait = null;
+      if (typing() || vv.scale > 1.01) return;
+      if (Math.abs(vv.offsetTop) < 1 && Math.abs(vv.height - window.innerHeight) < 2) return;
+      var x = window.scrollX, y = window.scrollY;
+      window.scrollTo(x, y > 0 ? y - 1 : y + 1);
+      window.scrollTo(x, y);
+      var bars = document.querySelectorAll('.wsdock, .wshead');
+      Array.prototype.forEach.call(bars, function (b) { b.classList.add('vvfix'); });
+      void document.body.offsetHeight;
+      requestAnimationFrame(function () { Array.prototype.forEach.call(bars, function (b) { b.classList.remove('vvfix'); }); dockHeight(); });
+      var root = document.documentElement;
+      root.setAttribute('data-vvfix', String((+root.getAttribute('data-vvfix') || 0) + 1));
+    }
+    function later() { clearTimeout(wait); wait = setTimeout(settle, 350); }
+    document.addEventListener('focusout', later, true);
+    document.addEventListener('change', later, true);         // a dropdown's picker closes with its choice
+    vv.addEventListener('resize', later);
+    vv.addEventListener('scroll', later);
+    window.addEventListener('pageshow', later);
+  })();
   var dockWatch = null, widthWatch = null;
   function dockHeight() {           // how tall the strip and the tabs are: what floats above them (a message) clears them
     var d = document.getElementById('wsdock');

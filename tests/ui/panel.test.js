@@ -2449,6 +2449,10 @@ function startServer(env) {          // env: more for the harness's environment 
         await page.reload();
         await page.waitForSelector('#nodesbtn');
         await go(page, 'now/now');
+        // the iOS nudge (app.js IOS_WEBKIT) is not set up outside iOS: a viewport event here counts nothing
+        await page.evaluate(() => { window.visualViewport.dispatchEvent(new Event('resize')); document.body.dispatchEvent(new FocusEvent('focusout', { bubbles: true })); });
+        await page.waitForTimeout(600);
+        assert.strictEqual(await page.getAttribute('html', 'data-vvfix'), null, 'the iOS viewport nudge is never set up in Chromium');
       }
     }
     // The discovery switch on its own Setup page (This node > Nodes on this network): it says what it does now, Stop

@@ -931,6 +931,7 @@ html { scroll-padding-top: calc(var(--head, 0px) + var(--sub, 0px)); scroll-padd
 .nssheet .nsver { margin: 18px 0 0; }
 /* inside the FireTab launcher its swipe strip lies over the bottom 28 px of the screen: nothing of the strip under it */
 html[data-launcher] .wsdock { padding-bottom: 28px; }
+.wsdock.vvfix, .wshead.vvfix { transform: translateZ(0); }      /* (one frame, iOS only: the bars laid out again, app.js) */
 
 /* Graphics (D129, slice 2): text and logos the node draws on the screen. A graphic's preview is a picture the node made
    (the same code that draws the wall), shown on a checkerboard in the shape of the screen, so what is clear shows. */
