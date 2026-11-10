@@ -12,7 +12,9 @@ The route table in api.py holds each route's minimum role. This module holds the
 * GuestControls: the lock, the limits, the two-step power-off and the log line.
 
 A new route is in none of these lists, so it is for paired devices of its minimum role only until someone decides
-otherwise; tests/test_roles.py fails for a route without a row.
+otherwise; tests/test_roles.py fails for a route without a row, and tests/test_carried_roles.py for a route without a decision
+about a device carried from another node (D132: a carried device has the role it was carried with, the gate treats it as a
+local device of that role, and the one thing it never does is make a ticket for a third node).
 """
 
 import json
