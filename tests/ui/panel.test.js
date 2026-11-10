@@ -129,7 +129,7 @@ function startServer(env) {          // env: more for the harness's environment 
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
     const page = await ctx.newPage();
     const problems = [];
-    // The 401 before pairing, the 403 for the wrong PIN, the 400 for a refused upload, the 409 for a value sent to a
+    // The 401 before pairing, the 403 for the wrong PIN, the 400 for a refused upload, the 409 for a Freeze refused on purpose and for a value sent to a
     // shader that has left the screen and the 503 for a screen preview from a harness player with no window are
     // provoked on purpose; so is the 502 for "Try again" on a projector that nothing answers for.
     // And the 422 for a theme file the box refuses (its text cannot be read, or it holds CSS), and the 415 for a logo that is a text file.
@@ -167,6 +167,28 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.click('.pad >> nth=0');
     await page.waitForFunction(() => /intro/.test(document.getElementById('np').textContent), null, { timeout: 8000 });
     await page.waitForSelector('.pad.on');
+    {
+      // What the message line says when a press goes wrong (2026-11-09): the node's reason as a sentence, with a
+      // capital; and a press the node is slow to answer says so after a moment, then gives the line back
+      const refuse = (route) => route.request().method() === 'POST' ? route.fulfill({ status: 409, json: { error: 'the player is restarting' } }) : route.continue();
+      await page.route('**/api/control', refuse);
+      await stripOpen(page);
+      await page.click('#freeze');
+      await page.waitForFunction(() => document.getElementById('msg').textContent === 'The player is restarting', null, { timeout: 5000 })
+        .catch(async () => { throw new Error('a refusal is said as a sentence: ' + JSON.stringify(await page.textContent('#msg'))); });
+      await page.unroute('**/api/control', refuse);
+      let free;
+      const slow = (route) => route.request().method() === 'POST' ? new Promise((res) => { free = () => { route.continue().then(res, res); }; }) : route.continue();
+      await page.route('**/api/control', slow);
+      await page.click('#freeze');
+      await page.waitForFunction(() => document.getElementById('msg').textContent === 'Waiting for the node...', null, { timeout: 4000 })
+        .catch(async () => { throw new Error('a slow press says it is waiting: ' + JSON.stringify(await page.textContent('#msg'))); });
+      free();
+      await page.waitForFunction(() => document.getElementById('msg').textContent !== 'Waiting for the node...', null, { timeout: 5000 });
+      await page.unroute('**/api/control', slow);
+      if ((await page.textContent('#freeze')) === 'Resume') await page.click('#freeze');      // (the second press froze it: back as it was)
+      await page.waitForFunction(() => document.getElementById('freeze').textContent === 'Freeze', null, { timeout: 5000 });
+    }
     if (shots) await page.screenshot({ path: path.join(shots, '2-live.png') });
     // Screen snapshot: one picture on request. The harness player has no real window (--vo=null), so no picture can be
     // made here; the panel must say so instead of showing a broken image, and must not keep asking by itself.
@@ -1178,7 +1200,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.selectOption('#autofile', { index: 0 });
     await page.fill('#autodelay', '999');
     await page.click('#autosave');
-    await page.waitForFunction(() => /delay must be/.test(document.getElementById('msg').textContent));
+    await page.waitForFunction(() => /Delay must be/.test(document.getElementById('msg').textContent));
     await page.fill('#autodelay', '3');
     await page.selectOption('#automode', 'all');
     await page.click('#autosave');
