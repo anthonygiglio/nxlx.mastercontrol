@@ -236,6 +236,9 @@ class Making(FleetToolBase):
         self.assertEqual(self.tool("fleet", "show"), 1)
         self.assertIn("fleet verify", self.errors)
         self.assertIn("backup", self.errors)
+        self.assertIn("remove the half that is left", self.errors)       # no backup: then sign with --serial above the working copy's
+        self.assertIn("--serial N", self.errors)
+        self.assertIn("fleet-draft.json", self.errors)
         self.assertNotIn("Move", self.errors)
 
     def test_a_serial_close_to_the_top_is_refused_in_plain_words(self):

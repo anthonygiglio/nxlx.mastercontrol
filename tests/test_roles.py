@@ -79,6 +79,11 @@ ROWS = {
     ("GET", "/api/ndi"): KINDS["op"],
     ("GET", "/api/nodes"): STUDIO("op"),                    # D127: the other nodes on the network
     ("POST", "/api/nodes/discovery"): STUDIO("owner"),
+    ("GET", "/api/fleet"): STUDIO("owner"),                 # D132: which nodes this one trusts; the Owner's, over https, never through the tunnel
+    ("POST", "/api/fleet/accept"): STUDIO("owner"),
+    ("POST", "/api/fleet/list"): STUDIO("owner"),
+    ("POST", "/api/fleet/accepted"): STUDIO("owner"),
+    ("POST", "/api/fleet/accepted/remove"): STUDIO("owner"),
     ("POST", "/api/ndi"): KINDS["owner"],
     # the NDI discovery server on the box (D85): the Owner's, and never through the support tunnel (support.REMOTE_DENY_PREFIX)
     ("GET", "/api/ndi/discovery"): STUDIO("owner"),
@@ -423,7 +428,7 @@ class GateTableTest(RolesBase):
         self.assertEqual(len(re.findall(r"self\._who\(method, path\)", source)), 1)
         self.assertIn("device = self._who(method, path)", route)
         before = route[:route.index("device = self._who(method, path)")]
-        self.assertEqual(re.findall(r'"(/api/[^"]+)"', before), [p for _m, p in policy.NO_GATE])
+        self.assertEqual(sorted(re.findall(r'"(/api/[^"]+)"', before)), sorted(p for _m, p in policy.NO_GATE))
         # and a request gets its device in two places only: _who (the gate) and _api (Api.handle, the gate again)
         self.assertEqual(len(re.findall(r"device = auth\.authenticate\(", source)), 2)
         self.assertEqual(sorted(routes - set(ROWS)), [], "routes without a row in tests/test_roles.py: decide who may use them")

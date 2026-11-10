@@ -1372,6 +1372,8 @@ class BoxCare:
             problems += api.theme_store.clear(api.themes)      # the owner's added themes go with the settings
             if api.https is not None:
                 problems += api.https.wipe()                   # the box's key and certificate: HTTP only, as a new box (D79)
+            if getattr(api, "handover", None) is not None:
+                problems += api.handover.wipe()                # the fleet list, the acceptances and the deny file (D132)
             problems += self._apply()
         finally:
             api._upload_lock.release()

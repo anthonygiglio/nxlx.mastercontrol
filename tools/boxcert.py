@@ -499,8 +499,9 @@ def signed_list(exe, folder):
         return None
     if not (os.path.isfile(jpath) and os.path.isfile(spath)):
         raise BoxcertError("%s and %s must both be in %s and one is missing. Restore the pair from your backup of this folder "
-                           "(boxcert.py fleet verify checks a pair). Do not make a new list with `fleet new`: it gets a new fleet id, "
-                           "which every node refuses." % (FLEET_JSON, FLEET_SIG, folder))
+                           "(boxcert.py fleet verify checks a pair). If there is no backup, remove the half that is left and then sign with "
+                           "--serial N, N above the serial in %s (a node refuses a lower one). Do not make a new list with `fleet new`: "
+                           "it gets a new fleet id, which every node refuses." % (FLEET_JSON, FLEET_SIG, folder, FLEET_DRAFT))
     body = _read_file(jpath, FL.MAX_BYTES)
     sig = _read_file(spath, FL.MAX_SIG_TEXT)
     try:

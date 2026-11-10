@@ -330,7 +330,7 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                 return self._graphics_thumb()
             if path == "/api/graphics/preview.png":
                 return self._graphics_preview()
-            if path == "/api/https" or path.startswith("/api/https/"):
+            if path == "/api/https" or path.startswith("/api/https/") or path == "/api/fleet/card":
                 return self._https_route("GET", path, {})
             if path.startswith("/api/"):
                 return self._api("GET", path, {})
@@ -506,6 +506,13 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                     if method != "GET":
                         raise ApiError(405, "method not allowed")
                     return self._json(200, {"https": self._secure()})
+                if path == "/api/fleet/card":               # D132: the facts mDNS announces and the hash of the public key; over TLS only
+                    if method != "GET" or not self._secure():
+                        raise ApiError(404, "not found")
+                    card = api.handover.card() if api.handover is not None else None
+                    if card is None:
+                        raise ApiError(404, "not found")
+                    return self._json(200, card)
                 device = self._who(method, path)
                 api.require(device, "full")
                 if method == "GET":
@@ -592,6 +599,7 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                 # a 6-digit code (a guest or presenter, or the code from a controller) is still taken over plain http
                 return self._json(403, {"error": "the PIN pairs an owner over the secure connection only: open %s and pair there"
                                         % box.https_address(), "https": box.https_address()})
+            api.request.secure = self._secure()                # which listener this request came in on, for the routes that need TLS (D132)
             try:
                 status, payload = api.handle(method, path, body, device, self.client_address[0])
             except Exception:
@@ -725,6 +733,7 @@ def build_fleet(api, settings, state, board):
     own_id, kept = fleet_mod.node_id(state)
     if not kept:
         print("pvj-web: the node id could not be kept in %s; it will be new at the next start" % state, file=sys.stderr)
+    api.node_id = own_id                     # the one id this node has: the fleet card says the same as the announcement
     tier = hardware.tier(board["kind"])
 
     def describe():
@@ -744,6 +753,16 @@ def build_fleet(api, settings, state, board):
     return fleet_mod.Fleet(describe, lambda: fleet_mod.stored_on(settings.data.get("fleet")), api.sysd,
                            lambda: fleet_mod.scan(fleet_mod.net_transport(addresses)),
                            log=lambda m: print(m, file=sys.stderr), event=api.event)
+
+
+def build_handover(api, settings, state, env):
+    """The fleet list, the acceptances and the deny file beside tls/ (pvj/handover.py, D132). Reads files, calls nobody."""
+    from . import fleet as fleet_mod, handover as handover_mod
+    own_id = getattr(api, "node_id", None) or fleet_mod.node_id(state)[0]
+    hv = handover_mod.Handover(state, api.https, settings, lambda: {"id": own_id, "name": fleet_mod.clean_hostname(socket.gethostname())},
+                               event=api.event, log=api.log, openssl=env.get("PVJ_OPENSSL", "openssl"))
+    hv.load()
+    return hv
 
 
 def build(env=None, player=None):
@@ -802,6 +821,7 @@ def build(env=None, player=None):
                                       clock_trusted=lambda: api.clock_status().get("clock_from_network"), log=api.log)
     api.https.load()                         # a certificate that will not load leaves HTTP as it is, with the reason on the page
     api.fleet = build_fleet(api, settings, state, board)         # other nodes on the network (D127); the first announcement is in main()
+    api.handover = build_handover(api, settings, state, env)     # who this node trusts to carry devices (D132): files only, no call to another node
     from . import supportd as supportd_mod
     api.support.client = supportd_mod.SupportdClient(paths.supportd_socket())
     api.support.panel_port = int(env.get("PVJ_PORT", "8080"))

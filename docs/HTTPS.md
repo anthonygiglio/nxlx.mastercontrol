@@ -70,7 +70,16 @@ Steps 2 to 4 for the new box with the same root; its certificate is `~/nxlx-root
 
 ## Letting your nodes open each other (the fleet list)
 
-Decision D132, design in `design/node-handover_2026-11-09.md`. **Only the first part is built: the list and its tool. No node reads a list yet, so nothing on a node changes and nothing opens without a PIN.** Later parts let a node load the list and let an Owner paired on one node open another without pairing again.
+Decision D132, design in `design/node-handover_2026-11-09.md`. **Built so far: the list and its tool, and a node that can store the list, ask who it trusts and give its card. Nothing opens without a PIN yet.** A node does not call another node, make a ticket or sign anyone in. Later parts do that, and let an Owner paired on one node open another without pairing again.
+
+What a node does now (the Owner's, over `https://` only; there is no panel screen for it yet):
+
+- `GET /api/fleet/card` (anyone, `https://` only): the node's id, its name and the hash of its public key. Nothing secret. `boxcert.py fleet add node-01.local` asks for it.
+- `POST /api/fleet/list` takes `fleet.json` and `fleet.sig`. The node checks them against the root it pins and keeps them beside `tls/` (`fleet.json`, `fleet.sig`, mode 0640). It refuses a list that is not signed by its root, is of another fleet, is older than the one it holds, or does not name this node with this node's key. A newer list replaces the old one.
+- `POST /api/fleet/accepted` accepts one other node by the fingerprint of its key, typed back from that node's own panel, for two nodes with no list. Nothing is stored unless the fingerprint matches. `POST /api/fleet/accepted/remove` takes it away.
+- `POST /api/fleet/accept` is the switch "Accept devices from other nodes". It is off by default, only an Owner changes it, it is this node's own (never in a settings export, and a file cannot set it) and a factory reset clears it.
+- `GET /api/fleet` shows the Owner the list's names and serial, the nodes accepted, this node's own fingerprint and the switch. It never shows another node's key or the signature.
+- The list, the acceptances and the deny file (`deny.json`, which later parts fill) are not in any other answer, in the diagnostics file or in a settings export, and a factory reset removes them. A node counts as approved only when it is on the held list with its id **and** its key, or accepted by its fingerprint, and its key is not on the deny list.
 
 The idea in plain words: you decide, once, on your own computer, which nodes may take each other's devices. You write that down in a **fleet list** and sign it with your root. A node will believe the list only if your root's signature on it holds. Having a certificate from your root is not enough for a node to be trusted this way, because a stolen or lent node still has one. The root key stays on your computer; it is used only to sign the list.
 
