@@ -162,6 +162,34 @@ function startServer(env) {          // env: more for the harness's environment 
     // Pads: assign a pad, then play it
     await page.click('text=Edit pads');
     await page.click('.pad >> nth=0');
+    await page.waitForSelector('.picker .sheet');
+    {
+      // a scroll over the pad's dialog, on the sheet or on the dark around it, never moves the page behind it
+      await page.evaluate(() => window.scrollTo(0, 0));
+      for (const [where, sel] of [['the sheet', '.picker .sheet'], ['the dark around it', '.picker']]) {
+        const b = await page.locator(sel).boundingBox();
+        await page.mouse.move(b.x + b.width / 2, b.y + (sel === '.picker' ? 20 : Math.min(b.height / 2, 150)));
+        for (let i = 0; i < 6; i++) { await page.mouse.wheel(0, 400); await page.waitForTimeout(40); }
+        await page.waitForTimeout(300);
+        assert.strictEqual(await page.evaluate(() => window.scrollY), 0, 'a scroll over ' + where + ' of the pad dialog leaves the page where it is');
+      }
+      // a list inside the dialog that scrolls takes the scroll first, even with the sheet at its end (made so here:
+      // the clip list three lines tall), and still not the page
+      const inner = await page.evaluate(() => {
+        const l = document.querySelector('.picker .sheet .list');
+        l.style.maxHeight = '60px'; l.style.overflowY = 'auto';
+        const sh = document.querySelector('.picker .sheet'); sh.scrollTop = sh.scrollHeight;
+        return { room: l.scrollHeight - l.clientHeight };
+      });
+      assert(inner.room > 0, 'the clip list is made to scroll for this check: ' + JSON.stringify(inner));
+      const lb = await page.locator('.picker .sheet .list >> nth=0').boundingBox();
+      await page.mouse.move(lb.x + lb.width / 2, lb.y + lb.height / 2);
+      for (let i = 0; i < 4; i++) { await page.mouse.wheel(0, 200); await page.waitForTimeout(40); }
+      await page.waitForTimeout(300);
+      const after = await page.evaluate(() => ({ list: document.querySelector('.picker .sheet .list').scrollTop, page: window.scrollY }));
+      assert(after.list > 0 && after.page === 0, 'the wheel over a list inside the pad dialog scrolls that list, not the page: ' + JSON.stringify(after));
+      await page.evaluate(() => { const l = document.querySelector('.picker .sheet .list'); l.style.maxHeight = ''; l.style.overflowY = ''; });
+    }
     await page.click('.sheet >> text=intro.mkv');
     await page.click('text=Done editing');
     await page.waitForSelector('.pad:not(.empty)');
@@ -1131,6 +1159,14 @@ function startServer(env) {          // env: more for the harness's environment 
       await stripOpen(page);
       await page.waitForFunction(() => document.getElementById('wsmore').getAttribute('aria-expanded') === 'true', null, { timeout: 3000 })
         .catch(() => { throw new Error('More opens the strip at 820, with one click'); });
+      {
+        // with More open the strip is a panel over the page: a scroll over it does not move the page behind it
+        const b = await page.locator('#wstp').boundingBox(), y0 = await page.evaluate(() => window.scrollY);
+        await page.mouse.move(b.x + 20, b.y + b.height / 2);
+        for (let i = 0; i < 6; i++) { await page.mouse.wheel(0, -400); await page.waitForTimeout(40); }
+        await page.waitForTimeout(300);
+        assert.strictEqual(await page.evaluate(() => window.scrollY), y0, 'a scroll over the open strip leaves the page where it is');
+      }
       await page.evaluate(() => window.scrollTo(0, 2000));
       headNow = await headAt();
       assert.deepStrictEqual([headNow.top, headNow.pos], [0, 'sticky'], 'and with More open: ' + JSON.stringify(headNow));
@@ -2259,6 +2295,18 @@ function startServer(env) {          // env: more for the harness's environment 
         await page.click('#nodesagain');
         await page.waitForFunction(() => document.querySelectorAll('#nodeslist .nodesrow').length === 12);
         assert.strictEqual(asked, 2, 'Look again asks again');
+        {
+          // A scroll over the open list stays in it (the owner, 2026-11-09: "i notice the page underneath moving"):
+          // the list scrolls to its end, and the page behind it does not move, then or after
+          const box = await page.locator('#nodespop').boundingBox();
+          const y0 = await page.evaluate(() => window.scrollY);
+          await page.mouse.move(box.x + box.width / 2, box.y + Math.min(box.height / 2, 150));
+          for (let i = 0; i < 10; i++) { await page.mouse.wheel(0, 400); await page.waitForTimeout(40); }
+          await page.waitForTimeout(400);
+          const sc = await page.evaluate(() => { const p = document.getElementById('nodespop'); return { page: window.scrollY, end: p.scrollTop + p.clientHeight >= p.scrollHeight - 1 }; });
+          assert.deepStrictEqual(sc, { page: y0, end: true }, 'a scroll over the Nodes list scrolls the list to its end and not the page: ' + JSON.stringify(sc));
+          await page.evaluate(() => { document.getElementById('nodespop').scrollTop = 0; });
+        }
         {
           await page.evaluate(() => localStorage.setItem('pvj.nodes.opened', JSON.stringify({ x: { address: '8.8.8.8', port: 443 }, ['9'.repeat(32)]: { address: '192.168.0.9', port: '1@e' } })));
           await page.click('#nodesagain');
