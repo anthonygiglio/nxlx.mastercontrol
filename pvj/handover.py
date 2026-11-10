@@ -26,6 +26,7 @@ import re
 import threading
 
 from . import fleetlist
+from .fleet import stored_on as fleet_stored_on
 
 LIST_FILE, SIG_FILE, DENY_FILE, PAIRINGS_FILE = "fleet.json", "fleet.sig", "deny.json", "pairings.json"
 FILES = (LIST_FILE, SIG_FILE, DENY_FILE, PAIRINGS_FILE)
@@ -48,10 +49,21 @@ def fingerprint(key_hash):
     return " ".join(h[i:i + 4] for i in range(0, len(h), 4))
 
 
+class Floor:
+    """What a node remembers of a list it could not check at start: the fleet and the highest serial found on disk, and the
+    digest of that file. It is not a list and approves nobody; it only stops a node from going back to an older serial or
+    over to another fleet while the root is briefly missing or the node's key was renewed (the fields `verify` reads)."""
+
+    def __init__(self, fleet, serial, digest):
+        self.fleet, self.serial, self.digest = fleet, serial, digest
+
+
 def same_fingerprint(typed, key_hash):
     """Is what was typed (spaces, colons, dashes and case do not matter) this key?"""
-    norm = re.sub(r"[^0-9a-f]", "", (typed or "").lower()) if isinstance(typed, str) else ""
-    return len(norm) == 64 and norm == (key_hash or "").lower()
+    if not isinstance(typed, str) or not isinstance(key_hash, str):
+        return False
+    norm = re.sub(r"[\s:-]", "", typed.lower())            # only spaces, colons and dashes may separate the digits
+    return re.fullmatch(r"[0-9a-f]{64}", norm) is not None and norm == key_hash.lower()
 
 
 def carried_role(role, carry):
@@ -73,6 +85,7 @@ class Handover:
         self.openssl = openssl
         self.lock = threading.RLock()
         self.list = None             # the FleetList that checked out at load or when it was taken, or None
+        self.floor = None            # a Floor, when files on disk did not check out: the fleet and the highest serial they show
         self.problem = None          # why the files on disk are not in use, for the Owner's status
         self._deny = []
         self._pairings = []
@@ -125,6 +138,8 @@ class Handover:
     def card(self):
         """What GET /api/fleet/card says: the facts mDNS announces plus the hash of this node's key. Nothing secret.
         None when the node has no certificate (and so nothing to be trusted by)."""
+        if not fleet_stored_on(self.settings.data.get("fleet")):
+            return None                  # discovery is off: this node announces nothing, so it gives its id and name to nobody
         key = self.own_key()
         node_id, name = self.own()
         if not key or not node_id or not name:
@@ -148,8 +163,22 @@ class Handover:
     def load(self):
         """At start: read the files that are there. Nothing here may stop the panel."""
         with self.lock:
-            self.list, self.problem = None, None
-            for suffix in ("", ".prev"):           # a crash between the two renames of a new pair leaves the old pair as .prev
+            self.list, self.problem, self.floor = None, None, None
+            seen = {}
+            for suffix in ("", ".prev"):
+                try:
+                    seen[suffix] = fleetlist.parse(self._read(LIST_FILE + suffix) or b"")      # well formed; not yet believed
+                except fleetlist.FleetError:
+                    seen[suffix] = None
+            known = [x for x in seen.values() if x is not None]
+            if known:                                  # remembered even when nothing below checks out
+                top = max(known, key=lambda x: x.serial)
+                self.floor = Floor(top.fleet, top.serial, top.digest)
+            for suffix in ("", ".prev"):
+                if suffix and seen[""] is not None and (seen[".prev"] is None or seen[""].serial > seen[".prev"].serial):
+                    # a newer list is on disk and did not check out: the older pair is NOT put in its place (a crash between the
+                    # two renames leaves no list file at all, or one no newer than the old pair)
+                    break
                 body, sig = self._read(LIST_FILE + suffix), self._read(SIG_FILE + suffix, fleetlist.MAX_SIG_TEXT)
                 if body is None or sig is None:
                     if (body is not None or sig is not None) and not suffix:
@@ -161,6 +190,10 @@ class Handover:
                 except HandoverError as e:
                     self.problem = self.problem or e.message
                     self.log("pvj-web: the fleet list on disk%s is not in use: %s" % (" (the previous one)" if suffix else "", e.message))
+            if self.list is None and self.floor is not None and self.problem is None:
+                self.problem = "the fleet list on disk (serial %d) is not in use" % self.floor.serial
+            if self.list is None and self.problem and self.floor is not None:
+                self.problem += "; this node will not take a list of another fleet or one with a serial below %d" % self.floor.serial
             self._deny = self._load_deny()
             self._pairings = self._load_pairings()
 
@@ -198,11 +231,11 @@ class Handover:
     def take_list(self, body, sig, who=None, source=None):
         """Verify, then store. Everything is checked before anything is written. Returns the Owner's status."""
         with self.lock:
-            lst = self._check(body, sig, self.list)
+            lst = self._check(body, sig, self.list or self.floor)            # a list that did not check out at start still sets the floor
             same = self.list is not None and self.list.digest == lst.digest
             if not same:
                 self._store_pair(body, sig)
-            self.list, self.problem = lst, None
+            self.list, self.problem, self.floor = lst, None, None
             where = " taken from %s" % source if source else " loaded"
             if not same:
                 self.event("handover", "The fleet list (serial %d, %d nodes) was%s." % (lst.serial, len(lst.nodes), where), who)
@@ -231,8 +264,12 @@ class Handover:
             data = json.loads(raw.decode("utf-8"))
             rows = data[field]
             out = []
+            seen = set()
             for r in rows[:cap]:
-                if isinstance(r, dict) and all(isinstance(r.get(k), str) for k in keys):
+                if isinstance(r, dict) and all(isinstance(r.get(k), str) for k in keys) and fleetlist.ID_WORD.fullmatch(r["id"]) \
+                        and fleetlist.NODE_NAME.fullmatch(r["name"]) and fleetlist.KEY_WORD.fullmatch(r["key"]) \
+                        and r["carry"] in fleetlist.CARRY and r["id"] not in seen:
+                    seen.add(r["id"])
                     out.append({k: r[k] for k in keys})
             return out
         except (ValueError, KeyError, TypeError, UnicodeDecodeError):
@@ -269,7 +306,10 @@ class Handover:
             rows.append({"id": node_id, "name": name, "key": key, "carry": carry})
             self._pairings = rows
             self._save_pairings()
-            self.event("handover", "%s was accepted by its key fingerprint (carry %s)." % (name, carry), who)
+            if known:
+                self.event("handover", "The acceptance of %s was changed (carry %s to %s)." % (name, known[0]["carry"], carry), who)
+            else:
+                self.event("handover", "%s was accepted by its key fingerprint (carry %s)." % (name, carry), who)
             return self.status()
 
     def remove_acceptance(self, node_id, who=None):
@@ -360,13 +400,19 @@ class Handover:
             node_id, name = self.own()
             key = self.own_key()
             lst = self.list
+            problem = self.problem
+            if lst is not None:
+                row = lst.node(node_id)
+                if row is None or key is None or row["key"] != key:
+                    problem = ("the held list does not name this node with the key it uses now, so it approves nobody through the list "
+                               "until a new signed list is loaded")
             return {
                 "accept": self.accepting(),
                 "self": {"id": node_id, "name": name, "fingerprint": fingerprint(key) if key else None},
                 "list": None if lst is None else {
                     "fleet": lst.fleet, "name": lst.name, "serial": lst.serial, "issued": lst.issued,
                     "nodes": [{"id": n["id"], "name": n["name"], "carry": n["carry"]} for n in sorted(lst.nodes, key=lambda n: n["name"].lower())]},
-                "list_problem": self.problem,
+                "list_problem": problem,
                 "accepted": [{"id": r["id"], "name": r["name"], "carry": r["carry"]} for r in self._pairings],
                 "removed": [{"name": r["name"], "by": r["by"]} for r in self._deny],
             }
@@ -376,9 +422,12 @@ class Handover:
         """Everything here goes. Returns the problems."""
         problems = []
         with self.lock:
-            self.list, self.problem, self._deny, self._pairings = None, None, [], []
-            for name in FILES:
-                for suffix in ("", ".prev", ".new", ".tmp"):
-                    if not self._unlink(name + suffix):
-                        problems.append("could not remove %s" % (name + suffix))
+            self.list, self.problem, self.floor, self._deny, self._pairings = None, None, None, [], []
+            try:
+                present = os.listdir(self.folder)
+            except OSError:
+                present = []
+            for name in sorted(n for n in present if any(n == f or n.startswith(f + ".") for f in FILES)):      # also .prev, .new, .new.tmp
+                if not self._unlink(name):
+                    problems.append("could not remove %s" % name)
         return problems

@@ -3607,7 +3607,7 @@ class Api:
         h = self._handover()
         if not isinstance(body, dict) or set(body) != {"list", "sig"} or not all(isinstance(body[k], str) for k in body):
             raise bad('send {"list": the text of fleet.json, "sig": the text of fleet.sig}')
-        return self._handover_call(h.take_list, body["list"].encode("utf-8"), body["sig"], device.get("name"))
+        return self._handover_call(h.take_list, body["list"].encode("utf-8", "surrogatepass"), body["sig"], device.get("name"))
 
     def post_fleet_accepted(self, body, device, client):
         """{"id", "name", "key", "carry", "typed"}: accept another node by the fingerprint of its key, typed back."""

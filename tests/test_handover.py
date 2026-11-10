@@ -392,5 +392,130 @@ class Approving(HandoverBase):
             self.assertEqual(hv.carried_role(role, carry), want, (role, carry))
 
 
+class Floors(HandoverBase):
+    """What a node remembers when the files on disk do not check out at start (the root briefly missing, a renewed key)."""
+
+    def test_booting_without_the_root_an_older_serial_is_still_refused(self):
+        self.me.take_list(*self.pair(5))
+        cold = self.make(self.cert, root="")                       # the root is not there at start
+        cold.load()
+        self.assertIsNone(cold.list)
+        self.assertIn("below 5", cold.problem)
+        self.assertEqual((cold.floor.fleet, cold.floor.serial), (FLEET, 5))
+        cold.https.root = self.roots["one"][1]                       # the root is back
+        for serial in (4, 1):
+            with self.assertRaises(hv.HandoverError) as cm:
+                cold.take_list(*self.pair(serial))
+            self.assertIn("older", cm.exception.message)
+        other = self.pair(5, nodes=[{"id": ME, "name": "node-01", "key": self.my_key, "carry": "live"}, PEER])
+        with self.assertRaises(hv.HandoverError) as cm:
+            cold.take_list(*other)
+        self.assertIn("same serial", cm.exception.message)
+        self.assertIsNone(cold.list)
+        cold.take_list(*self.pair(5))                                 # the same list again is fine
+        self.assertEqual(cold.list.serial, 5)
+        self.assertIsNone(cold.floor)
+
+    def test_after_a_renewal_with_a_new_key_another_fleets_list_is_refused(self):
+        self.me.take_list(*self.pair(3))
+        _key, renewed = self.node_cert()                             # a new key: the held list no longer names this node
+        cold = self.make(renewed)
+        cold.load()
+        self.assertIsNone(cold.list)
+        self.assertEqual(cold.floor.fleet, FLEET)
+        new_key = FL.key_hash(FL.certificate_der(renewed))
+        mine = {"id": ME, "name": "node-01", "key": new_key, "carry": "full"}
+        stranger = FL.canonical(self.data(9, fleet="fedcba9876543210", nodes=[mine, PEER]))
+        with self.assertRaises(hv.HandoverError) as cm:
+            cold.take_list(stranger, self.sign_message(FL.signed_bytes("fedcba9876543210", 9, stranger)))
+        self.assertIn("another fleet", cm.exception.message)
+        lower = FL.canonical(self.data(2, nodes=[mine, PEER]))
+        with self.assertRaises(hv.HandoverError) as cm:
+            cold.take_list(lower, self.sign_message(FL.signed_bytes(FLEET, 2, lower)))
+        self.assertIn("older", cm.exception.message)
+        newer = FL.canonical(self.data(4, nodes=[mine, PEER]))                # the owner's new list for the new key
+        cold.take_list(newer, self.sign_message(FL.signed_bytes(FLEET, 4, newer)))
+        self.assertEqual(cold.list.serial, 4)
+
+    def test_a_newer_list_that_does_not_check_out_is_not_replaced_by_the_older_pair(self):
+        self.me.take_list(*self.pair(1))
+        self.me.take_list(*self.pair(2))
+        self.assertIsNotNone(self.me.approved(PEER["id"], PEER["key"]))
+        with open(os.path.join(self.state, "fleet.sig"), "w") as f:
+            f.write("AAAAAAAAAAAAAAAAAAAA")                          # serial 2 is on disk and its signature does not hold
+        cold = self.make(self.cert)
+        cold.load()
+        self.assertIsNone(cold.list)
+        self.assertIsNone(cold.approved(PEER["id"], PEER["key"]))      # nothing the newer list may have dropped is approved
+        self.assertEqual(cold.floor.serial, 2)
+        self.assertIn("below 2", cold.problem)
+        with self.assertRaises(hv.HandoverError):
+            cold.take_list(*self.pair(1))
+
+    def test_a_damaged_file_leaves_no_floor_and_a_first_list_is_taken(self):
+        with open(os.path.join(self.state, "fleet.json"), "w") as f:
+            f.write("{nonsense")
+        cold = self.make(self.cert)
+        cold.load()
+        self.assertIsNone(cold.floor)
+        cold.take_list(*self.pair(1))
+        self.assertEqual(cold.list.serial, 1)
+
+
+class Details(HandoverBase):
+    def test_the_status_says_when_the_held_list_no_longer_names_this_nodes_key(self):
+        self.me.take_list(*self.pair(1))
+        self.assertIsNone(self.me.status()["list_problem"])
+        _key, renewed = self.node_cert()
+        moved = self.make(renewed)
+        moved.list = self.me.list
+        self.assertIn("does not name this node with the key it uses now", moved.status()["list_problem"])
+
+    def test_a_wipe_takes_every_leftover_whatever_its_ending(self):
+        self.me.take_list(*self.pair(1))
+        for name in ("fleet.json.prev", "fleet.sig.new", "fleet.json.new.tmp", "fleet.sig.prev.tmp", "deny.json.tmp", "pairings.json.new"):
+            with open(os.path.join(self.state, name), "w") as f:
+                f.write("x")
+        with open(os.path.join(self.state, "node-id"), "w") as f:
+            f.write("kept")
+        self.assertEqual(self.me.wipe(), [])
+        self.assertEqual([n for n in self.files() if n != "settings.json"], ["node-id"])
+
+    def test_the_acceptance_file_is_read_with_the_same_rules_it_is_written_with(self):
+        good = {"id": THIRD["id"], "name": "third", "key": THIRD["key"], "carry": "live"}
+        rows = [good, dict(good, name="again"),                              # a second row for the same id
+                dict(good, id="short"), dict(good, id="d" * 32, key="x"), dict(good, id="e" * 32, carry="owner"),
+                dict(good, id="f" * 32, name="a b"), {"id": 5}, "text"]
+        with open(os.path.join(self.state, "pairings.json"), "w") as f:
+            json.dump({"v": 1, "nodes": rows}, f)
+        cold = self.make(self.cert)
+        cold.load()
+        self.assertEqual(cold.status()["accepted"], [{"id": THIRD["id"], "name": "third", "carry": "live"}])
+        self.assertEqual(cold.approved(THIRD["id"], THIRD["key"])["via"], "pairing")
+        self.assertIsNone(cold.approved("d" * 32, "x"))
+
+    def test_the_fingerprint_may_be_separated_by_spaces_colons_and_dashes_only(self):
+        key = "3f9a" * 16
+        grouped = " ".join(key[i:i + 4] for i in range(0, 64, 4))
+        self.assertTrue(hv.same_fingerprint(grouped, key))
+        self.assertTrue(hv.same_fingerprint("\t" + grouped.upper() + "\n", key))
+        for typed in (key + "zz", key[:-1] + "g", key.replace("3", ".", 1), key.replace("3", "_", 1), key + "3f", "0x" + key, key[:60], "", None, 5, [key]):
+            self.assertFalse(hv.same_fingerprint(typed, key), typed)
+        self.assertFalse(hv.same_fingerprint(key, None))
+
+    def test_accepting_a_node_again_is_logged_as_a_change(self):
+        self.me.accept_node(THIRD["id"], THIRD["name"], THIRD["key"], "live", THIRD["key"], "Anthony iPad")
+        self.me.accept_node(THIRD["id"], THIRD["name"], THIRD["key"], "full", THIRD["key"], "Anthony iPad")
+        self.assertEqual([t for _k, t, _w in self.events.lines],
+                         ["third was accepted by its key fingerprint (carry live).", "The acceptance of third was changed (carry live to full)."])
+
+    def test_the_card_is_not_given_while_discovery_is_off(self):
+        self.assertEqual(self.me.card()["id"], ME)
+        self.settings.data["fleet"] = {"discovery": False}
+        self.assertIsNone(self.me.card())
+        self.settings.data["fleet"] = {"discovery": True, "accept": True}
+        self.assertEqual(self.me.card()["key"], self.my_key)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -19,6 +19,11 @@ PEER = {"id": "b" * 32, "name": "leyline", "key": "2" * 64, "carry": "live"}
 THIRD = {"id": "c" * 32, "name": "third", "key": "3" * 64}
 DENIED = "4" * 64
 
+def fake_screenshot(path, size, with_text):
+    with open(path, "wb") as f:
+        f.write(b"\xff\xd8\xff\xe0 a picture \xff\xd9")
+
+
 def raw(path):
     with open(path, "rb") as f:
         return f.read()
@@ -182,6 +187,126 @@ class Lists(FleetApiBase):
         self.assertIsNone(self.hv.list)
 
 
+class Odd(FleetApiBase):
+    def test_a_list_with_a_lone_surrogate_is_refused_in_words_not_with_a_500(self):
+        self.with_certificate()
+        for text in ("\ud800", "{\"v\": 1}\udfff"):
+            st, out = self.scall("POST", "/api/fleet/list", {"list": text, "sig": "AAAAAAAAAAAA"}, token=self.full)[:2]
+            self.assertEqual(st, 400, out)
+            self.assertIn("error", out)
+
+    def test_the_card_is_not_given_while_discovery_is_off(self):
+        self.with_certificate()
+        self.assertEqual(self.scall("GET", "/api/fleet/card")[0], 200)
+        self.assertEqual(self.call("POST", "/api/nodes/discovery", {"on": False}, token=self.full)[0], 200)
+        self.assertEqual(self.scall("GET", "/api/fleet/card")[0], 404)
+        self.assertEqual(self.call("POST", "/api/nodes/discovery", {"on": True}, token=self.full)[0], 200)
+        self.assertEqual(self.scall("GET", "/api/fleet/card")[0], 200)
+
+
+class Push(FleetApiBase):
+    """`boxcert.py fleet push`: the signed list sent to a node over https, with only the owner's root trusted."""
+
+    def tool(self, *argv, pin=None, folder=None):
+        import contextlib
+        import io
+        err = io.StringIO()
+        asked = []
+        self.out = getattr(self, "out", [])
+
+        def ask(prompt):
+            asked.append(prompt)
+            return (self.pin if pin is None else pin) if "PIN" in prompt else PASS
+        with contextlib.redirect_stderr(err):
+            code = boxcert.main(["--openssl", self.exe, "--dir", folder or self.ca] + list(argv), ask=ask, out=self.out.append)
+        self.errors, self.asked = err.getvalue(), asked
+        return code
+
+    def make_list(self, serial_args=()):
+        card = os.path.join(self.tmp, "card.json")
+        with open(card, "w") as f:
+            json.dump(self.hv.card(), f)
+        self.out = []
+        if not os.path.exists(os.path.join(self.ca, "fleet-draft.json")):
+            self.assertEqual(self.tool("fleet", "new", "--name", "Rig"), 0, self.errors)
+            self.assertEqual(self.tool("fleet", "add", "--card", card, "--carry", "full"), 0, self.errors)
+        self.assertEqual(self.tool("fleet", "sign", *serial_args), 0, self.errors)
+
+    def test_the_list_is_pushed_with_the_pin_asked_once_and_the_device_it_made_is_gone(self):
+        self.with_certificate()
+        self.make_list()
+        devices = len(self.settings.data["devices"])
+        self.assertEqual(self.tool("fleet", "push", "127.0.0.1", "--port", str(self.tls_port)), 0, self.errors)
+        self.assertEqual(self.hv.list.serial, 1)
+        self.assertIn("took the list", "\n".join(self.out))
+        self.assertEqual(len([a for a in self.asked if "PIN" in a]), 1)
+        self.assertEqual(len(self.settings.data["devices"]), devices, "boxcert's own device is logged out again")
+
+    def test_a_wrong_pin_or_a_pin_that_pairs_less_than_an_owner_sends_nothing(self):
+        self.with_certificate()
+        self.make_list()
+        self.assertEqual(self.tool("fleet", "push", "127.0.0.1", "--port", str(self.tls_port), pin="0000" if self.pin != "0000" else "1111"), 1)
+        self.assertIn("did not pair", self.errors)
+        self.assertIsNone(self.hv.list)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "fleet.json")))
+
+    def test_a_token_file_works_instead_of_the_pin_and_a_lesser_token_is_refused(self):
+        self.with_certificate()
+        self.make_list()
+        port = str(self.tls_port)
+        token_file = os.path.join(self.tmp, "token.txt")
+        with open(token_file, "w") as f:
+            f.write(self.full + "\n")
+        self.assertEqual(self.tool("fleet", "push", "127.0.0.1", "--port", port, "--token-file", token_file), 0, self.errors)
+        self.assertEqual([a for a in self.asked if "PIN" in a], [])
+        self.assertEqual(self.hv.list.serial, 1)
+        self.make_list()                                                  # serial 2
+        with open(token_file, "w") as f:
+            f.write(self.operator)
+        self.assertEqual(self.tool("fleet", "push", "127.0.0.1", "--port", port, "--token-file", token_file), 1)
+        self.assertIn("403", self.errors)
+        self.assertEqual(self.hv.list.serial, 1)
+        with open(token_file, "w") as f:
+            f.write("two words")
+        self.assertEqual(self.tool("fleet", "push", "127.0.0.1", "--port", port, "--token-file", token_file), 1)
+
+    def test_only_the_owners_root_is_trusted_and_an_unsigned_folder_sends_nothing(self):
+        self.with_certificate()
+        other = os.path.join(self.tmp, "other-ca")
+        boxcert.main(["--openssl", self.exe, "--dir", other, "make-root", "--allow-address", "127.0.0.0/255.0.0.0"], ask=lambda p: PASS, out=lambda l: None)
+        card = os.path.join(self.tmp, "c2.json")
+        with open(card, "w") as f:
+            json.dump(self.hv.card(), f)
+        self.out = []
+        self.assertEqual(self.tool("fleet", "new", "--name", "Other", folder=other), 0)
+        self.assertEqual(self.tool("fleet", "add", "--card", card, "--carry", "full", folder=other), 0)
+        self.assertEqual(self.tool("fleet", "sign", folder=other), 0)
+        self.assertEqual(self.tool("fleet", "push", "127.0.0.1", "--port", str(self.tls_port), folder=other), 1)
+        self.assertIn("did not sign", self.errors)
+        self.assertEqual([a for a in self.asked if "PIN" in a], [])          # it never got as far as asking for the PIN
+        empty = os.path.join(self.tmp, "empty-ca")
+        boxcert.main(["--openssl", self.exe, "--dir", empty, "make-root"], ask=lambda p: PASS, out=lambda l: None)
+        self.assertEqual(self.tool("fleet", "push", "127.0.0.1", "--port", str(self.tls_port), folder=empty), 1)
+        self.assertIn("nothing is signed", self.errors)
+        self.assertIsNone(self.hv.list)
+
+    def test_a_node_that_is_not_there_is_an_error(self):
+        self.with_certificate()
+        self.make_list()
+        self.assertEqual(self.tool("fleet", "push", "127.0.0.1", "--port", "9"), 1)
+        self.assertEqual(self.tool("fleet", "push", "not a host!"), 1)
+
+    def test_fleet_add_by_name_still_works_with_discovery_on_and_says_what_to_do_with_it_off(self):
+        self.with_certificate()
+        self.assertEqual(self.tool("fleet", "new", "--name", "Rig"), 0)
+        self.assertEqual(self.tool("fleet", "add", "127.0.0.1", "--port", str(self.tls_port), "--carry", "live"), 0, self.errors)
+        self.call("POST", "/api/nodes/discovery", {"on": False}, token=self.full)
+        self.assertEqual(self.tool("fleet", "remove", ME), 0)
+        self.assertEqual(self.tool("fleet", "add", "127.0.0.1", "--port", str(self.tls_port), "--carry", "live"), 1)
+        self.assertIn("--cert", self.errors)
+        self.assertIn("discovery", self.errors)
+
+
 class Switch(FleetApiBase):
     def setUp(self):
         super().setUp()
@@ -293,6 +418,13 @@ class Walk(FleetApiBase):
         self.assertGreater(seen["answers"], 40)
         for path in ("/api/system/diagnostics", "/api/https", "/api/fleet", "/api/nodes"):
             look(path, self.scall("GET", path, token=self.full)[1])
+        # the routes the server answers itself, outside the table: downloads, pictures, the QR code
+        self.player.screenshot = fake_screenshot
+        for path in ("/api/https/root.crt", "/api/https/request.csr", "/api/qr.svg", "/api/preview.jpg", "/api/graphics/thumb",
+                     "/api/graphics/preview.png", "/api/graphics/thumb?id=x", "/api/support", "/api/devices"):
+            for ask in (self.call, self.scall):
+                look((ask.__name__, path), ask("GET", path, token=self.full)[1])
+                seen["answers"] += 1
         # the Owner's own status is the one place the list shows: names and the serial, no key of another node
         status = self.scall("GET", "/api/fleet", token=self.full)[1]
         self.assertEqual(status["list"]["serial"], 3)
@@ -308,10 +440,14 @@ class Walk(FleetApiBase):
         # an import carrying the files' contents changes none of them
         file = out["file"]
         file["settings"]["fleet_list"] = {"text": text, "sig": sig}
+        file["settings"]["fleet"] = {"accept": True, "discovery": True, "list": text, "sig": sig, "deny": [DENIED]}
         before = {n: raw(os.path.join(self.tmp, n)) for n in ("fleet.json", "fleet.sig", "pairings.json", "deny.json")}
         self.call("POST", "/api/system/settings/import?confirm=import", raw=json.dumps(file).encode(), token=self.full)
         self.assertEqual({n: raw(os.path.join(self.tmp, n)) for n in before}, before)
         self.assertNotIn("fleet_list", json.dumps(self.settings.data))
+        self.assertNotIn(DENIED, json.dumps(self.settings.data))
+        self.assertNotIn("list", self.settings.data.get("fleet", {}))
+        self.assertNotIn("sig", self.settings.data.get("fleet", {}))
 
 
 class Reset(FleetApiBase):
@@ -322,12 +458,17 @@ class Reset(FleetApiBase):
         self.hv.deny_add(DENIED, "gone", "leyline")
         self.hv.set_accepting(True)
         secure = self.scall("POST", "/api/pair", {"pin": self.pin, "name": "owner, tls"})[1]["token"]
-        for name in ("fleet.json", "fleet.sig", "pairings.json", "deny.json"):
+        self.post_list(*self.sign_list(3))                       # leaves the first pair as .prev
+        leftovers = ("fleet.json.prev", "fleet.sig.prev", "fleet.json.new", "fleet.sig.new", "fleet.json.new.tmp", "deny.json.tmp", "pairings.json.new")
+        for name in leftovers[2:]:
+            with open(os.path.join(self.tmp, name), "w") as f:
+                f.write("x")
+        for name in ("fleet.json", "fleet.sig", "pairings.json", "deny.json") + leftovers:
             self.assertTrue(os.path.exists(os.path.join(self.tmp, name)), name)
         st, body, _ = self.scall("POST", "/api/system/factory-reset", {"confirm": "factory-reset", "media": "keep"}, token=secure)
         self.assertEqual(st, 200, body)
         self.assertEqual(body["problems"], [])
-        for name in ("fleet.json", "fleet.sig", "pairings.json", "deny.json"):
+        for name in ("fleet.json", "fleet.sig", "pairings.json", "deny.json") + leftovers:
             self.assertFalse(os.path.exists(os.path.join(self.tmp, name)), name)
         self.assertFalse(self.hv.accepting())
         self.assertNotIn("accept", self.settings.data.get("fleet", {}))

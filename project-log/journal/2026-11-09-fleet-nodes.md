@@ -1,5 +1,11 @@
 <!-- SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
      SPDX-License-Identifier: Apache-2.0 -->
+## 2026-11-09, Slice 2 review fixes
+
+- **Why.** The independent review of PR 267 found no High items and these.
+- **What.** A node that cannot check the files on disk at start now remembers the fleet and the highest serial (a floor), so an older serial or another fleet's list is still refused; a newer list that does not check out is not replaced by the older `.prev` pair. The status says when the held list does not name this node with its current key. A wipe takes every leftover (`.new.tmp` too). A list with a lone surrogate is refused in words, not a 500. The card is given only while discovery is on. `pairings.json` rows are read with the rules they are written with, one per id. The fingerprint accepts only spaces, colons and dashes between 64 hex digits. Accepting again logs a change. `boxcert.py fleet push HOST` sends the signed pair over https (PIN prompted, or `--token-file`) so slice 2 is usable without curl; it checks the node's certificate before it asks for anything. Design section 17 keeps the slice 3 trap: `typed` must never be filled from the card `key` came from.
+- **Checked.** Tests for each, the walk now covers the routes outside the table (root.crt, request.csr, qr.svg, preview.jpg, the graphics thumb and preview) and an import carrying list text in a `fleet` section, the reset test covers `.prev`, `.new` and `.new.tmp`, and `fleet push` runs against the real TLS listener (PIN, token file, a lesser token, another root, no signed list, a dead port).
+
 ## 2026-11-09, Node hand-over slice 2: a node keeps the fleet list and knows who is approved
 
 - **Why.** D132, slice 2: the node side of the fleet list, before any node talks to another. Storage, the card, the Owner's routes, the switch and the one question the later slices ask. Nothing is deployed and no node calls another.
