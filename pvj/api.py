@@ -270,6 +270,7 @@ class Api:
         self.https = None         # httpsbox.HttpsBox or None: the secure connection (D79), set in server.build
         self.handover = None      # handover.Handover or None (pvj/handover.py, D132): the fleet list, acceptances, the deny file
         self.peers = None         # peer.Peers or None (pvj/peer.py, D132): checked calls to the nodes this one approves
+        self.tickets = None       # ticket.Tickets or None (pvj/ticket.py, D132): one-time tickets for opening another node signed in
         self.request = threading.local()    # what the server knows about the request being handled on this thread: .secure
         self.capture = None       # Capture or None (live input from a USB capture device)
         self.ndi = None           # ndi.Input or None (the NDI helper's client; D62)
@@ -3584,9 +3585,10 @@ class Api:
     def _handover_call(fn, *args, **kw):
         from .handover import HandoverError
         from .peer import PeerError
+        from .ticket import TicketError
         try:
             return fn(*args, **kw)
-        except (HandoverError, PeerError) as e:
+        except (HandoverError, PeerError, TicketError) as e:
             raise ApiError(e.status, e.message)
 
     def _peers(self):
@@ -3608,14 +3610,26 @@ class Api:
         return self._handover().status()
 
     def set_fleet_accept(self, body, device, client):
-        """{"on": bool}: "Accept devices from other nodes", off by default. Only an Owner; this is the lock on pairing from
-        other nodes. (Turning it off will also sign out the devices carried here, when slice 4 makes them.)"""
+        """{"on": bool}: "Accept devices from other nodes", off by default. Only an Owner (a carried Owner too); this is the lock
+        on pairing from other nodes. Turning it off signs out every device carried here at once; the list and the
+        acceptances stay."""
         h = self._handover()
         if not isinstance(body, dict) or set(body) != {"on"} or not isinstance(body["on"], bool):
             raise bad('send {"on": true} or {"on": false}')
         h.set_accepting(body["on"])
-        self.event("handover", "Accepting devices from other nodes was switched %s." % ("on" if body["on"] else "off"), device.get("name"))
+        gone = 0 if body["on"] else self.auth.revoke_node_devices()
+        self.event("handover", "Accepting devices from other nodes was switched %s%s." % (
+            "on" if body["on"] else "off", (" (%d carried device%s signed out)" % (gone, "" if gone == 1 else "s")) if gone else ""), device.get("name"))
         return h.status()
+
+    def post_handover_ticket(self, body, device, client):
+        """{"to": node id, "proof": sha-256 of a value only the page keeps}: a one-time ticket, good for 60 seconds, for this device
+        to open that node signed in (D132). An Operator or an Owner paired over https; never a support login. The node is one
+        this node approves and has just checked; the answer says where to post the form."""
+        self._handover()
+        if self.tickets is None:
+            raise ApiError(404, "not available on this node")
+        return self._handover_call(self.tickets.make, device, body, getattr(self.request, "host", None))
 
     def post_fleet_list(self, body, device, client):
         """{"list": text of fleet.json, "sig": text of fleet.sig}: the owner's signed list, checked against the pinned root."""
@@ -5657,6 +5671,7 @@ class Api:
             ("POST", "/api/fleet/accepted/remove"): ("full", self.post_fleet_accepted_remove),
             ("POST", "/api/fleet/accepted/look"): ("full", self.post_fleet_accepted_look),
             ("POST", "/api/fleet/sync"): ("full", self.post_fleet_sync),
+            ("POST", "/api/handover/ticket"): ("live", self.post_handover_ticket),     # D132 4a: Operator and Owner, over https, never a controller or a support login
             ("GET", "/api/support"): ("view", self.get_support),
             ("POST", "/api/support/config"): ("full", self.set_support),
             ("POST", "/api/support/start"): ("full", self.start_support),

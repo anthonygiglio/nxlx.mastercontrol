@@ -1,7 +1,14 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""The peer channel (D132, design/node-handover_2026-11-09.md section 3.2 and slice 3): how one node talks to another it
-approves. Nothing here signs a device in; tickets, leases and pokes for devices are slice 4. What is here:
+"""The peer channel (D132, design/node-handover_2026-11-09.md section 3.2 and slices 3 and 4a): how one node talks to another
+it approves. Nothing here signs a device in (pvj/ticket.py does, over this channel); leases and pokes are slice 4b. What is here:
+
+* **The peer port (4a).** Calls between nodes go to a dedicated TLS listener (`PVJ_PEER_PORT`, 8443 on every node unless the
+  discovery row says another), which asks the caller for a certificate (CERT_REQUIRED, the pinned root the only CA) and
+  where the caller is proved by the handshake: its certificate chains to the root, has the clientAuth key usage, and the
+  hash of its public key is the one the list or an acceptance gives for the id it names. The caller's own claim of a key
+  proves nothing and is only compared with the handshake. The panel's port (443) no longer answers a peer call; it still
+  gives the card, which an Owner reads before a node is accepted.
 
 * **The checked connection.** To reach node B by its id the caller tries EVERY address its discovery list holds for that
   id (only private, link-local or loopback ones), one after the other, and uses the first whose certificate passes all of:
@@ -43,6 +50,7 @@ from . import fleetlist, httpsbox
 from .fleet import local_enough
 from .handover import HandoverError, fingerprint
 
+DEFAULT_PEER_PORT = 8443        # the peer listener of every node, unless the discovery row names another (PVJ_PEER_PORT on this node)
 CONNECT_SECONDS, TOTAL_SECONDS = 3.0, 6.0
 NODE_FAILS, TARGET_FAILS, SOURCE_FAILS, FAIL_WINDOW = 10, 5, 5, 60.0
 HEAVY_ANSWERS, ADOPT_TRIES, PULLS_PER_SOURCE = 2, 2, 2      # per source and minute: answers with the list or denies, lists tried, pulls started
@@ -57,9 +65,9 @@ _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,62}")
 
 
 class PeerError(Exception):
-    def __init__(self, message, status=502, check=False):
+    def __init__(self, message, status=502, check=False, refused=False):
         super().__init__(message)
-        self.message, self.status, self.check = message, status, check
+        self.message, self.status, self.check, self.refused = message, status, check, refused     # refused: the node answered and said no
 
 
 class Throttle:
@@ -108,12 +116,14 @@ def _spawn(fn):
 
 
 class Peers:
-    def __init__(self, handover, https, lookup, now=time.monotonic, wall=time.time, log=None, spawn=None):
+    def __init__(self, handover, https, lookup, now=time.monotonic, wall=time.time, log=None, spawn=None, peer_port=DEFAULT_PEER_PORT):
         """handover: the Handover (who is approved, the list, the deny file). https: the HttpsBox (the pinned root, the clock).
-        lookup(node_id) -> [(address, port, name)] from the discovery list (name may be left out). spawn(fn): how a pull in the
+        lookup(node_id) -> [(address, port, name, peer port)] from the discovery list (name and peer port may be left out; the
+        port is the panel's, the peer port defaults to `peer_port`). spawn(fn): how a pull in the
         background is run. The lookup is the Nodes list itself, which starts a scan when its last one is old (fleet.py, rate
         limited), so a node that is not listed yet is found by the next call without a scan of this module's own."""
         self.handover, self.https, self.lookup = handover, https, lookup
+        self.peer_port = peer_port
         self.now, self.wall = now, wall
         self.log = log or (lambda line: None)
         self.spawn = spawn or _spawn
@@ -177,14 +187,16 @@ class Peers:
         for row in (self.lookup(node_id) or []):
             address, port = row[0], row[1]
             name = row[2] if len(row) > 2 and isinstance(row[2], str) and _NAME.fullmatch(row[2]) else None
+            via = row[3] if len(row) > 3 and isinstance(row[3], int) and not isinstance(row[3], bool) and 1 <= row[3] <= 65535 else self.peer_port
             if (address, port) not in seen and local_enough(address):
                 seen.add((address, port))
-                out.append((address, port, name))
+                out.append((address, port, name, via))
         return out[:MAX_ADDRESSES]
 
-    def _open(self, address, port, keys, name, started):
+    def _open(self, address, port, keys, name, started, client=False):
         """A connection to this address whose certificate passed every check, with the certificate's DER and key hash.
-        `keys`: the key hashes that are acceptable, or None to take whatever key it shows (only to read a card)."""
+        `keys`: the key hashes that are acceptable, or None to take whatever key it shows (only to read a card). `client`:
+        show this node's own certificate (the peer port asks for it)."""
         if not local_enough(address):
             raise PeerError("that address is not on a private network")
         if self._out_blocked((address, port)):
@@ -196,6 +208,8 @@ class Peers:
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE                 # the checks below are made by hand, against the pinned root
         ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        if client and (self.https is None or not self.https.present_to_peer(ctx)):
+            raise PeerError("this node has no certificate of its own to show another node")
         conn = http.client.HTTPSConnection(address, port, timeout=min(CONNECT_SECONDS, left), context=ctx)
         try:
             try:
@@ -258,19 +272,22 @@ class Peers:
         if not isinstance(payload, dict):
             raise PeerError("the answer was not an object")
         if resp.status != 200:
-            raise PeerError("the node refused (%d): %s" % (resp.status, str(payload.get("error", ""))[:120]), 502)
+            raise PeerError("the node refused (%d): %s" % (resp.status, str(payload.get("error", ""))[:120]), 502, refused=True)
         return payload
 
-    def _through(self, node_id, keys, method, path, body, label):
+    def _through(self, node_id, keys, method, path, body, label, peer=False, count_refusals=True):
         """Try each address in turn; the first connection that passes the checks carries the call. Returns (payload, key,
-        target) where target is the (address, port) that answered."""
+        target) where target is the (address, port) that answered. `peer`: the call goes to the peer port, showing this
+        node's certificate; otherwise to the panel's own port (the card)."""
         addresses = self._addresses(node_id)
         if not addresses:
             raise PeerError("no address is known for that node: it is not on the network, or discovery is off")
         started, last = self.now(), None
-        for address, port, name in addresses:
+        for address, port, name, via in addresses:
+            if peer:
+                port = via
             try:
-                conn, der, key = self._open(address, port, keys, name, started)
+                conn, der, key = self._open(address, port, keys, name, started, client=peer)
             except PeerError as e:
                 last = e
                 if e.check:
@@ -278,8 +295,9 @@ class Peers:
                 continue
             try:
                 return self._http(conn, method, path, body, started), key, (address, port)
-            except PeerError:
-                self._fail_out((address, port))
+            except PeerError as e:
+                if count_refusals or not e.refused:
+                    self._fail_out((address, port))
                 raise
             finally:
                 conn.close()
@@ -305,7 +323,7 @@ class Peers:
         if not keys:
             raise PeerError("that node is not approved", 403)
         with self._slot(node_id):
-            payload, key, target = self._through(node_id, keys, "POST", path, dict(body or {}, **self.preamble()), h.name_of(node_id) or "a node")
+            payload, key, target = self._through(node_id, keys, "POST", path, dict(body or {}, **self.preamble()), h.name_of(node_id) or "a node", peer=True)
             self._after(node_id, key, payload, target)
             return payload
 
@@ -351,12 +369,82 @@ class Peers:
                 out.append({"id": node_id, "name": name, "ok": False, "error": e.message})
         return out
 
+    def call_once(self, node_id, path, body):
+        """One POST to the peer port of an approved node, with the checks of 3.2 and nothing else added to the body, made once: a
+        call that fails after it was sent is not tried again at another address (a ticket may be spent). A refusal the node
+        answers is not counted as a failed call. Returns (payload, the key the node showed). Raises PeerError."""
+        h = self.handover
+        keys = h.expected_keys(node_id)
+        if not keys:
+            raise PeerError("that node is not approved", 403)
+        with self._slot(node_id):
+            payload, key, _target = self._through(node_id, keys, "POST", path, dict(body or {}), h.name_of(node_id) or "a node", peer=True, count_refusals=False)
+        return payload, key
+
+    def panel_address(self, node_id):
+        """Where a browser may be sent to reach this node's panel (design 5, step 2): (host, port, key) of the first address
+        whose certificate passes every check of 3.2 AND covers the host that is returned (the address, or the .local name
+        the node announced), so the browser's own check passes there too. Raises PeerError."""
+        h = self.handover
+        keys = h.expected_keys(node_id)
+        if not keys:
+            raise PeerError("that node is not approved", 403)
+        addresses = self._addresses(node_id)
+        if not addresses:
+            raise PeerError("no address is known for that node: it is not on the network, or discovery is off")
+        started, last, label = self.now(), None, h.name_of(node_id) or "a node"
+        for address, port, name, _via in addresses:
+            try:
+                conn, der, key = self._open(address, port, keys, name, started)
+            except PeerError as e:
+                last = e
+                if e.check:
+                    self._say(label, e.message)
+                continue
+            conn.close()
+            info = httpsbox.read_certificate(der)
+            if httpsbox.name_matches(address, info["dns"], info["ips"]):
+                host = address
+            elif name is not None and httpsbox.name_matches(name + ".local", info["dns"], info["ips"]):
+                host = name + ".local"
+            else:
+                last = PeerError("the certificate at %s does not cover an address a browser could use" % address)
+                continue
+            return ("[%s]" % host if ":" in host else host), port, key
+        raise last
+
     # -- the other end of a call: what a node answers (POST /api/fleet/peer) --
-    def handle_peer(self, body, source):
-        """Answer a peer's hello. Nothing proves who is calling, so this only does what anybody approved may ask: take a newer
-        signed list the caller carries (the root's signature decides, not the caller), give the list if the caller is behind
-        and the denies if its digest differs (each capped per source), and ask the caller back for its denies. A caller this
-        node does not approve costs a lookup and a count. Only the sender's address is ever charged for a bad call."""
+    def authenticate(self, der, source):
+        """Who is calling, from the certificate the handshake on the peer port showed (the handshake has checked the chain to
+        the pinned root and that the caller holds the key): the hash of its public key. The certificate must have the clientAuth
+        key usage and, only while this node's clock is trusted, must not have run out. Raises PeerError (403, or 429 when the
+        sender's address has failed too often). A failure is charged to the sender's address only."""
+        if self._in_blocked(source):
+            raise PeerError("too many calls have failed lately: wait a minute", 429)
+        try:
+            info = httpsbox.read_certificate(der)
+            key = fleetlist.key_hash(der)
+        except (ValueError, IndexError, OverflowError, UnicodeDecodeError, TypeError, fleetlist.FleetError):
+            self._fail_in(source)
+            raise PeerError("not a usable certificate", 403)
+        if not info["client_auth"]:
+            self._fail_in(source)
+            raise PeerError("that certificate is not for a client: it was signed before nodes called each other and must be signed again", 403)
+        if self.https is not None and self.https.clock_trusted():
+            if info["not_after"] < int(self.wall()):
+                self._fail_in(source)
+                raise PeerError("that certificate has run out", 403)
+            if info["not_before"] > int(self.wall()):
+                self._fail_in(source)
+                raise PeerError("that certificate is not valid yet", 403)
+        return key
+
+    def handle_peer(self, body, source, peer_key):
+        """Answer a peer's hello. `peer_key` is the hash of the key in the certificate the caller showed in the handshake
+        (`authenticate`): the caller is proved, not claimed, and its claim of a key must equal it. A node this one does not
+        approve gets nothing. An approved one gets what an approved node may hold: it may carry a newer signed list (the
+        root's signature decides, not the caller), is given the list if it is behind and the denies if its digest differs
+        (each capped per source), and is asked back for its denies. Only the sender's address is ever charged for a bad call."""
         if self._in_blocked(source):
             raise PeerError("too many calls have failed lately: wait a minute", 429)
         h = self.handover
@@ -371,7 +459,7 @@ class Peers:
         if not ok:
             self._fail_in(source)
             raise PeerError("not a peer call", 400)
-        approved = h.approved(body["from"], body["key"])
+        approved = h.approved(body["from"], peer_key) if body["key"] == peer_key else None
         if approved is None:
             h.count_unknown()                                 # a count on the status, no log line, no outbound call
             self._fail_in(source)
@@ -381,8 +469,7 @@ class Peers:
         if isinstance(theirs, int) and "list" in body and "sig" in body and (lst is None or theirs > lst.serial) \
                 and self._spend(self._in_adopt, source):
             try:
-                # nothing proves who is calling until 4a, so the event does not credit the sender
-                h.take_list(body["list"].encode("utf-8", "surrogatepass"), body["sig"], source="a hello claiming %s" % approved["name"])
+                h.take_list(body["list"].encode("utf-8", "surrogatepass"), body["sig"], source=approved["name"])
             except HandoverError:
                 self._fail_in(source)                          # a list that fails the checks is a bad call, charged to its sender
             lst = h.list

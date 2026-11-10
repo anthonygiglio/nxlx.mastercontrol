@@ -101,6 +101,7 @@ REMOTE_DENY_PREFIX_WHY = {
     "/api/recovery": "the owner's ways back in (D81)",
     "/api/ndi/discovery": "the NDI discovery server's own settings: a listener on the network is the owner's, in the room (D85)",
     "/api/fleet": "which other nodes this node trusts, the list that names them and the switch for taking their devices: the owner's, in the room (D132)",
+    "/api/handover": "a ticket to open another node signed in is made for a device that is paired here: support stays at the node it was given to (D132)",
     "/api/nodes": "what this node announces to the local network and which other nodes it lists: network things stay in the room (D85, D127)",
 }
 REMOTE_DENY_PREFIX = tuple(REMOTE_DENY_PREFIX_WHY)
