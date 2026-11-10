@@ -489,6 +489,26 @@ class Asking(FleetToolBase):
         self.assertEqual(self.tool("fleet", "add", "127.0.0.1", "--port", "9", "--carry", "full"), 1)
 
 
+@unittest.skipUnless(openssls(), "no openssl on this machine")
+class NodeCertificates(FleetToolBase):
+    def test_a_new_node_certificate_can_serve_and_can_be_shown_as_a_client(self):
+        """Peers will present their certificates to each other (design 3.2, slice 4a), so a certificate signed from now on
+        carries clientAuth as well as serverAuth. Certificates signed before need to be signed again before then."""
+        import subprocess
+        work = self.workdir()
+        _key, csr = make_request(self.exe, work, ["node-01.local"], [], cn="node-01.local")
+        cert = os.path.join(work, "cert.pem")
+        boxcert.sign(self.exe, self.dir, csr, [], [], [], 30, cert, lambda p: PASS, out=lambda *a: None)
+        text = subprocess.run([self.exe, "x509", "-in", cert, "-noout", "-text"], capture_output=True, text=True, check=True).stdout
+        self.assertIn("TLS Web Server Authentication", text)
+        self.assertIn("TLS Web Client Authentication", text)
+        info = boxcert.read_cert(self.exe, cert)
+        self.assertTrue(info["server_auth"])
+        self.assertEqual(boxcert.verify(self.exe, self.dir, cert, lambda *a: None), True)
+        code = subprocess.run([self.exe, "verify", "-CAfile", os.path.join(self.dir, "root.pem"), "-purpose", "sslclient", cert], capture_output=True)
+        self.assertEqual(code.returncode, 0, code.stderr)
+
+
 class Separate(unittest.TestCase):
     def test_the_other_commands_still_know_their_own_help(self):
         import contextlib

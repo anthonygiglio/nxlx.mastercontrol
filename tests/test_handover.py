@@ -402,7 +402,7 @@ class Floors(HandoverBase):
         self.assertIsNone(cold.list)
         self.assertIn("below 5", cold.problem)
         self.assertEqual((cold.floor.fleet, cold.floor.serial), (FLEET, 5))
-        cold.https.root = self.roots["one"][1]                       # the root is back
+        cold.https.root = self.roots["one"][1]                       # the root is back (the list on disk is read again by the retry)
         for serial in (4, 1):
             with self.assertRaises(hv.HandoverError) as cm:
                 cold.take_list(*self.pair(serial))
@@ -411,7 +411,7 @@ class Floors(HandoverBase):
         with self.assertRaises(hv.HandoverError) as cm:
             cold.take_list(*other)
         self.assertIn("same serial", cm.exception.message)
-        self.assertIsNone(cold.list)
+        self.assertEqual(cold.list.serial, 5)
         cold.take_list(*self.pair(5))                                 # the same list again is fine
         self.assertEqual(cold.list.serial, 5)
         self.assertIsNone(cold.floor)
@@ -515,6 +515,166 @@ class Details(HandoverBase):
         self.assertIsNone(self.me.card())
         self.settings.data["fleet"] = {"discovery": True, "accept": True}
         self.assertEqual(self.me.card()["key"], self.my_key)
+
+
+class Retry(HandoverBase):
+    """R1 and the retry: the status keeps saying when the older pair is in use, and a list that could not be checked at
+    start is tried again when the root or the certificate appears."""
+
+    def test_the_status_keeps_a_line_while_the_previous_list_is_in_use(self):
+        self.me.take_list(*self.pair(1))
+        self.me.take_list(*self.pair(2))
+        os.unlink(os.path.join(self.state, "fleet.json"))                  # the crash: the new list file is gone, the new signature is there
+        cold = self.make(self.cert)
+        cold.load()
+        self.assertEqual(cold.list.serial, 1)
+        problem = cold.status()["list_problem"]
+        self.assertIn("previous list (serial 1) is in use", problem)
+        self.assertIn("without its signature", problem)                      # why: the signature without the list
+        self.assertIsNotNone(cold.approved(PEER["id"], PEER["key"]))
+        cold.take_list(*self.pair(3))                                          # a good list ends it
+        self.assertIsNone(cold.status()["list_problem"])
+
+    def test_a_lone_signature_without_a_list_is_said_even_with_no_previous_pair(self):
+        self.me.take_list(*self.pair(1))
+        os.unlink(os.path.join(self.state, "fleet.json"))
+        os.unlink(os.path.join(self.state, "fleet.json.prev")) if os.path.exists(os.path.join(self.state, "fleet.json.prev")) else None
+        cold = self.make(self.cert)
+        cold.load()
+        self.assertIsNone(cold.list)
+        self.assertIn("without its signature", cold.status()["list_problem"])
+
+    def test_a_list_on_disk_is_loaded_when_the_root_appears_later(self):
+        self.me.take_list(*self.pair(4))
+        cold = self.make(self.cert, root="")
+        cold.load()
+        self.assertIsNone(cold.list)
+        self.assertIn("no root certificate", cold.status()["list_problem"])
+        cold.https.root = self.roots["one"][1]                               # the root is pinned
+        self.assertEqual(cold.approved(PEER["id"], PEER["key"])["via"], "list")   # asking is enough: no restart, no new list
+        self.assertEqual(cold.list.serial, 4)
+        self.assertIsNone(cold.status()["list_problem"])
+
+    def test_a_list_on_disk_is_loaded_when_the_certificate_appears_later(self):
+        self.me.take_list(*self.pair(4))
+        cold = self.make("")
+        cold.load()
+        self.assertIsNone(cold.list)
+        cold.https.cert = self.cert
+        self.assertEqual(cold.expected_keys(PEER["id"]), [PEER["key"]])
+        self.assertEqual(cold.list.serial, 4)
+
+    def test_nothing_is_read_again_until_the_root_or_the_certificate_changes(self):
+        self.me.take_list(*self.pair(4))
+        cold = self.make(self.cert, root="")
+        cold.load()
+        loads = []
+        real = cold.load
+        cold.load = lambda: loads.append(1) or real()
+        for _ in range(5):
+            cold.approved(PEER["id"], PEER["key"])
+            cold.status()
+        self.assertEqual(loads, [])
+        cold.https.root = self.roots["one"][1]
+        cold.approved(PEER["id"], PEER["key"])
+        cold.approved(PEER["id"], PEER["key"])
+        self.assertEqual(loads, [1])
+
+    def test_a_list_the_files_do_not_hold_is_not_looked_for(self):
+        cold = self.make(self.cert, root="")
+        cold.load()
+        cold.https.root = self.roots["one"][1]
+        loads = []
+        cold.load = lambda: loads.append(1)
+        self.assertIsNone(cold.approved(PEER["id"], PEER["key"]))
+        self.assertEqual(loads, [])
+
+
+class Spreading(HandoverBase):
+    def test_the_deny_digest_changes_with_the_set_and_not_with_the_order(self):
+        empty = self.me.deny_digest()
+        self.me.deny_add("4" * 64, "x", "y")
+        one = self.me.deny_digest()
+        self.me.deny_add("5" * 64, "x", "y")
+        two = self.me.deny_digest()
+        self.assertEqual(len({empty, one, two}), 3)
+        other = self.make(self.cert, state=os.path.join(self.tmp, "other-%s" % self._testMethodName[:30]))
+        os.makedirs(other.folder, exist_ok=True)
+        other.deny_add("5" * 64, "x", "y")
+        other.deny_add("4" * 64, "x", "y")
+        self.assertEqual(other.deny_digest(), two)
+        self.assertEqual(len(two), 16)
+
+    def test_approved_nodes_lists_each_node_once_with_the_key_that_counts(self):
+        self.me.take_list(*self.pair(1))
+        self.me.accept_node(THIRD["id"], THIRD["name"], THIRD["key"], "full", THIRD["key"])
+        self.me.accept_node(PEER["id"], PEER["name"], PEER["key"], "full", PEER["key"])
+        self.assertEqual(sorted(self.me.approved_nodes()), sorted([(PEER["id"], "leyline", PEER["key"]), (THIRD["id"], "third", THIRD["key"])]))
+        self.me.deny_add(THIRD["key"], "third", "x")
+        self.assertEqual([i for i, _n, _k in self.me.approved_nodes()], [PEER["id"]])
+        self.assertEqual(self.me.expected_keys("d" * 32), [])
+
+    def test_the_list_text_is_what_a_peer_that_is_behind_is_sent(self):
+        self.assertIsNone(self.me.list_text())
+        body, sig = self.pair(2)
+        self.me.take_list(body, sig)
+        text, sig_text = self.me.list_text()
+        self.assertEqual(text.encode(), body)
+        self.assertEqual(sig_text.split(), sig.split())
+        cold = self.make(self.cert)
+        cold.load()
+        self.assertEqual(cold.list_text()[0].encode(), body)
+
+
+class Bounds(HandoverBase):
+    """M2: an approved peer can not fill the deny file, so the Owner can still remove a node."""
+
+    def entries(self, n, start=1, name="n"):
+        return [{"key": "%064x" % (start + i), "name": "%s%d" % (name, i)} for i in range(n)]
+
+    def test_one_peer_gives_at_most_so_many_in_an_hour_and_a_flood_is_said(self):
+        added = self.me.take_denies(self.entries(200), "node-03", now=1000.0)
+        self.assertEqual(len(added), hv.PEER_HOURLY)
+        self.assertEqual(self.me.status()["removal_floods"], [{"name": "node-03", "sent": 200, "taken": hv.PEER_HOURLY}])
+        self.assertIn("node-03 sent 200 removals; this node took %d." % hv.PEER_HOURLY, [t for _k, t, _w in self.events.lines])
+        self.assertEqual(self.me.take_denies(self.entries(5, start=1000), "node-03", now=1500.0), [])          # still inside the hour
+        self.assertEqual(len(self.me.take_denies(self.entries(5, start=2000), "node-03", now=1000.0 + 3601)), 5)
+
+    def test_all_peers_together_leave_room_for_the_owners_own_removals(self):
+        for i, peer_name in enumerate(("node-03", "node-04", "node-05", "node-06")):
+            self.me.take_denies(self.entries(64, start=1 + i * 100), peer_name, now=1000.0)
+        rows = self.me.deny_entries()
+        self.assertEqual(sum(1 for r in rows if r.get("peer")), hv.PEER_DENY_CAP)
+        self.assertEqual(len(rows), hv.PEER_DENY_CAP)
+        for i in range(hv.MAX_DENY - hv.PEER_DENY_CAP):                        # the Owner can still remove nodes here
+            self.assertTrue(self.me.deny_add("%064x" % (9000 + i), "local%d" % i, "node-01"))
+        self.assertEqual(len(self.me.deny_entries()), hv.MAX_DENY)
+        cold = self.make(self.cert)
+        cold.load()
+        self.assertEqual(sum(1 for r in cold.deny_entries() if r.get("peer")), hv.PEER_DENY_CAP)       # the mark survives a restart
+
+    def test_a_modest_batch_is_taken_whole_and_is_no_flood(self):
+        self.assertEqual(len(self.me.take_denies(self.entries(hv.FLOOD_BATCH), "node-03", now=1000.0)), hv.FLOOD_BATCH)
+        self.assertEqual(self.me.status()["removal_floods"], [])
+
+    def test_names_from_a_peer_are_cleaned_to_host_names(self):
+        self.me.take_denies([{"key": "5" * 64, "name": "a b<script>\n\u202e"}, {"key": "6" * 64, "name": "\u202e\n"}, {"key": "7" * 64, "name": "x" * 500}], "node-03")
+        names = [r["name"] for r in self.me.deny_entries()]
+        self.assertEqual(names[0], "abscript")
+        self.assertEqual(names[1], "node")
+        self.assertEqual(len(names[2]), 63)
+        for n in names:
+            self.assertTrue(FL.NODE_NAME.fullmatch(n), n)
+        self.assertNotIn("\n", "".join(e[1] for e in self.events.lines))
+
+    def test_the_unknown_call_count_is_kept_under_the_lock(self):
+        import threading
+        threads = [threading.Thread(target=lambda: [self.me.count_unknown() for _ in range(500)]) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(self.me.unknown_calls, 2000)
 
 
 if __name__ == "__main__":

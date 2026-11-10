@@ -505,6 +505,25 @@ class HttpsBox:
     def root_pem(self):
         return self._read(ROOT)
 
+    def chains_to_root(self, der):
+        """For a certificate that a peer showed (DER): (does it chain to the pinned root, what it says). The check is the one
+        used for this node's own certificate (`openssl verify`, fixed arguments, `-purpose sslserver`, the root's name
+        constraints, dates left out). (False, None) when it is not a certificate; (False, info) when no root is pinned or
+        there is no openssl."""
+        try:
+            info = read_certificate(der)
+        except Exception:
+            return False, None
+        if not self._read(ROOT) or not self.has_openssl():
+            return False, info
+        b64 = base64.b64encode(der).decode("ascii")
+        pem = "-----BEGIN CERTIFICATE-----\n" + "\n".join(b64[i:i + 64] for i in range(0, len(b64), 64)) + "\n-----END CERTIFICATE-----\n"
+        with self.lock:                                     # check.pem is one file
+            try:
+                return self._issued_by_stored_root(pem, info), info
+            except (HttpsError, OSError):
+                return False, info
+
     def cert_pem(self):
         """The text of the certificate file in use (the node's own certificate, then the root), or None. Public."""
         return self._read(CERT)

@@ -249,7 +249,7 @@ def read_cert(exe, path):
 def leaf_config(dns, ips):
     san = ", ".join(["DNS:%s" % d for d in dns] + ["IP:%s" % i for i in ips])
     return "\n".join(["[v3_leaf]", "basicConstraints = CA:FALSE", "keyUsage = critical, digitalSignature",
-                      "extendedKeyUsage = serverAuth", "subjectKeyIdentifier = hash", "authorityKeyIdentifier = keyid",
+                      "extendedKeyUsage = serverAuth, clientAuth", "subjectKeyIdentifier = hash", "authorityKeyIdentifier = keyid",
                       "subjectAltName = " + san]) + "\n"
 
 
@@ -795,6 +795,15 @@ def fleet_push(exe, folder, host, port, ask, token_file=None, out=print, timeout
             data = {}
         return resp.status, data if isinstance(data, dict) else {}
 
+    def log_out(tok):
+        """Take the device this tool paired off the node again; one plain line if that did not work."""
+        try:
+            gone = call("POST", "/api/logout", {}, tok)[0] == 200
+        except Exception:
+            gone = False
+        if not gone:
+            out("Could not log boxcert's device out on %s. Remove \"boxcert push\" under People on that node." % host)
+
     paired = False
     try:
         conn.connect()                      # the node's certificate is checked against your root BEFORE anything is asked or sent
@@ -804,10 +813,7 @@ def fleet_push(exe, folder, host, port, ask, token_file=None, out=print, timeout
             if st != 200 or not res.get("token"):
                 raise BoxcertError("%s did not pair this computer (%s). Nothing was sent." % (host, res.get("error") or "answered %d" % st))
             if (res.get("device") or {}).get("role") != "full":
-                try:
-                    call("POST", "/api/logout", {}, res["token"])
-                except (OSError, http.client.HTTPException):
-                    pass
+                log_out(res["token"])
                 raise BoxcertError("that code pairs a device that is not an Owner, and only an Owner may load a list. Nothing was sent.")
             token, paired = res["token"], True
         st, res = call("POST", "/api/fleet/list", {"list": body.decode("utf-8"), "sig": sig.decode("ascii")}, token)
@@ -823,10 +829,7 @@ def fleet_push(exe, folder, host, port, ask, token_file=None, out=print, timeout
         raise BoxcertError("could not reach %s:%d: %s" % (host, port, e))
     finally:
         if paired:
-            try:
-                call("POST", "/api/logout", {}, token)           # the device this made is removed again
-            except Exception:
-                pass
+            log_out(token)                                       # the device this made is removed again
         conn.close()
 
 

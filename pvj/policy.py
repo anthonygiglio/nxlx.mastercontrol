@@ -56,7 +56,11 @@ OUTSIDE = {
 #   the secure connection only, so the owner's tool can add the node to a fleet list. Nothing secret. It answers 404 while
 #   discovery is switched off (a node that announces nothing gives its id and name to nobody): then add the node with
 #   `boxcert.py fleet add --cert FILE --id ID --name NAME`, or switch discovery on for a minute.
-NO_GATE = frozenset([("GET", "/api/https/probe"), ("GET", "/api/fleet/card")])
+#   the peer call (D132, pvj/peer.py) is another node's hello: its list serial and deny digest. Nothing proves who is
+#   calling, so it has no authority: it gets what an approved node may hold (the list when the caller is behind, the denies
+#   when its digest differs), a caller that is not approved gets a 403 and a count (no log line), and the node asks the
+#   caller back over a connection it checks itself. Over TLS only.
+NO_GATE = frozenset([("GET", "/api/https/probe"), ("GET", "/api/fleet/card"), ("POST", "/api/fleet/peer")])
 
 # Every route a presenter (or less) could use on master before D80, 2026-10-10, as it was worked out from master's route
 # table (every route whose minimum there is none, view or live, and the two paths the server answered itself) at master
