@@ -2440,8 +2440,8 @@
         bodyWhenOff: true,
         body: function () { return [supportCard()]; } },
       { id: 'nodes', group: 'box', name: 'Nodes on this network', role: 'full',
-        blurb: 'Whether this node tells other nodes on the network it is here and looks for them, for the Nodes list in the title bar. Each node keeps its own pairing.',
-        body: function () { return [nodesSetupCard()]; } },
+        blurb: 'Whether this node tells other nodes on the network it is here and looks for them, for the Nodes list in the title bar, and which nodes open each other without a PIN.',
+        body: function () { return [nodesSetupCard(), clusterCard()]; } },
       { id: 'https', group: 'box', name: 'Secure connection', role: 'full', url: '/api/https',
         blurb: 'The panel over https://, with a certificate you sign yourself and a root your own devices install once. Guests stay on http://.',
         body: httpsCards },
@@ -8098,7 +8098,8 @@
   // again: never before, and never on a timer. (The Owner's Setup page of it asks once when it is opened, to say
   // whether looking is on: opening it is the press. The Setup index and Now never ask.) A node opens in a new tab over its own secure connection, with a
   // plain link: nothing of this node (its token, its PIN, the page's address) goes with it, and the other node asks
-  // for its own pairing. What the list says is what other devices on the network say, so names are text only, a
+  // for its own pairing. The exception (D132): a node this node trusts opens signed in, by a one-time ticket in a form
+  // (nodeHandOver), never the token or the PIN. What the list says is what other devices on the network say, so names are text only, a
   // row is keyed by the node's id with its address beside the name, one id or one name at two addresses is a
   // conflict with no Open, and a node without a secure connection has no Open either. This device remembers by id
   // where it opened a node before, and says when that node's address changed. The browser checks the certificate
@@ -8140,6 +8141,60 @@
       localStorage.setItem(NODES_KEY, JSON.stringify(keep));
     } catch (e) { /* private window: nothing kept */ }
   }
+  var NODES_WARN = 'If your device warns about a certificate, stop there: it is not one of your nodes, or it has changed.';
+  var NODES_NOTE = 'A node opens in a new tab over its secure connection. One this node trusts opens signed in, without its PIN; the others ask for their own PIN. ' + NODES_WARN;
+  var NODES_NOT_BUILT = 'this node does not hand devices to other nodes';
+  var IOS_STANDALONE = navigator.standalone === true;
+  // Opening a trusted node signed in (D132, design section 5): a tab named for the node is opened inside the press (no
+  // pop-up blocker objects) with no opener; this node is asked for a one-time ticket, bound to a secret only this page
+  // keeps (the node holds its hash); the ticket and the secret go to the other node in a form posted to that tab, never
+  // in an address. Any refusal sends the tab to the node's own address instead, where it asks for its PIN, and says why
+  // here. A node that appeared after the panel was loaded is not in the page's policy, so the browser stops the form:
+  // the line then says to reload the panel.
+  var handing = null;
+  document.addEventListener('securitypolicyviolation', function (e) {
+    if (!handing || e.effectiveDirective !== 'form-action') return;
+    var x = handing; handing = null;
+    try { x.w.close(); } catch (err) { /* already gone */ }
+    sayAt(x.line, 'This panel was opened before ' + x.name + ' joined. Reload the panel, then press Open again.', true);
+  });
+  function hex(bytes) { return Array.prototype.map.call(bytes, function (b) { return (b < 16 ? '0' : '') + b.toString(16); }).join(''); }
+  function nodeHandOver(n, name, url, fromId, line) {
+    var target = 'nxlx-' + n.id, w = null;
+    try { w = window.open('', target); } catch (e) { w = null; }
+    if (!w) { sayAt(line, 'The browser did not open a new tab. Allow pop-ups for this panel, then press Open again.', true); return; }
+    try { w.opener = null; } catch (e) { /* the browser did it */ }
+    try { w.document.title = name; w.document.body.textContent = 'Signing in to ' + name + '...'; } catch (e) { /* not ours to write */ }
+    sayAt(line, 'Signing in to ' + name + '...');
+    function pin(why) {
+      sayAt(line, 'Not signed in to ' + name + ', so it asks for its PIN: ' + why + '.', true);
+      try { w.location.replace(url); } catch (e) { /* the tab was closed */ }
+    }
+    var secret;
+    try {
+      var b = new Uint8Array(16); crypto.getRandomValues(b); secret = hex(b);
+    } catch (e) { pin('this browser cannot make the one-time secret'); return; }
+    if (!window.crypto || !crypto.subtle || typeof TextEncoder === 'undefined') { pin('this browser cannot make the one-time secret'); return; }
+    crypto.subtle.digest('SHA-256', new TextEncoder().encode(secret)).then(function (d) {
+      return api('POST', '/api/handover/ticket', { to: n.id, proof: hex(new Uint8Array(d)) });
+    }).then(function (r) {
+      if (!r.ok) return pin(String(r.data.error || 'this node could not hand you over'));
+      var a = r.data && r.data.action;
+      if (typeof a !== 'string' || !/^https:\/\/([a-z0-9.-]{1,253}|\[[0-9a-f:.]{2,45}\])(:\d{1,5})?\/handover$/i.test(a)) return pin('this node gave an address the panel does not use');
+      if (!fromId) return pin('this node did not say who it is');
+      nodesRemember(n);
+      var f = h('form', { method: 'POST', action: a, target: target, enctype: 'application/x-www-form-urlencoded', hidden: true },
+        h('input', { type: 'hidden', name: 'ticket', value: String(r.data.ticket || '') }),
+        h('input', { type: 'hidden', name: 'secret', value: secret }),
+        h('input', { type: 'hidden', name: 'from', value: fromId }));
+      handing = { w: w, line: line, name: name };
+      setTimeout(function () { if (handing && handing.w === w) handing = null; }, 3000);
+      document.body.appendChild(f);
+      f.submit();
+      f.parentNode.removeChild(f);
+      sayAt(line, name + ' is opening in its own tab.');
+    }, function () { pin('this browser cannot make the one-time secret'); });
+  }
   function nodeWhere(n) { return String(n.address) + (nodePort(n.port) && n.port !== 443 && n.port !== 80 ? ':' + n.port : ''); }
   var NODE_TIERS = { lean: 'Pi 3 class', standard: 'Pi 4', full: 'Pi 5 or computer' };
   // Looking for nodes, on or off (the Owner's; POST /api/nodes/discovery). Off also stops the announcement, so it is
@@ -8173,6 +8228,106 @@
     }
     function look() { api('GET', '/api/nodes').then(function (r) { if (card.isConnected) draw(r); }); }
     setTimeout(look, 0);       // (asked once the card is on the page)
+    return card;
+  }
+  // Nodes that open each other (D132, design sections 7 and 9): the Owner's, over https (GET /api/fleet). The switch
+  // "Accept devices from other nodes" (off signs out every device that came from another node), the nodes this node
+  // trusts (on the signed fleet list, or accepted by fingerprint), Remove a node from this cluster, the removals with
+  // Allow again (the fingerprint typed back) and, after a node removed others, the banner and Allow again everything it
+  // removed. A node without hand-overs (404) shows no card.
+  // (a list row: what THAT node gives to devices from this one; an acceptance: what THIS node gives to devices from it)
+  var CARRY_THERE = { full: 'It takes Owners from here as Owners.', live: 'It takes devices from here as Operators at most.', none: 'It takes no device from here.' };
+  var CARRY_HERE = { full: 'Its Owners are Owners here.', live: 'Its devices are Operators here at most.', none: 'Its devices are not taken in here.' };
+  function clusterCard() {
+    var body = h('div', { id: 'clusterbody' }, h('div', { class: 'hint', text: 'Looking...' }));
+    var line = h('div', { class: 'msg inmsg', id: 'clustermsg', role: 'status' });
+    var card = h('div', { class: 'card', id: 'clustercard' }, h('h2', { text: 'Nodes that open each other' }), line, body);
+    function look() { api('GET', '/api/fleet').then(function (r) { if (card.isConnected) draw(r); }); }
+    function warn(id, text) { return h('div', { class: 'confirm', id: id, role: 'alert', text: text }); }
+    function draw(r) {
+      body.textContent = '';
+      if (r.status === 404) { card.hidden = true; return; }
+      if (!r.ok) { body.appendChild(h('div', { class: 'hint', id: 'clusternone', text: sentence(r.data.error || 'this node could not say') + '.' })); return; }
+      var d = r.data || {}, me = (d.self && d.self.id) || null;
+      (Array.isArray(d.banner) ? d.banner : []).forEach(function (b, i) {
+        body.appendChild(h('div', { class: 'confirm' + (b.red ? ' bad' : ''), id: 'clusterbanner-' + i, role: 'alert',
+          text: String(b.text || '') + '. If that was not you, remove that node below, then allow again what it removed.' }));      // (it starts with a node's name: no capital added)
+      });
+      if (d.removed_from_cluster) body.appendChild(warn('clusterout', 'Another node removed this node from the cluster. It works on its own, and other nodes ask for its PIN.'));
+      if (d.deny_problem) body.appendChild(warn('clusterdeny', 'The list of removed nodes has a problem: ' + String(d.deny_problem) + '.'));
+      if (d.list_problem) body.appendChild(warn('clusterlist', sentence(String(d.list_problem)) + '.'));
+      var sw = h('div', { class: 'row', id: 'clusteracceptrow' });
+      body.appendChild(h('div', { class: 'hint', id: 'clusteraccepttext', text: d.accept
+        ? 'Accepting devices from other nodes: a device signed in on a node trusted here opens this node without its PIN.'
+        : 'Not accepting devices from other nodes: every device pairs here with this node\'s own PIN.' }));
+      body.appendChild(sw);
+      sw.appendChild(h('button', { class: 'btn grow' + (d.accept ? '' : ' on pri'), id: 'clusteraccept', text: d.accept ? 'Stop accepting devices from other nodes' : 'Accept devices from other nodes',
+        onclick: function (e) {
+          var post = function () { act('POST', '/api/fleet/accept', { on: !d.accept }, function () { sayAt(line, d.accept ? 'This node no longer accepts devices from other nodes.' : 'This node accepts devices from the nodes it trusts.'); look(); }); };
+          if (!d.accept) return post();
+          confirmRow('Stop? Every device that came here from another node is signed out now.', 'Stop accepting', 'Keep', post, e.currentTarget);
+        } }));
+      if (d.self && d.self.fingerprint) body.appendChild(h('p', { class: 'hint', id: 'clusterprint' }, 'This node\'s fingerprint, for another node\'s Owner to check: ',
+        h('span', { class: 'mono', text: String(d.self.fingerprint) })));
+      var trusted = [], seen = Object.create(null);
+      ((d.list && d.list.nodes) || []).forEach(function (n) { if (n.id !== me && !seen[n.id]) { seen[n.id] = 1; trusted.push({ id: n.id, name: n.name, how: 'On the fleet list' + (d.list.name ? ' "' + d.list.name + '"' : '') + '. ' + (CARRY_THERE[n.carry] || '') }); } });
+      (d.accepted || []).forEach(function (n) { if (!seen[n.id]) { seen[n.id] = 1; trusted.push({ id: n.id, name: n.name, how: 'Accepted here by its fingerprint. ' + (CARRY_HERE[n.carry] || '') }); } });
+      body.appendChild(h('h3', { class: 'k', text: 'Trusted nodes' }));
+      var list = h('div', { class: 'list', id: 'clustertrusted' });
+      body.appendChild(list);
+      if (!trusted.length) list.appendChild(h('div', { class: 'state', id: 'clusternotrust', text: 'No node is trusted yet. A node is trusted when it is on a fleet list you signed, or when this node\'s Owner accepted it by its fingerprint.' }));
+      trusted.forEach(function (n) {
+        var name = String(n.name || 'a node');
+        list.appendChild(h('div', { class: 'item nowrow', id: 'clusternode-' + String(n.id).replace(/\W/g, '') },
+          h('div', { class: 'nowwords' }, h('div', { class: 'lname', text: name }), h('span', { class: 'navstate', text: n.how })),
+          h('div', { class: 'row' }, h('button', { class: 'btn small', text: 'Remove from this cluster', 'aria-label': 'Remove ' + name + ' from this cluster', onclick: function (e) {
+            confirmRow(name + ' will be refused by every node in this cluster, and every device it carried will be signed out everywhere.', 'Remove', 'Keep', function () {
+              act('POST', '/api/fleet/remove', { id: n.id }, function (res) {
+                var k = res && typeof res.signed_out === 'number' ? res.signed_out : 0;
+                sayAt(line, name + ' was removed from this cluster. ' + (k === 1 ? '1 device it carried was' : k + ' devices it carried were') + ' signed out here.');
+                look();
+              });
+            }, e.currentTarget);
+          } }))));
+      });
+      var removed = Array.isArray(d.removed) ? d.removed : [];
+      if (!removed.length) return;
+      body.appendChild(h('h3', { class: 'k', text: 'Removed from this cluster' }));
+      var gone = h('div', { class: 'list', id: 'clusterremoved' });
+      body.appendChild(gone);
+      removed.forEach(function (x) {
+        var name = String(x.name || 'a node'), by = String(x.by || 'an Owner');
+        var row = h('div', { class: 'row' });
+        var allow = h('button', { class: 'btn small', text: 'Allow again', 'aria-label': 'Allow ' + name + ' again', onclick: function () {
+          row.textContent = '';
+          var typed = h('input', { type: 'text', class: 'grow mono', id: 'clustertyped-' + x.n, autocomplete: 'off', spellcheck: 'false', 'aria-label': name + '\'s fingerprint, as its own panel shows it', placeholder: 'Its fingerprint, from its own panel' });
+          row.appendChild(typed);
+          row.appendChild(h('button', { class: 'btn small', text: 'Allow', onclick: function () {
+            api('POST', '/api/fleet/allow', { n: x.n, epoch: x.epoch, typed: typed.value }).then(function (res) {
+              if (res.ok) { sayAt(line, name + ' is allowed again here. It opens this node again once it is on the fleet list or accepted again.'); return look(); }
+              if (res.status === 409) { sayAt(line, 'That removal was made again since this page asked. Here is the list as it is now.', true); return look(); }
+              if (res.status === 404) { sayAt(line, 'That removal is gone already.', true); return look(); }
+              sayAt(line, String(res.data.error || 'Something went wrong'), true);
+            });
+          } }));
+          typed.focus();
+        } });
+        row.appendChild(allow);
+        gone.appendChild(h('div', { class: 'item nowrow', id: 'clusterremoved-' + x.n },
+          h('div', { class: 'nowwords' }, h('div', { class: 'lname', text: name }),
+            h('span', { class: 'navstate', text: x.from_peer ? 'Removed by ' + by + ', another node.' : 'Removed here by ' + by + '.' })), row));
+      });
+      var peers = [];
+      removed.forEach(function (x) { if (x.from_peer && x.by && peers.indexOf(x.by) < 0) peers.push(x.by); });
+      peers.forEach(function (by, i) {
+        body.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn small grow', id: 'clusterallowby-' + i, text: 'Allow again everything ' + by + ' removed', onclick: function (e) {
+          confirmRow('Allow again, on this node, every node that ' + by + ' removed?', 'Allow again', 'Keep', function () {
+            act('POST', '/api/fleet/allow/by', { by: by }, function () { sayAt(line, 'Everything ' + by + ' removed is allowed again here.'); look(); });
+          }, e.currentTarget);
+        } })));
+      });
+    }
+    setTimeout(look, 0);
     return card;
   }
   // ---- The node sheet (2026-11-09) -------------------------------------------------------------------------------
@@ -8311,9 +8466,11 @@
     var list = h('div', { class: 'list', id: 'nodeslist' }, h('div', { class: 'hint', text: 'Looking for nodes on this network...' }));
     var self = h('p', { class: 'hint', id: 'nodesself' });
     var disc = h('div', { class: 'row', id: 'nodesdiscrow' });
+    var hoMsg = h('div', { class: 'msg inmsg', id: 'nodesmsg', role: 'status' });
+    var note = h('p', { class: 'hint', id: 'nodesnote', text: NODES_NOTE });
+    var selfId = null;
     var pop = h('section', { class: 'nodespop', id: 'nodespop', 'aria-labelledby': 'nsnodeshead' },
-      self, list,
-      h('p', { class: 'hint', id: 'nodesnote', text: 'A node opens in a new tab over its secure connection and asks for its own pairing. If your device warns about its certificate, stop there: it is not one of your nodes, or it has changed.' }),
+      self, hoMsg, list, note,
       disc,
       h('div', { class: 'row' },
         h('button', { class: 'btn small grow', id: 'nodesagain', text: 'Look again', onclick: look })));
@@ -8327,22 +8484,36 @@
       var url = !state ? 'https://' + host + (n.port !== 443 ? ':' + n.port : '') + '/' : null;
       var chip = h('span', { class: 'chip' }), words = h('span', { class: 'navstate' });
       showState(chip, words, state || { chip: null, text: '' });
+      // D132 slice 5: a node this node trusts opens signed in (a one-time ticket, then a form to that node); a device that
+      // came here from another node opens nothing further (nothing chains); any other node asks for its own PIN, as before
+      var signed = url && ho.may && n.carry === true, open = null;
+      if (url && !ho.carried) open = signed
+        ? h('button', { class: 'btn small', text: 'Open', 'aria-label': 'Open ' + name + ' signed in, in a new tab', onclick: function () { nodeHandOver(n, name, url, selfId, hoMsg); } })
+        : h('a', { class: 'btn small', href: url, target: '_blank', rel: 'noopener noreferrer', referrerpolicy: 'no-referrer', text: 'Open', 'aria-label': 'Open ' + name + ' in a new tab',
+          onclick: function () { if (!conflict) nodesRemember(n); } });
+      var how = !url || ho.carried ? null : signed ? 'Opens signed in, without its PIN' : ho.may ? 'Asks for its own PIN' : null;
       return h('div', { class: 'item nowrow nodesrow', id: 'node-' + String(n.id).replace(/\W/g, '') + '-' + String(n.address).replace(/\W/g, '-') },
         h('div', { class: 'nowwords' },
           h('div', { class: 'lname', text: name }),
           h('span', { class: 'navstate mono nodeswhere', text: where }),
           h('span', { class: 'navstate', text: [NODE_TIERS[n.tier], n.version].filter(Boolean).join(' · ') }),
           state ? words : null,
+          how ? h('span', { class: 'navstate nodeshow', text: how }) : null,
           was ? h('span', { class: 'navstate nodesmoved', text: 'Its address changed: you opened it at ' + nodeWhere(was) + ' before.' }) : null),
-        h('div', { class: 'row' }, state ? chip : null,
-          url ? h('a', { class: 'btn small', href: url, target: '_blank', rel: 'noopener noreferrer', referrerpolicy: 'no-referrer', text: 'Open', 'aria-label': 'Open ' + name + ' in a new tab',
-            onclick: function () { if (!conflict) nodesRemember(n); } }) : null));
+        h('div', { class: 'row' }, state ? chip : null, open));
     }
+    var ho = { may: false, carried: false };
     function draw(r) {
       list.textContent = ''; disc.textContent = '';
       if (!r.ok) { list.appendChild(h('div', { class: 'hint', text: 'The list could not be read from this node. Try again.' })); return; }
       var d = r.data || {}, dv = d.discovery || {}, nodes = d.nodes || [], mem = nodesMemory();
       self.textContent = d.self && d.self.name ? 'This node: ' + d.self.name : '';
+      selfId = d.self && nodeId(d.self.id) ? d.self.id : null;
+      var hv = d.handover && typeof d.handover === 'object' ? d.handover : {};
+      ho = { may: hv.may === true && !!selfId, carried: hv.carried === true };
+      note.textContent = ho.carried ? 'This device came here from another node, so it opens other nodes from there. ' + NODES_WARN
+        : NODES_NOTE + (ho.may && IOS_STANDALONE ? ' In the Home Screen app, a node opens in Safari and signs in there, not in this app.' : '')
+        + (!ho.may && hv.why && hv.why !== NODES_NOT_BUILT ? ' ' + sentence(hv.why) + '.' : '');
       var groupsId = Object.create(null), groupsName = Object.create(null), seen = Object.create(null);
       nodes.forEach(function (n) {
         groupsId[n.id] = (groupsId[n.id] || 0) + 1;

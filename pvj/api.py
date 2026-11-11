@@ -3557,7 +3557,59 @@ class Api:
         announced: nothing from this node's files, settings or devices."""
         if self.fleet is None:
             return {"self": None, "nodes": [], "scanning": False, "error": None, "discovery": {"on": False, "state": "off", "detail": ""}}
-        return self.fleet.view()
+        out = self.fleet.view()
+        out["handover"] = self._handover_view(device)
+        opens = set(out["handover"].pop("opens", ()))
+        out["nodes"] = [dict(r, carry=r.get("id") in opens and bool(r.get("https"))) for r in out.get("nodes", [])]
+        return out
+
+    def _handover_view(self, device):
+        """For the Nodes list (D132, slice 5): whether this device may open another node without its PIN, why not, and the ids of the
+        nodes it would open that way (popped by get_nodes into a `carry` mark on each row). A node opens that way when this node
+        approves it and the held list does not say it takes nobody from here; one accepted by fingerprint decides for itself."""
+        why = None
+        if self.tickets is None or self.handover is None:
+            why = "this node does not hand devices to other nodes"
+        elif not getattr(self.request, "secure", False):
+            why = "this panel is open over plain http: open the node's https address to open other nodes without their PIN"
+        else:
+            why = self.tickets.may_carry(device)
+        carried = bool(self.tickets is not None and self.tickets.carried(device))
+        opens = []
+        if why is None:
+            for node_id, _name, _key in self.handover.approved_nodes():
+                if self.handover.their_carry(node_id) != "none":
+                    opens.append(node_id)
+        return {"may": why is None, "why": why, "carried": carried, "opens": opens}
+
+    def handover_forms(self):
+        """The https origins the panel's page may post a hand-over form to (design 5, step 3): every address and .local name
+        that discovery has already seen for a node this node approves, with its port. Read from what is known, never by
+        asking the network. At most 32, each of the one shape server.CSP_ORIGIN allows. [] when hand-overs are not built."""
+        if self.fleet is None or self.handover is None or self.tickets is None:
+            return []
+        from .fleet import local_enough
+        from .peer import _NAME
+        try:
+            approved = {node_id for node_id, _name, _key in self.handover.approved_nodes() if self.handover.their_carry(node_id) != "none"}
+            rows = self.fleet.known()
+        except Exception as e:                     # the page still loads, with no other node in its policy
+            self.log("pvj-web: the nodes for the page's policy could not be read: %s" % (e,))
+            return []
+        out = []
+        for r in rows:
+            port = r.get("port")
+            if r.get("id") not in approved or not r.get("https") or not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
+                continue
+            tail = "" if port == 443 else ":%d" % port
+            address = r.get("address")
+            if not isinstance(address, str) or not local_enough(address):       # (the peer client never sends a browser there either)
+                continue
+            out.append("https://%s%s" % ("[%s]" % address if ":" in address else address, tail))
+            name = r.get("name")
+            if isinstance(name, str) and _NAME.fullmatch(name):
+                out.append("https://%s.local%s" % (name.lower(), tail))
+        return sorted(set(out))[:32]
 
     def set_nodes_discovery(self, body, device, client):
         """{"on": bool}: the Owner's switch for announcing this node and looking for others (off removes the avahi

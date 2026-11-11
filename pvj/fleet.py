@@ -382,6 +382,12 @@ class Browser:
                 self._running = False
             raise
 
+    def known(self):
+        """The rows seen so far, without asking the network: no scan is started and nothing waits. For the page's own policy,
+        which is made at every load of the panel and must never be a reason to look (D127: only a press looks)."""
+        with self._lock:
+            return [dict(row) for row, _at in sorted(self._seen.values(), key=lambda v: (v[0]["name"].lower(), v[0]["id"]))]
+
     def nodes(self, wait=FIRST_WAIT):
         """{"nodes": [...], "scanning": bool, "error": None | text}. Asking starts a scan when the last one is older than
         CACHE_SECONDS; the caller gets what is known now. Only before the first scan has finished does it wait (at most
@@ -470,6 +476,10 @@ class Fleet:
             self._set_state({"missing": "no-avahi", "stopped": "avahi-stopped"}.get(reply.get("avahi"), "announcing"))
     def status(self):
         return {"on": bool(self._on()), "state": self.state, "detail": STATES.get(self.state, "")}
+
+    def known(self):
+        """The rows already seen while discovery is on, [] while it is off. Never starts a scan (Browser.known)."""
+        return self.browser.known() if self._on() else []
 
     def view(self):
         """The reply of GET /api/nodes."""
