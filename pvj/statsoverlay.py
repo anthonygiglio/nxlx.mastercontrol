@@ -196,6 +196,7 @@ class StatsOverlay:
     def __init__(self, api, clock=time.monotonic, proc="/proc", sysfs="/sys", log=print, threaded=True):
         self.api, self._clock, self.proc, self.sysfs, self.log = api, clock, proc, sysfs, log
         self._threaded = threaded
+        self._link = None               # the connection the overlay is drawn through (see _held)
         self.lock = threading.Lock()
         self._draw = threading.Lock()           # held while a frame is checked and drawn, and while the overlay is taken off
         self._stop = threading.Event()
@@ -265,11 +266,11 @@ class StatsOverlay:
     def turn_off(self, why=None, who=None, quiet=False):
         """Off. `why` (given for an automatic off) goes in the event line with `who` (for a person's off)."""
         with self.lock:
-            was_on = self.on
+            was_on, mode = self.on, self.mode
             self._reset()
             self._stop.set()                    # under the lock: a turn_on that follows always starts a thread of its own
         with self._draw:                        # a frame being drawn finishes first, then the text is taken off
-            self._remove()
+            self._remove(mode, close=True)
         if was_on and not quiet:
             if why:
                 self.api.event("player", "Stats on the output went off by themselves: %s." % why, urgent=False)
@@ -306,18 +307,60 @@ class StatsOverlay:
         raise StatsError(409, "The new renderer on this node is too old to draw the stats overlay (it is version %s; the overlay "
                               "needs 0.12.0). Update the node's pvj-render." % (state.get("version") if isinstance(state, dict) else "unknown"))
 
-    def _remove(self):
-        """Take the text off. Always sent, drawn or not (a frame that failed may still have drawn). `_drawn` stays True when the
-        player did not take it, so the next look tries again. True when it was taken off."""
+    def _held(self):
+        """The connection the overlay is drawn through, kept open. mpv ties an osd-overlay to the client that made it and
+        removes it when that connection closes, and every request of pvj.player.Ipc is a connection of its own: drawn through
+        those, the text vanished at once on classic mpv (found on node-02, 2026-11-11; pvj-render keeps its overlays itself). So
+        the overlay is sent here, and ending the connection ends the overlay on classic mpv too."""
+        if self._link is None:
+            self._link = self._ipc().hold()
+        return self._link
+
+    def _drop_link(self):
+        link, self._link = self._link, None
+        if link is not None:
+            link.close()
+
+    def _command(self, *command):
+        """One command through the held connection. A connection that has gone bad (the player restarted, the socket broke) is
+        ended and replaced once, at once; a fresh one that fails too is the player's answer."""
+        fresh = self._link is None
         try:
-            self._ipc().request(*remove_command())
+            return self._held().request(*command)
         except PlayerError as e:
-            if not str(e).startswith("mpv: "):       # mpv's own refusal means nothing is drawn; anything else may mean it still is
-                return False
+            if str(e).startswith("mpv: "):
+                raise
+            self._drop_link()
+            if fresh:
+                raise
+        try:
+            return self._held().request(*command)
+        except PlayerError as e:
+            if not str(e).startswith("mpv: "):
+                self._drop_link()
+            raise
+
+    def _remove(self, mode=None, close=False):
+        """Take the text off. Sent through the held connection (or, on pvj-render with none, directly: that renderer keeps the
+        text itself until it is told). With `close` the connection is ended as well, which on classic mpv takes the text off
+        by itself. `_drawn` stays True only when pvj-render did not take it, so the next look tries again; a connection that
+        failed is ended, and that takes the text off on classic mpv. True when it is off."""
+        mode = mode or self.mode
+        ok = True
+        try:
+            if self._link is not None:
+                self._command(*remove_command())
+            elif mode == "render":
+                self._ipc().request(*remove_command())
+        except PlayerError as e:
+            if not str(e).startswith("mpv: "):       # mpv's or the renderer's own refusal means nothing is drawn
+                ok = False
         except Exception:
-            return False
-        self._drawn = False
-        return True
+            ok = False
+        if close or not ok:
+            self._drop_link()
+        self._drawn = False if (ok or mode != "render") else True
+        return ok
 
     def reset_player(self, tries=None, delay=1.0, sleep=time.sleep, cap=30.0):
         """At every start of pvj-web: the player outlives this program, so what it was told to draw last is taken off. Tries
@@ -398,7 +441,7 @@ class StatsOverlay:
             sample["left"] = left
             self._last = sample
             try:
-                self._ipc().request(*overlay_command(format_lines(sample), corner))
+                self._command(*overlay_command(format_lines(sample), corner))
             except PlayerError as e:
                 self._fails += 1
                 refused = str(e).startswith("mpv: ")

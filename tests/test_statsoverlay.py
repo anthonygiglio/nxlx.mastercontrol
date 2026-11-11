@@ -30,8 +30,17 @@ class FakeIpc:
                       "frame-drop-count": 0, "decoder-frame-drop-count": 0}
         self.sent, self.batches, self.overlay, self.fail, self.refuse = [], 0, None, None, False
         self.translate = None
+        self.links = []
 
-    def request(self, *cmd, wait=None):
+    def hold(self):
+        link = FakeLink(self)
+        self.links.append(link)
+        return link
+
+    def request(self, *cmd, wait=None, link=None):
+        """Like mpv: an osd-overlay belongs to the connection that sent it. A plain request is a connection of its own that
+        closes at once (pvj.player.Ipc), so on classic mpv (no pvj-render property) its overlay is gone as soon as it is made.
+        pvj-render keeps its overlays itself."""
         self.sent.append(cmd)
         if self.fail:
             raise PlayerError(self.fail)
@@ -45,6 +54,8 @@ class FakeIpc:
             if self.refuse:
                 raise PlayerError("mpv: invalid parameter")
             self.overlay = None if cmd[2] == "none" else cmd
+            if link is None and self.render is None:
+                self.overlay = None                        # classic mpv: the one-request connection closed
             return None
         raise PlayerError("mpv: invalid parameter")
 
@@ -58,6 +69,24 @@ class FakeIpc:
             v = self.pid if name == "pid" else (self.render if name == "pvj-render" else self.props.get(name, ERR))
             out.append((False, "property unavailable") if v is ERR or v is None else (True, v))
         return out
+
+
+class FakeLink:
+    """pvj.player.HeldIpc: one connection kept open. Closing it takes its overlay off on classic mpv."""
+
+    def __init__(self, ipc):
+        self.ipc, self.closed = ipc, False
+
+    def request(self, *cmd):
+        if self.closed:
+            raise PlayerError("ipc error: the connection is closed")
+        return self.ipc.request(*cmd, link=self)
+
+    def close(self):
+        if not self.closed:
+            self.closed = True
+            if self.ipc.render is None:
+                self.ipc.overlay = None
 
 
 class FakeApi:
@@ -364,6 +393,7 @@ class ShowSafetyTest(Base):
         self.assertIsNone(self.ipc.overlay)
 
     def test_a_failed_removal_while_hidden_is_tried_again(self):
+        self.ipc.render = dict(RENDER)                       # pvj-render keeps the text until it is told; classic loses it with the connection
         self.s.turn_on()
         self.api.access = True
         self.ipc.fail = "no reply from mpv"                  # the player does not take the removal
@@ -374,6 +404,47 @@ class ShowSafetyTest(Base):
         self.step()
         self.assertIsNone(self.ipc.overlay)
         self.assertFalse(self.s._drawn)
+
+    def test_on_classic_mpv_the_overlay_is_drawn_through_one_connection_kept_open(self):
+        # mpv removes an osd-overlay when the connection that made it closes; every plain Ipc request is a connection of its own
+        # (node-02, 2026-11-11: the overlay was on according to the panel and never on the screen)
+        self.s.turn_on()
+        self.assertIsNotNone(self.ipc.overlay, "drawn, and still there after the request returned")
+        self.assertEqual(len(self.ipc.links), 1)
+        for _ in range(3):
+            self.step()
+        self.assertEqual(len(self.ipc.links), 1, "the same connection every second")
+        self.assertFalse(self.ipc.links[0].closed)
+        self.s.turn_off()
+        self.assertTrue(self.ipc.links[0].closed, "ending the connection takes the text off on classic mpv")
+        self.assertIsNone(self.ipc.overlay)
+
+    def test_a_connection_that_breaks_is_replaced_and_the_text_comes_back(self):
+        self.s.turn_on()
+        first = self.ipc.links[0]
+        first.close()                                         # mpv went away and came back, or the socket broke
+        self.step()
+        self.assertEqual(len(self.ipc.links), 2)
+        self.assertIsNotNone(self.ipc.overlay)
+        self.assertEqual(self.s._fails, 0)
+
+    def test_hiding_for_a_pin_keeps_the_connection_and_the_text_returns(self):
+        self.s.turn_on()
+        self.api.access = True
+        self.step()
+        self.assertIsNone(self.ipc.overlay)
+        self.api.access = False
+        self.step()
+        self.assertIsNotNone(self.ipc.overlay)
+        self.assertEqual(len(self.ipc.links), 1)
+
+    def test_on_the_new_renderer_off_sends_none_even_with_no_connection_open(self):
+        self.ipc.render = dict(RENDER)
+        self.s.turn_on()
+        self.s._drop_link()
+        self.ipc.overlay = ("osd-overlay", so.OVERLAY_ID, "ass-events", "x", 1280, 720)
+        self.s.turn_off()
+        self.assertIsNone(self.ipc.overlay)
 
     def test_off_then_on_at_once_always_has_a_thread(self):
         api = FakeApi(FakeIpc())
@@ -606,6 +677,63 @@ class RealMpvTest(unittest.TestCase):
         ipc.request(*so.overlay_command(["node-02  192.168.0.174", "{\fs500}evil"], "br"))
         ipc.request(*so.remove_command())
         self.assertEqual(ipc.request("get_property", "pid"), proc.pid, "mpv is still there")
+
+
+class HeldIpcTest(unittest.TestCase):
+    def test_a_connection_that_stays_open_matches_answers_by_id_and_skips_events(self):
+        import socket
+        import threading
+        from pvj.player import Ipc
+        d = tempfile.mkdtemp(prefix="pvj-held-")
+        self.addCleanup(shutil.rmtree, d, True)
+        path = os.path.join(d, "s")
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        srv.bind(path)
+        srv.listen(5)
+        self.addCleanup(srv.close)
+        seen = []
+
+        def serve():
+            c, _ = srv.accept()
+            buf = b""
+            while True:
+                chunk = c.recv(4096)
+                if not chunk:
+                    seen.append("closed")
+                    c.close()
+                    return
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    r = json.loads(line)
+                    seen.append(r["command"][0])
+                    c.sendall(b'{"event":"idle"}\n')
+                    err = "success" if r["command"][0] != "bad" else "invalid parameter"
+                    c.sendall(json.dumps({"request_id": r["request_id"], "error": err, "data": r["command"][0].upper()}).encode() + b"\n")
+        threading.Thread(target=serve, daemon=True).start()
+        held = Ipc(path, timeout=3).hold()
+        self.assertEqual(held.request("one"), "ONE")
+        self.assertEqual(held.request("two"), "TWO")
+        with self.assertRaises(PlayerError) as e:
+            held.request("bad")
+        self.assertEqual(str(e.exception), "mpv: invalid parameter")
+        self.assertEqual(held.request("three"), "THREE")           # a refusal does not end the connection
+        held.close()
+        for _ in range(50):
+            if seen[-1] == "closed":
+                break
+            __import__("time").sleep(0.05)
+        self.assertEqual(seen, ["one", "two", "bad", "three", "closed"], "one connection for all of them, closed by close()")
+        with self.assertRaises(PlayerError):
+            held.request("four")
+
+    def test_no_player_is_the_usual_error(self):
+        from pvj.player import Ipc
+        d = tempfile.mkdtemp(prefix="pvj-held-")
+        self.addCleanup(shutil.rmtree, d, True)
+        with self.assertRaises(PlayerError) as e:
+            Ipc(os.path.join(d, "none")).hold()
+        self.assertEqual(str(e.exception), "player is not running")
 
 
 class RouteTest(CareBase):
