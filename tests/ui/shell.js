@@ -895,10 +895,10 @@ const ONE_FADE = 'D75: Fade in and Fade out are one button, #fade on the strip, 
 const LAYOUT = (now) => 'D75: the standard layouts were drawn afresh; on the same card it is now ' + now;
 const LAYOUTS = {
   'button: E: Vibes: Ambient': LAYOUT('"E: Fade out / in" (the Launchpad\'s round buttons E to H are the screen\'s four; Vibes: Ambient is on Top 1)'),
-  'button: F: Vibes: Show': LAYOUT('"F: Freeze / resume" (Vibes: Show is on Top 2)'),
+  'button: F: Vibes: Show': LAYOUT('"F: Play / pause" (Vibes: Show is on Top 2)'),
   'button: Pad #.#: Effect control #': LAYOUT('nothing: the effect\'s controls as presses are gone from the Launchpad (D75, "Cost")'),
   'button: Pad #.#: Presenter code (hold)': LAYOUT('"Top #: Guest code (hold)" (Top 3; D80: a controller\'s join code pairs a Guest)'),
-  'button: Play: Pause / resume': LAYOUT('"Play: Freeze / resume" (the panel\'s word for it)'),
+  'button: Play: Pause / resume': LAYOUT('"Play: Play / pause" (the panel\'s word for it)'),
   'button: R #: Fade in': LAYOUT('"R #: Fade out / in" (one fade button, on R 7 of the nanoKONTROL2)'),
   'button: R #: Fade out': LAYOUT('"R #: Fade out / in"'),
   'button: Top #: Fade in': LAYOUT('"E: Fade out / in" (one fade button, on the Launchpad\'s round button E)'),
@@ -907,11 +907,11 @@ const LAYOUTS = {
   'button: Top #: Previous clip': LAYOUT('"Pad #.#: Previous clip"'),
   'button: Top #: Next shader': LAYOUT('"Pad #.#: Next shader" (the shaders are on the Launchpad\'s row 7)'),
   'button: Top #: Previous shader': LAYOUT('"Pad #.#: Previous shader"'),
-  'button: Top #: Pause / resume': LAYOUT('"F: Freeze / resume"'),
+  'button: Top #: Pause / resume': LAYOUT('"F: Play / pause"'),
   'button: Top #: Vibes on / off': LAYOUT('"Pad #.#: Vibes on / off" (row 7)'),
 };
 // what stands for them, by the card they are on
-const LAYOUT_NOW = ['button: E: Fade out / in', 'button: F: Freeze / resume', 'button: Top #: Guest code (hold)', 'button: Play: Freeze / resume', 'button: R #: Fade out / in',
+const LAYOUT_NOW = ['button: E: Fade out / in', 'button: F: Play / pause', 'button: Top #: Guest code (hold)', 'button: Play: Play / pause', 'button: R #: Fade out / in',
   'button: Pad #.#: Next clip', 'button: Pad #.#: Previous clip', 'button: Pad #.#: Next shader', 'button: Pad #.#: Previous shader', 'button: Pad #.#: Vibes on / off'];
 // D80 renamed a control that was in the list (a Presenter is an Operator): it is held below by what stands for it.
 const OPERATOR = 'D80: the role is named Operator, so the button that ends its code reads "End the Operator (runs the room) code"';

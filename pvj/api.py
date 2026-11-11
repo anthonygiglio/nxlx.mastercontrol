@@ -273,6 +273,7 @@ class Api:
         self.tickets = None       # ticket.Tickets or None (pvj/ticket.py, D132): one-time tickets for opening another node signed in
         self.leases = None        # lease.Leases or None (pvj/lease.py, D132 slice 4b): the lease on carried devices, pokes, the 24 hour lapse
         self.request = threading.local()    # what the server knows about the request being handled on this thread: .secure
+        self._last_play = None    # the body of the last play of Source 1 (a clip, a pad, a list...), in memory only, never saved: Play after Stop
         self.capture = None       # Capture or None (live input from a USB capture device)
         self.ndi = None           # ndi.Input or None (the NDI helper's client; D62)
         self.ndisc = None         # ndiscovery.Manager or None (the NDI discovery server's supervisor; D85)
@@ -805,6 +806,10 @@ class Api:
         """Player status with stream passwords hidden and the saved stream's name added."""
         status = dict(self.player.status())
         path = status.get("path")
+        # Set before any of the cases below hide the path (a shader, Vibes, a capture, NDI, the test pattern, a tone): the
+        # panel's Play and Pause button reads these and never the path (review of PR 280)
+        status["loaded"] = bool(status.get("running")) and isinstance(path, str) and bool(path)
+        status["replay"] = self._last_play is not None
         # A live source that ended by itself (a stream that ran out, a sender that went, a player that was started
         # again) leaves no live source playing: the hold on the speed ends here, and the Mix speed is applied.
         if (self._speed_held and status.get("running") and not self._live_path(path)
@@ -1700,6 +1705,22 @@ class Api:
         return self.get_sources({}, device, client)
 
     def play(self, body, device, client):
+        """A play (see _play_one). A play of Source 1 that was taken is remembered, in memory only and never saved, so that Play
+        after a Stop can start it again (the owner, 2026-11-11: Play restarts the last clip). One reference is replaced at a
+        time, which needs no lock."""
+        out = self._play_one(body, device, client)
+        if isinstance(body, dict) and ("source" not in body or self._source_target(body) == 1):
+            self._last_play = copy.deepcopy(body)
+        return out
+
+    def replay(self, device, client):
+        """Play again what was last played on Source 1, from its start (a clip, a pad's clip, or a list from its first clip)."""
+        body = self._last_play
+        if body is None:
+            raise ApiError(409, "nothing to play again: start a pad or a clip first")
+        return self.play(copy.deepcopy(body), device, client)
+
+    def _play_one(self, body, device, client):
         if "source" in body:
             k = self._source_target(body)
             if k != 1:
@@ -1959,10 +1980,19 @@ class Api:
     def control(self, body, device, client):
         action = body.get("action")
         p = self.player
+        if action == "replay":
+            if set(body) != {"action"}:
+                raise bad('send {"action": "replay"}')
+            return self.replay(device, client)
         if action == "pause":
             value = body.get("value")
             if value is not None and not isinstance(value, bool):
                 raise bad("value must be true, false or null")
+            # Play and pause are one button (the owner, 2026-11-11): the toggle, with nothing loaded after a Stop, plays the
+            # last clip again. A pause or a play asked for by value never starts anything.
+            if value is None and not (self._player_call(p.status) or {}).get("path"):
+                self.replay(device, client)               # (a 409 "nothing to play again" when nothing is remembered)
+                return {"paused": False, "replayed": True}
             return {"paused": self._player_call(p.pause, value)}
         if action == "seek":
             self._player_call(p.seek, number(body, "value", -3600, 3600))

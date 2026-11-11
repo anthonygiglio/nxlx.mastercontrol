@@ -16,7 +16,7 @@ def snapshot(api, now, fresh=False, holder=None, every=PLAYER_EVERY):
     what the player said last between calls (`_player_seen`, and `_player_raw`: the player's own answer). A part that
     cannot be read keeps its quiet default."""
     snap = {"pads": [], "pad_shaders": [], "pad_presets": [], "pad_ndi": [], "ndi": None, "shader_on": False, "playing": None, "running": False, "paused": False, "playlist": False, "blackout": False, "fade": None,
-            "vibes": False, "vibes_ready": False, "sets": {}, "set": None, "shader": None, "presets": [], "preset": None,
+            "vibes": False, "vibes_ready": False, "sets": {}, "set": None, "shader": None, "presets": [], "preset": None, "replay": False,
             "scenes": [], "applying": None, "effect": None, "effect_ready": False}
     try:
         snap["pads"] = [[str(p.get("file") or "") for p in b["pads"]] for b in api.settings.data["pads"]["banks"]]
@@ -41,6 +41,7 @@ def snapshot(api, now, fresh=False, holder=None, every=PLAYER_EVERY):
         holder._player_seen = (now, seen)
         holder._player_raw = raw
     snap.update(holder._player_seen[1])
+    snap["replay"] = getattr(api, "_last_play", None) is not None      # (from memory: Play and pause would play it again)
     try:
         # The NDI source on the screen, by its id, for the pad that holds it (D62): from what the player said last
         # and what the panel noted when it loaded the pipe; nobody is asked.

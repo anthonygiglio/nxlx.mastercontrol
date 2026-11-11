@@ -93,7 +93,7 @@ With Geometry on (M 6 flashing), only the knobs change:
 | Marker Set | CC 60 | Vibes: start the set Ambient. In mapping mode: undo the last nudge | |
 | Marker <, Marker > | CC 61, 62 | Controllers' bank: the one before, the next. In mapping mode: the corner before, the next corner | |
 | Rewind, Forward | CC 43, 44 | Previous clip, next clip (of a playlist) | as printed |
-| Stop, Play | CC 42, 41 | Stop, Freeze / resume | as printed |
+| Stop, Play | CC 42, 41 | Stop, Play / pause | as printed |
 | Rec | CC 45 | Vibes: start the set Show | |
 
 Vibes time and shader presets 6 to 8 are not on this layout any more.
@@ -109,7 +109,7 @@ knob A   Sh c1    Sh c2    Sh c3    Sh c4    Sh c5    Sh c6    Sh c7    Sh c8
 knob B   Zoom     Pos X    Pos Y    Vibes t. (spare)  (spare)  (spare)  (spare)
 knob C   Fx c1    Fx c2    Fx c3    Fx c4    Fx c5    Fx c6    Fx c7    Fx c8
 Mute     pad 1    pad 2    pad 3    pad 4    pad 5    pad 6    pad 7    pad 8      Bank <
-Solo+M   Vibes    Shader < Shader > Effect   FADE     Freeze   Stop     BLACKOUT   Bank >
+Solo+M   Vibes    Shader < Shader > Effect   FADE     Pause    Stop     BLACKOUT   Bank >
 Rec Arm  preset 1 preset 2 preset 3 preset 4 preset 5 preset 6 preset 7 Rotate     Solo (shift)
 fader    Opacity  Volume   Clip spd Sh speed Sh hue   Sh brt   Fx amt   (spare)    Master (spare)
 ```
@@ -128,7 +128,7 @@ fader    Opacity  Volume   Clip spd Sh speed Sh hue   Sh brt   Fx amt   (spare) 
 | Rec Arm 1 to 7 | Note 3, 6, 9, 12, 15, 18, 21 | Shader preset 1 to 7 |
 | Rec Arm 8 | Note 24 | Rotate a quarter turn (not on the Solo row, between two switches, where the first layout of D75 had it) |
 | Solo+Mute 1 to 4 | Note 2, 5, 8, 11 | Vibes on / off, previous shader, next shader, effect on / off |
-| Solo+Mute 5 to 8 | Note 14, 17, 20, 23 | **Fade out, then in** (one button), Freeze / resume, Stop, Blackout (press twice): the panel's own order |
+| Solo+Mute 5 to 8 | Note 14, 17, 20, 23 | **Fade out, then in** (one button), Play / pause, Stop, Blackout (press twice): the panel's own order |
 | Bank Left, Bank Right | Note 25, 26 | Controllers' bank: the one before, the next |
 | Solo | Note 27 | Spare (it is the shift for the row above) |
 
@@ -143,7 +143,7 @@ The **original** Launchpad Mini, not the MK3 (which sends other numbers and has 
 1. **The grid is read in rows, and the banks follow one another from the top.** Each bank is a pair of rows, six pads and six, pad 1 at the left of the first: **bank A on rows 1 and 2, bank B on rows 3 and 4, bank C on rows 5 and 6**. Six and six, not eight and four: every bank has the same shape, pad 7 sits under pad 1, and the two columns left over run straight down beside all three banks as one strip.
 2. **A lit pad means there is something on it; the one that plays is bright green; an empty pad is dark.** Bank A is amber, bank B yellow-green, bank C orange.
 3. **One zone per thing, each a row or a strip, never scattered.** The strip beside the banks, two pads wide, is the presets of the shader on screen, 1 to 8 from the top. The fourth pair of rows is for what is not a pad: row 7 has shaders and Vibes on its left half and the effect on its right; row 8 has the clip in the panel's order (Prev, back 10 s, forward 10 s, Next) on its left and the shader's first four controls, as presses, on its right.
-4. **The round buttons are the ones to be careful with**, and you can feel that they are round. On the right, top half: the four **Room scenes** (press twice). Bottom half: **the screen**, in the panel's order from the top: **Fade, Freeze, Stop, Blackout**, Blackout in the corner. Fade and Blackout flash red for as long as they are on.
+4. **The round buttons are the ones to be careful with**, and you can feel that they are round. On the right, top half: the four **Room scenes** (press twice). Bottom half: **the screen**, in the panel's order from the top: **Fade, Pause (Play while paused), Stop, Blackout**, Blackout in the corner. Fade and Blackout flash red for as long as they are on.
 5. **The top row holds what is used least**: which set Vibes plays, the join code, which pairs a Guest (D80; a hold of three seconds, on the third button: away from every pad of a bank), the quarter turn (far from the right-hand column), the overlay, sound off, and mapping mode on the last (press twice).
 
 ```
@@ -153,7 +153,7 @@ row 2         A7   A8   A9   A10  A11  A12  |  preset 3  preset 4     (B) Room s
 row 3         B1   B2   B3   B4   B5   B6   |  preset 5  preset 6     (C) Room scene 3   2x
 row 4         B7   B8   B9   B10  B11  B12  |  preset 7  preset 8     (D) Room scene 4   2x
 row 5         C1   C2   C3   C4   C5   C6   |  .         .            (E) FADE out / in
-row 6         C7   C8   C9   C10  C11  C12  |  .         .            (F) Freeze
+row 6         C7   C8   C9   C10  C11  C12  |  .         .            (F) Pause
 row 7         Vibes Shader< Shader> .  |  Effect  Effect<  Effect>  .  (G) Stop
 row 8         Prev  -10 s   +10 s  Next |  control 1  2  3  4          (H) BLACKOUT      2x
 ```
@@ -170,7 +170,7 @@ row 8         Prev  -10 s   +10 s  Next |  control 1  2  3  4          (H) BLACK
 | Grid row 8, columns 1 to 4 | Notes 112 to 115 | Previous clip, back 10 seconds, forward 10 seconds, next clip |
 | Grid row 8, columns 5 to 8 | Notes 116 to 119 | Shader control 1 to 4, as a press (a switch toggles, a choice steps, an event fires, a number goes back to its own value) |
 | A to D (right) | Notes 8, 24, 40, 56 | Room scene 1 to 4 (press twice) |
-| E, F, G, H (right) | Notes 72, 88, 104, 120 | **Fade out, then in**; Freeze / resume; Stop; Blackout on / off (press twice) |
+| E, F, G, H (right) | Notes 72, 88, 104, 120 | **Fade out, then in**; Play / pause; Stop; Blackout on / off (press twice) |
 | Top 1, 2 | CC 104, 105 | Vibes: start the set Ambient, start the set Show |
 | Top 5, 6, 7 | CC 108, 109, 110 | Rotate a quarter turn, overlay picture on / off, sound off / on |
 | Top 3 | CC 106 | Show a one-time guest code (hold 3 seconds and let go; does nothing until switched on, see "A pairing code on the display"). It was on the pad of row 6, column 8, right beside bank C's pad 12, with a spare pad on its other side: a hold meant for a clip could land on it. Up here nothing next to it is a pad |
@@ -430,7 +430,7 @@ A mapping belongs to one controller (by its ALSA card id, such as `nanoKONTROL2`
 | Action | Kind | Does |
 | --- | --- | --- |
 | Play a pad | trigger | Plays that pad (bank A to C, pads 1 to 12) |
-| Stop, Pause / resume (the panel's Freeze), Blackout on / off, Fade out, Reset mix | trigger | As in the panel |
+| Stop, Pause / resume (the panel's Pause and Play; after a Stop it plays the last clip again), Blackout on / off, Fade out, Reset mix | trigger | As in the panel |
 | **Fade out, then in** (`fade`) | trigger | The one fade button: fades out in 2 seconds, and at the next press in. The box decides which from what the screen is doing (`POST /api/fade`): the picture is down when a Fade out is running or has left it black, or when Blackout is on, and then the press fades in (which also ends the Blackout). It is not a count of presses, so it stays right when a fade was started elsewhere, when Blackout was used and when a play brought the picture back. A press in the middle of a fade turns it round from where the picture is, and two presses that meet are taken one after the other |
 | Opacity, Zoom (`size`), Position X (`position`), Position Y (`position_y`), Speed, Volume | level | Follows the control: see "How a level follows a knob" |
 | Rotate a quarter turn (`rotate`) | trigger | 0, 90, 180, 270 degrees and round |
