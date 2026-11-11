@@ -1205,7 +1205,122 @@
   // place. Speed and Loop are on the transport strip (transport()), the Transition on Play > Pads
   // (transitionCard()), and Test pattern on Shape > Mapping (testPattern()).
   function effectPart() {
-    return h('div', { class: 'screen', id: 'effectscreen' }, window.pvjEffects ? window.pvjEffects.mixCard(shaderCtx()) : null);
+    return h('div', { class: 'screen', id: 'effectscreen' }, strobeShown() ? strobeCard() : null,
+      window.pvjEffects ? window.pvjEffects.mixCard(shaderCtx()) : null);
+  }
+  // ---- the Strobe (D134): a button that flashes for as long as it is held, and its settings ------------------------
+  // The owner, 2026-11-11: "a hold-to-strobe button for the panel... that stops the moment you let go", with rate and
+  // colour. A hold is a lease on the node (POST /api/strobe/hold, renewed every 0.2 s, ended at once by a release and
+  // within about half a second by silence), under a holder made for this tab alone. It starts on the press and ends on
+  // anything that could mean the finger is gone: lifting it, sliding off, the browser taking the touch, the window losing
+  // focus, the page being hidden or left. A renewal that is refused ends it too: the person lets go and presses again.
+  // On Shape > Effect, at the top: where the effects are, and a place one goes to on purpose (the strip is pressed in
+  // passing). Operators and Owners, not over remote support (the node lets a helper release only).
+  var STROBE_HOLDER = (function () {
+    var b = new Uint8Array(12);
+    try { crypto.getRandomValues(b); } catch (e) { for (var i = 0; i < b.length; i++) b[i] = Math.floor(Math.random() * 256); }
+    return 'panel-' + Array.prototype.map.call(b, function (x) { return (x < 16 ? '0' : '') + x.toString(16); }).join('');
+  })();
+  var strobeHeld = null;           // {timer, button, say} while this tab holds the strobe
+  function strobeShown() { return canOp() && !(S.device && S.device.remote) && moduleOn('shaders'); }
+  function strobeLetGo(why) {
+    var x = strobeHeld;
+    if (!x) return;
+    strobeHeld = null;
+    clearInterval(x.timer);
+    x.button.classList.remove('on', 'flash');
+    x.button.setAttribute('aria-pressed', 'false');
+    api('POST', '/api/strobe/release', { holder: STROBE_HOLDER });
+    x.say(why || 'Ready. Hold the button to flash.');
+  }
+  ['blur', 'pagehide'].forEach(function (ev) { window.addEventListener(ev, function () { strobeLetGo(); }); });
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') strobeLetGo(); });
+  function strobeLine(t) { t = sentence(t); return /[.!?]$/.test(t) ? t : t + '.'; }      // (the node's words may end with a full stop already)
+  var STROBE_WAYS = [['colour', 'To the colour'], ['black', 'To black'], ['add', 'Colour added']];
+  function strobeCard() {
+    var state = h('div', { class: 'hint', id: 'strobestate', role: 'status', text: 'Getting ready...' });
+    var say = function (t) { state.textContent = t; };
+    var hold = h('button', { class: 'btn strobehold', id: 'strobehold', type: 'button', 'aria-pressed': 'false', disabled: true, text: 'Hold to strobe' });
+    var sets = h('div', { class: 'list sp', id: 'strobesets' });
+    var card = h('div', { class: 'card', id: 'strobecard' }, h('div', { class: 'k sent', id: 'strobehead', text: 'Strobe: flashes for as long as you hold it' }), hold, state, sets);
+    var renewEvery = 200;
+    function show(r) {          // what a hold or a renewal said
+      if (!strobeHeld) return;
+      var d = r.data || {};
+      strobeHeld.button.classList.toggle('flash', d.on === true);
+      say(d.waiting ? 'Waiting a moment: flashes are kept a third of a second apart.' : d.on ? 'Flashing. Let go to stop.' : 'Held.');
+    }
+    function press() {
+      if (strobeHeld || hold.disabled) return;
+      strobeHeld = { timer: null, button: hold, say: say };
+      hold.classList.add('on');
+      hold.setAttribute('aria-pressed', 'true');
+      say('Starting...');
+      api('POST', '/api/strobe/hold', { holder: STROBE_HOLDER }).then(function (r) {
+        if (!strobeHeld || strobeHeld.button !== hold) return;          // let go before the answer: the release has gone already
+        if (!r.ok) { strobeLetGo(strobeLine(r.data.error || 'the strobe did not start')); return; }
+        show(r);
+        strobeHeld.timer = setInterval(function () {
+          if (!hold.isConnected) { strobeLetGo(); return; }
+          api('POST', '/api/strobe/renew', { holder: STROBE_HOLDER }).then(function (n) {
+            if (!strobeHeld || strobeHeld.button !== hold) return;
+            if (!n.ok) { strobeLetGo('It stopped (' + (n.data.error || 'the node did not renew it') + '). Let go and press again.'); return; }
+            show(n);
+          });
+        }, renewEvery);
+      });
+    }
+    hold.addEventListener('pointerdown', function (e) { if (e.button !== undefined && e.button > 0) return; e.preventDefault(); press(); });
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (ev) { hold.addEventListener(ev, function () { strobeLetGo(); }); });
+    hold.addEventListener('keydown', function (e) { if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) { e.preventDefault(); press(); } });
+    hold.addEventListener('keyup', function (e) { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); strobeLetGo(); } });
+    hold.addEventListener('blur', function () { strobeLetGo(); });
+    hold.addEventListener('contextmenu', function (e) { e.preventDefault(); });      // (a long press on a phone is a hold here, not a menu)
+    function put(body, after) {
+      api('POST', '/api/strobe', body).then(function (r) {
+        if (!r.ok) { say(strobeLine(r.data.error || 'that was not taken')); return; }
+        if (after) after(r.data);
+      });
+    }
+    function draw(d) {
+      sets.textContent = '';
+      var st = d.settings || {}, lim = d.limits || {}, rl = lim.rate || {}, fl = lim.flash || {};
+      var top = Math.min(typeof rl.max === 'number' ? rl.max : 3, typeof rl.cap === 'number' && !lim.faster ? rl.cap : 99);
+      var rate = h('input', { type: 'range', id: 'stroberate', min: rl.min || 0.5, max: top, step: rl.step || 0.05, value: st.rate });
+      var rateOut = h('span', { class: 'k', id: 'stroberateval', text: String(+(+st.rate).toFixed(2)) + ' a second' });
+      rate.addEventListener('input', function () { rateOut.textContent = String(+(+rate.value).toFixed(2)) + ' a second'; });
+      rate.addEventListener('change', function () { put({ rate: +rate.value }); });      // (on letting go of the slider: a rate change while flashing waits 0.35 s)
+      var flash = h('input', { type: 'range', id: 'strobeflash', min: fl.min || 10, max: fl.max || 250, step: 5, value: st.flash });
+      var flashOut = h('span', { class: 'k', id: 'strobeflashval', text: st.flash + ' ms' });
+      flash.addEventListener('input', function () { flashOut.textContent = flash.value + ' ms'; });
+      flash.addEventListener('change', function () { put({ flash: +flash.value }); });
+      var colour = h('input', { type: 'color', class: 'swatchpick', id: 'strobecolour', value: /^#[0-9a-f]{6}$/i.test(st.colour || '') ? st.colour : '#ffffff', 'aria-label': 'Colour of the flash' });
+      colour.addEventListener('change', function () { put({ colour: colour.value }); });
+      var ways = h('div', { class: 'seg', role: 'group', id: 'strobeway', 'aria-label': 'Flash to' }, STROBE_WAYS.filter(function (w) {
+        return !Array.isArray(lim.ways) || lim.ways.indexOf(w[0]) >= 0;
+      }).map(function (w) {
+        return h('button', { class: 'btn segbtn' + (st.way === w[0] ? ' on' : ''), id: 'strobeway-' + w[0], 'aria-pressed': st.way === w[0] ? 'true' : 'false', text: w[1], onclick: function () {
+          put({ way: w[0] }, function (n) { draw(n); });
+        } });
+      }));
+      sets.appendChild(h('div', { class: 'ctl' }, h('div', { class: 'ctlhead' }, h('label', { for: 'stroberate', text: 'Flashes a second' }), rateOut), rate,
+        h('div', { class: 'hint', text: lim.faster ? 'Up to ' + top + ' a second: faster than the flash limit is allowed on this node.' : 'Up to ' + top + ' a second, the limit for people sensitive to flashing light.' })));
+      sets.appendChild(h('div', { class: 'ctl' }, h('div', { class: 'ctlhead' }, h('label', { for: 'strobecolour', text: 'Colour' })), colour));
+      sets.appendChild(h('div', { class: 'ctl' }, h('div', { class: 'ctlhead' }, h('label', { for: 'strobeflash', text: 'How long each flash lasts' }), flashOut), flash));
+      sets.appendChild(h('div', { class: 'ctl' }, h('div', { class: 'k', text: 'Flash to' }), ways));
+    }
+    api('GET', '/api/strobe').then(function (r) {
+      if (!card.isConnected && !document.getElementById('strobecard')) return;
+      if (!r.ok) { say(strobeLine(r.data.error || 'the strobe could not be read')); return; }
+      var d = r.data || {};
+      if (d.hold && typeof d.hold.renew_every === 'number' && d.hold.renew_every > 0) renewEvery = Math.max(100, Math.min(250, d.hold.renew_every * 1000));
+      draw(d);
+      if (!d.available) { say(strobeLine(d.why || 'the strobe is not available')); return; }
+      hold.disabled = false;
+      say(d.path === 'effect' ? 'Ready. Hold the button to flash. (This node puts it on as the effect: the first flash takes a moment.)' : 'Ready. Hold the button to flash.');
+      api('POST', '/api/strobe', { arm: true });          // so the first hold is quick (D134: the loaded copy)
+    });
+    return card;
   }
   function picturePart() {
     var m = (S.status && S.status.mix) || {};

@@ -247,6 +247,17 @@ size, D58), its controls (Amount and its own inputs), its presets, the list with
 `/effects/config`, `/effects/library`. States: off, on, heavy (a warning), refused. A Guest with open controls may switch
 an effect, step and apply a preset; Operators everything else; MIDI teach is the Owner's.
 
+**Strobe** (`#strobecard`, at the top of Shape > Effect, D134; Operators and Owners, not over remote support, with the
+Shaders module on). "Hold to strobe" (`#strobehold`) flashes for as long as it is held: the press asks
+`POST /api/strobe/hold` under a holder made for this tab (`panel-` and 24 hex digits, never stored), renews every 0.2 s
+(`/renew`), and lets go (`/release`) on lifting the finger, sliding off the button, the browser taking the touch, the
+button or the window losing focus, the page being hidden or left; Space and Enter hold and let go too. A refused
+renewal ends the hold: "It stopped (...). Let go and press again." The line under it says Ready, Starting, Flashing,
+Waiting a moment (the node's 0.35 s gap) or why it cannot. Its settings: Flashes a second (up to the cap the node
+gives, 3, or more only with "Allow faster than the flash limit"; sent on letting go of the slider, since a change while
+flashing waits 0.35 s), Colour, How long each flash lasts (10 to 250 ms) and Flash to (To the colour, To black, Colour
+added). Showing the card sends `{"arm": true}`, so the first hold is quick.
+
 ### Picture (`#picturescreen`)
 
 | Part | What it does | Server | Roles |
