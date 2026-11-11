@@ -3623,7 +3623,13 @@ class Api:
         except Exception as e:                     # the page still loads, with no other node in its policy
             self.log("pvj-web: the nodes for the page's policy could not be read: %s" % (e,))
             return []
-        out = []
+        # The address this node last checked by certificate for each trusted node comes first, then at most 4 others per node,
+        # a node at a time, so whoever announces a trusted node's id at many addresses cannot push the real one past the 32
+        # (review of PR 276). The rest is what discovery says, which anybody on the network can say.
+        peers = getattr(self, "peers", None)
+        checked = dict(getattr(peers, "verified", {}) or {}) if peers is not None else {}
+        first = [checked[i] for i in sorted(approved) if isinstance(checked.get(i), str)]
+        per = {}
         for r in rows:
             port = r.get("port")
             if r.get("id") not in approved or not r.get("https") or not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
@@ -3632,11 +3638,23 @@ class Api:
             address = r.get("address")
             if not isinstance(address, str) or not local_enough(address):       # (the peer client never sends a browser there either)
                 continue
-            out.append("https://%s%s" % ("[%s]" % address if ":" in address else address, tail))
+            mine = per.setdefault(r["id"], [])
+            mine.append("https://%s%s" % ("[%s]" % address if ":" in address else address, tail))
             name = r.get("name")
             if isinstance(name, str) and _NAME.fullmatch(name):
-                out.append("https://%s.local%s" % (name.lower(), tail))
-        return sorted(set(out))[:32]
+                mine.append("https://%s.local%s" % (name.lower(), tail))
+        out, seen = [], set()
+        for o in first:
+            if o not in seen:
+                seen.add(o)
+                out.append(o)
+        lists = [[o for o in dict.fromkeys(per[i]) if o not in seen][:4] for i in sorted(per)]
+        for k in range(4):
+            for lst in lists:
+                if k < len(lst) and lst[k] not in seen:
+                    seen.add(lst[k])
+                    out.append(lst[k])
+        return out[:32]
 
     def set_nodes_discovery(self, body, device, client):
         """{"on": bool}: the Owner's switch for announcing this node and looking for others (off removes the avahi

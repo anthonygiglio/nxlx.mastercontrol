@@ -155,6 +155,7 @@ class Peers:
         self._push_dirty = False
         self._push_force = False
         self._owed = {}                                                    # node id -> monotonic time it may be tried again
+        self.verified = {}                                                 # node id -> the https origin panel_address last checked (the page's policy puts it first)
         self._peer_digest = {}                                             # node id -> the deny digest it last reported
         self._pulling = set()
         self._last_pull = {}
@@ -509,7 +510,13 @@ class Peers:
             else:
                 last = PeerError("the certificate at %s does not cover an address a browser could use" % address)
                 continue
-            return ("[%s]" % host if ":" in host else host), port, key
+            shown = "[%s]" % host if ":" in host else host
+            with self.lock:
+                self.verified.pop(node_id, None)
+                self.verified[node_id] = "https://%s%s" % (shown, "" if port == 443 else ":%d" % port)
+                while len(self.verified) > 64:
+                    self.verified.pop(next(iter(self.verified)))
+            return shown, port, key
         raise last
 
     # -- the other end of a call: what a node answers (POST /api/fleet/peer) --

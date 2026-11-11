@@ -908,6 +908,10 @@ html { scroll-padding-top: calc(var(--head, 0px) + var(--sub, 0px)); scroll-padd
 .list .item.nowrow > .row { flex: 0 0 auto; flex-wrap: nowrap; }
 .nowrow .nowwords { flex: 1 1 auto; min-width: 0; }
 .nowrow .navstate { display: block; overflow-wrap: anywhere; }
+.list .item.nowrow.clusteritem { flex-wrap: wrap; }      /* (nodes that open each other, D132: the buttons and the fingerprint form go on a line of their own) */
+.list .item.nowrow.clusteritem > .nowwords { flex: 1 1 100%; min-width: 0; }
+.list .item.nowrow.clusteritem > .row, .list .item.nowrow.clusteritem > .confirm { flex: 1 1 100%; margin-left: 0; justify-content: flex-start; flex-wrap: wrap; }
+.list .item.nowrow.clusteritem .list.sp { flex: 1 1 100%; min-width: 0; }
 .nowcues { flex-wrap: wrap; }
 /* the Room's scene blocks in a column of Now: as many to a row as have 140 px, the name cut between words */
 .nowscreen .room-scenes { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }

@@ -194,7 +194,13 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                 return CSP
             if self._secure():                    # over TLS: the other nodes a hand-over form may go to (D132, slice 5)
                 forms = getattr(api, "handover_forms", None)
-                return page_csp(None, forms() if forms is not None else ())
+                # only for a paired Operator or Owner, the devices that have the Nodes list: the PIN screen and a Guest's page
+                # do not learn which nodes this one trusts (review of PR 276)
+                token = self._token() if forms is not None else None
+                device = auth.authenticate(token) if token else None
+                if device is None or device.get("role") not in ("live", "full") or device.get("remote"):
+                    return page_csp(None, ())
+                return page_csp(None, forms())
             box = self._https()
             return page_csp(box.trusted_origin(self.headers.get("Host")) if box is not None else None)
 
