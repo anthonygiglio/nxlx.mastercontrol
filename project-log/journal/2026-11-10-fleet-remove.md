@@ -1,5 +1,11 @@
 <!-- SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
      SPDX-License-Identifier: Apache-2.0 -->
+## 2026-11-10, slice 4d review fixes (D132)
+
+- deny.json is read with a limit of 256 KiB and written to fit in it (compact JSON; tombstones give way first, a peer flood's before the Owner's). A file that is there but cannot be used is kept aside as `deny.json.unreadable`, logged and shown as `deny_problem` on the Owner's status; it is never taken for no file. A test fills the worst case (256 rows with the longest names, 256 tombstones, over 64 KiB) and reloads with nothing lost.
+- Epochs: a peer's deny up to 10^9 - 2, tombstones at most 10^9 - 1, removals made here at most 10^9; a stored epoch out of range is clamped and logged, not set to 1. Tested at both ends and across a restart.
+- A renewal sets `by` and the peer mark from the renewing node, counts toward the peer share of the file and is in the banner. Tombstone eviction takes a flood's first. Pushes owed are pruned to approved nodes; a push that met a running call is tried at the next tick. The removal number comes from a counter kept in the file. Design section 22 says a carried Owner from a carry-full node can use these routes here.
+
 ## 2026-11-10, node handover slice 4d: remove a node from this cluster, and Allow again (D132)
 
 - The Owner's action, as API routes (the panel is slice 5): `POST /api/fleet/remove {"id"}` puts a node of the approved set on the deny list, drops its fingerprint acceptance, signs out every device it carried on this node (the existing sweep, so it is at once and before any network), writes the event with the count, and starts the push. `POST /api/fleet/allow {"n", "epoch", "typed"}` allows one removed node again on this node only; `POST /api/fleet/allow/by {"by"}` lifts everything one peer sent (the way back from a node that denied the others). All three are the Owner's, over the secure connection, never through the support tunnel, and have `fleet` in the path, so the 4c by-name test holds them to the Owner. They are not on the peer port.

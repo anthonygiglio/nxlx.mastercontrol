@@ -38,8 +38,10 @@ LIST_FILE, SIG_FILE, DENY_FILE, PAIRINGS_FILE = "fleet.json", "fleet.sig", "deny
 FILES = (LIST_FILE, SIG_FILE, DENY_FILE, PAIRINGS_FILE)
 MAX_JSON = 65536
 MAX_DENY = 256
-MAX_EPOCH = 10 ** 9              # a deny with a larger epoch is not a deny
-MAX_TOMBS = MAX_DENY             # local tombstones of "Allow again"; the oldest goes when it is full
+MAX_EPOCH = 10 ** 9              # no epoch is larger. A peer's deny is taken up to MAX_EPOCH - 2, a tombstone is at most MAX_EPOCH - 1 and a
+                                 # removal made here at most MAX_EPOCH, so a node can always remove again above its own tombstone
+MAX_TOMBS = 512                  # local tombstones of "Allow again"; the ones that came from a peer's flood go first, then the oldest
+DENY_READ_LIMIT = 4 * MAX_JSON   # deny.json is read with this limit and written to fit in it (256 rows of long names and the tombstones)
 WIRE_ENTRIES = 24                # removals carried in one push (the rest catch up by the digest)
 PEER_DENY_CAP = 192              # rows a peer may have put in the deny file; the rest is room for the Owner's own removals
 PEER_HOURLY = 64                 # rows taken from one peer in an hour
@@ -106,7 +108,9 @@ class Handover:
         self.floods = {}             # peer name -> {"sent", "taken"}: a peer that sent a flood of removals
         self.problem = None          # why the files on disk are not in use, for the Owner's status
         self._deny = []
-        self._tombs = []             # [{"key", "name", "epoch"}]: Allow again, local, never sent to a peer
+        self._tombs = []             # [{"key", "name", "epoch", "peer"?}]: Allow again, local, never sent to a peer
+        self.deny_problem = None     # why deny.json is not in use, for the Owner's status
+        self._counter = 0            # the last removal number given out; kept in deny.json so a number is never used twice
         self._banner = {}            # peer name -> deque of (time, name) removals it sent lately (the banner of the Owner's status)
         self._pairings = []
         self.on_change = None        # called, with no lock held, after the list, an acceptance or the deny list changed (pvj/lease.py signs out what is no longer approved)
@@ -383,40 +387,85 @@ class Handover:
     def _epoch(value):
         return value if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= MAX_EPOCH else None
 
+    def _clamp(self, value, top, what):
+        """A stored epoch: in range as it is, otherwise pulled into range (never dropped to 1, which would let an old deny back in)."""
+        if isinstance(value, int) and not isinstance(value, bool):
+            kept = min(max(value, 1), top)
+            if kept != value:
+                self.log("pvj-web: deny.json: the epoch of %s (%d) is out of range and was set to %d" % (what, value, kept))
+            return kept
+        if value is not None:
+            self.log("pvj-web: deny.json: the epoch of %s is not a number and was set to 1" % what)
+        return 1
+
     def _load_deny(self):
-        raw = self._read(DENY_FILE)
-        if raw is None:
+        self._counter, self.deny_problem = 0, None
+        if not os.path.exists(self.path(DENY_FILE)):
             return [], []
+        raw = self._read(DENY_FILE, DENY_READ_LIMIT)
         try:
+            if raw is None:
+                raise ValueError("it is larger than %d bytes or cannot be read" % DENY_READ_LIMIT)
             data = json.loads(raw.decode("utf-8"))
             out, tombs, seen = [], [], set()
             for r in data["entries"][:MAX_DENY]:
                 if isinstance(r, dict) and isinstance(r.get("key"), str) and fleetlist.KEY_WORD.fullmatch(r["key"]) \
                         and isinstance(r.get("name"), str) and isinstance(r.get("by"), str) and isinstance(r.get("n"), int) and r["key"] not in seen:
                     seen.add(r["key"])
-                    row = {"key": r["key"], "name": r["name"][:64], "by": r["by"][:64], "n": r["n"], "epoch": self._epoch(r.get("epoch")) or 1}
+                    row = {"key": r["key"], "name": r["name"][:64], "by": r["by"][:64], "n": r["n"],
+                           "epoch": self._clamp(r.get("epoch"), MAX_EPOCH, r["name"][:64])}
                     if r.get("peer") is True:
                         row["peer"] = True                       # taken from a peer, not made here
                     out.append(row)
             for t in (data.get("tombstones") or [])[:MAX_TOMBS]:
                 if isinstance(t, dict) and isinstance(t.get("key"), str) and fleetlist.KEY_WORD.fullmatch(t["key"]) \
-                        and isinstance(t.get("name"), str) and self._epoch(t.get("epoch")) and t["key"] not in seen:
+                        and isinstance(t.get("name"), str) and t["key"] not in seen:
                     seen.add(t["key"])
-                    tombs.append({"key": t["key"], "name": t["name"][:64], "epoch": t["epoch"]})
+                    tomb = {"key": t["key"], "name": t["name"][:64], "epoch": self._clamp(t.get("epoch"), MAX_EPOCH - 1, t["name"][:64])}
+                    if t.get("peer") is True:
+                        tomb["peer"] = True
+                    tombs.append(tomb)
+            top = data.get("counter")
+            self._counter = max([top if isinstance(top, int) and not isinstance(top, bool) and top > 0 else 0] + [r["n"] for r in out])
             return out, tombs
-        except (ValueError, KeyError, TypeError, UnicodeDecodeError, AttributeError):
-            self.log("pvj-web: deny.json could not be read and is ignored")
+        except (ValueError, KeyError, TypeError, UnicodeDecodeError, AttributeError) as e:
+            # never treated as absent: the file is kept aside, the problem is on the Owner's status, and the removals must be made again
+            kept = DENY_FILE + ".unreadable"
+            try:
+                os.replace(self.path(DENY_FILE), self.path(kept))
+            except OSError:
+                kept = DENY_FILE
+            note = "%s is there but could not be used (%s), so NO removal is in force from it: the file was kept as %s; remove the nodes again or restore it" % (
+                DENY_FILE, e, kept)
+            self.log("pvj-web: " + note)
+            self.deny_problem = note
             return [], []
 
+    def _evict_tomb(self):
+        """A tombstone goes: the ones made for removals a peer sent first (a flood cannot push out the Owner's own), then the oldest."""
+        for i, t in enumerate(self._tombs):
+            if t.get("peer"):
+                del self._tombs[i]
+                return
+        del self._tombs[0]
+
     def _save_deny(self):
-        self._write(DENY_FILE, (json.dumps({"v": 1, "entries": self._deny, "tombstones": self._tombs}, indent=1) + "\n").encode("ascii"))
+        """Written to fit in DENY_READ_LIMIT, so a restart can read all of it: the tombstones give way if the rows need the room."""
+        while True:
+            data = (json.dumps({"v": 1, "counter": self._counter, "entries": self._deny, "tombstones": self._tombs},
+                               separators=(",", ":")) + "\n").encode("ascii")
+            if len(data) <= DENY_READ_LIMIT or not self._tombs:
+                break
+            self._evict_tomb()
+        self._write(DENY_FILE, data)
 
     def denied_keys(self):
         with self.lock:
             return {r["key"] for r in self._deny}
 
     def _next_n(self):
-        return 1 + max([r["n"] for r in self._deny] or [0])
+        self._counter = max([self._counter] + [r["n"] for r in self._deny]) + 1
+        return self._counter
 
     def _tomb(self, key):
         for t in self._tombs:
@@ -452,8 +501,12 @@ class Handover:
         """Take a row off and leave the tombstone (epoch + 1). The lock is held."""
         self._deny = [r for r in self._deny if r is not row]
         self._drop_tomb(row["key"])
-        self._tombs.append({"key": row["key"], "name": row["name"], "epoch": min(row["epoch"] + 1, MAX_EPOCH)})
-        del self._tombs[:-MAX_TOMBS]
+        tomb = {"key": row["key"], "name": row["name"], "epoch": min(row["epoch"] + 1, MAX_EPOCH - 1)}
+        if row.get("peer"):
+            tomb["peer"] = True
+        self._tombs.append(tomb)
+        while len(self._tombs) > MAX_TOMBS:
+            self._evict_tomb()
         self._save_deny()
 
     def deny_remove(self, key):
@@ -638,8 +691,8 @@ class Handover:
                         or not isinstance(e.get("name"), str):
                     continue
                 epoch = self._epoch(e.get("epoch", 1))
-                if epoch is None:
-                    continue
+                if epoch is None or epoch > MAX_EPOCH - 2:
+                    continue                               # a peer cannot pin a key where this node could no longer remove it above a tombstone
                 key = e["key"]
                 if key == own:
                     self.removed = True
@@ -662,11 +715,18 @@ class Handover:
                 window.popleft()
             hourly = PEER_HOURLY - len(window)
             renewed = []
-            for row, epoch in renew[:max(0, hourly)]:
-                row["epoch"] = epoch
+            peer_rows = sum(1 for r in self._deny if r.get("peer"))
+            for row, epoch in renew:
+                if hourly <= 0:
+                    break
+                if not row.get("peer"):
+                    if peer_rows >= PEER_DENY_CAP:
+                        continue                           # a renewal by a peer counts toward its share of the file like a new row
+                    peer_rows += 1
+                row["epoch"], row["by"], row["peer"] = epoch, str(by)[:64], True      # now it is that peer's: allow/by on the old sender no longer lifts it
                 window.append(now)
+                hourly -= 1
                 renewed.append(row["name"])
-            hourly -= len(renewed)
             room = min(PEER_DENY_CAP - sum(1 for r in self._deny if r.get("peer")), hourly, MAX_DENY - len(self._deny))
             taken = []
             for e, epoch in new[:max(0, room)]:
@@ -685,9 +745,9 @@ class Handover:
                 self.event("handover", "%s removed %s from this cluster." % (by, " and ".join(taken) if len(taken) < 3 else "%s and %d more" % (taken[0], len(taken) - 1)))
             if renewed:
                 self.event("handover", "%s removed %s from this cluster again." % (by, " and ".join(renewed) if len(renewed) < 3 else "%s and %d more" % (renewed[0], len(renewed) - 1)))
-            if taken:
+            if taken or renewed:
                 log = self._banner.setdefault(str(by), collections.deque(maxlen=64))
-                log.extend((now, name) for name in taken)
+                log.extend((now, name) for name in taken + renewed)
         if added:
             self._changed()
         return added
@@ -745,6 +805,7 @@ class Handover:
                     "fleet": lst.fleet, "name": lst.name, "serial": lst.serial, "issued": lst.issued,
                     "nodes": [{"id": n["id"], "name": n["name"], "carry": n["carry"]} for n in sorted(lst.nodes, key=lambda n: n["name"].lower())]},
                 "list_problem": problem,
+                "deny_problem": self.deny_problem,
                 "accepted": [{"id": r["id"], "name": r["name"], "carry": r["carry"]} for r in self._pairings],
                 "removed": [{"n": r["n"], "name": r["name"], "by": r["by"], "epoch": r["epoch"], "from_peer": bool(r.get("peer"))} for r in self._deny],
                 "banner": self._banner_lines(),
@@ -759,7 +820,7 @@ class Handover:
         problems = []
         with self.lock:
             self.list, self.problem, self.floor, self._deny, self._pairings = None, None, None, [], []
-            self._tombs, self._banner, self.floods, self.removed = [], {}, {}, False
+            self._tombs, self._banner, self.floods, self.removed, self._counter, self.deny_problem = [], {}, {}, False, 0, None
             try:
                 present = os.listdir(self.folder)
             except OSError:

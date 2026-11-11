@@ -212,19 +212,19 @@ class AllowAgain(Cluster):
         typed = hv.fingerprint(self.c.key)
         self.a.handover.allow_again(n, typed, epoch)
         self.remove(self.a, self.c, "Anthony iPad")                           # removed again: epoch 3 (above the tombstone's 2)
-        self.assertEqual(self.removal(self.a), (1, 3))
+        self.assertEqual(self.removal(self.a), (2, 3))                        # the number is not used twice: 1 was the first removal
         self.assertEqual(self.removal(self.b), (1, 3))                        # b's epoch 1 row was renewed
         self.assertIn("node-01 removed node-03 from this cluster again.", self.said(self.b))
-        for node in (self.a, self.b):                                         # the old Allow again, sent a second time
+        for node, status in ((self.a, 404), (self.b, 409)):                   # the old Allow again, sent a second time: a has a new number, b a new epoch
             with self.assertRaises(hv.HandoverError, msg=node.name) as cm:
                 node.handover.allow_again(n, typed, epoch)
-            self.assertEqual(cm.exception.status, 409)
+            self.assertEqual(cm.exception.status, status)
             self.assertIn(self.c.key, node.handover.denied_keys())
         # the epochs only go up: 3 now, a deny at 2 or 3 changes nothing, a deny at 4 renews
         self.assertEqual(self.a.handover.take_denies([{"key": self.c.key, "name": "node-03", "epoch": 2}], "node-02"), [])
         self.assertEqual(self.a.handover.take_denies([{"key": self.c.key, "name": "node-03", "epoch": 3}], "node-02"), [])
         self.assertEqual(self.a.handover.take_denies([{"key": self.c.key, "name": "node-03", "epoch": 4}], "node-02"), ["node-03"])
-        self.assertEqual(self.removal(self.a), (1, 4))
+        self.assertEqual(self.removal(self.a), (2, 4))
 
     def test_the_tombstone_is_local_it_stays_across_a_restart_and_is_never_sent(self):
         self.remove(self.a, self.c)
@@ -377,6 +377,153 @@ class Banner(Cluster):
         self.assertTrue(all(isinstance(r["epoch"], int) and r["from_peer"] for r in self.a.handover.status()["removed"]))
 
 
+def cold(node):
+    """The same node started again: a Handover that reads the files."""
+    h = hv.Handover(node.state, node.box, node.settings, lambda: {"id": node.id, "name": node.name}, event=node.events, openssl=node.exe)
+    h.load()
+    return h
+
+
+class Storage(Cluster):
+    """deny.json: bounded in bytes, read back whole, never silently empty; epochs at both ends; numbers; tombstones."""
+
+    def keys(self, start, count):
+        return ["%064x" % (start + i) for i in range(count)]
+
+    def test_the_worst_case_file_is_read_back_whole_after_a_restart(self):
+        h = self.a.handover
+        long_by = "\u00e9" * 64                                                # 6 bytes each once written: the longest a row can be
+        for key in self.keys(1, hv.MAX_DENY):
+            h.deny_add(key, "n" * 64, long_by)
+        for key in self.keys(1, hv.MAX_DENY):                                 # every one allowed again: 256 tombstones
+            h.deny_remove(key)
+        for key in self.keys(1000, hv.MAX_DENY):                              # and 256 rows again
+            h.deny_add(key, "n" * 64, long_by)
+        import os
+        size = os.path.getsize(os.path.join(self.a.state, "deny.json"))
+        self.assertGreater(size, hv.MAX_JSON)                                 # past the old 64 KiB limit that used to empty it
+        self.assertLessEqual(size, hv.DENY_READ_LIMIT)
+        again = cold(self.a)
+        self.assertIsNone(again.deny_problem)
+        self.assertEqual(again.denied_keys(), h.denied_keys())
+        self.assertEqual(len(again.denied_keys()), hv.MAX_DENY)
+        self.assertEqual(len(again._tombs), hv.MAX_DENY)
+        self.assertEqual(again.take_denies([{"key": self.keys(1, 1)[0], "name": "x", "epoch": 1}], "node-02"), [])    # the tombstones held
+        self.assertEqual(again.deny_digest(), h.deny_digest())
+
+    def test_a_file_that_cannot_be_used_is_never_taken_for_no_file(self):
+        import os
+        path = os.path.join(self.a.state, "deny.json")
+        for junk in (b" " * (hv.DENY_READ_LIMIT + 10), b"{not json", b'{"entries": 5}'):
+            with open(path, "wb") as f:
+                f.write(junk)
+            h = cold(self.a)
+            self.assertEqual(h.denied_keys(), set())
+            self.assertIn("could not be used", h.deny_problem)
+            self.assertIn("NO removal is in force", h.status()["deny_problem"])
+            self.assertTrue(os.path.exists(path + ".unreadable"))             # kept for repair
+            self.assertFalse(os.path.exists(path))
+        h.deny_add("5" * 64, "x", "y")                                         # and a node can go on removing nodes
+        self.assertEqual(cold(self.a).denied_keys(), {"5" * 64})
+        self.assertIsNone(cold(self.a).deny_problem)
+
+    def test_epochs_at_both_ends(self):
+        top = hv.MAX_EPOCH
+        h = self.a.handover
+        key = self.c.key
+        entry = lambda e: [{"key": key, "name": "node-03", "epoch": e}]
+        self.assertEqual(h.take_denies(entry(top), "node-02"), [])            # a peer cannot pin a key at the top, or one below it
+        self.assertEqual(h.take_denies(entry(top - 1), "node-02"), [])
+        self.assertEqual(h.take_denies(entry(top + 5), "node-02"), [])
+        self.assertEqual(h.take_denies(entry(top - 2), "node-02"), ["node-03"])
+        row = h.status()["removed"][0]
+        h.allow_again(row["n"], hv.fingerprint(key), row["epoch"])             # tombstone at top - 1
+        h.remove_node(C_ID)                                                    # removed again at the top
+        self.assertEqual(h.status()["removed"][0]["epoch"], top)
+        row = h.status()["removed"][0]
+        h.allow_again(row["n"], hv.fingerprint(key), row["epoch"])             # tombstone stays at top - 1, never above
+        self.assertEqual(h._tomb(key)["epoch"], top - 1)
+        again = cold(self.a)
+        self.assertEqual(again._tomb(key)["epoch"], top - 1)
+        self.assertEqual(again.take_denies(entry(top - 2), "node-02"), [])    # the pinned deny, replayed, stays out
+        again.remove_node(C_ID)
+        self.assertEqual(again.status()["removed"][0]["epoch"], top)          # and a removal here still beats the tombstone
+
+    def test_a_stored_epoch_out_of_range_is_clamped_not_set_to_one(self):
+        import json as j, os
+        key, other = self.c.key, self.b.key
+        data = {"v": 1, "entries": [{"key": key, "name": "node-03", "by": "x", "n": 1, "epoch": 10 ** 9 + 5}],
+                "tombstones": [{"key": other, "name": "node-02", "epoch": 2 * 10 ** 9}]}
+        with open(os.path.join(self.a.state, "deny.json"), "w") as f:
+            j.dump(data, f)
+        h = cold(self.a)
+        self.assertEqual(h.status()["removed"][0]["epoch"], hv.MAX_EPOCH)
+        self.assertEqual(h._tomb(other)["epoch"], hv.MAX_EPOCH - 1)
+        self.assertEqual(h.take_denies([{"key": other, "name": "node-02", "epoch": 1}], "node-03"), [])
+
+    def test_a_renewal_belongs_to_the_node_that_renewed_it_and_counts_in_the_banner_and_the_cap(self):
+        h = self.a.handover
+        h.remove_node(C_ID, "Anthony")                                         # the Owner's own removal
+        self.assertFalse(h.status()["removed"][0]["from_peer"])
+        h.take_denies([{"key": self.c.key, "name": "node-03", "epoch": 5}], "node-02")
+        row = h.status()["removed"][0]
+        self.assertEqual((row["epoch"], row["from_peer"]), (5, True))
+        self.assertEqual(h.status()["banner"][0]["names"], ["node-03"])
+        h.remove_node(B_ID, "Anthony")
+        self.assertEqual(h.allow_again_by("node-02")["removed"][0]["name"], "node-02")      # only what that peer sent
+        # the peer share of the file is full: a renewal of the Owner's own row is not taken
+        for i, by in enumerate(("p1", "p2", "p3")):
+            h.take_denies([{"key": "%064x" % (500 + i * 64 + j), "name": "n", "epoch": 1} for j in range(64)][:64], by)
+        self.assertEqual(sum(1 for r in h.deny_entries() if r.get("peer")), hv.PEER_DENY_CAP)
+        h2 = self.a.handover
+        h2.deny_add("7" * 64, "own", "Anthony")
+        self.assertEqual(h2.take_denies([{"key": "7" * 64, "name": "own", "epoch": 9}], "p4"), [])
+        self.assertEqual([r for r in h2.deny_entries() if r["key"] == "7" * 64][0]["epoch"], 1)
+
+    def test_tombstones_from_a_flood_are_evicted_before_the_owners(self):
+        old = hv.MAX_TOMBS
+        hv.MAX_TOMBS = 4
+        self.addCleanup(setattr, hv, "MAX_TOMBS", old)
+        h = self.a.handover
+        o1, o2, o3, p1, p2, p3 = self.keys(1, 6)
+        for k in (o1, o2, o3):
+            h.deny_add(k, "own", "Anthony")
+        h.take_denies([{"key": k, "name": "p", "epoch": 1} for k in (p1, p2, p3)], "node-02")
+        for k in (o1, p1, o2, p2, p3, o3):
+            h.deny_remove(k)
+        self.assertEqual(sorted(t["key"] for t in h._tombs if not t.get("peer")), sorted([o1, o2, o3]))
+        self.assertEqual(len(h._tombs), 4)
+
+    def test_owed_pushes_are_pruned_and_a_busy_slot_is_tried_at_the_next_tick(self):
+        import threading
+        peers = self.a.peers
+        peers._owed["e" * 32] = 0.0                                            # a node that is not approved at all
+        peers.retry_owed()
+        self.assertNotIn("e" * 32, peers._owed)
+        self.a.handover.remove_node(C_ID, "Anthony")
+        lock = peers._slots.setdefault(B_ID, threading.Lock())
+        lock.acquire()
+        try:
+            peers.push_all(True)                                               # b has a call running: 429
+        finally:
+            lock.release()
+        self.assertLessEqual(peers._owed[B_ID], self.clock())                 # due at the next tick, not in five minutes
+        self.assertEqual(self.b.handover.denied_keys(), set())
+        peers.retry_owed()
+        self.settle()
+        self.assertEqual(self.b.handover.denied_keys(), {self.c.key})
+
+    def test_a_removal_number_is_never_used_twice_even_after_a_restart(self):
+        h = self.a.handover
+        h.remove_node(C_ID, "Anthony")
+        self.assertEqual(h.status()["removed"][0]["n"], 1)
+        row = h.status()["removed"][0]
+        h.allow_again(row["n"], hv.fingerprint(self.c.key), row["epoch"])     # no rows left
+        again = cold(self.a)
+        again.remove_node(C_ID, "Anthony")
+        self.assertEqual(again.status()["removed"][0]["n"], 2)
+
+
 class Api(FleetApiBase):
     """The Owner's routes on the real secure listener."""
 
@@ -440,7 +587,8 @@ class Api(FleetApiBase):
         self.assertEqual(self.scall("POST", "/api/fleet/allow", body, token=self.full)[0], 404)             # the same request again
         self.scall("POST", "/api/fleet/remove", {"id": B_ID}, token=self.full)                              # removed again: epoch 3
         self.assertEqual(self.removed()[0]["epoch"], 3)
-        self.assertEqual(self.scall("POST", "/api/fleet/allow", body, token=self.full)[0], 409)             # the old request cannot undo the new deny
+        self.assertEqual(self.scall("POST", "/api/fleet/allow", body, token=self.full)[0], 404)             # the old request cannot undo the new deny (new number)
+        self.assertEqual(self.scall("POST", "/api/fleet/allow", dict(body, n=self.removed()[0]["n"]), token=self.full)[0], 409)    # nor with the new number and the old epoch
         self.assertIsNone(self.hv.approved(B_ID, self.b.key))
         for bad in ({}, {"n": 1}, {"n": 1, "epoch": 3, "typed": 5}, {"n": 1, "epoch": 3, "typed": "x", "more": 1}):
             self.assertEqual(self.scall("POST", "/api/fleet/allow", bad, token=self.full)[0], 400, bad)

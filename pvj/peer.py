@@ -439,7 +439,10 @@ class Peers:
         h = self.handover
         out = []
         own = h.deny_digest()
-        for node_id, name, _key in h.approved_nodes():
+        nodes = h.approved_nodes()
+        with self.lock:
+            self._owed = {k: v for k, v in self._owed.items() if k in {n[0] for n in nodes}}      # only nodes still approved are owed anything
+        for node_id, name, _key in nodes:
             with self.lock:
                 skip = self._peer_digest.get(node_id) == own or (not force and self._owed.get(node_id, 0.0) > self.now())
             if skip:
@@ -450,15 +453,17 @@ class Peers:
                     self._owed.pop(node_id, None)
                 out.append({"id": node_id, "name": name, "ok": True})
             except PeerError as e:
-                with self.lock:
-                    self._owed[node_id] = self.now() + PUSH_RETRY
+                with self.lock:                          # a call already running to that node (429) is tried again at the next tick
+                    self._owed[node_id] = self.now() + (0.0 if e.status == 429 else PUSH_RETRY)
                 out.append({"id": node_id, "name": name, "ok": False, "error": e.message})
         return out
 
     def retry_owed(self):
         """From the lease worker: nodes that could not be reached with the removals are tried again when their time has come."""
         t = self.now()
+        ids = {n[0] for n in self.handover.approved_nodes()}
         with self.lock:
+            self._owed = {k: v for k, v in self._owed.items() if k in ids}
             due = any(v <= t for v in self._owed.values()) and not self._pushing
         if due:
             self.spread(force=False)
