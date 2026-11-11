@@ -912,6 +912,13 @@ html { scroll-padding-top: calc(var(--head, 0px) + var(--sub, 0px)); scroll-padd
 .list .item.nowrow.clusteritem > .nowwords { flex: 1 1 100%; min-width: 0; }
 .list .item.nowrow.clusteritem > .row, .list .item.nowrow.clusteritem > .confirm { flex: 1 1 100%; margin-left: 0; justify-content: flex-start; flex-wrap: wrap; }
 .list .item.nowrow.clusteritem .list.sp { flex: 1 1 100%; min-width: 0; }
+/* the Owner card's own sections (Fleet list, Trusted nodes, Trust a node by its fingerprint, Removed): headings that mark
+   their sections, as in the node sheet (the owner, 2026-11-11); the card is already the band's tone, so no band here */
+#clusterbody > h3.k { margin: 24px 0 4px; font: 700 20px/24px var(--sans, system-ui, sans-serif); color: var(--fg); letter-spacing: 0; text-transform: none; }
+#clusterbody > h3.k + .list > .item:first-child { border-top: 0; }
+.clusteritem .nscarryq { margin: 8px 0 0; font-weight: 600; color: var(--fg); }      /* (the question the three choices answer) */
+.clusteritem .nscarry { flex-direction: column; align-items: stretch; }
+.clusteritem .nscarry .btn { white-space: normal; text-align: left; max-width: 100%; }      /* (answers of a sentence each: they wrap at 390 px) */
 .nowcues { flex-wrap: wrap; }
 /* the Room's scene blocks in a column of Now: as many to a row as have 140 px, the name cut between words */
 .nowscreen .room-scenes { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
@@ -929,7 +936,12 @@ html { scroll-padding-top: calc(var(--head, 0px) + var(--sub, 0px)); scroll-padd
 .nssheet { width: 100%; max-width: 1100px; max-height: 88dvh; overflow-y: auto; overscroll-behavior: contain; padding: 0 16px 24px; padding-top: env(safe-area-inset-top, 0px); background: var(--bg); color: var(--fg); border: 1.5px solid var(--ln); border-top: 0; border-radius: 0 0 12px 12px; text-align: left; }
 .nsbar { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 -16px; padding: 12px 16px; background: var(--bg); }
 .nsbar h2 { margin: 0; font-size: 17px; }
-.nssheet h3.k { margin: 18px 0 6px; font-weight: 500; }
+/* the sheet's sections (2026-11-11): a heading of its own (the title style) over its rows, the sections set apart by space
+   and a line, and no rule between a heading and its first row, so the heading reads as part of what is under it */
+.nssheet .nssec { margin-top: 24px; }
+.nssheet .nsbar + .nssec { margin-top: 0; }
+.nssheet h3.nshd { margin: 0 -16px 4px; padding: 12px 16px; background: var(--cd); font: 700 20px/24px var(--sans, system-ui, sans-serif); color: var(--fg); letter-spacing: 0; text-transform: none; }
+.nssheet .nssec > .list > .item:first-child, .nssheet .nssec .nodespop > .list > .item:first-child { border-top: 0; }
 .nstools { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
 .nssheet .nodespop .row { margin-top: 8px; }
 .nssheet .nsver { margin: 18px 0 0; }
@@ -1576,6 +1588,7 @@ html[data-style="signal"] .nowscreen .room-scene { font-size: 15px; }
 html[data-style="signal"] .wshead .nodesbtn { background: var(--on); color: var(--ac); border-color: var(--on); }
 html[data-style="signal"] .wshead .nodesbtn[aria-expanded="true"] { background: var(--ac); color: var(--on); border-color: var(--on); }
 html[data-style="signal"] .nssheet { border: var(--rule, 3px) solid var(--fg); border-top: 0; border-radius: 0 0 var(--tk-r, 0) var(--tk-r, 0); }
+html[data-style="signal"] .nssheet h3.nshd { font: 700 20px/24px var(--sans); color: var(--fg); background: var(--cd); }
 html[data-style="signal"] .nsbar { background: var(--ar-system, #7aa2ff); color: var(--ar-system-on, #0b0b0d); }      /* (Setup's blue in every area, as the FireTab launcher's drawer has: the two read as one kind of sheet) */
 html[data-style="signal"] .nsbar h2 { font: 900 20px/1.2 var(--sans); letter-spacing: .04em; text-transform: uppercase; }
 html[data-style="signal"] .nsbar .btn { background: transparent; color: var(--ar-system-on, #0b0b0d); border-color: var(--ar-system-on, #0b0b0d); }
