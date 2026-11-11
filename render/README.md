@@ -85,6 +85,13 @@ its width) once or looped. A scroll or crawl that has run off is done until `rep
 number of clients may speak at once; the lock order of `ipc.c` is kept. Test hook: `PVJ_RENDER_TEST_MAX_TEXTURE=N` (TEST_HOOKS
 builds) makes the limit small.
 
+The stats overlay's command (D133, version 0.12.0): `["osd-overlay", ID, "ass-events" | "none", TEXT, RES_X, RES_Y, Z, HIDDEN]` is forwarded to the text
+layer, which draws it last (over the mapping, so it is not warped), in an id of its own that is not `show-text`'s slot (the pairing PIN and the
+recovery codes use that one, and an overlay never replaces them). ID is a whole number from 0 to 63; TEXT is a string of at most 4096 bytes
+(an `ass-events` line needs one; `none` removes the overlay); RES_X and RES_Y 1 to 8192, Z -1000 to 1000, HIDDEN a flag; anything else, mpv's
+`compute_bounds` word too, is "invalid parameter". Any overlay on keeps the text layer on (`text-layer` in the `pvj-render` property), and `osd-overlay: true`
+in that property says a renderer has the command (the panel refuses the overlay on one that does not, in plain words).
+
 **Licence:** GPL-3.0-or-later (this folder only; `LICENSE`). It links libmpv, which is GPLv2 or later as Debian
 builds it. The rest of nxlx.mastercontrol is Apache-2.0 and only starts this program and talks to it over a socket.
 

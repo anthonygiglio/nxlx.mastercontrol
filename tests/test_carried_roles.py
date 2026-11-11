@@ -176,6 +176,8 @@ CARRIED = {
     ("POST", "/api/render/cue"): SAME,
     ("GET", "/api/renderer"): SAME,
     ("POST", "/api/renderer"): SAME,
+    ("GET", "/api/stats-overlay"): SAME,
+    ("POST", "/api/stats-overlay"): SAME,
     ("GET", "/api/room"): SAME,
     ("POST", "/api/room"): SAME,
     ("POST", "/api/room/group"): SAME,

@@ -3990,8 +3990,72 @@
       body.appendChild(h('div', { class: 'hint', text: 'Colour bars at the screen\'s own size, with a grid, a red border one pixel wide at the very edge and the mode in words, in place of what plays. A border you cannot see means the projector cuts the edge off.' }));
       body.appendChild(h('div', { class: 'row' }, testPattern()));
     }
+    card.appendChild(statsSection());
     look();
     return card;
+  }
+  // ---- show stats on output (D133) ---------------------------------------
+  // A debugging overlay in a corner of the node's output (frame rate, drops, decoder, clip, CPU, temperature, throttling, the
+  // node's name and address). The Owner's, off by default, held only in the node's memory: it turns itself off after 15 minutes,
+  // whenever the player restarts and whenever the panel's service restarts, so a page never leaves it on. Its own section of the
+  // Screen output card (not inside the card's body, which is drawn again while a screen mode is tried); built once, updated in place.
+  var STATS_CORNERS = { tl: 'Top left', tr: 'Top right', bl: 'Bottom left', br: 'Bottom right' };
+  var statsTimer = null;
+  function statsSection() {
+    clearTimeout(statsTimer);
+    var msg = h('div', { class: 'msg inmsg', id: 'statsmsg', role: 'status' });
+    var line = h('div', { class: 'state', id: 'statsline', text: 'Off.' });
+    var corner = h('select', { class: 'text-input', id: 'statscorner', 'aria-label': 'Corner for the stats', onchange: function () { if (tg.isOn()) send(true); } },
+      Object.keys(STATS_CORNERS).map(function (k) { return h('option', { value: k, text: STATS_CORNERS[k] }); }));
+    var tg = toggle('statsswitch', 'Show stats on output', false, function (v) { send(v); },
+      'A small debugging overlay in a corner of the picture: frame rate and dropped frames, what is decoding and what is playing, CPU, memory, temperature and throttling, and this node\'s name and address. For checking a node, never for a show.');
+    var box = h('div', { class: 'list sp', id: 'statsbox' }, h('div', { class: 'field', text: 'Debugging' }), tg,
+      labelled('Corner', corner, 'Where on the picture the stats are drawn.'), line,
+      h('div', { class: 'hint', id: 'statsnote', text: 'It turns itself off after 15 minutes, whenever the player restarts and whenever this panel restarts. It is hidden while a PIN or code is on the screen and during a blackout.' }), msg);
+    function draw(d) {
+      tg.sw.setAttribute('aria-checked', d.on ? 'true' : 'false');
+      if (d.on && document.activeElement !== corner) corner.value = d.corner;
+      var words = 'Off.';
+      if (d.on) {
+        var mins = Math.max(1, Math.round((d.seconds_left || 0) / 60));
+        words = 'On in the ' + STATS_CORNERS[d.corner].toLowerCase() + ' corner' + (d.renderer ? ' (' + (d.renderer === 'new' ? 'New renderer' : 'classic player') + ')' : '') +
+          (d.hidden ? '; hidden for now: ' + d.hidden : '') + '. Off by itself in ' + mins + (mins === 1 ? ' minute.' : ' minutes.');
+      }
+      line.textContent = words;
+    }
+    function look() {
+      clearTimeout(statsTimer);
+      api('GET', '/api/stats-overlay').then(function (r) {
+        if (!box.isConnected) return;
+        if (!r.ok) { line.textContent = (r.data.error || 'Not available') + '.'; return; }
+        draw(r.data);
+        if (r.data.on) statsTimer = setTimeout(look, 4000);      // while it is on, to show the time left and the end of it
+      });
+    }
+    function send(on) {
+      tg.sw.disabled = true;
+      var body = { on: on };
+      if (on) body.corner = corner.value;
+      return api('POST', '/api/stats-overlay', body).then(function (r) {
+        tg.sw.disabled = !!S.remote;
+        if (!box.isConnected) return;
+        if (!r.ok) {
+          tg.sw.setAttribute('aria-checked', on ? 'false' : 'true');       // back to what it was
+          sayAt(msg, r.data.error || 'Could not change it', true);
+          return;
+        }
+        sayAt(msg, '');
+        draw(r.data);
+        clearTimeout(statsTimer);
+        if (r.data.on) statsTimer = setTimeout(look, 4000);
+      });
+    }
+    if (S.remote) {                      // never through the support tunnel: the room's screen is seen by someone in the room
+      tg.sw.disabled = true; corner.disabled = true;
+      box.insertBefore(h('div', { class: 'hint', id: 'statsremote', text: 'It is turned on from the room, not through remote support.' }), line);
+    }
+    look();
+    return box;
   }
   // ---- the renderer (D95) -----------------------------------------------
   var RENDERER_NAMES = { classic: 'Classic (mpv)', 'new': 'New (pvj-render)' };

@@ -1369,7 +1369,7 @@ static void get_property(int fd, const mpv_node *id, const char *name)
         long back = app.back_drawn, fades = app.fades, done = app.fades_done, cut = app.fades_cut;
         long nothing = app.fades_from_nothing, held = app.sound_held, pfades = app.program_fades;
         double passes_rate = app.fx_passes_rate;
-        int osd = app.overlays != 0 || now_s() < app.text_until;
+        int osd = app.overlays != 0 || app.osd_ass != 0 || now_s() < app.text_until;
         int phase = app.fade.phase, front = app.front;
         double progress = app.fade.progress, seconds = app.fade.seconds;
         const char *kind = app.fade.move ? app.fade.move->name : "crossfade";   // a constant: it may be read after the lock
@@ -1393,8 +1393,8 @@ static void get_property(int fd, const mpv_node *id, const char *name)
                                             "back-idle", "fades-from-nothing", "sound-held", "sources", "shaders", "fx-fps",
                                             "fx-gl-objects", "fx-passes", "fx-passes-per-second", "load", "final-lines",
                                             "final-switches", "final-why", "moves", "fade-kind", "fade-steps", "layer-generators", "program-fades",
-                                            "graphics", "graphics-side" };
-        mpv_node vals[44] = { node_str(PVJ_VERSION), node_int(app.in_w), node_int(app.in_h), node_int(app.out_w), node_int(app.out_h),
+                                            "graphics", "graphics-side", "osd-overlay" };
+        mpv_node vals[45] = { node_str(PVJ_VERSION), node_int(app.in_w), node_int(app.in_h), node_int(app.out_w), node_int(app.out_h),
                               node_dbl(app.out_hz), node_int(flips), node_int(drawn), node_int(missed), node_str(state),
                               { .format = MPV_FORMAT_FLAG }, node_str(app.cfg->hwdec), node_int(fences), node_int(freed),
                               node_int(LAYERS), node_int(front), node_str(PHASES[phase]), node_dbl(progress), node_dbl(seconds),
@@ -1406,12 +1406,13 @@ static void get_property(int fd, const mpv_node *id, const char *name)
                               node_int(__atomic_load_n(&app.final_lines, __ATOMIC_ACQUIRE)),
                               node_int(__atomic_load_n(&app.final_switches, __ATOMIC_RELAXED)), node_str(final_why),
                               { .format = MPV_FORMAT_FLAG }, node_str(kind), node_int(steps), { .format = MPV_FORMAT_FLAG }, node_int(pfades),
-                              node_int(GFX_SLOTS), node_int(gfx_side_max()) };
+                              node_int(GFX_SLOTS), node_int(gfx_side_max()), { .format = MPV_FORMAT_FLAG } };
         vals[10].u.flag = osd;
         vals[24].u.flag = back_idle;
         vals[37].u.flag = 1;                // wipes and slides are drawn here (D111): the panel asks this once per process
         vals[40].u.flag = 1;                // source 1's layers each hold a generator (D130): asked once per process too
-        mpv_node_list list = { .num = 44, .values = vals, .keys = (char **)keys };
+        vals[44].u.flag = 1;                // osd-overlay is on the list (0.12.0): the panel's stats overlay asks this once
+        mpv_node_list list = { .num = 45, .values = vals, .keys = (char **)keys };
         d.format = MPV_FORMAT_NODE_MAP;
         d.u.list = &list;
         reply(fd, id, "success", &d);
@@ -1429,6 +1430,7 @@ static void get_property(int fd, const mpv_node *id, const char *name)
 // shorter than that kills this process with SIGBUS. So: a regular file (not a link, FIFO, directory or
 // device), big enough, and a size of picture that is sane. Anything else is refused as mpv would refuse it.
 #define OVERLAY_MAX_SIDE 8192.0
+#define OSD_OVERLAY_TEXT_MAX 4096        // an osd-overlay's text (the stats overlay's is under 600 bytes)
 static int overlay_file_ok(const char *path, const mpv_node *off, const mpv_node *w, const mpv_node *h, const mpv_node *stride)
 {
     double o = num(off), ww = num(w), hh = num(h), st = num(stride);
@@ -1654,6 +1656,38 @@ static void handle(int fd, const char *line, size_t len)
             app.overlays &= ~(1ull << oid->u.int64);
             pthread_mutex_unlock(&app.lock);
             wake_render();
+            reply(fd, id, r < 0 ? mpv_error_string(r) : "success", NULL);
+        }
+    } else if (!strcmp(name, "osd-overlay") && nargs >= 3 && nargs <= 8) {
+        // The panel's stats overlay (0.12.0): id, "ass-events" | "none", text[, res_x, res_y[, z[, hidden]]]. Drawn by the
+        // text layer, like show-text but in its own slot of mpv's, so a PIN or a recovery code (show-text) is never
+        // replaced by it. mpv's compute_bounds (a ninth word) is not on the list: it would send a reply made of mpv's data.
+        const mpv_node *oid = arg(cmd, 1);
+        const char *fmt = arg_str(cmd, 2), *text = arg_str(cmd, 3);
+        int ok = oid->format == MPV_FORMAT_INT64 && oid->u.int64 >= 0 && oid->u.int64 < 64 && fmt
+                 && (!strcmp(fmt, "ass-events") || !strcmp(fmt, "none"));
+        int on = ok && !strcmp(fmt, "ass-events");
+        if (ok && nargs >= 4 && !text) ok = 0;                       // the text is a string
+        if (ok && on && !text) ok = 0;                               // and an overlay that is drawn has some
+        if (ok && text && strlen(text) > OSD_OVERLAY_TEXT_MAX) ok = 0;
+        for (int i = 4; ok && i <= 6 && i < nargs; i++) {            // res_x, res_y, z: numbers in a sane range
+            double v = is_num(arg(cmd, i)) ? num(arg(cmd, i)) : -1e9;
+            ok = i == 6 ? (v >= -1000 && v <= 1000) : (v >= 1 && v <= 8192);
+        }
+        if (ok && nargs == 8 && arg(cmd, 7)->format != MPV_FORMAT_FLAG) ok = 0;
+        if (!ok) {
+            reply(fd, id, "invalid parameter", NULL);
+        } else {
+            mpv_node res;
+            int r = mpv_command_node(app.osd, (mpv_node *)cmd, &res);
+            if (r >= 0) {
+                mpv_free_node_contents(&res);
+                pthread_mutex_lock(&app.lock);
+                if (on) app.osd_ass |= 1ull << oid->u.int64;
+                else app.osd_ass &= ~(1ull << oid->u.int64);
+                pthread_mutex_unlock(&app.lock);
+                wake_render();
+            }
             reply(fd, id, r < 0 ? mpv_error_string(r) : "success", NULL);
         }
     } else if (!strcmp(name, "show-text") && nargs >= 2 && nargs <= 4 && arg_str(cmd, 1)) {

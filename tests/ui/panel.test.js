@@ -914,6 +914,63 @@ function startServer(env) {          // env: more for the harness's environment 
       assert(!tried, 'Cancel sent nothing');
     }
     assert(await page.isVisible('#screencard #testpattern'), 'the test pattern is on the page');
+    // Show stats on output (D133): the Owner's switch on this card, off by default, with a corner and the words about its end.
+    {
+      assert.strictEqual(await page.getAttribute('#statsswitch', 'aria-checked'), 'false', 'the stats overlay is off when the page opens');
+      assert.deepStrictEqual(await page.$$eval('#statscorner option', (os) => os.map((o) => o.value)), ['tl', 'tr', 'bl', 'br']);
+      assert.strictEqual(await page.inputValue('#statscorner'), 'tl', 'the top left is the default corner');
+      assert(/after 15 minutes/.test(await page.textContent('#statsnote')) && /whenever the player restarts/.test(await page.textContent('#statsnote')), 'it says when it ends');
+      assert.strictEqual((await get('/api/stats-overlay')).on, false, 'the box has it off');
+      let state = { on: false, corner: 'tl', seconds_left: null, hidden: null, renderer: 'classic' };
+      const sentStats = [];
+      let refuseStats = null, hideIt = false;
+      const statsRoute = async (route) => {
+        const req = route.request();
+        if (req.method() === 'POST') {
+          const b = JSON.parse(req.postData());
+          sentStats.push(b);
+          if (refuseStats) return route.fulfill({ status: 409, json: { error: refuseStats } });
+          state = b.on ? { on: true, corner: b.corner || 'tl', seconds_left: 900, hidden: hideIt ? 'blackout' : null, renderer: 'classic' } : { on: false, corner: 'tl', seconds_left: null, hidden: null, renderer: null };
+        }
+        return route.fulfill({ status: 200, json: state });
+      };
+      await page.route('**/api/stats-overlay', statsRoute);
+      await page.click('#statsswitch');
+      await page.waitForFunction(() => /^On in the top left corner/.test(document.getElementById('statsline').textContent));
+      assert.deepStrictEqual(sentStats[0], { on: true, corner: 'tl' }, 'the switch sends on and the corner, and no minutes (the box\'s 15)');
+      assert(/Off by itself in 15 minutes/.test(await page.textContent('#statsline')), 'the time left is said');
+      assert.strictEqual(await page.getAttribute('#statsswitch', 'aria-checked'), 'true');
+      await page.selectOption('#statscorner', 'br');
+      await page.waitForFunction(() => /bottom right corner/.test(document.getElementById('statsline').textContent));
+      assert.deepStrictEqual(sentStats[1], { on: true, corner: 'br' }, 'a new corner is sent while it is on');
+      hideIt = true;
+      await page.selectOption('#statscorner', 'tr');
+      await page.waitForFunction(() => /top right corner.*hidden for now: blackout/.test(document.getElementById('statsline').textContent));
+      await page.click('#statsswitch');
+      await page.waitForFunction(() => document.getElementById('statsline').textContent === 'Off.');
+      assert.deepStrictEqual(sentStats[sentStats.length - 1], { on: false }, 'off sends only off');
+      refuseStats = 'The new renderer on this node is too old to draw the stats overlay';
+      await page.click('#statsswitch');
+      await page.waitForFunction(() => /too old/.test(document.getElementById('statsmsg').textContent));
+      assert.strictEqual(await page.getAttribute('#statsswitch', 'aria-checked'), 'false', 'a refused switch goes back to off');
+      assert(await page.$eval('#statsmsg', (e) => e.classList.contains('err')), 'the refusal is shown as an error');
+      // the three widths of the panel brief (D102): nothing runs past the card, the switch and the choice stay usable
+      const wasStatsSize = page.viewportSize();
+      for (const width of [390, 820, 1440]) {
+        await page.setViewportSize({ width, height: 900 });
+        await page.waitForTimeout(150);
+        const over = await page.$$eval('#statsbox *', (els) => { const card = document.getElementById('screencard').getBoundingClientRect();
+          return els.filter((e) => { const r = e.getBoundingClientRect(); return r.width && (r.right > card.right + 1 || r.left < card.left - 1); })
+            .map((e) => (e.id || e.tagName) + ': ' + Math.round(e.getBoundingClientRect().right) + ' > ' + Math.round(card.right)); });
+        assert.deepStrictEqual(over, [], 'the stats section fits the Screen output card at ' + width + ' px');
+        const small = await page.$$eval('#statsswitch, #statscorner', (els) => els.filter((e) => e.getBoundingClientRect().height < 40).map((e) => e.id));
+        assert.deepStrictEqual(small, [], 'the switch and the corner are big enough to tap at ' + width + ' px');
+        const tiny = await page.$$eval('#statsbox *', (els) => els.filter((e) => e.children.length === 0 && e.textContent.trim() && parseFloat(getComputedStyle(e).fontSize) < 13).map((e) => e.id || e.textContent.slice(0, 20)));
+        assert.deepStrictEqual(tiny, [], 'no text under 13 px at ' + width + ' px');
+      }
+      await page.setViewportSize(wasStatsSize);
+      await page.unroute('**/api/stats-overlay', statsRoute);
+    }
     // The renderer (D95) on the same page: classic mpv draws until the owner chooses the new one
     await page.waitForSelector('#renderline');
     assert.strictEqual(await page.textContent('#renderline'), 'Drawing now: Classic (mpv).');

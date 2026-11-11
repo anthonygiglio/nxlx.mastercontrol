@@ -329,6 +329,9 @@ class Api:
         from . import renderer as renderer_mod
         self.renderer = renderer_mod.Renderer(self, settings, os.path.dirname(getattr(settings, "path", "") or "") or ".",
                                               player_dir, log=lambda line: self.log(line))
+        # Show stats on output (D133): a debugging overlay the Owner turns on. Its state is this object's memory and nothing else.
+        from . import statsoverlay
+        self.stats = statsoverlay.StatsOverlay(self, log=lambda line: self.log(line))
 
     # --- helpers -------------------------------------------------------
     # The picture's level: one rule for everything that loads something (a clip by a cut, a dip or a blend, a list, a
@@ -2227,6 +2230,7 @@ class Api:
                 if key != self._ev_renderer:
                     self._ev_renderer = key
                     self.event("renderer", "The new renderer fell back to classic mpv: %s" % rep["why"])
+                    self.stats.stop_if_on("the renderer fell back to classic mpv")
             now = time.monotonic()
             if now - self._ev_slow >= 10:
                 self._ev_slow = now
@@ -2453,9 +2457,11 @@ class Api:
     # --- the screen's mode (D90) -------------------------------------------
     def _screen_call(self, fn, *args):
         try:
-            return fn(*args)
+            out = fn(*args)
         except screenmode.ScreenError as e:
             raise ApiError(e.status, e.message)
+        self.stats.stop_if_on("the screen's mode was changed and the player restarted")      # a new player has no overlay (D133)
+        return out
 
     def get_screen(self, body, device, client):
         return self.screen.state()
@@ -2668,8 +2674,29 @@ class Api:
     def _renderer_call(self, fn, *args):
         from .renderer import RendererError
         try:
-            return fn(*args)
+            out = fn(*args)
         except RendererError as e:
+            raise ApiError(e.status, e.message)
+        self.stats.stop_if_on("the renderer was changed and the player restarted")             # D133
+        return out
+
+    # --- show stats on output (D133, pvj/statsoverlay.py) --------------------------------------------------------
+    def get_stats_overlay(self, body, device, client):
+        return self.stats.state()
+
+    def set_stats_overlay(self, body, device, client):
+        """{"on": true | false, "corner": "tl" | "tr" | "bl" | "br", "minutes": 1 to 240}. THE ONLY PLACE THE OVERLAY IS TURNED ON:
+        not a setting, a preset, a scene, an import, the schedule, MIDI, OSC, DMX or the Room. Off by default, in memory only."""
+        if not isinstance(body, dict) or not isinstance(body.get("on"), bool) or not set(body) <= {"on", "corner", "minutes"}:
+            raise bad("send on (true or false) and, if you like, corner (tl, tr, bl or br) and minutes (1 to 240)")
+        from . import statsoverlay
+        who = (device or {}).get("name")
+        try:
+            if body["on"]:
+                return self.stats.turn_on(body.get("corner"), body.get("minutes"), who=who)
+            self.stats.turn_off(who=who)
+            return self.stats.state()
+        except statsoverlay.StatsError as e:
             raise ApiError(e.status, e.message)
 
     def get_renderer(self, body, device, client):
@@ -5680,6 +5707,8 @@ class Api:
             ("POST", "/api/screen/revert"): ("full", self.revert_screen),
             ("GET", "/api/renderer"): ("full", self.get_renderer),      # which program draws (D95): the Owner's
             ("POST", "/api/renderer"): ("full", self.set_renderer),     # never through the support tunnel (D84)
+            ("GET", "/api/stats-overlay"): ("full", self.get_stats_overlay),    # the Owner's debugging overlay on the output (D133):
+            ("POST", "/api/stats-overlay"): ("full", self.set_stats_overlay),   # not in policy.LEGACY_LIVE or GUEST, no OSC address
             ("POST", "/api/testtone"): ("live", self.test_tone),
             ("POST", "/api/media/info"): ("view", self.media_info),
             ("POST", "/api/media/import"): ("live", self.import_usb),

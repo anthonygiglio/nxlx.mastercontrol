@@ -559,6 +559,58 @@ class TextLayerTest(Base):
         self.r("show-text", "", 1)
         self.assertTrue(self.r.wait(lambda: changed() < 20), self.r.stderr())
 
+    def _region_changed(self, base, shot, x0, y0, x1, y1):
+        n = 0
+        for y in range(y0, y1):
+            for x in range(x0, x1):
+                i = (y * W + x) * 3
+                if not near(base[2][i:i + 3], shot[2][i:i + 3], 30):
+                    n += 1
+        return n
+
+    def test_osd_overlay_draws_text_in_its_corner_and_goes(self):
+        # The stats overlay (0.12.0): mpv's osd-overlay, ASS text, forwarded to the text layer. It must draw in the corner it
+        # was put in, leave the rest alone, be removed by "none", and share the text layer with show-text without taking
+        # its slot (a PIN is a show-text).
+        state = self.r("get_property", "pvj-render")
+        self.assertIs(state.get("osd-overlay"), True, "the capability flag the panel looks for")
+        self.r("set_property", "loop-file", "inf")
+        self.r.load(self.picture)
+        base = self.r.capture()
+        text = r"{\an7\fs90\bord6\1c&HFFFFFF&\3c&H000000&}STATS 60 fps"
+        self.r("osd-overlay", 61, "ass-events", text, 1280, 720)
+        corner = lambda shot: self._region_changed(base, shot, 0, 0, W // 2, H // 2)
+        other = lambda shot: self._region_changed(base, shot, W // 2, H // 2, W, H)
+        self.assertTrue(self.r.wait(lambda: corner(self.r.capture()) > 150), "no overlay text in the corner\n" + self.r.stderr())
+        self.assertLess(other(self.r.capture()), 20, "the overlay drew outside its corner")
+        self.assertIs(self.r("get_property", "pvj-render").get("text-layer"), True)
+        self.r("show-text", "", 1)                      # a show-text that ends does not take the overlay with it
+        time.sleep(0.5)
+        self.assertGreater(corner(self.r.capture()), 150)
+        self.r("osd-overlay", 61, "none", "")
+        self.assertTrue(self.r.wait(lambda: corner(self.r.capture()) < 20), "the overlay stayed after none\n" + self.r.stderr())
+        self.assertIs(self.r("get_property", "pvj-render").get("text-layer"), False, "the text layer is on for nothing")
+
+    def test_osd_overlay_refuses_bad_ids_formats_and_text(self):
+        r = self.r
+        good = r"{\fs40}x"
+        for cmd in (("osd-overlay", -1, "ass-events", good, 1280, 720), ("osd-overlay", 64, "ass-events", good, 1280, 720),
+                    ("osd-overlay", "1", "ass-events", good, 1280, 720), ("osd-overlay", 1.5, "ass-events", good),
+                    ("osd-overlay", 1, "text", good), ("osd-overlay", 1, "ass-events"), ("osd-overlay", 1, "ass-events", 7),
+                    ("osd-overlay", 1, "ass-events", "y" * 5000, 1280, 720), ("osd-overlay", 1, "ass-events", good, 0, 720),
+                    ("osd-overlay", 1, "ass-events", good, 1280, 99999), ("osd-overlay", 1, "ass-events", good, "a", "b"),
+                    ("osd-overlay", 1, "ass-events", good, 1280, 720, 5000), ("osd-overlay", 1, "ass-events", good, 1280, 720, 0, 3),
+                    ("osd-overlay", 1, "ass-events", good, 1280, 720, 0, False, True),
+                    ("osd-overlay",), ("osd-overlay", 1)):
+            with self.assertRaises(PlayerError, msg=str(cmd)) as e:
+                r(*cmd)
+            self.assertEqual(str(e.exception), "mpv: invalid parameter", cmd)
+        self.assertIs(r("get_property", "pvj-render").get("text-layer"), False, "a refused command left the text layer on")
+        r("osd-overlay", 63, "ass-events", good, 1280, 720)             # the top of the range, and a long one that fits
+        r("osd-overlay", 63, "none", "")
+        r("osd-overlay", 0, "ass-events", r"{\fs20}" + "z" * 3000, 1280, 720, 0, False)
+        r("osd-overlay", 0, "none", "")
+
     def test_the_text_layer_works_after_a_slow_start(self):
         # The text core plays nothing, so it gets its window (and its on-screen layer) only as it first goes idle; mpv
         # before 0.41 (CI's Debian 13 and Ubuntu jobs, the Pi) never acts on a force-window turned on later. Before the

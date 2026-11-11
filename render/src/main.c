@@ -1138,7 +1138,7 @@ int main(int argc, char **argv)
     while (!g_signal) {
         pthread_mutex_lock(&app.lock);
         int quit = app.quit, cap = app.capture_serial != app.capture_done_serial;
-        int text_on = app.overlays != 0 || now_s() < app.text_until;
+        int text_on = app.overlays != 0 || app.osd_ass != 0 || now_s() < app.text_until;
         // one look at the whole fade: the layer, the phase and its clock are never from two different crossfades
         int fi = app.front, phase = app.fade.phase, base = app.fade.base_starts;
         double asked = app.fade.asked, t0 = app.fade.t0, len = app.fade.seconds;

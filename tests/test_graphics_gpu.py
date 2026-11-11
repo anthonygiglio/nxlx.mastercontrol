@@ -113,7 +113,7 @@ class Base(unittest.TestCase):
 class StillTest(Base):
     def test_it_says_what_it_is(self):
         st = self.r("get_property", "pvj-render")
-        self.assertEqual(st["version"], "0.11.0")
+        self.assertEqual(st["version"], "0.12.0")
         self.assertEqual(st["graphics"], 8)
         self.assertGreaterEqual(st["graphics-side"], 1024)
         s = self.slots()

@@ -17,6 +17,8 @@ with SO_PEERCRED), and runs only these fixed commands, as argument lists, never 
   (fields checked against fixed patterns, a fixed template, nothing run; the only file outside /run this helper writes);
 * av_output: turn the AV (composite) output on or off in the Raspberry Pi's boot files (pvj/bootcfg.py), with backups; it
   takes effect at the next start of the node;
+* throttled (the stats overlay): `vcgencmd get_throttled`, a fixed argument list, read-only; the reply is the number the firmware
+  keeps (bit 0 under-voltage now, 1 capped now, 2 throttled now, 3 soft temperature limit now; bits 16 to 19 the same since boot);
 * update: start pvj-update-usb@V.service or pvj-update-inbox@V.service (fixed template units, V a checked version: pvj-update checks the signature,
   refuses older versions and rolls back by itself).
 
@@ -65,7 +67,7 @@ class SysService:
         self._power_requested = None
 
     def _run(self, argv, timeout=15):
-        assert isinstance(argv, list) and argv[0] in ("systemctl", "timedatectl", "journalctl")
+        assert isinstance(argv, list) and argv[0] in ("systemctl", "timedatectl", "journalctl", "vcgencmd")
         try:
             r = self.runner(argv, capture_output=True, text=True, timeout=timeout)
         except (OSError, subprocess.TimeoutExpired) as e:
@@ -191,6 +193,18 @@ class SysService:
                 "enabled": res["state"]["composite"], "norm": res["state"]["norm"]}
 
     boot_root = "/"
+
+    THROTTLED = re.compile(r"throttled=0x([0-9a-fA-F]{1,8})")
+
+    def throttled(self):
+        """{"ok", "bits"}: the firmware's throttling word, read by `vcgencmd get_throttled` (a fixed argument list, nothing from
+        the caller). Only a Raspberry Pi has it: elsewhere (no vcgencmd, or no firmware to ask) the answer is ok False and the
+        panel says the state is unknown. Read-only; the panel asks about every five seconds while the stats overlay is on."""
+        code, out = self._run(["vcgencmd", "get_throttled"], timeout=3)
+        m = self.THROTTLED.fullmatch(out.strip()) if code == 0 else None
+        if not m:
+            return {"ok": False, "error": "the throttling state is not available on this node"}
+        return {"ok": True, "bits": int(m.group(1), 16)}
 
     @staticmethod
     def _bounded(value, low, high, default):
@@ -361,6 +375,8 @@ class SysService:
             return self.fleet_announce(message)
         if cmd == "fleet_withdraw":
             return self.fleet_withdraw()
+        if cmd == "throttled":
+            return self.throttled()
         return {"ok": False, "error": "unknown command"}
 
 

@@ -48,6 +48,8 @@ REFUSED = {
     ("POST", "/api/screen/confirm"),
     # the renderer (D95): which program draws outlives the session and is not taken back by itself
     ("POST", "/api/renderer"),
+    # the stats overlay (D133): text drawn over the picture in the room
+    ("POST", "/api/stats-overlay"),
     # the output (D128): which socket the picture goes to, and the AV output's boot files; the Owner in the room sees the screen
     ("POST", "/api/output"), ("POST", "/api/output/av"),
     # the NDI discovery server on this box (D85): a listener on the network is the owner's, in the room

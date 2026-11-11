@@ -144,6 +144,56 @@ class Ipc:
             return self.translate.request(self.direct, command, wait)
         return self.direct(*command, wait=wait)
 
+    def batch(self, commands, wait=None):
+        """Several commands in one connection, one round trip: a list of (ok, data) in the same order, `ok` False with the
+        player's words as `data` for a command it refused (a property that is not there while nothing plays). The stats
+        overlay asks its dozen questions a second this way. Raises PlayerError only when the player cannot be reached at
+        all or answers nothing in time; an answer that did not arrive in time for the rest is (False, "no reply")."""
+        if not commands:
+            return []
+        ids = []
+        lines = []
+        for command in commands:
+            self._id += 1
+            ids.append(self._id)
+            lines.append(json.dumps({"command": list(command), "request_id": self._id}).encode() + b"\n")
+        wait = wait if wait is not None else (
+            max(self.timeout, START_WAIT) if time.monotonic() < getattr(self, "patient_until", 0.0) else self.timeout)
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(wait)
+        got = {}
+        try:
+            s.connect(self.path)
+            s.sendall(b"".join(lines))
+            buf = b""
+            deadline = time.monotonic() + wait
+            while len(got) < len(ids) and time.monotonic() < deadline:
+                try:
+                    chunk = s.recv(65536)
+                except socket.timeout:
+                    break
+                if not chunk:
+                    break
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    try:
+                        msg = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(msg, dict) and msg.get("request_id") in ids:
+                        ok = msg.get("error") == "success"
+                        got[msg["request_id"]] = (ok, msg.get("data") if ok else msg.get("error"))
+        except (ConnectionRefusedError, FileNotFoundError):
+            raise PlayerError("player is not running")       # these words are Player.NOT_RUNNING
+        except OSError as e:
+            raise PlayerError("ipc error: %s" % e)
+        finally:
+            s.close()
+        if not got:
+            raise PlayerError("no reply from mpv")
+        return [got.get(i, (False, "no reply")) for i in ids]
+
     def direct(self, *command, wait=None):
         """One command and its answer, as the player says it."""
         self._id += 1
@@ -341,7 +391,11 @@ class Player:
                 # (--load-unsafe-playlists=no alone did not stop a fake .mp4 that was really a playlist: tested on a Pi 4.
                 # --access-references=no does: such a file is no longer followed to other files or URLs.)
                 "--load-unsafe-playlists=no", "--access-references=no", "--sub-auto=no", "--audio-file-auto=no", "--ytdl=no",
-                "--load-scripts=no", "--load-auto-profiles=no"]
+                "--load-scripts=no", "--load-auto-profiles=no",
+                # --load-scripts=no does not stop mpv's built-in stats script (its own option does): it would cost a Lua VM
+                # on every node and leave a key binding that draws mpv's own stats over the show. The panel's own stats
+                # overlay (pvj/statsoverlay.py) draws with osd-overlay instead.
+                "--load-stats-overlay=no"]
         if not windowed:
             args.append("--fullscreen")
         if audio_device:
