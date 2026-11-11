@@ -8306,10 +8306,12 @@
     var body = h('div', { id: 'clusterbody' }, h('div', { class: 'hint', text: 'Looking...' }));
     var line = h('div', { class: 'msg inmsg', id: 'clustermsg', role: 'status' });
     var card = h('div', { class: 'card', id: 'clustercard' }, h('h2', { text: 'Nodes that open each other' }), line, body);
+    // The nodes on the network are asked for when the card opens and after a change of trust only (asking may start a
+    // scan, D127), not after every press on the card (review of PR 278)
     var seenNodes = [];
-    function look() {
+    function look(nodesToo) {
       api('GET', '/api/fleet').then(function (r) {
-        if (!r.ok) return r;
+        if (!r.ok || !nodesToo) return r;
         return api('GET', '/api/nodes').then(function (n) { seenNodes = n.ok && Array.isArray(n.data.nodes) ? n.data.nodes : []; return r; });
       }).then(function (r) { if (card.isConnected) draw(r); });
     }
@@ -8375,14 +8377,14 @@
           h('div', { class: 'nowwords' }, h('div', { class: 'lname', text: name }), h('span', { class: 'navstate', text: n.how })),
           h('div', { class: 'row' }, acceptedIds[n.id] ? h('button', { class: 'btn small', text: 'Stop trusting here', 'aria-label': 'Stop trusting ' + name + ' here', onclick: function (e) {
             confirmRow('Stop trusting ' + name + ' on this node? Devices that came here from it are signed out here. Other nodes are not told.', 'Stop trusting', 'Keep', function () {
-              act('POST', '/api/fleet/accepted/remove', { id: n.id }, function () { sayAt(line, name + ' is no longer trusted here.'); look(); });
+              act('POST', '/api/fleet/accepted/remove', { id: n.id }, function () { sayAt(line, name + ' is no longer trusted here.'); look(true); });
             }, e.currentTarget);
           } }) : null, h('button', { class: 'btn small', text: 'Remove from this cluster', 'aria-label': 'Remove ' + name + ' from this cluster', onclick: function (e) {
             confirmRow(name + ' will be refused by every node in this cluster, and every device it carried will be signed out everywhere.', 'Remove', 'Keep', function () {
               act('POST', '/api/fleet/remove', { id: n.id }, function (res) {
                 var k = res && typeof res.signed_out === 'number' ? res.signed_out : 0;
                 sayAt(line, name + ' was removed from this cluster. ' + (k === 1 ? '1 device it carried was' : k + ' devices it carried were') + ' signed out here.');
-                look();
+                look(true);
               });
             }, e.currentTarget);
           } }))));
@@ -8416,7 +8418,7 @@
             });
             typed.addEventListener('input', function () { trust.disabled = !carry || !typed.value.trim(); });
             trust.addEventListener('click', function () {
-              act('POST', '/api/fleet/accepted', { id: n.id, carry: carry, typed: typed.value }, function () { sayAt(line, name + ' is trusted here now.'); look(); });
+              act('POST', '/api/fleet/accepted', { id: n.id, carry: carry, typed: typed.value }, function () { sayAt(line, name + ' is trusted here now.'); look(true); });
             });
             slot.appendChild(h('div', { class: 'list sp', id: 'clustercandask-' + n.id },
               h('p', { class: 'hint', text: name + ' shows this fingerprint: ' }, h('span', { class: 'mono', id: 'clustercandprint-' + n.id, text: String(res.data.fingerprint || '') })),
@@ -8465,7 +8467,7 @@
         } })));
       });
     }
-    setTimeout(look, 0);
+    setTimeout(function () { look(true); }, 0);
     return card;
   }
   // ---- The node sheet (2026-11-09) -------------------------------------------------------------------------------
