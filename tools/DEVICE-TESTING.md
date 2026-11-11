@@ -1437,3 +1437,18 @@ Run 2026-11-09 on node-01 with a copy of the clips in `/tmp` (removed after), th
 | LG4 | PASS | locally on llvmpipe, 3 runs: 0 blank draws over 3 passes for the bright clip by `loop-file` and by a list; the clip with 0.2 s of black at its end: at least 1 |
 
 Local run with the same Lumia copy on the headless renderer (mpv 0.41): the counter saw 1 or 2 blank draws in each 45 s (two passes), and a log of the draws showed the blank draw is the one for the last frame, 50 ms before the seek. On node-01 a seek back to the start takes 150 to 300 ms from the event to the first new picture with software decoding at 1080p (a scratch headless renderer built in `/tmp` on the node, not the installed one).
+
+### The Strobe (hold to strobe): not yet run on a node, nor with a person at a button
+
+Do these on a test node with nobody in the room who is sensitive to flashing light, with the room dark and a projector or screen that is not a show's. Keep Blackout in reach.
+
+| Row | Do | Good | Bad |
+|---|---|---|---|
+| ST1 | A Pi 4 on the New renderer, a 1080p clip playing. `POST /api/strobe {"arm": true}`, then hold: press and hold the panel's button (or `POST /api/strobe/hold` with `holder` and renew every 200 ms) while the GPU guard and `GET /api/strobe` are watched | `started_ms` is a few milliseconds, the picture flashes at the rate set, no frames are dropped (the guard says ok), `path` is `chain`. Write down the numbers: the filter was never measured | A build on the hold, dropped frames, `path` is `effect` |
+| ST2 | Hold, then close the browser tab (or switch the tablet's Wi-Fi off) | The flashing stops within about half a second | It goes on |
+| ST3 | Hold a mapped pad on a controller, then pull the USB cable | It stops within about half a second | It goes on, or for 10 seconds |
+| ST4 | Send OSC `/pvj/strobe 1` and nothing after | It stops by itself after about 10 seconds | It goes on |
+| ST5 | Set the rate to the top, hold, and count flashes against a stopwatch or a phone's slow-motion video for 10 seconds | 3 a second at most (about 30 in 10 seconds) | More |
+| ST6 | With "Allow faster than the flash limit" off, send `/pvj/strobe/rate 12`, and a mapped knob to the top | The rate is 3 a second | Above 3 |
+| ST7 | An effect on (fx-wash), hold the strobe, let go | The wash is there before, under the flash (the strobe is after it in the chain), and after | The wash is gone |
+| ST8 | A node on classic mpv (or with both chain slots of source 1 taken): hold, let go | The strobe is the effect while held and the one before comes back; the delay at the start is noted (a compile) | The old effect does not come back |

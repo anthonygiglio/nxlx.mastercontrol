@@ -301,6 +301,8 @@ class Api:
         self.effects = effects_mod.Effects(self)                    # ISF filters over what plays (see effects.py)
         from . import fxchain
         self.chains = fxchain.Chains(self)                          # chains of effects on the New renderer (D106 step b)
+        from . import strobe as strobe_mod
+        self.strobe = strobe_mod.Strobe(self)                       # the hold-to-strobe flash (see strobe.py); its watcher starts on demand
         from . import health as health_mod
         self.health = health_mod.Health(self, getattr(player, "rundir", paths.WEB_DIR))     # checks start in server.build
         from . import sync as sync_mod
@@ -5845,6 +5847,13 @@ class Api:
             # chains of effects on any source (D106 step b): the Owner's and an Operator's, as the sources are (D101)
             ("GET", "/api/effects/chain"): ("live", self.chains.api_get),
             ("POST", "/api/effects/chain"): ("live", self.chains.api_post),
+            # the Strobe (strobe.py): a flash held down that stops when let go. Not a Guest's, ever; the hold routes are also a
+            # controller's (MIDI, OSC), on purpose, and are refused to remote support (a helper cannot see the room).
+            ("GET", "/api/strobe"): ("live", self.strobe.api_get),
+            ("POST", "/api/strobe"): ("live", self.strobe.api_set),
+            ("POST", "/api/strobe/hold"): ("live", self.strobe.api_hold),
+            ("POST", "/api/strobe/renew"): ("live", self.strobe.api_renew),
+            ("POST", "/api/strobe/release"): ("live", self.strobe.api_release),
             ("GET", "/api/projectors"): ("view", self.get_projectors),
             ("POST", "/api/projectors"): ("full", self.set_projectors),
             ("POST", "/api/projector"): ("live", self.projector_action),

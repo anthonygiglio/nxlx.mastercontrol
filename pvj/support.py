@@ -86,6 +86,11 @@ REMOTE_DENY = {
     ("POST", "/api/renderer"): "which program draws the screen is chosen by the owner, who sees the screen in the room",
     # the stats overlay (D133): text drawn over the room's screen. A helper cannot see the room, and a show must never get it from afar.
     ("POST", "/api/stats-overlay"): "text drawn over the picture in the room is turned on by the owner, who sees the screen",
+    # the strobe (strobe.py): a flash in the room that stops when the holder lets go or the leases run out. A helper cannot see the
+    # room and the tunnel's delays are no dead-man; the people in the room hold it.
+    ("POST", "/api/strobe/hold"): "a strobe flashes the room, and a helper cannot see the room or let go in time",
+    ("POST", "/api/strobe/renew"): "a strobe flashes the room, and a helper cannot see the room or let go in time",
+    ("POST", "/api/strobe"): "the strobe's rate and colour are set by someone who sees the room",
     # the output (D128): which socket the picture goes to, and the AV output's boot files. A wrong choice leaves the room dark
     # and a helper cannot see the room; the Owner in the room chooses it. A helper may read the list.
     ("POST", "/api/output"): "which output the picture goes to is chosen by the owner, who sees the screen in the room",

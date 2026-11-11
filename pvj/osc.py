@@ -539,6 +539,40 @@ def _fade(path, args):
     return path, {"seconds": 2.0 if v == 1 else v}
 
 
+STROBE_PATHS = ("/api/strobe/hold", "/api/strobe/release")
+
+
+def _strobe(a, args):
+    """The Strobe (pvj/strobe.py). /pvj/strobe is HELD: a button's 1 is a press (the node gives the sender a lease), its 0 is the
+    release, and a 1 sent again renews the lease. A message with no argument does nothing (a flash is never started by an
+    address alone). The lease of an OSC sender runs out by itself after strobe.CONTROLLER_TTL seconds of silence, however long
+    the button stays down; the sender's address is the holder (set by the receiver, not by the message). The rest set the look:
+    /pvj/strobe/rate (flashes a second; the node keeps it to 3, or 12 with its opt-in), /pvj/strobe/colour (a hex colour, or red,
+    green and blue from 0 to 1), /pvj/strobe/flash (milliseconds) and /pvj/strobe/way (colour, black or add)."""
+    v = args[0] if args else None
+    number = v if _number(v) else None
+    if a == "/pvj/strobe":
+        if v is None:
+            return None
+        flag = v if isinstance(v, bool) else ((v > 0.5) if number is not None else None)
+        if flag is None:
+            return None
+        return ("/api/strobe/hold" if flag else "/api/strobe/release"), {}
+    if a == "/pvj/strobe/rate":
+        return ("/api/strobe", {"rate": number}) if number is not None else None
+    if a in ("/pvj/strobe/colour", "/pvj/strobe/color"):
+        if isinstance(v, str):
+            return "/api/strobe", {"colour": v[:16]}
+        if len(args) in (3, 4) and all(_number(x) for x in args):
+            return "/api/strobe", {"colour": list(args)}
+        return None
+    if a == "/pvj/strobe/flash":
+        return ("/api/strobe", {"flash": number}) if number is not None else None
+    if a == "/pvj/strobe/way":
+        return ("/api/strobe", {"way": v[:16]}) if isinstance(v, str) else None
+    return None
+
+
 def _reach(a, args):
     """(path, body) for one of the addresses added with D75, None for one of them with an argument that means
     nothing, _NOT_MINE for any other address. Numbers are in real units and go to the API as they are: no curve
@@ -570,6 +604,8 @@ def _reach(a, args):
         if not args:
             return actions.press("effect_toggle")
         return ("/api/effects", {"on": flag}) if flag is not None else None
+    if a.startswith("/pvj/strobe"):
+        return _strobe(a, args)
     if a == "/pvj/overlay":
         if not args:
             return actions.press("overlay")
@@ -853,6 +889,8 @@ class OscServer:
             if mapped is None:
                 self.watch.note(source_ip, False, DID_NOTHING, seen)
                 continue
+            if mapped[0] in STROBE_PATHS:
+                mapped = (mapped[0], dict(mapped[1], holder=plain))        # the sender is the holder; a message cannot name another
             status, payload = self.api.handle("POST", mapped[0], mapped[1], OSC_DEVICE, source_ip)
             if status == 200:
                 done += 1
@@ -902,6 +940,12 @@ class OscServer:
         if self._thread:
             self._thread.join(timeout=2)
             self._thread = None
+        strobe = getattr(self.api, "strobe", None)
+        if strobe is not None:
+            try:
+                strobe.drop("osc")                  # the listener is gone: nobody is holding a strobe through it
+            except Exception:
+                pass
 
     @property
     def listening(self):

@@ -1208,6 +1208,7 @@ def main(argv=None):
         if api.ndi:
             api.ndi.stop()
         api.dmx.stop()
+        api.strobe.stop()
         api.midi.stop()
         api.room.stop()
         api.projectors.stop(final=True)
