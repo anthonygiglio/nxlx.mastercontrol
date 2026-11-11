@@ -5088,7 +5088,7 @@ function startServer(env) {          // env: more for the harness's environment 
         await page.setViewportSize({ width: w, height: hgt });
         await page.waitForTimeout(300);
         const lay = await page.evaluate(() => { const b = document.getElementById('strobehold').getBoundingClientRect(); return { wide: document.documentElement.scrollWidth - innerWidth, h: Math.round(b.height), shown: b.width > 0 }; });
-        assert(lay.wide === 0 && lay.shown && lay.h >= 56, 'the hold button is a big target and fits at ' + w + ': ' + JSON.stringify(lay));
+        assert(lay.wide === 0 && lay.shown && lay.h >= 80, 'the hold button is a big target and fits at ' + w + ': ' + JSON.stringify(lay));
       }
       await page.setViewportSize({ width: 390, height: 844 });
       await page.reload();                      // (the phone emulation keeps a zoomed-out scale after 1440 and back)
