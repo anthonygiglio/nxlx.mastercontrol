@@ -1041,6 +1041,8 @@ def build(env=None, player=None):
     # The player outlives this program: whatever the stats overlay drew before a restart of the panel is taken off, however
     # long the player takes to come up (D133). It is never on at a start.
     threading.Thread(target=api.stats.reset_player, name="stats-overlay-reset", daemon=True).start()
+    # and a strobe that was lit when the panel went down is taken off the same way (the player keeps drawing it with nobody holding it)
+    threading.Thread(target=api.strobe.reset_player, name="strobe-reset", daemon=True).start()
     # The NDI helper's client. NDI is opt-in per box (D62): PVJ_NDI_DIR is set only by the drop-in that root's
     # `pvj-ndi-runtime install` writes for the panel's unit (pvj/ndisetup.py). Without it this box has no helper, the
     # socket is never tried, and the page says how to set NDI up. With it, the helper is idle until the module is on.

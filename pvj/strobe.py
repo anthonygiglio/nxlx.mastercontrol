@@ -46,6 +46,7 @@ import time
 
 from . import policy
 from .api import ApiError
+from .player import PlayerError
 
 from .effects import HOLD_ONLY
 
@@ -115,6 +116,7 @@ class Strobe:
         self._retry_at = 0.0
         self.error = None
         self._thread = None
+        self._said = {}
         self._stopped = False
         self.started_ms = None                  # how long the last start took, for the state (a number to look at, not a promise)
 
@@ -141,8 +143,27 @@ class Strobe:
         speed = max(1.0, rate / CAP) if rate > CAP else 1.0
         if not self.faster():
             rate, speed = min(rate, CAP), 1.0
-        return {"rate": round(min(rate, CAP), 3), "speed": round(speed, 3), "flash": self.cfg["flash"],
+        # The filter's TIME is counted from the clip's frames (SHADERS.md), so the Mix screen's playback Speed above 1 makes it
+        # run that much faster, and so would the flashes: the rate sent is divided by it (the filter's input does not go
+        # below 0.5, so at a playback speed of 6 or more the floor is the limit; the Mix screen stops at 4).
+        sent = min(rate, CAP) / self._playback()
+        return {"rate": round(sent, 3), "speed": round(speed, 3), "flash": self.cfg["flash"],
                 "tint": self.cfg["colour"], "way": WAYS.index(self.cfg["way"])}
+
+    def _playback(self):
+        """The Mix screen's playback Speed when it is above 1 (what the API last set), else 1."""
+        try:
+            v = float((getattr(self.api, "levels", None) or {}).get("speed", 1.0))
+        except (TypeError, ValueError):
+            return 1.0
+        return v if v == v and 1.0 < v < 1000.0 else 1.0
+
+    def _say(self, key, text):
+        """A log line at most once in 10 seconds for each kind: a stop that fails is tried every tick."""
+        now = self._clock()
+        if now - self._said.get(key, -1e9) >= 10.0:
+            self._said[key] = now
+            self.log(text)
 
     @staticmethod
     def _timing(plan):
@@ -185,7 +206,7 @@ class Strobe:
         if body.get("arm") is True:
             self._arm()
         elif body.get("arm") is False:
-            self._unload(force=True)
+            self._unload()                  # not while it is lit: a hold in progress keeps its copy (letting go is the way to stop it)
         self.settle()
         self._ensure_thread()
         return self.state()
@@ -442,17 +463,29 @@ class Strobe:
     def _stop(self, now):
         """End the lit stretch. This must not fail quietly: if the gentle way fails, the loaded copy or the effect is taken off."""
         done = False
+        if self.route == "chain":
+            try:
+                native = bool(self.api.player.native_chains())
+            except Exception:
+                native = None                       # the player did not answer: not known, so not "done"
+            if self.slot is None or native is False:
+                # no copy of ours to stop (it was taken off, or the renderer fell back to classic: there is no chain)
+                done = True
+                with self._lock:
+                    self.slot, self.route = None, None
         try:
-            if self.route == "chain":
+            if done:
+                pass
+            elif self.route == "chain":
                 self.api.chains.values({"source": SOURCE, "slot": self.slot, "controls": {"amount": 0.0}})
                 done = True
             else:
                 self._stop_effect()
                 done = True
         except ApiError as e:
-            self.log("pvj-web: strobe: stopping gently failed (%s); taking it off" % e.message)
+            self._say("stop", "pvj-web: strobe: stopping gently failed (%s); taking it off" % e.message)
         except Exception as e:
-            self.log("pvj-web: strobe: stopping failed (%s); taking it off" % e)
+            self._say("stop", "pvj-web: strobe: stopping failed (%s); taking it off" % e)
         if not done:
             try:
                 if self.route == "chain":
@@ -463,7 +496,7 @@ class Strobe:
                     self.api.effects.off()
                 done = True
             except Exception as e:
-                self.log("pvj-web: strobe: could not stop it (%s); will try again" % e)
+                self._say("stop2", "pvj-web: strobe: could not stop it (%s); will try again" % e)
         with self._lock:
             if done:
                 self.lit, self._off_at, self._idle_since = False, now, self._clock()
@@ -531,6 +564,63 @@ class Strobe:
             pass
         if worker is not None and worker is not threading.current_thread():
             worker.join(timeout)
+
+    # ---- a restart of pvj-web while the strobe is lit --------------------------------------------------------------
+    NATIVE_MARK = ("//!INPUT float rate", "//!INPUT color tint", "//!INPUT float flash", "//!INPUT long way")
+    CLASSIC_MARK = ("const float rate", "const vec4 tint", "const float flash", "const int way")
+
+    @staticmethod
+    def _is_strobe_file(path, marks):
+        try:
+            with open(path, "r", errors="replace") as f:
+                text = f.read(20000)
+        except OSError:
+            return False
+        return all(m in text for m in marks)
+
+    def _clear_leftovers(self):
+        """The player outlives this program. If it was restarted while the strobe was lit, the player still draws it with nobody
+        holding it: take off any slot of source 1 that runs the strobe's program (the New renderer), or the strobe's text from
+        mpv's shader list (classic). Raises PlayerError while the player does not answer."""
+        ipc = self.api.player.ipc
+        try:
+            rows = ipc.request("get_property", "pvj-shaders")
+        except PlayerError as e:
+            if not str(e).startswith("mpv: "):
+                raise
+            rows = None
+        if isinstance(rows, list):
+            for r in rows:
+                if (isinstance(r, dict) and r.get("source") == SOURCE and r.get("slot") in SLOTS and r.get("state") not in (None, "off")
+                        and isinstance(r.get("path"), str) and self._is_strobe_file(r["path"], self.NATIVE_MARK)):
+                    ipc.request("pvj-shader", "clear", SOURCE, r["slot"])
+                    self.log("pvj-web: strobe: a strobe left running in slot %s by an earlier run was taken off" % r["slot"])
+            return
+        listed = ipc.request("get_property", "glsl-shaders")
+        if isinstance(listed, list):
+            keep = [p for p in listed if not (isinstance(p, str) and self._is_strobe_file(p, self.CLASSIC_MARK))]
+            if len(keep) != len(listed):
+                ipc.request("set_property", "glsl-shaders", keep)
+                self.log("pvj-web: strobe: a strobe left running by an earlier run was taken off")
+
+    def reset_player(self, tries=None, delay=1.0, sleep=time.sleep, cap=30.0):
+        """At every start of pvj-web (server.build, on a thread): take off a strobe the player is still drawing, as
+        statsoverlay.reset_player does for its overlay: again with a back-off until the player answers; `tries` bounds it
+        for a test. It ends at once if the strobe has been used since. True when done."""
+        n = 0
+        while tries is None or n < tries:
+            n += 1
+            with self._lock:
+                if self._stopped or self.holders or self.lit or self.slot is not None:
+                    return True
+            try:
+                with self._apply:
+                    self._clear_leftovers()
+                return True
+            except Exception:
+                pass
+            sleep(min(delay * 2 ** (n - 1), cap))
+        return False
 
     # ---- the API -------------------------------------------------------------------------------------------------
     def state(self):

@@ -1124,6 +1124,10 @@ class MidiMapper:
             # safe: its hold is forgotten above, so its next release asks for nothing.)
             for key in [k for k in self._pressed if (source is None or k[1] == source) and k[2] == "note"]:
                 del self._pressed[key]
+            # a pad that sends a controller number and is mapped to the strobe is a button too: its release may be lost
+            gates = {e.get("id") or e["action"] for e in self.entries if ACTIONS.get(e.get("action"), ("",))[0] == "gate"}
+            for key in [k for k in self._pressed if (source is None or k[1] == source) and k[2] == "cc" and k[0] in gates]:
+                del self._pressed[key]
 
     def plan(self, source, msg, at=None):
         """What a message should do: a list of (path, body) calls. Nothing is called here, so a caller can release its
@@ -1777,7 +1781,7 @@ class MidiHub:
             self.log("midi: " + text)
 
     def _do(self, path, body):
-        if not self.calls.allow("all"):
+        if path != STROBE_RELEASE and not self.calls.allow("all"):      # letting go of the strobe is never dropped by the limiter
             self._note("too many commands a second; some were dropped")
             return False
         if path == "/api/vibes" or path.startswith(("/api/shaders/", "/api/effects")):   # only with the Shaders and Vibes module on; said once
@@ -2144,6 +2148,11 @@ class MidiHub:
         elif path == STROBE_RELEASE:
             with self._lock:
                 self._strobe.pop(holder, None)
+            if not done:                    # the release did not reach the node (it was refused or failed): ask once more, directly
+                try:
+                    self.api.handle("POST", STROBE_RELEASE, {"holder": holder}, MIDI_DEVICE, "midi")
+                except Exception as e:
+                    self.log("midi: could not let go of the strobe: %r" % (e,))
 
     def _strobe_beat(self, stop):
         """While a strobe control is down: renew its lease every STROBE_BEAT, as long as a device of that controller is
@@ -2161,9 +2170,16 @@ class MidiHub:
                 if self._stop.is_set() or source not in alive:
                     self._strobe_drop(holder=holder)
                     continue
-                if not self._do(STROBE_RENEW, {"holder": holder}):
+                # directly, not through the hub's limiter: a flood of fader moves must not starve the renewals of a held pad
+                try:
+                    status, _ = self.api.handle("POST", STROBE_RENEW, {"holder": holder}, MIDI_DEVICE, "midi")
+                except Exception:
+                    status = 500
+                if status == 409:               # the hold ended (the longest hold, or it lapsed): nothing to let go of
                     with self._lock:
                         self._strobe.pop(holder, None)
+                elif status != 200:             # anything else: let go rather than leave a lease to run out
+                    self._strobe_drop(holder=holder)
 
     def _strobe_drop(self, source=None, holder=None):
         """Let go of the strobe controls of one controller (or of all): a release may have been lost."""

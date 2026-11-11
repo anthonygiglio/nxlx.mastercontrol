@@ -25,6 +25,7 @@ import unittest
 import tests        # noqa: F401  (the run's own temp folder, ranked locks)
 from pvj import actions, effects as E, midi, osc, policy, shaders as S, strobe as ST
 from pvj.api import ApiError
+from pvj.player import PlayerError
 from tests.test_effects import Base as FxBase
 from tests.test_osc import msg
 
@@ -123,6 +124,7 @@ class FakePlayer:
 class Api:
     def __init__(self, native=True):
         self.player, self.effects, self.chains = FakePlayer(native), Effects(), Chains()
+        self.levels = {"volume": 100.0, "speed": 1.0}
         self.lines = []
 
     def log(self, line):
@@ -728,6 +730,13 @@ class MidiMapperTest(unittest.TestCase):
         self.assertEqual([c[0] for c in calls], ["/api/strobe/hold", "/api/strobe/release"])
         self.assertEqual(calls[0][1], {"holder": "Mini:cc20"})
 
+    def test_lost_messages_clear_a_cc_pad_too_so_its_next_press_is_a_press(self):
+        m, calls = self.mapper("cc", 20)
+        m.message("Mini", ("cc", 0, 20, 127))
+        m.forget_held("Mini", pressed=True)                     # messages were lost: the release may be among them
+        m.message("Mini", ("cc", 0, 20, 127))
+        self.assertEqual([c[0] for c in calls], ["/api/strobe/hold", "/api/strobe/hold"])
+
     def test_it_is_a_note_or_a_cc_never_a_program_change_and_never_a_level(self):
         with self.assertRaises(midi.MidiError):
             midi.validate_entry({"kind": "program", "number": 3, "action": "strobe_hold"})
@@ -830,6 +839,30 @@ class MidiHubTest(RouteBase):
         self.hub.apply()
         self.assertIsNone(self.fx.on)
         self.assertEqual(self.strobe.state()["held"], 0)
+
+    def test_a_release_is_not_dropped_by_the_hubs_limiter(self):
+        self.send([0x90, 60, 100])
+        self.wait(lambda: self.fx.on is not None)
+        self.hub.calls.allow = lambda key: False               # a flood of fader moves has used the 50 a second up
+        self.send([0x80, 60, 0])
+        self.wait(lambda: self.fx.on is None, timeout=2)
+        self.assertEqual(self.strobe.state()["held"], 0)
+
+    def test_a_release_that_failed_is_asked_again_directly(self):
+        self.send([0x90, 60, 100])
+        self.wait(lambda: self.fx.on is not None)
+        real = self.hub._do
+        self.hub._do = lambda path, body: False if path == midi.STROBE_RELEASE else real(path, body)
+        self.send([0x80, 60, 0])
+        self.wait(lambda: self.fx.on is None, timeout=2)
+
+    def test_a_renewal_the_node_cannot_take_lets_go_and_one_it_refuses_as_ended_does_not(self):
+        self.send([0x90, 60, 100])
+        self.wait(lambda: self.fx.on is not None)
+        orig = self.api.handle
+        self.api.handle = lambda m, p, b, d, c: (503, {"error": "x"}) if p == midi.STROBE_RENEW else orig(m, p, b, d, c)
+        self.wait(lambda: self.fx.on is None, timeout=2)
+        self.assertEqual(self.hub._strobe, {})
 
     def test_the_rate_knob_reaches_the_node_and_is_kept_to_its_cap(self):
         self.send([0xB0, 21, 127])
@@ -1008,6 +1041,17 @@ class NativeTest(unittest.TestCase):
         self.assertEqual(self.api.chains.on[(1, 3)]["values"]["way"], 1)
         self.strobe.release({"id": "ab12cd34", "role": "live"}, {"all": True})
 
+    def test_a_restart_of_the_panel_with_the_slot_at_amount_1_ends_with_no_flashing(self):
+        from pvj import fxchain
+        self.strobe.hold({"id": "ab12cd34", "role": "live"}, {"holder": "t"})
+        self.assertEqual(self.slot(3)["state"], "on")
+        self.api.chains = fxchain.Chains(self.api)                # the panel restarted: empty records, no holders, slot None
+        fresh = self.api.strobe = ST.Strobe(self.api, clock=self.clock, thread=False, log=lambda *_: None)
+        self.addCleanup(fresh.stop)
+        self.assertTrue(fresh.reset_player(tries=1))
+        self.assertEqual(self.slot(3)["state"], "off")
+        self.assertEqual(self.slot(2)["state"], "off")
+
     def test_a_stop_of_source_one_takes_the_loaded_copy_off_and_the_next_hold_loads_it_again(self):
         self.strobe.set({"arm": True})
         self.player.clear()                              # source 1's Stop takes its chain off
@@ -1054,6 +1098,152 @@ class ShaderTimingTest(NativeBase):
         count, samples = self.edges(4.0)
         self.assertLessEqual(count, 14, (count, samples))                                # 3 a second for 4 seconds, with room for the sampling
         self.assertGreaterEqual(count, 6, (count, samples))
+
+
+# ---- the review of PR 281 -------------------------------------------------------------------------------------------------
+class PlaybackSpeedTest(unittest.TestCase):
+    def test_the_rate_sent_is_divided_by_the_mix_screens_speed_on_both_paths(self):
+        for native in (True, False):
+            for speed, want in ((1.0, 3.0), (2.0, 1.5), (4.0, 0.75), (0.5, 3.0)):
+                with self.subTest(native=native, speed=speed):
+                    api, clock, s = rig(native)
+                    api.levels["speed"] = speed
+                    s.set({"rate": 3})
+                    s.hold(DEVICE, {"holder": "t"})
+                    sent = api.chains.rows[(1, 3)]["values"]["rate"] if native else api.effects.on["values"]["rate"]
+                    self.assertEqual(sent, want)
+                    self.assertLessEqual(sent * max(speed, 1.0), ST.CAP + 1e-9)       # flashes a second in the end: never above 3
+
+    def test_a_change_of_speed_while_it_is_held_is_a_change_of_timing(self):
+        api, clock, s = rig()
+        s.set({"rate": 3})
+        s.hold(DEVICE, {"holder": "t"})
+        api.levels["speed"] = 4.0
+        clock.t += 0.2
+        s.hold(DEVICE, {"holder": "t"}, renew=True)
+        self.assertFalse(lit(api))                              # the old timing ended at once ...
+        clock.t += ST.GAP + 0.01
+        s.hold(DEVICE, {"holder": "t"}, renew=True)
+        s.tick()
+        self.assertTrue(lit(api))                               # ... and the new one starts a gap later
+        self.assertEqual(api.chains.rows[(1, 3)]["values"]["rate"], 0.75)
+
+
+class FallbackAndArmTest(unittest.TestCase):
+    def test_the_renderer_falling_back_mid_hold_does_not_wedge_it_or_fill_the_log(self):
+        api, clock, s = rig()
+        s.hold(DEVICE, {"holder": "t"})
+        api.player.native = False                               # pvj-render fell back to classic: there is no chain
+        s.release(DEVICE, {"holder": "t"})
+        self.assertFalse(s.lit)
+        self.assertEqual((s.route, s.slot), (None, None))
+        before = len(api.lines)
+        for _ in range(100):
+            clock.t += ST.TICK
+            s.tick()
+        self.assertEqual(len(api.lines), before)
+
+    def test_a_stop_that_keeps_failing_says_so_once_in_ten_seconds(self):
+        api, clock, s = rig()
+        s.hold(DEVICE, {"holder": "t"})
+        api.chains.fail_values = 10 ** 6
+        api.chains.fail_off = True
+        s.release(DEVICE, {"holder": "t"})
+        for _ in range(150):
+            clock.t += ST.TICK
+            s.tick()
+        self.assertLessEqual(len(api.lines), 6, api.lines)     # 7.5 seconds of ticks: a line or two for each of two kinds
+        self.assertTrue(s.lit)
+
+    def test_a_player_that_does_not_answer_is_not_taken_for_a_fallback(self):
+        api, clock, s = rig()
+        s.hold(DEVICE, {"holder": "t"})
+        def boom():
+            raise RuntimeError("no answer")
+        api.player.native_chains = boom
+        api.chains.fail_values = 10 ** 6
+        api.chains.fail_off = True
+        s.release(DEVICE, {"holder": "t"})
+        self.assertTrue(s.lit)                                  # still known to be lit: tried again
+
+    def test_arm_false_while_it_is_lit_changes_nothing_and_a_release_clears_only_its_own_slot(self):
+        api, clock, s = rig()
+        api.chains.rows[(1, 2)] = {"id": "fx-grade.fs", "amount": 1.0, "speed": 1.0, "values": {}}
+        s.hold(DEVICE, {"holder": "t"})
+        out = s.set({"arm": False})
+        self.assertTrue(out["armed"] and out["on"])
+        s.release(DEVICE, {"holder": "t"})
+        self.assertFalse(lit_strobe(api))
+        self.assertEqual(api.chains.rows[(1, 2)]["id"], "fx-grade.fs")
+        self.assertNotIn(("off", None), api.chains.calls)
+        s.set({"arm": False})                                   # when it is not lit, it is taken off
+        self.assertNotIn((1, 3), api.chains.rows)
+        self.assertIn((1, 2), api.chains.rows)
+
+
+def lit_strobe(api):
+    return any(r["amount"] > 0 for r in api.chains.rows.values() if r["id"] == ST.EFFECT)
+
+
+class RestartTest(unittest.TestCase):
+    def test_the_leftover_is_taken_off_with_a_back_off_until_the_player_answers(self):
+        calls, waits = [], []
+
+        class Ipc:
+            n = 0
+
+            def request(self, *c):
+                Ipc.n += 1
+                calls.append(c)
+                if Ipc.n <= 2:
+                    raise PlayerError("player is not running")
+                if c[:2] == ("get_property", "pvj-shaders"):
+                    return [{"source": 1, "slot": 3, "state": "on", "path": path}]
+                return None
+        import tempfile
+        d = tempfile.mkdtemp()
+        path = os.path.join(d, "x.prog")
+        parsed = S.parse(open(os.path.join(E.EFFECTS_DIR, "fx-strobe.fs")).read(), S.FILTER, passes=True)
+        open(path, "w").write(E.translate_native(parsed))
+        self.addCleanup(lambda: __import__("shutil").rmtree(d, True))
+        api = Api()
+        api.player.ipc = Ipc()
+        s = ST.Strobe(api, thread=False)
+        self.assertTrue(s.reset_player(tries=5, delay=1.0, sleep=waits.append))
+        self.assertEqual(waits, [1.0, 2.0])
+        self.assertIn(("pvj-shader", "clear", 1, 3), calls)
+
+    def test_another_program_in_the_slot_is_left_alone_and_a_used_strobe_is_not_reset(self):
+        calls = []
+
+        class Ipc:
+            def request(self, *c):
+                calls.append(c)
+                if c[:2] == ("get_property", "pvj-shaders"):
+                    return [{"source": 1, "slot": 3, "state": "on", "path": "/nonexistent/x.prog"}]
+        api = Api()
+        api.player.ipc = Ipc()
+        s = ST.Strobe(api, thread=False)
+        self.assertTrue(s.reset_player(tries=1))
+        self.assertNotIn(("pvj-shader", "clear", 1, 3), calls)
+        s.hold(DEVICE, {})
+        calls.clear()
+        self.assertTrue(s.reset_player(tries=1))
+        self.assertEqual(calls, [])
+
+    def test_a_restart_with_the_slot_lit_on_the_classic_path(self):
+        pass
+
+
+class ClassicRestartTest(RouteBase):
+    def test_a_strobe_left_in_mpvs_list_is_taken_off_at_start_up(self):
+        self.post("/api/strobe/hold", {"holder": "tab"})
+        self.assertTrue(any("effect" in n for n in self.mpv.loaded))
+        self.fx.on = None                                       # the panel restarted: it knows nothing
+        fresh = ST.Strobe(self.api, clock=self.clock, thread=False, log=lambda *_: None)
+        self.assertTrue(fresh.reset_player(tries=1))
+        self.assertEqual(self.mpv.props["glsl-shaders"], [])
+        fresh.stop()
 
 
 if __name__ == "__main__":
