@@ -23,7 +23,11 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
-PrivateDevices=yes
+# The stats overlay (D133) reads the firmware's throttling word with `vcgencmd get_throttled`, which opens /dev/vcio (root only, 0600).
+# A private /dev has no such file, so the device policy stands in for PrivateDevices: nothing but /dev/vcio beyond the standard pseudo
+# devices (null, zero, random and the like). On a board with no /dev/vcio the entry matches nothing.
+DevicePolicy=closed
+DeviceAllow=/dev/vcio rw
 # D127: the one avahi service file that announces the node to the local network (pvj/FLEET.md). D128: the Pi's boot files, for the AV output choice.
 # "-": no error where avahi is not installed or the boot folder is not there.
 ReadWritePaths=/run/pvj-sysd -/etc/avahi/services -/boot/firmware

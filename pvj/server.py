@@ -1022,7 +1022,13 @@ def build(env=None, player=None):
     api.events = events_mod.EventLog(os.path.join(state, events_mod.FILE), boot_id=screenmode.boot_id, log=lambda m: print(m, file=sys.stderr))
     api.events.start()          # a boot id that is not the one in the file: the node restarted
     if hasattr(player, "on_restart"):
-        player.on_restart = lambda: api.event("player", "The player restarted by itself (it stopped or crashed).")
+        def player_restarted():
+            api.event("player", "The player restarted by itself (it stopped or crashed).")
+            api.stats.stop_if_on("the player restarted")
+        player.on_restart = player_restarted
+    # The player outlives this program: whatever the stats overlay drew before a restart of the panel is taken off, however
+    # long the player takes to come up (D133). It is never on at a start.
+    threading.Thread(target=api.stats.reset_player, name="stats-overlay-reset", daemon=True).start()
     # The NDI helper's client. NDI is opt-in per box (D62): PVJ_NDI_DIR is set only by the drop-in that root's
     # `pvj-ndi-runtime install` writes for the panel's unit (pvj/ndisetup.py). Without it this box has no helper, the
     # socket is never tried, and the page says how to set NDI up. With it, the helper is idle until the module is on.

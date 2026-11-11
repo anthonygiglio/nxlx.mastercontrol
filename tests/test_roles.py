@@ -222,6 +222,10 @@ ROWS = {
     # it back by itself, so it is never made through the tunnel; a support session of the Owner's role may read it.
     ("GET", "/api/renderer"): KINDS["owner"],
     ("POST", "/api/renderer"): STUDIO("owner"),
+    # The stats overlay (D133): text over the room's screen for a soak or a fault. The Owner's, read-only through a support
+    # session; turning it on is from the room, and never an Operator's, a Guest's, MIDI's, OSC's or the Room's.
+    ("GET", "/api/stats-overlay"): KINDS["owner"],
+    ("POST", "/api/stats-overlay"): STUDIO("owner"),
     ("POST", "/api/system/reboot"): KINDS["owner"],
     ("POST", "/api/system/poweroff"): STUDIO("owner"),
     ("POST", "/api/system/clock"): KINDS["owner"],

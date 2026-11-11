@@ -419,6 +419,9 @@ class SysdUnitTest(unittest.TestCase):
                            ("RuntimeDirectory", "pvj-sysd"), ("RuntimeDirectoryMode", "0750"), ("SystemCallFilter", "@system-service")):
             self.assertEqual(u[key], [value], key)
         self.assertNotIn("PrivateUsers", u)            # it would hide the caller's uid from the peer check
+        # D133: vcgencmd get_throttled needs /dev/vcio, which a private /dev does not have: a device policy with that one entry instead
+        self.assertNotIn("PrivateDevices", u)
+        self.assertEqual((u["DevicePolicy"], u["DeviceAllow"]), (["closed"], ["/dev/vcio rw"]))
 
     def test_installer_and_image_enable_it(self):
         with open(os.path.join(REPO, "install", "install.sh")) as f:

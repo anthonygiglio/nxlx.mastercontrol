@@ -13,7 +13,7 @@
 #include <GLES3/gl3.h>
 #include <mpv/client.h>
 
-#define PVJ_VERSION "0.11.0"
+#define PVJ_VERSION "0.12.0"
 #define MAX_SHADERS 16
 #define LAYERS 2                    // source 1's video layers (phase 2, D98): the one on screen and the one a crossfade comes in on
 #define MAX_SOURCES 8               // sources (D101): source 1 is LAYERS layers, each other source one layer
@@ -144,6 +144,7 @@ typedef struct {
 
     // the text layer: drawn over the picture while an overlay or a text is on
     uint64_t overlays;              // bit n: overlay n is on
+    uint64_t osd_ass;               // bit n: osd-overlay n (ASS text, 0.12.0) is on; it keeps the text layer on like overlays
     double text_until;              // monotonic seconds
 
     // the final pass's size (D108). final_want: the lines asked (0: the output's own), set by the socket's thread or
