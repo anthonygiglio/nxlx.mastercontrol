@@ -73,6 +73,7 @@ NO_PICTURE = "Nothing with a picture is playing"
 # dmx.DMX_DEVICE, room.ROOM_DEVICE). Their calls run on the thread that reads the controller and never ask the player
 # (see Effects._seen). A paired device's id is eight hex digits, so none of these can be one.
 CONTROLLERS = api_controllers
+HOLD_ONLY = frozenset(("fx-strobe.fs",))    # in the library, but never what Previous and Next step onto: the Strobe is held (pvj/strobe.py)
 # Kr and Kb of the colour matrices mpv names in video-params/colormatrix. Anything else is treated as BT.709.
 MATRICES = {"bt.601": (0.299, 0.114), "bt.709": (0.2126, 0.0722), "bt.2020-ncl": (0.2627, 0.0593),
             "bt.2020-cl": (0.2627, 0.0593), "smpte-240m": (0.212, 0.087)}
@@ -123,6 +124,10 @@ class PairGuard(L.Guard):
 # clip by themselves, and with an effect on, the filter's own pass plus about 14 ms at 720 lines and plus about 21 ms
 # at 1080 lines (plus 12 and 18 with Half resolution).
 HOLDS = L.HOLDS
+# Bundled and not measured on a Pi 4: the Strobe (fx-strobe.fs, 2026-11-11). It reads the picture once at the pixel and mixes
+# in a colour, the work of fx-wash, which was measured; nobody has run it on a board. Its row says "weight" from the count
+# of its text, like an upload's, and has no "measured". The first run on a board is row ST1 in tools/DEVICE-TESTING.md.
+UNMEASURED = frozenset(("fx-strobe.fs",))
 PI4 = {
     "fx-edge-glow.fs": ("medium", ((21.1, 7.93), (5.3, 0.0)), ((9.2, 0.0), (2.4, 0.0))),
     "fx-grade.fs": ("medium", ((11.1, 2.53), (2.8, 0.0)), ((4.7, 0.0), (1.2, 0.0))),
@@ -1105,7 +1110,7 @@ class Effects(S.Engine):
         refused over that generator."""
         out = []
         for s in S.Engine.library(self):
-            if not s["error"]:
+            if not s["error"] and s["id"] not in HOLD_ONLY:
                 try:
                     digest = self._parsed(self._path(s["id"])[0])[1]
                     if digest not in self._refusals and not (pair and self._pair_said(digest, pair)):

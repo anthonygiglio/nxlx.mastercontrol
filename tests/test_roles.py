@@ -103,6 +103,15 @@ ROWS = {
     ("GET", "/api/sources"): KINDS["op"],
     ("POST", "/api/sources"): KINDS["op"],
     ("GET", "/api/effects/chain"): KINDS["op"],
+    # the Strobe (pvj/strobe.py): a flash held down. The Operator's and the Owner's, never a Guest's (a flash in the room is not
+    # something guest controls open). The hold routes are also a controller's, on purpose: MIDI and OSC hold it, and the node's
+    # leases end it if they go. Remote support is refused the ones that start or shape a flash (a helper cannot see the room or
+    # let go in time) but may release, which only ever stops it. A state read is for people, not controllers.
+    ("GET", "/api/strobe"): KINDS["op"],
+    ("POST", "/api/strobe"): STUDIO("live"),
+    ("POST", "/api/strobe/hold"): STUDIO("live"),
+    ("POST", "/api/strobe/renew"): STUDIO("live"),
+    ("POST", "/api/strobe/release"): KINDS["live"],
     ("POST", "/api/effects/chain"): KINDS["op"],
     # Render nodes (D94): seeing them and cueing one by hand are running the room, the Operator's; keeping the list (where
     # the box sends) is the Owner's and, by D84, a support session of his role's, as the OSC state targets. Controllers, a

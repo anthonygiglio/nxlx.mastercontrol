@@ -12,7 +12,10 @@ module goes to the lightest part, and so on down. A module that is not in the li
 
 The seconds are from the Python 3.9 job of master's run 39384981398 (2026-10-20). Only modules of ten seconds or more
 are listed: they are about nine tenths of the time. When a part comes close to its limit again, take the times of a
-new run (the unit step prints a line per test, each stamped by GitHub) and write them here.
+new run (the unit step prints a line per test, each stamped by GitHub) and write them here. Added 2026-11-11, from the
+Python 3.9 job of pull request 281: test_ticket, test_peer, test_cluster_remove, test_ticket_http, test_lease, test_sandbox and
+test_carried_roles, which were counted as small, so adding one small module moved a hundred seconds from one part to another
+and part 1 of 3.9 ran out of its twenty minutes; and test_strobe.
 """
 import os
 import sys
@@ -22,8 +25,13 @@ SMALL = 3                                       # seconds; the modules under ten
 SECONDS = {
     "test_transitions": 152,
     "test_roles": 141,
+    "test_peer": 136,
+    "test_ticket": 136,
     "test_ndi_sound": 133,
     "test_projector": 112,
+    "test_cluster_remove": 110,
+    "test_ticket_http": 102,
+    "test_lease": 100,
     "test_ndi": 79,
     "test_shader_engine": 78,
     "test_ndi_standin": 77,
@@ -33,9 +41,12 @@ SECONDS = {
     "test_boxcare": 49,
     "test_server": 46,
     "test_renderer": 44,
+    "test_sandbox": 44,
     "test_shaders": 39,
     "test_room": 36,
+    "test_strobe": 35,
     "test_osc_defaults": 31,
+    "test_carried_roles": 30,
     "test_midi_layouts": 28,
     "test_recovery": 26,
     "test_support_reach": 23,

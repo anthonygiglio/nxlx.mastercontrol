@@ -35,7 +35,8 @@ class LevelShapeTest(unittest.TestCase):
         self.assertEqual(ends, {"opacity": (0.0, 100.0), "volume": (0.0, 100.0), "effect_amount": (0.0, 1.0),
                                 "size": (25.0, 200.0),          # not 1 to 200: under 25 percent a picture is a speck
                                 "position": (-100.0, 100.0), "position_y": (-100.0, 100.0), "speed": (0.25, 2.0),
-                                "shader_speed": (0.0, 4.0), "shader_hue": (-180.0, 180.0), "shader_brightness": (0.0, 2.0)})
+                                "shader_speed": (0.0, 4.0), "shader_hue": (-180.0, 180.0), "shader_brightness": (0.0, 2.0),
+                                "strobe_rate": (0.5, 3.0)})
         # what a mapping may ask for at most is the API's own range, not the default one
         self.assertEqual((midi.ACTIONS["size"][1:], midi.ACTIONS["position_y"]), ((1, 200), ("level", -100, 100)))
 

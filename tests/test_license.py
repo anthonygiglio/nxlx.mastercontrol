@@ -191,7 +191,7 @@ class LicenseTest(unittest.TestCase):
             self.assertIn("ISF-Files", by_licence[p][-1][1], p)
             self.assertNotIn("Ashima", by_licence[p][-1][1], p)                   # none of these holds the simplex noise
         own = sorted(p for p in tracked() if re.fullmatch(r"pvj/effects\.d/[^/]+\.fs", p))
-        self.assertEqual(len(own), 12)
+        self.assertEqual(len(own), 13)               # twelve filters and the Strobe
         for p in own + [FX_PACK + "SHA256SUMS"]:
             self.assertEqual([licence for licence, _ in by_licence.get(p, [])], ["Apache-2.0"], p)
         for name, digest in (("LICENSE", ISF_LICENSE_SHA256), ("SHA256SUMS", FX_SUMS_SHA256)):

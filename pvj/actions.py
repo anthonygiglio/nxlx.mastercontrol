@@ -70,6 +70,8 @@ def level(name, value):
         return "/api/shaders/values", {"controls": {_SHADER[name]: round(value, 2)}}
     if name == "effect_amount":
         return "/api/effects/values", {"controls": {"amount": round(value, 3)}}
+    if name == "strobe_rate":
+        return "/api/strobe", {"rate": round(value, 2)}         # flashes a second; the node keeps it to its cap
     return None
 
 

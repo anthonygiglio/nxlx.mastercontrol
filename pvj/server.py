@@ -159,6 +159,8 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
             super().finish()
 
         def log_message(self, fmt, *args):
+            if len(args) >= 2 and "/api/strobe/renew" in str(args[0]) and str(args[1]) == "200":
+                return                  # a held strobe renews five times a second: not worth a line in the journal each
             sys.stderr.write("%s %s\n" % (self.client_address[0], fmt % args))
 
         # --- plumbing ---------------------------------------------------
@@ -1039,6 +1041,8 @@ def build(env=None, player=None):
     # The player outlives this program: whatever the stats overlay drew before a restart of the panel is taken off, however
     # long the player takes to come up (D133). It is never on at a start.
     threading.Thread(target=api.stats.reset_player, name="stats-overlay-reset", daemon=True).start()
+    # and a strobe that was lit when the panel went down is taken off the same way (the player keeps drawing it with nobody holding it)
+    threading.Thread(target=api.strobe.reset_player, name="strobe-reset", daemon=True).start()
     # The NDI helper's client. NDI is opt-in per box (D62): PVJ_NDI_DIR is set only by the drop-in that root's
     # `pvj-ndi-runtime install` writes for the panel's unit (pvj/ndisetup.py). Without it this box has no helper, the
     # socket is never tried, and the page says how to set NDI up. With it, the helper is idle until the module is on.
@@ -1208,6 +1212,7 @@ def main(argv=None):
         if api.ndi:
             api.ndi.stop()
         api.dmx.stop()
+        api.strobe.stop()
         api.midi.stop()
         api.room.stop()
         api.projectors.stop(final=True)
