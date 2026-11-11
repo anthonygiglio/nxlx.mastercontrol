@@ -142,11 +142,12 @@ OTHER = {
 }
 
 
-# Filters that flash: over a still picture TIME stands where it happened to be, so a flash is on or off by chance and the
-# picture is the same between flashes. They are judged by a sweep of the rate: some rate shows the flash (the colour), and
-# every draw is either the picture again or the flash, never half of one; and at amount 0 the picture again.
-FLASHING = {"fx-strobe.fs": {"flash": 250.0, "way": 0, "tint": [1.0, 0.2, 0.9, 1.0]}}
-RATES = (0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0)
+# Filters that flash: the clip is a picture that loops, so TIME runs and a flash is on or off by chance, and a flash of one
+# flat colour is no "picture" for still(). They are judged with the clip paused (TIME stands where it is) by a sweep of
+# the rate: some rate shows the flash (here the colour added to the picture, so that it stays a picture), and every draw
+# is either the picture again or the flash, never half of one; and at amount 0 the picture again.
+FLASHING = {"fx-strobe.fs": {"flash": 250.0, "way": 2, "tint": [0.35, 0.15, 0.3, 1.0]}}
+RATES = tuple(0.5 + 0.125 * n for n in range(21))        # 0.5 to 3
 
 # "The picture again": what a filter that changes nothing, and any filter at amount 0, must give. Not to the last
 # bit: with an effect the picture takes one more pass through the GPU, and for a video with colour at half the detail
@@ -665,6 +666,8 @@ class FxCase(GpuCase):
             other = dict(self.varied(s, rng), **dict(NEUTRAL.get(sid, {}), **OTHER.get(sid, {})))
             if sid in FLASHING:
                 draws = []
+                self.real.ipc.request("set_property", "pause", True)
+                self.settle()
                 for rate in RATES:
                     self.fx._checked.clear()
                     self.fx.put(sid, values=dict(FLASHING[sid], rate=rate))
@@ -682,6 +685,8 @@ class FxCase(GpuCase):
                 if not alike(d):
                     failed.append("%s (amount 0): not the picture as it was (max %d, mean %.2f)" % (sid, d[0], d[1]))
                 self.fx.off()
+                self.real.ipc.request("set_property", "pause", False)
+                self.settle()
                 continue
             for what, kw in (("defaults", {}), ("varied", {"values": other}), ("amount 0", {"values": other, "controls": {"amount": 0.0}})):
                 self.fx._checked.clear()
