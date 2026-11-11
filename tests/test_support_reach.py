@@ -50,6 +50,8 @@ REFUSED = {
     ("POST", "/api/renderer"),
     # the stats overlay (D133): text drawn over the picture in the room
     ("POST", "/api/stats-overlay"),
+    # the strobe: starting, renewing and shaping a flash in a room a helper cannot see (release is open: it only stops it)
+    ("POST", "/api/strobe/hold"), ("POST", "/api/strobe/renew"), ("POST", "/api/strobe"),
     # the output (D128): which socket the picture goes to, and the AV output's boot files; the Owner in the room sees the screen
     ("POST", "/api/output"), ("POST", "/api/output/av"),
     # the NDI discovery server on this box (D85): a listener on the network is the owner's, in the room

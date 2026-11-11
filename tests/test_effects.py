@@ -22,9 +22,9 @@ from tests.test_shaders import FakeTap, REFUSAL, WELL_KNOWN
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 PACK_DIR = os.path.join(E.EFFECTS_DIR, "isf-files")
-OWN = ["fx-edge-glow", "fx-grade", "fx-kaleido", "fx-mirror-quad", "fx-pixel-grid", "fx-rgb-split", "fx-ring", "fx-ripple", "fx-slit-bands", "fx-twirl",
-       "fx-vignette", "fx-wash"]
-MOVING = ["fx-kaleido", "fx-rgb-split", "fx-ring", "fx-ripple", "fx-slit-bands"]                # they read TIME: the flash limit applies
+OWN = ["fx-edge-glow", "fx-grade", "fx-kaleido", "fx-mirror-quad", "fx-pixel-grid", "fx-rgb-split", "fx-ring", "fx-ripple", "fx-slit-bands", "fx-strobe",
+       "fx-twirl", "fx-vignette", "fx-wash"]
+MOVING = ["fx-kaleido", "fx-rgb-split", "fx-ring", "fx-ripple", "fx-slit-bands", "fx-strobe"]                # they read TIME: the flash limit applies
 PICTURE = {"NAME": "inputImage", "TYPE": "image"}
 BODY = "\nvoid main() {\n    gl_FragColor = IMG_THIS_PIXEL(inputImage) * k;\n}\n"
 K = {"NAME": "k", "TYPE": "float", "MIN": 0, "MAX": 2, "DEFAULT": 1}
@@ -690,7 +690,11 @@ class LibraryTest(Base):
         """All 37, each with the class and the numbers a Pi 4 measured (2026-10-05): over a 1080 line clip and a 720
         line clip, at full size and with Half resolution. The class is what the two full-size drop rates make."""
         rows = {s["id"]: s for s in self.state()["effects"]}
-        self.assertEqual(sorted(E.PI4), sorted(rows))                                  # every bundled file, and nothing else
+        self.assertEqual(sorted(set(E.PI4) | E.UNMEASURED), sorted(rows))              # every bundled file, and nothing else
+        self.assertEqual(E.UNMEASURED & set(E.PI4), set())
+        for sid in E.UNMEASURED:                                                       # the Strobe: said plainly to be unmeasured
+            self.assertIsNone(rows[sid]["measured"], sid)
+            self.assertEqual(rows[sid]["weight"], rows[sid]["estimate"]["weight"], sid)
         for sid, (weight, large, small) in E.PI4.items():
             self.assertEqual(E.weigh(small[0][1], large[0][1]), weight, sid)
             for full, half in (large, small):                                          # a quarter of the pixels never costs more

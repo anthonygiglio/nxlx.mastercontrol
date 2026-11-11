@@ -139,6 +139,15 @@ ACTIONS.update({"map_x": ("delta", "x", None), "map_y": ("delta", "y", None)})
 LAYERS = ("mapping", "geometry")
 LAYER_SECONDS = {"geometry": 120.0}
 ACTIONS["layer_geometry"] = ("trigger", "geometry", None)
+# The Strobe (pvj/strobe.py). strobe_hold is a "gate": the strobe runs while the pad or button is DOWN (a note with a velocity
+# above 0, a controller number at 64 or more) and stops the moment it comes up, whatever else happens. It is a lease on the
+# node, not a switch: the hub renews it while the control is down and the device is still read (STROBE_BEAT), a note-off or a
+# controller that goes ends it, and the node ends it by itself if the renewals stop (strobe.py). strobe_rate is the rate in
+# flashes a second; the node keeps it to 3 (12 with its opt-in) however it is mapped.
+ACTIONS["strobe_hold"] = ("gate", None, None)
+ACTIONS["strobe_rate"] = ("level", 0.5, 12.0)
+STROBE_HOLD, STROBE_RENEW, STROBE_RELEASE = "/api/strobe/hold", "/api/strobe/renew", "/api/strobe/release"
+STROBE_BEAT = 0.2           # seconds between the renewals of a held strobe control (strobe.RENEW_EVERY)
 # How a level follows a knob or fader: action -> (low, high, centre, curve). The second and third fields of ACTIONS
 # stay the WIDEST range a mapping may ask for with its own "min" and "max"; these are what a control gets when it
 # asks for nothing.
@@ -151,7 +160,7 @@ ACTIONS["layer_geometry"] = ("trigger", "geometry", None)
 SHAPES = {
     "opacity": (0, 100, None, 1.0), "volume": (0, 100, None, 1.0), "effect_amount": (0.0, 1.0, None, 1.0),
     "size": (25, 200, 100, 1.6), "position": (-100, 100, 0, 1.6), "position_y": (-100, 100, 0, 1.6),
-    "speed": (0.25, 2.0, 1.0, 1.0), "shader_speed": (0.0, 4.0, 1.0, 1.0),
+    "speed": (0.25, 2.0, 1.0, 1.0), "shader_speed": (0.0, 4.0, 1.0, 1.0), "strobe_rate": (0.5, 3.0, None, 1.0),
     "shader_hue": (-180.0, 180.0, 0.0, 1.0), "shader_brightness": (0.0, 2.0, 1.0, 1.0),
 }
 CENTRE_HALF = 4             # of 127: this close to the middle of a control is the centre of a level that has one
@@ -894,6 +903,8 @@ def validate_entry(e, keep_id=False):
         raise MidiError("only a knob or fader can nudge by being turned")
     if ACTIONS[action][0] == "hold" and kind == "program":
         raise MidiError("a program change cannot be held; use a pad or a button")
+    if ACTIONS[action][0] == "gate" and kind == "program":
+        raise MidiError("a program change cannot be held down; use a pad or a button")
     stored = keep_id and isinstance(e.get("id"), str) and re.fullmatch(r"[0-9a-f]{8}", e["id"])
     out = {"id": e["id"] if stored else uuid.uuid4().hex[:8],
            "source": source, "kind": kind, "channel": e.get("channel", 0), "number": e["number"], "action": action}
@@ -1113,6 +1124,10 @@ class MidiMapper:
             # safe: its hold is forgotten above, so its next release asks for nothing.)
             for key in [k for k in self._pressed if (source is None or k[1] == source) and k[2] == "note"]:
                 del self._pressed[key]
+            # a pad that sends a controller number and is mapped to the strobe is a button too: its release may be lost
+            gates = {e.get("id") or e["action"] for e in self.entries if ACTIONS.get(e.get("action"), ("",))[0] == "gate"}
+            for key in [k for k in self._pressed if (source is None or k[1] == source) and k[2] == "cc" and k[0] in gates]:
+                del self._pressed[key]
 
     def plan(self, source, msg, at=None):
         """What a message should do: a list of (path, body) calls. Nothing is called here, so a caller can release its
@@ -1175,6 +1190,21 @@ class MidiMapper:
                     since = self._held.pop(key, None)
                     if since is not None and HOLD_MIN <= read - since <= HOLD_MAX:
                         calls.append((LOCAL_CODE, {"kind": ACTIONS[e["action"]][1], "since": since}))
+                continue
+            if kind_of == "gate":
+                # Held while down: a press asks the node for a lease, the release lets go. The renewals in between are the
+                # hub's (MidiHub._strobe_beat), which stops them when the device goes. A second "down" without an "up" is the
+                # same press (a controller that repeats), and asks for nothing.
+                if kind == "program":
+                    continue
+                down = d2 >= 64 if kind == "cc" else d2 > 0
+                was = self._pressed.get(key, False)
+                self._pressed[key] = down
+                holder = "%s:%s%d" % (source, kind, d1)
+                if down and not was:
+                    calls.append((STROBE_HOLD, {"holder": holder}))
+                elif was and not down:
+                    calls.append((STROBE_RELEASE, {"holder": holder}))
                 continue
             if kind_of == "trigger":
                 down = d2 >= 64 if kind == "cc" else (d2 > 0 or kind == "program")
@@ -1716,6 +1746,9 @@ class MidiHub:
         self.mapper.local = self._local
         self.mapper.mapping_mode = self._mapping_mode
         self.queue_max = QUEUE_MAX          # messages read from one controller and not yet handled (a test makes it small)
+        self._strobe = {}         # holder -> source of a strobe control that is down; renewed by _strobe_beat while its device is read
+        self._strobe_thread = None
+        self._strobe_stop = threading.Event()
         self.learn_until = 0.0
         self.captured = None
         self._quiet = None
@@ -1748,7 +1781,7 @@ class MidiHub:
             self.log("midi: " + text)
 
     def _do(self, path, body):
-        if not self.calls.allow("all"):
+        if path != STROBE_RELEASE and not self.calls.allow("all"):      # letting go of the strobe is never dropped by the limiter
             self._note("too many commands a second; some were dropped")
             return False
         if path == "/api/vibes" or path.startswith(("/api/shaders/", "/api/effects")):   # only with the Shaders and Vibes module on; said once
@@ -2101,10 +2134,72 @@ class MidiHub:
                 with self._lock:
                     self.mapper.forget_held(source)
 
+    # --- the strobe's lease (pvj/strobe.py) ------------------------------------------------------------
+    def _strobe_note(self, path, body, source, done):
+        """A planned strobe call was made: remember the control that is down (the beat renews it), or forget it."""
+        holder = body.get("holder")
+        if path == STROBE_HOLD and done:
+            with self._lock:
+                self._strobe[holder] = source
+                if self._strobe_thread is None or not self._strobe_thread.is_alive():
+                    self._strobe_stop = threading.Event()
+                    self._strobe_thread = threading.Thread(target=self._strobe_beat, args=(self._strobe_stop,), daemon=True, name="midi-strobe")
+                    self._strobe_thread.start()
+        elif path == STROBE_RELEASE:
+            with self._lock:
+                self._strobe.pop(holder, None)
+            if not done:                    # the release did not reach the node (it was refused or failed): ask once more, directly
+                try:
+                    self.api.handle("POST", STROBE_RELEASE, {"holder": holder}, MIDI_DEVICE, "midi")
+                except Exception as e:
+                    self.log("midi: could not let go of the strobe: %r" % (e,))
+
+    def _strobe_beat(self, stop):
+        """While a strobe control is down: renew its lease every STROBE_BEAT, as long as a device of that controller is
+        still being read. When the device is gone (a cable pulled, the controller switched off, MIDI switched off) the
+        renewals stop, the lease runs out and the strobe ends within the node's PANEL_TTL; the release is also asked at
+        once so that it does not wait for that. A renewal the node refuses (the hold ended, the longest hold) ends it here."""
+        while not stop.wait(STROBE_BEAT):
+            with self._lock:
+                held = dict(self._strobe)
+                alive = {i.source for i in self.inputs.values() if i.alive}
+                if not held:
+                    self._strobe_thread = None
+                    return
+            for holder, source in held.items():
+                if self._stop.is_set() or source not in alive:
+                    self._strobe_drop(holder=holder)
+                    continue
+                # directly, not through the hub's limiter: a flood of fader moves must not starve the renewals of a held pad
+                try:
+                    status, _ = self.api.handle("POST", STROBE_RENEW, {"holder": holder}, MIDI_DEVICE, "midi")
+                except Exception:
+                    status = 500
+                if status == 409:               # the hold ended (the longest hold, or it lapsed): nothing to let go of
+                    with self._lock:
+                        self._strobe.pop(holder, None)
+                elif status != 200:             # anything else: let go rather than leave a lease to run out
+                    self._strobe_drop(holder=holder)
+
+    def _strobe_drop(self, source=None, holder=None):
+        """Let go of the strobe controls of one controller (or of all): a release may have been lost."""
+        with self._lock:
+            gone = [h for h, s in self._strobe.items() if (holder is None or h == holder) and (source is None or s == source)]
+            for h in gone:
+                self._strobe.pop(h, None)
+        for h in gone:
+            try:
+                self.api.handle("POST", STROBE_RELEASE, {"holder": h}, MIDI_DEVICE, "midi")
+            except Exception as e:
+                self.log("midi: could not let go of the strobe: %r" % (e,))
+
     def _make_calls(self, calls, source):
         for path, body in calls:
             if path == LOCAL_CODE:
                 self._local(source, body)
+                continue
+            if path in (STROBE_HOLD, STROBE_RELEASE):
+                self._strobe_note(path, body, source, self._do(path, body))
                 continue
             if path == "/api/blackout" and body.get("on") is None:
                 body = {"on": not self.api.mix.get("blackout", False)}
@@ -2123,6 +2218,7 @@ class MidiHub:
         if msg == LOST:                             # the reader's queue was full: a release may be among what was dropped
             with self._lock:                        # (the marker comes in the queue, where the messages are missing)
                 self.mapper.forget_held(source, pressed=True)
+            self._strobe_drop(source=source)        # a note-off may be among them: a held strobe is let go
             return
         if msg is None:
             with self._lock:
@@ -2163,12 +2259,14 @@ class MidiHub:
             self.captured = None
             self.learn_until = self._clock() + LEARN_SECONDS
             self.mapper.forget_held()
+        self._strobe_drop()
 
     def cancel_learn(self):
         """Also called after every change of the map (api.midi_map)."""
         with self._lock:
             self.learn_until, self.captured = 0.0, None
             self.mapper.forget_held()
+        self._strobe_drop()
 
     # --- devices -------------------------------------------------------------
     def scan(self):
@@ -2227,6 +2325,7 @@ class MidiHub:
             self._stop_all()
             return
         self._check_map()
+        self._strobe_drop()                             # and no strobe is held across it either
         with self._lock:
             self._stop.clear()
             self.mapper.forget_held()                   # a switch or a layout choice changed: no hold runs across that
@@ -2267,6 +2366,7 @@ class MidiHub:
             # From here on a release is dropped (on_message), so no button may stay "pressed": one held at this
             # moment would never fire again. The same for a fader's pickup and a guarded button's first press.
             self.mapper.forget()
+        self._strobe_drop()                             # a held strobe is let go before the readers end
         self._light_wake.set()
         if scanner:
             scanner.join(timeout=3)
