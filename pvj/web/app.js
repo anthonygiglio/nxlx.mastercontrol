@@ -1017,7 +1017,15 @@
     // the node's own name (the owner, 2026-11-07: "show the node's name"), without the nxlx- every node's name starts with
     var nodeName = String(sys.name || '').replace(/^nxlx-/i, '');
     if (pill) pill.textContent = [nodeName || sys.board, temp, pl.running ? 'OK' : 'No player'].filter(Boolean).join(' · ');
-    var f = document.getElementById('freeze'); if (f) f.textContent = pl.paused || !pl.path ? 'Play' : 'Pause';      // (nothing loaded: Play starts the last clip again)
+    // Play and Pause: what the node says is on the screen (a clip, a shader, Vibes, a capture, NDI, the test pattern, a
+    // tone), not the path, which it hides for most of those; with nothing on it and nothing to play again, there is nothing
+    // to press (review of PR 280)
+    var f = document.getElementById('freeze');
+    if (f) {
+      var loaded = pl.loaded === undefined ? !!pl.path : pl.loaded === true;
+      f.textContent = pl.paused || !loaded ? 'Play' : 'Pause';
+      if (canOp()) f.disabled = !loaded && pl.replay === false;
+    }
     fadeShow(document.getElementById('fade'), st.mix);
     var b = document.getElementById('black'); if (b) { var on = st.mix && st.mix.blackout; b.classList.toggle('flash', !!on); b.textContent = on ? 'Show' : 'Blackout'; }      // flashing for as long as it is on, as the fade button is (D75)
     var pads = document.getElementById('pads');

@@ -754,7 +754,9 @@ def light_state(action, snap, bank=0, layer=None):
     if a in ("clip_prev", "clip_next"):
         return "on" if snap["running"] and snap["playlist"] else "off"
     if a == "pause":
-        return "off" if not snap["running"] else ("busy" if snap["paused"] else "active")
+        if not snap["running"]:                         # nothing loaded: lit where a press would play the last clip again
+            return "on" if snap.get("replay") else "off"
+        return "busy" if snap["paused"] else "active"
     if a == "stop":
         return "on" if snap["running"] else "active"
     if a == "layer_geometry":                           # the controller's own layer: flashing for as long as it is on

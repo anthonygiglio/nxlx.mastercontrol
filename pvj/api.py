@@ -804,6 +804,10 @@ class Api:
         """Player status with stream passwords hidden and the saved stream's name added."""
         status = dict(self.player.status())
         path = status.get("path")
+        # Set before any of the cases below hide the path (a shader, Vibes, a capture, NDI, the test pattern, a tone): the
+        # panel's Play and Pause button reads these and never the path (review of PR 280)
+        status["loaded"] = bool(status.get("running")) and isinstance(path, str) and bool(path)
+        status["replay"] = self._last_play is not None
         # A live source that ended by itself (a stream that ran out, a sender that went, a player that was started
         # again) leaves no live source playing: the hold on the speed ends here, and the Mix speed is applied.
         if (self._speed_held and status.get("running") and not self._live_path(path)
@@ -1984,8 +1988,8 @@ class Api:
                 raise bad("value must be true, false or null")
             # Play and pause are one button (the owner, 2026-11-11): the toggle, with nothing loaded after a Stop, plays the
             # last clip again. A pause or a play asked for by value never starts anything.
-            if value is None and self._last_play is not None and not (self._player_call(p.status) or {}).get("path"):
-                self.replay(device, client)
+            if value is None and not (self._player_call(p.status) or {}).get("path"):
+                self.replay(device, client)               # (a 409 "nothing to play again" when nothing is remembered)
                 return {"paused": False, "replayed": True}
             return {"paused": self._player_call(p.pause, value)}
         if action == "seek":

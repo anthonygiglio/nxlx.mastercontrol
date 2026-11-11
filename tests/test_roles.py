@@ -286,7 +286,8 @@ GUEST_BODIES = {
         [{"action": a, "value": v} for a, v in (("volume", 130), ("opacity", 0), ("size", 10), ("position", 5), ("rotate", 90),
                                                 ("flip_h", True), ("speed", 4), ("seek", 5), ("mute", True), ("loop", True),
                                                 ("pause", True), ("volume_step", 50))]
-        + [{"action": "reset"}, {"action": "shuffle"}, {"action": "stop", "value": 1}, {}]),
+        + [{"action": "reset"}, {"action": "shuffle"}, {"action": "stop", "value": 1}, {},
+           {"action": "pause"}, {"action": "replay"}]),        # (Play and pause, and Play after Stop: never a Guest's, review of PR 280)
     ("POST", "/api/blackout"): ([{"on": True}, {"on": False}], [{"on": True, "seconds": 3}, {}]),
     ("POST", "/api/vibes"): (
         [{"on": True}, {"on": True, "set": "Ambient"}, {"on": False}, {"next": True}, {"previous": True}],
