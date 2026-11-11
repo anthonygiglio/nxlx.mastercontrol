@@ -144,6 +144,12 @@ class Ipc:
             return self.translate.request(self.direct, command, wait)
         return self.direct(*command, wait=wait)
 
+    def hold(self):
+        """A connection that stays open, for what mpv ties to the client that made it: an `osd-overlay` is removed by mpv the
+        moment the connection that created it closes (found on a Pi 3 with classic mpv: every request here is its own connection,
+        so the stats overlay was drawn and taken off again at once). pvj-render keeps its overlays itself and does not care."""
+        return HeldIpc(self.path, self.timeout)
+
     def batch(self, commands, wait=None):
         """Several commands in one connection, one round trip: a list of (ok, data) in the same order, `ok` False with the
         player's words as `data` for a command it refused (a property that is not there while nothing plays). The stats
@@ -233,6 +239,64 @@ class Ipc:
             raise PlayerError("ipc error: %s" % e)
         finally:
             s.close()
+
+
+class HeldIpc:
+    """One mpv socket connection kept open: `request` is `Ipc.direct` on it. Closing it (`close`) ends everything mpv ties to
+    this client, an osd-overlay among it. Not for several threads at once (the stats overlay holds its own lock). A broken
+    connection raises PlayerError and is closed; the caller makes a new one."""
+
+    def __init__(self, path, timeout=2.0):
+        self.timeout, self._id, self._buf, self.sock = timeout, 0, b"", None
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(timeout)
+        try:
+            s.connect(path)
+        except (ConnectionRefusedError, FileNotFoundError):
+            s.close()
+            raise PlayerError("player is not running")
+        except OSError as e:
+            s.close()
+            raise PlayerError("ipc error: %s" % e)
+        self.sock = s
+
+    def request(self, *command):
+        if self.sock is None:
+            raise PlayerError("ipc error: the connection is closed")
+        self._id += 1
+        rid = self._id
+        try:
+            self.sock.sendall(json.dumps({"command": list(command), "request_id": rid}).encode() + b"\n")
+            deadline = time.monotonic() + self.timeout
+            while time.monotonic() < deadline:
+                while b"\n" in self._buf:
+                    line, self._buf = self._buf.split(b"\n", 1)
+                    try:
+                        msg = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(msg, dict) and msg.get("request_id") == rid:       # events and old answers are passed over
+                        if msg.get("error") != "success":
+                            raise PlayerError("mpv: %s" % msg.get("error"))
+                        return msg.get("data")
+                chunk = self.sock.recv(65536)
+                if not chunk:
+                    raise OSError("the player closed the connection")
+                self._buf += chunk
+            raise OSError("no reply from mpv")
+        except PlayerError:
+            raise
+        except OSError as e:
+            self.close()
+            raise PlayerError("ipc error: %s" % e)
+
+    def close(self):
+        s, self.sock = self.sock, None
+        if s is not None:
+            try:
+                s.close()
+            except OSError:
+                pass
 
 
 class Player:
