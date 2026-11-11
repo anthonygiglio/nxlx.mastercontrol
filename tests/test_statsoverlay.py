@@ -346,9 +346,45 @@ class ShowSafetyTest(Base):
         sleeps = []
         self.ipc.fail = "player is not running"
         self.assertFalse(self.s.reset_player(tries=3, delay=2.0, sleep=sleeps.append))
-        self.assertEqual(sleeps, [2.0, 2.0, 2.0])
+        self.assertEqual(sleeps, [2.0, 4.0, 8.0])           # a back-off, not a fixed wait
         self.ipc.fail = "mpv: invalid parameter"                      # a renderer from before: nothing to take off
         self.assertTrue(self.s.reset_player(sleep=lambda _: None))
+
+    def test_the_clearing_keeps_trying_past_five_tries_and_stops_when_it_works(self):
+        sleeps = []
+        self.ipc.fail = "player is not running"
+        self.ipc.overlay = ("osd-overlay", so.OVERLAY_ID, "ass-events", "left over", 1280, 720)
+
+        def sleep(t):
+            sleeps.append(t)
+            if len(sleeps) == 9:
+                self.ipc.fail = None                         # the player comes up after nine tries
+        self.assertTrue(self.s.reset_player(sleep=sleep))
+        self.assertEqual(sleeps, [1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 30.0, 30.0, 30.0])      # capped at 30
+        self.assertIsNone(self.ipc.overlay)
+
+    def test_a_failed_removal_while_hidden_is_tried_again(self):
+        self.s.turn_on()
+        self.api.access = True
+        self.ipc.fail = "no reply from mpv"                  # the player does not take the removal
+        self.step()
+        self.assertIsNotNone(self.ipc.overlay)
+        self.assertTrue(self.s._drawn)
+        self.ipc.fail = None
+        self.step()
+        self.assertIsNone(self.ipc.overlay)
+        self.assertFalse(self.s._drawn)
+
+    def test_off_then_on_at_once_always_has_a_thread(self):
+        api = FakeApi(FakeIpc())
+        s = so.StatsOverlay(api, proc=os.path.join(self.tmp, "proc"), sysfs=os.path.join(self.tmp, "sys"), log=lambda *_: None)
+        s.throttle_reader = lambda: 0
+        s.turn_on()
+        for _ in range(30):
+            s.turn_off()
+            s.turn_on()
+            self.assertTrue(s._thread.is_alive() and not s._stop.is_set(), "on with no thread")
+        s.turn_off()
 
     def test_an_old_renderer_is_refused_in_plain_words(self):
         self.ipc.render = {"version": "0.11.0", "layers": 2}

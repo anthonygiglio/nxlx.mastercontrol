@@ -267,7 +267,7 @@ class StatsOverlay:
         with self.lock:
             was_on = self.on
             self._reset()
-        self._stop.set()
+            self._stop.set()                    # under the lock: a turn_on that follows always starts a thread of its own
         with self._draw:                        # a frame being drawn finishes first, then the text is taken off
             self._remove()
         if was_on and not quiet:
@@ -307,25 +307,37 @@ class StatsOverlay:
                               "needs 0.12.0). Update the node's pvj-render." % (state.get("version") if isinstance(state, dict) else "unknown"))
 
     def _remove(self):
-        try:                                # always sent, drawn or not: a frame that failed may still have drawn
+        """Take the text off. Always sent, drawn or not (a frame that failed may still have drawn). `_drawn` stays True when the
+        player did not take it, so the next look tries again. True when it was taken off."""
+        try:
             self._ipc().request(*remove_command())
+        except PlayerError as e:
+            if not str(e).startswith("mpv: "):       # mpv's own refusal means nothing is drawn; anything else may mean it still is
+                return False
         except Exception:
-            pass
+            return False
         self._drawn = False
+        return True
 
-    def reset_player(self, tries=5, delay=2.0, sleep=time.sleep):
-        """At every start of pvj-web: the player outlives this program, so what it was told to draw last is taken off.
-        Waits for a player that is not up yet (a few tries). A renderer that does not know osd-overlay has nothing to take off."""
-        for i in range(tries):
+    def reset_player(self, tries=None, delay=1.0, sleep=time.sleep, cap=30.0):
+        """At every start of pvj-web: the player outlives this program, so what it was told to draw last is taken off. Tries
+        again with a back-off (delay, then twice that, and so on up to `cap` seconds) until the player takes it or says it does
+        not know the command (a renderer before 0.12.0 has nothing to take off); `tries` bounds it for a test. It also ends when
+        the overlay has been turned on since, which needed a player that answers. True when cleared."""
+        n = 0
+        while tries is None or n < tries:
+            n += 1
             try:
                 self._ipc().request(*remove_command())
                 return True
             except PlayerError as e:
                 if str(e).startswith("mpv: "):
                     return True                     # mpv's or the renderer's own refusal: nothing is drawn
-                sleep(delay)
             except Exception:
-                sleep(delay)
+                pass
+            if self.on:
+                return True
+            sleep(min(delay * 2 ** (n - 1), cap))
         return False
 
     # -- the sampler thread --
@@ -371,8 +383,7 @@ class StatsOverlay:
             with self.lock:
                 self._hidden = reason
             with self._draw:
-                if self._drawn:
-                    self._remove()
+                self._remove()                  # every look while hidden, until the player has taken it off
             return
         with self.lock:
             self._hidden = ""
