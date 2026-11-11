@@ -1,0 +1,11 @@
+<!-- SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+     SPDX-License-Identifier: Apache-2.0 -->
+## 2026-11-11, Play and pause, and Play after Stop
+
+- **Why.** The owner: "Make the freeze and stop buttons into play/pause and stop buttons." Asked what Play does after a Stop, when nothing is loaded, he chose "Restart the last clip". The coordinator approved the back-end part in this branch, with an independent review before merge.
+- **What.**
+  - The strip's Freeze is one Pause and Play button: Pause while a clip plays, Play while it is paused and while nothing is loaded. The id stays `#freeze`. The controllers' label for the action is "Play / pause"; MIDI.md, OSC.md and PANEL.md say Pause and Play. The shaders' own Freeze switch (speed 0) is another thing and keeps its name.
+  - The node: `POST /api/control {"action": "replay"}` plays again the last play of Source 1 (a clip, a pad, a list from its first clip) from its start; a 409 "nothing to play again: start a pad or a clip first" when there is none. The last play is the body of the last play of Source 1 that was taken (`Api._last_play`), in memory only, never saved. The play and pause toggle (`{"action": "pause"}` with no value: the panel button, the MIDI button, `/pvj/pause` with no value) with nothing loaded and something remembered plays it again; a pause or a play asked for by value never starts anything.
+  - Replay is the Operator's and the Owner's (the route's role), not a Guest's even with open controls, unlike Stop: a replay could start again what an Owner played (a stream, a capture), which the gate would not let a Guest start. The coordinator asked for "the same role as Stop"; this is the one difference, said in the hand-over.
+  - Known limit: a list starts again from its first clip, not where it was stopped (starting part-way needs player work).
+- **Checked.** tests/test_replay.py (8): nothing to play again, the same clip again, the last of two plays, the toggle with nothing loaded, the toggle with nothing remembered, only the action, a Guest refused, never saved. The control, role, carried-role, OSC, MIDI, controller and light suites (385). tests/ui/panel.test.js: Pause and Play, then Stop, Play, and the clip back with the label Pause.

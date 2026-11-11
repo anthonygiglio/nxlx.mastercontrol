@@ -87,7 +87,7 @@ Off until the Owner switches it on (D82, 2026-10-11). With it on, the box tells 
 | --- | --- | --- |
 | `/pvj/state/alive` | f, always 1 | The heartbeat, every 2 seconds. No heartbeat for 6 seconds or more: the box is not answering (or this device is no longer a target) |
 | `/pvj/state/playing` | f 0/1 | Something plays |
-| `/pvj/state/pause` | f 0/1 | Paused. Freeze on the panel is pause, as for `/pvj/pause` |
+| `/pvj/state/pause` | f 0/1 | Paused. Pause and Play on the panel, as for `/pvj/pause` |
 | `/pvj/state/clip/name` | s | The playing clip's file name, without its folder; empty for a shader, a stream, a live input and when nothing plays |
 | `/pvj/state/clip/number` | f | Its place in the playlist that plays, from 1; 0 when nothing plays |
 | `/pvj/state/clip/count` | f | How many clips that playlist has |
@@ -233,7 +233,7 @@ Every address in this table, the ones added with D75 and `/pvj/mapping/...` amon
 
 **Real units, and no centre that sits.** A MIDI knob sends 0 to 127, so the box gives its zoom and position a middle that holds and a curve ([MIDI.md](MIDI.md), "How a level follows a knob"). OSC sends the real value, so `/pvj/size 100` is 100 percent and `/pvj/position/y 0.5` is half a step off centre: nothing is rounded to a centre and nothing waits for pickup. Set the fader's range in the sender.
 
-**Freeze** on the panel is pause: `/pvj/pause`. There is no `/pvj/freeze`.
+**Pause** and **Play** on the panel (one button; it was called Freeze until 2026-11-11) are `/pvj/pause`. There is no `/pvj/freeze`. `/pvj/pause` with no value, when nothing is loaded after a Stop, plays the last clip again from its start, as the panel's Play does (the node's `/api/control` `{"action": "replay"}`); with 1 or 0 it only pauses or plays on.
 
 **Text and logos (D129).** `/pvj/graphic/...` change what the node writes on the screen, so they are for an Operator's reach and no more: they are behind the owner's OSC switch and the three locks like every other address, and whoever passes those acts as an Operator, as for every OSC address. Setting the text (`/text` and `/send`) has a switch of its own, "Controllers may push text", on this page and on Play > Graphics: it is off until the Owner switches it on, and while it is off those two addresses are refused (showing and hiding by number and Hide all are not). Even with it on, turn on the locks of "Who may send" for a venue. A Guest on the panel has no way to it: the panel's graphics routes are not among a Guest's forms. What is typed is never interpreted: a line is letters, not markup. A burst of messages is one picture (at most 5 a second for one graphic, 20 a second for all, the last one wins) and one write of the settings every half second. Not yet over OSC (a later slice): position, size, opacity, a saved line by number, motion, and the state sent back.
 

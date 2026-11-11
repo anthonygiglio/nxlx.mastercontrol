@@ -216,9 +216,21 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.waitForFunction(() => document.getElementById('msg').textContent !== 'Waiting for the node...', null, { timeout: 5000 });
       await page.unroute('**/api/control', slow);
       // (the second press froze it; the label follows at the next status, so wait for it, then press it back)
-      await page.waitForFunction(() => document.getElementById('freeze').textContent === 'Resume', null, { timeout: 5000 });
+      await page.waitForFunction(() => document.getElementById('freeze').textContent === 'Play', null, { timeout: 5000 });
       await page.click('#freeze');
-      await page.waitForFunction(() => document.getElementById('freeze').textContent === 'Freeze', null, { timeout: 5000 });
+      await page.waitForFunction(() => document.getElementById('freeze').textContent === 'Pause', null, { timeout: 5000 });
+      // Play after Stop (the owner, 2026-11-11): with nothing loaded the button says Play, and it starts the last clip again
+      const sent = [];
+      const seen = (q) => { if (q.method() === 'POST' && /\/api\/control$/.test(q.url())) sent.push(q.postDataJSON()); };
+      page.on('request', seen);
+      await page.click('#stop');
+      await page.waitForFunction(() => document.getElementById('freeze').textContent === 'Play', null, { timeout: 8000 })
+        .catch(async () => { throw new Error('after Stop the button says Play: ' + JSON.stringify(await page.textContent('#freeze'))); });
+      await page.click('#freeze');
+      await page.waitForFunction(() => document.getElementById('freeze').textContent === 'Pause', null, { timeout: 10000 })
+        .catch(async () => { throw new Error('Play after Stop plays again: ' + JSON.stringify(await page.textContent('#freeze')) + ' ' + JSON.stringify(sent)); });
+      page.off('request', seen);
+      assert.deepStrictEqual(sent, [{ action: 'stop' }, { action: 'pause' }], 'Stop, then the one play and pause press');
     }
     if (shots) await page.screenshot({ path: path.join(shots, '2-live.png') });
     // Screen snapshot: one picture on request. The harness player has no real window (--vo=null), so no picture can be
