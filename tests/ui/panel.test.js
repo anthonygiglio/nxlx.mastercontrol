@@ -215,7 +215,9 @@ function startServer(env) {          // env: more for the harness's environment 
       free();
       await page.waitForFunction(() => document.getElementById('msg').textContent !== 'Waiting for the node...', null, { timeout: 5000 });
       await page.unroute('**/api/control', slow);
-      if ((await page.textContent('#freeze')) === 'Resume') await page.click('#freeze');      // (the second press froze it: back as it was)
+      // (the second press froze it; the label follows at the next status, so wait for it, then press it back)
+      await page.waitForFunction(() => document.getElementById('freeze').textContent === 'Resume', null, { timeout: 5000 });
+      await page.click('#freeze');
       await page.waitForFunction(() => document.getElementById('freeze').textContent === 'Freeze', null, { timeout: 5000 });
     }
     if (shots) await page.screenshot({ path: path.join(shots, '2-live.png') });
@@ -2499,6 +2501,201 @@ function startServer(env) {          // env: more for the harness's environment 
         await page.waitForTimeout(600);
         assert.strictEqual(await page.getAttribute('html', 'data-vvfix'), null, 'the iOS viewport nudge is never set up in Chromium');
       }
+    }
+    // Opening a trusted node signed in (D132, slice 5; the node itself is not changed: the requests are answered here, and
+    // the page's policy is given form-action for the trusted node as the TLS listener gives it). Nothing is asked before
+    // Open; then one ticket from this node (the node's id and the hash of a secret, nothing else) and one form to the other
+    // node (ticket, secret, this node's id), never in an address, in a tab with no opener. A refusal sends that tab to the
+    // node's own address, where it asks for its PIN, and says why. A node the page's policy does not name: the browser
+    // stops the form and the line says to reload. A node not trusted keeps its plain link. A device that came from another
+    // node gets no Open; one that may not carry gets plain links and the reason.
+    {
+      const A = 'a'.repeat(32), B = 'b'.repeat(32), C = 'c'.repeat(32);
+      let ho = { may: true, why: null, carried: false }, ticketAnswer = null;
+      const tickets = [], forms = [];
+      const nodesAnswer = () => ({ self: { id: A, name: 'nxlx-node-01', tier: 'standard', version: '1.0' }, discovery: { on: true, state: 'on', detail: '' },
+        scanning: false, error: null, handover: ho, nodes: [
+          { id: B, name: 'nxlx-node-02', address: '192.168.0.170', port: 443, tier: 'lean', version: '1.0', https: true, seen_seconds_ago: 1, carry: true },
+          { id: C, name: 'nxlx-venue', address: '192.168.0.180', port: 443, tier: 'standard', version: '1.0', https: true, seen_seconds_ago: 1, carry: false }] });
+      const nodesR = (route) => route.fulfill({ json: nodesAnswer() });
+      const ticketR = async (route) => {
+        tickets.push(route.request().postDataJSON());
+        await route.fulfill(ticketAnswer || { json: { ticket: 'f'.repeat(32), action: 'https://192.168.0.170/handover', origin: 'https://192.168.0.169', seconds: 60 } });
+      };
+      const formR = async (route) => { forms.push({ method: route.request().method(), body: route.request().postData() }); await route.fulfill({ contentType: 'text/html', body: '<p>signed in</p>' }); };
+      const plainR = (route) => route.fulfill({ contentType: 'text/html', body: '<p>the PIN screen</p>' });
+      const policy = async (route) => {
+        const res = await route.fetch(); const hd = res.headers();
+        hd['content-security-policy'] = String(hd['content-security-policy']).replace("form-action 'self'", "form-action 'self' https://192.168.0.170");
+        await route.fulfill({ response: res, headers: hd });
+      };
+      await page.route('**/api/nodes', nodesR);
+      await page.route('**/api/handover/ticket', ticketR);
+      await ctx.route('https://192.168.0.170/handover', formR);
+      await ctx.route('https://192.168.0.170/', plainR);
+      await ctx.route('https://192.168.0.180/', plainR);
+      await page.route(base + '/', policy);
+      await page.reload();
+      await page.waitForSelector('#nodesbtn');
+      const openRow = (name) => '#nodeslist .nodesrow:has(.lname:text-is("' + name + '")) .row > :text-is("Open")';
+      const rowHow = (name) => page.locator('#nodeslist .nodesrow:has(.lname:text-is("' + name + '")) .nodeshow');
+      const look = async () => {
+        if (!(await page.isVisible('#nodesheet'))) await page.evaluate(() => document.getElementById('nodesbtn').click());
+        else await page.evaluate(() => document.getElementById('nodesagain').click());
+        await page.waitForSelector('#nodesheet #nodeslist .nodesrow');
+        await page.waitForTimeout(300);
+      };
+      await look();
+      assert.deepStrictEqual(tickets, [], 'no ticket is asked for before Open is pressed');
+      assert.strictEqual(await rowHow('nxlx-node-02').textContent(), 'Opens signed in, without its PIN', 'a trusted node says it opens signed in');
+      assert.strictEqual(await rowHow('nxlx-venue').textContent(), 'Asks for its own PIN', 'another node says it asks for its PIN');
+      assert.strictEqual(await page.getAttribute(openRow('nxlx-venue'), 'href'), 'https://192.168.0.180/', 'a node not trusted keeps its plain link');
+      assert.strictEqual(await page.locator(openRow('nxlx-node-02')).evaluate((e) => e.tagName), 'BUTTON', 'a trusted node opens by a press, not a link');
+      const note = await page.textContent('#nodesnote');
+      assert(/opens signed in, without its PIN; the others ask for their own PIN/.test(note) && !/asks for its own pairing/.test(note), 'the note says which nodes open signed in: ' + note);
+      // the hand-over
+      let pop = ctx.waitForEvent('page');
+      await page.click(openRow('nxlx-node-02'));
+      let tab = await pop;
+      await tab.waitForURL('https://192.168.0.170/handover');
+      await page.waitForFunction(() => /is opening in its own tab/.test(document.getElementById('nodesmsg').textContent));
+      assert.strictEqual(tickets.length, 1, 'one ticket is asked for');
+      assert.deepStrictEqual(Object.keys(tickets[0]).sort(), ['proof', 'to'], 'the ticket request has the node and the proof, nothing else');
+      assert.strictEqual(tickets[0].to, B, 'the node by its id, never an address');
+      assert.strictEqual(forms.length, 1, 'one form goes to the other node');
+      assert.strictEqual(forms[0].method, 'POST', 'posted');
+      const fields = new URLSearchParams(forms[0].body);
+      assert.deepStrictEqual([...fields.keys()].sort(), ['from', 'secret', 'ticket'], 'the form has the ticket, the secret and this node, nothing else');
+      assert.strictEqual(fields.get('ticket'), 'f'.repeat(32), 'the ticket this node gave');
+      assert.strictEqual(fields.get('from'), A, 'this node by its id');
+      assert.strictEqual(require('crypto').createHash('sha256').update(fields.get('secret')).digest('hex'), tickets[0].proof, 'the secret is the one whose hash was the proof');
+      assert(![tab.url(), page.url()].some((u) => /f{32}|secret|ticket/.test(u)), 'no ticket or secret in any address');
+      assert.strictEqual(await tab.evaluate(() => window.opener), null, 'the tab has no opener');
+      assert.strictEqual(await page.locator('form').count(), 0, 'the form is gone from the page');
+      await tab.close();
+      // a refusal: the node's own address, where it asks for the PIN, and why
+      ticketAnswer = { status: 409, json: { error: 'nxlx-node-02 is not one this node trusts now' } };
+      pop = ctx.waitForEvent('page');
+      await page.click(openRow('nxlx-node-02'));
+      tab = await pop;
+      await tab.waitForURL('https://192.168.0.170/');
+      await page.waitForFunction(() => /so it asks for its PIN/.test(document.getElementById('nodesmsg').textContent));
+      assert.strictEqual(await page.textContent('#nodesmsg'), 'Not signed in to nxlx-node-02, so it asks for its PIN: nxlx-node-02 is not one this node trusts now.', 'a refusal says why');
+      assert.strictEqual(forms.length, 1, 'no form after a refusal');
+      await tab.close();
+      // a node the page's policy does not name (it joined after the panel was loaded): the browser stops the form
+      ticketAnswer = { json: { ticket: 'e'.repeat(32), action: 'https://192.168.0.171/handover', origin: 'https://192.168.0.169', seconds: 60 } };
+      pop = ctx.waitForEvent('page');
+      await page.click(openRow('nxlx-node-02'));
+      tab = await pop;
+      await page.waitForFunction(() => /^This panel was opened before nxlx-node-02 joined\. Reload the panel, then press Open again\.$/.test(document.getElementById('nodesmsg').textContent), null, { timeout: 5000 });
+      assert.strictEqual(forms.length, 1, 'the stopped form reached nobody');
+      await tab.waitForEvent('close', { timeout: 3000 }).catch(() => {});
+      assert(tab.isClosed(), 'the waiting tab is closed');
+      for (let i = problems.length - 1; i >= 0; i--) if (/form-action/.test(problems[i]) && /192\.168\.0\.171/.test(problems[i])) problems.splice(i, 1);      // (the one violation this step makes on purpose)
+      ticketAnswer = null;
+      // a device that came from another node: no Open at all
+      ho = { may: false, why: 'a device that joined by a code, a link or from another node does not carry to other nodes', carried: true };
+      await look();
+      assert.strictEqual(await page.locator('#nodeslist .row > :text-is("Open")').count(), 0, 'a device from another node opens nothing further');
+      assert(/came here from another node/.test(await page.textContent('#nodesnote')), 'and the note says why');
+      // a device that may not carry: plain links, and the reason
+      ho = { may: false, why: 'this device was paired over plain http: log out and pair it again over https first', carried: false };
+      await look();
+      assert.strictEqual(await page.getAttribute(openRow('nxlx-node-02'), 'href'), 'https://192.168.0.170/', 'a device that may not carry gets the plain link');
+      assert.strictEqual(await page.locator('#nodeslist .nodeshow').count(), 0, 'and no row says it opens signed in');
+      assert(/This device was paired over plain http/.test(await page.textContent('#nodesnote')), 'the reason is in the note');
+      await page.click('#nsclose');
+      await page.waitForSelector('#nodesheetback', { state: 'detached' });
+      await page.unroute('**/api/nodes', nodesR);
+      await page.unroute('**/api/handover/ticket', ticketR);
+      await ctx.unroute('https://192.168.0.170/handover', formR);
+      await ctx.unroute('https://192.168.0.170/', plainR);
+      await ctx.unroute('https://192.168.0.180/', plainR);
+      await page.unroute(base + '/', policy);
+      await page.reload();
+      await page.waitForSelector('#nodesbtn');
+    }
+    // The Owner's card for nodes that open each other (D132, slice 5; GET /api/fleet answered here): the banner (a node's
+    // name keeps its case), deny_problem said plainly, the switch (Stop is asked first), this node's fingerprint, the
+    // trusted nodes with Remove (asked first, the count said), the removals with Allow again (the fingerprint typed back;
+    // 409 and 404 said plainly), Allow again everything one node removed (asked first); at every width
+    {
+      const A = 'a'.repeat(32), B = 'b'.repeat(32), C = 'c'.repeat(32);
+      const posts = [];
+      let allowStatus = 200;
+      const fleetAnswer = () => ({ accept: true, self: { id: A, name: 'nxlx-node-01', fingerprint: '3F:9A:12:CD' },
+        list: { fleet: '0123456789abcdef', name: 'rig', serial: 3, issued: '2026-11-09', nodes: [{ id: A, name: 'nxlx-node-01', carry: 'full' }, { id: B, name: 'nxlx-node-02', carry: 'full' }] },
+        list_problem: null, deny_problem: 'deny.json could not be read and was kept aside', accepted: [{ id: C, name: 'nxlx-venue', carry: 'live' }],
+        removed: [{ n: 4, name: 'nxlx-old', by: 'nxlx-node-03', epoch: 2, from_peer: true }, { n: 5, name: 'nxlx-lent', by: 'Owner phone', epoch: 1, from_peer: false }],
+        banner: [{ by: 'nxlx-node-03', names: ['nxlx-old'], red: true, text: 'nxlx-node-03 removed nxlx-old from this cluster' }],
+        removed_from_cluster: false, removal_floods: [], unknown_calls: 0 });
+      const fleetR = (route) => route.fulfill({ json: fleetAnswer() });
+      const postR = async (route) => {
+        const p = new URL(route.request().url()).pathname;
+        posts.push([p, route.request().postDataJSON()]);
+        if (p === '/api/fleet/allow' && allowStatus !== 200) return route.fulfill({ status: allowStatus, json: { error: 'no' } });
+        await route.fulfill({ json: Object.assign(fleetAnswer(), p === '/api/fleet/remove' ? { signed_out: 2 } : {}) });
+      };
+      await page.route('**/api/fleet', fleetR);
+      await page.route('**/api/fleet/*', postR);
+      await page.route('**/api/fleet/allow/by', postR);
+      await sysIndex();
+      await page.click('#sysindex .navrow:has(.navname:text-is("Nodes on this network"))');
+      await page.waitForSelector('#clustercard #clusterremoved');
+      const banner = await page.textContent('#clusterbanner-0');
+      assert(/^nxlx-node-03 removed nxlx-old from this cluster\. If that was not you/.test(banner), 'the banner keeps the node name as it is: ' + banner);
+      assert(await page.evaluate(() => document.getElementById('clusterbanner-0').classList.contains('bad')), 'more than one removal a minute is the red banner');
+      assert.strictEqual(await page.textContent('#clusterdeny'), 'The list of removed nodes has a problem: deny.json could not be read and was kept aside.', 'deny_problem is said plainly');
+      assert(/3F:9A:12:CD/.test(await page.textContent('#clusterprint')), 'this node\'s fingerprint is shown');
+      assert.deepStrictEqual(await page.$$eval('#clustertrusted .lname', (x) => x.map((e) => e.textContent)), ['nxlx-node-02', 'nxlx-venue'], 'the trusted nodes, without this node');
+      for (const [w, hgt] of [[390, 844], [820, 1180], [1440, 900]]) {
+        await page.setViewportSize({ width: w, height: hgt });
+        await page.waitForTimeout(300);
+        assert.strictEqual(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth), 0, 'the card fits at ' + w);
+        assert(await page.isVisible('#clusteraccept') && await page.isVisible('#clustertrusted'), 'the switch and the list at ' + w);
+      }
+      await page.setViewportSize({ width: 390, height: 844 });
+      // the switch: Stop is asked first
+      await page.click('#clusteraccept');
+      await page.waitForSelector('#confirmrow');
+      assert(/signed out now/.test(await page.textContent('#confirmrow')), 'stopping says devices from other nodes are signed out');
+      await page.click('#confirmrow button:text-is("Stop accepting")');
+      await page.waitForFunction(() => /no longer accepts/.test(document.getElementById('clustermsg').textContent));
+      assert.deepStrictEqual(posts.pop(), ['/api/fleet/accept', { on: false }], 'the switch is posted off');
+      // Remove: asked first, then the count
+      await page.click('#clustertrusted .item:has(.lname:text-is("nxlx-node-02")) button');
+      await page.waitForSelector('#confirmrow');
+      assert(/refused by every node in this cluster, and every device it carried will be signed out everywhere/.test(await page.textContent('#confirmrow')), 'Remove says what it does');
+      await page.click('#confirmrow button:text-is("Remove")');
+      await page.waitForFunction(() => /2 devices it carried were signed out/.test(document.getElementById('clustermsg').textContent));
+      assert.deepStrictEqual(posts.pop(), ['/api/fleet/remove', { id: B }], 'removed by id');
+      // Allow again: the fingerprint typed back
+      await page.click('#clusterremoved-4 button:text-is("Allow again")');
+      await page.fill('#clustertyped-4', '3f9a 0000');
+      await page.click('#clusterremoved-4 button:text-is("Allow")');
+      await page.waitForFunction(() => /allowed again here/.test(document.getElementById('clustermsg').textContent));
+      assert.deepStrictEqual(posts.pop(), ['/api/fleet/allow', { n: 4, epoch: 2, typed: '3f9a 0000' }], 'Allow again sends the number, the epoch seen and what was typed');
+      const before = problems.length;
+      for (const [st, words] of [[409, 'That removal was made again since this page asked'], [404, 'That removal is gone already']]) {
+        allowStatus = st;
+        await page.click('#clusterremoved-5 button:text-is("Allow again")');
+        await page.fill('#clustertyped-5', 'x');
+        await page.click('#clusterremoved-5 button:text-is("Allow")');
+        await page.waitForFunction((t) => document.getElementById('clustermsg').textContent.indexOf(t) === 0, words);
+      }
+      allowStatus = 200;
+      for (let i = problems.length - 1; i >= before; i--) if (/status of 404/.test(problems[i])) problems.splice(i, 1);      // (the 404 this step answers on purpose)
+      // Allow again everything one node removed: asked first
+      await page.click('#clusterallowby-0');
+      await page.waitForSelector('#confirmrow');
+      await page.click('#confirmrow button:text-is("Allow again")');
+      await page.waitForFunction(() => /Everything nxlx-node-03 removed is allowed again here/.test(document.getElementById('clustermsg').textContent));
+      assert.deepStrictEqual(posts.pop(), ['/api/fleet/allow/by', { by: 'nxlx-node-03' }], 'by the node that sent them');
+      await page.unroute('**/api/fleet', fleetR);
+      await page.unroute('**/api/fleet/*', postR);
+      await page.unroute('**/api/fleet/allow/by', postR);
+      await go(page, 'now/now');
     }
     // The discovery switch on its own Setup page (This node > Nodes on this network): it says what it does now, Stop
     // is asked first, and the answer is shown (the node itself is not changed: the requests are answered here)

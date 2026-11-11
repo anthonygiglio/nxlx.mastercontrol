@@ -324,6 +324,17 @@ L; ls /run/pvj
 
 Send back the output of `L` at every step, R0, and the output of R10. If any line differs from the table, stop and send it: do not "fix" an owner by hand.
 
+### Hand-over between nodes (D132): NOT YET RUN on the nodes
+
+The whole table is in `design/node-handover_2026-11-09.md`, section 12 (HO1 to HO20). The panel's part (slice 5) is
+built; do HO6 first, because nothing off a real phone can tell it.
+
+| Row | What | Passes when |
+|---|---|---|
+| HO6 | On node-01 paired as Owner over https, open Nodes and press Open on node-02 ("Opens signed in, without its PIN"), in: Safari on iPhone, Safari and Chrome on the Mac, Chrome on Android, Firefox on a laptop, the Fire launcher, and the panel saved as an app on the iPhone | node-02 opens signed in, with no PIN screen, and Back does not ask again. The iPhone app: write down where it lands; the note under the list says it opens in Safari |
+| HO6a | The same with node-02's switch "Accept devices from other nodes" off | node-02's PIN screen in the new tab, and the line under node-01's list says why |
+| HO6b | Setup > Nodes on this network on node-01: the switch, this node's fingerprint, the trusted nodes; Remove node-02, then Allow again with node-02's fingerprint read from node-02's own panel | Each says what it did; after Remove, Open on node-02 asks for its PIN |
+
 ### Crossfade (D71)
 
 **Run on the test Pi 4 by a script on 2026-10-09, with nobody at the monitor** (the journal of that afternoon): what a script can see of X2, X3, X4, X10, X11, X12, X14 and X16 held at 2560 x 1440, and a play answered after 0.93 to 1.09 s. **Everything that needs eyes is open**, and so is every row not named. In CI it ran on a software GPU in a 320 x 180 window, which says the picture is right and nothing about time. Ten minutes; the numbers matter more than the look, so please send them.

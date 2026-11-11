@@ -139,6 +139,22 @@ Built once by `render()` and `chrome()` in `app.js`:
   opens inside the title bar, so it keeps its height. Inside the FireTab launcher (user agent `NXLXLauncher/`, root
   `data-launcher`) the strip keeps 28 px clear at its foot for the launcher's own swipe strip; the swipe up from the
   bottom edge is the launcher's drawer, a different thing.
+- **Opening a trusted node signed in** (D132, slice 5): in the Nodes list, a row the node marks `carry` says "Opens
+  signed in, without its PIN" and its Open is a button. The press opens a tab named for the node (no opener), asks this
+  node for a one-time ticket (`POST /api/handover/ticket`, the node's id and the hash of a secret the page keeps) and
+  posts a form to the other node's `/handover` in that tab (ticket, secret, this node's id; never in an address). A
+  refusal sends the tab to the node's own address, where it asks for its PIN, and the line under the list says why. A
+  node the page's policy does not name (it joined after the panel was loaded) is stopped by the browser and the line
+  says to reload. Other rows keep the plain link and say "Asks for its own PIN". A device that came from another node
+  gets no Open (nothing chains); one that may not carry gets plain links and the reason in the note. In the iOS Home
+  Screen app the note says the node opens, and signs in, in Safari.
+- **Nodes that open each other** (`#clustercard`, Setup > Nodes on this network, the Owner's, over https; D132):
+  the banner when another node removed nodes (red when it removed more than one in a minute), the problems of the
+  list and of the removals said plainly, the switch "Accept devices from other nodes" (Stop is asked first: devices
+  from other nodes are signed out), this node's fingerprint, the trusted nodes (fleet list or accepted by fingerprint)
+  each with Remove from this cluster (asked first, then how many devices were signed out), the removals with Allow
+  again (the fingerprint typed back from that node's own panel) and Allow again everything one node removed. A node
+  without hand-overs shows no card.
 
 ## 4. The shared patterns
 

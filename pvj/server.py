@@ -49,13 +49,19 @@ CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' 
 CSP_ORIGIN = re.compile(r"https://(?:[a-z0-9.-]{1,253}|\[[0-9a-f:.]{2,45}\])(?::[0-9]{1,5})?")   # the one shape page_csp adds
 
 
-def page_csp(origin):
+def page_csp(origin, forms=()):
     """The policy for the HTML document. With `origin` (httpsbox.page_origin: the box's own https:// origin, from a
     Host header that passed its checks) connect-src names that origin too, and nothing else: no scheme source, no
-    wildcard, no second host. Anything that is not exactly that shape is dropped and the plain policy goes out."""
-    if not origin or not CSP_ORIGIN.fullmatch(origin):
-        return CSP
-    return CSP.replace("connect-src 'self';", "connect-src 'self' %s;" % origin, 1)
+    wildcard, no second host. Anything that is not exactly that shape is dropped and the plain policy goes out.
+    `forms` (D132, slice 5: Api.handover_forms, over TLS only): the other nodes' https origins that a hand-over form may be
+    posted to, added to form-action, each of the same one shape, 32 at most; anything else is dropped."""
+    csp = CSP
+    if origin and CSP_ORIGIN.fullmatch(origin):
+        csp = csp.replace("connect-src 'self';", "connect-src 'self' %s;" % origin, 1)
+    extra = [f for f in (forms or ())[:32] if isinstance(f, str) and CSP_ORIGIN.fullmatch(f)]
+    if extra:
+        csp = csp.replace("form-action 'self';", "form-action 'self' %s;" % " ".join(extra), 1)
+    return csp
 TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
          ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".woff2": "font/woff2"}
 HTML_TAG = b'<html lang="en">'          # in index.html; the style of the chosen theme is written into it (styled_html)
@@ -184,8 +190,11 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
         def _csp(self, content_type):
             """The HTML document over plain http, with a certificate in use, may connect to the box's own https://
             origin (D79, the trust check); over TLS 'self' already is that origin, and no other answer is a document."""
-            if self._secure() or not content_type.startswith("text/html"):
+            if not content_type.startswith("text/html"):
                 return CSP
+            if self._secure():                    # over TLS: the other nodes a hand-over form may go to (D132, slice 5)
+                forms = getattr(api, "handover_forms", None)
+                return page_csp(None, forms() if forms is not None else ())
             box = self._https()
             return page_csp(box.trusted_origin(self.headers.get("Host")) if box is not None else None)
 

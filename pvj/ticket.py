@@ -96,6 +96,14 @@ class Tickets:
     # ------------------------------------------------------------------------------------------------------------------
     # Node A: making a ticket
     # ------------------------------------------------------------------------------------------------------------------
+    def carried(self, device):
+        """Whether this device came here from another node (a `via: node` record): the panel then offers no Open to a third node,
+        because nothing chains (design section 4)."""
+        if not isinstance(device, dict) or device.get("remote") or not isinstance(device.get("id"), str):
+            return False
+        stored = self.auth.device(device["id"])
+        return bool(stored is not None and stored.get("via") == "node")
+
     def may_carry(self, device):
         """Why this device may not carry to another node, or None when it may: an Owner or an Operator whose token was made over
         https, paired by the PIN or a recovery code (not a join code, a controller's code, another node or a remote

@@ -254,6 +254,7 @@ details.fold { display: block; }
 .switch[aria-checked="true"]::before { background: var(--ac); border-color: var(--ac); }
 .switch[aria-checked="true"]::after { left: 24px; background: var(--on); }
 @media (prefers-reduced-motion: no-preference) { .switch::after { transition: left .12s ease-out; } }
+.confirm.bad { background: #b00020; color: #fff; }      /* the cluster banner when one node removed several others in a minute (D132) */
 .confirm { flex: 1 1 100%; display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1.5px solid #b00020; border-radius: 6px; background: var(--cd); font-weight: 600; font-size: 14px; }
 .btn.danger { background: #b00020; border-color: #b00020; color: #fff; }
 .danger-h { margin: 8px 0 0; font-size: 15px; color: var(--ac); grid-column: 1 / -1; }      /* (as the other error lines: the look's own colour, which reads on its page; a fixed red was 3.8:1 on Dark stage) */
@@ -1039,6 +1040,7 @@ html[data-style="signal"] .picker .sheet { border-color: var(--fg); border-botto
 html[data-style="signal"] .moreacts, html[data-style="signal"] .teachbox { border-color: var(--fg); padding: 10px; }
 html[data-style="signal"] .teachbox { border-style: dashed; }
 html[data-style="signal"] .confirm { border-color: var(--st-problem, var(--fg)); background: var(--cd); padding: 12px; }
+html[data-style="signal"] .confirm.bad { background: var(--st-problem, var(--fg)); color: var(--bg); }      /* (a node removed others more than once in a minute, D132) */
 html[data-style="signal"] .hint.warn { border-left: 6px solid var(--st-problem, var(--fg)); padding-left: 10px; }
 html[data-style="signal"] .offline, html[data-style="signal"] .support-banner { border-radius: 0; background: var(--st-setup, var(--ac)); color: var(--st-setup-on, var(--on)); font-weight: 900; text-transform: uppercase; letter-spacing: .04em; font-size: 14px; }
 html[data-style="signal"] .support-banner .btn { border-color: var(--st-setup-on, var(--on)); color: var(--st-setup-on, var(--on)); }
