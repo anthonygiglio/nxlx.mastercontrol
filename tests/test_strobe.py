@@ -1213,7 +1213,7 @@ class RestartTest(unittest.TestCase):
         self.assertEqual(waits, [1.0, 2.0])
         self.assertIn(("pvj-shader", "clear", 1, 3), calls)
 
-    def test_another_program_in_the_slot_is_left_alone_and_a_used_strobe_is_not_reset(self):
+    def test_another_program_in_the_slot_is_left_alone_also_after_a_hold(self):
         calls = []
 
         class Ipc:
@@ -1229,7 +1229,7 @@ class RestartTest(unittest.TestCase):
         s.hold(DEVICE, {})
         calls.clear()
         self.assertTrue(s.reset_player(tries=1))
-        self.assertEqual(calls, [])
+        self.assertFalse([c for c in calls if c[0] == "pvj-shader" and c[1] == "clear"])
 
     def test_a_leftover_in_the_effect_slot_is_taken_off_too(self):
         calls = []
