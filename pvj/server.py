@@ -159,6 +159,8 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
             super().finish()
 
         def log_message(self, fmt, *args):
+            if len(args) >= 2 and "/api/strobe/renew" in str(args[0]) and str(args[1]) == "200":
+                return                  # a held strobe renews five times a second: not worth a line in the journal each
             sys.stderr.write("%s %s\n" % (self.client_address[0], fmt % args))
 
         # --- plumbing ---------------------------------------------------

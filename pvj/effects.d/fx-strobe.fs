@@ -67,8 +67,10 @@ void main() {
     float hz = clamp(rate, 0.0, 3.0);
     // a flash lasts the time asked for, and never more than half of the gap between two flashes
     float on = min(clamp(flash, 10.0, 250.0) * 0.001 * hz, 0.5);
-    // a flash starts at the start of each cycle; no rate (0) is no flash at all
-    float lit = (hz > 0.01 && fract(TIME * hz) < on) ? 1.0 : 0.0;
+    // the place in the cycle: TIME is folded into it first and its rate is capped here too; a flash starts at the start of
+    // each cycle, and no rate (0) is no flash at all
+    float cycle = fract(TIME * min(rate, 3.0));
+    float lit = (hz > 0.01 && cycle < on) ? 1.0 : 0.0;
     vec3 c = src;
     if (way == 1) {
         c = vec3(0.0);

@@ -677,6 +677,7 @@ class FilterTest(unittest.TestCase):
         rate = next(i for i in parsed["inputs"] if i["name"] == "rate")
         self.assertEqual((rate["min"], rate["max"]), (0.5, 3.0))
         self.assertIn("clamp(rate, 0.0, 3.0)", source)
+        self.assertIn("fract(TIME * min(rate, 3.0))", source)           # the place in the cycle is capped on its own, as the project's other filters do
         self.assertIn("min(clamp(flash, 10.0, 250.0) * 0.001 * hz, 0.5)", source)
         for text in (E.translate(parsed), E.translate_native(parsed)):
             self.assertIn("clamp(rate, 0.0, 3.0)", text)
