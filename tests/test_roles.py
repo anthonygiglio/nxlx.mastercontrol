@@ -86,6 +86,9 @@ ROWS = {
     ("POST", "/api/fleet/accepted/remove"): STUDIO("owner"),
     ("POST", "/api/fleet/accepted/look"): STUDIO("owner"),
     ("POST", "/api/fleet/sync"): STUDIO("owner"),
+    ("POST", "/api/fleet/remove"): STUDIO("owner"),         # D132 4d: remove a node from this cluster, allow it again: the Owner's, over https, never through the tunnel
+    ("POST", "/api/fleet/allow"): STUDIO("owner"),
+    ("POST", "/api/fleet/allow/by"): STUDIO("owner"),
     ("POST", "/api/handover/ticket"): STUDIO("op"),         # D132 4a: a ticket to open another node signed in; an Operator or an Owner, over https, never through the tunnel
     ("POST", "/api/ndi"): KINDS["owner"],
     # the NDI discovery server on the box (D85): the Owner's, and never through the support tunnel (support.REMOTE_DENY_PREFIX)

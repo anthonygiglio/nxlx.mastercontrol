@@ -450,6 +450,12 @@ class Leases:
                 self.check_node(node_id)
             except Exception as e:
                 self.log("pvj-web: a lease check failed: %s" % e)
+        retry = getattr(self.peers, "retry_owed", None)       # removals that could not be delivered are tried again (slice 4d)
+        if retry is not None:
+            try:
+                retry()
+            except Exception as e:
+                self.log("pvj-web: pushing removals again failed: %s" % e)
         with self.lock:
             waiting = bool(self._out_dirty)
         if waiting:

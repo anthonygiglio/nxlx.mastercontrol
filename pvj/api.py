@@ -3660,6 +3660,45 @@ class Api:
             raise bad("send {}")
         return {"nodes": self._handover_call(peers.sync)}
 
+    def post_fleet_remove(self, body, device, client):
+        """{"id": a node's id}: remove a node of the approved set from this cluster (D132, design section 9). Its key goes on the deny
+        list at once, its fingerprint acceptance goes, every device it carried is signed out here (the sweep), and the removal is
+        pushed to every approved node this node can reach; the others hear it the next time they talk to anybody. Only an Owner (a
+        carried Owner too). Answers the status and how many carried devices were signed out."""
+        h = self._handover()
+        node_id = self._node_id(body, {"id"})
+        before = self._carried_from(node_id)
+        done = self._handover_call(h.remove_node, node_id, device.get("name"))
+        gone = max(0, before - self._carried_from(node_id))
+        own = (h.own()[1] or "this node")
+        self.event("handover", "%s was removed from this cluster by %s (on %s). %d device%s it carried %s signed out." % (
+            done["name"], device.get("name") or "an Owner", own, gone, "" if gone == 1 else "s", "was" if gone == 1 else "were"), device.get("name"))
+        if self.peers is not None:
+            self.peers.spread()
+        out = h.status()
+        out["signed_out"] = gone
+        return out
+
+    def _carried_from(self, node_id):
+        return sum(1 for r in self.auth.node_records() if r["node"] == node_id)
+
+    def post_fleet_allow(self, body, device, client):
+        """{"n": the removal's number, "epoch": the epoch the status showed, "typed": its fingerprint}: allow a removed node again, on
+        this node only. A tombstone one epoch above is kept here and never sent to a peer, so no copy of the old removal
+        undoes this and no peer can do it for this node. The node must still be on the signed list or accepted again."""
+        h = self._handover()
+        if not isinstance(body, dict) or set(body) != {"n", "epoch", "typed"} or not isinstance(body["typed"], str):
+            raise bad('send {"n": the removal\'s number, "epoch": the epoch the status showed, "typed": the node\'s fingerprint}')
+        return self._handover_call(h.allow_again, body["n"], body["typed"], body["epoch"], device.get("name"))
+
+    def post_fleet_allow_by(self, body, device, client):
+        """{"by": a node's name}: allow again everything that node sent as a removal, on this node only (the way back from a node that
+        denied the others)."""
+        h = self._handover()
+        if not isinstance(body, dict) or set(body) != {"by"} or not isinstance(body["by"], str):
+            raise bad('send {"by": the name of the node that sent the removals}')
+        return self._handover_call(h.allow_again_by, body["by"], device.get("name"))
+
     def post_fleet_accepted_remove(self, body, device, client):
         h = self._handover()
         if not isinstance(body, dict) or set(body) != {"id"} or not isinstance(body["id"], str):
@@ -5672,6 +5711,9 @@ class Api:
             ("POST", "/api/fleet/accepted/remove"): ("full", self.post_fleet_accepted_remove),
             ("POST", "/api/fleet/accepted/look"): ("full", self.post_fleet_accepted_look),
             ("POST", "/api/fleet/sync"): ("full", self.post_fleet_sync),
+            ("POST", "/api/fleet/remove"): ("full", self.post_fleet_remove),            # D132 4d: remove a node from this cluster; the Owner's, by name (tests/test_carried_roles.py)
+            ("POST", "/api/fleet/allow"): ("full", self.post_fleet_allow),
+            ("POST", "/api/fleet/allow/by"): ("full", self.post_fleet_allow_by),
             ("POST", "/api/handover/ticket"): ("live", self.post_handover_ticket),     # D132 4a: Operator and Owner, over https, never a controller or a support login
             ("GET", "/api/support"): ("view", self.get_support),
             ("POST", "/api/support/config"): ("full", self.set_support),

@@ -85,6 +85,9 @@ CARRIED = {
     ("POST", "/api/fleet/accepted/remove"): SAME,
     ("POST", "/api/fleet/list"): SAME,
     ("POST", "/api/fleet/sync"): SAME,
+    ("POST", "/api/fleet/remove"): SAME,
+    ("POST", "/api/fleet/allow"): SAME,
+    ("POST", "/api/fleet/allow/by"): SAME,
     ("GET", "/api/graphics"): SAME,
     ("POST", "/api/graphics"): SAME,
     ("GET", "/api/graphics/file"): SAME,
@@ -440,7 +443,8 @@ class Handlers(HttpBase):
         capped = self.carry("live", name="Owner capped, via node-02", node=B_ID, device="cd02ef03")
         for who, token in (("local", self.operator), ("carried", carried), ("capped", capped)):
             for path in ("/api/pin/show", "/api/recovery/codes", "/api/pin/rotate", "/api/fleet/accept", "/api/fleet/list",
-                         "/api/fleet/accepted", "/api/fleet/accepted/remove", "/api/fleet/sync", "/api/nodes/discovery"):
+                         "/api/fleet/accepted", "/api/fleet/accepted/remove", "/api/fleet/sync", "/api/fleet/remove", "/api/fleet/allow",
+                         "/api/fleet/allow/by", "/api/nodes/discovery"):
                 self.assertEqual(self.scall("POST", path, {}, token=token)[0], 403, (who, path))
             self.assertEqual(self.scall("GET", "/api/fleet", token=token)[0], 403, who)
             st, out = self.scall("POST", "/api/devices/invite", {"name": "n", "role": "live"}, token=token)[:2]

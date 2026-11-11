@@ -11,7 +11,10 @@ slice 3 on. What is here:
   and names THIS node with THIS node's key.
 * **Acceptances by fingerprint** (`pairings.json`): the substitute for a list for one pair of nodes (design 3.4). The
   Owner types the other node's key fingerprint back; without it nothing is stored.
-* **The deny file** (`deny.json`): the keys of nodes removed from the cluster. Storage and reading only here.
+* **The deny file** (`deny.json`): the keys of nodes removed from the cluster (slice 4d: the Owner's action `remove_node`, the
+  spreading, and "Allow again"). Each row has an integer **epoch**. Allow again leaves a LOCAL tombstone (key, epoch + 1) that is
+  never sent to a peer: a deny from a peer is taken only when its epoch is higher than this node's row or tombstone, so an old
+  deny passed around cannot undo an Allow again, and nothing a peer sends can lift a deny. The digest covers (key, epoch).
 * **The switch** "Accept devices from other nodes" (`fleet.accept` in settings, off by default).
 * **`approved(node id, key hash)`**: the one question the later slices ask. A node is approved when it is on the held
   list with that id AND that key (an id alone is public and proves nothing), or accepted by fingerprint, and its key is
@@ -35,6 +38,9 @@ LIST_FILE, SIG_FILE, DENY_FILE, PAIRINGS_FILE = "fleet.json", "fleet.sig", "deny
 FILES = (LIST_FILE, SIG_FILE, DENY_FILE, PAIRINGS_FILE)
 MAX_JSON = 65536
 MAX_DENY = 256
+MAX_EPOCH = 10 ** 9              # a deny with a larger epoch is not a deny
+MAX_TOMBS = MAX_DENY             # local tombstones of "Allow again"; the oldest goes when it is full
+WIRE_ENTRIES = 24                # removals carried in one push (the rest catch up by the digest)
 PEER_DENY_CAP = 192              # rows a peer may have put in the deny file; the rest is room for the Owner's own removals
 PEER_HOURLY = 64                 # rows taken from one peer in an hour
 FLOOD_BATCH = 20                 # more new removals than this in one answer is a flood, said in an event and on the status
@@ -100,6 +106,8 @@ class Handover:
         self.floods = {}             # peer name -> {"sent", "taken"}: a peer that sent a flood of removals
         self.problem = None          # why the files on disk are not in use, for the Owner's status
         self._deny = []
+        self._tombs = []             # [{"key", "name", "epoch"}]: Allow again, local, never sent to a peer
+        self._banner = {}            # peer name -> deque of (time, name) removals it sent lately (the banner of the Owner's status)
         self._pairings = []
         self.on_change = None        # called, with no lock held, after the list, an acceptance or the deny list changed (pvj/lease.py signs out what is no longer approved)
 
@@ -219,7 +227,7 @@ class Handover:
                 self.problem = "the fleet list on disk (serial %d) is not in use" % self.floor.serial
             if self.list is None and self.problem and self.floor is not None:
                 self.problem += "; this node will not take a list of another fleet or one with a serial below %d" % self.floor.serial
-            self._deny = self._load_deny()
+            self._deny, self._tombs = self._load_deny()
             self._pairings = self._load_pairings()
             self._inputs = self._now_inputs()
 
@@ -370,35 +378,59 @@ class Handover:
         self._changed()
         return status
 
-    # -- the deny file (storage only in slice 2) --
+    # -- the deny file: rows (removals) and tombstones (Allow again) --
+    @staticmethod
+    def _epoch(value):
+        return value if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= MAX_EPOCH else None
+
     def _load_deny(self):
         raw = self._read(DENY_FILE)
         if raw is None:
-            return []
+            return [], []
         try:
-            rows = json.loads(raw.decode("utf-8"))["entries"]
-            out = []
-            for r in rows[:MAX_DENY]:
+            data = json.loads(raw.decode("utf-8"))
+            out, tombs, seen = [], [], set()
+            for r in data["entries"][:MAX_DENY]:
                 if isinstance(r, dict) and isinstance(r.get("key"), str) and fleetlist.KEY_WORD.fullmatch(r["key"]) \
-                        and isinstance(r.get("name"), str) and isinstance(r.get("by"), str) and isinstance(r.get("n"), int):
-                    row = {"key": r["key"], "name": r["name"][:64], "by": r["by"][:64], "n": r["n"]}
+                        and isinstance(r.get("name"), str) and isinstance(r.get("by"), str) and isinstance(r.get("n"), int) and r["key"] not in seen:
+                    seen.add(r["key"])
+                    row = {"key": r["key"], "name": r["name"][:64], "by": r["by"][:64], "n": r["n"], "epoch": self._epoch(r.get("epoch")) or 1}
                     if r.get("peer") is True:
                         row["peer"] = True                       # taken from a peer, not made here
                     out.append(row)
-            return out
-        except (ValueError, KeyError, TypeError, UnicodeDecodeError):
+            for t in (data.get("tombstones") or [])[:MAX_TOMBS]:
+                if isinstance(t, dict) and isinstance(t.get("key"), str) and fleetlist.KEY_WORD.fullmatch(t["key"]) \
+                        and isinstance(t.get("name"), str) and self._epoch(t.get("epoch")) and t["key"] not in seen:
+                    seen.add(t["key"])
+                    tombs.append({"key": t["key"], "name": t["name"][:64], "epoch": t["epoch"]})
+            return out, tombs
+        except (ValueError, KeyError, TypeError, UnicodeDecodeError, AttributeError):
             self.log("pvj-web: deny.json could not be read and is ignored")
-            return []
+            return [], []
 
     def _save_deny(self):
-        self._write(DENY_FILE, (json.dumps({"v": 1, "entries": self._deny}, indent=1) + "\n").encode("ascii"))
+        self._write(DENY_FILE, (json.dumps({"v": 1, "entries": self._deny, "tombstones": self._tombs}, indent=1) + "\n").encode("ascii"))
 
     def denied_keys(self):
         with self.lock:
             return {r["key"] for r in self._deny}
 
+    def _next_n(self):
+        return 1 + max([r["n"] for r in self._deny] or [0])
+
+    def _tomb(self, key):
+        for t in self._tombs:
+            if t["key"] == key:
+                return t
+        return None
+
+    def _drop_tomb(self, key):
+        self._tombs = [t for t in self._tombs if t["key"] != key]
+
     def deny_add(self, key, name, by):
-        """Storage only: record a key as removed from the cluster. (The action, the spreading and the sign-outs are slice 4d.)"""
+        """Put a key on the deny list from this node (the Owner's removal). The epoch is 1, or one above the tombstone an Allow
+        again left, so this removal beats every older deny that is still going round. True when it was added; False when the key
+        was denied already. A deny always wins: what the node carried is signed out at once."""
         if not isinstance(key, str) or not fleetlist.KEY_WORD.fullmatch(key):
             raise HandoverError("not a key hash")
         with self.lock:
@@ -408,18 +440,90 @@ class Handover:
                 return False
             if len(self._deny) >= MAX_DENY:
                 raise HandoverError("the deny file is full")
-            self._deny.append({"key": key, "name": str(name)[:64], "by": str(by)[:64], "n": 1 + max([r["n"] for r in self._deny] or [0])})
+            tomb = self._tomb(key)
+            self._deny.append({"key": key, "name": str(name)[:64], "by": str(by)[:64], "n": self._next_n(),
+                               "epoch": (tomb["epoch"] + 1) if tomb else 1})
+            self._drop_tomb(key)
             self._save_deny()
-        self._changed()                                  # a deny always wins: what the node carried is signed out at once
+        self._changed()
         return True
 
+    def _lift(self, row):
+        """Take a row off and leave the tombstone (epoch + 1). The lock is held."""
+        self._deny = [r for r in self._deny if r is not row]
+        self._drop_tomb(row["key"])
+        self._tombs.append({"key": row["key"], "name": row["name"], "epoch": min(row["epoch"] + 1, MAX_EPOCH)})
+        del self._tombs[:-MAX_TOMBS]
+        self._save_deny()
+
     def deny_remove(self, key):
+        """Lift a deny for a key (with its tombstone). The Owner's `allow_again` checks first; this is the act."""
         with self.lock:
-            before = len(self._deny)
-            self._deny = [r for r in self._deny if r["key"] != key]
-            if len(self._deny) != before:
-                self._save_deny()
-            return len(self._deny) != before
+            rows = [r for r in self._deny if r["key"] == key]
+            if not rows:
+                return False
+            self._lift(rows[0])
+            return True
+
+    def remove_node(self, node_id, who=None):
+        """The Owner removes a node of the approved set from the cluster: its key (every key this node would take for that id) goes
+        on the deny list, its fingerprint acceptance goes, and the sweep signs out what it carried. Returns {"name", "added"}.
+        The caller spreads it (Peers.spread) and writes the event with the count of devices signed out."""
+        if not isinstance(node_id, str) or not fleetlist.ID_WORD.fullmatch(node_id):
+            raise HandoverError("not a node id")
+        with self.lock:
+            self._maybe_reload()
+            cands = self._candidates(node_id)
+            if not cands:
+                raise HandoverError("that node is not one this node approves (it may be removed already)", 404)
+            name = cands[0][2]
+            if len(self._deny) + len(cands) > MAX_DENY:
+                raise HandoverError("the deny file is full")
+            for key, _via, _name, _carry in cands:
+                tomb = self._tomb(key)
+                self._deny.append({"key": key, "name": name[:64], "by": (who or "an Owner")[:64], "n": self._next_n(),
+                                   "epoch": (tomb["epoch"] + 1) if tomb else 1})
+                self._drop_tomb(key)
+            self._pairings = [r for r in self._pairings if r["id"] != node_id]
+            self._save_pairings()
+            self._save_deny()
+            result = {"name": name, "added": len(cands)}
+        self._changed()
+        return result
+
+    def allow_again(self, n, typed, epoch, who=None):
+        """The Owner lets a removed node be approved again (it still has to be on the list or accepted again). `n` names the row, `typed`
+        is its fingerprint read on the other node, `epoch` is the one the Owner saw: a removal renewed since (a newer deny came) is
+        refused, so a copy of an old request cannot undo a newer deny. The row becomes a local tombstone of epoch + 1: no peer is
+        ever told, and no deny at that epoch or below is taken again."""
+        if not (isinstance(n, int) and not isinstance(n, bool)) or self._epoch(epoch) is None:
+            raise HandoverError('send {"n": the removal\'s number, "epoch": the epoch the status showed, "typed": the fingerprint}')
+        with self.lock:
+            rows = [r for r in self._deny if r["n"] == n]
+            if not rows:
+                raise HandoverError("that node is not on the removed list", 404)
+            row = rows[0]
+            if row["epoch"] != epoch:
+                raise HandoverError("that removal was renewed since you looked: read the list again", 409)
+            if not same_fingerprint(typed, row["key"]):
+                raise HandoverError("the fingerprint typed does not match that node's key: read it from the node itself or the signed list and type it again, nothing was changed")
+            self._lift(row)
+            self.event("handover", "%s was allowed again by %s." % (row["name"], who or "an Owner"), who)
+            return self.status()
+
+    def allow_again_by(self, by, who=None):
+        """After a bad node denied others: lift every removal that came from that peer (each row records who sent it). Returns the status."""
+        if not isinstance(by, str) or not by:
+            raise HandoverError('send {"by": the name of the node that sent them}')
+        with self.lock:
+            rows = [r for r in self._deny if r.get("peer") and r["by"] == by]
+            if not rows:
+                raise HandoverError("no removal came from that node", 404)
+            for row in rows:
+                self._lift(row)
+            names = " and ".join(r["name"] for r in rows) if len(rows) < 4 else "%s and %d more" % (rows[0]["name"], len(rows) - 1)
+            self.event("handover", "%s allowed again by %s: everything %s removed." % (names, who or "an Owner", by), who)
+            return self.status()
 
     # -- the question the later slices ask --
     def approved(self, node_id, key):
@@ -493,12 +597,19 @@ class Handover:
     # -- the deny list as it spreads (design section 9): a deny is taken from an approved peer, an allow never is --
     def deny_digest(self):
         """A short digest of the denied keys, carried in every peer call: a peer that sees another one exchanges entries."""
-        keys = sorted(self.denied_keys())
-        return hashlib.sha256("\n".join(keys).encode("ascii")).hexdigest()[:16]
+        with self.lock:
+            pairs = sorted("%s:%d" % (r["key"], r["epoch"]) for r in self._deny)
+        return hashlib.sha256("\n".join(pairs).encode("ascii")).hexdigest()[:16]
 
     def deny_entries(self):
         with self.lock:
             return [dict(r) for r in self._deny]
+
+    def deny_wire(self, limit=None):
+        """The removals as they go to a peer: key, name and epoch, newest first. Nothing about who sent it or whether it came from a peer."""
+        with self.lock:
+            rows = sorted(self._deny, key=lambda r: -r["n"])
+            return [{"key": r["key"], "name": r["name"], "epoch": r["epoch"]} for r in (rows[:limit] if limit else rows)]
 
     @staticmethod
     def _clean_name(name):
@@ -507,47 +618,76 @@ class Handover:
         return text if fleetlist.NODE_NAME.fullmatch(text or "") else "node"
 
     def take_denies(self, entries, by, now=None):
-        """Take the denies an approved peer reported. Only additions: nothing here removes an entry, and a peer cannot make
-        this node approve anybody. A deny for this node's own key is not stored; the status says so. A peer may fill at most
-        PEER_DENY_CAP rows of the file (the rest is for this node's Owner) and gives at most PEER_HOURLY in an hour; more
-        than FLOOD_BATCH new ones at once, or any it could not take, is an event and a line on the status. Returns the
-        names added."""
+        """Take the denies an approved peer reported. Only denies: nothing here removes an entry or a tombstone, and a peer cannot
+        make this node approve anybody. Each carries an epoch (1 when it says none). For a key this node holds a row for, a higher
+        epoch renews the row; for a key it holds a tombstone for (an Allow again), a deny is taken only above the tombstone's epoch,
+        so an old deny going round does not undo it; otherwise it is a new row. A deny for this node's own key is not stored; the
+        status says so. A peer may fill at most PEER_DENY_CAP rows of the file (the rest is for this node's Owner) and gives at
+        most PEER_HOURLY rows or renewals in an hour; more than FLOOD_BATCH new ones at once, or any it could not take, is an event
+        and a line on the status. Returns the names added or renewed."""
         added = []
         if not isinstance(entries, list):
             return added
         now = time.time() if now is None else now
         with self.lock:
             own = self.own_key()
-            new, seen = [], set(self.denied_keys())
+            rows = {r["key"]: r for r in self._deny}
+            new, renew, seen = [], [], set()
             for e in entries[:MAX_DENY]:
                 if not isinstance(e, dict) or not isinstance(e.get("key"), str) or not fleetlist.KEY_WORD.fullmatch(e["key"]) \
                         or not isinstance(e.get("name"), str):
                     continue
-                if e["key"] == own:
+                epoch = self._epoch(e.get("epoch", 1))
+                if epoch is None:
+                    continue
+                key = e["key"]
+                if key == own:
                     self.removed = True
                     continue
-                if e["key"] in seen:
+                if key in seen:
                     continue
-                seen.add(e["key"])
-                new.append(e)
-            if not new:
+                seen.add(key)
+                if key in rows:
+                    if epoch > rows[key]["epoch"]:
+                        renew.append((rows[key], epoch))
+                    continue
+                tomb = self._tomb(key)
+                if tomb is not None and epoch <= tomb["epoch"]:
+                    continue                               # a deny the Owner lifted (or older): it stays lifted, and it is no flood
+                new.append((e, epoch))
+            if not new and not renew:
                 return added
             window = self._taken.setdefault(str(by), collections.deque())
             while window and now - window[0] > 3600:
                 window.popleft()
-            room = min(PEER_DENY_CAP - sum(1 for r in self._deny if r.get("peer")), PEER_HOURLY - len(window), MAX_DENY - len(self._deny))
-            for e in new[:max(0, room)]:
-                self._deny.append({"key": e["key"], "name": self._clean_name(e["name"]), "by": str(by)[:64], "peer": True,
-                                   "n": 1 + max([r["n"] for r in self._deny] or [0])})
+            hourly = PEER_HOURLY - len(window)
+            renewed = []
+            for row, epoch in renew[:max(0, hourly)]:
+                row["epoch"] = epoch
                 window.append(now)
-                added.append(self._deny[-1]["name"])
-            if added:
+                renewed.append(row["name"])
+            hourly -= len(renewed)
+            room = min(PEER_DENY_CAP - sum(1 for r in self._deny if r.get("peer")), hourly, MAX_DENY - len(self._deny))
+            taken = []
+            for e, epoch in new[:max(0, room)]:
+                self._deny.append({"key": e["key"], "name": self._clean_name(e["name"]), "by": str(by)[:64], "peer": True,
+                                   "n": self._next_n(), "epoch": epoch})
+                self._drop_tomb(e["key"])
+                window.append(now)
+                taken.append(self._deny[-1]["name"])
+            if taken or renewed:
                 self._save_deny()
-            if len(new) > FLOOD_BATCH or len(added) < len(new):
-                self.floods[str(by)] = {"sent": len(new), "taken": len(added)}
-                self.event("handover", "%s sent %d removals; this node took %d." % (by, len(new), len(added)))
-            elif added:
-                self.event("handover", "%s removed %s from this cluster." % (by, " and ".join(added) if len(added) < 3 else "%s and %d more" % (added[0], len(added) - 1)))
+            added = taken + renewed
+            if len(new) > FLOOD_BATCH or len(taken) < len(new):
+                self.floods[str(by)] = {"sent": len(new), "taken": len(taken)}
+                self.event("handover", "%s sent %d removals; this node took %d." % (by, len(new), len(taken)))
+            elif taken:
+                self.event("handover", "%s removed %s from this cluster." % (by, " and ".join(taken) if len(taken) < 3 else "%s and %d more" % (taken[0], len(taken) - 1)))
+            if renewed:
+                self.event("handover", "%s removed %s from this cluster again." % (by, " and ".join(renewed) if len(renewed) < 3 else "%s and %d more" % (renewed[0], len(renewed) - 1)))
+            if taken:
+                log = self._banner.setdefault(str(by), collections.deque(maxlen=64))
+                log.extend((now, name) for name in taken)
         if added:
             self._changed()
         return added
@@ -568,6 +708,21 @@ class Handover:
             if self.list is None or self.sig_text is None:
                 return None
             return self.list.body.decode("utf-8"), self.sig_text
+
+    def _banner_lines(self, now=None):
+        """The banner of the Owner's status (design section 9): a peer that sent removals lately. Red when it sent more than one in a
+        minute. Taken from memory; it is gone at a restart, the rows themselves stay."""
+        now = time.time() if now is None else now
+        out = []
+        for by, log in sorted(self._banner.items()):
+            while log and now - log[0][0] > 3600:
+                log.popleft()
+            if not log:
+                continue
+            names = [n for _t, n in log]
+            out.append({"by": by, "names": names, "red": sum(1 for t, _n in log if now - t <= 60) > 1,
+                        "text": "%s removed %s from this cluster" % (by, " and ".join(names) if len(names) < 4 else "%s and %d more" % (names[0], len(names) - 1))})
+        return out
 
     # -- what the Owner sees --
     def status(self):
@@ -591,7 +746,8 @@ class Handover:
                     "nodes": [{"id": n["id"], "name": n["name"], "carry": n["carry"]} for n in sorted(lst.nodes, key=lambda n: n["name"].lower())]},
                 "list_problem": problem,
                 "accepted": [{"id": r["id"], "name": r["name"], "carry": r["carry"]} for r in self._pairings],
-                "removed": [{"name": r["name"], "by": r["by"]} for r in self._deny],
+                "removed": [{"n": r["n"], "name": r["name"], "by": r["by"], "epoch": r["epoch"], "from_peer": bool(r.get("peer"))} for r in self._deny],
+                "banner": self._banner_lines(),
                 "removed_from_cluster": self.removed,
                 "removal_floods": [{"name": k, "sent": v["sent"], "taken": v["taken"]} for k, v in sorted(self.floods.items())],
                 "unknown_calls": self.unknown_calls,
@@ -603,6 +759,7 @@ class Handover:
         problems = []
         with self.lock:
             self.list, self.problem, self.floor, self._deny, self._pairings = None, None, None, [], []
+            self._tombs, self._banner, self.floods, self.removed = [], {}, {}, False
             try:
                 present = os.listdir(self.folder)
             except OSError:

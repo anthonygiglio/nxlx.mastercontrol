@@ -27,7 +27,13 @@ use it too. What is here:
   node's own failed calls count toward 10 a minute for the node and 5 for each target (address and port). Inbound:
   only the sender's address is charged (5 failures a minute), never the node, so nobody on the network can switch this
   node's calls off by sending it junk.
-* **The deny list spreads by asking.** A deny is taken from an approved peer's answer; an allow is never taken. A call
+* **Removals are pushed and pulled (slice 4d).** When an Owner removes a node (or this node takes a removal from a peer) it tells
+  every approved node it can reach, in a hello that carries the removals (key, name, epoch), from one background pusher at a time
+  that waits for nobody and charges a failure to its target only, never to the node-wide count of outbound failures. A node that
+  could not be reached is tried again later (every 5 minutes, from the lease worker) and also catches up by itself: its next hello
+  to anybody carries a different digest, and the answer carries the removals. The receiver's allowance for pushes is its own,
+  per caller key; a node taking a removal passes it on to its own approved peers. Only denies travel; "Allow again" is local and
+  never sent (pvj/handover.py). A call
   whose caller cannot be proved (nothing authenticates the caller, only the callee) has no authority beyond making
   this node ask the caller back, over a checked connection, for its denies. Answers that carry the list or denies, and
   the pulls a source can start, are capped per source. A call from a node this node does not approve costs a lookup
@@ -49,12 +55,15 @@ import time
 
 from . import fleetlist, httpsbox
 from .fleet import local_enough
-from .handover import HandoverError, fingerprint
+from .handover import WIRE_ENTRIES, HandoverError, fingerprint
 
 DEFAULT_PEER_PORT = 8443        # the peer listener of every node, unless the discovery row names another (PVJ_PEER_PORT on this node)
 CONNECT_SECONDS, TOTAL_SECONDS = 3.0, 6.0
 NODE_FAILS, TARGET_FAILS, SOURCE_FAILS, FAIL_WINDOW = 10, 5, 5, 60.0
 HEAVY_ANSWERS, ADOPT_TRIES, PULLS_PER_SOURCE = 2, 2, 2      # per source and minute: answers with the list or denies, lists tried, pulls started
+PUSHES_PER_KEY = 12             # per approved caller's key and minute: pushes of removals that are read (its own allowance, not a failure count)
+PUSH_RETRY = 300.0              # seconds before a node that could not be reached is tried again with the removals
+MAX_PUSH_BODY = 60000           # bytes of a hello with removals; the signed list leaves it first when it would not fit the server's body limit
 MAX_ANSWER = 262144
 MAX_ADDRESSES = 4
 PULL_GAP = 10.0                 # seconds between two pulls from the same node
@@ -116,8 +125,12 @@ def _spawn(fn):
     threading.Thread(target=fn, name="fleet-pull", daemon=True).start()
 
 
+def _spawn_push(fn):
+    threading.Thread(target=fn, name="fleet-push", daemon=True).start()
+
+
 class Peers:
-    def __init__(self, handover, https, lookup, now=time.monotonic, wall=time.time, log=None, spawn=None, peer_port=DEFAULT_PEER_PORT):
+    def __init__(self, handover, https, lookup, now=time.monotonic, wall=time.time, log=None, spawn=None, peer_port=DEFAULT_PEER_PORT, push_spawn=None):
         """handover: the Handover (who is approved, the list, the deny file). https: the HttpsBox (the pinned root, the clock).
         lookup(node_id) -> [(address, port, name, peer port)] from the discovery list (name and peer port may be left out; the
         port is the panel's, the peer port defaults to `peer_port`). spawn(fn): how a pull in the
@@ -128,6 +141,7 @@ class Peers:
         self.now, self.wall = now, wall
         self.log = log or (lambda line: None)
         self.spawn = spawn or _spawn
+        self.push_spawn = push_spawn or _spawn_push
         self.lock = threading.Lock()
         self._slots = {}
         self._out_node = Throttle(NODE_FAILS, FAIL_WINDOW, now)            # outbound only
@@ -136,6 +150,12 @@ class Peers:
         self._in_heavy = Buckets(HEAVY_ANSWERS, now)
         self._in_adopt = Buckets(ADOPT_TRIES, now)
         self._in_pull = Buckets(PULLS_PER_SOURCE, now)
+        self._in_push = Buckets(PUSHES_PER_KEY, now)                       # inbound only, by the approved caller's key
+        self._pushing = False                                              # one pusher at a time
+        self._push_dirty = False
+        self._push_force = False
+        self._owed = {}                                                    # node id -> monotonic time it may be tried again
+        self._peer_digest = {}                                             # node id -> the deny digest it last reported
         self._pulling = set()
         self._last_pull = {}
 
@@ -318,27 +338,32 @@ class Peers:
             out["list"], out["sig"] = files
         return out
 
-    def request(self, node_id, path, body=None):
+    def request(self, node_id, path, body=None, budget=True):
         """A call to an approved node, with the serial, the list and the deny digest in it. Raises PeerError. A newer list the
         peer sends is taken (verified, with the floor) and the denies it reports are taken; a peer that holds an older list
-        and could not take ours is refused for this call (being ahead is not a failure)."""
+        and could not take ours is refused for this call (being ahead is not a failure). `budget=False`: a failure is charged to the
+        target only (the pusher of removals uses it)."""
         h = self.handover
         keys = h.expected_keys(node_id)
         if not keys:
             raise PeerError("that node is not approved", 403)
         with self._slot(node_id):
-            payload, key, target = self._through(node_id, keys, "POST", path, dict(body or {}, **self.preamble()), h.name_of(node_id) or "a node", peer=True)
-            self._after(node_id, key, payload, target)
+            data = dict(body or {}, **self.preamble())
+            if len(json.dumps(data)) > MAX_PUSH_BODY:
+                data.pop("list", None)
+                data.pop("sig", None)
+            payload, key, target = self._through(node_id, keys, "POST", path, data, h.name_of(node_id) or "a node", peer=True, budget=budget)
+            self._after(node_id, key, payload, target, budget)
             return payload
 
-    def _after(self, node_id, key, payload, target):
+    def _after(self, node_id, key, payload, target, budget=True):
         h = self.handover
         approved = h.approved(node_id, key)
         name = approved["name"] if approved else "a node"
         peer = payload.get("serial")
         own = h.list.serial if h.list is not None else None
         if not (peer == "pairing" or (isinstance(peer, int) and not isinstance(peer, bool) and peer >= 1)):
-            self._fail_out(target)
+            self._fail_out(target, budget)
             raise PeerError("%s did not say which list it holds" % name)
         if isinstance(peer, int) and own is not None and peer < own:
             raise PeerError("%s holds an older list (serial %d, this node has %d) and could not take this node's" % (name, peer, own), 409)
@@ -349,14 +374,18 @@ class Peers:
                     h.take_list(text.encode("utf-8", "surrogatepass"), sig, source=name)
                 except HandoverError as e:
                     if own is not None:                          # a node with a list that is told a better one that fails the checks
-                        self._fail_out(target)
+                        self._fail_out(target, budget)
                         raise PeerError("%s sent a list that was not taken: %s" % (name, e.message))
             elif own is not None:
-                self._fail_out(target)
+                self._fail_out(target, budget)
                 raise PeerError("%s holds a newer list but did not send it" % name)
             if key not in h.expected_keys(node_id):
                 raise PeerError("this node no longer approves %s after the new list" % name, 403)
-        h.take_denies(payload.get("denied"), name)
+        digest = payload.get("deny")
+        if isinstance(digest, str) and len(digest) == 16 and (node_id in self._peer_digest or len(self._peer_digest) < 64):
+            self._peer_digest[node_id] = digest
+        if h.take_denies(payload.get("denied"), name):
+            self.spread()                                       # a removal taken here goes on to this node's other peers
 
     def hello(self, node_id):
         """Say hello to an approved node: this node's serial, list and deny digest go out, a newer list and new denies come back."""
@@ -372,6 +401,67 @@ class Peers:
             except PeerError as e:
                 out.append({"id": node_id, "name": name, "ok": False, "error": e.message})
         return out
+
+    # -- pushing removals (slice 4d) --
+    def spread(self, force=True):
+        """Tell every approved node about the removals held now. Returns at once: one background pusher runs at a time, and a request
+        made while it runs makes it go round once more. `force`: also nodes that could not be reached lately."""
+        with self.lock:
+            self._push_dirty = True
+            self._push_force = self._push_force or force
+            if self._pushing:
+                return
+            self._pushing = True
+        try:
+            self.push_spawn(self._push_run)
+        except BaseException:
+            with self.lock:
+                self._pushing = False
+            raise
+
+    def _push_run(self):
+        try:
+            while True:
+                with self.lock:
+                    if not self._push_dirty:
+                        self._pushing = False
+                        return
+                    self._push_dirty, force, self._push_force = False, self._push_force, False
+                self.push_all(force)
+        except BaseException:
+            with self.lock:
+                self._pushing = False
+            raise
+
+    def push_all(self, force=True):
+        """One round: a hello with the removals to each approved node whose last reported digest differs from ours. A node that cannot
+        be reached is owed the push and tried again after PUSH_RETRY. Returns [{"id", "name", "ok"}]."""
+        h = self.handover
+        out = []
+        own = h.deny_digest()
+        for node_id, name, _key in h.approved_nodes():
+            with self.lock:
+                skip = self._peer_digest.get(node_id) == own or (not force and self._owed.get(node_id, 0.0) > self.now())
+            if skip:
+                continue
+            try:
+                self.request(node_id, "/api/fleet/peer", {"denied": h.deny_wire(WIRE_ENTRIES)}, budget=False)
+                with self.lock:
+                    self._owed.pop(node_id, None)
+                out.append({"id": node_id, "name": name, "ok": True})
+            except PeerError as e:
+                with self.lock:
+                    self._owed[node_id] = self.now() + PUSH_RETRY
+                out.append({"id": node_id, "name": name, "ok": False, "error": e.message})
+        return out
+
+    def retry_owed(self):
+        """From the lease worker: nodes that could not be reached with the removals are tried again when their time has come."""
+        t = self.now()
+        with self.lock:
+            due = any(v <= t for v in self._owed.values()) and not self._pushing
+        if due:
+            self.spread(force=False)
 
     def call_once(self, node_id, path, body, budget=True):
         """One POST to the peer port of an approved node, with the checks of 3.2 and nothing else added to the body, made once: a
@@ -453,13 +543,14 @@ class Peers:
             raise PeerError("too many calls have failed lately: wait a minute", 429)
         h = self.handover
         need = {"from", "key", "serial", "deny"}
-        ok = isinstance(body, dict) and need <= set(body) <= need | {"list", "sig"}
+        ok = isinstance(body, dict) and need <= set(body) <= need | {"list", "sig", "denied"}
         if ok:
             serial = body["serial"]
             ok = isinstance(body["from"], str) and fleetlist.ID_WORD.fullmatch(body["from"]) and isinstance(body["key"], str) \
                 and fleetlist.KEY_WORD.fullmatch(body["key"]) and isinstance(body["deny"], str) and len(body["deny"]) == 16 \
                 and (serial == "pairing" or (isinstance(serial, int) and not isinstance(serial, bool) and serial >= 1)) \
-                and all(isinstance(body.get(k, ""), str) and len(body.get(k, "")) <= MAX_CARRIED for k in ("list", "sig"))
+                and all(isinstance(body.get(k, ""), str) and len(body.get(k, "")) <= MAX_CARRIED for k in ("list", "sig")) \
+                and (not "denied" in body or (isinstance(body["denied"], list) and len(body["denied"]) <= WIRE_ENTRIES))
         if not ok:
             self._fail_in(source)
             raise PeerError("not a peer call", 400)
@@ -477,6 +568,12 @@ class Peers:
             except HandoverError:
                 self._fail_in(source)                          # a list that fails the checks is a bad call, charged to its sender
             lst = h.list
+        if "denied" in body and body["denied"] and self._spend(self._in_push, peer_key):
+            if h.take_denies(body["denied"], approved["name"]):
+                self.spread()                                 # a removal taken here goes on to this node's other peers
+        with self.lock:
+            if body["from"] in self._peer_digest or len(self._peer_digest) < 64:
+                self._peer_digest[body["from"]] = body["deny"]  # what the caller held when it called (it may take ours in the answer)
         answer = {"v": 1, "serial": lst.serial if lst is not None else "pairing", "deny": h.deny_digest()}
         files = h.list_text()
         wants_list = files is not None and (theirs == "pairing" or theirs < lst.serial)
@@ -485,7 +582,7 @@ class Peers:
             if wants_list:
                 answer["list"], answer["sig"] = files
             if different:
-                answer["denied"] = h.deny_entries()
+                answer["denied"] = h.deny_wire()
         if different and self._spend(self._in_pull, source):
             self._pull_later(body["from"])
         return answer

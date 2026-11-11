@@ -301,7 +301,7 @@ class Denying(HandoverBase):
         again = self.make(self.cert)
         again.load()
         self.assertEqual(again.denied_keys(), {"4" * 64})
-        self.assertEqual(again.status()["removed"], [{"name": "gone", "by": "leyline"}])
+        self.assertEqual(again.status()["removed"], [{"n": 1, "name": "gone", "by": "leyline", "epoch": 1, "from_peer": False}])
         self.assertTrue(again.deny_remove("4" * 64))
         self.assertFalse(again.deny_remove("4" * 64))
         cold = self.make(self.cert)
