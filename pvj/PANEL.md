@@ -154,7 +154,11 @@ Built once by `render()` and `chrome()` in `app.js`:
   from other nodes are signed out), this node's fingerprint, the trusted nodes (fleet list or accepted by fingerprint)
   each with Remove from this cluster (asked first, then how many devices were signed out), the removals with Allow
   again (the fingerprint typed back from that node's own panel) and Allow again everything one node removed. A node
-  without hand-overs shows no card.
+  without hand-overs shows no card. Also there: the fleet list held, with Load a fleet list (fleet.json and fleet.sig
+  chosen together, sent as they are); Stop trusting here on a node accepted by fingerprint (this node only); and Trust
+  a node by its fingerprint for a node on the network with a secure connection that is not trusted yet: its card's
+  fingerprint is shown, the Owner types the one THAT node's own panel shows (the box is never filled in) and chooses
+  what its devices may do here; Trust waits for both.
 
 ## 4. The shared patterns
 

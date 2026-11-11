@@ -194,9 +194,19 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                 return CSP
             if self._secure():                    # over TLS: the other nodes a hand-over form may go to (D132, slice 5)
                 forms = getattr(api, "handover_forms", None)
-                return page_csp(None, forms() if forms is not None else ())
+                # only for a paired Operator or Owner, the devices that have the Nodes list: the PIN screen and a Guest's page
+                # do not learn which nodes this one trusts (review of PR 276)
+                return page_csp(None, forms() if forms is not None and self._paired_staff() else ())
             box = self._https()
             return page_csp(box.trusted_origin(self.headers.get("Host")) if box is not None else None)
+
+        def _paired_staff(self):
+            """Yes or no: this request carries the token of a paired Operator or Owner (not a support login). Only for the page's
+            policy (_csp): the HTML document is served to everybody, without the gate, so there is no device of the gate to reuse,
+            and nothing here is handed to a route; a route gets its device from _who or _api only (tests/test_roles.py)."""
+            token = self._token()
+            device = auth.authenticate(token) if token else None
+            return bool(device is not None and device.get("role") in ("live", "full") and not device.get("remote"))
 
         def _token(self):
             header = self.headers.get("Authorization", "")

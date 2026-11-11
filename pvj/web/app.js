@@ -8306,7 +8306,15 @@
     var body = h('div', { id: 'clusterbody' }, h('div', { class: 'hint', text: 'Looking...' }));
     var line = h('div', { class: 'msg inmsg', id: 'clustermsg', role: 'status' });
     var card = h('div', { class: 'card', id: 'clustercard' }, h('h2', { text: 'Nodes that open each other' }), line, body);
-    function look() { api('GET', '/api/fleet').then(function (r) { if (card.isConnected) draw(r); }); }
+    // The nodes on the network are asked for when the card opens and after a change of trust only (asking may start a
+    // scan, D127), not after every press on the card (review of PR 278)
+    var seenNodes = [];
+    function look(nodesToo) {
+      api('GET', '/api/fleet').then(function (r) {
+        if (!r.ok || !nodesToo) return r;
+        return api('GET', '/api/nodes').then(function (n) { seenNodes = n.ok && Array.isArray(n.data.nodes) ? n.data.nodes : []; return r; });
+      }).then(function (r) { if (card.isConnected) draw(r); });
+    }
     function warn(id, text) { return h('div', { class: 'confirm', id: id, role: 'alert', text: text }); }
     function draw(r) {
       body.textContent = '';
@@ -8333,26 +8341,94 @@
         } }));
       if (d.self && d.self.fingerprint) body.appendChild(h('p', { class: 'hint', id: 'clusterprint' }, 'This node\'s fingerprint, for another node\'s Owner to check: ',
         h('span', { class: 'mono', text: String(d.self.fingerprint) })));
+      body.appendChild(h('h3', { class: 'k', text: 'Fleet list' }));
+      var held = d.list;
+      body.appendChild(h('p', { class: 'hint', id: 'clusterlistheld', text: held
+        ? 'Holding "' + String(held.name || 'the fleet list') + '", serial ' + held.serial + (held.issued ? ', signed ' + held.issued : '') + ', naming ' + (held.nodes || []).length + ' nodes.'
+        : 'No fleet list is loaded. A fleet list is signed on your own computer with your root (tools/boxcert.py fleet sign); load its two files here.' }));
+      var listPick = h('input', { type: 'file', id: 'clusterlistpick', multiple: true, accept: '.json,.sig', hidden: true, 'aria-label': 'Choose fleet.json and fleet.sig' });
+      listPick.addEventListener('change', function () {
+        var files = Array.prototype.slice.call(listPick.files || []);
+        listPick.value = '';
+        var json = files.filter(function (f) { return /\.json$/i.test(f.name); }), sig = files.filter(function (f) { return /\.sig$/i.test(f.name); });
+        if (json.length !== 1 || sig.length !== 1) { sayAt(line, 'Choose the two files together: fleet.json and fleet.sig.', true); return; }
+        if (json[0].size > 65536 || sig[0].size > 8192) { sayAt(line, 'Those files are larger than a fleet list can be.', true); return; }
+        Promise.all([json[0].text(), sig[0].text()]).then(function (t) {
+          act('POST', '/api/fleet/list', { list: t[0], sig: t[1] }, function (res) {
+            var l = res && res.list;
+            sayAt(line, l ? 'The fleet list "' + String(l.name || '') + '", serial ' + l.serial + ', is loaded.' : 'The fleet list is loaded.');
+            look();
+          });
+        }, function () { sayAt(line, 'Those files could not be read. Choose them again.', true); });
+      });
+      body.appendChild(listPick);
+      body.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'clusterlistload', text: held ? 'Load a newer fleet list' : 'Load a fleet list', onclick: function () { listPick.click(); } })));
       var trusted = [], seen = Object.create(null);
       ((d.list && d.list.nodes) || []).forEach(function (n) { if (n.id !== me && !seen[n.id]) { seen[n.id] = 1; trusted.push({ id: n.id, name: n.name, how: 'On the fleet list' + (d.list.name ? ' "' + d.list.name + '"' : '') + '. ' + (CARRY_THERE[n.carry] || '') }); } });
-      (d.accepted || []).forEach(function (n) { if (!seen[n.id]) { seen[n.id] = 1; trusted.push({ id: n.id, name: n.name, how: 'Accepted here by its fingerprint. ' + (CARRY_HERE[n.carry] || '') }); } });
+      var acceptedIds = Object.create(null);
+      (d.accepted || []).forEach(function (n) { acceptedIds[n.id] = 1; if (!seen[n.id]) { seen[n.id] = 1; trusted.push({ id: n.id, name: n.name, how: 'Accepted here by its fingerprint. ' + (CARRY_HERE[n.carry] || '') }); } });
       body.appendChild(h('h3', { class: 'k', text: 'Trusted nodes' }));
       var list = h('div', { class: 'list', id: 'clustertrusted' });
       body.appendChild(list);
       if (!trusted.length) list.appendChild(h('div', { class: 'state', id: 'clusternotrust', text: 'No node is trusted yet. A node is trusted when it is on a fleet list you signed, or when this node\'s Owner accepted it by its fingerprint.' }));
       trusted.forEach(function (n) {
         var name = String(n.name || 'a node');
-        list.appendChild(h('div', { class: 'item nowrow', id: 'clusternode-' + String(n.id).replace(/\W/g, '') },
+        list.appendChild(h('div', { class: 'item nowrow clusteritem', id: 'clusternode-' + String(n.id).replace(/\W/g, '') },
           h('div', { class: 'nowwords' }, h('div', { class: 'lname', text: name }), h('span', { class: 'navstate', text: n.how })),
-          h('div', { class: 'row' }, h('button', { class: 'btn small', text: 'Remove from this cluster', 'aria-label': 'Remove ' + name + ' from this cluster', onclick: function (e) {
+          h('div', { class: 'row' }, acceptedIds[n.id] ? h('button', { class: 'btn small', text: 'Stop trusting here', 'aria-label': 'Stop trusting ' + name + ' here', onclick: function (e) {
+            confirmRow('Stop trusting ' + name + ' on this node? Devices that came here from it are signed out here. Other nodes are not told.', 'Stop trusting', 'Keep', function () {
+              act('POST', '/api/fleet/accepted/remove', { id: n.id }, function () { sayAt(line, name + ' is no longer trusted here.'); look(true); });
+            }, e.currentTarget);
+          } }) : null, h('button', { class: 'btn small', text: 'Remove from this cluster', 'aria-label': 'Remove ' + name + ' from this cluster', onclick: function (e) {
             confirmRow(name + ' will be refused by every node in this cluster, and every device it carried will be signed out everywhere.', 'Remove', 'Keep', function () {
               act('POST', '/api/fleet/remove', { id: n.id }, function (res) {
                 var k = res && typeof res.signed_out === 'number' ? res.signed_out : 0;
                 sayAt(line, name + ' was removed from this cluster. ' + (k === 1 ? '1 device it carried was' : k + ' devices it carried were') + ' signed out here.');
-                look();
+                look(true);
               });
             }, e.currentTarget);
           } }))));
+      });
+      var others = seenNodes.filter(function (n) { return nodeId(n.id) && n.id !== me && !seen[n.id] && n.https === true; })
+        .filter(function (n, i, all) { return all.findIndex(function (m) { return m.id === n.id; }) === i; });
+      body.appendChild(h('h3', { class: 'k', text: 'Trust a node by its fingerprint' }));
+      var cand = h('div', { class: 'list', id: 'clustercandidates' });
+      body.appendChild(cand);
+      if (!others.length) cand.appendChild(h('div', { class: 'state', id: 'clusternocand', text: 'No other node on this network is waiting to be trusted. Nodes show here when looking for nodes is on and they answer over a secure connection.' }));
+      others.forEach(function (n) {
+        var name = String(n.name || 'a node'), slot = h('div', { class: 'row' });
+        var rowId = 'clustercand-' + n.id;
+        slot.appendChild(h('button', { class: 'btn small', text: 'Trust by fingerprint', 'aria-label': 'Trust ' + name + ' by its fingerprint', onclick: function () {
+          slot.textContent = '';
+          slot.appendChild(h('span', { class: 'hint', text: 'Asking ' + name + ' for its fingerprint...' }));
+          api('POST', '/api/fleet/accepted/look', { id: n.id }).then(function (res) {
+            slot.textContent = '';
+            if (!res.ok) { sayAt(line, String(res.data.error || 'That node did not answer'), true); look(); return; }
+            var carry = null;
+            var typed = h('input', { type: 'text', class: 'grow mono', id: 'clustercandtyped-' + n.id, autocomplete: 'off', spellcheck: 'false',
+              'aria-label': name + '\'s fingerprint, read on its own panel', placeholder: 'Its fingerprint, read on its own panel' });
+            var trust = h('button', { class: 'btn small', id: 'clustercandtrust-' + n.id, text: 'Trust', disabled: true });
+            var choices = h('div', { class: 'row', role: 'group', 'aria-label': 'What its devices may do here' });
+            [['full', 'Its Owners are Owners here'], ['live', 'Its devices are Operators here at most'], ['none', 'Its devices are not taken in']].forEach(function (c) {
+              choices.appendChild(h('button', { class: 'btn small', 'aria-pressed': 'false', 'data-carry': c[0], text: c[1], onclick: function (e) {
+                carry = c[0];
+                Array.prototype.forEach.call(choices.children, function (b) { b.setAttribute('aria-pressed', b === e.currentTarget ? 'true' : 'false'); b.classList.toggle('on', b === e.currentTarget); });
+                trust.disabled = !carry || !typed.value.trim();
+              } }));
+            });
+            typed.addEventListener('input', function () { trust.disabled = !carry || !typed.value.trim(); });
+            trust.addEventListener('click', function () {
+              act('POST', '/api/fleet/accepted', { id: n.id, carry: carry, typed: typed.value }, function () { sayAt(line, name + ' is trusted here now.'); look(true); });
+            });
+            slot.appendChild(h('div', { class: 'list sp', id: 'clustercandask-' + n.id },
+              h('p', { class: 'hint', text: name + ' shows this fingerprint: ' }, h('span', { class: 'mono', id: 'clustercandprint-' + n.id, text: String(res.data.fingerprint || '') })),
+              h('p', { class: 'hint', text: 'Open ' + name + '\'s own panel (Setup > Nodes on this network), check that it shows the same fingerprint, and type it here. If they differ, stop: it is not that node.' }),
+              typed, h('p', { class: 'hint', text: 'What its devices may do here:' }), choices, h('div', { class: 'row' }, trust)));
+            typed.focus();
+          });
+        } }));
+        cand.appendChild(h('div', { class: 'item nowrow clusteritem', id: rowId },
+          h('div', { class: 'nowwords' }, h('div', { class: 'lname', text: name }), h('span', { class: 'navstate mono', text: nodeWhere(n) })), slot));
       });
       var removed = Array.isArray(d.removed) ? d.removed : [];
       if (!removed.length) return;
@@ -8377,7 +8453,7 @@
           typed.focus();
         } });
         row.appendChild(allow);
-        gone.appendChild(h('div', { class: 'item nowrow', id: 'clusterremoved-' + x.n },
+        gone.appendChild(h('div', { class: 'item nowrow clusteritem', id: 'clusterremoved-' + x.n },
           h('div', { class: 'nowwords' }, h('div', { class: 'lname', text: name }),
             h('span', { class: 'navstate', text: x.from_peer ? 'Removed by ' + by + ', another node.' : 'Removed here by ' + by + '.' })), row));
       });
@@ -8391,7 +8467,7 @@
         } })));
       });
     }
-    setTimeout(look, 0);
+    setTimeout(function () { look(true); }, 0);
     return card;
   }
   // ---- The node sheet (2026-11-09) -------------------------------------------------------------------------------

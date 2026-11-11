@@ -439,8 +439,14 @@ class GateTableTest(RolesBase):
         self.assertIn("device = self._who(method, path)", route)
         before = route[:route.index("device = self._who(method, path)")]
         self.assertEqual(sorted(re.findall(r'"(/api/[^"]+)"', before)), sorted(p for _m, p in policy.NO_GATE))
-        # and a request gets its device in two places only: _who (the gate) and _api (Api.handle, the gate again)
-        self.assertEqual(len(re.findall(r"device = auth\.authenticate\(", source)), 2)
+        # and a request gets its device in two places only: _who (the gate) and _api (Api.handle, the gate again). A third
+        # lookup is allowed, knowingly (review of PR 278), in _paired_staff: the page policy's yes or no for whether the HTML
+        # document names the trusted nodes in form-action (D132). The document is served to everybody without the gate, so
+        # there is no gate's device to reuse; _paired_staff gives back a bool and hands no device to any route.
+        self.assertEqual(len(re.findall(r"device = auth\.authenticate\(", source)), 3)
+        staff = source[source.index("def _paired_staff("):source.index("def _token(")]
+        self.assertEqual(len(re.findall(r"device = auth\.authenticate\(", staff)), 1)
+        self.assertIn("return bool(", staff)
         self.assertEqual(sorted(routes - set(ROWS)), [], "routes without a row in tests/test_roles.py: decide who may use them")
         self.assertEqual(sorted(set(ROWS) - routes), [], "rows for routes that are gone")
         self.assertEqual(sorted(set(GUEST_BODIES)), sorted(policy.GUEST))

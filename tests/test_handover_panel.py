@@ -80,8 +80,8 @@ class HandoverForms(unittest.TestCase):
         a = fake_api([row(B, "192.168.0.170"), row(B, "10.0.0.7", 8443), row(C, "192.168.0.171", name="venue"),
                       row(D, "192.168.0.172", name="plain", https=False), row(E, "8.8.8.8", name="far")],
                      approved=[B, C, D, E], carry={C: "none"})
-        self.assertEqual(api_mod.Api.handover_forms(a), sorted(["https://192.168.0.170", "https://node-02.local", "https://10.0.0.7:8443",
-                                                                "https://node-02.local:8443"]))      # (a public address: not even its .local name)
+        self.assertEqual(sorted(api_mod.Api.handover_forms(a)), sorted(["https://192.168.0.170", "https://node-02.local", "https://10.0.0.7:8443",
+                                                                        "https://node-02.local:8443"]))      # (a public address: not even its .local name)
 
     def test_none_without_trust(self):
         self.assertEqual(api_mod.Api.handover_forms(fake_api([row(B, "192.168.0.170")], approved=[])), [])
@@ -97,10 +97,27 @@ class HandoverForms(unittest.TestCase):
         self.assertEqual(api_mod.Api.handover_forms(a), [])
 
     def test_every_origin_passes_the_csp_shape(self):
-        a = fake_api([row(B, "192.168.0.%d" % i, name="node-%d" % i) for i in range(1, 40)], approved=[B])
+        ids = ["%032x" % (i + 1) for i in range(40)]
+        a = fake_api([row(i, "192.168.0.%d" % (n + 1), name="node-%d" % n) for n, i in enumerate(ids)], approved=ids)
         forms = api_mod.Api.handover_forms(a)
         self.assertEqual(len(forms), 32)
         self.assertTrue(all(server.CSP_ORIGIN.fullmatch(f) for f in forms))
+
+    def test_a_flood_for_one_id_takes_four_places(self):
+        # whoever announces a trusted node's id at many addresses gets at most 4 places for it, and the other node keeps its own
+        flood = [row(B, "192.168.1.%d" % i, name="spoof") for i in range(1, 60)]
+        a = fake_api(flood + [row(C, "192.168.0.171", name="venue")], approved=[B, C])
+        forms = api_mod.Api.handover_forms(a)
+        self.assertIn("https://192.168.0.171", forms)
+        self.assertLessEqual(sum(1 for f in forms if f.startswith("https://192.168.1.")), 4)
+
+    def test_the_checked_address_comes_first(self):
+        flood = [row(B, "192.168.1.%d" % i, name="spoof") for i in range(1, 60)]
+        a = fake_api(flood, approved=[B])
+        a.peers = types.SimpleNamespace(verified={B: "https://192.168.0.170", D: "https://192.168.0.99"})
+        forms = api_mod.Api.handover_forms(a)
+        self.assertEqual(forms[0], "https://192.168.0.170", "the address checked by certificate is first")
+        self.assertNotIn("https://192.168.0.99", forms, "a node that is not trusted now is left out, checked or not")
 
 
 class NodesAnswer(unittest.TestCase):
@@ -141,6 +158,37 @@ class KnownNeverScans(unittest.TestCase):
         self.assertEqual(fleet.Fleet.known(f), [])
         f._on = lambda: True
         self.assertEqual(fleet.Fleet.known(f), [1])
+
+
+
+
+from tests.test_boxcert import openssls  # noqa: E402
+from tests.test_https import HttpsBase  # noqa: E402
+
+
+@unittest.skipUnless(openssls(), "no openssl on this machine")
+class PolicyOnlyForPairedStaff(HttpsBase):
+    """The page over TLS names the trusted nodes in form-action only for a paired Operator or Owner: the PIN screen and a
+    Guest do not learn which nodes this one trusts (review of PR 276)."""
+
+    def test_who_sees_the_trusted_nodes(self):
+        owner, _ = self.pair("owner laptop")
+        self.full = owner                      # (request_and_sign asks as the Owner)
+        self.install(self.request_and_sign())
+        self.api.handover_forms = lambda: ["https://192.168.0.170"]
+        guest = self.call("POST", "/api/devices/invite", {"name": "guest", "role": "view"}, token=owner)[1]["token"]
+        operator = self.call("POST", "/api/devices/invite", {"name": "op", "role": "live"}, token=owner)[1]["token"]
+
+        def policy(token):
+            st, _, r = self.scall("GET", "/", token=token)
+            self.assertEqual(st, 200)
+            return r.getheader("Content-Security-Policy")
+        named = "form-action \x27self\x27 https://192.168.0.170;"
+        self.assertNotIn("192.168.0.170", policy(None), "the PIN screen")
+        self.assertNotIn("192.168.0.170", policy("0" * 32), "a token that is no device")
+        self.assertNotIn("192.168.0.170", policy(guest), "a Guest")
+        self.assertIn(named, policy(operator))
+        self.assertIn(named, policy(owner))
 
 
 if __name__ == "__main__":

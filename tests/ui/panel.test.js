@@ -2688,15 +2688,24 @@ function startServer(env) {          // env: more for the harness's environment 
         banner: [{ by: 'nxlx-node-03', names: ['nxlx-old'], red: true, text: 'nxlx-node-03 removed nxlx-old from this cluster' }],
         removed_from_cluster: false, removal_floods: [], unknown_calls: 0 });
       const fleetR = (route) => route.fulfill({ json: fleetAnswer() });
+      const D = 'd'.repeat(32);
+      const seenR = (route) => route.fulfill({ json: { self: { id: A, name: 'nxlx-node-01' }, discovery: { on: true, state: 'on', detail: '' }, scanning: false, error: null,
+        handover: { may: true, why: null, carried: false }, nodes: [
+          { id: B, name: 'nxlx-node-02', address: '192.168.0.170', port: 443, tier: 'lean', version: '1.0', https: true, seen_seconds_ago: 1, carry: true },
+          { id: D, name: 'nxlx-friend', address: '192.168.0.190', port: 443, tier: 'standard', version: '1.0', https: true, seen_seconds_ago: 1, carry: false },
+          { id: 'e'.repeat(32), name: 'nxlx-plain', address: '192.168.0.191', port: 80, tier: 'standard', version: '1.0', https: false, seen_seconds_ago: 1, carry: false }] } });
       const postR = async (route) => {
         const p = new URL(route.request().url()).pathname;
         posts.push([p, route.request().postDataJSON()]);
+        if (p === '/api/fleet/accepted/look') return route.fulfill({ json: { id: D, name: 'nxlx-friend', fingerprint: '7C:22:9B:0E' } });
         if (p === '/api/fleet/allow' && allowStatus !== 200) return route.fulfill({ status: allowStatus, json: { error: 'no' } });
         await route.fulfill({ json: Object.assign(fleetAnswer(), p === '/api/fleet/remove' ? { signed_out: 2 } : {}) });
       };
       await page.route('**/api/fleet', fleetR);
       await page.route('**/api/fleet/*', postR);
       await page.route('**/api/fleet/allow/by', postR);
+      await page.route('**/api/fleet/accepted/*', postR);
+      await page.route('**/api/nodes', seenR);
       await sysIndex();
       await page.click('#sysindex .navrow:has(.navname:text-is("Nodes on this network"))');
       await page.waitForSelector('#clustercard #clusterremoved');
@@ -2749,9 +2758,64 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.click('#confirmrow button:text-is("Allow again")');
       await page.waitForFunction(() => /Everything nxlx-node-03 removed is allowed again here/.test(document.getElementById('clustermsg').textContent));
       assert.deepStrictEqual(posts.pop(), ['/api/fleet/allow/by', { by: 'nxlx-node-03' }], 'by the node that sent them');
+      // The fleet list (the follow-up to slice 5): what is held, and loading the two files chosen together
+      assert(/^Holding "rig", serial 3, signed 2026-11-09, naming 2 nodes\.$/.test(await page.textContent('#clusterlistheld')), 'the held list is described');
+      const fs = require('fs');
+      const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'pvj-fleet-'));
+      fs.writeFileSync(path.join(dir, 'fleet.json'), '{"v":1,"name":"rig"}');
+      fs.writeFileSync(path.join(dir, 'fleet.sig'), 'c2lnbmF0dXJl');
+      await page.setInputFiles('#clusterlistpick', [path.join(dir, 'fleet.json')]);
+      await page.waitForFunction(() => /Choose the two files together/.test(document.getElementById('clustermsg').textContent));
+      await page.setInputFiles('#clusterlistpick', [path.join(dir, 'fleet.json'), path.join(dir, 'fleet.sig')]);
+      await page.waitForFunction(() => /The fleet list "rig", serial 3, is loaded/.test(document.getElementById('clustermsg').textContent));
+      assert.deepStrictEqual(posts.pop(), ['/api/fleet/list', { list: '{"v":1,"name":"rig"}', sig: 'c2lnbmF0dXJl' }], 'the two files go as they are');
+      fs.rmSync(dir, { recursive: true, force: true });
+      // Stop trusting a node accepted by fingerprint (asked first; the cluster is not told)
+      assert.strictEqual(await page.locator('#clusternode-' + B + ' button:text-is("Stop trusting here")').count(), 0, 'a node on the fleet list has no Stop trusting');
+      await page.click('#clusternode-' + C + ' button:text-is("Stop trusting here")');
+      await page.waitForSelector('#confirmrow');
+      assert(/Other nodes are not told/.test(await page.textContent('#confirmrow')), 'Stop trusting says it is this node only');
+      await page.click('#confirmrow button:text-is("Stop trusting")');
+      await page.waitForFunction(() => /is no longer trusted here/.test(document.getElementById('clustermsg').textContent));
+      assert.deepStrictEqual(posts.pop(), ['/api/fleet/accepted/remove', { id: C }], 'by id');
+      // Trust a node by its fingerprint (design 3.4): only a node on the network with a secure connection that is not trusted
+      // yet; the fingerprint is shown from its card, the box is never filled in, and Trust waits for the typing and a choice
+      await page.waitForSelector('#clustercand-' + D);
+      assert.deepStrictEqual(await page.$$eval('#clustercandidates .lname', (x) => x.map((e) => e.textContent)), ['nxlx-friend'], 'only the untrusted node with a secure connection');
+      await page.$eval('#clustercand-' + D + ' button', (e) => e.click());
+      await page.waitForSelector('#clustercandtyped-' + D);
+      assert.deepStrictEqual(posts.pop(), ['/api/fleet/accepted/look', { id: D }], 'its card is asked for');
+      assert.strictEqual(await page.textContent('#clustercandprint-' + D), '7C:22:9B:0E', 'its fingerprint is shown');
+      assert.strictEqual(await page.inputValue('#clustercandtyped-' + D), '', 'the fingerprint is never filled in for the Owner');
+      assert(await page.isDisabled('#clustercandtrust-' + D), 'Trust waits');
+      await page.fill('#clustercandtyped-' + D, '7c229b0e');
+      assert(await page.isDisabled('#clustercandtrust-' + D), 'Trust still waits for a choice');
+      // (pressed in the page: the panel puts its scroll back when it redraws, which fights Playwright's own scrolling here)
+      await page.$eval('#clustercandask-' + D + ' button[data-carry="live"]', (e) => e.click());
+      assert(await page.evaluate((id) => document.querySelector('#clustercandask-' + id + ' button[data-carry="live"]').classList.contains('on'), D), 'the choice shows');
+      await page.$eval('#clustercandtrust-' + D, (e) => e.click());
+      await page.waitForFunction(() => /nxlx-friend is trusted here now/.test(document.getElementById('clustermsg').textContent));
+      assert.deepStrictEqual(posts.pop(), ['/api/fleet/accepted', { id: D, carry: 'live', typed: '7c229b0e' }], 'the id, the choice and what was typed');
+      for (const [w, hgt] of [[390, 844], [820, 1180], [1440, 900]]) {
+        await page.setViewportSize({ width: w, height: hgt });
+        await page.click('#clustercand-' + D + ' button:text-is("Trust by fingerprint")', { timeout: 2000 }).catch(() => {});      // (open already after the first width)
+        await page.waitForSelector('#clustercandtyped-' + D);
+        const lay = await page.evaluate((id) => {
+          const words = document.querySelector('#clustercand-' + id + ' .lname').getBoundingClientRect();
+          return { wide: document.documentElement.scrollWidth - innerWidth, name: Math.round(words.width) };
+        }, D);
+        assert(lay.wide === 0 && lay.name >= 60, 'the trust form fits and the name is not squeezed at ' + w + ': ' + JSON.stringify(lay));
+        await page.setViewportSize({ width: 390, height: 844 });
+      }
       await page.unroute('**/api/fleet', fleetR);
       await page.unroute('**/api/fleet/*', postR);
       await page.unroute('**/api/fleet/allow/by', postR);
+      await page.unroute('**/api/fleet/accepted/*', postR);
+      await page.unroute('**/api/nodes', seenR);
+      // (the phone emulation keeps a zoomed-out scale after being stretched to 1440 and back: 853 px of window over a page
+      // laid out at 390, so presses land beside what they aim at; a reload sets the scale again)
+      await page.reload();
+      await page.waitForSelector('#wsmain');
       await go(page, 'now/now');
     }
     // The discovery switch on its own Setup page (This node > Nodes on this network): it says what it does now, Stop
