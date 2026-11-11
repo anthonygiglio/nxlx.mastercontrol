@@ -579,7 +579,7 @@ class Denies(PeerBase):
         self.settle()
         self.assertIn(self.x, self.a.handover.denied_keys())
         self.assertIn(("handover", "node-02 removed node-03 from this cluster.", None), self.a.events.lines)
-        self.assertEqual(self.a.handover.status()["removed"], [{"name": "node-03", "by": "node-02"}])
+        self.assertEqual(self.a.handover.status()["removed"], [{"n": 1, "name": "node-03", "by": "node-02", "epoch": 1, "from_peer": True}])
 
     def test_an_allow_is_never_taken_and_both_nodes_end_with_every_deny(self):
         self.a.handover.deny_add(self.y, "node-04", "node-01")
@@ -594,9 +594,9 @@ class Denies(PeerBase):
         self.a.peers.hello(B_ID)
         self.settle()
         self.assertIn(self.y, self.b.handover.denied_keys())
-        # a deny that one node lifted comes back from a peer that still holds it: lifting a deny for good needs every node,
-        # or a memory of the lifting (slice 4d, design section 18)
-        self.assertIn(self.y, self.a.handover.denied_keys())
+        # a deny that one node lifted does not come back from a peer that still holds it: the lifting leaves a local tombstone
+        # (slice 4d, design section 18, item 10), tests/test_cluster_remove.py goes through it
+        self.assertNotIn(self.y, self.a.handover.denied_keys())
 
     def test_a_peer_can_not_make_a_node_approve_anybody_by_what_it_sends(self):
         before = self.a.handover.approved_nodes()

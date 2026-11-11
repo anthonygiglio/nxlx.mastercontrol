@@ -91,13 +91,14 @@ class PeerNode:
         self.handover.load()
         self.directory = {}
         self.pulls = []
+        self.pushes = []
         self.threads = []
         kw = {}
         if now:
             kw["now"] = now
         if wall:
             kw["wall"] = wall
-        self.peers = peer.Peers(self.handover, self.box, lambda i: list(self.directory.get(i, [])), spawn=self._spawn, **kw)
+        self.peers = peer.Peers(self.handover, self.box, lambda i: list(self.directory.get(i, [])), spawn=self._spawn, push_spawn=self._push_spawn, **kw)
         self.calls = []                                       # what reached this node's servers: (method, path)
         self.port = None
         self.peer_port = None
@@ -109,6 +110,13 @@ class PeerNode:
     def _spawn(self, fn):
         """A pull runs in a thread of its own, as in production; `settle()` waits for them."""
         self.pulls.append(fn)
+        t = threading.Thread(target=fn, daemon=True)
+        self.threads.append(t)
+        t.start()
+
+    def _push_spawn(self, fn):
+        """The pusher of removals, in a thread of its own as in production; `settle()` waits for it too."""
+        self.pushes.append(fn)
         t = threading.Thread(target=fn, daemon=True)
         self.threads.append(t)
         t.start()

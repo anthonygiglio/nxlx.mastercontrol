@@ -35,7 +35,8 @@ def raw(path):
 
 
 ROUTES = [("GET", "/api/fleet"), ("POST", "/api/fleet/accept"), ("POST", "/api/fleet/list"), ("POST", "/api/fleet/accepted"),
-          ("POST", "/api/fleet/accepted/remove"), ("POST", "/api/fleet/accepted/look"), ("POST", "/api/fleet/sync")]
+          ("POST", "/api/fleet/accepted/remove"), ("POST", "/api/fleet/accepted/look"), ("POST", "/api/fleet/sync"),
+          ("POST", "/api/fleet/remove"), ("POST", "/api/fleet/allow"), ("POST", "/api/fleet/allow/by")]
 
 
 @unittest.skipUnless(openssls(), "no openssl on this machine")
