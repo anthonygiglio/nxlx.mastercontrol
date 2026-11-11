@@ -8310,8 +8310,10 @@
   // Allow again (the fingerprint typed back) and, after a node removed others, the banner and Allow again everything it
   // removed. A node without hand-overs (404) shows no card.
   // (a list row: what THAT node gives to devices from this one; an acceptance: what THIS node gives to devices from it)
-  var CARRY_THERE = { full: 'It takes Owners from here as Owners.', live: 'It takes devices from here as Operators at most.', none: 'It takes no device from here.' };
-  var CARRY_HERE = { full: 'Its Owners are Owners here.', live: 'Its devices are Operators here at most.', none: 'Its devices are not taken in here.' };
+  // (said as what happens to a person who comes over: the owner, 2026-11-11, of the first words, "What does this section
+  // mean? I don't understand")
+  var CARRY_THERE = { full: 'Someone from this node who opens it keeps their role there.', live: 'Someone from this node who opens it can run the show there, not change settings.', none: 'Someone from this node needs its PIN.' };
+  var CARRY_HERE = { full: 'Someone from it who opens this node keeps their role here.', live: 'Someone from it who opens this node can run the show here, not change settings.', none: 'Someone from it needs this node\'s PIN.' };
   function clusterCard() {
     var body = h('div', { id: 'clusterbody' }, h('div', { class: 'hint', text: 'Looking...' }));
     var line = h('div', { class: 'msg inmsg', id: 'clustermsg', role: 'status' });
@@ -8417,9 +8419,9 @@
             var carry = null;
             var typed = h('input', { type: 'text', class: 'grow mono', id: 'clustercandtyped-' + n.id, autocomplete: 'off', spellcheck: 'false',
               'aria-label': name + '\'s fingerprint, read on its own panel', placeholder: 'Its fingerprint, read on its own panel' });
-            var trust = h('button', { class: 'btn small', id: 'clustercandtrust-' + n.id, text: 'Trust', disabled: true });
-            var choices = h('div', { class: 'row', role: 'group', 'aria-label': 'What its devices may do here' });
-            [['full', 'Its Owners are Owners here'], ['live', 'Its devices are Operators here at most'], ['none', 'Its devices are not taken in']].forEach(function (c) {
+            var trust = h('button', { class: 'btn small', id: 'clustercandtrust-' + n.id, text: 'Trust ' + name, disabled: true });
+            var choices = h('div', { class: 'row nscarry', role: 'group', 'aria-label': 'When someone from ' + name + ' opens this node' });
+            [['full', 'They keep their role (an Owner there is an Owner here)'], ['live', 'They can run the show but not change settings (Operator at most)'], ['none', 'They need this node\'s PIN']].forEach(function (c) {
               choices.appendChild(h('button', { class: 'btn small', 'aria-pressed': 'false', 'data-carry': c[0], text: c[1], onclick: function (e) {
                 carry = c[0];
                 Array.prototype.forEach.call(choices.children, function (b) { b.setAttribute('aria-pressed', b === e.currentTarget ? 'true' : 'false'); b.classList.toggle('on', b === e.currentTarget); });
@@ -8433,7 +8435,7 @@
             slot.appendChild(h('div', { class: 'list sp', id: 'clustercandask-' + n.id },
               h('p', { class: 'hint', text: name + ' shows this fingerprint: ' }, h('span', { class: 'mono', id: 'clustercandprint-' + n.id, text: String(res.data.fingerprint || '') })),
               h('p', { class: 'hint', text: 'Open ' + name + '\'s own panel (Setup > Nodes on this network), check that it shows the same fingerprint, and type it here. If they differ, stop: it is not that node.' }),
-              typed, h('p', { class: 'hint', text: 'What its devices may do here:' }), choices, h('div', { class: 'row' }, trust)));
+              typed, h('p', { class: 'nscarryq', text: 'When someone from ' + name + ' opens this node:' }), choices, h('div', { class: 'row' }, trust)));
             typed.focus();
           });
         } }));
@@ -8545,15 +8547,20 @@
     var out = h('div', { class: 'msg inmsg', id: 'nsmsg', role: 'status' });
     var ver = h('p', { class: 'k nsver', id: 'nsversion', text: 'nxlx.mastercontrol' });
     api('GET', '/api/system').then(function (r) { if (r.ok && r.data && r.data.version && ver.isConnected) ver.textContent = 'nxlx.mastercontrol ' + r.data.version; });
-    // the nodes come first: Nodes in the title bar is what opens it (the pill opens the same sheet)
+    // The node this device is looking at comes first, then the others on the network, this device and the tools (the owner,
+    // 2026-11-11: "Move the details about the active node ... to the top of the Nodes panel"). Each section is a block of
+    // its own under a real heading, set apart from the one before ("section headers like 'this node' are not clearly
+    // defining their sections"). Nodes in the title bar opens it, and so does the pill.
     var bar = h('div', { class: 'nsbar' }, h('h2', { id: 'nshead', text: nodesShown() ? 'Nodes' : 'This node' }), close);
+    var sec = function (id, title, kids) {
+      return h('section', { class: 'nssec', id: 'nssec-' + id, 'aria-labelledby': 'nshd-' + id }, h('h3', { class: 'nshd', id: 'nshd-' + id, text: title }), kids);
+    };
     var box = h('div', { class: 'nssheet', id: 'nodesheet', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'nshead' },
       bar,
-      nodesShown() ? h('h3', { class: 'k', id: 'nsnodeshead', text: 'Nodes on this network' }) : null,
-      nodesShown() ? nodesPanel() : null,
-      h('h3', { class: 'k', text: 'This node' }), status,
-      h('h3', { class: 'k', text: 'This device' }), device,
-      h('h3', { class: 'k', text: 'Tools' }), tools, out, ver);
+      sec('node', 'This node', status),
+      nodesShown() ? sec('nodes', 'Nodes on this network', nodesPanel()) : null,
+      sec('device', 'This device', device),
+      sec('tools', 'Tools', [tools, out]), ver);
     var back = h('div', { class: 'nsback', id: 'nodesheetback', onclick: function (e) { if (e.target === back) nodeSheetShow(false); },
       onkeydown: function (e) {
         if (e.key === 'Escape') { e.stopPropagation(); nodeSheetShow(false); return; }
@@ -8619,7 +8626,7 @@
     var hoMsg = h('div', { class: 'msg inmsg', id: 'nodesmsg', role: 'status' });
     var note = h('p', { class: 'hint', id: 'nodesnote', text: NODES_NOTE });
     var selfId = null;
-    var pop = h('section', { class: 'nodespop', id: 'nodespop', 'aria-labelledby': 'nsnodeshead' },
+    var pop = h('div', { class: 'nodespop', id: 'nodespop' },
       self, hoMsg, list, note,
       disc,
       h('div', { class: 'row' },

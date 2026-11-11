@@ -132,10 +132,12 @@ Built once by `render()` and `chrome()` in `app.js`:
   none. The strip is built once and kept across redraws, so a finger on a slider is never cut off.
 - **Node sheet** (`#nodesheet`, 2026-11-09): a dialog called Nodes that comes down from the top. Nodes in the title bar
   opens it, and so does the pill, which is a button. There is no swipe (the owner: "I do not like the swipe up panel").
-  Nodes on this network first (the list itself, with Look again and the switch for looking; Owner and Operator, and
-  the sheet is called This node without it), This node (its address, temperature and player; what is on the screen;
-  Health with Open), This device (name, role, secure or not), Tools (Reload, Full screen and Keep the screen on where the browser can, Look for the
-  Owner, Log out), and the version line. Closes with Close, Escape or a press around it; Tab stays inside it. Nothing
+  This node first (its address, temperature and player; what is on the screen; Health with Open; the owner,
+  2026-11-11: the node being looked at goes at the top), then Nodes on this network (the list itself, with Look again
+  and the switch for looking; Owner and Operator, and the sheet is called This node without it), This device (name, role, secure or not), Tools (Reload, Full screen and Keep the screen on where the browser can, Look for the
+  Owner, Log out), and the version line. Each section is a `section.nssec` under its own heading `h3.nshd` (the title
+  style, 20/24 bold, on a full-width band of the card tone, space before it, no rule between it and its first row), so
+  a heading reads as the start of its section and not as one of the rows. Closes with Close, Escape or a press around it; Tab stays inside it. Nothing
   opens inside the title bar, so it keeps its height. Inside the FireTab launcher (user agent `NXLXLauncher/`, root
   `data-launcher`) the strip keeps 28 px clear at its foot for the launcher's own swipe strip; the swipe up from the
   bottom edge is the launcher's drawer, a different thing.
@@ -157,8 +159,9 @@ Built once by `render()` and `chrome()` in `app.js`:
   without hand-overs shows no card. Also there: the fleet list held, with Load a fleet list (fleet.json and fleet.sig
   chosen together, sent as they are); Stop trusting here on a node accepted by fingerprint (this node only); and Trust
   a node by its fingerprint for a node on the network with a secure connection that is not trusted yet: its card's
-  fingerprint is shown, the Owner types the one THAT node's own panel shows (the box is never filled in) and chooses
-  what its devices may do here; Trust waits for both.
+  fingerprint is shown, the Owner types the one THAT node's own panel shows (the box is never filled in) and answers
+  "When someone from <node> opens this node:" (they keep their role; they can run the show but not change settings;
+  they need this node's PIN); Trust <node> waits for both.
 
 ## 4. The shared patterns
 

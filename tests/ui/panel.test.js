@@ -2441,7 +2441,13 @@ function startServer(env) {          // env: more for the harness's environment 
           assert.strictEqual(await page.getAttribute('#nodesbtn', 'aria-expanded'), 'true', 'Nodes says the sheet is open');
           assert.strictEqual(await page.getAttribute('#nodesbtn', 'aria-haspopup'), 'dialog', 'Nodes says it opens a dialog');
           assert.strictEqual(await page.textContent('#nshead'), 'Nodes', 'the sheet is called Nodes');
-          assert.strictEqual(await page.$eval('#nodesheet h3', (e) => e.textContent), 'Nodes on this network', 'the list of nodes comes first');
+          assert.strictEqual(await page.$eval('#nodesheet h3', (e) => e.textContent), 'This node', 'the node being looked at comes first (the owner, 2026-11-11)');
+          assert.deepStrictEqual(await page.$$eval('#nodesheet .nssec', (x) => x.map((e) => e.querySelector('h3').textContent)), ['This node', 'Nodes on this network', 'This device', 'Tools'], 'each section is a block with its heading');
+          const hd = await page.$eval('#nshd-nodes', (e) => { const s = getComputedStyle(e); return { size: parseFloat(s.fontSize), weight: +s.fontWeight }; });
+          assert(hd.size >= 18 && hd.weight >= 700, 'a section heading is a real heading, bigger and bold: ' + JSON.stringify(hd));
+          const band = await page.$eval('#nshd-nodes', (e) => ({ bg: getComputedStyle(e).backgroundColor, sheet: getComputedStyle(document.getElementById('nodesheet')).backgroundColor, gap: parseFloat(getComputedStyle(e.parentNode).marginTop) }));
+          assert(band.bg !== band.sheet && band.bg !== 'rgba(0, 0, 0, 0)' && band.gap >= 16, 'each heading is a band of its own tone, with space before the section: ' + JSON.stringify(band));
+          assert.strictEqual(await page.$eval('#nssec-node .list > .item', (e) => getComputedStyle(e).borderTopStyle), 'none', 'no rule between a heading and its first row');
         }
         const rows = await page.$$eval('#nodeslist .nodesrow', (els) => els.map((el) => ({ name: el.querySelector('.lname').textContent,
           where: el.querySelector('.nodeswhere').textContent, href: el.querySelector('a') ? el.querySelector('a').getAttribute('href') : null,
@@ -2504,7 +2510,7 @@ function startServer(env) {          // env: more for the harness's environment 
           await page.click('#pill');
           await page.waitForSelector('#nodesheet');
           assert.strictEqual(await page.evaluate(() => document.activeElement.id), 'nsclose', 'the sheet opens with the cursor on Close');
-          assert.deepStrictEqual(await page.$$eval('#nodesheet h3', (x) => x.map((e) => e.textContent)), ['Nodes on this network', 'This node', 'This device', 'Tools'], 'what the sheet has, for the Owner');
+          assert.deepStrictEqual(await page.$$eval('#nodesheet h3', (x) => x.map((e) => e.textContent)), ['This node', 'Nodes on this network', 'This device', 'Tools'], 'what the sheet has, for the Owner');
           assert(await page.isVisible('#ns-node') && await page.isVisible('#ns-me') && await page.isVisible('#nslogout') && await page.isVisible('#nslook'), 'the node, this device, Log out and Look');
           await page.waitForFunction(() => /^nxlx\.mastercontrol \S+/.test(document.getElementById('nsversion').textContent), null, { timeout: 5000 });
           await page.keyboard.press('Escape');
@@ -2727,6 +2733,8 @@ function startServer(env) {          // env: more for the harness's environment 
       assert.strictEqual(await page.textContent('#clusterdeny'), 'The list of removed nodes has a problem: deny.json could not be read and was kept aside.', 'deny_problem is said plainly');
       assert(/3F:9A:12:CD/.test(await page.textContent('#clusterprint')), 'this node\'s fingerprint is shown');
       assert.deepStrictEqual(await page.$$eval('#clustertrusted .lname', (x) => x.map((e) => e.textContent)), ['nxlx-node-02', 'nxlx-venue'], 'the trusted nodes, without this node');
+      const sub = await page.$$eval('#clusterbody > h3', (x) => x.map((e) => { const s = getComputedStyle(e); return [e.textContent, parseFloat(s.fontSize) >= 18 && +s.fontWeight >= 700]; }));
+      assert(sub.length >= 3 && sub.every((x) => x[1]), 'the sections of the card have real headings: ' + JSON.stringify(sub));
       for (const [w, hgt] of [[390, 844], [820, 1180], [1440, 900]]) {
         await page.setViewportSize({ width: w, height: hgt });
         await page.waitForTimeout(300);
@@ -2798,6 +2806,9 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.waitForSelector('#clustercandtyped-' + D);
       assert.deepStrictEqual(posts.pop(), ['/api/fleet/accepted/look', { id: D }], 'its card is asked for');
       assert.strictEqual(await page.textContent('#clustercandprint-' + D), '7C:22:9B:0E', 'its fingerprint is shown');
+      // the three choices answer a question said in words (the owner, 2026-11-11: "What does this section mean?")
+      assert.strictEqual(await page.textContent('#clustercandask-' + D + ' .nscarryq'), 'When someone from nxlx-friend opens this node:', 'the question the choices answer');
+      assert.strictEqual(await page.textContent('#clustercandtrust-' + D), 'Trust nxlx-friend', 'Trust names the node');
       assert.strictEqual(await page.inputValue('#clustercandtyped-' + D), '', 'the fingerprint is never filled in for the Owner');
       assert(await page.isDisabled('#clustercandtrust-' + D), 'Trust waits');
       await page.fill('#clustercandtyped-' + D, '7c229b0e');
@@ -2817,6 +2828,8 @@ function startServer(env) {          // env: more for the harness's environment 
           return { wide: document.documentElement.scrollWidth - innerWidth, name: Math.round(words.width) };
         }, D);
         assert(lay.wide === 0 && lay.name >= 60, 'the trust form fits and the name is not squeezed at ' + w + ': ' + JSON.stringify(lay));
+        const spill = await page.$$eval('#clustercandask-' + D + ' .nscarry .btn, #clustercandtrust-' + D, (bs) => { const card = document.getElementById('clustercard').getBoundingClientRect(); return bs.filter((b) => b.getBoundingClientRect().right > card.right + 1 || b.scrollWidth > b.clientWidth + 1).map((b) => b.textContent); });
+        assert.deepStrictEqual(spill, [], 'every choice fits inside the card at ' + w);
         await page.setViewportSize({ width: 390, height: 844 });
       }
       await page.unroute('**/api/fleet', fleetR);
