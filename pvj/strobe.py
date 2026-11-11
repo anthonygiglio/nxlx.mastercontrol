@@ -589,15 +589,21 @@ class Strobe:
             if not str(e).startswith("mpv: "):
                 raise
             rows = None
+        with self._lock:
+            mine = (self.slot, self.route if self.lit else None)       # what this run has put there itself: left alone
         if isinstance(rows, list):
+            # slots 2 and 3 are the chain's; slot 1 is the panel's own effect slot, where the strobe sits when both are taken
             for r in rows:
-                if (isinstance(r, dict) and r.get("source") == SOURCE and r.get("slot") in SLOTS and r.get("state") not in (None, "off")
+                slot = r.get("slot") if isinstance(r, dict) else None
+                if slot == mine[0] or (slot == 1 and mine[1] == "effect"):
+                    continue
+                if (isinstance(r, dict) and r.get("source") == SOURCE and slot in (1,) + SLOTS and r.get("state") not in (None, "off")
                         and isinstance(r.get("path"), str) and self._is_strobe_file(r["path"], self.NATIVE_MARK)):
                     ipc.request("pvj-shader", "clear", SOURCE, r["slot"])
                     self.log("pvj-web: strobe: a strobe left running in slot %s by an earlier run was taken off" % r["slot"])
             return
         listed = ipc.request("get_property", "glsl-shaders")
-        if isinstance(listed, list):
+        if isinstance(listed, list) and mine[1] != "effect":
             keep = [p for p in listed if not (isinstance(p, str) and self._is_strobe_file(p, self.CLASSIC_MARK))]
             if len(keep) != len(listed):
                 ipc.request("set_property", "glsl-shaders", keep)
@@ -606,12 +612,13 @@ class Strobe:
     def reset_player(self, tries=None, delay=1.0, sleep=time.sleep, cap=30.0):
         """At every start of pvj-web (server.build, on a thread): take off a strobe the player is still drawing, as
         statsoverlay.reset_player does for its overlay: again with a back-off until the player answers; `tries` bounds it
-        for a test. It ends at once if the strobe has been used since. True when done."""
+        for a test. It runs once whatever has been done since (a hold in the first second must not hide a leftover in another
+        slot), and leaves alone only what this run itself holds. True when done."""
         n = 0
         while tries is None or n < tries:
             n += 1
             with self._lock:
-                if self._stopped or self.holders or self.lit or self.slot is not None:
+                if self._stopped:
                     return True
             try:
                 with self._apply:

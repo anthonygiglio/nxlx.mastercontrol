@@ -1231,8 +1231,49 @@ class RestartTest(unittest.TestCase):
         self.assertTrue(s.reset_player(tries=1))
         self.assertEqual(calls, [])
 
-    def test_a_restart_with_the_slot_lit_on_the_classic_path(self):
-        pass
+    def test_a_leftover_in_the_effect_slot_is_taken_off_too(self):
+        calls = []
+        import tempfile
+        d = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(d, True))
+        path = os.path.join(d, "x.prog")
+        parsed = S.parse(open(os.path.join(E.EFFECTS_DIR, "fx-strobe.fs")).read(), S.FILTER, passes=True)
+        open(path, "w").write(E.translate_native(parsed))
+
+        class Ipc:
+            def request(self, *c):
+                calls.append(c)
+                if c[:2] == ("get_property", "pvj-shaders"):
+                    return [{"source": 1, "slot": 1, "state": "on", "path": path}]
+        api = Api()
+        api.player.ipc = Ipc()
+        s = ST.Strobe(api, thread=False)
+        self.assertTrue(s.reset_player(tries=1))
+        self.assertIn(("pvj-shader", "clear", 1, 1), calls)
+
+    def test_a_hold_in_the_first_second_does_not_hide_a_leftover_in_the_other_slot(self):
+        calls = []
+        import tempfile
+        d = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(d, True))
+        path = os.path.join(d, "x.prog")
+        parsed = S.parse(open(os.path.join(E.EFFECTS_DIR, "fx-strobe.fs")).read(), S.FILTER, passes=True)
+        open(path, "w").write(E.translate_native(parsed))
+        api = Api()
+
+        class Ipc:
+            def request(self, *c):
+                calls.append(c)
+                if c[:2] == ("get_property", "pvj-shaders"):
+                    return [{"source": 1, "slot": 2, "state": "on", "path": path}, {"source": 1, "slot": 3, "state": "on", "path": path}]
+        api.player.ipc = Ipc()
+        s = ST.Strobe(api, thread=False)
+        s.hold(DEVICE, {"holder": "t"})                         # the new run's own hold went to slot 3
+        self.assertEqual(s.slot, 3)
+        self.assertTrue(s.reset_player(tries=1))
+        self.assertIn(("pvj-shader", "clear", 1, 2), calls)     # the leftover is gone ...
+        self.assertNotIn(("pvj-shader", "clear", 1, 3), calls)  # ... and its own slot is not touched
+        self.assertTrue(lit(api))
 
 
 class ClassicRestartTest(RouteBase):
