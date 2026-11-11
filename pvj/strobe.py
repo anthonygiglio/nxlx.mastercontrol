@@ -17,10 +17,10 @@ back. That is slower (a text is compiled) and is said so in the state (`"path": 
 THE DEAD-MAN. A hold is a lease, not a switch. Every holder has a deadline; the node's own watcher (TICK seconds) ends
 the strobe when the last lease has run out, so a closed tab, a dropped network, a pulled cable or a silent controller
 cannot leave it on. The panel renews every RENEW_EVERY seconds and a lease from the panel lasts PANEL_TTL, so the strobe
-ends at most PANEL_TTL + TICK after the last renewal. A controller (MIDI, OSC) sends a press and a release and nothing
-between, so its lease is CONTROLLER_TTL long unless the controller renews it; the MIDI hub renews for a held control
-every RENEW_EVERY while the device is still read, so a MIDI controller that goes ends the strobe in about half a second,
-and the OSC lease is its ceiling (a sender that repeats its 1 keeps it). No lease lasts longer than MAX_HOLD in all,
+ends at most PANEL_TTL + TICK after the last renewal. OSC is the same (the owner's decision, 2026-11-11): the sender repeats
+/pvj/strobe 1 about every RENEW_EVERY while held, and one press with no repeats lasts at most PANEL_TTL. A MIDI pad sends a
+press and a release and nothing between, so the MIDI hub renews for a held control every RENEW_EVERY while the device is still
+read; a MIDI controller that goes ends the strobe in about half a second, and CONTROLLER_TTL is only the backstop. No lease lasts longer than MAX_HOLD in all,
 renewed or not: a finger left on a button, or a stuck tab, ends it, and the holder must let go and press again.
 
 SEVERAL HOLDERS are counted, one lease for each (a device and the holder name it gives): the strobe is on while at least
@@ -60,7 +60,7 @@ WAYS = ("colour", "black", "add")
 SOURCE, SLOTS = 1, (3, 2)       # where the loaded copy sits on the New renderer
 PANEL_TTL = 0.5                 # seconds a lease from the panel lasts without a renewal
 RENEW_EVERY = 0.2               # what the panel is told to renew at (and the MIDI hub does)
-CONTROLLER_TTL = 10.0           # a lease from MIDI or OSC, unless renewed
+CONTROLLER_TTL = 10.0           # a lease from MIDI (the hub renews it every RENEW_EVERY): a backstop only. OSC's is PANEL_TTL
 MAX_HOLD = 60.0                 # the longest one holder may hold in all, renewed or not
 MAX_HOLDERS = 8
 TICK = 0.05                     # the watcher looks this often while anything is held or lit
@@ -214,7 +214,9 @@ class Strobe:
         message from a stalled network cannot start the strobe again: the person lets go and presses again."""
         self._need()
         key, who = self._key(device, body)
-        ttl = CONTROLLER_TTL if policy.is_controller(device) else PANEL_TTL
+        # OSC has no heartbeat of the node's own: the sender must repeat its 1, so its lease is the panel's. MIDI's is renewed by
+        # the hub while the control is down and the device is read; its longer lease is only a backstop for a hub that stopped.
+        ttl = CONTROLLER_TTL if policy.is_controller(device) and (device or {}).get("id") != "osc" else PANEL_TTL
         now = self._clock()
         refused = None
         with self._lock:

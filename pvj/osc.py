@@ -545,8 +545,8 @@ STROBE_PATHS = ("/api/strobe/hold", "/api/strobe/release")
 def _strobe(a, args):
     """The Strobe (pvj/strobe.py). /pvj/strobe is HELD: a button's 1 is a press (the node gives the sender a lease), its 0 is the
     release, and a 1 sent again renews the lease. A message with no argument does nothing (a flash is never started by an
-    address alone). The lease of an OSC sender runs out by itself after strobe.CONTROLLER_TTL seconds of silence, however long
-    the button stays down; the sender's address is the holder (set by the receiver, not by the message). The rest set the look:
+    address alone). The lease of an OSC sender is the panel's half second (strobe.PANEL_TTL): the sender repeats its 1 about every 0.2 s while
+    held, and one press with no repeats lasts about half a second; the sender's address is the holder (set by the receiver, not by the message). The rest set the look:
     /pvj/strobe/rate (flashes a second; the node keeps it to 3, or 12 with its opt-in), /pvj/strobe/colour (a hex colour, or red,
     green and blue from 0 to 1), /pvj/strobe/flash (milliseconds) and /pvj/strobe/way (colour, black or add)."""
     v = args[0] if args else None

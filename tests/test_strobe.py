@@ -283,21 +283,33 @@ class DeadManTest(unittest.TestCase):
             s.hold(DEVICE, {"holder": "t"}, renew=True)
         self.assertFalse(lit(api))                              # and the refusal itself let go
 
-    def test_a_controller_lease_runs_out_by_itself_and_a_renewal_or_a_repeated_press_keeps_it(self):
-        for who in (MIDI, OSC):
-            with self.subTest(who=who["id"]):
-                api, clock, s = rig()
-                s.hold(who, {"holder": "pad"})
-                clock.t += ST.CONTROLLER_TTL - 1
-                s.tick()
-                self.assertTrue(lit(api))
-                s.hold(who, {"holder": "pad"})                  # a sender that repeats its 1
-                clock.t += ST.CONTROLLER_TTL - 1
-                s.tick()
-                self.assertTrue(lit(api))
-                clock.t += 2
-                s.tick()
-                self.assertFalse(lit(api))                      # a release that never came
+    def test_an_osc_lease_is_the_panels_half_second_and_a_repeated_1_keeps_it(self):
+        api, clock, s = rig()
+        s.hold(OSC, {"holder": "10.0.0.5"})
+        clock.t += ST.PANEL_TTL - 0.05
+        s.tick()
+        self.assertTrue(lit(api))
+        clock.t += 0.1                                          # one press and no repeats: about half a second
+        s.tick()
+        self.assertFalse(lit(api))
+        s.release(OSC, {"all": True})
+        clock.t += ST.GAP + 0.01
+        s.hold(OSC, {"holder": "10.0.0.5"})
+        for _ in range(30):                                     # a sender that repeats its 1 every 0.2 s
+            clock.t += ST.RENEW_EVERY
+            s.tick()
+            self.assertTrue(lit(api))
+            s.hold(OSC, {"holder": "10.0.0.5"})
+
+    def test_a_midi_lease_is_a_backstop_for_a_hub_that_stopped_renewing(self):
+        api, clock, s = rig()
+        s.hold(MIDI, {"holder": "pad"})
+        clock.t += ST.CONTROLLER_TTL - 1
+        s.tick()
+        self.assertTrue(lit(api))
+        clock.t += 2
+        s.tick()
+        self.assertFalse(lit(api))
 
     def test_no_hold_lasts_longer_than_the_longest_however_it_is_renewed_and_it_must_be_let_go_of(self):
         api, clock, s = rig()
@@ -904,11 +916,16 @@ class OscHandlerTest(RouteBase):
         self.assertEqual(keyed.handle_packet(msg("/k/%s/pvj/strobe" % KEY, 1), self.SENDER), 1)
         self.assertIsNotNone(self.fx.on)
 
-    def test_a_lease_from_osc_ends_by_itself_without_a_zero(self):
+    def test_a_lease_from_osc_ends_in_half_a_second_without_a_repeat_and_a_repeat_keeps_it(self):
         server = self.make_server()
         server.handle_packet(msg("/pvj/strobe", 1), self.SENDER)
         self.assertIsNotNone(self.fx.on)
-        self.clock.t += ST.CONTROLLER_TTL + 0.5
+        self.clock.t += 0.3
+        server.handle_packet(msg("/pvj/strobe", 1), self.SENDER)         # repeated while held
+        self.clock.t += 0.4
+        self.strobe.tick()
+        self.assertIsNotNone(self.fx.on)
+        self.clock.t += 0.2                                              # and then nothing
         self.strobe.tick()
         self.assertIsNone(self.fx.on)
 

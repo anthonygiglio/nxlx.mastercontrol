@@ -1447,7 +1447,7 @@ Do these on a test node with nobody in the room who is sensitive to flashing lig
 | ST1 | A Pi 4 on the New renderer, a 1080p clip playing. `POST /api/strobe {"arm": true}`, then hold: press and hold the panel's button (or `POST /api/strobe/hold` with `holder` and renew every 200 ms) while the GPU guard and `GET /api/strobe` are watched | `started_ms` is a few milliseconds, the picture flashes at the rate set, no frames are dropped (the guard says ok), `path` is `chain`. Write down the numbers: the filter was never measured | A build on the hold, dropped frames, `path` is `effect` |
 | ST2 | Hold, then close the browser tab (or switch the tablet's Wi-Fi off) | The flashing stops within about half a second | It goes on |
 | ST3 | Hold a mapped pad on a controller, then pull the USB cable | It stops within about half a second | It goes on, or for 10 seconds |
-| ST4 | Send OSC `/pvj/strobe 1` and nothing after | It stops by itself after about 10 seconds | It goes on |
+| ST4 | Send OSC `/pvj/strobe 1` once and nothing after; then hold a TouchOSC button that repeats it every 200 ms, and switch the tablet's Wi-Fi off | A single 1 flashes for about half a second; the repeating button keeps it on; the Wi-Fi off stops it within about half a second | It goes on |
 | ST5 | Set the rate to the top, hold, and count flashes against a stopwatch or a phone's slow-motion video for 10 seconds | 3 a second at most (about 30 in 10 seconds) | More |
 | ST6 | With "Allow faster than the flash limit" off, send `/pvj/strobe/rate 12`, and a mapped knob to the top | The rate is 3 a second | Above 3 |
 | ST7 | An effect on (fx-wash), hold the strobe, let go | The wash is there before, under the flash (the strobe is after it in the chain), and after | The wash is gone |
