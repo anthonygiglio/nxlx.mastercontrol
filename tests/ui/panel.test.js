@@ -4998,7 +4998,7 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.waitForSelector('#fxlist [data-effect="fx-vignette.fs"]', { timeout: 20000 });
       assert.strictEqual(await at(page), 'shape/effect');
       const fxs = (await get('/api/effects')).effects;
-      assert(fxs.length >= 29 && fxs.filter((s) => s.pack === 'nxlx').length === 12 && fxs.every((s) => !s.error), 'the project\'s twelve filters and the pack are listed');
+      assert(fxs.length >= 29 && fxs.filter((s) => s.pack === 'nxlx').length === 13 && fxs.every((s) => !s.error), 'the project\'s twelve filters, the Strobe and the pack are listed');
       assert.strictEqual(await page.locator('#fxlist [data-effect]').count(), fxs.length, 'every filter has a row');
       assert.strictEqual(await page.textContent('#fxname'), 'No effect is on');
       assert.strictEqual(await page.textContent('#fxchip'), 'Off');

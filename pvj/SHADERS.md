@@ -570,7 +570,7 @@ Settled by experiment on a real mpv 0.37 in CI (`tests/test_effects_gpu.py`), as
 
 ### The bundled filters
 
-**The project's own twelve** (Apache-2.0, `pvj/effects.d/fx-*.fs`), written for performing and for the room. Own construction: no code from ISF-Files, Shadertoy or anywhere else, and none of the colour conversions and one-line hashes that are passed around (a test looks for them). Where one moves by itself, TIME is folded into a place in a cycle first and its rate is capped in the code.
+**The project's own twelve, and the Strobe, which is [below](#the-strobe)** (Apache-2.0, `pvj/effects.d/fx-*.fs`), written for performing and for the room. Own construction: no code from ISF-Files, Shadertoy or anywhere else, and none of the colour conversions and one-line hashes that are passed around (a test looks for them). Where one moves by itself, TIME is folded into a place in a cycle first and its rate is capped in the code.
 
 | Filter | What it does | Inputs | Moves by itself | Work (a count from the text) |
 | --- | --- | --- | --- | --- |

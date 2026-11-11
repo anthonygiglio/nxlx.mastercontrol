@@ -142,6 +142,12 @@ OTHER = {
 }
 
 
+# Filters that flash: over a still picture TIME stands where it happened to be, so a flash is on or off by chance and the
+# picture is the same between flashes. They are judged by a sweep of the rate: some rate shows the flash (the colour), and
+# every draw is either the picture again or the flash, never half of one; and at amount 0 the picture again.
+FLASHING = {"fx-strobe.fs": {"flash": 250.0, "way": 0, "tint": [1.0, 0.2, 0.9, 1.0]}}
+RATES = (0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0)
+
 # "The picture again": what a filter that changes nothing, and any filter at amount 0, must give. Not to the last
 # bit: with an effect the picture takes one more pass through the GPU, and for a video with colour at half the detail
 # (4:2:0, 8 bit) the rounding came out up to 3 of 255 away, 1.1 on average, in every way of drawing; for 10 bit and for
@@ -657,6 +663,26 @@ class FxCase(GpuCase):
             self.assertIsNone(s["error"], sid)
             rng = random.Random("fx " + sid)
             other = dict(self.varied(s, rng), **dict(NEUTRAL.get(sid, {}), **OTHER.get(sid, {})))
+            if sid in FLASHING:
+                draws = []
+                for rate in RATES:
+                    self.fx._checked.clear()
+                    self.fx.put(sid, values=dict(FLASHING[sid], rate=rate))
+                    shot = self.still()
+                    draws.append((rate, differ(shot, plain)))
+                lit = [r for r, d in draws if d[2] >= 0.02 or d[1] >= 1.5]
+                print("filter, ES %s: %-34s sweep    flashes at rates %s of %s" % (self.ES, sid, lit, list(RATES)))
+                if not lit:
+                    failed.append("%s: no rate of the sweep shows a flash" % sid)
+                failed.extend("%s (rate %s): neither the picture nor a flash (max %d, mean %.2f)" % (sid, r, d[0], d[1])
+                              for r, d in draws if r not in lit and not alike(d))
+                self.fx._checked.clear()
+                self.fx.put(sid, values=dict(FLASHING[sid], rate=3.0), controls={"amount": 0.0})
+                d = differ(self.still(), plain)
+                if not alike(d):
+                    failed.append("%s (amount 0): not the picture as it was (max %d, mean %.2f)" % (sid, d[0], d[1]))
+                self.fx.off()
+                continue
             for what, kw in (("defaults", {}), ("varied", {"values": other}), ("amount 0", {"values": other, "controls": {"amount": 0.0}})):
                 self.fx._checked.clear()
                 try:
