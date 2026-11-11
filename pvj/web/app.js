@@ -809,7 +809,7 @@
     card.parentNode.replaceChild(transitionCard(), card);
   }
   // The one transport strip (D65, the owner's choice of D63; D72): what is playing, the place in it, Speed and Loop,
-  // and Previous, back 10 s, forward 10 s, Next, Fade (one button, D75), Freeze, Stop and Blackout, at the foot of every
+  // and Previous, back 10 s, forward 10 s, Next, Fade (one button, D75), Pause (Play while paused), Stop and Blackout, at the foot of every
   // screen at every width. These are the controls Live had in its Now playing card and in its bottom row, and (D72)
   // the Speed slider and the Loop button that were on Shape > Controls, with the ids they had; there is no second
   // copy on any screen. Under 600 px the strip shows Previous, Next, Stop and Blackout, and More opens the rest in
@@ -840,7 +840,7 @@
     } });
     var el = h('div', { class: 'tp', id: 'wstp', role: 'group', 'aria-label': 'Transport' },
       // (fold f-...: what leaves the one line of a wider panel for More, in the stylesheet's order: back and forward
-      // 10 s first, then Fade, Speed, Loop, Previous and Next; never Freeze, Stop, Blackout (keep), which a
+      // 10 s first, then Fade, Speed, Loop, Previous and Next; never Pause, Stop, Blackout (keep), which a
       // phone's closed strip shows too, with More beside them. The place in the clip is never behind More: where it
       // has no room on the line it is a slim bar along the strip's top edge, the same one control, placed there by
       // the stylesheet.)
@@ -858,7 +858,9 @@
       h('div', { class: 'tpgrp' },
         // the one fade button (D75): out, then in, decided by the box; fadeShow() in patchLive() keeps its words and its flash
         fadeButton('btn tpb tpx fold f-fades', canLive),
-        b('freeze', 'Freeze', null, 'keep', ctl('pause'))),
+        // play and pause in one button (the owner, 2026-11-11: "Make the freeze and stop buttons into play/pause and stop
+        // buttons"): Pause while a clip plays, Play while it is paused. The id stays #freeze for the controllers and the tests
+        b('freeze', 'Pause', null, 'keep', ctl('pause'))),
       h('div', { class: 'tpgrp' },
         b('stop', 'Stop', null, 'keep', ctl('stop')),
         b('black', 'Blackout', null, 'keep', function () {
@@ -1015,7 +1017,15 @@
     // the node's own name (the owner, 2026-11-07: "show the node's name"), without the nxlx- every node's name starts with
     var nodeName = String(sys.name || '').replace(/^nxlx-/i, '');
     if (pill) pill.textContent = [nodeName || sys.board, temp, pl.running ? 'OK' : 'No player'].filter(Boolean).join(' · ');
-    var f = document.getElementById('freeze'); if (f) f.textContent = pl.paused ? 'Resume' : 'Freeze';
+    // Play and Pause: what the node says is on the screen (a clip, a shader, Vibes, a capture, NDI, the test pattern, a
+    // tone), not the path, which it hides for most of those; with nothing on it and nothing to play again, there is nothing
+    // to press (review of PR 280)
+    var f = document.getElementById('freeze');
+    if (f) {
+      var loaded = pl.loaded === undefined ? !!pl.path : pl.loaded === true;
+      f.textContent = pl.paused || !loaded ? 'Play' : 'Pause';
+      if (canOp()) f.disabled = !loaded && pl.replay === false;
+    }
     fadeShow(document.getElementById('fade'), st.mix);
     var b = document.getElementById('black'); if (b) { var on = st.mix && st.mix.blackout; b.classList.toggle('flash', !!on); b.textContent = on ? 'Show' : 'Blackout'; }      // flashing for as long as it is on, as the fade button is (D75)
     var pads = document.getElementById('pads');
@@ -3567,7 +3577,7 @@
     effect_amount: 'Effect amount', effect_toggle: 'Effect on / off', effect_prev: 'Previous effect', effect_next: 'Next effect', clock_tap: 'Tap tempo',
     code_join: 'Guest code (hold)', code_owner: 'Owner code (hold)', strobe_hold: 'Strobe (hold)', strobe_rate: 'Strobe rate',
     fade: 'Fade out / in', size: 'Zoom', rotate: 'Rotate', flip_h: 'Mirror left to right', flip_v: 'Mirror top to bottom', overlay: 'Overlay', seek_back: 'Back 10 s', seek_forward: 'Forward 10 s',
-    loop: 'Loop', mute: 'Sound off / on', test_pattern: 'Test pattern', pause: 'Freeze / resume', mapping_mode: 'Mapping mode', layer_geometry: 'Geometry',
+    loop: 'Loop', mute: 'Sound off / on', test_pattern: 'Test pattern', pause: 'Play / pause', mapping_mode: 'Mapping mode', layer_geometry: 'Geometry',
     map_surface_next: 'Map: next surface', map_surface_prev: 'Map: surface before', map_corner_next: 'Map: next corner', map_corner_prev: 'Map: corner before',
     map_left: 'Map: left', map_right: 'Map: right', map_up: 'Map: up', map_down: 'Map: down', map_step: 'Map: step size', map_undo: 'Map: undo',
     map_x: 'Map: nudge X', map_y: 'Map: nudge Y' };

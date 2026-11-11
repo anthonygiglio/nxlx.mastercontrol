@@ -938,7 +938,8 @@ class NoBlockingTest(Live):
         refused = sorted({(path, status) for (path, status) in answers if status != 200})
         # (404, since the layouts of D75 press the presets and the controls while the shader is still on: a preset
         # and an input that this shader does not have)
-        self.assertEqual(refused, [("/api/effects/values", 409), ("/api/mapper/nudge", 409), ("/api/overlay", 400), ("/api/play", 400),      # (the overlay: no picture was chosen; mapping mode: its module is off)
+        # (/api/control 409: Play and pause with nothing loaded and nothing to play again, since Play after Stop)
+        self.assertEqual(refused, [("/api/control", 409), ("/api/effects/values", 409), ("/api/mapper/nudge", 409), ("/api/overlay", 400), ("/api/play", 400),      # (the overlay: no picture was chosen; mapping mode: its module is off)
                                    ("/api/room/scene", 409), ("/api/shaders/preset", 404), ("/api/shaders/preset", 409),
                                    ("/api/shaders/values", 404), ("/api/shaders/values", 409)], answers)
         for path in ("/api/effects", "/api/effects/step"):

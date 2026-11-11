@@ -173,7 +173,7 @@ class ServerTest(ServerBase):
     # --- CSRF and request hygiene -------------------------------------
     def test_post_needs_header_matching_origin_json_and_sane_size(self):
         token, _ = self.pair()
-        body = {"action": "pause"}
+        body = {"action": "pause", "value": False}      # (a pause by value: the toggle with nothing loaded is a 409 since Play after Stop)
         self.assertEqual(self.call("POST", "/api/control", body, token=token, csrf=False)[0], 403)
         self.assertEqual(self.call("POST", "/api/control", body, token=token,
                                    headers={"Origin": "http://evil.example"})[0], 403)
@@ -189,7 +189,7 @@ class ServerTest(ServerBase):
     def test_origin_check_handles_ipv6_hosts_and_garbage_ports(self):
         token, _ = self.pair()
         ok = {"Host": "[::1]:8080", "Origin": "http://[::1]:8080"}
-        self.assertEqual(self.call("POST", "/api/control", {"action": "pause"}, token=token, headers=ok)[0], 200)
+        self.assertEqual(self.call("POST", "/api/control", {"action": "pause", "value": False}, token=token, headers=ok)[0], 200)
         for origin in ("http://127.0.0.1:99999", "http://[::1", "null", "http://", "http://evil.example:80"):
             st, _, _ = self.call("POST", "/api/control", {"action": "pause"}, token=token, headers={"Origin": origin})
             self.assertEqual(st, 403, origin)

@@ -75,7 +75,7 @@ display. From 1100 px some pages gain a third column (the Shaders page's sets an
 
 The transport strip folds its controls into More by width, in this order of leaving: back and forward 10 s first, then
 Fade, Speed, Loop, Previous and Next. Shown on one line from: Previous and Next 800, Loop 940, Speed 1080, Fade 1280,
-back and forward 10 s 1400. More is gone from 1400. Freeze, Stop and Blackout are never folded.
+back and forward 10 s 1400. More is gone from 1400. Pause, Stop and Blackout are never folded.
 
 Heights: under 600 and under 480 px of height the strip and the open More are held to part of the window and scroll
 inside; a short window keeps the strip.
@@ -126,7 +126,7 @@ Built once by `render()` and `chrome()` in `app.js`:
   (`#mv`, 0.25x to 2.00x, sent while dragging, at most every 80 ms; "1.00x · live" and held while a live source plays);
   Loop (on or off); Previous and Next (enabled only with a playlist of two or more); back 10 s and forward 10 s; Fade (the
   one fade button of D75: "Fade out", then "Fade in"; flashes while the picture goes down and while it is black from a
-  fade, or stands inverted with a dashed edge for reduced motion); Freeze (Resume while paused); Stop; Blackout (Show
+  fade, or stands inverted with a dashed edge for reduced motion); Pause (Play while paused, and while nothing is loaded after a Stop, when it starts the last clip again from its start, read from the status's `loaded` and `replay`; with nothing on the screen and nothing to play again it cannot be pressed; it was Freeze until 2026-11-11). What it plays again is the last play of Source 1, whoever started it (a pad, the schedule, autostart); a clip deleted since is refused again each time until another is played. Stop; Blackout (Show
   while on, flashing). All go to `POST /api/control` except Fade (`/api/fade`) and Blackout (`/api/blackout`). Enabled
   for Operator and up; a Guest with open controls gets Previous, Next, Stop and Blackout only; a watching device gets
   none. The strip is built once and kept across redraws, so a finger on a slider is never cut off.

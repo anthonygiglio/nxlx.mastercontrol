@@ -1044,7 +1044,7 @@ class DiagnosticsTest(Base):
         # the same file through the tunnel (support is who it is for)
         self.assertNotIn(PROJECTOR_PASSWORD, json.dumps(self.get(dev, TUNNEL)))
         # whatever stream is playing, saved or not, is shown only as where it comes from
-        self.assertEqual(file["player"], {"running": True, "path": "rtsp://192.168.1.60:554", "stream": "Camera"})
+        self.assertEqual(file["player"], {"running": True, "path": "rtsp://192.168.1.60:554", "stream": "Camera", "loaded": True, "replay": False})
         self.care._run = FakeJournal()
         playing = [(x["url"], x["name"]) for x in d["streams"]] + [(a[0], None) for a in ADDRESSES]
         playing.append(("rtsp://192.168.1.77:8554/private-path-s20?res=hd", None))
