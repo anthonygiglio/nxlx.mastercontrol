@@ -5009,7 +5009,10 @@ function startServer(env) {          // env: more for the harness's environment 
       const strobeReq = [];
       const seenS = (q) => { if (q.method() === 'POST' && /\/api\/strobe/.test(q.url())) strobeReq.push([new URL(q.url()).pathname, q.postDataJSON()]); };
       page.on('request', seenS);
-      assert.strictEqual(await post('/api/play', { pad: [0, 0] }), 200, 'a clip plays: a strobe needs a picture to flash over');
+      // a clip with a picture: a strobe needs one to flash over (the harness player takes a moment to have it)
+      assert.strictEqual(await post('/api/play', { file: 'intro.mkv' }), 200);
+      await page.waitForFunction(() => fetch('/api/effects').then((r) => r.json()).then((d) => d.available === true), null, { timeout: 20000 })
+        .catch(async () => { throw new Error('the picture for the strobe: ' + JSON.stringify(await get('/api/effects').then((d) => [d.available, d.unavailable]))); });
       await go(page, 'shape/effect');
       await page.waitForSelector('#strobecard #strobehold:not([disabled])', { timeout: 10000 });
       await page.waitForTimeout(300);

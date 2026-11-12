@@ -1240,8 +1240,16 @@
     clearInterval(x.timer);
     x.button.classList.remove('on', 'flash');
     x.button.setAttribute('aria-pressed', 'false');
-    api('POST', '/api/strobe/release', { holder: STROBE_HOLDER });
+    strobeRelease();
     x.say(why || 'Ready. Hold the button to flash.');
+  }
+  // The release goes with keepalive, so that it is still sent when the page is being left (pagehide); its answer is
+  // always 200 and nothing waits for it (review of PR 282)
+  function strobeRelease() {
+    try {
+      fetch('/api/strobe/release', { method: 'POST', credentials: 'same-origin', keepalive: true,
+        headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify({ holder: STROBE_HOLDER }) }).catch(function () {});
+    } catch (e) { /* the page is going: the lease runs out by itself within half a second */ }
   }
   ['blur', 'pagehide'].forEach(function (ev) { window.addEventListener(ev, function () { strobeLetGo(); }); });
   document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') strobeLetGo(); });
@@ -1267,7 +1275,8 @@
       hold.setAttribute('aria-pressed', 'true');
       say('Starting...');
       api('POST', '/api/strobe/hold', { holder: STROBE_HOLDER }).then(function (r) {
-        if (!strobeHeld || strobeHeld.button !== hold) return;          // let go before the answer: the release has gone already
+        // let go before the answer: the release went before the hold arrived, so a hold that was taken is released again
+        if (!strobeHeld || strobeHeld.button !== hold) { if (r.ok) strobeRelease(); return; }
         if (!r.ok) { strobeLetGo(strobeLine(r.data.error || 'the strobe did not start')); return; }
         show(r);
         strobeHeld.timer = setInterval(function () {
