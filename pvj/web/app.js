@@ -78,7 +78,7 @@
     var opts = { method: method, credentials: 'same-origin', headers: {} };
     if (method === 'POST') {
       opts.headers['Content-Type'] = 'application/json';
-      opts.headers['X-PVJ-Request'] = '1';
+      opts.headers['X-MCTL-Request'] = '1';
       opts.body = JSON.stringify(body || {});
     }
     return fetch(path, opts).then(function (r) {
@@ -168,8 +168,8 @@
         var left = document.getElementById('supportleft');
         if (left && now) left.textContent = (S.device && S.device.remote ? 'You are connected as remote support' : 'Remote support session is open') + ' · ' + mins(r.data.support.seconds_left) + ' left';
         patchLive();
-        if (window.pvjEffects) window.pvjEffects.patch(shaderCtx());       // the Effects card
-        if (window.pvjRoom && window.pvjRoom.patch) window.pvjRoom.patch();
+        if (window.mctlEffects) window.mctlEffects.patch(shaderCtx());       // the Effects card
+        if (window.mctlRoom && window.mctlRoom.patch) window.mctlRoom.patch();
       }
     });
   }
@@ -473,7 +473,7 @@
   // padKinds below; padButton, live and sheet only call them.
   function padShader(pad) { return !pad.file && typeof pad.shader === 'string' && pad.shader ? pad.shader : ''; }
   function padShaderName(pad) { return padShader(pad).replace(/\.fs$/, ''); }
-  function padShaderNice(id) { return window.pvjShaders && window.pvjShaders.nice ? window.pvjShaders.nice(id) : String(id || '').replace(/\.fs$/, ''); }
+  function padShaderNice(id) { return window.mctlShaders && window.mctlShaders.nice ? window.mctlShaders.nice(id) : String(id || '').replace(/\.fs$/, ''); }
   // A pad that holds an NDI source (D62): `file` is empty and `ndi` is the source's id, nothing else. The names come
   // beside the banks (`ndi` in the answer of /api/pads) for everyone above a guest; a guest gets none and sees such
   // a pad as not available. Everything the pads know of such a pad is in these functions and in padKinds.
@@ -742,7 +742,7 @@
     return h('div', { class: 'screen', id: 'padsscreen' },
       guestNote('pads'),
       h('div', { class: 'livecols', id: 'livecols' },
-      window.pvjShaders ? window.pvjShaders.liveRow(shaderCtx()) : null,
+      window.mctlShaders ? window.mctlShaders.liveRow(shaderCtx()) : null,
       h('div', { class: 'banks' }, S.banks.map(function (b, i) {
         return h('button', { class: 'btn' + (i === S.bank ? ' on' : ''), text: b.name.replace('Bank ', 'Bank '), 'aria-pressed': i === S.bank ? 'true' : 'false',
           onclick: function () { S.bank = i; redrawPart('pads'); } });
@@ -1006,9 +1006,9 @@
     if (pl.test_tone) np.textContent = 'Test tone (' + pl.test_tone + ')';
     if (pl.capture) np.textContent = 'Live input' + (pl.capture.device ? ' (' + pl.capture.device + ', ' + pl.capture.mode + ')' : '');
     if (pl.ndi) np.textContent = 'NDI' + (typeof pl.ndi === 'string' ? ': ' + pl.ndi : ' input');
-    if (window.pvjShaders) window.pvjShaders.patch(shaderCtx(), pl, np);
+    if (window.mctlShaders) window.mctlShaders.patch(shaderCtx(), pl, np);
     // D74: the effect is named over a shader too (it stays on there), so no guard on pl.shader here.
-    if (pl.effect && window.pvjEffects && pl.running) np.textContent += ' \u00b7 effect: ' + window.pvjEffects.nice(pl.effect);
+    if (pl.effect && window.mctlEffects && pl.running) np.textContent += ' \u00b7 effect: ' + window.mctlEffects.nice(pl.effect);
     np.title = np.textContent;          // the line is cut with dots where it is long: the whole of it is here
     nowLive(np.textContent, pl, st.mix || {});
     nowPresence(st.presence);
@@ -1215,7 +1215,7 @@
   // place. Speed and Loop are on the transport strip (transport()), the Transition on Play > Pads
   // (transitionCard()), and Test pattern on Shape > Mapping (testPattern()).
   function effectPart() {
-    return h('div', { class: 'screen', id: 'effectscreen' }, window.pvjEffects ? window.pvjEffects.mixCard(shaderCtx()) : null);
+    return h('div', { class: 'screen', id: 'effectscreen' }, window.mctlEffects ? window.mctlEffects.mixCard(shaderCtx()) : null);
   }
   function picturePart() {
     var m = (S.status && S.status.mix) || {};
@@ -1448,7 +1448,7 @@
         if (field) ask.text = typed;
         gfxLast[id] = mine;
         fetch('/api/graphics/preview.png', { method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify(ask) }).then(function (r) {
+          headers: { 'Content-Type': 'application/json', 'X-MCTL-Request': '1' }, body: JSON.stringify(ask) }).then(function (r) {
           if (!r.ok) throw new Error('no picture');
           return r.blob();
         }).then(function (blob) {
@@ -1654,7 +1654,7 @@
             if (!r.ok) { say(r.data.error || 'Could not change that', true); load(); return; }
             say(v ? 'OSC can now put a line of text on the screen.' : 'OSC can no longer put text on the screen.'); load();
           });
-        }, 'Off unless you switch it on. With it on, a device that passes the OSC locks can set the text of a graphic (/pvj/graphic/N/text and /send). Showing and hiding a graphic over OSC does not need it.'));
+        }, 'Off unless you switch it on. With it on, a device that passes the OSC locks can set the text of a graphic (/mctl/graphic/N/text and /send). Showing and hiding a graphic over OSC does not need it.'));
         body.appendChild(h('div', { class: 'hint', id: 'graphicsnote', text: 'Masks (Shape > Picture) are full-screen pictures that never move. Graphics are text and logos you place on the screen. This node shows ' + plural(d.max_on, 'graphic') + ' at a time.' }));
       });
       drawFiles();
@@ -1668,7 +1668,7 @@
       say2('Sending ' + name + '...');
       var replace = d && d.files.some(function (f) { return f.name === name.replace(/\.[^.]*$/, '') + '.png'; });
       return fetch('/api/graphics/upload?name=' + encodeURIComponent(name) + (replace ? '&replace=1' : ''), { method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/octet-stream', 'X-PVJ-Request': '1' }, body: file }).then(function (r) {
+        headers: { 'Content-Type': 'application/octet-stream', 'X-MCTL-Request': '1' }, body: file }).then(function (r) {
         return r.json().catch(function () { return {}; }).then(function (data) {
           uploading = false;
           if (r.ok) say2(name + ' is stored as ' + data.name + ' (' + data.width + ' x ' + data.height + ').');
@@ -1749,9 +1749,9 @@
     for (k = r - 1; k > 0; k--) out.push(at(k, 0));
     return out;
   }
-  // When a new look's stylesheet has loaded ('pvj-look', from the Look page), the mapping display on the page, if
+  // When a new look's stylesheet has loaded ('mctl-look', from the Look page), the mapping display on the page, if
   // any, draws again in its colours. One listener for the page; each display leaves its paint on its canvas.
-  window.addEventListener('pvj-look', function () { var c = document.getElementById('mapcanvas'); if (c && c.repaint) c.repaint(); });
+  window.addEventListener('mctl-look', function () { var c = document.getElementById('mapcanvas'); if (c && c.repaint) c.repaint(); });
   function mapperCard() {
     var body = h('div', { class: 'mapbody', id: 'mapbody' }, h('div', { class: 'card' }, h('div', { class: 'hint', text: 'Loading...' })));
     var card = h('div', { class: 'mapdesk', id: 'mapcard' }, body);
@@ -1920,7 +1920,7 @@
       var testRow = h('div', { class: 'row', id: 'maptest' }, testPattern(), h('span', { class: 'hint grow', text: 'Colour bars in place of what plays, to line the projector up' }));
       if (!full) { if (remote) stage.appendChild(remote); stage.appendChild(testRow); watch(); return; }
       canvas = h('canvas', { class: 'mapcanvas', id: 'mapcanvas', tabindex: '0', 'aria-label': 'Mapping editor: drag a corner, or use the arrows beside it' });
-      canvas.repaint = paint;          // (a new look: drawn again in its colours once its stylesheet has loaded, see the pvj-look listener above mapperCard)
+      canvas.repaint = paint;          // (a new look: drawn again in its colours once its stylesheet has loaded, see the mctl-look listener above mapperCard)
       canvas.style.setProperty('--mapaspect', String(d.screen[0] / Math.max(1, d.screen[1])));
       stage.appendChild(canvas);
       if (remote) stage.appendChild(remote);
@@ -2147,7 +2147,7 @@
     return new Promise(function (resolve) {
       var xhr = new XMLHttpRequest();
       xhr.open('POST', '/api/media/upload?name=' + encodeURIComponent(file.name));
-      xhr.setRequestHeader('X-PVJ-Request', '1');
+      xhr.setRequestHeader('X-MCTL-Request', '1');
       xhr.setRequestHeader('Content-Type', 'application/octet-stream');
       xhr.upload.onprogress = function (e) { if (e.lengthComputable) bar.style.width = Math.round(100 * e.loaded / e.total) + '%'; };
       xhr.onload = function () {
@@ -2319,7 +2319,7 @@
   // The Room area: room.js's one build, its cards in the columns of the area's desk. The title is the shell's; a
   // guest's "View only" stays, above the columns. The element keeps its id, which the stylesheet and room.js know.
   function roomDesk(mine) {
-    var el = window.pvjRoom.screen(roomCtx());
+    var el = window.mctlRoom.screen(roomCtx());
     var top = el.querySelector('.top'), msg = el.querySelector('#msg'), cols = {}, rest = [];
     if (msg && msg.parentNode === el) el.removeChild(msg);
     if (top && top.parentNode === el) {
@@ -2347,7 +2347,7 @@
   // Setup > Room: the module's switch and the card that sets the room up (groups and scenes). The title and message
   // line are the page's, so the copies are taken out.
   function roomInPage() {
-    var el = window.pvjRoom.screen(roomCtx());
+    var el = window.mctlRoom.screen(roomCtx());
     ['.top', '#msg'].forEach(function (sel) { var x = el.querySelector(sel); if (x && x.parentNode === el) el.removeChild(x); });
     el.className = 'roominpage';
     Array.prototype.forEach.call(el.children, function (x) { if (ROOM_PARTS[x.id]) x.hidden = ROOM_PARTS[x.id] !== 'setup'; });
@@ -2367,7 +2367,7 @@
       // by the Owner and, since D80, by an Operator: room.js's set-up card, which the Room area leaves out.)
       { id: 'room', group: 'everyday', name: 'Room', role: 'op', module: 'room', url: '/api/room',
         blurb: 'For the people who run the room: scenes to tap, each wall on or off, its source and its mutes, and All off, on the Room screens. Here: the groups and the scenes. It needs Projectors to be on. Not yet tried on a real projector.',
-        body: function () { return window.pvjRoom ? [roomInPage()] : []; } },
+        body: function () { return window.mctlRoom ? [roomInPage()] : []; } },
       { id: 'schedule', group: 'everyday', name: 'Schedule', role: 'op', module: 'scheduler', url: '/api/schedule',
         blurb: 'Play a clip, stop, black out or show the screen, start Vibes or switch the projectors at set times on chosen days. It uses the node\'s clock, so check the clock first.',
         steps: [scheduleStep()], offInner: true,
@@ -2378,7 +2378,7 @@
           var pl = (S.status && S.status.player) || {};
           ask(pl.vibes || typeof pl.shader === 'string' ? 'Vibes is on the screen. Switching off stops it now.' : null);
         },
-        body: function () { return window.pvjShaders ? [window.pvjShaders.page(shaderCtx())] : []; } },
+        body: function () { return window.mctlShaders ? [window.mctlShaders.page(shaderCtx())] : []; } },
       // An Operator gets this row too (D48, D80): the guest code and the guest link, the guests to remove, the lock on
       // guest controls, and nothing else.
       { id: 'access', group: 'everyday', name: 'People and codes', role: 'live', url: '/api/access', urlRole: 'live',
@@ -2498,7 +2498,7 @@
 
   // -- what each row says about itself --
   function schedWhat(e) {
-    if (e.action === 'scene') return 'Scene ' + (window.pvjRoom ? window.pvjRoom.sceneName(e.scene) : e.scene);
+    if (e.action === 'scene') return 'Scene ' + (window.mctlRoom ? window.mctlRoom.sceneName(e.scene) : e.scene);
     return e.action === 'play' ? 'Play ' + e.file : e.action === 'preset' ? 'Old start script ' + e.preset :
       ({ stop: 'Stop playing', blackout: 'Screen to black', show: 'Screen back on', projector_on: 'Projectors on', projector_off: 'Projectors off', vibes: 'Start Vibes' })[e.action] || e.action;
   }
@@ -2565,7 +2565,7 @@
       return st('ready', next ? 'Next: ' + next : plural(d.entries.length, 'entry', 'entries'));
     },
     vibes: function (d) {
-      var nice = window.pvjShaders ? window.pvjShaders.nice : String;
+      var nice = window.mctlShaders ? window.mctlShaders.nice : String;
       if (d.error) return st('problem', 'A shader was refused: ' + nice(d.error.id));
       if (d.vibes && d.vibes.running) return st('active', 'Vibes is playing' + (d.playing ? ': ' + nice(d.playing.name) : ''));
       if (d.playing) return st('active', 'One shader is playing: ' + nice(d.playing.name));
@@ -5278,7 +5278,7 @@
           if (!f) { refresh(); return; }
           say('Uploading ' + f.name + '...');
           fetch('/api/system/update/upload?name=' + encodeURIComponent(f.name), { method: 'POST', credentials: 'same-origin',
-            headers: { 'X-PVJ-Request': '1', 'Content-Type': 'application/octet-stream' }, body: f })
+            headers: { 'X-MCTL-Request': '1', 'Content-Type': 'application/octet-stream' }, body: f })
             .then(function (r) {
               return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok) throw new Error(j.error || 'upload failed (HTTP ' + r.status + ')'); });
             })
@@ -5504,7 +5504,7 @@
       d.https && !d.secure ? h('a', { class: 'btn grow', id: 'httpsgo', href: d.https_address, text: 'Open ' + d.https_address }) : null), out);
     return h('div', { class: 'card', id: 'httpsdevices' }, h('h2', { text: d.secure ? 'This device' : 'Your devices' }), h('div', { class: 'list sp' }, rows));
   }
-  window.pvjHttpsPlatform = httpsPlatform;       // for the browser test: the words per device, with injected user agents
+  window.mctlHttpsPlatform = httpsPlatform;       // for the browser test: the words per device, with injected user agents
   function httpsCards() {
     var d = (S.sysData.https || {}).now;
     if (!d) return [h('div', { class: 'card', id: 'httpsstate' }, h('div', { class: 'hint', text: 'Checking...' }))];
@@ -5538,7 +5538,7 @@
     function load(f) {
       say('Importing ' + f.name + '...');
       fetch('/api/system/settings/import?confirm=import', { method: 'POST', credentials: 'same-origin',
-        headers: { 'X-PVJ-Request': '1', 'Content-Type': 'application/json' }, body: f })
+        headers: { 'X-MCTL-Request': '1', 'Content-Type': 'application/json' }, body: f })
         .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, status: r.status, data: j }; }); },
           function () { return { ok: false, status: 0, data: { error: 'no connection to the node' } }; })
         .then(function (r) {
@@ -6198,9 +6198,9 @@
       function opt(a) { return h('option', { value: a[0], text: a[1] + (isOff(a[0]) ? ' (' + NEEDS[a[0]][2] + ' is off)' : ''), selected: a[0] === f.action }); }
       var action = h('select', { class: 'text-input', id: 'schedaction' },
         [['play', 'Play a clip'], ['vibes', 'Start Vibes'], ['scene', 'Apply a Room scene'], ['projector_on', 'Projectors on'], ['projector_off', 'Projectors off'],
-          ['blackout', 'Screen to black'], ['show', 'Screen back on'], ['stop', 'Stop playing']].filter(function (a) { return a[0] !== 'scene' || !!window.pvjRoom; }).map(opt),
+          ['blackout', 'Screen to black'], ['show', 'Screen back on'], ['stop', 'Stop playing']].filter(function (a) { return a[0] !== 'scene' || !!window.mctlRoom; }).map(opt),
         h('optgroup', { label: 'Advanced' }, opt(['preset', 'Old start script'])));
-      var scene = window.pvjRoom ? window.pvjRoom.scheduleField(roomCtx(), action, f, function () { draw(d); }) : null;
+      var scene = window.mctlRoom ? window.mctlRoom.scheduleField(roomCtx(), action, f, function () { draw(d); }) : null;
       if (!f.file && S.media.length) f.file = S.media[0];
       var file = h('select', { class: 'text-input', id: 'schedfile' },
         S.media.length ? S.media.map(function (n) { return h('option', { value: n, text: n, selected: n === f.file }); }) : [h('option', { value: '', text: 'No clips on the node yet' })]);
@@ -6684,7 +6684,7 @@
     }
     // 3. the key
     box.appendChild(toggle('osckey', 'A key in the address', d.key_on, function (v) { set({ key_on: v }); },
-      'Every message must start with /k/ and the key, for example /k/<key>/pvj/stop. Anyone who can listen on this network can read the key from a single message, so it stops people who are merely on the network from poking the node, not someone who is capturing traffic.'));
+      'Every message must start with /k/ and the key, for example /k/<key>/mctl/stop. Anyone who can listen on this network can read the key from a single message, so it stops people who are merely on the network from poking the node, not someone who is capturing traffic.'));
     if (d.key_on) box.appendChild(oscKeyBox());
     // who sent, and what
     box.appendChild(h('div', { class: 'switchlabel', text: 'Senders in the last ten minutes' }));
@@ -6703,7 +6703,7 @@
         if (r.ok) say('Saved'); else say((r.data.error || 'Could not save') + '. Nothing was changed.', true);
         api('GET', '/api/osc').then(function (g) { if (g.ok) redraw(g.data); });
       });
-    }, 'Off unless you switch it on. With it on, a device that passes the locks above can put words on the screen with /pvj/graphic/N/text and /send. Showing, hiding and Hide all over OSC do not need it.'));
+    }, 'Off unless you switch it on. With it on, a device that passes the locks above can put words on the screen with /mctl/graphic/N/text and /send. Showing, hiding and Hide all over OSC do not need it.'));
     return box;
   }
   function oscPairedText(d) {
@@ -6838,7 +6838,7 @@
       api('POST', '/api/osc/key', body).then(function (r) {
         if (!r.ok) return say((r.data.error || 'Could not show the key') + '.', true);
         out.textContent = r.data.prefix; out.hidden = where.hidden = false; show.textContent = 'Hide the key';
-        where.textContent = 'In TouchOSC, put it at the front of every address in the layout: ' + r.data.example + ' in place of /pvj/stop (in each control\'s OSC message, or once with a script that adds it). It hides itself after ' + OSC_KEY_SECONDS + ' seconds.';
+        where.textContent = 'In TouchOSC, put it at the front of every address in the layout: ' + r.data.example + ' in place of /mctl/stop (in each control\'s OSC message, or once with a script that adds it). It hides itself after ' + OSC_KEY_SECONDS + ' seconds.';
         if (body.new) say('A new key is made. The old one no longer works.');
         clearTimeout(oscKeyTimer);
         oscKeyTimer = setTimeout(hide, OSC_KEY_SECONDS * 1000);
@@ -6964,9 +6964,9 @@
     var t = S.theme || {};
     var fresh = function () {
       // The new look's colours arrive with the stylesheet, after this redraw: what the script draws in them (the
-      // mapping display) is told when it has loaded, and draws again ('pvj-look').
+      // mapping display) is told when it has loaded, and draws again ('mctl-look').
       var link = document.querySelector('link[href^="/theme.css"]');
-      link.addEventListener('load', function () { window.dispatchEvent(new Event('pvj-look')); }, { once: true });
+      link.addEventListener('load', function () { window.dispatchEvent(new Event('mctl-look')); }, { once: true });
       link.setAttribute('href', '/theme.css?v=' + Date.now());
       markLook();
       render();
@@ -7645,7 +7645,7 @@
         cue('nowstop', 'Stop', function () { act('POST', '/api/control', { action: 'stop' }, poll); }),
         testPattern()),
       h('div', { class: 'row' }, h('button', { class: 'btn small', id: 'nowtopads', text: 'Open the pads', onclick: function () { go('play/pads'); } })));
-    var hasRoom = !!window.pvjRoom && moduleOn('room');
+    var hasRoom = !!window.mctlRoom && moduleOn('room');
     var scenesRow = h('div', { class: 'room-scenes nowscenes', id: 'nowscenes' });      // (the Room's own blocks: a long name stays inside them)
     var wallsList = h('div', { class: 'list', id: 'nowwalls' });
     var room = h('div', { class: 'card', id: 'nowroom' }, h('h2', { text: 'The room' }),
@@ -7962,11 +7962,11 @@
       scr('play', 'library', 'Library', 'Play clips, pictures and live inputs.', 'play', { part: 'library' }));
     if (has('vibes')) list.push(scr('play', 'shaders', 'Shaders', 'Pick a shader, or let Vibes play a set.', 'play', { part: 'shaders' }));
     if (has('graphics')) list.push(scr('play', 'graphics', 'Graphics', 'Put text and logos on the screen.', 'system', { sys: 'graphics' }));
-    if (window.pvjEffects && moduleOn('shaders')) list.push(scr('shape', 'effect', 'Effect', 'Put an effect over the picture.', 'shape', { part: 'effect' }));
+    if (window.mctlEffects && moduleOn('shaders')) list.push(scr('shape', 'effect', 'Effect', 'Put an effect over the picture.', 'shape', { part: 'effect' }));
     list.push(scr('shape', 'picture', 'Picture', 'Set how the picture looks and where it sits.', 'shape', { part: 'picture' }));
     if (has('sound')) list.push(scr('shape', 'sound', 'Sound', 'How loud, and where it comes out.', 'shape', { part: 'sound' }));
     if (has('mapping')) list.push(scr('shape', 'mapping', 'Mapping', 'Fit the picture to the wall.', 'system', { sys: 'mapping' }));
-    if (window.pvjRoom && moduleOn('room')) {
+    if (window.mctlRoom && moduleOn('room')) {
       list.push(scr('room', 'scenes', 'Scenes', 'Set the whole room with one tap.', 'room', { part: 'scenes' }));
       list.push(scr('room', 'walls', 'Walls', 'One wall at a time: power, source and mutes.', 'room', { part: 'walls' }));
       if (can('live') && !remote) list.push(scr('room', 'guests', 'Guests', 'Let someone in, and end their code.', 'room', { part: 'guests' }));
@@ -8079,7 +8079,7 @@
     Array.prototype.forEach.call(desk.children, function (el) { if (el.hasAttribute('data-col')) el.classList.toggle('cur', el.getAttribute('data-col') === part); });
     redrawChrome();
     // a column that asks the box by itself (the Shaders page) waits while it is hidden, and is told when it is shown again
-    try { window.dispatchEvent(new CustomEvent('pvjshown', { detail: part })); } catch (e) { /* an old browser: the column's own timer looks within seconds */ }
+    try { window.dispatchEvent(new CustomEvent('mctlshown', { detail: part })); } catch (e) { /* an old browser: the column's own timer looks within seconds */ }
   }
   function colShown(el) { return !!el && el.getClientRects().length > 0; }
   // Open a screen by its key. Another column of the build that is on the page is shown without drawing anything
@@ -8180,7 +8180,17 @@
   // where it opened a node before, and says when that node's address changed. The browser checks the certificate
   // against the root installed on this device; the panel cannot, so it says to stop at a certificate warning.
   // Operator and Owner, not over remote support (the node refuses it there: network things stay in the room).
-  var NODES_KEY = 'pvj.nodes.opened';
+  var NODES_KEY = 'mctl.nodes.opened';
+  // The key before the rename (D138): copied once to the new one and removed, so the nodes this device opened stay
+  // listed. Remove in the release after the cutover.
+  var OLD_NODES_KEY = 'pvj.nodes.opened';
+  try {
+    var oldNodes = localStorage.getItem(OLD_NODES_KEY);
+    if (oldNodes !== null) {
+      if (localStorage.getItem(NODES_KEY) === null) localStorage.setItem(NODES_KEY, oldNodes);
+      localStorage.removeItem(OLD_NODES_KEY);
+    }
+  } catch (e) { /* storage blocked: nothing to carry over */ }
   function nodesShown() { return canOp() && !(S.device && S.device.remote); }
   var NODES_KEPT = 32;               // nodes this device remembers opening, the latest first
   // What other devices say is checked here as well as on the node: an id is 32 hex digits, a port a whole number from
@@ -8804,7 +8814,7 @@
     var landing = S.landing !== false;
     if (S.modules.length) S.landing = false;      // decided once the modules are known, not by a render that came before them
     if (landing && canOp() && hasScreen('now/now')) S.tab = 'now';
-    else if (window.pvjRoom && moduleOn('room') && landing && !can('full')) S.tab = 'room';
+    else if (window.mctlRoom && moduleOn('room') && landing && !can('full')) S.tab = 'room';
     settle();
     markArea();        // again: the screen may just have been decided
     var desk = S.tab === 'system' ? system() : areaDesk();
@@ -8884,7 +8894,7 @@
       if (busy()) { late = setTimeout(drawLate, 400); return; }
       render();
     }
-    document.addEventListener('pvjfile', drawLate);
+    document.addEventListener('mctlfile', drawLate);
     // Where an area's screens stand side by side none of them is "the open one" to the eye, but one of them is what
     // a narrower panel would show alone: the column that was last used. So a window made narrower keeps the field
     // that is being typed in on the page, with what was typed.
@@ -8907,5 +8917,5 @@
   // ran to the point where the panel was started. A file the browser cannot read as a program (a syntax error after
   // a merge, a browser too old for it), or one that stops before here, leaves this unset, and the page says so
   // instead of staying empty. What goes wrong later, in an answer from the box, is not seen by this.
-  window.pvjApp = true;
+  window.mctlApp = true;
 })();

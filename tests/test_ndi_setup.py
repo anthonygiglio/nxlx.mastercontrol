@@ -410,7 +410,7 @@ class EnableTest(Base):
         """Review L1: the install folder and the unit's template were looked at only after apt and the account, so a
         box whose install.json holds a folder written another way got a package and an account and then an error."""
         os.makedirs(self.p("/etc/pvj"))
-        for written in ("/opt/pvj/", "/opt//pvj", "/opt/pvj\nExecStartPre=/bin/evil", "relative/pvj"):
+        for written in ("/opt/pvj/", "/opt//mctl", "/opt/pvj\nExecStartPre=/bin/evil", "relative/pvj"):
             with open(self.p(ndisetup.INSTALL_JSON), "w") as f:
                 json.dump({"prefix": written}, f)
             run = Commands()

@@ -10,7 +10,7 @@
 # Empty while no kind has landed. At the end of the rename only the credit and the upstream original are left.
 #
 # count	path
-4	RELEASE_NOTES.md
+5	RELEASE_NOTES.md
 1	bin/nxlx-convert
 5	docs/Install_OSC_on35_or_older.md
 5	docs/OSC_Commands.md
@@ -54,8 +54,27 @@
 10	docs/html/index.html
 4	docs/html/search.html
 3	docs/html/searchindex.js
-1	project-log/decisions/D135-rename-table.md
+1	index.html
+47	project-log/DECISIONS.md
+21	project-log/JOURNAL.md
+8	project-log/LESSONS.md
+1	project-log/decisions/D116-box-clock.md
+3	project-log/decisions/D129-addendum-2026-11-08-graphics-static.md
+2	project-log/decisions/D134-strobe-safety.md
+2	project-log/decisions/D135-rename-table.md
+1	project-log/journal/2026-10-31-box-clock.md
+2	project-log/journal/2026-11-08-graphics-static.md
+2	project-log/journal/2026-11-09-mapping-repaint.md
+1	project-log/journal/2026-11-10-fleet-ticket.md
+1	project-log/journal/2026-11-11-play-pause.md
+2	project-log/journal/2026-11-11-strobe.md
+1	project-log/journal/2026-11-14-rename-1.md
 2	project-log/journal/2026-11-14-rename-3.md
+1	pvj/OSC.md
+1	pvj/README.md
+4	pvj/osc.py
+3	pvj/server.py
+1	pvj/web/app.js
 1	sync/customfunction1
 1	sync/customfunction2
 1	sync/interfaceswifi
@@ -68,4 +87,8 @@
 1	sync/rebootall
 1	sync/servicecheck
 1	sync/shutdownall
+1	tests/security_test.sh
+4	tests/test_https.py
+32	tests/test_old_clients.py
 6	themes/offline-language-english.css
+2	tools/boxcert.py

@@ -179,7 +179,7 @@ only_the_new_layout
 
 step "the preview through the panel, inside its sandbox (it must not fail on a read-only file system)"
 PIN="$("$SRC/bin/pvj-pin")"
-TOKEN="$(curl -sS -m 20 -H 'Content-Type: application/json' -H 'X-PVJ-Request: 1' -d "{\"pin\": \"$PIN\", \"name\": \"ci\"}" http://127.0.0.1/api/pair | sed -n 's/.*"token": *"\([^"]*\)".*/\1/p')"
+TOKEN="$(curl -sS -m 20 -H 'Content-Type: application/json' -H 'X-MCTL-Request: 1' -d "{\"pin\": \"$PIN\", \"name\": \"ci\"}" http://127.0.0.1/api/pair | sed -n 's/.*"token": *"\([^"]*\)".*/\1/p')"
 [ -n "$TOKEN" ] || fail "could not pair with the panel"
 CODE="$(curl -sS -m 30 -o /tmp/pvj-preview.out -w '%{http_code}' -H "Authorization: Bearer $TOKEN" http://127.0.0.1/api/preview.jpg)"
 echo "preview: HTTP $CODE, $(wc -c < /tmp/pvj-preview.out) bytes"
@@ -243,7 +243,7 @@ panel_answers() { curl -sS -m 5 -o /dev/null http://127.0.0.1/api/hello; }
 ndi_page() {       # the panel's own account of NDI, with the module on
 	wait_for 40 panel_answers || fail "the panel does not answer"
 	local code
-	code="$(curl -sS -m 20 -o "$OUT" -w '%{http_code}' -H 'Content-Type: application/json' -H 'X-PVJ-Request: 1' -H "Authorization: Bearer $TOKEN" -d '{"enabled": true}' http://127.0.0.1/api/modules/inputs-ndi)"
+	code="$(curl -sS -m 20 -o "$OUT" -w '%{http_code}' -H 'Content-Type: application/json' -H 'X-MCTL-Request: 1' -H "Authorization: Bearer $TOKEN" -d '{"enabled": true}' http://127.0.0.1/api/modules/inputs-ndi)"
 	[ "$code" = 200 ] || fail "the NDI module could not be switched on: HTTP $code, $(head -c 300 "$OUT")"
 	code="$(curl -sS -m 20 -o "$OUT" -w '%{http_code}' -H "Authorization: Bearer $TOKEN" http://127.0.0.1/api/ndi)"
 	cat "$OUT"
@@ -452,7 +452,7 @@ ndisc_get() {
 }
 ndisc_post() {     # ndisc_post PATH JSON
 	local code
-	code="$(curl -sS -m 30 -o "$OUT" -w '%{http_code}' -H 'Content-Type: application/json' -H 'X-PVJ-Request: 1' -H "Authorization: Bearer $TOKEN" -d "$2" "http://127.0.0.1$1")"
+	code="$(curl -sS -m 30 -o "$OUT" -w '%{http_code}' -H 'Content-Type: application/json' -H 'X-MCTL-Request: 1' -H "Authorization: Bearer $TOKEN" -d "$2" "http://127.0.0.1$1")"
 	[ "$code" = 200 ] || fail "POST $1 answered HTTP $code, $(head -c 300 "$OUT")"
 }
 wait_for 40 panel_answers || fail "the panel does not answer after the discovery server's set-up"
@@ -670,7 +670,7 @@ helper_is_new() {  # helper_is_new OLD_PID: the helper runs, as another process
 }
 ndi_module() {     # ndi_module true|false
 	local code
-	code="$(curl -sS -m 20 -o "$OUT" -w '%{http_code}' -H 'Content-Type: application/json' -H 'X-PVJ-Request: 1' -H "Authorization: Bearer $TOKEN" -d "{\"enabled\": $1}" http://127.0.0.1/api/modules/inputs-ndi)"
+	code="$(curl -sS -m 20 -o "$OUT" -w '%{http_code}' -H 'Content-Type: application/json' -H 'X-MCTL-Request: 1' -H "Authorization: Bearer $TOKEN" -d "{\"enabled\": $1}" http://127.0.0.1/api/modules/inputs-ndi)"
 	[ "$code" = 200 ] || ndi_fail "the NDI module could not be switched to $1: HTTP $code, $(head -c 300 "$OUT")"
 }
 ndi_clean() {      # every step starts from the same place, whatever the one before left: no source, a new helper, a new player

@@ -595,7 +595,7 @@ class BoxTest(BoxBase):
             source = inspect.getsource(module)
             for word in ("controller_code", "controllercode", "create_controller", "code_join", "code_owner", "LOCAL_CODE"):
                 self.assertNotIn(word, source, (module.__name__, word))
-        for address in ("/pvj/code", "/pvj/code/owner", "/code_owner", "/pvj/access/controller", "/pvj/pin"):
+        for address in ("/mctl/code", "/mctl/code/owner", "/code_owner", "/mctl/access/controller", "/mctl/pin"):
             got = osc.translate(address, [1])
             self.assertFalse(got and "access" in got[0], address)
         # 4. the only callers of the two functions that make a code

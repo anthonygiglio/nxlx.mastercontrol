@@ -277,11 +277,11 @@ class Peers:
         if left <= 0:
             raise PeerError("the call took too long")
         conn.sock.settimeout(left)
-        headers = {"Accept": "application/json", "User-Agent": "pvj-peer"}
+        headers = {"Accept": "application/json", "User-Agent": "mctl-peer"}
         data = None
         if body is not None:
             data = json.dumps(body).encode("utf-8")
-            headers.update({"Content-Type": "application/json", "X-PVJ-Request": "1"})
+            headers.update({"Content-Type": "application/json", "X-MCTL-Request": "1"})
         try:
             conn.request(method, path, body=data, headers=headers)
             resp = conn.getresponse()

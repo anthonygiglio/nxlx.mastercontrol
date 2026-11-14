@@ -9,7 +9,7 @@ from pvj import auth as auth_mod, pinscreen as pinscreen_mod
 from tests.test_server import ServerBase
 from tests.test_support import LAN, TUNNEL, SupportBase
 
-EXPIRED = "pvj_token=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
+EXPIRED = "mctl_token=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
 
 
 class Clock:

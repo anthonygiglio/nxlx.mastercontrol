@@ -882,26 +882,26 @@ def tr(address, *args):
 
 class OscTest(unittest.TestCase):
     def test_one_and_zero_hold_and_release_and_nothing_starts_without_an_argument(self):
-        self.assertEqual(tr("/pvj/strobe", 1), ("/api/strobe/hold", {}))
-        self.assertEqual(tr("/pvj/strobe", 1.0), ("/api/strobe/hold", {}))
-        self.assertEqual(tr("/pvj/strobe", True), ("/api/strobe/hold", {}))
-        self.assertEqual(tr("/pvj/strobe", 0), ("/api/strobe/release", {}))
-        self.assertEqual(tr("/pvj/strobe", False), ("/api/strobe/release", {}))
-        self.assertIsNone(tr("/pvj/strobe"))
-        self.assertIsNone(tr("/pvj/strobe", "on"))
-        self.assertIsNone(tr("/pvj/strobefoo", 1))
+        self.assertEqual(tr("/mctl/strobe", 1), ("/api/strobe/hold", {}))
+        self.assertEqual(tr("/mctl/strobe", 1.0), ("/api/strobe/hold", {}))
+        self.assertEqual(tr("/mctl/strobe", True), ("/api/strobe/hold", {}))
+        self.assertEqual(tr("/mctl/strobe", 0), ("/api/strobe/release", {}))
+        self.assertEqual(tr("/mctl/strobe", False), ("/api/strobe/release", {}))
+        self.assertIsNone(tr("/mctl/strobe"))
+        self.assertIsNone(tr("/mctl/strobe", "on"))
+        self.assertIsNone(tr("/mctl/strobefoo", 1))
 
     def test_rate_colour_flash_and_way(self):
-        self.assertEqual(tr("/pvj/strobe/rate", 2.5), ("/api/strobe", {"rate": 2.5}))
-        self.assertEqual(tr("/pvj/strobe/colour", "#ff0000"), ("/api/strobe", {"colour": "#ff0000"}))
-        self.assertEqual(tr("/pvj/strobe/color", 1.0, 0.0, 0.0), ("/api/strobe", {"colour": [1.0, 0.0, 0.0]}))
-        self.assertEqual(tr("/pvj/strobe/flash", 80), ("/api/strobe", {"flash": 80}))
-        self.assertEqual(tr("/pvj/strobe/way", "black"), ("/api/strobe", {"way": "black"}))
-        for address in ("/pvj/strobe/rate", "/pvj/strobe/colour", "/pvj/strobe/flash", "/pvj/strobe/way"):
+        self.assertEqual(tr("/mctl/strobe/rate", 2.5), ("/api/strobe", {"rate": 2.5}))
+        self.assertEqual(tr("/mctl/strobe/colour", "#ff0000"), ("/api/strobe", {"colour": "#ff0000"}))
+        self.assertEqual(tr("/mctl/strobe/color", 1.0, 0.0, 0.0), ("/api/strobe", {"colour": [1.0, 0.0, 0.0]}))
+        self.assertEqual(tr("/mctl/strobe/flash", 80), ("/api/strobe", {"flash": 80}))
+        self.assertEqual(tr("/mctl/strobe/way", "black"), ("/api/strobe", {"way": "black"}))
+        for address in ("/mctl/strobe/rate", "/mctl/strobe/colour", "/mctl/strobe/flash", "/mctl/strobe/way"):
             self.assertIsNone(tr(address), address)
-        self.assertIsNone(tr("/pvj/strobe/rate", "fast"))
-        self.assertIsNone(tr("/pvj/strobe/colour", 1.0, 2.0))
-        self.assertIsNone(tr("/pvj/strobe/other", 1))
+        self.assertIsNone(tr("/mctl/strobe/rate", "fast"))
+        self.assertIsNone(tr("/mctl/strobe/colour", 1.0, 2.0))
+        self.assertIsNone(tr("/mctl/strobe/other", 1))
 
 
 class OscHandlerTest(RouteBase):
@@ -918,20 +918,20 @@ class OscHandlerTest(RouteBase):
 
     def test_a_one_holds_a_zero_lets_go_and_the_sender_is_the_holder(self):
         server = self.make_server()
-        self.assertEqual(server.handle_packet(msg("/pvj/strobe", 1), self.SENDER), 1)
+        self.assertEqual(server.handle_packet(msg("/mctl/strobe", 1), self.SENDER), 1)
         self.assertEqual(list(self.strobe.holders), ["osc:" + self.SENDER])
         self.assertEqual(self.fx.on["id"], "fx-strobe.fs")
-        self.assertEqual(server.handle_packet(msg("/pvj/strobe", 1), "192.168.1.21"), 1)        # a second sender is a second holder
+        self.assertEqual(server.handle_packet(msg("/mctl/strobe", 1), "192.168.1.21"), 1)        # a second sender is a second holder
         self.assertEqual(self.strobe.state()["held"], 2)
-        server.handle_packet(msg("/pvj/strobe", 0), self.SENDER)
+        server.handle_packet(msg("/mctl/strobe", 0), self.SENDER)
         self.assertEqual(list(self.strobe.holders), ["osc:192.168.1.21"])
         self.assertIsNotNone(self.fx.on)
-        server.handle_packet(msg("/pvj/strobe", 0), "192.168.1.21")
+        server.handle_packet(msg("/mctl/strobe", 0), "192.168.1.21")
         self.assertIsNone(self.fx.on)
 
     def test_stopping_the_listener_lets_go(self):
         server = self.make_server()
-        server.handle_packet(msg("/pvj/strobe", 1), self.SENDER)
+        server.handle_packet(msg("/mctl/strobe", 1), self.SENDER)
         self.assertIsNotNone(self.fx.on)
         server.stop()
         self.assertIsNone(self.fx.on)
@@ -940,21 +940,21 @@ class OscHandlerTest(RouteBase):
     def test_the_lockdown_layers_stand_before_the_strobe(self):
         from tests.test_osc_lockdown import KEY
         server = self.make_server(only_on=True, only=["10.0.0.5"])
-        self.assertEqual(server.handle_packet(msg("/pvj/strobe", 1), self.SENDER), 0)       # not on the list of devices
+        self.assertEqual(server.handle_packet(msg("/mctl/strobe", 1), self.SENDER), 0)       # not on the list of devices
         self.assertIsNone(self.fx.on)
         self.assertEqual(self.strobe.state()["held"], 0)
         keyed = self.make_server(key=KEY, key_on=True)
-        self.assertEqual(keyed.handle_packet(msg("/pvj/strobe", 1), self.SENDER), 0)        # no key in the address
+        self.assertEqual(keyed.handle_packet(msg("/mctl/strobe", 1), self.SENDER), 0)        # no key in the address
         self.assertIsNone(self.fx.on)
-        self.assertEqual(keyed.handle_packet(msg("/k/%s/pvj/strobe" % KEY, 1), self.SENDER), 1)
+        self.assertEqual(keyed.handle_packet(msg("/k/%s/mctl/strobe" % KEY, 1), self.SENDER), 1)
         self.assertIsNotNone(self.fx.on)
 
     def test_a_lease_from_osc_ends_in_half_a_second_without_a_repeat_and_a_repeat_keeps_it(self):
         server = self.make_server()
-        server.handle_packet(msg("/pvj/strobe", 1), self.SENDER)
+        server.handle_packet(msg("/mctl/strobe", 1), self.SENDER)
         self.assertIsNotNone(self.fx.on)
         self.clock.t += 0.3
-        server.handle_packet(msg("/pvj/strobe", 1), self.SENDER)         # repeated while held
+        server.handle_packet(msg("/mctl/strobe", 1), self.SENDER)         # repeated while held
         self.clock.t += 0.4
         self.strobe.tick()
         self.assertIsNotNone(self.fx.on)
@@ -964,9 +964,9 @@ class OscHandlerTest(RouteBase):
 
     def test_the_rate_over_osc_is_kept_to_the_cap(self):
         server = self.make_server()
-        server.handle_packet(msg("/pvj/strobe/rate", 40.0), self.SENDER)
+        server.handle_packet(msg("/mctl/strobe/rate", 40.0), self.SENDER)
         self.assertEqual(self.strobe.cfg["rate"], 3.0)
-        server.handle_packet(msg("/pvj/strobe/colour", "#00ff00"), self.SENDER)
+        server.handle_packet(msg("/mctl/strobe/colour", "#00ff00"), self.SENDER)
         self.assertEqual(self.strobe.cfg["colour"], "#00ff00")
 
 

@@ -238,7 +238,7 @@ class RouteTest(Base):
         self.assertEqual([m["file"] for m in self.settings.data["overlay"]["masks"]], ["m1.png"])
 
     def test_the_one_picture_of_before_still_works(self):
-        # what OSC's /pvj/overlay/file and a controller's overlay button send (osc.py, actions.py)
+        # what OSC's /mctl/overlay/file and a controller's overlay button send (osc.py, actions.py)
         self.post({"add": "m1.png"})
         self.post({"add": "m2.png"})
         self.post({"file": "m3.png", "on": True})

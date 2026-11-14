@@ -585,7 +585,7 @@ class BoxKeepsToThisMachineTest(unittest.TestCase):
 
     def post(self, path, body, host=None):
         c = http.client.HTTPConnection("127.0.0.1", self.boxes.ports()["owner"], timeout=30)
-        h = {"Content-Type": "application/json", "X-PVJ-Request": "1"}
+        h = {"Content-Type": "application/json", "X-MCTL-Request": "1"}
         if host:
             h["Host"] = host
         c.request("POST", path, json.dumps(body).encode(), h)

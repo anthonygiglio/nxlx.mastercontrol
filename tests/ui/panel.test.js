@@ -359,7 +359,7 @@ function startServer(env) {          // env: more for the harness's environment 
       pic.data.fill(0);
       const bytes = Array.from(PNG.sync.write(pic));
       for (const name of ['mask-a.png', 'mask-b.png']) {
-        const st = await page.evaluate(async ([n, b]) => (await fetch('/api/media/upload?name=' + n, { method: 'POST', headers: { 'X-PVJ-Request': '1', 'Content-Type': 'application/octet-stream' }, body: new Uint8Array(b) })).status, [name, bytes]);
+        const st = await page.evaluate(async ([n, b]) => (await fetch('/api/media/upload?name=' + n, { method: 'POST', headers: { 'X-MCTL-Request': '1', 'Content-Type': 'application/octet-stream' }, body: new Uint8Array(b) })).status, [name, bytes]);
         assert.strictEqual(st, 200, 'upload ' + name);
       }
       await go(page, 'shape/picture');
@@ -385,7 +385,7 @@ function startServer(env) {          // env: more for the harness's environment 
       assert.deepStrictEqual(masks.masks.map((m) => m.file), ['mask-b.png']);
       assert.strictEqual(masks.on, true, 'the first one added was shown');
       await page.evaluate(async () => {          // and the box as it was for the rest of the test
-        const h = { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' };
+        const h = { 'Content-Type': 'application/json', 'X-MCTL-Request': '1' };
         await fetch('/api/overlay', { method: 'POST', headers: h, body: JSON.stringify({ remove: 'mask-b.png' }) });
         for (const n of ['mask-a.png', 'mask-b.png']) await fetch('/api/media/delete', { method: 'POST', headers: h, body: JSON.stringify({ name: n }) });
       });
@@ -419,7 +419,7 @@ function startServer(env) {          // env: more for the harness's environment 
       await fitsCard('.card, #syspage', name + ' page');
       await fitsPhone(name + ' page');
     }
-    const post = (path, body) => page.evaluate(([p, b]) => fetch(p, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify(b) }).then((r) => r.status), [path, body]);
+    const post = (path, body) => page.evaluate(([p, b]) => fetch(p, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-MCTL-Request': '1' }, body: JSON.stringify(b) }).then((r) => r.status), [path, body]);
     const get = (path) => page.evaluate((p) => fetch(p).then((r) => r.json()), path);
     const moduleIsOn = async (id) => (await get('/api/modules')).modules.some((m) => m.id === id && m.enabled);
     // Switching off with the page's switch: the page then shows only the description and the big button
@@ -1194,20 +1194,20 @@ function startServer(env) {          // env: more for the harness's environment 
     assert.deepStrictEqual([oscNow.only_on, oscNow.paired_on, oscNow.key_on, oscNow.only, oscNow.senders, 'key' in oscNow], [false, false, false, [], [], false], 'every lock is off until it is switched on');
     await page.waitForSelector('#oscnosenders');
     assert(/None of them is encryption/.test(await page.textContent('#oscwhohint')), 'the limit is said beside the locks');
-    await oscSend('/pvj/nothing-here');                       // the sender appears by itself, with its button
+    await oscSend('/mctl/nothing-here');                       // the sender appears by itself, with its button
     await page.waitForSelector(`${oscRow} button:text-is("Allow this one")`, { timeout: 15000 });
     await page.click('#osconly');                             // lock 1: nobody yet, said in place
     await page.waitForSelector('#osconlyempty');
-    await oscSend('/pvj/stop');
+    await oscSend('/mctl/stop');
     await page.waitForSelector(`${oscRow} .warn:has-text("Refused: not in the list of devices that may send")`, { timeout: 15000 });
     await page.click(`${oscRow} button:text-is("Allow this one")`);
     await page.waitForSelector('#osconlylist .addr:text-is("127.0.0.1")');
     assert.strictEqual(await page.locator('#osconlyempty').count(), 0, 'the warning goes once a device is in the list');
     await page.waitForSelector(`${oscRow} .hint:text-is("In the list")`);
-    await oscSend('/pvj/stop');
-    await page.waitForSelector(`${oscRow} .state:has-text("the last one /pvj/stop")`, { timeout: 15000 });
+    await oscSend('/mctl/stop');
+    await page.waitForSelector(`${oscRow} .state:has-text("the last one /mctl/stop")`, { timeout: 15000 });
     await page.click('#osclog > summary');                    // Last messages: what was let in, and why the other was not
-    await page.waitForSelector('#oscmessages .oscmsg:has-text("/pvj/stop")');
+    await page.waitForSelector('#oscmessages .oscmsg:has-text("/mctl/stop")');
     await page.waitForSelector('#oscmessages .oscmsg:has-text("Refused: not in the list")');
     await page.click('#oscpaired');                           // lock 2: this browser is a paired device on loopback
     await page.waitForFunction(() => { const n = document.getElementById('oscpairednow'); return n && n.textContent === 'Counts now: 127.0.0.1.'; });
@@ -1221,12 +1221,12 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.click('#osckeyshow');
     await page.waitForFunction(() => /^\/k\/[0-9a-f]{20}$/.test(document.getElementById('osckeyout').textContent));
     const oscPrefix = await page.textContent('#osckeyout');
-    assert((await page.textContent('#osckeywhere')).includes(oscPrefix + '/pvj/stop'), 'where the key goes in TouchOSC is said with it');
+    assert((await page.textContent('#osckeywhere')).includes(oscPrefix + '/mctl/stop'), 'where the key goes in TouchOSC is said with it');
     assert(!JSON.stringify(await get('/api/osc')).includes(oscPrefix.slice(3)), 'the key is not in what the page asks for by itself');
-    await oscSend('/pvj/stop');
+    await oscSend('/mctl/stop');
     await page.waitForSelector(`${oscRow} .warn:has-text("no key in the address")`, { timeout: 15000 });
-    await oscSend(oscPrefix + '/pvj/stop');
-    await page.waitForSelector(`${oscRow} .state:has-text("the last one /pvj/stop")`, { timeout: 15000 });
+    await oscSend(oscPrefix + '/mctl/stop');
+    await page.waitForSelector(`${oscRow} .state:has-text("the last one /mctl/stop")`, { timeout: 15000 });
     // Send state back (D82): off, nobody in the list, and the reason said in place. "Use the device that is sending
     // now" fills the form and adds nothing; this browser's loopback address is then refused as a target by the box.
     await page.waitForSelector('#oscstatecard:not([hidden]) #oscstate[aria-checked="false"]');
@@ -1255,7 +1255,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.click('#osckeynew');
     await page.click('#confirmyes');
     await page.waitForFunction((old) => { const t = document.getElementById('osckeyout').textContent; return /^\/k\/[0-9a-f]{20}$/.test(t) && t !== old; }, oscPrefix);
-    await oscSend(oscPrefix + '/pvj/stop');                   // the old key stops at once
+    await oscSend(oscPrefix + '/mctl/stop');                   // the old key stops at once
     await page.waitForSelector(`${oscRow} .warn:has-text("Refused: wrong key")`, { timeout: 15000 });
     await page.waitForSelector(`${oscRow} .oscwrong:text-is("1 wrong key from this address.")`);
     assert.strictEqual(await page.locator(`${oscRow} .oscnopanel`).count(), 0, 'this browser is a panel device at that address');
@@ -1269,14 +1269,14 @@ function startServer(env) {          // env: more for the harness's environment 
       d.paired_now = [oscLong(1), oscLong(2), oscLong(3)];
       d.paired_v6 = [oscLong(5), oscLong(6)];
       d.refused = 1234567;
-      d.senders = [{ address: oscLong(1), messages: 123456, refused: 0, last: '/pvj/' + 'x'.repeat(59), accepted: true, why: 'nothing to do (an unknown address, or a button release)', at: 1 },
+      d.senders = [{ address: oscLong(1), messages: 123456, refused: 0, last: '/mctl/' + 'x'.repeat(59), accepted: true, why: 'nothing to do (an unknown address, or a button release)', at: 1 },
         { address: oscLong(40), messages: 0, refused: 98765, wrong_keys: 98765, panel: false, last: '', accepted: false, why: 'not in the list of devices that may send', at: 1 }];
       d.feedback = { on: true, sending: true, max: 4, sender: '192.168.100.200', targets: [0, 1, 2, 3].map((n) => ({ name: 'A_tablet_with_a_long_name_' + 'x'.repeat(5) + n, address: '192.168.100.20' + n, port: 65530 + n,
         last_sent: n === 0 ? null : n * 40, why: n === 3 ? 'not on this network now, nothing is sent to it' : '' })) };
       await route.fulfill({ response: res, json: d });
     };
     const oscWideLog = async (route) => route.fulfill({ json: { messages: [
-      { at: 1791650837, from: oscLong(1), address: '/pvj/' + 'x'.repeat(59), ok: true, why: '', count: 1 },
+      { at: 1791650837, from: oscLong(1), address: '/mctl/' + 'x'.repeat(59), ok: true, why: '', count: 1 },
       { at: 1791650837, from: oscLong(40), address: '', ok: false, why: 'not in the list of devices that may send', count: 98765 }] } });
     await page.route('**/api/osc', oscWide);
     await page.route('**/api/osc/messages', oscWideLog);
@@ -1736,7 +1736,7 @@ function startServer(env) {          // env: more for the harness's environment 
     assert.strictEqual(await post('/api/ndi', { action: 'sound_from', id: 'VLC (NDI Audio)' }), 400, 'a name is never a sound source, only an id');
     // (asked beside the page, not from it: a 404 answered to the page's own fetch is a console error, and the page
     // itself must never ask for what is not there; the check at the end holds it to that)
-    assert.strictEqual((await page.request.post(base + '/api/ndi', { data: { action: 'sound_from', id: '0123456789ab' }, headers: { 'X-PVJ-Request': '1' } })).status(), 404,
+    assert.strictEqual((await page.request.post(base + '/api/ndi', { data: { action: 'sound_from', id: '0123456789ab' }, headers: { 'X-MCTL-Request': '1' } })).status(), 404,
       'and only an id that is on the network now');
     await page.click('#ndisoundnone');
     await page.waitForFunction(() => /No sound: NDI pictures are shown without sound/.test(document.getElementById('ndisoundline').textContent));
@@ -2426,7 +2426,7 @@ function startServer(env) {          // env: more for the harness's environment 
               { id: '6'.repeat(32), name: 'constructor', address: '192.168.0.178', port: 443, tier: 'standard', version: '1.0', https: true, seen_seconds_ago: 1 }] } });
         };
         await page.route('**/api/nodes', fleet);
-        await page.evaluate((id) => localStorage.setItem('pvj.nodes.opened', JSON.stringify({ [id]: { address: '192.168.0.99', port: 443 } })), 'b'.repeat(32));
+        await page.evaluate((id) => localStorage.setItem('mctl.nodes.opened', JSON.stringify({ [id]: { address: '192.168.0.99', port: 443 } })), 'b'.repeat(32));
         await page.waitForTimeout(1500);
         assert.strictEqual(asked, 0, 'the node list is not asked for before Nodes is pressed');
         const headBefore = await page.evaluate(() => document.getElementById('wshead').getBoundingClientRect().height);
@@ -2490,13 +2490,13 @@ function startServer(env) {          // env: more for the harness's environment 
           assert.deepStrictEqual(sc, { page: y0, end: true }, 'a scroll over the Nodes list scrolls the sheet to its end and not the page: ' + JSON.stringify(sc));
         }
         {
-          await page.evaluate(() => localStorage.setItem('pvj.nodes.opened', JSON.stringify({ x: { address: '8.8.8.8', port: 443 }, ['9'.repeat(32)]: { address: '192.168.0.9', port: '1@e' } })));
+          await page.evaluate(() => localStorage.setItem('mctl.nodes.opened', JSON.stringify({ x: { address: '8.8.8.8', port: 443 }, ['9'.repeat(32)]: { address: '192.168.0.9', port: '1@e' } })));
           await page.click('#nodesagain');
           // (the list already has 12 rows before Look again redraws it: wait for the answer, then for the redraw)
           for (let i = 0; i < 100 && asked < 3; i++) await page.waitForTimeout(100);
           await page.waitForFunction(() => document.querySelectorAll('#nodeslist .nodesrow').length === 12 && !document.querySelector('.nodesmoved'), null, { timeout: 5000 }).catch(() => {});
           assert.strictEqual(await page.locator('.nodesmoved').count(), 0, 'a remembered entry that is not well formed is ignored');
-          await page.evaluate(() => localStorage.removeItem('pvj.nodes.opened'));
+          await page.evaluate(() => localStorage.removeItem('mctl.nodes.opened'));
         }
         await page.click('#nsclose');
         await page.waitForSelector('#nodespop', { state: 'detached' });
@@ -2986,7 +2986,7 @@ function startServer(env) {          // env: more for the harness's environment 
     }
     // A guest sees the state and no button that does anything; a presenter starts on Now and has the buttons on the Room screen
     const roomTokens = await page.evaluate(() => Promise.all(['view', 'live'].map((role) => fetch('/api/devices/invite', { method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify({ name: 'room ' + role, role: role }) }).then((r) => r.json()).then((d) => d.token))));
+      headers: { 'Content-Type': 'application/json', 'X-MCTL-Request': '1' }, body: JSON.stringify({ name: 'room ' + role, role: role }) }).then((r) => r.json()).then((d) => d.token))));
     for (const [n, role] of [[0, 'view'], [1, 'live']]) {
       const roomCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
       const staff = await roomCtx.newPage();
@@ -3278,14 +3278,14 @@ function startServer(env) {          // env: more for the harness's environment 
         return { got: [d[0], d[1], d[2]], want: [want[0], want[1], want[2]] };
       });
       assert.deepStrictEqual(px.got, px.want, 'the mapping display is drawn on the look\'s --bg: ' + JSON.stringify(px));
-      // and drawn again when a new look's stylesheet has loaded ('pvj-look'), in the new colours
+      // and drawn again when a new look's stylesheet has loaded ('mctl-look'), in the new colours
       const again = await page.evaluate(() => {
         const c = document.getElementById('mapcanvas'), read = () => Array.from((() => { const t = document.createElement('canvas'); t.width = 4; t.height = 4; const g = t.getContext('2d', { willReadFrequently: true }); g.drawImage(c, -1, -1); return g.getImageData(0, 0, 1, 1).data; })().slice(0, 3));
         document.documentElement.style.setProperty('--bg', 'rgb(1, 2, 3)');
-        window.dispatchEvent(new Event('pvj-look'));
+        window.dispatchEvent(new Event('mctl-look'));
         const got = read();
         document.documentElement.style.removeProperty('--bg');
-        window.dispatchEvent(new Event('pvj-look'));
+        window.dispatchEvent(new Event('mctl-look'));
         return got;
       });
       assert.deepStrictEqual(again, [1, 2, 3], 'a new look redraws the mapping display in its colours: ' + JSON.stringify(again));
@@ -3732,7 +3732,7 @@ function startServer(env) {          // env: more for the harness's environment 
     // five more spent, each from its own cookie jar: two left, and the card says to make a new set (review of #122)
     for (let i = 3; i < 8; i++) {
       const jar = await browser.newContext();
-      const r = await jar.request.post(base + '/api/pair', { data: { pin: codes2[i], name: 'spent ' + i }, headers: { 'X-PVJ-Request': '1' } });
+      const r = await jar.request.post(base + '/api/pair', { data: { pin: codes2[i], name: 'spent ' + i }, headers: { 'X-MCTL-Request': '1' } });
       assert.strictEqual(r.status(), 200, 'code ' + i + ' pairs');
       await jar.close();
     }
@@ -3830,7 +3830,7 @@ function startServer(env) {          // env: more for the harness's environment 
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36 Edg/120.0',
       'Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
-      'Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0'].map((ua) => window.pvjHttpsPlatform(ua)));
+      'Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0'].map((ua) => window.mctlHttpsPlatform(ua)));
     assert.deepStrictEqual(platforms.map((p) => p.name), ['iPhone', 'Android', 'Mac', 'Windows', 'Chromebook', 'Linux'], 'each device is told apart by its user agent');
     assert(platforms[0].steps.join(' ').includes('Certificate Trust Settings'), 'the iPhone is told about the second step in Settings');
     assert(platforms[1].steps.join(' ').includes('CA certificate'), 'Android is told where the CA certificate goes');
@@ -4407,7 +4407,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.waitForFunction(() => fetch('/api/shaders').then((r) => r.json()).then((d) => d.playing && d.playing.values.lit === true && d.playing.values.mode === 5 && d.playing.controls.brightness === 1.5 && d.playing.controls.speed === 2));
     // a refusal is said at the control: here a value for a shader that has just left the screen
     {
-      const said = await page.evaluate(() => fetch('/api/shaders/play', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify({ id: 'nxlx-tide.fs' }) }).then(() => {
+      const said = await page.evaluate(() => fetch('/api/shaders/play', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-MCTL-Request': '1' }, body: JSON.stringify({ id: 'nxlx-tide.fs' }) }).then(() => {
         document.getElementById('shin-lit').click();
         return new Promise((done) => {
           let n = 0;
@@ -4746,7 +4746,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.waitForFunction(() => /Player idle/.test((document.getElementById('np') || {}).textContent), null, { timeout: 8000 });
 
     // A presenter's Setup: the rows a presenter can use (the modules that are on), no switches, nothing disabled
-    const presenterToken = await page.evaluate(() => fetch('/api/devices/invite', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' },
+    const presenterToken = await page.evaluate(() => fetch('/api/devices/invite', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-MCTL-Request': '1' },
       body: JSON.stringify({ name: 'Presenter', role: 'live' }) }).then((r) => r.json()).then((d) => d.token));
     const liveCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
     const presenter = await liveCtx.newPage();
@@ -4867,7 +4867,7 @@ function startServer(env) {          // env: more for the harness's environment 
       ['/api/access/cancel', { all: true }], ['/api/access/cancel', { role: 'live' }], ['/api/access/cancel', { code: digits }],
       ['/api/access/screen', { show: true, items: ['pin'] }], ['/api/access/screen', { show: true, items: ['view', 'live'] }],
       ['/api/devices/invite', { name: 'x', role: 'live' }], ['/api/pin/rotate', {}], ['/api/pin/unlock', {}]
-    ].map((x) => fetch(x[0], { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify(x[1]) }).then((r) => r.status))), ownersPresenter);
+    ].map((x) => fetch(x[0], { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-MCTL-Request': '1' }, body: JSON.stringify(x[1]) }).then((r) => r.status))), ownersPresenter);
     assert.deepStrictEqual(refused, [403, 400, 400, 403, 403, 403, 403, 403, 403, 403, 403], 'what an operator is refused (D80: also a link above a guest; whom he may remove is in tests/test_roles.py)');
     assert.strictEqual(await presenter.evaluate(() => fetch('/api/qr.svg?for=live').then((r) => r.status)), 403, 'no QR code of the presenter code for a presenter');
     assert.strictEqual(await presenter.evaluate(() => fetch('/api/access/code', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"role":"view","replace":true}' }).then((r) => r.status)), 403,
@@ -4922,7 +4922,7 @@ function startServer(env) {          // env: more for the harness's environment 
     assert.strictEqual(await post('/api/modules/room', { enabled: true }), 200);
     {
       const tokens = await page.evaluate(() => Promise.all(['live', 'view'].map((role) => fetch('/api/devices/invite', { method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify({ name: 'ambience ' + role, role: role }) }).then((r) => r.json()).then((d) => d.token))));
+        headers: { 'Content-Type': 'application/json', 'X-MCTL-Request': '1' }, body: JSON.stringify({ name: 'ambience ' + role, role: role }) }).then((r) => r.json()).then((d) => d.token))));
       const open = async (token, who) => {
         const c = await browser.newContext({ viewport: { width: 390, height: 844 } });
         const pg = await c.newPage();
@@ -5394,7 +5394,7 @@ function startServer(env) {          // env: more for the harness's environment 
       await ndiPad.click();
       await page.waitForFunction(() => /not allowed any more|NDI is not set up|not running|empty/i.test(document.getElementById('msg').textContent));
       // a guest sees such a pad as not available, and his tap is answered in place and never sent
-      const guestToken = await page.evaluate(() => fetch('/api/devices/invite', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify({ name: 'NDI guest', role: 'view' }) }).then((r) => r.json()).then((d) => d.token));
+      const guestToken = await page.evaluate(() => fetch('/api/devices/invite', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-MCTL-Request': '1' }, body: JSON.stringify({ name: 'NDI guest', role: 'view' }) }).then((r) => r.json()).then((d) => d.token));
       const guestCtx = await browser.newContext({ viewport: { width: 320, height: 700 } });
       const gp = await guestCtx.newPage();
       const asked = [];
@@ -5752,7 +5752,7 @@ function startServer(env) {          // env: more for the harness's environment 
             const x = document.querySelector('.deskcol[data-col="' + c + '"] > .deskhead'); return x ? getComputedStyle(x).position : null; }));
           assert.deepStrictEqual(pos, ['static', 'static', 'sticky'], 'on Room at 1440 only the Walls name is stuck (scenes, guests, walls): ' + JSON.stringify(pos));
         }
-        const call = (url, body) => page.evaluate(([u, b]) => fetch(u, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify(b || {}) }).then((r) => r.json().catch(() => ({}))), [url, body]);
+        const call = (url, body) => page.evaluate(([u, b]) => fetch(u, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-MCTL-Request': '1' }, body: JSON.stringify(b || {}) }).then((r) => r.json().catch(() => ({}))), [url, body]);
         {
           // The keyboard's ring on the title bar can be seen in Signal, where the bar is the area's colour: the ring is
           // the bar's ink there, not the area's colour (it was the same colour as the bar)
@@ -5811,7 +5811,7 @@ function startServer(env) {          // env: more for the harness's environment 
         const ws = require('./shell');
         const inv = require('./inventory');
         const began = Date.now();
-        const flag = (url, body) => page.evaluate(([u, b]) => fetch(u, b ? { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify(b) } : { credentials: 'same-origin' }).then((r) => r.json().then((d) => [r.status, d.enabled])), [url, body]);
+        const flag = (url, body) => page.evaluate(([u, b]) => fetch(u, b ? { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-MCTL-Request': '1' }, body: JSON.stringify(b) } : { credentials: 'same-origin' }).then((r) => r.json().then((d) => [r.status, d.enabled])), [url, body]);
         const held = [], back = [];
         for (const url of ['/api/dmx', '/api/osc']) {
           if ((await flag(url))[1] !== true) continue;
@@ -5825,7 +5825,7 @@ function startServer(env) {          // env: more for the harness's environment 
           const owner = await fresh();
           await owner.goto(base2 + '/');
           await owner.waitForSelector('.pin');
-          const paired = await owner.evaluate(([pin, name]) => fetch('/api/pair', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify({ pin, name }) }).then((r) => r.status), [bare.info.pin, inv.OWNER]);
+          const paired = await owner.evaluate(([pin, name]) => fetch('/api/pair', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-MCTL-Request': '1' }, body: JSON.stringify({ pin, name }) }).then((r) => r.status), [bare.info.pin, inv.OWNER]);
           assert.strictEqual(paired, 200, 'pairing with the box that has no player');
           await owner.goto(base2 + '/');
           await owner.waitForSelector('main.ws');

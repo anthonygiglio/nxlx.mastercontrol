@@ -2136,7 +2136,7 @@ class Api:
         return {"ok": True}
 
     def shader_play(self, body, device, client):
-        """Show one shader by its id, as the Shaders screen's Play does. From a controller (OSC's /pvj/shader, D75)
+        """Show one shader by its id, as the Shaders screen's Play does. From a controller (OSC's /mctl/shader, D75)
         it goes the way a pad's shader goes from a controller (D73, _play_shader_pad): what can be said at once is
         said, and the tap is queued for the engine's worker, so the thread that reads the controller never waits
         while the GPU looks at a shader. From the panel it is the engine's own call, as before."""
@@ -3288,7 +3288,7 @@ class Api:
             self.support.note(device, "made a new OSC key and knows it" if made else "was shown the OSC key", key=True)
         elif made:
             self.support.key_renewed()
-        return {"key": key, "prefix": osc_mod.KEY_PREFIX + key, "example": osc_mod.KEY_PREFIX + key + "/pvj/stop"}
+        return {"key": key, "prefix": osc_mod.KEY_PREFIX + key, "example": osc_mod.KEY_PREFIX + key + "/mctl/stop"}
 
     def remote_allow_refused(self, items, current):
         """D84: the networks of `items` (what OSC would also accept from) that a support session may not add. A way to

@@ -6,13 +6,15 @@ Security model, in one place:
 * every API call except hello, pair, session and logout needs a paired device token
   (HttpOnly SameSite=Strict cookie, or Authorization: Bearer for scripts); logout
   removes that token from the box and answers with the cookie expired
-* every state-changing call is a POST with JSON, the X-PVJ-Request header and a
+* every state-changing call is a POST with JSON, the X-MCTL-Request header and a
   matching Origin (if the browser sends one), so other websites cannot drive it
+* for one release after the rename (D138) the old header name and the old cookie names are still read: a client
+  that sends them keeps working, and a browser that shows an old cookie gets the new one and loses the old one
 * the panel is served with a Content-Security-Policy that forbids inline script,
   external resources and framing; over plain http, while a certificate is in use, the page's connect-src also names
   the box's own https:// origin (page_csp), so the Secure connection page can ask whether this device trusts the box
 * the same panel and API answer on a second, TLS listener when PVJ_HTTPS_PORT is set (D79, pvj/httpsbox.py): there
-  the cookie is __Host-pvj_token with Secure; a switch keeps owner access off plain HTTP (the gate below)
+  the cookie is __Host-mctl_token with Secure; a switch keeps owner access off plain HTTP (the gate below)
 * the nodes talk to each other on a third listener, when PVJ_PEER_PORT is set (D132, PeerServer): TLS with a client
   certificate required (the pinned root the only CA); it answers two POSTs and nothing else
 """
@@ -41,9 +43,15 @@ from .settings import Settings, SettingsError
 
 WEB_DIR = os.path.join(os.path.dirname(__file__), "web")
 MAX_BODY = 64 * 1024
-COOKIE = "pvj_token"
-SECURE_COOKIE = "__Host-pvj_token"      # over TLS only (D79): the prefix forces Secure, Path=/ and no Domain; a second name,
+COOKIE = "mctl_token"
+SECURE_COOKIE = "__Host-mctl_token"      # over TLS only (D79): the prefix forces Secure, Path=/ and no Domain; a second name,
                                         # because browsers leave a Secure cookie alone when plain http tries to replace it
+CSRF_HEADER = "X-MCTL-Request"
+# The names before the rename, read for one release and never written (D138, the owner's decision A: nobody is signed
+# out by the rename). Remove these three and their uses in the release after the cutover.
+OLD_CSRF_HEADER = "X-PVJ-Request"
+OLD_COOKIE = "pvj_token"
+OLD_SECURE_COOKIE = "__Host-pvj_token"
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; "
        "connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
 CSP_ORIGIN = re.compile(r"https://(?:[a-z0-9.-]{1,253}|\[[0-9a-f:.]{2,45}\])(?::[0-9]{1,5})?")   # the one shape page_csp adds
@@ -137,7 +145,7 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
     static = static_files(web_dir)
 
     class Handler(BaseHTTPRequestHandler):
-        server_version = "pvj"
+        server_version = "mctl"
         sys_version = ""
         timeout = 10  # per read; the lifetime timer below bounds the whole connection
 
@@ -174,7 +182,9 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                 self.send_header("Referrer-Policy", "no-referrer")
                 self.send_header("Content-Security-Policy", self._csp(content_type))
                 self.send_header("Cache-Control", cache)
-                for k, v in (extra or []):
+                extra = list(extra or [])
+                extra += self._cookie_moved(extra)  # after the policy above, which may have read a page's cookie
+                for k, v in extra:
                     self.send_header(k, v)
                 self.end_headers()
                 if self.command != "HEAD":
@@ -210,18 +220,61 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
             device = auth.authenticate(token) if token else None
             return bool(device is not None and device.get("role") in ("live", "full") and not device.get("remote"))
 
+        def parse_request(self):
+            self._old_cookie, self._old_sent = None, False      # one request at a time on a kept-alive connection
+            return super().parse_request()
+
         def _token(self):
-            header = self.headers.get("Authorization", "")
-            if header.startswith("Bearer "):
-                return header[7:].strip()
+            self._old_cookie, self._old_sent = None, False
             jar = SimpleCookie()
             try:
                 jar.load(self.headers.get("Cookie", ""))
             except Exception:
+                jar = {}
+            self._old_sent = OLD_COOKIE in jar or (self._secure() and OLD_SECURE_COOKIE in jar)      # D138
+            header = self.headers.get("Authorization", "")
+            if header.startswith("Bearer "):
+                return header[7:].strip()
+            if not jar:
                 return None
             if self._secure() and SECURE_COOKIE in jar:     # the secure name is read over TLS only
                 return jar[SECURE_COOKIE].value
-            return jar[COOKIE].value if COOKIE in jar else None
+            if self._secure() and OLD_SECURE_COOKIE in jar:     # D138: the name before the rename, for one release
+                self._old_cookie = jar[OLD_SECURE_COOKIE].value
+                return self._old_cookie
+            if COOKIE in jar:
+                return jar[COOKIE].value
+            if OLD_COOKIE in jar:
+                self._old_cookie = jar[OLD_COOKIE].value
+                return self._old_cookie
+            return None
+
+        def _cookie_moved(self, extra):
+            """D138: the request was signed in by a cookie of the old name and its token is still paired: the same token
+            under the new name, and the old names expired, so the browser moves over without a new pairing. Nothing when
+            the answer sets or clears a cookie itself (a pairing, a sign-in, a logout), or the token is not paired. A
+            cookie of the old name beside a new one (a device paired again) is only expired."""
+            token, sent = getattr(self, "_old_cookie", None), getattr(self, "_old_sent", False)
+            self._old_cookie, self._old_sent = None, False
+            if not sent or any(k == "Set-Cookie" for k, _ in extra):
+                return []
+            if not token:                           # signed in by the new name or a Bearer token: the old one only goes
+                return self._old_cookies_cleared()
+            if auth.authenticate(token) is not None:
+                life = 31536000                     # as long as a pairing's cookie (/api/pair)
+            elif api.support.authenticate(token) is not None:
+                life = supportd_max_seconds()       # as long as a support login's cookie
+            else:
+                return []
+            return [("Set-Cookie", self._cookie_set(token, life))] + self._old_cookies_cleared()
+
+        def _old_cookies_cleared(self):
+            """The old names with no life left (D138), with the attributes they were set with."""
+            gone = "=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
+            out = [("Set-Cookie", OLD_COOKIE + gone)]
+            if self._secure():
+                out.append(("Set-Cookie", OLD_SECURE_COOKIE + "=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"))
+            return out
 
         def _cookie_set(self, token, max_age):
             if self._secure():
@@ -235,6 +288,8 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
             out = [("Set-Cookie", COOKIE + gone)]
             if self._secure():
                 out.append(("Set-Cookie", SECURE_COOKIE + "=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"))
+            if getattr(self, "_old_sent", False):          # a logout also drops a cookie of the old name (D138)
+                out += self._old_cookies_cleared()
             return out
 
         def _https(self):
@@ -246,7 +301,7 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
             return box.owner_gate(device, self._secure(), path) if box is not None else None
 
         def _csrf_ok(self):
-            if self.headers.get("X-PVJ-Request") != "1":
+            if self.headers.get(CSRF_HEADER) != "1" and self.headers.get(OLD_CSRF_HEADER) != "1":
                 return False
             origin = self.headers.get("Origin")
             if origin:
@@ -496,7 +551,7 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                 return
             path = urlsplit(self.path).path
             if path in ("/handover", "/handover/switch"):
-                return self._handover_form(path)                # D132: a browser form, not an API call (no JSON, no X-PVJ-Request)
+                return self._handover_form(path)                # D132: a browser form, not an API call (no JSON, no X-MCTL-Request)
             if not path.startswith("/api/"):
                 return self._json(404, {"error": "not found"})
             if not self._csrf_ok():
@@ -822,7 +877,7 @@ def make_peer_handler(api, max_lifetime=30.0):
     from .lease import LeaseError
 
     class PeerHandler(BaseHTTPRequestHandler):
-        server_version = "pvj"
+        server_version = "mctl"
         sys_version = ""
         timeout = 10
 
@@ -1145,7 +1200,7 @@ def main(argv=None):
     if int(env.get("PVJ_PEER_PORT", "0") or 0):
         try:
             peerd = PeerServer((host, peer_port(env)), make_peer_handler(api), api.https)
-            threading.Thread(target=peerd.serve_forever, name="pvj-peer", daemon=True).start()
+            threading.Thread(target=peerd.serve_forever, name="mctl-peer", daemon=True).start()
         except OSError as e:                 # the port in use: the panel still comes up, and this node can call the others
             print("pvj-web: the peer port is not listening on %s:%d: %s" % (host, peer_port(env), e), file=sys.stderr)
     api.scheduler.start()

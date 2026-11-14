@@ -68,8 +68,8 @@ class FirstSwitchOnTest(Base):
         self.assertEqual((saved["paired_on"], saved[osc.EVER_ON], saved[osc.PAIRED_DEFAULT]), (True, True, True))
         # and it holds: a stranger on the network is refused, the owner's own device (which opened the panel) is not
         server = self.api.osc.server
-        self.assertEqual(server.handle_packet(msg("/pvj/stop"), OTHER), 0)
-        self.assertEqual(server.handle_packet(msg("/pvj/stop"), "127.0.0.1"), 1)
+        self.assertEqual(server.handle_packet(msg("/mctl/stop"), OTHER), 0)
+        self.assertEqual(server.handle_packet(msg("/mctl/stop"), "127.0.0.1"), 1)
 
     def test_a_request_that_says_what_it_wants_for_the_lock_is_obeyed(self):
         out = self.on(paired_on=False)
@@ -114,7 +114,7 @@ class ExistingBoxTest(Base):
         cfg = self.settings.data["osc"]
         self.assertEqual({k: v for k, v in cfg.items() if k != osc.EVER_ON}, {"enabled": True, "port": 0, "allow": []})
         self.assertIs(cfg[osc.EVER_ON], True)
-        self.assertEqual(self.api.osc.server.handle_packet(msg("/pvj/stop"), OTHER), 1, "the tablet that worked still works")
+        self.assertEqual(self.api.osc.server.handle_packet(msg("/mctl/stop"), OTHER), 1, "the tablet that worked still works")
         out = self.get()
         self.assertEqual((out["open"], out["paired_on"], out["paired_default"]), (True, False, False))
         self.assertEqual(out["open_text"], "OSC is open: anyone on this network can control the node. Switch on a lock.")
@@ -189,7 +189,7 @@ class ReviewTest(Base):
         finally:
             self.settings.save = real
         self.assertTrue(self.api.osc.server and self.api.osc.server.listening, "the receiver listens")
-        self.assertEqual(self.api.osc.server.handle_packet(msg("/pvj/stop"), OTHER), 0, "and the lock that was on holds")
+        self.assertEqual(self.api.osc.server.handle_packet(msg("/mctl/stop"), OTHER), 0, "and the lock that was on holds")
         self.assertEqual(len([x for x in lines if "could not be saved" in x]), 1, lines)
         self.api.osc.apply()                # the disk is back
         with open(self.settings.path) as f:
@@ -352,7 +352,7 @@ class RollbackTest(Base):
         self.addCleanup(setattr, self.api, "settings", self.settings)
         self.api.osc.apply()
         self.assertEqual(s.data["osc"], {"enabled": True, "port": 0, "allow": [], osc.EVER_ON: True})
-        self.assertEqual(self.api.osc.server.handle_packet(msg("/pvj/stop"), OTHER), 1)
+        self.assertEqual(self.api.osc.server.handle_packet(msg("/mctl/stop"), OTHER), 1)
         self.assertTrue(self.api.osc.status()["open"])
 
     def test_master_keeps_the_new_keys_and_holds_the_lock(self):
@@ -378,7 +378,7 @@ class RollbackTest(Base):
             api = Api()
             m = osc.OscManager(api, s, host="127.0.0.1", log=lambda *a: None)
             m.apply()
-            taken = m.server.handle_packet(b"/pvj/stop\\0\\0\\0,\\0\\0\\0", "192.168.1.77")
+            taken = m.server.handle_packet(b"/mctl/stop\\0\\0,\\0\\0\\0", "192.168.1.77")
             cfg = dict(s.data["osc"], port=9877, enabled=False)       # its own page's save: a copy with its keys changed
             s.data["osc"] = cfg
             m.apply()

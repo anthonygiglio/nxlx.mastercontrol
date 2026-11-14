@@ -635,6 +635,6 @@ is not a fall back: the mode last known stands. After a hold a graphic comes bac
 crawl simply goes on); Replay plays it. Things to know: moving a graphic in the list replays its motion (it is drawn again in its new
 slot); a fade out already running finishes while a code is on the screen (the hold takes the others off at once); a graphic shown again
 during its fade out fades in from the level the fade out had reached, on both kinds of node. Roles: every route is the Operator's
-and the Owner's (`tests/test_roles.py`); `GET /api/status` gives every role `graphics_on`. OSC: `/pvj/graphic/N`, `/text`, `/send`
-and `/pvj/graphic/hide` (pvj/OSC.md). The browser test is `tests/ui/panel.test.js` (the Graphics step, the row, the menus) and the
+and the Owner's (`tests/test_roles.py`); `GET /api/status` gives every role `graphics_on`. OSC: `/mctl/graphic/N`, `/text`, `/send`
+and `/mctl/graphic/hide` (pvj/OSC.md). The browser test is `tests/ui/panel.test.js` (the Graphics step, the row, the menus) and the
 page is in the list of `tests/ui/signal-pages.js`.
