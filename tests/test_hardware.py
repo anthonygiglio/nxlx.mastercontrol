@@ -107,3 +107,97 @@ class CheapRenderingTest(unittest.TestCase):
             args = hardware.playback_profile({"kind": kind}, has_desktop=False)["mpv_args"]
             self.assertEqual("--profile=fast" in args, expected, kind)
 
+
+
+class VaDecodingTest(unittest.TestCase):
+    """Hardware decoding on a PC node (J-152): pvj-selftest reports it as information, from the graphics, the VA-API
+    driver files and the render node."""
+    LIB = "usr/lib/x86_64-linux-gnu/dri/"
+
+    def tree(self, files):
+        root = make_tree(files)
+        self.addCleanup(__import__("shutil").rmtree, root, True)
+        return root
+
+    def pci(self, cls, vendor, n=2):
+        d = "sys/bus/pci/devices/0000:00:%02x.0/" % n
+        return {d + "class": cls + "\n", d + "vendor": vendor + "\n"}
+
+    def test_an_intel_node_with_its_driver_and_render_node_has_it(self):
+        root = self.tree(dict(self.pci("0x030000", "0x8086"), **self.pci("0x060000", "0x8086", 0),
+                              **{self.LIB + "iHD_drv_video.so": "", "dev/dri/renderD128": ""}))
+        out = hardware.va_decoding(root, "x86_64")
+        self.assertIs(out["available"], True)
+        self.assertEqual((out["gpu_vendors"], out["va_drivers"], out["render_nodes"]), (["0x8086"], ["iHD"], ["renderD128"]))
+        self.assertIn("iHD", out["text"])
+
+    def test_an_intel_node_without_its_driver_is_told_the_package(self):
+        root = self.tree(dict(self.pci("0x030000", "0x8086"), **{"dev/dri/renderD128": ""}))
+        out = hardware.va_decoding(root, "x86_64")
+        self.assertIs(out["available"], False)
+        self.assertEqual(out["missing_package"], "intel-media-va-driver")
+        self.assertIn("intel-media-va-driver", out["text"])
+
+    def test_an_amd_node_needs_radeonsi_not_an_intel_driver(self):
+        root = self.tree(dict(self.pci("0x030000", "0x1002"), **{self.LIB + "iHD_drv_video.so": "", "dev/dri/renderD128": ""}))
+        out = hardware.va_decoding(root, "x86_64")
+        self.assertEqual((out["available"], out["missing_package"]), (False, "mesa-va-drivers"))
+        root = self.tree(dict(self.pci("0x030000", "0x1002"), **{self.LIB + "radeonsi_drv_video.so": "", "dev/dri/renderD128": ""}))
+        self.assertIs(hardware.va_decoding(root, "x86_64")["available"], True)
+
+    def test_no_render_node_means_no_hardware_decoding(self):
+        root = self.tree(dict(self.pci("0x030000", "0x8086"), **{self.LIB + "iHD_drv_video.so": ""}))
+        out = hardware.va_decoding(root, "x86_64")
+        self.assertIs(out["available"], False)
+        self.assertIn("renderD", out["text"])
+
+    def test_a_pi_is_not_checked(self):
+        out = hardware.va_decoding(self.tree({"dev/dri/renderD128": ""}), "aarch64")
+        self.assertIsNone(out["available"])
+        self.assertIn("Not checked", out["text"])
+
+    def test_the_selftest_reports_it_and_never_fails_on_it(self):
+        from pvj import selftest
+        out = selftest.decoding(self.tree(self.pci("0x030000", "0x8086")), "x86_64")
+        self.assertIs(out["available"], False)
+        broken = hardware.va_decoding
+        hardware.va_decoding = lambda *a: 1 / 0
+        try:
+            out = selftest.decoding()
+        finally:
+            hardware.va_decoding = broken
+        self.assertIsNone(out["available"])
+        self.assertIn("ZeroDivisionError", out["text"])
+
+
+class ClockSyncTest(unittest.TestCase):
+    """pvj-selftest says whether the clock is synchronised (J-154), as information that never fails the report."""
+
+    def test_timedatectl_answers_first(self):
+        from pvj import selftest
+        root = make_tree({"run/systemd/timesync/synchronized": ""})
+        self.addCleanup(__import__("shutil").rmtree, root, True)
+        out = selftest.clock_sync(root, ask=lambda: "yes")
+        self.assertEqual((out["synchronized"], out["source"]), (True, "timedatectl"))
+        out = selftest.clock_sync(root, ask=lambda: "no")       # timedatectl's word wins over a stale flag file
+        self.assertEqual((out["synchronized"], out["source"]), (False, "timedatectl"))
+        self.assertIn("not synchronised", out["text"])
+
+    def test_without_timedatectl_the_flag_file_says_yes_and_its_absence_cannot_tell(self):
+        from pvj import selftest
+        root = make_tree({"run/systemd/timesync/synchronized": ""})
+        self.addCleanup(__import__("shutil").rmtree, root, True)
+        out = selftest.clock_sync(root, ask=lambda: None)
+        self.assertEqual((out["synchronized"], out["source"]), (True, "systemd-timesyncd"))
+        empty = make_tree({})
+        self.addCleanup(__import__("shutil").rmtree, empty, True)
+        out = selftest.clock_sync(empty, ask=lambda: None)
+        self.assertIsNone(out["synchronized"])
+        self.assertIn("Could not tell", out["text"])
+
+    def test_a_failure_is_reported_not_raised(self):
+        from pvj import selftest
+        out = selftest.clock_sync("/", ask=lambda: 1 / 0)
+        self.assertIsNone(out["synchronized"])
+        self.assertIn("ZeroDivisionError", out["text"])
+        self.assertIn(selftest.clock_sync()["synchronized"], (True, False, None))   # this machine, whatever it is
