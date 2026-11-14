@@ -300,6 +300,7 @@ class Api:
         self.vibes = vibes_mod.Vibes(self, self.shaders)            # the endless rotation; its thread starts on demand
         from . import effects as effects_mod
         self.effects = effects_mod.Effects(self)                    # ISF filters over what plays (see effects.py)
+        player.on_source = self.effects.note_source                 # one look at each new picture, for a loop's gap (D140)
         from . import fxchain
         self.chains = fxchain.Chains(self)                          # chains of effects on the New renderer (D106 step b)
         from . import strobe as strobe_mod

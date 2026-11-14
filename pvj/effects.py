@@ -70,9 +70,10 @@ UNFIT_FORMATS = re.compile(r"^(?:xyz|gray|y8|y1[0-6]|ya8|ya16|mono[bw]|pal8)")
 UNFIT = "This picture's format cannot take an effect"
 NO_PICTURE = "Nothing with a picture is playing"
 # At the start of each pass of a looping clip, and for a moment after a seek, mpv has no video-params while the same item
-# is still playing. The last picture read for that item then stays the picture while mpv says it is at the start of the
-# item (time-pos under this many seconds) or is seeking, so the gap is bounded by the player's own state, not by when
-# anybody last asked.
+# is still playing. The picture last read for that item (a real, fitting read, taken when the item started to show:
+# see note_source) then stays the picture while mpv says it is seeking or at the start of the item (time-pos under
+# this many seconds). An item that never had a good read is refused, as before.
+LEARN_LOOKS = 30                # looks at a new source for its picture, a tenth of a second apart
 PICTURE_GRACE = 1.0
 # The box's own callers of the API, by the id of the device they act as (midi.MIDI_DEVICE, osc.OSC_DEVICE,
 # dmx.DMX_DEVICE, room.ROOM_DEVICE). Their calls run on the thread that reads the controller and never ask the player
@@ -919,6 +920,7 @@ class Effects(S.Engine):
 
     def __init__(self, api, log=print, clock=time.monotonic, tap=S.LogTap, thread=True):
         super().__init__(api, log, clock, tap)
+        self._learn_thread, self._learning = thread, None
         self.dir = os.path.join(os.path.dirname(api.settings.path), "effects")
         paths.remove_leftovers(self.dir, S.UPLOAD_TEMP)     # as the shaders' folder, a line up in Engine (D70)
         self.bundled_dir = EFFECTS_DIR
@@ -1300,31 +1302,49 @@ class Effects(S.Engine):
         return (path, getattr(player, "source_epoch", None), getattr(player, "clears", None)) if path else None
 
     def _held_picture(self, ipc):
-        """The picture of the item that plays when the player has no video-params for a moment (a loop restart, a seek),
-        or None. Taken only when mpv itself says it is a gap: a video track is selected, the player is not idle, and
-        it is seeking or at the very start of the item (time-pos under PICTURE_GRACE). The last read is used when it is
-        of this same item (path, epoch and clears); with none, a plain picture stands in until the next read. A stop,
-        another file, a source with no video and a gap that lasts are refused as before."""
-        item = self._item(ipc)
-        if item is None:
-            return None
-        try:
-            if ipc.request("get_property", "idle-active") is True:
-                return None
-            vid = ipc.request("get_property", "vid")
-            if not isinstance(vid, int) or isinstance(vid, bool):
-                return None
-            seeking = ipc.request("get_property", "seeking") is True
-            pos = ipc.request("get_property", "time-pos")
-        except Exception:
-            return None
-        if not seeking and not (isinstance(pos, (int, float)) and not isinstance(pos, bool) and pos < PICTURE_GRACE):
-            return None
+        """The picture last read for the item that plays, when the player has no video-params for a moment (a loop
+        restart, a seek), or None. Only a real read of this same item (path, epoch and clears) is used, so a clip that
+        never had a fitting picture (an unfit format, a stream with no first frame, a refused pair) is refused as it
+        was. mpv must say it is a gap: not idle, and seeking or at the start of the item (time-pos under PICTURE_GRACE;
+        an unreadable time-pos does not count). `vid` is not asked: the same item had a picture, and "auto" is what a
+        playlist reload may say of a track that is there."""
         last = self._last_picture
-        if last is None or last[0] != item:
-            return clean_picture()
+        item = self._item(ipc)
+        if last is None or item is None or last[0] != item:
+            return None
+        def ask(name):
+            try:
+                return ipc.request("get_property", name)
+            except Exception:
+                return None
+        if ask("idle-active") is True:
+            return None
+        pos = ask("time-pos")
+        if ask("seeking") is not True and not (isinstance(pos, (int, float)) and not isinstance(pos, bool) and pos < PICTURE_GRACE):
+            return None
         self.size, self.under, self.pair, self.estimated = last[2:6]
         return dict(last[1])
+
+    def note_source(self):
+        """A new source was put on the screen: take a real look at its picture as soon as it shows one, so that a loop's
+        gap (see _held_picture) has something of this item to hold. A short, bounded wait on a thread of its own (the
+        newest source's look is the only one that goes on); no look is made again until the next source."""
+        self._learning = token = object()
+        def learn(wait):
+            for _ in range(LEARN_LOOKS if wait else 1):
+                if wait:
+                    time.sleep(0.1)
+                if self._learning is not token:
+                    return
+                try:
+                    if self.picture() is not None or self.unfit:
+                        return
+                except Exception:
+                    return
+        if self._learn_thread:
+            threading.Thread(target=learn, args=(True,), daemon=True, name="effects-learn").start()
+        else:
+            learn(False)
 
     def _seen(self):
         """The effect that is on, from what this process remembers: no question to the player and no lock, for the

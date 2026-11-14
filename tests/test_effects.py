@@ -663,22 +663,21 @@ class Base(ServerBase):
 
 
 class LoopGapTest(Base):
-    """At a loop point mpv has no video-params for a moment while the same item plays (D140): the picture stays, by what
-    mpv says of itself, however long ago the picture was last read."""
+    """At a loop point mpv has no video-params for a moment while the same item plays (D140): the picture read when the
+    item started to show stays, judged by what mpv says of itself, however long ago it was read."""
     def setUp(self):
         super().setUp()
-        self.mpv.props.update({"vid": 1, "time-pos": 0.2, "seeking": False})
-        self.mpv.video_ok = self.mpv.video
-
-    def read(self):
-        self.assertIsNotNone(self.fx.picture())
+        self.fx._learn_thread = False                       # the look at a new source is made at once, here
+        self.player.on_source = self.fx.note_source         # as the Api wires it
+        self.player.play(["/media/a.mp4"])                  # the item starts to show: one real read
+        self.mpv.props.update({"time-pos": 0.2, "seeking": False})
 
     def gap(self, **props):
         self.mpv.video = None
         self.mpv.props.update(props)
 
-    def test_a_gap_at_the_loop_start_keeps_the_picture_however_long_since_the_last_read(self):
-        self.read()
+    def test_a_gap_at_the_loop_start_keeps_the_picture_though_nobody_has_read_since(self):
+        self.assertIsNotNone(self.fx._last_picture)
         before = self.fx.picture()
         self.gap()
         self.assertEqual(self.fx.picture(), before)
@@ -686,47 +685,49 @@ class LoopGapTest(Base):
         self.fx.put("fx-wash.fs")                           # an effect goes on in the gap
         self.assertIsNotNone(self.fx.on)
 
-    def test_a_gap_on_a_clip_nobody_has_read_yet_is_a_picture_too(self):
-        self.gap()                                          # a Strobe from a controller: no read before this
-        self.assertIsNone(self.fx._last_picture)
-        self.assertEqual(self.fx.available(), (True, None))
-
-    def test_a_seek_is_a_gap_too(self):
-        self.read()
-        self.gap(**{"time-pos": 50.0, "seeking": True})
+    def test_a_seek_is_a_gap_even_when_the_position_cannot_be_read(self):
+        self.gap(**{"time-pos": None, "seeking": True})
         self.assertIsNotNone(self.fx.picture())
 
     def test_the_gap_is_bounded_by_the_player_not_by_a_clock(self):
-        self.read()
-        self.gap(**{"time-pos": E.PICTURE_GRACE + 0.5})     # a clip that never shows a picture
+        self.gap(**{"time-pos": E.PICTURE_GRACE + 0.5})     # a clip that never shows a picture again
         self.assertIsNone(self.fx.picture())
         self.assertEqual(self.fx.available()[0], False)
-
-    def test_a_stop_and_a_source_with_no_video_are_still_refused(self):
-        self.read()
-        self.gap()
-        self.mpv.props["vid"] = "no"                        # audio only
+        self.gap(**{"time-pos": None})                      # and no position at all, not seeking
         self.assertIsNone(self.fx.picture())
-        self.mpv.props["vid"] = 1
+
+    def test_a_stop_and_an_idle_player_are_still_refused(self):
+        self.gap()
         self.mpv.props["idle-active"] = True
         self.assertIsNone(self.fx.picture())
+        self.mpv.props["idle-active"] = False
         self.player.clear()                                 # a real stop: no path
         self.assertIsNone(self.fx.picture())
         self.assertIn(E.NO_PICTURE, self.fx.available()[1])
 
-    def test_the_old_path_before_mpv_catches_up_is_not_the_new_item(self):
-        """After a load of B mpv still says A for a moment: A's picture is not B's, and an audio-only B has none."""
-        self.read()
-        self.player.play(["/media/b.mp4"])
-        self.mpv.props["path"] = "/media/a.mp4"             # the lag
-        self.gap(vid="no")
+    def test_an_item_that_never_had_a_good_read_is_refused(self):
+        self.player.on_source = None
+        self.player.play(["/media/b.mp4"])                  # nothing looked at it
+        self.fx._last_picture = None
+        self.gap()
         self.assertIsNone(self.fx.picture())
-        self.mpv.props["vid"] = 1
-        self.fx._last_picture = (("/media/a.mp4", -1, -1), {"matrix": "rgb", "levels": "full", "fps": 7.0}, None, None, None, False)
-        self.assertEqual(self.fx.picture(), E.clean_picture())      # the plain stand-in, not A's
+        self.player.on_source = self.fx.note_source
+        self.mpv.video = {"colormatrix": "xyz", "colorlevels": "full", "pixelformat": "xyz12"}
+        self.player.play(["/media/c.mp4"])                  # a picture the hooks cannot take: looked at, not kept
+        self.assertTrue(self.fx.unfit)
+        self.gap()
+        self.assertIsNone(self.fx.picture())
+        self.assertEqual(self.fx.available()[0], False)
+
+    def test_the_old_path_before_mpv_catches_up_is_not_the_new_item(self):
+        """After a load of B mpv still says A for a moment: A's picture is not B's."""
+        self.player.on_source = None                        # B has had no look yet
+        self.player.play(["/media/b.mp4"])
+        self.mpv.props["path"] = "/media/a.mp4"             # the lag, with A's path
+        self.gap()
+        self.assertIsNone(self.fx.picture())
 
     def test_a_generator_on_the_new_renderer_is_not_held_as_the_one_before(self):
-        self.read()
         self.fx._last_picture = (("av://carrier", self.player.source_epoch, self.player.clears), {"matrix": "rgb", "levels": "full", "fps": 7.0}, (111, 111), E.SHADER, ("a", "x"), False)
         self.player._standin_up = lambda: True
         self.player._standin = "av://carrier"
