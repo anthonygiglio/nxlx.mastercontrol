@@ -470,6 +470,104 @@ class InstallTest(unittest.TestCase):
         self.assertEqual(install(self.src, self.stage, "--uninstall", "--purge").returncode, 0)
         self.assertFalse(os.path.exists(self.p("opt/pvj-ndi")))
 
+    # Hardware video decoding on a PC node (J-152): the VA-API driver for the graphics found in sysfs, best effort.
+    def _pci(self, *devices):
+        pci = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, pci, True)
+        for i, (cls, vendor) in enumerate(devices):
+            d = os.path.join(pci, "0000:00:%02x.0" % i)
+            os.makedirs(d)
+            for name, value in (("class", cls), ("vendor", vendor)):
+                with open(os.path.join(d, name), "w") as f:
+                    f.write(value + "\n")
+        return pci
+
+    def _va_install(self, arch, pci, *extra):
+        env = dict(os.environ, PVJ_INSTALL_ARCH=arch, PVJ_INSTALL_PCI=pci)
+        return subprocess.run([os.path.join(self.src, "install", "install.sh"), "--stage", self.stage, "--user", "gigbox", *extra],
+                              capture_output=True, text=True, timeout=60, env=env)
+
+    def test_an_intel_pc_node_is_told_its_va_driver(self):
+        pci = self._pci(("0x060000", "0x8086"), ("0x030000", "0x8086"), ("0x0c0330", "0x8086"))
+        r = self._va_install("x86_64", pci)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("graphics: Intel; hardware video decoding needs intel-media-va-driver\n", r.stdout)
+        self.assertNotIn("mesa-va-drivers", r.stdout)
+        # in stage mode nothing is installed, and what is missing is said (unless this machine has the packages already)
+        self.assertTrue("until these are installed: " in r.stdout or "the VA-API driver is installed" in r.stdout, r.stdout)
+        self.assertNotIn("installing intel-media-va-driver", r.stdout)
+
+    def test_an_amd_pc_node_gets_mesa_and_both_get_both(self):
+        r = self._va_install("x86_64", self._pci(("0x030000", "0x1002")))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("graphics: AMD; hardware video decoding needs mesa-va-drivers\n", r.stdout)
+        r = self._va_install("x86_64", self._pci(("0x030000", "0x8086"), ("0x038000", "0x1002"), ("0x030000", "0x8086")))
+        self.assertIn("graphics: Intel AMD; hardware video decoding needs intel-media-va-driver mesa-va-drivers\n", r.stdout)
+
+    def test_other_graphics_and_a_pi_get_no_va_driver(self):
+        r = self._va_install("x86_64", self._pci(("0x030000", "0x10de"), ("0x020000", "0x8086")))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("graphics: no Intel or AMD graphics found", r.stdout)
+        self.assertNotIn("va-driver", r.stdout)
+        r = self._va_install("aarch64", self._pci(("0x030000", "0x8086")))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("graphics:", r.stdout)
+        self.assertNotIn("va-driver", r.stdout)
+
+    def test_va_driver_offline_and_dry_run_install_nothing(self):
+        pci = self._pci(("0x030000", "0x8086"))
+        r = self._va_install("x86_64", pci, "--offline")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("installing intel-media-va-driver", r.stdout)
+        shutil.rmtree(self.stage)                   # the dry run starts from nothing, and leaves nothing
+        os.mkdir(self.stage)
+        r = self._va_install("x86_64", pci, "--dry-run")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("graphics: Intel; hardware video decoding needs intel-media-va-driver\n", r.stdout)
+        self.assertNotIn("installing intel-media-va-driver", r.stdout)
+        self.assertEqual(os.listdir(self.stage), [])
+
+    def test_a_failed_va_driver_install_does_not_fail_the_install(self):
+        # The apt branch only runs on a real install; its line must end in "|| log", as the other optional packages do.
+        text = self.read(os.path.join(self.src, "install", "install.sh"))
+        line = [l for l in text.splitlines() if "run apt-get install" in l and "va_need" in l]
+        self.assertEqual(len(line), 1, line)
+        self.assertIn('|| log "could not install ${va_need[*]}; the install goes on', line[0])
+        # the stand-ins for the machine and sysfs are for stage mode only: a real install reads the real ones
+        self.assertIn('if [ "$REAL" = 0 ]; then va_arch="${PVJ_INSTALL_ARCH:-$va_arch}"', text)
+
+    # Time sync (J-154): a system without any gets systemd-timesyncd, best effort; one that has one is left alone.
+    def test_a_system_without_time_sync_is_told_and_stage_mode_installs_nothing(self):
+        for extra in ((), ("--offline",)):
+            r = install(self.src, self.stage, *extra)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("time sync: none installed; the clock is not kept right until systemd-timesyncd", r.stdout)
+            self.assertNotIn("installing systemd-timesyncd", r.stdout)
+
+    def test_a_system_with_time_sync_is_left_as_it_is(self):
+        for path in ("usr/lib/systemd/systemd-timesyncd", "usr/sbin/chronyd", "usr/sbin/ntpd"):
+            stage = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, stage, True)
+            os.makedirs(os.path.join(stage, os.path.dirname(path)))
+            open(os.path.join(stage, path), "w").close()       # what a Pi image (systemd-timesyncd) or chrony brings
+            r = install(self.src, stage)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("time sync: %s is installed\n" % os.path.basename(path), r.stdout)
+            self.assertNotIn("time sync: none installed", r.stdout)
+
+    def test_time_sync_dry_run_writes_nothing_and_a_failed_install_does_not_fail_the_install(self):
+        r = install(self.src, self.stage, "--dry-run")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("time sync: none installed", r.stdout)
+        self.assertEqual(os.listdir(self.stage), [])
+        # the apt branch only runs on a real install: a failed apt, start or set-ntp is said and the install goes on
+        text = self.read(os.path.join(self.src, "install", "install.sh"))
+        line = [l for l in text.splitlines() if "apt-get install" in l and "systemd-timesyncd" in l]
+        self.assertEqual(len(line), 1, line)
+        self.assertIn("if run apt-get install -y --no-install-recommends systemd-timesyncd; then", line[0])
+        self.assertIn("run systemctl enable --now systemd-timesyncd.service || log", text)
+        self.assertIn("run timedatectl set-ntp true || log", text)
+
     def test_rejects_bad_input(self):
         for bad in (["--prefix", "relative"], ["--media", "/tmp/a b"], ["--prefix", "/opt/x;reboot"],
                     ["--web-user", "Bad User"], ["--bogus"],

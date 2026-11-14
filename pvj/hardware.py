@@ -169,6 +169,70 @@ def has_desktop(env=None):
     return bool(env.get("WAYLAND_DISPLAY") or env.get("DISPLAY"))
 
 
+# PC graphics by PCI vendor: the Debian package with its VA-API driver (install/install.sh installs it on x86_64) and the
+# driver files it brings. An Intel PC node played 4K60 HEVC with nothing dropped only once intel-media-va-driver was in
+# (J-152); without it mpv's --hwdec=auto-safe falls back to software decoding without a word.
+VA_VENDORS = {
+    "0x8086": ("Intel", "intel-media-va-driver", ("iHD", "i965")),
+    "0x1002": ("AMD", "mesa-va-drivers", ("radeonsi",)),
+}
+
+
+def gpu_vendors(root="/"):
+    """The PCI vendor ids ("0x8086") of the display controllers (PCI class 0x03xxxx), sorted, each once."""
+    found = set()
+    for dev in glob.glob(os.path.join(root, "sys/bus/pci/devices/*")):
+        cls = _read("/", os.path.join(dev, "class")) or ""
+        vendor = (_read("/", os.path.join(dev, "vendor")) or "").lower()
+        if cls.lower().startswith("0x03") and re.fullmatch(r"0x[0-9a-f]{4}", vendor):
+            found.add(vendor)
+    return sorted(found)
+
+
+def va_drivers(root="/"):
+    """The VA-API driver names installed ("iHD" for iHD_drv_video.so), sorted, each once."""
+    names = set()
+    for d in ("usr/lib/*/dri", "usr/lib/dri", "usr/lib64/dri"):
+        for f in glob.glob(os.path.join(root, d, "*_drv_video.so")):
+            names.add(os.path.basename(f)[:-len("_drv_video.so")])
+    return sorted(names)
+
+
+def va_decoding(root="/", machine=None):
+    """Whether a PC node can decode video in hardware through VA-API, as information (pvj-selftest reports it and never
+    fails on it). `available` is True, False, or None where VA-API is not how this board decodes (a Pi, not x86_64)."""
+    machine = machine or platform.machine()
+    render = sorted(os.path.basename(p) for p in glob.glob(os.path.join(root, "dev/dri/renderD*")))
+    vendors = gpu_vendors(root)
+    drivers = va_drivers(root)
+    out = {"machine": machine, "render_nodes": render, "gpu_vendors": vendors, "va_drivers": drivers, "available": None,
+           "missing_package": None}
+    if machine not in ("x86_64", "amd64"):
+        out["text"] = "Not checked: VA-API is how PC nodes decode in hardware; this board has its own way."
+        return out
+    known = [VA_VENDORS[v] for v in vendors if v in VA_VENDORS]
+    if not render:
+        out["available"] = False
+        out["text"] = "No hardware decoding: there is no /dev/dri/renderD node (no graphics driver is loaded)."
+        return out
+    if not known:
+        out["available"] = bool(drivers)
+        out["text"] = ("A VA-API driver is installed (%s), for graphics this check does not know." % ", ".join(drivers)) if drivers else \
+            "No hardware decoding through VA-API: no Intel or AMD graphics was found, and no VA-API driver is installed."
+        return out
+    for name, package, files in known:
+        have = [d for d in files if d in drivers]
+        if have:
+            out["available"] = True
+            out["text"] = "Hardware decoding is available: the VA-API driver %s for the %s graphics." % (have[0], name)
+            return out
+    name, package, _ = known[0]
+    out["available"] = False
+    out["missing_package"] = package
+    out["text"] = "No hardware decoding: the %s graphics has no VA-API driver. Install %s (the installer does, when it can reach the network)." % (name, package)
+    return out
+
+
 def report(root="/"):
     board = detect_board(root)
     return {
