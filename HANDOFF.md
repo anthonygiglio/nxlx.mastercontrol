@@ -60,7 +60,55 @@ The repository was renamed from `PocketVJ-CP-v3` to `nxlx.mastercontrol`.
 - Naming: the `pvj` package, `pvj-*` services and commands and install paths keep their names.
 - Style: no em dashes in written text (commas, semicolons, new sentences). Default document font Inter.
 
-## State on 2026-10-13 (read this first; where the sections below disagree, this wins)
+## State on 2026-11-14 (read this first; where the sections below disagree, this wins)
+
+Written from the repository at master `9236fb2` (the merge of #280), the day of the Leyline show. About 588 commits and about 110 merged pull requests since 2026-10-13; decisions D93 to D134 are on master. Anything the repository cannot show is marked **unconfirmed**. The code is under a freeze until after the show; nothing here was deployed or run for this page.
+
+### What the product does now
+
+- **The panel** was redesigned (D102 and D103; `pvj/PANEL.md` is the inventory, frames 390, 820 and 1440 wide; a design sandbox runs the real panel on 127.0.0.1 with fakes, `tools/sandbox`). Parts: a Now screen (what plays, who is connected and what each last changed, D126), Nodes (a sheet), Mapping, Setup, Health (disk health, the node event log, D125), and a stats overlay that is the Owner's, off by default (D133). It says "node", not "box" (D121). Wording and touch fixes for phones, iPhone and the Fire tablet went in as many small pull requests (#206 to #261).
+- **Two renderers.** Classic is mpv alone. The New renderer is `pvj-render`, our own, which draws crossfades, wipes, slides, effects, shader layers and graphics itself (D95, D98, D106, D111; `render/`, `pvj/RENDERNODES.md`). It caps its memory arenas (D114), runs its thread at real-time priority 1 (D106 addendum), may draw at 720 lines and let the display scaler finish (D108), and does not deblock on a Pi (D120). Plain clips stay at 60 (D119). A looping clip plays through a generated ffconcat list on the New renderer (D118).
+- **Tiers by board.** A node names its board and takes lean (Pi 3), standard (Pi 4) or full (Pi 5, PC) values; a board it cannot name takes the lean ones (D122). On the full tier the effect rate follows the screen and a software rasteriser never draws it (D123). A hidden setting turns on hardware decoding in `pvj-render`, off by default (D124).
+- **Transitions.** Crossfade, wipes and slides are drawn by `pvj-render` with both clips playing; classic mpv blends from a still (D71, D111). Shader pads take the Mix transition: a generator is a video layer of Source 1, New renderer only (D130, three slices, #239 to #241). A freeze made by a transition leaves a record so a new panel can thaw it (D112). A switch between NDI sources keeps the old picture until the new one is ready (D113).
+- **Effects, shaders and graphics.** Effects over clips and shaders, an effect that works while a clip is paused (D115), and the Strobe (D134): a hold-to-flash lease, capped in three places and spaced by a gap, with MIDI and OSC (OSC must repeat while held). Text and logos are "graphics", drawn by the node, decoded only by a sandboxed rasteriser (D129, slices 1 to 3 and position, #232, #234, #236, #242, #250). Shader notes are in `pvj/SHADERS.md`.
+- **Controllers.** Three MIDI layouts with one Fade toggle and mapping mode (D75); OSC with three locks, safe defaults and state sent back (D78, D82, D83); the TouchOSC "Deck" layout (kept outside the repository). A controller can hold the Strobe. **Unconfirmed:** any person trying these on the new panel since 2026-10-13.
+- **Clock and sound.** One box clock fed by tap, OSC and sound (D116), and Ableton Link, follow only (D117). Sound sources and sound reactivity are older (D96, D97).
+- **NDI and capture.** NDI receives over TCP, not reliable UDP (D110). Numbers measured on the deployed build are in the D110 and D113 addenda. Both capture dongles are shared to NDI for the owner: **unconfirmed** from the repository, it is in the owner's notes only.
+- **The Output page** (D128, #225, #230): the Owner may pick the connector, and on a Pi the AV output can be switched on from the panel.
+- **Fleet and node handover.** Nodes announce themselves by mDNS through a static avahi file and list each other with a one-shot question (D127, `pvj/FLEET.md`). A device paired on one node opens the other approved nodes through a one-time ticket that the first node keeps and the second redeems (D132, `design/node-handover_2026-11-09.md`): peers, ticket, event hand-over, a lease, carried roles, a Nodes sheet, a remove-node button with Allow again, and trust screens (#267 to #278). The owner's answers: a list plus fingerprint, carried Owners may do everything, 24 hours, the accept switch is the lock, and a remove button. The FireTab launcher (the recycled Fire tablet controller) trusts only the owner's own root and shows only nodes (D131).
+- **HTTPS with the owner's own CA** (D79, `docs/HTTPS.md`, `tools/boxcert.py`): the root lives on the owner's machine only; each node holds a certificate his root signed. node-01's was good until 2027-11-14 (from the 2026-10-13 section). **Unconfirmed:** whether node-02 and node-03 have certificates.
+- **Roles** are Owner, Operator and Guest (D80), with owner recovery by printed codes and a USB stick (D81) and a policy gate with a table test of every route. Carried roles for handover are tested in `tests/test_carried_roles.py`.
+
+### The nodes
+
+| Node | Hardware | Role | Source |
+|---|---|---|---|
+| node-01 | Raspberry Pi 4 (192.168.0.169 earlier, account `pvj-dev`) | the show node; the soak, the HDMI numbers and most hardware rows ran here | journal, `tools/DEVICE-TESTING.md` |
+| node-02 | Raspberry Pi 3B (lean tier, classic mpv) | second node; used for handover and the stats overlay tests (journal 2026-11-09 and 2026-11-11) | the owner's word for the model; the repository only says "node-02" |
+| node-03 | x86 PC, Lenovo M710q | just added | **Unconfirmed and not in the repository docs:** its address, install and certificate are not recorded. Add a row of facts when it is set up as a node. |
+
+Addresses move. Use the node's `.local` name, or read `GET /api/nodes` for the live list. WSL on the HP does not always resolve `.local`; use the address there.
+
+### Deploy and test
+
+- **Deploy** (unchanged, see "Working on the test Pi"): `git archive` of master piped over SSH to `/tmp/nxlx-src`, then `sudo -n ./install/install.sh --offline`. It restarts the panel and the player; five services must be active, `pvj-selftest` clean, files compared by hash. Each deploy makes a new pairing PIN. The owner's standing word (2026-10-23): deploy a reviewed green master to the test node during a bug push without asking, and tell him after. **Freeze:** no merge or deploy until after the 2026-11-14 show.
+- **Tests:** `python3 -m unittest discover -s tests`; browser tests `node tests/ui/panel.test.js`; hardware rows in `tools/DEVICE-TESTING.md` (many say RUN with a date and a result; the rest are open). Run `python3 tools/project-log.py check` before a pull request; each pull request adds one journal file (D107).
+- **Protect master** requires CI jobs by name; a new or renamed job must be added there or pull requests block. Cancelled push runs whose test jobs failed can block a merge until rerun.
+- Do not run measurement scripts against a node another session is deploying to. The X27 projector is a show unit: use it sparingly, batch the tests, switch it off after.
+
+### What is open
+
+- **The rename**, about to start in 10 pull requests (the plan is in the owner's notes, not in this repository; **unconfirmed** here). It will rewrite this file; this section is the last one under the old names. The `pvj` package, `pvj-*` services and install paths keep their names until then.
+- **Cluster control** comes after the rename (one panel acting on the whole fleet). Discovery, the node switcher and signed enrollment are built; **unconfirmed** whether anything of cluster control is on a branch.
+- **#282** the Strobe on the panel (the node side, D134, is merged in #281); its strobe test is to be fixed after the show. Nothing of the Strobe has run on a board, a projector or with a person (rows ST1 to ST8).
+- **#174** D108 A and B decks for a Performance mode (design only).
+- **#116** the panel saved as an app on phones, tablets and laptops (D76, a draft in progress).
+- **#65** an old click-through navigation proposal, not to merge.
+- **Not yet seen or heard by a person**, from the journals: shader layers and graphics on a projector or wall (pvj-render 0.11.0 ran headless on Mesa; no frame-cost number on hardware), node handover on phones in every browser (rows HO6 to HO6b), the stats overlay on a real HDMI capture, NDI sound by ear.
+- **Older queued items** still open from 2026-10-13: Dante and AES67 as a module, sound per pad, sparing the playing source when an NDI press fails, what happens when a stream's source drops.
+- **Before the final shipment:** remind the owner to run the ultra code review; remove the `pvj-dev` account from any node that goes to a venue.
+
+## State on 2026-10-13 (where the 2026-11-14 section above disagrees, it wins)
 
 **Merged on 2026-10-12 and 13, each on a fully green check list:** the NDI helper writes root's pipe and the two discovery pages show each other (#127); the hand-over of the one pipe, reasons kept on the page, a still picture with sound, sound start and stream timing, with end-to-end tests on a stand-in library and a CI job on the Pi's own player version (#129, D86); sound from a second NDI sender, a delay, a "sound only" label (#132, D87); three test repairs (#131, #133, #134). Reviews: #127 and #129 were read on Fable; #132 was read three times on the default model because Fable had no usage credits that night, and its pull request says so.
 
