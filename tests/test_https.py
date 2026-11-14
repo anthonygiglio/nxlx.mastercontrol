@@ -670,7 +670,7 @@ class HttpsTest(HttpsBase):
         from pvj import policy
         operator = self.call("POST", "/api/devices/invite", {"name": "op", "role": "live"}, token=self.full)[1]["token"]
         routes = sorted(k for k in policy.OUTSIDE if k[1].startswith("/api/https"))
-        self.assertEqual(len(routes), 9)
+        self.assertEqual(len(routes), 10)
         for method, path in routes:
             body = {} if method == "POST" else None
             self.assertEqual(self.call(method, path, body)[0], 401, path)

@@ -62,6 +62,7 @@ class Base(unittest.TestCase):
 
     def workdir(self):
         d = tempfile.mkdtemp(dir=self.tmp)
+        self.addCleanup(shutil.rmtree, d, True)
         return d
 
     def node_box(self, hostname="testbox", addresses=("127.0.0.1", "192.168.0.50"), now=time.time):
