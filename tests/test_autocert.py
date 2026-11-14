@@ -4,7 +4,6 @@
 pins, the rate limit, the log), a node certificate that chains through the signer (install, the peer's handshake,
 boxcert verify), the root move, and the node's hook against a real signing service on loopback. Throwaway roots in
 temporary folders only. Needs openssl; skipped cleanly without."""
-import http.server
 import importlib.util
 import json
 import os

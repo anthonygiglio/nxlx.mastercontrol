@@ -5505,10 +5505,30 @@
     return h('div', { class: 'card', id: 'httpsdevices' }, h('h2', { text: d.secure ? 'This device' : 'Your devices' }), h('div', { class: 'list sp' }, rows));
   }
   window.pvjHttpsPlatform = httpsPlatform;       // for the browser test: the words per device, with injected user agents
+  // D139: the certificate from the owner's signing service, asked for by the node itself
+  function httpsAutoCard(d) {
+    var a = d.auto || {}, out = h('div', { class: 'msg inmsg', id: 'httpsautoresult', role: 'status' });
+    var url = h('input', { type: 'text', class: 'text-input', id: 'httpssigner', value: httpsForm.signer != null ? httpsForm.signer : (a.url || ''),
+      placeholder: 'http://signing-computer.local:8781', autocomplete: 'off', spellcheck: 'false' });
+    url.addEventListener('input', function () { httpsForm.signer = url.value; });
+    var state = a.state ? (a.words + (a.message ? ' ' + a.message : '')) : 'Not tried yet since the node started.';
+    var rows = [h('div', { class: 'kv', id: 'httpsauto', text: state }),
+      h('div', { class: 'hint', text: 'The node asks your signing service for its certificate by itself: when it starts, after an update, and before the certificate runs out. Nothing to sign or upload by hand (docs/HTTPS.md, "Automatic certificates").' }),
+      labelled('Signing service', url, 'Set at install. Change it only if the signing computer moved.'),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn grow', id: 'httpssignersave', text: 'Save and try now', onclick: function () {
+          act('POST', '/api/https/auto', { signer_url: url.value.trim() }, function () { httpsForm.signer = null; sayAt(out, 'Asking the signer now; this page updates in a few seconds.'); setTimeout(httpsReload, 4000); })
+            .then(function (r) { if (!r.ok) sayAt(out, r.data.error || 'Not saved.', true); });
+        } }),
+        h('button', { class: 'btn grow', id: 'httpssignertry', text: 'Try now', onclick: function () {
+          act('POST', '/api/https/auto', {}, function () { sayAt(out, 'Asking the signer now; this page updates in a few seconds.'); setTimeout(httpsReload, 4000); });
+        } })), out];
+    return h('div', { class: 'card', id: 'httpsautocard' }, h('h2', { text: 'Automatic certificate' }), h('div', { class: 'list sp' }, rows));
+  }
   function httpsCards() {
     var d = (S.sysData.https || {}).now;
     if (!d) return [h('div', { class: 'card', id: 'httpsstate' }, h('div', { class: 'hint', text: 'Checking...' }))];
-    var cards = [httpsStateCard(d), httpsCertificateCard(d), httpsDeviceCard(d)];
+    var cards = [httpsStateCard(d), httpsAutoCard(d), httpsCertificateCard(d), httpsDeviceCard(d)];
     if (!d.openssl) cards.splice(1, 0, h('div', { class: 'card' }, h('div', { class: 'hint warn', id: 'httpsnoopenssl', text: 'This node has no openssl, so it cannot make a key. Install the openssl package on it (it comes with Debian), then come back.' })));
     return cards;
   }

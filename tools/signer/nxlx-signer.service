@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# The node signing service (tools/nxlx-signer.py, D139) on an always-on Linux computer. Once, as root:
+#   useradd --system --home-dir /var/lib/nxlx-signer --shell /usr/sbin/nologin nxlx-signer
+#   install -d -o nxlx-signer -m 0700 /var/lib/nxlx-signer /opt/nxlx-signer
+#   cp -r <the signer folder>/. /var/lib/nxlx-signer/ && chown -R nxlx-signer /var/lib/nxlx-signer
+#   cp tools/nxlx-signer.py tools/boxcert.py /opt/nxlx-signer/
+#   cp tools/signer/nxlx-signer.service /etc/systemd/system/ && systemctl enable --now nxlx-signer
+# Open TCP 8781 to the local network only, if a firewall runs.
+[Unit]
+Description=NXLX node signer (automatic node certificates)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=nxlx-signer
+ExecStart=/usr/bin/python3 /opt/nxlx-signer/nxlx-signer.py --dir /var/lib/nxlx-signer --port 8781
+Restart=always
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/nxlx-signer
+
+[Install]
+WantedBy=multi-user.target

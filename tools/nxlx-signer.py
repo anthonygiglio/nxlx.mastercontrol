@@ -177,6 +177,9 @@ class Signer:
                 self._limit(caller)
                 out = self._sign(body, caller)
             self.log("signed for %s (%s), serial %s, ends %s" % (", ".join(out["names"]), caller, out["serial"], out["ends"]))
+            if out.pop("short", False):
+                self.log("NOTE: the signer ends within a year, so certificates are getting shorter: make a new signer "
+                         "(boxcert.py make-signer, after moving the old signer folder away) and copy it here")
             return out
         except Refused as e:
             self.log("refused %s: %s" % (caller, e.message))
@@ -246,7 +249,8 @@ class Signer:
         for d in dns:
             pins[d] = {"key": key, "first": (pins.get(d) or {}).get("first", stamp), "last": stamp, "from": caller, "serial": info["serial"]}
         self._save_pins(pins)
-        return {"chain": chain, "names": dns + ips, "ends": info["end"].date().isoformat(), "serial": info["serial"], "left_out": left_out}
+        return {"chain": chain, "names": dns + ips, "ends": info["end"].date().isoformat(), "serial": info["serial"], "left_out": left_out,
+                "short": days < LEAF_DAYS}
 
     def _key_hash(self, csr):
         code, pub, err = boxcert.run(self.exe, ["req", "-in", csr, "-noout", "-pubkey"])
