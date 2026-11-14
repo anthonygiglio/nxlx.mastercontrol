@@ -133,16 +133,36 @@ def verify_args(exe, root_pem, tmp, untrusted=None, purpose="sslserver", attime=
     return args
 
 
-def public_key_hash(exe, path, kind="x509"):
-    """SHA-256 of the DER SubjectPublicKeyInfo of a certificate (kind x509) or a request (kind req): the key a pin holds."""
+def spki_der(exe, path, kind="x509"):
+    """The DER SubjectPublicKeyInfo of a certificate (kind x509) or a request (kind req)."""
     code, pub, err = run(exe, [kind, "-in", path, "-noout", "-pubkey"])
-    body = "".join(l for l in pub.splitlines() if l and not l.startswith("-----"))
-    if code or not body:
+    lines = [l.strip() for l in pub.splitlines() if l.strip()]
+    if code or len(lines) < 3 or lines[0] != "-----BEGIN PUBLIC KEY-----" or lines[-1] != "-----END PUBLIC KEY-----":
         raise BoxcertError("the public key of %s could not be read" % path)
     try:
-        return hashlib.sha256(base64.b64decode(body, validate=True)).hexdigest()
+        return base64.b64decode("".join(lines[1:-1]), validate=True)
     except ValueError:
         raise BoxcertError("the public key of %s could not be read" % path)
+
+
+def public_key_hash(exe, path, kind="x509"):
+    """SHA-256 of the DER SubjectPublicKeyInfo of a certificate (kind x509) or a request (kind req): the key a pin holds."""
+    return hashlib.sha256(spki_der(exe, path, kind)).hexdigest()
+
+
+# SEQUENCE { SEQUENCE { id-ecPublicKey, prime256v1 }, BIT STRING (no unused bits, 0x04 = uncompressed point) }: the exact
+# bytes every EC P-256 SubjectPublicKeyInfo starts with; 64 bytes of the point follow, 91 bytes in all
+P256_SPKI_PREFIX = bytes.fromhex("3059301306072a8648ce3d020106082a8648ce3d03010703420004")
+
+
+def is_p256(der):
+    """Is this DER SubjectPublicKeyInfo an EC P-256 key, by its bytes (not by what openssl -text prints)?"""
+    return isinstance(der, (bytes, bytearray)) and len(der) == 91 and bytes(der[:len(P256_SPKI_PREFIX)]) == P256_SPKI_PREFIX
+
+
+def cert_ends(c):
+    """The end of a read_cert() certificate as a Unix time (for pins of addresses, which lapse with it)."""
+    return int(c["end"].timestamp()) if c.get("end") else None
 
 
 # --- the signer's pin file (D139): which key each .local name and address was signed for ---------------------------------
@@ -216,42 +236,86 @@ def write_pins(folder, pins):
         os.fsync(f.fileno())
     if os.path.isfile(path):
         shutil.copyfile(path, path + ".bak.tmp")
-        os.replace(path + ".bak.tmp", path + ".bak")
-    os.replace(tmp, path)
+        _replace(path + ".bak.tmp", path + ".bak")
+    _replace(tmp, path)
+
+
+def _replace(src, dst, tries=20, pause=0.1):
+    """os.replace, tried again for about two seconds: on Windows a reader (a backup or a virus scanner) holding the
+    file makes it fail for a moment. BoxcertError when it never works."""
+    import time
+    for i in range(tries):
+        try:
+            os.replace(src, dst)
+            return
+        except OSError as e:
+            if i == tries - 1:
+                raise BoxcertError("the pin file could not be saved (%s); nothing was changed" % (e.strerror or e))
+            time.sleep(pause)
+
+
+def merge_pin(pins, name, entry, now_epoch):
+    """Put one pin in, unless the name or address is held by another key: then False, and nothing changes. A lapsed
+    address pin (its certificate ended) is free again."""
+    old = pins.get(name)
+    if old and old.get("key") != entry["key"] and not pin_lapsed(old, now_epoch):
+        return False
+    if old and old.get("key") == entry["key"]:
+        entry = dict(entry, first=old.get("first", entry.get("first")))
+    pins[name] = entry
+    return True
+
+
+def pin_lapsed(pin, now_epoch):
+    """An address pin ends with the certificate it came from; a name pin never lapses by itself."""
+    ends = pin.get("ends")
+    return pin.get("kind") == "address" and isinstance(ends, int) and ends < now_epoch
 
 
 def seed_pins(exe, records_folder, sdir, out=print, now=None):
     """Pin the names and addresses of the nodes signed by hand before (the rows of records_folder/signed.json whose
-    certificate file is still there), so nobody can take them before those nodes ask the service themselves (D139)."""
+    certificate file is still there), so nobody can take them before those nodes ask the service themselves (D139).
+    A later row of the same node replaces an earlier one; a name or address already pinned to another key in the pin
+    file is left as it is and listed."""
     try:
         with open(os.path.join(records_folder, SIGNED)) as f:
             rows = json.load(f)
     except (OSError, ValueError):
         rows = []
-    stamp = (now or datetime.datetime.now(datetime.timezone.utc)).replace(microsecond=0).isoformat()
-    done, missing = [], []
+    when = now or datetime.datetime.now(datetime.timezone.utc)
+    stamp, now_epoch = when.replace(microsecond=0).isoformat(), int(when.timestamp())
+    found, missing = {}, []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict) or row.get("box") == "signer" or not isinstance(row.get("file"), str):
+            continue
+        path = row["file"] if os.path.isabs(row["file"]) else os.path.join(records_folder, row["file"])
+        if not os.path.isfile(path):
+            missing.append(row.get("box", "?"))
+            continue
+        try:
+            key = public_key_hash(exe, path)
+            c = read_cert(exe, path)
+        except BoxcertError:
+            missing.append(row.get("box", "?"))
+            continue
+        for name in c["dns"]:
+            found[name] = {"key": key, "first": stamp, "last": stamp, "from": "seeded from %s" % os.path.basename(path), "serial": c["serial"]}
+        for ip in c["ips"]:
+            found[ip] = {"key": key, "first": stamp, "last": stamp, "from": "seeded from %s" % os.path.basename(path), "serial": c["serial"],
+                         "kind": "address", "ends": cert_ends(c)}
+    done, skipped = [], []
     with PinLock(sdir):
         pins = read_pins(sdir)
-        for row in rows if isinstance(rows, list) else []:
-            if not isinstance(row, dict) or row.get("box") == "signer" or not isinstance(row.get("file"), str):
-                continue
-            path = row["file"] if os.path.isabs(row["file"]) else os.path.join(records_folder, row["file"])
-            if not os.path.isfile(path):
-                missing.append(row.get("box", "?"))
-                continue
-            try:
-                key = public_key_hash(exe, path)
-                c = read_cert(exe, path)
-            except BoxcertError:
-                missing.append(row.get("box", "?"))
-                continue
-            for name in c["dns"] + c["ips"]:
-                pins[name] = {"key": key, "first": stamp, "last": stamp, "from": "seeded from %s" % os.path.basename(path), "serial": c["serial"]}
-                if name not in done:
-                    done.append(name)
+        for name, entry in found.items():
+            if entry.get("kind") == "address" and pin_lapsed(entry, now_epoch):
+                continue                                      # that certificate has ended: nothing to keep the address for
+            (done if merge_pin(pins, name, entry, now_epoch) else skipped).append(name)
         write_pins(sdir, pins)
     if done:
         out("Pinned for the nodes you signed before: %s" % ", ".join(done))
+    if skipped:
+        out("Left as they were (already pinned to another key in the pin file): %s. If that is wrong, release them on the "
+            "signing computer and pin again with nxlx-signer.py pin --cert <the certificate file>." % ", ".join(skipped))
     if missing:
         out("Not pinned (their certificate file is not in %s): %s. Pin them on the signing computer with "
             "nxlx-signer.py pin --cert <their certificate file>." % (records_folder, ", ".join(sorted(set(missing)))))
@@ -666,9 +730,20 @@ def root_allows_signer(root_text):
     return not re.search(r"CA:TRUE,\s*pathlen:0", root_text)
 
 
-def make_signer(exe, folder, ask, out=print, days=SIGNER_DAYS, ranges=SIGNER_RANGES, now=None):
+def make_signer(exe, folder, ask, out=print, days=SIGNER_DAYS, ranges=SIGNER_RANGES, now=None, pins_from=None):
     """The intermediate CA the signing service signs nodes with. Its key is written UNENCRYPTED (mode 600), because the
-    service must sign without a person; the root key never leaves this computer."""
+    service must sign without a person; the root key never leaves this computer. `pins_from`: the signing computer's
+    signed.json, carried over into the new signer folder, so a replaced signer keeps every name and address pinned."""
+    pins_text = "{}\n"
+    if pins_from:
+        try:
+            with open(os.path.expanduser(pins_from), encoding="utf-8") as f:
+                carried = json.load(f)
+        except (OSError, ValueError, UnicodeDecodeError) as e:
+            raise BoxcertError("--pins %s cannot be read (%s); nothing was made" % (pins_from, e))
+        if not isinstance(carried, dict) or not all(isinstance(k, str) and isinstance(v, dict) and isinstance(v.get("key"), str) for k, v in carried.items()):
+            raise BoxcertError("--pins %s is not a pin file the signing service wrote; nothing was made" % pins_from)
+        pins_text = json.dumps(carried, indent=1, sort_keys=True) + "\n"
     key, pem = os.path.join(folder, ROOT_KEY), os.path.join(folder, ROOT_PEM)
     for p in (key, pem):
         if not os.path.isfile(p):
@@ -722,7 +797,7 @@ def make_signer(exe, folder, ask, out=print, days=SIGNER_DAYS, ranges=SIGNER_RAN
     write_private(os.path.join(sdir, SIGNER_KEY), key_text)
     with open(pem) as f:
         root_pem_text = f.read()
-    for name, text in ((SIGNER_PEM, signer_text), (ROOT_PEM, root_pem_text), (SIGNER_PINS, "{}\n")):
+    for name, text in ((SIGNER_PEM, signer_text), (ROOT_PEM, root_pem_text), (SIGNER_PINS, pins_text)):
         with open(os.path.join(sdir, name), "w") as f:
             f.write(text)
     _record(folder, {"box": "signer", "names": [SIGNER_NAME], "addresses": [], "serial": info["serial"], "start": info["start"].isoformat(),
@@ -1277,6 +1352,7 @@ def main(argv=None, ask=None, out=print):
     x = sub.add_parser("make-signer", help="make the signer the signing service uses (once per root; D139)")
     x.add_argument("--days", type=int, default=SIGNER_DAYS, help="how long the signer lasts (default %d)" % SIGNER_DAYS)
     x.add_argument("--allow-address", action="append", default=[], metavar="RANGE", help="a further address range (besides the private ranges)")
+    x.add_argument("--pins", default=None, metavar="FILE", help="when replacing a signer: the signing computer's signed.json, carried over")
     x = sub.add_parser("move-root", help="sign, with the OLD root (--dir), a message that moves every node to the new root (--to)")
     x.add_argument("--to", required=True, help="the new root's folder, e.g. ~/nxlx-root-ca-2 (its signer must exist)")
     sub.add_parser("show").add_argument("cert")
@@ -1337,7 +1413,7 @@ def main(argv=None, ask=None, out=print):
         elif a.cmd in ("sign", "renew"):
             sign(exe, a.dir, a.request, a.name, a.address, [d.lower() for d in a.drop], a.days, a.out, ask, out)
         elif a.cmd == "make-signer":
-            make_signer(exe, a.dir, ask, out, a.days, tuple(SIGNER_RANGES) + tuple(a.allow_address))
+            make_signer(exe, a.dir, ask, out, a.days, tuple(SIGNER_RANGES) + tuple(a.allow_address), pins_from=a.pins)
         elif a.cmd == "move-root":
             move_root(exe, a.dir, os.path.expanduser(a.to), ask, out)
         elif a.cmd == "show":

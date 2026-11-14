@@ -39,6 +39,7 @@ address, that nobody has taken yet. What is taken is protected by the pin.
 
 import argparse
 import datetime
+import hashlib
 import http.server
 import importlib.util
 import ipaddress
@@ -156,6 +157,14 @@ class Signer:
                 lock.__exit__(*a)
         return Held()
 
+    def _save(self, pins):
+        """write_pins, or a 503 that says so: on Windows a reader holding the file can make the replace fail for a while."""
+        try:
+            boxcert.write_pins(self.folder, pins)
+        except (boxcert.BoxcertError, OSError) as e:
+            self.log("the pin file could not be saved: %s" % e)
+            raise Refused("the signer could not save its pin file just now; nothing was changed. Try again in a minute.", 503)
+
     @staticmethod
     def _word(name):
         name = (name or "").strip().lower().rstrip(".")
@@ -169,7 +178,7 @@ class Signer:
             if name not in pins:
                 raise Refused("%s is not pinned (nxlx-signer.py list shows what is)" % name, 404)
             del pins[name]
-            boxcert.write_pins(self.folder, pins)
+            self._save(pins)
         self.log("released %s" % name)
         return name
 
@@ -187,11 +196,14 @@ class Signer:
         with self.lock, self._held():
             pins = self._pins()
             for w in words:
-                if w in pins and pins[w].get("key") != key:
+                if w in pins and pins[w].get("key") != key and not boxcert.pin_lapsed(pins[w], int(self.now())):
                     raise Refused("%s is pinned to another key already; release it first if that is right" % w, 409)
             for w in words:
-                pins[w] = {"key": key, "first": (pins.get(w) or {}).get("first", stamp), "last": stamp, "from": "pinned by hand", "serial": c["serial"]}
-            boxcert.write_pins(self.folder, pins)
+                entry = {"key": key, "first": (pins.get(w) or {}).get("first", stamp), "last": stamp, "from": "pinned by hand", "serial": c["serial"]}
+                if _ip(w) is not None:
+                    entry.update(kind="address", ends=boxcert.cert_ends(c))
+                pins[w] = entry
+            self._save(pins)
         self.log("pinned %s to the key of %s" % (", ".join(words), os.path.basename(cert_path)))
         return words
 
@@ -256,9 +268,13 @@ class Signer:
                 req = boxcert.read_request(self.exe, csr)
             except boxcert.BoxcertError:
                 raise Refused("the request does not check out (its signature is wrong or it is not a request)")
-            code, text, _ = boxcert.run(self.exe, ["req", "-in", csr, "-noout", "-text"])
-            if code or "id-ecPublicKey" not in text or not ("prime256v1" in text or "P-256" in text):
+            try:
+                spki = boxcert.spki_der(self.exe, csr, "req")
+            except boxcert.BoxcertError:
+                raise Refused("the request's key could not be read")
+            if not boxcert.is_p256(spki):                       # by the key's own bytes, not by what -text prints
                 raise Refused("the request's key must be EC P-256, as a node makes it")
+            key = hashlib.sha256(spki).hexdigest()
             dns = []
             for d in req["dns"]:
                 d = d.lower().rstrip(".")
@@ -284,16 +300,20 @@ class Signer:
                     left_out.append(i)
             if m.group(1).lower() not in dns + ips:
                 raise Refused("the request's subject %s is not one of its names" % m.group(1)[:80])
-            try:
-                key = boxcert.public_key_hash(self.exe, csr, "req")
-            except boxcert.BoxcertError:
-                raise Refused("the request's key could not be read")
-            for d in dns + ips:
+            for d in dns:
                 pin = pins.get(d)
                 if pin and pin.get("key") != key:
-                    raise Refused("%s was signed before for another key (first on %s). If that node made a new key, was set up again or "
-                                  "the address moved to another node, release it on the signing computer: python tools/nxlx-signer.py release %s"
+                    raise Refused("%s was signed before for another key (first on %s). If that node made a new key or was set up again, "
+                                  "release it on the signing computer: python tools/nxlx-signer.py release %s"
                                   % (d, str(pin.get("first", "?"))[:10], d), 409)
+            now_epoch = int(self.now())
+            for i in list(ips):
+                # an address held by another node's key (not lapsed) is left out, not the whole certificate: with DHCP an
+                # address moves, and the node is still reached by its .local name
+                pin = pins.get(i)
+                if pin and pin.get("key") != key and not boxcert.pin_lapsed(pin, now_epoch):
+                    ips.remove(i)
+                    left_out.append(i)
             days = min(LEAF_DAYS, self._signer_days_left())
             if days < 1:
                 raise Refused("the signer has run out; make a new one (boxcert.py make-signer) and copy it here", 503)
@@ -310,9 +330,14 @@ class Signer:
             with open(leaf) as f:
                 chain = f.read().strip() + "\n" + self._text(boxcert.SIGNER_PEM).strip() + "\n" + self._text(boxcert.ROOT_PEM).strip() + "\n"
         stamp = _now_iso(self.now())
-        for d in dns + ips:
+        for d in dns:
             pins[d] = {"key": key, "first": (pins.get(d) or {}).get("first", stamp), "last": stamp, "from": caller, "serial": info["serial"]}
-        boxcert.write_pins(self.folder, pins)
+        for name in [n for n, p in pins.items() if p.get("key") == key and _ip(n) is not None and n not in ips]:
+            del pins[name]                      # this key's newest certificate no longer carries that address: it is free again
+        for i in ips:
+            pins[i] = {"key": key, "first": (pins.get(i) or {}).get("first", stamp), "last": stamp, "from": caller, "serial": info["serial"],
+                       "kind": "address", "ends": boxcert.cert_ends(info)}
+        self._save(pins)
         return {"chain": chain, "names": dns + ips, "ends": info["end"].date().isoformat(), "serial": info["serial"], "left_out": left_out,
                 "short": days < LEAF_DAYS}
 
@@ -405,8 +430,12 @@ def make_handler(signer, allowed=None):
                 return self._json(200, signer.sign(body, self.client_address[0]))
             except Refused as e:
                 return self._json(e.status, {"error": e.message})
-            except boxcert.BoxcertError as e:
-                return self._json(500, {"error": str(e)[:200]})
+            except (boxcert.BoxcertError, OSError) as e:      # a file the signer needs could not be read or written
+                try:
+                    signer.log("could not answer %s: %s" % (self.client_address[0], e))
+                except OSError:
+                    pass
+                return self._json(503, {"error": "the signer could not finish just now; try again in a minute"})
 
         def log_message(self, *a):
             pass

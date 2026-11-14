@@ -32,11 +32,9 @@ class PinTest(ta.SignerBase):
         real, _ = self.csr(["node-01.local"], ["192.168.0.169"])
         self.assertEqual(self.ask(real, host="node-01", caller="192.168.0.169")["names"], ["node-01.local", "192.168.0.169"])
         thief, _ = self.csr(["anything.local"], ["192.168.0.169"])
-        with self.assertRaises(S.Refused) as cm:
-            self.ask(thief, host="anything", caller="192.168.0.169")       # whoever holds .169 now
-        self.assertEqual(cm.exception.status, 409)
-        self.assertIn("192.168.0.169", cm.exception.message)
-        self.assertNotIn("anything.local", self.signer.pins())
+        out = self.ask(thief, host="anything", caller="192.168.0.169")    # whoever holds .169 now: not for that address
+        self.assertEqual((out["names"], out["left_out"]), (["anything.local"], ["192.168.0.169"]))
+        self.assertNotEqual(self.signer.pins()["192.168.0.169"]["key"], self.signer.pins()["anything.local"]["key"])
         lines = []
         S.main(["--dir", self.sdir, "--openssl", self.exe, "list"], out=lines.append)
         self.assertTrue(any(l.startswith("192.168.0.169") for l in lines))
@@ -125,8 +123,8 @@ class SeedTest(ta.Base):
         with self.assertRaises(S.Refused) as cm:
             sg.sign({"csr": read(thief), "hostname": "node-01"}, "192.168.0.66")
         self.assertEqual(cm.exception.status, 409)
-        with self.assertRaises(S.Refused):                     # nor the address, by whoever holds it
-            sg.sign({"csr": read(self.csr_with_ip("anything", "192.168.0.169")), "hostname": "anything"}, "192.168.0.169")
+        out = sg.sign({"csr": read(self.csr_with_ip("anything", "192.168.0.169")), "hostname": "anything"}, "192.168.0.169")
+        self.assertEqual(out["left_out"], ["192.168.0.169"], "nor the address, by whoever holds it: left out")
         sg.sign({"csr": read(csr), "hostname": "node-01"}, "192.168.0.169")       # the node itself, its own key: signed
 
     def csr_with_ip(self, host, ip):
