@@ -252,7 +252,7 @@ class Matcher:
         """(new text, number of changes, [old-style text no row covers or a held row keeps]).
 
         Unlike the apply script, a held row (release, until PR 8) does not shield its text from the live rows: on a
-        node "pvj-update/" is also the start of /run/pvj-update/, which is the command's folder, not the USB one."""
+        node "pvj-update/" is also the start of /run/pvj-update, which is the command's folder, not the USB one."""
         out, at, n, pos = [], 0, 0, 0
         while True:
             m = self.rx.search(text, pos)
