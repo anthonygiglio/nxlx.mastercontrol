@@ -14,6 +14,11 @@ OpenSSL from Homebrew, both work; Linux; Windows with OpenSSL on the path). Noth
   boxcert.py list [--dir DIR]             what this root has signed, and what is due
   boxcert.py root [--dir DIR]             the root's SHA-256 fingerprint, to compare with the box's page once
 
+  Automatic certificates (D139, docs/HTTPS.md "Automatic certificates"): a signer under the root, run by a small service.
+  boxcert.py make-signer [--dir DIR]      make the "NXLX node signer" (once per root); writes DIR/signer/ for the signing computer
+  boxcert.py move-root --to NEWDIR [--dir OLDDIR]   a message signed by the OLD root that tells each node to trust the new
+                                          one; written into NEWDIR/signer/, where the signing service hands it to the nodes
+
   The fleet list: which of your nodes may open each other without pairing again (D132). Sign it here, load it on a node.
   boxcert.py fleet new --name NAME        start a list (once)
   boxcert.py fleet add HOST --carry full|live|none     add or change a node: asks it for its card over https and trusts
@@ -49,6 +54,12 @@ ROOT_DAYS = 7300                  # twenty years: the root is renewed by making 
 LEAF_DAYS, MAX_LEAF_DAYS = 397, 825   # Apple: 825 at most for every TLS server certificate; 397 keeps a yearly rhythm
 ROOT_CURVE, BOX_CURVE = "secp384r1", "prime256v1"
 PRIVATE_RANGES = ("10.0.0.0/255.0.0.0", "172.16.0.0/255.240.0.0", "192.168.0.0/255.255.0.0", "169.254.0.0/255.255.0.0")
+SIGNER_RANGES = PRIVATE_RANGES[:3]  # the signer: .local names and the three private ranges, nothing link-local (D139)
+SIGNER_DIR, SIGNER_KEY, SIGNER_PEM, SIGNER_PINS = "signer", "signer.key", "signer.pem", "signed.json"
+SIGNER_DAYS = 825
+SIGNER_NAME = "NXLX node signer"
+ROOT_MOVE, ROOT_MOVE_SIG = "root-move.json", "root-move.sig"
+ROOT_MOVE_MAGIC = b"nxlx-root-move-v1\n"     # what the old root signs: these bytes, then the exact bytes of root-move.json
 DEFAULT_ALLOWED = ("local",)       # "local" permits every name under .local (RFC 5280: labels may be added on the left)
 SERVER_AUTH = "1.3.6.1.5.5.7.3.1"
 
@@ -106,8 +117,10 @@ def valid_ip(text):
 
 # --- the root ----------------------------------------------------------------------------------------------------
 def root_config(name, allowed, constraints, ranges=PRIVATE_RANGES):
+    # pathlen:1 since D139: one signer may sit between the root and a node. A root of pathlen:0 (every root made
+    # before 2026-11-14) cannot have one: devices refuse "path length constraint exceeded".
     lines = ["[req]", "distinguished_name = dn", "prompt = no", "[dn]", "CN = %s" % name, "[v3_ca]",
-             "basicConstraints = critical, CA:TRUE, pathlen:0", "keyUsage = critical, keyCertSign, cRLSign",
+             "basicConstraints = critical, CA:TRUE, pathlen:1", "keyUsage = critical, keyCertSign, cRLSign",
              "subjectKeyIdentifier = hash"]
     if constraints:
         parts = ["permitted;DNS:%s" % d for d in allowed] + ["permitted;IP:%s" % r for r in ranges]
@@ -172,7 +185,8 @@ def make_root(exe, folder, name, allowed, constraints, ask, out=print, ranges=PR
     out("  public root : %s  (this is what each phone, tablet and laptop installs once)" % pem)
     out("  SHA-256     : %s" % read_cert(exe, pem)["fingerprint"])
     out("  constraints : %s" % ("names under %s and addresses in %s only" % (", ".join("." + a for a in allowed), ", ".join(ranges)) if constraints else "none"))
-    out("Next: on the box's panel, System > Secure connection, download the request, then: boxcert.py sign <the request>")
+    out("Next: boxcert.py --dir %s make-signer   (automatic certificates), or on the box's panel, System > Secure connection, "
+        "download the request, then: boxcert.py sign <the request>" % folder)
     return key, pem
 
 
@@ -376,14 +390,47 @@ def _record(folder, entry):
 
 
 # --- show, verify, list ---------------------------------------------------------------------------------------------
+def pem_blocks(text):
+    """Every CERTIFICATE block of a PEM text, in order, as text."""
+    return [m.group(0) + "\n" for m in re.finditer(r"-----BEGIN CERTIFICATE-----[A-Za-z0-9+/=\s]{1,65536}?-----END CERTIFICATE-----", text or "")]
+
+
+def _norm(block):
+    return "".join(block.split())
+
+
+def is_signer(c):
+    """A CA certificate that another CA issued: a signer (an intermediate), not a root."""
+    return bool(c.get("ca")) and c.get("cn", "") not in re.split(r"\s*[,/]\s*|\s*=\s*", c.get("issuer", ""))
+
+
+def _intermediates_file(path, tmp, root_text=None):
+    """A file of the certificates after the first one in `path`, leaving out the root itself (D139: a node's file is the
+    node's certificate, then the signer, then the root). None when there are none."""
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        blocks = pem_blocks(f.read(262144))
+    rest = [b for b in blocks[1:] if root_text is None or _norm(b) not in [_norm(r) for r in pem_blocks(root_text)]]
+    if not rest:
+        return None
+    out = os.path.join(tmp, "untrusted.pem")
+    with open(out, "w") as f:
+        f.write("".join(rest))
+    return out
+
+
 def show(exe, path, out=print, now=None):
     c = read_cert(exe, path)
     now = now or datetime.datetime.now(datetime.timezone.utc)
     left = (c["end"] - now).days if c["end"] else None
     out("%s" % path)
     out("  for     : %s" % (", ".join(c["dns"] + c["ips"]) or c["cn"] or "(no names)"))
-    out("  kind    : %s" % ("a ROOT certificate (install this on devices; never upload it as a box's certificate)" if c["ca"] else
+    out("  kind    : %s" % (("a SIGNER certificate (it signs node certificates for your root; never upload it as a node's certificate)" if is_signer(c) else
+                             "a ROOT certificate (install this on devices; never upload it as a box's certificate)") if c["ca"] else
                             "a box's certificate" + ("" if c["server_auth"] else " WITHOUT serverAuth (browsers will refuse it)")))
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        more = len(pem_blocks(f.read(262144))) - 1
+    if more > 0:
+        out("  also    : %d more certificate(s) in this file (the signer and the root that vouch for it)" % more)
     out("  from    : %s" % (c["start"].date().isoformat() if c["start"] else "?"))
     out("  ends on : %s  (%s)" % (c["end"].date().isoformat() if c["end"] else "?",
                                  "RUN OUT" if left is not None and left < 0 else "%d days left" % left if left is not None else "?"))
@@ -410,7 +457,10 @@ def verify(exe, folder, path, out=print):
     pem = os.path.join(folder, ROOT_PEM)
     if not os.path.isfile(pem):
         raise BoxcertError("%s is missing: point --dir at the root's folder" % pem)
-    code, text, err = run(exe, ["verify", "-CAfile", pem, "-purpose", "sslserver", path])
+    with tempfile.TemporaryDirectory() as tmp, open(pem) as r:
+        # a node certificate from the signer (D139) needs the signer, which comes after it in the same file
+        untrusted = _intermediates_file(path, tmp, r.read())
+        code, text, err = run(exe, ["verify", "-CAfile", pem, "-purpose", "sslserver"] + (["-untrusted", untrusted] if untrusted else []) + [path])
     ok = code == 0 and ": OK" in text
     out("%s: %s" % (path, "signed by this root and good for a server" if ok else "NOT verified: " + (err.strip() or text.strip())))
     return ok
@@ -436,6 +486,157 @@ def list_signed(folder, out=print, now=None):
             state = "?"
         out("%-24s %-12s ends %s  %s  (%s)" % (r.get("box", "?"), state, str(r.get("end", "?"))[:10], ", ".join(r.get("names", [])), r.get("file", "")))
     return rows
+
+
+# --- the signer and the root move (D139, docs/HTTPS.md "Automatic certificates") --------------------------------------------
+def signer_config(allowed=DEFAULT_ALLOWED, ranges=SIGNER_RANGES):
+    parts = ["permitted;DNS:%s" % d for d in allowed] + ["permitted;IP:%s" % r for r in ranges]
+    return "\n".join(["[req]", "distinguished_name = dn", "prompt = no", "[dn]", "CN = %s" % SIGNER_NAME, "[v3_signer]",
+                      "basicConstraints = critical, CA:TRUE, pathlen:0", "keyUsage = critical, keyCertSign, cRLSign",
+                      "subjectKeyIdentifier = hash", "authorityKeyIdentifier = keyid",
+                      "nameConstraints = critical, " + ", ".join(parts)]) + "\n"
+
+
+def root_allows_signer(root_text):
+    """False for a root that may sign node certificates only (pathlen:0, every root made before D139)."""
+    return not re.search(r"CA:TRUE,\s*pathlen:0", root_text)
+
+
+def make_signer(exe, folder, ask, out=print, days=SIGNER_DAYS, ranges=SIGNER_RANGES, now=None):
+    """The intermediate CA the signing service signs nodes with. Its key is written UNENCRYPTED (mode 600), because the
+    service must sign without a person; the root key never leaves this computer."""
+    key, pem = os.path.join(folder, ROOT_KEY), os.path.join(folder, ROOT_PEM)
+    for p in (key, pem):
+        if not os.path.isfile(p):
+            raise BoxcertError("%s is missing: make the root first (boxcert.py --dir %s make-root)" % (p, folder))
+    if not isinstance(days, int) or not 30 <= days <= MAX_LEAF_DAYS:
+        raise BoxcertError("--days must be from 30 to %d" % MAX_LEAF_DAYS)
+    for bad in [r for r in ranges if not valid_range(r)]:
+        raise BoxcertError("not an address range (write it as 192.168.0.0/255.255.0.0): %r" % bad)
+    sdir = os.path.join(folder, SIGNER_DIR)
+    if os.path.lexists(sdir):
+        raise BoxcertError("%s exists already. A signer is made once; to replace it (it ran out, or it may have been stolen), move "
+                           "that folder away first, then run this again and copy the new folder to the signing computer." % sdir)
+    code, root_text, err = run(exe, ["x509", "-in", pem, "-noout", "-text"])
+    if code:
+        _fail("could not read the root", err)
+    if not root_allows_signer(root_text):
+        raise BoxcertError("this root was made to sign node certificates only (pathlen:0, every root made before 2026-11-14), so "
+                           "devices would refuse anything a signer under it signs. Make a new root in a new folder "
+                           "(boxcert.py --dir ~/nxlx-root-ca-2 make-root) and read 'One evening' in docs/HTTPS.md.")
+    passphrase = ask("Passphrase of the root key: ")
+    code, _, err = run(exe, ["pkey", "-in", key, "-passin", "stdin", "-noout"], passphrase)
+    if code:
+        raise BoxcertError("wrong passphrase (or %s is damaged); nothing was made" % key)
+    with tempfile.TemporaryDirectory() as tmp:
+        os.chmod(tmp, 0o700)
+        skey, csr, cfg, spem = (os.path.join(tmp, n) for n in ("signer.key", "signer.csr", "signer.cnf", "signer.pem"))
+        with open(cfg, "w") as f:
+            f.write(signer_config(DEFAULT_ALLOWED, ranges))
+        code, _, err = run(exe, ["ecparam", "-name", BOX_CURVE, "-genkey", "-noout", "-out", skey])
+        if code:
+            _fail("could not make the signer's key", err)
+        os.chmod(skey, 0o600)
+        code, _, err = run(exe, ["req", "-new", "-key", skey, "-config", cfg, "-out", csr])
+        if code:
+            _fail("could not make the signer's request", err)
+        code, _, err = run(exe, ["x509", "-req", "-in", csr, "-CA", pem, "-CAkey", key, "-passin", "stdin", "-set_serial", "0x" + new_serial(),
+                                 "-days", str(days), "-sha256", "-extfile", cfg, "-extensions", "v3_signer", "-out", spem], passphrase)
+        if code:
+            _fail("signing the signer failed", err)
+        code, text, err = run(exe, ["verify", "-CAfile", pem, spem])
+        if code or ": OK" not in text:
+            _fail("the signer does not check out against the root", err or text)
+        info = read_cert(exe, spem)
+        with open(skey) as f:
+            key_text = f.read()
+        with open(spem) as f:
+            signer_text = f.read()
+        with open(skey, "r+b") as f:
+            f.write(b"\0" * os.path.getsize(skey))
+    os.makedirs(sdir, mode=0o700)
+    write_private(os.path.join(sdir, SIGNER_KEY), key_text)
+    with open(pem) as f:
+        root_pem_text = f.read()
+    for name, text in ((SIGNER_PEM, signer_text), (ROOT_PEM, root_pem_text), (SIGNER_PINS, "{}\n")):
+        with open(os.path.join(sdir, name), "w") as f:
+            f.write(text)
+    _record(folder, {"box": "signer", "names": [SIGNER_NAME], "addresses": [], "serial": info["serial"], "start": info["start"].isoformat(),
+                     "end": info["end"].isoformat(), "file": os.path.join(SIGNER_DIR, SIGNER_PEM),
+                     "signed": (now or datetime.datetime.now(datetime.timezone.utc)).replace(microsecond=0).isoformat()})
+    out("Signer made: %s" % sdir)
+    out("  %s : the signer's key, NOT encrypted, so the signing service can sign without you. Keep this folder on the signing computer only." % SIGNER_KEY)
+    out("  %s : the signer (ends on %s)" % (SIGNER_PEM, info["end"].date().isoformat()))
+    out("  %s    : a copy of your root, public" % ROOT_PEM)
+    out("  constraints: names under .local and addresses in %s only" % ", ".join(ranges))
+    out("Next: copy the whole folder %s to the signing computer (on the HP: C:\\Users\\<you>\\nxlx-signer), then start the service there "
+        "(tools/signer/install-windows.ps1). Then delete the copy here if you like; this folder can make a new signer at any time." % sdir)
+    return sdir
+
+
+def _fp_hex(exe, path):
+    return read_cert(exe, path)["fingerprint"].replace(" ", "")
+
+
+def move_root(exe, old_folder, new_folder, ask, out=print, now=None):
+    """A message, signed by the OLD root, that names the new root. A node that pins the old root takes the new one when
+    it gets this message from the signing service, with no person at the node (D139). The old root signs it, so only
+    whoever holds the old key and its passphrase can make one."""
+    FL = fleetlist()
+    old_key, old_pem, new_pem = os.path.join(old_folder, ROOT_KEY), os.path.join(old_folder, ROOT_PEM), os.path.join(new_folder, ROOT_PEM)
+    for p in (old_key, old_pem):
+        if not os.path.isfile(p):
+            raise BoxcertError("%s is missing: --dir must be the OLD root's folder (the one your nodes trust today)" % p)
+    if not os.path.isfile(new_pem):
+        raise BoxcertError("%s is missing: --to must be the NEW root's folder (make it with make-root first)" % new_pem)
+    sdir = os.path.join(new_folder, SIGNER_DIR)
+    if not os.path.isdir(sdir):
+        raise BoxcertError("%s is missing: make the signer first (boxcert.py --dir %s make-signer), then run this" % (sdir, new_folder))
+    old_fp, new_fp = _fp_hex(exe, old_pem), _fp_hex(exe, new_pem)
+    if old_fp == new_fp:
+        raise BoxcertError("--dir and --to hold the same root; nothing to move")
+    with open(new_pem) as f:
+        new_text = f.read()
+    with open(old_pem) as f:
+        old_text = f.read()
+    body = json.dumps({"v": 1, "kind": "nxlx-root-move", "from": old_fp, "to": new_fp, "root": new_text,
+                       "issued": (now or datetime.datetime.now(datetime.timezone.utc)).date().isoformat()},
+                      sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+    out("Moving your nodes from the root %s... to the root %s..." % (old_fp[:16], new_fp[:16]))
+    passphrase = ask("Passphrase of the OLD root key (%s): " % old_key)
+    code, _, err = run(exe, ["pkey", "-in", old_key, "-passin", "stdin", "-noout"], passphrase)
+    if code:
+        raise BoxcertError("wrong passphrase (or %s is damaged); nothing was written" % old_key)
+    with tempfile.TemporaryDirectory() as tmp:
+        os.chmod(tmp, 0o700)
+        msg, sig = os.path.join(tmp, "message"), os.path.join(tmp, "signature")
+        with open(msg, "wb") as f:
+            f.write(ROOT_MOVE_MAGIC + body)
+        code, _, err = run(exe, ["dgst", "-sha256", "-sign", old_key, "-passin", "stdin", "-out", sig, msg], passphrase)
+        if code or not os.path.isfile(sig):
+            _fail("signing the move failed", err)
+        with open(sig, "rb") as f:
+            sig_text = base64.encodebytes(f.read()).decode("ascii")
+    try:                                                       # checked the way a node checks it, before anything is written
+        ok = FL.signature_ok(ROOT_MOVE_MAGIC + body, sig_text, old_text, exe)
+    except FL.FleetError as e:
+        raise BoxcertError("the move could not be checked: %s" % e.message)
+    if not ok:
+        raise BoxcertError("the move's signature does not check out against the old root; nothing was written")
+    _write_file(os.path.join(sdir, ROOT_MOVE), body)
+    _write_file(os.path.join(sdir, ROOT_MOVE_SIG), sig_text.encode("ascii"))
+    out("Written: %s and %s in %s." % (ROOT_MOVE, ROOT_MOVE_SIG, sdir))
+    out("The signing service gives them to every node that still trusts the old root; each node checks the old root's signature,")
+    out("takes the new root and asks for a new certificate by itself. Nothing to do at the nodes.")
+    if any(os.path.exists(os.path.join(old_folder, n)) for n in (FLEET_DRAFT, FLEET_JSON)):
+        data = _load_draft(exe, old_folder)
+        last = max(data.get("serial") or 0, (signed_list(exe, old_folder).serial if os.path.exists(os.path.join(old_folder, FLEET_JSON)) else 0))
+        if not os.path.exists(os.path.join(new_folder, FLEET_DRAFT)):
+            data["serial"] = last
+            _save_draft(new_folder, data)          # the same fleet id; the old folder is only read
+        out("You have a fleet list. Nodes check it against their root, so after the move it must be signed by the new root:")
+        out("  boxcert.py --dir %s fleet sign --serial %d   then   boxcert.py --dir %s fleet push <each node>" % (new_folder, last + 1, new_folder))
+    return os.path.join(sdir, ROOT_MOVE)
 
 
 # --- the fleet list (D132, docs/HTTPS.md "Letting your nodes open each other") ----------------------------------------------
@@ -604,8 +805,10 @@ def card_from_files(exe, folder, card_path, cert_path, node_id, name):
     _root_pem_text(folder)
     info = read_cert(exe, cert_path)
     # the certificate must be one your root signed for a server (dates left out, as a node judges it: the key is what counts)
-    code, text, err = run(exe, ["verify", "-CAfile", os.path.join(folder, ROOT_PEM), "-purpose", "sslserver",
-                                "-attime", str(int(info["start"].timestamp()) + 60), cert_path])
+    with tempfile.TemporaryDirectory() as tmp:
+        untrusted = _intermediates_file(cert_path, tmp, _root_pem_text(folder))
+        code, text, err = run(exe, ["verify", "-CAfile", os.path.join(folder, ROOT_PEM), "-purpose", "sslserver",
+                                    "-attime", str(int(info["start"].timestamp()) + 60)] + (["-untrusted", untrusted] if untrusted else []) + [cert_path])
     if code or ": OK" not in text:
         raise BoxcertError("%s is not a certificate your root signed (%s). Nothing was added." % (cert_path, (err.strip() or text.strip()).splitlines()[-1] if (err.strip() or text.strip()) else "no reason given"))
     der = _fleet_call(FL.certificate_der, _read_file(cert_path, 65536).decode("utf-8", "replace"))
@@ -904,6 +1107,11 @@ def main(argv=None, ask=None, out=print):
         s.add_argument("--drop", action="append", default=[], help="a name or address from the request to leave out")
         s.add_argument("--days", type=int, default=LEAF_DAYS)
         s.add_argument("--out", default=None)
+    x = sub.add_parser("make-signer", help="make the signer the signing service uses (once per root; D139)")
+    x.add_argument("--days", type=int, default=SIGNER_DAYS, help="how long the signer lasts (default %d)" % SIGNER_DAYS)
+    x.add_argument("--allow-address", action="append", default=[], metavar="RANGE", help="a further address range (besides the private ranges)")
+    x = sub.add_parser("move-root", help="sign, with the OLD root (--dir), a message that moves every node to the new root (--to)")
+    x.add_argument("--to", required=True, help="the new root's folder, e.g. ~/nxlx-root-ca-2 (its signer must exist)")
     sub.add_parser("show").add_argument("cert")
     sub.add_parser("verify").add_argument("cert")
     sub.add_parser("list")
@@ -961,6 +1169,10 @@ def main(argv=None, ask=None, out=print):
                       tuple(PRIVATE_RANGES) + tuple(a.allow_address))
         elif a.cmd in ("sign", "renew"):
             sign(exe, a.dir, a.request, a.name, a.address, [d.lower() for d in a.drop], a.days, a.out, ask, out)
+        elif a.cmd == "make-signer":
+            make_signer(exe, a.dir, ask, out, a.days, tuple(SIGNER_RANGES) + tuple(a.allow_address))
+        elif a.cmd == "move-root":
+            move_root(exe, a.dir, os.path.expanduser(a.to), ask, out)
         elif a.cmd == "show":
             show(exe, a.cert, out)
         elif a.cmd == "verify":

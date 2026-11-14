@@ -556,7 +556,7 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                             raise ApiError(404, "the node has no root certificate to give: upload a certificate file that holds the root after the node's certificate")
                         return self._send(200, text.encode(), "application/x-x509-ca-cert",
                                           [("Content-Disposition", 'attachment; filename="nxlx-root.crt"')])
-                    raise ApiError(405 if path in ("/api/https/request", "/api/https/certificate", "/api/https/undo", "/api/https/remove", "/api/https/owner-only", "/api/https/root") else 404,
+                    raise ApiError(405 if path in ("/api/https/request", "/api/https/certificate", "/api/https/undo", "/api/https/remove", "/api/https/owner-only", "/api/https/root", "/api/https/auto") else 404,
                                    "method not allowed" if path.startswith("/api/https/") else "not found")
                 if path == "/api/https/request":
                     names = body.get("names") if "names" in body else box.default_names()
@@ -575,6 +575,22 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                     out = box.replace_root(body.get("root"), body.get("confirm"), self._secure(), box.device_secure(device))
                     api.log("pvj-web: root replaced by device %s (%s)" % (device["id"], device["name"]))
                     return self._json(200, dict(out, status=box.status(self._secure(), host, device)))
+                if path == "/api/https/auto":               # D139: where the signer is, and "try now"; the try runs in its own thread
+                    from .autocert import URL as SIGNER_URL
+                    auto = getattr(api, "autocert", None)
+                    if auto is None:
+                        raise ApiError(404, "not found")
+                    if "signer_url" in body:
+                        url = body.get("signer_url")
+                        if not isinstance(url, str) or (url.strip() and not SIGNER_URL.fullmatch(url.strip())):
+                            raise ApiError(400, "give the signer's address as http://name-or-address:port, or nothing to use the node's default")
+                        with api.settings.lock:
+                            section = dict(api.settings.data.get("https") or {})
+                            section["signer_url"] = url.strip()
+                            api.settings.data["https"] = section
+                            api.settings.save()
+                    auto.kick()
+                    return self._json(200, {"signer_url": auto.url(), "status": box.status(self._secure(), host, device)})
                 if path == "/api/https/owner-only":
                     on = box.set_owner_only(body.get("on"), self._secure(), box.device_secure(device))
                     return self._json(200, {"owner_only": on, "status": box.status(self._secure(), host, device)})
@@ -1069,6 +1085,8 @@ def build(env=None, player=None):
                                                          for a in e.get("addr_info", []) if a.get("family") == "inet" and a.get("local")],
                                       clock_trusted=lambda: api.clock_status().get("clock_from_network"), log=api.log)
     api.https.load()                         # a certificate that will not load leaves HTTP as it is, with the reason on the page
+    from . import autocert as autocert_mod
+    api.autocert = autocert_mod.AutoCert(api.https, settings, env, log=api.log)     # D139: started in main(), after the listeners
     api.fleet = build_fleet(api, settings, state, board)         # other nodes on the network (D127); the first announcement is in main()
     api.handover = build_handover(api, settings, state, env)     # who this node trusts to carry devices (D132): files only, no call to another node
     from . import supportd as supportd_mod
@@ -1141,6 +1159,8 @@ def main(argv=None):
             threading.Thread(target=tlsd.serve_forever, name="pvj-https", daemon=True).start()
         except OSError as e:                 # the port in use or not allowed: the plain panel still comes up
             print("pvj-web: https not listening on %s:%d: %s" % (host, tls_port, e), file=sys.stderr)
+    if getattr(api, "autocert", None) is not None:
+        api.autocert.start()                 # D139: asks the signer in its own thread; a silent signer never holds the panel up
     peerd = None
     if int(env.get("PVJ_PEER_PORT", "0") or 0):
         try:
