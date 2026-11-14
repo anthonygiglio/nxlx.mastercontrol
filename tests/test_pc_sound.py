@@ -3,6 +3,7 @@
 """A PC node's Automatic sound goes to the HDMI or DisplayPort sound of the screen the picture is on, when that can be
 told safely (J-155, D137): from ALSA's jack and ELD controls (amixer, faked here) and fake /proc and /sys trees."""
 import shutil
+import subprocess
 import types
 import unittest
 from unittest import mock
@@ -162,13 +163,18 @@ class HdmiSoundTest(unittest.TestCase):
     def test_nothing_to_read_gives_nothing(self):
         root = self.tree(card(), drm(HDMI_A_1=edid("A")))
         c = conns(HDMI_A_1="x")
-        self.assertEqual(hardware.hdmi_sound_screens(root, runner("", returncode=1)), [])          # amixer failed
+        self.assertIsNone(hardware.hdmi_sound_screens(root, runner("", returncode=1)))         # amixer failed: not "no screens"
+
+        def timeout(cmd, **kw):
+            raise subprocess.TimeoutExpired(cmd, 3)
+        self.assertIsNone(hardware.hdmi_sound_screens(root, timeout))
+        self.assertIsNone(hardware.hdmi_sound_for("HDMI-A-1", c, root, timeout))
         self.assertIsNone(hardware.hdmi_sound_for("HDMI-A-1", c, root, runner(amixer_text({3: None, 7: None}))))
         self.assertEqual(hardware.hdmi_sound_screens(self.tree(drm(HDMI_A_1=edid("A"))), runner(amixer_text(KABY_PCMS))), [])
         bad = self.tree({"proc/asound/card1/id": "bad id;\n"})
         self.assertEqual(hardware.hdmi_sound_screens(bad, runner(amixer_text(KABY_PCMS))), [])
         with mock.patch("pvj.hardware.shutil.which", return_value=None):
-            self.assertEqual(hardware.hdmi_sound_screens(root), [])                              # no amixer at all
+            self.assertIsNone(hardware.hdmi_sound_screens(root))                                 # no amixer at all
 
     def test_edid_reading(self):
         root = self.tree(drm(HDMI_A_1=edid(*DELL)), {"sys/class/drm/card1-HDMI-A-2/edid": b"not an edid"})
@@ -245,6 +251,45 @@ class PcAutomaticSoundTest(ServerBase):
         self.assertEqual(self.api.apply_audio(), "auto")
         st, body, _ = self.call("GET", "/api/audio", token=self.full)
         self.assertEqual((body["automatic_is"], body["automatic_note"]), ("auto", "Several HDMI screens: choose the sound output by hand"))
+
+    def sets(self):
+        return [c[2] for c in self.ipc.calls if c[:2] == ("set_property", "audio-device")]
+
+    def test_a_failed_or_empty_read_keeps_the_last_pick(self):
+        self.using[0] = "HDMI-A-1"
+        self.assertEqual(self.api.apply_audio(), "alsa/plughw:CARD=PCH,DEV=3")
+
+        def timeout(cmd, **kw):
+            raise subprocess.TimeoutExpired(cmd, 3)
+        for run in (runner("", returncode=1), timeout,                                 # amixer failed, timed out
+                    runner(amixer_text({3: None, 7: None, 8: None}))):                # a jack dropped for a moment
+            self.api.SOUND_RUN = run
+            for _ in range(3):                                                           # ensure_audio every few seconds
+                self.assertEqual(self.api.ensure_audio(), "alsa/plughw:CARD=PCH,DEV=3")
+        self.assertNotIn("auto", self.sets())                                           # never to the analog jack
+        st, body, _ = self.call("GET", "/api/audio", token=self.full)
+        self.assertEqual((body["automatic_is"], body["automatic_note"]), ("alsa/plughw:CARD=PCH,DEV=3", ""))
+
+    def test_a_new_pick_for_the_same_screen_needs_two_reads_in_a_row(self):
+        self.using[0] = "HDMI-A-1"
+        self.assertEqual(self.api.apply_audio(), "alsa/plughw:CARD=PCH,DEV=3")
+        moved = runner(amixer_text({3: None, 8: eld(*DELL)}))         # the driver gave HDMI-A-1's screen PCM 8
+        steady = self.api.SOUND_RUN
+        self.api.SOUND_RUN = moved
+        self.assertEqual(self.api.ensure_audio(), "alsa/plughw:CARD=PCH,DEV=3")       # one read: not yet
+        self.api.SOUND_RUN = steady
+        self.assertEqual(self.api.ensure_audio(), "alsa/plughw:CARD=PCH,DEV=3")       # back again: the odd one forgotten
+        self.api.SOUND_RUN = moved
+        self.assertEqual(self.api.ensure_audio(), "alsa/plughw:CARD=PCH,DEV=3")
+        self.assertEqual(self.api.ensure_audio(), "alsa/plughw:CARD=PCH,DEV=8")       # two in a row: taken
+        self.assertEqual(self.sets()[-1], "alsa/plughw:CARD=PCH,DEV=8")
+
+    def test_get_audio_reads_amixer_once(self):
+        self.using[0] = "HDMI-A-1"
+        self.call("GET", "/api/audio", token=self.full)
+        self.assertEqual(len(self.api.SOUND_RUN.calls), 1)
+        self.call("POST", "/api/audio", {"device": "auto"}, token=self.full)
+        self.assertEqual(len(self.api.SOUND_RUN.calls), 2)
 
     def test_a_choice_made_by_hand_is_kept(self):
         self.settings.data["audio"]["device"] = "alsa/default:CARD=PCH"

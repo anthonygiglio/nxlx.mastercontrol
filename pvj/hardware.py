@@ -266,21 +266,30 @@ def _amixer(card, run=None):
     exe = shutil.which("amixer") if run is None else "amixer"
     if not exe:
         return None
-    r = (run or subprocess.run)([exe, "-c", str(card), "contents"], capture_output=True, text=True, timeout=3)
+    try:
+        r = (run or subprocess.run)([exe, "-c", str(card), "contents"], capture_output=True, text=True, timeout=3)
+    except (OSError, subprocess.SubprocessError):
+        return None
     return r.stdout if r.returncode == 0 else None
 
 
 def hdmi_sound_screens(root="/", run=None):
     """The HDMI and DisplayPort sound PCMs that have a screen, by ALSA's jack controls: [{"card", "card_id", "device",
-    "hdmi_index", "identity"}], `identity` being the ELD's (name, maker, product) or None. [] when amixer is missing or
-    says nothing. `run` stands in for subprocess.run (tests)."""
+    "hdmi_index", "identity"}], `identity` being the ELD's (name, maker, product) or None. None when the read failed
+    (amixer missing, failing or timing out on a card), so a caller can tell a failed read from no screens.
+    `run` stands in for subprocess.run (tests)."""
     found = []
+    failed = False
     for card_dir in sorted(glob.glob(os.path.join(root, "proc/asound/card[0-9]*"))):
         m = re.fullmatch(r"card([0-9]{1,3})", os.path.basename(card_dir))
         card_id = _read("/", os.path.join(card_dir, "id"))
         if not m or not card_id or not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", card_id):
             continue
-        controls = parse_amixer(_amixer(int(m.group(1)), run))
+        text = _amixer(int(m.group(1)), run)
+        if text is None:
+            failed = True
+            continue
+        controls = parse_amixer(text)
         named = {}
         for info in glob.glob(os.path.join(card_dir, "pcm*p", "info")):
             dm = re.fullmatch(r"pcm([0-9]{1,3})p", os.path.basename(os.path.dirname(info)))
@@ -294,20 +303,24 @@ def hdmi_sound_screens(root="/", run=None):
             eld = controls[device]["eld"]
             found.append({"card": int(m.group(1)), "card_id": card_id, "device": device, "hdmi_index": k,
                           "identity": eld_identity(eld) if eld else None})
-    return found
+    return None if failed else found
 
 
-def hdmi_sound_for(connector, connectors, root="/", run=None):
+def hdmi_sound_for(connector, connectors, root="/", run=None, screens=None):
     """The sound PCM (an item of hdmi_sound_screens, with "how") of the screen on DRM connector `connector`, or None
     when it cannot be told safely. `connectors` is drm_connectors() (each with "status": "connected" or not).
 
     1. One PCM with a screen: it is this screen's ("the only screen"), the common case of one projector on a PC.
     2. Several: only when every PCM's ELD and every connected HDMI or DisplayPort screen's EDID has a (name, maker,
        product) that no other on its side has, and the connector's is one PCM's ("monitor name and model"). Two
-       screens that look alike on either side give None: on the M710q the ELDs and EDIDs did not agree (D137)."""
+       screens that look alike on either side give None: on the M710q the ELDs and EDIDs did not agree (D137).
+    `screens` is hdmi_sound_screens() when the caller has read it already."""
     if connector_kind(connector) not in ("hdmi", "dp"):
         return None
-    screens = hdmi_sound_screens(root, run)
+    if screens is None:
+        screens = hdmi_sound_screens(root, run)
+    if not screens:
+        return None
     if len(screens) == 1:
         return dict(screens[0], how="the only screen")
     if len(screens) < 2:

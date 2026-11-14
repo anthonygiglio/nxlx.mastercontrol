@@ -4214,12 +4214,25 @@ class Api:
     SOUND_ROOT = "/"        # where /proc/asound and /sys/class/drm are read for a PC's HDMI sound (tests point it at a fake tree)
     SOUND_RUN = None        # stands in for subprocess.run when amixer is asked (tests); None runs the real amixer
 
-    def _auto_audio(self, names):
+    _UNREAD = object()
+    _pc_lock = threading.Lock()     # the PC pick below is read and changed by the request threads and autostart's
+
+    def _is_pi(self):
+        return str((self.board or {}).get("kind", "")).startswith("pi")
+
+    def _pc_screens(self):
+        """hardware.hdmi_sound_screens(), or None when the read failed (amixer failing or timing out)."""
+        try:
+            return hardware.hdmi_sound_screens(self.SOUND_ROOT, self.SOUND_RUN)
+        except Exception:
+            return None
+
+    def _auto_audio(self, names, screens=_UNREAD):
         """The sound output "automatic" means: on a Pi, HDMI on the connected port (the picture and the sound go to
         the same screen); otherwise mpv's own choice, which on a Pi is the headphone jack (found on a real Pi 4).
         On a PC (any board that is not a Pi), the HDMI or DisplayPort sound device of the screen the picture is on,
         when it can be told (J-155, D137); mpv's own choice there is the analog jack. When it cannot be told, mpv's own
-        choice, as before."""
+        choice, as before. `screens` is the PC's HDMI screens when the caller has read them already."""
         conns = hardware.drm_connectors()
         for c in conns:
             m = re.fullmatch(r"HDMI-A-([0-9])", c["connector"])
@@ -4227,12 +4240,35 @@ class Api:
                 want = "alsa/sysdefault:CARD=vc4hdmi%d" % (int(m.group(1)) - 1)
                 if want in names:
                     return want
-        if str((self.board or {}).get("kind", "")).startswith("pi"):
+        if self._is_pi():
             return "auto"
+        if screens is self._UNREAD:
+            screens = self._pc_screens()
         try:
-            return self._pc_screen_sound(names, conns) or "auto"
+            return self._pc_steady(names, conns, screens)
         except Exception:       # the sound must never stop on a file this could not read
             return "auto"
+
+    def _pc_steady(self, names, conns, screens):
+        """The PC pick, held steady (the review of J-155): ensure_audio asks every few seconds, and a read that fails,
+        times out or comes back empty (a jack that drops for a moment while a screen changes mode) must not move the
+        sound to the analog jack and back in a show. So such a read keeps the last pick; a new pick for the same
+        screen is taken only when two reads in a row give it. The first pick, and a pick for another screen (the
+        output was changed on purpose), are taken at once."""
+        connector = self._picture_connector(conns)
+        with self._pc_lock:
+            st = self.__dict__.setdefault("_pc_pick", {"name": None, "connector": None, "pending": None})
+            if not screens:
+                st["pending"] = None
+                if st["name"] is not None and (st["name"] == "auto" or st["name"] in names):
+                    return st["name"]
+                return "auto"
+            candidate = self._pc_screen_sound(names, conns, connector, screens) or "auto"
+            if st["name"] is None or connector != st["connector"] or candidate == st["name"] or st["pending"] == candidate:
+                st.update(name=candidate, connector=connector, pending=None)
+                return candidate
+            st["pending"] = candidate
+            return st["name"] if st["name"] == "auto" or st["name"] in names else "auto"
 
     def _picture_connector(self, conns):
         """The connector the picture is on: the one the player said it draws on, else the chosen output when it is
@@ -4259,12 +4295,11 @@ class Api:
                     return name
         return None
 
-    def _pc_screen_sound(self, names, conns):
-        """mpv's name for the sound device of the screen the picture is on, when mpv lists it; else None."""
-        connector = self._picture_connector(conns)
+    def _pc_screen_sound(self, names, conns, connector, screens):
+        """mpv's name for the sound device of the screen `connector` (the picture's), when mpv lists it; else None."""
         if not connector:
             return None
-        pcm = hardware.hdmi_sound_for(connector, conns, self.SOUND_ROOT, self.SOUND_RUN)
+        pcm = hardware.hdmi_sound_for(connector, conns, self.SOUND_ROOT, self.SOUND_RUN, screens=screens)
         if not pcm:
             return None
         wants = ["alsa/plughw:CARD=%s,DEV=%d" % (pcm["card_id"], pcm["device"])]        # the one measured on the M710q
@@ -4277,15 +4312,12 @@ class Api:
 
     SEVERAL_SCREENS = "Several HDMI screens: choose the sound output by hand"
 
-    def _automatic_note(self, automatic_is):
+    def _automatic_note(self, automatic_is, screens):
         """What the sound section says when Automatic could not pick a screen's sound on a PC with several HDMI screens
-        (D137); "" otherwise."""
-        if automatic_is != "auto" or str((self.board or {}).get("kind", "")).startswith("pi"):
+        (D137); "" otherwise. `screens` is the read _auto_audio used."""
+        if automatic_is != "auto" or self._is_pi() or not screens:
             return ""
-        try:
-            return self.SEVERAL_SCREENS if len(hardware.hdmi_sound_screens(self.SOUND_ROOT, self.SOUND_RUN)) > 1 else ""
-        except Exception:
-            return ""
+        return self.SEVERAL_SCREENS if len(screens) > 1 else ""
 
     def _started_playing(self, capture=False, ndi=False, live=False):
         """Something is about to be on screen: take any on-screen pairing PIN off it at once, and stop a live input
@@ -5268,20 +5300,22 @@ class Api:
         except (ApiError, PlayerError):
             return None
 
-    def apply_audio(self):
+    def apply_audio(self, screens=_UNREAD):
         """Point the player at the chosen output. Called when the setting changes and whenever the player restarts."""
         names = {d["name"] for d in self._audio_devices()}
         chosen = self.settings.data["audio"]["device"]
-        target = chosen if chosen != "auto" and chosen in names else self._auto_audio(names)
+        target = chosen if chosen != "auto" and chosen in names else self._auto_audio(names, screens)
         self._player_call(self.player.ipc.request, "set_property", "audio-device", target)
         return target
 
-    def get_audio(self, body, device, client):
+    def get_audio(self, body, device, client, screens=_UNREAD):
         devices = self._audio_devices()
         names = {d["name"] for d in devices}
-        automatic_is = self._auto_audio(names)
+        if screens is self._UNREAD:         # one read of the PC's HDMI screens for the answer and its note
+            screens = None if self._is_pi() else self._pc_screens()
+        automatic_is = self._auto_audio(names, screens)
         return {"device": self.settings.data["audio"]["device"], "devices": devices, "automatic_is": automatic_is,
-                "automatic_note": self._automatic_note(automatic_is)}
+                "automatic_note": self._automatic_note(automatic_is, screens)}
 
     def set_audio(self, body, device, client):
         chosen = body.get("device")
@@ -5291,8 +5325,9 @@ class Api:
         with self.settings.lock:
             self.settings.data["audio"]["device"] = chosen
             self.settings.save()
-        target = self.apply_audio()
-        return dict(self.get_audio({}, device, client), in_use=target)
+        screens = None if self._is_pi() else self._pc_screens()        # one read for the change and the answer
+        target = self.apply_audio(screens)
+        return dict(self.get_audio({}, device, client, screens), in_use=target)
 
     # --- autostart -----------------------------------------------------
     def get_autostart(self, body, device, client):
