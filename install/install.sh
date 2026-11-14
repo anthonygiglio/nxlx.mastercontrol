@@ -252,7 +252,7 @@ if [ "$va_arch" = x86_64 ]; then
 	va_pkgs=()
 	va_names=()
 	for dev in "$va_pci"/*; do
-		[ -r "$dev/class" ] && [ -r "$dev/vendor" ] || continue
+		if [ ! -r "$dev/class" ] || [ ! -r "$dev/vendor" ]; then continue; fi
 		case "$(cat "$dev/class" 2>/dev/null)" in 0x03*) ;; *) continue ;; esac
 		case "$(cat "$dev/vendor" 2>/dev/null)" in
 		0x8086) p=intel-media-va-driver; n=Intel ;;
