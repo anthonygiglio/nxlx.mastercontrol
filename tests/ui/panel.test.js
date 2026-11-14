@@ -5000,6 +5000,134 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.waitForSelector('.pads');
     assert.strictEqual(await post('/api/modules/room', { enabled: false }), 200);
 
+    // The Strobe (D134, the owner, 2026-11-11: "a hold-to-strobe button for the panel... that stops the moment you let go"):
+    // on Shape > Effect for Operators and Owners. It arms the node when shown; a press holds under this tab's own holder
+    // and renews every 0.2 s; letting go, sliding off or the window losing focus releases; Space holds too; a refused
+    // renewal stops it and says to press again; waiting is said; the settings are sent on letting go of a slider. Against
+    // the sandbox node, whose strobe goes on as the effect (no chain here)
+    {
+      const strobeReq = [];
+      const seenS = (q) => { if (q.method() === 'POST' && /\/api\/strobe/.test(q.url())) strobeReq.push([new URL(q.url()).pathname, q.postDataJSON()]); };
+      page.on('request', seenS);
+      // a clip with a picture: a strobe needs one to flash over (the harness player takes a moment to have it). The hold
+      // puts the strobe on as the effect here, so it is refused by the same check as GET /api/effects (effects.available).
+      // That check read "available" from the picture before this play (10 ms after it, on CI run 43138645183), and the
+      // player had no picture a moment later while it loaded the clip, so the hold was refused. So: stop, wait until
+      // nothing has a picture, then play and wait for the picture of this clip, seen on three polls in a row.
+      // On CI (CI run 43613035748, mpv 0.37) the picture was there on three polls within 80 ms of the play, before the clip
+      // had a frame to show (mpv gives the stream's size once it has probed it, then drops it while it starts the decoder),
+      // and the hold 0.4 s later found none: 409 "Nothing with a picture is playing". So the picture is trusted only once
+      // the clip is rolling too: the player reports a position of 0.2 s or more (a frame has been shown), on the same polls.
+      assert.strictEqual(await post('/api/control', { action: 'stop' }), 200);
+      await page.waitForFunction(() => fetch('/api/effects').then((r) => r.json()).then((d) => d.available === false), null, { timeout: 20000 });
+      assert.strictEqual(await post('/api/play', { file: 'intro.mkv' }), 200);
+      await page.waitForFunction(async () => {
+        for (let i = 0; i < 3; i++) {
+          if (i) await new Promise((r) => setTimeout(r, 100));
+          if ((await fetch('/api/effects').then((r) => r.json())).available !== true) return false;
+          const at = (await fetch('/api/status').then((r) => r.json())).player.position;
+          if (typeof at !== 'number' || at < 0.2) return false;
+        }
+        return true;
+      }, null, { timeout: 20000 })
+        .catch(async () => { throw new Error('the picture for the strobe: ' + JSON.stringify(await get('/api/effects').then((d) => [d.available, d.unavailable]))); });
+      await go(page, 'shape/effect');
+      await page.waitForSelector('#strobecard #strobehold:not([disabled])', { timeout: 10000 });
+      await page.waitForTimeout(300);
+      assert.deepStrictEqual(strobeReq.filter((x) => x[0] === '/api/strobe'), [['/api/strobe', { arm: true }]], 'the button being shown arms the node, so the first hold is quick');
+      const kinds = () => strobeReq.map((x) => x[0].replace('/api/strobe', '') || 'set');
+      const holder = () => strobeReq.filter((x) => x[0] !== '/api/strobe').map((x) => x[1].holder);
+      // a press and three quarters of a second: one hold, renewals every 0.2 s, one release on letting go
+      strobeReq.length = 0;
+      const box = await page.locator('#strobehold').boundingBox();
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      // The test clip is 2 seconds long and loops, and at the start of each pass (and while the decoder starts) mpv has no
+      // video-params for a moment, so a hold that lands there is refused with the same 409 ("Nothing with a picture is
+      // playing"). Loading the screen above takes about as long as a pass, so the clip's phase at the press is not known.
+      // So press in the middle of a pass: the picture is there and the clip is between 0.3 and 0.8 seconds in, which
+      // leaves more than a second (the hold below lasts 0.75) before the next pass starts.
+      await page.waitForFunction(async () => {
+        const d = await fetch('/api/effects').then((r) => r.json());
+        const at = (await fetch('/api/status').then((r) => r.json())).player.position;
+        return d.available === true && typeof at === 'number' && at >= 0.3 && at < 0.8;
+      }, null, { polling: 40, timeout: 20000 })
+        .catch(async () => { throw new Error('no moment in the middle of a pass of the strobe clip: ' + JSON.stringify(await get('/api/status').then((d) => d.player))); });
+      await page.mouse.down();
+      await page.waitForFunction(() => /Flashing|Waiting|Held/.test(document.getElementById('strobestate').textContent), null, { timeout: 8000 });
+      assert.strictEqual(await page.getAttribute('#strobehold', 'aria-pressed'), 'true', 'the button is drawn pressed while held');
+      await page.waitForTimeout(750);
+      await page.mouse.up();
+      await page.waitForFunction(() => /^Ready/.test(document.getElementById('strobestate').textContent), null, { timeout: 3000 });
+      const k1 = kinds();
+      assert.strictEqual(k1[0], '/hold', 'a hold first: ' + JSON.stringify(k1));
+      assert(k1.filter((k) => k === '/renew').length >= 2, 'renewed while held: ' + JSON.stringify(k1));
+      assert.strictEqual(k1[k1.length - 1], '/release', 'released on letting go');
+      const hs = holder();
+      assert(hs.length && hs.every((x) => x === hs[0]) && /^panel-[0-9a-f]{24}$/.test(hs[0]), 'one holder of this tab\'s own: ' + hs[0]);
+      // sliding off the button lets go
+      strobeReq.length = 0;
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      await page.waitForTimeout(300);
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height + 120);
+      await page.waitForTimeout(300);
+      assert.strictEqual(kinds()[kinds().length - 1], '/release', 'sliding off the button lets go: ' + JSON.stringify(kinds()));
+      await page.mouse.up();
+      // the window losing focus lets go
+      strobeReq.length = 0;
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      await page.waitForTimeout(300);
+      await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+      await page.waitForTimeout(200);
+      assert.strictEqual(kinds()[kinds().length - 1], '/release', 'the window losing focus lets go');
+      await page.mouse.up();
+      // Space holds and releases
+      strobeReq.length = 0;
+      await page.focus('#strobehold');
+      await page.keyboard.down('Space');
+      await page.waitForTimeout(500);
+      await page.keyboard.up('Space');
+      await page.waitForTimeout(200);
+      assert.deepStrictEqual([kinds()[0], kinds()[kinds().length - 1]], ['/hold', '/release'], 'Space holds and lets go: ' + JSON.stringify(kinds()));
+      // waiting is said; a refused renewal stops it and says to press again
+      const waitR = (route) => route.fulfill({ json: { ok: true, held: 1, on: false, renew_every: 0.2, expires_in: 0.5, waiting: true } });
+      const refuseR = (route) => route.fulfill({ status: 409, json: { error: 'that hold has ended' } });
+      await page.route('**/api/strobe/hold', waitR);
+      await page.route('**/api/strobe/renew', refuseR);
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      await page.waitForFunction(() => /Let go and press again/.test(document.getElementById('strobestate').textContent), null, { timeout: 3000 });
+      assert.strictEqual(await page.getAttribute('#strobehold', 'aria-pressed'), 'false', 'a refused renewal ends the hold here too');
+      await page.mouse.up();
+      await page.unroute('**/api/strobe/renew', refuseR);
+      const beforeWait = strobeReq.length;
+      await page.mouse.down();
+      await page.waitForFunction(() => /Waiting a moment/.test(document.getElementById('strobestate').textContent), null, { timeout: 3000 });
+      await page.mouse.up();
+      await page.unroute('**/api/strobe/hold', waitR);
+      assert(strobeReq.length > beforeWait, 'the waiting hold was asked for');
+      for (let i = problems.length - 1; i >= 0; i--) if (/status of 409/.test(problems[i])) problems.splice(i, 1);      // (the refusal this step makes on purpose)
+      // the settings: the rate on letting go of the slider, up to the cap; the way at once
+      strobeReq.length = 0;
+      assert.strictEqual(await page.getAttribute('#stroberate', 'max'), '3', 'the rate goes up to the cap of 3 a second');
+      await page.$eval('#stroberate', (e) => { e.value = '2.5'; e.dispatchEvent(new Event('input')); e.dispatchEvent(new Event('change')); });
+      await page.$eval('#strobeway-black', (e) => e.click());
+      await page.waitForTimeout(400);
+      assert.deepStrictEqual(strobeReq.map((x) => x[1]), [{ rate: 2.5 }, { way: 'black' }], 'the rate and the way are sent');
+      assert.strictEqual(await page.textContent('#stroberateval'), '2.5 a second');
+      for (const [w, hgt] of [[390, 844], [820, 1180], [1440, 900]]) {
+        await page.setViewportSize({ width: w, height: hgt });
+        await page.waitForTimeout(300);
+        const lay = await page.evaluate(() => { const b = document.getElementById('strobehold').getBoundingClientRect(); return { wide: document.documentElement.scrollWidth - innerWidth, h: Math.round(b.height), shown: b.width > 0 }; });
+        assert(lay.wide === 0 && lay.shown && lay.h >= 80, 'the hold button is a big target and fits at ' + w + ': ' + JSON.stringify(lay));
+      }
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.reload();                      // (the phone emulation keeps a zoomed-out scale after 1440 and back)
+      await page.waitForSelector('#wsmain');
+      page.off('request', seenS);
+      await go(page, 'now/now');
+    }
     // Effects: a filter over what plays. Shape > Effect has the card: the effect that is on with Previous, On or
     // Off and Next, the list, the controls of the one that is on (Amount first) and its presets. It is the one place:
     // the compact strip that Shape > Controls carried until D72 (before the shell: Live) was a copy of the card's
