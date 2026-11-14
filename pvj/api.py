@@ -4211,16 +4211,66 @@ class Api:
         return [{"name": d["name"], "description": str(d.get("description", ""))[:120]}
                 for d in (lst or []) if isinstance(d, dict) and isinstance(d.get("name"), str)]
 
+    SOUND_ROOT = "/"        # where /proc/asound and /sys/class/drm are read for a PC's HDMI sound (tests point it at a fake tree)
+
     def _auto_audio(self, names):
         """The sound output "automatic" means: on a Pi, HDMI on the connected port (the picture and the sound go to
-        the same screen); otherwise mpv's own choice, which on a Pi is the headphone jack (found on a real Pi 4)."""
-        for c in hardware.drm_connectors():
+        the same screen); otherwise mpv's own choice, which on a Pi is the headphone jack (found on a real Pi 4).
+        On a PC (any board that is not a Pi), the HDMI or DisplayPort sound device of the screen the picture is on,
+        when it can be told (J-155, D137); mpv's own choice there is the analog jack. When it cannot be told, mpv's own
+        choice, as before."""
+        conns = hardware.drm_connectors()
+        for c in conns:
             m = re.fullmatch(r"HDMI-A-([0-9])", c["connector"])
             if m and c["status"] == "connected":
                 want = "alsa/sysdefault:CARD=vc4hdmi%d" % (int(m.group(1)) - 1)
                 if want in names:
                     return want
-        return "auto"
+        if str((self.board or {}).get("kind", "")).startswith("pi"):
+            return "auto"
+        try:
+            return self._pc_screen_sound(names, conns) or "auto"
+        except Exception:       # the sound must never stop on a file this could not read
+            return "auto"
+
+    def _picture_connector(self, conns):
+        """The connector the picture is on: the one the player said it draws on, else the chosen output when it is
+        connected, else the first connected HDMI screen, then DisplayPort (as the player's own choice goes, D128)."""
+        connected = [c["connector"] for c in conns if c.get("status") == "connected"
+                     and hardware.connector_kind(c["connector"]) in ("hdmi", "dp")]
+        screen = getattr(self, "screen", None)
+        if screen is not None:
+            try:
+                using = (screen.report() or {}).get("connector")
+            except Exception:
+                using = None
+            if using:
+                return using if using in connected else None     # drawn on a screen without HDMI sound (VGA, a panel)
+            try:
+                saved = screen.saved_output()
+            except Exception:
+                saved = None
+            if saved in connected:
+                return saved
+        for kind in ("hdmi", "dp"):
+            for name in connected:
+                if hardware.connector_kind(name) == kind:
+                    return name
+        return None
+
+    def _pc_screen_sound(self, names, conns):
+        """mpv's name for the sound device of the screen the picture is on, when mpv lists it; else None."""
+        connector = self._picture_connector(conns)
+        if not connector:
+            return None
+        pin = hardware.hdmi_sound_for(connector, conns, self.SOUND_ROOT)
+        if not pin:
+            return None
+        for want in ("alsa/plughw:CARD=%s,DEV=%d" % (pin["card_id"], pin["device"]),     # the one measured on the M710q
+                     "alsa/hdmi:CARD=%s,DEV=%d" % (pin["card_id"], pin["hdmi_index"])):
+            if want in names:
+                return want
+        return None
 
     def _started_playing(self, capture=False, ndi=False, live=False):
         """Something is about to be on screen: take any on-screen pairing PIN off it at once, and stop a live input

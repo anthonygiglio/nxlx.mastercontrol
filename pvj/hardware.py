@@ -169,6 +169,107 @@ def has_desktop(env=None):
     return bool(env.get("WAYLAND_DISPLAY") or env.get("DISPLAY"))
 
 
+# --- the sound device of a screen on a PC (J-155, D137) ----------------------------------------------------------------
+# On a PC the ALSA default is the analog jack, so mpv's own "auto" never reaches the screen's HDMI sound (measured on an
+# Intel M710q: a tone on auto never reached the HDMI capture card; on plughw:CARD=PCH,DEV=3 it did). The HDA HDMI codec
+# lists one ELD file a pin, /proc/asound/cardN/eld#CODEC.PIN, with the monitor's name and whether one is present; its
+# PCM devices are named "HDMI 0", "HDMI 1" ... in pin order (devices 3, 7, 8, 9 ... on Intel). The DRM connector's EDID
+# carries the same monitor name, which is how a pin is matched to a connector, not by guessing from port letters.
+_ELD_FILE = re.compile(r"eld#([0-9]{1,3})\.([0-9]{1,3})(?:\.([0-9]{1,3}))?")
+_HDA_HDMI_DEVICES = (3, 7, 8, 9, 10, 11)       # the HDA driver's fixed HDMI PCM numbers, used when pcmNp/info is missing
+_EDID_HEADER = b"\x00\xff\xff\xff\xff\xff\xff\x00"
+
+
+def edid_monitor_name(connector, root="/"):
+    """The monitor name in a DRM connector's EDID (its 0xFC descriptor), or None (no screen, no name, unreadable)."""
+    want = re.compile(r"card[0-9]{1,3}-" + re.escape(str(connector)))
+    for path in sorted(glob.glob(os.path.join(root, "sys/class/drm/card*-*"))):
+        if not want.fullmatch(os.path.basename(path)):
+            continue
+        try:
+            with open(os.path.join(path, "edid"), "rb") as f:
+                data = f.read(256)
+        except OSError:
+            continue
+        if len(data) < 128 or data[:8] != _EDID_HEADER:
+            continue
+        for off in (54, 72, 90, 108):
+            d = data[off:off + 18]
+            if d[:3] == b"\0\0\0" and d[3] == 0xFC:
+                name = d[5:18].split(b"\n")[0].decode("ascii", "replace").strip()
+                return name or None
+    return None
+
+
+def _eld_fields(text):
+    fields = {}
+    for line in (text or "").splitlines():
+        parts = line.split(None, 1)
+        if parts:
+            fields[parts[0]] = parts[1].strip() if len(parts) > 1 else ""
+    return fields
+
+
+def hdmi_sound_pins(root="/"):
+    """The HDMI and DisplayPort sound pins of the HDA sound cards, from their ELD files: [{"card", "card_id", "pin",
+    "hdmi_index", "device", "present", "name", "type"}]. `device` is the ALSA PCM device of the pin (None when it
+    cannot be told) and `hdmi_index` the N of ALSA's hdmi:CARD=X,DEV=N. A DP MST stream (eld#C.P.D with D above 0) is
+    left out: which PCM it gets is not fixed."""
+    out = []
+    for card_dir in sorted(glob.glob(os.path.join(root, "proc/asound/card[0-9]*"))):
+        m = re.fullmatch(r"card([0-9]{1,3})", os.path.basename(card_dir))
+        card_id = _read("/", os.path.join(card_dir, "id"))
+        if not m or not card_id or not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", card_id):
+            continue
+        named = {}
+        for info in glob.glob(os.path.join(card_dir, "pcm*p", "info")):
+            dm = re.fullmatch(r"pcm([0-9]{1,3})p", os.path.basename(os.path.dirname(info)))
+            nm = re.search(r"(?m)^name: HDMI ([0-9]{1,2})\s*$", _read("/", info) or "")
+            if dm and nm:
+                named[int(nm.group(1))] = int(dm.group(1))
+        elds = []
+        for path in glob.glob(os.path.join(card_dir, "eld#*")):
+            em = _ELD_FILE.fullmatch(os.path.basename(path))
+            if em and int(em.group(3) or 0) == 0:
+                elds.append((int(em.group(1)), int(em.group(2)), path))
+        for codec, pin, path in sorted(elds):
+            f = _eld_fields(_read("/", path))
+            if named:
+                device = named.get(pin)
+            else:
+                device = _HDA_HDMI_DEVICES[pin] if pin < len(_HDA_HDMI_DEVICES) else None
+            out.append({"card": int(m.group(1)), "card_id": card_id, "pin": pin, "hdmi_index": pin, "device": device,
+                        "present": f.get("monitor_present") == "1" and f.get("eld_valid", "1") == "1",
+                        "name": f.get("monitor_name") or None, "type": f.get("connection_type") or None})
+    return out
+
+
+def hdmi_sound_for(connector, connectors, root="/"):
+    """The sound pin (an item of hdmi_sound_pins, with "how") of the screen on DRM connector `connector`, or None when
+    it cannot be told. The monitor name in the connector's EDID is matched with the pins' ELD; without a name, or with
+    no single pin of that name, the only connected HDMI or DisplayPort screen is matched with the only pin that has a
+    monitor present. Two screens of one model and no other clue give None: a guess could send the sound to the wrong
+    screen. `connectors` is drm_connectors()."""
+    kind = connector_kind(connector)
+    if kind not in ("hdmi", "dp"):
+        return None
+    want_type = "HDMI" if kind == "hdmi" else "DisplayPort"
+    pins = [p for p in hdmi_sound_pins(root) if p["present"] and p["device"] is not None
+            and p["type"] in (None, "HDMI", "DisplayPort") and p["type"] in (None, want_type)]
+    if not pins:
+        return None
+    name = edid_monitor_name(connector, root)
+    if name:
+        same = [p for p in pins if p["name"] == name]
+        if len(same) == 1:
+            return dict(same[0], how="monitor name")
+    screens = [c for c in connectors if c.get("status") == "connected" and connector_kind(c.get("connector")) in ("hdmi", "dp")]
+    if len(screens) == 1 and screens[0].get("connector") == connector and len(pins) == 1 \
+            and not (name and pins[0]["name"] and pins[0]["name"] != name):      # two names that differ are two screens
+        return dict(pins[0], how="the only screen")
+    return None
+
+
 def report(root="/"):
     board = detect_board(root)
     return {
