@@ -517,6 +517,51 @@ class ReviewFixes(Base):
         self.assertEqual(self.read("etc/passwd"), PASSWD, "no account was renamed")
 
 
+class SecondReview(Base):
+    """The findings of the converter's second review (2026-11-14)."""
+
+    def test_confirm_needs_a_finished_run_and_one_converter_works_at_a_time(self):
+        total = len(re.findall(r"(?m)^    +\d+  ", convert(self.root, "--plan").stdout))
+        self.assertEqual(convert(self.root, "--run", env={"NXLX_CONVERT_FAIL_AT": str(total // 2)}).returncode, 1)
+        r = convert(self.root, "--confirm")
+        self.assertEqual(r.returncode, 2, r.stdout)
+        self.assertIn("the latest run did not finish (an injected failure", r.stdout)
+        self.assertTrue(os.path.isfile(self.p("etc/systemd/system/nxlx-convert-undo.timer")), "the undo stays armed")
+        half = snapshot(self.root)
+        with open(self.p("var/backups/nxlx-convert/lock")) as held:          # an undo (or a run) is working
+            fcntl.flock(held, fcntl.LOCK_EX)
+            for args in (("--run",), ("--undo",), ("--undo", "--auto"), ("--confirm",)):
+                r = convert(self.root, *args)
+                self.assertEqual(r.returncode, 2, "%s: %s" % (args, r.stdout))
+                self.assertIn("another nxlx-convert (a run, an undo or a confirm) is working on this node now", r.stdout)
+            self.assertEqual(snapshot(self.root), half, "nothing was changed while the lock was held")
+        self.assertEqual(convert(self.root, "--run").returncode, 0)
+        r = convert(self.root, "--confirm")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertFalse(os.path.exists(self.p("etc/systemd/system/nxlx-convert-undo.timer")))
+
+    def test_an_undone_conversion_cannot_be_confirmed(self):
+        self.assertEqual(convert(self.root, "--run").returncode, 0)
+        self.assertEqual(convert(self.root, "--undo").returncode, 0)
+        r = convert(self.root, "--confirm")
+        self.assertEqual(r.returncode, 2, r.stdout)
+        self.assertIn("the latest conversion was undone", r.stdout)
+
+    def test_a_helper_the_node_had_must_be_in_the_new_release(self):
+        # The picture helper was built on this node (the old release has it); its unit runs it from render/.
+        write(self.root, "opt/pvj/releases/9.9.1/render/pvj-raster", "a program\n", 0o755)
+        r = convert(self.root, "--run")
+        self.assertEqual(r.returncode, 2, r.stdout)
+        self.assertIn("does not have the new names: render/nxlx-raster is missing", r.stdout)
+        write(self.root, "opt/pvj/releases/9.9.2/render/nxlx-raster", "a program\n", 0o755)
+        self.assertEqual(convert(self.root, "--plan").returncode, 0)
+
+    def test_an_optional_helper_the_node_never_had_is_not_asked_for(self):
+        self.assertFalse(os.path.exists(self.p("opt/pvj/releases/9.9.1/render/pvj-raster")))
+        out = convert(self.root, "--plan").stdout
+        self.assertIn("has the programs the converted units run", out)
+
+
 class Refusals(Base):
     def assertRefused(self, r, said):
         self.assertEqual(r.returncode, 2, r.stdout + r.stderr)

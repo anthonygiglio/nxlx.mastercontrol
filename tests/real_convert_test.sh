@@ -79,7 +79,16 @@ VERSION="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$NEW/mctl/__init__.py")"
 [ -n "$VERSION" ] || fail "the stand-in has no mctl/__init__.py"
 REL="/opt/pvj/releases/$VERSION-nxlx"
 mkdir -p "$REL"
-cp -a "$NEW/mctl" "$NEW/bin" "$REL/"
+cp -a "$NEW/mctl" "$NEW/bin" "$NEW/render" "$REL/"
+# The programs install.sh built on this runner for the old release, under their new names, as install.sh will
+# build them for the new one (the converter asks for each one the node had).
+for prog in render link link-peer raster; do
+	if [ -x "$OLD_CURRENT/render/pvj-$prog" ]; then
+		new="mctl-render"
+		[ "$prog" = render ] || new="nxlx-$prog"
+		cp -a "$OLD_CURRENT/render/pvj-$prog" "$REL/render/$new"
+	fi
+done
 chown -R root:root "$REL"
 chmod -R go-w "$REL"
 ln -sfn "$REL" /opt/pvj/current.tmp
