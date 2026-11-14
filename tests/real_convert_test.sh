@@ -114,6 +114,14 @@ grep -q "the account pvj-dev is in use" <<<"$out" || fail "the refusal does not 
 kill "$HOLDER"
 wait "$HOLDER" 2>/dev/null || true
 HOLDER=""
+# su opens a login session, so systemd keeps a user manager for pvj-dev for a few seconds after the shell is gone,
+# and --run refuses while any process of the account is left. End the session, then wait until nothing is.
+loginctl terminate-user pvj-dev 2>/dev/null || true
+for _ in $(seq 1 60); do
+	pgrep -u pvj-dev >/dev/null || break
+	sleep 1
+done
+if pgrep -u pvj-dev >/dev/null; then fail "pvj-dev still has processes after its login ended"; fi
 
 step "--run, in its own unit"
 "${CONVERT[@]}" --run || fail "the run failed"
