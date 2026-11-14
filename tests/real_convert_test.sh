@@ -167,7 +167,7 @@ step "--undo puts the old names back"
 { has_user pvj-web && has_user pvj-dev && has_group pvj && ! has_user nxlx-web && ! has_user nxlx-dev; } || fail "the old accounts are not back"
 { [ "$(uid_of pvj-dev)" = "$UID_DEV" ] && [ -d /home/pvj-dev ]; } || fail "the login account and its home"
 { [ -d /opt/pvj ] && [ ! -e /opt/nxlx ] && [ -f /etc/systemd/system/pvj-web.service ]; } || fail "the folders and units"
-{ visudo -c >/dev/null && sudo -l -U pvj-dev | grep -q NOPASSWD; } || fail "pvj-dev lost sudo"
+{ visudo -c -q -f /etc/sudoers.d/010_pvj-dev && sudo -l -U pvj-dev | grep -q NOPASSWD; } || fail "pvj-dev lost sudo"
 # The old names with the old release: what install.sh's rollback to "previous" does.
 ln -sfn "$OLD_CURRENT" /opt/pvj/current.tmp && mv -T /opt/pvj/current.tmp /opt/pvj/current
 for u in "${ACTIVE[@]}"; do
