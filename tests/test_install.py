@@ -470,6 +470,72 @@ class InstallTest(unittest.TestCase):
         self.assertEqual(install(self.src, self.stage, "--uninstall", "--purge").returncode, 0)
         self.assertFalse(os.path.exists(self.p("opt/pvj-ndi")))
 
+    # Hardware video decoding on a PC node (J-152): the VA-API driver for the graphics found in sysfs, best effort.
+    def _pci(self, *devices):
+        pci = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, pci, True)
+        for i, (cls, vendor) in enumerate(devices):
+            d = os.path.join(pci, "0000:00:%02x.0" % i)
+            os.makedirs(d)
+            for name, value in (("class", cls), ("vendor", vendor)):
+                with open(os.path.join(d, name), "w") as f:
+                    f.write(value + "\n")
+        return pci
+
+    def _va_install(self, arch, pci, *extra):
+        env = dict(os.environ, PVJ_INSTALL_ARCH=arch, PVJ_INSTALL_PCI=pci)
+        return subprocess.run([os.path.join(self.src, "install", "install.sh"), "--stage", self.stage, "--user", "gigbox", *extra],
+                              capture_output=True, text=True, timeout=60, env=env)
+
+    def test_an_intel_pc_node_is_told_its_va_driver(self):
+        pci = self._pci(("0x060000", "0x8086"), ("0x030000", "0x8086"), ("0x0c0330", "0x8086"))
+        r = self._va_install("x86_64", pci)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("graphics: Intel; hardware video decoding needs intel-media-va-driver\n", r.stdout)
+        self.assertNotIn("mesa-va-drivers", r.stdout)
+        # in stage mode nothing is installed, and what is missing is said (unless this machine has the packages already)
+        self.assertTrue("until these are installed: " in r.stdout or "the VA-API driver is installed" in r.stdout, r.stdout)
+        self.assertNotIn("installing intel-media-va-driver", r.stdout)
+
+    def test_an_amd_pc_node_gets_mesa_and_both_get_both(self):
+        r = self._va_install("x86_64", self._pci(("0x030000", "0x1002")))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("graphics: AMD; hardware video decoding needs mesa-va-drivers\n", r.stdout)
+        r = self._va_install("x86_64", self._pci(("0x030000", "0x8086"), ("0x038000", "0x1002"), ("0x030000", "0x8086")))
+        self.assertIn("graphics: Intel AMD; hardware video decoding needs intel-media-va-driver mesa-va-drivers\n", r.stdout)
+
+    def test_other_graphics_and_a_pi_get_no_va_driver(self):
+        r = self._va_install("x86_64", self._pci(("0x030000", "0x10de"), ("0x020000", "0x8086")))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("graphics: no Intel or AMD graphics found", r.stdout)
+        self.assertNotIn("va-driver", r.stdout)
+        r = self._va_install("aarch64", self._pci(("0x030000", "0x8086")))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("graphics:", r.stdout)
+        self.assertNotIn("va-driver", r.stdout)
+
+    def test_va_driver_offline_and_dry_run_install_nothing(self):
+        pci = self._pci(("0x030000", "0x8086"))
+        r = self._va_install("x86_64", pci, "--offline")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("installing intel-media-va-driver", r.stdout)
+        shutil.rmtree(self.stage)                   # the dry run starts from nothing, and leaves nothing
+        os.mkdir(self.stage)
+        r = self._va_install("x86_64", pci, "--dry-run")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("graphics: Intel; hardware video decoding needs intel-media-va-driver\n", r.stdout)
+        self.assertNotIn("installing intel-media-va-driver", r.stdout)
+        self.assertEqual(os.listdir(self.stage), [])
+
+    def test_a_failed_va_driver_install_does_not_fail_the_install(self):
+        # The apt branch only runs on a real install; its line must end in "|| log", as the other optional packages do.
+        text = self.read(os.path.join(self.src, "install", "install.sh"))
+        line = [l for l in text.splitlines() if "run apt-get install" in l and "va_need" in l]
+        self.assertEqual(len(line), 1, line)
+        self.assertIn('|| log "could not install ${va_need[*]}; the install goes on', line[0])
+        # the stand-ins for the machine and sysfs are for stage mode only: a real install reads the real ones
+        self.assertIn('if [ "$REAL" = 0 ]; then va_arch="${PVJ_INSTALL_ARCH:-$va_arch}"', text)
+
     def test_rejects_bad_input(self):
         for bad in (["--prefix", "relative"], ["--media", "/tmp/a b"], ["--prefix", "/opt/x;reboot"],
                     ["--web-user", "Bad User"], ["--bogus"],
