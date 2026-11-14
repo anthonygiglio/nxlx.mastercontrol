@@ -147,7 +147,8 @@ done
 { [ -f /etc/systemd/system/nxlx-web.service ] && [ ! -e /etc/systemd/system/pvj-web.service ]; } || fail "the units"
 grep -q '^User=nxlx-dev$' /etc/systemd/system/nxlx-player.service || fail "the player's unit does not run as nxlx-dev"
 [ "$(readlink /usr/local/bin/nxlx-player)" = /opt/nxlx/current/bin/nxlx-player ] || fail "the command links"
-{ [ -f /etc/sudoers.d/010_nxlx-dev ] && visudo -c >/dev/null; } || fail "sudoers"
+# only the file the converter wrote: the CI runner's own /etc/sudoers.d/runner has the wrong mode and fails a full check
+{ [ -f /etc/sudoers.d/010_nxlx-dev ] && visudo -c -q -f /etc/sudoers.d/010_nxlx-dev; } || fail "sudoers"
 sudo -l -U nxlx-dev | grep -q NOPASSWD || fail "nxlx-dev lost sudo"
 { systemctl is-enabled --quiet nxlx-convert-undo.timer && systemctl is-active --quiet nxlx-convert-undo.timer; } || fail "the undo timer is not armed"
 grep -q '^OnBootSec=' /etc/systemd/system/nxlx-convert-undo.timer || fail "the undo timer does not survive a restart"
