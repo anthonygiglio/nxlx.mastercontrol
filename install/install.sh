@@ -238,6 +238,48 @@ if ! command -v arecord >/dev/null && [ ! -x /usr/bin/arecord ]; then
 	fi
 fi
 
+# Optional: hardware video decoding on a PC node (J-152). mpv decodes through VA-API there, which needs the driver for the
+# graphics: without it mpv falls back to software decoding without a word (an Intel M710q dropped frames on 4K60 HEVC
+# until intel-media-va-driver was in, and dropped none with it). The graphics is read from sysfs (PCI class 0x03, display):
+# Intel (vendor 8086) gets intel-media-va-driver, AMD (1002) gets mesa-va-drivers, and vainfo comes with either, so a
+# person can see what the driver decodes. Best effort: a failed install is said and the install goes on, in software.
+# A Pi decodes its own way and gets none of this. In stage mode (tests) PVJ_INSTALL_ARCH and PVJ_INSTALL_PCI stand in
+# for the machine and /sys/bus/pci/devices; a real install reads the real ones.
+va_arch="$(uname -m)"
+va_pci=/sys/bus/pci/devices
+if [ "$REAL" = 0 ]; then va_arch="${PVJ_INSTALL_ARCH:-$va_arch}"; va_pci="${PVJ_INSTALL_PCI:-$va_pci}"; fi
+if [ "$va_arch" = x86_64 ]; then
+	va_pkgs=()
+	va_names=()
+	for dev in "$va_pci"/*; do
+		[ -r "$dev/class" ] && [ -r "$dev/vendor" ] || continue
+		case "$(cat "$dev/class" 2>/dev/null)" in 0x03*) ;; *) continue ;; esac
+		case "$(cat "$dev/vendor" 2>/dev/null)" in
+		0x8086) p=intel-media-va-driver; n=Intel ;;
+		0x1002) p=mesa-va-drivers; n=AMD ;;
+		*) continue ;;
+		esac
+		case " ${va_pkgs[*]-} " in *" $p "*) ;; *) va_pkgs+=("$p"); va_names+=("$n") ;; esac
+	done
+	if [ ${#va_pkgs[@]} -gt 0 ]; then
+		log "graphics: ${va_names[*]}; hardware video decoding needs ${va_pkgs[*]}"
+		va_need=()
+		for p in "${va_pkgs[@]}" vainfo; do
+			if ! command -v dpkg-query >/dev/null || ! dpkg-query -W -f '${Status}' "$p" 2>/dev/null | grep -q 'install ok installed'; then va_need+=("$p"); fi
+		done
+		if [ ${#va_need[@]} -eq 0 ]; then
+			log "the VA-API driver is installed (${va_pkgs[*]})"
+		elif [ "$OFFLINE" = 1 ] || [ "$REAL" = 0 ] || ! command -v apt-get >/dev/null; then
+			log "hardware video decoding will be unavailable (mpv decodes in software) until these are installed: ${va_need[*]}"
+		else
+			log "installing ${va_need[*]} (for hardware video decoding)"
+			run apt-get install -y --no-install-recommends "${va_need[@]}" || log "could not install ${va_need[*]}; the install goes on, and mpv decodes in software until they are installed"
+		fi
+	else
+		log "graphics: no Intel or AMD graphics found; no VA-API driver is installed (mpv decodes in software unless the graphics has its own way)"
+	fi
+fi
+
 # Nothing is installed for the NDI input here, not avahi either: that is opt-in per box (pvj/ndisetup.py, D62).
 
 # --- accounts -----------------------------------------------------------
