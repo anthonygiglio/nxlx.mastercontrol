@@ -109,6 +109,7 @@ CARRIED = {
     ("GET", "/api/https"): SAME,
     ("POST", "/api/https/certificate"): SAME,
     ("POST", "/api/https/owner-only"): SAME,
+    ("POST", "/api/https/auto"): SAME,
     ("POST", "/api/https/remove"): SAME,
     ("POST", "/api/https/request"): SAME,
     ("GET", "/api/https/request.csr"): SAME,
