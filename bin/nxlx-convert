@@ -1,0 +1,1451 @@
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+# SPDX-License-Identifier: Apache-2.0
+"""nxlx-convert: move a node's live state from the old pocketvj names to the NXLX names, once, at the cutover.
+
+    sudo nxlx-convert --plan         what it would do, and what stops it; changes nothing (the default)
+    sudo nxlx-convert --run          convert: back up, arm a 15 minute undo, stop, rename, rewrite, start, check
+    sudo nxlx-convert --confirm      keep the conversion: disarm the undo (the backup stays)
+    sudo nxlx-convert --undo         walk the journal backwards and start the old names again
+    nxlx-convert --root DIR ...      stage mode: work on a copy of a node in DIR (tests); no accounts tools,
+                                     no systemctl, no timer, nothing outside DIR
+
+The rename plan is rename-pvj-assessment.md, PR 2 and section 4; the names are those of tools/rename-map.txt
+(D135; the rows a node needs are copied into TABLE below and a test keeps the two equal); decision D136.
+
+What it converts: the service accounts and their groups (the shared group pvj becomes nxlx-svc), the deploy and
+login account pvj-dev (last, and only when nobody is logged in as it), the folders /opt/pvj, /opt/pvj-ndi,
+/opt/pvj-ndi-server, /var/lib/pvj and its siblings, /etc/pvj (pvj.env becomes nxlx.env), /media/pvj, the unit
+files with their drop-ins and wants links, sudoers, udev, tmpfiles, journald and modules-load files, the command
+links in /usr/local/bin, and the text files it owns (install.json, nxlx.env, allowed_signers, support.json, the
+release's "previous" note). User and group ids stay, so every file keeps its owner and nothing is chowned; the
+settings, the node id, the certificates and the pairing hashes are carried over byte for byte (checked). Nobody is
+signed out by the conversion: the paired devices' tokens are hashes in settings.json, which is not touched.
+
+What it never does: delete anything (leftovers are listed, and move with their folder), touch the videos (only
+their parent folder is renamed, on the same file system), touch /run (rebuilt at boot), or run while a show is
+playing, an update is running, the root file system is read-only or a USB drive is mounted under /media/pvj.
+--force overrides only the show check.
+
+The undo timer is a unit file in /etc (nxlx-convert-undo.timer, enabled), so it also fires five minutes after a
+restart: a node that loses power half-way comes back to the old names by itself. A run that carries on re-arms it.
+
+Idempotent: the plan is worked out from what is on the node, so a second run finds nothing to do and a run that
+stopped half-way finishes with --run or goes back with --undo. Every change is written to the journal
+/var/backups/nxlx-convert/journal.jsonl before and after it is made, with the original of every rewritten file.
+
+Standard library only, so it runs before anything else of the new release is in place.
+"""
+import argparse
+import datetime
+import fcntl
+import hashlib
+import json
+import os
+import re
+import shutil
+import socket
+import stat
+import subprocess
+import sys
+import tarfile
+
+# The rows of tools/rename-map.txt a node's files can hold (kinds system, env and release, and the package folder
+# in a path). old, new, kind; the matching rules are the table's (see its header).
+TABLE = r"""
+pvj-render	mctl-render	render
+pvj/	mctl/	package
+@/pvj/	@/mctl/	package
+pvj-link-	nxlx-link-	system
+pvj-ndi-mpv-	nxlx-ndi-mpv-	system
+pvj-sound-	nxlx-sound-	system
+pvj-update-	nxlx-update-	system
+pvj-wlan0-try-	nxlx-wlan0-try-	system
+pvj-web	nxlx-web	system
+pvj-player	nxlx-player	system
+pvj-netd	nxlx-netd	system
+pvj-sysd	nxlx-sysd	system
+pvj-sound	nxlx-sound	system
+pvj-supportd	nxlx-supportd	system
+pvj-support	nxlx-support	system
+pvj-link	nxlx-link	system
+pvj-link-peer	nxlx-link-peer	system
+test_pvj_link	test_nxlx_link	system
+pvj-raster	nxlx-raster	system
+pvj-ndi	nxlx-ndi	system
+pvj-ndi-discovery	nxlx-ndi-discovery	system
+pvj-ndisc	nxlx-ndisc	system
+pvj-ndi-runtime	nxlx-ndi-runtime	system
+pvj-ndi-server	nxlx-ndi-server	system
+pvj-ndi-config	nxlx-ndi-config	system
+pvj-ndi-pipe	nxlx-ndi-pipe	system
+pvj-update	nxlx-update	system
+pvj-update-usb	nxlx-update-usb	system
+pvj-update-inbox	nxlx-update-inbox	system
+pvj-usb	nxlx-usb	system
+pvj-pin	nxlx-pin	system
+pvj-selftest	nxlx-selftest	system
+pvj-rootfs	nxlx-rootfs	system
+pvj-dev	nxlx-dev	system
+pvj-tmpfiles	nxlx-tmpfiles	system
+pvj-wireguard	nxlx-wireguard	system
+pvj-persistent-log	nxlx-persistent-log	system
+pvj-hub	nxlx-hub	system
+pvj-install	nxlx-install	system
+pvj-backups	nxlx-backups	system
+pvj-deploy	nxlx-deploy	system
+pvj-eth0	nxlx-eth0	system
+pvj-eth0-try	nxlx-eth0-try	system
+pvj-eth0-old	nxlx-eth0-old	system
+pvj-wlan0	nxlx-wlan0	system
+pvj-wlan0-try	nxlx-wlan0-try	system
+pvj-wlan0-old	nxlx-wlan0-old	system
+pvj-planted-by-root	nxlx-planted-by-root	system
+pvjdisplay	nxlxdisplay	system
+pvj-%d	nxlx-%d	system
+wg-pvj	wg-nxlx	system
+pvj0	nxlx0	system
+pvj_hub	nxlx_hub	system
+pvj_support	nxlx_support	system
+opt/pvj	opt/nxlx	system
+etc/pvj	etc/nxlx	system
+var/lib/pvj	var/lib/nxlx	system
+run/pvj	run/nxlx	system
+media/pvj	media/nxlx	system
+pvj.env	nxlx.env	system
+/pvj.env	/nxlx.env	system
+box/pvj	box/nxlx	system
+//pvj	//nxlx	system
+RuntimeDirectory=pvj	RuntimeDirectory=nxlx	system
+StateDirectory=pvj	StateDirectory=nxlx	system
+pvj.conf	nxlx.conf	system
+:pvj	:nxlx-svc	system
+Group=pvj	Group=nxlx-svc	system
+group "pvj"	group "nxlx-svc"	system
+group pvj	group nxlx-svc	system
+--gid pvj	--gid nxlx-svc	system
+--system pvj	--system nxlx-svc	system
+-aG pvj	-aG nxlx-svc	system
+getgrnam("pvj")	getgrnam("nxlx-svc")	system
+for g in pvj	for g in nxlx-svc	system
+PVJ-SUPPORTD	NXLX-SUPPORTD	system
+pvj-ndi-	nxlx-ndi-	system
+pvj-web pvj	nxlx-web nxlx-svc	system
+"pvj-"	"nxlx-"	system
+pvj-<	nxlx-<	system
+pvj-* 	nxlx-* 	system
+'pvj-*'	'nxlx-*'	system
+(pvj-*)	(nxlx-*)	system
+`pvj-*`	`nxlx-*`	system
+pvj-release	nxlx-release	release
+pvj-recover	nxlx-recover	release
+pvj-update/	nxlx-update/	release
+pvj-N	nxlx-N	release
+pvj-x	nxlx-x	release
+pvj-0	nxlx-0	release
+pvj-1	nxlx-1	release
+pvj-2	nxlx-2	release
+pvj-3	nxlx-3	release
+pvj-4	nxlx-4	release
+pvj-5	nxlx-5	release
+pvj-6	nxlx-6	release
+pvj-7	nxlx-7	release
+pvj-8	nxlx-8	release
+pvj-9	nxlx-9	release
+PVJ-RECOVER	NXLX-RECOVER	release
+pvj-*.tar.gz	nxlx-*.tar.gz	release
+pvj-$version	nxlx-$version	release
+pvj-(	nxlx-(	release
+PVJ_*	NXLX_*	env
+@PVJ	@NXLX	env
+\bPVJ_*	\bNXLX_*	env
+\nPVJ_*	\nNXLX_*	env
+-DPVJ_*	-DNXLX_*	env
+"""
+
+# Release names (signing namespace, bundle and USB names) change with rename PR 8. Until that pull request sets
+# this to True the converter holds them as they are, so a node converted early still accepts its signed bundles.
+RELEASE_NAMES_LIVE = False
+
+IDENT = "A-Za-z0-9_"
+OLD = re.compile(r"pvj|pocket[ _-]?vj", re.I)
+BACKUP = "var/backups/nxlx-convert"
+JOURNAL = BACKUP + "/journal.jsonl"
+UNDO_UNIT = "nxlx-convert-undo"
+UNDO_AFTER = "15min"
+
+# Folders renamed whole (same file system, so it is instant and nothing inside is copied).
+FOLDERS = [("opt/pvj", "opt/nxlx"), ("opt/pvj-ndi", "opt/nxlx-ndi"), ("opt/pvj-ndi-server", "opt/nxlx-ndi-server"),
+           ("var/lib/pvj", "var/lib/nxlx"), ("var/lib/pvj-player", "var/lib/nxlx-player"),
+           ("var/lib/pvj-netd", "var/lib/nxlx-netd"), ("var/lib/pvj-support", "var/lib/nxlx-support"),
+           ("etc/pvj", "etc/nxlx"), ("media/pvj", "media/nxlx")]
+# Text files the converter owns, at their new place; each is rewritten with the table.
+OWNED_TEXT = ["etc/nxlx/install.json", "etc/nxlx/nxlx.env", "etc/nxlx/allowed_signers", "etc/nxlx/support.json",
+              "opt/nxlx/previous"]
+# Where the system's files of the node are: every entry with an old name is renamed, every text file with one is
+# rewritten, every link with one in its target is pointed again.
+SYSTEM_DIRS = ["etc/systemd/system", "etc/systemd/journald.conf.d", "etc/modules-load.d", "etc/tmpfiles.d",
+               "etc/udev/rules.d", "usr/local/bin"]
+SUDOERS_DIR = "etc/sudoers.d"
+SERVICE_USERS = ["pvj-web", "pvj-player", "pvj-ndi", "pvj-ndisc", "pvj-sound", "pvj-link", "pvj-raster"]
+SERVICE_GROUPS = ["pvj", "pvj-ndi", "pvj-ndisc", "pvj-link", "pvj-raster"]
+DEV = "pvj-dev"                     # the deploy and login account: renamed last (the owner: part of the rename)
+GROUP_NEW = {"pvj": "nxlx-svc"}     # node-01 already has a login group called nxlx
+STOP_ORDER = ["pvj-web.service", "pvj-player.service", "pvj-ndi.service", "pvj-ndi-discovery.service",
+              "pvj-link.service", "pvj-sound.service", "pvj-supportd.service", "pvj-sysd.service",
+              "pvj-netd.service", "pvj-raster.socket"]
+PLAYER_SOCKET = "run/pvj/player/player.sock"
+UPDATE_LOCKS = ["run/pvj-update/update.lock", "run/lock/pvj-update.lock"]
+CARRIED = ["settings.json", "node-id"]      # in /var/lib/pvj: must come out byte for byte the same
+BACKED_UP = ["etc/passwd", "etc/group", "etc/shadow", "etc/gshadow", "etc/subuid", "etc/subgid",
+             "var/lib/pvj/settings.json", "var/lib/pvj/node-id", "var/lib/pvj/tls", "var/lib/pvj/events.json",
+             "var/lib/pvj/renderer.json", "var/lib/pvj/screen-mode.json", "opt/pvj/previous", "opt/pvj/current",
+             "etc/pvj"]
+EXIT_OK, EXIT_FAILED, EXIT_REFUSED = 0, 1, 2
+
+
+class Refused(Exception):
+    pass
+
+
+# --- the table and its matching rules (the same as tools/rename-apply.py) -------------------------------------
+class Row:
+    def __init__(self, old, new, kind):
+        self.old, self.new, self.kind = old, new, kind
+        self.family = old.endswith("*")
+        self.lit = old[:-1] if self.family else old
+
+    def pattern(self):
+        lit = self.lit
+        if lit[0] == "/":
+            before = "(?<![%s.])" % IDENT
+        elif re.match("[%s]" % IDENT, lit[0]):
+            before = "(?<![%s])" % IDENT
+        else:
+            before = ""
+        if self.family:
+            return before + re.escape(lit) + "[%s]*" % IDENT
+        after = "(?![%s-])" % IDENT if re.match("[%s]" % IDENT, lit[-1]) else ""
+        return before + re.escape(lit) + after
+
+    def replace(self, text):
+        return self.new[:-1] + text[len(self.lit):] if self.family else self.new
+
+
+def rows():
+    out = []
+    for line in TABLE.strip("\n").split("\n"):
+        old, new, kind = line.split("\t")
+        out.append(Row(old, new, kind))
+    return out
+
+
+class Matcher:
+    def __init__(self, table):
+        self.rows = sorted(table, key=lambda r: (-len(r.lit), r.old))
+        self.rx = re.compile("|".join("(%s)" % r.pattern() for r in self.rows))
+        self.kinds = {"system", "env", "package", "render"} | ({"release"} if RELEASE_NAMES_LIVE else set())
+        self.live = [r for r in self.rows if r.kind in self.kinds]
+        self.live_rx = re.compile("|".join("(%s)" % r.pattern() for r in self.live))
+
+    def apply(self, text):
+        """(new text, number of changes, [old-style text no row covers or a held row keeps]).
+
+        Unlike the apply script, a held row (release, until PR 8) does not shield its text from the live rows: on a
+        node "pvj-update/" is also the start of /run/pvj-update, which is the command's folder, not the USB one."""
+        out, at, n, pos = [], 0, 0, 0
+        while True:
+            m = self.rx.search(text, pos)
+            if not m:
+                break
+            row = self.rows[m.lastindex - 1]
+            if row.kind not in self.kinds:
+                lm = self.live_rx.match(text, m.start())
+                if not lm:
+                    pos = m.end()
+                    continue
+                m, row = lm, self.live[lm.lastindex - 1]
+            out.append(text[at:m.start()])
+            out.append(row.replace(m.group(0)))
+            at = pos = m.end()
+            n += 1
+        out.append(text[at:])
+        new = "".join(out)
+        return new, n, left_over(new)
+
+
+def left_over(text):
+    """The old-style words still in a text, each with what is around it up to a separator."""
+    found = []
+    for m in OLD.finditer(text):
+        lo, hi = m.start(), m.end()
+        while lo > 0 and re.match("[%s.@-]" % IDENT, text[lo - 1]):
+            lo -= 1
+        while hi < len(text) and re.match("[%s@-]" % IDENT, text[hi]):
+            hi += 1
+        found.append(text[lo:hi])
+    return found
+
+
+# --- the node: a real one (root "") or a staged copy -------------------------------------------------------------
+class Node:
+    def __init__(self, root):
+        self.root = root.rstrip("/") if root else ""
+        self.stage = bool(root)
+
+    def p(self, rel):
+        return self.root + "/" + rel
+
+    def exists(self, rel):
+        return os.path.lexists(self.p(rel))
+
+    def read_db(self, name):
+        """[[fields]] of etc/passwd or etc/group (missing: [])."""
+        try:
+            with open(self.p("etc/" + name), encoding="utf-8") as f:
+                return [line.rstrip("\n").split(":") for line in f if line.strip() and not line.startswith("#")]
+        except FileNotFoundError:
+            return []
+
+    def users(self):
+        return {f[0]: f for f in self.read_db("passwd") if len(f) >= 7}
+
+    def groups(self):
+        return {f[0]: f for f in self.read_db("group") if len(f) >= 4}
+
+    def mounts(self):
+        """[(mount point, type, options)]; a staged node without proc/mounts has none."""
+        path = self.p("proc/mounts") if self.stage else "/proc/mounts"
+        try:
+            with open(path) as f:
+                return [tuple(line.split()[1:4]) for line in f if len(line.split()) >= 4]
+        except OSError:
+            return []
+
+    def processes(self):
+        """[(pid, real uid, cgroup text)] of the node's processes."""
+        proc = self.p("proc") if self.stage else "/proc"
+        out = []
+        try:
+            pids = [d for d in os.listdir(proc) if d.isdigit()]
+        except OSError:
+            return out
+        for pid in pids:
+            try:
+                with open(os.path.join(proc, pid, "status")) as f:
+                    uid = next((int(line.split()[1]) for line in f if line.startswith("Uid:")), None)
+                try:
+                    with open(os.path.join(proc, pid, "cgroup")) as f:
+                        cg = f.read()
+                except OSError:
+                    cg = ""
+            except (OSError, ValueError):
+                continue
+            if uid is not None:
+                out.append((int(pid), uid, cg))
+        return out
+
+
+def sh(cmd, check=True):
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if check and r.returncode != 0:
+        raise RuntimeError("%s: %s" % (" ".join(cmd), (r.stderr or r.stdout).strip()))
+    return r
+
+
+def is_text(path, limit=1 << 20):
+    try:
+        if os.path.getsize(path) > limit:
+            return None
+        with open(path, "rb") as f:
+            data = f.read()
+        if b"\0" in data:
+            return None
+        return data.decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def sha(path):
+    try:
+        with open(path, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except OSError:
+        return None
+
+
+# --- the plan -------------------------------------------------------------------------------------------------------
+class Plan:
+    def __init__(self, node, m):
+        self.node, self.m = node, m
+        self.checks = []            # (ok, text, forceable)
+        self.actions = []           # dicts: step, op, text and the op's fields
+        self.notes = []             # what is left alone, and why
+        self.left = {}              # path: [old-style text left after the rewrite]
+        self.backup = []            # relative paths for the backup tar
+        self.carried = {}           # name: sha256 before
+        self.needs = {}             # path under /opt/nxlx/current the converted units and links run: optional?
+
+    def add(self, step, op, text, **kw):
+        kw.update(step=step, op=op, text=text)
+        self.actions.append(kw)
+
+    def check(self, ok, text, forceable=False):
+        self.checks.append((ok, text, forceable))
+
+    def blockers(self, force=False):
+        return [t for ok, t, fc in self.checks if not ok and not (force and fc)]
+
+
+SERVICE_CGROUP = re.compile(r"/(pvj|nxlx)-[A-Za-z0-9@_.-]*\.(service|socket)\b")
+
+
+def busy_accounts(node, uids):
+    """{account: [pid]} of the processes of these accounts ({uid: name}) outside a unit of the node's services,
+    which stop with their unit. Anything else (an ssh login, a shell, sudo started from it) keeps the account busy:
+    Linux refuses to rename an account that has a process."""
+    busy = {}
+    for pid, uid, cg in node.processes():
+        if uid in uids and not SERVICE_CGROUP.search(cg):
+            busy.setdefault(uids[uid], []).append(pid)
+    sudo_user = os.environ.get("SUDO_USER") if not node.stage else None
+    if sudo_user in uids.values():
+        busy.setdefault(sudo_user, []).append("sudo")
+    return busy
+
+
+def where(node, rel):
+    """The path a file has now: `rel` (its place after the folder renames) or its place before them."""
+    if node.exists(rel):
+        return rel
+    for old, new in FOLDERS:
+        if rel == new or rel.startswith(new + "/"):
+            cand = old + rel[len(new):]
+            if node.exists(cand):
+                return cand
+    return None
+
+
+def renamed(m, name):
+    new, _, _ = m.apply(name)
+    return new
+
+
+def make_plan(node, force=False, mode="plan"):
+    m = Matcher(rows())
+    plan = Plan(node, m)
+    users, groups = node.users(), node.groups()
+
+    # 0. checks: nothing here changes anything
+    if not node.stage:
+        plan.check(mode == "plan" or os.geteuid() == 0, "running as root")
+    ro = [(mp, t, o) for mp, t, o in node.mounts() if mp == "/" and (t == "overlay" or "ro" in o.split(","))]
+    plan.check(not ro, "the root file system is writable" if not ro else
+               "the root file system is read-only (%s): nothing would persist. Turn the read-only root off first "
+               "(sudo pvj-rootfs off) and restart" % ro[0][1])
+    usb = [mp for mp, _, _ in node.mounts() if mp.startswith("/media/pvj/")]
+    plan.check(not usb, "no USB drive is mounted under /media/pvj" if not usb else
+               "a USB drive is mounted at %s: take it out (or sudo umount it) first" % ", ".join(usb))
+    # The update lock is taken, and kept for as long as this process runs, so no update starts in the middle.
+    plan.locks, held = [], []
+    for rel in UPDATE_LOCKS:
+        if node.exists(rel) and not os.path.islink(node.p(rel)):
+            try:
+                fd = os.open(node.p(rel), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            except OSError:
+                continue
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                plan.locks.append(fd)
+            except OSError:
+                os.close(fd)
+                held.append("/" + rel)
+    plan.check(not held, "no update is running" if not held else
+               "an update is running (%s is held): wait for it to finish" % ", ".join(held))
+    playing = show_playing(node)
+    if playing is None:
+        plan.check(True, "nothing is playing (the player is not running)")
+    elif playing is False:
+        plan.check(True, "nothing is playing (the player is idle)")
+    else:
+        plan.check(False, "a show is playing (%s): the conversion stops every service. Stop the show first, or "
+                   "give --force" % playing, forceable=True)
+
+    # Accounts that would be renamed, and the clash check for their new names.
+    renames_u = [(u, renamed(m, u)) for u in SERVICE_USERS + [DEV] if u in users]
+    renames_g = [(g, GROUP_NEW.get(g) or renamed(m, g)) for g in SERVICE_GROUPS + [DEV] if g in groups]
+    for old, new in renames_u:
+        plan.check(new not in users, "the account name %s is free" % new if new not in users else
+                   "both accounts %s and %s exist: look at them by hand" % (old, new))
+    for old, new in renames_g:
+        plan.check(new not in groups, "the group name %s is free" % new if new not in groups else
+                   "both groups %s and %s exist: look at them by hand" % (old, new))
+    # Linux refuses to rename an account that has a process. A service's processes stop with its unit; anything
+    # else (an ssh login, a shell, sudo started from it) means: run this from another admin login.
+    uids = {int(users[u][2]): u for u, _ in renames_u}
+    busy = busy_accounts(node, uids)
+    for u, pids in sorted(busy.items()):
+        plan.check(False, "the account %s is in use outside its services (process %s): log out of it and run "
+                   "this from another admin login (node-01: nxlx, node-02: pi)" % (u, ", ".join(map(str, pids[:5]))))
+    if not busy:
+        plan.check(True, "no account to be renamed is logged in")
+
+    # Folders and files: a name that exists under both names is a conflict, never overwritten.
+    for old, new in FOLDERS:
+        if node.exists(old) and node.exists(new):
+            plan.check(False, "both /%s and /%s exist: look at them by hand" % (old, new))
+
+    # 3. stop the services (a real node only), then make sure no process of an account to be renamed is left
+    if not node.stage:
+        plan.add(3, "stop", "stop the services in order (%s), then every other loaded pvj-* unit (the picture "
+                 "helper's jobs, updates)" % ", ".join(STOP_ORDER), units=STOP_ORDER)
+    if uids:
+        plan.add(3, "idle", "check that no process of an account to be renamed is left",
+                 uids=sorted([k, v] for k, v in uids.items()))
+
+    # 4. service accounts: names only, ids stay
+    for old, new in renames_g:
+        if old != DEV:
+            plan.add(4, "group", "rename group %s to %s (gid %s stays)" % (old, new, groups[old][2]), old=old, new=new)
+    for old, new in renames_u:
+        if old != DEV:
+            home = users[old][5]
+            plan.add(4, "user", "rename account %s to %s (uid %s stays)%s" % (
+                old, new, users[old][2], "" if renamed(m, home) == home else ", home %s" % renamed(m, home)),
+                old=old, new=new, home_old=home, home_new=renamed(m, home))
+
+    # 5. folders
+    for old, new in FOLDERS:
+        if node.exists(old) and not node.exists(new):
+            plan.add(5, "rename", "move /%s to /%s" % (old, new), src=old, dst=new)
+    env = where(node, "etc/nxlx/pvj.env")
+    if env and not node.exists("etc/nxlx/nxlx.env"):
+        plan.add(5, "rename", "rename /etc/nxlx/pvj.env to nxlx.env", src="etc/nxlx/pvj.env", dst="etc/nxlx/nxlx.env")
+    cur = where(node, "opt/nxlx/current")
+    if cur and os.path.islink(node.p(cur)):
+        target = os.readlink(node.p(cur))
+        if renamed(m, target) != target:
+            plan.add(5, "link", "point /opt/nxlx/current at %s" % renamed(m, target),
+                     path="opt/nxlx/current", old=target, new=renamed(m, target))
+    rel = where(node, "opt/nxlx/releases")
+    if rel:
+        for name in sorted(os.listdir(node.p(rel))):
+            if ".new" in name or ".old." in name:
+                plan.notes.append("/opt/nxlx/releases/%s: left from an install that was cut short; it moves with "
+                                  "the folder and nothing is deleted" % name)
+
+    # 6. the text files the converter owns
+    for new in OWNED_TEXT:
+        now = where(node, new) or where(node, new.replace("nxlx.env", "pvj.env"))
+        if not now or os.path.islink(node.p(now)):
+            continue
+        text = is_text(node.p(now))
+        if text is None:
+            continue
+        out, n, left = m.apply(text)
+        if n:
+            plan.add(6, "write", "rewrite /%s (%d names)" % (new, n), path=new, size=len(out))
+        if left:
+            plan.left["/" + new] = left
+
+    # 7. units, drop-ins, wants links, udev, tmpfiles, journald, modules-load, command links
+    for base in SYSTEM_DIRS:
+        system_entries(node, m, plan, base, 7)
+    # The converted units and command links run the release's programs under their new names. On a release from
+    # before the rename those do not exist, and the node would stay dark until the undo: refuse.
+    if plan.needs:
+        cur = where(node, "opt/nxlx/current")
+        target = os.readlink(node.p(cur)) if cur and os.path.islink(node.p(cur)) else ""
+        release = where(node, renamed(m, target).lstrip("/")) if target.startswith("/") else None
+        if release is None:
+            plan.check(False, "cannot find the current release (/opt/pvj/current is not a link to a release)")
+        else:
+            base = "/opt/nxlx/current"
+            # An optional program is needed when the node had it under its old name in the release it ran before
+            # ("previous", else the current one): a node that had the picture helper must not lose it.
+            before = []
+            prev = where(node, "opt/nxlx/previous")
+            if prev and not os.path.islink(node.p(prev)):
+                text = (is_text(node.p(prev)) or "").strip()
+                if text.startswith("/"):
+                    before.append(where(node, renamed(m, text).lstrip("/")))
+            before = [b for b in before + [release] if b]
+
+            def had(new_path):
+                rel = new_path[len(base):]
+                olds = {rel} | {rel.replace(r.new, r.old) for r in m.live if not r.family and r.new in rel}
+                return any(os.path.exists(node.p(b) + o) for b in before for o in olds)
+
+            missing = sorted(n[len(base) + 1:] for n, opt in plan.needs.items()
+                             if not os.path.exists(node.p(release) + n[len(base):]) and (not opt or had(n)))
+            plan.check(not missing, "the current release (%s) has the programs the converted units run" % target
+                       if not missing else
+                       "the current release (%s) does not have the new names: %s %s missing, so the converted units "
+                       "would start nothing. Install a release with the new names first (rename PR 7 and later)"
+                       % (target, ", ".join(missing[:6]) + (" and %d more" % (len(missing) - 6) if len(missing) > 6 else ""),
+                          "is" if len(missing) == 1 else "are"))
+
+    # 8. the deploy and login account, then its sudoers, then the sub-id files of every renamed account
+    if DEV in groups and (DEV, "nxlx-dev") in renames_g:
+        plan.add(8, "group", "rename group %s to nxlx-dev (gid %s stays)" % (DEV, groups[DEV][2]), old=DEV, new="nxlx-dev")
+    if (DEV, "nxlx-dev") in renames_u:
+        home = users[DEV][5]
+        plan.add(8, "user", "rename the login account %s to nxlx-dev (uid %s stays)" % (DEV, users[DEV][2]),
+                 old=DEV, new="nxlx-dev", home_old=home, home_new=renamed(m, home))
+        hrel = home.strip("/")
+        if home != renamed(m, home) and node.exists(hrel) and not node.exists(renamed(m, home).strip("/")):
+            plan.add(8, "rename", "move the home %s to %s" % (home, renamed(m, home)), src=hrel, dst=renamed(m, home).strip("/"))
+    system_entries(node, m, plan, SUDOERS_DIR, 8, sudoers=True)
+    for f in ("etc/subuid", "etc/subgid"):
+        text = is_text(node.p(f)) if node.exists(f) else None
+        if text is None:
+            continue
+        out = subid_text(m, text)
+        if out != text:
+            plan.add(8, "write", "rename the accounts in /%s" % f, path=f, size=len(out), subid=True)
+
+    # 9. start and check (a real node only)
+    if not node.stage and any(a["op"] != "stop" for a in plan.actions):
+        plan.add(9, "start", "reload systemd, udev and tmpfiles, start what was running under its new name, check")
+
+    # carried over unchanged, and what is only reported
+    for name in CARRIED:
+        now = where(node, "var/lib/nxlx/" + name)
+        if now:
+            plan.carried[name] = sha(node.p(now))
+    state = where(node, "var/lib/nxlx")
+    if state:
+        found = scan_state(node, state)
+        if found:
+            plan.notes.append("old names in saved state, reported and NOT rewritten (the protocol names change with "
+                              "rename PR 4): " + "; ".join("%s (%d)" % kv for kv in sorted(found.items())[:10]))
+    if node.exists("run/pvj"):
+        plan.notes.append("/run/pvj and its siblings: left alone, /run is rebuilt at boot")
+    if not RELEASE_NAMES_LIVE:
+        plan.notes.append("release names (pvj-release, pvj-recover, bundle names) are held until rename PR 8")
+
+    # The backup: the account files, what is carried over, and every file a step touches (not the videos).
+    seen = set()
+    for rel in BACKED_UP:
+        now = where(node, rel) or (rel if node.exists(rel) else None)
+        if now and now not in seen:
+            seen.add(now)
+            plan.backup.append(now)
+    for a in plan.actions:
+        r = a.get("path") or (a.get("src") if a.get("entry") else None)    # not the big folders: only renamed
+        now = r and (where(node, r) or r)
+        if now and node.exists(now) and now not in seen and not any(now.startswith(s + "/") for s in seen):
+            seen.add(now)
+            plan.backup.append(now)
+    return plan
+
+
+def subid_text(m, text):
+    """etc/subuid or etc/subgid with every account of the rename under its new name (also one renamed earlier)."""
+    names = {u: renamed(m, u) for u in SERVICE_USERS + [DEV]}
+    return "\n".join(":".join([names.get(line.split(":")[0], line.split(":")[0])] + line.split(":")[1:])
+                     if line else line for line in text.split("\n"))
+
+
+def system_entries(node, m, plan, base, step, sudoers=False):
+    """Plan the renames, rewrites and link changes of one system folder, deepest first."""
+    top = node.p(base)
+    if not os.path.isdir(top):
+        return
+    for d, dirs, files in os.walk(top, topdown=False):
+        reld = os.path.relpath(d, node.root or "/") if node.root else d.lstrip("/")
+        for name in sorted(files) + sorted(x for x in dirs if os.path.islink(os.path.join(d, x))):
+            full = os.path.join(d, name)
+            rel = reld + "/" + name
+            if os.path.islink(full):
+                target = os.readlink(full)
+                nt = renamed(m, target)
+                if nt != target:
+                    plan.add(step, "link", "point /%s at %s" % (rel, nt), path=rel, old=target, new=nt)
+                    if nt.startswith("/opt/nxlx/current/"):
+                        plan.needs.setdefault(nt, False)
+            elif os.path.isfile(full):
+                text = is_text(full)
+                if text is not None:
+                    out, n, left = m.apply(text)
+                    if n:
+                        plan.add(step, "write", "rewrite /%s (%d names)" % (rel, n), path=rel, size=len(out),
+                                 sudoers=sudoers)
+                        # A program behind ConditionPathExists is optional (the renderer, Link and the picture
+                        # helper are built on the node when its tools allow); the others must be there.
+                        optional = set(re.findall(r"(?m)^ConditionPathExists=(/opt/nxlx/current/\S+)", out))
+                        for path in re.findall(r"(?m)^Exec[A-Za-z]*=[-@+!:]*(/opt/nxlx/current/\S+)", out):
+                            plan.needs[path] = plan.needs.get(path, True) and path in optional
+                    if left:
+                        plan.left["/" + rel] = left
+            entry_rename(node, m, plan, step, reld, name)
+        for name in sorted(x for x in dirs if not os.path.islink(os.path.join(d, x))):
+            entry_rename(node, m, plan, step, reld, name)
+
+
+def entry_rename(node, m, plan, step, reld, name):
+    new = renamed(m, name)
+    if re.fullmatch(r"\d+_" + DEV, name):        # a sudoers file such as 010_pvj-dev: the _ is no boundary
+        new = name[:-len(DEV)] + renamed(m, DEV)
+    if new == name:
+        return
+    if OLD.search(new):
+        plan.left["/%s/%s" % (reld, name)] = ["the name itself: no row covers it, not renamed"]
+        return
+    if node.exists(reld + "/" + new):
+        plan.check(False, "both /%s/%s and /%s/%s exist: look at them by hand" % (reld, name, reld, new))
+        return
+    plan.add(step, "rename", "rename /%s/%s to %s" % (reld, name, new), src=reld + "/" + name, dst=reld + "/" + new,
+             entry=True)
+
+
+def scan_state(node, rel):
+    """{file: count} of old names in the small text files of the state folder (reported only)."""
+    found = {}
+    for d, dirs, files in os.walk(node.p(rel)):
+        dirs[:] = [x for x in dirs if x not in ("video", "tls")]
+        for name in files:
+            if not name.endswith((".json", ".txt", ".conf", ".csv")):
+                continue
+            text = is_text(os.path.join(d, name), 4 << 20)
+            if text and OLD.search(text):
+                found["/" + os.path.relpath(os.path.join(d, name), node.root or "/")] = len(OLD.findall(text))
+    return found
+
+
+def show_playing(node):
+    """None when no player answers (not running), False when it is idle, else a few words on what plays. A player
+    that is there but does not answer counts as playing: when in doubt, the show goes on."""
+    path = node.p(PLAYER_SOCKET)
+    if not os.path.exists(path):
+        return None
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(2)
+    try:
+        s.connect(path)
+        s.sendall(b'{"command": ["get_property", "idle-active"], "request_id": 7041}\n')
+        buf = b""
+        while True:
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            buf += chunk
+            for line in buf.split(b"\n")[:-1]:
+                try:
+                    msg = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(msg, dict) and msg.get("request_id") == 7041:
+                    if msg.get("error") == "success" and msg.get("data") is True:
+                        return False
+                    if msg.get("error") == "success" and msg.get("data") is False:
+                        return "the player has something loaded"
+                    return "the player gave no clear answer"
+        return "the player closed the connection without an answer"
+    except ConnectionRefusedError:
+        return None
+    except OSError as e:
+        return "the player did not answer (%s)" % (e.strerror or e)
+    finally:
+        s.close()
+
+
+# --- doing it ---------------------------------------------------------------------------------------------------
+class Journal:
+    def __init__(self, node):
+        self.node = node
+        self.path = node.p(JOURNAL)
+
+    def records(self):
+        try:
+            with open(self.path) as f:
+                return [json.loads(line) for line in f if line.strip()]
+        except FileNotFoundError:
+            return []
+
+    def write(self, rec):
+        os.makedirs(os.path.dirname(self.path), mode=0o700, exist_ok=True)
+        rec["at"] = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with open(self.path, "a") as f:
+            f.write(json.dumps(rec, sort_keys=True) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(self.path, 0o600)
+
+
+def atomic_write(path, data, like=None):
+    st = os.lstat(like or path)
+    tmp = path + ".nxlx-convert.tmp"
+    with open(tmp, "wb") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    os.chmod(tmp, stat.S_IMODE(st.st_mode))
+    try:
+        os.chown(tmp, st.st_uid, st.st_gid)
+    except PermissionError:
+        pass
+    os.replace(tmp, path)
+
+
+def edit_db(node, name, fn):
+    path = node.p("etc/" + name)
+    if not os.path.exists(path):
+        return
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    lines = []
+    for line in text.split("\n"):
+        lines.append(":".join(fn(line.split(":"))) if line and not line.startswith("#") else line)
+    out = "\n".join(lines)
+    if out != text:
+        atomic_write(path, out.encode())
+
+
+def members(field, old, new):
+    return ",".join(new if x == old else x for x in field.split(",")) if field else field
+
+
+def rename_account(node, kind, old, new, home_old=None, home_new=None):
+    if not node.stage:
+        if kind == "group":
+            sh(["groupmod", "-n", new, old])
+        else:
+            sh(["usermod", "-l", new, old])
+            if home_new and home_new != home_old:
+                sh(["usermod", "-d", home_new, new])
+        return
+    if kind == "group":
+        edit_db(node, "group", lambda f: [new] + f[1:] if f[0] == old else f)
+        edit_db(node, "gshadow", lambda f: [new] + f[1:] if f[0] == old else f)
+        return
+    def pw(f):
+        if f[0] == old:
+            f = [new] + f[1:]
+            if home_new and len(f) > 5 and f[5] == home_old:
+                f[5] = home_new
+        return f
+    edit_db(node, "passwd", pw)
+    edit_db(node, "shadow", lambda f: [new] + f[1:] if f[0] == old else f)
+    edit_db(node, "group", lambda f: f[:3] + [members(f[3], old, new)] if len(f) >= 4 else f)
+    edit_db(node, "gshadow", lambda f: f[:2] + [members(f[2], old, new), members(f[3], old, new)] if len(f) >= 4 else f)
+
+
+class Runner:
+    def __init__(self, node, plan, journal, run_id, run_dir):
+        self.node, self.plan, self.journal, self.run_id, self.run_dir = node, plan, journal, run_id, run_dir
+        self.n = 0
+
+    def do(self, a):
+        node, m = self.node, self.plan.m
+        op = a["op"]
+        rec = {"run": self.run_id, "n": self.n, "step": a["step"], "op": op, "text": a["text"]}
+        if op == "rename":
+            rec.update(src=a["src"], dst=a["dst"])
+        elif op == "link":
+            rec.update(path=a["path"], old=a["old"], new=a["new"])
+        elif op in ("group", "user"):
+            rec.update(old=a["old"], new=a["new"], home_old=a.get("home_old"), home_new=a.get("home_new"))
+        elif op == "write":
+            path = node.p(a["path"])
+            keep = os.path.join(self.run_dir, "orig-%03d" % self.n)
+            shutil.copyfile(path, keep)
+            os.chmod(keep, 0o600)
+            rec.update(path=a["path"], orig=os.path.relpath(keep, node.root or "/"))
+        elif op == "stop":
+            # Every loaded unit of the old family, not only the main ones: the picture helper's per-job instances
+            # (pvj-raster@N, Accept=yes, as pvj-raster) and an update unit would keep an account busy.
+            loaded = loaded_units()
+            names = [u for u, _ in loaded]
+            rec.update(active=[u for u, state in loaded if state == "active"],
+                       units=[u for u in STOP_ORDER if u in names] + sorted(u for u in names if u not in STOP_ORDER))
+        self.journal.write(dict(rec, state="begin"))
+        fail = os.environ.get("NXLX_CONVERT_FAIL_AT") if node.stage else None
+        if fail and int(fail) == self.n + 1:
+            raise RuntimeError("an injected failure before change %d (tests)" % (self.n + 1))
+        if op == "rename":
+            if node.exists(a["dst"]):
+                raise RuntimeError("/%s exists already" % a["dst"])
+            os.rename(node.p(a["src"]), node.p(a["dst"]))
+        elif op == "link":
+            path = node.p(a["path"])
+            tmp = path + ".nxlx-convert.tmp"
+            os.symlink(a["new"], tmp)
+            os.replace(tmp, path)
+        elif op == "write":
+            path = node.p(a["path"])
+            text = is_text(path)
+            if a.get("subid"):
+                out = subid_text(m, text)
+            else:
+                out, _, _ = m.apply(text)
+            if a.get("sudoers") and not node.stage:
+                tmp = path + ".nxlx-convert.check"
+                with open(tmp, "w") as f:
+                    f.write(out)
+                try:
+                    sh(["visudo", "-cf", tmp])
+                finally:
+                    os.unlink(tmp)
+            atomic_write(path, out.encode())
+        elif op in ("group", "user"):
+            rename_account(node, op, a["old"], a["new"], a.get("home_old"), a.get("home_new"))
+        elif op == "stop":
+            for u in rec["units"]:
+                sh(["systemctl", "stop", u], check=False)
+        elif op == "idle":
+            uids = {int(k): v for k, v in a["uids"]}
+            left = [(pid, uids[uid]) for pid, uid, _ in node.processes() if uid in uids]
+            if left:
+                raise RuntimeError("%s still running after the services stopped (process %s); no account was "
+                                   "renamed. Stop it, then run --run again" % (
+                                       ", ".join(sorted({u for _, u in left})), ", ".join(str(p) for p, _ in left[:5])))
+        elif op == "start":
+            start_real(node, self.journal)
+        self.journal.write(dict(rec, state="done"))
+        self.n += 1
+
+
+def loaded_units():
+    """[(unit, active state)] of every loaded unit whose name starts with pvj- (a real node)."""
+    r = sh(["systemctl", "list-units", "--all", "--plain", "--no-legend", "--full", "pvj-*"], check=False)
+    out = []
+    for line in r.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 3 and parts[0].startswith("pvj-"):
+            out.append((parts[0], parts[2]))
+    return out
+
+
+def units_to_start(records):
+    """The main units that were running before any run that is not undone stopped them, in STOP_ORDER. Every run
+    counts, so a run that carries on after a failure starts what the first one stopped."""
+    undone = {(r.get("run"), r.get("n")) for r in records if r.get("state") == "undone"}
+    active = set()
+    for r in records:
+        if r.get("op") == "stop" and r.get("state") == "done" and (r.get("run"), r.get("n")) not in undone:
+            active.update(r.get("active", []))
+    return [u for u in STOP_ORDER if u in active]
+
+
+def start_real(node, journal):
+    m = Matcher(rows())
+    sh(["systemctl", "daemon-reload"])
+    sh(["udevadm", "control", "--reload"], check=False)
+    for name in sorted(os.listdir("/etc/tmpfiles.d")):
+        if name.startswith("nxlx"):
+            sh(["systemd-tmpfiles", "--create", "/etc/tmpfiles.d/" + name], check=False)
+    failed = []
+    for u in reversed(units_to_start(journal.records())):
+        new = renamed(m, u)
+        if sh(["systemctl", "start", new], check=False).returncode != 0:
+            failed.append(new)
+    if failed:
+        raise RuntimeError("did not start: %s (the undo is armed; see journalctl -u <unit>)" % ", ".join(failed))
+
+
+def make_backup(node, plan, run_dir):
+    tar = os.path.join(run_dir, "backup.tar")
+    fd = os.open(tar, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "wb") as f, tarfile.open(fileobj=f, mode="w") as t:
+        for rel in plan.backup:
+            t.add(node.p(rel), arcname=rel, recursive=True)
+    return tar
+
+
+UNDO_COPY = BACKUP + "/nxlx-convert"
+UNDO_SERVICE = "etc/systemd/system/%s.service" % UNDO_UNIT
+UNDO_TIMER = "etc/systemd/system/%s.timer" % UNDO_UNIT
+UNDO_WANTS = "etc/systemd/system/timers.target.wants/%s.timer" % UNDO_UNIT
+UNDO_SERVICE_TEXT = """# Written by nxlx-convert --run, removed by --confirm or --undo (D136).
+[Unit]
+Description=Undo the NXLX conversion unless it was confirmed
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /%s --undo --auto
+""" % UNDO_COPY
+UNDO_TIMER_TEXT = """# Written by nxlx-convert --run, removed by --confirm or --undo (D136). A unit file, not a transient timer, so it
+# survives a restart: a node that loses power in the middle of a run comes back and is undone a few minutes later.
+[Unit]
+Description=Undo the NXLX conversion unless it is confirmed
+
+[Timer]
+OnActiveSec=%s
+OnBootSec=5min
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target
+""" % UNDO_AFTER
+
+
+def arm_undo(node):
+    """The undo timer: written in /etc, enabled, (re)started, so its 15 minutes count from this run. The converter is
+    copied next to the backup first, because its own folder moves during the run. A timer left by an earlier run
+    is stopped and reset first, so a run that carries on is armed again and not undone by the earlier one."""
+    me = node.p(UNDO_COPY)
+    if os.path.realpath(os.path.abspath(__file__)) != os.path.realpath(me):
+        tmp = me + ".tmp"
+        shutil.copyfile(os.path.abspath(__file__), tmp)
+        os.chmod(tmp, 0o700)
+        os.replace(tmp, me)
+    if not node.stage:
+        sh(["systemctl", "stop", UNDO_UNIT + ".timer"], check=False)
+        sh(["systemctl", "reset-failed", UNDO_UNIT + ".timer", UNDO_UNIT + ".service"], check=False)
+    for rel, text in ((UNDO_SERVICE, UNDO_SERVICE_TEXT), (UNDO_TIMER, UNDO_TIMER_TEXT)):
+        os.makedirs(os.path.dirname(node.p(rel)), exist_ok=True)
+        tmp = node.p(rel) + ".nxlx-convert.tmp"
+        with open(tmp, "w") as f:
+            f.write(text)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, node.p(rel))
+    if node.stage:
+        os.makedirs(os.path.dirname(node.p(UNDO_WANTS)), exist_ok=True)
+        if not os.path.lexists(node.p(UNDO_WANTS)):
+            os.symlink("/" + UNDO_TIMER, node.p(UNDO_WANTS))
+        return "the timer is written (stage mode: not started)"
+    sh(["systemctl", "daemon-reload"])
+    sh(["systemctl", "enable", UNDO_UNIT + ".timer"])
+    sh(["systemctl", "restart", UNDO_UNIT + ".timer"])
+    return "armed: undone in %s (or 5 minutes after a restart) unless sudo nxlx-convert --confirm" % UNDO_AFTER
+
+
+LOCK = BACKUP + "/lock"
+
+
+def take_lock(node):
+    """The converter's own lock: one of --run, --undo (by hand or by the timer) and --confirm at a time. Kept until
+    the process ends. Returns None when another one holds it."""
+    os.makedirs(node.p(BACKUP), mode=0o700, exist_ok=True)
+    os.chmod(node.p(BACKUP), 0o700)
+    fd = os.open(node.p(LOCK), os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return None
+    return fd
+
+
+BUSY = "another nxlx-convert (a run, an undo or a confirm) is working on this node now; wait for it to finish"
+
+
+def disarm_undo(node, inside=False):
+    """Take the timer away. The undo service itself is never stopped: an undo that has begun finishes."""
+    if not node.stage:
+        sh(["systemctl", "disable", "--now", UNDO_UNIT + ".timer"], check=False)
+    for rel in (UNDO_WANTS, UNDO_TIMER, UNDO_SERVICE):
+        if os.path.lexists(node.p(rel)):
+            os.unlink(node.p(rel))
+    try:
+        os.rmdir(os.path.dirname(node.p(UNDO_WANTS)))        # only when nothing else is in it
+    except OSError:
+        pass
+    if not node.stage:
+        sh(["systemctl", "daemon-reload"], check=False)
+
+
+def disk_free(node, need):
+    path = node.p("var")
+    while not os.path.exists(path):
+        path = os.path.dirname(path)
+    st = os.statvfs(path)
+    return st.f_bavail * st.f_frsize >= need
+
+
+def backup_size(node, plan):
+    total = 0
+    for rel in plan.backup:
+        p = node.p(rel)
+        if os.path.isdir(p) and not os.path.islink(p):
+            for d, _, files in os.walk(p):
+                for n in files:
+                    try:
+                        total += os.lstat(os.path.join(d, n)).st_size
+                    except OSError:
+                        pass
+        else:
+            try:
+                total += os.lstat(p).st_size
+            except OSError:
+                pass
+    return total
+
+
+# --- the commands -------------------------------------------------------------------------------------------------
+class Say:
+    """What the converter tells the person: to the terminal while there is one, and to the run's log file. A
+    terminal that goes away (a dropped ssh connection) is ignored, never a reason to stop half-way; the log keeps
+    everything, from the first line on."""
+
+    def __init__(self):
+        self.buf, self.log = [], None
+
+    def __call__(self, text):
+        try:
+            sys.stdout.write(text)
+            sys.stdout.flush()
+        except (OSError, ValueError):
+            pass
+        if self.log is None:
+            self.buf.append(text)
+            return
+        try:
+            self.log.write(text)
+            self.log.flush()
+        except (OSError, ValueError):
+            pass
+
+    def to_file(self, path):
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        self.log = os.fdopen(fd, "w")
+        self.log.write("".join(self.buf))
+        self.log.flush()
+        self.buf = []
+
+
+say = Say()
+
+
+def report(plan, out=None, force=False):
+    w = say
+    node = plan.node
+    w("nxlx-convert: %s\n\n" % ("stage mode, the node in %s" % node.root if node.stage else "this node"))
+    w("Checks\n")
+    for ok, text, fc in plan.checks:
+        w("  %-8s %s\n" % ("ok" if ok else ("FORCED" if force and fc else "REFUSED"), text))
+    changes = [a for a in plan.actions]
+    w("\nChanges (%d)\n" % len(changes))
+    if not changes:
+        w("  none: this node already uses the new names\n")
+    names = {3: "stop", 4: "accounts", 5: "folders", 6: "text files", 7: "system files", 8: "login account", 9: "start"}
+    last = None
+    for i, a in enumerate(changes, 1):
+        if a["step"] != last:
+            w("  step %d, %s\n" % (a["step"], names[a["step"]]))
+            last = a["step"]
+        w("    %3d  %s\n" % (i, a["text"]))
+    if changes:
+        w("\nBackup\n  %d entries, %d KB, to /%s/<run>/backup.tar (root only, 0600); the videos are not copied "
+          "(their folder is only renamed)\n" % (len(plan.backup), (backup_size(node, plan) + 1023) // 1024, BACKUP))
+        w("  carried over byte for byte and checked after: %s\n" % (", ".join(sorted(plan.carried)) or "nothing found"))
+    if plan.left:
+        w("\nOld names left after the conversion (reported, not changed)\n")
+        for path, left in sorted(plan.left.items()):
+            w("  %s: %s\n" % (path, ", ".join(sorted(set(left)))))
+    if plan.notes:
+        w("\nLeft alone\n")
+        for n in plan.notes:
+            w("  %s\n" % n)
+
+
+def cmd_plan(node, force):
+    plan = make_plan(node, force)
+    report(plan, None, force)
+    blocked = plan.blockers(force)
+    say("\nNothing was changed. %s\n" % (
+        "Refused: %d check(s) failed, see above." % len(blocked) if blocked else
+        ("Run with --run to convert." if plan.actions else "Nothing to convert.")))
+    return EXIT_REFUSED if blocked else EXIT_OK
+
+
+def run_detached(what, force):
+    """--run or --undo by hand on a real node: the work runs in its own transient unit, with no terminal of its
+    own (its output goes to the journal and to a log file), so a dropped ssh connection cannot stop it half-way.
+    This process only waits and then shows the log."""
+    unit = "nxlx-convert-run" if what == "run" else "nxlx-convert-manual-undo"
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    log = "/%s/%s-%s.log" % (BACKUP, what, stamp)
+    since = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    args = [sys.executable, os.path.abspath(__file__), "--" + what] + (["--force"] if force else [])
+    say("Running in the unit %s (journalctl -u %s). If this connection drops, it goes on; its report is in %s.\n"
+        % (unit, unit, log))
+    r = subprocess.run(["systemd-run", "--unit=" + unit, "--wait", "--collect", "--quiet",
+                        "--setenv=NXLX_CONVERT_DETACHED=1", "--setenv=NXLX_CONVERT_LOG=" + log] + args,
+                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    if os.path.isfile(log):
+        with open(log) as f:
+            say(f.read())
+    else:
+        j = sh(["journalctl", "-u", unit, "--since", since, "--no-pager", "-o", "cat"], check=False)
+        say(j.stdout + (r.stderr or ""))
+    m = re.search(r"status=(\d+)", r.stderr or "")
+    return int(m.group(1)) if r.returncode and m else r.returncode
+
+
+def detach(node):
+    return not node.stage and os.environ.get("NXLX_CONVERT_DETACHED") != "1" and os.path.isdir("/run/systemd/system")
+
+
+def cmd_run(node, force):
+    if detach(node):
+        return run_detached("run", force)
+    plan = make_plan(node, force, mode="run")
+    report(plan, None, force)
+    blocked = plan.blockers(force)
+    if blocked:
+        say("\nRefused, nothing was changed: %s\n" % "; ".join(blocked))
+        return EXIT_REFUSED
+    if not plan.actions:
+        say("\nNothing to convert: this node already uses the new names.\n")
+        return EXIT_OK
+    need = backup_size(node, plan) * 2 + (20 << 20)
+    if not disk_free(node, need):
+        say("\nRefused, nothing was changed: less than %d MB free for the backup\n" % (need >> 20))
+        return EXIT_REFUSED
+    lock = take_lock(node)
+    if lock is None:
+        say("\nRefused, nothing was changed: %s.\n" % BUSY)
+        return EXIT_REFUSED
+    journal = Journal(node)
+    run_id = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-%d" % os.getpid()
+    run_dir = node.p(BACKUP + "/" + run_id)
+    os.makedirs(node.p(BACKUP), mode=0o700, exist_ok=True)
+    os.chmod(node.p(BACKUP), 0o700)
+    os.makedirs(run_dir, mode=0o700)
+    if say.log is None:
+        say.to_file(os.path.join(run_dir, "run.log"))
+    try:
+        armed = arm_undo(node)
+    except Exception as e:      # noqa: BLE001 - no undo, no run
+        say("\nRefused, nothing on the node was changed: the undo timer could not be armed (%s)\n" % e)
+        return EXIT_REFUSED
+    tar = make_backup(node, plan, run_dir)
+    journal.write({"run": run_id, "state": "start", "backup": os.path.relpath(tar, node.root or "/"),
+                   "carried": plan.carried, "undo": armed})
+    say("\nConverting (backup %s; undo %s)\n" % ("/" + os.path.relpath(tar, node.root or "/"), armed))
+    runner = Runner(node, plan, journal, run_id, run_dir)
+    try:
+        for a in plan.actions:
+            runner.do(a)
+            say("  done %3d  %s\n" % (runner.n, a["text"]))
+    except Exception as e:      # noqa: BLE001 - every failure stops the run and is said, never swallowed
+        journal.write({"run": run_id, "state": "failed", "n": runner.n, "error": str(e)})
+        say("\nFAILED at change %d: %s\n%d of %d changes were made and are in the journal. Either put the cause "
+            "right and run --run again (it carries on), or run --undo.%s\n"
+            % (runner.n + 1, e, runner.n, len(plan.actions),
+               "" if node.stage else " The undo timer runs by itself in %s." % UNDO_AFTER))
+        return EXIT_FAILED
+    bad = [n for n, h in plan.carried.items() if sha(node.p("var/lib/nxlx/" + n)) != h]
+    if bad:
+        journal.write({"run": run_id, "state": "failed", "error": "changed: " + ", ".join(bad)})
+        say("\nFAILED: %s changed during the conversion; run --undo\n" % ", ".join(bad))
+        return EXIT_FAILED
+    journal.write({"run": run_id, "state": "finished"})
+    say("\nConverted: %d changes. Check the node, then: sudo nxlx-convert --confirm%s\n" % (
+        runner.n, "" if node.stage else " (within %s, or it is undone)" % UNDO_AFTER))
+    return EXIT_OK
+
+
+def cmd_confirm(node):
+    journal = Journal(node)
+    if not any(r.get("state") == "start" for r in journal.records()):
+        say("Nothing to confirm: this node was never converted.\n")
+        return EXIT_OK
+    lock = take_lock(node)
+    if lock is None:
+        say("Refused, nothing was changed: %s.\n" % BUSY)
+        return EXIT_REFUSED
+    if not node.stage and sh(["systemctl", "is-active", "--quiet", UNDO_UNIT + ".service"], check=False).returncode == 0:
+        say("Refused, nothing was changed: the timed undo is running. Let it finish, then look at the node.\n")
+        return EXIT_REFUSED
+    recs = journal.records()
+    last = max(i for i, r in enumerate(recs) if r.get("state") == "start")
+    after = recs[last + 1:]
+    if not any(r.get("state") == "finished" for r in after):
+        say("Refused, nothing was changed: the latest run did not finish (%s). Run --run again to finish it, or "
+            "--undo; the undo timer stays.\n" % next((r.get("error") for r in after if r.get("state") == "failed"),
+                                                      "it stopped half-way"))
+        return EXIT_REFUSED
+    if any(r.get("state") == "undo-finished" for r in after):
+        say("Refused, nothing was changed: the latest conversion was undone.\n")
+        return EXIT_REFUSED
+    disarm_undo(node)
+    journal.write({"state": "confirmed"})
+    say("Confirmed: the undo timer is gone. The backups stay in /%s.\n" % BACKUP)
+    return EXIT_OK
+
+
+def confirmed(records):
+    """Whether the latest conversion was confirmed: a confirm after the latest start (an earlier conversion's
+    confirm does not count)."""
+    last = max([i for i, r in enumerate(records) if r.get("state") == "start"], default=-1)
+    return any(r.get("state") == "confirmed" for r in records[last + 1:]) if last >= 0 else False
+
+
+def undo_blocks(done):
+    """The records to put back, newest first, in blocks. A run's step 8 is one block with the login account first:
+    when the account cannot get its old name back, its home, sudoers file and sub-id lines stay with it."""
+    order, out, i = list(reversed(done)), [], 0
+    while i < len(order):
+        r = order[i]
+        if r.get("step") == 8:
+            j = i
+            while j < len(order) and order[j].get("step") == 8 and order[j]["run"] == r["run"]:
+                j += 1
+            out.append(sorted(order[i:j], key=lambda x: 0 if x["op"] == "user" else 1))
+            i = j
+        else:
+            out.append([r])
+            i += 1
+    return out
+
+
+def cmd_undo(node, force, auto):
+    journal = Journal(node)
+    if not journal.records():
+        say("Nothing to undo.\n")
+        return EXIT_OK
+    lock = take_lock(node)
+    if lock is None:
+        say("Refused, nothing was changed: %s.\n" % BUSY)
+        return EXIT_REFUSED
+    recs = journal.records()
+    if auto and confirmed(recs):
+        say("Not undone: the conversion was confirmed.\n")
+        return EXIT_OK
+    if not auto:
+        playing = show_playing(node)
+        if playing and not force:
+            say("Refused, nothing was changed: a show is playing (%s). Give --force to undo anyway.\n" % playing)
+            return EXIT_REFUSED
+    undone = {(r["run"], r["n"]) for r in recs if r.get("state") == "undone"}
+    done = [r for r in recs if r.get("state") == "done" and (r["run"], r["n"]) not in undone]
+    if not done:
+        disarm_undo(node, inside=auto)
+        say("Nothing to undo.\n")
+        return EXIT_OK
+    # The same check as --run: an account that is logged in cannot get its old name back.
+    users = node.users()
+    back = {r["new"]: r["old"] for r in done if r["op"] == "user"}
+    uids = {int(users[n][2]): n for n in back if n in users}
+    busy = busy_accounts(node, uids)
+    if busy and not auto:
+        for u, pids in sorted(busy.items()):
+            say("Refused, nothing was changed: the account %s is in use outside its services (process %s). Log "
+                "out of it and run this from another admin login.\n" % (u, ", ".join(map(str, pids[:5]))))
+        return EXIT_REFUSED
+    m = Matcher(rows())
+    active = units_to_start(recs)
+    if not node.stage:
+        for u in [renamed(m, x) for x in STOP_ORDER] + [u for u, _ in loaded_units_new()]:
+            sh(["systemctl", "stop", u], check=False)
+    failed = 0
+    for block in undo_blocks(done):
+        stuck = None
+        for r in block:
+            if stuck:
+                failed += 1
+                say("  NOT UNDONE  %s (left with %s, which keeps its new name)\n" % (r["text"], stuck))
+                continue
+            if r["op"] == "user" and r["new"] in busy:
+                stuck = r["new"]
+                failed += 1
+                say("  NOT UNDONE  %s: %s is logged in (process %s)\n" % (
+                    r["text"], r["new"], ", ".join(map(str, busy[r["new"]][:5]))))
+                if len(block) == 1 or r.get("step") != 8:
+                    stuck = None
+                continue
+            try:
+                undo_one(node, r)
+                journal.write({"run": r["run"], "n": r["n"], "op": r["op"], "state": "undone"})
+                say("  undone  %s\n" % r["text"])
+            except Exception as e:  # noqa: BLE001 - go on with the rest, say what could not be undone
+                failed += 1
+                say("  NOT UNDONE  %s: %s\n" % (r["text"], e))
+                if r["op"] == "user" and r.get("step") == 8:
+                    stuck = r["new"]
+    disarm_undo(node, inside=auto)
+    if not node.stage:
+        sh(["systemctl", "daemon-reload"], check=False)
+        sh(["udevadm", "control", "--reload"], check=False)
+        for u in reversed(active):
+            sh(["systemctl", "start", u], check=False)
+    journal.write({"state": "undo-finished", "failed": failed})
+    say("%s The backup stays in /%s.\n" % (
+        "Undone: the node uses the old names again." if not failed else
+        "Undone with %d change(s) that could not be put back, listed above. Run --undo again once the cause is "
+        "gone." % failed, BACKUP))
+    return EXIT_FAILED if failed else EXIT_OK
+
+
+def loaded_units_new():
+    """[(unit, active state)] of every loaded unit whose name starts with nxlx- but is not the converter's own."""
+    r = sh(["systemctl", "list-units", "--all", "--plain", "--no-legend", "--full", "nxlx-*"], check=False)
+    return [(p[0], p[2]) for p in (line.split() for line in r.stdout.splitlines())
+            if len(p) >= 3 and p[0].startswith("nxlx-") and not p[0].startswith("nxlx-convert")]
+
+
+def undo_one(node, r):
+    op = r["op"]
+    if op == "rename":
+        if node.exists(r["dst"]) and not node.exists(r["src"]):
+            os.rename(node.p(r["dst"]), node.p(r["src"]))
+    elif op == "link":
+        path = node.p(r["path"])
+        if not os.path.lexists(path):
+            for old, new in FOLDERS:            # a link inside a folder that was already moved back
+                if r["path"].startswith(new + "/"):
+                    path = node.p(old + r["path"][len(new):])
+        tmp = path + ".nxlx-convert.tmp"
+        os.symlink(r["old"], tmp)
+        os.replace(tmp, path)
+    elif op == "write":
+        path = node.p(r["path"])
+        if not os.path.exists(path):
+            for old, new in FOLDERS:
+                if r["path"].startswith(new + "/") and os.path.exists(node.p(old + r["path"][len(new):])):
+                    path = node.p(old + r["path"][len(new):])
+        with open(node.p(r["orig"]), "rb") as f:
+            data = f.read()
+        atomic_write(path, data)
+    elif op in ("group", "user"):
+        users, groups = node.users(), node.groups()
+        have = groups if op == "group" else users
+        if r["new"] in have and r["old"] not in have:
+            rename_account(node, op, r["new"], r["old"], r.get("home_new"), r.get("home_old"))
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="nxlx-convert", description=__doc__.split("\n\n")[0])
+    g = ap.add_mutually_exclusive_group()
+    g.add_argument("--plan", action="store_true", help="what it would do; changes nothing (the default)")
+    g.add_argument("--run", action="store_true", help="convert")
+    g.add_argument("--confirm", action="store_true", help="keep the conversion: disarm the undo")
+    g.add_argument("--undo", action="store_true", help="go back to the old names")
+    ap.add_argument("--root", help="stage mode: the copy of a node to work on (tests)")
+    ap.add_argument("--force", action="store_true", help="run even while a show is playing (only that check)")
+    ap.add_argument("--auto", action="store_true", help=argparse.SUPPRESS)       # the undo timer: skip if confirmed
+    a = ap.parse_args(argv)
+    if a.root is not None and (not os.path.isabs(a.root) or not os.path.isdir(a.root) or a.root.rstrip("/") == ""):
+        ap.error("--root must be an existing folder, given as an absolute path, and not /")
+    node = Node(a.root)
+    log = os.environ.get("NXLX_CONVERT_LOG") if os.environ.get("NXLX_CONVERT_DETACHED") == "1" else None
+    if log and not node.stage and log.startswith("/" + BACKUP + "/") and "/../" not in log:
+        os.makedirs("/" + BACKUP, mode=0o700, exist_ok=True)
+        say.to_file(log)
+    if not node.stage and (a.run or a.undo or a.confirm) and os.geteuid() != 0:
+        say("nxlx-convert: run as root (sudo), or use --plan or --root\n")
+        return EXIT_REFUSED
+    if a.run:
+        return cmd_run(node, a.force)
+    if a.confirm:
+        return cmd_confirm(node)
+    if a.undo:
+        if not a.auto and detach(node):
+            return run_detached("undo", a.force)
+        return cmd_undo(node, a.force, a.auto)
+    return cmd_plan(node, a.force)
+
+
+if __name__ == "__main__":
+    code = main()
+    try:
+        sys.stdout.flush()
+    except OSError:
+        try:
+            os.dup2(os.open(os.devnull, os.O_WRONLY), 1)
+        except OSError:
+            pass
+    sys.exit(code)

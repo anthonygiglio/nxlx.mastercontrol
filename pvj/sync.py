@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Multi-box sync (server and client) and the video wall.
 
-The old PocketVJ had a "master" box broadcasting its position over UDP and "slaves" that jumped when they drifted
+The upstream original had a "master" box broadcasting its position over UDP and "slaves" that jumped when they drifted
 more than 50 ms (omxplayer-sync). Here, in the owner's words, a **server** box leads and **client** boxes follow:
 
 * The server sends, about ten times a second, a small message to every local
