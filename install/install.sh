@@ -18,6 +18,10 @@
 #   --dry-run        print what would happen
 #   --uninstall      remove the service and program files (keeps /etc/pvj and media)
 #   --purge          with --uninstall, also remove /etc/pvj
+#   --signer URL     the owner's signing service, e.g. http://hp.local:8781 (D139): the node asks it for its
+#                    HTTPS certificate by itself; written into /etc/pvj/pvj.env as PVJ_SIGNER_URL
+#   --root-fingerprint HEX   required with --signer: the SHA-256 of the owner's root (boxcert.py root); a node with
+#                    no root yet takes only that root (PVJ_ROOT_FINGERPRINT)
 set -euo pipefail
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -31,6 +35,8 @@ STAGE=""
 DRY=0
 UNINSTALL=0
 PURGE=0
+SIGNER=""
+ROOT_FP=""
 
 log() { printf 'pvj-install: %s\n' "$*"; }
 die() { printf 'pvj-install: error: %s\n' "$*" >&2; exit 1; }
@@ -50,10 +56,24 @@ while [ $# -gt 0 ]; do
 	--dry-run) DRY=1; shift ;;
 	--uninstall) UNINSTALL=1; shift ;;
 	--purge) PURGE=1; shift ;;
-	-h | --help) sed -n '4,19p' "${BASH_SOURCE[0]}"; exit 0 ;;
+	--signer) SIGNER="${2:?}"; shift 2 ;;
+	--root-fingerprint) ROOT_FP="${2:?}"; shift 2 ;;
+	-h | --help) sed -n '4,24p' "${BASH_SOURCE[0]}"; exit 0 ;;
 	*) die "unknown option $1 (try --help)" ;;
 	esac
 done
+SIGNER_RE='^https?://[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?/?$'
+if [ -n "$SIGNER" ] && ! [[ "$SIGNER" =~ $SIGNER_RE ]]; then
+	die "--signer must look like http://name-or-address:port"
+fi
+if [ -n "$SIGNER" ] && [ -z "$ROOT_FP" ]; then
+	# a node with no root yet must know which root to take (D139): never the first that answers over plain http
+	die "--signer needs --root-fingerprint too (the 64 hex digits python3 tools/boxcert.py root prints)"
+fi
+if [ -n "$ROOT_FP" ]; then
+	ROOT_FP="$(printf '%s' "$ROOT_FP" | tr 'A-F' 'a-f' | tr -cd '0-9a-f')"
+	[ "${#ROOT_FP}" = 64 ] || die "--root-fingerprint must be the root's SHA-256: 64 hex digits (boxcert.py root prints it)"
+fi
 
 # One way of writing a folder: no slash at the end and no doubled one. The prefix goes into install.json and from
 # there into units (the NDI helper's, pvj/ndisetup.py), which take it only as this script would have written it.
@@ -402,6 +422,19 @@ ENV
 else
 	log "keeping existing $ETC/pvj.env"
 fi
+# The signing service and the expected root (D139): set or replaced in pvj.env only when given; both values were
+# checked above, so they hold no character sed or the env file would read specially.
+set_env() {
+	if [ "$DRY" = 1 ]; then printf '  would set %s=%s in %s\n' "$1" "$2" "$ETC/pvj.env"; return; fi
+	if grep -q "^$1=" "$ETC/pvj.env" 2>/dev/null; then
+		sed -i "s|^$1=.*|$1=$2|" "$ETC/pvj.env"
+	else
+		printf '%s=%s\n' "$1" "$2" >> "$ETC/pvj.env"
+	fi
+	log "set $1 in $ETC/pvj.env"
+}
+if [ -n "$SIGNER" ]; then set_env PVJ_SIGNER_URL "${SIGNER%/}"; fi
+if [ -n "$ROOT_FP" ]; then set_env PVJ_ROOT_FINGERPRINT "$ROOT_FP"; fi
 # Public keys whose signatures pvj-update accepts (one line per key, see install/README.md).
 if [ ! -e "$ETC/allowed_signers" ] && [ "$DRY" = 0 ]; then
 	cat > "$ETC/allowed_signers" <<KEYS

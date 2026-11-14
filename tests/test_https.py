@@ -670,7 +670,7 @@ class HttpsTest(HttpsBase):
         from pvj import policy
         operator = self.call("POST", "/api/devices/invite", {"name": "op", "role": "live"}, token=self.full)[1]["token"]
         routes = sorted(k for k in policy.OUTSIDE if k[1].startswith("/api/https"))
-        self.assertEqual(len(routes), 9)
+        self.assertEqual(len(routes), 10)
         for method, path in routes:
             body = {} if method == "POST" else None
             self.assertEqual(self.call(method, path, body)[0], 401, path)
@@ -759,7 +759,8 @@ class ReaderTest(unittest.TestCase):
         self.assertEqual(leaf["serial"].lstrip("0"), info["serial"].lstrip("0"))
         self.assertEqual(leaf["not_after"], int(info["end"].timestamp()))
         self.assertTrue(root["ca"])
-        self.assertFalse(root["server_auth"])
+        # since the D139 review a root says what certificates under it are for: server and client, nothing else
+        self.assertEqual((root["server_auth"], root["client_auth"], root["self_issued"]), (True, True, True))
 
 
 class OlderReleaseTest(unittest.TestCase):

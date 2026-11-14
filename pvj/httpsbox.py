@@ -34,6 +34,11 @@ import threading
 import time
 
 KEY, REQUEST, REQUEST_META, CERT, PREVIOUS, ROOT, NEW = "key.pem", "request.pem", "request.json", "cert.pem", "previous.pem", "root.pem", "cert.new.pem"
+AUTO = "auto.json"                     # what the last try at the signing service said (D139, pvj/autocert.py)
+AUTO_REQUEST = "auto-request.pem"      # the automatic certificate's own request: request.pem is the owner's
+NO_CA = "no-ca"                        # an empty folder: -CApath for an openssl that cannot be told to leave the system's CAs out
+ROOT_MOVE_MAGIC = b"nxlx-root-move-v1\n"   # tools/boxcert.py move-root: the old root signs these bytes and then the message
+MAX_MOVE = 16 * 1024
 CURVE = "prime256v1"
 MAX_PEM = 32 * 1024                    # a certificate with its root is about 2 kB
 WARN_DAYS = 30
@@ -147,7 +152,9 @@ def read_certificate(der):
     not_before, not_after = _time(*validity[0]), _time(*validity[1])
     subject = _name_cn(fields[i + 4][1])
     out = {"serial": serial, "subject": subject, "issuer": issuer, "not_before": not_before, "not_after": not_after,
-           "dns": [], "ips": [], "server_auth": False, "client_auth": False, "ca": False, "has_eku": False}
+           "dns": [], "ips": [], "server_auth": False, "client_auth": False, "ca": False, "has_eku": False,
+           # issuer and subject the same name (byte for byte): a root. A CA that is not self-issued is a signer (D139)
+           "self_issued": fields[i + 2][1] == fields[i + 4][1]}
     for tag, val in fields[i + 5:]:
         if tag != 0xA3:
             continue
@@ -173,6 +180,25 @@ def read_certificate(der):
                 bc = _children(inner)
                 out["ca"] = bool(bc) and bc[0][0] == 0x01 and bc[0][1] != b"\x00"
     return out
+
+
+def split_chain(text):
+    """(the first certificate's PEM, the PEMs of the signers after it, the PEM of a root after it or None) from a
+    certificate file (D139: the node's certificate, then the signer, then the root). A root is a CA whose issuer and
+    subject are the same name; any other CA is a signer. Raises ValueError for a file that is not certificates."""
+    blocks = pem_blocks(text)
+    if not blocks:
+        raise ValueError("no certificate")
+    signers, root = [], None
+    for der, block in blocks[1:]:
+        info = read_certificate(der)
+        if not info["ca"]:
+            continue
+        if info["self_issued"]:
+            root = root or block
+        else:
+            signers.append(block)
+    return blocks[0][1], signers, root
 
 
 def fingerprint(der):
@@ -267,6 +293,8 @@ class HttpsBox:
         self.port = None             # set by the server when it listens
         self._openssl_ok = None
         self._peer_ctx = None        # (cert text, root text, SSLContext): the context of the peer listener (D132), made again when either changes
+        self.auto = None             # what the automatic certificate last said (D139, pvj/autocert.py), for the page
+        self._isolate_args = None    # how this openssl is told to trust the pinned root only (_isolate)
 
     # -- files --
     def path(self, name):
@@ -454,8 +482,14 @@ class HttpsBox:
         return dns, ips
 
     # -- the key and the request --
-    def make_request(self, names, new_key=False):
+    def make_request(self, names, new_key=False, auto=False):
+        """The request (and the key, the first time). `auto` (D139): the automatic certificate's own request, written to
+        AUTO_REQUEST, so the owner's saved names (https.names) and a manual request.pem he may be about to download are
+        left as they are. It never makes a new key over an existing one."""
         dns, ips = self.check_names(names)
+        if auto:
+            new_key = False
+        req_name = AUTO_REQUEST if auto else REQUEST
         if not self.has_openssl():
             raise HttpsError("this node has no openssl, so it cannot make a key; install the openssl package on it", 503)
         with self.lock:
@@ -474,14 +508,16 @@ class HttpsBox:
             self._write("request.cnf", "[req]\ndistinguished_name=dn\nprompt=no\nreq_extensions=v3_req\n[dn]\nCN=%s\n[v3_req]\nsubjectAltName=%s\n"
                         % ((dns or ips)[0], san), 0o600)
             try:
-                r = self._run(["req", "-new", "-key", self.path(KEY), "-config", cfg, "-out", self.path(REQUEST) + ".tmp"])
+                r = self._run(["req", "-new", "-key", self.path(KEY), "-config", cfg, "-out", self.path(req_name) + ".tmp"])
             finally:
                 self._unlink("request.cnf")
             if r.returncode != 0:
-                self._unlink(REQUEST + ".tmp")
+                self._unlink(req_name + ".tmp")
                 raise HttpsError("the request could not be made: %s" % self._tail(r), 500)
-            os.chmod(self.path(REQUEST) + ".tmp", 0o640)
-            os.replace(self.path(REQUEST) + ".tmp", self.path(REQUEST))
+            os.chmod(self.path(req_name) + ".tmp", 0o640)
+            os.replace(self.path(req_name) + ".tmp", self.path(req_name))
+            if auto:
+                return {"request": self._read(AUTO_REQUEST), "names": dns + ips}
             self._write(REQUEST_META, json.dumps({"dns": dns, "ips": ips, "made": int(self._now())}))
         extra = [d for d in dns if d != self.hostname() + ".local"]
         with self.settings.lock:
@@ -509,24 +545,27 @@ class HttpsBox:
     def root_pem(self):
         return self._read(ROOT)
 
-    def chains_to_root(self, der):
-        """For a certificate that a peer showed (DER): (does it chain to the pinned root, what it says). The check is the one
-        used for this node's own certificate (`openssl verify`, fixed arguments, `-purpose sslserver`, the root's name
-        constraints, dates left out). (False, None) when it is not a certificate; (False, info) when no root is pinned or
-        there is no openssl."""
+    def peer_client_context(self):
+        """The context this node calls another node with (D132, D139): the pinned root is the only CA and the handshake
+        checks the whole chain the other node sends (its certificate, and the signer when it has one), with the
+        root's name constraints and path length, `sslserver` purpose. Names, keys and dates are judged by the caller.
+        None while no root is pinned."""
+        root = self._read(ROOT)
+        if not root:
+            return None
         try:
-            info = read_certificate(der)
-        except Exception:
-            return False, None
-        if not self._read(ROOT) or not self.has_openssl():
-            return False, info
-        b64 = base64.b64encode(der).decode("ascii")
-        pem = "-----BEGIN CERTIFICATE-----\n" + "\n".join(b64[i:i + 64] for i in range(0, len(b64), 64)) + "\n-----END CERTIFICATE-----\n"
-        with self.lock:                                     # check.pem is one file
-            try:
-                return self._issued_by_stored_root(pem, info), info
-            except (HttpsError, OSError):
-                return False, info
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            ctx.check_hostname = False                   # the caller matches the address or the .local name itself
+            ctx.verify_mode = ssl.CERT_REQUIRED
+            ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+            ctx.load_verify_locations(cadata=root)
+        except (ssl.SSLError, ValueError):
+            return None
+        try:
+            ctx.verify_flags |= NO_CHECK_TIME
+        except (OverflowError, ValueError, ssl.SSLError):
+            pass                                         # as peer_context: a library without the flag judges dates itself
+        return ctx
 
     def cert_pem(self):
         """The text of the certificate file in use (the node's own certificate, then the root), or None. Public."""
@@ -638,12 +677,18 @@ class HttpsBox:
         if h and h not in ("localhost", "127.0.0.1", "::1") and not name_matches(h, leaf["dns"], leaf["ips"]):
             raise HttpsError("the certificate does not name %s, which is how you reached the node; it names %s. Make the request again with that name in it, or open the node by a name it has"
                              % (h, ", ".join(leaf["dns"] + leaf["ips"])))
-        root = None
+        # what comes after the node's certificate: signers (kept with it, so devices get the whole path, D139) and the
+        # root (self-issued; taken only when no root is pinned yet). Before D139 the first CA was taken as the root,
+        # which would have pinned a signer.
+        root, signers = None, []
         for info, (_, block) in zip(infos[1:], blocks[1:]):
-            if info["ca"]:
-                root = block
-                break
-        return leaf, blocks[0][1], root
+            if not info["ca"]:
+                continue
+            if info["self_issued"]:
+                root = root or block
+            else:
+                signers.append(block)
+        return leaf, blocks[0][1] + "".join(signers), root
 
     def root_info(self):
         """(info, fingerprint) of the stored root, or (None, None)."""
@@ -656,18 +701,49 @@ class HttpsBox:
         except (ValueError, IndexError):
             return None, None
 
-    def _issued_by_stored_root(self, leaf_pem, leaf):
+    def _isolate(self):
+        """Arguments that make the pinned root the ONLY anchor of `openssl verify` (D139 review): without them -CAfile
+        is added to the system's CA folder and store, so a certificate from any public authority, or from a CA someone
+        put in the system's folder, would count as "from the root this node knows". OpenSSL 3 has -no-CApath and
+        -no-CAstore, 1.1.1 -no-CApath; any other gets an empty folder as -CApath."""
+        if self._isolate_args is None:
+            try:
+                r = subprocess.run([self.openssl, "verify", "-help"], capture_output=True, text=True, timeout=20)
+                text = (r.stdout or "") + (r.stderr or "")
+            except (OSError, subprocess.TimeoutExpired):
+                text = ""
+            if "-no-CApath" in text:
+                self._isolate_args = ["-no-CApath"] + (["-no-CAstore"] if "-no-CAstore" in text else [])
+            else:
+                self._isolate_args = ["-CApath", self.path(NO_CA)]
+        if self._isolate_args[0] == "-CApath":
+            self._ensure_folder()
+            os.makedirs(self.path(NO_CA), mode=0o700, exist_ok=True)
+        return list(self._isolate_args)
+
+    def _issued_by_stored_root(self, leaf_pem, leaf, ca=None):
         """Is this certificate signed by the root this box knows? Checked by the operating system's `openssl verify`
         with fixed arguments and a time bound: the issuer name and the key identifier can be forged by a root made
         to look the same, and the standard library has no public way to check a signature. `-attime` is the
         certificate's own first minute, so the dates (which the device judges, and which a stepped clock would
-        confuse) play no part here; `-purpose sslserver` and the root's name constraints do."""
-        self._write("check.pem", leaf_pem, 0o600)
+        confuse) play no part here; `-purpose sslserver` and the root's name constraints do.
+        `leaf_pem` may hold signers after the certificate (D139): they go in as `-untrusted`, which only helps build the
+        path; the pinned root is still the one anchor, its path length and constraints apply to the signer too. A
+        root in the text is left out: only the stored one counts."""
         try:
-            r = self._run(["verify", "-CAfile", self.path(ROOT), "-purpose", "sslserver", "-attime", str(leaf["not_before"] + 60), self.path("check.pem")],
-                          timeout=20)
+            first, signers, _root = split_chain(leaf_pem)
+        except (ValueError, IndexError, UnicodeDecodeError, OverflowError):
+            return False
+        self._write("check.pem", first, 0o600)
+        args = ["verify", "-CAfile", ca or self.path(ROOT)] + self._isolate() + ["-purpose", "sslserver", "-attime", str(leaf["not_before"] + 60)]
+        if signers:
+            self._write("untrusted.pem", "".join(signers), 0o600)
+            args += ["-untrusted", self.path("untrusted.pem")]
+        try:
+            r = self._run(args + [self.path("check.pem")], timeout=20)
         finally:
             self._unlink("check.pem")
+            self._unlink("untrusted.pem")
         return r.returncode == 0 and ": OK" in (r.stdout or "")
 
     def install(self, pem_text, host):
@@ -743,6 +819,92 @@ class HttpsBox:
         self.log("pvj-web: the root was replaced: %s -> %s" % ((old_fp or "none")[:19], new_fp[:19]))
         return {"old": old_fp, "new": new_fp, "name": info["subject"]}
 
+    def apply_root_move(self, body, sig_text, expect_to=None):
+        """Take a new root because the pinned root said so (D139, tools/boxcert.py move-root): `body` is the exact bytes
+        of root-move.json, `sig_text` the old root's signature over ROOT_MOVE_MAGIC + body. No person and no pairing is
+        needed, because only the holder of the pinned root's key can make one; this is how the owner's nodes move to a
+        new root in one evening. A move that names another root than the pinned one is refused, so a move applies once
+        and an old one replayed later does nothing. `expect_to`: the root the move must lead to (the signer's, and the
+        one the node was told to expect), checked before anything is written. Returns {"old", "new"} fingerprints."""
+        from . import fleetlist
+        if isinstance(body, str):
+            body = body.encode("utf-8")
+        if not isinstance(body, (bytes, bytearray)) or not 0 < len(body) <= MAX_MOVE:
+            raise HttpsError("that is not a root move")
+        try:
+            msg = json.loads(bytes(body).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            raise HttpsError("that is not a root move")
+        if not isinstance(msg, dict) or set(msg) != {"v", "kind", "from", "to", "root", "issued"} or msg["v"] != 1 \
+                or msg["kind"] != "nxlx-root-move" or not all(isinstance(msg[k], str) for k in ("from", "to", "root", "issued")):
+            raise HttpsError("that is not a root move this node understands")
+        for want in ([expect_to] if isinstance(expect_to, str) else list(expect_to or ())):
+            if want and not same_fingerprint(msg["to"], want):
+                raise HttpsError("the root move leads to %s, not to the root expected here (%s)" % (msg["to"][:16], re.sub(r"[^0-9a-f]", "", want.lower())[:16]), 409)
+        with self.lock:
+            stored = self._read(ROOT)
+            if not stored:
+                raise HttpsError("this node trusts no root yet, so there is nothing to move from", 409)
+            try:
+                stored_der = pem_certificates(stored)[0]
+            except (ValueError, IndexError):
+                raise HttpsError("the root this node trusts cannot be read", 500)
+            old = hashlib.sha256(stored_der).hexdigest()
+            if not same_fingerprint(msg["from"], old):
+                raise HttpsError("this root move is for another root than the one this node trusts", 409)
+            try:
+                ok = fleetlist.signature_ok(ROOT_MOVE_MAGIC + bytes(body), sig_text, stored, self.openssl)
+            except fleetlist.FleetError as e:
+                raise HttpsError("the root move could not be checked: %s" % e.message, 503 if e.code == "no-openssl" else 400)
+            if not ok:
+                raise HttpsError("the root move is not signed by the root this node trusts", 403)
+            try:
+                blocks = pem_blocks(msg["root"])
+                infos = [read_certificate(d) for d, _ in blocks]
+            except (ValueError, IndexError, UnicodeDecodeError, OverflowError):
+                raise HttpsError("the new root in the move cannot be read")
+            if len(blocks) != 1 or not infos[0]["ca"] or not infos[0]["self_issued"]:
+                raise HttpsError("the move must carry exactly one root certificate")
+            new = hashlib.sha256(blocks[0][0]).hexdigest()
+            if not same_fingerprint(msg["to"], new):
+                raise HttpsError("the new root in the move is not the one it names")
+            self._write(ROOT, blocks[0][1])
+            current = self._read(CERT)
+            if self.context is not None and current and self.info and self.has_openssl():
+                self.chained = self._issued_by_stored_root(current, self.info)
+        self.log("pvj-web: the root was moved by a message the old root signed: %s -> %s" % (fingerprint(stored_der)[:19], fingerprint(blocks[0][0])[:19]))
+        return {"old": fingerprint(stored_der), "new": fingerprint(blocks[0][0])}
+
+    def install_from_signer(self, chain_text, signer_root_fp, want_root=None):
+        """A certificate the signing service sent (D139), through the same checks as an upload (install): with a root
+        pinned, the chain must end at it. With none pinned yet, the root in the answer is pinned, as the first manual
+        upload does, but only when the node was told which root to expect (`want_root`: https.root_fingerprint or
+        PVJ_ROOT_FINGERPRINT, set at install; the D139 review: never a first root from whoever answers over plain http),
+        that root is the one in the answer and the one the signer said it works for, and the chain checks out against it."""
+        leaf, chain_pem, root_pem = self.check(chain_text, None)
+        if self.root_info()[0] is None:
+            if not want_root:
+                raise HttpsError("this node trusts no root yet and was not told which one to expect: it needs the root fingerprint", 412)
+            if not root_pem:
+                raise HttpsError("the signer's answer holds no root")
+            root_fp = fingerprint(pem_certificates(root_pem)[0])
+            if not same_fingerprint(root_fp, signer_root_fp):
+                raise HttpsError("the signer's answer ends at another root than the one it says it works for")
+            if not same_fingerprint(root_fp, want_root):
+                raise HttpsError("the signer works for the root %s, but this node was set up to trust %s only" % (root_fp[:19], want_root[:19]))
+            if not self.has_openssl():
+                raise HttpsError("the certificate cannot be checked without openssl on the node", 503)
+            with self.lock:
+                self._ensure_folder()
+                self._write("anchor.pem", root_pem, 0o600)
+                try:
+                    ok = self._issued_by_stored_root(chain_pem, leaf, ca=self.path("anchor.pem"))
+                finally:
+                    self._unlink("anchor.pem")
+            if not ok:
+                raise HttpsError("the signer's certificate does not check out against the root in its own answer")
+        return self.install(chain_text, None)
+
     def undo(self):
         with self.lock:
             prev = self._read(PREVIOUS)
@@ -782,9 +944,16 @@ class HttpsBox:
         problems = []
         with self.lock:
             self.context, self.info, self.load_error = None, None, None
-            for name in (KEY, REQUEST, REQUEST_META, CERT, PREVIOUS, ROOT, NEW, "check.pem", "request.cnf", KEY + ".tmp", REQUEST + ".tmp", NEW + ".tmp"):
+            self.auto = None
+            for name in (KEY, REQUEST, REQUEST_META, CERT, PREVIOUS, ROOT, NEW, AUTO, AUTO_REQUEST, "check.pem", "untrusted.pem", "anchor.pem", "request.cnf",
+                         KEY + ".tmp", REQUEST + ".tmp", NEW + ".tmp", AUTO + ".tmp", AUTO_REQUEST + ".tmp"):
                 if not self._unlink(name):
                     problems.append("could not remove %s" % name)
+            try:
+                if os.path.isdir(self.path(NO_CA)):
+                    os.rmdir(self.path(NO_CA))
+            except OSError:
+                pass
             try:
                 if os.path.isdir(self.folder):
                     os.rmdir(self.folder)
@@ -830,6 +999,7 @@ class HttpsBox:
                 "root": os.path.isfile(self.path(ROOT)), "root_fingerprint": self.root_info()[1], "openssl": self.has_openssl(), "clock_trusted": self.clock_trusted(),
                 "load_error": self.load_error, "default_names": self.default_names(), "host": host_of(host),
                 "this_device_secure": self.device_secure(device) if device else False, "warn_days": WARN_DAYS, "relief": self.relief(),
+                "auto": dict(self.auto) if isinstance(self.auto, dict) else None,
                 "https_address": self.https_address(host), "http_address": "http://%s/" % (host_of(host) or self.first_name())}
 
     def trusted_origin(self, host):
