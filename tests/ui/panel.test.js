@@ -5041,6 +5041,17 @@ function startServer(env) {          // env: more for the harness's environment 
       strobeReq.length = 0;
       const box = await page.locator('#strobehold').boundingBox();
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      // The test clip is 2 seconds long and loops, and at the start of each pass (and while the decoder starts) mpv has no
+      // video-params for a moment, so a hold that lands there is refused with the same 409 ("Nothing with a picture is
+      // playing"). Loading the screen above takes about as long as a pass, so the clip's phase at the press is not known.
+      // So press in the middle of a pass: the picture is there and the clip is between 0.3 and 0.8 seconds in, which
+      // leaves more than a second (the hold below lasts 0.75) before the next pass starts.
+      await page.waitForFunction(async () => {
+        const d = await fetch('/api/effects').then((r) => r.json());
+        const at = (await fetch('/api/status').then((r) => r.json())).player.position;
+        return d.available === true && typeof at === 'number' && at >= 0.3 && at < 0.8;
+      }, null, { polling: 40, timeout: 20000 })
+        .catch(async () => { throw new Error('no moment in the middle of a pass of the strobe clip: ' + JSON.stringify(await get('/api/status').then((d) => d.player))); });
       await page.mouse.down();
       await page.waitForFunction(() => /Flashing|Waiting|Held/.test(document.getElementById('strobestate').textContent), null, { timeout: 8000 });
       assert.strictEqual(await page.getAttribute('#strobehold', 'aria-pressed'), 'true', 'the button is drawn pressed while held');
