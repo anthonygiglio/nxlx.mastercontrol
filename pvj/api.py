@@ -4263,11 +4263,11 @@ class Api:
         connector = self._picture_connector(conns)
         if not connector:
             return None
-        pin = hardware.hdmi_sound_for(connector, conns, self.SOUND_ROOT)
-        if not pin:
+        port = hardware.hdmi_sound_for(connector, conns, self.SOUND_ROOT)
+        if not port:
             return None
-        for want in ("alsa/plughw:CARD=%s,DEV=%d" % (pin["card_id"], pin["device"]),     # the one measured on the M710q
-                     "alsa/hdmi:CARD=%s,DEV=%d" % (pin["card_id"], pin["hdmi_index"])):
+        for want in ("alsa/plughw:CARD=%s,DEV=%d" % (port["card_id"], port["device"]),     # the one measured on the M710q
+                     "alsa/hdmi:CARD=%s,DEV=%d" % (port["card_id"], port["hdmi_index"])):
             if want in names:
                 return want
         return None

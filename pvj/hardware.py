@@ -172,10 +172,12 @@ def has_desktop(env=None):
 # --- the sound device of a screen on a PC (J-155, D137) ----------------------------------------------------------------
 # On a PC the ALSA default is the analog jack, so mpv's own "auto" never reaches the screen's HDMI sound (measured on an
 # Intel M710q: a tone on auto never reached the HDMI capture card; on plughw:CARD=PCH,DEV=3 it did). The HDA HDMI codec
-# lists one ELD file a pin, /proc/asound/cardN/eld#CODEC.PIN, with the monitor's name and whether one is present; its
-# PCM devices are named "HDMI 0", "HDMI 1" ... in pin order (devices 3, 7, 8, 9 ... on Intel). The DRM connector's EDID
-# carries the same monitor name, which is how a pin is matched to a connector, not by guessing from port letters.
-_ELD_FILE = re.compile(r"eld#([0-9]{1,3})\.([0-9]{1,3})(?:\.([0-9]{1,3}))?")
+# lists ELD files /proc/asound/cardN/eld#CODEC.N with the monitor's name and whether one is present. With DP MST
+# support (Intel Haswell and later) each port has several entries, one a stream: N = port * streams + stream, and the
+# codec file (codec#CODEC) says "Devices: streams" for each port; a Kaby Lake HD 630 has 3 ports and 9 entries
+# (eld#0.0 to eld#0.8, its monitors on 0, 3 and 6). The PCM devices are named "HDMI 0", "HDMI 1" ... one a port, in
+# port order (devices 3, 7, 8 on Intel). The DRM connector's EDID carries the same monitor name as the ELD.
+_ELD_FILE = re.compile(r"eld#([0-9]{1,3})\.([0-9]{1,3})")
 _HDA_HDMI_DEVICES = (3, 7, 8, 9, 10, 11)       # the HDA driver's fixed HDMI PCM numbers, used when pcmNp/info is missing
 _EDID_HEADER = b"\x00\xff\xff\xff\xff\xff\xff\x00"
 
@@ -210,11 +212,23 @@ def _eld_fields(text):
     return fields
 
 
-def hdmi_sound_pins(root="/"):
-    """The HDMI and DisplayPort sound pins of the HDA sound cards, from their ELD files: [{"card", "card_id", "pin",
-    "hdmi_index", "device", "present", "name", "type"}]. `device` is the ALSA PCM device of the pin (None when it
-    cannot be told) and `hdmi_index` the N of ALSA's hdmi:CARD=X,DEV=N. A DP MST stream (eld#C.P.D with D above 0) is
-    left out: which PCM it gets is not fixed."""
+def _streams_a_port(card_dir, codec, entries, ports):
+    """How many ELD entries each port of `codec` has: the codec file's "Devices: N" (the same N on every port, and
+    ports times N entries), else the entries over the HDMI PCMs when they divide, else 1."""
+    found = [int(n) for n in re.findall(r"(?m)^\s*Devices: ([0-9]{1,2})\s*$", _read("/", os.path.join(card_dir, "codec#%d" % codec)) or "")]
+    if found and len(set(found)) == 1 and found[0] > 0 and len(found) * found[0] == entries:
+        return found[0]
+    if ports and entries > ports and entries % ports == 0:
+        return entries // ports
+    return 1
+
+
+def hdmi_sound_ports(root="/"):
+    """The HDMI and DisplayPort sound ports of the HDA sound cards, from their ELD files: [{"card", "card_id", "port",
+    "hdmi_index", "device", "present", "name", "type"}], in card and port order. `device` is the ALSA PCM device of
+    the port ("HDMI k" for port k, else HDA's fixed 3, 7, 8 ...; None when it cannot be told) and `hdmi_index` the k of
+    ALSA's hdmi:CARD=X,DEV=k. A port is present when any of its entries has a monitor; its name and type are that
+    entry's."""
     out = []
     for card_dir in sorted(glob.glob(os.path.join(root, "proc/asound/card[0-9]*"))):
         m = re.fullmatch(r"card([0-9]{1,3})", os.path.basename(card_dir))
@@ -227,46 +241,68 @@ def hdmi_sound_pins(root="/"):
             nm = re.search(r"(?m)^name: HDMI ([0-9]{1,2})\s*$", _read("/", info) or "")
             if dm and nm:
                 named[int(nm.group(1))] = int(dm.group(1))
-        elds = []
+        codecs = {}
         for path in glob.glob(os.path.join(card_dir, "eld#*")):
             em = _ELD_FILE.fullmatch(os.path.basename(path))
-            if em and int(em.group(3) or 0) == 0:
-                elds.append((int(em.group(1)), int(em.group(2)), path))
-        for codec, pin, path in sorted(elds):
-            f = _eld_fields(_read("/", path))
-            if named:
-                device = named.get(pin)
-            else:
-                device = _HDA_HDMI_DEVICES[pin] if pin < len(_HDA_HDMI_DEVICES) else None
-            out.append({"card": int(m.group(1)), "card_id": card_id, "pin": pin, "hdmi_index": pin, "device": device,
-                        "present": f.get("monitor_present") == "1" and f.get("eld_valid", "1") == "1",
-                        "name": f.get("monitor_name") or None, "type": f.get("connection_type") or None})
+            if em:
+                codecs.setdefault(int(em.group(1)), []).append((int(em.group(2)), path))
+        index = 0                       # "HDMI k" counts the ports of the card, codec after codec
+        for codec in sorted(codecs):
+            entries = sorted(codecs[codec])
+            stride = _streams_a_port(card_dir, codec, len(entries), len(named))
+            ports = {}
+            for n, path in entries:
+                ports.setdefault(n // stride, []).append(_eld_fields(_read("/", path)))
+            for port in sorted(ports):
+                present = [f for f in ports[port] if f.get("monitor_present") == "1" and f.get("eld_valid", "1") == "1"]
+                f = present[0] if present else {}
+                k = index
+                index += 1
+                device = named.get(k) if named else (_HDA_HDMI_DEVICES[k] if k < len(_HDA_HDMI_DEVICES) else None)
+                out.append({"card": int(m.group(1)), "card_id": card_id, "port": port, "hdmi_index": k, "device": device,
+                            "present": bool(present), "name": f.get("monitor_name") or None,
+                            "type": f.get("connection_type") or None})
     return out
 
 
+def _connector_order(name):
+    num = re.search(r"([0-9]+)$", str(name))
+    return (int(num.group(1)) if num else 0, str(name))
+
+
 def hdmi_sound_for(connector, connectors, root="/"):
-    """The sound pin (an item of hdmi_sound_pins, with "how") of the screen on DRM connector `connector`, or None when
-    it cannot be told. The monitor name in the connector's EDID is matched with the pins' ELD; without a name, or with
-    no single pin of that name, the only connected HDMI or DisplayPort screen is matched with the only pin that has a
-    monitor present. Two screens of one model and no other clue give None: a guess could send the sound to the wrong
-    screen. `connectors` is drm_connectors()."""
+    """The sound port (an item of hdmi_sound_ports, with "how") of the screen on DRM connector `connector`, or None
+    when it cannot be told. `connectors` is drm_connectors() (each with "status": "connected" or not).
+
+    1. By monitor name: the name in the connector's EDID, when no other connected screen has it and exactly one present
+       port has it in its ELD.
+    2. By port order, when the names cannot tell (no name, or names that repeat: two screens of one model): the
+       connected screens, all HDMI or all DisplayPort, in the kernel's order (HDMI-A-1, -2, -3), are matched with the
+       present ports in order, when there are as many of each. This assumes the kernel numbers its connectors in the
+       order of the sound ports, which held on an Intel Kaby Lake (D137). A port whose ELD names another monitor than
+       the connector's EDID is never taken.
+    Anything else gives None: a guess could send the sound to the wrong screen."""
     kind = connector_kind(connector)
     if kind not in ("hdmi", "dp"):
         return None
     want_type = "HDMI" if kind == "hdmi" else "DisplayPort"
-    pins = [p for p in hdmi_sound_pins(root) if p["present"] and p["device"] is not None
-            and p["type"] in (None, "HDMI", "DisplayPort") and p["type"] in (None, want_type)]
-    if not pins:
+    ports = [p for p in hdmi_sound_ports(root) if p["present"] and p["device"] is not None and p["type"] in (None, want_type)]
+    if not ports:
         return None
-    name = edid_monitor_name(connector, root)
-    if name:
-        same = [p for p in pins if p["name"] == name]
+    screens = sorted((c["connector"] for c in connectors if c.get("status") == "connected"
+                      and connector_kind(c.get("connector")) in ("hdmi", "dp")), key=_connector_order)
+    if connector not in screens:
+        return None
+    names = {s: edid_monitor_name(s, root) for s in screens}
+    name = names[connector]
+    if name and list(names.values()).count(name) == 1:
+        same = [p for p in ports if p["name"] == name]
         if len(same) == 1:
             return dict(same[0], how="monitor name")
-    screens = [c for c in connectors if c.get("status") == "connected" and connector_kind(c.get("connector")) in ("hdmi", "dp")]
-    if len(screens) == 1 and screens[0].get("connector") == connector and len(pins) == 1 \
-            and not (name and pins[0]["name"] and pins[0]["name"] != name):      # two names that differ are two screens
-        return dict(pins[0], how="the only screen")
+    if len(screens) == len(ports) and all(connector_kind(s) == kind for s in screens):
+        port = ports[screens.index(connector)]
+        if not (name and port["name"] and port["name"] != name):
+            return dict(port, how="port order")
     return None
 
 

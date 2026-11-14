@@ -75,20 +75,28 @@ class HdmiSoundTreeTest(unittest.TestCase):
         self.assertEqual((one["card_id"], one["device"], one["hdmi_index"], one["how"]), ("PCH", 8, 2, "monitor name"))
         self.assertEqual((two["device"], two["hdmi_index"]), (7, 1))
 
-    def test_the_only_screen_takes_the_only_pin_without_a_name(self):
+    def test_the_only_screen_takes_the_only_port_without_a_name(self):
         root = self.tree(intel([eld(True, ""), eld(False), eld(False)]), drm(HDMI_A_1="", DP_1=None))
         found = hardware.hdmi_sound_for("HDMI-A-1", conns(HDMI_A_1="x", DP_1=None), root)
-        self.assertEqual((found["device"], found["how"]), (3, "the only screen"))
+        self.assertEqual((found["device"], found["how"]), (3, "port order"))
 
     def test_pcm_numbers_come_from_the_driver_and_the_fixed_list_without_it(self):
         root = self.tree(intel([eld(False), eld(True, "A")], info=False), drm(HDMI_A_1="A"))
         self.assertEqual(hardware.hdmi_sound_for("HDMI-A-1", conns(HDMI_A_1="A"), root)["device"], 7)
 
-    def test_no_clue_gives_none(self):
+    def test_two_screens_of_one_model_go_by_port_order(self):
         c = conns(HDMI_A_1="x", HDMI_A_2="y")
-        # two screens of one model: no guess
         root = self.tree(intel([eld(True, "SAME"), eld(True, "SAME")]), drm(HDMI_A_1="SAME", HDMI_A_2="SAME"))
+        one, two = (hardware.hdmi_sound_for(n, c, root) for n in ("HDMI-A-1", "HDMI-A-2"))
+        self.assertEqual((one["device"], one["how"], two["device"], two["how"]), (3, "port order", 7, "port order"))
+        # as many present ports as screens, or no guess: a third port with a monitor the kernel does not show
+        root = self.tree(intel([eld(True, "SAME"), eld(True, "SAME"), eld(True, "SAME")]), drm(HDMI_A_1="SAME", HDMI_A_2="SAME"))
         self.assertIsNone(hardware.hdmi_sound_for("HDMI-A-1", c, root))
+        # an HDMI and a DisplayPort screen are not put in one order
+        root = self.tree(intel([eld(True, "SAME"), eld(True, "SAME", "DisplayPort")]), drm(HDMI_A_1="SAME", DP_1="SAME"))
+        self.assertIsNone(hardware.hdmi_sound_for("HDMI-A-1", conns(HDMI_A_1="x", DP_1="y"), root))
+
+    def test_no_clue_gives_none(self):
         # no monitor present on any pin, no sound card at all, a screen kind without sound
         root = self.tree(intel([eld(False), eld(False)]), drm(HDMI_A_1="A"))
         self.assertIsNone(hardware.hdmi_sound_for("HDMI-A-1", conns(HDMI_A_1="A"), root))
@@ -105,13 +113,43 @@ class HdmiSoundTreeTest(unittest.TestCase):
                                                                                    drm(DP_1="A")))["device"], 3)
 
     def test_odd_files_are_left_out(self):
-        root = self.tree(intel([eld(True, "A")]), {"proc/asound/card0/eld#2.0.1": eld(True, "A"),      # an MST stream
+        root = self.tree(intel([eld(True, "A")]), {"proc/asound/card0/eld#2.0.x": eld(True, "A"),      # not a kernel name
                                                    "proc/asound/card1/id": "bad id;\n", "proc/asound/card1/eld#0.0": eld(True, "A"),
                                                    "sys/class/drm/card1-HDMI-A-1/edid": b"not an edid"})
-        pins = hardware.hdmi_sound_pins(root)
-        self.assertEqual([(p["card_id"], p["pin"]) for p in pins], [("PCH", 0)])
+        ports = hardware.hdmi_sound_ports(root)
+        self.assertEqual([(p["card_id"], p["port"]) for p in ports], [("PCH", 0)])
         self.assertIsNone(hardware.edid_monitor_name("HDMI-A-1", root))
         self.assertIsNone(hardware.edid_monitor_name("HDMI-A", root))
+
+    # The real layout of an Intel Kaby Lake HD 630 (an M710q, three screens on HDMI-A-1, -2 and -3, 2026-11-14): DP MST
+    # gives each of the 3 ports 3 ELD entries, eld#0.0 to eld#0.8, the monitors on entries 0, 3 and 6; the PCMs are
+    # 3, 7 and 8 (HDMI 0, 1, 2). Two of the screens give one name. A tone on plughw:CARD=PCH,DEV=3 reached HDMI-A-1.
+    def kaby_lake(self, codec_file=True):
+        names = {0: "HDMI TO USB", 3: "HD TO USB", 6: "HDMI TO USB"}
+        files = {"proc/asound/card0/id": "PCH\n"}
+        for n in range(9):
+            files["proc/asound/card0/eld#0.%d" % n] = eld(n in names, names.get(n, ""))
+        for k, dev in enumerate((3, 7, 8)):
+            files["proc/asound/card0/pcm%dp/info" % dev] = "card: 0\ndevice: %d\nid: HDMI %d\nname: HDMI %d\n" % (dev, k, k)
+        if codec_file:
+            files["proc/asound/card0/codec#0"] = "Codec: Intel Kabylake HDMI\n" + "".join(
+                "Node 0x0%d [Pin Complex] wcaps 0x40778d: 8-Channels Digital Amp-Out CP\n  Devices: 3\n"
+                "    Dev 00: PD = 0, ELDV = 0, IA = 0, Connections [ 0x02* 0x03 0x04 ]\n" % nid for nid in (5, 6, 7))
+        return self.tree(files, drm(HDMI_A_1="HDMI TO USB", HDMI_A_2="HD TO USB", HDMI_A_3="HDMI TO USB"))
+
+    def test_the_kaby_lake_layout_maps_three_ports_from_nine_entries(self):
+        for codec_file in (True, False):            # the codec file says 3 a port; without it, 9 entries over 3 PCMs
+            root = self.kaby_lake(codec_file)
+            ports = hardware.hdmi_sound_ports(root)
+            self.assertEqual([(p["port"], p["device"], p["present"], p["name"]) for p in ports],
+                             [(0, 3, True, "HDMI TO USB"), (1, 7, True, "HD TO USB"), (2, 8, True, "HDMI TO USB")])
+            c = conns(HDMI_A_1="x", HDMI_A_2="y", HDMI_A_3="z")
+            found = [hardware.hdmi_sound_for(n, c, root) for n in ("HDMI-A-1", "HDMI-A-2", "HDMI-A-3")]
+            self.assertEqual([(f["device"], f["how"]) for f in found],
+                             [(3, "port order"), (7, "monitor name"), (8, "port order")])
+            # with only HDMI-A-2 left connected, its unique name still finds its port
+            two = hardware.hdmi_sound_for("HDMI-A-2", conns(HDMI_A_1=None, HDMI_A_2="y", HDMI_A_3=None), root)
+            self.assertEqual(two["device"], 7)
 
 
 PC_DEVICES = [{"name": "auto", "description": "Autoselect device"},
