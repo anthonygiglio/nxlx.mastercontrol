@@ -55,6 +55,7 @@
 4	docs/html/search.html
 3	docs/html/searchindex.js
 1	project-log/decisions/D135-rename-table.md
+2	project-log/journal/2026-11-14-rename-3.md
 1	sync/customfunction1
 1	sync/customfunction2
 1	sync/interfaceswifi
