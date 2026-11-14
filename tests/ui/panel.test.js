@@ -5018,19 +5018,28 @@ function startServer(env) {          // env: more for the harness's environment 
       // had a frame to show (mpv gives the stream's size once it has probed it, then drops it while it starts the decoder),
       // and the hold 0.4 s later found none: 409 "Nothing with a picture is playing". So the picture is trusted only once
       // the clip is rolling too: the player reports a position of 0.2 s or more (a frame has been shown), on the same polls.
+      // `want(position)` must hold, with an effect available (the same check the hold makes), on `n` samples in a row 100 ms apart.
+      const steady = async (want, n, what) => {
+        const end = Date.now() + 20000;
+        let run = 0, last = null;
+        while (run < n) {
+          if (Date.now() > end) throw new Error(what + ': ' + JSON.stringify(last));
+          const r = await page.evaluate(async () => {
+            const d = await fetch('/api/effects').then((x) => x.json());
+            const at = (await fetch('/api/status').then((x) => x.json())).player.position;
+            return { available: d.available, unavailable: d.unavailable, at };
+          });
+          last = r;
+          run = r.available === true && typeof r.at === 'number' && r.at >= 0.2 && want(r.at) ? run + 1 : 0;
+          if (run < n) await page.waitForTimeout(100);
+        }
+      };
       assert.strictEqual(await post('/api/control', { action: 'stop' }), 200);
       await page.waitForFunction(() => fetch('/api/effects').then((r) => r.json()).then((d) => d.available === false), null, { timeout: 20000 });
       assert.strictEqual(await post('/api/play', { file: 'intro.mkv' }), 200);
-      await page.waitForFunction(async () => {
-        for (let i = 0; i < 3; i++) {
-          if (i) await new Promise((r) => setTimeout(r, 100));
-          if ((await fetch('/api/effects').then((r) => r.json())).available !== true) return false;
-          const at = (await fetch('/api/status').then((r) => r.json())).player.position;
-          if (typeof at !== 'number' || at < 0.2) return false;
-        }
-        return true;
-      }, null, { timeout: 20000 })
-        .catch(async () => { throw new Error('the picture for the strobe: ' + JSON.stringify(await get('/api/effects').then((d) => [d.available, d.unavailable]))); });
+      // (Not page.waitForFunction with an async function: Playwright waits for the promise it returns and then takes the
+      // wait as done whatever it said, so such a wait never polls. The polling is here, one page.evaluate at a time.)
+      await steady(() => true, 3, 'the picture for the strobe');
       await go(page, 'shape/effect');
       await page.waitForSelector('#strobecard #strobehold:not([disabled])', { timeout: 10000 });
       await page.waitForTimeout(300);
@@ -5046,12 +5055,7 @@ function startServer(env) {          // env: more for the harness's environment 
       // playing"). Loading the screen above takes about as long as a pass, so the clip's phase at the press is not known.
       // So press in the middle of a pass: the picture is there and the clip is between 0.3 and 0.8 seconds in, which
       // leaves more than a second (the hold below lasts 0.75) before the next pass starts.
-      await page.waitForFunction(async () => {
-        const d = await fetch('/api/effects').then((r) => r.json());
-        const at = (await fetch('/api/status').then((r) => r.json())).player.position;
-        return d.available === true && typeof at === 'number' && at >= 0.3 && at < 0.8;
-      }, null, { polling: 40, timeout: 20000 })
-        .catch(async () => { throw new Error('no moment in the middle of a pass of the strobe clip: ' + JSON.stringify(await get('/api/status').then((d) => d.player))); });
+      await steady((at) => at >= 0.3 && at < 0.8, 3, 'no moment in the middle of a pass of the strobe clip');
       await page.mouse.down();
       await page.waitForFunction(() => /Flashing|Waiting|Held/.test(document.getElementById('strobestate').textContent), null, { timeout: 8000 });
       assert.strictEqual(await page.getAttribute('#strobehold', 'aria-pressed'), 'true', 'the button is drawn pressed while held');
