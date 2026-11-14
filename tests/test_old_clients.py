@@ -10,8 +10,11 @@ the node sends is new only. Remove this file with the bridge, in the release aft
 import os
 import unittest
 
-from pvj import osc, oscfeedback, peer
+from pvj import osc, oscfeedback, oscfeedback as fb, peer
+from tests.test_https import HttpsBase
 from tests.test_osc import ServerLogicTest, msg
+from tests.test_osc_feedback import T1, Base as FeedbackBase, decode
+from tests.test_osc_lockdown import OTHER, TABLET, LayerBase
 from tests.test_server import ServerBase
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -128,6 +131,94 @@ class OldHeaderAndCookieTest(ServerBase):
             self.assertEqual(cookies(r), [], "the second request on the connection sent no cookie")
         finally:
             c.close()
+
+
+class OldFamilyLocksTest(LayerBase):
+    def test_the_device_list_holds_for_the_old_family(self):
+        self.rules(only_on=True, only=[OTHER])
+        self.assertEqual(self.send(msg("/pvj/speed", 2.0)), 0)
+        self.assertEqual(self.why(), osc.WHY_ONLY)
+        self.assertEqual(self.send(msg("/pvj/speed", 2.0), OTHER), 1)
+        self.assertEqual(self.speeds(), [2.0])
+
+    def test_the_paired_device_rule_holds_for_the_old_family(self):
+        self.rules(paired_on=True)
+        self.assertEqual(self.send(msg("/pvj/speed", 2.0)), 0)
+        self.assertEqual(self.why(), osc.WHY_PAIRED)
+        self.device("full", TABLET)
+        self.assertEqual(self.send(msg("/pvj/speed", 3.0)), 1)
+        self.assertEqual(self.speeds(), [3.0])
+
+
+class OldFamilyStateTest(FeedbackBase):
+    """The coordinator's rule for the bridge release (D138): state goes out in the family the target asked with."""
+
+    def setUp(self):
+        super().setUp()
+        self.f = self.feedback()
+        self.rules()
+        self.server.feedback = self.f
+
+    def addresses(self):
+        out = {a for a, _args, _w in decode(self.sock.sent)}
+        del self.sock.sent[:]
+        return out
+
+    def test_a_target_that_never_asked_gets_the_new_family(self):
+        self.run_for(self.f, 1)
+        got = self.addresses()
+        self.assertIn(fb.ALIVE, got)
+        self.assertTrue(all(a.startswith(fb.PREFIX) for a in got), got)
+
+    def test_an_old_layout_gets_the_old_family_until_it_asks_with_the_new(self):
+        self.run_for(self.f, 1)
+        new = self.addresses()
+        self.now[0] += fb.REQUEST_EVERY
+        self.assertEqual(self.send(msg("/pvj/state"), TABLET), 0)
+        self.run_for(self.f, 1)
+        old = self.addresses()
+        self.assertIn("/pvj/state/alive", old)
+        self.assertTrue(all(a.startswith(fb.OLD_PREFIX) for a in old), old)
+        self.assertEqual({a[len(fb.OLD_PREFIX):] for a in old} - {a[len(fb.PREFIX):] for a in new}, set(),
+                         "the same state, only named the old way")
+        self.now[0] += fb.REQUEST_EVERY
+        self.send(msg("/mctl/state"), TABLET)
+        self.run_for(self.f, 1)
+        back = self.addresses()
+        self.assertTrue(back and all(a.startswith(fb.PREFIX) for a in back), back)
+
+    def test_only_the_target_that_asked_the_old_way_gets_it(self):
+        self.assertTrue(self.f.request(TABLET, old_family=True))
+        self.assertFalse(self.f.request(OTHER, old_family=True), "not a target: nothing remembered")
+        self.assertEqual(self.f._old_family, {TABLET})
+        self.f.configure([])
+        self.assertEqual(self.f._old_family, set(), "a target taken off the list is forgotten")
+        self.assertTrue(T1)
+
+
+class OldSecureCookieTest(HttpsBase):
+    def setUp(self):
+        super().setUp()
+        self.full, _ = self.pair("owner laptop")
+        st, body, _ = self.install(self.request_and_sign())
+        self.assertEqual(st, 200, body)
+
+    def set_cookies(self, r):
+        return [v.split(";")[0] for k, v in r.getheaders() if k.lower() == "set-cookie"]
+
+    def test_a_plain_old_cookie_over_tls_becomes_the_plain_new_one_never_host(self):
+        st, _, r = self.scall("GET", "/api/status", cookie="pvj_token=" + self.full)
+        self.assertEqual(st, 200)
+        self.assertEqual(self.set_cookies(r), ["mctl_token=" + self.full, "pvj_token=", "__Host-pvj_token="],
+                         "a cookie plain http could plant is never promoted to __Host-")
+
+    def test_logout_over_tls_clears_the_secure_old_cookie(self):
+        token = self.scall("POST", "/api/pair", {"pin": self.pin, "name": "tls phone"})[1]["token"]
+        st, _, r = self.scall("POST", "/api/logout", {}, cookie="__Host-pvj_token=" + token)
+        self.assertEqual(st, 200)
+        self.assertEqual(sorted(self.set_cookies(r)),
+                         ["__Host-mctl_token=", "__Host-pvj_token=", "mctl_token=", "pvj_token="])
+        self.assertIsNone(self.auth.authenticate(token))
 
 
 class WhatIsSentTest(unittest.TestCase):

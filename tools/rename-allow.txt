@@ -62,6 +62,7 @@
 3	project-log/decisions/D129-addendum-2026-11-08-graphics-static.md
 2	project-log/decisions/D134-strobe-safety.md
 2	project-log/decisions/D135-rename-table.md
+11	project-log/decisions/D138-old-names-bridge.md
 1	project-log/journal/2026-10-31-box-clock.md
 2	project-log/journal/2026-11-08-graphics-static.md
 2	project-log/journal/2026-11-09-mapping-repaint.md
@@ -70,9 +71,11 @@
 2	project-log/journal/2026-11-11-strobe.md
 1	project-log/journal/2026-11-14-rename-1.md
 2	project-log/journal/2026-11-14-rename-3.md
-1	pvj/OSC.md
+6	project-log/journal/2026-11-14-rename-4.md
+3	pvj/OSC.md
 1	pvj/README.md
 4	pvj/osc.py
+4	pvj/oscfeedback.py
 3	pvj/server.py
 1	pvj/web/app.js
 1	sync/customfunction1
@@ -89,6 +92,6 @@
 1	sync/shutdownall
 1	tests/security_test.sh
 4	tests/test_https.py
-32	tests/test_old_clients.py
+44	tests/test_old_clients.py
 6	themes/offline-language-english.css
 2	tools/boxcert.py

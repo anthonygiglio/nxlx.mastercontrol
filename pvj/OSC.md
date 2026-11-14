@@ -2,7 +2,7 @@
 
 OSC 1.0 over UDP, for TouchOSC, Resolume, QLab, Max, Chataigne, Companion and anything else that can send OSC. Switch it on in **Setup > OSC** with the switch at the top of the page (full-access devices only); there is no other switch, and the port and networks have their own Save button. Default port **9876**, the same as the old receiver, so existing controller layouts keep their target. The box receives; it sends its state back only where the Owner switched that on and named the device ("State sent back", below).
 
-**The addresses were renamed (D138).** Every address starts with `/mctl/` (it was `/pvj/`). For one release a node still takes an address of the old family and treats it as the new one, so a layout or patch that was not redone keeps working; what the node sends back ("State sent back") uses `/mctl/state/...` only. Redo old layouts before the release after the cutover.
+**The addresses were renamed (D138).** Every address starts with `/mctl/` (it was `/pvj/`). For one release a node still takes an address of the old family and treats it as the new one, so a layout or patch that was not redone keeps working; what the node sends back ("State sent back") is named as the target asked: a target that asked with `/pvj/state` gets `/pvj/state/...`, any other gets `/mctl/state/...`. Redo old layouts before the release after the cutover.
 
 ## Safety
 

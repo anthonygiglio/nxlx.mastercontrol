@@ -38,6 +38,18 @@ NOT_INTERFACES = ("lo", "wg", "docker", "veth", "br-", "virbr", "tun", "tap", "t
 
 PREFIX = "/mctl/state/"
 REQUEST = "/mctl/state"          # a listed target asks for everything; the box itself never sends this address
+# The family before the rename (D138): a target that asked for everything with /pvj/state gets its state as
+# /pvj/state/... for one release, so a TouchOSC layout that was not redone keeps showing it. A target that asked with
+# the new family, or never asked (set by hand), gets the new names. Remove in the release after the cutover.
+OLD_PREFIX = "/pvj/state/"
+
+
+def _old_name(address):
+    return OLD_PREFIX + address[len(PREFIX):] if address.startswith(PREFIX) else address
+
+
+def _new_name(address):
+    return PREFIX + address[len(OLD_PREFIX):] if address.startswith(OLD_PREFIX) else address
 ALIVE = PREFIX + "alive"
 
 MAX_DATAGRAM = 1200             # bytes: under any network's packet size, so nothing is ever split
@@ -459,6 +471,7 @@ class Feedback:
         self._lock = threading.Lock()       # the flags and the counters; never held over a look at the box or a send
         self._targets = [dict(t) for t in targets]
         self._wanted = set()                # addresses of targets that asked for everything
+        self._old_family = set()            # addresses of targets whose last ask used the old family (D138)
         self._per = {}                      # (address, port) -> what was sent there last, its buckets, its counters
         self._nets = (None, [])
         self._all = None
@@ -477,14 +490,21 @@ class Feedback:
             keep = {(t["address"], t["port"]) for t in self._targets}
             self._per = {k: v for k, v in self._per.items() if k in keep}
             self._wanted &= {t["address"] for t in self._targets}
+            self._old_family &= {t["address"] for t in self._targets}
 
-    def request(self, source):
+    def request(self, source, old_family=False):
         """A sender that passed every lock asked for everything. True when its address is a listed target: only
-        then, and only for that target. The answer goes out on the feedback thread, at most every REQUEST_EVERY."""
+        then, and only for that target. The answer goes out on the feedback thread, at most every REQUEST_EVERY.
+        `old_family`: it asked with /pvj/state, so its state goes out under that family (D138) until it asks with
+        the new one."""
         with self._lock:
             if not any(t["address"] == source for t in self._targets):
                 return False
             self._wanted.add(source)
+            if old_family:
+                self._old_family.add(source)
+            else:
+                self._old_family.discard(source)
         self._wake.set()
         return True
 
@@ -560,6 +580,7 @@ class Feedback:
         with self._lock:
             targets = [dict(t) for t in self._targets]
             wanted = set(self._wanted)
+            old_family = set(self._old_family)
         nets = self._local(now)
         live = []
         for t in targets:
@@ -604,15 +625,19 @@ class Feedback:
             sent = st["sent"]
             messages += [m for m in state if m[0] not in sent]
             messages += [m for m in state if m[0] in sent and sent[m[0]] != m[1]]
+            if t["address"] in old_family:      # D138: named as this target asked; what was sent is kept by the new name
+                messages = [(_old_name(a), v) for a, v in messages]
             bad = []
             packed = pack(messages, bad)
             for address, value in bad:          # left out, and not tried again until it changes; the rest leave
+                address = _new_name(address)
                 st["sent"][address] = value
                 self._note("encode", "%s could not be sent (a value that is no number and no text); the rest is sent" % address)
             for data, part in packed:
                 if not self._send(st, data, (t["address"], t["port"]), now):
                     break
                 for address, value in part:
+                    address = _new_name(address)
                     if address == ALIVE:
                         st["beat"] = now
                     else:

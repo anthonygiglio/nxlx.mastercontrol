@@ -240,12 +240,12 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
             if self._secure() and SECURE_COOKIE in jar:     # the secure name is read over TLS only
                 return jar[SECURE_COOKIE].value
             if self._secure() and OLD_SECURE_COOKIE in jar:     # D138: the name before the rename, for one release
-                self._old_cookie = jar[OLD_SECURE_COOKIE].value
+                self._old_cookie, self._old_secure = jar[OLD_SECURE_COOKIE].value, True
                 return self._old_cookie
             if COOKIE in jar:
                 return jar[COOKIE].value
             if OLD_COOKIE in jar:
-                self._old_cookie = jar[OLD_COOKIE].value
+                self._old_cookie, self._old_secure = jar[OLD_COOKIE].value, False
                 return self._old_cookie
             return None
 
@@ -266,7 +266,9 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                 life = supportd_max_seconds()       # as long as a support login's cookie
             else:
                 return []
-            return [("Set-Cookie", self._cookie_set(token, life))] + self._old_cookies_cleared()
+            # the new name of the same strength: a plain cookie (which plain http can plant) never becomes __Host-
+            return [("Set-Cookie", self._cookie_set(token, life, secure=getattr(self, "_old_secure", False)))] \
+                + self._old_cookies_cleared()
 
         def _old_cookies_cleared(self):
             """The old names with no life left (D138), with the attributes they were set with."""
@@ -276,8 +278,8 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                 out.append(("Set-Cookie", OLD_SECURE_COOKIE + "=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"))
             return out
 
-        def _cookie_set(self, token, max_age):
-            if self._secure():
+        def _cookie_set(self, token, max_age, secure=None):
+            if self._secure() if secure is None else (secure and self._secure()):
                 return "%s=%s; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=%d" % (SECURE_COOKIE, token, max_age)
             return "%s=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=%d" % (COOKIE, token, max_age)
 

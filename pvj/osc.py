@@ -888,13 +888,14 @@ class OscServer:
         done = 0
         for address, args in messages:
             seen = shown(address, rules["key"])      # for the page and the journal: never with the key in it
+            was = address
             address = current(address)               # /pvj/... is /mctl/... for one release (D138); seen keeps what was sent
             if (address.rstrip("/") or "/") == oscfeedback.REQUEST:
                 # "Send me everything" (D82). It sets a flag for the target at this address and nothing else: the
                 # state leaves on the feedback thread, under its caps, to the Owner's target only. From any other
                 # address, or with feedback off, nothing is sent to anybody.
                 feedback = self.feedback
-                asked = feedback is not None and feedback.request(plain)
+                asked = feedback is not None and feedback.request(plain, old_family=current(was) != was)
                 self.watch.note(source_ip, asked, "" if asked else NO_STATE, seen)
                 continue
             if address in REFUSED:
