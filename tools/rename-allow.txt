@@ -155,6 +155,7 @@
 1	project-log/decisions/D132-node-handover.md
 2	project-log/decisions/D133-stats-overlay-show-safety.md
 4	project-log/decisions/D134-strobe-safety.md
+14	project-log/decisions/D135-rename-table.md
 2	project-log/decisions/D93-addendum-2026-10-30-remove-old-drift.md
 2	project-log/journal/2026-10-20-panel-design.md
 2	project-log/journal/2026-10-20-panel-sandbox.md
@@ -216,6 +217,7 @@
 1	project-log/journal/2026-11-11-play-pause.md
 3	project-log/journal/2026-11-11-stats-overlay-classic.md
 7	project-log/journal/2026-11-11-strobe.md
+10	project-log/journal/2026-11-14-rename-1.md
 3	project-log/lessons/2026-11-11-stats-overlay-owned-by-connection.md
 2	pvj/AUTOSTART.md
 1	pvj/DMX.md
