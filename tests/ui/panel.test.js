@@ -5014,6 +5014,10 @@ function startServer(env) {          // env: more for the harness's environment 
       // That check read "available" from the picture before this play (10 ms after it, on CI run 43138645183), and the
       // player had no picture a moment later while it loaded the clip, so the hold was refused. So: stop, wait until
       // nothing has a picture, then play and wait for the picture of this clip, seen on three polls in a row.
+      // On CI (CI run 43613035748, mpv 0.37) the picture was there on three polls within 80 ms of the play, before the clip
+      // had a frame to show (mpv gives the stream's size once it has probed it, then drops it while it starts the decoder),
+      // and the hold 0.4 s later found none: 409 "Nothing with a picture is playing". So the picture is trusted only once
+      // the clip is rolling too: the player reports a position of 0.2 s or more (a frame has been shown), on the same polls.
       assert.strictEqual(await post('/api/control', { action: 'stop' }), 200);
       await page.waitForFunction(() => fetch('/api/effects').then((r) => r.json()).then((d) => d.available === false), null, { timeout: 20000 });
       assert.strictEqual(await post('/api/play', { file: 'intro.mkv' }), 200);
@@ -5021,6 +5025,8 @@ function startServer(env) {          // env: more for the harness's environment 
         for (let i = 0; i < 3; i++) {
           if (i) await new Promise((r) => setTimeout(r, 100));
           if ((await fetch('/api/effects').then((r) => r.json())).available !== true) return false;
+          const at = (await fetch('/api/status').then((r) => r.json())).player.position;
+          if (typeof at !== 'number' || at < 0.2) return false;
         }
         return true;
       }, null, { timeout: 20000 })
