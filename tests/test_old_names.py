@@ -2,18 +2,21 @@
 # SPDX-License-Identifier: Apache-2.0
 """The rename of pocketvj / pvj to NXLX and Mastercontrol (D135): the table, the apply script and the guard.
 
-The guard (OldNamesGuard) fails when a file holds more old-style names than tools/rename-allow.txt allows it, or
-when a file that is not listed holds any: a pull request that adds a new pvj name (in its text or its file name)
-fails here, so the rename cannot slide back. The list only shrinks: the rename's pull requests recount it with
-`python3 tools/rename-apply.py --write-allow`."""
+The guard (OldNamesGuard) enforces only the kinds whose rename has landed (LANDED in tools/rename-apply.py): it
+fails when a file holds more names of those kinds than tools/rename-allow.txt allows it, or when a file that is not
+listed holds any, in its text or its file name, so a landed rename cannot slide back. A kind that has not landed
+is reported, not enforced, so unrelated pull requests that still use the old names are not blocked. Each rename
+pull request adds its kind to LANDED and recounts the list with `python3 tools/rename-apply.py --write-allow`."""
 import contextlib
 import hashlib
 import importlib.util
 import io
 import os
 import re
+import sys
 import tempfile
 import unittest
+from unittest import mock
 import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -61,28 +64,53 @@ class OldNamesGuard(unittest.TestCase):
     def test_no_file_holds_more_old_names_than_the_allow_list_says(self):
         counts, allowed = ra.allow_counts(REPO), ra.read_allow(REPO)
         over = {p: "%d, allowed %d" % (c, allowed.get(p, 0)) for p, c in counts.items() if c > allowed.get(p, 0)}
-        self.assertEqual(over, {}, "new old-style names (pvj, PocketVJ...). Use the new name from tools/rename-map.txt "
-                         "once its pull request has landed; until then a new use of an old name is a choice for review: "
-                         "raise the file's number in tools/rename-allow.txt and say why")
+        self.assertEqual(over, {}, "new old names of a kind whose rename has landed (%s). Use the new name from "
+                         "tools/rename-map.txt; a new use of an old name is a choice for review: raise the file's "
+                         "number in tools/rename-allow.txt and say why" % ", ".join(ra.LANDED))
+        waiting = [k for k in ra.KINDS if k not in ra.LANDED]
+        if waiting:
+            old = ra.old_counts(REPO)
+            sys.stderr.write("\nold-name guard: %d old-style names in %d files, kinds not landed yet (%s): reported, "
+                             "not enforced\n" % (sum(old.values()), len(old), ", ".join(waiting)))
 
     def test_the_allow_list_is_well_formed(self):
         allowed = ra.read_allow(REPO)
-        self.assertTrue(allowed)
+        self.assertTrue(set(ra.LANDED) <= set(ra.KINDS), "LANDED names kinds of the table")
+        if not ra.LANDED:
+            self.assertEqual(allowed, {}, "nothing is enforced, so nothing is allowed yet")
         for own in ra.OWN:
             self.assertNotIn(own, allowed, "the rename's own files are not counted")
         with open(os.path.join(REPO, ra.ALLOW), encoding="utf-8") as f:
             listed = [line.split("\t", 1)[1].rstrip("\n") for line in f if line[:1].isdigit()]
         self.assertEqual(listed, sorted(listed), "kept sorted, so a recount shows as a small diff")
 
-    def test_the_guard_catches_a_new_old_name_in_text_and_in_a_file_name(self):
-        root = tree({"a.py": "x = 1\n", "b.md": "the pvj-web service\n", "pvj-new.txt": "nothing\n"})
+    def test_a_new_old_name_passes_until_its_kind_lands_and_fails_after(self):
+        root = tree({"a.py": "x = 1\n", "b.md": "the pvj-web service\n", "pvj-web.txt": "nothing\n"})
         os.makedirs(os.path.join(root, "tools"))
-        ra.write_allow(root)
-        self.assertEqual(ra.read_allow(root), {"b.md": 1, "pvj-new.txt": 1})
-        with open(os.path.join(root, "a.py"), "a") as f:
-            f.write("PVJ_DIR = 1\n")
-        counts, allowed = ra.allow_counts(root), ra.read_allow(root)
-        self.assertEqual({p for p, c in counts.items() if c > allowed.get(p, 0)}, {"a.py"})
+
+        def over():
+            counts, allowed = ra.allow_counts(root), ra.read_allow(root)
+            return {p for p, c in counts.items() if c > allowed.get(p, 0)}
+
+        with mock.patch.object(ra, "LANDED", ()):
+            ra.write_allow(root)
+            self.assertEqual(ra.read_allow(root), {})
+            with open(os.path.join(root, "a.py"), "a") as f:
+                f.write("PVJ_DIR = 1\nsee pvj-sound\n")
+            with open(os.path.join(root, "pvj-new.py"), "w") as f:
+                f.write("import pvj\n")
+            self.assertEqual(over(), set(), "no kind has landed: reported, not enforced")
+        with mock.patch.object(ra, "LANDED", ("system",)):
+            self.assertEqual(over(), {"a.py", "b.md", "pvj-web.txt"}, "in the text and in the file name")
+        with mock.patch.object(ra, "LANDED", ("env",)):
+            self.assertEqual(over(), {"a.py"})
+        with mock.patch.object(ra, "LANDED", ("system",)):
+            ra.write_allow(root)
+            self.assertEqual(ra.read_allow(root), {"a.py": 1, "b.md": 1, "pvj-web.txt": 1})
+            self.assertEqual(over(), set())
+            with open(os.path.join(root, "b.md"), "a") as f:
+                f.write("and pvj-link\n")
+            self.assertEqual(over(), {"b.md"}, "a landed kind cannot slide back")
 
 
 class Table(unittest.TestCase):
@@ -214,6 +242,25 @@ class ApplyScript(unittest.TestCase):
         with self.assertRaises(SystemExit):
             run("--root", root, "--map", os.path.join(REPO, ra.MAP), "--write")
         self.assertEqual(snapshot(root), before)
+
+    def test_a_link_is_never_followed_rewritten_or_renamed(self):
+        outside = tree({"secret.service": "User=pvj-web\n"})
+        root = tree({"a.service": "User=pvj-web\n"})
+        os.symlink(os.path.join(outside, "secret.service"), os.path.join(root, "b.service"))
+        os.symlink(os.path.join(outside, "secret.service"), os.path.join(root, "pvj-web.service"))
+        os.symlink(outside, os.path.join(root, "pvj"))
+        code, said = run("--root", root, "--map", os.path.join(REPO, ra.MAP), "--write")
+        self.assertEqual(code, 0)
+        with open(os.path.join(outside, "secret.service")) as f:
+            self.assertEqual(f.read(), "User=pvj-web\n", "a file outside the tree is never written")
+        with open(os.path.join(root, "a.service")) as f:
+            self.assertEqual(f.read(), "User=nxlx-web\n")
+        for name in ("b.service", "pvj-web.service", "pvj"):
+            self.assertTrue(os.path.islink(os.path.join(root, name)), "%s is left as it is" % name)
+        self.assertFalse(os.path.lexists(os.path.join(root, "nxlx-web.service")))
+        self.assertIn("Links, never followed, rewritten or renamed: 2", said)
+        with mock.patch.object(ra, "LANDED", ("system",)):
+            self.assertEqual(ra.allow_counts(root), {}, "the guard does not read through a link either")
 
     def test_a_new_name_already_in_the_tree_is_reported(self):
         root = tree({"a.sh": "id nxlx-web; systemctl status x\n", "b.service": "User=pvj-web\n"})

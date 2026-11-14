@@ -58,6 +58,11 @@ SKIP = ("LICENSE.md", "AUTHORS.md", "NOTICE.md", "RELEASE_NOTES.md",
         "docs/PureData_install.md", "docs/TouchOSC_Layout V.01.md", "docs/projector_passwords.md", "docs/PVJ_2019.svg")
 # The rename's own files name the old names on purpose: never rewritten, and not counted by the guard.
 OWN = ("tools/rename-map.txt", "tools/rename-apply.py", "tools/rename-allow.txt", "tests/test_old_names.py")
+# The kinds whose rename pull request has landed. The guard enforces only these: it counts only the matches of their
+# rows, so an unrelated pull request that adds a pvj module, a PVJ_ variable or a journal line is not blocked before
+# that kind's rename. Every rename pull request adds its kind here and recounts the allow list (--write-allow).
+# Empty in PR 1: until a kind lands, its names are reported (the dry run, the guard's note) and not enforced.
+LANDED = ()
 
 
 class Row:
@@ -207,10 +212,25 @@ def read_text(root, path):
         return None
 
 
-def guard_count(path, text):
-    """How many old-style names a file holds, in its text and its path: the number the guard compares with the
-    allow list."""
+def old_count(path, text):
+    """How many old-style names a file holds, in its text and its path, of any kind: what is reported."""
     return len(OLD.findall(path)) + (len(OLD.findall(text)) if text else 0)
+
+
+def guard_count(matcher, path, text, landed):
+    """How many names of the landed kinds a file holds, in its text and its path: the number the guard compares
+    with the allow list. Every row is matched, so a row of a kind that has not landed still holds its text."""
+    if not landed:
+        return 0
+    return sum(1 for t in (path, text) if t for _, _, row in matcher.matches(t) if row.kind in landed)
+
+
+def outside(root, path):
+    """Whether a path of the tree is a link, or leads out of the tree through one: never read, written or renamed
+    (a link in another checkout could otherwise make --write change a file anywhere)."""
+    full = os.path.join(root, path)
+    real = os.path.realpath(full)
+    return os.path.islink(full) or not real.startswith(os.path.realpath(root) + os.sep)
 
 
 def plan(root, rows, kinds):
@@ -222,10 +242,13 @@ def plan(root, rows, kinds):
     probe = Matcher([Row(n, n, KEEP, "", 0) for n in sorted({r.new for r in rows if r.kind in kinds and not r.family})],
                     anchor=NEW)
     report = {"kinds": list(kinds), "files": {}, "renames": {}, "uncovered": {}, "clashes": {},
-              "skipped": 0, "not_text": []}
+              "skipped": 0, "not_text": [], "links": []}
     for path in files(root):
         if skipped(path):
             report["skipped"] += 1
+            continue
+        if outside(root, path):
+            report["links"].append(path)
             continue
         text = read_text(root, path)
         if text is None:
@@ -309,6 +332,8 @@ def print_report(report, every_file=False, out=None, writing=False):
             w("  %-40s %d\n" % (t, c))
     if report["not_text"]:
         w("\nBinary or not UTF-8, only the path is looked at: %d files.\n" % len(report["not_text"]))
+    if report["links"]:
+        w("\nLinks, never followed, rewritten or renamed: %d (%s).\n" % (len(report["links"]), ", ".join(report["links"][:5])))
     if every_file:
         w("\nEvery file (places changed, places not covered):\n")
         for path in sorted(set(report["files"]) | set(report["uncovered"])):
@@ -333,15 +358,20 @@ def write(root, rows, kinds, report):
         raise SystemExit("not written: rename collisions, see the dry run")
     m = Matcher(rows)
     for path in report["files"]:
+        if outside(root, path):             # looked at again: it may have become a link since the plan
+            continue
         full = os.path.join(root, path)
         text = read_text(root, path)
         new, _ = m.apply(text, kinds)
         mode = os.stat(full).st_mode
-        with open(full, "w", encoding="utf-8", newline="") as f:
+        fd = os.open(full, os.O_WRONLY | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
             f.write(new)
         os.chmod(full, mode)
     git = os.path.exists(os.path.join(root, ".git"))
     for old, new in sorted(report["renames"].items()):
+        if outside(root, old):
+            continue
         os.makedirs(os.path.dirname(os.path.join(root, new)) or root, exist_ok=True)
         if git:
             subprocess.run(["git", "mv", "--", old, new], cwd=root, check=True, capture_output=True)
@@ -349,13 +379,37 @@ def write(root, rows, kinds, report):
             os.renames(os.path.join(root, old), os.path.join(root, new))
 
 
-def allow_counts(root):
-    """{path: count} of every file that holds old-style names, except the rename's own files."""
+def table_of(root):
+    """The rows of the root's table, or of this checkout's when the root has none (a throwaway folder)."""
+    own = os.path.join(root, MAP)
+    return load(own if os.path.exists(own) else None)
+
+
+def allow_counts(root, landed=None):
+    """{path: count} of every file that holds names of the landed kinds (LANDED unless given), except the rename's
+    own files. Links are not read."""
+    landed = LANDED if landed is None else tuple(landed)
+    if not landed:
+        return {}
+    m = Matcher(table_of(root))
     out = {}
     for path in files(root):
-        if path in OWN:
+        if path in OWN or outside(root, path):
             continue
-        c = guard_count(path, read_text(root, path))
+        c = guard_count(m, path, read_text(root, path), landed)
+        if c:
+            out[path] = c
+    return out
+
+
+def old_counts(root):
+    """{path: count} of every file that holds old-style names of any kind (the report), except the rename's own
+    files. Links are not read."""
+    out = {}
+    for path in files(root):
+        if path in OWN or outside(root, path):
+            continue
+        c = old_count(path, read_text(root, path))
         if c:
             out[path] = c
     return out
@@ -379,19 +433,20 @@ def read_allow(root):
 ALLOW_HEAD = """# SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
 #
-# The guard's allow list (tests/test_old_names.py): every file that may still hold old pocketvj / pvj names, and
-# at most how many (in its text and its path together, any letter case). A file not listed may hold none.
-# A file may go below its number. The rename's pull requests recount the list with
+# The guard's allow list (tests/test_old_names.py): every file that may still hold old names of the kinds whose
+# rename has landed (LANDED in tools/rename-apply.py), and at most how many (matches of those kinds' rows, in its
+# text and its path together). A file not listed may hold none. A file may go below its number. Each rename pull
+# request adds its kind to LANDED and recounts the list with
 #     python3 tools/rename-apply.py --write-allow
-# so it only shrinks. Raising a number by hand is a visible choice for review: say why in the pull request.
-# At the end of the rename only the credit and the upstream original are left (rename-pvj-assessment.md).
+# Raising a number by hand is a visible choice for review: say why in the pull request.
+# Empty while no kind has landed. At the end of the rename only the credit and the upstream original are left.
 #
 # count\tpath
 """
 
 
-def write_allow(root):
-    counts = allow_counts(root)
+def write_allow(root, landed=None):
+    counts = allow_counts(root, landed)
     with open(os.path.join(root, ALLOW), "w", encoding="utf-8") as f:
         f.write(ALLOW_HEAD)
         for path in sorted(counts):
