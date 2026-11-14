@@ -4201,7 +4201,7 @@
       var loop = h('select', { class: 'text-input', id: 'autoloop' },
         [[true, 'Play it again, for ever'], [false, 'Stop after one time']].map(function (o) { return h('option', { value: String(o[0]), text: o[1], selected: o[0] === c.loop }); }));
       var delay = h('input', { class: 'text-input mono', id: 'autodelay', type: 'number', min: 0, max: 120, value: c.delay });
-      var wrap = { file: labelled('Clip', file), preset: labelled('Start script name', preset, 'The name of an old PocketVJ start script, as it was called on the old node.'),
+      var wrap = { file: labelled('Clip', file), preset: labelled('Start script name', preset, 'The name of an old start script, as it was called on the old node.'),
         pad: labelled('Pad', pad), seconds: labelled('Seconds a picture', seconds), shuffle: labelled('Order', shuffle),
         loop: labelled('When it ends', loop), delay: labelled('Wait after power-up (seconds)', delay, 'Gives a projector or a screen time to wake before the picture starts.') };
       var off = offNotice('autovibesoff', 'vibes', 'Vibes', function () { draw(d); });
@@ -6210,7 +6210,7 @@
       })));
       var label = h('input', { class: 'text-input', id: 'schedlabel', placeholder: 'Opening time', maxlength: 40, value: f.label });
       var wrap = { file: labelled('Clip', file), set: labelled('Which shaders', set), scene: scene ? labelled('Scene', scene) : null,
-        preset: labelled('Start script name', preset, 'The name of an old PocketVJ start script, such as startlessonce05.') };
+        preset: labelled('Start script name', preset, 'The name of an old start script, such as startlessonce05.') };
       var off = h('div', { id: 'schedoffwrap' });
       function fit() {
         var a = action.value;
