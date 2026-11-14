@@ -374,8 +374,8 @@ class RuntimeFolderTest(unittest.TestCase):
         files = glob.glob(os.path.join(REPO, "bin", "*")) + glob.glob(os.path.join(REPO, "install", "*")) + glob.glob(os.path.join(NDI_UNITS, "*"))
         seen = set()
         for path in files:
-            if path.endswith(".md"):
-                continue
+            if path.endswith(".md") or not os.path.isfile(path):
+                continue    # a folder such as bin/__pycache__ (a test that loads a program writes one)
             with open(path) as f:
                 for found in re.findall(r"/run/pvj[A-Za-z0-9_./<>-]*", f.read()):
                     found = found.rstrip(".")
