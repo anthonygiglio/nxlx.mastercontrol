@@ -536,6 +536,38 @@ class InstallTest(unittest.TestCase):
         # the stand-ins for the machine and sysfs are for stage mode only: a real install reads the real ones
         self.assertIn('if [ "$REAL" = 0 ]; then va_arch="${PVJ_INSTALL_ARCH:-$va_arch}"', text)
 
+    # Time sync (J-154): a system without any gets systemd-timesyncd, best effort; one that has one is left alone.
+    def test_a_system_without_time_sync_is_told_and_stage_mode_installs_nothing(self):
+        for extra in ((), ("--offline",)):
+            r = install(self.src, self.stage, *extra)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("time sync: none installed; the clock is not kept right until systemd-timesyncd", r.stdout)
+            self.assertNotIn("installing systemd-timesyncd", r.stdout)
+
+    def test_a_system_with_time_sync_is_left_as_it_is(self):
+        for path in ("usr/lib/systemd/systemd-timesyncd", "usr/sbin/chronyd", "usr/sbin/ntpd"):
+            stage = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, stage, True)
+            os.makedirs(os.path.join(stage, os.path.dirname(path)))
+            open(os.path.join(stage, path), "w").close()       # what a Pi image (systemd-timesyncd) or chrony brings
+            r = install(self.src, stage)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("time sync: %s is installed\n" % os.path.basename(path), r.stdout)
+            self.assertNotIn("time sync: none installed", r.stdout)
+
+    def test_time_sync_dry_run_writes_nothing_and_a_failed_install_does_not_fail_the_install(self):
+        r = install(self.src, self.stage, "--dry-run")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("time sync: none installed", r.stdout)
+        self.assertEqual(os.listdir(self.stage), [])
+        # the apt branch only runs on a real install: a failed apt, start or set-ntp is said and the install goes on
+        text = self.read(os.path.join(self.src, "install", "install.sh"))
+        line = [l for l in text.splitlines() if "apt-get install" in l and "systemd-timesyncd" in l]
+        self.assertEqual(len(line), 1, line)
+        self.assertIn("if run apt-get install -y --no-install-recommends systemd-timesyncd; then", line[0])
+        self.assertIn("run systemctl enable --now systemd-timesyncd.service || log", text)
+        self.assertIn("run timedatectl set-ntp true || log", text)
+
     def test_rejects_bad_input(self):
         for bad in (["--prefix", "relative"], ["--media", "/tmp/a b"], ["--prefix", "/opt/x;reboot"],
                     ["--web-user", "Bad User"], ["--bogus"],
