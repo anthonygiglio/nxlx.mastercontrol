@@ -275,9 +275,9 @@ def summary(report):
             "skipped_files": report["skipped"]}
 
 
-def print_report(report, every_file=False, out=sys.stdout, writing=False):
+def print_report(report, every_file=False, out=None, writing=False):
     s = summary(report)
-    w = out.write
+    w = (out or sys.stdout).write
     w("%s Kinds: %s\n\n" % ("Rename, writing." if writing else "Rename dry run (nothing written).",
                             ", ".join(report["kinds"])))
     w("Would change %d places (%d distinct names) in %d files, and rename %d files.\n"
@@ -381,7 +381,7 @@ ALLOW_HEAD = """# SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 #
 # The guard's allow list (tests/test_old_names.py): every file that may still hold old pocketvj / pvj names, and
 # at most how many (in its text and its path together, any letter case). A file not listed may hold none.
-# A file may go below its number; the test then says so, and the rename's pull requests recount the list with
+# A file may go below its number. The rename's pull requests recount the list with
 #     python3 tools/rename-apply.py --write-allow
 # so it only shrinks. Raising a number by hand is a visible choice for review: say why in the pull request.
 # At the end of the rename only the credit and the upstream original are left (rename-pvj-assessment.md).
