@@ -70,7 +70,9 @@ UNFIT_FORMATS = re.compile(r"^(?:xyz|gray|y8|y1[0-6]|ya8|ya16|mono[bw]|pal8)")
 UNFIT = "This picture's format cannot take an effect"
 NO_PICTURE = "Nothing with a picture is playing"
 # At the start of each pass of a looping clip, and for a moment after a seek, mpv has no video-params while the same item
-# is still playing. For this many seconds the last picture read stays the picture, as long as `path` is still that item.
+# is still playing. The last picture read for that item then stays the picture while mpv says it is at the start of the
+# item (time-pos under this many seconds) or is seeking, so the gap is bounded by the player's own state, not by when
+# anybody last asked.
 PICTURE_GRACE = 1.0
 # The box's own callers of the API, by the id of the device they act as (midi.MIDI_DEVICE, osc.OSC_DEVICE,
 # dmx.DMX_DEVICE, room.ROOM_DEVICE). Their calls run on the thread that reads the controller and never ask the player
@@ -946,7 +948,7 @@ class Effects(S.Engine):
         self.pair = None                            # then also (the generator's file, the shape of its values), or None if unknown
         self._flying = None                         # the effect the worker is putting on at this moment (what a forecast counts from)
         self._waiting = None                        # the `error` that says an effect could not go on for want of a picture
-        self._last_picture = None                   # (path, when, picture, size, under, pair, estimated) of the last good read (PICTURE_GRACE)
+        self._last_picture = None                   # (path, epoch, picture, size, under, pair, estimated) of the last good read (PICTURE_GRACE)
 
     # -- settings: only presets, kept in the Shaders and Vibes section (shaderlive.py) --
     def config(self):
@@ -1219,21 +1221,20 @@ class Effects(S.Engine):
         picture is playing or the picture is one the hooks cannot take (`self.unfit` says which)."""
         self.unfit = self.estimated = False
         self.size = self.under = self.pair = None
+        ipc = None
         try:
             ipc = self.api.player.ipc
             params = ipc.request("get_property", "video-params")
         except Exception:
             params = None
         if not isinstance(params, dict):
-            held = self._held_picture(ipc)
-            if held is not None:
-                return held
             # On the New renderer a shader is the front layer's picture and no clip is loaded under it (D130), so libmpv
             # has no video-params: the generator's picture is RGB at full range, as the carrier's was.
             up = getattr(self.api.player, "_standin_up", None)
-            if up is None or not up():
-                return None
-            params = {"colormatrix": "rgb", "colorlevels": "full"}
+            if up is not None and up():
+                params = {"colormatrix": "rgb", "colorlevels": "full"}
+            else:
+                return self._held_picture(ipc)
         decoded = params
         w, h = params.get("w"), params.get("h")       # as it is stored; the arithmetic of the cap is the same turned
         if all(isinstance(n, int) and not isinstance(n, bool) and 0 < n <= 16384 for n in (w, h)):
@@ -1285,30 +1286,45 @@ class Effects(S.Engine):
                     fps, self.estimated = near_common(fps), True
                 break
         pic = clean_picture(params.get("colormatrix"), params.get("colorlevels"), fps)
-        try:
-            now = getattr(self.api.player, "path_now", None)
-            path = now() if now else ipc.request("get_property", "path")
-        except Exception:
-            path = None
-        self._last_picture = (path, self._clock(), pic, self.size, self.under, self.pair, self.estimated) if path else None
+        self._last_picture = (self._item(ipc), pic, self.size, self.under, self.pair, self.estimated)
         return pic
 
-    def _held_picture(self, ipc):
-        """The last picture read, when the player has no video-params for a moment (a loop restart, a seek) while the
-        same item is still the one that plays, and the read was within PICTURE_GRACE. Otherwise None: a stop, another
-        file and a source with no picture are refused as before."""
-        last = self._last_picture
-        if last is None or self._clock() - last[1] > PICTURE_GRACE:
-            return None
+    def _item(self, ipc):
+        """What identifies the item that plays: (mpv's path, the player's source epoch, its count of clears), or None."""
         try:
-            now = getattr(self.api.player, "path_now", None)
+            player = self.api.player
+            now = getattr(player, "path_now", None)
             path = now() if now else ipc.request("get_property", "path")
         except Exception:
             return None
-        if not path or path != last[0]:
+        return (path, getattr(player, "source_epoch", None), getattr(player, "clears", None)) if path else None
+
+    def _held_picture(self, ipc):
+        """The picture of the item that plays when the player has no video-params for a moment (a loop restart, a seek),
+        or None. Taken only when mpv itself says it is a gap: a video track is selected, the player is not idle, and
+        it is seeking or at the very start of the item (time-pos under PICTURE_GRACE). The last read is used when it is
+        of this same item (path, epoch and clears); with none, a plain picture stands in until the next read. A stop,
+        another file, a source with no video and a gap that lasts are refused as before."""
+        item = self._item(ipc)
+        if item is None:
             return None
-        self.size, self.under, self.pair, self.estimated = last[3:7]
-        return dict(last[2])
+        try:
+            if ipc.request("get_property", "idle-active") is True:
+                return None
+            vid = ipc.request("get_property", "vid")
+            if not isinstance(vid, int) or isinstance(vid, bool):
+                return None
+            seeking = ipc.request("get_property", "seeking") is True
+            pos = ipc.request("get_property", "time-pos")
+        except Exception:
+            return None
+        if not seeking and not (isinstance(pos, (int, float)) and not isinstance(pos, bool) and pos < PICTURE_GRACE):
+            return None
+        last = self._last_picture
+        if last is None or last[0] != item:
+            return clean_picture()
+        self.size, self.under, self.pair, self.estimated = last[2:6]
+        return dict(last[1])
 
     def _seen(self):
         """The effect that is on, from what this process remembers: no question to the player and no lock, for the

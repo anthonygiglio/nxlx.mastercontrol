@@ -663,43 +663,90 @@ class Base(ServerBase):
 
 
 class LoopGapTest(Base):
-    """At a loop point mpv has no video-params for a moment while the same item plays (D-gap): the last picture stays."""
+    """At a loop point mpv has no video-params for a moment while the same item plays (D140): the picture stays, by what
+    mpv says of itself, however long ago the picture was last read."""
     def setUp(self):
         super().setUp()
-        self.now = [100.0]
-        self.fx._clock = lambda: self.now[0]
-        self.assertIsNotNone(self.fx.picture())             # a pass of the clip, read
-        self.good = self.mpv.video
+        self.mpv.props.update({"vid": 1, "time-pos": 0.2, "seeking": False})
+        self.mpv.video_ok = self.mpv.video
 
-    def test_a_gap_with_the_same_item_playing_keeps_the_picture(self):
-        before = self.fx.picture()
+    def read(self):
+        self.assertIsNotNone(self.fx.picture())
+
+    def gap(self, **props):
         self.mpv.video = None
-        self.now[0] += E.PICTURE_GRACE / 2
+        self.mpv.props.update(props)
+
+    def test_a_gap_at_the_loop_start_keeps_the_picture_however_long_since_the_last_read(self):
+        self.read()
+        before = self.fx.picture()
+        self.gap()
         self.assertEqual(self.fx.picture(), before)
         self.assertEqual(self.fx.available(), (True, None))
         self.fx.put("fx-wash.fs")                           # an effect goes on in the gap
         self.assertIsNotNone(self.fx.on)
 
-    def test_the_gap_is_bounded(self):
-        self.mpv.video = None
-        self.now[0] += E.PICTURE_GRACE + 0.1
+    def test_a_gap_on_a_clip_nobody_has_read_yet_is_a_picture_too(self):
+        self.gap()                                          # a Strobe from a controller: no read before this
+        self.assertIsNone(self.fx._last_picture)
+        self.assertEqual(self.fx.available(), (True, None))
+
+    def test_a_seek_is_a_gap_too(self):
+        self.read()
+        self.gap(**{"time-pos": 50.0, "seeking": True})
+        self.assertIsNotNone(self.fx.picture())
+
+    def test_the_gap_is_bounded_by_the_player_not_by_a_clock(self):
+        self.read()
+        self.gap(**{"time-pos": E.PICTURE_GRACE + 0.5})     # a clip that never shows a picture
         self.assertIsNone(self.fx.picture())
         self.assertEqual(self.fx.available()[0], False)
 
-    def test_a_stop_a_different_file_and_a_source_with_no_picture_are_still_refused(self):
-        self.mpv.video = None
-        self.player.clear()                                 # a real stop: no path
+    def test_a_stop_and_a_source_with_no_video_are_still_refused(self):
+        self.read()
+        self.gap()
+        self.mpv.props["vid"] = "no"                        # audio only
         self.assertIsNone(self.fx.picture())
-        self.mpv.props["path"] = "/media/b.mp4"             # another file with no picture at all
+        self.mpv.props["vid"] = 1
+        self.mpv.props["idle-active"] = True
+        self.assertIsNone(self.fx.picture())
+        self.player.clear()                                 # a real stop: no path
         self.assertIsNone(self.fx.picture())
         self.assertIn(E.NO_PICTURE, self.fx.available()[1])
 
-    def test_a_source_that_never_had_a_picture_is_refused(self):
-        self.player.clear()
-        self.fx._last_picture = None
-        self.mpv.video = None
-        self.player.play(["/media/audio.flac"])
+    def test_the_old_path_before_mpv_catches_up_is_not_the_new_item(self):
+        """After a load of B mpv still says A for a moment: A's picture is not B's, and an audio-only B has none."""
+        self.read()
+        self.player.play(["/media/b.mp4"])
+        self.mpv.props["path"] = "/media/a.mp4"             # the lag
+        self.gap(vid="no")
         self.assertIsNone(self.fx.picture())
+        self.mpv.props["vid"] = 1
+        self.fx._last_picture = (("/media/a.mp4", -1, -1), {"matrix": "rgb", "levels": "full", "fps": 7.0}, None, None, None, False)
+        self.assertEqual(self.fx.picture(), E.clean_picture())      # the plain stand-in, not A's
+
+    def test_a_generator_on_the_new_renderer_is_not_held_as_the_one_before(self):
+        self.read()
+        self.fx._last_picture = (("av://carrier", self.player.source_epoch, self.player.clears), {"matrix": "rgb", "levels": "full", "fps": 7.0}, (111, 111), E.SHADER, ("a", "x"), False)
+        self.player._standin_up = lambda: True
+        self.player._standin = "av://carrier"
+        self.mpv.props["path"] = "av://carrier"
+        self.gap()
+        self.fx.picture()
+        self.assertNotEqual(self.fx.size, (111, 111))
+        self.assertNotEqual(self.fx.pair, ("a", "x"))
+
+    def test_a_player_whose_ipc_cannot_be_read_says_no_picture(self):
+        class Gone:
+            @property
+            def ipc(self):
+                raise PlayerError("gone")
+        real = self.api.player
+        self.api.player = Gone()
+        try:
+            self.assertIsNone(self.fx.picture())
+        finally:
+            self.api.player = real
 
 
 class LibraryTest(Base):
