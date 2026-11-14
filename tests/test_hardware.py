@@ -168,3 +168,36 @@ class VaDecodingTest(unittest.TestCase):
             hardware.va_decoding = broken
         self.assertIsNone(out["available"])
         self.assertIn("ZeroDivisionError", out["text"])
+
+
+class ClockSyncTest(unittest.TestCase):
+    """pvj-selftest says whether the clock is synchronised (J-154), as information that never fails the report."""
+
+    def test_timedatectl_answers_first(self):
+        from pvj import selftest
+        root = make_tree({"run/systemd/timesync/synchronized": ""})
+        self.addCleanup(__import__("shutil").rmtree, root, True)
+        out = selftest.clock_sync(root, ask=lambda: "yes")
+        self.assertEqual((out["synchronized"], out["source"]), (True, "timedatectl"))
+        out = selftest.clock_sync(root, ask=lambda: "no")       # timedatectl's word wins over a stale flag file
+        self.assertEqual((out["synchronized"], out["source"]), (False, "timedatectl"))
+        self.assertIn("not synchronised", out["text"])
+
+    def test_without_timedatectl_the_flag_file_says_yes_and_its_absence_cannot_tell(self):
+        from pvj import selftest
+        root = make_tree({"run/systemd/timesync/synchronized": ""})
+        self.addCleanup(__import__("shutil").rmtree, root, True)
+        out = selftest.clock_sync(root, ask=lambda: None)
+        self.assertEqual((out["synchronized"], out["source"]), (True, "systemd-timesyncd"))
+        empty = make_tree({})
+        self.addCleanup(__import__("shutil").rmtree, empty, True)
+        out = selftest.clock_sync(empty, ask=lambda: None)
+        self.assertIsNone(out["synchronized"])
+        self.assertIn("Could not tell", out["text"])
+
+    def test_a_failure_is_reported_not_raised(self):
+        from pvj import selftest
+        out = selftest.clock_sync("/", ask=lambda: 1 / 0)
+        self.assertIsNone(out["synchronized"])
+        self.assertIn("ZeroDivisionError", out["text"])
+        self.assertIn(selftest.clock_sync()["synchronized"], (True, False, None))   # this machine, whatever it is

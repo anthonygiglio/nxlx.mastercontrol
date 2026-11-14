@@ -280,6 +280,33 @@ if [ "$va_arch" = x86_64 ]; then
 	fi
 fi
 
+# Time sync (J-154). A plain Debian PC install has no time sync at all: a PC node ran 5 hours slow ("NTP service: n/a"
+# in timedatectl), and a node with the wrong time gets certificates, logs and the clock wrong. When none of
+# systemd-timesyncd, chrony or ntpd (ntp, ntpsec, openntpd) is there, systemd-timesyncd is installed and turned on. Best
+# effort: a failed install is said and the install goes on. A system that already has one (Raspberry Pi OS ships
+# systemd-timesyncd) is left as it is. The programs are looked for under the install root, so in stage mode (tests and
+# image builds) it is the staged system that is looked at; stage mode, --offline and a system without apt install
+# nothing and only say it.
+ts_have=""
+for f in usr/lib/systemd/systemd-timesyncd lib/systemd/systemd-timesyncd usr/sbin/chronyd sbin/chronyd usr/sbin/ntpd sbin/ntpd; do
+	if [ -e "$ROOT/$f" ]; then ts_have="$f"; break; fi
+done
+if [ -n "$ts_have" ]; then
+	log "time sync: ${ts_have##*/} is installed"
+elif [ "$OFFLINE" = 1 ] || [ "$REAL" = 0 ] || ! command -v apt-get >/dev/null; then
+	log "time sync: none installed; the clock is not kept right until systemd-timesyncd (or chrony) is installed"
+else
+	log "time sync: none installed; installing systemd-timesyncd"
+	if run apt-get install -y --no-install-recommends systemd-timesyncd; then
+		if [ -d /run/systemd/system ]; then
+			run systemctl enable --now systemd-timesyncd.service || log "could not start systemd-timesyncd; the install goes on"
+			run timedatectl set-ntp true || log "could not turn on time sync with timedatectl; the install goes on"
+		fi
+	else
+		log "could not install systemd-timesyncd; the install goes on, and the clock is not kept right until it is installed"
+	fi
+fi
+
 # Nothing is installed for the NDI input here, not avahi either: that is opt-in per box (pvj/ndisetup.py, D62).
 
 # --- accounts -----------------------------------------------------------
