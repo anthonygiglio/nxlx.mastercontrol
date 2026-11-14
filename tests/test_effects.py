@@ -13,7 +13,6 @@ import struct
 import threading
 import time
 import unittest
-from unittest import mock
 
 from pvj import effects as E, midi as M, shaderlive as L, shaders as S
 from pvj.api import ApiError
@@ -672,9 +671,7 @@ class LoopGapTest(Base):
         self.mpv.props.update({"time-pos": 0.2, "seeking": False})
         self.sleeps = []
         self.on_sleep = lambda n: None
-        patcher = mock.patch.object(E.time, "sleep", self.sleep)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        self.fx._sleep = self.sleep
 
     def sleep(self, seconds):
         self.sleeps.append(seconds)
@@ -726,6 +723,26 @@ class LoopGapTest(Base):
         with self.assertRaises(ApiError):
             self.fx.put("fx-wash.fs")
         self.assertEqual(len(self.sleeps), 1)
+
+    def test_the_panels_toggle_step_and_preset_wait_too_and_once(self):
+        for call in (lambda: self.fx.toggle(ask=True), lambda: self.fx.step(1, ask=True)):
+            self.sleeps.clear()
+            self.fx.off()
+            self.gap()
+            self.on_sleep = lambda n: setattr(self.mpv, "video", self.good)
+            call()                                          # no 409 at the loop point
+            self.assertEqual(len(self.sleeps), 1)           # the one wait of the request; the worker's put finds a picture
+            self.mpv.video = self.good
+
+    def test_an_off_during_the_wait_wins_over_the_put_by_hand(self):
+        self.gap()
+        def off_and_back(n):
+            self.fx.off()
+            self.mpv.video = self.good
+        self.on_sleep = off_and_back
+        out = self.fx.put("fx-wash.fs")
+        self.assertTrue(out.get("superseded"))
+        self.assertIsNone(self.fx.on)
 
     def test_nothing_waits_when_there_is_no_gap(self):
         self.fx.put("fx-wash.fs")

@@ -325,10 +325,21 @@ class Strobe:
                     return "waiting"
                 if retry > 0 and self.error is not None:
                     return "error"
-                return self._start(now)
+                status = self._start(now)
+                self._count_from_now(self._clock() - now)
+                return status
             if lit and want:
                 self._follow_look()
             return "lit" if lit else "off"
+
+    def _count_from_now(self, spent):
+        """A start can take a while (a loop point's wait for the picture, a compile). The leases are counted from after
+        it: a press that was held through the start is not ended the moment it lit for the time the start took."""
+        if spent <= 0:
+            return
+        with self._lock:
+            for h in self.holders.values():
+                h["seen"] += spent
 
     def _follow_look(self):
         """A colour or a way that changed while it flashes: sent at once (the timing is the same; see settle)."""

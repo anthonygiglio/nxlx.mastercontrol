@@ -921,6 +921,7 @@ class Effects(S.Engine):
 
     def __init__(self, api, log=print, clock=time.monotonic, tap=S.LogTap, thread=True):
         super().__init__(api, log, clock, tap)
+        self._sleep = time.sleep                    # injected by tests (the looks of _ride_out_gap)
         self.dir = os.path.join(os.path.dirname(api.settings.path), "effects")
         paths.remove_leftovers(self.dir, S.UPLOAD_TEMP)     # as the shaders' folder, a line up in Engine (D70)
         self.bundled_dir = EFFECTS_DIR
@@ -1328,7 +1329,7 @@ class Effects(S.Engine):
         if not starting and ask("seeking") is not True:
             return
         for _ in range(PICTURE_LOOKS):
-            time.sleep(PICTURE_LOOK_GAP)
+            self._sleep(PICTURE_LOOK_GAP)
             if item() != first or ask("idle-active") is True:
                 return
             if has_picture():
@@ -1348,6 +1349,7 @@ class Effects(S.Engine):
         (`ask`) is told now, with a 409, when no effect could go on: it used to hear "ok" and then nothing happened.
         A controller's call is not: it asks the player nothing, hears "ok", and the worker says why in `error`."""
         if ask:
+            self._ride_out_gap()                    # a loop point or a seek is no reason to refuse a press
             ok, why = self.available()
             if not ok:
                 raise ApiError(409, why)
@@ -1475,7 +1477,10 @@ class Effects(S.Engine):
         native = bool(self.native())                # the New renderer runs the effect itself (D106), asked once a play
         if gen is None:
             self._gen += 1                              # by hand: newer than every wish that waits
+        mine = self._gen
         self._ride_out_gap()                            # outside the lock: nothing else waits on a gap in the picture
+        if gen is None and self._gen != mine:           # an Off or a newer effect came during the wait: it wins
+            return {"ok": True, "id": sid, "superseded": True}
         with self._lock:
             if gen is not None and gen != self._gen:    # something was asked for after this (an Off, an effect by hand)
                 return None

@@ -21,7 +21,6 @@ import re
 import threading
 import time
 import unittest
-from unittest import mock
 
 import tests        # noqa: F401  (the run's own temp folder, ranked locks)
 from pvj import actions, effects as E, midi, osc, policy, shaders as S, strobe as ST
@@ -234,6 +233,24 @@ class FastPathTest(unittest.TestCase):
         api.effects.on = {"id": "fx-grade.fs", "values": {}, "controls": {"amount": 1.0, "speed": 1.0}}      # the person chose another
         s.release(DEVICE, {})
         self.assertEqual(api.effects.on["id"], "fx-grade.fs")
+
+
+    def test_a_slow_start_does_not_use_up_the_lease(self):
+        """An OSC press (a lease of 0.5 s) whose start takes longer than that, a wait at a loop point: it is not ended the
+        moment it lit."""
+        api, clock, s = rig(native=False)
+        put = api.effects.put
+        def slow(*a, **k):
+            clock.t += 0.8
+            return put(*a, **k)
+        api.effects.put = slow
+        s.hold(OSC, {"holder": "osc"})
+        s.tick()
+        st = s.state()
+        self.assertEqual((st["held"], st["on"]), (1, True))
+        clock.t += 0.6                                      # and it does lapse when nothing renews it
+        s.tick()
+        self.assertEqual(s.state()["held"], 0)
 
 
 class DeadManTest(unittest.TestCase):
@@ -624,16 +641,16 @@ class RouteTest(RouteBase):
         self.mpv.props.update({"time-pos": 0.1, "seeking": False})
         def back(_seconds):
             self.mpv.video = good
-        with mock.patch.object(E.time, "sleep", back):
-            st, body, _ = self.post("/api/strobe/hold", {"holder": "tab"})
+        self.fx._sleep = back
+        st, body, _ = self.post("/api/strobe/hold", {"holder": "tab"})
         self.assertEqual((st, body.get("ok")), (200, True), body)
         self.assertEqual(self.fx.on["id"], "fx-strobe.fs")
 
     def test_a_press_with_no_picture_that_stays_away_is_refused(self):
         self.mpv.video = None
         self.mpv.props.update({"time-pos": 0.1, "seeking": False})
-        with mock.patch.object(E.time, "sleep", lambda _s: None):
-            st, body, _ = self.post("/api/strobe/hold", {"holder": "tab"})
+        self.fx._sleep = lambda _s: None
+        st, body, _ = self.post("/api/strobe/hold", {"holder": "tab"})
         self.assertEqual(st, 409, body)
         self.assertIn("Nothing with a picture", body["error"])
 
