@@ -5009,9 +5009,21 @@ function startServer(env) {          // env: more for the harness's environment 
       const strobeReq = [];
       const seenS = (q) => { if (q.method() === 'POST' && /\/api\/strobe/.test(q.url())) strobeReq.push([new URL(q.url()).pathname, q.postDataJSON()]); };
       page.on('request', seenS);
-      // a clip with a picture: a strobe needs one to flash over (the harness player takes a moment to have it)
+      // a clip with a picture: a strobe needs one to flash over (the harness player takes a moment to have it). The hold
+      // puts the strobe on as the effect here, so it is refused by the same check as GET /api/effects (effects.available).
+      // That check read "available" from the picture before this play (10 ms after it, on CI run 43138645183), and the
+      // player had no picture a moment later while it loaded the clip, so the hold was refused. So: stop, wait until
+      // nothing has a picture, then play and wait for the picture of this clip, seen on three polls in a row.
+      assert.strictEqual(await post('/api/control', { action: 'stop' }), 200);
+      await page.waitForFunction(() => fetch('/api/effects').then((r) => r.json()).then((d) => d.available === false), null, { timeout: 20000 });
       assert.strictEqual(await post('/api/play', { file: 'intro.mkv' }), 200);
-      await page.waitForFunction(() => fetch('/api/effects').then((r) => r.json()).then((d) => d.available === true), null, { timeout: 20000 })
+      await page.waitForFunction(async () => {
+        for (let i = 0; i < 3; i++) {
+          if (i) await new Promise((r) => setTimeout(r, 100));
+          if ((await fetch('/api/effects').then((r) => r.json())).available !== true) return false;
+        }
+        return true;
+      }, null, { timeout: 20000 })
         .catch(async () => { throw new Error('the picture for the strobe: ' + JSON.stringify(await get('/api/effects').then((d) => [d.available, d.unavailable]))); });
       await go(page, 'shape/effect');
       await page.waitForSelector('#strobecard #strobehold:not([disabled])', { timeout: 10000 });

@@ -1,5 +1,11 @@
 <!-- SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
      SPDX-License-Identifier: Apache-2.0 -->
+## 2026-11-14, The strobe test waits for the picture of its own clip (J-134)
+
+- **What failed.** CI run 43138645183, panel-ui: the first press got 409 "Nothing with a picture is playing" right after `GET /api/effects` said available, so the button never said Flashing (panel.test.js, the wait at about line 5027).
+- **Why.** The node's checks agree: on the sandbox node the hold puts the strobe on as the effect (`effects.put`), which refuses with the same `effects.available()` that `GET /api/effects` reports. The test's wait was the race: it asked 10 ms after `POST /api/play`, while the player still had the picture from before, and saw "available"; a moment later the player was loading the clip and had no picture, and the hold 0.44 s later was refused. No code changes: the refusal is right (D134 rule 5, the effect route needs a picture), and the panel already says the node's reason.
+- **Fix.** The test stops first, waits until nothing has a picture, then plays and waits for available on three polls in a row 0.1 s apart. Left as it is: `GET /api/strobe`'s `available` covers the module and the file, not the picture, so the button is pressable while nothing plays and the press is what says why. Whether the button should say it before a press is a panel question for after the show.
+
 ## 2026-11-11, The Strobe button on the panel (D134)
 
 - **Why.** The owner asked for "a hold-to-strobe button for the panel... that stops the moment you let go", with rate and colour controls. The node's side (PR 281) is merged and deployed; this is the panel's part, given to the panel session by the coordinator.
