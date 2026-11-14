@@ -109,6 +109,16 @@ def stage_old_node(src_copy):
     link(root, "etc/systemd/system/sockets.target.wants/pvj-raster.socket", "/etc/systemd/system/pvj-raster.socket")
     write(root, "etc/avahi/services/nxlx-mastercontrol.service", "<!-- announced by pvj-sysd -->\n")
     write(root, "proc/mounts", "/dev/mmcblk0p2 / ext4 rw,noatime 0 0\n")
+    # The release the cutover installs: the programs under their new names (a copy of the old one, renamed), and
+    # "current" pointing at it, as install.sh leaves it from rename PR 7 on. 9.9.1 stays as the previous release.
+    old, new = os.path.join(root, "opt/pvj/releases/9.9.1"), os.path.join(root, "opt/pvj/releases/9.9.2")
+    shutil.copytree(old, new, symlinks=True)
+    os.rename(os.path.join(new, "pvj"), os.path.join(new, "mctl"))
+    for name in os.listdir(os.path.join(new, "bin")):
+        os.rename(os.path.join(new, "bin", name), os.path.join(new, "bin", name.replace("pvj-", "nxlx-")))
+    os.unlink(os.path.join(root, "opt/pvj/current"))
+    os.symlink("/opt/pvj/releases/9.9.2", os.path.join(root, "opt/pvj/current"))
+    write(root, "opt/pvj/previous", "/opt/pvj/releases/9.9.1\n")
     return root
 
 
@@ -218,7 +228,7 @@ class Plan(Base):
                      "rename account pvj-player to nxlx-player (uid 989 stays), home /var/lib/nxlx-player",
                      "move /opt/pvj to /opt/nxlx", "move /var/lib/pvj to /var/lib/nxlx", "move /etc/pvj to /etc/nxlx",
                      "move /opt/pvj-ndi to /opt/nxlx-ndi", "rename /etc/nxlx/pvj.env to nxlx.env",
-                     "point /opt/nxlx/current at /opt/nxlx/releases/9.9.1",
+                     "point /opt/nxlx/current at /opt/nxlx/releases/9.9.2",
                      "rename /etc/systemd/system/pvj-web.service to nxlx-web.service",
                      "rename /etc/systemd/system/pvj-web.service.d to nxlx-web.service.d",
                      "point /etc/systemd/system/multi-user.target.wants/pvj-ndi.service at /etc/systemd/system/nxlx-ndi.service",
@@ -266,7 +276,8 @@ class Run(Base):
         for gone in ("opt/pvj", "var/lib/pvj", "etc/pvj", "opt/pvj-ndi", "var/lib/pvj-player", "home/pvj-dev",
                      "etc/systemd/system/pvj-web.service", "usr/local/bin/pvj-player", "etc/sudoers.d/010_pvj-dev"):
             self.assertFalse(os.path.lexists(self.p(gone)), gone)
-        self.assertEqual(os.readlink(self.p("opt/nxlx/current")), "/opt/nxlx/releases/9.9.1")
+        self.assertEqual(os.readlink(self.p("opt/nxlx/current")), "/opt/nxlx/releases/9.9.2")
+        self.assertEqual(self.read("opt/nxlx/previous"), "/opt/nxlx/releases/9.9.1\n")
         self.assertEqual(os.readlink(self.p("usr/local/bin/nxlx-player")), "/opt/nxlx/current/bin/nxlx-player")
         self.assertEqual(os.readlink(self.p("etc/systemd/system/multi-user.target.wants/nxlx-ndi.service")),
                          "/etc/systemd/system/nxlx-ndi.service")
@@ -390,6 +401,120 @@ class Run(Base):
         self.assertEqual(snapshot(self.root), converted)
         self.assertEqual(convert(self.root, "--undo").returncode, 0)
         self.assertEqual(snapshot(self.root), before)
+
+
+class ReviewFixes(Base):
+    """The findings of the converter's review (2026-11-14), each shown where stage mode can show it."""
+
+    def test_a_terminal_that_goes_away_does_not_stop_the_run(self):
+        p = subprocess.Popen([CONVERT, "--root", self.root, "--run"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        p.stdout.close()                                     # the ssh connection drops at once
+        _, err = p.communicate(timeout=120)
+        self.assertEqual(p.returncode, 0, err)
+        self.assertFalse(os.path.exists(self.p("opt/pvj")))
+        self.assertTrue(os.path.islink(self.p("opt/nxlx/current")))
+        runs = [d for d in os.listdir(self.p("var/backups/nxlx-convert")) if os.path.isdir(self.p("var/backups/nxlx-convert", d))]
+        log = self.read("var/backups/nxlx-convert", runs[0], "run.log")
+        self.assertIn("Checks", log, "the log has the report from its first line")
+        self.assertIn("Converted:", log)
+        self.assertEqual(stat.S_IMODE(os.stat(self.p("var/backups/nxlx-convert", runs[0], "run.log")).st_mode), 0o600)
+
+    def test_undo_leaves_a_logged_in_account_with_its_home_and_sudoers(self):
+        before = snapshot(self.root, skip=("var/backups", "proc"))
+        self.assertEqual(convert(self.root, "--run").returncode, 0)
+        converted = snapshot(self.root, skip=("var/backups", "proc"))
+        write(self.root, "proc/900/status", "Name:\tbash\nUid:\t1001\t1001\t1001\t1001\n")
+        write(self.root, "proc/900/cgroup", "0::/user.slice/user-1001.slice/session-4.scope\n")
+        r = convert(self.root, "--undo")
+        self.assertEqual(r.returncode, 2, r.stdout)
+        self.assertIn("the account nxlx-dev is in use outside its services (process 900)", r.stdout)
+        self.assertEqual(snapshot(self.root, skip=("var/backups", "proc")), converted, "a refused undo changes nothing")
+        # The timer cannot wait: it puts back everything but the account, and leaves its home and sudoers with it.
+        r = convert(self.root, "--undo", "--auto")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("nxlx-dev is logged in (process 900)", r.stdout)
+        self.assertIn("left with nxlx-dev, which keeps its new name", r.stdout)
+        passwd = {l.split(":")[0]: l.split(":") for l in self.read("etc/passwd").splitlines()}
+        self.assertEqual(passwd["nxlx-dev"][5], "/home/nxlx-dev")
+        self.assertIn("pvj-web", passwd)
+        self.assertTrue(os.path.isfile(self.p("home/nxlx-dev/.ssh/authorized_keys")), "its home stays with it")
+        self.assertEqual(self.read("etc/sudoers.d/010_nxlx-dev"), "nxlx-dev ALL=(ALL) NOPASSWD:ALL\n", "so does sudo")
+        self.assertTrue(os.path.isdir(self.p("opt/pvj")), "the rest is back")
+        # Once the login is gone, a second undo finishes the job.
+        shutil.rmtree(self.p("proc/900"))
+        r = convert(self.root, "--undo")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertEqual(snapshot(self.root, skip=("var/backups", "proc")), before)
+
+    def test_units_to_start_counts_every_run_that_is_not_undone(self):
+        conv = load_converter()
+        recs = [{"run": "a", "n": 0, "op": "stop", "state": "done", "active": ["pvj-web.service", "pvj-player.service"]},
+                {"run": "a", "state": "failed"},
+                {"run": "b", "n": 0, "op": "stop", "state": "done", "active": []},          # the run that carried on
+                {"run": "c", "n": 0, "op": "stop", "state": "done", "active": ["pvj-sound.service"]},
+                {"run": "c", "n": 0, "op": "stop", "state": "undone"}]
+        self.assertEqual(conv.units_to_start(recs), ["pvj-web.service", "pvj-player.service"])
+
+    def test_a_release_without_the_new_names_is_refused(self):
+        os.unlink(self.p("opt/pvj/current"))
+        os.symlink("/opt/pvj/releases/9.9.1", self.p("opt/pvj/current"))
+        before = snapshot(self.root, skip=())
+        r = convert(self.root, "--run")
+        self.assertEqual(r.returncode, 2, r.stdout)
+        self.assertIn("the current release (/opt/pvj/releases/9.9.1) does not have the new names: bin/nxlx-", r.stdout)
+        self.assertIn("Install a release with the new names first", r.stdout)
+        self.assertEqual(snapshot(self.root, skip=()), before)
+        os.unlink(self.p("opt/pvj/current"))
+        os.symlink("/opt/pvj/releases/9.9.2", self.p("opt/pvj/current"))
+        self.assertIn("the current release (/opt/pvj/releases/9.9.2) has the programs the converted units run",
+                      convert(self.root, "--plan").stdout)
+
+    def test_the_undo_timer_is_a_unit_that_survives_a_restart_and_is_armed_again(self):
+        total = len(re.findall(r"(?m)^    +\d+  ", convert(self.root, "--plan").stdout))
+        r = convert(self.root, "--run", env={"NXLX_CONVERT_FAIL_AT": str(total // 2)})
+        self.assertEqual(r.returncode, 1, r.stdout)
+        timer = self.read("etc/systemd/system/nxlx-convert-undo.timer")
+        self.assertRegex(timer, r"(?m)^OnBootSec=5min$")
+        self.assertRegex(timer, r"(?m)^OnActiveSec=15min$")
+        self.assertRegex(timer, r"(?m)^WantedBy=timers.target$")
+        self.assertEqual(os.readlink(self.p("etc/systemd/system/timers.target.wants/nxlx-convert-undo.timer")),
+                         "/etc/systemd/system/nxlx-convert-undo.timer")
+        service = self.read("etc/systemd/system/nxlx-convert-undo.service")
+        self.assertIn("ExecStart=/usr/bin/python3 /var/backups/nxlx-convert/nxlx-convert --undo --auto", service)
+        copy = self.p("var/backups/nxlx-convert/nxlx-convert")
+        self.assertTrue(os.access(copy, os.X_OK))
+        with open(copy, "rb") as a, open(CONVERT, "rb") as b:
+            self.assertEqual(a.read(), b.read(), "the copy the timer runs, outside the folders that move")
+        # The run that carries on arms the same timer again instead of failing on the one that is there.
+        r = convert(self.root, "--run")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("the timer is written", r.stdout)
+        self.assertEqual(self.read("etc/systemd/system/nxlx-convert-undo.timer"), timer)
+        self.assertEqual(convert(self.root, "--confirm").returncode, 0)
+        for gone in ("nxlx-convert-undo.timer", "nxlx-convert-undo.service", "timers.target.wants"):
+            self.assertFalse(os.path.lexists(self.p("etc/systemd/system", gone)), gone)
+
+    def test_a_confirm_of_an_earlier_conversion_does_not_stop_the_timed_undo(self):
+        before = snapshot(self.root)
+        self.assertEqual(convert(self.root, "--run").returncode, 0)
+        self.assertEqual(convert(self.root, "--confirm").returncode, 0)
+        self.assertEqual(convert(self.root, "--undo").returncode, 0)
+        self.assertEqual(convert(self.root, "--run").returncode, 0)          # converted again, not confirmed
+        r = convert(self.root, "--undo", "--auto")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("Undone", r.stdout)
+        self.assertEqual(snapshot(self.root), before)
+
+    def test_a_process_left_in_a_helper_unit_stops_the_run_before_any_rename(self):
+        # A picture job (pvj-raster@N.service, Accept=yes) that is still there when the accounts are renamed.
+        write(self.root, "proc/777/status", "Name:\tpvj-raster\nUid:\t986\t986\t986\t986\n")
+        write(self.root, "proc/777/cgroup", "0::/system.slice/system-pvj\\x2draster.slice/pvj-raster@3.service\n")
+        self.assertEqual(convert(self.root, "--plan").returncode, 0, "a service's process stops with its unit")
+        r = convert(self.root, "--run")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("FAILED at change 1: pvj-raster still running after the services stopped (process 777)", r.stdout)
+        self.assertTrue(os.path.isdir(self.p("opt/pvj")))
+        self.assertEqual(self.read("etc/passwd"), PASSWD, "no account was renamed")
 
 
 class Refusals(Base):

@@ -27,6 +27,9 @@ their parent folder is renamed, on the same file system), touch /run (rebuilt at
 playing, an update is running, the root file system is read-only or a USB drive is mounted under /media/pvj.
 --force overrides only the show check.
 
+The undo timer is a unit file in /etc (nxlx-convert-undo.timer, enabled), so it also fires five minutes after a
+restart: a node that loses power half-way comes back to the old names by itself. A run that carries on re-arms it.
+
 Idempotent: the plan is worked out from what is on the node, so a second run finds nothing to do and a run that
 stopped half-way finishes with --run or goes back with --undo. Every change is written to the journal
 /var/backups/nxlx-convert/journal.jsonl before and after it is made, with the original of every rewritten file.
@@ -381,6 +384,7 @@ class Plan:
         self.left = {}              # path: [old-style text left after the rewrite]
         self.backup = []            # relative paths for the backup tar
         self.carried = {}           # name: sha256 before
+        self.needs = set()          # files under /opt/nxlx/current/bin that the converted units and links run
 
     def add(self, step, op, text, **kw):
         kw.update(step=step, op=op, text=text)
@@ -391,6 +395,23 @@ class Plan:
 
     def blockers(self, force=False):
         return [t for ok, t, fc in self.checks if not ok and not (force and fc)]
+
+
+SERVICE_CGROUP = re.compile(r"/(pvj|nxlx)-[A-Za-z0-9@_.-]*\.(service|socket)\b")
+
+
+def busy_accounts(node, uids):
+    """{account: [pid]} of the processes of these accounts ({uid: name}) outside a unit of the node's services,
+    which stop with their unit. Anything else (an ssh login, a shell, sudo started from it) keeps the account busy:
+    Linux refuses to rename an account that has a process."""
+    busy = {}
+    for pid, uid, cg in node.processes():
+        if uid in uids and not SERVICE_CGROUP.search(cg):
+            busy.setdefault(uids[uid], []).append(pid)
+    sudo_user = os.environ.get("SUDO_USER") if not node.stage else None
+    if sudo_user in uids.values():
+        busy.setdefault(sudo_user, []).append("sudo")
+    return busy
 
 
 def where(node, rel):
@@ -462,13 +483,7 @@ def make_plan(node, force=False, mode="plan"):
     # Linux refuses to rename an account that has a process. A service's processes stop with its unit; anything
     # else (an ssh login, a shell, sudo started from it) means: run this from another admin login.
     uids = {int(users[u][2]): u for u, _ in renames_u}
-    busy = {}
-    for pid, uid, cg in node.processes():
-        if uid in uids and not re.search(r"/pvj-[A-Za-z0-9@_.-]*\.(service|socket)\b", cg):
-            busy.setdefault(uids[uid], []).append(pid)
-    sudo_user = os.environ.get("SUDO_USER") if not node.stage else None
-    if sudo_user in uids.values():
-        busy.setdefault(sudo_user, []).append("sudo")
+    busy = busy_accounts(node, uids)
     for u, pids in sorted(busy.items()):
         plan.check(False, "the account %s is in use outside its services (process %s): log out of it and run "
                    "this from another admin login (node-01: nxlx, node-02: pi)" % (u, ", ".join(map(str, pids[:5]))))
@@ -480,9 +495,13 @@ def make_plan(node, force=False, mode="plan"):
         if node.exists(old) and node.exists(new):
             plan.check(False, "both /%s and /%s exist: look at them by hand" % (old, new))
 
-    # 3. stop the services (a real node only)
+    # 3. stop the services (a real node only), then make sure no process of an account to be renamed is left
     if not node.stage:
-        plan.add(3, "stop", "stop the services in order: " + ", ".join(STOP_ORDER), units=STOP_ORDER)
+        plan.add(3, "stop", "stop the services in order (%s), then every other loaded pvj-* unit (the picture "
+                 "helper's jobs, updates)" % ", ".join(STOP_ORDER), units=STOP_ORDER)
+    if uids:
+        plan.add(3, "idle", "check that no process of an account to be renamed is left",
+                 uids=sorted([k, v] for k, v in uids.items()))
 
     # 4. service accounts: names only, ids stay
     for old, new in renames_g:
@@ -532,6 +551,23 @@ def make_plan(node, force=False, mode="plan"):
     # 7. units, drop-ins, wants links, udev, tmpfiles, journald, modules-load, command links
     for base in SYSTEM_DIRS:
         system_entries(node, m, plan, base, 7)
+    # The converted units and command links run the release's programs under their new names. On a release from
+    # before the rename those do not exist, and the node would stay dark until the undo: refuse.
+    if plan.needs:
+        cur = where(node, "opt/nxlx/current")
+        target = os.readlink(node.p(cur)) if cur and os.path.islink(node.p(cur)) else ""
+        release = where(node, renamed(m, target).lstrip("/")) if target.startswith("/") else None
+        if release is None:
+            plan.check(False, "cannot find the current release (/opt/pvj/current is not a link to a release)")
+        else:
+            base = "/opt/nxlx/current"
+            missing = sorted(n[len(base) + 1:] for n in plan.needs if not os.path.exists(node.p(release) + n[len(base):]))
+            plan.check(not missing, "the current release (%s) has the programs the converted units run" % target
+                       if not missing else
+                       "the current release (%s) does not have the new names: %s %s missing, so the converted units "
+                       "would start nothing. Install a release with the new names first (rename PR 7 and later)"
+                       % (target, ", ".join(missing[:6]) + (" and %d more" % (len(missing) - 6) if len(missing) > 6 else ""),
+                          "is" if len(missing) == 1 else "are"))
 
     # 8. the deploy and login account, then its sudoers, then the sub-id files of every renamed account
     if DEV in groups and (DEV, "nxlx-dev") in renames_g:
@@ -610,6 +646,8 @@ def system_entries(node, m, plan, base, step, sudoers=False):
                 nt = renamed(m, target)
                 if nt != target:
                     plan.add(step, "link", "point /%s at %s" % (rel, nt), path=rel, old=target, new=nt)
+                    if nt.startswith("/opt/nxlx/current/bin/"):
+                        plan.needs.add(nt)
             elif os.path.isfile(full):
                 text = is_text(full)
                 if text is not None:
@@ -617,6 +655,7 @@ def system_entries(node, m, plan, base, step, sudoers=False):
                     if n:
                         plan.add(step, "write", "rewrite /%s (%d names)" % (rel, n), path=rel, size=len(out),
                                  sudoers=sudoers)
+                        plan.needs.update(re.findall(r"(?m)^Exec[A-Za-z]*=[-@+!:]*(/opt/nxlx/current/bin/[^\s]+)", out))
                     if left:
                         plan.left["/" + rel] = left
             entry_rename(node, m, plan, step, reld, name)
@@ -794,11 +833,12 @@ class Runner:
             os.chmod(keep, 0o600)
             rec.update(path=a["path"], orig=os.path.relpath(keep, node.root or "/"))
         elif op == "stop":
-            active = []
-            for u in a["units"]:
-                if sh(["systemctl", "is-active", "--quiet", u], check=False).returncode == 0:
-                    active.append(u)
-            rec.update(active=active)
+            # Every loaded unit of the old family, not only the main ones: the picture helper's per-job instances
+            # (pvj-raster@N, Accept=yes, as pvj-raster) and an update unit would keep an account busy.
+            loaded = loaded_units()
+            names = [u for u, _ in loaded]
+            rec.update(active=[u for u, state in loaded if state == "active"],
+                       units=[u for u in STOP_ORDER if u in names] + sorted(u for u in names if u not in STOP_ORDER))
         self.journal.write(dict(rec, state="begin"))
         fail = os.environ.get("NXLX_CONVERT_FAIL_AT") if node.stage else None
         if fail and int(fail) == self.n + 1:
@@ -831,27 +871,52 @@ class Runner:
         elif op in ("group", "user"):
             rename_account(node, op, a["old"], a["new"], a.get("home_old"), a.get("home_new"))
         elif op == "stop":
-            for u in a["units"]:
+            for u in rec["units"]:
                 sh(["systemctl", "stop", u], check=False)
+        elif op == "idle":
+            uids = {int(k): v for k, v in a["uids"]}
+            left = [(pid, uids[uid]) for pid, uid, _ in node.processes() if uid in uids]
+            if left:
+                raise RuntimeError("%s still running after the services stopped (process %s); no account was "
+                                   "renamed. Stop it, then run --run again" % (
+                                       ", ".join(sorted({u for _, u in left})), ", ".join(str(p) for p, _ in left[:5])))
         elif op == "start":
-            start_real(node, self.journal, self.run_id)
+            start_real(node, self.journal)
         self.journal.write(dict(rec, state="done"))
         self.n += 1
 
 
-def start_real(node, journal, run_id):
+def loaded_units():
+    """[(unit, active state)] of every loaded unit whose name starts with pvj- (a real node)."""
+    r = sh(["systemctl", "list-units", "--all", "--plain", "--no-legend", "--full", "pvj-*"], check=False)
+    out = []
+    for line in r.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 3 and parts[0].startswith("pvj-"):
+            out.append((parts[0], parts[2]))
+    return out
+
+
+def units_to_start(records):
+    """The main units that were running before any run that is not undone stopped them, in STOP_ORDER. Every run
+    counts, so a run that carries on after a failure starts what the first one stopped."""
+    undone = {(r.get("run"), r.get("n")) for r in records if r.get("state") == "undone"}
+    active = set()
+    for r in records:
+        if r.get("op") == "stop" and r.get("state") == "done" and (r.get("run"), r.get("n")) not in undone:
+            active.update(r.get("active", []))
+    return [u for u in STOP_ORDER if u in active]
+
+
+def start_real(node, journal):
     m = Matcher(rows())
     sh(["systemctl", "daemon-reload"])
     sh(["udevadm", "control", "--reload"], check=False)
     for name in sorted(os.listdir("/etc/tmpfiles.d")):
         if name.startswith("nxlx"):
             sh(["systemd-tmpfiles", "--create", "/etc/tmpfiles.d/" + name], check=False)
-    active = []
-    for rec in journal.records():
-        if rec.get("run") == run_id and rec.get("op") == "stop" and rec.get("state") == "done":
-            active = rec.get("active", [])
     failed = []
-    for u in reversed([x for x in STOP_ORDER if x in active]):
+    for u in reversed(units_to_start(journal.records())):
         new = renamed(m, u)
         if sh(["systemctl", "start", new], check=False).returncode != 0:
             failed.append(new)
@@ -868,17 +933,79 @@ def make_backup(node, plan, run_dir):
     return tar
 
 
-def arm_undo(node, run_dir):
-    """A timer that undoes the conversion unless --confirm comes first (a real node only). The converter is copied
-    next to the backup first: its own folder moves during the run."""
-    me = os.path.join(run_dir, "nxlx-convert")
-    shutil.copyfile(os.path.abspath(__file__), me)
-    os.chmod(me, 0o700)
+UNDO_COPY = BACKUP + "/nxlx-convert"
+UNDO_SERVICE = "etc/systemd/system/%s.service" % UNDO_UNIT
+UNDO_TIMER = "etc/systemd/system/%s.timer" % UNDO_UNIT
+UNDO_WANTS = "etc/systemd/system/timers.target.wants/%s.timer" % UNDO_UNIT
+UNDO_SERVICE_TEXT = """# Written by nxlx-convert --run, removed by --confirm or --undo (D136).
+[Unit]
+Description=Undo the NXLX conversion unless it was confirmed
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /%s --undo --auto
+""" % UNDO_COPY
+UNDO_TIMER_TEXT = """# Written by nxlx-convert --run, removed by --confirm or --undo (D136). A unit file, not a transient timer, so it
+# survives a restart: a node that loses power in the middle of a run comes back and is undone a few minutes later.
+[Unit]
+Description=Undo the NXLX conversion unless it is confirmed
+
+[Timer]
+OnActiveSec=%s
+OnBootSec=5min
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target
+""" % UNDO_AFTER
+
+
+def arm_undo(node):
+    """The undo timer: written in /etc, enabled, (re)started, so its 15 minutes count from this run. The converter is
+    copied next to the backup first, because its own folder moves during the run. A timer left by an earlier run
+    is stopped and reset first, so a run that carries on is armed again and not undone by the earlier one."""
+    me = node.p(UNDO_COPY)
+    if os.path.realpath(os.path.abspath(__file__)) != os.path.realpath(me):
+        tmp = me + ".tmp"
+        shutil.copyfile(os.path.abspath(__file__), tmp)
+        os.chmod(tmp, 0o700)
+        os.replace(tmp, me)
+    if not node.stage:
+        sh(["systemctl", "stop", UNDO_UNIT + ".timer"], check=False)
+        sh(["systemctl", "reset-failed", UNDO_UNIT + ".timer", UNDO_UNIT + ".service"], check=False)
+    for rel, text in ((UNDO_SERVICE, UNDO_SERVICE_TEXT), (UNDO_TIMER, UNDO_TIMER_TEXT)):
+        os.makedirs(os.path.dirname(node.p(rel)), exist_ok=True)
+        tmp = node.p(rel) + ".nxlx-convert.tmp"
+        with open(tmp, "w") as f:
+            f.write(text)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, node.p(rel))
     if node.stage:
-        return "stage mode: no timer"
-    sh(["systemd-run", "--unit=" + UNDO_UNIT, "--on-active=" + UNDO_AFTER, "--timer-property=AccuracySec=1s",
-        "--description=undo the NXLX conversion unless it is confirmed", sys.executable, me, "--undo", "--auto"])
-    return "armed: undone in %s unless sudo nxlx-convert --confirm" % UNDO_AFTER
+        os.makedirs(os.path.dirname(node.p(UNDO_WANTS)), exist_ok=True)
+        if not os.path.lexists(node.p(UNDO_WANTS)):
+            os.symlink("/" + UNDO_TIMER, node.p(UNDO_WANTS))
+        return "the timer is written (stage mode: not started)"
+    sh(["systemctl", "daemon-reload"])
+    sh(["systemctl", "enable", UNDO_UNIT + ".timer"])
+    sh(["systemctl", "restart", UNDO_UNIT + ".timer"])
+    return "armed: undone in %s (or 5 minutes after a restart) unless sudo nxlx-convert --confirm" % UNDO_AFTER
+
+
+def disarm_undo(node, inside=False):
+    """Take the timer away. `inside`: called from the timer's own service, which must not be stopped."""
+    if not node.stage:
+        sh(["systemctl", "disable", "--now", UNDO_UNIT + ".timer"], check=False)
+        if not inside:
+            sh(["systemctl", "stop", UNDO_UNIT + ".service"], check=False)
+    for rel in (UNDO_WANTS, UNDO_TIMER, UNDO_SERVICE):
+        if os.path.lexists(node.p(rel)):
+            os.unlink(node.p(rel))
+    try:
+        os.rmdir(os.path.dirname(node.p(UNDO_WANTS)))        # only when nothing else is in it
+    except OSError:
+        pass
+    if not node.stage:
+        sh(["systemctl", "daemon-reload"], check=False)
 
 
 def disk_free(node, need):
@@ -909,8 +1036,42 @@ def backup_size(node, plan):
 
 
 # --- the commands -------------------------------------------------------------------------------------------------
-def report(plan, out, force=False):
-    w = out.write
+class Say:
+    """What the converter tells the person: to the terminal while there is one, and to the run's log file. A
+    terminal that goes away (a dropped ssh connection) is ignored, never a reason to stop half-way; the log keeps
+    everything, from the first line on."""
+
+    def __init__(self):
+        self.buf, self.log = [], None
+
+    def __call__(self, text):
+        try:
+            sys.stdout.write(text)
+            sys.stdout.flush()
+        except (OSError, ValueError):
+            pass
+        if self.log is None:
+            self.buf.append(text)
+            return
+        try:
+            self.log.write(text)
+            self.log.flush()
+        except (OSError, ValueError):
+            pass
+
+    def to_file(self, path):
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        self.log = os.fdopen(fd, "w")
+        self.log.write("".join(self.buf))
+        self.log.flush()
+        self.buf = []
+
+
+say = Say()
+
+
+def report(plan, out=None, force=False):
+    w = say
     node = plan.node
     w("nxlx-convert: %s\n\n" % ("stage mode, the node in %s" % node.root if node.stage else "this node"))
     w("Checks\n")
@@ -943,34 +1104,53 @@ def report(plan, out, force=False):
 
 def cmd_plan(node, force):
     plan = make_plan(node, force)
-    report(plan, sys.stdout, force)
+    report(plan, None, force)
     blocked = plan.blockers(force)
-    sys.stdout.write("\nNothing was changed. %s\n" % (
+    say("\nNothing was changed. %s\n" % (
         "Refused: %d check(s) failed, see above." % len(blocked) if blocked else
         ("Run with --run to convert." if plan.actions else "Nothing to convert.")))
     return EXIT_REFUSED if blocked else EXIT_OK
 
 
-def cmd_run(node, force, assume_detached=False):
-    if not node.stage and not assume_detached and os.environ.get("NXLX_CONVERT_DETACHED") != "1" \
-            and os.path.isdir("/run/systemd/system"):
-        # Its own transient unit, so a dropped ssh connection cannot stop it half-way.
-        args = [sys.executable, os.path.abspath(__file__), "--run"] + (["--force"] if force else [])
-        r = subprocess.run(["systemd-run", "--unit=nxlx-convert-run", "--wait", "--pipe", "--collect", "--quiet",
-                            "--setenv=NXLX_CONVERT_DETACHED=1"] + args)
-        return r.returncode
+def run_detached(force):
+    """--run on a real node: the work runs in its own transient unit, with no terminal of its own (its output goes
+    to the journal and to the run's log file), so a dropped ssh connection cannot stop it half-way. This process
+    only waits and then shows the log."""
+    since = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    before = set(os.listdir("/" + BACKUP)) if os.path.isdir("/" + BACKUP) else set()
+    args = [sys.executable, os.path.abspath(__file__), "--run"] + (["--force"] if force else [])
+    say("Running in the unit nxlx-convert-run (journalctl -u nxlx-convert-run). If this connection drops, the run "
+        "goes on; its report is in /%s/<run>/run.log.\n" % BACKUP)
+    r = subprocess.run(["systemd-run", "--unit=nxlx-convert-run", "--wait", "--collect", "--quiet",
+                        "--setenv=NXLX_CONVERT_DETACHED=1"] + args, stdin=subprocess.DEVNULL,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    new = sorted(set(os.listdir("/" + BACKUP)) - before) if os.path.isdir("/" + BACKUP) else []
+    logs = [os.path.join("/" + BACKUP, d, "run.log") for d in new if os.path.isfile(os.path.join("/" + BACKUP, d, "run.log"))]
+    if logs:
+        with open(logs[-1]) as f:
+            say(f.read())
+    else:
+        j = sh(["journalctl", "-u", "nxlx-convert-run", "--since", since, "--no-pager", "-o", "cat"], check=False)
+        say(j.stdout + (r.stderr or ""))
+    m = re.search(r"status=(\d+)", r.stderr or "")
+    return int(m.group(1)) if r.returncode and m else r.returncode
+
+
+def cmd_run(node, force):
+    if not node.stage and os.environ.get("NXLX_CONVERT_DETACHED") != "1" and os.path.isdir("/run/systemd/system"):
+        return run_detached(force)
     plan = make_plan(node, force, mode="run")
-    report(plan, sys.stdout, force)
+    report(plan, None, force)
     blocked = plan.blockers(force)
     if blocked:
-        sys.stdout.write("\nRefused, nothing was changed: %s\n" % "; ".join(blocked))
+        say("\nRefused, nothing was changed: %s\n" % "; ".join(blocked))
         return EXIT_REFUSED
     if not plan.actions:
-        sys.stdout.write("\nNothing to convert: this node already uses the new names.\n")
+        say("\nNothing to convert: this node already uses the new names.\n")
         return EXIT_OK
     need = backup_size(node, plan) * 2 + (20 << 20)
     if not disk_free(node, need):
-        sys.stdout.write("\nRefused, nothing was changed: less than %d MB free for the backup\n" % (need >> 20))
+        say("\nRefused, nothing was changed: less than %d MB free for the backup\n" % (need >> 20))
         return EXIT_REFUSED
     journal = Journal(node)
     run_id = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-%d" % os.getpid()
@@ -978,30 +1158,35 @@ def cmd_run(node, force, assume_detached=False):
     os.makedirs(node.p(BACKUP), mode=0o700, exist_ok=True)
     os.chmod(node.p(BACKUP), 0o700)
     os.makedirs(run_dir, mode=0o700)
+    say.to_file(os.path.join(run_dir, "run.log"))
+    try:
+        armed = arm_undo(node)
+    except Exception as e:      # noqa: BLE001 - no undo, no run
+        say("\nRefused, nothing on the node was changed: the undo timer could not be armed (%s)\n" % e)
+        return EXIT_REFUSED
     tar = make_backup(node, plan, run_dir)
-    armed = arm_undo(node, run_dir)
     journal.write({"run": run_id, "state": "start", "backup": os.path.relpath(tar, node.root or "/"),
                    "carried": plan.carried, "undo": armed})
-    sys.stdout.write("\nConverting (backup %s; undo %s)\n" % ("/" + os.path.relpath(tar, node.root or "/"), armed))
+    say("\nConverting (backup %s; undo %s)\n" % ("/" + os.path.relpath(tar, node.root or "/"), armed))
     runner = Runner(node, plan, journal, run_id, run_dir)
     try:
         for a in plan.actions:
             runner.do(a)
-            sys.stdout.write("  done %3d  %s\n" % (runner.n, a["text"]))
+            say("  done %3d  %s\n" % (runner.n, a["text"]))
     except Exception as e:      # noqa: BLE001 - every failure stops the run and is said, never swallowed
         journal.write({"run": run_id, "state": "failed", "n": runner.n, "error": str(e)})
-        sys.stdout.write("\nFAILED at change %d: %s\n%d of %d changes were made and are in the journal. Either "
-                         "put the cause right and run --run again (it carries on), or run --undo.%s\n"
-                         % (runner.n + 1, e, runner.n, len(plan.actions),
-                            "" if node.stage else " The undo timer runs by itself in %s." % UNDO_AFTER))
+        say("\nFAILED at change %d: %s\n%d of %d changes were made and are in the journal. Either put the cause "
+            "right and run --run again (it carries on), or run --undo.%s\n"
+            % (runner.n + 1, e, runner.n, len(plan.actions),
+               "" if node.stage else " The undo timer runs by itself in %s." % UNDO_AFTER))
         return EXIT_FAILED
     bad = [n for n, h in plan.carried.items() if sha(node.p("var/lib/nxlx/" + n)) != h]
     if bad:
         journal.write({"run": run_id, "state": "failed", "error": "changed: " + ", ".join(bad)})
-        sys.stdout.write("\nFAILED: %s changed during the conversion; run --undo\n" % ", ".join(bad))
+        say("\nFAILED: %s changed during the conversion; run --undo\n" % ", ".join(bad))
         return EXIT_FAILED
     journal.write({"run": run_id, "state": "finished"})
-    sys.stdout.write("\nConverted: %d changes. Check the node, then: sudo nxlx-convert --confirm%s\n" % (
+    say("\nConverted: %d changes. Check the node, then: sudo nxlx-convert --confirm%s\n" % (
         runner.n, "" if node.stage else " (within %s, or it is undone)" % UNDO_AFTER))
     return EXIT_OK
 
@@ -1009,58 +1194,116 @@ def cmd_run(node, force, assume_detached=False):
 def cmd_confirm(node):
     journal = Journal(node)
     recs = journal.records()
-    if not recs:
-        sys.stdout.write("Nothing to confirm: this node was never converted.\n")
+    if not any(r.get("state") == "start" for r in recs):
+        say("Nothing to confirm: this node was never converted.\n")
         return EXIT_OK
-    if not node.stage:
-        sh(["systemctl", "stop", UNDO_UNIT + ".timer"], check=False)
+    disarm_undo(node)
     journal.write({"state": "confirmed"})
-    sys.stdout.write("Confirmed: the undo timer is off. The backups stay in /%s.\n" % BACKUP)
+    say("Confirmed: the undo timer is gone. The backups stay in /%s.\n" % BACKUP)
     return EXIT_OK
+
+
+def confirmed(records):
+    """Whether the latest conversion was confirmed: a confirm after the latest start (an earlier conversion's
+    confirm does not count)."""
+    last = max([i for i, r in enumerate(records) if r.get("state") == "start"], default=-1)
+    return any(r.get("state") == "confirmed" for r in records[last + 1:]) if last >= 0 else False
+
+
+def undo_blocks(done):
+    """The records to put back, newest first, in blocks. A run's step 8 is one block with the login account first:
+    when the account cannot get its old name back, its home, sudoers file and sub-id lines stay with it."""
+    order, out, i = list(reversed(done)), [], 0
+    while i < len(order):
+        r = order[i]
+        if r.get("step") == 8:
+            j = i
+            while j < len(order) and order[j].get("step") == 8 and order[j]["run"] == r["run"]:
+                j += 1
+            out.append(sorted(order[i:j], key=lambda x: 0 if x["op"] == "user" else 1))
+            i = j
+        else:
+            out.append([r])
+            i += 1
+    return out
 
 
 def cmd_undo(node, force, auto):
     journal = Journal(node)
     recs = journal.records()
-    if auto and any(r.get("state") == "confirmed" for r in recs):
-        sys.stdout.write("Not undone: the conversion was confirmed.\n")
+    if auto and confirmed(recs):
+        say("Not undone: the conversion was confirmed.\n")
         return EXIT_OK
     if not auto:
         playing = show_playing(node)
         if playing and not force:
-            sys.stdout.write("Refused, nothing was changed: a show is playing (%s). Give --force to undo anyway.\n"
-                             % playing)
+            say("Refused, nothing was changed: a show is playing (%s). Give --force to undo anyway.\n" % playing)
             return EXIT_REFUSED
     undone = {(r["run"], r["n"]) for r in recs if r.get("state") == "undone"}
     done = [r for r in recs if r.get("state") == "done" and (r["run"], r["n"]) not in undone]
     if not done:
-        sys.stdout.write("Nothing to undo.\n")
+        disarm_undo(node, inside=auto)
+        say("Nothing to undo.\n")
         return EXIT_OK
+    # The same check as --run: an account that is logged in cannot get its old name back.
+    users = node.users()
+    back = {r["new"]: r["old"] for r in done if r["op"] == "user"}
+    uids = {int(users[n][2]): n for n in back if n in users}
+    busy = busy_accounts(node, uids)
+    if busy and not auto:
+        for u, pids in sorted(busy.items()):
+            say("Refused, nothing was changed: the account %s is in use outside its services (process %s). Log "
+                "out of it and run this from another admin login.\n" % (u, ", ".join(map(str, pids[:5]))))
+        return EXIT_REFUSED
     m = Matcher(rows())
-    active = [u for r in done if r["op"] == "stop" for u in r.get("active", [])]
+    active = units_to_start(recs)
     if not node.stage:
-        for u in [renamed(m, x) for x in STOP_ORDER]:
+        for u in [renamed(m, x) for x in STOP_ORDER] + [u for u, _ in loaded_units_new()]:
             sh(["systemctl", "stop", u], check=False)
     failed = 0
-    for r in reversed(done):
-        try:
-            undo_one(node, r)
-            journal.write({"run": r["run"], "n": r["n"], "op": r["op"], "state": "undone"})
-            sys.stdout.write("  undone  %s\n" % r["text"])
-        except Exception as e:  # noqa: BLE001 - go on with the rest, say what could not be undone
-            failed += 1
-            sys.stdout.write("  NOT UNDONE  %s: %s\n" % (r["text"], e))
+    for block in undo_blocks(done):
+        stuck = None
+        for r in block:
+            if stuck:
+                failed += 1
+                say("  NOT UNDONE  %s (left with %s, which keeps its new name)\n" % (r["text"], stuck))
+                continue
+            if r["op"] == "user" and r["new"] in busy:
+                stuck = r["new"]
+                failed += 1
+                say("  NOT UNDONE  %s: %s is logged in (process %s)\n" % (
+                    r["text"], r["new"], ", ".join(map(str, busy[r["new"]][:5]))))
+                if len(block) == 1 or r.get("step") != 8:
+                    stuck = None
+                continue
+            try:
+                undo_one(node, r)
+                journal.write({"run": r["run"], "n": r["n"], "op": r["op"], "state": "undone"})
+                say("  undone  %s\n" % r["text"])
+            except Exception as e:  # noqa: BLE001 - go on with the rest, say what could not be undone
+                failed += 1
+                say("  NOT UNDONE  %s: %s\n" % (r["text"], e))
+                if r["op"] == "user" and r.get("step") == 8:
+                    stuck = r["new"]
+    disarm_undo(node, inside=auto)
     if not node.stage:
-        sh(["systemctl", "stop", UNDO_UNIT + ".timer"], check=False)
         sh(["systemctl", "daemon-reload"], check=False)
         sh(["udevadm", "control", "--reload"], check=False)
-        for u in reversed([x for x in STOP_ORDER if x in active]):
+        for u in reversed(active):
             sh(["systemctl", "start", u], check=False)
     journal.write({"state": "undo-finished", "failed": failed})
-    sys.stdout.write("%s The backup stays in /%s.\n" % (
+    say("%s The backup stays in /%s.\n" % (
         "Undone: the node uses the old names again." if not failed else
-        "Undone with %d change(s) that could not be put back, listed above." % failed, BACKUP))
+        "Undone with %d change(s) that could not be put back, listed above. Run --undo again once the cause is "
+        "gone." % failed, BACKUP))
     return EXIT_FAILED if failed else EXIT_OK
+
+
+def loaded_units_new():
+    """[(unit, active state)] of every loaded unit whose name starts with nxlx- but is not the converter's own."""
+    r = sh(["systemctl", "list-units", "--all", "--plain", "--no-legend", "--full", "nxlx-*"], check=False)
+    return [(p[0], p[2]) for p in (line.split() for line in r.stdout.splitlines())
+            if len(p) >= 3 and p[0].startswith("nxlx-") and not p[0].startswith("nxlx-convert")]
 
 
 def undo_one(node, r):
@@ -1108,7 +1351,7 @@ def main(argv=None):
         ap.error("--root must be an existing folder, given as an absolute path, and not /")
     node = Node(a.root)
     if not node.stage and (a.run or a.undo or a.confirm) and os.geteuid() != 0:
-        sys.stderr.write("nxlx-convert: run as root (sudo), or use --plan or --root\n")
+        say("nxlx-convert: run as root (sudo), or use --plan or --root\n")
         return EXIT_REFUSED
     if a.run:
         return cmd_run(node, a.force)
@@ -1120,4 +1363,12 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    code = main()
+    try:
+        sys.stdout.flush()
+    except OSError:
+        try:
+            os.dup2(os.open(os.devnull, os.O_WRONLY), 1)
+        except OSError:
+            pass
+    sys.exit(code)
