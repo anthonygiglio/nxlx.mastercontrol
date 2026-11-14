@@ -63,7 +63,7 @@ The status line says "frozen" while the picture is frozen.
 
 - The weekly schedule can switch every projector on or off (`projector_on`, `projector_off`), and can run a legacy start script such as `startlessonce05` (`preset`).
 - The old OSC addresses `/beameron` and `/beameroff` switch every projector on or off (on press).
-- Input selection and the separate mutes reach the schedule, OSC and MIDI through the Room module's groups and scenes ([ROOM.md](ROOM.md)): a scene on the schedule, `/pvj/scene/<n>` and `/pvj/group/<n>/input` over OSC, a scene on a MIDI control.
+- Input selection and the separate mutes reach the schedule, OSC and MIDI through the Room module's groups and scenes ([ROOM.md](ROOM.md)): a scene on the schedule, `/mctl/scene/<n>` and `/mctl/group/<n>/input` over OSC, a scene on a MIDI control.
 - From OSC and the schedule the commands are sent in the background, so a projector that is off the network never delays the next cue or entry. A failure is written to the log (OSC) or shown under the entry's "Last run" (schedule).
 
 ## Safety

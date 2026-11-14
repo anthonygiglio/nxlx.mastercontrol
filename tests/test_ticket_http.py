@@ -20,7 +20,7 @@ from tests.test_handover_api import B_ID, ME, FleetApiBase, raw
 from tests.test_https import PASS
 from tests.test_ticket import new_secret
 
-COOKIE = "__Host-pvj_token="
+COOKIE = "__Host-mctl_token="
 A_ID = "e" * 32            # (the test server's own id, ME, is "a" * 32)
 
 

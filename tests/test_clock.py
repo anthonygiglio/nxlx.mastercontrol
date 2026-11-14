@@ -691,11 +691,11 @@ class ControllerActionTest(unittest.TestCase):
                             [midi.validate_entry({"kind": "note", "number": 40, "action": "clock_tap"})], {})
         m.message("x", ("on", 0, 40, 127))
         self.assertEqual(calls, [("/api/tempo/tap", {})])
-        (a, parsed), = osc.parse_packet(_osc_message("/pvj/clock/tap", 1.0))
+        (a, parsed), = osc.parse_packet(_osc_message("/mctl/clock/tap", 1.0))
         self.assertEqual(osc.translate(a, parsed, None), actions.press("clock_tap"))
-        (a, parsed), = osc.parse_packet(_osc_message("/pvj/clock/tap", 0.0))
+        (a, parsed), = osc.parse_packet(_osc_message("/mctl/clock/tap", 0.0))
         self.assertIsNone(osc.translate(a, parsed, None), "the release of a button does nothing")
-        (a, parsed), = osc.parse_packet(_osc_message("/pvj/clock/tap"))
+        (a, parsed), = osc.parse_packet(_osc_message("/mctl/clock/tap"))
         self.assertEqual(osc.translate(a, parsed, None), actions.press("clock_tap"), "no argument is a press")
 
     def test_dmx_has_no_clock_channel(self):

@@ -356,58 +356,58 @@ class OverOscTest(Base):
         return self.server.handle_packet(msg(address, *args), "192.168.1.20")
 
     def test_the_same_mode_behind_the_same_switch(self):
-        for address, args in (("/pvj/mapping/mode", (1,)), ("/pvj/mapping/right", (1.0,)), ("/pvj/mapping/nudge", (2, 3))):
+        for address, args in (("/mctl/mapping/mode", (1,)), ("/mctl/mapping/right", (1.0,)), ("/mctl/mapping/nudge", (2, 3))):
             self.assertEqual(self.osc(address, *args), 0)           # the switch is off
         self.assertFalse(self.mapper.remote_on())
         self.allow()
-        self.assertEqual(self.osc("/pvj/mapping/right", 1.0), 0)    # and nothing outside the mode
-        self.assertEqual(self.osc("/pvj/mapping/mode", 1), 1)
-        self.assertEqual(self.osc("/pvj/mapping/mode", 1), 1)       # said outright: on twice is on
+        self.assertEqual(self.osc("/mctl/mapping/right", 1.0), 0)    # and nothing outside the mode
+        self.assertEqual(self.osc("/mctl/mapping/mode", 1), 1)
+        self.assertEqual(self.osc("/mctl/mapping/mode", 1), 1)       # said outright: on twice is on
         self.assertTrue(self.mapper.remote_on())
         s, corner, at = self.chosen()
-        self.assertEqual(self.osc("/pvj/mapping/right", 1.0), 1)
-        self.assertEqual(self.osc("/pvj/mapping/right", 0.0), 0)    # a button's release
-        self.assertEqual(self.osc("/pvj/mapping/down", 1.0), 1)
-        self.assertEqual(self.osc("/pvj/mapping/nudge", 2, -3), 1)
+        self.assertEqual(self.osc("/mctl/mapping/right", 1.0), 1)
+        self.assertEqual(self.osc("/mctl/mapping/right", 0.0), 0)    # a button's release
+        self.assertEqual(self.osc("/mctl/mapping/down", 1.0), 1)
+        self.assertEqual(self.osc("/mctl/mapping/nudge", 2, -3), 1)
         self.assertEqual(self.chosen()[2], [at[0] + 3, at[1] - 2])
-        self.assertEqual(self.osc("/pvj/mapping/undo", 1.0), 1)     # the three came within a second: one run, one step of undo
+        self.assertEqual(self.osc("/mctl/mapping/undo", 1.0), 1)     # the three came within a second: one run, one step of undo
         self.assertEqual(self.chosen()[2], at)
-        self.assertEqual(self.osc("/pvj/mapping/step", 10), 1)
-        self.assertEqual(self.osc("/pvj/mapping/left"), 1)
+        self.assertEqual(self.osc("/mctl/mapping/step", 10), 1)
+        self.assertEqual(self.osc("/mctl/mapping/left"), 1)
         self.assertEqual(self.chosen()[2], [at[0] - 10, at[1]])
-        self.assertEqual(self.osc("/pvj/mapping/corner/next", 1.0), 1)
-        self.assertEqual(self.osc("/pvj/mapping/surface/prev", 1.0), 1)
+        self.assertEqual(self.osc("/mctl/mapping/corner/next", 1.0), 1)
+        self.assertEqual(self.osc("/mctl/mapping/surface/prev", 1.0), 1)
         self.assertNotEqual(self.chosen()[0]["id"], s["id"])
-        for address, args in (("/pvj/mapping/nudge", (1,)), ("/pvj/mapping/nudge", (1.5, 0.0)), ("/pvj/mapping/step", (7,)),
-                              ("/pvj/mapping/add", (1,)), ("/pvj/mapping/mode", ("x",))):
+        for address, args in (("/mctl/mapping/nudge", (1,)), ("/mctl/mapping/nudge", (1.5, 0.0)), ("/mctl/mapping/step", (7,)),
+                              ("/mctl/mapping/add", (1,)), ("/mctl/mapping/mode", ("x",))):
             self.assertEqual(self.osc(address, *args), 0, address)
-        self.assertEqual(self.osc("/pvj/mapping/mode/off", 1), 1)
+        self.assertEqual(self.osc("/mctl/mapping/mode/off", 1), 1)
         self.assertFalse(self.mapper.remote_on())
-        self.assertEqual(osc.translate("/pvj/mapping/mode", []), ("/api/mapper/nudge", {"mode": "toggle"}))
+        self.assertEqual(osc.translate("/mctl/mapping/mode", []), ("/api/mapper/nudge", {"mode": "toggle"}))
 
     def test_a_buttons_release_does_not_leave_the_mode(self):
         """A TouchOSC button sends 1 when it is pressed and 0 when it is let go. The 0 used to be "leave": the mode
-        was over as the finger came up (the trap /pvj/fadein had)."""
+        was over as the finger came up (the trap /mctl/fadein had)."""
         self.allow()
         logged = len(self.logs)
-        self.assertEqual(self.osc("/pvj/mapping/mode", 1.0), 1)
-        self.assertEqual(self.osc("/pvj/mapping/mode", 0.0), 0)     # the release: nothing, and nothing in the log
+        self.assertEqual(self.osc("/mctl/mapping/mode", 1.0), 1)
+        self.assertEqual(self.osc("/mctl/mapping/mode", 0.0), 0)     # the release: nothing, and nothing in the log
         self.assertTrue(self.mapper.remote_on())
-        self.assertEqual(self.osc("/pvj/mapping/mode", False), 0)
+        self.assertEqual(self.osc("/mctl/mapping/mode", False), 0)
         self.assertTrue(self.mapper.remote_on())
-        self.assertEqual(self.osc("/pvj/mapping/mode/off", 0.0), 0) # and the release of the button that leaves
+        self.assertEqual(self.osc("/mctl/mapping/mode/off", 0.0), 0) # and the release of the button that leaves
         self.assertTrue(self.mapper.remote_on())
-        self.assertEqual(self.osc("/pvj/mapping/mode/off", 1.0), 1) # said outright
+        self.assertEqual(self.osc("/mctl/mapping/mode/off", 1.0), 1) # said outright
         self.assertFalse(self.mapper.remote_on())
-        self.assertEqual(self.osc("/pvj/mapping/mode/off"), 1)      # off twice is off
-        self.assertEqual(self.osc("/pvj/mapping/mode/on", 1.0), 1)
-        self.assertEqual(self.osc("/pvj/mapping/mode/on", 0.0), 0)
+        self.assertEqual(self.osc("/mctl/mapping/mode/off"), 1)      # off twice is off
+        self.assertEqual(self.osc("/mctl/mapping/mode/on", 1.0), 1)
+        self.assertEqual(self.osc("/mctl/mapping/mode/on", 0.0), 0)
         self.assertTrue(self.mapper.remote_on())
         for want in (False, True):                                  # one momentary button for both: press, release, press, release
-            self.assertEqual(self.osc("/pvj/mapping/mode/toggle", 1.0), 1)
-            self.assertEqual(self.osc("/pvj/mapping/mode/toggle", 0.0), 0)
+            self.assertEqual(self.osc("/mctl/mapping/mode/toggle", 1.0), 1)
+            self.assertEqual(self.osc("/mctl/mapping/mode/toggle", 0.0), 0)
             self.assertEqual(self.mapper.remote_on(), want)
-        self.assertEqual(self.osc("/pvj/mapping/mode"), 1)          # no argument switches over, as it did
+        self.assertEqual(self.osc("/mctl/mapping/mode"), 1)          # no argument switches over, as it did
         self.assertFalse(self.mapper.remote_on())
         self.assertEqual(self.logs[logged:], [])
 

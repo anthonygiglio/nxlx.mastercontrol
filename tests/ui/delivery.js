@@ -23,16 +23,16 @@ const assert = require('assert');
 const LOST = (files) => 'Part of this page did not arrive from the node (' + files + '), so some of the panel is missing. The node keeps playing. Press Try again.';
 const BROKEN = (files) => 'Part of this page arrived but did not start (' + files + '), so some of the panel is missing. This is a fault in the panel, not in the connection; please report it.';
 const SCANNED = 'Reload forgets the code you scanned. Join first, or scan the code again afterwards.';
-const PARTS = ['pvjShaders', 'pvjEffects', 'pvjApp', 'pvjRoom'];
+const PARTS = ['mctlShaders', 'mctlEffects', 'mctlApp', 'mctlRoom'];
 const pause = (ms) => new Promise((done) => setTimeout(done, ms));
 
 /* eslint-disable no-undef */
 function look() {
   return {
-    asked: Object.assign({}, window.pvjLoad.asked), lost: window.pvjLoad.lost.slice(), broken: window.pvjLoad.broken.slice(),
+    asked: Object.assign({}, window.mctlLoad.asked), lost: window.mctlLoad.lost.slice(), broken: window.mctlLoad.broken.slice(),
     // every new request this page made, by file (the waits themselves are looked at apart: they differ by chance)
-    again: window.pvjLoad.waits.map((w) => w[0]).sort(),
-    parts: ['pvjShaders', 'pvjEffects', 'pvjApp', 'pvjRoom'].filter((n) => !!window[n]),
+    again: window.mctlLoad.waits.map((w) => w[0]).sort(),
+    parts: ['mctlShaders', 'mctlEffects', 'mctlApp', 'mctlRoom'].filter((n) => !!window[n]),
     drawn: !!document.querySelector('#app > *'),
     note: Array.from(document.querySelectorAll('#loadnote p')).map((p) => p.textContent),
     buttons: Array.from(document.querySelectorAll('#loadnote button')).map((b) => b.id),
@@ -50,7 +50,7 @@ function place() {
   return { position: st.position, role: note.getAttribute('role'), left: r.left, top: r.top, across: r.width === document.documentElement.clientWidth, window: innerWidth, low: r.bottom <= innerHeight * 0.6 + 1,
     sideways: document.documentElement.scrollWidth > innerWidth, scrolled: scrollY > 0, cursorInIt: note.contains(document.activeElement), buttons };
 }
-const isWhole = () => !!window.pvjLoad && !document.querySelector('#loadnote') && !!document.querySelector('#app > *') && !!window.pvjShaders && !!window.pvjEffects && !!window.pvjApp && !!window.pvjRoom &&
+const isWhole = () => !!window.mctlLoad && !document.querySelector('#loadnote') && !!document.querySelector('#app > *') && !!window.mctlShaders && !!window.mctlEffects && !!window.mctlApp && !!window.mctlRoom &&
   document.styleSheets.length === 2 && Array.from(document.styleSheets).every((s) => { try { return s.cssRules.length > 0; } catch (e) { return false; } });
 // the notice is up with that button, and the panel has drawn (both: the notice may come first)
 const offersAgain = () => !!document.querySelector('#loadnote #loadagain') && !!document.querySelector('#app > *');
@@ -67,7 +67,7 @@ async function check(o) {
   const WHOLE = { asked: {}, lost: [], broken: [], again: [], parts: PARTS, drawn: true, note: [], buttons: [], sheets: ['/theme.css', '/app.css'] };
   const whole = (again) => Object.assign({}, WHOLE, { again });
   const waits = [];          // every wait before a new request that any of these pages chose: [path, ms]
-  const seen = async () => { const got = await pg.evaluate(look); waits.push(...await pg.evaluate(() => window.pvjLoad.waits)); return got; };   // eslint-disable-line no-undef
+  const seen = async () => { const got = await pg.evaluate(look); waits.push(...await pg.evaluate(() => window.mctlLoad.waits)); return got; };   // eslint-disable-line no-undef
   // address: what follows the box's own, as a scanned code does ("#code=..."). Through an empty page first, since
   // going from the panel to the panel with only that part different loads nothing.
   const open = async (lines, ready, address) => {
@@ -91,7 +91,7 @@ async function check(o) {
   assert.deepStrictEqual(await open(['/app.css drop', '/app.css busy']), whole(['/app.css', '/app.css']), 'app.css missing twice: the second new request brings it');
   {
     // the first wait is the short one and the second the long one, each within a quarter of its length
-    const [[, first], [, second]] = await pg.evaluate(() => window.pvjLoad.waits);   // eslint-disable-line no-undef
+    const [[, first], [, second]] = await pg.evaluate(() => window.mctlLoad.waits);   // eslint-disable-line no-undef
     assert(first >= 300 && first <= 500 && second >= 1125 && second <= 1875, 'the two waits: ' + first + ' ms, ' + second + ' ms');
   }
 
@@ -101,14 +101,14 @@ async function check(o) {
   assert.deepStrictEqual(await open(['/theme.css drop', '/theme.css busy']), whole(['/theme.css', '/theme.css']), 'theme.css missing twice');
   plan(['/theme.css drop']);
   await pg.evaluate(() => document.querySelector('link[href^="/theme.css"]').setAttribute('href', '/theme.css?v=' + Date.now()));   // eslint-disable-line no-undef
-  await pg.waitForFunction(() => !!document.querySelector('#loadnote') || (window.pvjLoad.waits.length === 3 && !window.pvjLoad.asked['/theme.css'] &&   // eslint-disable-line no-undef
+  await pg.waitForFunction(() => !!document.querySelector('#loadnote') || (window.mctlLoad.waits.length === 3 && !window.mctlLoad.asked['/theme.css'] &&   // eslint-disable-line no-undef
     Array.from(document.styleSheets).every((s) => { try { return s.cssRules.length > 0; } catch (e) { return false; } })), null, { timeout: 15000 });   // eslint-disable-line no-undef
   assert.deepStrictEqual(await seen(), whole(['/theme.css', '/theme.css', '/theme.css']), 'the look changed on a page that had used both new requests once: the sheet is asked for again');
   assert.strictEqual(left(), '');
 
   // three times: the page says so, offers Try again and asks no further (the fourth line is still there afterwards)
   let got = await open(['/room.js drop', '/room.js busy', '/room.js drop', '/room.js drop'], offersAgain);
-  const lostRoom = Object.assign({}, WHOLE, { asked: { '/room.js': 2 }, again: ['/room.js', '/room.js'], lost: ['/room.js'], parts: PARTS.filter((p) => p !== 'pvjRoom'), note: [LOST('room.js')], buttons: ['loadagain', 'loadhide'] });
+  const lostRoom = Object.assign({}, WHOLE, { asked: { '/room.js': 2 }, again: ['/room.js', '/room.js'], lost: ['/room.js'], parts: PARTS.filter((p) => p !== 'mctlRoom'), note: [LOST('room.js')], buttons: ['loadagain', 'loadhide'] });
   assert.deepStrictEqual(got, lostRoom, 'room.js missing three times');
   await pause(2500);
   assert.strictEqual(left(), '/room.js drop', 'after the two new requests the page asks for the file no more');
@@ -148,7 +148,7 @@ async function check(o) {
   assert.deepStrictEqual(await pg.evaluate(code), ['123456', '', '/'], 'the scanned code is still in its field after Try again');
 
   // a script that arrives and cannot run is a fault of the file: not asked for again, and named as that
-  const brokenRoom = Object.assign({}, WHOLE, { broken: ['/room.js'], parts: PARTS.filter((p) => p !== 'pvjRoom'), note: [BROKEN('room.js')], buttons: ['loadreload', 'loadhide'] });
+  const brokenRoom = Object.assign({}, WHOLE, { broken: ['/room.js'], parts: PARTS.filter((p) => p !== 'mctlRoom'), note: [BROKEN('room.js')], buttons: ['loadreload', 'loadhide'] });
   assert.deepStrictEqual(await open(['/room.js broken'], offersReload), brokenRoom, 'room.js arrives and cannot run');
   // Hide takes the notice away and nothing else
   await pg.click('#loadhide');
@@ -158,13 +158,13 @@ async function check(o) {
   assert.deepStrictEqual(got, Object.assign({}, brokenRoom, { note: [BROKEN('room.js'), SCANNED] }), 'room.js cannot run on a page opened from a QR code');
   assert.deepStrictEqual(await pg.evaluate(code), ['123456', '', '/']);
   await pg.click('#loadreload');
-  await pg.waitForFunction(() => !!window.pvjRoom && !document.querySelector('#loadnote') && !!document.querySelector('#joincode'), null, { timeout: 15000 });   // eslint-disable-line no-undef
+  await pg.waitForFunction(() => !!window.mctlRoom && !document.querySelector('#loadnote') && !!document.querySelector('#joincode'), null, { timeout: 15000 });   // eslint-disable-line no-undef
   assert.deepStrictEqual(await pg.evaluate(code), ['', '', '/'], 'Reload loads the page again, and the code is gone as the notice said');
 
   // app.js itself arrives and cannot be read as a program (a merge gone wrong, a browser too old for it): the page
-  // used to stay empty and silent. Now it is named like any other, since app.js says when it has started (pvjApp).
-  got = await open(['/app.js broken'], () => !!document.querySelector('#loadnote #loadreload') && !!window.pvjRoom);   // eslint-disable-line no-undef
-  assert.deepStrictEqual(got, Object.assign({}, WHOLE, { broken: ['/app.js'], parts: PARTS.filter((p) => p !== 'pvjApp'), drawn: false, note: [BROKEN('app.js')], buttons: ['loadreload', 'loadhide'] }),
+  // used to stay empty and silent. Now it is named like any other, since app.js says when it has started (mctlApp).
+  got = await open(['/app.js broken'], () => !!document.querySelector('#loadnote #loadreload') && !!window.mctlRoom);   // eslint-disable-line no-undef
+  assert.deepStrictEqual(got, Object.assign({}, WHOLE, { broken: ['/app.js'], parts: PARTS.filter((p) => p !== 'mctlApp'), drawn: false, note: [BROKEN('app.js')], buttons: ['loadreload', 'loadhide'] }),
     'app.js arrives and cannot run: the page says so');
 
   // The waits before the new requests above: each within a quarter of 0.4 s or of 1.5 s, and not everybody's the same.
@@ -174,17 +174,17 @@ async function check(o) {
 
   // Nobody is paired on this page: a part arriving late draws nothing again, so a PIN being typed stays.
   await open([]);
-  await pg.evaluate(() => { document.querySelector('input.pin').value = '7'; document.querySelector('#app > *').setAttribute('data-was', '1'); document.dispatchEvent(new Event('pvjfile')); });   // eslint-disable-line no-undef
+  await pg.evaluate(() => { document.querySelector('input.pin').value = '7'; document.querySelector('#app > *').setAttribute('data-was', '1'); document.dispatchEvent(new Event('mctlfile')); });   // eslint-disable-line no-undef
   assert.deepStrictEqual(await pg.evaluate(() => [document.querySelector('input.pin').value, !!document.querySelector('#app > [data-was]')]), ['7', true], 'the connect screen is left alone');   // eslint-disable-line no-undef
 
-  // On a paired page the panel draws again with the part that came late (app.js, the listener for "pvjfile").
+  // On a paired page the panel draws again with the part that came late (app.js, the listener for "mctlfile").
   // (The page is loaded afresh first: it comes from whatever the checks before this one did, and here nothing but
   // the late part may be the reason for a new drawing.)
   const late = o.page;
   await late.goto(base + '/');
-  await late.waitForFunction(() => !!window.pvjApp && !!document.querySelector('#app > *') && !document.querySelector('#app .pin'), null, { timeout: 15000 });   // eslint-disable-line no-undef
+  await late.waitForFunction(() => !!window.mctlApp && !!document.querySelector('#app > *') && !document.querySelector('#app .pin'), null, { timeout: 15000 });   // eslint-disable-line no-undef
   await pause(1500);
-  assert.strictEqual(await late.evaluate(() => { if (document.activeElement) document.activeElement.blur(); document.querySelector('#app > *').setAttribute('data-was', '1'); document.dispatchEvent(new Event('pvjfile')); return !!document.querySelector('#app > [data-was]'); }), false,   // eslint-disable-line no-undef
+  assert.strictEqual(await late.evaluate(() => { if (document.activeElement) document.activeElement.blur(); document.querySelector('#app > *').setAttribute('data-was', '1'); document.dispatchEvent(new Event('mctlfile')); return !!document.querySelector('#app > [data-was]'); }), false,   // eslint-disable-line no-undef
     'the panel draws again when a part arrives late');
   // But not under somebody typing: drawing again empties the page, and what was typed would be gone. (The field is
   // put there by this check, in the drawn panel: which fields a paired page has depends on the screen it is on and
@@ -193,7 +193,7 @@ async function check(o) {
     const shell = document.querySelector('#app > *'), f = document.createElement('input');   // eslint-disable-line no-undef
     f.id = 'latefield'; f.className = 'text-input'; f.setAttribute('aria-label', 'A field of the test');
     shell.setAttribute('data-was', '1'); shell.appendChild(f); f.focus(); f.value = 'half a na';
-    document.dispatchEvent(new Event('pvjfile'));   // eslint-disable-line no-undef
+    document.dispatchEvent(new Event('mctlfile'));   // eslint-disable-line no-undef
   });
   assert.deepStrictEqual(await late.evaluate(typing), ['half a na', true, true], 'a part arrived late while somebody was typing: nothing is drawn over the field');
   await pause(1000);
@@ -204,7 +204,7 @@ async function check(o) {
   await late.evaluate(() => {
     const shell = document.querySelector('#app > *'), q = document.createElement('div');   // eslint-disable-line no-undef
     q.id = 'confirmrow'; shell.setAttribute('data-was', '1'); shell.appendChild(q);
-    document.dispatchEvent(new Event('pvjfile'));   // eslint-disable-line no-undef
+    document.dispatchEvent(new Event('mctlfile'));   // eslint-disable-line no-undef
   });
   await pause(600);
   assert.strictEqual(await late.evaluate(() => !!document.querySelector('#app > [data-was] #confirmrow')), true, 'a question that is open is not drawn over');   // eslint-disable-line no-undef

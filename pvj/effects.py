@@ -1987,7 +1987,7 @@ class Effects(S.Engine):
         return {"ok": True, "on": True, "id": sid}
 
     def switch(self, on, ask=False):
-        """On, or off, said outright (OSC's /pvj/effect 1 and 0, D75): nothing if that is what was last asked for,
+        """On, or off, said outright (OSC's /mctl/effect 1 and 0, D75): nothing if that is what was last asked for,
         else the one button. So "on" twice is on, where two presses of the button are on and off."""
         self._need()
         now = self._intent if self._intent is not None else (self._seen() is not None)

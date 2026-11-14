@@ -783,7 +783,10 @@ def fleet_push(exe, folder, host, port, ask, token_file=None, out=print, timeout
     conn = http.client.HTTPSConnection(host, port, timeout=timeout, context=ctx)
 
     def call(method, path, payload, tok):
-        headers = {"Content-Type": "application/json", "X-PVJ-Request": "1", "Accept": "application/json", "User-Agent": "boxcert"}
+        # Both header names for one release (D138): this runs on the owner's computer and may meet a node that is not
+        # updated yet, which reads only the old name. Drop X-PVJ-Request in the release after the cutover.
+        headers = {"Content-Type": "application/json", "X-MCTL-Request": "1", "X-PVJ-Request": "1",
+                   "Accept": "application/json", "User-Agent": "boxcert"}
         if tok:
             headers["Authorization"] = "Bearer " + tok
         conn.request(method, path, body=json.dumps(payload).encode("utf-8"), headers=headers)

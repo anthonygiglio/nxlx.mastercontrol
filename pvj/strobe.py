@@ -18,7 +18,7 @@ THE DEAD-MAN. A hold is a lease, not a switch. Every holder has a deadline; the 
 the strobe when the last lease has run out, so a closed tab, a dropped network, a pulled cable or a silent controller
 cannot leave it on. The panel renews every RENEW_EVERY seconds and a lease from the panel lasts PANEL_TTL, so the strobe
 ends at most PANEL_TTL + TICK after the last renewal. OSC is the same (the owner's decision, 2026-11-11): the sender repeats
-/pvj/strobe 1 about every RENEW_EVERY while held, and one press with no repeats lasts at most PANEL_TTL. A MIDI pad sends a
+/mctl/strobe 1 about every RENEW_EVERY while held, and one press with no repeats lasts at most PANEL_TTL. A MIDI pad sends a
 press and a release and nothing between, so the MIDI hub renews for a held control every RENEW_EVERY while the device is still
 read; a MIDI controller that goes ends the strobe in about half a second, and CONTROLLER_TTL is only the backstop. No lease lasts longer than MAX_HOLD in all,
 renewed or not: a finger left on a button, or a stuck tab, ends it, and the holder must let go and press again.

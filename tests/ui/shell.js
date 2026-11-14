@@ -205,8 +205,8 @@ async function tabWalk(pg) {
     for (let i = 0; i < 400; i++) {
       await pg.keyboard.press('Tab');
       // (each stop is told from the others by a number given to its element: many buttons of a screen have no id)
-      const [id, n] = await pg.evaluate(() => { const a = document.activeElement; if (!a || a === document.body) return ['', 0]; window.pvjWalk = window.pvjWalk || 0; if (!a.pvjWalk) a.pvjWalk = ++window.pvjWalk;
-        return [(a.closest('main') ? 'main:' : '') + (a.id || (a.classList.contains('tploop') ? 'loop' : a.tagName.toLowerCase())), a.pvjWalk]; });
+      const [id, n] = await pg.evaluate(() => { const a = document.activeElement; if (!a || a === document.body) return ['', 0]; window.mctlWalk = window.mctlWalk || 0; if (!a.mctlWalk) a.mctlWalk = ++window.mctlWalk;
+        return [(a.closest('main') ? 'main:' : '') + (a.id || (a.classList.contains('tploop') ? 'loop' : a.tagName.toLowerCase())), a.mctlWalk]; });
       if (stops.length && n === stops[0]) break;          // round again
       stops.push(n);
       seen.push(id);
@@ -462,7 +462,7 @@ async function seekBar(pg) {
     await pg.goto(home);
     await ready(pg);
     await pg.waitForFunction(() => /A_very_long_clip_name/.test(document.getElementById('np').textContent) && !document.getElementById('seek').disabled, null, { timeout: 15000 });
-    await pg.evaluate(() => { window.pvjAsked = []; const f = window.fetch; window.fetch = function (u, o) { if (o && o.method === 'POST' && /\/api\/control$/.test(String(u))) window.pvjAsked.push(o.body); return f.apply(this, arguments); }; });
+    await pg.evaluate(() => { window.mctlAsked = []; const f = window.fetch; window.fetch = function (u, o) { if (o && o.method === 'POST' && /\/api\/control$/.test(String(u))) window.mctlAsked.push(o.body); return f.apply(this, arguments); }; });
     for (const width of [390, 768, 1280, 1366, 1440, 1920]) {
       await pg.setViewportSize({ width, height: 844 });
       await frames(pg);
@@ -484,7 +484,7 @@ async function seekBar(pg) {
       assert.strictEqual(moved.height, before.height, where + 'keeps its height with the cursor in it (what grows is its line, inside it)');
       await pg.evaluate(() => document.getElementById('seek').blur());
     }
-    const sought = await pg.evaluate(() => window.pvjAsked.filter((b) => /seek_to/.test(b)).length);
+    const sought = await pg.evaluate(() => window.mctlAsked.filter((b) => /seek_to/.test(b)).length);
     assert(sought >= 6, 'each move of the place in the clip asked the box to seek: ' + sought + ' requests');
   } finally {
     await pg.unroute('**/api/status', status).catch(() => {});
@@ -790,7 +790,7 @@ async function roles(pages, post) {
     const roomIn = () => pg.waitForFunction(() => !!document.querySelector('#wsside [data-ar="room"]'), null, { timeout: 8000 });
     try { await roomIn(); } catch (e) {
       const had = await pg.evaluate(() => fetch('/api/modules').then((r) => r.json().then((d) => ({ status: r.status, on: (d.modules || []).filter((m) => m.enabled).map((m) => m.id) })), () => ({ status: 0 }))
-        .then((box) => ({ box, roomScript: !!window.pvjRoom, loaded: document.readyState,
+        .then((box) => ({ box, roomScript: !!window.mctlRoom, loaded: document.readyState,
           files: performance.getEntriesByType('resource').filter((x) => /\.(js|css)$/.test(x.name)).map((x) => x.name.replace(/^.*\//, '') + ': ' + x.responseStatus + ', ' + x.decodedBodySize + ' bytes'),
           areas: Array.prototype.map.call(document.querySelectorAll('#wsside [data-ar]'), (b) => b.getAttribute('data-ar')) })));
       throw new Error('the panel of a ' + who + ' has no Room area: ' + JSON.stringify(had));

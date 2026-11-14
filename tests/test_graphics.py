@@ -22,7 +22,7 @@ from tests.test_roles import RolesBase
 from tests.test_server import ServerBase
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OCTET = {"Content-Type": "application/octet-stream", "X-PVJ-Request": "1"}
+OCTET = {"Content-Type": "application/octet-stream", "X-MCTL-Request": "1"}
 
 
 def wait(cond, seconds=10.0):
@@ -731,24 +731,24 @@ class OscTest(Base):
         self.assertEqual(st, 200, body)
 
     def test_text_send_and_hide_map_to_the_graphics_route(self):
-        self.assertEqual(osc.translate("/pvj/graphic/2/text", ["NEXT UP"]), ("/api/graphics", {"slot": 2, "text": "NEXT UP"}))
-        self.assertEqual(osc.translate("/pvj/graphic/1/send", ["THANK YOU"]), ("/api/graphics", {"slot": 1, "text": "THANK YOU", "on": True}))
-        self.assertEqual(osc.translate("/pvj/graphic/hide", []), ("/api/graphics", {"all": False}))
-        self.assertEqual(osc.translate("/pvj/graphic/hide", [0]), None, "a button's release does nothing")
-        self.assertEqual(osc.translate("/pvj/graphic/3", []), ("/api/graphics", {"slot": 3, "on": "toggle"}))
-        self.assertEqual(osc.translate("/pvj/graphic/3", [1]), ("/api/graphics", {"slot": 3, "on": True}))
-        self.assertEqual(osc.translate("/pvj/graphic/3", [0.0]), ("/api/graphics", {"slot": 3, "on": False}))
-        for address, args in (("/pvj/graphic/9/text", ["x"]), ("/pvj/graphic/0/send", ["x"]), ("/pvj/graphic/1/text", [5]), ("/pvj/graphic/1/send", []),
-                              ("/pvj/graphic/1/frob", ["x"]), ("/pvj/graphic/x", [])):
+        self.assertEqual(osc.translate("/mctl/graphic/2/text", ["NEXT UP"]), ("/api/graphics", {"slot": 2, "text": "NEXT UP"}))
+        self.assertEqual(osc.translate("/mctl/graphic/1/send", ["THANK YOU"]), ("/api/graphics", {"slot": 1, "text": "THANK YOU", "on": True}))
+        self.assertEqual(osc.translate("/mctl/graphic/hide", []), ("/api/graphics", {"all": False}))
+        self.assertEqual(osc.translate("/mctl/graphic/hide", [0]), None, "a button's release does nothing")
+        self.assertEqual(osc.translate("/mctl/graphic/3", []), ("/api/graphics", {"slot": 3, "on": "toggle"}))
+        self.assertEqual(osc.translate("/mctl/graphic/3", [1]), ("/api/graphics", {"slot": 3, "on": True}))
+        self.assertEqual(osc.translate("/mctl/graphic/3", [0.0]), ("/api/graphics", {"slot": 3, "on": False}))
+        for address, args in (("/mctl/graphic/9/text", ["x"]), ("/mctl/graphic/0/send", ["x"]), ("/mctl/graphic/1/text", [5]), ("/mctl/graphic/1/send", []),
+                              ("/mctl/graphic/1/frob", ["x"]), ("/mctl/graphic/x", [])):
             self.assertIsNone(osc.translate(address, args), address)
-        long = osc.translate("/pvj/graphic/1/text", ["z" * 50000])[1]["text"]
+        long = osc.translate("/mctl/graphic/1/text", ["z" * 50000])[1]["text"]
         self.assertEqual(len(long), 2000)
 
     def test_an_osc_line_reaches_the_screen_and_a_burst_keeps_the_last(self):
         self.allow_text()
         gid = self.add(text="old")
         slot = self.item(gid)["slot"]
-        mapped = osc.translate("/pvj/graphic/%d/send" % slot, ["  PUSHED ‮ FROM TOUCHOSC "])
+        mapped = osc.translate("/mctl/graphic/%d/send" % slot, ["  PUSHED ‮ FROM TOUCHOSC "])
         st, body = self.h("POST", mapped[0], mapped[1], osc.OSC_DEVICE, "osc")
         self.assertEqual(st, 200, body)
         it = self.item(gid)
@@ -758,7 +758,7 @@ class OscTest(Base):
         self.gfx.synchronous = False
         self.client.jobs.clear()
         for i in range(60):
-            m = osc.translate("/pvj/graphic/%d/text" % slot, ["burst %d" % i])
+            m = osc.translate("/mctl/graphic/%d/text" % slot, ["burst %d" % i])
             self.assertEqual(self.h("POST", m[0], m[1], osc.OSC_DEVICE, "osc")[0], 200)
         self.assertTrue(wait(lambda: not self.gfx.busy()))
         self.assertTrue(wait(lambda: self.gfx.state()["items"][0]["status"]["state"] == "on"))
@@ -771,7 +771,7 @@ class OscTest(Base):
         gid = self.add(text="kept")
         slot = self.item(gid)["slot"]
         for address in ("text", "send"):
-            m = osc.translate("/pvj/graphic/%d/%s" % (slot, address), ["pushed by osc"])
+            m = osc.translate("/mctl/graphic/%d/%s" % (slot, address), ["pushed by osc"])
             st, body = self.h("POST", m[0], m[1], osc.OSC_DEVICE, "osc")
             self.assertEqual(st, 403, address)
             self.assertIn("may not push text", body["error"])
@@ -788,12 +788,12 @@ class OscTest(Base):
         # the Owner switches it on
         self.allow_text()
         self.assertTrue(self.get()[1]["controllers_text"])
-        m = osc.translate("/pvj/graphic/%d/send" % slot, ["pushed by osc"])
+        m = osc.translate("/mctl/graphic/%d/send" % slot, ["pushed by osc"])
         self.assertEqual(self.h("POST", m[0], m[1], osc.OSC_DEVICE, "osc")[0], 200)
         self.assertEqual((self.item(gid)["text"]["value"], self.item(gid)["on"]), ("pushed by osc", True))
         # and off again
         self.allow_text(False)
-        m = osc.translate("/pvj/graphic/%d/text" % slot, ["after off"])
+        m = osc.translate("/mctl/graphic/%d/text" % slot, ["after off"])
         self.assertEqual(self.h("POST", m[0], m[1], osc.OSC_DEVICE, "osc")[0], 403)
         self.assertEqual(self.item(gid)["text"]["value"], "pushed by osc")
         self.assertNotIn("graphics", self.settings.data.get("control", {}), "off is stored as nothing")
@@ -824,7 +824,7 @@ class OscTest(Base):
 
     def test_the_documented_addresses_are_the_ones_that_work(self):
         text = open(os.path.join(HERE, "pvj", "OSC.md"), encoding="utf-8").read()
-        for address in ("/pvj/graphic/N", "/pvj/graphic/N/text", "/pvj/graphic/N/send", "/pvj/graphic/hide"):
+        for address in ("/mctl/graphic/N", "/mctl/graphic/N/text", "/mctl/graphic/N/send", "/mctl/graphic/hide"):
             self.assertIn(address, text)
 
 

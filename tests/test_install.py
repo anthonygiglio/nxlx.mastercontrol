@@ -376,7 +376,7 @@ class InstallTest(unittest.TestCase):
         self.assertIn("ExecStart=/srv/box/pvj/current/bin/pvj-web", self.read(self.p("etc/systemd/system/pvj-web.service")))
         ndisetup.check(self.stage, account=lambda: None)   # the setup would take this box
         stage2 = tempfile.mkdtemp()
-        for bad in ("/opt//pvj", "//opt/pvj", "/opt/pvj//x", "/opt/pvj/./", "/opt/./pvj", "/opt/pvj/."):      # the last three: second review, N4
+        for bad in ("/opt//mctl", "//opt/pvj", "/opt/pvj//x", "/opt/pvj/./", "/opt/./pvj", "/opt/pvj/."):      # the last three: second review, N4
             self.assertNotEqual(install(self.src, stage2, "--prefix", bad).returncode, 0, bad)
         self.assertEqual(os.listdir(stage2), [])
 

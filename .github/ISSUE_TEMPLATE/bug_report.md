@@ -7,7 +7,7 @@ assignees: ''
 
 ---
 
-**PocketVJ RTC Image and Build Version:**
+**Mastercontrol version and node (board, system image):**
 
 **Describe the bug**
 A clear and concise description of what the bug is.

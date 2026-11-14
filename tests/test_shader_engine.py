@@ -1324,10 +1324,10 @@ class SetsTest(Live):
 
     def test_schedule_osc_and_autostart_can_name_a_set_or_use_the_active_one(self):
         show = self.add("Gig", ["nxlx-prism.fs"])
-        self.assertEqual(osc.translate("/pvj/vibes/set", ["Gig"]), ("/api/vibes", {"on": True, "set": "Gig"}))
-        self.assertIsNone(osc.translate("/pvj/vibes/set", [5]))
-        self.assertEqual(osc.translate("/pvj/vibes/previous", [1]), ("/api/vibes", {"previous": True}))
-        self.assertEqual(osc.translate("/pvj/vibes", []), ("/api/vibes", {"on": True}))
+        self.assertEqual(osc.translate("/mctl/vibes/set", ["Gig"]), ("/api/vibes", {"on": True, "set": "Gig"}))
+        self.assertIsNone(osc.translate("/mctl/vibes/set", [5]))
+        self.assertEqual(osc.translate("/mctl/vibes/previous", [1]), ("/api/vibes", {"previous": True}))
+        self.assertEqual(osc.translate("/mctl/vibes", []), ("/api/vibes", {"on": True}))
         entry = {"time": "08:00", "days": [0], "action": "vibes", "set": show["id"]}
         clean = scheduler.validate({"enabled": True, "entries": [entry]})["entries"][0]
         self.assertEqual(clean["set"], show["id"])
