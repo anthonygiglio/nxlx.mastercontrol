@@ -10,6 +10,9 @@
 # Empty while no kind has landed. At the end of the rename only the credit and the upstream original are left.
 #
 # count	path
+# .github/workflows/pvj.yml: the ndi-mpv job checks the new tests against the code from before the mending, which
+# knows only the old request header and cookie, so it rewrites the copied tests to X-PVJ-Request and pvj_token there.
+2	.github/workflows/pvj.yml
 5	RELEASE_NOTES.md
 1	bin/nxlx-convert
 5	docs/Install_OSC_on35_or_older.md
@@ -95,6 +98,3 @@
 44	tests/test_old_clients.py
 6	themes/offline-language-english.css
 2	tools/boxcert.py
-# .github/workflows/pvj.yml: the ndi-mpv job checks the new tests against the code from before the mending, which
-# knows only the old request header and cookie, so it rewrites the copied tests to X-PVJ-Request and pvj_token there.
-2	.github/workflows/pvj.yml
