@@ -39,6 +39,7 @@ import argparse
 import base64
 import datetime
 import getpass
+import hashlib
 import json
 import os
 import re
@@ -97,6 +98,166 @@ def _fail(what, err):
     raise BoxcertError("%s: %s" % (what, tail))
 
 
+_ISOLATE = {}
+
+
+def isolate_args(exe, empty_dir):
+    """Arguments that keep `openssl verify -CAfile ROOT` from also trusting the system's CA folder and store, so the
+    owner's root is the ONLY anchor. OpenSSL 3 knows -no-CApath and -no-CAstore, 1.1.1 -no-CApath only; LibreSSL (a
+    Mac's /usr/bin/openssl) knows neither, and there an empty folder given as -CApath takes the place of the default one.
+    `empty_dir` must be an empty folder that lives as long as the command."""
+    if exe not in _ISOLATE:
+        try:
+            r = subprocess.run([exe, "verify", "-help"], capture_output=True, text=True, timeout=30)
+            text = (r.stdout or "") + (r.stderr or "")
+        except (OSError, subprocess.TimeoutExpired):
+            text = ""
+        _ISOLATE[exe] = ("-no-CApath" in text, "-no-CAstore" in text)
+    no_path, no_store = _ISOLATE[exe]
+    if no_path:
+        return ["-no-CApath"] + (["-no-CAstore"] if no_store else [])
+    return ["-CApath", empty_dir]
+
+
+def verify_args(exe, root_pem, tmp, untrusted=None, purpose="sslserver", attime=None):
+    """`openssl verify` with the owner's root as the only anchor (isolate_args)."""
+    empty = os.path.join(tmp, "no-ca-folder")
+    os.makedirs(empty, exist_ok=True)
+    args = ["verify", "-CAfile", root_pem] + isolate_args(exe, empty)
+    if purpose:
+        args += ["-purpose", purpose]
+    if attime is not None:
+        args += ["-attime", str(attime)]
+    if untrusted:
+        args += ["-untrusted", untrusted]
+    return args
+
+
+def public_key_hash(exe, path, kind="x509"):
+    """SHA-256 of the DER SubjectPublicKeyInfo of a certificate (kind x509) or a request (kind req): the key a pin holds."""
+    code, pub, err = run(exe, [kind, "-in", path, "-noout", "-pubkey"])
+    body = "".join(l for l in pub.splitlines() if l and not l.startswith("-----"))
+    if code or not body:
+        raise BoxcertError("the public key of %s could not be read" % path)
+    try:
+        return hashlib.sha256(base64.b64decode(body, validate=True)).hexdigest()
+    except ValueError:
+        raise BoxcertError("the public key of %s could not be read" % path)
+
+
+# --- the signer's pin file (D139): which key each .local name and address was signed for ---------------------------------
+class PinLock:
+    """One process at a time on a signer folder's pins (the service, `release`, `list`, `pin`, the seeding here): an
+    advisory lock on signer.lock, fcntl on Linux and macOS, msvcrt on Windows, given up after `wait` seconds."""
+
+    def __init__(self, folder, wait=30.0):
+        self.path, self.wait, self.f = os.path.join(folder, "signer.lock"), wait, None
+
+    def __enter__(self):
+        import time
+        self.f = open(self.path, "a+")
+        deadline = time.monotonic() + self.wait
+        while True:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    self.f.seek(0)
+                    msvcrt.locking(self.f.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(self.f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return self
+            except OSError:
+                if time.monotonic() > deadline:
+                    self.f.close()
+                    raise BoxcertError("the signer's pin file is held by another program for too long; try again")
+                time.sleep(0.05)
+
+    def __exit__(self, *a):
+        try:
+            if os.name == "nt":
+                import msvcrt
+                self.f.seek(0)
+                msvcrt.locking(self.f.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(self.f.fileno(), fcntl.LOCK_UN)
+        finally:
+            self.f.close()
+
+
+def read_pins(folder):
+    """The pins, or BoxcertError: a missing or damaged file is never taken as "nothing pinned" (that would let anybody
+    take every name)."""
+    path = os.path.join(folder, SIGNER_PINS)
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        raise BoxcertError("the pin file %s is missing; restore it from %s.bak (the copy before the last change) or from "
+                           "your backup. Nothing is signed until then." % (path, SIGNER_PINS))
+    except (OSError, ValueError, UnicodeDecodeError):
+        raise BoxcertError("the pin file %s cannot be read; restore it from %s.bak (the copy before the last change) or from "
+                           "your backup. Nothing is signed until then." % (path, SIGNER_PINS))
+    if not isinstance(data, dict) or not all(isinstance(k, str) and isinstance(v, dict) and isinstance(v.get("key"), str) for k, v in data.items()):
+        raise BoxcertError("the pin file %s is not one this tool wrote; restore it from %s.bak or from your backup" % (path, SIGNER_PINS))
+    return data
+
+
+def write_pins(folder, pins):
+    """Atomically: the new file is written and flushed beside the old one, the old one becomes signed.json.bak, then the
+    new one takes its place."""
+    path = os.path.join(folder, SIGNER_PINS)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(pins, f, indent=1, sort_keys=True)
+        f.write("\n")
+        f.flush()
+        os.fsync(f.fileno())
+    if os.path.isfile(path):
+        shutil.copyfile(path, path + ".bak.tmp")
+        os.replace(path + ".bak.tmp", path + ".bak")
+    os.replace(tmp, path)
+
+
+def seed_pins(exe, records_folder, sdir, out=print, now=None):
+    """Pin the names and addresses of the nodes signed by hand before (the rows of records_folder/signed.json whose
+    certificate file is still there), so nobody can take them before those nodes ask the service themselves (D139)."""
+    try:
+        with open(os.path.join(records_folder, SIGNED)) as f:
+            rows = json.load(f)
+    except (OSError, ValueError):
+        rows = []
+    stamp = (now or datetime.datetime.now(datetime.timezone.utc)).replace(microsecond=0).isoformat()
+    done, missing = [], []
+    with PinLock(sdir):
+        pins = read_pins(sdir)
+        for row in rows if isinstance(rows, list) else []:
+            if not isinstance(row, dict) or row.get("box") == "signer" or not isinstance(row.get("file"), str):
+                continue
+            path = row["file"] if os.path.isabs(row["file"]) else os.path.join(records_folder, row["file"])
+            if not os.path.isfile(path):
+                missing.append(row.get("box", "?"))
+                continue
+            try:
+                key = public_key_hash(exe, path)
+                c = read_cert(exe, path)
+            except BoxcertError:
+                missing.append(row.get("box", "?"))
+                continue
+            for name in c["dns"] + c["ips"]:
+                pins[name] = {"key": key, "first": stamp, "last": stamp, "from": "seeded from %s" % os.path.basename(path), "serial": c["serial"]}
+                if name not in done:
+                    done.append(name)
+        write_pins(sdir, pins)
+    if done:
+        out("Pinned for the nodes you signed before: %s" % ", ".join(done))
+    if missing:
+        out("Not pinned (their certificate file is not in %s): %s. Pin them on the signing computer with "
+            "nxlx-signer.py pin --cert <their certificate file>." % (records_folder, ", ".join(sorted(set(missing)))))
+    return done
+
+
 def write_private(path, text, mode=0o600):
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
     with os.fdopen(fd, "w") as f:
@@ -121,6 +282,8 @@ def root_config(name, allowed, constraints, ranges=PRIVATE_RANGES):
     # before 2026-11-14) cannot have one: devices refuse "path length constraint exceeded".
     lines = ["[req]", "distinguished_name = dn", "prompt = no", "[dn]", "CN = %s" % name, "[v3_ca]",
              "basicConstraints = critical, CA:TRUE, pathlen:1", "keyUsage = critical, keyCertSign, cRLSign",
+             # what certificates under it are for (D139 review): web servers and the node-to-node channel, nothing else
+             "extendedKeyUsage = serverAuth, clientAuth",
              "subjectKeyIdentifier = hash"]
     if constraints:
         parts = ["permitted;DNS:%s" % d for d in allowed] + ["permitted;IP:%s" % r for r in ranges]
@@ -460,7 +623,7 @@ def verify(exe, folder, path, out=print):
     with tempfile.TemporaryDirectory() as tmp, open(pem) as r:
         # a node certificate from the signer (D139) needs the signer, which comes after it in the same file
         untrusted = _intermediates_file(path, tmp, r.read())
-        code, text, err = run(exe, ["verify", "-CAfile", pem, "-purpose", "sslserver"] + (["-untrusted", untrusted] if untrusted else []) + [path])
+        code, text, err = run(exe, verify_args(exe, pem, tmp, untrusted) + [path])
     ok = code == 0 and ": OK" in text
     out("%s: %s" % (path, "signed by this root and good for a server" if ok else "NOT verified: " + (err.strip() or text.strip())))
     return ok
@@ -493,6 +656,7 @@ def signer_config(allowed=DEFAULT_ALLOWED, ranges=SIGNER_RANGES):
     parts = ["permitted;DNS:%s" % d for d in allowed] + ["permitted;IP:%s" % r for r in ranges]
     return "\n".join(["[req]", "distinguished_name = dn", "prompt = no", "[dn]", "CN = %s" % SIGNER_NAME, "[v3_signer]",
                       "basicConstraints = critical, CA:TRUE, pathlen:0", "keyUsage = critical, keyCertSign, cRLSign",
+                      "extendedKeyUsage = serverAuth, clientAuth",
                       "subjectKeyIdentifier = hash", "authorityKeyIdentifier = keyid",
                       "nameConstraints = critical, " + ", ".join(parts)]) + "\n"
 
@@ -544,7 +708,7 @@ def make_signer(exe, folder, ask, out=print, days=SIGNER_DAYS, ranges=SIGNER_RAN
                                  "-days", str(days), "-sha256", "-extfile", cfg, "-extensions", "v3_signer", "-out", spem], passphrase)
         if code:
             _fail("signing the signer failed", err)
-        code, text, err = run(exe, ["verify", "-CAfile", pem, spem])
+        code, text, err = run(exe, verify_args(exe, pem, tmp, purpose=None) + [spem])
         if code or ": OK" not in text:
             _fail("the signer does not check out against the root", err or text)
         info = read_cert(exe, spem)
@@ -564,6 +728,7 @@ def make_signer(exe, folder, ask, out=print, days=SIGNER_DAYS, ranges=SIGNER_RAN
     _record(folder, {"box": "signer", "names": [SIGNER_NAME], "addresses": [], "serial": info["serial"], "start": info["start"].isoformat(),
                      "end": info["end"].isoformat(), "file": os.path.join(SIGNER_DIR, SIGNER_PEM),
                      "signed": (now or datetime.datetime.now(datetime.timezone.utc)).replace(microsecond=0).isoformat()})
+    seed_pins(exe, folder, sdir, out)
     out("Signer made: %s" % sdir)
     out("  %s : the signer's key, NOT encrypted, so the signing service can sign without you. Keep this folder on the signing computer only." % SIGNER_KEY)
     out("  %s : the signer (ends on %s)" % (SIGNER_PEM, info["end"].date().isoformat()))
@@ -626,6 +791,8 @@ def move_root(exe, old_folder, new_folder, ask, out=print, now=None):
     _write_file(os.path.join(sdir, ROOT_MOVE), body)
     _write_file(os.path.join(sdir, ROOT_MOVE_SIG), sig_text.encode("ascii"))
     out("Written: %s and %s in %s." % (ROOT_MOVE, ROOT_MOVE_SIG, sdir))
+    # the nodes signed by hand with the old root keep their names and addresses: nobody can take them before they move
+    seed_pins(exe, old_folder, sdir, out)
     out("The signing service gives them to every node that still trusts the old root; each node checks the old root's signature,")
     out("takes the new root and asks for a new certificate by itself. Nothing to do at the nodes.")
     if any(os.path.exists(os.path.join(old_folder, n)) for n in (FLEET_DRAFT, FLEET_JSON)):
@@ -807,8 +974,8 @@ def card_from_files(exe, folder, card_path, cert_path, node_id, name):
     # the certificate must be one your root signed for a server (dates left out, as a node judges it: the key is what counts)
     with tempfile.TemporaryDirectory() as tmp:
         untrusted = _intermediates_file(cert_path, tmp, _root_pem_text(folder))
-        code, text, err = run(exe, ["verify", "-CAfile", os.path.join(folder, ROOT_PEM), "-purpose", "sslserver",
-                                    "-attime", str(int(info["start"].timestamp()) + 60)] + (["-untrusted", untrusted] if untrusted else []) + [cert_path])
+        code, text, err = run(exe, verify_args(exe, os.path.join(folder, ROOT_PEM), tmp, untrusted,
+                                               attime=int(info["start"].timestamp()) + 60) + [cert_path])
     if code or ": OK" not in text:
         raise BoxcertError("%s is not a certificate your root signed (%s). Nothing was added." % (cert_path, (err.strip() or text.strip()).splitlines()[-1] if (err.strip() or text.strip()) else "no reason given"))
     der = _fleet_call(FL.certificate_der, _read_file(cert_path, 65536).decode("utf-8", "replace"))
