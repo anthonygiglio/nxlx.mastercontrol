@@ -662,6 +662,46 @@ class Base(ServerBase):
         return self.fx.state()
 
 
+class LoopGapTest(Base):
+    """At a loop point mpv has no video-params for a moment while the same item plays (D-gap): the last picture stays."""
+    def setUp(self):
+        super().setUp()
+        self.now = [100.0]
+        self.fx._clock = lambda: self.now[0]
+        self.assertIsNotNone(self.fx.picture())             # a pass of the clip, read
+        self.good = self.mpv.video
+
+    def test_a_gap_with_the_same_item_playing_keeps_the_picture(self):
+        before = self.fx.picture()
+        self.mpv.video = None
+        self.now[0] += E.PICTURE_GRACE / 2
+        self.assertEqual(self.fx.picture(), before)
+        self.assertEqual(self.fx.available(), (True, None))
+        self.fx.put("fx-wash.fs")                           # an effect goes on in the gap
+        self.assertIsNotNone(self.fx.on)
+
+    def test_the_gap_is_bounded(self):
+        self.mpv.video = None
+        self.now[0] += E.PICTURE_GRACE + 0.1
+        self.assertIsNone(self.fx.picture())
+        self.assertEqual(self.fx.available()[0], False)
+
+    def test_a_stop_a_different_file_and_a_source_with_no_picture_are_still_refused(self):
+        self.mpv.video = None
+        self.player.clear()                                 # a real stop: no path
+        self.assertIsNone(self.fx.picture())
+        self.mpv.props["path"] = "/media/b.mp4"             # another file with no picture at all
+        self.assertIsNone(self.fx.picture())
+        self.assertIn(E.NO_PICTURE, self.fx.available()[1])
+
+    def test_a_source_that_never_had_a_picture_is_refused(self):
+        self.player.clear()
+        self.fx._last_picture = None
+        self.mpv.video = None
+        self.player.play(["/media/audio.flac"])
+        self.assertIsNone(self.fx.picture())
+
+
 class LibraryTest(Base):
     def test_the_bundled_filters_are_the_projects_own_and_the_pack(self):
         rows = self.state()["effects"]
@@ -2246,6 +2286,7 @@ class QueueTest(Base):
         self.fx.toggle()
         self.fx.step(1)
         self.mpv.video = None
+        self.fx._last_picture = None                                                   # no picture for longer than the loop-gap grace
         self.drain()
         self.assertEqual((self.on(), self.mpv.loaded), (None, []))
         self.assertIn("Nothing with a picture is playing", self.state()["error"]["message"])

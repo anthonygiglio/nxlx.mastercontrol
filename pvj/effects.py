@@ -69,6 +69,9 @@ FPS_SAME = 0.06
 UNFIT_FORMATS = re.compile(r"^(?:xyz|gray|y8|y1[0-6]|ya8|ya16|mono[bw]|pal8)")
 UNFIT = "This picture's format cannot take an effect"
 NO_PICTURE = "Nothing with a picture is playing"
+# At the start of each pass of a looping clip, and for a moment after a seek, mpv has no video-params while the same item
+# is still playing. For this many seconds the last picture read stays the picture, as long as `path` is still that item.
+PICTURE_GRACE = 1.0
 # The box's own callers of the API, by the id of the device they act as (midi.MIDI_DEVICE, osc.OSC_DEVICE,
 # dmx.DMX_DEVICE, room.ROOM_DEVICE). Their calls run on the thread that reads the controller and never ask the player
 # (see Effects._seen). A paired device's id is eight hex digits, so none of these can be one.
@@ -943,6 +946,7 @@ class Effects(S.Engine):
         self.pair = None                            # then also (the generator's file, the shape of its values), or None if unknown
         self._flying = None                         # the effect the worker is putting on at this moment (what a forecast counts from)
         self._waiting = None                        # the `error` that says an effect could not go on for want of a picture
+        self._last_picture = None                   # (path, when, picture, size, under, pair, estimated) of the last good read (PICTURE_GRACE)
 
     # -- settings: only presets, kept in the Shaders and Vibes section (shaderlive.py) --
     def config(self):
@@ -1221,6 +1225,9 @@ class Effects(S.Engine):
         except Exception:
             params = None
         if not isinstance(params, dict):
+            held = self._held_picture(ipc)
+            if held is not None:
+                return held
             # On the New renderer a shader is the front layer's picture and no clip is loaded under it (D130), so libmpv
             # has no video-params: the generator's picture is RGB at full range, as the carrier's was.
             up = getattr(self.api.player, "_standin_up", None)
@@ -1277,7 +1284,31 @@ class Effects(S.Engine):
                 if name == "estimated-vf-fps":
                     fps, self.estimated = near_common(fps), True
                 break
-        return clean_picture(params.get("colormatrix"), params.get("colorlevels"), fps)
+        pic = clean_picture(params.get("colormatrix"), params.get("colorlevels"), fps)
+        try:
+            now = getattr(self.api.player, "path_now", None)
+            path = now() if now else ipc.request("get_property", "path")
+        except Exception:
+            path = None
+        self._last_picture = (path, self._clock(), pic, self.size, self.under, self.pair, self.estimated) if path else None
+        return pic
+
+    def _held_picture(self, ipc):
+        """The last picture read, when the player has no video-params for a moment (a loop restart, a seek) while the
+        same item is still the one that plays, and the read was within PICTURE_GRACE. Otherwise None: a stop, another
+        file and a source with no picture are refused as before."""
+        last = self._last_picture
+        if last is None or self._clock() - last[1] > PICTURE_GRACE:
+            return None
+        try:
+            now = getattr(self.api.player, "path_now", None)
+            path = now() if now else ipc.request("get_property", "path")
+        except Exception:
+            return None
+        if not path or path != last[0]:
+            return None
+        self.size, self.under, self.pair, self.estimated = last[3:7]
+        return dict(last[2])
 
     def _seen(self):
         """The effect that is on, from what this process remembers: no question to the player and no lock, for the

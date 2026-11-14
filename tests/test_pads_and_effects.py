@@ -266,7 +266,7 @@ class Together(TE.OverShaderTest):
         """A pair that has dropped frames for most of the floor's time, and then a clip takes the screen: the effect
         is not taken off "over the shader" while a clip plays, nor while nothing with a picture can be seen."""
         now = self.floor_clock()
-        for name, change in (("a clip", self.clip), ("no picture to be seen", lambda: setattr(self.mpv, "video", None))):
+        for name, change in (("a clip", self.clip), ("no picture to be seen", lambda: (setattr(self.mpv, "video", None), setattr(self.fx, "_last_picture", None)))):
             self.tap(0)
             self.fx.put("fx-wash.fs")
             self.assertIs(self.heavy_seconds(now, 22), False, name)
