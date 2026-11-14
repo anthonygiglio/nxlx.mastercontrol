@@ -70,11 +70,12 @@ UNFIT_FORMATS = re.compile(r"^(?:xyz|gray|y8|y1[0-6]|ya8|ya16|mono[bw]|pal8)")
 UNFIT = "This picture's format cannot take an effect"
 NO_PICTURE = "Nothing with a picture is playing"
 # At the start of each pass of a looping clip, and for a moment after a seek, mpv has no video-params while the same item
-# is still playing. The picture last read for that item (a real, fitting read, taken when the item started to show:
-# see note_source) then stays the picture while mpv says it is seeking or at the start of the item (time-pos under
-# this many seconds). An item that never had a good read is refused, as before.
-LEARN_LOOKS = 30                # looks at a new source for its picture, a tenth of a second apart
-PICTURE_GRACE = 1.0
+# is still playing. A put that meets that waits for the picture to come back: up to PICTURE_LOOKS looks, PICTURE_LOOK_GAP
+# seconds apart (half a second at most), when mpv says the item is seeking or at its start (time-pos under
+# PICTURE_START seconds, or not readable). It is then the normal fresh read that decides; nothing is remembered.
+PICTURE_LOOKS = 5
+PICTURE_LOOK_GAP = 0.1
+PICTURE_START = 1.0
 # The box's own callers of the API, by the id of the device they act as (midi.MIDI_DEVICE, osc.OSC_DEVICE,
 # dmx.DMX_DEVICE, room.ROOM_DEVICE). Their calls run on the thread that reads the controller and never ask the player
 # (see Effects._seen). A paired device's id is eight hex digits, so none of these can be one.
@@ -920,7 +921,6 @@ class Effects(S.Engine):
 
     def __init__(self, api, log=print, clock=time.monotonic, tap=S.LogTap, thread=True):
         super().__init__(api, log, clock, tap)
-        self._learn_thread, self._learning = thread, None
         self.dir = os.path.join(os.path.dirname(api.settings.path), "effects")
         paths.remove_leftovers(self.dir, S.UPLOAD_TEMP)     # as the shaders' folder, a line up in Engine (D70)
         self.bundled_dir = EFFECTS_DIR
@@ -950,7 +950,6 @@ class Effects(S.Engine):
         self.pair = None                            # then also (the generator's file, the shape of its values), or None if unknown
         self._flying = None                         # the effect the worker is putting on at this moment (what a forecast counts from)
         self._waiting = None                        # the `error` that says an effect could not go on for want of a picture
-        self._last_picture = None                   # (path, epoch, picture, size, under, pair, estimated) of the last good read (PICTURE_GRACE)
 
     # -- settings: only presets, kept in the Shaders and Vibes section (shaderlive.py) --
     def config(self):
@@ -1223,7 +1222,6 @@ class Effects(S.Engine):
         picture is playing or the picture is one the hooks cannot take (`self.unfit` says which)."""
         self.unfit = self.estimated = False
         self.size = self.under = self.pair = None
-        ipc = None
         try:
             ipc = self.api.player.ipc
             params = ipc.request("get_property", "video-params")
@@ -1233,10 +1231,9 @@ class Effects(S.Engine):
             # On the New renderer a shader is the front layer's picture and no clip is loaded under it (D130), so libmpv
             # has no video-params: the generator's picture is RGB at full range, as the carrier's was.
             up = getattr(self.api.player, "_standin_up", None)
-            if up is not None and up():
-                params = {"colormatrix": "rgb", "colorlevels": "full"}
-            else:
-                return self._held_picture(ipc)
+            if up is None or not up():
+                return None
+            params = {"colormatrix": "rgb", "colorlevels": "full"}
         decoded = params
         w, h = params.get("w"), params.get("h")       # as it is stored; the arithmetic of the cap is the same turned
         if all(isinstance(n, int) and not isinstance(n, bool) and 0 < n <= 16384 for n in (w, h)):
@@ -1287,64 +1284,55 @@ class Effects(S.Engine):
                 if name == "estimated-vf-fps":
                     fps, self.estimated = near_common(fps), True
                 break
-        pic = clean_picture(params.get("colormatrix"), params.get("colorlevels"), fps)
-        self._last_picture = (self._item(ipc), pic, self.size, self.under, self.pair, self.estimated)
-        return pic
+        return clean_picture(params.get("colormatrix"), params.get("colorlevels"), fps)
 
-    def _item(self, ipc):
-        """What identifies the item that plays: (mpv's path, the player's source epoch, its count of clears), or None."""
+    def _ride_out_gap(self):
+        """When there is no picture only because the item is at a loop point or in a seek (the player is not idle, the
+        same path is loaded, and it is seeking or at the start of the item), wait for video-params to come back, a
+        few short looks. Does nothing at all when there is a picture, none to wait for, or the screen is a generator's.
+        A stop, another item, a clip with no video or a stream with no frame run out the looks and are refused by
+        the normal read, as before."""
         try:
             player = self.api.player
-            now = getattr(player, "path_now", None)
-            path = now() if now else ipc.request("get_property", "path")
+            ipc = player.ipc
+            up = getattr(player, "_standin_up", None)
+            if up is not None and up():
+                return
         except Exception:
-            return None
-        return (path, getattr(player, "source_epoch", None), getattr(player, "clears", None)) if path else None
+            return
 
-    def _held_picture(self, ipc):
-        """The picture last read for the item that plays, when the player has no video-params for a moment (a loop
-        restart, a seek), or None. Only a real read of this same item (path, epoch and clears) is used, so a clip that
-        never had a fitting picture (an unfit format, a stream with no first frame, a refused pair) is refused as it
-        was. mpv must say it is a gap: not idle, and seeking or at the start of the item (time-pos under PICTURE_GRACE;
-        an unreadable time-pos does not count). `vid` is not asked: the same item had a picture, and "auto" is what a
-        playlist reload may say of a track that is there."""
-        last = self._last_picture
-        item = self._item(ipc)
-        if last is None or item is None or last[0] != item:
-            return None
         def ask(name):
             try:
                 return ipc.request("get_property", name)
             except Exception:
                 return None
-        if ask("idle-active") is True:
-            return None
-        pos = ask("time-pos")
-        if ask("seeking") is not True and not (isinstance(pos, (int, float)) and not isinstance(pos, bool) and pos < PICTURE_GRACE):
-            return None
-        self.size, self.under, self.pair, self.estimated = last[2:6]
-        return dict(last[1])
 
-    def note_source(self):
-        """A new source was put on the screen: take a real look at its picture as soon as it shows one, so that a loop's
-        gap (see _held_picture) has something of this item to hold. A short, bounded wait on a thread of its own (the
-        newest source's look is the only one that goes on); no look is made again until the next source."""
-        self._learning = token = object()
-        def learn(wait):
-            for _ in range(LEARN_LOOKS if wait else 1):
-                if wait:
-                    time.sleep(0.1)
-                if self._learning is not token:
-                    return
-                try:
-                    if self.picture() is not None or self.unfit:
-                        return
-                except Exception:
-                    return
-        if self._learn_thread:
-            threading.Thread(target=learn, args=(True,), daemon=True, name="effects-learn").start()
-        else:
-            learn(False)
+        def item():
+            try:
+                now = getattr(player, "path_now", None)
+                path = now() if now else ask("path")
+            except Exception:
+                return None
+            return (path, getattr(player, "source_epoch", None), getattr(player, "clears", None)) if path else None
+
+        def has_picture():
+            return isinstance(ask("video-params"), dict)
+
+        if has_picture():
+            return
+        first = item()
+        if first is None or ask("idle-active") is True:
+            return
+        pos = ask("time-pos")
+        starting = pos is None or (isinstance(pos, (int, float)) and not isinstance(pos, bool) and pos < PICTURE_START)
+        if not starting and ask("seeking") is not True:
+            return
+        for _ in range(PICTURE_LOOKS):
+            time.sleep(PICTURE_LOOK_GAP)
+            if item() != first or ask("idle-active") is True:
+                return
+            if has_picture():
+                return
 
     def _seen(self):
         """The effect that is on, from what this process remembers: no question to the player and no lock, for the
@@ -1487,6 +1475,7 @@ class Effects(S.Engine):
         native = bool(self.native())                # the New renderer runs the effect itself (D106), asked once a play
         if gen is None:
             self._gen += 1                              # by hand: newer than every wish that waits
+        self._ride_out_gap()                            # outside the lock: nothing else waits on a gap in the picture
         with self._lock:
             if gen is not None and gen != self._gen:    # something was asked for after this (an Off, an effect by hand)
                 return None

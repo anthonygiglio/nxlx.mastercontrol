@@ -13,6 +13,7 @@ import struct
 import threading
 import time
 import unittest
+from unittest import mock
 
 from pvj import effects as E, midi as M, shaderlive as L, shaders as S
 from pvj.api import ApiError
@@ -663,79 +664,94 @@ class Base(ServerBase):
 
 
 class LoopGapTest(Base):
-    """At a loop point mpv has no video-params for a moment while the same item plays (D140): the picture read when the
-    item started to show stays, judged by what mpv says of itself, however long ago it was read."""
+    """At a loop point mpv has no video-params for a moment while the same item plays (D140): a put waits a few short
+    looks for the picture to come back, and only a fresh read ever decides."""
     def setUp(self):
         super().setUp()
-        self.fx._learn_thread = False                       # the look at a new source is made at once, here
-        self.player.on_source = self.fx.note_source         # as the Api wires it
-        self.player.play(["/media/a.mp4"])                  # the item starts to show: one real read
+        self.good = self.mpv.video
         self.mpv.props.update({"time-pos": 0.2, "seeking": False})
+        self.sleeps = []
+        self.on_sleep = lambda n: None
+        patcher = mock.patch.object(E.time, "sleep", self.sleep)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.on_sleep(len(self.sleeps))
 
     def gap(self, **props):
         self.mpv.video = None
         self.mpv.props.update(props)
 
-    def test_a_gap_at_the_loop_start_keeps_the_picture_though_nobody_has_read_since(self):
-        self.assertIsNotNone(self.fx._last_picture)
-        before = self.fx.picture()
+    def test_a_gap_that_ends_within_the_window_lets_the_effect_on(self):
         self.gap()
-        self.assertEqual(self.fx.picture(), before)
-        self.assertEqual(self.fx.available(), (True, None))
-        self.fx.put("fx-wash.fs")                           # an effect goes on in the gap
+        self.on_sleep = lambda n: setattr(self.mpv, "video", self.good) if n == 2 else None
+        self.fx.put("fx-wash.fs")
+        self.assertIsNotNone(self.fx.on)
+        self.assertEqual(self.sleeps, [E.PICTURE_LOOK_GAP] * 2)
+
+    def test_a_seek_is_a_gap_too(self):
+        self.gap(**{"time-pos": 50.0, "seeking": True})
+        self.on_sleep = lambda n: setattr(self.mpv, "video", self.good)
+        self.fx.put("fx-wash.fs")
         self.assertIsNotNone(self.fx.on)
 
-    def test_a_seek_is_a_gap_even_when_the_position_cannot_be_read(self):
-        self.gap(**{"time-pos": None, "seeking": True})
-        self.assertIsNotNone(self.fx.picture())
+    def test_a_gap_with_no_position_is_waited_for_too(self):
+        self.gap(**{"time-pos": None})
+        self.on_sleep = lambda n: setattr(self.mpv, "video", self.good)
+        self.fx.put("fx-wash.fs")
+        self.assertIsNotNone(self.fx.on)
 
-    def test_the_gap_is_bounded_by_the_player_not_by_a_clock(self):
-        self.gap(**{"time-pos": E.PICTURE_GRACE + 0.5})     # a clip that never shows a picture again
-        self.assertIsNone(self.fx.picture())
-        self.assertEqual(self.fx.available()[0], False)
-        self.gap(**{"time-pos": None})                      # and no position at all, not seeking
-        self.assertIsNone(self.fx.picture())
-
-    def test_a_stop_and_an_idle_player_are_still_refused(self):
+    def test_a_gap_that_does_not_end_is_refused_after_the_window(self):
         self.gap()
+        with self.assertRaises(ApiError) as caught:
+            self.fx.put("fx-wash.fs")
+        self.assertEqual((caught.exception.status, E.NO_PICTURE in caught.exception.message), (409, True))
+        self.assertEqual(len(self.sleeps), E.PICTURE_LOOKS)
+        self.assertLessEqual(sum(self.sleeps), 0.5 + 1e-9)
+
+    def test_a_stop_during_the_wait_is_refused(self):
+        self.gap()
+        self.on_sleep = lambda n: self.player.clear() if n == 1 else None
+        with self.assertRaises(ApiError):
+            self.fx.put("fx-wash.fs")
+        self.assertEqual(len(self.sleeps), 1)
+
+    def test_another_item_during_the_wait_is_refused(self):
+        self.gap()
+        def other(n):
+            self.mpv.props["path"] = "/media/b.mp4"         # another item, one that has no picture of its own
+        self.on_sleep = other
+        with self.assertRaises(ApiError):
+            self.fx.put("fx-wash.fs")
+        self.assertEqual(len(self.sleeps), 1)
+
+    def test_nothing_waits_when_there_is_no_gap(self):
+        self.fx.put("fx-wash.fs")
+        self.assertEqual(self.sleeps, [])
+        self.fx.off()
+        self.gap(**{"time-pos": 20.0})                      # no picture in the middle of an item: not a loop point
+        with self.assertRaises(ApiError):
+            self.fx.put("fx-wash.fs")
+        self.player.clear()                                 # nothing playing
+        with self.assertRaises(ApiError):
+            self.fx.put("fx-wash.fs")
         self.mpv.props["idle-active"] = True
-        self.assertIsNone(self.fx.picture())
-        self.mpv.props["idle-active"] = False
-        self.player.clear()                                 # a real stop: no path
-        self.assertIsNone(self.fx.picture())
-        self.assertIn(E.NO_PICTURE, self.fx.available()[1])
+        self.assertEqual(self.sleeps, [])
 
-    def test_an_item_that_never_had_a_good_read_is_refused(self):
-        self.player.on_source = None
-        self.player.play(["/media/b.mp4"])                  # nothing looked at it
-        self.fx._last_picture = None
-        self.gap()
-        self.assertIsNone(self.fx.picture())
-        self.player.on_source = self.fx.note_source
+    def test_a_picture_the_hooks_cannot_take_is_refused_without_a_wait(self):
         self.mpv.video = {"colormatrix": "xyz", "colorlevels": "full", "pixelformat": "xyz12"}
-        self.player.play(["/media/c.mp4"])                  # a picture the hooks cannot take: looked at, not kept
-        self.assertTrue(self.fx.unfit)
-        self.gap()
-        self.assertIsNone(self.fx.picture())
-        self.assertEqual(self.fx.available()[0], False)
+        with self.assertRaises(ApiError) as caught:
+            self.fx.put("fx-wash.fs")
+        self.assertIn(E.UNFIT, caught.exception.message)
+        self.assertEqual(self.sleeps, [])
 
-    def test_the_old_path_before_mpv_catches_up_is_not_the_new_item(self):
-        """After a load of B mpv still says A for a moment: A's picture is not B's."""
-        self.player.on_source = None                        # B has had no look yet
-        self.player.play(["/media/b.mp4"])
-        self.mpv.props["path"] = "/media/a.mp4"             # the lag, with A's path
-        self.gap()
-        self.assertIsNone(self.fx.picture())
-
-    def test_a_generator_on_the_new_renderer_is_not_held_as_the_one_before(self):
-        self.fx._last_picture = (("av://carrier", self.player.source_epoch, self.player.clears), {"matrix": "rgb", "levels": "full", "fps": 7.0}, (111, 111), E.SHADER, ("a", "x"), False)
+    def test_a_generator_on_the_new_renderer_waits_for_nothing(self):
         self.player._standin_up = lambda: True
-        self.player._standin = "av://carrier"
-        self.mpv.props["path"] = "av://carrier"
         self.gap()
-        self.fx.picture()
-        self.assertNotEqual(self.fx.size, (111, 111))
-        self.assertNotEqual(self.fx.pair, ("a", "x"))
+        self.fx._ride_out_gap()
+        self.assertEqual(self.sleeps, [])
 
     def test_a_player_whose_ipc_cannot_be_read_says_no_picture(self):
         class Gone:
@@ -746,6 +762,7 @@ class LoopGapTest(Base):
         self.api.player = Gone()
         try:
             self.assertIsNone(self.fx.picture())
+            self.fx._ride_out_gap()
         finally:
             self.api.player = real
 
@@ -2334,7 +2351,6 @@ class QueueTest(Base):
         self.fx.toggle()
         self.fx.step(1)
         self.mpv.video = None
-        self.fx._last_picture = None                                                   # no picture for longer than the loop-gap grace
         self.drain()
         self.assertEqual((self.on(), self.mpv.loaded), (None, []))
         self.assertIn("Nothing with a picture is playing", self.state()["error"]["message"])

@@ -21,6 +21,7 @@ import re
 import threading
 import time
 import unittest
+from unittest import mock
 
 import tests        # noqa: F401  (the run's own temp folder, ranked locks)
 from pvj import actions, effects as E, midi, osc, policy, shaders as S, strobe as ST
@@ -616,6 +617,25 @@ class RouteTest(RouteBase):
         self.assertEqual(st, 409)
         self.assertIn("press again", body["error"])
         self.assertEqual(self.post("/api/strobe/release", {"holder": "tab"})[0], 200)       # letting go twice is fine
+
+    def test_a_press_at_a_loop_point_waits_for_the_picture_and_goes_on(self):
+        good = self.mpv.video
+        self.mpv.video = None                               # the start of a pass: no video-params for a moment
+        self.mpv.props.update({"time-pos": 0.1, "seeking": False})
+        def back(_seconds):
+            self.mpv.video = good
+        with mock.patch.object(E.time, "sleep", back):
+            st, body, _ = self.post("/api/strobe/hold", {"holder": "tab"})
+        self.assertEqual((st, body.get("ok")), (200, True), body)
+        self.assertEqual(self.fx.on["id"], "fx-strobe.fs")
+
+    def test_a_press_with_no_picture_that_stays_away_is_refused(self):
+        self.mpv.video = None
+        self.mpv.props.update({"time-pos": 0.1, "seeking": False})
+        with mock.patch.object(E.time, "sleep", lambda _s: None):
+            st, body, _ = self.post("/api/strobe/hold", {"holder": "tab"})
+        self.assertEqual(st, 409, body)
+        self.assertIn("Nothing with a picture", body["error"])
 
     def test_a_lapsed_hold_is_ended_by_the_watcher_through_the_real_engine(self):
         self.post("/api/strobe/hold", {"holder": "tab"})

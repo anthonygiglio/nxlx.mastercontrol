@@ -7,7 +7,6 @@ clips are switched with `loadfile`, so changing clips does not tear down the
 window (no black gap like the old stopall plus new process).
 """
 
-import functools
 import json
 import math
 import os
@@ -20,22 +19,6 @@ import threading
 import time
 
 from . import locks, looplist, paths
-
-
-def announces(fn):
-    """After a call that puts a new source on the screen has returned (and the player's lock is let go), tell whoever
-    listens (`on_source`; the effects take one look at the new picture then). A listener's failure is its own."""
-    @functools.wraps(fn)
-    def wrapped(self, *a, **k):
-        result = fn(self, *a, **k)
-        listener = getattr(self, "on_source", None)
-        if listener is not None:
-            try:
-                listener()
-            except Exception:
-                pass
-        return result
-    return wrapped
 
 VIDEO_EXTENSIONS = (".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mpg", ".mpeg", ".ts", ".wmv")
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".gif")
@@ -549,7 +532,6 @@ class Player:
         proc.terminate()
         raise PlayerError("mpv did not become ready")
 
-    @announces
     def play(self, paths, loop=True, audio_device=None, windowed=False, spawn=True, ending=None, image_seconds=None, fade=None, style="crossfade"):
         """Play `paths` (see _play). A shader source that was on is taken off first: it draws in place of the
         picture, so it must never stay over a clip.
@@ -597,7 +579,6 @@ class Player:
         except PlayerError:
             pass
 
-    @announces
     def fade_to_program(self, path, seconds, style="crossfade", epoch=None, spawn=False, standin=None):
         """Fade from what is on the screen (a clip, or another program) into the program file `path`, drawn by the renderer
         itself (D130: `pvj-fade-to-program`): the program is built into the idle layer's generator, and the fade begins
