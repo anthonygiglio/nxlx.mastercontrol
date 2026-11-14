@@ -12,9 +12,10 @@ first stranger to answer.
 What a try does, in order, and never more often than it must:
   1. A node that trusts no root and was not told which root to expect does NOTHING: it says it needs the root
      fingerprint (the D139 review: the first root is never taken from whoever answers over plain http).
-  2. GET /v1/info: the root the signer works for. It must be the expected root when one is set.
-  3. When this node pins another root, GET /v1/root-move; the move must lead to the signer's root (and the expected
-     one) before it is even checked, and it is taken only if the pinned root signed it (HttpsBox.apply_root_move).
+  2. GET /v1/info: the root the signer works for. While no root is pinned it must be the expected root. Once a root is
+     pinned, the expected fingerprint plays no part any more: only a move the pinned root signed changes the root.
+  3. When this node pins another root, GET /v1/root-move; the move must lead to the signer's root before it is even
+     checked, and it is taken only if the pinned root signed it (HttpsBox.apply_root_move).
   4. When the certificate in use is missing, has under 30 days left, or is not from the pinned root: make the
      automatic request with the node's own key (its own file: the owner's request.pem and saved names stay as they
      are), POST /v1/sign, and load the answer through HttpsBox.install_from_signer, the checks of a manual upload.
@@ -190,11 +191,13 @@ class AutoCert:
             signer_fp = fingerprint(pem_certificates(root)[0])
         except (ValueError, IndexError):
             raise SignerSaid(502, "the signer's root cannot be read")
-        if want and not same_fingerprint(signer_fp, want):
-            raise HttpsError("the signer at %s works for the root %s, not for the root this node expects (%s); nothing was sent to it"
-                             % (url, signer_fp.replace(" ", "")[:16], want[:16]))
         moved = ""
         _stored, stored_fp = self.box.root_info()
+        # the expected fingerprint decides the FIRST root only; once a root is pinned, only a move that root signed changes
+        # it (a fingerprint set at install must not block the owner's later, signed move to another root)
+        if stored_fp is None and want and not same_fingerprint(signer_fp, want):
+            raise HttpsError("the signer at %s works for the root %s, not for the root this node expects (%s); nothing was sent to it"
+                             % (url, signer_fp.replace(" ", "")[:16], want[:16]))
         if stored_fp is not None and not same_fingerprint(stored_fp, signer_fp):
             try:
                 move = self._call(url + "/v1/root-move")
@@ -205,7 +208,7 @@ class AutoCert:
                 raise
             if not isinstance(move.get("move"), str) or not isinstance(move.get("sig"), str):
                 raise SignerSaid(502, "the signer's root move is not one")
-            done = self.box.apply_root_move(move["move"].encode("utf-8"), move["sig"], expect_to=[signer_fp, want])
+            done = self.box.apply_root_move(move["move"].encode("utf-8"), move["sig"], expect_to=[signer_fp])
             moved = "Moved to the new root %s. " % done["new"][:19]
         why = self.due()
         if why is None:
