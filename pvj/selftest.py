@@ -80,6 +80,15 @@ def display_play(seconds=6):
         shutil.rmtree(rundir, ignore_errors=True)
 
 
+def decoding(root="/", machine=None):
+    """Whether hardware decoding is there (VA-API on a PC node), as information: it is not a check, so a node without it
+    still passes. A PC node without its VA-API driver plays in software, which drops frames on heavy clips (J-152)."""
+    try:
+        return hardware.va_decoding(root, machine)
+    except Exception as e:  # information only: it must never stop the report
+        return {"available": None, "text": "Could not tell: %s: %s" % (type(e).__name__, e)}
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="pvj-selftest")
     ap.add_argument("--play", action="store_true", help="also play a test pattern on the real display")
@@ -87,7 +96,7 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     report = {"pvj_version": __version__, "python": platform.python_version(),
-              "hardware": hardware.report(), "checks": []}
+              "hardware": hardware.report(), "hardware_decoding": decoding(), "checks": []}
     report["checks"].append(check("mpv installed", mpv_version))
     report["checks"].append(check("headless ipc roundtrip", headless_roundtrip))
     if args.play:
