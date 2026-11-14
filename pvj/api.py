@@ -4212,6 +4212,7 @@ class Api:
                 for d in (lst or []) if isinstance(d, dict) and isinstance(d.get("name"), str)]
 
     SOUND_ROOT = "/"        # where /proc/asound and /sys/class/drm are read for a PC's HDMI sound (tests point it at a fake tree)
+    SOUND_RUN = None        # stands in for subprocess.run when amixer is asked (tests); None runs the real amixer
 
     def _auto_audio(self, names):
         """The sound output "automatic" means: on a Pi, HDMI on the connected port (the picture and the sound go to
@@ -4263,14 +4264,28 @@ class Api:
         connector = self._picture_connector(conns)
         if not connector:
             return None
-        port = hardware.hdmi_sound_for(connector, conns, self.SOUND_ROOT)
-        if not port:
+        pcm = hardware.hdmi_sound_for(connector, conns, self.SOUND_ROOT, self.SOUND_RUN)
+        if not pcm:
             return None
-        for want in ("alsa/plughw:CARD=%s,DEV=%d" % (port["card_id"], port["device"]),     # the one measured on the M710q
-                     "alsa/hdmi:CARD=%s,DEV=%d" % (port["card_id"], port["hdmi_index"])):
+        wants = ["alsa/plughw:CARD=%s,DEV=%d" % (pcm["card_id"], pcm["device"])]        # the one measured on the M710q
+        if pcm["hdmi_index"] is not None:
+            wants.append("alsa/hdmi:CARD=%s,DEV=%d" % (pcm["card_id"], pcm["hdmi_index"]))
+        for want in wants:
             if want in names:
                 return want
         return None
+
+    SEVERAL_SCREENS = "Several HDMI screens: choose the sound output by hand"
+
+    def _automatic_note(self, automatic_is):
+        """What the sound section says when Automatic could not pick a screen's sound on a PC with several HDMI screens
+        (D137); "" otherwise."""
+        if automatic_is != "auto" or str((self.board or {}).get("kind", "")).startswith("pi"):
+            return ""
+        try:
+            return self.SEVERAL_SCREENS if len(hardware.hdmi_sound_screens(self.SOUND_ROOT, self.SOUND_RUN)) > 1 else ""
+        except Exception:
+            return ""
 
     def _started_playing(self, capture=False, ndi=False, live=False):
         """Something is about to be on screen: take any on-screen pairing PIN off it at once, and stop a live input
@@ -5264,7 +5279,9 @@ class Api:
     def get_audio(self, body, device, client):
         devices = self._audio_devices()
         names = {d["name"] for d in devices}
-        return {"device": self.settings.data["audio"]["device"], "devices": devices, "automatic_is": self._auto_audio(names)}
+        automatic_is = self._auto_audio(names)
+        return {"device": self.settings.data["audio"]["device"], "devices": devices, "automatic_is": automatic_is,
+                "automatic_note": self._automatic_note(automatic_is)}
 
     def set_audio(self, body, device, client):
         chosen = body.get("device")
