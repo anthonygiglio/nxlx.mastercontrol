@@ -20,8 +20,8 @@
 #   --purge          with --uninstall, also remove /etc/pvj
 #   --signer URL     the owner's signing service, e.g. http://hp.local:8781 (D139): the node asks it for its
 #                    HTTPS certificate by itself; written into /etc/pvj/pvj.env as PVJ_SIGNER_URL
-#   --root-fingerprint HEX   optional: the SHA-256 of the owner's root (boxcert.py root); a node with no root yet then
-#                    pins only that root (PVJ_ROOT_FINGERPRINT)
+#   --root-fingerprint HEX   required with --signer: the SHA-256 of the owner's root (boxcert.py root); a node with
+#                    no root yet takes only that root (PVJ_ROOT_FINGERPRINT)
 set -euo pipefail
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -62,8 +62,13 @@ while [ $# -gt 0 ]; do
 	*) die "unknown option $1 (try --help)" ;;
 	esac
 done
-if [ -n "$SIGNER" ] && ! printf '%s' "$SIGNER" | grep -Eq '^https?://[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?/?$'; then
+SIGNER_RE='^https?://[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?/?$'
+if [ -n "$SIGNER" ] && ! [[ "$SIGNER" =~ $SIGNER_RE ]]; then
 	die "--signer must look like http://name-or-address:port"
+fi
+if [ -n "$SIGNER" ] && [ -z "$ROOT_FP" ]; then
+	# a node with no root yet must know which root to take (D139): never the first that answers over plain http
+	die "--signer needs --root-fingerprint too (the 64 hex digits python3 tools/boxcert.py root prints)"
 fi
 if [ -n "$ROOT_FP" ]; then
 	ROOT_FP="$(printf '%s' "$ROOT_FP" | tr 'A-F' 'a-f' | tr -cd '0-9a-f')"

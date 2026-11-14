@@ -40,6 +40,10 @@ from .player import Player
 from .settings import Settings, SettingsError
 
 WEB_DIR = os.path.join(os.path.dirname(__file__), "web")
+
+
+def env_signer(auto):
+    return bool((auto.env.get("PVJ_SIGNER_URL") or "").strip())
 MAX_BODY = 64 * 1024
 COOKIE = "pvj_token"
 SECURE_COOKIE = "__Host-pvj_token"      # over TLS only (D79): the prefix forces Secure, Path=/ and no Domain; a second name,
@@ -576,21 +580,33 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                     api.log("pvj-web: root replaced by device %s (%s)" % (device["id"], device["name"]))
                     return self._json(200, dict(out, status=box.status(self._secure(), host, device)))
                 if path == "/api/https/auto":               # D139: where the signer is, and "try now"; the try runs in its own thread
-                    from .autocert import URL as SIGNER_URL
+                    from .autocert import URL as SIGNER_URL, clean_fingerprint
                     auto = getattr(api, "autocert", None)
                     if auto is None:
                         raise ApiError(404, "not found")
+                    change = {}
                     if "signer_url" in body:
                         url = body.get("signer_url")
                         if not isinstance(url, str) or (url.strip() and not SIGNER_URL.fullmatch(url.strip())):
                             raise ApiError(400, "give the signer's address as http://name-or-address:port, or nothing to use the node's default")
+                        change["signer_url"] = url.strip()
+                    if "root_fingerprint" in body:
+                        fp = body.get("root_fingerprint")
+                        if not isinstance(fp, str) or (fp.strip() and clean_fingerprint(fp) is None):
+                            raise ApiError(400, "the root fingerprint is the 64 hex digits python3 tools/boxcert.py root prints, or nothing")
+                        change["root_fingerprint"] = clean_fingerprint(fp) or ""
+                    if change:
                         with api.settings.lock:
                             section = dict(api.settings.data.get("https") or {})
-                            section["signer_url"] = url.strip()
+                            section.update(change)
+                            # a node with no root takes a first root only when it knows which (D139 review)
+                            if box.root_info()[0] is None and (section.get("signer_url") or env_signer(auto)) and \
+                                    not (clean_fingerprint(section.get("root_fingerprint") or "") or auto.env.get("PVJ_ROOT_FINGERPRINT")):
+                                raise ApiError(400, "this node trusts no root yet: give the root fingerprint with the signer's address")
                             api.settings.data["https"] = section
                             api.settings.save()
                     auto.kick()
-                    return self._json(200, {"signer_url": auto.url(), "status": box.status(self._secure(), host, device)})
+                    return self._json(200, {"signer_url": auto.url(), "root_fingerprint": auto.want_root(), "status": box.status(self._secure(), host, device)})
                 if path == "/api/https/owner-only":
                     on = box.set_owner_only(body.get("on"), self._secure(), box.device_secure(device))
                     return self._json(200, {"owner_only": on, "status": box.status(self._secure(), host, device)})

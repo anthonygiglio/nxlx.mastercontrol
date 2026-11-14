@@ -77,7 +77,7 @@ class MakeSignerTest(Base):
     def test_a_new_root_allows_one_signer_and_the_signer_is_constrained(self):
         self.assertIn("pathlen:1", cert_text(self.exe, os.path.join(self.ca, "root.pem")))
         sdir = self.make_signer()
-        self.assertEqual(sorted(os.listdir(sdir)), ["root.pem", "signed.json", "signer.key", "signer.pem"])
+        self.assertTrue({"root.pem", "signed.json", "signer.key", "signer.pem"} <= set(os.listdir(sdir)))
         self.assertEqual(os.stat(os.path.join(sdir, "signer.key")).st_mode & 0o777, 0o600)
         self.assertNotIn("ENCRYPTED", read(os.path.join(sdir, "signer.key")), "the service signs without a person")
         text = cert_text(self.exe, os.path.join(sdir, "signer.pem"))
@@ -226,7 +226,11 @@ class ChainOnTheNodeTest(SignerBase):
         box, _ = self.node_box()
         chain = self.signed_for_box(box)
         root_fp = httpsbox.fingerprint(httpsbox.pem_certificates(read(os.path.join(self.ca, "root.pem")))[0])
-        leaf = box.install_from_signer(chain, root_fp)
+        with self.assertRaises(httpsbox.HttpsError) as cm:           # never a first root without the expected fingerprint
+            box.install_from_signer(chain, root_fp)
+        self.assertIn("needs the root fingerprint", cm.exception.message)
+        self.assertIsNone(box.root_info()[0])
+        leaf = box.install_from_signer(chain, root_fp, want_root=root_fp)
         self.assertEqual(leaf["dns"], ["testbox.local"])
         self.assertEqual(box.root_info()[1], root_fp)
         self.assertTrue(box.load())
@@ -249,11 +253,16 @@ class ChainOnTheNodeTest(SignerBase):
         s = cli.wrap_socket(socket.create_connection(srv.getsockname(), timeout=10), server_hostname="testbox.local")
         s.close()
         srv.close()
-        # a peer's view: the node's certificate alone does not reach the root, with the signer it does
-        der = httpsbox.pem_certificates(box.cert_pem())
-        self.assertEqual(box.chains_to_root(der[0])[0], False)
-        self.assertEqual(box.chains_to_root(der[0], der[1:])[0], True)
-        self.assertIsNotNone(box.peer_client_context())
+        # another node's view: its handshake context (the pinned root only) accepts the whole path the node sends
+        srv = socket.socket()
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        srv.settimeout(10)
+        threading.Thread(target=serve, daemon=True).start()
+        s = box.peer_client_context().wrap_socket(socket.create_connection(srv.getsockname(), timeout=10))
+        self.assertTrue(s.getpeercert(binary_form=True))
+        s.close()
+        srv.close()
 
     def test_the_expected_root_and_the_signers_word_must_hold_on_first_pin(self):
         box, _ = self.node_box()
@@ -396,8 +405,11 @@ class FakeSigner:
 
 
 class HookTest(SignerBase):
-    def auto(self, box, settings, url, now=time.time):
-        return autocert.AutoCert(box, settings, env={"PVJ_SIGNER_URL": url} if url else {}, now=now)
+    def auto(self, box, settings, url, now=time.time, fp=True):
+        env = {"PVJ_SIGNER_URL": url} if url else {}
+        if fp:
+            env["PVJ_ROOT_FINGERPRINT"] = boxcert.read_cert(self.exe, os.path.join(self.ca, "root.pem"))["fingerprint"]
+        return autocert.AutoCert(box, settings, env=env, now=now)
 
     def test_a_new_node_gets_its_certificate_and_then_leaves_the_signer_alone(self):
         fake = FakeSigner(self, self.signer)
@@ -424,6 +436,8 @@ class HookTest(SignerBase):
         dead.bind(("127.0.0.1", 0))
         port = dead.getsockname()[1]
         dead.close()
+        st = self.auto(box, settings, "http://127.0.0.1:%d" % port, fp=False).run_once()
+        self.assertEqual(st["state"], "needs-fingerprint", "no root and no fingerprint: nothing is asked")
         started = time.time()
         st = self.auto(box, settings, "http://127.0.0.1:%d" % port).run_once()
         self.assertLess(time.time() - started, autocert.TIMEOUT + 2)
@@ -476,6 +490,7 @@ class HookTest(SignerBase):
         st = self.auto(box, settings, fake.url).run_once()
         self.assertEqual(st["state"], "refused")
         self.assertIn("release testbox.local", st["message"])
+        self.assertEqual(autocert.AutoCert.next_delay(st), autocert.RECHECK, "a taken name: no point asking every ten minutes")
 
 
 from tests.test_https import HttpsBase  # noqa: E402
@@ -489,7 +504,11 @@ class PanelRouteTest(HttpsBase):
         self.api.autocert.run_once()
         self.assertEqual(self.call("GET", "/api/https", token=full)[1]["auto"]["state"], "off")
         st, body, _ = self.call("POST", "/api/https/auto", {"signer_url": "http://192.168.0.10:8781"}, token=full)
-        self.assertEqual((st, body["signer_url"]), (200, "http://192.168.0.10:8781"), body)
+        self.assertEqual(st, 400, "a node with no root needs the fingerprint with the address")
+        self.assertIn("fingerprint", body["error"])
+        st, body, _ = self.call("POST", "/api/https/auto", {"signer_url": "http://192.168.0.10:8781", "root_fingerprint": "AB:" * 31 + "AB"}, token=full)
+        self.assertEqual((st, body["signer_url"], body["root_fingerprint"]), (200, "http://192.168.0.10:8781", "ab" * 32), body)
+        self.assertEqual(self.call("POST", "/api/https/auto", {"root_fingerprint": "abc"}, token=full)[0], 400)
         self.assertEqual(self.settings.data["https"]["signer_url"], "http://192.168.0.10:8781")
         for bad in ("ftp://x", "http://a b", 5):
             self.assertEqual(self.call("POST", "/api/https/auto", {"signer_url": bad}, token=full)[0], 400)

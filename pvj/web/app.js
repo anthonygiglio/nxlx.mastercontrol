@@ -5511,13 +5511,17 @@
     var url = h('input', { type: 'text', class: 'text-input', id: 'httpssigner', value: httpsForm.signer != null ? httpsForm.signer : (a.url || ''),
       placeholder: 'http://signing-computer.local:8781', autocomplete: 'off', spellcheck: 'false' });
     url.addEventListener('input', function () { httpsForm.signer = url.value; });
+    var fp = h('input', { type: 'text', class: 'text-input', id: 'httpssignerfp', value: httpsForm.signerFp != null ? httpsForm.signerFp : (a.root_fingerprint || ''),
+      placeholder: '64 hex digits', autocomplete: 'off', spellcheck: 'false' });
+    fp.addEventListener('input', function () { httpsForm.signerFp = fp.value; });
     var state = a.state ? (a.words + (a.message ? ' ' + a.message : '')) : 'Not tried yet since the node started.';
-    var rows = [h('div', { class: 'kv', id: 'httpsauto', text: state }),
+    var rows = [h('div', { class: a.state === 'needs-fingerprint' ? 'kv warn' : 'kv', id: 'httpsauto', text: state }),
       h('div', { class: 'hint', text: 'The node asks your signing service for its certificate by itself: when it starts, after an update, and before the certificate runs out. Nothing to sign or upload by hand (docs/HTTPS.md, "Automatic certificates").' }),
       labelled('Signing service', url, 'Set at install. Change it only if the signing computer moved.'),
+      labelled('Fingerprint of your root', fp, 'What python3 tools/boxcert.py root prints. A node that trusts no root yet takes only this one.'),
       h('div', { class: 'row' },
         h('button', { class: 'btn grow', id: 'httpssignersave', text: 'Save and try now', onclick: function () {
-          act('POST', '/api/https/auto', { signer_url: url.value.trim() }, function () { httpsForm.signer = null; sayAt(out, 'Asking the signer now; this page updates in a few seconds.'); setTimeout(httpsReload, 4000); })
+          act('POST', '/api/https/auto', { signer_url: url.value.trim(), root_fingerprint: fp.value.trim() }, function () { httpsForm.signer = null; httpsForm.signerFp = null; sayAt(out, 'Asking the signer now; this page updates in a few seconds.'); setTimeout(httpsReload, 4000); })
             .then(function (r) { if (!r.ok) sayAt(out, r.data.error || 'Not saved.', true); });
         } }),
         h('button', { class: 'btn grow', id: 'httpssignertry', text: 'Try now', onclick: function () {

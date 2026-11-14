@@ -759,7 +759,8 @@ class ReaderTest(unittest.TestCase):
         self.assertEqual(leaf["serial"].lstrip("0"), info["serial"].lstrip("0"))
         self.assertEqual(leaf["not_after"], int(info["end"].timestamp()))
         self.assertTrue(root["ca"])
-        self.assertFalse(root["server_auth"])
+        # since the D139 review a root says what certificates under it are for: server and client, nothing else
+        self.assertEqual((root["server_auth"], root["client_auth"], root["self_issued"]), (True, True, True))
 
 
 class OlderReleaseTest(unittest.TestCase):
