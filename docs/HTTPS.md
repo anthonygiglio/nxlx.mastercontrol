@@ -76,31 +76,35 @@ On the Mac, in the project folder (a checkout that has this change):
    Asks the new passphrase. Writes the folder `~/nxlx-root-ca-2/signer`.
 3. `python3 tools/boxcert.py --dir ~/nxlx-root-ca move-root --to ~/nxlx-root-ca-2`
    Asks the OLD passphrase, the last time you need it. Writes a short message, signed by the old root, into `~/nxlx-root-ca-2/signer`: "trust the new root from now on". Nodes that trust the old root believe it because the old root signed it, so you never touch those nodes.
+   It also reserves ("pins") the names and addresses of every node you signed by hand with the old root, from `~/nxlx-root-ca/signed.json` and the certificate files beside it, so nobody can take them before those nodes ask. It lists what it pinned. If it says a node was "Not pinned" (its certificate file is gone), pin that node on the HP after step 6: `python C:\Users\antho\nxlx-signer\bin\nxlx-signer.py pin --cert <that node's certificate file>`.
 4. `python3 tools/boxcert.py --dir ~/nxlx-root-ca-2 root`
-   Prints the new root's fingerprint. Give it to whoever deploys, for `install.sh --root-fingerprint`.
+   Prints the new root's fingerprint. Give it to whoever deploys: every install with `--signer` needs it as `--root-fingerprint`, because a new node trusts only the root it was told to expect.
 5. Back up the whole folder `~/nxlx-root-ca-2` (the T5, a password manager), like the old one.
 6. Copy the folder `~/nxlx-root-ca-2/signer` to the HP as `C:\Users\antho\nxlx-signer` (a USB stick, then delete it from the stick). On the HP, open PowerShell with "Run as administrator" and run, once:
    `powershell -ExecutionPolicy Bypass -File \\wsl.localhost\Ubuntu\home\anthony\Projects\nxlx\nxlx.mastercontrol\code\tools\signer\install-windows.ps1`
    From then on the service starts by itself each time you log on to the HP. It says "The signer is running".
 7. Install the new root on each of your devices: the file `~/nxlx-root-ca-2/root.pem`, the same steps as the first time (above). Keep the old root on them until every node has moved, then remove it.
-8. Then the nodes are deployed with `--signer http://yt-1300f.local:8781` (and `--root-fingerprint` from step 4). Each node moves to the new root, gets its certificate and says so on System > Secure connection. Nothing to do at the nodes.
+8. Then the nodes are deployed with `--signer http://yt-1300f.local:8781 --root-fingerprint <the fingerprint from step 4>`. Each node moves to the new root, gets its certificate and says so on System > Secure connection. Nothing to do at the nodes.
 
 If step 3 says "You have a fleet list", run the two commands it prints too (the list must be signed by the new root).
 
 ### What happens on a node
 
-- The node knows where the service is from `install.sh --signer URL` (or the field on System > Secure connection). It is not discovered: the HP cannot announce itself the way nodes do, and an address you gave is safer than the first answer from the network.
-- It asks the service at start, then every few hours. When its certificate is missing, ends within 30 days, or is not from the root it trusts, it makes a request with its own key (the same request as the manual way), sends it, and loads the answer through the same checks as an upload. The root pin holds: the answer must end at the root the node trusts. A node that trusts no root yet takes the service's root with its first certificate, as the first upload does, and only the root given with `--root-fingerprint` when one was given.
-- When the service works for another root than the node's, the node asks for the move message and takes the new root only if its own root signed that message.
+- The node knows where the service is, and which root to expect, from `install.sh --signer URL --root-fingerprint HEX` (or the two fields on System > Secure connection). It is not discovered: the HP cannot announce itself the way nodes do, and an address you gave is safer than the first answer from the network.
+- It asks the service at start, then every few hours. When its certificate is missing, ends within 30 days, or is not from the root it trusts, it makes a request with its own key (its own request: the one you may make by hand, and the names you saved, stay as they are), sends it, and loads the answer through the same checks as an upload. The root pin holds: the answer must end at the root the node trusts.
+- A node that trusts no root yet takes one only when it was told which, by its fingerprint. Without the fingerprint it does nothing and the page says "Needs the root fingerprint". A service that works for another root than the expected one is not even sent a request.
+- When the service works for another root than the node's, the node asks for the move message and takes the new root only if the move leads to the service's root (and the expected one) and its own root signed that message.
 - If the service does not answer, nothing changes: the node keeps what it has, installs and updates finish as usual, and System > Secure connection says "Waiting for the signer". It tries again every ten minutes.
 - The manual way (request, `boxcert.py sign`, upload) still works, also with the new root.
 
 ### The rules the service keeps, and the honest trade-off
 
-- It answers the local network only (10/8, 172.16/12, 192.168/16) and signs `.local` names and the caller's own private address, nothing else. The request must name the node's own `<hostname>.local`.
-- **First come, first pinned.** A name is signed again only for the same node key. If a node was set up again (a new key), the service refuses its name with the way out: on the HP, `python C:\Users\antho\nxlx-signer\bin\nxlx-signer.py release node-01.local`. `... nxlx-signer.py list` shows every name it has signed.
-- At most 6 signings an hour from one address and 30 in all. Every signing and every refusal is written to `C:\Users\antho\nxlx-signer\signer.log`.
-- The trade-off: anyone on your network can get a certificate for a `.local` name that nobody has taken yet, and your devices would trust it for that name. Names already taken are protected by the pin. Keep the HP on the network you trust.
+- It answers the local network only (10/8, 172.16/12, 192.168/16) and signs `.local` names and the caller's own private address, nothing else. The request must name the node's own `<hostname>.local`, have that name as its only subject, and use the kind of key a node makes (EC P-256).
+- It answers only when it is called by an address or by the HP's own name (`yt-1300f.local`; add others with `--host-name`), never a request a web page sends (one with an Origin header), and a request must say it is JSON. So a web page you open on a computer on your network cannot use it.
+- **First come, first pinned, names and addresses alike.** A name or an address is signed again only for the same node key. If a node was set up again (a new key), or an address moved to another node, the service refuses with the way out: on the HP, `python C:\Users\antho\nxlx-signer\bin\nxlx-signer.py release node-01.local` (or the address). `... nxlx-signer.py list` shows every name and address it has signed; `... pin --cert FILE` reserves a node's names and addresses before it asks.
+- The pin file is `signed.json` in the signer folder, with `signed.json.bak`, the copy before the last change. If it is missing or damaged, the service signs nothing until you put a good copy back; it never treats a broken file as "nothing reserved".
+- Refusals count against the address that sent them (6 an hour), signings against everybody (30 an hour), so junk from a few addresses cannot block a real node. A node told that its name is taken asks again only every six hours (or when you press Try now). Every signing and every refusal is written to `C:\Users\antho\nxlx-signer\signer.log`.
+- The trade-off: anyone on your network can get a certificate for a `.local` name, or for their own address, that nobody has reserved yet, and your devices would trust it for that name. What is reserved is protected by the pin. Keep the HP on the network you trust.
 
 ### If the signer is lost or may be stolen
 
