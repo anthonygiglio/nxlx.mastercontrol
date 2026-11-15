@@ -32,15 +32,19 @@ def have_before():
         return False
 
 
-def old_mapper():
-    """pvj/mapper.py as the release before had it, loaded as a module of its own, with the renderer's names of the
-    rename applied (rename PR 5: PVJWARP and the pvj_ helpers are MCTLWARP and mctl_ now), so the comparison is of
-    the shaders' code and not of the names the rename table changed."""
-    text = subprocess.run(["git", "-C", REPO, "show", BEFORE + ":pvj/mapper.py"], check=True, capture_output=True).stdout
+def renamed(shader):
+    """A shader the release before wrote, with the renderer's names of the rename (rename PR 5: PVJWARP and the pvj_
+    helpers are MCTLWARP and mctl_ now). Only the old release's output is renamed, never its code, so a change the
+    rename made inside the mapper cannot hide on both sides of a comparison."""
     spec = importlib.util.spec_from_file_location("rename_apply", os.path.join(REPO, "tools", "rename-apply.py"))
     ra = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(ra)
-    text = ra.Matcher(ra.load(os.path.join(REPO, "tools", "rename-map.txt"))).apply(text.decode("utf-8"), ("render",))[0].encode("utf-8")
+    return ra.Matcher(ra.load(os.path.join(REPO, "tools", "rename-map.txt"))).apply(shader, ("render",))[0]
+
+
+def old_mapper():
+    """pvj/mapper.py as the release before had it, unchanged, loaded as a module of its own."""
+    text = subprocess.run(["git", "-C", REPO, "show", BEFORE + ":pvj/mapper.py"], check=True, capture_output=True).stdout
     d = tempfile.mkdtemp()
     pkg = os.path.join(d, "oldpvj")
     os.makedirs(pkg)
@@ -173,8 +177,9 @@ class ClassicUnchangedTest(unittest.TestCase):
             before = old.validate_mapping({"surfaces": surfaces})
             self.assertEqual(plain, before, "a mapping without sources is stored as before")
             want_table = old.warp_table(before, 1920, 1080)
-            want_show = old.warp_shader(*want_table)
-            want_edit = old.shader(before, {"selected": before[0]["id"], "corner": 1})
+            want_show = renamed(old.warp_shader(*want_table))
+            want_edit = renamed(old.shader(before, {"selected": before[0]["id"], "corner": 1}))
+            self.assertNotIn("MCTL", old.warp_shader(*want_table), "the release before is compared as it was")
             self.assertEqual(mapper.warp_shader(*mapper.warp_table(plain, 1920, 1080)), want_show)
             self.assertEqual(mapper.warp_shader(*mapper.warp_table(plain, 1920, 1080, with_sources=True), available=4), want_show,
                              "every surface on Source 1, on the new renderer: as before")

@@ -14,6 +14,9 @@
 #include <mpv/client.h>
 
 #define MCTL_VERSION "0.12.0"
+// Whether the string S starts with the literal PREFIX, by the literal's own length (never a count typed by hand: a
+// rename of a prefix must not leave a stale length behind).
+#define STARTS(s, prefix) (strncmp((s), "" prefix, sizeof(prefix) - 1) == 0)
 #define MAX_SHADERS 16
 #define LAYERS 2                    // source 1's video layers (phase 2, D98): the one on screen and the one a crossfade comes in on
 #define MAX_SOURCES 8               // sources (D101): source 1 is LAYERS layers, each other source one layer

@@ -222,7 +222,12 @@ rm -f "$SRC/render/pvj-render"
 [ ! -e "$NEW_REL/render/pvj-render" ] || fail "the new release holds the old renderer's program"
 [ -x "$OLD_REL/render/pvj-render" ] || fail "the old release lost its own program (a rollback needs it)"
 [ "$(cat /opt/pvj/previous)" = "$OLD_REL" ] || fail "the old release is not the one a rollback goes to: $(cat /opt/pvj/previous)"
-if grep -rIl "pvj-render" "$NEW_REL" /etc/systemd/system; then fail "a file of the new release or a unit still names pvj-render"; fi
+# What runs or starts the renderer: the package, render/, the commands in bin/ and the node's units. bin/nxlx-convert
+# is left out: its rename table names the old program on purpose, as the name it converts from.
+if grep -rIl "pvj-render" "$NEW_REL/pvj" "$NEW_REL/render" /etc/systemd/system/pvj-* \
+	|| grep -rIl --exclude=nxlx-convert "pvj-render" "$NEW_REL/bin"; then
+	fail "a file of the new release or a unit still names pvj-render"
+fi
 grep -q "mctl-render" "$NEW_REL/pvj/renderer.py" || fail "the player does not look for mctl-render"
 rm -rf "$OLD_REL"
 if [ "$had_previous" = 1 ]; then cp "$PREV_SAVED" /opt/pvj/previous; else rm -f /opt/pvj/previous; fi

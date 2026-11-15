@@ -478,6 +478,21 @@ class MappingTest(Base):
         with self.assertRaises(PlayerError):
             self.r("set_property", "glsl-shaders", [big])
 
+    def test_a_texture_name_is_refused_for_the_players_prefix_only(self):
+        """The prefix mctl_ is compared by its whole length (rename PR 5: the length of pvj_ was kept once, so a texture
+        called mctlTable was refused)."""
+        surfaces = self.surface([[0, 0], [W / 2, 0], [W / 2, H], [0, H]])
+        lw, lh, values = mapper.warp_table(surfaces, W, H)
+        good = mapper.warp_shader(lw, lh, values)
+        self.r.load(self.picture)
+        bad = self.write(good.replace("MCTLWARPA", "mctl_table"))
+        with self.assertRaises(PlayerError):
+            self.r("set_property", "glsl-shaders", [bad])
+        # the socket says only "invalid parameter"; the reader's own reason is in the renderer's log
+        self.assertIn("%s refused: a texture's name is not allowed" % bad, self.r.stderr())
+        self.r("set_property", "glsl-shaders", [self.write(good.replace("MCTLWARPA", "mctlTable"))])
+        self.check_left_half()
+
     def test_a_shader_that_does_not_compile_leaves_the_picture_unmapped(self):
         path = self.write("//!HOOK OUTPUT\n//!BIND HOOKED\nvec4 hook() { return not_glsl; }\n")
         self.r.load(self.picture)

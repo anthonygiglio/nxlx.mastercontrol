@@ -125,8 +125,8 @@ static int fx_name_ok(const char *s)
     if (n == 0 || n > FX_NAME - 1 || !(isalpha((unsigned char)s[0]))) return 0;
     for (size_t i = 0; i < n; i++)
         if (!(isalnum((unsigned char)s[i]) || s[i] == '_')) return 0;
-    if (strstr(s, "__") || !strncmp(s, "gl_", 3) || !strncmp(s, "isf_", 4)) return 0;
-    if (!strncmp(s, "mctl_", 4) && strncmp(s, "mctl_in_", 7)) return 0;   // mctl_in_: the panel's renamed inputs
+    if (strstr(s, "__") || STARTS(s, "gl_") || STARTS(s, "isf_")) return 0;
+    if (STARTS(s, "mctl_") && !STARTS(s, "mctl_in_")) return 0;   // mctl_in_: the panel's renamed inputs
     for (int i = 0; TAKEN[i]; i++)
         if (!strcmp(TAKEN[i], s)) return 0;
     return 1;
@@ -295,7 +295,7 @@ int fx_read(const char *path, FxProg **out, char *err, size_t n)
     size_t clen = (size_t)(end - line);
     if (memmem(line, clen, "//!", 3)) { snprintf(err, n, "the code holds //!"); goto bad; }
     if (memchr(line, '\\', clen)) { snprintf(err, n, "the code holds a backslash"); goto bad; }
-    if (!memmem(line, clen, "mctl_main", 8)) { snprintf(err, n, "the code has no mctl_main()"); goto bad; }
+    if (!memmem(line, clen, "mctl_main", sizeof("mctl_main") - 1)) { snprintf(err, n, "the code has no mctl_main()"); goto bad; }
     p->code = malloc(clen + 1);
     if (!p->code) { snprintf(err, n, "out of memory"); goto bad; }
     memcpy(p->code, line, clen);

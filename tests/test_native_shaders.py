@@ -26,6 +26,7 @@ channels more than 3 apart; for those three, the 99th percentile at most 8 and a
 """
 import glob
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -485,6 +486,30 @@ class RefusalTest(NativeBase):
                     self.r("mctl-shader", "set", 1, 0, values)
         time.sleep(0.3)
         self.assertEqual(self.r.pixel(10, 10)[0], 64)            # all or nothing: "half of it good" moved nothing
+
+    def test_the_players_prefix_is_read_by_its_whole_length(self):
+        """The reader compares the prefixes mctl_, mctl_in_ and the name mctl_main by their full length (rename PR 5: the
+        lengths of pvj_, pvj_in_ and pvj_main were kept once, so mctlSpeed was refused and mctl_inX taken)."""
+        good = S.translate_native(S.parse(FLAT), (W, H))
+        for what, text, said in [
+                ("the player's prefix without in_", good.replace("//!INPUT float level", "//!INPUT float mctl_inlevel"),
+                 "an INPUT's name is not allowed"),
+                ("the player's prefix", good.replace("//!INPUT float level", "//!INPUT float mctl_level"),
+                 "an INPUT's name is not allowed"),
+                ("no mctl_main", good.replace("mctl_main", "mctl_maix"), "the code has no mctl_main()")]:
+            with self.subTest(what):
+                path = self.write(text)
+                with self.assertRaises(PlayerError):
+                    self.r("mctl-shader", "load", 1, 0, path)
+                # the socket says only "invalid parameter"; the reader's own reason is in the renderer's log
+                self.assertIn("%s refused: %s" % (path, said), self.r.stderr())
+        self.carrier()
+        # a name that starts with the letters mctl but not the prefix mctl_ is the person's own
+        self.r("mctl-shader", "load", 1, 0, self.write(re.sub(r"\blevel\b", "mctlSpeed", good)))
+        self.r.wait(lambda: self.r.pixel(10, 10)[0] == 64, 3)
+        # and so is a renamed input under mctl_in_ (the panel's own)
+        self.r("mctl-shader", "load", 1, 0, self.write(re.sub(r"\blevel\b", "mctl_in_level", good)))
+        self.r.wait(lambda: self.r.pixel(10, 10)[0] == 64, 3)
 
     def test_a_refused_program_leaves_the_one_before_on(self):
         self.carrier()

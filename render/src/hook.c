@@ -99,7 +99,7 @@ static int valid_name(const char *s)
     if (n == 0 || n > 60 || !(isalpha((unsigned char)s[0]) || s[0] == '_')) return 0;
     for (size_t i = 0; i < n; i++)
         if (!(isalnum((unsigned char)s[i]) || s[i] == '_')) return 0;
-    if (!strncmp(s, "gl_", 3) || !strncmp(s, "mctl_", 4) || !strncmp(s, "HOOKED", 6)) return 0;
+    if (STARTS(s, "gl_") || STARTS(s, "mctl_") || STARTS(s, "HOOKED")) return 0;
     return 1;
 }
 
