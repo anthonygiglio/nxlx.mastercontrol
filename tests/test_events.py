@@ -370,7 +370,7 @@ class ApiTest(CareBase):
     def test_events_tick_says_an_update_and_a_fall_back_once(self):
         result = {"state": "failed", "message": "the update stopped before it finished", "at": 1790000100}
         self.api._update_result = lambda: result
-        rep = {"drawing": "classic", "why": "pvj-render ended twice in a row (exit 3)", "pid": 5}
+        rep = {"drawing": "classic", "why": "mctl-render ended twice in a row (exit 3)", "pid": 5}
         self.api.renderer.report = lambda: rep
         self.api.renderer.saved = lambda: {"use": "new"}
         self.api.events_tick()

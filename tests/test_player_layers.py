@@ -151,7 +151,7 @@ if __name__ == "__main__":
 
 
 class StillKindTest(unittest.TestCase):
-    """A still of the window (D108): on pvj-render the final picture at the screen's size, on classic mpv as it was."""
+    """A still of the window (D108): on mctl-render the final picture at the screen's size, on classic mpv as it was."""
 
     def asked(self, renderer):
         p = Player.__new__(Player)
@@ -161,7 +161,7 @@ class StillKindTest(unittest.TestCase):
             calls.append(command)
             if command[:2] == ("get_property", "pid"):
                 return 7
-            if command[:2] == ("get_property", "pvj-render"):
+            if command[:2] == ("get_property", "mctl-render"):
                 if renderer:
                     return {"layers": 2}
                 raise PlayerError("mpv: property not found")
@@ -174,8 +174,8 @@ class StillKindTest(unittest.TestCase):
         p.still("/tmp/y.png", "video")
         return [c for c in calls if c[0] == "screenshot-to-file"]
 
-    def test_pvj_render_is_asked_for_the_screen(self):
-        self.assertEqual(self.asked(True), [("screenshot-to-file", "/tmp/x.png", "pvj-screen"), ("screenshot-to-file", "/tmp/y.png", "video")])
+    def test_mctl_render_is_asked_for_the_screen(self):
+        self.assertEqual(self.asked(True), [("screenshot-to-file", "/tmp/x.png", "mctl-screen"), ("screenshot-to-file", "/tmp/y.png", "video")])
 
     def test_classic_mpv_is_asked_as_it_always_was(self):
         self.assertEqual(self.asked(False), [("screenshot-to-file", "/tmp/x.png", "window"), ("screenshot-to-file", "/tmp/y.png", "video")])

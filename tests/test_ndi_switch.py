@@ -12,7 +12,7 @@ Measured on the node: after a press the screen showed nothing new for 0.83 s at 
    on its last open is waited for only a moment the next time; a source that has sound is never made to wait, and
    sound that turns up under a picture opened without it still ends the stream and opens it again with sound.
 
-Nothing here is skipped (a skipped test fails the pvj-render job)."""
+Nothing here is skipped (a skipped test fails the mctl-render job)."""
 
 import os
 import shutil

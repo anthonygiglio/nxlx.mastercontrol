@@ -126,7 +126,7 @@ def main(argv=None):
     ap.add_argument("--json", metavar="FILE", help="write the report to FILE as well")
     args = ap.parse_args(argv)
 
-    report = {"pvj_version": __version__, "python": platform.python_version(),
+    report = {"mctl_version": __version__, "python": platform.python_version(),
               "hardware": hardware.report(), "hardware_decoding": decoding(),
               "clock": clock_sync(), "checks": []}
     report["checks"].append(check("mpv installed", mpv_version))

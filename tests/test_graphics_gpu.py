@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""The graphics stage of pvj-render (D129, slice 3; render/src/gfx.c), run for real, headless, like tests/test_pvj_render.
+"""The graphics stage of mctl-render (D129, slice 3; render/src/gfx.c), run for real, headless, like tests/test_mctl_render.
 
 What is held here:
 * a picture loaded from a file is drawn where it was put, to the pixel, premultiplied, over the final picture and under
@@ -14,7 +14,7 @@ What is held here:
 * several clients at once, each speaking on its own socket, change nothing for the others and leave nothing behind;
 * the output rate with four graphics on (a crawl among them).
 
-Without the program these are skipped, except where PVJ_RENDER_TEST=1 (the CI job pvj-render).
+Without the program these are skipped, except where PVJ_RENDER_TEST=1 (the CI job mctl-render).
 """
 import os
 import random
@@ -26,7 +26,7 @@ import unittest
 
 import tests        # the run's own temp folder (tests/__init__.py)
 from pvj.player import Ipc, Player, PlayerError
-from tests.test_pvj_render import BIN, H, STRICT, W, Renderer, fd_count, need_program, thread_count
+from tests.test_mctl_render import BIN, H, STRICT, W, Renderer, fd_count, need_program, thread_count
 
 import subprocess
 
@@ -69,10 +69,10 @@ class Base(unittest.TestCase):
         return path
 
     def g(self, *command):
-        return self.r("pvj-graphic", *command)
+        return self.r("mctl-graphic", *command)
 
     def slots(self):
-        return self.r("get_property", "pvj-graphics")
+        return self.r("get_property", "mctl-graphics")
 
     def slot(self, n):
         return self.slots()["list"][n - 1]
@@ -112,7 +112,7 @@ class Base(unittest.TestCase):
 
 class StillTest(Base):
     def test_it_says_what_it_is(self):
-        st = self.r("get_property", "pvj-render")
+        st = self.r("get_property", "mctl-render")
         self.assertEqual(st["version"], "0.12.0")
         self.assertEqual(st["graphics"], 8)
         self.assertGreaterEqual(st["graphics-side"], 1024)
@@ -201,7 +201,7 @@ class StillTest(Base):
                 self.g("set", 3, bad)
         self.assertEqual(self.slot(3)["motion"], "crawl", "a refused set changed nothing, not even the valid half of it")
         for nan in ("NaN", "Infinity"):
-            self.assertTrue(self.send_raw('{"command": ["pvj-graphic", "set", 3, {"x": %s}], "request_id": 1}' % nan).find("success") < 0)
+            self.assertTrue(self.send_raw('{"command": ["mctl-graphic", "set", 3, {"x": %s}], "request_id": 1}' % nan).find("success") < 0)
 
     def send_raw(self, line):
         import socket
@@ -328,12 +328,12 @@ class SmallTextureTest(Base):
         need_program(self)
         if not hooks_built():
             if STRICT:
-                self.fail("PVJ_RENDER_TEST=1 and pvj-render was built without TEST_HOOKS=1")
-            self.skipTest("pvj-render was built without TEST_HOOKS=1")
+                self.fail("PVJ_RENDER_TEST=1 and mctl-render was built without TEST_HOOKS=1")
+            self.skipTest("mctl-render was built without TEST_HOOKS=1")
         super().setUp()
 
     def test_a_picture_wider_than_the_node_can_hold_is_refused_in_words(self):
-        self.assertEqual(self.r("get_property", "pvj-render")["graphics-side"], 256)
+        self.assertEqual(self.r("get_property", "mctl-render")["graphics-side"], 256)
         self.assertEqual(self.slots()["side"], 256)
         self.g("load", 1, self.make(256, 40), 256, 40, 1)
         with self.assertRaises(PlayerError) as e:
@@ -547,9 +547,9 @@ class MoveTest(Base):
 
 class PaceTest(Base):
     def rate(self, seconds=2.0):
-        a, t0 = self.r("get_property", "pvj-render"), time.monotonic()
+        a, t0 = self.r("get_property", "mctl-render"), time.monotonic()
         time.sleep(seconds)
-        b, t1 = self.r("get_property", "pvj-render"), time.monotonic()
+        b, t1 = self.r("get_property", "mctl-render"), time.monotonic()
         return (b["flips"] - a["flips"]) / (t1 - t0)
 
     def test_four_graphics_one_of_them_a_crawl_keep_the_output_rate(self):
@@ -559,13 +559,13 @@ class PaceTest(Base):
         self.put(4, 100, 40, 100, 100, WHITE_BGRA, lines=2, motion="typewriter", seconds=1.5)
         for n in (1, 2, 3, 4):
             self.g("show", n)
-        before = self.r("get_property", "pvj-render")["missed-vblanks"]
+        before = self.r("get_property", "mctl-render")["missed-vblanks"]
         flips = self.rate(3.0)
         self.assertGreater(flips, 0.85 * 60, "flips a second with four graphics: %.1f\n%s" % (flips, self.r.stderr()))
         self.assertLessEqual(flips, 62)
         # (missed vblanks are judged in the window and against the flips: a slow runner may miss some, but flips above 85
         # percent of 60 are already asserted, and a stage that cost the frame its time would show in both)
-        missed = self.r("get_property", "pvj-render")["missed-vblanks"] - before
+        missed = self.r("get_property", "mctl-render")["missed-vblanks"] - before
         self.assertLess(missed, 0.25 * flips * 3.0, "vblanks missed in the 3 s: %d" % missed)
 
 
@@ -592,23 +592,23 @@ class ManyClientsTest(Base):
                     try:
                         if op == "load":
                             p, w, h = rng.choice(((picture, 120, 40), (other, 300, 50)))
-                            ipc.request("pvj-graphic", "load", slot, p, w, h, rng.randint(1, 2))
+                            ipc.request("mctl-graphic", "load", slot, p, w, h, rng.randint(1, 2))
                         elif op == "set":
-                            ipc.request("pvj-graphic", "set", slot, {"motion": rng.choice(("none", "fade", "typewriter", "scroll", "crawl")),
+                            ipc.request("mctl-graphic", "set", slot, {"motion": rng.choice(("none", "fade", "typewriter", "scroll", "crawl")),
                                                                      "x": rng.randint(-50, 300), "y": rng.randint(-20, 200),
                                                                      "seconds": rng.random() * 2, "out": rng.random(), "loop": rng.random() < 0.5})
                         elif op == "read":
-                            s = ipc.request("get_property", "pvj-graphics")
+                            s = ipc.request("get_property", "mctl-graphics")
                             if s["bytes"] > s["bytes-max"]:
                                 errors.append("bytes over the limit: %s" % s["bytes"])
                         elif op == "bad":
                             try:
-                                ipc.request("pvj-graphic", "load", slot, "/nope", 10, 10, 1)
+                                ipc.request("mctl-graphic", "load", slot, "/nope", 10, 10, 1)
                                 errors.append("a bad load was taken")
                             except PlayerError:
                                 pass
                         else:
-                            ipc.request("pvj-graphic", op, slot)
+                            ipc.request("mctl-graphic", op, slot)
                     except PlayerError as e:
                         errors.append("%s: %s" % (op, e))
                     n += 1
@@ -640,7 +640,7 @@ class ManyClientsTest(Base):
         b = self.make(200, 50)
         ipcs = [Ipc(self.r.sock, timeout=10.0) for _ in range(2)]
         for round_ in range(40):
-            ts = [threading.Thread(target=lambda i=i, p=p, w=w, h=h: ipcs[i].request("pvj-graphic", "load", 1, p, w, h, 1))
+            ts = [threading.Thread(target=lambda i=i, p=p, w=w, h=h: ipcs[i].request("mctl-graphic", "load", 1, p, w, h, 1))
                   for i, (p, w, h) in enumerate(((a, 100, 100), (b, 200, 50)))]
             for t in ts:
                 t.start()
@@ -696,11 +696,11 @@ class PlayerSideTest(Base):
         classic, calls = self.fake(lambda c: 7 if c[1] == "pid" else PlayerError("mpv: property not found"))
         self.assertIsNone(classic.graphics_stage())
         self.assertIsNone(classic.graphics_stage())
-        self.assertEqual(len([c for c in calls if c[1] == "pvj-render"]), 1, "asked once for this process")
+        self.assertEqual(len([c for c in calls if c[1] == "mctl-render"]), 1, "asked once for this process")
         old, calls = self.fake(lambda c: 7 if c[1] == "pid" else {"version": "0.10.0", "layers": 2, "program-fades": 0})
         self.assertIsNone(old.graphics_stage(), "a 0.10.0 renderer has no stage")
         self.assertIsNone(old.graphics_stage())
-        self.assertEqual(len([c for c in calls if c[1] == "pvj-render"]), 1)
+        self.assertEqual(len([c for c in calls if c[1] == "mctl-render"]), 1)
         odd, _ = self.fake(lambda c: 7 if c[1] == "pid" else {"graphics": True, "graphics-side": "big"})
         self.assertIsNone(odd.graphics_stage(), "words that are not numbers are not a stage")
 

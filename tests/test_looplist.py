@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
 """The loop lists of plain clips (D118): the real Player and the real Lists against the stand-in for mpv on the socket.
-tests/test_pvj_render.py runs the same against the real renderer; what only a node shows is in tools/DEVICE-TESTING.md."""
+tests/test_mctl_render.py runs the same against the real renderer; what only a node shows is in tools/DEVICE-TESTING.md."""
 import os
 import re
 import stat
@@ -30,17 +30,17 @@ class ListMpv(FakeMpv):
         self.position = 0.5
         self.seeks = []
         self.refuse = False
-        self.loads = []             # every loadfile, pvj-crossfade and pvj-source loadfile, whole
+        self.loads = []             # every loadfile, mctl-crossfade and mctl-source loadfile, whole
         self.sources_path = {}
 
     def _do(self, name, args):
-        if name in ("loadfile", "pvj-crossfade"):
+        if name in ("loadfile", "mctl-crossfade"):
             self.loads.append((name,) + tuple(args))
             if self.refuse and args[0].endswith(".ffconcat"):
                 raise ValueError("refused")
         if name == "seek":
             self.seeks.append(tuple(args))
-        if name == "pvj-source":
+        if name == "mctl-source":
             n, what = args[0], args[1]
             if what == "loadfile":
                 self.loads.append((name,) + tuple(args))
@@ -67,10 +67,10 @@ class ListMpv(FakeMpv):
             return 7.0
         if prop == "playlist":
             return [{"filename": f} for f in self.playlist]
-        if prop == "pvj-sources":
+        if prop == "mctl-sources":
             rows = [{"source": 1, "idle": self.path is None, "path": self.path}]
             return rows + [{"source": n, "idle": False, "path": p} for n, p in sorted(self.sources_path.items())]
-        if prop == "pvj-render":
+        if prop == "mctl-render":
             return dict(super()._get(prop), sources=4)
         return super()._get(prop)
 
@@ -218,7 +218,7 @@ class WhichLoadsTest(Base):
         for style in ("crossfade", "wipe-left"):
             self.assertIsNone(self.player.play([self.clip], fade=1.0, style=style, spawn=False))
             load = self.mpv.loads[-1]
-            self.assertEqual(load[0], "pvj-crossfade")
+            self.assertEqual(load[0], "mctl-crossfade")
             self.assertTrue(load[1].endswith(".ffconcat"))
             self.assertEqual(load[3], "keep-open=no,image-display-duration=inf," + looplist.QUEUE)
             self.assertEqual(load[4:], () if style == "crossfade" else (style,))
@@ -243,7 +243,7 @@ class FallbackTest(Base):
         self.player.play([self.make("b.mp4")], spawn=False)
         self.mpv.refuse = True
         self.assertIsNone(self.player.play([self.clip], fade=1.0, spawn=False))
-        self.assertEqual(self.mpv.loads[-1][:2], ("pvj-crossfade", self.clip))
+        self.assertEqual(self.mpv.loads[-1][:2], ("mctl-crossfade", self.clip))
         self.player.play_to(2, [self.clip])
         self.assertEqual(self.mpv.sources_path[2], self.clip)
 
@@ -337,7 +337,7 @@ class TranslationTest(Base):
         self.assertAlmostEqual(self.ask("percent-pos"), 25.0)
         self.assertEqual(self.ask("playlist"), [{"filename": self.clip}])
         self.assertEqual(self.player.playlist_files(), [self.clip])
-        self.assertEqual(self.ask("pvj-sources")[0]["path"], self.clip)
+        self.assertEqual(self.ask("mctl-sources")[0]["path"], self.clip)
         self.assertEqual(self.player.sources_state()[0]["path"] if self.player.sources() > 1 else self.clip, self.clip)
 
     def test_the_status(self):
@@ -352,10 +352,10 @@ class TranslationTest(Base):
         self.player.play_to(2, [self.clip])
         self.mpv.position = 5.0
         ask = self.player.ipc.request
-        self.assertEqual(ask("pvj-source", 2, "get_property", "path"), self.clip)
-        self.assertEqual(ask("pvj-source", 2, "get_property", "duration"), 2.0)
-        self.assertAlmostEqual(ask("pvj-source", 2, "get_property", "time-pos"), 1.0)
-        self.assertEqual(ask("get_property", "pvj-sources")[1]["path"], self.clip)
+        self.assertEqual(ask("mctl-source", 2, "get_property", "path"), self.clip)
+        self.assertEqual(ask("mctl-source", 2, "get_property", "duration"), 2.0)
+        self.assertAlmostEqual(ask("mctl-source", 2, "get_property", "time-pos"), 1.0)
+        self.assertEqual(ask("get_property", "mctl-sources")[1]["path"], self.clip)
 
     def test_a_panel_that_started_again_reads_what_its_player_still_plays(self):
         self.playing(4.5)

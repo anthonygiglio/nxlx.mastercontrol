@@ -2516,7 +2516,7 @@ class LostPlayerTest(NdiApiTest):
         p._pipe, p._pipe_pid, p._pipe_path = True, 41, "/run/pvj-ndi-pipe/ndi.fifo"
         self.assertFalse(p.pipe_restarted("/run/pvj-ndi-pipe/ndi.fifo"))        # the same mpv: nothing was lost
         pid[0] = 77                                                             # another process
-        self.assertFalse(p.pipe_restarted("/run/pvj-capture/capture.fifo"))     # not this pipe
+        self.assertFalse(p.pipe_restarted("/run/mctl-capture/capture.fifo"))     # not this pipe
         self.assertTrue(p.pipe_restarted("/run/pvj-ndi-pipe/ndi.fifo"))
         self.assertFalse(p.pipe_is("/run/pvj-ndi-pipe/ndi.fifo"))               # and it does not play
         self.assertTrue(p.pipe_restarted("/run/pvj-ndi-pipe/ndi.fifo"))         # until something is loaded
@@ -2855,7 +2855,7 @@ class PlayerLetsGoTest(NdiApiTest):
         p = Player.__new__(Player)
         p.ipc, p._lock, p.path = Ipc(), threading.RLock(), None
         self.assertIsNone(p.release_pipe("/run/pvj-ndi-pipe/ndi.fifo"))         # nothing was loaded
-        p._pipe, p._pipe_pid, p._pipe_path = True, 41, "/run/pvj-capture/capture.fifo"
+        p._pipe, p._pipe_pid, p._pipe_path = True, 41, "/run/mctl-capture/capture.fifo"
         self.assertIsNone(p.release_pipe("/run/pvj-ndi-pipe/ndi.fifo"))         # the capture input's pipe plays: not ours to end
         self.assertNotIn(("stop",), sent)
         del sent[:]
@@ -3035,7 +3035,7 @@ class PlayerDidNotOpenTest(NdiApiTest):
         p._pipe_since -= Player.PIPE_OPENING_SECONDS + 0.1
         self.assertIs(p.pipe_stuck("/run/pvj-ndi-pipe/ndi.fifo"), True)
         self.assertEqual(sent, [("get_property", "track-list/count")])
-        self.assertIsNone(p.pipe_stuck("/run/pvj-capture/capture.fifo"))       # not this pipe
+        self.assertIsNone(p.pipe_stuck("/run/mctl-capture/capture.fifo"))       # not this pipe
         tracks[0] = 2
         self.assertIs(p.pipe_stuck("/run/pvj-ndi-pipe/ndi.fifo"), False)
         tracks[0] = PlayerError("no answer")

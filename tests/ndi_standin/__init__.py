@@ -28,6 +28,6 @@ def receivers(path, name, bandwidth, open_now=False):
     bandwidth (SOUND_ALONE or PICTURE); with `open_now`, only those not given back. `path` must be the very file the
     helper's code loaded: the same file loaded again is the same library with the same memory, a copy of it is not."""
     lib = ctypes.CDLL(path)
-    lib.pvj_standin_receivers.restype = ctypes.c_int
-    lib.pvj_standin_receivers.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_int]
-    return lib.pvj_standin_receivers(name.encode("utf-8"), bandwidth, 1 if open_now else 0)
+    lib.mctl_standin_receivers.restype = ctypes.c_int
+    lib.mctl_standin_receivers.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_int]
+    return lib.mctl_standin_receivers(name.encode("utf-8"), bandwidth, 1 if open_now else 0)

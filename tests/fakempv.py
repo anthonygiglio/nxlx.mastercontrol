@@ -54,12 +54,12 @@ class FakeMpv:
         self.dies = False           # True: `quit` ends the process without an answer, as a player that goes at once
         self.scales = False         # True: overlay-add takes a size to draw at (mpv 0.38 on); False refuses it (0.37)
         self.video = (1920, 1080)   # the size of a clip's own picture
-        self.layers = False         # True: it answers as pvj-render with two video layers (D98): `pvj-crossfade` loads
+        self.layers = False         # True: it answers as mctl-render with two video layers (D98): `mctl-crossfade` loads
         #                             a clip as loadfile does and is written down as ("fade", kind, name); False: as
-        #                             mpv, "property not found" for `pvj-render` and "invalid parameter" for the command
+        #                             mpv, "property not found" for `mctl-render` and "invalid parameter" for the command
         self.fades = []             # the seconds of every crossfade asked
         self.moves = False          # True, with `layers`: it says it draws the wipes and slides too (D111)
-        self.fade_styles = []       # the fifth word of every `pvj-crossfade` (None: a crossfade)
+        self.fade_styles = []       # the fifth word of every `mctl-crossfade` (None: a crossfade)
         self.counts = {"scaled": 0, "video stills": 0}     # overlays drawn at a size of their own, stills of the clip alone
         self._reset()
         self._stop = threading.Event()
@@ -179,7 +179,7 @@ class FakeMpv:
             self._now_plays(args[0])
             self.log.append(("load", self.kind(args[0]), os.path.basename(args[0])))
             return None
-        if name == "pvj-crossfade":
+        if name == "mctl-crossfade":
             if not self.layers:
                 raise ValueError("not one of mpv's commands")
             if len(args) == 4 and not self.moves:
@@ -247,7 +247,7 @@ class FakeMpv:
     def _get(self, prop):
         if prop == "pid":
             return self.pid
-        if prop == "pvj-render":
+        if prop == "mctl-render":
             if not self.layers:
                 raise NotFound()
             return dict({"version": "0.2.0", "layers": 2, "fade": "off"}, **({"moves": True} if self.moves else {}))

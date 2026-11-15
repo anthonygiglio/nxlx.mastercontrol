@@ -7,9 +7,9 @@ what is playing (decoder, size, pixel format, the clip's file name); CPU load, m
 firmware has throttled the CPU. It is for the Owner at a soak or a fault, never for a show.
 
 How it is drawn: mpv's `osd-overlay` command with ASS text, in an id of its own (OVERLAY_ID). Classic mpv draws it over
-the clip, user shaders and graphics; pvj-render (0.12.0 on) forwards the same command to its text layer, which is drawn
+the clip, user shaders and graphics; mctl-render (0.12.0 on) forwards the same command to its text layer, which is drawn
 last, over the mapping. It does NOT use `show-text`, which is the one OSD slot the PIN and the recovery codes use, and not
-mpv's stats.lua, which cannot show the system fields, costs more, and on pvj-render would be warped by the mapping.
+mpv's stats.lua, which cannot show the system fields, costs more, and on mctl-render would be warped by the mapping.
 
 Show safety (the owner's rules; D133). All of these are tested:
 
@@ -290,14 +290,14 @@ class StatsOverlay:
 
     def _probe(self):
         """("classic" or "render", pid) of the player now, or StatsError. A renderer from before osd-overlay is refused in
-        plain words (the capability is `osd-overlay` in its `pvj-render` property)."""
+        plain words (the capability is `osd-overlay` in its `mctl-render` property)."""
         ipc = self._ipc()
         try:
             pid = ipc.request("get_property", "pid")
         except PlayerError as e:
             raise StatsError(409, "The player is not running, so there is no screen to draw on (%s)." % e)
         try:
-            state = ipc.request("get_property", "pvj-render")
+            state = ipc.request("get_property", "mctl-render")
         except PlayerError as e:
             if str(e).startswith("mpv: "):
                 return "classic", pid               # mpv's own refusal: classic mpv has no such property
@@ -305,12 +305,12 @@ class StatsOverlay:
         if isinstance(state, dict) and state.get("osd-overlay") is True:
             return "render", pid
         raise StatsError(409, "The new renderer on this node is too old to draw the stats overlay (it is version %s; the overlay "
-                              "needs 0.12.0). Update the node's pvj-render." % (state.get("version") if isinstance(state, dict) else "unknown"))
+                              "needs 0.12.0). Update the node's mctl-render." % (state.get("version") if isinstance(state, dict) else "unknown"))
 
     def _held(self):
         """The connection the overlay is drawn through, kept open. mpv ties an osd-overlay to the client that made it and
         removes it when that connection closes, and every request of pvj.player.Ipc is a connection of its own: drawn through
-        those, the text vanished at once on classic mpv (found on node-02, 2026-11-11; pvj-render keeps its overlays itself). So
+        those, the text vanished at once on classic mpv (found on node-02, 2026-11-11; mctl-render keeps its overlays itself). So
         the overlay is sent here, and ending the connection ends the overlay on classic mpv too."""
         if self._link is None:
             self._link = self._ipc().hold()
@@ -341,9 +341,9 @@ class StatsOverlay:
             raise
 
     def _remove(self, mode=None, close=False):
-        """Take the text off. Sent through the held connection (or, on pvj-render with none, directly: that renderer keeps the
+        """Take the text off. Sent through the held connection (or, on mctl-render with none, directly: that renderer keeps the
         text itself until it is told). With `close` the connection is ended as well, which on classic mpv takes the text off
-        by itself. `_drawn` stays True only when pvj-render did not take it, so the next look tries again; a connection that
+        by itself. `_drawn` stays True only when mctl-render did not take it, so the next look tries again; a connection that
         failed is ended, and that takes the text off on classic mpv. True when it is off."""
         mode = mode or self.mode
         ok = True
@@ -466,7 +466,7 @@ class StatsOverlay:
                 ("get_property", "video-params"), ("get_property", "estimated-vf-fps"),
                 ("get_property", "frame-drop-count"), ("get_property", "decoder-frame-drop-count")]
         if self.mode == "render":
-            asks += [("get_property", "pvj-render"), ("get_property", "pvj-shaders")]
+            asks += [("get_property", "mctl-render"), ("get_property", "mctl-shaders")]
         try:
             got = ipc.batch(asks)
         except PlayerError:

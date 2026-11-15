@@ -104,10 +104,10 @@ _IMG = re.compile(r"\bIMG_(?:PIXEL|NORM_PIXEL|THIS_PIXEL|THIS_NORM_PIXEL|SIZE)\b
 # The five ways a filter may read the playing picture, each with what it becomes in the player's text (effects.py
 # defines those functions). The picture's name is the first argument and is not passed on: no other texture can be
 # named. A call that names anything else is left as it is, and what is left is refused.
-_IMG_CALLS = ((re.compile(r"\bIMG_THIS_(?:NORM_)?PIXEL(\s*)\((\s*)%s(\s*)\)" % IMAGE), "pvj_img_this()"),
-              (re.compile(r"\bIMG_NORM_PIXEL(\s*)\((\s*)%s(\s*)," % IMAGE), "pvj_img_norm("),
-              (re.compile(r"\bIMG_PIXEL(\s*)\((\s*)%s(\s*)," % IMAGE), "pvj_img_px("),
-              (re.compile(r"\bIMG_SIZE(\s*)\((\s*)%s(\s*)\)" % IMAGE), "pvj_img_size()"))
+_IMG_CALLS = ((re.compile(r"\bIMG_THIS_(?:NORM_)?PIXEL(\s*)\((\s*)%s(\s*)\)" % IMAGE), "mctl_img_this()"),
+              (re.compile(r"\bIMG_NORM_PIXEL(\s*)\((\s*)%s(\s*)," % IMAGE), "mctl_img_norm("),
+              (re.compile(r"\bIMG_PIXEL(\s*)\((\s*)%s(\s*)," % IMAGE), "mctl_img_px("),
+              (re.compile(r"\bIMG_SIZE(\s*)\((\s*)%s(\s*)\)" % IMAGE), "mctl_img_size()"))
 _HOST_NAMES = re.compile(r"\b_%s_\w*" % IMAGE)
 # What mpv defines for a texture a hook binds. An effect's text binds the picture's own planes besides the hooked
 # picture (effects.py), so a filter could otherwise read those through the player's names.
@@ -122,9 +122,9 @@ _PLAYER_CLOCK = re.compile(r"\b(?:frame|random)\b")
 _CLOCK = re.compile(r"\b(?:TIME|TIMEDELTA|FRAMEINDEX|DATE)\b")
 _FLASH = re.compile(r"strob|flash|flicker|blink", re.I)
 # Names the player and this translator own, in any letter case: the hook, mpv's textures and their companions.
-_OWN = re.compile(r"\b(?:pvj_\w*|hook|hooked\w*|texture\d+|texcoord\d+|texture_(?:size|rot|off)\d+|pixel_size\d+|texmap\d+"
+_OWN = re.compile(r"\b(?:mctl_\w*|hook|hooked\w*|texture\d+|texcoord\d+|texture_(?:size|rot|off)\d+|pixel_size\d+|texmap\d+"
                   r"|out_color|input_size|target_size|tex_offset)\b", re.I)
-# Two names that many ISF files use and the player owns. They are not refused: every use is renamed to a pvj_ name
+# Two names that many ISF files use and the player owns. They are not refused: every use is renamed to a mctl_ name
 # (which a file cannot write itself), so the player's own `out_color` and `color` are never touched by a file.
 _RENAMED = "out_color"                  # in the code, spelled exactly so; any other letter case stays refused
 _INPUT_RENAMED = ("color",)             # as an input's name, in any letter case
@@ -198,9 +198,9 @@ def _input(spec, seen, kind=GENERATOR):
         raise ShaderError("an input name must be 1 to 32 letters, digits or _ and start with a letter")
     low = name.lower()
     # One rule for a name that is a reserved word in some letter case: renamed() says whether it is written into the
-    # shader under a pvj_in_ name (see there) or refused. The prefixes, a double underscore and the player's own
+    # shader under a mctl_in_ name (see there) or refused. The prefixes, a double underscore and the player's own
     # patterns are refused whatever renamed() says.
-    if (low.startswith(("gl_", "pvj_", "isf_", "hooked")) or "__" in name or _OWN.fullmatch(name)
+    if (low.startswith(("gl_", "mctl_", "isf_", "hooked")) or "__" in name or _OWN.fullmatch(name)
             or (low in RESERVED_LOWER and not renamed(name))):
         raise ShaderError("the input name %s is taken by the shader language or the player" % name)
     if name in seen:
@@ -298,7 +298,7 @@ def _input(spec, seen, kind=GENERATOR):
 
 
 def renamed(name):
-    """Whether an input of this name is written into the shader under a pvj_in_ name instead of its own. One rule:
+    """Whether an input of this name is written into the shader under a mctl_in_ name instead of its own. One rule:
     the name is a reserved word in another letter case than the one the word is reserved in, and the word is the
     language's or ISF's (`time` beside ISF's TIME, `Date`, `Float`, `Mix`). GLSL tells letter cases apart, so such a
     name clashes with nothing; it was refused only because the list is compared in lower case. It is renamed all
@@ -311,8 +311,8 @@ def renamed(name):
 
 
 def ident(name):
-    """The name an input has inside the generated shader: its own, or a pvj_in_ name (see renamed)."""
-    return "pvj_in_" + name if renamed(name) else name
+    """The name an input has inside the generated shader: its own, or a mctl_in_ name (see renamed)."""
+    return "mctl_in_" + name if renamed(name) else name
 
 
 def _no_constant(word):
@@ -484,7 +484,7 @@ def _passes(passes, persistent):
         if last:
             raise ShaderError("the last pass draws into a TARGET (%s): the last pass must draw the picture itself" % _text(str(name), 32))
         if not isinstance(name, str) or not INPUT_NAME.fullmatch(name) or name.lower() in RESERVED_LOWER or _OWN.fullmatch(name) \
-                or name.lower().startswith(("gl_", "pvj_", "isf_", "hooked")) or "__" in name or name == IMAGE:
+                or name.lower().startswith(("gl_", "mctl_", "isf_", "hooked")) or "__" in name or name == IMAGE:
             raise ShaderError("pass %d's TARGET must be a plain name of 1 to 32 letters, digits or _ that is not the language's or the player's" % (n + 1))
         if name not in index:
             if len(targets) == MAX_TARGETS:
@@ -515,14 +515,14 @@ def _passes(passes, persistent):
 
 
 def _target_calls(text, targets, keep=True):
-    """`text` with every IMG_ call on a buffer exchanged for the renderer's own function (pvj_t<i>_...), or (with
+    """`text` with every IMG_ call on a buffer exchanged for the renderer's own function (mctl_t<i>_...), or (with
     `keep` false, to see what is left) for nothing. Line breaks inside a call are kept."""
     for i, t in enumerate(targets):
         n = re.escape(t["name"])
-        for pattern, new in ((r"\bIMG_THIS_(?:NORM_)?PIXEL(\s*)\((\s*)%s(\s*)\)" % n, "pvj_t%d_this()" % i),
-                             (r"\bIMG_NORM_PIXEL(\s*)\((\s*)%s(\s*)," % n, "pvj_t%d_norm(" % i),
-                             (r"\bIMG_PIXEL(\s*)\((\s*)%s(\s*)," % n, "pvj_t%d_px(" % i),
-                             (r"\bIMG_SIZE(\s*)\((\s*)%s(\s*)\)" % n, "pvj_t%d_size()" % i)):
+        for pattern, new in ((r"\bIMG_THIS_(?:NORM_)?PIXEL(\s*)\((\s*)%s(\s*)\)" % n, "mctl_t%d_this()" % i),
+                             (r"\bIMG_NORM_PIXEL(\s*)\((\s*)%s(\s*)," % n, "mctl_t%d_norm(" % i),
+                             (r"\bIMG_PIXEL(\s*)\((\s*)%s(\s*)," % n, "mctl_t%d_px(" % i),
+                             (r"\bIMG_SIZE(\s*)\((\s*)%s(\s*)\)" % n, "mctl_t%d_size()" % i)):
             text = re.sub(pattern, lambda m, new=new: (new if keep else " ") + "\n" * "".join(m.groups()).count("\n"), text)
     return text
 
@@ -650,15 +650,15 @@ def parse(source, kind=GENERATOR, passes=False):
         raise ShaderError("the code must have exactly one void main()")
     # The code as the player will get it, made once per file: comments gone, ISF's names exchanged for ours (and, on
     # the New renderer, the buffers' reads for its own functions).
-    code = re.sub(r"\bgl_FragColor\b", "pvj_color", _target_calls(whole, targets))
-    code = re.sub(r"\bgl_FragCoord\b", "pvj_coord", code)
-    code = re.sub(r"\b%s\b" % _RENAMED, "pvj_u_" + _RENAMED, code)
+    code = re.sub(r"\bgl_FragColor\b", "mctl_color", _target_calls(whole, targets))
+    code = re.sub(r"\bgl_FragCoord\b", "mctl_coord", code)
+    code = re.sub(r"\b%s\b" % _RENAMED, "mctl_u_" + _RENAMED, code)
     for i in clean:
         if ident(i["name"]) != i["name"]:
             code = re.sub(r"\b%s\b" % i["name"], ident(i["name"]), code)
     if kind == FILTER:
         code = _read_calls(code)
-    code = _MAIN.sub("void pvj_main()", code).rstrip()
+    code = _MAIN.sub("void mctl_main()", code).rstrip()
     cats = head.get("CATEGORIES")
     cats = [c for c in (_text(c, 40) for c in (cats if isinstance(cats, list) else [])[:16]) if c]
     out = {"description": _text(head.get("DESCRIPTION")), "credit": _text(head.get("CREDIT")), "cost": _text(head.get("COST")),
@@ -811,71 +811,71 @@ def translate(parsed, size, values=None, hue=0.0, offset=0.0, desc="nxlx shader"
              # compiled, and complained about, afresh.
              "// %s" % desc,
              "#if defined(GL_ES) && (__VERSION__ >= 300 || defined(GL_FRAGMENT_PRECISION_HIGH))",
-             "precision highp float;", "precision highp int;", "#define PVJ_HP highp",
-             "#else", "#define PVJ_HP", "#endif",
+             "precision highp float;", "precision highp int;", "#define MCTL_HP highp",
+             "#else", "#define MCTL_HP", "#endif",
              "#define RENDERSIZE vec2(%s, %s)" % (_f(width), _f(height)),
-             "#define TIME pvj_time",
+             "#define TIME mctl_time",
              "#define TIMEDELTA %s" % _f(1.0 / CARRIER_FPS),
              "#define FRAMEINDEX frame",
              "#define PASSINDEX 0",
              "#define DATE vec4(%s, %s, %s, %s)" % (_f(t.tm_year), _f(t.tm_mon), _f(t.tm_mday), _f(t.tm_hour * 3600 + t.tm_min * 60 + t.tm_sec)),
-             "#define isf_FragNormCoord pvj_norm",
-             "#define vv_FragNormCoord pvj_norm",
-             "PVJ_HP float pvj_time;", "vec2 pvj_norm;", "vec4 pvj_coord;", "vec4 pvj_color;"]
+             "#define isf_FragNormCoord mctl_norm",
+             "#define vv_FragNormCoord mctl_norm",
+             "MCTL_HP float mctl_time;", "vec2 mctl_norm;", "vec4 mctl_coord;", "vec4 mctl_color;"]
     lines += input_lines(parsed, values)
     # The file's own line numbers, for what the compiler says. "#line n" makes the next line n on OpenGL ES and from
     # GLSL 3.30 on. Before that it makes it n + 1 (the GLSL 1.40 specification, 3.3: "as if it is compiling at line
     # number line+1"; 3.30 says "line number line"), and GLSL 1.40 is what mpv makes on a Raspberry Pi 4, where a
     # refused generator named a line one too high. The same lines as in an effect's text (effects._block).
-    lines += ["#if defined(GL_ES) || __VERSION__ >= 330", "#define PVJ_LINE %d" % parsed["line"], "#else",
-              "#define PVJ_LINE %d" % max(0, parsed["line"] - 1), "#endif",
-              "#line PVJ_LINE", parsed["code"], "",
+    lines += ["#if defined(GL_ES) || __VERSION__ >= 330", "#define MCTL_LINE %d" % parsed["line"], "#else",
+              "#define MCTL_LINE %d" % max(0, parsed["line"] - 1), "#endif",
+              "#line MCTL_LINE", parsed["code"], "",
               "vec4 hook() {"]
     if anchor is None:
         # frame = hi * 512 + lo, in whole numbers small enough for 16 bits; hi starts again after 8192 (38.8 hours)
-        lines += ["    int pvj_hi = frame / 512;",
-                  "    int pvj_lo = frame - pvj_hi * 512;",
-                  "    pvj_hi = pvj_hi - (pvj_hi / 8192) * 8192;"]
+        lines += ["    int mctl_hi = frame / 512;",
+                  "    int mctl_lo = frame - mctl_hi * 512;",
+                  "    mctl_hi = mctl_hi - (mctl_hi / 8192) * 8192;"]
     else:
         # The carrier's frame number, read from its colour (flat, so any place will do), as hi * 512 + lo again;
         # then the frames since the anchor, which stay right when the three bytes start again from 0.
-        lines += ["    PVJ_HP vec3 pvj_px = floor(HOOKED_tex(vec2(0.5, 0.5)).rgb * 255.0 + 0.5);",
-                  "    int pvj_g = int(pvj_px.g);",
-                  "    int pvj_lo = int(pvj_px.r) + 256 * (pvj_g - (pvj_g / 2) * 2) - %d;" % (anchor % 512),
-                  "    int pvj_hi = pvj_g / 2 + 128 * int(pvj_px.b) - %d;" % (anchor // 512),
-                  "    if (pvj_lo < 0) { pvj_lo += 512; pvj_hi -= 1; }",
-                  "    if (pvj_hi < 0) { pvj_hi += 32768; }"]
-    lines += ["    PVJ_HP float pvj_k = 512.0;",
-              "    pvj_time = (float(pvj_hi) * pvj_k + float(pvj_lo)) / %s%s + %s;" % (
+        lines += ["    MCTL_HP vec3 mctl_px = floor(HOOKED_tex(vec2(0.5, 0.5)).rgb * 255.0 + 0.5);",
+                  "    int mctl_g = int(mctl_px.g);",
+                  "    int mctl_lo = int(mctl_px.r) + 256 * (mctl_g - (mctl_g / 2) * 2) - %d;" % (anchor % 512),
+                  "    int mctl_hi = mctl_g / 2 + 128 * int(mctl_px.b) - %d;" % (anchor // 512),
+                  "    if (mctl_lo < 0) { mctl_lo += 512; mctl_hi -= 1; }",
+                  "    if (mctl_hi < 0) { mctl_hi += 32768; }"]
+    lines += ["    MCTL_HP float mctl_k = 512.0;",
+              "    mctl_time = (float(mctl_hi) * mctl_k + float(mctl_lo)) / %s%s + %s;" % (
                   _f(CARRIER_FPS), "" if speed == 1.0 else " * %s" % _f(speed), _f(offset, 10)),
-              "    pvj_norm = vec2(HOOKED_pos.x, 1.0 - HOOKED_pos.y);",
-              "    pvj_coord = vec4(pvj_norm * RENDERSIZE, 0.0, 1.0);",
-              "    pvj_color = vec4(0.0, 0.0, 0.0, 1.0);",
-              "    pvj_main();",
-              "    vec3 c = clamp(pvj_color.rgb, 0.0, 1.0) * clamp(pvj_color.a, 0.0, 1.0);"]
+              "    mctl_norm = vec2(HOOKED_pos.x, 1.0 - HOOKED_pos.y);",
+              "    mctl_coord = vec4(mctl_norm * RENDERSIZE, 0.0, 1.0);",
+              "    mctl_color = vec4(0.0, 0.0, 0.0, 1.0);",
+              "    mctl_main();",
+              "    vec3 c = clamp(mctl_color.rgb, 0.0, 1.0) * clamp(mctl_color.a, 0.0, 1.0);"]
     if hue:
         h = hue_matrix(hue)
         lines.append("    c = clamp(mat3(%s) * c, 0.0, 1.0);" % ", ".join(_f(h[r * 3 + col]) for col in range(3) for r in range(3)))
     if gain != 1.0:
         lines.append("    c = clamp(c * %s, 0.0, 1.0);" % _f(gain))
     # half a step of noise against bands in slow gradients: a fine diagonal pattern from the pixel's own position
-    lines += ["    c += (fract(pvj_coord.x * 0.6113 + pvj_coord.y * 0.3791) - 0.5) / 255.0;",
+    lines += ["    c += (fract(mctl_coord.x * 0.6113 + mctl_coord.y * 0.3791) - 0.5) / 255.0;",
               "    return vec4(c, 1.0);",
               "}", ""]
     return "\n".join(lines)
 
 
 # ---- the New renderer's own programs (D106) --------------------------------------------------------------------------
-# pvj-render runs a generator or an effect itself, with its inputs as uniforms that are set while it plays: a value
+# mctl-render runs a generator or an effect itself, with its inputs as uniforms that are set while it plays: a value
 # that moves is never compiled again. The file it reads is not an mpv user shader but a "program file" (render/src/fx.c
 # says what it takes): the same checked code as translate() writes, the inputs with their first values, and the
 # controls. Nothing of the ISF file but the code reaches it, and the code is the one parse() made.
-PROGRAM_HEAD = "//!PVJ 1\n"
+PROGRAM_HEAD = "//!MCTL 1\n"
 _NATIVE_TYPES = {"float": "float", "bool": "bool", "event": "bool", "long": "long", "color": "color", "point2D": "point2D"}
 
 
 def native_value(i, v):
-    """One input's value as the program file and pvj-shader set carry it (bool, int, float or a list of floats)."""
+    """One input's value as the program file and mctl-shader set carry it (bool, int, float or a list of floats)."""
     if i["type"] in ("bool", "event"):
         return bool(v)
     if i["type"] == "long":
@@ -886,7 +886,7 @@ def native_value(i, v):
 
 
 def native_values(parsed, values):
-    """{name in the code: value} for every input named in `values` (checked values), for pvj-shader set."""
+    """{name in the code: value} for every input named in `values` (checked values), for mctl-shader set."""
     kinds = {i["name"]: i for i in parsed["inputs"]}
     return {ident(n): native_value(kinds[n], v) for n, v in values.items() if n in kinds}
 
@@ -930,7 +930,7 @@ def translate_native(parsed, size, values=None, hue=0.0, offset=0.0, speed=1.0, 
     speed, gain = _num(speed, "speed", SPEED_MAX), _num(gain, "brightness", GAIN_MAX)
     if speed < SPEED_MIN or gain < GAIN_MIN:
         raise ShaderError("speed and brightness cannot be below 0")
-    lines = ["//!PVJ 1", "//!KIND generator", "//!SIZE %d %d" % (width, height), "//!LINE %d" % parsed["line"]]
+    lines = ["//!MCTL 1", "//!KIND generator", "//!SIZE %d %d" % (width, height), "//!LINE %d" % parsed["line"]]
     lines += native_passes(parsed)
     lines += native_inputs(parsed, values)
     lines += ["//!CONTROL speed %s" % _f(speed), "//!CONTROL hue %s" % _f(hue), "//!CONTROL gain %s" % _f(gain),
@@ -939,8 +939,8 @@ def translate_native(parsed, size, values=None, hue=0.0, offset=0.0, speed=1.0, 
 
 
 # What stands in on the New renderer when a generator is refused and there is none to go back to (BLACK, above).
-BLACK_NATIVE = "\n".join(["//!PVJ 1", "//!KIND generator", "//!SIZE 16 16", "//!LINE 1", "//!CODE",
-                          "void pvj_main() { pvj_color = vec4(0.0, 0.0, 0.0, 1.0); }", ""])
+BLACK_NATIVE = "\n".join(["//!MCTL 1", "//!KIND generator", "//!SIZE 16 16", "//!LINE 1", "//!CODE",
+                          "void mctl_main() { mctl_color = vec4(0.0, 0.0, 0.0, 1.0); }", ""])
 
 
 def player_native(player):
@@ -953,7 +953,7 @@ def player_native(player):
 
 
 def native_send(parsed, values, held):
-    """Every input's value for pvj-shader set: the value given or held down, else its DEFAULT (an event that is not
+    """Every input's value for mctl-shader set: the value given or held down, else its DEFAULT (an event that is not
     held is let go). By the name the code knows it by."""
     merged = dict(values, **held)
     return native_values(parsed, {i["name"]: merged.get(i["name"], i["default"]) for i in parsed["inputs"]})
@@ -1059,14 +1059,14 @@ class LogTap:
 
 _COMPILER_LINE = re.compile(r"^(?:(ERROR|WARNING): )?\d+:(\d+)(?:\(\d+\))?: (?:(error|warning): )?(.*)$", re.I)
 _SOURCE_LINE = re.compile(r"^\[\s*\d+\]( |$)")                 # mpv prints the shader it could not compile, numbered
-_INTERNAL = re.compile(r"\bpvj_\w*|\bPVJ_\w*|\bHOOKED\w*|//!|^\s*#|[;{}]\s*$")
+_INTERNAL = re.compile(r"\bmctl_\w*|\bMCTL_\w*|\bHOOKED\w*|//!|^\s*#|[;{}]\s*$")
 
 
 def shader_errors(lines):
     """What the player said about a shader it refused, as one short message, or "" if it said nothing of the kind.
     mpv prints the whole shader and then the GPU compiler's log, all at error level, from its video output. Only the
     compiler's errors are passed on: its warnings are left out (a refused shader's log also carries warnings about
-    this translator's own pvj_ names, which mean nothing to the person), and so is every line of the shader text."""
+    this translator's own mctl_ names, which mean nothing to the person), and so is every line of the shader text."""
     mine = [t for p, level, t in lines if level in ("error", "fatal") and p.startswith("vo/") and not _SOURCE_LINE.match(t)]
     if not any(re.search(r"shader|compile|link log|Unrecognized command|hook", t, re.I) for t in mine):
         return ""

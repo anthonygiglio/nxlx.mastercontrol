@@ -2,18 +2,18 @@
 # SPDX-License-Identifier: Apache-2.0
 """A screen that comes after the player has started (D95, D90).
 
-The order at a show is the Pi boots, then the projector warms up. pvj-render cannot start without a screen
+The order at a show is the Pi boots, then the projector warms up. mctl-render cannot start without a screen
 (`render/src/out.c`: "no screen is connected", exit 2), so the player's service falls back to classic mpv, and classic
-mpv takes a screen when one comes. Nothing then brought the box back to pvj-render, though the owner chose it.
+mpv takes a screen when one comes. Nothing then brought the box back to mctl-render, though the owner chose it.
 
 When the fallback was only for want of a screen, the player starts a small watcher before it becomes mpv. The watcher
 reads the connector status files under /sys/class/drm (any connector on any card, none hard-coded: the same
 `hardware.drm_connectors` that screenmode reads) once a second. When a screen has stayed connected for SETTLE_SECONDS,
 it ends the player's process, and systemd (`Restart=always`) starts the service again by its normal path: the screen's
-mode is chosen as at any start and pvj-render is tried, with the same gate as ever (a pvj-render that fails to start
+mode is chosen as at any start and mctl-render is tried, with the same gate as ever (a mctl-render that fails to start
 or ends twice stays on classic). It is not a restart loop: after a switch the next one waits WAITS in turn (30 s, 60 s,
 120 s, then 300 s). There is no total: a no-screen fallback never leaves the box on classic for the rest of the boot, it only
-makes it wait longer. The wait starts again at 30 s once the last switch is more than RESET_SECONDS old, i.e. pvj-render
+makes it wait longer. The wait starts again at 30 s once the last switch is more than RESET_SECONDS old, i.e. mctl-render
 has drawn that long since. The first switch of a boot has no wait.
 
 The switch times are kept in STATE in the player's state folder (`paths.player_state_dir`, a StateDirectory= of the
@@ -34,25 +34,25 @@ POLL_SECONDS = 1.0
 SETTLE_SECONDS = 3.0            # a screen must stay connected this long (its modes are read after the kernel has them)
 GAP_SECONDS = 30.0              # the floor of a watcher that cannot keep a count
 WAITS = (30.0, 60.0, 120.0, 300.0)      # the wait after the 1st, 2nd, 3rd and later switch of a run of switches
-RESET_SECONDS = 600.0           # a switch this old (pvj-render has drawn since) no longer counts: the waits start again
+RESET_SECONDS = 600.0           # a switch this old (mctl-render has drawn since) no longer counts: the waits start again
 KEEP = 8                        # switches kept in the file
 
-# renderer.Supervisor.run's words for the two ends that exit 2 gives: pvj-render ends with 2 when it has no screen with a
+# renderer.Supervisor.run's words for the two ends that exit 2 gives: mctl-render ends with 2 when it has no screen with a
 # mode (render/src/out.c), before it answers ("did not start") or after it has drawn, when the screen went away and
 # presenting failed ("ended twice in a row"). Any other exit code is a crash, and stays on classic.
-NO_SCREEN_WHY = ("pvj-render did not start (exit 2)", "pvj-render ended twice in a row (exit 2)")
+NO_SCREEN_WHY = ("mctl-render did not start (exit 2)", "mctl-render ended twice in a row (exit 2)")
 
 
 def connected_screens(sysfs):
-    """The names of the screens pvj-render could draw on in hardware.drm_connectors()' list: status connected AND at
-    least one mode (a projector says "connected" before its EDID is read, and pvj-render takes only a connector with
+    """The names of the screens mctl-render could draw on in hardware.drm_connectors()' list: status connected AND at
+    least one mode (a projector says "connected" before its EDID is read, and mctl-render takes only a connector with
     modes: out.c, pick_connector). A writeback connector is not a screen."""
     return sorted(c["connector"] for c in sysfs
                   if c.get("status") == "connected" and c.get("modes") and not str(c.get("connector", "")).lower().startswith("writeback"))
 
 
 def no_screen_fallback(why, sysfs):
-    """True when pvj-render ended with exit 2 (NO_SCREEN_WHY) AND no screen with a mode is connected now: the one kind of
+    """True when mctl-render ended with exit 2 (NO_SCREEN_WHY) AND no screen with a mode is connected now: the one kind of
     fallback that a screen can undo. A board whose /sys lists no connector at all cannot say; any other end is a crash."""
     return bool(sysfs) and why in NO_SCREEN_WHY and not connected_screens(sysfs)
 
@@ -136,8 +136,8 @@ class Watcher:
             screenmode.write_json(self.path, {"boot": self.boot, "switches": switches})
         except OSError:
             pass                    # said at the start if the file cannot be written; the next watcher then has the floor
-        self.log("pvj-player: renderer: a screen is connected now (%s) and pvj-render did not start only because there "
-                 "was none; restarting the player once so that pvj-render draws (the next switch waits at least %d s)"
+        self.log("pvj-player: renderer: a screen is connected now (%s) and mctl-render did not start only because there "
+                 "was none; restarting the player once so that mctl-render draws (the next switch waits at least %d s)"
                  % (", ".join(names), wait_next))
         self.end_player()
         return True
@@ -176,7 +176,7 @@ def start(rundir, log, env=None, boot=None):
         began = start_time(pid)
         if began is None:
             return False
-        log("pvj-player: renderer: no screen with a mode is connected; watching for one, to start pvj-render when it comes")
+        log("pvj-player: renderer: no screen with a mode is connected; watching for one, to start mctl-render when it comes")
         child = os.fork()
     except Exception:
         return False

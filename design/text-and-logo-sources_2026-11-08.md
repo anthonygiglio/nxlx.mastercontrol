@@ -29,13 +29,13 @@ Words used in this document:
 
 | Fact | Where |
 | --- | --- |
-| Sources 2 to 8 are one libmpv core each in `pvj-render`; source 1 is the player. The mapping picks a source per surface. | D101, `pvj/PANEL.md` section 12 |
-| Generators (ISF shaders) and effects are drawn by `pvj-render` itself, with values set every frame; each source has a chain of up to 3 effects. | D106, D74, D55 |
+| Sources 2 to 8 are one libmpv core each in `mctl-render`; source 1 is the player. The mapping picks a source per surface. | D101, `pvj/PANEL.md` section 12 |
+| Generators (ISF shaders) and effects are drawn by `mctl-render` itself, with values set every frame; each source has a chain of up to 3 effects. | D106, D74, D55 |
 | One overlay picture (mpv `overlay-add`, id 30 after the review of slice 2; it was 10) is the mask list: up to 8 PNGs combined by mpv into one premultiplied BGRA picture at screen size, in a worker thread, newest change wins. Works on classic mpv too. | D100, `pvj/overlay.py` |
-| `pvj-render` has a "text layer": a second libmpv that plays nothing and draws overlays and `show-text` above everything. | `render/src/main.c` |
+| `mctl-render` has a "text layer": a second libmpv that plays nothing and draws overlays and `show-text` above everything. | `render/src/main.c` |
 | Media upload: Operator and up, one at a time, hidden temp file, size and rate limits, extension list `VIDEO + IMAGE + AUDIO`. Images are `.png .jpg .jpeg .bmp .gif` and are playable as clips. There are no thumbnails. | `pvj/api.py`, `pvj/player.py` |
 | Fonts on the node: Archivo and JetBrains Mono (OFL), bundled for the panel's Signal look as web fonts only. `LICENSES/OFL-1.1.txt` is in the repo. | `pvj/web/fonts`, D54 |
-| Tiers: `hardware.tier()` gives lean (Pi 3, and unknown boards by D122), standard (Pi 4, Pi 400, CM4), full (Pi 5, x86). A Pi 3's graphics chip is OpenGL ES 2, so it runs classic mpv, never `pvj-render`. | D122, D123, journal 2026-11-07 board tiers |
+| Tiers: `hardware.tier()` gives lean (Pi 3, and unknown boards by D122), standard (Pi 4, Pi 400, CM4), full (Pi 5, x86). A Pi 3's graphics chip is OpenGL ES 2, so it runs classic mpv, never `mctl-render`. | D122, D123, journal 2026-11-07 board tiers |
 | Roles: Owner (`full`), Operator (`live`), Guest (`view`). A Guest may only send a fixed list (`policy.GUEST`). | `pvj/PANEL.md` section 1 |
 | No Python imaging library on the node (no Pillow, no numpy). | D100 |
 
@@ -95,8 +95,8 @@ then drawn by whatever draws the screen on that node.
 
 | Tier | Drawn by | Static text and logo | Fade | Typewriter | Scroll, crawl | Key | Effects | As Source N |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Full (Pi 5, desktop) and standard (Pi 4, Pi 400, CM4) on the New renderer | `pvj-render` GPU, a new graphics stage (section 3.1) | yes | yes, per frame | yes, per frame | yes, per frame | live on the GPU | up to 3, live | yes, on a source slot |
-| Standard or full, Classic renderer chosen | mpv `overlay-add`, small bitmaps, no `pvj-render` | yes | stepped, about 12 steps a second | stepped, about 12 steps a second | refused with plain words, unless the spike below passes | baked in when the picture is built | baked in (colour effects only) | text on black only |
+| Full (Pi 5, desktop) and standard (Pi 4, Pi 400, CM4) on the New renderer | `mctl-render` GPU, a new graphics stage (section 3.1) | yes | yes, per frame | yes, per frame | yes, per frame | live on the GPU | up to 3, live | yes, on a source slot |
+| Standard or full, Classic renderer chosen | mpv `overlay-add`, small bitmaps, no `mctl-render` | yes | stepped, about 12 steps a second | stepped, about 12 steps a second | refused with plain words, unless the spike below passes | baked in when the picture is built | baked in (colour effects only) | text on black only |
 | Lean (Pi 3, unknown boards) | same as Classic: mpv `overlay-add` | yes | stepped | stepped | refused, unless the spike passes | baked in | baked in (colour effects only) | text on black only |
 
 "Baked in" means the rasteriser applies the key and the colour effect once, when the graphic changes, so nothing is
@@ -109,7 +109,7 @@ node.)
 go to the lean tier at no per-frame Python cost. It is not known whether the OSD's clock advances the ASS time. The
 spike decides it. If it fails, the table above stands.
 
-### 3.1 The graphics stage in `pvj-render` (standard and full)
+### 3.1 The graphics stage in `mctl-render` (standard and full)
 
 - Each on graphic is one texture (premultiplied RGBA) and one set of per-frame numbers: position, scale, rotation,
   opacity, and for motion a time value. The rasteriser writes the picture to a file in a runtime folder (like the
@@ -487,7 +487,7 @@ real boards (Pi 4 and Pi 3 on the test rig, the desktop; the X27 only for the fi
 | --- | --- | --- | --- |
 | 1 | **The rasteriser and safe logo upload.** `pvj-raster` (PNG, JPEG, SVG to normalised PNG), its socket-activated unit, the graphics store, Library > Graphics tab with upload, thumbnails, rename, delete, the limits of 7.2. Nothing is drawn yet. Then the **independent review** (7.5) before slice 2 builds on it. | Logos can be uploaded safely and seen as thumbnails. | Pi 4 and Pi 3: upload a 3 MB PNG, a JPG, a clean SVG; a text-in-SVG and a 12 MB PNG are refused in plain words; a truncated PNG is refused; node memory and CPU do not move during a refused bomb; `systemctl status` shows the unit with no network. |
 | 2 | **Static text and logos on every tier, through mpv.** Rasteriser gets text (FreeType, bundled fonts, licences added); the settings key, the routes, Play > Graphics (type, font, size, colour, outline, shadow, position, show and hide, Lines); drawn with `overlay-add` ids 20 to 27 from a worker; OSC `text`, `send`, `hide`. The lean-tier ASS spike. | The first thing Anthony can use on any node, including a Pi 3. | Pi 3, Pi 4 (classic and New), desktop: type a line and see it within 250 ms; change fonts; a phone and a laptop; the OSC push from TouchOSC; the clip keeps its rate; node restart brings back what was on; the X27 once. |
-| 3 | **The GPU graphics stage and motion.** In `pvj-render`: texture upload, the graphic quad, opacity, fade, typewriter, scroll, crawl, drawn over the screen after the final pass; classic and lean keep slice 2's path. Frame cost numbers recorded. | Smooth motion on Pi 4, Pi 5 and desktop. | Pi 4 at 1080p output with a 1080p clip: scroll and crawl for 10 minutes at 60 flips and 0 dropped; Pi 5 and desktop with four graphics; fade tested at 0.5 and 5 s; a very long crawl refused with words; a node that falls back to classic mid-show still shows the static graphic. |
+| 3 | **The GPU graphics stage and motion.** In `mctl-render`: texture upload, the graphic quad, opacity, fade, typewriter, scroll, crawl, drawn over the screen after the final pass; classic and lean keep slice 2's path. Frame cost numbers recorded. | Smooth motion on Pi 4, Pi 5 and desktop. | Pi 4 at 1080p output with a 1080p clip: scroll and crawl for 10 minutes at 60 flips and 0 dropped; Pi 5 and desktop with four graphics; fade tested at 0.5 and 5 s; a very long crawl refused with words; a node that falls back to classic mid-show still shows the static graphic. |
 | 4 | **Keying and effects.** Alpha, luma and chroma keys with the picker; up to three effects with alpha-aware effects added; baked versions for classic and lean. The alpha spike. | Logos from JPGs and green backdrops; glow and shadow. | A black-backed JPG with luma key; a green-screen logo with chroma; edges at 2 m; Pi 4 cost with a key moving and an effect on; the Pi 3 baked key matches the Pi 4's live key to the eye. |
 | 5 | **As a source and over a source.** `where` gains `over` and `as`; D101 mapping carries them; the warning about using a source; text and logos as a surface's picture; the source's chain applies. | A surface that shows only a DJ's name; a logo on one surface's clip. | Pi 4 with two sources and the mapping: a graphic on Source 2 shown by one surface; a clip on the other; switching a pad away from Source 2 and back; Pi 3 shows the "needs the New renderer" line. |
 | 6 | **Controllers and pads.** MIDI actions, learn, the controller lights; OSC addresses for position, opacity, line; state sent back; the Graphic pad; settings export and import including the graphics (and, if ticked, the files, re-run through the rasteriser on import); `PANEL.md`, `OSC.md`, `MIDI.md` brought up to date. | Fire a line from a pad, a knob, or a phone. | The three MIDI controllers; TouchOSC on the tablet and phone: send, toggle, label receives; an import of a bundle with a bad PNG is refused. |

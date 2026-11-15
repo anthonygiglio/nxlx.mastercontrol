@@ -1,13 +1,13 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""The New renderer's own shader programs (D106, phase 3 step a): generators and effects run by pvj-render itself,
-with their inputs as uniforms set every frame, run for real (headless, Mesa's software GPU) like tests/test_pvj_render.
+"""The New renderer's own shader programs (D106, phase 3 step a): generators and effects run by mctl-render itself,
+with their inputs as uniforms set every frame, run for real (headless, Mesa's software GPU) like tests/test_mctl_render.
 
 What is held here:
-* the program file the panel writes (pvj/shaders.py and pvj/effects.py, translate_native) and what pvj-render's
+* the program file the panel writes (pvj/shaders.py and pvj/effects.py, translate_native) and what mctl-render's
   reader refuses;
-* every bundled generator and effect drawn by pvj-render's own program against the same shader drawn by libmpv inside
-  the same pvj-render (the path the New renderer had before), by the pixels, within the tolerance below;
+* every bundled generator and effect drawn by mctl-render's own program against the same shader drawn by libmpv inside
+  the same mctl-render (the path the New renderer had before), by the pixels, within the tolerance below;
 * the level after the programs (the panel's brightness, a Blackout under an effect that adds light);
 * values that move without a build, many times, with nothing growing; TIME that does not jump;
 * a code that cannot take its inputs as uniforms, built with constants; refusals; the rate cap;
@@ -37,7 +37,7 @@ import tests        # the run's own temp folder (tests/__init__.py)
 from pvj import effects as E, paths, shaders as S
 from pvj.player import Ipc, Player, PlayerError, is_program
 from pvj.transitions import read_still
-from tests.test_pvj_render import (BIN, BLACK, BLUE, GREEN, H, RED, STRICT, W, Renderer, SourcesBase, fd_count, need_program, png,
+from tests.test_mctl_render import (BIN, BLACK, BLUE, GREEN, H, RED, STRICT, W, Renderer, SourcesBase, fd_count, need_program, png,
                                    thread_count)
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -96,7 +96,7 @@ class NativeBase(unittest.TestCase):
         return self.write(E.translate_native(S.parse(source, S.FILTER, passes=True), **kw))
 
     def slot(self, k):
-        return self.r("get_property", "pvj-shaders")[k]
+        return self.r("get_property", "mctl-shaders")[k]
 
     def steady(self, before=None, seconds=8.0):
         """A capture once two in a row are the same (and differ from `before`, when given)."""
@@ -134,28 +134,28 @@ class ProgramFileTest(unittest.TestCase):
     def test_a_generator_file(self):
         text = S.translate_native(S.parse(FLAT), (320, 180), {"level": 0.75}, hue=10.0, offset=2.0, speed=0.5, gain=1.5)
         lines = text.split("\n")
-        self.assertEqual(lines[:4], ["//!PVJ 1", "//!KIND generator", "//!SIZE 320 180", "//!LINE 3"])
+        self.assertEqual(lines[:4], ["//!MCTL 1", "//!KIND generator", "//!SIZE 320 180", "//!LINE 3"])
         self.assertIn("//!INPUT float level 0.75", lines)
         self.assertIn("//!INPUT bool lit 1", lines)
         self.assertIn("//!INPUT color tint 1.0 0.5 0.0 1.0", lines)
         for c in ("//!CONTROL speed 0.5", "//!CONTROL hue 10.0", "//!CONTROL gain 1.5", "//!CONTROL offset 2.0"):
             self.assertIn(c, lines)
         code = text.split("//!CODE\n", 1)[1]
-        self.assertIn("void pvj_main()", code)
+        self.assertIn("void mctl_main()", code)
         self.assertNotIn("//!", code)
         self.assertNotIn("const float level", text)            # a uniform in the renderer, never a constant here
 
     def test_an_effect_file(self):
         text = E.translate_native(S.parse(INVERT, S.FILTER), controls={"amount": 0.5, "speed": 2.0})
-        self.assertTrue(text.startswith("//!PVJ 1\n//!KIND filter\n//!CLOCK 0\n"))
+        self.assertTrue(text.startswith("//!MCTL 1\n//!KIND filter\n//!CLOCK 0\n"))
         self.assertIn("//!CONTROL amount 0.5", text)
-        self.assertIn("pvj_img_this()", text)
+        self.assertIn("mctl_img_this()", text)
 
     def test_values_by_the_name_in_the_code(self):
         parsed = S.parse(FLAT.replace("\"lit\"", "\"time\"").replace("lit ?", "time ?"))
-        self.assertEqual(S.native_values(parsed, {"time": True, "level": 1}), {"pvj_in_time": True, "level": 1.0})
+        self.assertEqual(S.native_values(parsed, {"time": True, "level": 1}), {"mctl_in_time": True, "level": 1.0})
         sent = S.native_send(parsed, {"level": 0.5}, {})
-        self.assertEqual(sent, {"level": 0.5, "pvj_in_time": True, "tint": [1.0, 0.5, 0.0, 1.0]})
+        self.assertEqual(sent, {"level": 0.5, "mctl_in_time": True, "tint": [1.0, 0.5, 0.0, 1.0]})
 
     def test_a_program_is_told_from_an_mpv_shader(self):
         d = tempfile.mkdtemp()
@@ -170,7 +170,7 @@ class ProgramFileTest(unittest.TestCase):
 
 
 class ParityTest(NativeBase):
-    """Every bundled shader, drawn by pvj-render's own program and by libmpv in the same process (D106's parity)."""
+    """Every bundled shader, drawn by mctl-render's own program and by libmpv in the same process (D106's parity)."""
 
     def mpv_shot(self, text):
         self.r("set_property", "glsl-shaders", [])
@@ -186,9 +186,9 @@ class ParityTest(NativeBase):
         for f in GENERATORS:
             with self.subTest(shader=os.path.basename(f)):
                 parsed = S.parse(open(f, encoding="utf-8").read())
-                self.r("pvj-shader", "clear", 1, 0)
+                self.r("mctl-shader", "clear", 1, 0)
                 a = self.mpv_shot(S.translate(parsed, (W, H), speed=0.0, offset=2.5, desc="nxlx shader %d" % self.n))
-                self.r("pvj-shader", "load", 1, 0, self.write(S.translate_native(parsed, (W, H), speed=0.0, offset=2.5)))
+                self.r("mctl-shader", "load", 1, 0, self.write(S.translate_native(parsed, (W, H), speed=0.0, offset=2.5)))
                 b = self.steady()
                 self.assertEqual(self.slot(0)["state"], "on")
                 worst.append((self.assertNear(a, b, os.path.basename(f))["p99"], os.path.basename(f)))
@@ -201,7 +201,7 @@ class ParityTest(NativeBase):
         for f in EFFECTS:
             with self.subTest(effect=os.path.basename(f)):
                 parsed = S.parse(open(f, encoding="utf-8").read(), S.FILTER)
-                self.r("pvj-shader", "clear", 1, 1)
+                self.r("mctl-shader", "clear", 1, 1)
                 text = E.translate(parsed, controls={"speed": 0.0}, picture={"matrix": "rgb", "levels": "full", "fps": 30},
                                    desc="nxlx effect %d" % self.n)
                 self.r("set_property", "glsl-shaders", [self.write(text, ".glsl")])
@@ -210,7 +210,7 @@ class ParityTest(NativeBase):
                 time.sleep(0.5)
                 a = self.steady()
                 self.r("set_property", "glsl-shaders", [])
-                self.r("pvj-shader", "load", 1, 1, self.write(E.translate_native(parsed, controls={"speed": 0.0})))
+                self.r("mctl-shader", "load", 1, 1, self.write(E.translate_native(parsed, controls={"speed": 0.0})))
                 b = self.steady()
                 self.assertEqual(self.slot(1)["state"], "on")
                 worst.append((self.assertNear(a, b, os.path.basename(f))["p99"], os.path.basename(f)))
@@ -226,11 +226,11 @@ class LevelTest(NativeBase):
         prog = self.effect(INVERT, controls={"amount": 0.0})         # on, and drawing nothing: only the level moves
         for b in (-100, -60, -25, -5, 0, 5, 25, 60, 100):
             with self.subTest(brightness=b):
-                self.r("pvj-shader", "clear", 1, 1)
+                self.r("mctl-shader", "clear", 1, 1)
                 self.r("set_property", "brightness", b)
                 time.sleep(0.4)                         # libmpv redraws a still picture for a new level a moment later
                 a = self.steady()
-                self.r("pvj-shader", "load", 1, 1, prog)
+                self.r("mctl-shader", "load", 1, 1, prog)
                 time.sleep(0.4)
                 n = self.steady()
                 self.assertLessEqual(channel_diff(a, n)["max"], 1, b)
@@ -238,7 +238,7 @@ class LevelTest(NativeBase):
 
     def test_a_blackout_holds_under_an_effect_that_adds_light(self):
         self.picture()
-        self.r("pvj-shader", "load", 1, 1, self.effect(INVERT))
+        self.r("mctl-shader", "load", 1, 1, self.effect(INVERT))
         self.r("set_property", "brightness", -100)
         shot = self.steady()
         self.assertEqual(max(shot[2]), 0, "an inverting effect undid the Blackout")
@@ -248,7 +248,7 @@ class LevelTest(NativeBase):
         self.assertTrue(all(abs(a - b) <= 2 for a, b in zip(self.r.pixel(5, 5), want)), (self.r.pixel(5, 5), want))   # inverted
         # off again: the layers have the level back, as before
         self.r("set_property", "brightness", -100)
-        self.r("pvj-shader", "clear", 1, 1)
+        self.r("mctl-shader", "clear", 1, 1)
         self.assertEqual(max(self.steady()[2]), 0)
         self.assertEqual(self.r("get_property", "brightness"), -100)
 
@@ -261,10 +261,10 @@ class MoveEffectTest(NativeBase):
         png(a, W, H, lambda x, y: RED)
         png(b, W, H, lambda x, y: BLUE)
         self.r.load(a)
-        self.r("pvj-shader", "load", 1, 1, self.effect(INVERT))
+        self.r("mctl-shader", "load", 1, 1, self.effect(INVERT))
         self.assertTrue(self.r.wait(lambda: self.r.pixel(5, 5)[1] > 200, 5), self.r.pixel(5, 5))
-        self.r("pvj-crossfade", b, 6.0, "keep-open=no,image-display-duration=inf", "wipe-from-left")
-        look = lambda: self.r("get_property", "pvj-render")
+        self.r("mctl-crossfade", b, 6.0, "keep-open=no,image-display-duration=inf", "wipe-from-left")
+        look = lambda: self.r("get_property", "mctl-render")
         self.assertTrue(self.r.wait(lambda: look()["fade"] == "running" and 0.2 < look()["fade-progress"] < 0.7, 10, 0.02), look())
         shot = self.r.capture()
         self.assertTrue(all(abs(p - q) <= 40 for p, q in zip(self.r.pixel(4, H // 2, shot), (255, 255, 0))), "new, inverted: %s" % (self.r.pixel(4, H // 2, shot),))
@@ -278,59 +278,59 @@ class MoveEffectTest(NativeBase):
 class ValuesTest(NativeBase):
     def test_values_move_without_a_build_and_nothing_grows(self):
         self.carrier()
-        self.r("pvj-shader", "load", 1, 0, self.generator(FLAT))
+        self.r("mctl-shader", "load", 1, 0, self.generator(FLAT))
         self.r.wait(lambda: self.r.pixel(10, 10)[0] in range(60, 70), 5)
         self.assertEqual(self.r.pixel(10, 10)[:2], (64, 128))
         for v in (0.0, 1.0, 0.5):
-            self.r("pvj-shader", "set", 1, 0, {"level": v, "lit": v > 0.6})
+            self.r("mctl-shader", "set", 1, 0, {"level": v, "lit": v > 0.6})
             want = (round(v * 255), 128 if v > 0.6 else 0)
             self.assertTrue(self.r.wait(lambda: abs(self.r.pixel(10, 10)[0] - want[0]) <= 1 and self.r.pixel(10, 10)[1] in (want[1], want[1] - 1, want[1] + 1), 3),
                             (v, self.r.pixel(10, 10)))
-        self.r("pvj-shader", "set", 1, 0, {"tint": [0.0, 0.0, 1.0, 1.0]})
+        self.r("mctl-shader", "set", 1, 0, {"tint": [0.0, 0.0, 1.0, 1.0]})
         self.assertTrue(self.r.wait(lambda: self.r.pixel(10, 10)[2] >= 254, 3))
-        start = (fd_count(self.r.pid), thread_count(self.r.pid), self.r("get_property", "pvj-render")["fx-gl-objects"],
-                 self.r("get_property", "pvj-render")["gl-objects"])
+        start = (fd_count(self.r.pid), thread_count(self.r.pid), self.r("get_property", "mctl-render")["fx-gl-objects"],
+                 self.r("get_property", "mctl-render")["gl-objects"])
         runs = self.slot(0)["runs"]
         for i in range(2000):
-            self.r("pvj-shader", "set", 1, 0, {"level": (i % 256) / 255.0, "@hue": float(i % 360)})
-        self.r("pvj-shader", "set", 1, 0, {"level": 0.2, "@hue": 0.0})
+            self.r("mctl-shader", "set", 1, 0, {"level": (i % 256) / 255.0, "@hue": float(i % 360)})
+        self.r("mctl-shader", "set", 1, 0, {"level": 0.2, "@hue": 0.0})
         self.assertTrue(self.r.wait(lambda: abs(self.r.pixel(10, 10)[0] - 51) <= 1, 3))
         s = self.slot(0)
         self.assertEqual((s["state"], s["rebuilds"]), ("on", 0))
         self.assertGreater(s["runs"], runs)
-        after = (fd_count(self.r.pid), thread_count(self.r.pid), self.r("get_property", "pvj-render")["fx-gl-objects"],
-                 self.r("get_property", "pvj-render")["gl-objects"])
+        after = (fd_count(self.r.pid), thread_count(self.r.pid), self.r("get_property", "mctl-render")["fx-gl-objects"],
+                 self.r("get_property", "mctl-render")["gl-objects"])
         self.assertEqual((start[0], start[2]), (after[0], after[2]), (start, after))      # descriptors, the programs' GL objects
         self.assertLessEqual(abs(start[1] - after[1]), 2, (start, after))               # libmpv's threads and GL objects: a pool
         self.assertLessEqual(abs(start[3] - after[3]), 2, (start, after))
 
     def test_time_never_jumps_and_speed_zero_stands(self):
         self.carrier()
-        self.r("pvj-shader", "load", 1, 0, self.generator(CLOCK, offset=10.0))
+        self.r("mctl-shader", "load", 1, 0, self.generator(CLOCK, offset=10.0))
         t0 = self.slot(0)["time"]
         self.assertGreaterEqual(t0, 10.0)
         last = t0
         for speed in (2.0, 0.5, 4.0, 1.0):
-            self.r("pvj-shader", "set", 1, 0, {"@speed": speed})
+            self.r("mctl-shader", "set", 1, 0, {"@speed": speed})
             for _ in range(5):
                 time.sleep(0.1)
                 t = self.slot(0)["time"]
                 self.assertGreaterEqual(t, last)
                 self.assertLess(t - last, 0.1 * 4 * 3 + 0.5, (speed, last, t))     # never more than the pace allows
                 last = t
-        self.r("pvj-shader", "set", 1, 0, {"@speed": 0.0})
+        self.r("mctl-shader", "set", 1, 0, {"@speed": 0.0})
         time.sleep(0.2)
         a = self.slot(0)["time"]
         time.sleep(0.5)
         self.assertEqual(self.slot(0)["time"], a)
-        self.r("pvj-shader", "set", 1, 0, {"@offset": 50.0})
+        self.r("mctl-shader", "set", 1, 0, {"@offset": 50.0})
         self.assertTrue(self.r.wait(lambda: self.slot(0)["time"] == 50.0, 3))
         self.assertTrue(self.r.wait(lambda: abs(self.r.pixel(5, 5)[0] - 128) <= 1, 3), self.r.pixel(5, 5))
 
     def test_an_effects_time_stands_while_its_clip_is_paused(self):
         self.picture()
         moving = INVERT.replace("vec4(1.0 - c.rgb, 1.0)", "vec4(fract(TIME / 100.0), c.g, 0.0, 1.0)")
-        self.r("pvj-shader", "load", 1, 1, self.effect(moving))
+        self.r("mctl-shader", "load", 1, 1, self.effect(moving))
         self.assertTrue(self.r.wait(lambda: self.slot(1)["time"] > 0.2, 3))
         self.r("set_property", "pause", True)
         time.sleep(0.3)
@@ -344,29 +344,29 @@ class ValuesTest(NativeBase):
 
     def test_constants_when_the_code_needs_them(self):
         self.carrier()
-        self.r("pvj-shader", "load", 1, 0, self.generator(CONST))
+        self.r("mctl-shader", "load", 1, 0, self.generator(CONST))
         self.assertEqual(self.slot(0)["state"], "constants")
         self.assertTrue(self.r.wait(lambda: abs(self.r.pixel(5, 5)[0] - 128) <= 1, 3))
-        self.r("pvj-shader", "set", 1, 0, {"level": 0.1})
+        self.r("mctl-shader", "set", 1, 0, {"level": 0.1})
         self.assertTrue(self.r.wait(lambda: abs(self.r.pixel(5, 5)[0] - 51) <= 1, 3), self.r.pixel(5, 5))
         self.assertGreaterEqual(self.slot(0)["rebuilds"], 1)
 
     def test_a_generator_runs_at_its_rate_and_an_effect_only_on_a_change(self):
         self.carrier()
-        self.r("pvj-shader", "load", 1, 0, self.generator(CLOCK))
+        self.r("mctl-shader", "load", 1, 0, self.generator(CLOCK))
         a, t = self.slot(0)["runs"], time.monotonic()
         time.sleep(2.0)
         rate = (self.slot(0)["runs"] - a) / (time.monotonic() - t)
         self.assertLess(rate, 33, rate)                 # 30 a second at most (--fx-fps), on a 60 Hz clock
         self.assertGreater(rate, 15, rate)
-        self.r("pvj-shader", "clear", 1, 0)
+        self.r("mctl-shader", "clear", 1, 0)
         self.picture()
-        self.r("pvj-shader", "load", 1, 1, self.effect(INVERT))
+        self.r("mctl-shader", "load", 1, 1, self.effect(INVERT))
         time.sleep(0.5)
         a = self.slot(1)["runs"]
         time.sleep(1.0)
         self.assertLessEqual(self.slot(1)["runs"] - a, 1, "an effect without a clock over a still picture ran again")
-        self.r("pvj-shader", "set", 1, 1, {"@amount": 0.5})
+        self.r("mctl-shader", "set", 1, 1, {"@amount": 0.5})
         self.assertTrue(self.r.wait(lambda: self.slot(1)["runs"] > a, 2))
 
 
@@ -376,17 +376,17 @@ class ManyLoadsTest(NativeBase):
         gen, eff = self.generator(FLAT), self.effect(INVERT)
         counts = []
         for i in range(260):
-            self.r("pvj-shader", "load", 1, i % 2, gen if i % 2 == 0 else eff)
+            self.r("mctl-shader", "load", 1, i % 2, gen if i % 2 == 0 else eff)
             if i % 3 == 0:
-                self.r("pvj-shader", "set", 1, i % 2, {"level": 0.5} if i % 2 == 0 else {"@amount": 0.5})
+                self.r("mctl-shader", "set", 1, i % 2, {"level": 0.5} if i % 2 == 0 else {"@amount": 0.5})
             if i % 4 == 3:
-                self.r("pvj-shader", "clear", 1, 0)
-                self.r("pvj-shader", "clear", 1, 1)
+                self.r("mctl-shader", "clear", 1, 0)
+                self.r("mctl-shader", "clear", 1, 1)
             if i in (59, 119, 179, 259):
-                self.r("pvj-shader", "clear", 1, 0)
-                self.r("pvj-shader", "clear", 1, 1)
+                self.r("mctl-shader", "clear", 1, 0)
+                self.r("mctl-shader", "clear", 1, 1)
                 time.sleep(0.3)
-                st = self.r("get_property", "pvj-render")
+                st = self.r("get_property", "mctl-render")
                 counts.append((fd_count(self.r.pid), thread_count(self.r.pid), st["fx-gl-objects"], st["gl-objects"]))
         self.assertEqual(counts[-1][2], 0, counts)                  # every program, texture and framebuffer given back
         for c in counts[1:]:
@@ -397,7 +397,7 @@ class ManyLoadsTest(NativeBase):
 
 
 class ClassicTest(unittest.TestCase):
-    """Classic mpv (D105): the shader list it is sent is what it was, and it is never sent a program or a pvj-shader."""
+    """Classic mpv (D105): the shader list it is sent is what it was, and it is never sent a program or a mctl-shader."""
 
     class Recorder:
         def __init__(self):
@@ -407,7 +407,7 @@ class ClassicTest(unittest.TestCase):
             self.sent.append(command)
             if command[:2] == ("get_property", "pid"):
                 return 4242
-            if command[:2] == ("get_property", "pvj-render"):
+            if command[:2] == ("get_property", "mctl-render"):
                 raise PlayerError("mpv: property not found")
             if command[:2] == ("get_property", "path"):
                 return "av://carrier"
@@ -429,7 +429,7 @@ class ClassicTest(unittest.TestCase):
         lists = [c[2] for c in p.ipc.sent if c[:2] == ("set_property", "glsl-shaders")]
         self.assertEqual(lists, [[src, fx, mapping]])
         self.assertFalse(p.native_shaders())
-        self.assertFalse(any(c[0] == "pvj-shader" for c in p.ipc.sent))
+        self.assertFalse(any(c[0] == "mctl-shader" for c in p.ipc.sent))
         # a program file that reached a classic player (a fallback in between) is never put in its list
         prog = os.path.join(d, "prog")
         with open(prog, "w") as f:
@@ -437,7 +437,7 @@ class ClassicTest(unittest.TestCase):
         p._source = prog
         p.set_shaders([mapping])
         self.assertEqual([c[2] for c in p.ipc.sent if c[:2] == ("set_property", "glsl-shaders")][-1], [fx, mapping])
-        self.assertFalse(any(c[0] == "pvj-shader" for c in p.ipc.sent))
+        self.assertFalse(any(c[0] == "mctl-shader" for c in p.ipc.sent))
 
 
 class RefusalTest(NativeBase):
@@ -446,7 +446,7 @@ class RefusalTest(NativeBase):
         link = os.path.join(self.tmp, "link.prog")
         os.symlink(self.write(good), link)
         bad = {
-            "no head": good.replace("//!PVJ 1", "//!PVJ 2"),
+            "no head": good.replace("//!MCTL 1", "//!MCTL 2"),
             "two kinds": good.replace("//!KIND generator", "//!KIND sometimes"),
             "a name": good.replace("//!INPUT float level", "//!INPUT float gl_level"),
             "a wrapper's name": good.replace("//!INPUT float level", "//!INPUT float TIME"),
@@ -464,7 +464,7 @@ class RefusalTest(NativeBase):
         for what, text in bad.items():
             with self.subTest(what):
                 with self.assertRaises(PlayerError):
-                    self.r("pvj-shader", "load", 1, 0, self.write(text))
+                    self.r("mctl-shader", "load", 1, 0, self.write(text))
         big = self.write(good + "//" + "x" * (70 * 1024) + "\n")
         for what, cmd in {"a link": ["load", 1, 0, link], "too large": ["load", 1, 0, big],
                           "an effect in the generator's slot": ["load", 1, 0, self.effect(INVERT)],
@@ -473,26 +473,26 @@ class RefusalTest(NativeBase):
                           "a relative path": ["load", 1, 0, "p1.prog"], "a word": ["reload", 1, 0, "/x"]}.items():
             with self.subTest(what):
                 with self.assertRaises(PlayerError):
-                    self.r("pvj-shader", *cmd)
+                    self.r("mctl-shader", *cmd)
         self.assertEqual(self.slot(0)["state"], "off")
         self.carrier()
-        self.r("pvj-shader", "load", 1, 0, self.write(good))
+        self.r("mctl-shader", "load", 1, 0, self.write(good))
         for what, values in {"an unknown name": {"nothing": 1.0}, "a word": {"level": "high"}, "a list for a float": {"level": [1.0]},
                              "two for a colour": {"tint": [1.0, 0.0]}, "2 for a bool": {"lit": 2}, "a control": {"@volume": 1.0}, "a whole number too large": {"level": 10 ** 12},
                              "half of it good": {"level": 0.5, "nothing": 1.0}}.items():
             with self.subTest(what):
                 with self.assertRaises(PlayerError):
-                    self.r("pvj-shader", "set", 1, 0, values)
+                    self.r("mctl-shader", "set", 1, 0, values)
         time.sleep(0.3)
         self.assertEqual(self.r.pixel(10, 10)[0], 64)            # all or nothing: "half of it good" moved nothing
 
     def test_a_refused_program_leaves_the_one_before_on(self):
         self.carrier()
-        self.r("pvj-shader", "load", 1, 0, self.generator(FLAT))
+        self.r("mctl-shader", "load", 1, 0, self.generator(FLAT))
         self.r.wait(lambda: self.r.pixel(10, 10)[0] == 64, 3)
         broken = S.translate_native(S.parse(FLAT), (W, H)).replace("vec4(level", "vec4(nonsense")
         with self.assertRaises(PlayerError) as e:
-            self.r("pvj-shader", "load", 1, 0, self.write(broken))
+            self.r("mctl-shader", "load", 1, 0, self.write(broken))
         self.assertIn("nonsense", str(e.exception))
         self.assertIn("GPU refused", str(e.exception))
         time.sleep(0.3)
@@ -505,7 +505,7 @@ class StillTest(NativeBase):
 
     def test_the_crossfades_still_and_the_preview(self):
         self.carrier()
-        self.r("pvj-shader", "load", 1, 0, self.generator(FLAT))
+        self.r("mctl-shader", "load", 1, 0, self.generator(FLAT))
         self.r.wait(lambda: self.r.pixel(10, 10)[0] == 64, 3)
         path = os.path.join(self.tmp, "still.png")
         open(path, "w").close()                         # the panel makes the file; the player writes over it
@@ -528,10 +528,10 @@ class StillTest(NativeBase):
         mean = [sum(raw[c::3]) / (W * H) for c in range(3)]
         for got, want in zip(mean, (64, 128, 0)):
             self.assertLess(abs(got - want), 3, mean)
-        self.r("pvj-shader", "clear", 1, 0)
+        self.r("mctl-shader", "clear", 1, 0)
         self.r("screenshot-to-file", path, "window")    # with nothing on, libmpv's own screenshot as before
         self.assertTrue(os.path.getsize(path) > 0)
-        self.r("pvj-shader", "load", 1, 0, self.generator(FLAT))
+        self.r("mctl-shader", "load", 1, 0, self.generator(FLAT))
         with self.assertRaises(PlayerError):            # a file ending the renderer does not write
             self.r("screenshot-to-file", os.path.join(self.tmp, "still.bmp"), "window")
 
@@ -634,11 +634,11 @@ class ShotPaceTest(NativeBase):
     def flips(self):
         # headless, the renderer is paced by a clock and counts no missed vblanks (out.c counts them from the
         # screen's own sequence): a stall shows as flips that did not happen
-        return self.r("get_property", "pvj-render")["flips"]
+        return self.r("get_property", "mctl-render")["flips"]
 
     def test_screenshots_do_not_stall_the_screen(self):
         self.carrier()
-        self.r("pvj-shader", "load", 1, 0, self.generator(FLAT, size=(1920, 1080)))
+        self.r("mctl-shader", "load", 1, 0, self.generator(FLAT, size=(1920, 1080)))
         time.sleep(1.0)
         # The quiet and the busy rate are taken in turn, five times 1.5 s each, and added up. One quiet stretch and
         # one busy stretch after it (3 s each) let a runner that got busier or slower between the two read as a
@@ -677,7 +677,7 @@ class ShotPaceTest(NativeBase):
     def test_two_screenshots_at_once_each_get_their_picture(self):
         import threading
         self.carrier()
-        self.r("pvj-shader", "load", 1, 0, self.generator(FLAT, size=(320, 180)))
+        self.r("mctl-shader", "load", 1, 0, self.generator(FLAT, size=(320, 180)))
         paths = [os.path.join(self.tmp, "a.png"), os.path.join(self.tmp, "b.jpg")]
         errors = []
 
@@ -702,7 +702,7 @@ class ShotPaceTest(NativeBase):
 
     def test_a_screenshot_into_a_fifo_is_refused_at_once(self):
         self.carrier()
-        self.r("pvj-shader", "load", 1, 0, self.generator(FLAT))
+        self.r("mctl-shader", "load", 1, 0, self.generator(FLAT))
         fifo = os.path.join(self.tmp, "pipe.png")
         os.mkfifo(fifo)
         t = time.monotonic()
@@ -719,8 +719,8 @@ class SlowBuildTest(NativeBase):
         need_program(self)
         if "with test hooks" not in subprocess.run([BIN, "--version"], capture_output=True, text=True).stdout:
             if STRICT:
-                self.fail("PVJ_RENDER_TEST=1 and pvj-render was built without its test hooks: make -C render TEST_HOOKS=1")
-            self.skipTest("pvj-render was built without its test hooks")
+                self.fail("PVJ_RENDER_TEST=1 and mctl-render was built without its test hooks: make -C render TEST_HOOKS=1")
+            self.skipTest("mctl-render was built without its test hooks")
         self.tmp = tempfile.mkdtemp(prefix="pvj-native-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.n = 0
@@ -769,14 +769,14 @@ class CapTest(NativeBase):
 
     def test_a_generator_and_an_effect_hold_the_cap_while_values_move(self):
         self.carrier()
-        self.r("pvj-shader", "load", 1, 0, self.generator(FLAT))
-        runs, sets = self.rate(0, lambda i: self.r("pvj-shader", "set", 1, 0, {"level": (i % 100) / 100.0}))
+        self.r("mctl-shader", "load", 1, 0, self.generator(FLAT))
+        runs, sets = self.rate(0, lambda i: self.r("mctl-shader", "set", 1, 0, {"level": (i % 100) / 100.0}))
         self.assertGreater(sets, 35)
         self.assertLess(runs, 33, (runs, sets))
-        self.r("pvj-shader", "clear", 1, 0)
+        self.r("mctl-shader", "clear", 1, 0)
         self.picture()
-        self.r("pvj-shader", "load", 1, 1, self.effect(INVERT))
-        runs, sets = self.rate(1, lambda i: self.r("pvj-shader", "set", 1, 1, {"@amount": 0.5 + (i % 50) / 100.0}))
+        self.r("mctl-shader", "load", 1, 1, self.effect(INVERT))
+        runs, sets = self.rate(1, lambda i: self.r("mctl-shader", "set", 1, 1, {"@amount": 0.5 + (i % 50) / 100.0}))
         self.assertGreater(sets, 35)
         self.assertLess(runs, 33, (runs, sets))
         self.assertGreater(runs, 10, "the values never landed")
@@ -797,7 +797,7 @@ class ChainTest(SourcesBase):
     effect = NativeBase.effect
 
     def slot(self, source, k):
-        return [s for s in self.r("get_property", "pvj-shaders") if s["source"] == source and s["slot"] == k][0]
+        return [s for s in self.r("get_property", "mctl-shaders") if s["source"] == source and s["slot"] == k][0]
 
     def test_an_effect_on_source_2_and_a_chain_in_its_order(self):
         r = self.r
@@ -805,27 +805,27 @@ class ChainTest(SourcesBase):
         self.to(2, self.blue)                           # source 2: blue
         self.show_halves(1, 2)
         self.halves_are(GREEN, BLUE)
-        r("pvj-shader", "load", 2, 1, self.effect(INVERT))
+        r("mctl-shader", "load", 2, 1, self.effect(INVERT))
         self.assertTrue(r.wait(lambda: near_px(r.pixel(3 * W // 4, H // 4), (255, 255, 0)), 3), r.pixel(3 * W // 4, H // 4))
         self.halves_are(GREEN, (255, 255, 0))           # source 1 untouched
         # a second effect after it: red set to 1 after the invert
-        r("pvj-shader", "load", 2, 2, self.effect(RED_ON))
+        r("mctl-shader", "load", 2, 2, self.effect(RED_ON))
         self.assertTrue(r.wait(lambda: near_px(r.pixel(3 * W // 4, H // 4), (255, 255, 0)), 3))
         # the other order: red on first, then the invert takes it to 0
-        r("pvj-shader", "load", 2, 1, self.effect(RED_ON))
-        r("pvj-shader", "load", 2, 2, self.effect(INVERT))
+        r("mctl-shader", "load", 2, 1, self.effect(RED_ON))
+        r("mctl-shader", "load", 2, 2, self.effect(INVERT))
         self.assertTrue(r.wait(lambda: near_px(r.pixel(3 * W // 4, H // 4), (0, 255, 0)), 3), r.pixel(3 * W // 4, H // 4))
         # a third, and one at amount 0 in the middle passes the picture on as it is
-        r("pvj-shader", "load", 2, 3, self.effect(INVERT))
+        r("mctl-shader", "load", 2, 3, self.effect(INVERT))
         self.assertTrue(r.wait(lambda: near_px(r.pixel(3 * W // 4, H // 4), (255, 0, 255)), 3))
-        r("pvj-shader", "set", 2, 2, {"@amount": 0.0})
+        r("mctl-shader", "set", 2, 2, {"@amount": 0.0})
         self.assertTrue(r.wait(lambda: near_px(r.pixel(3 * W // 4, H // 4), (0, 255, 0)), 3), r.pixel(3 * W // 4, H // 4))
         # source 1's own chain: its effect and one after it
-        r("pvj-shader", "load", 1, 1, self.effect(INVERT))
-        r("pvj-shader", "load", 1, 2, self.effect(RED_ON))
+        r("mctl-shader", "load", 1, 1, self.effect(INVERT))
+        r("mctl-shader", "load", 1, 2, self.effect(RED_ON))
         self.assertTrue(r.wait(lambda: near_px(r.pixel(W // 4, H // 4), (255, 0, 255)), 3), r.pixel(W // 4, H // 4))
         for k in (1, 2, 3):
-            r("pvj-shader", "clear", 2, k)
+            r("mctl-shader", "clear", 2, k)
         self.assertTrue(r.wait(lambda: near_px(r.pixel(3 * W // 4, H // 4), BLUE), 3))
 
     def test_each_sources_level_is_drawn_after_its_effects(self):
@@ -833,16 +833,16 @@ class ChainTest(SourcesBase):
         r.load(self.green)
         self.to(2, self.blue)
         self.show_halves(1, 2)
-        r("pvj-shader", "load", 2, 1, self.effect(INVERT))
+        r("mctl-shader", "load", 2, 1, self.effect(INVERT))
         r("set_property", "brightness", -100)            # Blackout: every source, under an effect that adds light
         self.assertTrue(r.wait(lambda: max(r.capture()[2]) == 0, 3), "an inverting effect on source 2 undid the Blackout")
-        self.assertEqual(r("pvj-source", 2, "get_property", "brightness"), -100)
+        self.assertEqual(r("mctl-source", 2, "get_property", "brightness"), -100)
         r("set_property", "brightness", 0)
         self.assertTrue(r.wait(lambda: near_px(r.pixel(3 * W // 4, H // 4), (255, 255, 0)), 3))
-        r("pvj-source", 2, "set_property", "brightness", -50)        # a source's own level, after its effect too
+        r("mctl-source", 2, "set_property", "brightness", -50)        # a source's own level, after its effect too
         self.assertTrue(r.wait(lambda: near_px(r.pixel(3 * W // 4, H // 4), (128, 128, 0), 3), 3), r.pixel(3 * W // 4, H // 4))
-        self.assertEqual(r("pvj-source", 2, "get_property", "brightness"), -50)
-        r("pvj-shader", "clear", 2, 1)                  # off: the layer has its level back
+        self.assertEqual(r("mctl-source", 2, "get_property", "brightness"), -50)
+        r("mctl-shader", "clear", 2, 1)                  # off: the layer has its level back
         self.assertTrue(r.wait(lambda: near_px(r.pixel(3 * W // 4, H // 4), (0, 0, 128), 3), 3), r.pixel(3 * W // 4, H // 4))
 
     def test_an_idle_source_shows_black_under_its_effect(self):
@@ -851,10 +851,10 @@ class ChainTest(SourcesBase):
         r.load(self.green)
         self.to(2, self.blue)
         self.show_halves(1, 2)
-        r("pvj-shader", "load", 2, 1, self.effect(INVERT))
-        r("pvj-shader", "load", 1, 1, self.effect(INVERT))
+        r("mctl-shader", "load", 2, 1, self.effect(INVERT))
+        r("mctl-shader", "load", 1, 1, self.effect(INVERT))
         self.assertTrue(r.wait(lambda: near_px(r.pixel(3 * W // 4, H // 4), (255, 255, 0)), 3))
-        r("pvj-source", 2, "stop")
+        r("mctl-source", 2, "stop")
         self.assertTrue(r.wait(lambda: near_px(r.pixel(3 * W // 4, H // 4), BLACK), 3), r.pixel(3 * W // 4, H // 4))
         r("stop")                                       # source 1 with nothing on: black too, its effect still loaded
         self.assertTrue(r.wait(lambda: near_px(r.pixel(W // 4, H // 4), BLACK), 3), r.pixel(W // 4, H // 4))
@@ -866,10 +866,10 @@ class ChainTest(SourcesBase):
         r.load(self.green)
         self.to(2, self.blue)
         self.show_halves(1, 2)
-        r("pvj-shader", "load", 2, 1, self.effect(RED_ON))
-        r("pvj-shader", "load", 2, 2, self.effect(INVERT))
+        r("mctl-shader", "load", 2, 1, self.effect(RED_ON))
+        r("mctl-shader", "load", 2, 2, self.effect(INVERT))
         self.assertTrue(r.wait(lambda: near_px(r.pixel(3 * W // 4, H // 4), (0, 255, 0)), 3))
-        r("pvj-shader", "clear", 2, 1)
+        r("mctl-shader", "clear", 2, 1)
         self.assertTrue(r.wait(lambda: near_px(r.pixel(3 * W // 4, H // 4), (255, 255, 0)), 3), r.pixel(3 * W // 4, H // 4))
 
     def test_each_sources_level_with_a_program_on_source_1(self):
@@ -877,24 +877,24 @@ class ChainTest(SourcesBase):
         r.load(self.green)
         self.to(2, self.blue)
         self.show_halves(1, 2)
-        r("pvj-shader", "load", 1, 1, self.effect(INVERT))
-        r("pvj-shader", "load", 2, 1, self.effect(INVERT))
+        r("mctl-shader", "load", 1, 1, self.effect(INVERT))
+        r("mctl-shader", "load", 2, 1, self.effect(INVERT))
         r("set_property", "brightness", -100)
         self.assertTrue(r.wait(lambda: max(r.capture()[2]) == 0, 3), "an invert undid the Blackout somewhere")
         r("set_property", "brightness", 0)
         self.assertTrue(r.wait(lambda: near_px(r.pixel(W // 4, H // 4), (255, 0, 255)), 3))
-        r("pvj-source", 2, "set_property", "brightness", -50)
+        r("mctl-source", 2, "set_property", "brightness", -50)
         self.assertTrue(r.wait(lambda: near_px(r.pixel(3 * W // 4, H // 4), (128, 128, 0), 3), 3), r.pixel(3 * W // 4, H // 4))
         self.assertTrue(near_px(r.pixel(W // 4, H // 4), (255, 0, 255)), "source 2's own level reached source 1")
         self.assertEqual(r("get_property", "brightness"), 0)
 
     def test_the_passes_a_second(self):
         r = self.r
-        self.assertEqual(r("get_property", "pvj-render")["fx-passes-per-second"], 0)
+        self.assertEqual(r("get_property", "mctl-render")["fx-passes-per-second"], 0)
         self.to(2, self.blue)
-        r("pvj-shader", "load", 1, 0, self.write(S.translate_native(S.parse(CLOCK), (W, H))))
+        r("mctl-shader", "load", 1, 0, self.write(S.translate_native(S.parse(CLOCK), (W, H))))
         time.sleep(2.5)
-        rate = r("get_property", "pvj-render")["fx-passes-per-second"]
+        rate = r("get_property", "mctl-render")["fx-passes-per-second"]
         self.assertTrue(15 <= rate <= 35, rate)         # one generator at the 30-a-second cap
 
     def test_what_a_chain_refuses(self):
@@ -904,7 +904,7 @@ class ChainTest(SourcesBase):
                           "slot 4": ["load", 2, 4, self.effect(INVERT)], "a set on an empty slot": ["set", 3, 1, {"@amount": 0.5}]}.items():
             with self.subTest(what):
                 with self.assertRaises(PlayerError):
-                    r("pvj-shader", *cmd)
+                    r("mctl-shader", *cmd)
 
     def test_many_chain_loads_leave_nothing_behind(self):
         r = self.r
@@ -913,14 +913,14 @@ class ChainTest(SourcesBase):
         counts = []
         for i in range(150):
             src, k = 2 + i % 3, 1 + i % 3
-            r("pvj-shader", "load", src, k, a if i % 2 else b)
+            r("mctl-shader", "load", src, k, a if i % 2 else b)
             if i % 5 == 4:
                 for s in (2, 3, 4):
                     for kk in (1, 2, 3):
-                        r("pvj-shader", "clear", s, kk)
+                        r("mctl-shader", "clear", s, kk)
                 if i % 50 == 49:
                     time.sleep(0.3)
-                    st = r("get_property", "pvj-render")
+                    st = r("get_property", "mctl-render")
                     counts.append((fd_count(r.pid), st["fx-gl-objects"], thread_count(r.pid)))
         self.assertEqual([c[:2] for c in counts], [counts[0][:2]] * len(counts), counts)
         self.assertEqual(counts[-1][1], 0)
@@ -938,8 +938,8 @@ class ChainSlowBuildTest(unittest.TestCase):
         need_program(self)
         if "with test hooks" not in subprocess.run([BIN, "--version"], capture_output=True, text=True).stdout:
             if STRICT:
-                self.fail("PVJ_RENDER_TEST=1 and pvj-render was built without its test hooks: make -C render TEST_HOOKS=1")
-            self.skipTest("pvj-render was built without its test hooks")
+                self.fail("PVJ_RENDER_TEST=1 and mctl-render was built without its test hooks: make -C render TEST_HOOKS=1")
+            self.skipTest("mctl-render was built without its test hooks")
         self.tmp = tempfile.mkdtemp(prefix="pvj-native-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.r = Renderer("--sources=4", env={"PVJ_RENDER_TEST_SLOW_BUILD": "4000"})
@@ -950,7 +950,7 @@ class ChainSlowBuildTest(unittest.TestCase):
         self.player = Player(rundir=d)
 
     def slot(self, s, k):
-        return [x for x in self.r("get_property", "pvj-shaders") if x["source"] == s and x["slot"] == k][0]
+        return [x for x in self.r("get_property", "mctl-shaders") if x["source"] == s and x["slot"] == k][0]
 
     def test_stop_takes_off_an_effect_whose_load_had_no_word(self):
         prog = os.path.join(self.tmp, "e.prog")
@@ -993,7 +993,7 @@ class ChainApiTest(unittest.TestCase):
         self.assertEqual(st["slots"][2], [0, 1, 2, 3])                  # slot 0: a shader as the source (step d)
         out = chains.api_post({"source": 2, "slot": 1, "id": "fx-grade.fs"}, None, None)
         self.assertTrue(out["ok"])
-        slot = [s for s in self.r("get_property", "pvj-shaders") if s["source"] == 2 and s["slot"] == 1][0]
+        slot = [s for s in self.r("get_property", "mctl-shaders") if s["source"] == 2 and s["slot"] == 1][0]
         self.assertEqual(slot["state"], "on")
         path = chains.on[(2, 1)]["path"]
         self.assertTrue(is_program(path))
@@ -1013,7 +1013,7 @@ class ChainApiTest(unittest.TestCase):
         # a source's Stop takes its chain off; source 1's Stop takes source 1's
         self.player.stop_source(2)
         self.assertEqual([r["source"] for r in chains.state()["chains"]], [1])
-        self.assertTrue(self.r.wait(lambda: [s for s in self.r("get_property", "pvj-shaders") if s["source"] == 2 and s["slot"] == 1][0]["state"] == "off", 3))
+        self.assertTrue(self.r.wait(lambda: [s for s in self.r("get_property", "mctl-shaders") if s["source"] == 2 and s["slot"] == 1][0]["state"] == "off", 3))
         self.player.clear()
         self.assertEqual(chains.state()["chains"], [])
         out = chains.api_post({"source": 3, "slot": 2, "id": "fx-grade.fs"}, None, None)
@@ -1102,7 +1102,7 @@ class PassParseTest(unittest.TestCase):
         p = S.parse(FEEDBACK, passes=True)
         self.assertEqual(p["targets"], [{"name": "acc", "persistent": True, "float": False, "w": "w1", "h": "h1"}])
         self.assertEqual(p["plan"], [0, None])
-        self.assertIn("pvj_t0_this()", p["code"])
+        self.assertIn("mctl_t0_this()", p["code"])
         text = S.translate_native(p, (W, H))
         self.assertIn("//!TARGET acc 1 0 w1 h1\n//!PASS 0\n//!PASS -\n", text)
         self.assertEqual(S.parse(HALF, passes=True)["targets"][0]["w"], "w0.5")
@@ -1150,7 +1150,7 @@ class BufferBudgetTest(NativeBase):
         refused = None
         for s, k in ((1, 1), (1, 2), (1, 3), (2, 1), (2, 2), (2, 3), (3, 1)):
             try:
-                self.r("pvj-shader", "load", s, k, prog)
+                self.r("mctl-shader", "load", s, k, prog)
                 placed.append((s, k))
             except PlayerError as e:
                 refused = (s, k, str(e))
@@ -1158,16 +1158,16 @@ class BufferBudgetTest(NativeBase):
         self.assertEqual(len(placed), 6, (placed, refused))          # 6 of 31.6 MiB fit in 192, a seventh does not
         self.assertIn("every program on the box", refused[2])
         # a slot that already holds one takes another in its place (its own buffers count as given back)
-        self.r("pvj-shader", "load", 1, 1, prog)
-        self.r("pvj-shader", "clear", *placed[0])
-        self.r("pvj-shader", "load", refused[0], refused[1], prog)       # room again
+        self.r("mctl-shader", "load", 1, 1, prog)
+        self.r("mctl-shader", "clear", *placed[0])
+        self.r("mctl-shader", "load", refused[0], refused[1], prog)       # room again
         for s, k in placed[1:] + [refused[:2]]:
-            self.r("pvj-shader", "clear", s, k)
-        self.assertEqual(self.r("get_property", "pvj-render")["fx-gl-objects"], 0)
+            self.r("mctl-shader", "clear", s, k)
+        self.assertEqual(self.r("get_property", "mctl-render")["fx-gl-objects"], 0)
 
 
 class PassTest(NativeBase):
-    """Persistent and feedback passes in pvj-render (D106 step c)."""
+    """Persistent and feedback passes in mctl-render (D106 step c)."""
 
     def red(self):
         return self.r.pixel(10, 10)[0]
@@ -1175,24 +1175,24 @@ class PassTest(NativeBase):
     def test_a_feedback_buffer_grows_keeps_through_values_and_starts_over_on_a_load(self):
         self.carrier()
         prog = self.generator(FEEDBACK)
-        self.r("pvj-shader", "load", 1, 0, prog)
+        self.r("mctl-shader", "load", 1, 0, prog)
         a = self.red()
         self.assertTrue(self.r.wait(lambda: self.red() > a + 20, 3), (a, self.red()))
         b = self.red()
         self.assertTrue(self.r.wait(lambda: self.red() > b, 3))            # it goes on growing, frame by frame
-        self.r("pvj-shader", "set", 1, 0, {"rise": 0.001})               # a value: the buffer keeps what it holds
+        self.r("mctl-shader", "set", 1, 0, {"rise": 0.001})               # a value: the buffer keeps what it holds
         time.sleep(0.2)
         c = self.red()
         self.assertGreaterEqual(c, b)
-        self.r("pvj-shader", "set", 1, 0, {"rise": 0.02})
+        self.r("mctl-shader", "set", 1, 0, {"rise": 0.02})
         self.assertTrue(self.r.wait(lambda: self.red() == 255, 5))
-        self.r("pvj-shader", "load", 1, 0, prog)                         # a load: the buffer starts black again
+        self.r("mctl-shader", "load", 1, 0, prog)                         # a load: the buffer starts black again
         self.assertLess(self.red(), 128)
         self.assertEqual(self.slot(0)["state"], "on")
 
     def test_a_pass_draws_at_its_own_size(self):
         self.carrier()
-        self.r("pvj-shader", "load", 1, 0, self.generator(HALF))
+        self.r("mctl-shader", "load", 1, 0, self.generator(HALF))
         time.sleep(0.3)
         got = self.r.pixel(10, 10)
         want = (round(W / 2 / 1000 * 255), round(H / 2 / 1000 * 255), round(W / 2 / 1000 * 255))
@@ -1200,7 +1200,7 @@ class PassTest(NativeBase):
 
     def test_a_float_buffer_keeps_values_above_one(self):
         self.carrier()
-        self.r("pvj-shader", "load", 1, 0, self.generator(FLOATS))
+        self.r("mctl-shader", "load", 1, 0, self.generator(FLOATS))
         time.sleep(0.3)
         state = self.slot(0)["state"]
         want = 64 if "8-bit" in state else 128                   # 2 / 4 kept, or 1 / 4 where the GPU has no float buffers
@@ -1209,7 +1209,7 @@ class PassTest(NativeBase):
 
     def test_an_effect_of_two_passes(self):
         self.picture()
-        self.r("pvj-shader", "load", 1, 1, self.effect(INVERT_TWICE))
+        self.r("mctl-shader", "load", 1, 1, self.effect(INVERT_TWICE))
         time.sleep(0.3)
         got = self.r.pixel(5, 5)
         want = tuple(255 - c for c in gradient(5, 5))
@@ -1217,7 +1217,7 @@ class PassTest(NativeBase):
 
     def test_a_buffer_that_is_not_persistent_starts_each_run_black(self):
         self.carrier()
-        self.r("pvj-shader", "load", 1, 0, self.generator(FRESH))
+        self.r("mctl-shader", "load", 1, 0, self.generator(FRESH))
         time.sleep(0.5)
         a = self.red()
         time.sleep(1.0)
@@ -1226,7 +1226,7 @@ class PassTest(NativeBase):
 
     def test_a_filter_sees_its_pictures_own_size_from_a_smaller_pass(self):
         self.picture()
-        self.r("pvj-shader", "load", 1, 1, self.effect(SRC_SIZE))
+        self.r("mctl-shader", "load", 1, 1, self.effect(SRC_SIZE))
         time.sleep(0.3)
         got = self.r.pixel(10, 10)
         want = (round(W / 1000 * 255), round(W / 2 / 1000 * 255))     # IMG_SIZE: the picture's; RENDERSIZE: the pass's
@@ -1234,22 +1234,22 @@ class PassTest(NativeBase):
 
     def test_every_pass_is_counted(self):
         self.carrier()
-        self.r("pvj-shader", "load", 1, 0, self.generator(FEEDBACK))
+        self.r("mctl-shader", "load", 1, 0, self.generator(FEEDBACK))
         time.sleep(2.5)
-        rate = self.r("get_property", "pvj-render")["fx-passes-per-second"]
+        rate = self.r("get_property", "mctl-render")["fx-passes-per-second"]
         self.assertTrue(30 <= rate <= 70, rate)          # two passes a run, about 30 runs a second
 
     def test_buffers_too_large_are_refused_and_loads_leave_nothing(self):
         self.carrier()
         huge = FEEDBACK.replace('"PERSISTENT": true', '"PERSISTENT": true, "WIDTH": 4096, "HEIGHT": 4096')
         with self.assertRaises(PlayerError) as e:
-            self.r("pvj-shader", "load", 1, 0, self.generator(huge))
+            self.r("mctl-shader", "load", 1, 0, self.generator(huge))
         self.assertIn("MB", str(e.exception))
         progs = [self.generator(FEEDBACK), self.generator(HALF), self.generator(FLOATS)]
         for i in range(60):
-            self.r("pvj-shader", "load", 1, 0, progs[i % 3])
-        self.r("pvj-shader", "clear", 1, 0)
-        self.assertEqual(self.r("get_property", "pvj-render")["fx-gl-objects"], 0)
+            self.r("mctl-shader", "load", 1, 0, progs[i % 3])
+        self.r("mctl-shader", "clear", 1, 0)
+        self.assertEqual(self.r("get_property", "mctl-render")["fx-gl-objects"], 0)
 
 
 class GeneratorSourceTest(SourcesBase):
@@ -1263,7 +1263,7 @@ class GeneratorSourceTest(SourcesBase):
     effect = NativeBase.effect
 
     def slot(self, source, k):
-        return [s for s in self.r("get_property", "pvj-shaders") if s["source"] == source and s["slot"] == k][0]
+        return [s for s in self.r("get_property", "mctl-shaders") if s["source"] == source and s["slot"] == k][0]
 
     def test_a_generator_is_a_sources_picture_with_its_effects_and_level(self):
         r = self.r
@@ -1272,19 +1272,19 @@ class GeneratorSourceTest(SourcesBase):
         right = (3 * W // 4, H // 4)
         self.assertTrue(r.wait(lambda: near_px(r.pixel(*right), BLACK), 3))         # source 2 idle: black
         gen = self.write(S.translate_native(S.parse(FLAT, passes=True), (W, H)))
-        r("pvj-shader", "load", 2, 0, gen)
+        r("mctl-shader", "load", 2, 0, gen)
         self.assertTrue(r.wait(lambda: near_px(r.pixel(*right), (64, 128, 0)), 3), r.pixel(*right))
         self.assertTrue(near_px(r.pixel(W // 4, H // 4), GREEN), "source 1 changed")
         self.assertTrue(self.sources()[1]["idle"], "the clip layer under the generator plays nothing")
-        r("pvj-shader", "set", 2, 0, {"level": 1.0})
+        r("mctl-shader", "set", 2, 0, {"level": 1.0})
         self.assertTrue(r.wait(lambda: near_px(r.pixel(*right), (255, 128, 0)), 3))
-        r("pvj-shader", "load", 2, 1, self.effect(INVERT))                          # an effect over it
+        r("mctl-shader", "load", 2, 1, self.effect(INVERT))                          # an effect over it
         self.assertTrue(r.wait(lambda: near_px(r.pixel(*right), (0, 127, 255)), 3), r.pixel(*right))
         r("set_property", "brightness", -100)                                       # the Blackout reaches it
         self.assertTrue(r.wait(lambda: max(r.capture()[2]) == 0, 3))
         r("set_property", "brightness", 0)
-        r("pvj-shader", "clear", 2, 0)
-        r("pvj-shader", "clear", 2, 1)
+        r("mctl-shader", "clear", 2, 0)
+        r("mctl-shader", "clear", 2, 1)
         self.assertTrue(r.wait(lambda: near_px(r.pixel(*right), BLACK), 3))
 
 
@@ -1308,7 +1308,7 @@ class GeneratorSourceApiTest(unittest.TestCase):
         self.player.ipc.request("set_property", "image-display-duration", "inf")
 
     def slot(self, s, k):
-        return [x for x in self.r("get_property", "pvj-shaders") if x["source"] == s and x["slot"] == k][0]
+        return [x for x in self.r("get_property", "mctl-shaders") if x["source"] == s and x["slot"] == k][0]
 
     def test_a_shader_to_source_2_its_values_a_clip_in_its_place_and_stop(self):
         dev = {"id": "t", "role": "full"}
@@ -1523,7 +1523,7 @@ class LayerGeneratorTest(NativeBase):
         png(self.blue, W, H, lambda x, y: BLUE)
 
     def st(self):
-        return self.r("get_property", "pvj-render")
+        return self.r("get_property", "mctl-render")
 
     def objects(self):
         return self.st()["fx-gl-objects"]
@@ -1531,11 +1531,11 @@ class LayerGeneratorTest(NativeBase):
     def red_on_the_screen(self):
         """A clip playing in the front layer (the panel's carrier) and a red generator on it: the state before a fade."""
         self.carrier()
-        self.r("pvj-shader", "load", 1, 0, self.generator(solid(0.8, 0, 0)))
+        self.r("mctl-shader", "load", 1, 0, self.generator(solid(0.8, 0, 0)))
         self.assertTrue(self.r.wait(lambda: self.r.pixel(10, 10)[0] > FULL - 8, 5), self.r.pixel(10, 10))
 
     def fade(self, move=None, seconds=None):
-        args = ["pvj-crossfade", self.blue, seconds or self.SECONDS, "keep-open=no,image-display-duration=inf"]
+        args = ["mctl-crossfade", self.blue, seconds or self.SECONDS, "keep-open=no,image-display-duration=inf"]
         self.r(*(args + ([move] if move else [])))
 
     def running(self, low=0.25, high=0.7):
@@ -1551,7 +1551,7 @@ class LayerGeneratorTest(NativeBase):
         self.red_on_the_screen()
         one = self.objects()
         self.fade("wipe-from-left" if self._move else None)
-        self.r("pvj-shader", "load", 1, 0, self.generator(LEVEL if self._level else solid(0, 0, 0.8)))
+        self.r("mctl-shader", "load", 1, 0, self.generator(LEVEL if self._level else solid(0, 0, 0.8)))
         return one
 
     _move = False
@@ -1573,7 +1573,7 @@ class LayerGeneratorTest(NativeBase):
         self.assertTrue(self.r.wait(lambda: self.objects() == one, 5), "the outgoing program was not freed: %s" % self.objects())
         px = self.r.pixel(W // 2, H // 2)
         self.assertTrue(px[2] > FULL - 8 and px[0] < 6 and px[1] < 6, px)
-        slot = self.r("get_property", "pvj-shaders")[0]
+        slot = self.r("get_property", "mctl-shaders")[0]
         self.assertEqual((slot["kind"], slot["state"]), ("generator", "on"))     # the incoming one, now the only one
         st = self.st()
         self.assertEqual((st["fades-done"], st["fades-cut"], st["layer-generators"]), (1, 0, True))
@@ -1599,11 +1599,11 @@ class LayerGeneratorTest(NativeBase):
         finally:
             self._move = self._level = False
         self.running(0.3, 0.6)
-        self.r("pvj-shader", "set", 1, 0, {"level": 0.9})
+        self.r("mctl-shader", "set", 1, 0, {"level": 0.9})
         self.assertTrue(self.r.wait(lambda: self.r.pixel(4, H // 2)[2] > 220, 5), self.r.pixel(4, H // 2))
         right = self.r.pixel(W - 4, H // 2)
         self.assertTrue(right[0] > FULL - 8 and right[2] < 6, "the outgoing generator (right of the edge) moved: %s" % (right,))
-        self.assertEqual(self.r("get_property", "pvj-shaders")[0]["inputs"], 1)
+        self.assertEqual(self.r("get_property", "mctl-shaders")[0]["inputs"], 1)
         self.settled()
 
     def test_both_generators_keep_drawing_through_the_fade(self):
@@ -1616,7 +1616,7 @@ class LayerGeneratorTest(NativeBase):
         alone = passes(1.5)
         self.assertGreater(alone, 20, alone)                # --fx-fps 30 by default
         self.fade()
-        self.r("pvj-shader", "load", 1, 0, self.generator(solid(0, 0, 0.8)))
+        self.r("mctl-shader", "load", 1, 0, self.generator(solid(0, 0, 0.8)))
         self.running(0.1, 0.5)
         both = passes(1.5)
         self.assertGreater(both, 1.6 * alone, "the outgoing generator stopped drawing: %.1f a second, one alone drew %.1f" % (both, alone))
@@ -1632,7 +1632,7 @@ class LayerGeneratorTest(NativeBase):
         self.assertEqual(self.objects() > 0, True)
         self.settled()
         self.assertTrue(self.r.wait(lambda: self.objects() == 0, 5), self.objects())
-        slot = self.r("get_property", "pvj-shaders")[0]
+        slot = self.r("get_property", "mctl-shaders")[0]
         self.assertEqual(slot["state"], "off")
         px = self.r.pixel(W // 2, H // 2)
         self.assertTrue(px[2] > 240 and px[0] < 6, px)
@@ -1648,15 +1648,15 @@ class LayerGeneratorTest(NativeBase):
         px = self.r.pixel(W // 2, H // 2)
         self.assertTrue(px[2] > FULL - 8 and px[0] < 6, "the incoming generator is the picture: %s" % (px,))
         # and a new crossfade does the same: red out, blue in, then asked again while that runs
-        self.r("pvj-shader", "load", 1, 0, self.generator(solid(0.8, 0, 0)))
+        self.r("mctl-shader", "load", 1, 0, self.generator(solid(0.8, 0, 0)))
         self.fade()
-        self.r("pvj-shader", "load", 1, 0, self.generator(solid(0, 0, 0.8)))
+        self.r("mctl-shader", "load", 1, 0, self.generator(solid(0, 0, 0.8)))
         self.running(0.05, 0.5)
         self.assertEqual(self.objects(), 2 * one)
         self.fade(seconds=3.0)
         # the red went with the fade it was cut from; the blue is the outgoing picture of this one, and goes at its end
         self.assertTrue(self.r.wait(lambda: self.objects() == one, 5), self.objects())
-        self.assertEqual(self.r("get_property", "pvj-shaders")[0]["state"], "off")      # slot 0 is the (new) front layer's: none yet
+        self.assertEqual(self.r("get_property", "mctl-shaders")[0]["state"], "off")      # slot 0 is the (new) front layer's: none yet
         self.settled()
         self.assertTrue(self.r.wait(lambda: self.objects() == 0, 5), self.objects())
 
@@ -1664,12 +1664,12 @@ class LayerGeneratorTest(NativeBase):
         one = self.both()
         self.running()
         with self.assertRaises(PlayerError):
-            self.r("pvj-shader", "load", 1, 0, self.write("//!PVJ 1\n//!KIND generator\n//!SIZE 320 180\n//!CODE\nvoid pvj_main() { not glsl }\n"))
+            self.r("mctl-shader", "load", 1, 0, self.write("//!MCTL 1\n//!KIND generator\n//!SIZE 320 180\n//!CODE\nvoid mctl_main() { not glsl }\n"))
         self.assertEqual(self.objects(), 2 * one)
         self.assertEqual(self.st()["fade"], "running")
         self.settled()
 
-    BAD = "//!PVJ 1\n//!KIND generator\n//!SIZE 320 180\n//!CODE\nvoid pvj_main() { not glsl }\n"
+    BAD = "//!MCTL 1\n//!KIND generator\n//!SIZE 320 180\n//!CODE\nvoid mctl_main() { not glsl }\n"
     TRIES = int(os.environ.get("PVJ_LOST_CLEAR_TRIES", "6"))
 
     def test_a_cut_then_a_refused_load_at_once_still_takes_the_outgoing_generator_off(self):
@@ -1681,18 +1681,18 @@ class LayerGeneratorTest(NativeBase):
         png(green, W, H, lambda x, y: GREEN)
         self.carrier()
         for i in range(self.TRIES):
-            self.r("pvj-shader", "load", 1, 0, self.generator(solid(0.8, 0, 0)))
+            self.r("mctl-shader", "load", 1, 0, self.generator(solid(0.8, 0, 0)))
             self.assertTrue(self.r.wait(lambda: self.r.pixel(10, 10)[0] > FULL - 8, 5), self.r.pixel(10, 10))
             one = self.objects()
             self.fade(seconds=8.0)
-            self.r("pvj-shader", "load", 1, 0, self.generator(solid(0, 0, 0.8)))
+            self.r("mctl-shader", "load", 1, 0, self.generator(solid(0, 0, 0.8)))
             self.running(0.1, 0.8)
             self.assertEqual(self.objects(), 2 * one)
             # the cut and the refused load, back to back
-            args = ["pvj-crossfade", green, 2.0, "keep-open=no,image-display-duration=inf"]
+            args = ["mctl-crossfade", green, 2.0, "keep-open=no,image-display-duration=inf"]
             self.r(*args)
             with self.assertRaises(PlayerError):
-                self.r("pvj-shader", "load", 1, 0, self.write(self.BAD))
+                self.r("mctl-shader", "load", 1, 0, self.write(self.BAD))
             self.settled()
             self.assertTrue(self.r.wait(lambda: self.objects() == 0, 5), "try %d: objects %d" % (i, self.objects()))
             self.assertEqual(self.slot(0)["state"], "off", "try %d" % i)
@@ -1713,7 +1713,7 @@ class LayerGeneratorTest(NativeBase):
         self.assertTrue(r > 50 and b > 50 and g < 40, (r, g, b))
         self.settled()
         self.assertEqual(self.objects(), 0)
-        self.assertFalse(self.r("get_property", "pvj-shaders")[0]["state"] != "off")
+        self.assertFalse(self.r("get_property", "mctl-shaders")[0]["state"] != "off")
 
 
 class LayerLoadAnswerTest(NativeBase):
@@ -1725,8 +1725,8 @@ class LayerLoadAnswerTest(NativeBase):
         need_program(self)
         if "with test hooks" not in subprocess.run([BIN, "--version"], capture_output=True, text=True).stdout:
             if STRICT:
-                self.fail("PVJ_RENDER_TEST=1 and pvj-render was built without its test hooks: make -C render TEST_HOOKS=1")
-            self.skipTest("pvj-render was built without its test hooks")
+                self.fail("PVJ_RENDER_TEST=1 and mctl-render was built without its test hooks: make -C render TEST_HOOKS=1")
+            self.skipTest("mctl-render was built without its test hooks")
         self.tmp = tempfile.mkdtemp(prefix="pvj-native-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.r = Renderer(env={"PVJ_RENDER_TEST_SLOW_BUILD": "3500"})
@@ -1743,7 +1743,7 @@ class LayerLoadAnswerTest(NativeBase):
         def load(name, path):
             ipc = Ipc(self.r.sock, timeout=12.0)
             try:
-                ipc.request("pvj-shader", "load", 1, 0, path, wait=6.0)
+                ipc.request("mctl-shader", "load", 1, 0, path, wait=6.0)
                 said[name] = "success"
             except PlayerError as e:
                 said[name] = str(e)
@@ -1755,15 +1755,15 @@ class LayerLoadAnswerTest(NativeBase):
         b.start()                                   # client 2: waits behind that build, on the same layer
         time.sleep(0.1)
         keep = "keep-open=no,image-display-duration=inf"
-        self.r("pvj-crossfade", green, 20.0, keep)          # the load's layer goes out ...
-        self.r("pvj-crossfade", green, 0.2, keep)           # ... and a new crossfade cuts that fade: end_fade drops the waiting load
+        self.r("mctl-crossfade", green, 20.0, keep)          # the load's layer goes out ...
+        self.r("mctl-crossfade", green, 0.2, keep)           # ... and a new crossfade cuts that fade: end_fade drops the waiting load
         a.join(15)
         b.join(15)
         self.assertFalse(a.is_alive() or b.is_alive())
-        self.assertTrue(self.r.wait(lambda: self.r("get_property", "pvj-render")["fade"] == "off", 20, 0.1))
+        self.assertTrue(self.r.wait(lambda: self.r("get_property", "mctl-render")["fade"] == "off", 20, 0.1))
         self.assertNotEqual(said.get("b"), "success", said)
         self.assertIn("ended", said.get("b", ""), said)
-        self.assertTrue(self.r.wait(lambda: self.r("get_property", "pvj-render")["fx-gl-objects"] == 0, 8), self.r("get_property", "pvj-render"))
+        self.assertTrue(self.r.wait(lambda: self.r("get_property", "mctl-render")["fx-gl-objects"] == 0, 8), self.r("get_property", "mctl-render"))
         self.assertEqual(self.slot(0)["state"], "off")
 
 
@@ -1780,9 +1780,9 @@ class ManyLayerFadesTest(NativeBase):
         png(pics[0], W, H, lambda x, y: RED)
         png(pics[1], W, H, lambda x, y: BLUE)
         gens = [self.generator(solid(0.8, 0, 0)), self.generator(solid(0, 0, 0.8))]
-        st = lambda: self.r("get_property", "pvj-render")
+        st = lambda: self.r("get_property", "mctl-render")
         self.carrier()
-        self.r("pvj-shader", "load", 1, 0, gens[0])
+        self.r("mctl-shader", "load", 1, 0, gens[0])
         one = st()["fx-gl-objects"]
         self.assertGreater(one, 0)
         marks = []
@@ -1790,8 +1790,8 @@ class ManyLayerFadesTest(NativeBase):
             self.assertLess(time.monotonic(), deadline, "the bounded run of fades took too long (%d done)" % i)
             long_one = i % 3 == 1                               # this one is cut short by the next
             before = st()["fades"]
-            self.r("pvj-crossfade", pics[i % 2], 30.0 if long_one else 0.03, "keep-open=no,image-display-duration=inf")
-            self.r("pvj-shader", "load", 1, 0, gens[(i + 1) % 2])
+            self.r("mctl-crossfade", pics[i % 2], 30.0 if long_one else 0.03, "keep-open=no,image-display-duration=inf")
+            self.r("mctl-shader", "load", 1, 0, gens[(i + 1) % 2])
             if not long_one:
                 self.assertTrue(self.r.wait(lambda: st()["fade"] == "off", 15, 0.01), "fade %d: %s\n%s" % (i, st(), self.r.stderr()))
             self.assertEqual(st()["fades"], before + 1)
@@ -1809,18 +1809,18 @@ class ManyLayerFadesTest(NativeBase):
             self.assertLessEqual(abs(m[3] - marks[0][3]), 6, marks)       # libmpv's pools move by a few with fades (D98)
         self.assertIsNone(self.r.proc.poll())
         self.assertNotIn("Export failed", self.r.stderr())
-        self.r("pvj-shader", "clear", 1, 0)
+        self.r("mctl-shader", "clear", 1, 0)
         self.assertEqual(st()["fx-gl-objects"], 0)
         print("\n%d fades with a generator on each side: fds, threads, program objects, libmpv objects at rest %s" % (self.FADES, marks))
 
 
-# ---- D130, slice 2: pvj-fade-to-program, and clip to shader and shader to clip as fades --------------------------------
+# ---- D130, slice 2: mctl-fade-to-program, and clip to shader and shader to clip as fades --------------------------------
 
 # a clip whose red moves (a sine over its frame number) and a generator whose green moves (a sine over TIME): while both
 # are in a fade, the mix has both moving. No comma outside a function: the address is a lavfi graph.
 MOVING = "av://lavfi:color=c=black:size=%dx%d:rate=30,format=gbrp,geq=r=140+110*sin(N/5):g=0:b=0,format=rgb0" % (W, H)
 MOVER = "/*{}*/\nvoid main() { gl_FragColor = vec4(0.0, 0.5 + 0.45 * sin(TIME * 6.0), 0.0, 1.0); }\n"
-BAD_PROGRAM = "//!PVJ 1\n//!KIND generator\n//!SIZE 320 180\n//!CODE\nvoid pvj_main() { not glsl }\n"
+BAD_PROGRAM = "//!MCTL 1\n//!KIND generator\n//!SIZE 320 180\n//!CODE\nvoid mctl_main() { not glsl }\n"
 MOVES = ("wipe-from-left", "wipe-from-right", "wipe-from-top", "wipe-from-bottom",
          "slide-left", "slide-right", "slide-up", "slide-down")
 KEEP = "keep-open=no,image-display-duration=inf"
@@ -1830,7 +1830,7 @@ class ProgramFadeBase(NativeBase):
     SECONDS = 8.0
 
     def st(self):
-        return self.r("get_property", "pvj-render")
+        return self.r("get_property", "mctl-render")
 
     def objects(self):
         return self.st()["fx-gl-objects"]
@@ -1846,11 +1846,11 @@ class ProgramFadeBase(NativeBase):
         time.sleep(0.3)
 
     def to_program(self, program, seconds=None, move=None):
-        args = ["pvj-fade-to-program", program, self.SECONDS if seconds is None else seconds]
+        args = ["mctl-fade-to-program", program, self.SECONDS if seconds is None else seconds]
         return self.r(*(args + ([move] if move else [])))
 
     def to_clip(self, url, seconds=None, move=None):
-        args = ["pvj-crossfade", url, self.SECONDS if seconds is None else seconds, KEEP]
+        args = ["mctl-crossfade", url, self.SECONDS if seconds is None else seconds, KEEP]
         return self.r(*(args + ([move] if move else [])))
 
     def running(self, low=0.25, high=0.7, step=0.02):
@@ -1873,8 +1873,8 @@ class ProgramFadeBase(NativeBase):
 
 
 class ProgramFadeTest(ProgramFadeBase):
-    """D130, slice 2. pvj-fade-to-program builds a generator into the idle layer and fades to it, from a clip or from
-    another generator; a pvj-crossfade out of a layer that holds a generator is a fade whether or not a clip plays under
+    """D130, slice 2. mctl-fade-to-program builds a generator into the idle layer and fades to it, from a clip or from
+    another generator; a mctl-crossfade out of a layer that holds a generator is a fade whether or not a clip plays under
     it. Both sides move through the fade; the outgoing layer's picture is freed at its end; a program the GPU refuses
     changes nothing on the screen."""
 
@@ -2021,7 +2021,7 @@ class ProgramFadeTest(ProgramFadeBase):
         for args in ([os.path.basename(good), 1.0], ["/does/not/exist.prog", 1.0], [good, -1], [good, 61], [good, 1.0, "wobble"],
                      [self.effect(INVERT), 1.0], [5, 1.0], [good, "x"]):
             with self.assertRaises(PlayerError) as e:
-                self.r("pvj-fade-to-program", *args)
+                self.r("mctl-fade-to-program", *args)
             self.assertIn("invalid parameter", str(e.exception), args)
         st = self.st()
         self.assertEqual((st["fade"], st["fades"], st["program-fades"]), ("off", 0, 0))
@@ -2068,7 +2068,7 @@ class ProgramFadeTest(ProgramFadeBase):
         one = self.objects()
         self.assertGreater(one, 0)
         with self.assertRaises(PlayerError) as e:
-            self.r("pvj-shader", "set", 1, 0, {"level": 0.9})
+            self.r("mctl-shader", "set", 1, 0, {"level": 0.9})
         self.assertIn("invalid parameter", str(e.exception))
         self.assertEqual(self.st()["fade"], "running")
         self.assertEqual(self.objects(), one)
@@ -2104,8 +2104,8 @@ class ProgramFadeSlowBuildTest(ProgramFadeBase):
         need_program(self)
         if "with test hooks" not in subprocess.run([BIN, "--version"], capture_output=True, text=True).stdout:
             if STRICT:
-                self.fail("PVJ_RENDER_TEST=1 and pvj-render was built without its test hooks: make -C render TEST_HOOKS=1")
-            self.skipTest("pvj-render was built without its test hooks")
+                self.fail("PVJ_RENDER_TEST=1 and mctl-render was built without its test hooks: make -C render TEST_HOOKS=1")
+            self.skipTest("mctl-render was built without its test hooks")
         self.tmp = tempfile.mkdtemp(prefix="pvj-native-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.r = Renderer(env={"PVJ_RENDER_TEST_SLOW_BUILD": str(ms)})
@@ -2123,7 +2123,7 @@ class ProgramFadeSlowBuildTest(ProgramFadeBase):
 
         def ask():
             said["t0"] = time.monotonic()
-            Ipc(self.r.sock, timeout=12.0).request("pvj-fade-to-program", self.generator(solid(0, 0, 0.8)), 8.0, wait=6.0)
+            Ipc(self.r.sock, timeout=12.0).request("mctl-fade-to-program", self.generator(solid(0, 0, 0.8)), 8.0, wait=6.0)
             said["t1"] = time.monotonic()
         th = threading.Thread(target=ask)
         th.start()
@@ -2173,7 +2173,7 @@ class ManyProgramFadesTest(ProgramFadeBase):
         deadline = time.monotonic() + self.LIMIT
         clips = [self.pic("a", RED), self.pic("b", GREEN)]
         gens = [self.generator(solid(0.8, 0, 0)), self.generator(solid(0, 0, 0.8))]
-        st = lambda: self.r("get_property", "pvj-render")
+        st = lambda: self.r("get_property", "mctl-render")
         self.r.load(clips[0])
         marks = []
         one = None
@@ -2302,7 +2302,7 @@ ENDED = "the layer was ended before the load took effect"
 
 
 class ProgramBuildDoesNotHoldTheLayersTest(ProgramFadeBase):
-    """The review of #240: pvj-fade-to-program used to hold layer_lock across the build (up to 3 s), so a Stop, a load, a
+    """The review of #240: mctl-fade-to-program used to hold layer_lock across the build (up to 3 s), so a Stop, a load, a
     level or a crossfade from the panel waited behind it past the player's 2 s timeout and raised there while still running
     in the renderer. Now the lock is let go while the program builds; a command that ends a fade ends the build too, and the
     fade command answers that the layer was ended."""
@@ -2311,8 +2311,8 @@ class ProgramBuildDoesNotHoldTheLayersTest(ProgramFadeBase):
         need_program(self)
         if "with test hooks" not in subprocess.run([BIN, "--version"], capture_output=True, text=True).stdout:
             if STRICT:
-                self.fail("PVJ_RENDER_TEST=1 and pvj-render was built without its test hooks: make -C render TEST_HOOKS=1")
-            self.skipTest("pvj-render was built without its test hooks")
+                self.fail("PVJ_RENDER_TEST=1 and mctl-render was built without its test hooks: make -C render TEST_HOOKS=1")
+            self.skipTest("mctl-render was built without its test hooks")
         self.tmp = tempfile.mkdtemp(prefix="pvj-native-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.r = Renderer(env={"PVJ_RENDER_TEST_SLOW_BUILD": str(ms)})
@@ -2329,7 +2329,7 @@ class ProgramBuildDoesNotHoldTheLayersTest(ProgramFadeBase):
         def ask():
             t0 = time.monotonic()
             try:
-                Ipc(self.r.sock, timeout=12.0).request("pvj-fade-to-program", program, seconds, wait=8.0)
+                Ipc(self.r.sock, timeout=12.0).request("mctl-fade-to-program", program, seconds, wait=8.0)
                 said["answer"] = "success"
             except PlayerError as e:
                 said["answer"] = str(e)
@@ -2353,7 +2353,7 @@ class ProgramBuildDoesNotHoldTheLayersTest(ProgramFadeBase):
         self.assertTrue(self.r.wait(lambda: self.objects() == 0, 10), self.objects())
         st = self.st()
         self.assertEqual((st["fade"], st["fades"]), ("off", 0), st)
-        self.assertEqual(self.r("get_property", "pvj-shaders")[0]["state"], "off")
+        self.assertEqual(self.r("get_property", "mctl-shaders")[0]["state"], "off")
         self.assertIsNone(self.r.proc.poll())
 
     def test_a_load_a_level_and_a_crossfade_are_served_while_the_program_builds(self):
@@ -2364,10 +2364,10 @@ class ProgramBuildDoesNotHoldTheLayersTest(ProgramFadeBase):
         ipc = Ipc(self.r.sock, timeout=2.0)
         t0 = time.monotonic()
         ipc.request("set_property", "brightness", -10)       # a level does not end the build
-        ipc.request("get_property", "pvj-render")
+        ipc.request("get_property", "mctl-render")
         self.assertLess(time.monotonic() - t0, 1.0)
         t0 = time.monotonic()
-        ipc.request("pvj-crossfade", red, 0.2, KEEP)         # a transition does: the program is asked off
+        ipc.request("mctl-crossfade", red, 0.2, KEEP)         # a transition does: the program is asked off
         self.assertLess(time.monotonic() - t0, 1.0)
         th.join(15)
         self.assertIn(ENDED, said["answer"])
@@ -2459,28 +2459,28 @@ class TwoClientStressTest(ProgramFadeBase):
                 time.sleep(rnd.uniform(0, 0.02))
 
         def a_fade_prog(ipc, rnd):
-            args = ["pvj-fade-to-program", rnd.choice(gens + [bad]), rnd.choice([0.03, 0.1, 0.5, 2.0])]
+            args = ["mctl-fade-to-program", rnd.choice(gens + [bad]), rnd.choice([0.03, 0.1, 0.5, 2.0])]
             if rnd.random() < 0.4:
                 args.append(rnd.choice(["wipe-from-left", "slide-from-top", "wipe-from-bottom"]))
             ipc.request(*args, wait=8.0)
 
         def a_load(ipc, rnd):
-            ipc.request("pvj-shader", "load", 1, 0, rnd.choice(gens + [bad]), wait=8.0)
+            ipc.request("mctl-shader", "load", 1, 0, rnd.choice(gens + [bad]), wait=8.0)
 
         def a_set(ipc, rnd):
-            ipc.request("pvj-shader", "set", 1, 0, {"level": rnd.random()})
+            ipc.request("mctl-shader", "set", 1, 0, {"level": rnd.random()})
 
         def a_clear(ipc, rnd):
-            ipc.request("pvj-shader", "clear", 1, 0, wait=8.0)
+            ipc.request("mctl-shader", "clear", 1, 0, wait=8.0)
 
         def b_fade(ipc, rnd):
-            args = ["pvj-crossfade", rnd.choice([red, blue, green]), rnd.choice([0.03, 0.1, 0.5, 2.0]), KEEP]
+            args = ["mctl-crossfade", rnd.choice([red, blue, green]), rnd.choice([0.03, 0.1, 0.5, 2.0]), KEEP]
             if rnd.random() < 0.4:
                 args.append(rnd.choice(["wipe-from-left", "slide-from-top"]))
             ipc.request(*args)
 
         def b_fade_prog(ipc, rnd):
-            ipc.request("pvj-fade-to-program", rnd.choice(gens), rnd.choice([0.03, 0.3, 1.0]), wait=8.0)
+            ipc.request("mctl-fade-to-program", rnd.choice(gens), rnd.choice([0.03, 0.3, 1.0]), wait=8.0)
 
         def b_load(ipc, rnd):
             ipc.request("loadfile", rnd.choice([red, blue, green]), "replace")
@@ -2492,8 +2492,8 @@ class TwoClientStressTest(ProgramFadeBase):
             ipc.request("set_property", "brightness", rnd.choice([0, -20, 10]))
 
         def b_look(ipc, rnd):
-            ipc.request("get_property", "pvj-shaders")
-            ipc.request("get_property", "pvj-render")
+            ipc.request("get_property", "mctl-shaders")
+            ipc.request("get_property", "mctl-render")
 
         ta = threading.Thread(target=client, args=("a", [a_fade_prog, a_fade_prog, a_fade_prog, a_load, a_set, a_set, a_clear]))
         tb = threading.Thread(target=client, args=("b", [b_fade, b_fade, b_fade_prog, b_load, b_stop, b_set, b_look]))
@@ -2508,7 +2508,7 @@ class TwoClientStressTest(ProgramFadeBase):
         self.assertEqual(slow, [], "answers that took over 1.5 s (a lock held across a build): %s" % slow[:8])
         self.assertGreater(counts["a"] + counts["b"], 20)
         self.r("stop")
-        self.r("pvj-shader", "clear", 1, 0)
+        self.r("mctl-shader", "clear", 1, 0)
         self.assertTrue(self.r.wait(lambda: self.objects() == 0, 10), "programs left alive after stop and clear: %d" % self.objects())
         time.sleep(0.5)
         self.assertLessEqual(fd_count(self.r.pid), start[0])
@@ -2580,7 +2580,7 @@ class PlayerShaderLayerTest(ProgramFadeBase):
 
         def lost(*command, **kw):
             out = real(*command, **kw)
-            if command and command[0] == "pvj-fade-to-program":
+            if command and command[0] == "mctl-fade-to-program":
                 raise PlayerError("no answer from the player")
             return out
         p.ipc.request = lost
@@ -2599,7 +2599,7 @@ class PlayerShaderLayerTest(ProgramFadeBase):
         real = p.ipc.request
 
         def lost(*command, **kw):
-            if command and command[0] == "pvj-fade-to-program":
+            if command and command[0] == "mctl-fade-to-program":
                 raise PlayerError("no answer from the player")
             return real(*command, **kw)
         p.ipc.request = lost
@@ -2641,7 +2641,7 @@ class EngineFadeTest(NativeBase):
         self.api.settings.data["mix"] = self.T.stored("crossfade", 3.0)
 
     def st(self):
-        return self.r("get_property", "pvj-render")
+        return self.r("get_property", "mctl-render")
 
     def settled(self):
         self.assertTrue(self.r.wait(lambda: self.st()["fade"] == "off", 15, 0.05), self.st())
@@ -2755,7 +2755,7 @@ class MixCardAfterRestartTest(NativeBase):
         real = self.player.ipc.request
 
         def classic(*command, **kw):
-            if command[:2] == ("get_property", "pvj-render"):
+            if command[:2] == ("get_property", "mctl-render"):
                 raise PlayerError("mpv: property not found")
             return real(*command, **kw)
         self.player.ipc.request = classic

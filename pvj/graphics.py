@@ -5,7 +5,7 @@
 A graphic is a text or a logo that the node draws over the picture. pvj-raster (render/raster/, its own process with its
 own limits) makes each graphic into one small premultiplied picture; what draws it depends on the player:
 
-* the New renderer (pvj-render 0.11.0 on, `Player.graphics_stage()`; Pi 4, Pi 5, desktop): its GPU stage, one slot a
+* the New renderer (mctl-render 0.11.0 on, `Player.graphics_stage()`; Pi 4, Pi 5, desktop): its GPU stage, one slot a
   graphic in the order of the list (a later one over an earlier). The picture is loaded once; the fade, the typewriter,
   the scroll and the crawl are worked out by the renderer every frame, so nothing is sent while they run;
 * classic mpv (a Pi 3, or a node that fell back): `overlay-add` (ids OVERLAY_BASE to OVERLAY_BASE + 7), still. mpv's

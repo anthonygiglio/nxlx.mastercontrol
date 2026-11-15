@@ -63,8 +63,8 @@ OWN = ("tools/rename-map.txt", "tools/rename-apply.py", "tools/rename-allow.txt"
 # rows, so an unrelated pull request that adds a pvj module, a PVJ_ variable or a journal line is not blocked before
 # that kind's rename. Every rename pull request adds its kind here and recounts the allow list (--write-allow).
 # Empty in PR 1: until a kind lands, its names are reported (the dry run, the guard's note) and not enforced.
-# text landed in PR 3, protocol in PR 4.
-LANDED = ("text", "protocol")
+# text landed in PR 3, protocol in PR 4, render in PR 5.
+LANDED = ("text", "protocol", "render")
 
 
 class Row:

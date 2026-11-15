@@ -1,10 +1,10 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""Which program draws (pvj/renderer.py, D95): the choice, pvj-render's arguments, the supervisor in the player's
+"""Which program draws (pvj/renderer.py, D95): the choice, mctl-render's arguments, the supervisor in the player's
 service and its fallback to classic mpv, the report read as untrusted data, and the panel's routes.
 
-pvj-render itself is tested in tests/test_pvj_render.py. Here a stand-in helper (a small Python program that answers
-on the socket as pvj-render does, and can be told to fail in each way) stands in for it, so these run everywhere."""
+mctl-render itself is tested in tests/test_mctl_render.py. Here a stand-in helper (a small Python program that answers
+on the socket as mctl-render does, and can be told to fail in each way) stands in for it, so these run everywhere."""
 import json
 import os
 import signal
@@ -21,11 +21,11 @@ import tests        # the run's own temp folder (tests/__init__.py)
 from pvj import boxcare, renderer, screenmode, settings as settings_mod
 from pvj.player import Ipc, Player, PlayerError
 
-# The stand-in: answers get_property pid with its own pid (and quit) on --socket=PATH, as pvj-render does. What it
+# The stand-in: answers get_property pid with its own pid (and quit) on --socket=PATH, as mctl-render does. What it
 # does is read from STANDIN_MODE: "ok" (a quit ends it with 0), "die:SECONDS:CODE" (answer, then end with CODE),
 # "silent" (never answer), "exit:CODE" (end at once), "quit-after:SECONDS" (end with 0 as if quit was asked),
 # "term" (never takes a quit; SIGTERM ends it), "deaf" (answers the first question, then hears nothing more and
-# ignores SIGTERM: only SIGKILL ends it, as a jammed pvj-render on the first Pi run).
+# ignores SIGTERM: only SIGKILL ends it, as a jammed mctl-render on the first Pi run).
 STANDIN = textwrap.dedent('''\
     import json, os, signal, socket, sys, time
     path = [a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--socket=")][0]
@@ -71,9 +71,9 @@ STANDIN = textwrap.dedent('''\
 
 class Base(unittest.TestCase):
     def setUp(self):
-        self.dir = tempfile.mkdtemp(prefix="pvj-renderer-")
+        self.dir = tempfile.mkdtemp(prefix="mctl-renderer-")
         self.addCleanup(lambda: subprocess.run(["rm", "-rf", self.dir]))
-        self.standin = os.path.join(self.dir, "pvj-render")
+        self.standin = os.path.join(self.dir, "mctl-render")
         with open(self.standin, "w") as f:
             f.write("#!%s\n%s" % (sys.executable, STANDIN))
         os.chmod(self.standin, 0o755)
@@ -187,7 +187,7 @@ class FinalRuleTest(unittest.TestCase):
 
 
 class FakeRender:
-    """What the supervisor's watch asks of pvj-render: its counters, and pvj-final."""
+    """What the supervisor's watch asks of mctl-render: its counters, and mctl-final."""
 
     def __init__(self):
         self.state = {"missed-vblanks": 0, "load": 5, "output-fps": 60.0, "final-lines": 0, "final-why": ""}
@@ -196,7 +196,7 @@ class FakeRender:
     def request(self, *command, wait=None):
         if self.down:
             raise PlayerError("no reply from mpv")
-        if command[0] == "pvj-final":
+        if command[0] == "mctl-final":
             if self.refuse:
                 raise PlayerError("mpv: invalid parameter")
             self.asked.append(command[1])
@@ -208,7 +208,7 @@ class FakeRender:
 class FinalWatchTest(Base):
     def watched(self, cmd_final="--final=auto"):
         now = [0.0]
-        sup = renderer.Supervisor(["pvj-render", cmd_final], self.sock, self.dir, "auto", log=self.lines.append, clock=lambda: now[0])
+        sup = renderer.Supervisor(["mctl-render", cmd_final], self.sock, self.dir, "auto", log=self.lines.append, clock=lambda: now[0])
         sup._final_begin()
         fake = sup.final_ipc = FakeRender()
         return sup, fake, now
@@ -246,10 +246,10 @@ class FinalWatchTest(Base):
         fake.refuse = True
         self.tick(sup, fake, now, 10, 30)
         self.assertFalse(sup.final_watch)
-        self.assertEqual(self.report()["final_why"], "pvj-render did not take the change")
+        self.assertEqual(self.report()["final_why"], "mctl-render did not take the change")
 
     def test_the_poll_is_short_so_a_jammed_renderer_holds_nothing_up(self):
-        sup = renderer.Supervisor(["pvj-render", "--final=auto"], self.sock, self.dir, "auto")
+        sup = renderer.Supervisor(["mctl-render", "--final=auto"], self.sock, self.dir, "auto")
         sup._final_begin()
         self.assertEqual(sup.final_ipc.timeout, 0.2)
         asked = []
@@ -258,7 +258,7 @@ class FinalWatchTest(Base):
         sup.final_ipc, sup.clock = fake, lambda: 10.0
         sup.final_rule = {"final": "full", "t0": 0.0, "m0": 0}
         sup._final_tick()
-        self.assertEqual(asked, [("get_property", None), ("pvj-final", renderer.FINAL_ASK_SECONDS)])
+        self.assertEqual(asked, [("get_property", None), ("mctl-final", renderer.FINAL_ASK_SECONDS)])
 
     def test_a_silent_renderer_is_not_this_watchs_business(self):
         sup, fake, now = self.watched()
@@ -396,18 +396,18 @@ class SupervisorTest(Base):
 
     def test_a_program_that_ends_at_once_falls_back_at_once(self):
         why = self.supervisor("exit:2").run()
-        self.assertEqual(why, "pvj-render did not start (exit 2)")
+        self.assertEqual(why, "mctl-render did not start (exit 2)")
         self.assertEqual(len(self.runs()), 1)
 
     def test_a_program_that_never_answers_falls_back(self):
         sup = self.supervisor("silent", start_seconds=1.5)
         why = sup.run()
-        self.assertEqual(why, "pvj-render did not answer within 1 seconds")
+        self.assertEqual(why, "mctl-render did not answer within 1 seconds")
         self.assertIsNotNone(sup.proc.poll(), "the silent one was ended")
 
     def test_one_end_is_started_again_and_two_in_a_row_fall_back(self):
         why = self.supervisor("die:0.8:3").run()
-        self.assertEqual(why, "pvj-render ended twice in a row (exit 3)")
+        self.assertEqual(why, "mctl-render ended twice in a row (exit 3)")
         self.assertEqual(len(self.runs()), 2)
         self.assertTrue(any("starting it once more" in line for line in self.lines), self.lines)
 
@@ -470,8 +470,8 @@ class SupervisorTest(Base):
 
 
 class SwitchTest(Base):
-    """A change of the wish while pvj-render draws (the Owner chose classic again): the supervisor ends pvj-render
-    itself, asked first, then SIGTERM, then SIGKILL, and ends the service, whether or not pvj-render answers."""
+    """A change of the wish while mctl-render draws (the Owner chose classic again): the supervisor ends mctl-render
+    itself, asked first, then SIGTERM, then SIGKILL, and ends the service, whether or not mctl-render answers."""
 
     def run_switch(self, mode, wish={"use": "classic", "detail": "auto"}):
         import threading
@@ -502,7 +502,7 @@ class SwitchTest(Base):
             sup.stopping = True
             sup._end()
             t.join(10)
-            self.fail("the change of the wish did not end pvj-render (%s)" % self.lines)
+            self.fail("the change of the wish did not end mctl-render (%s)" % self.lines)
         return done, sup, took
 
     def test_a_helper_that_never_answers_is_killed_and_the_service_ends(self):
@@ -515,7 +515,7 @@ class SwitchTest(Base):
         self.assertEqual((rep["chosen"], rep["drawing"]), ("classic", "classic"))
         self.assertIn("SIGKILL", rep["switched"])
         self.assertIn("its socket did not answer", rep["switched"])
-        self.assertTrue(any("switched from pvj-render" in line for line in self.lines), self.lines)
+        self.assertTrue(any("switched from mctl-render" in line for line in self.lines), self.lines)
 
     def test_a_helper_that_takes_no_quit_gets_sigterm(self):
         done, sup, took = self.run_switch("term")
@@ -550,7 +550,7 @@ class SwitchTest(Base):
         sup = renderer.Supervisor(["x"], self.sock, self.dir, "auto", wanted=wanted)
         screenmode.write_json(wanted, renderer.clean({"use": "new", "detail": "auto", "loop_lists": False}))
         self.assertIn("loop_lists", screenmode.read_json(wanted), "the file the panel writes carries the switch")
-        self.assertIsNone(sup._wish_changed(), "or the player ends pvj-render every few seconds, for good")
+        self.assertIsNone(sup._wish_changed(), "or the player ends mctl-render every few seconds, for good")
         screenmode.write_json(wanted, {"use": "new", "detail": 720, "loop_lists": False})
         self.assertEqual(sup._wish_changed(), {"use": "new", "detail": 720}, "a real change is still one")
 
@@ -570,7 +570,7 @@ class SwitchTest(Base):
         screenmode.write_json(wanted, renderer.clean({"use": "new", "detail": "auto", "deblock": True}))
         self.assertEqual(sup._wish_changed(), {"use": "new", "detail": "auto", "deblock": True}, "the way back takes hold")
         again = renderer.Supervisor(["x"], self.sock, self.dir, "auto", wanted=wanted, deblock=True)
-        self.assertIsNone(again._wish_changed(), "or the player ends pvj-render every few seconds, for good")
+        self.assertIsNone(again._wish_changed(), "or the player ends mctl-render every few seconds, for good")
 
     def test_another_final_pass_is_a_change_too(self):
         done, sup, took = self.run_switch("ok", {"use": "new", "detail": "auto", "final": 720})
@@ -625,7 +625,7 @@ class ServeTest(Base):
         self.assertEqual(args[0], "mpv")
         self.assertIn("--drm-mode=1920x1080@60.00", args)
         self.assertEqual((rep["chosen"], rep["drawing"]), ("new", "classic"))
-        self.assertEqual(rep["why"], "pvj-render did not start (exit 2)")
+        self.assertEqual(rep["why"], "mctl-render did not start (exit 2)")
         self.assertEqual(self.runs()[0][-5:], ["--detail=540", "--fast", "--skip-deblock", "--sources=4", "--final=auto"])
 
     def test_a_killed_renderers_socket_is_gone_before_classic_mpv_starts(self):
@@ -715,9 +715,9 @@ class PanelTest(CareBase):
 
     def setUp(self):
         super().setUp()
-        self.bdir = tempfile.mkdtemp(prefix="pvj-renderer-bin-")
+        self.bdir = tempfile.mkdtemp(prefix="mctl-renderer-bin-")
         self.addCleanup(lambda: subprocess.run(["rm", "-rf", self.bdir]))
-        self.bin = os.path.join(self.bdir, "pvj-render")
+        self.bin = os.path.join(self.bdir, "mctl-render")
         with open(self.bin, "w") as f:
             f.write("#!/bin/sh\nexit 0\n")
         os.chmod(self.bin, 0o755)
@@ -741,7 +741,7 @@ class PanelTest(CareBase):
         self.assertEqual(self.settings.data["renderer"], {"use": "new", "detail": 720})
         self.assertEqual(screenmode.read_json(self.api.renderer.wanted_file), {"use": "new", "detail": 720})
         self.assertEqual(len(self.quits), 1)
-        self.assertEqual(body["why"], "the player has not started pvj-render yet")
+        self.assertEqual(body["why"], "the player has not started mctl-render yet")
         self.r("POST", "/api/renderer", {"use": "new", "detail": 720})
         self.assertEqual(len(self.quits), 1, "the same again restarts nothing")
         self.assertEqual(stat.S_IMODE(os.stat(self.api.renderer.wanted_file).st_mode), 0o640)
@@ -785,18 +785,18 @@ class PanelTest(CareBase):
             st, body = self.r("GET", "/api/renderer")
         self.assertEqual(body["final_now"], {"final": 720, "why": "the node was busy: 21 in 100 frames came late with a load of 5"})
 
-    def test_choosing_new_again_after_a_fall_back_tries_pvj_render_again(self):
+    def test_choosing_new_again_after_a_fall_back_tries_mctl_render_again(self):
         self.r("POST", "/api/renderer", {"use": "new", "detail": 720})
         self.assertEqual(len(self.quits), 1)
         os.makedirs(os.path.dirname(self.api.renderer.report_file), exist_ok=True)
         renderer.write_report(os.path.dirname(self.api.renderer.report_file),
-                              {"chosen": "new", "drawing": "classic", "why": "pvj-render ended twice in a row (exit 3)", "detail": 720})
+                              {"chosen": "new", "drawing": "classic", "why": "mctl-render ended twice in a row (exit 3)", "detail": 720})
         pid = screenmode.read_json(self.api.renderer.report_file)["pid"]
         real = self.api.player.ipc.request
         with mock.patch.object(self.api.player.ipc, "request", lambda *a: pid if a == ("get_property", "pid") else real(*a)):
             st, body = self.r("POST", "/api/renderer", {"use": "new", "detail": 720})
             self.assertEqual((st, body["drawing"]), (200, "classic"))
-            self.assertEqual(len(self.quits), 2, "the same choice again re-arms New: the player restarts and tries pvj-render")
+            self.assertEqual(len(self.quits), 2, "the same choice again re-arms New: the player restarts and tries mctl-render")
             # drawing New already (a report of New): the same again restarts nothing
             renderer.write_report(os.path.dirname(self.api.renderer.report_file),
                                   {"chosen": "new", "drawing": "new", "why": "", "detail": 720})
@@ -828,11 +828,11 @@ class PanelTest(CareBase):
         self.r("POST", "/api/renderer", {"use": "new"})
         os.makedirs(os.path.dirname(self.api.renderer.report_file), exist_ok=True)
         renderer.write_report(os.path.dirname(self.api.renderer.report_file),
-                              {"chosen": "new", "drawing": "classic", "why": "pvj-render ended twice in a row (exit 3)", "detail": "auto"})
+                              {"chosen": "new", "drawing": "classic", "why": "mctl-render ended twice in a row (exit 3)", "detail": "auto"})
         pid = screenmode.read_json(self.api.renderer.report_file)["pid"]
         real = self.api.player.ipc.request
         with mock.patch.object(self.api.player.ipc, "request", lambda *a: pid if a == ("get_property", "pid") else real(*a)):
-            self.assertEqual(self.api.renderer.brief(), {"use": "new", "drawing": "classic", "why": "pvj-render ended twice in a row (exit 3)"})
+            self.assertEqual(self.api.renderer.brief(), {"use": "new", "drawing": "classic", "why": "mctl-render ended twice in a row (exit 3)"})
         st, out = self.h("GET", "/api/status", None, self.full_dev)
         self.assertEqual(st, 200, out)
         self.assertEqual(set(out["renderer"]), {"use", "drawing", "why"})
@@ -903,7 +903,7 @@ class PanelTest(CareBase):
         with mock.patch.object(self.api.renderer, "drawing", lambda: ("classic", renderer.GLES2_WHY)):
             self.r("POST", "/api/renderer", {"use": "new"})
         self.assertEqual(len(self.quits), n)
-        with mock.patch.object(self.api.renderer, "drawing", lambda: ("classic", "pvj-render did not start (exit 2)")):
+        with mock.patch.object(self.api.renderer, "drawing", lambda: ("classic", "mctl-render did not start (exit 2)")):
             self.r("POST", "/api/renderer", {"use": "new"})
         self.assertEqual(len(self.quits), n + 1, "other reasons still restart")
 

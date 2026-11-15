@@ -208,10 +208,10 @@ for p in gcc make pkg-config libc6-dev libmpv-dev libegl-dev libgles-dev libgbm-
 done
 if [ ${#render_need[@]} -gt 0 ] && command -v dpkg-query >/dev/null; then
 	if [ "$OFFLINE" = 1 ] || [ "$REAL" = 0 ] || ! command -v apt-get >/dev/null; then
-		log "pvj-render will not be built until these are installed: ${render_need[*]}"
+		log "mctl-render will not be built until these are installed: ${render_need[*]}"
 	else
-		log "installing ${render_need[*]} (to build pvj-render)"
-		run apt-get install -y --no-install-recommends "${render_need[@]}" || log "could not install ${render_need[*]}; pvj-render stays unavailable"
+		log "installing ${render_need[*]} (to build mctl-render)"
+		run apt-get install -y --no-install-recommends "${render_need[@]}" || log "could not install ${render_need[*]}; mctl-render stays unavailable"
 	fi
 fi
 
@@ -399,20 +399,22 @@ if [ "$DRY" = 0 ]; then
 	[ -d "$SRC/render" ] && cp -a "$SRC/render" "$RELEASE.new/"
 	find "$RELEASE.new" -name __pycache__ -type d -prune -exec rm -rf {} +
 	# The renderer (D95), built from source here and never shipped as a binary. A failed build leaves the box as it
-	# was: classic mpv draws and the panel says pvj-render is not built. Not in stage mode (tests, the image's own
+	# was: classic mpv draws and the panel says mctl-render is not built. Not in stage mode (tests, the image's own
 	# copy is installed for real in the image's chroot).
 	if [ "$REAL" = 1 ] && [ -f "$RELEASE.new/render/Makefile" ]; then
-		rm -f "$RELEASE.new/render/pvj-render" "$RELEASE.new"/render/src/*.o
+		# pvj-render is the renderer's name before the rename (rename PR 5): a source folder where it was built by hand
+		# must not carry it into a release, where nothing runs it any more.
+		rm -f "$RELEASE.new/render/mctl-render" "$RELEASE.new/render/pvj-render" "$RELEASE.new"/render/src/*.o
 		if command -v make >/dev/null && command -v pkg-config >/dev/null && pkg-config --exists mpv egl glesv2 gbm libdrm; then
-			log "building pvj-render (a minute or two on a Pi 4)"
+			log "building mctl-render (a minute or two on a Pi 4)"
 			if timeout 1200 make -C "$RELEASE.new/render" > "$RELEASE.new/render/build.log" 2>&1; then
-				log "pvj-render built"
+				log "mctl-render built"
 			else
-				log "pvj-render was not built (render/build.log in the release); classic mpv stays the only renderer"
+				log "mctl-render was not built (render/build.log in the release); classic mpv stays the only renderer"
 			fi
 			rm -f "$RELEASE.new"/render/src/*.o
 		else
-			log "pvj-render was not built: the build tools or headers are missing"
+			log "mctl-render was not built: the build tools or headers are missing"
 		fi
 	fi
 	# The Link follower (D117), built here in the same way. It never stops an install: without it the panel says Link is

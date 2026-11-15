@@ -4247,7 +4247,7 @@
     return box;
   }
   // ---- the renderer (D95) -----------------------------------------------
-  var RENDERER_NAMES = { classic: 'Classic (mpv)', 'new': 'New (pvj-render)' };
+  var RENDERER_NAMES = { classic: 'Classic (mpv)', 'new': 'New (mctl-render)' };
   var DETAIL_NAMES = { auto: 'Automatic (540 lines on a Pi 3 or 4, else the screen\'s own)', 540: '540 lines', 720: '720 lines', output: 'The screen\'s own size' };
   var FINAL_NAMES = { auto: 'Automatic (720 lines when a Pi 3 or 4 is busy, else the screen\'s own)', full: 'The screen\'s own size', 720: '720 lines, scaled by the display' };
   // Choices not applied yet survive a redraw, as autoForm's do: the look a few seconds after Use this redraws the card,
@@ -4283,8 +4283,8 @@
       }
       if (d.why) body.appendChild(h('div', { class: 'hint warn', id: 'renderwhy', role: 'status', text: 'New was chosen; classic mpv is drawing: ' + d.why + '.' }));
       if (d.switched) body.appendChild(h('div', { class: 'hint', id: 'renderswitched', role: 'status',
-        text: 'At the last change the player ended pvj-render' + (d.switched_at ? ' (' + new Date(d.switched_at * 1000).toLocaleString() + ')' : '') + ': ' + d.switched + '.' }));
-      if (!d.available) body.appendChild(h('div', { class: 'hint', id: 'rendernone', text: 'pvj-render is not built on this node, so only classic mpv can draw.' }));
+        text: 'At the last change the player ended mctl-render' + (d.switched_at ? ' (' + new Date(d.switched_at * 1000).toLocaleString() + ')' : '') + ': ' + d.switched + '.' }));
+      if (!d.available) body.appendChild(h('div', { class: 'hint', id: 'rendernone', text: 'mctl-render is not built on this node, so only classic mpv can draw.' }));
       var use = h('select', { class: 'text-input', id: 'renderuse' }, d.uses.map(function (u) {
         return h('option', { value: u, text: RENDERER_NAMES[u] || u, selected: u === d.use, disabled: u === 'new' && !d.available && d.use !== 'new' });
       }));

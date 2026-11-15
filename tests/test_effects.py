@@ -59,10 +59,10 @@ class TranslatorTest(unittest.TestCase):
         text = E.translate(p)
         self.assertNotIn("inputImage", text)
         self.assertNotIn("IMG_", text)
-        self.assertEqual(text.count("pvj_img_this() + pvj_img_this()"), 2)                      # once per hook
-        self.assertIn("pvj_img_norm( pvj_norm)", text.replace("isf_FragNormCoord", "pvj_norm"))
-        self.assertIn("pvj_img_px( pvj_coord.xy)", text)
-        self.assertIn("pvj_img_size().x", text)
+        self.assertEqual(text.count("mctl_img_this() + mctl_img_this()"), 2)                      # once per hook
+        self.assertIn("mctl_img_norm( mctl_norm)", text.replace("isf_FragNormCoord", "mctl_norm"))
+        self.assertIn("mctl_img_px( mctl_coord.xy)", text)
+        self.assertIn("mctl_img_size().x", text)
 
     def test_the_text_is_two_hooks_at_the_native_stage_one_for_a_yuv_picture_and_one_for_rgb(self):
         p = S.parse(GOOD, S.FILTER)
@@ -71,19 +71,19 @@ class TranslatorTest(unittest.TestCase):
                                                                 "HOOK NATIVE", "BIND HOOKED", "BIND RGB", "DESC nxlx effect 7 3"])
         first, second = text.split("//!HOOK NATIVE")[1:]
         self.assertIn("mat3(1.0, 1.0, 1.0, 0.0,", first)                               # the full-range BT.601 matrix
-        self.assertIn("vec3 pvj_native(vec3 c) { return c; }", second)                 # nothing to convert for RGB
+        self.assertIn("vec3 mctl_native(vec3 c) { return c; }", second)                 # nothing to convert for RGB
         for block in (first, second):
             self.assertIn("const float k = 1.5;", block)
             self.assertIn("#define RENDERSIZE HOOKED_size\n", block)
-            self.assertIn("#define PVJ_LINE 1\n#else\n#define PVJ_LINE 0\n#endif\n#line PVJ_LINE\n", block)
-            self.assertIn("return vec4(mix(pvj_src.rgb, pvj_native(c), 0.25), pvj_src.a);", block)
-            self.assertIn("pvj_time = 0.0;", block)                                      # it does not read the clock
+            self.assertIn("#define MCTL_LINE 1\n#else\n#define MCTL_LINE 0\n#endif\n#line MCTL_LINE\n", block)
+            self.assertIn("return vec4(mix(mctl_src.rgb, mctl_native(c), 0.25), mctl_src.a);", block)
+            self.assertIn("mctl_time = 0.0;", block)                                      # it does not read the clock
             self.assertIn("// nxlx effect 7 3\n", block)                                 # the name inside the code: a text is never alike another
         self.assertNotIn("//!WIDTH", text)                                             # no cap: the hook draws at the clip's own size
         self.assertNotIn("//!WHEN", text)
         half = E.translate(p, controls={"half": True})                                 # superseded, and still taken: 540 lines at most
         self.assertEqual(half.count("\n".join(E.size_lines(540))), 2)
-        self.assertEqual(half.count("#define RENDERSIZE pvj_work\n"), 2)
+        self.assertEqual(half.count("#define RENDERSIZE mctl_work\n"), 2)
         # an RGB picture: the YUV hook is still there, for the video that may come next
         self.assertIn("BIND LUMA", E.translate(p, picture={"matrix": "rgb", "levels": "full", "fps": 25.0}))
 
@@ -91,7 +91,7 @@ class TranslatorTest(unittest.TestCase):
         p = S.parse(MOVES, S.FILTER)
         self.assertEqual((p["clock"], p["flashes"]), (True, False))
         text = E.translate(p, picture={"matrix": "bt.709", "levels": "limited", "fps": 60.0})
-        self.assertIn("pvj_time = (float(pvj_hi) * pvj_k + float(pvj_lo)) / 60.0;", text)
+        self.assertIn("mctl_time = (float(mctl_hi) * mctl_k + float(mctl_lo)) / 60.0;", text)
         self.assertIn("#define TIMEDELTA 0.01666667", text)
         self.assertIn("/ 25.0 * 0.5;", E.translate(p, controls={"speed": 0.5}, picture={"fps": 25.0}))
         self.assertIn("/ 30.0;", E.translate(p, picture={"fps": float("nan")}))          # a rate the player cannot say: 30
@@ -112,7 +112,7 @@ class TranslatorTest(unittest.TestCase):
             with self.assertRaises(S.ShaderError, msg=bad):
                 E.translate(p, **bad)
         self.assertEqual(L.clean_fx_controls({"amount": 7, "speed": -1}), {"amount": 1.0, "speed": 0.0, "half": False})
-        self.assertIn("pvj_native(c), 0.0)", E.translate(p, controls={"amount": -3}))
+        self.assertIn("mctl_native(c), 0.0)", E.translate(p, controls={"amount": -3}))
         with self.assertRaises(S.ShaderError):
             E.translate(S.parse("/*{}*/\nvoid main() { gl_FragColor = vec4(1.0); }\n"))      # a generator is not put on as an effect
         with self.assertRaises(S.ShaderError):
@@ -160,7 +160,7 @@ class TranslatorTest(unittest.TestCase):
             (fx(body=BODY.replace("* k", "* k * mod(float(frame), 2.0)")), "the name frame belongs to the player"),
             (fx(body=BODY.replace("* k", "* k * step(0.5, random)")), "the name random belongs to the player"),
             (fx(body="\nfloat random(vec2 p) { return fract(p.x * 7.0); }" + BODY), "the name random belongs to the player"),
-            (fx(body=BODY.replace("IMG_THIS_PIXEL(inputImage)", "pvj_at(vec2(2.0))")), "used by the player"),
+            (fx(body=BODY.replace("IMG_THIS_PIXEL(inputImage)", "mctl_at(vec2(2.0))")), "used by the player"),
             (fx(body="\n//!HOOK OUTPUT" + BODY), "//!"),
             (fx(DESCRIPTION="//!TEXTURE x"), "//!"),
             (fx(body="\n#include <x>" + BODY), "#include"),
@@ -223,7 +223,7 @@ class TranslatorTest(unittest.TestCase):
         p = S.parse(fx(body=BODY.replace("* k", "* k * mod(float(FRAMEINDEX), 2.0)")), S.FILTER)
         self.assertTrue(p["clock"])
         text = E.translate(p, {}, {"amount": 1.0, "speed": 0.5, "half": False}, E.clean_picture("bt.709", "limited", 25.0))
-        self.assertIn("#define FRAMEINDEX int(pvj_time * 25.0 + 0.5)", text)
+        self.assertIn("#define FRAMEINDEX int(mctl_time * 25.0 + 0.5)", text)
         self.assertNotIn("#define FRAMEINDEX frame", text)
         self.assertIn("/ 25.0 * 0.5;", text)                                           # TIME, and with it the frame number, at half speed
 
@@ -411,8 +411,8 @@ def player_size(line, w, h):
 
 def shader_size(text, w, h):
     """What the generated code takes for RENDERSIZE in a picture of w x h, from its own lines (32-bit numbers)."""
-    assert "    PVJ_HP float pvj_short = min(HOOKED_size.x, HOOKED_size.y);\n" in text
-    m = re.search(r"if \(pvj_short > ([0-9.]+)\) pvj_work = floor\(HOOKED_size - HOOKED_size \* \(pvj_short - \1\) / pvj_short \+ 0\.5\);", text)
+    assert "    MCTL_HP float mctl_short = min(HOOKED_size.x, HOOKED_size.y);\n" in text
+    m = re.search(r"if \(mctl_short > ([0-9.]+)\) mctl_work = floor\(HOOKED_size - HOOKED_size \* \(mctl_short - \1\) / mctl_short \+ 0\.5\);", text)
     side, cap = min(w, h), float(m.group(1))
     if not side > cap:
         return w, h
@@ -474,7 +474,7 @@ class WorkingSizeTest(unittest.TestCase):
             self.assertTrue(width.startswith("//!WIDTH ") and height.startswith("//!HEIGHT "))
             self.assertEqual((len(width.split()) - 1, len(height.split()) - 1), (30, 30))       # mpv reads at most 32 words of a size
             text = E.translate(p, lines=lines)
-            self.assertEqual((text.count(width + "\n" + height + "\n"), text.count("PVJ_HP vec2 pvj_work;")), (2, 2))
+            self.assertEqual((text.count(width + "\n" + height + "\n"), text.count("MCTL_HP vec2 mctl_work;")), (2, 2))
             for w, h in sizes:                          # lying, standing and square alike: one text for every shape
                 want = E.work_size(w, h, lines)
                 self.assertEqual((player_size(width, w, h), player_size(height, w, h)), want, (w, h, lines))
@@ -489,8 +489,8 @@ class WorkingSizeTest(unittest.TestCase):
         self.assertEqual(capped.count(
             "//!WIDTH HOOKED.w HOOKED.w HOOKED.h > HOOKED.h 720 > * HOOKED.w * HOOKED.h 720 - * HOOKED.h / - HOOKED.w HOOKED.h > ! HOOKED.w 720 > * HOOKED.w 720 - * -\n"
             "//!HEIGHT HOOKED.h HOOKED.w HOOKED.h > ! HOOKED.w 720 > * HOOKED.h * HOOKED.w 720 - * HOOKED.w / - HOOKED.w HOOKED.h > HOOKED.h 720 > * HOOKED.h 720 - * -\n"), 2)
-        self.assertEqual(capped.count("    if (pvj_short > 720.0) pvj_work = floor("), 2)
-        self.assertIn("vec4 pvj_src = HOOKED_tex(HOOKED_pos);", capped)                # the mix is with the clip itself, read where this pixel lies
+        self.assertEqual(capped.count("    if (mctl_short > 720.0) mctl_work = floor("), 2)
+        self.assertIn("vec4 mctl_src = HOOKED_tex(HOOKED_pos);", capped)                # the mix is with the clip itself, read where this pixel lies
         # the old control: true is 540 lines at most, whatever the cap; false follows the cap
         self.assertEqual(E.translate(p, controls={"half": True}, lines=720), E.translate(p, controls={"half": True}, lines=540))
         self.assertEqual(E.translate(p, controls={"half": True}), E.translate(p, controls={"half": True}, lines=540))
@@ -507,11 +507,11 @@ class WorkingSizeTest(unittest.TestCase):
                 E.translate(p, lines=bad)
         # TIME does not know of the cap: every line of the clock is the same with and without one, at any speed
         moves = S.parse(MOVES, S.FILTER)
-        clock = lambda text: [l for l in text.split("\n") if "pvj_time" in l or "TIMEDELTA" in l or "FRAMEINDEX" in l or "pvj_hi" in l or "pvj_lo" in l]
+        clock = lambda text: [l for l in text.split("\n") if "mctl_time" in l or "TIMEDELTA" in l or "FRAMEINDEX" in l or "mctl_hi" in l or "mctl_lo" in l]
         for speed in (1.0, 0.5):
             picture = E.clean_picture("bt.709", "limited", 29.97)
             free = clock(E.translate(moves, controls={"speed": speed}, picture=picture))
-            self.assertIn("    pvj_time = (float(pvj_hi) * pvj_k + float(pvj_lo)) / 29.97%s;" % ("" if speed == 1.0 else " * 0.5"), free)
+            self.assertIn("    mctl_time = (float(mctl_hi) * mctl_k + float(mctl_lo)) / 29.97%s;" % ("" if speed == 1.0 else " * 0.5"), free)
             for lines in (540, 720):
                 self.assertEqual(clock(E.translate(moves, controls={"speed": speed}, picture=picture, lines=lines)), free, (speed, lines))
             self.assertEqual(clock(E.translate(moves, controls={"speed": speed, "half": True}, picture=picture)), free)
@@ -1139,8 +1139,8 @@ class ValuesTest(Base):
         self.fx.change({"values": {"lit": True, "mode": 1, "tint": [0.1, 0.2, 0.3], "spot": [0.2, 0.9]}, "controls": {"amount": 0.4, "half": True}, "id": "all.fs"})
         self.pump()
         text = self.text()
-        for line in ("const bool lit = true;", "const int mode = 1;", "const vec4 pvj_in_tint" if False else "const vec4 tint = vec4(0.1, 0.2, 0.3, 1.0);",
-                     "const vec2 spot = vec2(0.2, 0.9);", "pvj_native(c), 0.4)", E.size_lines(540)[0]):
+        for line in ("const bool lit = true;", "const int mode = 1;", "const vec4 mctl_in_tint" if False else "const vec4 tint = vec4(0.1, 0.2, 0.3, 1.0);",
+                     "const vec2 spot = vec2(0.2, 0.9);", "mctl_native(c), 0.4)", E.size_lines(540)[0]):
             self.assertIn(line, text)
         self.assertEqual(self.state()["on"]["controls"], {"amount": 0.4, "speed": 1.0, "half": True})
 
@@ -2056,7 +2056,7 @@ class ReviewTest(Base):
         self.pump()
         on = self.state()["on"]
         self.assertEqual((on["controls"]["amount"], on["working"]["lines"]), (0.25, 720))
-        self.assertIn("pvj_native(c), 0.25)", self.text())
+        self.assertIn("mctl_native(c), 0.25)", self.text())
         self.assertIn(E.size_lines(720)[0], self.text())
         # with a preset on, a new detail is not a change of the effect's values: the preset is still what is on
         self.fx.preset_save("Kept")
@@ -2081,7 +2081,7 @@ class ReviewTest(Base):
             self.assertEqual(L.clean_fx_controls({"amount": small})["amount"], small)
             text = E.translate(p, controls={"amount": small}, lines=720)
             self.assertNotIn("//!WHEN", text)
-            self.assertNotIn("pvj_native(c), 0.0)", text)
+            self.assertNotIn("mctl_native(c), 0.0)", text)
         self.fx.set_detail(720)
         self.fx.put("all.fs", controls={"amount": 1e-40})
         self.assertEqual(self.text().count("//!WHEN 0\n"), 2)

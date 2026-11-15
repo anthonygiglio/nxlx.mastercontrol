@@ -11,7 +11,7 @@ row (and the nudge down) with nothing said: a change of place now sends them acr
 (tests/ui/panel.test.js).
 
 The pictures are plain blocks from the stand-in helper, so the lit rectangle is exactly the picture. The renderer is run at
-two sizes (the second has the proportions of 1080p and 720p outputs; `--final=720` is tested in tests/test_pvj_render.py).
+two sizes (the second has the proportions of 1080p and 720p outputs; `--final=720` is tested in tests/test_mctl_render.py).
 """
 import time
 
@@ -20,7 +20,7 @@ from pvj import graphics
 from pvj.player import Ipc
 from tests.test_graphics import Base
 from tests.test_graphics_motion import MotionBase
-from tests.test_pvj_render import Renderer, need_program
+from tests.test_mctl_render import Renderer, need_program
 
 
 def lit_box(shot):
@@ -48,7 +48,7 @@ class GpuPlaceTest(Base):
         p = self.api.player
         p.osd_size = lambda: (self.r("get_property", "osd-width"), self.r("get_property", "osd-height"))
         p.graphics_stage = lambda ask=True: {"slots": 8, "side": 4096}
-        p.graphic = lambda what, slot, *a: ipc.request("pvj-graphic", what, slot, *a)
+        p.graphic = lambda what, slot, *a: ipc.request("mctl-graphic", what, slot, *a)
 
     def want(self, gid, anchor):
         it = next(i for i in graphics.items_of(self.api.settings.data["graphics"]) if i["id"] == gid)
@@ -62,13 +62,13 @@ class GpuPlaceTest(Base):
         while time.monotonic() < end:
             b = self.gfx._built.get(gid)
             if b and (b["x"], b["y"]) == self.want(gid, anchor)[:2]:
-                slots = self.r("get_property", "pvj-graphics")["list"]
+                slots = self.r("get_property", "mctl-graphics")["list"]
                 if slots[0]["loaded"] and not slots[0]["waiting"] and slots[0]["width"] == b["w"] and slots[0]["height"] == b["h"]:
                     time.sleep(0.15)
                     return
             time.sleep(0.05)
         self.fail("the picture did not get to the renderer: built %s, renderer %s, status %s; wanted %s at %s; work %s, failed %s, worker alive %s" % (
-            self.gfx._built.get(gid), self.r("get_property", "pvj-graphics")["list"][0], self.gfx._status.get(gid), self.want(gid, anchor),
+            self.gfx._built.get(gid), self.r("get_property", "mctl-graphics")["list"][0], self.gfx._status.get(gid), self.want(gid, anchor),
             anchor, self.gfx._work, self.gfx._failed, self.gfx._thread is not None and self.gfx._thread.is_alive()))
 
     def sweep(self, gid, tag):
@@ -173,7 +173,7 @@ class MotionChosenTest(Base):
         p = self.api.player
         p.osd_size = lambda: (self.r("get_property", "osd-width"), self.r("get_property", "osd-height"))
         p.graphics_stage = lambda ask=True: {"slots": 8, "side": 4096}
-        p.graphic = lambda what, slot, *a: ipc.request("pvj-graphic", what, slot, *a)
+        p.graphic = lambda what, slot, *a: ipc.request("mctl-graphic", what, slot, *a)
         self.gfx.synchronous = False
         self.addCleanup(self.gfx.stop)
 

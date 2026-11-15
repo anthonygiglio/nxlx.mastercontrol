@@ -325,10 +325,10 @@ class FxCase(GpuCase):
         """(points that disagree, points looked at): a hand-written hook with the size lines of a cap and the code's
         own arithmetic for RENDERSIZE, over the picture that plays."""
         made = E.translate(S.parse(SAME, S.FILTER), lines=lines)
-        code = [l.replace("PVJ_HP ", "") for l in made.split("\n") if "pvj_work = " in l or "pvj_short = " in l][:3]
-        self.raw("//!HOOK NATIVE\n//!BIND HOOKED\n%s\n//!DESC nxlx size probe\n\nvec4 hook() {\n    vec2 pvj_work;\n%s\n"
-                 "    vec2 at = HOOKED_pos * pvj_work;\n    float dx = abs(at.x - gl_FragCoord.x);\n"
-                 "    float dy = min(abs(at.y - gl_FragCoord.y), abs(pvj_work.y - at.y - gl_FragCoord.y));\n"
+        code = [l.replace("MCTL_HP ", "") for l in made.split("\n") if "mctl_work = " in l or "mctl_short = " in l][:3]
+        self.raw("//!HOOK NATIVE\n//!BIND HOOKED\n%s\n//!DESC nxlx size probe\n\nvec4 hook() {\n    vec2 mctl_work;\n%s\n"
+                 "    vec2 at = HOOKED_pos * mctl_work;\n    float dx = abs(at.x - gl_FragCoord.x);\n"
+                 "    float dy = min(abs(at.y - gl_FragCoord.y), abs(mctl_work.y - at.y - gl_FragCoord.y));\n"
                  "    return (max(dx, dy) < 0.01) ? vec4(0.85, 0.5, 0.5, 1.0) : vec4(0.15, 0.5, 0.5, 1.0);\n}\n"
                  % ("\n".join(E.size_lines(lines)), "\n".join(code)))
         self.settle()

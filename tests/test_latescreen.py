@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
 """A screen that comes after the player has started (pvj/latescreen.py): the box that fell back to classic mpv for want
-of a screen goes back to pvj-render once when one is connected, never in a loop, and a crash fallback stays on classic.
+of a screen goes back to mctl-render once when one is connected, never in a loop, and a crash fallback stays on classic.
 
 A fake /sys tree and a fake clock; nothing here forks, kills or touches the real /sys."""
 import os
@@ -132,13 +132,13 @@ class WatcherTest(unittest.TestCase):
         self.assertTrue(all("the next switch waits at least" in line for line in f.lines if "restarting" in line))
         self.assertFalse([line for line in f.lines if "stays" in line])     # there is no limit that ends it
 
-    def test_the_wait_starts_again_once_pvj_render_has_drawn_for_ten_minutes(self):
+    def test_the_wait_starts_again_once_mctl_render_has_drawn_for_ten_minutes(self):
         f = Fake(self)
         f.screen("HDMI-A-1", True)
         self.restarts(f, 1, 100)
         self.restarts(f, 1, 100)
         self.restarts(f, 1, 100)                        # three switches in a run: the next would wait 120 s
-        f.sleep(latescreen.RESET_SECONDS + 60)           # pvj-render drew all that time
+        f.sleep(latescreen.RESET_SECONDS + 60)           # mctl-render drew all that time
         f.screen("HDMI-A-1", False)
         w = f.watcher()
         f.sleep(2.0)
@@ -208,34 +208,34 @@ class FallbackKindTest(unittest.TestCase):
     NO_MODES = [{"connector": "HDMI-A-1", "status": "connected", "modes": [], "card": 1}]
     ONE = [{"connector": "HDMI-A-1", "status": "connected", "modes": ["1920x1080"], "card": 1}]
 
-    def test_pvj_render_that_did_not_start_with_no_screen_is_the_one_a_screen_undoes(self):
-        self.assertTrue(latescreen.no_screen_fallback("pvj-render did not start (exit 2)", self.NONE))
+    def test_mctl_render_that_did_not_start_with_no_screen_is_the_one_a_screen_undoes(self):
+        self.assertTrue(latescreen.no_screen_fallback("mctl-render did not start (exit 2)", self.NONE))
 
     def test_a_screen_that_is_connected_but_lists_no_modes_is_not_one(self):
-        self.assertTrue(latescreen.no_screen_fallback("pvj-render did not start (exit 2)", self.NO_MODES))
+        self.assertTrue(latescreen.no_screen_fallback("mctl-render did not start (exit 2)", self.NO_MODES))
 
-    def test_a_screen_that_went_away_while_pvj_render_drew_is_a_no_screen_fallback(self):
+    def test_a_screen_that_went_away_while_mctl_render_drew_is_a_no_screen_fallback(self):
         # out_present fails, the supervisor starts it once more, it exits 2: "ended twice in a row (exit 2)"
-        self.assertTrue(latescreen.no_screen_fallback("pvj-render ended twice in a row (exit 2)", self.NONE))
-        self.assertFalse(latescreen.no_screen_fallback("pvj-render ended twice in a row (exit 2)", self.ONE))
+        self.assertTrue(latescreen.no_screen_fallback("mctl-render ended twice in a row (exit 2)", self.NONE))
+        self.assertFalse(latescreen.no_screen_fallback("mctl-render ended twice in a row (exit 2)", self.ONE))
 
     def test_only_exit_2_counts(self):
-        for why in ("pvj-render did not start (exit 1)", "pvj-render did not start (exit -11)", "pvj-render did not start (exit 22)",
-                    "pvj-render ended twice in a row (exit 1)", "pvj-render ended twice in a row (exit 3)",
-                    "pvj-render ended twice in a row (signal 11)", "pvj-render ended twice in a row (exit 20)"):
+        for why in ("mctl-render did not start (exit 1)", "mctl-render did not start (exit -11)", "mctl-render did not start (exit 22)",
+                    "mctl-render ended twice in a row (exit 1)", "mctl-render ended twice in a row (exit 3)",
+                    "mctl-render ended twice in a row (signal 11)", "mctl-render ended twice in a row (exit 20)"):
             self.assertFalse(latescreen.no_screen_fallback(why, self.NONE), why)
 
     def test_a_crash_stays_on_classic(self):
-        for why in ("pvj-render ended twice in a row (exit 3)", "pvj-render ended twice in a row (signal 11)",
-                    "pvj-render did not answer within 10 seconds", "pvj-render is not built on this node",
-                    "pvj-render could not be started (Permission denied)", ""):
+        for why in ("mctl-render ended twice in a row (exit 3)", "mctl-render ended twice in a row (signal 11)",
+                    "mctl-render did not answer within 10 seconds", "mctl-render is not built on this node",
+                    "mctl-render could not be started (Permission denied)", ""):
             self.assertFalse(latescreen.no_screen_fallback(why, self.NONE), why)
 
     def test_a_screen_that_is_there_changes_nothing(self):
-        self.assertFalse(latescreen.no_screen_fallback("pvj-render did not start (exit 2)", self.ONE))
+        self.assertFalse(latescreen.no_screen_fallback("mctl-render did not start (exit 2)", self.ONE))
 
     def test_a_board_that_lists_no_connector_cannot_say(self):
-        self.assertFalse(latescreen.no_screen_fallback("pvj-render did not start (exit 2)", []))
+        self.assertFalse(latescreen.no_screen_fallback("mctl-render did not start (exit 2)", []))
 
 
 class ServeTest(RendererBase):
@@ -280,7 +280,7 @@ class ServeTest(RendererBase):
         self.assertEqual(self.report()["drawing"], "classic")
 
     def test_a_screen_present_at_start_changes_nothing(self):
-        seen = self.serve(FallbackKindTest.ONE)          # pvj-render fails for another reason: classic, and no watching
+        seen = self.serve(FallbackKindTest.ONE)          # mctl-render fails for another reason: classic, and no watching
         self.assertEqual(seen["args"][0], "mpv")
         self.assertEqual(seen["watch"], [])
 

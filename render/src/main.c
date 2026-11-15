@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// pvj-render (project-log/DECISIONS.md, D95 and D98): the box's own renderer behind the socket the one mpv had.
+// mctl-render (project-log/DECISIONS.md, D95 and D98): the box's own renderer behind the socket the one mpv had.
 //
 //   two video layers  two libmpv cores (render API), each drawing its clip, with its brightness, zoom, pan,
 //                     rotation, flips and its user shaders (effects, generators), into a texture at the internal
@@ -19,11 +19,11 @@
 //   the text layer    a second libmpv that plays nothing draws overlays and show-text at the screen's size, laid
 //                     over the final picture while something is on it
 //
-// Usage: pvj-render --socket=PATH [--drm-device=/dev/dri/cardN] [--drm-connector=NAME] [--drm-mode=WxH@R|N]
+// Usage: mctl-render --socket=PATH [--drm-device=/dev/dri/cardN] [--drm-connector=NAME] [--drm-mode=WxH@R|N]
 //                   [--detail=LINES|output] [--hwdec=NAME] [--audio-device=NAME] [--fast] [--skip-deblock]
 //                   [--every-vblank] [--sources=N] [--fx-fps=N] [--final=auto|720] [--headless=WxH] [--frames=N] [--verbose]
 #define _GNU_SOURCE
-#include "pvj.h"
+#include "mctl.h"
 #include "json.h"
 
 #include <errno.h>
@@ -65,7 +65,7 @@ void logf_(const char *fmt, ...)
     va_start(ap, fmt);
     vsnprintf(line, sizeof line, fmt, ap);
     va_end(ap);
-    fprintf(stderr, "pvj-render: %s\n", line);
+    fprintf(stderr, "mctl-render: %s\n", line);
 }
 
 void wake_render(void)
@@ -98,7 +98,7 @@ static void on_signal(int s)
 // review of #296: about 0.8 MB a fade at 720p, whose chroma planes are just under 256 KiB). So when a video layer's file
 // has ended (the outgoing clip of a crossfade, or a clip a load replaced: its decoders are closed by then), a thread of its
 // own trims the heap with malloc_trim, which gives back the free pages inside the arenas too. At most one trim a second,
-// a moment after the end, never on the render thread; how long they take is counted (`pvj-heap`).
+// a moment after the end, never on the render thread; how long they take is counted (`mctl-heap`).
 #ifndef HEAP_MMAP_THRESHOLD
 #define HEAP_MMAP_THRESHOLD (128 * 1024)
 #endif
@@ -236,9 +236,9 @@ static int parse_args(int argc, char **argv, Cfg *c)
         else if (!strcmp(a, "--every-vblank")) c->every_vblank = 1;
         else if (!strcmp(a, "--verbose")) c->verbose = 1;
 #ifdef PVJ_RENDER_TEST_HOOKS
-        else if (!strcmp(a, "--version")) { printf("pvj-render %s (with test hooks)\n", PVJ_VERSION); exit(0); }
+        else if (!strcmp(a, "--version")) { printf("mctl-render %s (with test hooks)\n", MCTL_VERSION); exit(0); }
 #else
-        else if (!strcmp(a, "--version")) { printf("pvj-render %s\n", PVJ_VERSION); exit(0); }
+        else if (!strcmp(a, "--version")) { printf("mctl-render %s\n", MCTL_VERSION); exit(0); }
 #endif
         else { LOG("unknown argument: %s", a); return -1; }
     }
@@ -304,7 +304,7 @@ static void GL_APIENTRY count_delete_sync(GLsync s)
 
 // libmpv's GL objects, counted the same way (phase 2, D98): a crossfade loads a clip into a core that was idle and
 // stops the other one, again and again in a show, and whatever libmpv makes for a clip and does not give back would
-// pile up. `gl-objects` in the pvj-render property is the number it holds now; a test runs many fades and looks.
+// pile up. `gl-objects` in the mctl-render property is the number it holds now; a test runs many fades and looks.
 typedef void (GL_APIENTRYP GenFn)(GLsizei, GLuint *);
 typedef void (GL_APIENTRYP DelFn)(GLsizei, const GLuint *);
 static GenFn real_gen[4];
@@ -487,7 +487,7 @@ static int target(Layer *l, int w, int h)
 #ifdef PVJ_RENDER_TEST_HOOKS
 // For the tests only, and only in a build made with `make TEST_HOOKS=1` (CI; the box's own build has none):
 // PVJ_RENDER_TEST_SLOW_START=<ms> waits that long after the text core's mpv_initialize, as a loaded machine may, so
-// that the core is surely idle before anything else is done to it (tests/test_pvj_render.py).
+// that the core is surely idle before anything else is done to it (tests/test_mctl_render.py).
 static void slow_start(void)
 {
     const char *v = getenv("PVJ_RENDER_TEST_SLOW_START");
@@ -509,7 +509,7 @@ static void send_stop(mpv_handle *h, int i)
 
 #ifdef PVJ_RENDER_TEST_HOOKS
 // PVJ_RENDER_TEST_SLOW_STOP=<ms> holds back the stop that ends a fade until the next fade has loaded, or for that long,
-// as a core busy with its clip reaches it after a blocking command (tests/test_pvj_render.py). The hold stays well under
+// as a core busy with its clip reaches it after a blocking command (tests/test_mctl_render.py). The hold stays well under
 // STOP_WAIT, or the load goes ahead without the stop and the test sees what it is there to catch.
 static mpv_handle *held_stop;
 static int held_layer;
@@ -674,7 +674,7 @@ static void layer_render(Layer *l)
     last_call_delete = 0;
     int r = mpv_render_context_render(l->rc, rp);
 #ifdef PVJ_RENDER_TEST_HOOKS
-    // Tests only: a draw of a video layer that leaves the middle of its picture black is counted (pvj-test-blank), so a
+    // Tests only: a draw of a video layer that leaves the middle of its picture black is counted (mctl-test-blank), so a
     // test with a clip that has no black there sees a blank picture even when it is on the screen for one flip.
     if (r >= 0 && l->index >= 0 && l->index < LAYERS) {
         unsigned char px[8 * 8 * 4];
@@ -714,33 +714,33 @@ static void layer_close(Layer *l)
 /* ---- the passes ----------------------------------------------------------------------------------------------------- */
 static const char *VS_PLAIN =
     "#version 300 es\n"
-    "in vec2 pvj_vert;\n"
-    "out vec2 pvj_pos;\n"
-    "void main() { pvj_pos = vec2(pvj_vert.x * 0.5 + 0.5, 0.5 - pvj_vert.y * 0.5); gl_Position = vec4(pvj_vert, 0.0, 1.0); }\n";
+    "in vec2 mctl_vert;\n"
+    "out vec2 mctl_pos;\n"
+    "void main() { mctl_pos = vec2(mctl_vert.x * 0.5 + 0.5, 0.5 - mctl_vert.y * 0.5); gl_Position = vec4(mctl_vert, 0.0, 1.0); }\n";
 static const char *FS_SCALE =
     "#version 300 es\n"
     "precision mediump float;\n"
-    "in vec2 pvj_pos;\n"
-    "out vec4 pvj_out;\n"
+    "in vec2 mctl_pos;\n"
+    "out vec4 mctl_out;\n"
     "uniform sampler2D tex;\n"
-    "uniform float pvj_level;\n"         /* source 1's level while a program of the renderer's is on (D106), else 0 */
-    "void main() { pvj_out = vec4(clamp(texture(tex, pvj_pos).rgb + pvj_level, 0.0, 1.0), 1.0); }\n";
+    "uniform float mctl_level;\n"         /* source 1's level while a program of the renderer's is on (D106), else 0 */
+    "void main() { mctl_out = vec4(clamp(texture(tex, mctl_pos).rgb + mctl_level, 0.0, 1.0), 1.0); }\n";
 // the text layer is premultiplied (mpv draws its on-screen layer that way): laid over with ONE, ONE_MINUS_SRC_ALPHA
 static const char *FS_OVER =
     "#version 300 es\n"
     "precision mediump float;\n"
-    "in vec2 pvj_pos;\n"
-    "out vec4 pvj_out;\n"
+    "in vec2 mctl_pos;\n"
+    "out vec4 mctl_out;\n"
     "uniform sampler2D tex;\n"
-    "void main() { pvj_out = texture(tex, pvj_pos); }\n";
+    "void main() { mctl_out = texture(tex, mctl_pos); }\n";
 
 // The compositor (D98): the two video layers mixed by real opacity, texel for texel at the internal size, into a
 // texture laid out as a layer's is, so the final pass reads it as it reads a layer.
 static const char *VS_SAME =
     "#version 300 es\n"
-    "in vec2 pvj_vert;\n"
-    "out vec2 pvj_pos;\n"
-    "void main() { pvj_pos = pvj_vert * 0.5 + 0.5; gl_Position = vec4(pvj_vert, 0.0, 1.0); }\n";
+    "in vec2 mctl_vert;\n"
+    "out vec2 mctl_pos;\n"
+    "void main() { mctl_pos = mctl_vert * 0.5 + 0.5; gl_Position = vec4(mctl_vert, 0.0, 1.0); }\n";
 // The mixing stage (D101): a layer laid over a base by the layer's opacity and blend. The crossfade of D98 is this
 // stage with the incoming layer's opacity moved by the clock (0 to 1 over the fade's seconds) over the outgoing one;
 // a manual A/B crossfader is the same stage with the opacity set from outside. Blend 0 is normal (an alpha mix);
@@ -748,31 +748,31 @@ static const char *VS_SAME =
 static const char *FS_MIX =
     "#version 300 es\n"
     "precision mediump float;\n"
-    "in vec2 pvj_pos;\n"
-    "out vec4 pvj_out;\n"
+    "in vec2 mctl_pos;\n"
+    "out vec4 mctl_out;\n"
     "uniform sampler2D outgoing;\n"
     "uniform sampler2D incoming;\n"
     "uniform float share;\n"
     "uniform int blend;\n"
     "void main() {\n"
-    "  vec3 base = texture(outgoing, pvj_pos).rgb, layer = texture(incoming, pvj_pos).rgb;\n"
+    "  vec3 base = texture(outgoing, mctl_pos).rgb, layer = texture(incoming, mctl_pos).rgb;\n"
     "  vec3 c = layer;\n"                  /* blend 0, normal; e.g. add: if (blend == 1) c = min(base + layer, 1.0) */
-    "  pvj_out = vec4(mix(base, c, share), 1.0);\n"
+    "  mctl_out = vec4(mix(base, c, share), 1.0);\n"
     "}\n";
 // A wipe or a slide (D111): one layer's part of the picture, read where it lies now (`shift`, in parts of the picture).
 static const char *VS_MOVE =
     "#version 300 es\n"
-    "in vec2 pvj_vert;\n"
-    "out vec2 pvj_pos;\n"
+    "in vec2 mctl_vert;\n"
+    "out vec2 mctl_pos;\n"
     "uniform vec2 shift;\n"
-    "void main() { pvj_pos = pvj_vert * 0.5 + 0.5 + shift; gl_Position = vec4(pvj_vert, 0.0, 1.0); }\n";
+    "void main() { mctl_pos = mctl_vert * 0.5 + 0.5 + shift; gl_Position = vec4(mctl_vert, 0.0, 1.0); }\n";
 static const char *FS_MOVE =
     "#version 300 es\n"
     "precision mediump float;\n"
-    "in highp vec2 pvj_pos;\n"            /* highp: a moving picture must land on its texels, whatever the GPU's mediump is */
-    "out vec4 pvj_out;\n"
+    "in highp vec2 mctl_pos;\n"            /* highp: a moving picture must land on its texels, whatever the GPU's mediump is */
+    "out vec4 mctl_out;\n"
     "uniform sampler2D tex;\n"
-    "void main() { pvj_out = vec4(texture(tex, pvj_pos).rgb, 1.0); }\n";
+    "void main() { mctl_out = vec4(texture(tex, mctl_pos).rgb, 1.0); }\n";
 
 static GLuint vbo, vao, p_scale, p_over, p_mix, p_move;
 static GLint loc_share, loc_blend, loc_scale_level, loc_shift;
@@ -1175,7 +1175,7 @@ int main(int argc, char **argv)
     if (!p_scale || !p_over || !p_mix || !p_move) { LOG("%s", err); out_close(); return 2; }
     glUseProgram(p_scale);
     glUniform1i(glGetUniformLocation(p_scale, "tex"), 0);
-    loc_scale_level = glGetUniformLocation(p_scale, "pvj_level");
+    loc_scale_level = glGetUniformLocation(p_scale, "mctl_level");
     glUseProgram(p_over);
     glUniform1i(glGetUniformLocation(p_over, "tex"), 0);
     glUseProgram(p_mix);
@@ -1248,7 +1248,7 @@ int main(int argc, char **argv)
         int fi = app.front, phase = app.fade.phase, base = app.fade.base_starts;
         double asked = app.fade.asked, t0 = app.fade.t0, len = app.fade.seconds;
         const Move *move = app.fade.move;
-        int into_program = app.fade.program;        // the incoming layer's picture is a generator (pvj-fade-to-program)
+        int into_program = app.fade.program;        // the incoming layer's picture is a generator (mctl-fade-to-program)
         memcpy(frame_opacity, app.opacity, sizeof frame_opacity);     // the sources' mix, read once for this frame
         // each source's level: while it has a program on, or while its layers still have brightness 0 (ipc.c, level_sync)
         for (int s = 0; s < MAX_SOURCES; s++)

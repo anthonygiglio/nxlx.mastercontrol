@@ -396,7 +396,7 @@ def _mat3(rows):
     return "mat3(%s)" % ", ".join(_g(rows[r][c]) for c in range(3) for r in range(3))
 
 
-def native_glsl(colormatrix, levels, prefix="pvj"):
+def native_glsl(colormatrix, levels, prefix="mctl"):
     """The GLSL for the two conversions: `vec3 <prefix>_rgb(vec3 native)` (kept inside 0 to 1) and
     `vec3 <prefix>_native(vec3 rgb)`."""
     to_rgb, off, to_native = native_maps(colormatrix, levels)
@@ -461,59 +461,59 @@ def _block(parsed, values, c, pic, desc, plane, t, cap=None):
     lines += ["//!DESC %s" % desc, "",
               "// %s" % desc,              # the name again, inside the code: see shaders.translate
               "#if defined(GL_ES) && (__VERSION__ >= 300 || defined(GL_FRAGMENT_PRECISION_HIGH))",
-              "precision highp float;", "precision highp int;", "#define PVJ_HP highp",
-              "#else", "#define PVJ_HP", "#endif",
+              "precision highp float;", "precision highp int;", "#define MCTL_HP highp",
+              "#else", "#define MCTL_HP", "#endif",
               # In ISF a filter is drawn at the size of its picture, so both sizes are the same thing here, also under
-              # a cap: the picture is then read as one of the smaller size (pvj_work, set in hook()).
-              "#define RENDERSIZE %s" % ("HOOKED_size" if cap is None else "pvj_work"),
-              "#define TIME pvj_time",
+              # a cap: the picture is then read as one of the smaller size (mctl_work, set in hook()).
+              "#define RENDERSIZE %s" % ("HOOKED_size" if cap is None else "mctl_work"),
+              "#define TIME mctl_time",
               "#define TIMEDELTA %s" % S._f(1.0 / pic["fps"]),
               # the frame number with Speed in it, as TIME has: a filter that counts frames is under the flash limit too
-              "#define FRAMEINDEX int(pvj_time * %s + 0.5)" % S._f(pic["fps"]),
+              "#define FRAMEINDEX int(mctl_time * %s + 0.5)" % S._f(pic["fps"]),
               "#define PASSINDEX 0",
               "#define DATE vec4(%s, %s, %s, %s)" % (S._f(t.tm_year), S._f(t.tm_mon), S._f(t.tm_mday), S._f(t.tm_hour * 3600 + t.tm_min * 60 + t.tm_sec)),
-              "#define isf_FragNormCoord pvj_norm",
-              "#define vv_FragNormCoord pvj_norm",
-              "PVJ_HP float pvj_time;", "vec2 pvj_norm;", "vec4 pvj_coord;", "vec4 pvj_color;"]
+              "#define isf_FragNormCoord mctl_norm",
+              "#define vv_FragNormCoord mctl_norm",
+              "MCTL_HP float mctl_time;", "vec2 mctl_norm;", "vec4 mctl_coord;", "vec4 mctl_color;"]
     if cap is not None:
-        lines.append("PVJ_HP vec2 pvj_work;")
+        lines.append("MCTL_HP vec2 mctl_work;")
     lines += native_glsl("rgb" if plane == "RGB" else ("bt.709" if pic["matrix"] == "rgb" else pic["matrix"]), pic["levels"])
     # The picture, read at a place counted from the top left as the player counts (0 to 1); outside it, its edge.
-    lines += ["vec4 pvj_at(vec2 p) { return vec4(pvj_rgb(HOOKED_tex(clamp(p, vec2(0.0), vec2(1.0))).rgb), 1.0); }",
-              "vec4 pvj_img_this() { return pvj_at(HOOKED_pos); }",
-              "vec4 pvj_img_norm(vec2 n) { return pvj_at(vec2(n.x, 1.0 - n.y)); }",
-              "vec4 pvj_img_px(vec2 p) { return pvj_at(vec2(p.x, RENDERSIZE.y - p.y) / RENDERSIZE); }",
-              "vec2 pvj_img_size() { return RENDERSIZE; }"]
+    lines += ["vec4 mctl_at(vec2 p) { return vec4(mctl_rgb(HOOKED_tex(clamp(p, vec2(0.0), vec2(1.0))).rgb), 1.0); }",
+              "vec4 mctl_img_this() { return mctl_at(HOOKED_pos); }",
+              "vec4 mctl_img_norm(vec2 n) { return mctl_at(vec2(n.x, 1.0 - n.y)); }",
+              "vec4 mctl_img_px(vec2 p) { return mctl_at(vec2(p.x, RENDERSIZE.y - p.y) / RENDERSIZE); }",
+              "vec2 mctl_img_size() { return RENDERSIZE; }"]
     lines += S.input_lines(parsed, values)
     # The file's own line numbers, for what the compiler says. "#line n" names the next line n on OpenGL ES and from
     # GLSL 3.30 on, and n + 1 before that (GLSL 1.40, what a Raspberry Pi 4 gets: seen in CI, where the same mistake
     # was reported one line further down).
-    lines += ["#if defined(GL_ES) || __VERSION__ >= 330", "#define PVJ_LINE %d" % parsed["line"], "#else",
-              "#define PVJ_LINE %d" % max(0, parsed["line"] - 1), "#endif",
-              "#line PVJ_LINE", parsed["code"], "",
+    lines += ["#if defined(GL_ES) || __VERSION__ >= 330", "#define MCTL_LINE %d" % parsed["line"], "#else",
+              "#define MCTL_LINE %d" % max(0, parsed["line"] - 1), "#endif",
+              "#line MCTL_LINE", parsed["code"], "",
               "vec4 hook() {",
-              "    vec4 pvj_src = HOOKED_tex(HOOKED_pos);"]
+              "    vec4 mctl_src = HOOKED_tex(HOOKED_pos);"]
     if cap is not None:
         # the size this hook draws at: the same arithmetic as its WIDTH and HEIGHT lines, rounded as the player rounds
-        lines += ["    pvj_work = HOOKED_size;",
-                  "    PVJ_HP float pvj_short = min(HOOKED_size.x, HOOKED_size.y);",
-                  "    if (pvj_short > %s) pvj_work = floor(HOOKED_size - HOOKED_size * (pvj_short - %s) / pvj_short + 0.5);" % (S._f(cap), S._f(cap))]
+        lines += ["    mctl_work = HOOKED_size;",
+                  "    MCTL_HP float mctl_short = min(HOOKED_size.x, HOOKED_size.y);",
+                  "    if (mctl_short > %s) mctl_work = floor(HOOKED_size - HOOKED_size * (mctl_short - %s) / mctl_short + 0.5);" % (S._f(cap), S._f(cap))]
     if parsed.get("clock"):
         # mpv's frame number as hi * 512 + lo, in whole numbers small enough for 16 bits (see shaders.translate)
-        lines += ["    int pvj_hi = frame / 512;",
-                  "    int pvj_lo = frame - pvj_hi * 512;",
-                  "    pvj_hi = pvj_hi - (pvj_hi / 8192) * 8192;",
-                  "    PVJ_HP float pvj_k = 512.0;",
-                  "    pvj_time = (float(pvj_hi) * pvj_k + float(pvj_lo)) / %s%s;" % (S._f(pic["fps"]), "" if c["speed"] == 1.0 else " * %s" % S._f(c["speed"]))]
+        lines += ["    int mctl_hi = frame / 512;",
+                  "    int mctl_lo = frame - mctl_hi * 512;",
+                  "    mctl_hi = mctl_hi - (mctl_hi / 8192) * 8192;",
+                  "    MCTL_HP float mctl_k = 512.0;",
+                  "    mctl_time = (float(mctl_hi) * mctl_k + float(mctl_lo)) / %s%s;" % (S._f(pic["fps"]), "" if c["speed"] == 1.0 else " * %s" % S._f(c["speed"]))]
     else:
-        lines.append("    pvj_time = 0.0;")
-    lines += ["    pvj_norm = vec2(HOOKED_pos.x, 1.0 - HOOKED_pos.y);",
-              "    pvj_coord = vec4(pvj_norm * RENDERSIZE, 0.0, 1.0);",
-              "    pvj_color = vec4(0.0, 0.0, 0.0, 1.0);",
-              "    pvj_main();",
-              "    vec3 c = clamp(pvj_color.rgb, 0.0, 1.0) * clamp(pvj_color.a, 0.0, 1.0);",
+        lines.append("    mctl_time = 0.0;")
+    lines += ["    mctl_norm = vec2(HOOKED_pos.x, 1.0 - HOOKED_pos.y);",
+              "    mctl_coord = vec4(mctl_norm * RENDERSIZE, 0.0, 1.0);",
+              "    mctl_color = vec4(0.0, 0.0, 0.0, 1.0);",
+              "    mctl_main();",
+              "    vec3 c = clamp(mctl_color.rgb, 0.0, 1.0) * clamp(mctl_color.a, 0.0, 1.0);",
               # back into the picture's own colours, then the mix: at amount 0 this is the pixel that was read
-              "    return vec4(mix(pvj_src.rgb, pvj_native(c), %s), pvj_src.a);" % S._f(c["amount"]),
+              "    return vec4(mix(mctl_src.rgb, mctl_native(c), %s), mctl_src.a);" % S._f(c["amount"]),
               "}", ""]
     return lines
 
@@ -526,7 +526,7 @@ def translate_native(parsed, values=None, controls=None):
         raise ShaderError("this is a generator, not a filter of the playing picture: it is played under Shaders")
     values = S.clean_values(parsed, values)
     c = L.clean_fx_controls(controls)
-    lines = ["//!PVJ 1", "//!KIND filter", "//!CLOCK %d" % (1 if parsed.get("clock") else 0), "//!LINE %d" % parsed["line"]]
+    lines = ["//!MCTL 1", "//!KIND filter", "//!CLOCK %d" % (1 if parsed.get("clock") else 0), "//!LINE %d" % parsed["line"]]
     lines += S.native_passes(parsed)
     lines += S.native_inputs(parsed, values)
     lines += ["//!CONTROL amount %s" % S._f(c["amount"]), "//!CONTROL speed %s" % S._f(c["speed"]), "//!CODE", parsed["code"], ""]

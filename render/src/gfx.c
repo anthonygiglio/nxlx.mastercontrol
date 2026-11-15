@@ -11,7 +11,7 @@
 // (overlay 30) and the pairing codes (40 to 43) stay on top of them, as on classic mpv. The screenshots and the
 // captures use the same final pass, so they show the graphics too.
 //
-// What the panel sends (ipc.c, "pvj-graphic"): a picture as a premultiplied B G R A file of the rasteriser's, loaded
+// What the panel sends (ipc.c, "mctl-graphic"): a picture as a premultiplied B G R A file of the rasteriser's, loaded
 // into a slot; the slot's place (pixels of the screen), motion and times; show, hide, replay and clear. Everything the
 // frame needs to move is worked out here from the monotonic clock and the slot's times, so a motion costs the socket
 // nothing and the panel sends nothing while it runs.
@@ -24,7 +24,7 @@
 // Bounds. Eight slots; a picture's side is at most GFX_SIDE_MAX and the GPU's own limit; all pictures together (loaded and
 // waiting) at most GFX_BYTES_MAX; at most two uploads a frame; a slot that is not on and not fading out is not drawn.
 #define _GNU_SOURCE
-#include "pvj.h"
+#include "mctl.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -50,12 +50,12 @@ static int side_max = 2048;
 
 static const char *VS =
     "#version 300 es\n"
-    "in vec2 pvj_vert;\n"
-    "out highp vec2 pvj_uv;\n"
+    "in vec2 mctl_vert;\n"
+    "out highp vec2 mctl_uv;\n"
     "uniform vec4 rect;\n"                                        /* left, top, right, bottom in clip space */
     "void main() {\n"
-    "  vec2 s = pvj_vert * 0.5 + 0.5;\n"
-    "  pvj_uv = vec2(s.x, 1.0 - s.y);\n"                          /* the file's first row is the top */
+    "  vec2 s = mctl_vert * 0.5 + 0.5;\n"
+    "  mctl_uv = vec2(s.x, 1.0 - s.y);\n"                          /* the file's first row is the top */
     "  gl_Position = vec4(mix(rect.x, rect.z, s.x), mix(rect.w, rect.y, s.y), 0.0, 1.0);\n"
     "}\n";
 // The picture is premultiplied. `reveal[i]` is how far along line i the typewriter has come, as a part of the picture's
@@ -63,17 +63,17 @@ static const char *VS =
 static const char *FS =
     "#version 300 es\n"
     "precision highp float;\n"
-    "in vec2 pvj_uv;\n"
-    "out vec4 pvj_out;\n"
+    "in vec2 mctl_uv;\n"
+    "out vec4 mctl_out;\n"
     "uniform sampler2D tex;\n"
     "uniform float alpha;\n"
     "uniform int nl;\n"
     "uniform float reveal[6];\n"
     "uniform float soft;\n"
     "void main() {\n"
-    "  int li = clamp(int(pvj_uv.y * float(nl)), 0, nl - 1);\n"
-    "  float k = clamp((reveal[li] - pvj_uv.x) / soft, 0.0, 1.0);\n"
-    "  pvj_out = texture(tex, pvj_uv) * (alpha * k);\n"
+    "  int li = clamp(int(mctl_uv.y * float(nl)), 0, nl - 1);\n"
+    "  float k = clamp((reveal[li] - mctl_uv.x) / soft, 0.0, 1.0);\n"
+    "  mctl_out = texture(tex, mctl_uv) * (alpha * k);\n"
     "}\n";
 
 int gfx_side_max(void) { return side_max; }

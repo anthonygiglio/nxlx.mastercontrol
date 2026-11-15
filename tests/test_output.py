@@ -212,24 +212,24 @@ class PrepareTest(unittest.TestCase):
 
 
 class LateScreenAgreementTest(unittest.TestCase):
-    """Composite, the late-screen watcher (#201) and pvj-render's exit-2 words: one notion of a screen."""
+    """Composite, the late-screen watcher (#201) and mctl-render's exit-2 words: one notion of a screen."""
 
     def test_the_watcher_counts_the_av_output_as_a_screen_exactly_when_the_decision_does(self):
         sysfs = sysfs_of(PI4)
         self.assertEqual(latescreen.connected_screens(sysfs), ["Composite-1", "HDMI-A-1"], "writeback and the unplugged HDMI are not")
-        self.assertFalse(latescreen.no_screen_fallback("pvj-render did not start (exit 2)", sysfs), "a screen is there: not a late screen")
+        self.assertFalse(latescreen.no_screen_fallback("mctl-render did not start (exit 2)", sysfs), "a screen is there: not a late screen")
         only_av = sysfs_of([(1, "HDMI-A-1", "disconnected", []), (1, "Composite-1", "connected", ["720x480i"])])
         self.assertEqual(latescreen.connected_screens(only_av), ["Composite-1"])
-        self.assertFalse(latescreen.no_screen_fallback("pvj-render ended twice in a row (exit 2)", only_av))
+        self.assertFalse(latescreen.no_screen_fallback("mctl-render ended twice in a row (exit 2)", only_av))
         none = sysfs_of([(1, "HDMI-A-1", "disconnected", []), (1, "Composite-1", "disconnected", [])])
-        self.assertTrue(latescreen.no_screen_fallback("pvj-render did not start (exit 2)", none))
-        self.assertFalse(latescreen.no_screen_fallback("pvj-render did not start (exit 3)", none), "any other end is a crash")
+        self.assertTrue(latescreen.no_screen_fallback("mctl-render did not start (exit 2)", none))
+        self.assertFalse(latescreen.no_screen_fallback("mctl-render did not start (exit 3)", none), "any other end is a crash")
         # a projector that says connected before it has modes is not a screen yet, for the watcher and for the decision alike
         waking = sysfs_of([(1, "HDMI-A-1", "connected", []), (1, "Composite-1", "disconnected", [])])
         self.assertEqual(latescreen.connected_screens(waking), [])
 
-    def test_the_decision_and_pvj_renders_own_pick_agree_on_a_named_connector_and_an_exact_interlaced_mode(self):
-        # pvj-render reads the same arguments (render/src/out.c: pick_connector takes the connector by its whole name, pick_mode
+    def test_the_decision_and_mctl_renders_own_pick_agree_on_a_named_connector_and_an_exact_interlaced_mode(self):
+        # mctl-render reads the same arguments (render/src/out.c: pick_connector takes the connector by its whole name, pick_mode
         # takes WxH@R to 0.01 Hz with the rate doubled for an interlaced mode): the text passed is mpv's own, 59.94 for 720x480i
         rep = decide([(1, "Composite-1", "connected", ["720x480i"])], help_text((0, "Composite-1", [COMP_HELP[0]])))
         self.assertIsNotNone(S.MODE_ARG.fullmatch(S.screen_args(rep)[-1]))

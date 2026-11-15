@@ -632,8 +632,8 @@ for a graphic that is on starts at once; a change of place sent to one that is n
 run off was nothing on the screen), but not for the nudge it ignores and never for a looped one. The preview of a crawl is its one line on its row. The
 card applies the answers of its changes in the order they were sent and never lets a refresh asked before a change (or while one is out) overwrite it. The settings are `graphics` in `settings.json` (no schema change). Drawing: a worker builds one picture per
 change (newest change wins, 5 a second for one graphic and 20 a second in all); a graphic that is off has no picture, no file and no
-cost. With the renderer's stage (`Player.graphics_stage()`, pvj-render 0.11.0 on) each graphic is a slot there, in the order of the
-list: the picture is loaded once (`pvj-graphic load`), its place and motion are numbers (`set`), `show`, `hide` and `replay` start
+cost. With the renderer's stage (`Player.graphics_stage()`, mctl-render 0.11.0 on) each graphic is a slot there, in the order of the
+list: the picture is loaded once (`mctl-graphic load`), its place and motion are numbers (`set`), `show`, `hide` and `replay` start
 and stop it, and the renderer draws it over the final picture, under the text layer, so the masks (id 30) and the pairing codes
 (40 to 43) stay on top; nothing is sent while a motion runs. Without it, mpv's `overlay-add` with ids 20 to 27 draws the picture
 still, and a stepping thread (about twelve steps a second, each motion finite, the pictures stepped at once bounded at 12 MB) writes

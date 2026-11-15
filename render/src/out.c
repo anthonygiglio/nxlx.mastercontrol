@@ -6,7 +6,7 @@
 // the clock. The card, connector and mode are taken as mpv 0.40 takes them (video/out/drm_common.c), because the
 // player's service passes the arguments it chose for mpv (pvj/screenmode.py, D90 to D92).
 #define _GNU_SOURCE
-#include "pvj.h"
+#include "mctl.h"
 
 #include <errno.h>
 #include <fcntl.h>

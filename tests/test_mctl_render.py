@@ -1,12 +1,12 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""pvj-render (render/, D95) run for real, headless: EGL without a surface on Mesa's software GPU, no screen.
+"""mctl-render (render/, D95) run for real, headless: EGL without a surface on Mesa's software GPU, no screen.
 
 The program is built first (`make -C render TEST_HOOKS=1`; a build without the hooks skips the one test that needs
 them, and fails it where PVJ_RENDER_TEST=1). Without it these tests are skipped, except where PVJ_RENDER_TEST=1
-(the CI job pvj-render), where a missing program, a missing clip maker or a missing font is a failure: there a skip
+(the CI job mctl-render), where a missing program, a missing clip maker or a missing font is a failure: there a skip
 would judge nothing. Every question goes through pvj.player.Ipc, the panel's own client, so what is tested is what the
-panel will meet. The pictures are read back with pvj-render's own `pvj-capture` (the final picture as it would go to
+panel will meet. The pictures are read back with mctl-render's own `mctl-capture` (the final picture as it would go to
 the screen) and judged by their pixels.
 """
 import atexit
@@ -28,7 +28,7 @@ from pvj import looplist, mapper
 from pvj.player import Ipc, Player, PlayerError
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-BIN = os.environ.get("PVJ_RENDER_BIN") or os.path.join(REPO, "render", "pvj-render")
+BIN = os.environ.get("PVJ_RENDER_BIN") or os.path.join(REPO, "render", "mctl-render")
 STRICT = os.environ.get("PVJ_RENDER_TEST") == "1"
 W, H = 320, 180
 
@@ -71,7 +71,7 @@ LIVE = set()        # every Renderer not yet closed: ended at exit whatever happ
 
 
 def _die_with_parent():
-    """In the child, before pvj-render runs: the kernel ends it with SIGTERM if this test process dies first."""
+    """In the child, before mctl-render runs: the kernel ends it with SIGTERM if this test process dies first."""
     try:
         import ctypes
         ctypes.CDLL(None, use_errno=True).prctl(1, signal.SIGTERM)       # PR_SET_PDEATHSIG
@@ -86,10 +86,10 @@ def _end_all():
 
 
 class Renderer:
-    """One pvj-render process in its own folder."""
+    """One mctl-render process in its own folder."""
 
     def __init__(self, *args, env=None, no_realtime=False):
-        self.dir = tempfile.mkdtemp(prefix="pvj-render-")
+        self.dir = tempfile.mkdtemp(prefix="mctl-render-")
         self.sock = os.path.join(self.dir, "mpv.sock")
         env = dict(os.environ, LIBGL_ALWAYS_SOFTWARE="1", **(env or {}))
         self.log = open(os.path.join(self.dir, "stderr.txt"), "w+")
@@ -106,14 +106,14 @@ class Renderer:
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
             if self.proc.poll() is not None:
-                raise AssertionError("pvj-render ended at once (%s): %s" % (self.proc.returncode, self.stderr()))
+                raise AssertionError("mctl-render ended at once (%s): %s" % (self.proc.returncode, self.stderr()))
             try:
                 self.pid = self.ipc.request("get_property", "pid")
                 return
             except PlayerError:
                 time.sleep(0.1)
         self.close()
-        raise AssertionError("pvj-render did not answer: " + self.stderr())
+        raise AssertionError("mctl-render did not answer: " + self.stderr())
 
     def stderr(self):
         self.log.flush()
@@ -125,7 +125,7 @@ class Renderer:
 
     def capture(self):
         path = os.path.join(self.dir, "cap-%d.ppm" % time.monotonic_ns())
-        self("pvj-capture", path)
+        self("mctl-capture", path)
         out = read_ppm(path)
         os.unlink(path)
         return out
@@ -159,8 +159,8 @@ class Renderer:
         ok = self.wait(lambda: self.playing() == path)
         assert ok, "the clip was not loaded: " + self.stderr()
         # a picture is on the screen once the video layer drew it (its own counter) and one more frame went out
-        drawn = self("get_property", "pvj-render")["drawn"]
-        self.wait(lambda: self("get_property", "pvj-render")["drawn"] > drawn, 5)
+        drawn = self("get_property", "mctl-render")["drawn"]
+        self.wait(lambda: self("get_property", "mctl-render")["drawn"] > drawn, 5)
         time.sleep(0.3)
 
     def close(self):
@@ -182,7 +182,7 @@ def need_program(case):
     if not (os.path.isfile(BIN) and os.access(BIN, os.X_OK)):
         if STRICT:
             case.fail("PVJ_RENDER_TEST=1 and there is no %s: build it with make -C render" % BIN)
-        case.skipTest("pvj-render is not built (make -C render)")
+        case.skipTest("mctl-render is not built (make -C render)")
 
 
 class Base(unittest.TestCase):
@@ -190,7 +190,7 @@ class Base(unittest.TestCase):
 
     def setUp(self):
         need_program(self)
-        self.tmp = tempfile.mkdtemp(prefix="pvj-render-media-")
+        self.tmp = tempfile.mkdtemp(prefix="mctl-render-media-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.r = Renderer(*self.ARGS)
         self.addCleanup(lambda: self.r.close())
@@ -220,9 +220,9 @@ class GraphicsChipTest(unittest.TestCase):
         hooks = "with test hooks" in subprocess.run([BIN, "--version"], capture_output=True, text=True, timeout=10).stdout
         if not hooks:
             if STRICT:
-                self.fail("PVJ_RENDER_TEST=1 and pvj-render was built without TEST_HOOKS=1")
-            self.skipTest("pvj-render was built without TEST_HOOKS=1")
-        self.tmp = tempfile.mkdtemp(prefix="pvj-render-gpu-")
+                self.fail("PVJ_RENDER_TEST=1 and mctl-render was built without TEST_HOOKS=1")
+            self.skipTest("mctl-render was built without TEST_HOOKS=1")
+        self.tmp = tempfile.mkdtemp(prefix="mctl-render-gpu-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
 
     def run_named(self, name):
@@ -253,11 +253,11 @@ class AnswersTest(Base):
     def test_what_it_says_of_itself(self):
         r = self.r
         self.assertEqual(r("get_property", "pid"), r.proc.pid)
-        self.assertEqual(r("get_property", "current-vo"), "pvj-render")
+        self.assertEqual(r("get_property", "current-vo"), "mctl-render")
         self.assertEqual((r("get_property", "osd-width"), r("get_property", "osd-height")), (W, H))
         self.assertEqual((r("get_property", "display-width"), r("get_property", "display-height")), (W, H))
         self.assertAlmostEqual(r("get_property", "display-fps"), 60.0)
-        st = r("get_property", "pvj-render")
+        st = r("get_property", "mctl-render")
         self.assertEqual((st["internal-width"], st["internal-height"], st["output-width"], st["output-height"]), (W, H, W, H))
         self.assertEqual(st["mapping"], "off")
         self.assertEqual(st["hwdec"], "no")
@@ -288,7 +288,7 @@ class AnswersTest(Base):
                    ("vf", "add", "lavfi=[movie=/etc/passwd]"), ("vf", "set", "hflip"),
                    ("overlay-add", 1, 0, 0, "@3", 0, "bgra", 1, 1, 4), ("overlay-add", 1, 0, 0, "&123", 0, "bgra", 1, 1, 4),
                    ("overlay-add", 99, 0, 0, "/tmp/x", 0, "bgra", 1, 1, 4), ("screenshot-to-file", "relative.png", "video"),
-                   ("seek", 1, "sideways"), ("add", "speed", 1), ("pvj-capture", "relative.ppm")]
+                   ("seek", 1, "sideways"), ("add", "speed", 1), ("mctl-capture", "relative.ppm")]
         for cmd in refused:
             with self.assertRaises(PlayerError, msg=str(cmd)) as e:
                 r(*cmd)
@@ -394,14 +394,14 @@ class PictureTest(Base):
         self.r("set_property", "glsl-shaders", [fx])
         self.assertEqual(self.r("get_property", "glsl-shaders"), [fx])
         self.assertTrue(self.r.wait(lambda: near(self.r.pixel(W // 4, H // 4), (0, 255, 255))), self.r.stderr())
-        self.assertEqual(self.r("get_property", "pvj-render")["mapping"], "off")
+        self.assertEqual(self.r("get_property", "mctl-render")["mapping"], "off")
 
 
 class DetailTest(Base):
     ARGS = ("--detail=90",)
 
     def test_a_smaller_inside_is_scaled_to_the_output(self):
-        st = self.r("get_property", "pvj-render")
+        st = self.r("get_property", "mctl-render")
         self.assertEqual((st["internal-width"], st["internal-height"]), (160, 90))
         self.assertEqual(self.r("get_property", "osd-width"), W)
         self.r.load(self.picture)
@@ -432,10 +432,10 @@ class MappingTest(Base):
         path = self.write(mapper.warp_shader(lw, lh, values))
         self.r.load(self.picture)
         self.r("set_property", "glsl-shaders", [path])
-        self.assertEqual(self.r("get_property", "pvj-render")["mapping"], "on", self.r.stderr())
+        self.assertEqual(self.r("get_property", "mctl-render")["mapping"], "on", self.r.stderr())
         self.check_left_half()
         self.r("set_property", "glsl-shaders", [])
-        self.assertEqual(self.r("get_property", "pvj-render")["mapping"], "off")
+        self.assertEqual(self.r("get_property", "mctl-render")["mapping"], "off")
         self.assertQuadrants()
 
     def test_the_editing_shader_is_drawn_too(self):
@@ -443,7 +443,7 @@ class MappingTest(Base):
         path = self.write(mapper.shader(surfaces))
         self.r.load(self.picture)
         self.r("set_property", "glsl-shaders", [path])
-        self.assertEqual(self.r("get_property", "pvj-render")["mapping"], "on", self.r.stderr())
+        self.assertEqual(self.r("get_property", "mctl-render")["mapping"], "on", self.r.stderr())
         self.check_left_half()
 
     def test_the_same_with_a_smaller_inside(self):
@@ -465,12 +465,12 @@ class MappingTest(Base):
         self.r.load(self.picture)
         bad = [good.replace("//!SIZE %d %d" % (lw, lh), "//!SIZE %d %d" % (lw + 1, lh)),        # data of the wrong size
                good.replace("//!SIZE %d %d" % (lw, lh), "//!SIZE 5000 5000"),
-               good.replace("rgba16f", "rgb10_a2"), good.replace("//!BIND PVJWARPB", "//!BIND NOSUCH"),
-               good.replace("//!TEXTURE PVJWARPA", "//!TEXTURE gl_bad")]
+               good.replace("rgba16f", "rgb10_a2"), good.replace("//!BIND MCTLWARPB", "//!BIND NOSUCH"),
+               good.replace("//!TEXTURE MCTLWARPA", "//!TEXTURE gl_bad")]
         for text in bad:
             with self.assertRaises(PlayerError):
                 self.r("set_property", "glsl-shaders", [self.write(text)])
-        self.assertEqual(self.r("get_property", "pvj-render")["mapping"], "off")
+        self.assertEqual(self.r("get_property", "mctl-render")["mapping"], "off")
         self.assertQuadrants()
         big = os.path.join(self.tmp, "big.glsl")
         with open(big, "w") as f:
@@ -482,7 +482,7 @@ class MappingTest(Base):
         path = self.write("//!HOOK OUTPUT\n//!BIND HOOKED\nvec4 hook() { return not_glsl; }\n")
         self.r.load(self.picture)
         self.r("set_property", "glsl-shaders", [path])
-        self.assertTrue(self.r("get_property", "pvj-render")["mapping"].startswith("failed"))
+        self.assertTrue(self.r("get_property", "mctl-render")["mapping"].startswith("failed"))
         self.assertQuadrants()
 
 
@@ -495,13 +495,13 @@ class TextLayerTest(Base):
         self.r("overlay-add", 5, 10, 10, bgra, 0, "bgra", 40, 30, 160)
         self.assertTrue(self.r.wait(lambda: near(self.r.pixel(25, 20), MAGENTA)), self.r.stderr())
         self.assertColour(self.r.pixel(W // 4, 3 * H // 4), BLUE, "beside the overlay")
-        self.assertTrue(self.r("get_property", "pvj-render")["text-layer"])
+        self.assertTrue(self.r("get_property", "mctl-render")["text-layer"])
         self.r("overlay-remove", 5)
         self.assertTrue(self.r.wait(lambda: near(self.r.pixel(25, 20), RED)), self.r.stderr())
-        self.assertFalse(self.r("get_property", "pvj-render")["text-layer"])
+        self.assertFalse(self.r("get_property", "mctl-render")["text-layer"])
 
     def test_masks_combined_into_one_picture_are_drawn_as_the_overlay(self):
-        # D100: the panel's combined masks (pvj/overlay.py) go to pvj-render as one overlay-add, as to classic mpv.
+        # D100: the panel's combined masks (pvj/overlay.py) go to mctl-render as one overlay-add, as to classic mpv.
         # The picture is combined here in plain Python by the same rule as overlay.combine (premultiplied, a later
         # mask "over" an earlier one), so this needs no mpv program: the CI job has libmpv only. mpv's own combining
         # is tested in tests/test_masks.py.
@@ -572,7 +572,7 @@ class TextLayerTest(Base):
         # The stats overlay (0.12.0): mpv's osd-overlay, ASS text, forwarded to the text layer. It must draw in the corner it
         # was put in, leave the rest alone, be removed by "none", and share the text layer with show-text without taking
         # its slot (a PIN is a show-text).
-        state = self.r("get_property", "pvj-render")
+        state = self.r("get_property", "mctl-render")
         self.assertIs(state.get("osd-overlay"), True, "the capability flag the panel looks for")
         self.r("set_property", "loop-file", "inf")
         self.r.load(self.picture)
@@ -583,13 +583,13 @@ class TextLayerTest(Base):
         other = lambda shot: self._region_changed(base, shot, W // 2, H // 2, W, H)
         self.assertTrue(self.r.wait(lambda: corner(self.r.capture()) > 150), "no overlay text in the corner\n" + self.r.stderr())
         self.assertLess(other(self.r.capture()), 20, "the overlay drew outside its corner")
-        self.assertIs(self.r("get_property", "pvj-render").get("text-layer"), True)
+        self.assertIs(self.r("get_property", "mctl-render").get("text-layer"), True)
         self.r("show-text", "", 1)                      # a show-text that ends does not take the overlay with it
         time.sleep(0.5)
         self.assertGreater(corner(self.r.capture()), 150)
         self.r("osd-overlay", 61, "none", "")
         self.assertTrue(self.r.wait(lambda: corner(self.r.capture()) < 20), "the overlay stayed after none\n" + self.r.stderr())
-        self.assertIs(self.r("get_property", "pvj-render").get("text-layer"), False, "the text layer is on for nothing")
+        self.assertIs(self.r("get_property", "mctl-render").get("text-layer"), False, "the text layer is on for nothing")
 
     def test_osd_overlay_refuses_bad_ids_formats_and_text(self):
         r = self.r
@@ -605,7 +605,7 @@ class TextLayerTest(Base):
             with self.assertRaises(PlayerError, msg=str(cmd)) as e:
                 r(*cmd)
             self.assertEqual(str(e.exception), "mpv: invalid parameter", cmd)
-        self.assertIs(r("get_property", "pvj-render").get("text-layer"), False, "a refused command left the text layer on")
+        self.assertIs(r("get_property", "mctl-render").get("text-layer"), False, "a refused command left the text layer on")
         r("osd-overlay", 63, "ass-events", good, 1280, 720)             # the top of the range, and a long one that fits
         r("osd-overlay", 63, "none", "")
         r("osd-overlay", 0, "ass-events", r"{\fs20}" + "z" * 3000, 1280, 720, 0, False)
@@ -619,8 +619,8 @@ class TextLayerTest(Base):
         hooks = "with test hooks" in subprocess.run([BIN, "--version"], capture_output=True, text=True, timeout=10).stdout
         if not hooks:
             if STRICT:
-                self.fail("PVJ_RENDER_TEST=1 and pvj-render was built without its test hooks: make -C render TEST_HOOKS=1")
-            self.skipTest("pvj-render was built without its test hooks (make -C render clean; make -C render TEST_HOOKS=1)")
+                self.fail("PVJ_RENDER_TEST=1 and mctl-render was built without its test hooks: make -C render TEST_HOOKS=1")
+            self.skipTest("mctl-render was built without its test hooks (make -C render clean; make -C render TEST_HOOKS=1)")
         r = Renderer(env={"PVJ_RENDER_TEST_SLOW_START": "500"})
         self.addCleanup(r.close)
         r("set_property", "image-display-duration", "inf")
@@ -637,7 +637,7 @@ class TextLayerTest(Base):
         # config=no is the hardening: nothing on disk of mpv's own. The text core's render context is made before
         # mpv_initialize, where mpv's paths are not set yet, so without gpu-shader-cache=no it wrote compiled shaders
         # to $XDG_CACHE_HOME/mpv (the review of #162).
-        cache = tempfile.mkdtemp(prefix="pvj-render-cache-")
+        cache = tempfile.mkdtemp(prefix="mctl-render-cache-")
         self.addCleanup(shutil.rmtree, cache, True)
         r = Renderer(env={"XDG_CACHE_HOME": cache, "HOME": cache})
         self.addCleanup(r.close)
@@ -692,7 +692,7 @@ class SocketTest(Base):
         stuck = connect(self.r.sock)
         self.addCleanup(stuck.close)
         stuck.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
-        line = b'{"command": ["get_property", "pvj-render"], "request_id": 1}\n'
+        line = b'{"command": ["get_property", "mctl-render"], "request_id": 1}\n'
 
         def flood():
             try:
@@ -749,7 +749,7 @@ class SocketTest(Base):
             ipc = Ipc(self.r.sock, timeout=5.0)
             for _ in range(25):
                 try:
-                    answered.append(ipc.request("get_property", "pvj-render")["output-width"])
+                    answered.append(ipc.request("get_property", "mctl-render")["output-width"])
                 except Exception as e:
                     errors.append(repr(e))
         threads = [threading.Thread(target=worker) for _ in range(16)]
@@ -767,9 +767,9 @@ class PaceTest(Base):
     """A picture goes out at every vblank (here: the headless clock's 60 a second), new clip frame or not."""
 
     def rate(self, seconds=2.0):
-        a, t0 = self.r("get_property", "pvj-render"), time.monotonic()
+        a, t0 = self.r("get_property", "mctl-render"), time.monotonic()
         time.sleep(seconds)
-        b, t1 = self.r("get_property", "pvj-render"), time.monotonic()
+        b, t1 = self.r("get_property", "mctl-render"), time.monotonic()
         return (b["flips"] - a["flips"]) / (t1 - t0), (b["drawn"] - a["drawn"]) / (t1 - t0)
 
     def test_the_output_rate_with_nothing_playing(self):
@@ -841,8 +841,8 @@ class FenceTest(Base):
         make_clip(self, clip, 4)
         self.r("set_property", "loop-file", "inf")
         self.r.load(clip)
-        self.assertTrue(self.r.wait(lambda: self.r("get_property", "pvj-render")["drawn"] >= 60, 15), self.r.stderr())
-        st = self.r("get_property", "pvj-render")
+        self.assertTrue(self.r.wait(lambda: self.r("get_property", "mctl-render")["drawn"] >= 60, 15), self.r.stderr())
+        st = self.r("get_property", "mctl-render")
         self.assertLessEqual(st["gl-fences"], 4, st)
         version = self.r("get_property", "mpv-version") or ""
         if version.startswith(("mpv 0.40.", "mpv 0.41.")):
@@ -898,8 +898,8 @@ def need_hooks(case):
     if "with test hooks" in subprocess.run([BIN, "--version"], capture_output=True, text=True, timeout=10).stdout:
         return
     if STRICT:
-        case.fail("PVJ_RENDER_TEST=1 and pvj-render was built without its test hooks: make -C render TEST_HOOKS=1")
-    case.skipTest("pvj-render was built without its test hooks (make -C render clean; make -C render TEST_HOOKS=1)")
+        case.fail("PVJ_RENDER_TEST=1 and mctl-render was built without its test hooks: make -C render TEST_HOOKS=1")
+    case.skipTest("mctl-render was built without its test hooks (make -C render clean; make -C render TEST_HOOKS=1)")
 
 
 def make_clip_with_black_end(case, path, bright=2, black=0.2):
@@ -919,7 +919,7 @@ class LoopGapTest(Base):
     """What a looping clip puts on the screen at its loop point (the finding of 2026-11-09 on node-01: 2 to 4 black
     captured frames at every loop). The renderer holds a layer's last picture through a seek, so the picture at the loop
     is the clip's own last frame until its first one is decoded. A black frame there is the clip's: the finding's clip
-    ends in one black frame, and the renderer only holds it while the decoder restarts. `pvj-test-blank` (TEST_HOOKS)
+    ends in one black frame, and the renderer only holds it while the decoder restarts. `mctl-test-blank` (TEST_HOOKS)
     counts the draws that left the middle of the layer black, so a clip with a lit middle has none unless it is black."""
 
     def setUp(self):
@@ -928,7 +928,7 @@ class LoopGapTest(Base):
         self.r("set_property", "loop-file", "inf")
 
     def blank(self):
-        return self.r("get_property", "pvj-test-blank")
+        return self.r("get_property", "mctl-test-blank")
 
     def count_passes(self, passes, seconds=20):
         """Waits for `passes` wraps of the position (the clip's own loops) and returns how many were seen."""
@@ -960,7 +960,7 @@ class LoopGapTest(Base):
 
 
 class FadeBase(Base):
-    """Two video layers and the renderer's own crossfade (D98): ["pvj-crossfade", URL, SECONDS, OPTIONS]."""
+    """Two video layers and the renderer's own crossfade (D98): ["mctl-crossfade", URL, SECONDS, OPTIONS]."""
 
     def setUp(self):
         super().setUp()
@@ -970,10 +970,10 @@ class FadeBase(Base):
         png(self.blue, W, H, lambda x, y: BLUE)
 
     def st(self):
-        return self.r("get_property", "pvj-render")
+        return self.r("get_property", "mctl-render")
 
     def fade(self, path, seconds, opts="keep-open=no,image-display-duration=inf"):
-        return self.r("pvj-crossfade", path, seconds, opts)
+        return self.r("mctl-crossfade", path, seconds, opts)
 
     def settled(self, seconds=15):
         """Wait until no crossfade is on its way; the state then."""
@@ -1087,7 +1087,7 @@ class CrossfadeTest(FadeBase):
         r = self.r
         r.load(self.red)
         r("set_property", "video-zoom", 0.0)
-        r("vf", "add", "@pvjfliph:hflip")
+        r("vf", "add", "@mctlfliph:hflip")
         self.fade(self.picture, 6.0)
         self.assertTrue(r.wait(lambda: self.st()["fade"] == "running" and self.st()["fade-progress"] > 0.2, 10, 0.02), self.st())
         r("set_property", "brightness", -100)
@@ -1143,12 +1143,12 @@ class CrossfadeTest(FadeBase):
     def test_what_is_not_a_crossfade_is_refused_with_mpvs_words(self):
         r = self.r
         r.load(self.red)
-        for cmd in (("pvj-crossfade",), ("pvj-crossfade", self.blue), ("pvj-crossfade", self.blue, "2"),
-                    ("pvj-crossfade", self.blue, -1), ("pvj-crossfade", self.blue, 61), ("pvj-crossfade", 5, 2),
-                    ("pvj-crossfade", "", 2), ("pvj-crossfade", self.blue, 2, "script=/tmp/x.lua"),
-                    ("pvj-crossfade", self.blue, 2, "pause=yes"), ("pvj-crossfade", self.blue, 2, "keep-open"),
-                    ("pvj-crossfade", self.blue, 2, "keep-open=yes;rm"), ("pvj-crossfade", self.blue, 2, 7),
-                    ("pvj-crossfade", self.blue, 2, "keep-open=no", "extra"), ("pvj-crossfade", self.blue, 1e9)):
+        for cmd in (("mctl-crossfade",), ("mctl-crossfade", self.blue), ("mctl-crossfade", self.blue, "2"),
+                    ("mctl-crossfade", self.blue, -1), ("mctl-crossfade", self.blue, 61), ("mctl-crossfade", 5, 2),
+                    ("mctl-crossfade", "", 2), ("mctl-crossfade", self.blue, 2, "script=/tmp/x.lua"),
+                    ("mctl-crossfade", self.blue, 2, "pause=yes"), ("mctl-crossfade", self.blue, 2, "keep-open"),
+                    ("mctl-crossfade", self.blue, 2, "keep-open=yes;rm"), ("mctl-crossfade", self.blue, 2, 7),
+                    ("mctl-crossfade", self.blue, 2, "keep-open=no", "extra"), ("mctl-crossfade", self.blue, 1e9)):
             with self.assertRaises(PlayerError, msg=str(cmd)) as e:
                 r(*cmd)
             self.assertEqual(str(e.exception), "mpv: invalid parameter", cmd)
@@ -1317,7 +1317,7 @@ class HeapTest(FadeBase):
     """A crossfade gives its clip's memory back (J-157). glibc raises its threshold for blocks mapped on their own to the
     size of each such block freed, so the frames and packets of every clip after the first came from the arenas, and
     each crossfade, with two decoders at once, left them more cut up: on node-03 the renderer grew from 62 to 782 MB in
-    50 fades and to 1,905 MB in an hour, with what was in use following the clip on the screen. pvj-render fixes the
+    50 fades and to 1,905 MB in an hour, with what was in use following the clip on the screen. mctl-render fixes the
     threshold (main.c, heap_setup) and trims the heap when a clip ends. Here: 720p clips through the loop lists the player
     loads (looplist.QUEUE), the renderer with the unit's MALLOC_ARENA_MAX=2 and none of glibc's own settings from the
     environment, and the heap's free bytes (held by malloc, not given back) after a warm-up and after more fades. The
@@ -1384,12 +1384,12 @@ class HeapTest(FadeBase):
         for i in range(1, 31):
             self.assertLess(time.monotonic(), deadline, "the bounded run of fades took too long")
             done = self.st()["fades-done"]
-            r("pvj-crossfade", items[i % 4], 1.0, opts)
+            r("mctl-crossfade", items[i % 4], 1.0, opts)
             self.assertTrue(r.wait(lambda: self.st()["fades-done"] > done, 15, 0.05), "fade %d: %s\n%s" % (i, self.st(), r.stderr()))
             r("set_property", "loop-file", "inf")
             time.sleep(1.0)
             if i in (10, 30):
-                seen.append(r("get_property", "pvj-heap"))
+                seen.append(r("get_property", "mctl-heap"))
         free = [h["free"] for h in seen]
         heap = seen[1]
         print("\nthe heap after 10 and 30 crossfades (MB): free %s (at most %d, growth at most %d), mapped %s (at least %d); "
@@ -1417,8 +1417,8 @@ class FadeOnFadeTest(FadeBase):
         hooks = "with test hooks" in subprocess.run([BIN, "--version"], capture_output=True, text=True, timeout=10).stdout
         if not hooks:
             if STRICT:
-                self.fail("PVJ_RENDER_TEST=1 and pvj-render was built without its test hooks: make -C render TEST_HOOKS=1")
-            self.skipTest("pvj-render was built without its test hooks (make -C render clean; make -C render TEST_HOOKS=1)")
+                self.fail("PVJ_RENDER_TEST=1 and mctl-render was built without its test hooks: make -C render TEST_HOOKS=1")
+            self.skipTest("mctl-render was built without its test hooks (make -C render clean; make -C render TEST_HOOKS=1)")
         self.r.close()
         self.r = r = Renderer(env={"PVJ_RENDER_TEST_SLOW_STOP": "100"})
         r("set_property", "image-display-duration", "inf")
@@ -1533,7 +1533,7 @@ class FadeEdgesTest(FadeBase):
 
 
 class MoveBase(FadeBase):
-    """The wipes and the slides drawn by the renderer (D111): ["pvj-crossfade", URL, SECONDS, OPTIONS, MOVE]."""
+    """The wipes and the slides drawn by the renderer (D111): ["mctl-crossfade", URL, SECONDS, OPTIONS, MOVE]."""
     OPTS = "keep-open=no,image-display-duration=inf"
 
     def setUp(self):
@@ -1542,7 +1542,7 @@ class MoveBase(FadeBase):
         png(self.magenta, W, H, lambda x, y: MAGENTA)
 
     def move(self, path, seconds, name):
-        return self.r("pvj-crossfade", path, seconds, self.OPTS, name)
+        return self.r("mctl-crossfade", path, seconds, self.OPTS, name)
 
     def at(self, low, high=0.95):
         self.assertTrue(self.r.wait(lambda: self.st()["fade"] == "running" and low < self.st()["fade-progress"] < high, 15, 0.02), self.st())
@@ -1682,14 +1682,14 @@ class MoveTest(MoveBase):
     def test_the_flip_stays_on_the_picture_and_the_way_stays_the_screens(self):
         r = self.r
         r.load(self.picture)
-        r("vf", "add", "@pvjfliph:hflip")
+        r("vf", "add", "@mctlfliph:hflip")
         self.assertTrue(r.wait(lambda: near(r.pixel(W // 4, H // 4), GREEN)), "flipped")
         self.move(self.magenta, 3.0, "wipe-from-left")
         self.at(0.2, 0.6)
         shot = r.capture()
         self.assertColour(r.pixel(4, H // 4, shot), MAGENTA, "from the screen's left, flipped or not")
         self.assertColour(r.pixel(W - 10, H // 4, shot), RED, "the outgoing picture, flipped")
-        r("vf", "remove", "@pvjfliph")
+        r("vf", "remove", "@mctlfliph")
 
     def test_a_load_a_stop_or_a_new_transition_ends_it(self):
         r = self.r
@@ -1720,12 +1720,12 @@ class MoveTest(MoveBase):
         r.load(self.red)
         for word in ("", "crossfade", "wipe", "wipe-from-left ", "slide-LEFT", 3, True):
             with self.assertRaises(PlayerError, msg=str(word)) as e:
-                r("pvj-crossfade", self.blue, 2, self.OPTS, word)
+                r("mctl-crossfade", self.blue, 2, self.OPTS, word)
             self.assertEqual(str(e.exception), "mpv: invalid parameter", word)
         with self.assertRaises(PlayerError):
-            r("pvj-crossfade", self.blue, 2, "pause=yes", "wipe-from-left")
+            r("mctl-crossfade", self.blue, 2, "pause=yes", "wipe-from-left")
         with self.assertRaises(PlayerError):
-            r("pvj-crossfade", self.blue, 2, self.OPTS, "wipe-from-left", "extra")
+            r("mctl-crossfade", self.blue, 2, self.OPTS, "wipe-from-left", "extra")
         st = self.st()
         self.assertEqual((st["fades"], st["fade"], st["front"]), (0, "off", 0), "nothing happened")
         self.assertEqual(r("get_property", "path"), self.red)
@@ -1803,7 +1803,7 @@ class ManyMovesTest(MoveBase):
 
 
 class PlayerFadeTest(FadeBase):
-    """pvj/player.py's crossfade through the real pvj-render: Player.play(..., fade=seconds)."""
+    """pvj/player.py's crossfade through the real mctl-render: Player.play(..., fade=seconds)."""
 
     def player(self):
         from pvj.player import Player
@@ -1875,7 +1875,7 @@ class SourcesBase(FadeBase):
         png(self.green, W, H, lambda x, y: GREEN)
 
     def sources(self):
-        return self.r("get_property", "pvj-sources")
+        return self.r("get_property", "mctl-sources")
 
     def source(self, k):
         return self.sources()[k - 1]
@@ -1883,7 +1883,7 @@ class SourcesBase(FadeBase):
     def to(self, k, path, flag="replace", opts=SHOW):
         """Load `path` on source k and wait until it plays there and has drawn a frame."""
         drawn = self.source(k)["drawn"]
-        self.r("pvj-source", k, "loadfile", path, flag, opts)
+        self.r("mctl-source", k, "loadfile", path, flag, opts)
         self.assertTrue(self.r.wait(lambda: self.source(k)["path"] == path and self.source(k)["drawn"] > drawn, 10),
                         "source %d did not take %s: %s\n%s" % (k, path, self.sources(), self.r.stderr()))
         time.sleep(0.2)
@@ -1937,7 +1937,7 @@ class SourcesTest(SourcesBase):
         r.load(self.picture)                        # source 1, through the plain commands, as always
         for k in (2, 3, 4):
             self.to(k, clips[k], opts="keep-open=no")
-            r("pvj-source", k, "set_property", "loop-file", "inf")
+            r("mctl-source", k, "set_property", "loop-file", "inf")
         before = self.sources()
         time.sleep(1.5)
         after = self.sources()
@@ -1946,7 +1946,7 @@ class SourcesTest(SourcesBase):
             self.assertEqual((s["path"], s["idle"], s["height"]), (clips[k], False, 180), s)
             self.assertGreater(s["drawn"] - before[k - 1]["drawn"], 20, "source %d moves: %s" % (k, s))
             self.assertLess(s["drawn"] - before[k - 1]["drawn"], 60, "each clip frame converted once: %s" % s)
-            self.assertEqual(r("pvj-source", k, "get_property", "loop-file"), "inf")
+            self.assertEqual(r("mctl-source", k, "get_property", "loop-file"), "inf")
         # every plain command still means source 1
         self.assertEqual(r("get_property", "path"), self.picture)
         self.assertEqual(after[0]["path"], self.picture)
@@ -1956,11 +1956,11 @@ class SourcesTest(SourcesBase):
         self.assertEqual((st["fades"], st["front"]), (0, 0))
         # the panel's level reaches every source; a source's own pause is its own
         r("set_property", "brightness", -50)
-        self.assertEqual([r("pvj-source", k, "get_property", "brightness") for k in (2, 3, 4)], [-50] * 3)
-        r("pvj-source", 3, "set_property", "pause", True)
-        self.assertIs(r("pvj-source", 3, "get_property", "pause"), True)
+        self.assertEqual([r("mctl-source", k, "get_property", "brightness") for k in (2, 3, 4)], [-50] * 3)
+        r("mctl-source", 3, "set_property", "pause", True)
+        self.assertIs(r("mctl-source", 3, "get_property", "pause"), True)
         self.assertIs(r("get_property", "pause"), False)
-        self.assertIs(r("pvj-source", 2, "get_property", "pause"), False)
+        self.assertIs(r("mctl-source", 2, "get_property", "pause"), False)
 
     def test_a_surface_on_source_2_shows_source_2s_picture(self):
         r = self.r
@@ -2006,21 +2006,21 @@ class SourcesTest(SourcesBase):
         self.halves_are(RED, BLUE)
         self.assertEqual((self.source(2)["opacity"], self.source(2)["blend"]), (1.0, "normal"))
         self.assertEqual((self.source(1)["opacity"], self.source(1)["blend"]), (1.0, "normal"), "source 1 is the program")
-        r("pvj-source", 2, "set_property", "opacity", 0.5)
-        self.assertEqual(r("pvj-source", 2, "get_property", "opacity"), 0.5)
+        r("mctl-source", 2, "set_property", "opacity", 0.5)
+        self.assertEqual(r("mctl-source", 2, "get_property", "opacity"), 0.5)
         self.assertEqual(self.source(2)["opacity"], 0.5)
         self.assertTrue(r.wait(lambda: near(r.pixel(3 * W // 4, H // 2), (0, 0, 128), 20)), r.pixel(3 * W // 4, H // 2))
         self.assertColour(r.pixel(W // 4, H // 2), RED, "source 1 at its own level")
-        r("pvj-source", 2, "set_property", "opacity", 0)
+        r("mctl-source", 2, "set_property", "opacity", 0)
         self.assertTrue(r.wait(lambda: near(r.pixel(3 * W // 4, H // 2), BLACK, 10)), r.pixel(3 * W // 4, H // 2))
-        r("pvj-source", 2, "set_property", "blend", "normal")
-        self.assertEqual(r("pvj-source", 2, "get_property", "blend"), "normal")
+        r("mctl-source", 2, "set_property", "blend", "normal")
+        self.assertEqual(r("mctl-source", 2, "get_property", "blend"), "normal")
         for name, value in (("blend", "add"), ("blend", "screen"), ("blend", 1), ("blend", ""), ("opacity", 1.5),
                             ("opacity", -0.1), ("opacity", "1"), ("opacity", True)):
             with self.assertRaises(PlayerError, msg=(name, value)) as e:
-                r("pvj-source", 2, "set_property", name, value)
+                r("mctl-source", 2, "set_property", name, value)
             self.assertEqual(str(e.exception), "mpv: invalid parameter", (name, value))
-        r("pvj-source", 2, "set_property", "opacity", 1)
+        r("mctl-source", 2, "set_property", "opacity", 1)
         self.assertTrue(r.wait(lambda: near(r.pixel(3 * W // 4, H // 2), BLUE)), r.pixel(3 * W // 4, H // 2))
 
     def test_a_stop_on_a_source_makes_it_idle_and_its_surface_black(self):
@@ -2029,7 +2029,7 @@ class SourcesTest(SourcesBase):
         self.to(2, self.blue)
         self.show_halves(1, 2)
         self.halves_are(RED, BLUE)
-        r("pvj-source", 2, "stop")
+        r("mctl-source", 2, "stop")
         self.assertTrue(r.wait(lambda: self.source(2)["idle"] is True), self.sources())
         self.assertTrue(r.wait(lambda: near(r.pixel(3 * W // 4, H // 2), BLACK)), r.pixel(3 * W // 4, H // 2))
         self.assertColour(r.pixel(W // 4, H // 2), RED, "source 1 plays on")
@@ -2058,24 +2058,24 @@ class SourcesTest(SourcesBase):
     def test_what_is_not_a_source_command_is_refused_with_mpvs_words(self):
         r = self.r
         p = self.blue
-        for cmd in (("pvj-source",), ("pvj-source", 2), ("pvj-source", 1, "stop"), ("pvj-source", 5, "stop"),
-                    ("pvj-source", 0, "stop"), ("pvj-source", "2", "stop"), ("pvj-source", 2.0, "stop"), ("pvj-source", True, "stop"),
-                    ("pvj-source", 2, "loadfile"), ("pvj-source", 2, "loadfile", ""), ("pvj-source", 2, "loadfile", 7),
-                    ("pvj-source", 2, "loadfile", p, "nonsense"), ("pvj-source", 2, "loadfile", p, "insert-next"),
-                    ("pvj-source", 2, "loadfile", p, "replace", "script=/tmp/x.lua"), ("pvj-source", 2, "loadfile", p, "replace", "aid=auto"),
-                    ("pvj-source", 2, "loadfile", p, "replace", "pause=yes"), ("pvj-source", 2, "loadfile", p, "replace", SHOW, "x"),
-                    ("pvj-source", 2, "stop", "now"), ("pvj-source", 2, "run", "/bin/sh"), ("pvj-source", 2, "seek", 1),
-                    ("pvj-source", 2, "set_property", "pause"), ("pvj-source", 2, "get_property"), ("pvj-source", 2, "quit")):
+        for cmd in (("mctl-source",), ("mctl-source", 2), ("mctl-source", 1, "stop"), ("mctl-source", 5, "stop"),
+                    ("mctl-source", 0, "stop"), ("mctl-source", "2", "stop"), ("mctl-source", 2.0, "stop"), ("mctl-source", True, "stop"),
+                    ("mctl-source", 2, "loadfile"), ("mctl-source", 2, "loadfile", ""), ("mctl-source", 2, "loadfile", 7),
+                    ("mctl-source", 2, "loadfile", p, "nonsense"), ("mctl-source", 2, "loadfile", p, "insert-next"),
+                    ("mctl-source", 2, "loadfile", p, "replace", "script=/tmp/x.lua"), ("mctl-source", 2, "loadfile", p, "replace", "aid=auto"),
+                    ("mctl-source", 2, "loadfile", p, "replace", "pause=yes"), ("mctl-source", 2, "loadfile", p, "replace", SHOW, "x"),
+                    ("mctl-source", 2, "stop", "now"), ("mctl-source", 2, "run", "/bin/sh"), ("mctl-source", 2, "seek", 1),
+                    ("mctl-source", 2, "set_property", "pause"), ("mctl-source", 2, "get_property"), ("mctl-source", 2, "quit")):
             with self.assertRaises(PlayerError, msg=str(cmd)) as e:
                 r(*cmd)
             self.assertEqual(str(e.exception), "mpv: invalid parameter", cmd)
         for name in ("aid", "volume", "audio-device", "glsl-shaders", "script-opts", "input-ipc-server", "vf", "keep-open"):
             with self.assertRaises(PlayerError) as e:
-                r("pvj-source", 2, "set_property", name, "x")
+                r("mctl-source", 2, "set_property", name, "x")
             self.assertEqual(str(e.exception), "mpv: property not found", name)
-        for name in ("stream-open-filename", "playlist", "mpv-version", "pvj-render"):
+        for name in ("stream-open-filename", "playlist", "mpv-version", "mctl-render"):
             with self.assertRaises(PlayerError) as e:
-                r("pvj-source", 2, "get_property", name)
+                r("mctl-source", 2, "get_property", name)
             self.assertEqual(str(e.exception), "mpv: property not found", name)
         self.assertTrue(all(s["idle"] for s in self.sources()[1:]), "nothing was loaded")
         self.assertIsNone(r.proc.poll())
@@ -2085,8 +2085,8 @@ class SourcesTest(SourcesBase):
         # in an hour, mpv's default cache (150 MiB ahead, 50 behind) on each core. Sources 2 to N play local clips only.
         mib = 1024 * 1024
         for k in (2, 3, 4):
-            self.assertEqual(self.r("pvj-source", k, "get_property", "demuxer-max-bytes"), 32 * mib, k)
-            self.assertEqual(self.r("pvj-source", k, "get_property", "demuxer-max-back-bytes"), 16 * mib, k)
+            self.assertEqual(self.r("mctl-source", k, "get_property", "demuxer-max-bytes"), 32 * mib, k)
+            self.assertEqual(self.r("mctl-source", k, "get_property", "demuxer-max-back-bytes"), 16 * mib, k)
         # source 1 keeps mpv's own: it plays streams and NDI, and the player sets its cache for those (PIPE_DEFAULTS)
         self.assertEqual(self.r("get_property", "demuxer-max-bytes"), 150 * mib)
 
@@ -2096,9 +2096,9 @@ class SourcesTest(SourcesBase):
         clip = os.path.join(self.tmp, "tone.mp4")
         make_clip_with_sound(self, clip, 3)
         self.to(2, clip, opts="keep-open=no")
-        self.assertIn(r("pvj-source", 2, "get_property", "aid"), (False, "no"))
+        self.assertIn(r("mctl-source", 2, "get_property", "aid"), (False, "no"))
         with self.assertRaises(PlayerError):
-            r("pvj-source", 2, "get_property", "current-ao")       # no sound output was opened
+            r("mctl-source", 2, "get_property", "current-ao")       # no sound output was opened
         r.load(clip)                                                # source 1 has its sound, as always
         self.assertTrue(r.wait(lambda: FadeEdgesTest.output(r) == "alsa", 5), r.stderr())
 
@@ -2145,7 +2145,7 @@ class OwnersMappingBase(SourcesBase):
 
 
 class OwnersMappingTest(OwnersMappingBase):
-    # Started with --fast, as the Pi starts pvj-render (renderer.command): mpv's cheap scalers. The same mapping
+    # Started with --fast, as the Pi starts mctl-render (renderer.command): mpv's cheap scalers. The same mapping
     # without --fast, the way other boards draw, is SourceScalerTest below.
     ARGS = ("--sources=4", "--fast", "--skip-deblock")
 
@@ -2188,22 +2188,22 @@ class OwnersMappingTest(OwnersMappingBase):
         r("set_property", "keepaspect", False)               # Player.set_mapping_mode, a mapping on
         r("set_property", "fbo-format", "rgba8")
         for k in (2, 3, 4):
-            self.assertIs(r("pvj-source", k, "get_property", "keepaspect"), False, "source %d keeps its letterbox" % k)
-            self.assertEqual(r("pvj-source", k, "get_property", "fbo-format"), "rgba8")
+            self.assertIs(r("mctl-source", k, "get_property", "keepaspect"), False, "source %d keeps its letterbox" % k)
+            self.assertEqual(r("mctl-source", k, "get_property", "fbo-format"), "rgba8")
         r("set_property", "keepaspect", True)                # and back, with the mapping off (Player.set_mapping_mode
         r("set_property", "fbo-format", "auto")              # sets both)
-        self.assertEqual([r("pvj-source", k, "get_property", "keepaspect") for k in (2, 3, 4)], [True] * 3)
-        self.assertEqual([r("pvj-source", k, "get_property", "fbo-format") for k in (2, 3, 4)], ["auto"] * 3,
+        self.assertEqual([r("mctl-source", k, "get_property", "keepaspect") for k in (2, 3, 4)], [True] * 3)
+        self.assertEqual([r("mctl-source", k, "get_property", "fbo-format") for k in (2, 3, 4)], ["auto"] * 3,
                          "the sources' buffers go back to mpv's own with the mapping off")
         with self.assertRaises(PlayerError) as e:
-            r("pvj-source", 2, "set_property", "keepaspect", False)
+            r("mctl-source", 2, "set_property", "keepaspect", False)
         self.assertEqual(str(e.exception), "mpv: property not found", "read only on a source: it follows source 1")
 
 
 class SourceScalerTest(OwnersMappingBase):
     # The fault of D101's addendum, without --fast (how a PC or a Pi 5 draws): mpv up to 0.41 left the padding of its
     # 6-tap scaler table uninitialised, and on llvmpipe a small upscaled picture was drawn black or dim into a source in
-    # about half of fresh processes (6 to 7 of 10 runs here). pvj-render now gives every core scalers of 8 taps or
+    # about half of fresh processes (6 to 7 of 10 runs here). mctl-render now gives every core scalers of 8 taps or
     # more (render/src/main.c, layer_open); with them 0 of 30. Until 2026-10-23 an opt-in reproducer (PVJ_SOURCE_RACE=1).
     ARGS = ("--sources=4",)
 
@@ -2240,7 +2240,7 @@ class FinalPassTest(unittest.TestCase):
 
     def setUp(self):
         need_program(self)
-        self.tmp = tempfile.mkdtemp(prefix="pvj-render-final-")
+        self.tmp = tempfile.mkdtemp(prefix="mctl-render-final-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
 
     def start(self, *args, test_final=True):
@@ -2248,8 +2248,8 @@ class FinalPassTest(unittest.TestCase):
             hooks = "with test hooks" in subprocess.run([BIN, "--version"], capture_output=True, text=True, timeout=10).stdout
             if not hooks:
                 if STRICT:
-                    self.fail("PVJ_RENDER_TEST=1 and pvj-render was built without TEST_HOOKS=1")
-                self.skipTest("pvj-render was built without TEST_HOOKS=1")
+                    self.fail("PVJ_RENDER_TEST=1 and mctl-render was built without TEST_HOOKS=1")
+                self.skipTest("mctl-render was built without TEST_HOOKS=1")
         r = Renderer("--headless=%dx%d" % (self.FW, self.FH), "--detail=450", *args, env={"PVJ_RENDER_TEST_FINAL": "1"} if test_final else None)
         self.addCleanup(r.close)
         r("set_property", "image-display-duration", "inf")
@@ -2258,12 +2258,12 @@ class FinalPassTest(unittest.TestCase):
         return r
 
     def lines(self, r, want):
-        got = r.wait(lambda: r("get_property", "pvj-render")["final-lines"] == want, 5)
-        self.assertTrue(got, r("get_property", "pvj-render"))
+        got = r.wait(lambda: r("get_property", "mctl-render")["final-lines"] == want, 5)
+        self.assertTrue(got, r("get_property", "mctl-render"))
 
     def assertScreen(self, r):
         """Every size the socket reports is the screen's, whichever way the final pass draws."""
-        st = r("get_property", "pvj-render")
+        st = r("get_property", "mctl-render")
         self.assertEqual((st["output-width"], st["output-height"]), (self.FW, self.FH))
         self.assertEqual((r("get_property", "osd-width"), r("get_property", "osd-height")), (self.FW, self.FH))
         self.assertEqual((r("get_property", "display-width"), r("get_property", "display-height")), (self.FW, self.FH))
@@ -2273,7 +2273,7 @@ class FinalPassTest(unittest.TestCase):
     def quads(self, r):
         W_, H_ = self.FW, self.FH
         shot = r.capture()
-        self.assertEqual(shot[:2], (W_, H_), "pvj-capture answers at the screen's size")
+        self.assertEqual(shot[:2], (W_, H_), "mctl-capture answers at the screen's size")
         # near the middle too: a picture drawn smaller in the corner would have those points in the wrong quadrant
         for (x, y), want in (((W_ // 4, H_ // 4), RED), ((3 * W_ // 4, H_ // 4), GREEN), ((W_ // 4, 3 * H_ // 4), BLUE),
                              ((3 * W_ // 4, 3 * H_ // 4), WHITE), ((W_ - 8, H_ - 8), WHITE), ((8, H_ - 8), BLUE),
@@ -2287,8 +2287,8 @@ class FinalPassTest(unittest.TestCase):
         blue = os.path.join(self.tmp, "blue.png")
         png(blue, W, H, lambda x, y: BLUE)
         r.load(self.picture)
-        r("pvj-crossfade", blue, 4.0, "keep-open=no,image-display-duration=inf", "wipe-from-left")
-        look = lambda: r("get_property", "pvj-render")
+        r("mctl-crossfade", blue, 4.0, "keep-open=no,image-display-duration=inf", "wipe-from-left")
+        look = lambda: r("get_property", "mctl-render")
         self.assertTrue(r.wait(lambda: look()["fade"] == "running" and 0.15 < look()["fade-progress"] < 0.45, 10, 0.02), look())
         shot = r.capture()
         self.assertEqual(shot[:2], (self.FW, self.FH))
@@ -2298,21 +2298,21 @@ class FinalPassTest(unittest.TestCase):
 
     def test_no_plane_says_why_and_stays_at_the_outputs_size(self):
         r = self.start("--final=auto", test_final=False)
-        st = r("get_property", "pvj-render")
+        st = r("get_property", "mctl-render")
         self.assertEqual((st["final-lines"], st["final-why"]), (0, "there is no display (headless)"))
         for ask in (720, "full"):
             with self.assertRaises(PlayerError):
-                r("pvj-final", ask)
+                r("mctl-final", ask)
         r2 = Renderer("--final=720")           # a start is never failed for it
         self.addCleanup(r2.close)
-        self.assertEqual(r2("get_property", "pvj-render")["final-lines"], 0)
+        self.assertEqual(r2("get_property", "mctl-render")["final-lines"], 0)
 
     def test_without_the_argument_nothing_of_it_runs(self):
         r = self.start(test_final=False)
-        st = r("get_property", "pvj-render")
+        st = r("get_property", "mctl-render")
         self.assertEqual((st["final-lines"], st["final-why"], st["final-switches"]), (0, "", 0))
         with self.assertRaises(PlayerError):
-            r("pvj-final", 720)
+            r("mctl-final", 720)
 
     def test_a_bad_argument_ends_the_start(self):
         for bad in ("--final=540", "--final=", "--final=full"):
@@ -2323,30 +2323,30 @@ class FinalPassTest(unittest.TestCase):
     def test_an_output_of_720_lines_stays_as_it_is(self):
         self.FW, self.FH = 1280, 720
         r = self.start("--final=720")
-        self.assertEqual(r("get_property", "pvj-render")["final-lines"], 0)
-        self.assertEqual(r("get_property", "pvj-render")["final-why"], "the output has no more than 720 lines")
+        self.assertEqual(r("get_property", "mctl-render")["final-lines"], 0)
+        self.assertEqual(r("get_property", "mctl-render")["final-why"], "the output has no more than 720 lines")
 
     def test_both_sizes_report_the_screen_and_capture_it(self):
         r = self.start("--final=auto")
         r.load(self.picture)
         self.assertScreen(r)
         self.quads(r)
-        st = r("get_property", "pvj-render")
+        st = r("get_property", "mctl-render")
         self.assertEqual((st["final-lines"], st["final-switches"], st["final-why"]), (0, 0, ""))
-        r("pvj-final", 720)
+        r("mctl-final", 720)
         self.lines(r, 720)
         self.assertScreen(r)
         self.quads(r)
-        r("pvj-final", "full")
+        r("mctl-final", "full")
         self.lines(r, 0)
         self.assertScreen(r)
         self.quads(r)
-        self.assertEqual(r("get_property", "pvj-render")["final-switches"], 2)
+        self.assertEqual(r("get_property", "mctl-render")["final-switches"], 2)
 
     def buffer(self, r):
         """The buffer as the plane gets it, corner and all, and a function from a screen point to its colour there."""
         path = os.path.join(self.tmp, "b-%d.ppm" % time.monotonic_ns())
-        r("pvj-test-buffer", path)
+        r("mctl-test-buffer", path)
         shot = read_ppm(path)
         k = 720.0 / self.FH
         return lambda x, y: r.pixel(int(x * k), int(y * k), shot)
@@ -2364,38 +2364,38 @@ class FinalPassTest(unittest.TestCase):
     def test_a_refusal_at_run_time_is_for_good(self):
         r = self.start("--final=auto")
         r.load(self.picture)
-        r("pvj-final", 720)
+        r("mctl-final", 720)
         self.lines(r, 720)
-        r("pvj-test-refuse")
+        r("mctl-test-refuse")
         self.lines(r, 0)
-        self.assertEqual(r("get_property", "pvj-render")["final-why"], "the display refused the scaled frame")
+        self.assertEqual(r("get_property", "mctl-render")["final-why"], "the display refused the scaled frame")
         for ask in (720, "full"):
             with self.assertRaises(PlayerError, msg=ask):
-                r("pvj-final", ask)
+                r("mctl-final", ask)
         time.sleep(0.3)
-        self.assertEqual(r("get_property", "pvj-render")["final-lines"], 0, "the small frame did not come back")
+        self.assertEqual(r("get_property", "mctl-render")["final-lines"], 0, "the small frame did not come back")
         self.quads(r)
 
     def test_720_from_the_start(self):
         r = self.start("--final=720")
         r.load(self.picture)
         self.lines(r, 720)
-        self.assertEqual(r("get_property", "pvj-render")["final-switches"], 1)
+        self.assertEqual(r("get_property", "mctl-render")["final-switches"], 1)
         self.quads(r)
 
     def test_only_full_and_720_are_taken(self):
         r = self.start("--final=auto")
         for bad in (540, "720", "auto", True, 720.5):
             with self.assertRaises(PlayerError, msg=bad):
-                r("pvj-final", bad)
-        self.assertEqual(r("get_property", "pvj-render")["final-lines"], 0)
+                r("mctl-final", bad)
+        self.assertEqual(r("get_property", "mctl-render")["final-lines"], 0)
 
     def mapped(self, r, shader):
         path = os.path.join(self.tmp, "map-%d.glsl" % time.monotonic_ns())
         with open(path, "w") as f:
             f.write(shader)
         r("set_property", "glsl-shaders", [path])
-        self.assertEqual(r("get_property", "pvj-render")["mapping"], "on", r.stderr())
+        self.assertEqual(r("get_property", "mctl-render")["mapping"], "on", r.stderr())
 
     def test_the_mapping_lands_in_the_same_place_at_both_sizes(self):
         w, h = self.FW, self.FH
@@ -2413,10 +2413,10 @@ class FinalPassTest(unittest.TestCase):
                 self.assertTrue(near(r.pixel(x, y, shot), want), "pixel %d,%d: %s" % (x, y, r.pixel(x, y, shot)))
         for text in (mapper.warp_shader(lw, lh, values), mapper.shader(surfaces)):      # the show, and editing (it measures in HOOKED_size)
             self.mapped(r, text)
-            r("pvj-final", "full")
+            r("mctl-final", "full")
             self.lines(r, 0)
             check()
-            r("pvj-final", 720)
+            r("mctl-final", 720)
             self.lines(r, 720)
             check()
             at = self.buffer(r)                 # and the frame that really goes out, at 720 lines
@@ -2426,7 +2426,7 @@ class FinalPassTest(unittest.TestCase):
     def still(self, r, path):
         from pvj.transitions import read_still
         open(path, "w").close()
-        r("screenshot-to-file", path, "pvj-screen")
+        r("screenshot-to-file", path, "mctl-screen")
         return read_still(path, (self.FW, self.FH))
 
     def test_the_screen_still_is_the_screen_at_both_sizes(self):
@@ -2441,7 +2441,7 @@ class FinalPassTest(unittest.TestCase):
             o = (y * w + x) * 4
             return (px[o + 2], px[o + 1], px[o])
         for lines in (0, 720):
-            r("pvj-final", 720 if lines else "full")
+            r("mctl-final", 720 if lines else "full")
             self.lines(r, lines)
             got_w, got_h, px = self.still(r, os.path.join(self.tmp, "s.png"))
             self.assertEqual((got_w, got_h), (w, h), "the still is of the screen's size, not libmpv's inside size")
@@ -2449,7 +2449,7 @@ class FinalPassTest(unittest.TestCase):
             self.assertTrue(near(bgr(px, w // 4, h // 4), RED), lines)
         self.mapped(r, mapper.warp_shader(lw, lh, values))
         for lines in (0, 720):
-            r("pvj-final", 720 if lines else "full")
+            r("mctl-final", 720 if lines else "full")
             self.lines(r, lines)
             px = self.still(r, os.path.join(self.tmp, "s.png"))[2]
             self.assertTrue(near(bgr(px, 3 * w // 4, h // 2), BLACK), "the mapping is in the still")
@@ -2472,11 +2472,11 @@ class FinalPassTest(unittest.TestCase):
 
 class SourceCountTest(Base):
     def test_one_source_by_default_and_no_more_than_eight(self):
-        st = self.r("get_property", "pvj-render")
+        st = self.r("get_property", "mctl-render")
         self.assertEqual(st["sources"], 1)
-        self.assertEqual(len(self.r("get_property", "pvj-sources")), 1)
+        self.assertEqual(len(self.r("get_property", "mctl-sources")), 1)
         with self.assertRaises(PlayerError) as e:
-            self.r("pvj-source", 2, "stop")
+            self.r("mctl-source", 2, "stop")
         self.assertEqual(str(e.exception), "mpv: invalid parameter")
         for bad in ("--sources=0", "--sources=9", "--sources=two", "--sources="):
             run = subprocess.run([BIN, "--socket=" + os.path.join(self.tmp, "x.sock"), "--headless=64x64", bad],
@@ -2484,8 +2484,8 @@ class SourceCountTest(Base):
             self.assertEqual(run.returncode, 64, bad)
         r8 = Renderer("--sources=8")
         self.addCleanup(r8.close)
-        self.assertEqual(r8("get_property", "pvj-render")["sources"], 8)
-        self.assertEqual([s["source"] for s in r8("get_property", "pvj-sources")], list(range(1, 9)))
+        self.assertEqual(r8("get_property", "mctl-render")["sources"], 8)
+        self.assertEqual([s["source"] for s in r8("get_property", "mctl-sources")], list(range(1, 9)))
 
 
 class IdleSourcesTest(SourcesBase):
@@ -2510,7 +2510,7 @@ class IdleSourcesTest(SourcesBase):
         self.assertLessEqual(flips, 62)
         # and a source that stops is idle again: one more picture (its empty one), then nothing
         self.to(2, self.blue)
-        r("pvj-source", 2, "stop")
+        r("mctl-source", 2, "stop")
         self.assertTrue(r.wait(lambda: self.source(2)["idle"] is True))
         time.sleep(0.5)
         n = self.source(2)["drawn"]
@@ -2524,7 +2524,7 @@ class SourceFadeTest(SourcesBase):
         clip = os.path.join(self.tmp, "s2.mp4")
         make_clip(self, clip, 3)
         self.to(2, clip, opts="keep-open=no")
-        r("pvj-source", 2, "set_property", "loop-file", "inf")
+        r("mctl-source", 2, "set_property", "loop-file", "inf")
         r.load(self.red)
         self.show_halves(1, 2)
         self.fade(self.blue, 1.5)
@@ -2537,12 +2537,12 @@ class SourceFadeTest(SourcesBase):
         self.assertTrue(r.wait(lambda: near(r.pixel(W // 4, H // 2), BLUE)), r.pixel(W // 4, H // 2))
         self.assertEqual(self.source(2)["path"], clip)
         self.assertEqual(r("get_property", "path"), self.blue)
-        self.assertEqual(self.sources()[0]["path"], self.blue, "pvj-sources follows source 1's front")
+        self.assertEqual(self.sources()[0]["path"], self.blue, "mctl-sources follows source 1's front")
         self.assertIs(self.source(2)["idle"], False)
 
 
 class PlayerSourcesTest(SourcesBase):
-    """pvj/player.py's side through the real pvj-render: Player.sources, play_to, stop_source, sources_state."""
+    """pvj/player.py's side through the real mctl-render: Player.sources, play_to, stop_source, sources_state."""
 
     def player(self):
         from pvj.player import Player
@@ -2557,12 +2557,12 @@ class PlayerSourcesTest(SourcesBase):
         self.assertIs(p.crossfades(), True, "source 1 still fades")
         p.play([self.red], spawn=False)
         p.play_to(2, [self.blue], "loop")
-        self.assertEqual(self.r("pvj-source", 2, "get_property", "path"), self.blue)
-        self.assertEqual(self.r("pvj-source", 2, "get_property", "loop-file"), "inf")
-        self.assertIs(self.r("pvj-source", 2, "get_property", "pause"), False)
+        self.assertEqual(self.r("mctl-source", 2, "get_property", "path"), self.blue)
+        self.assertEqual(self.r("mctl-source", 2, "get_property", "loop-file"), "inf")
+        self.assertIs(self.r("mctl-source", 2, "get_property", "pause"), False)
         p.play_to(3, [self.green, self.picture], "loop")
-        self.assertEqual(self.r("pvj-source", 3, "get_property", "playlist-count"), 2)
-        self.assertEqual(self.r("pvj-source", 3, "get_property", "loop-playlist"), "inf")
+        self.assertEqual(self.r("mctl-source", 3, "get_property", "playlist-count"), 2)
+        self.assertEqual(self.r("mctl-source", 3, "get_property", "loop-playlist"), "inf")
         self.assertTrue(self.r.wait(lambda: self.source(2)["height"] == H and self.source(3)["path"] == self.green), self.sources())
         rows = p.sources_state()
         self.assertEqual([(r["source"], r["path"], r["idle"]) for r in rows],
@@ -2592,7 +2592,7 @@ class ManySourceLoadsTest(SourcesBase):
         """At rest: sources 2 to 4 stopped and idle (a clip's decoder threads come and go as it plays and ends), the
         socket's client threads gone."""
         for k in (2, 3, 4):
-            self.r("pvj-source", k, "stop")
+            self.r("mctl-source", k, "stop")
         self.assertTrue(self.r.wait(lambda: all(s["idle"] for s in self.sources()[1:]), 10), self.sources())
         time.sleep(0.6)
         pid = self.r.proc.pid
@@ -2605,11 +2605,11 @@ class ManySourceLoadsTest(SourcesBase):
             k = 2 + i % 3
             path = a if (i // 3) % 2 == 0 else b
             loads = self.source(k)["loads"]
-            self.r("pvj-source", k, "loadfile", path, "replace", "keep-open=no")
+            self.r("mctl-source", k, "loadfile", path, "replace", "keep-open=no")
             self.assertTrue(self.r.wait(lambda: self.source(k)["loads"] > loads and self.source(k)["path"] == path, 10, 0.01),
                             "load %d: %s\n%s" % (i, self.sources(), self.r.stderr()))
             if i % 10 == 9:
-                self.r("pvj-source", k, "stop")
+                self.r("mctl-source", k, "stop")
 
     def same(self, now, then, what, gl):
         for k in ("fds", "threads"):
@@ -2701,7 +2701,7 @@ class LoopListTest(Base):
         self.assertEqual((st["path"], st["duration"], st["loop_file"]), (self.clip, 2.0, "inf"))
         self.assertLess(st["position"], 2.0)
         self.assertEqual(self.r("get_property", "vd-queue-max-samples"), 6, "the queue is on for this file")
-        self.assertEqual(self.r("get_property", "pvj-render")["fade"], "off")
+        self.assertEqual(self.r("get_property", "mctl-render")["fade"], "off")
 
     def test_a_list_loop_draws_no_blank_at_its_joins(self):
         # the panel's own loop (D118) of a clip with a lit middle: through three joins, no draw leaves the layer black
@@ -2716,9 +2716,9 @@ class LoopListTest(Base):
         p.play([bright], spawn=False)
         self.assertTrue(self.plays_list())
         self.assertTrue(self.r.wait(lambda: (self.position() or 0) > 0.5, 15), self.r.stderr())
-        before = self.r("get_property", "pvj-test-blank")
+        before = self.r("get_property", "mctl-test-blank")
         self.assertTrue(self.r.wait(lambda: (self.position() or 0) > 6.6, 20), self.r.stderr())
-        self.assertEqual(self.r("get_property", "pvj-test-blank") - before, 0, "a blank picture at a join\n" + self.r.stderr())
+        self.assertEqual(self.r("get_property", "mctl-test-blank") - before, 0, "a blank picture at a join\n" + self.r.stderr())
 
     def test_the_queue_is_that_files_alone(self):
         if not self.takes:
@@ -2776,15 +2776,15 @@ class LoopListTest(Base):
             with self.assertRaises(PlayerError, msg=opts):
                 self.r("loadfile", self.list, "replace", -1, opts)
             with self.assertRaises(PlayerError, msg=opts):
-                self.r("pvj-crossfade", self.list, 1, opts)
+                self.r("mctl-crossfade", self.list, 1, opts)
             with self.assertRaises(PlayerError, msg=opts):
-                self.r("pvj-source", 2, "loadfile", self.list, "replace", opts)
+                self.r("mctl-source", 2, "loadfile", self.list, "replace", opts)
 
     def test_crossfades_in_out_and_from_a_clip_to_itself(self):
         if not self.takes:
             return
         p = self.player
-        settled = lambda: self.r.wait(lambda: self.r("get_property", "pvj-render")["fade"] == "off", 15, 0.02)  # noqa: E731
+        settled = lambda: self.r.wait(lambda: self.r("get_property", "mctl-render")["fade"] == "off", 15, 0.02)  # noqa: E731
         p.play([self.other], ending="stop", spawn=False)
         self.assertIsNone(p.play([self.clip], fade=0.3, spawn=False))       # into its list
         self.assertTrue(self.plays_list(), self.r.stderr())
@@ -2803,18 +2803,18 @@ class LoopListTest(Base):
         if not self.takes:
             return
         self.player.play_to(2, [self.clip])
-        self.assertTrue(self.plays_list("pvj-source", 2), self.r.stderr())
+        self.assertTrue(self.plays_list("mctl-source", 2), self.r.stderr())
         ask = self.player.ipc.request
-        self.assertEqual(ask("pvj-source", 2, "get_property", "path"), self.clip)
-        self.assertEqual(ask("pvj-source", 2, "get_property", "duration"), 2.0)
+        self.assertEqual(ask("mctl-source", 2, "get_property", "path"), self.clip)
+        self.assertEqual(ask("mctl-source", 2, "get_property", "duration"), 2.0)
 
         def position():
             try:
-                return self.player.ipc.direct("pvj-source", 2, "get_property", "time-pos")
+                return self.player.ipc.direct("mctl-source", 2, "get_property", "time-pos")
             except PlayerError:         # still opening: `path` is there before a position is
                 return 0
         self.assertTrue(self.r.wait(lambda: position() > 2.4, 15), self.r.stderr())
-        self.assertLess(ask("pvj-source", 2, "get_property", "time-pos"), 2.0)
+        self.assertLess(ask("mctl-source", 2, "get_property", "time-pos"), 2.0)
         self.assertEqual(self.player.sources_state()[1]["path"], self.clip)
 
     def test_the_end_of_the_list_is_one_ordinary_seam(self):

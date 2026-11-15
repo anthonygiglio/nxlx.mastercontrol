@@ -17,8 +17,8 @@ A surface list is validated here (never trusted), turned into matrices here, and
 constants, so the shader holds no loops over data and no user text. The first surface in the list is drawn on top.
 
 Sources (D101): a surface shows source 1 (the player's picture, as always) or, on the new renderer, another source:
-another clip layer of pvj-render's (`"source": 2` to 8; no key is source 1, so a file without it is as before). The
-generated shader names such a source with `//!BIND SOURCEk` and reads it with SOURCEk_tex, which pvj-render supplies.
+another clip layer of mctl-render's (`"source": 2` to 8; no key is source 1, so a file without it is as before). The
+generated shader names such a source with `//!BIND SOURCEk` and reads it with SOURCEk_tex, which mctl-render supplies.
 Classic mpv has source 1 only: there every surface is drawn from source 1, and the shader is byte for byte what it was.
 """
 
@@ -680,14 +680,14 @@ def warp_shader(lw, lh, values, sources=None, available=1):
         b += (values[k + 4], values[k + 5], 0.0, 1.0)
     return "\n".join([
         "// nxlx.mastercontrol projection mapping (generated; do not edit)",
-        "//!TEXTURE PVJWARPA",
+        "//!TEXTURE MCTLWARPA",
         "//!SIZE %d %d" % (lw, lh),
         "//!FORMAT rgba16f",
         "//!FILTER LINEAR",
         "//!BORDER CLAMP",
         struct.pack("<%df" % len(a), *a).hex(),
         "",
-        "//!TEXTURE PVJWARPB",
+        "//!TEXTURE MCTLWARPB",
         "//!SIZE %d %d" % (lw, lh),
         "//!FORMAT rgba16f",
         "//!FILTER LINEAR",
@@ -696,15 +696,15 @@ def warp_shader(lw, lh, values, sources=None, available=1):
         "",
         "//!HOOK OUTPUT",
         "//!BIND HOOKED",
-        "//!BIND PVJWARPA",
-        "//!BIND PVJWARPB",
+        "//!BIND MCTLWARPA",
+        "//!BIND MCTLWARPB",
         "//!DESC nxlx mapper",
         "",
         "vec4 hook() {",
-        "    vec4 a = texture(PVJWARPA, HOOKED_pos);",
+        "    vec4 a = texture(MCTLWARPA, HOOKED_pos);",
         "    float ka = clamp(a.z + 0.5, 0.0, 1.0);",
         "    vec3 top = HOOKED_tex(clamp(a.xy, vec2(0.0), vec2(1.0))).rgb;",
-        "    vec4 b = texture(PVJWARPB, HOOKED_pos);",
+        "    vec4 b = texture(MCTLWARPB, HOOKED_pos);",
         "    float kb = clamp(a.w + 0.5, 0.0, 1.0);",
         "    vec3 under = HOOKED_tex(clamp(b.xy, vec2(0.0), vec2(1.0))).rgb * kb;",
         "    return vec4(mix(under, top, ka), 1.0);",
@@ -727,14 +727,14 @@ def _warp_shader_sources(lw, lh, values, shown, used):
     pick += ["    return HOOKED_tex(t).rgb;", "}"]
     return "\n".join([
         "// nxlx.mastercontrol projection mapping, with sources (generated; do not edit)",
-        "//!TEXTURE PVJWARPA",
+        "//!TEXTURE MCTLWARPA",
         "//!SIZE %d %d" % (lw, lh),
         "//!FORMAT rgba16f",
         "//!FILTER LINEAR",
         "//!BORDER CLAMP",
         struct.pack("<%df" % len(a), *a).hex(),
         "",
-        "//!TEXTURE PVJWARPB",
+        "//!TEXTURE MCTLWARPB",
         "//!SIZE %d %d" % (lw, lh),
         "//!FORMAT rgba16f",
         "//!FILTER LINEAR",
@@ -743,16 +743,16 @@ def _warp_shader_sources(lw, lh, values, shown, used):
         "",
         "//!HOOK OUTPUT",
         "//!BIND HOOKED",
-        "//!BIND PVJWARPA",
-        "//!BIND PVJWARPB",
+        "//!BIND MCTLWARPA",
+        "//!BIND MCTLWARPB",
     ] + _source_binds(used) + [
         "//!DESC nxlx mapper (sources)",
         "",
     ] + pick + [
         "vec4 hook() {",
-        "    vec4 a = texture(PVJWARPA, HOOKED_pos);",
-        "    vec4 b = texture(PVJWARPB, HOOKED_pos);",
-        "    vec2 n = texelFetch(PVJWARPB, ivec2(clamp(HOOKED_pos * PVJWARPB_size, vec2(0.0), PVJWARPB_size - 1.0)), 0).zw;",
+        "    vec4 a = texture(MCTLWARPA, HOOKED_pos);",
+        "    vec4 b = texture(MCTLWARPB, HOOKED_pos);",
+        "    vec2 n = texelFetch(MCTLWARPB, ivec2(clamp(HOOKED_pos * MCTLWARPB_size, vec2(0.0), MCTLWARPB_size - 1.0)), 0).zw;",
         "    float ka = clamp(a.z + 0.5, 0.0, 1.0);",
         "    float kb = clamp(a.w + 0.5, 0.0, 1.0);",
         "    vec3 top = src(n.x, a.xy);",

@@ -12,7 +12,7 @@
 // No library: the program links only what D95 names. Written from the standards (ISO/IEC 10918-1 annex K, RFC 1950,
 // RFC 1951, the PNG specification), not copied from any implementation.
 #define _GNU_SOURCE
-#include "pvj.h"
+#include "mctl.h"
 
 #include <errno.h>
 #include <math.h>

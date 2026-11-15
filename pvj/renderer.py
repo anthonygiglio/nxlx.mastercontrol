@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""Which program draws the screen: classic mpv, or pvj-render, the box's own renderer (render/, D95).
+"""Which program draws the screen: classic mpv, or mctl-render, the box's own renderer (render/, D95).
 
-pvj-render is a separate program (GPL-3.0-or-later, in render/) that speaks the same JSON socket as mpv, so nothing
+mctl-render is a separate program (GPL-3.0-or-later, in render/) that speaks the same JSON socket as mpv, so nothing
 that talks to the player changes: the switch is which program the player's service starts.
 
 Who does what, as for the screen's mode (pvj/screenmode.py, D90):
@@ -13,19 +13,19 @@ Who does what, as for the screen's mode (pvj/screenmode.py, D90):
   panel writes the wish alone to
   WANTED in the state folder, at its start and on a change, and restarts the player for a change (`Renderer`).
 * The player's service (`pvj-player serve`, the display's account) reads WANTED just before it would become mpv. With
-  "new" it stays a small supervisor instead (`serve`): it starts pvj-render with the screen's arguments that
+  "new" it stays a small supervisor instead (`serve`): it starts mctl-render with the screen's arguments that
   screenmode chose for mpv, waits for its socket to answer, and watches it. It falls back to classic mpv by itself
-  (the same exec as before) when pvj-render is missing, does not start, or ends twice in a row, and writes what it
+  (the same exec as before) when mctl-render is missing, does not start, or ends twice in a row, and writes what it
   did and why to REPORT in its own folder, which the panel reads as data from a less trusted account.
-* While pvj-render draws, the supervisor also reads WANTED every half second. When it no longer says what this run
-  was started with (the Owner chose classic, or another detail), the supervisor ends pvj-render itself: it asks it
+* While mctl-render draws, the supervisor also reads WANTED every half second. When it no longer says what this run
+  was started with (the Owner chose classic, or another detail), the supervisor ends mctl-render itself: it asks it
   to quit on its socket, then sends SIGTERM after QUIT_SECONDS, then SIGKILL after TERM_SECONDS more, writes how it
   ended to REPORT (the page shows it), and ends the service, which systemd starts again with the new wish. The
-  panel's own quit on the socket is only the polite half: on the first Pi run a jammed pvj-render never heard it,
+  panel's own quit on the socket is only the polite half: on the first Pi run a jammed mctl-render never heard it,
   and the box stayed on the new renderer until the service was restarted by hand (2026-10-18).
 * The final pass may draw at 720 lines and let the display's scaler bring it to the output (D108). `final` is the
-  setting: "full" is pvj-render as it always was; 720 is always on; "auto" allows it on a Pi 3 or 4, and the
-  supervisor, which looks at pvj-render's counters at every WATCH_SECONDS anyway, applies `final_rule`.
+  setting: "full" is mctl-render as it always was; 720 is always on; "auto" allows it on a Pi 3 or 4, and the
+  supervisor, which looks at mctl-render's counters at every WATCH_SECONDS anyway, applies `final_rule`.
 """
 
 import os
@@ -42,17 +42,17 @@ DETAILS = ("auto", 540, 720, "output")
 DEFAULT = {"use": "classic", "detail": "auto"}
 WANTED = "renderer.json"                # in the state folder: the panel writes it, the player reads it
 REPORT = paths.RENDERER_REPORT          # in the player's folder: the player writes it, the panel reads it
-START_SECONDS = 10.0                    # pvj-render must answer on its socket this soon after it is started
+START_SECONDS = 10.0                    # mctl-render must answer on its socket this soon after it is started
 HEALTHY_SECONDS = 600.0                 # an end after this long a run is not "in a row" with the one before
-STOP_SECONDS = 5.0                      # systemd's stop: this long for pvj-render to end before it is killed
-QUIT_SECONDS = 2.0                      # a switch: this long for pvj-render to end when asked on its socket, then SIGTERM
+STOP_SECONDS = 5.0                      # systemd's stop: this long for mctl-render to end before it is killed
+QUIT_SECONDS = 2.0                      # a switch: this long for mctl-render to end when asked on its socket, then SIGTERM
 TERM_SECONDS = 3.0                      # ... and this long after SIGTERM, then SIGKILL
-WATCH_SECONDS = 0.5                     # how often the supervisor reads WANTED while pvj-render draws
-FINAL_POLL_SECONDS = 0.2                # the final pass's look at pvj-render: a jammed one must not hold up the watch (D108)
-FINAL_ASK_SECONDS = 1.0                 # ... and a change of it, asked only of a pvj-render that has just answered
+WATCH_SECONDS = 0.5                     # how often the supervisor reads WANTED while mctl-render draws
+FINAL_POLL_SECONDS = 0.2                # the final pass's look at mctl-render: a jammed one must not hold up the watch (D108)
+FINAL_ASK_SECONDS = 1.0                 # ... and a change of it, asked only of a mctl-render that has just answered
 # Sources (D101) and the Pi 3 or 4 group (was SMALL_BOARDS) are in pvj/profile.py, one row per tier.
 SOURCES_MAX = profile.SOURCES_MAX
-# Hardware decoding for pvj-render (D124), a setting with no page: only the copy variants, because pvj-render makes its render
+# Hardware decoding for mctl-render (D124), a setting with no page: only the copy variants, because mctl-render makes its render
 # context without a display, so a zero-copy import is not attempted. "no" (software) is the default and passes nothing.
 HWDECS = ("no", "auto-copy", "v4l2m2m-copy", "vaapi-copy", "nvdec-copy", "drm-copy")
 FINALS = ("auto", "full", 720)          # the final pass (D108): Automatic, always the output's size, always 720 lines
@@ -72,7 +72,7 @@ HOLD_SECONDS = 30.0
 
 def final_rule(state, now, missed, load, hz):
     """One look at the box: what the final pass should draw at. `state` is what the last look returned, {"final":
-    "full"} at the start; `now` seconds on any clock, `missed` pvj-render's vblanks missed so far, `load` the number of
+    "full"} at the start; `now` seconds on any clock, `missed` mctl-render's vblanks missed so far, `load` the number of
     things it draws now (sources that play, their programs, the mapping), `hz` the output's rate. Returns the next
     state, whose "final" is "full" or 720 and whose "why" says why in words. Asks nothing and changes nothing, so
     a test can drive it with made-up numbers."""
@@ -106,7 +106,7 @@ def source_cap(board_kind):
 
 
 def sources_for(board_kind, chosen=None):
-    """The sources pvj-render is started with on this board: the Owner's number, or the board's default, never over
+    """The sources mctl-render is started with on this board: the Owner's number, or the board's default, never over
     its cap."""
     n = chosen if isinstance(chosen, int) and not isinstance(chosen, bool) and 1 <= chosen <= SOURCES_MAX else \
         profile.sources_default(board_kind)
@@ -114,9 +114,9 @@ def sources_for(board_kind, chosen=None):
 
 
 def binary(env=None):
-    """Where the program is built: render/pvj-render beside pvj/ in this release (PVJ_RENDER_BIN overrides, tests)."""
+    """Where the program is built: render/mctl-render beside pvj/ in this release (PVJ_RENDER_BIN overrides, tests)."""
     env = os.environ if env is None else env
-    return env.get("PVJ_RENDER_BIN") or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "render", "pvj-render")
+    return env.get("PVJ_RENDER_BIN") or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "render", "mctl-render")
 
 
 def available(env=None):
@@ -179,14 +179,14 @@ def wanted_path(env=None):
 
 
 def detail_arg(detail, board_kind):
-    """--detail for pvj-render: lines inside, or the output's own size. Automatic: 540 on a Pi 3 or 4, else the output."""
+    """--detail for mctl-render: lines inside, or the output's own size. Automatic: 540 on a Pi 3 or 4, else the output."""
     if detail == "auto":
         detail = profile.inside_lines(board_kind) or "output"
     return "--detail=%s" % detail
 
 
 def final_arg(final, board_kind):
-    """--final for pvj-render (D108), or None: without it pvj-render flips as it always has. Automatic is allowed on
+    """--final for mctl-render (D108), or None: without it mctl-render flips as it always has. Automatic is allowed on
     a Pi 3 or 4 only; elsewhere the GPU has the room, so it is off."""
     if final == 720:
         return "--final=720"
@@ -194,7 +194,7 @@ def final_arg(final, board_kind):
 
 
 def command(socket_path, screen_args, detail, board_kind, env=None, sources=None, final=None, deblock=False, hwdec=None):
-    """pvj-render's argv: the socket, the screen's arguments as screenmode chose them for mpv, the detail, mpv's
+    """mctl-render's argv: the socket, the screen's arguments as screenmode chose them for mpv, the detail, mpv's
     cheap scalers on a Pi (as classic's --profile=fast), no deblocking on a Pi unless the settings keep it (D120), the
     number of sources (D101) and the final pass (D108)."""
     args = [binary(env), "--socket=" + socket_path]
@@ -210,26 +210,26 @@ def command(socket_path, screen_args, detail, board_kind, env=None, sources=None
     hz = re.search(r"^--drm-mode=\d+x\d+@([0-9.]+)$", next((a for a in screen_args if a.startswith("--drm-mode=")), ""))
     rate = profile.fx_fps(board_kind, hz.group(1) if hz else None)
     if rate:
-        args.append("--fx-fps=%d" % rate)       # only the full tier; the others keep pvj-render's 30, their argv as it was
+        args.append("--fx-fps=%d" % rate)       # only the full tier; the others keep mctl-render's 30, their argv as it was
     extra = final_arg(final, board_kind)
     if extra:
         args.append(extra)
     return args
 
 
-GLES2_WHY = "pvj-render needs OpenGL ES 3 and this node's graphics chip only has version 2"
-EXIT_NO_GPU = 5                         # pvj-render's exit when its screen is drawn by a software rasteriser (render/src/pvj.h)
+GLES2_WHY = "mctl-render needs OpenGL ES 3 and this node's graphics chip only has version 2"
+EXIT_NO_GPU = 5                         # mctl-render's exit when its screen is drawn by a software rasteriser (render/src/mctl.h)
 NO_GPU_WHY = "this node has no graphics chip the new renderer can use"
 
 
 def gles2_only(board_kind):
     """A board whose graphics chip is OpenGL ES 2 (VC4: a Pi 3 class board, and a Pi 1 or Zero, which are pi-other), so
-    pvj-render cannot start on it. An arm-other board may have ES 3 (an RK3588 has 3.2): it keeps trying."""
+    mctl-render cannot start on it. An arm-other board may have ES 3 (an RK3588 has 3.2): it keeps trying."""
     return hardware.tier(board_kind) == "lean" or board_kind == "pi-other"
 
 
 def chosen(rundir, extra_args, windowed, env=None, board_kind=None):
-    """(use, detail, why) for the start that is about to happen. "new" only where pvj-render can draw in phase 1: on
+    """(use, detail, why) for the start that is about to happen. "new" only where mctl-render can draw in phase 1: on
     a node without a desktop, where the player draws through DRM itself (`--gpu-context=drm`), and not on a board whose
     graphics chip is OpenGL ES 2 (gles2_only): classic at once, with the reason, and the choice stays saved."""
     want = clean(screenmode.read_json(wanted_path(env)))
@@ -240,9 +240,9 @@ def chosen(rundir, extra_args, windowed, env=None, board_kind=None):
     if gles2_only(board_kind):
         return "classic", want["detail"], GLES2_WHY
     if windowed or "--gpu-context=drm" not in extra_args:
-        return "classic", want["detail"], "pvj-render draws only on a node without a desktop (phase 1)"
+        return "classic", want["detail"], "mctl-render draws only on a node without a desktop (phase 1)"
     if not available(env):
-        return "classic", want["detail"], "pvj-render is not built on this node"
+        return "classic", want["detail"], "mctl-render is not built on this node"
     return "new", want["detail"], ""
 
 
@@ -269,8 +269,8 @@ def write_report(rundir, data, log=None):
 
 # ---- the player's side: the supervisor ---------------------------------------------------------------------------
 class Supervisor:
-    """Runs pvj-render and says when to fall back. `run()` returns the reason to fall back to classic mpv, or ends
-    the process (SystemExit) when pvj-render was asked to quit or systemd stops the service."""
+    """Runs mctl-render and says when to fall back. `run()` returns the reason to fall back to classic mpv, or ends
+    the process (SystemExit) when mctl-render was asked to quit or systemd stops the service."""
 
     def __init__(self, cmd, socket_path, rundir, detail, log=print, spawn=None, clock=time.monotonic, sleep=time.sleep,
                  ready=None, start_seconds=START_SECONDS, healthy_seconds=HEALTHY_SECONDS, wanted=None, sources=None,
@@ -281,7 +281,7 @@ class Supervisor:
         self.deblock = deblock              # this run was started keeping the video's deblocking (D120)
         self.hwdec = hwdec                  # this run was started with --hwdec=this (D124), or None
         self.final_rule = None              # final_rule's state, while it decides for this run
-        self.final_watch = False            # pvj-render was started with --final and has not said it cannot
+        self.final_watch = False            # mctl-render was started with --final and has not said it cannot
         self.final_now = ("full", "")       # what the report says: what the final pass draws at, and why
         self.final_ipc = None
         self.log, self.clock, self.sleep = log, clock, sleep
@@ -294,7 +294,7 @@ class Supervisor:
         self.stop_at = None                 # when systemd's stop came (the clock), for the kill after STOP_SECONDS
 
     def _ready(self, proc):
-        """True once pvj-render answers on its socket with its own pid."""
+        """True once mctl-render answers on its socket with its own pid."""
         from .player import Ipc, PlayerError
         ipc = Ipc(self.socket_path, timeout=1.0)
         try:
@@ -303,7 +303,7 @@ class Supervisor:
             return False
 
     def _stop(self, signum=None, frame=None):
-        """systemd's stop (SIGTERM) or Ctrl-C: passed on to pvj-render, which ends cleanly."""
+        """systemd's stop (SIGTERM) or Ctrl-C: passed on to mctl-render, which ends cleanly."""
         self.stopping = True
         if self.stop_at is None:
             self.stop_at = self.clock()
@@ -343,9 +343,9 @@ class Supervisor:
             return False
 
     def _switch(self, wish):
-        """End pvj-render for a new wish whatever state it is in: asked on its socket, then SIGTERM, then SIGKILL.
+        """End mctl-render for a new wish whatever state it is in: asked on its socket, then SIGTERM, then SIGKILL.
         Returns how it ended, in words for the page."""
-        self.log("pvj-player: renderer: the wish is now %s (%s); ending pvj-render" % (wish["use"], wish["detail"]))
+        self.log("pvj-player: renderer: the wish is now %s (%s); ending mctl-render" % (wish["use"], wish["detail"]))
         heard = self._ask_quit()
         how = None
         for sig, seconds, words in ((None, QUIT_SECONDS, "it quit when asked"),
@@ -365,7 +365,7 @@ class Supervisor:
             except subprocess.TimeoutExpired:
                 continue
         how = how or "it did not end even after SIGKILL"
-        self.log("pvj-player: renderer: switched from pvj-render: %s" % how)
+        self.log("pvj-player: renderer: switched from mctl-render: %s" % how)
         write_report(self.rundir, {"chosen": wish["use"], "drawing": "classic" if wish["use"] == "classic" else "new",
                                    "why": "", "detail": wish["detail"], "switched": how}, self.log)
         return how
@@ -388,7 +388,7 @@ class Supervisor:
                                    "final": self.final_now[0], "final_why": self.final_now[1]}, self.log)
 
     def _final_begin(self):
-        """pvj-render is up: the final pass starts at the output's size, whatever the last run came to."""
+        """mctl-render is up: the final pass starts at the output's size, whatever the last run came to."""
         from .player import Ipc
         self.final_now = ("full", "")
         self.final_watch = any(a.startswith("--final=") for a in self.cmd)
@@ -401,21 +401,21 @@ class Supervisor:
             self._report("new", "")
 
     def _final_tick(self):
-        """A look at pvj-render's counters while it draws (D108): under Automatic the rule's word goes to pvj-render,
-        and the report says what the final pass draws at and why. A pvj-render that does not answer is looked at
+        """A look at mctl-render's counters while it draws (D108): under Automatic the rule's word goes to mctl-render,
+        and the report says what the final pass draws at and why. A mctl-render that does not answer is looked at
         again next time: it is not this watch's business."""
         if not self.final_watch:
             return
         from .player import PlayerError
         try:
-            state = self.final_ipc.request("get_property", "pvj-render")
+            state = self.final_ipc.request("get_property", "mctl-render")
         except PlayerError:
             return
         if not isinstance(state, dict):
             return
         refused = state.get("final-why")
         if refused:
-            self.final_watch = False            # said once by pvj-render, and it stays at the output's size
+            self.final_watch = False            # said once by mctl-render, and it stays at the output's size
             self._final_say("full", refused if isinstance(refused, str) else "")
             return
         words = ""
@@ -427,11 +427,11 @@ class Supervisor:
             if self.final_rule["final"] != before:
                 self.log("pvj-player: renderer: the final pass goes to %s (%s)" % (self.final_rule["final"], words or "the load is lighter"))
                 try:
-                    self.final_ipc.request("pvj-final", self.final_rule["final"], wait=FINAL_ASK_SECONDS)
+                    self.final_ipc.request("mctl-final", self.final_rule["final"], wait=FINAL_ASK_SECONDS)
                 except PlayerError as e:
                     self.log("pvj-player: renderer: the final pass stays as it is (%s)" % e)
                     self.final_rule, self.final_watch = None, False
-                    self._final_say("full", "pvj-render did not take the change")
+                    self._final_say("full", "mctl-render did not take the change")
                     return
         self._final_say(720 if state.get("final-lines") == 720 else "full", words)
 
@@ -446,7 +446,7 @@ class Supervisor:
             try:
                 self.proc = self.spawn(self.cmd)
             except OSError as e:
-                return "pvj-render could not be started (%s)" % (e.strerror or e)
+                return "mctl-render could not be started (%s)" % (e.strerror or e)
             up = False
             while self.clock() - started < self.start_seconds and not self.stopping:
                 if self.proc.poll() is not None:
@@ -463,11 +463,11 @@ class Supervisor:
                 self._end()
                 if code == EXIT_NO_GPU:
                     return NO_GPU_WHY
-                return ("pvj-render did not start (exit %s)" % code) if code is not None else \
-                    "pvj-render did not answer within %d seconds" % self.start_seconds
+                return ("mctl-render did not start (exit %s)" % code) if code is not None else \
+                    "mctl-render did not answer within %d seconds" % self.start_seconds
             self._final_begin()
             self._report("new", "")
-            self.log("pvj-player: renderer: pvj-render is drawing (pid %d)" % self.proc.pid)
+            self.log("pvj-player: renderer: mctl-render is drawing (pid %d)" % self.proc.pid)
             while True:
                 try:
                     code = self.proc.wait(WATCH_SECONDS)
@@ -490,18 +490,18 @@ class Supervisor:
                 raise SystemExit(0)
             if code == 0:
                 # asked to quit (the panel restarts the player): the service starts again and reads the wish again
-                self.log("pvj-player: renderer: pvj-render quit")
+                self.log("pvj-player: renderer: mctl-render quit")
                 raise SystemExit(0)
             ends = 1 if self.clock() - started >= self.healthy_seconds else ends + 1
             what = ("exit %d" % code) if code > 0 else "signal %d" % -code
             if ends >= 2:
-                return "pvj-render ended twice in a row (%s)" % what
-            self.log("pvj-player: renderer: pvj-render ended (%s); starting it once more" % what)
+                return "mctl-render ended twice in a row (%s)" % what
+            self.log("pvj-player: renderer: mctl-render ended (%s); starting it once more" % what)
 
 
 def serve(player, screen_args, detail, log, env=None):
-    """Run pvj-render under a Supervisor in this process. Returns the reason to fall back to classic mpv; never
-    returns while pvj-render draws."""
+    """Run mctl-render under a Supervisor in this process. Returns the reason to fall back to classic mpv; never
+    returns while mctl-render draws."""
     board = hardware.detect_board().get("kind", "")
     wish = clean(screenmode.read_json(wanted_path(env)))
     sources, final = wish.get("sources"), wish.get("final")
@@ -627,7 +627,7 @@ class Renderer:
         return "classic", ""
 
     def _same_run(self, rep, pid):
-        # the supervisor writes its own pid; pvj-render is its child and classic mpv is the supervisor itself (exec)
+        # the supervisor writes its own pid; mctl-render is its child and classic mpv is the supervisor itself (exec)
         if rep["drawing"] == "classic":
             return rep["pid"] == pid
         try:
@@ -642,7 +642,7 @@ class Renderer:
 
     def settings_profile(self, drawing=None):
         """(profile, note) for the card: this node's tier and each value with its reason (profile.describe), from the
-        board the panel read and the settings saved. While pvj-render draws it is the report's own (what the player
+        board the panel read and the settings saved. While mctl-render draws it is the report's own (what the player
         started with); the note says so in one line when the two differ."""
         board = getattr(self.api, "board", None)
         board = board if isinstance(board, dict) else {}
@@ -657,7 +657,7 @@ class Renderer:
 
     def sources(self):
         """What the page says of sources (D101): the Owner's number or None (the board's own), this board's default
-        and cap, and the number pvj-render is started with."""
+        and cap, and the number mctl-render is started with."""
         kind = self.board()
         chosen = self.saved().get("sources")
         return {"chosen": chosen, "default": sources_for(kind), "cap": source_cap(kind), "starts": sources_for(kind, chosen)}
@@ -672,12 +672,12 @@ class Renderer:
         if note:
             out["profile_note"] = note
         if saved["use"] == "new" and drawing == "classic":
-            out["why"] = why or "the player has not started pvj-render yet"
+            out["why"] = why or "the player has not started mctl-render yet"
         rep = self.report()
         if rep and drawing == "new" and rep["final"]:
             out["final_now"] = {"final": rep["final"], "why": rep["final_why"]}      # what the final pass draws at now (D108)
         if rep and rep["switched"]:
-            # how the player ended pvj-render at the last change of the wish (Supervisor._switch)
+            # how the player ended mctl-render at the last change of the wish (Supervisor._switch)
             out["switched"], out["switched_at"] = rep["switched"], rep["at"]
         return out
 
@@ -707,7 +707,7 @@ class Renderer:
         if use == "new" and gles2_only(self.board()):
             raise RendererError(409, GLES2_WHY)
         if use == "new" and not available(self.env):
-            raise RendererError(409, "pvj-render is not built on this node")
+            raise RendererError(409, "mctl-render is not built on this node")
         before = self.saved()
         with self.settings.lock:
             self.settings.data["renderer"] = {"use": use, "detail": detail}
@@ -727,10 +727,10 @@ class Renderer:
         except OSError as e:
             raise RendererError(500, "the wish for the player was not written (%s)" % e)
         if self.saved() != before:
-            self._restart("the renderer is now %s" % ("pvj-render" if use == "new" else "classic mpv"))
+            self._restart("the renderer is now %s" % ("mctl-render" if use == "new" else "classic mpv"))
         elif use == "new":
-            # New chosen again while the player fell back to classic (pvj-render ended twice in a row, or did not
-            # start): a restart of the player is what tries pvj-render again (D95), so choosing New again does it,
+            # New chosen again while the player fell back to classic (mctl-render ended twice in a row, or did not
+            # start): a restart of the player is what tries mctl-render again (D95), so choosing New again does it,
             # instead of leaving the box on classic until something else restarts the player (the 2-hour soak, D106)
             drawing, why = self.drawing()
             if drawing == "classic" and why and why != GLES2_WHY:

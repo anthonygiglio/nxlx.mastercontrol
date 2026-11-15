@@ -56,7 +56,7 @@
  * that has sound. Every other bandwidth is a receiver that may have a picture.
  *
  * Every receiver that was ever made is counted, by its source's name and its bandwidth, and whether it was given
- * back: pvj_standin_receivers at the end of this file. A test in the same process reads it through ctypes (the same
+ * back: mctl_standin_receivers at the end of this file. A test in the same process reads it through ctypes (the same
  * file loaded a second time is the same library). That is how "the sound connection was opened once" is shown.
  *
  * A picture that is not "one still" changes 30 times a second. The names are in SOURCES below.
@@ -83,7 +83,7 @@
 #include <time.h>
 
 /* ---- the structures, field for field as pvj/ndi.py declares them (_Source, _FindCreate, _RecvCreate, _Video,
- * _Audio, _Perf). The unit test compares every size and offset with ctypes (pvj_standin_layout below). */
+ * _Audio, _Perf). The unit test compares every size and offset with ctypes (mctl_standin_layout below). */
 typedef struct {
 	const char *name;
 	const char *url;
@@ -149,7 +149,7 @@ typedef struct {
 #define STOP_AFTER 150   /* pictures: five seconds */
 #define PAD 16
 #define SOURCE_COUNT_MAX 32
-#define RECEIVERS_MAX 512 /* how many receivers are remembered for pvj_standin_receivers; later ones are not counted */
+#define RECEIVERS_MAX 512 /* how many receivers are remembered for mctl_standin_receivers; later ones are not counted */
 #define RATE 48000
 #define CHANNELS 2
 #define SAMPLES 1600
@@ -582,7 +582,7 @@ void NDIlib_recv_get_performance(void *recv, standin_perf *total, standin_perf *
 
 /* ---- for the tests only: how many receivers were made in this process for the source called `name` with that
  * bandwidth (100 for a picture's, 10 for sound alone); with `open_now` not 0, only those not given back yet. */
-int pvj_standin_receivers(const char *name, int bandwidth, int open_now)
+int mctl_standin_receivers(const char *name, int bandwidth, int open_now)
 {
 	int i, n = 0, which;
 	if (name == NULL)
@@ -599,7 +599,7 @@ int pvj_standin_receivers(const char *name, int bandwidth, int open_now)
 /* ---- for the unit test only: the size of each structure and the place of each field, in the order of the fields
  * above, so that the test can compare them with what ctypes makes of pvj/ndi.py's declarations. Returns how many
  * numbers there are; writes at most `room` of them. */
-int pvj_standin_layout(int *out, int room)
+int mctl_standin_layout(int *out, int room)
 {
 	const int numbers[] = {
 		(int)sizeof(standin_source), (int)offsetof(standin_source, name), (int)offsetof(standin_source, url),

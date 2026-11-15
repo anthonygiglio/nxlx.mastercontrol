@@ -137,7 +137,7 @@ class PlayerUnitTest(unittest.TestCase):
         self.assertEqual(load_units()["pvj-web.service"]["Group"], ["pvj"])
 
     def test_player_may_ask_for_real_time_priority_1_and_has_no_capability_for_it(self):
-        # pvj-render's render thread asks for SCHED_RR 1 (render/src/main.c). The resource limit alone lets an
+        # mctl-render's render thread asks for SCHED_RR 1 (render/src/main.c). The resource limit alone lets an
         # unprivileged account do that, so the unit grows no capability, and no other unit gets the limit.
         player = load_units()["pvj-player.service"]
         self.assertEqual(player["LimitRTPRIO"], ["1"])

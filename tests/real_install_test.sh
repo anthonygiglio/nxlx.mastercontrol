@@ -202,6 +202,34 @@ runuser -u pvj-web -- rm /run/pvj/web/undervoltage-seen
 only_the_new_layout
 services_and_their_files
 
+step "an update from a release that ran the renderer as pvj-render (rename PR 5): the new release has no pvj-render, the old one keeps its own"
+# The release before the rename, as a copy of this one with the old program in it (this runner has no libmpv headers,
+# so a plain file stands in for the built program), made current as an update finds it. A pvj-render built by hand in
+# the source folder is planted too: the installer must not carry it into the new release.
+OLD_REL=/opt/pvj/releases/0.0.1
+NEW_REL="$(readlink -f /opt/pvj/current)"
+PREV_SAVED="$(mktemp)"
+had_previous=0
+if [ -f /opt/pvj/previous ]; then cp /opt/pvj/previous "$PREV_SAVED"; had_previous=1; fi
+cp -a "$NEW_REL" "$OLD_REL"
+printf '#!/bin/sh\nexit 0\n' > "$OLD_REL/render/pvj-render"
+chmod 755 "$OLD_REL/render/pvj-render"
+ln -sfn "$OLD_REL" /opt/pvj/current.tmp && mv -T /opt/pvj/current.tmp /opt/pvj/current
+cp "$OLD_REL/render/pvj-render" "$SRC/render/pvj-render"
+installer
+rm -f "$SRC/render/pvj-render"
+[ "$(readlink -f /opt/pvj/current)" = "$NEW_REL" ] || fail "the update did not make the new release current: $(readlink /opt/pvj/current)"
+[ ! -e "$NEW_REL/render/pvj-render" ] || fail "the new release holds the old renderer's program"
+[ -x "$OLD_REL/render/pvj-render" ] || fail "the old release lost its own program (a rollback needs it)"
+[ "$(cat /opt/pvj/previous)" = "$OLD_REL" ] || fail "the old release is not the one a rollback goes to: $(cat /opt/pvj/previous)"
+if grep -rIl "pvj-render" "$NEW_REL" /etc/systemd/system; then fail "a file of the new release or a unit still names pvj-render"; fi
+grep -q "mctl-render" "$NEW_REL/pvj/renderer.py" || fail "the player does not look for mctl-render"
+rm -rf "$OLD_REL"
+if [ "$had_previous" = 1 ]; then cp "$PREV_SAVED" /opt/pvj/previous; else rm -f /opt/pvj/previous; fi
+rm -f "$PREV_SAVED"
+only_the_new_layout
+services_and_their_files
+
 step "an emptying that was cut short (no marker) with a planted helper folder is finished by the next run, also with --no-start"
 systemctl stop pvj-netd.service
 rm -f /run/pvj/.d45

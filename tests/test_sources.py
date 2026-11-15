@@ -4,8 +4,8 @@
 
 The mapping's side (a surface's "source", the show table and both shaders carrying it, classic mpv's shader byte for
 byte as before, the release before loading a file with the key), the renderer's number of sources, and the API's
-play to a source, its refusals, its roles, the pads' target and the warning about load. pvj-render's own side runs
-for real in tests/test_pvj_render.py (SourcesTest and the classes after it)."""
+play to a source, its refusals, its roles, the pads' target and the warning about load. mctl-render's own side runs
+for real in tests/test_mctl_render.py (SourcesTest and the classes after it)."""
 import importlib.util
 import json
 import os
@@ -33,8 +33,14 @@ def have_before():
 
 
 def old_mapper():
-    """pvj/mapper.py as the release before had it, loaded as a module of its own."""
+    """pvj/mapper.py as the release before had it, loaded as a module of its own, with the renderer's names of the
+    rename applied (rename PR 5: PVJWARP and the pvj_ helpers are MCTLWARP and mctl_ now), so the comparison is of
+    the shaders' code and not of the names the rename table changed."""
     text = subprocess.run(["git", "-C", REPO, "show", BEFORE + ":pvj/mapper.py"], check=True, capture_output=True).stdout
+    spec = importlib.util.spec_from_file_location("rename_apply", os.path.join(REPO, "tools", "rename-apply.py"))
+    ra = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ra)
+    text = ra.Matcher(ra.load(os.path.join(REPO, "tools", "rename-map.txt"))).apply(text.decode("utf-8"), ("render",))[0].encode("utf-8")
     d = tempfile.mkdtemp()
     pkg = os.path.join(d, "oldpvj")
     os.makedirs(pkg)
@@ -127,7 +133,7 @@ class TableTest(unittest.TestCase):
         text = mapper.warp_shader(*table, available=4)
         self.assertIn("//!BIND SOURCE2\n//!BIND SOURCE4\n", text)
         self.assertNotIn("SOURCE3", text)
-        self.assertIn("texelFetch(PVJWARPB", text, "the index is read at the nearest cell, never blended")
+        self.assertIn("texelFetch(MCTLWARPB", text, "the index is read at the nearest cell, never blended")
         self.assertNotIn("SOURCE", text.split("//!HOOK OUTPUT")[0], "no source in the data's directives")
         # the second texture's spare channels hold the sources: (uB, vB, sA, sB)
         import struct

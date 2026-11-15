@@ -138,7 +138,7 @@ class Ipc:
 
     def request(self, *command, wait=None):
         """One command and its answer, as everything above the player sees it. `wait`: seconds to wait for it instead of
-        the usual timeout (a request the player itself answers only after a bounded wait of its own, such as pvj-render's
+        the usual timeout (a request the player itself answers only after a bounded wait of its own, such as mctl-render's
         build of a program)."""
         if self.translate is not None:
             return self.translate.request(self.direct, command, wait)
@@ -147,7 +147,7 @@ class Ipc:
     def hold(self):
         """A connection that stays open, for what mpv ties to the client that made it: an `osd-overlay` is removed by mpv the
         moment the connection that created it closes (found on a Pi 3 with classic mpv: every request here is its own connection,
-        so the stats overlay was drawn and taken off again at once). pvj-render keeps its overlays itself and does not care."""
+        so the stats overlay was drawn and taken off again at once). mctl-render keeps its overlays itself and does not care."""
         return HeldIpc(self.path, self.timeout)
 
     def batch(self, commands, wait=None):
@@ -351,7 +351,7 @@ class Player:
         self._new_expected = False  # the panel ended the player (quit): the next new one is that restart, already counted
         self._pid_lock = locks.make("player.pid")       # a leaf: the look at the pid and the count are one step
         # The New renderer's own programs (D106): what each of source 1's slots holds (path, the player's pid), and
-        # what pvj-render said of each program file it was given.
+        # what mctl-render said of each program file it was given.
         self._native_loaded = [None, None]
         self._native_verdicts = {}
         # The chains of effects (D106 step b): {(source, slot): (path, the player's pid)}, for source 1's slots 2 and 3
@@ -376,7 +376,7 @@ class Player:
 
     def _lists_playing(self):
         """The paths the layers play, as the player says them: what a prune must leave. Raises PlayerError."""
-        rows = self.ipc.direct("get_property", "pvj-sources")
+        rows = self.ipc.direct("get_property", "mctl-sources")
         return [r.get("path") for r in rows if isinstance(r, dict)]
 
     def _front_list(self):
@@ -479,7 +479,7 @@ class Player:
         log = lambda line: print(line, file=sys.stderr, flush=True)
         screen = screenmode.prepare(self.extra_args, self.rundir, self.mpv_bin, log=log)
         args += screen
-        # The renderer (D95): pvj-render where the owner chose it, run by a supervisor in this process; it comes back
+        # The renderer (D95): mctl-render where the owner chose it, run by a supervisor in this process; it comes back
         # here only to fall back, and then this process becomes classic mpv as always.
         from . import renderer
         use, detail, why = renderer.chosen(self.rundir, self.extra_args, windowed)
@@ -487,12 +487,12 @@ class Player:
             why = renderer.serve(self, screen, detail, log)
         if why:
             renderer.fallback(self.rundir, detail, why, log)
-            # pvj-render killed leaves its socket behind: the opener below would take that old file for mpv's and open
+            # mctl-render killed leaves its socket behind: the opener below would take that old file for mpv's and open
             # it, and mpv's own new one would stay owner-only, out of the panel's reach (the soak of 2026-10-30)
             if os.path.exists(self.socket_path):
                 os.unlink(self.socket_path)
             if use == "new":
-                # pvj-render fell back only for want of a screen (the projector warms up after the Pi boots): a screen that
+                # mctl-render fell back only for want of a screen (the projector warms up after the Pi boots): a screen that
                 # comes later ends this process once, and systemd starts the service by its normal path
                 from . import hardware, latescreen
                 try:
@@ -536,7 +536,7 @@ class Player:
         """Play `paths` (see _play). A shader source that was on is taken off first: it draws in place of the
         picture, so it must never stay over a clip.
 
-        `fade`: seconds of a crossfade drawn by the renderer itself, where the player is pvj-render with two video
+        `fade`: seconds of a crossfade drawn by the renderer itself, where the player is mctl-render with two video
         layers (`crossfades`, D98). Only from a clip to one clip: out of a generator or a live input, into a list,
         on classic mpv, or when the renderer refuses, this is a cut (the plain load below), never a black screen.
         `style`: "crossfade", or a wipe's or a slide's name, which the renderer draws the same way (`moves`, D111).
@@ -581,7 +581,7 @@ class Player:
 
     def fade_to_program(self, path, seconds, style="crossfade", epoch=None, spawn=False, standin=None):
         """Fade from what is on the screen (a clip, or another program) into the program file `path`, drawn by the renderer
-        itself (D130: `pvj-fade-to-program`): the program is built into the idle layer's generator, and the fade begins
+        itself (D130: `mctl-fade-to-program`): the program is built into the idle layer's generator, and the fade begins
         when its first picture is drawn, both sides moving. `style`: "crossfade" or a wipe's or a slide's name. With
         `epoch`, only if nothing else has been played since it was handed out (None is returned and nothing changes).
         Returns the new epoch. Raises PlayerError where the renderer cannot or would not, with nothing changed on the
@@ -615,7 +615,7 @@ class Player:
                 except PlayerError:
                     pass
             try:
-                self.ipc.request("pvj-fade-to-program", path, seconds, *tail, wait=self.NATIVE_LOAD_WAIT)
+                self.ipc.request("mctl-fade-to-program", path, seconds, *tail, wait=self.NATIVE_LOAD_WAIT)
             except PlayerError as e:
                 message = str(e)
                 message = message[5:] if message.startswith("mpv: ") else message
@@ -644,7 +644,7 @@ class Player:
     def _program_in_slot(self, path):
         """The renderer says the program file `path` is source 1's generator now (asked after a fade whose answer was lost)."""
         try:
-            rows = self.ipc.request("get_property", "pvj-shaders")
+            rows = self.ipc.request("get_property", "mctl-shaders")
             return any(isinstance(r, dict) and r.get("source") == 1 and r.get("slot") == 0 and r.get("path") == path
                        and r.get("state") not in (None, "off") for r in rows)
         except (PlayerError, TypeError, AttributeError):
@@ -682,7 +682,7 @@ class Player:
     fade_refused = ""               # why the last crossfade asked of the renderer became a cut, for the log
 
     def crossfades(self, ask=True):
-        """True if the player that answers now is pvj-render with two video layers, which draws a crossfade itself
+        """True if the player that answers now is mctl-render with two video layers, which draws a crossfade itself
         (D98). Asked once per player process (its pid, as the last word with it gave it): classic mpv answers
         "property not found" and keeps D71's still. A player that does not answer is asked again next time. With
         `ask` False, only what is known already (for a status, which asks the player nothing). The same answer says
@@ -696,7 +696,7 @@ class Player:
         try:
             if pid is None:
                 pid = self._note_pid(self.ipc.request("get_property", "pid"))
-            state = self.ipc.request("get_property", "pvj-render")
+            state = self.ipc.request("get_property", "mctl-render")
         except PlayerError as e:
             if str(e).startswith("mpv: ") and pid is not None:
                 self._layers_seen = (pid, False)        # mpv's own refusal: this player has no layers
@@ -723,7 +723,7 @@ class Player:
         return bool(known[1])
 
     def layer_generators(self, ask=True):
-        """True if the player that answers now is pvj-render with a generator in each of source 1's video layers and the
+        """True if the player that answers now is mctl-render with a generator in each of source 1's video layers and the
         command that fades into a program (D130, `layer-generators` and `program-fades`). Asked once per player process,
         in the same request as `crossfades`; classic mpv, and a renderer before slice 2, answer False. With `ask` False,
         only what is known already."""
@@ -745,7 +745,7 @@ class Player:
     _stage_seen = None              # (pid, None or {"slots", "side"}): does that player process have the graphics stage (D129)
 
     def graphics_stage(self, ask=True):
-        """{"slots": n, "side": s} if the player that answers now is a pvj-render with the graphics stage (D129, slice 3:
+        """{"slots": n, "side": s} if the player that answers now is a mctl-render with the graphics stage (D129, slice 3:
         its `graphics` and `graphics-side`, there from version 0.11.0), else None: classic mpv answers "property not
         found", and a renderer from before answers without the keys. Asked once per player process, as `crossfades`; a
         player that does not answer raises PlayerError (that is not "no stage") and is asked again next time. With `ask`
@@ -760,7 +760,7 @@ class Player:
         try:
             if pid is None:
                 pid = self._note_pid(self.ipc.request("get_property", "pid"))
-            state = self.ipc.request("get_property", "pvj-render")
+            state = self.ipc.request("get_property", "mctl-render")
         except PlayerError as e:
             if str(e).startswith("mpv: ") and pid is not None:
                 self._stage_seen = (pid, None)      # mpv's own refusal: classic, and it says so
@@ -774,13 +774,13 @@ class Player:
         return stage
 
     def graphic(self, what, slot, *args):
-        """One command of the renderer's graphics stage (pvj-render's `pvj-graphic`): load, set, show, hide, replay or
+        """One command of the renderer's graphics stage (mctl-render's `mctl-graphic`): load, set, show, hide, replay or
         clear, on slot 1 to 8. Raises PlayerError, with the renderer's words when it refused."""
-        return self.ipc.request("pvj-graphic", what, int(slot), *args)
+        return self.ipc.request("mctl-graphic", what, int(slot), *args)
 
     def moves(self, ask=True):
         """True if the player that answers now draws the wipes and the slides itself, as the same stage as the crossfade
-        (D111): pvj-render's `moves`. Asked once per player process, as `crossfades`; classic mpv and a pvj-render from
+        (D111): mctl-render's `moves`. Asked once per player process, as `crossfades`; classic mpv and a mctl-render from
         before that keep D71's still. With `ask` False, only what is known already."""
         known, pid = self._moves_seen, self._seen_pid
         if known is not None and known[0] == pid:
@@ -790,7 +790,7 @@ class Player:
         try:
             if pid is None:
                 pid = self._note_pid(self.ipc.request("get_property", "pid"))
-            state = self.ipc.request("get_property", "pvj-render")
+            state = self.ipc.request("get_property", "mctl-render")
         except PlayerError as e:
             if str(e).startswith("mpv: ") and pid is not None:
                 self._moves_seen = (pid, False)
@@ -800,13 +800,13 @@ class Player:
         return ok
 
     # ---- sources 2 to N (D101) -----------------------------------------------------------------------------------------
-    # pvj-render plays other clips beside the player's own picture (source 1), each on a source of its own, which the
+    # mctl-render plays other clips beside the player's own picture (source 1), each on a source of its own, which the
     # mapping shows on the surfaces that name it. Everything else in this class is source 1, as before.
     MAX_SOURCES = 8
     _sources_seen = None            # (pid, n): how many sources that player process has
 
     def sources(self, ask=True):
-        """How many sources the player has: pvj-render's `sources`, 1 on classic mpv (which answers "property not
+        """How many sources the player has: mctl-render's `sources`, 1 on classic mpv (which answers "property not
         found") or a player that does not say. Asked once per player process, as `crossfades`; with `ask` False only
         what is known already."""
         known, pid = self._sources_seen, self._seen_pid
@@ -817,7 +817,7 @@ class Player:
         try:
             if pid is None:
                 pid = self._note_pid(self.ipc.request("get_property", "pid"))
-            state = self.ipc.request("get_property", "pvj-render")
+            state = self.ipc.request("get_property", "mctl-render")
         except PlayerError as e:
             if str(e).startswith("mpv: ") and pid is not None:
                 self._sources_seen = (pid, 1)
@@ -847,38 +847,38 @@ class Player:
         target = self._list_for(files, ending)
         if target is not None:
             try:
-                self.ipc.direct("pvj-source", source, "loadfile", target, "replace", opts + "," + looplist.QUEUE)
+                self.ipc.direct("mctl-source", source, "loadfile", target, "replace", opts + "," + looplist.QUEUE)
             except PlayerError:
                 target = None               # a renderer that refuses it: the clip itself, as always
         if target is None:
             target = files[0]
             first = True
             for f in files:
-                self.ipc.request("pvj-source", source, "loadfile", f, "replace" if first else "append", opts)
+                self.ipc.request("mctl-source", source, "loadfile", f, "replace" if first else "append", opts)
                 first = False
         deadline = time.monotonic() + 3.0
         while time.monotonic() < deadline:
             try:
-                if self.ipc.direct("pvj-source", source, "get_property", "path") == target:
+                if self.ipc.direct("mctl-source", source, "get_property", "path") == target:
                     break
             except PlayerError:
                 pass
             time.sleep(0.05)
         looping = ending == "loop"
-        self.ipc.request("pvj-source", source, "set_property", "pause", False)
-        self.ipc.request("pvj-source", source, "set_property", "loop-file", "inf" if (looping and single) else "no")
-        self.ipc.request("pvj-source", source, "set_property", "loop-playlist", "inf" if (looping and not single) else "no")
+        self.ipc.request("mctl-source", source, "set_property", "pause", False)
+        self.ipc.request("mctl-source", source, "set_property", "loop-file", "inf" if (looping and single) else "no")
+        self.ipc.request("mctl-source", source, "set_property", "loop-playlist", "inf" if (looping and not single) else "no")
 
     def stop_source_clip(self, source):
         """Stop source `source`'s clip only (2 to N): a generator is about to be its picture (D106 step d)."""
         self._source_ok(source)
-        self.ipc.request("pvj-source", source, "stop")
+        self.ipc.request("mctl-source", source, "stop")
 
     def stop_source(self, source):
         """Stop source `source` (2 to N): it is idle, and costs nothing again. Its effects come off with it, as an
         effect comes off source 1 with Stop (D74, D106)."""
         self._source_ok(source)
-        self.ipc.request("pvj-source", source, "stop")
+        self.ipc.request("mctl-source", source, "stop")
         self.chain_clear(source)
 
     # ---- the chains of effects (D106 step b) -------------------------------------------------------------------------
@@ -914,7 +914,7 @@ class Player:
             self._note_pid(self.ipc.request("get_property", "pid"))
             self._chain_alive()
             try:
-                self.ipc.request("pvj-shader", "load", source, slot, path, wait=self.NATIVE_LOAD_WAIT)
+                self.ipc.request("mctl-shader", "load", source, slot, path, wait=self.NATIVE_LOAD_WAIT)
             except PlayerError as e:
                 message = str(e)
                 message = message[5:] if message.startswith("mpv: ") else message
@@ -927,9 +927,9 @@ class Player:
             return "ok", ""
 
     def _chain_there(self, source, slot, path):
-        """Whether pvj-render says `slot` of `source` holds the program file `path` (after a load that had no word)."""
+        """Whether mctl-render says `slot` of `source` holds the program file `path` (after a load that had no word)."""
         try:
-            rows = self.ipc.request("get_property", "pvj-shaders")
+            rows = self.ipc.request("get_property", "mctl-shaders")
             return any(isinstance(r, dict) and r.get("source") == source and r.get("slot") == slot and r.get("path") == path for r in rows)
         except (PlayerError, TypeError):
             return False
@@ -945,7 +945,7 @@ class Player:
                 have = self._chain[(source, slot)] = (path, self._seen_pid)
             if have is None or (path is not None and have[0] != path):
                 return False
-            self.ipc.request("pvj-shader", "set", source, slot, values)
+            self.ipc.request("mctl-shader", "set", source, slot, values)
             return True
 
     def chain_clear(self, source, slot=None):
@@ -957,7 +957,7 @@ class Player:
             self._chain_alive()
             slots = [slot] if slot is not None else list(self.chain_slots(source, True))
             try:
-                rows = self.ipc.request("get_property", "pvj-shaders")
+                rows = self.ipc.request("get_property", "mctl-shaders")
                 there = {(r.get("source"), r.get("slot")) for r in rows if isinstance(r, dict) and r.get("state") not in (None, "off")}
             except (PlayerError, TypeError, AttributeError):
                 there = set()
@@ -965,7 +965,7 @@ class Player:
             for k in slots:
                 had = (self._chain.pop((source, k), None) is not None) or ((source, k) in there) or had
                 try:
-                    self.ipc.request("pvj-shader", "clear", source, k)
+                    self.ipc.request("mctl-shader", "clear", source, k)
                 except PlayerError:
                     pass
             return had
@@ -981,7 +981,7 @@ class Player:
         that does not answer, the one source the status knows of. Asks the player."""
         if self.sources() > 1:
             try:
-                rows = self.ipc.request("get_property", "pvj-sources")
+                rows = self.ipc.request("get_property", "mctl-sources")
             except PlayerError:
                 rows = None
             if isinstance(rows, list):
@@ -1033,13 +1033,13 @@ class Player:
                 pass
         if target is not None:
             try:
-                self.ipc.direct("pvj-crossfade", target, seconds, opts + "," + looplist.QUEUE, *tail)
+                self.ipc.direct("mctl-crossfade", target, seconds, opts + "," + looplist.QUEUE, *tail)
             except PlayerError:
                 target = None               # a renderer that refuses it: the clip itself, as always
         if target is None:
             target = path
             try:
-                self.ipc.request("pvj-crossfade", path, seconds, opts, *tail)
+                self.ipc.request("mctl-crossfade", path, seconds, opts, *tail)
             except PlayerError as e:
                 self.fade_refused = str(e)
                 return False
@@ -1496,9 +1496,9 @@ class Player:
         self._set("screenshot-high-bit-depth", False)
         self._set("screenshot-png-compression", 0)
         self._set("screenshot-png-filter", 0)
-        # pvj-render's libmpv draws the window at the inside size with no mapping in it, so "window" there would not be the
+        # mctl-render's libmpv draws the window at the inside size with no mapping in it, so "window" there would not be the
         # screen: it is asked for the final picture at the screen's size instead, whatever size the final pass draws (D108).
-        window = "pvj-screen" if self.crossfades() else "window"
+        window = "mctl-screen" if self.crossfades() else "window"
         self.ipc.request("screenshot-to-file", path, "video" if kind == "video" else window)
 
     def video_place(self, screen):
@@ -1720,12 +1720,12 @@ class Player:
 
     # ---- the New renderer's own programs (D106) --------------------------------------------------------------------
     _native_seen = None             # (pid, True or False): does that player process run programs of its own
-    # pvj-render answers a load once it has built the program, waiting at most 3 seconds for its render thread
+    # mctl-render answers a load once it has built the program, waiting at most 3 seconds for its render thread
     # (ipc.c, shader_command): the panel waits longer than that, so that only the renderer's own word ends it
     NATIVE_LOAD_WAIT = 6.0
 
     def native_shaders(self, ask=True):
-        """True if the player that answers now is pvj-render with programs of its own (its `shaders`), which run a
+        """True if the player that answers now is mctl-render with programs of its own (its `shaders`), which run a
         generator or an effect with values set while it plays. Asked once per player process, as `crossfades`;
         classic mpv answers "property not found". With `ask` False, only what is known already."""
         known, pid = self._native_seen, self._seen_pid
@@ -1736,7 +1736,7 @@ class Player:
         try:
             if pid is None:
                 pid = self._note_pid(self.ipc.request("get_property", "pid"))
-            state = self.ipc.request("get_property", "pvj-render")
+            state = self.ipc.request("get_property", "mctl-render")
         except PlayerError as e:
             if str(e).startswith("mpv: ") and pid is not None:
                 self._native_seen = (pid, False)
@@ -1750,7 +1750,7 @@ class Player:
     _native_slots = None            # (pid, slots a source that player process has)
 
     def native_chains(self):
-        """True if the player runs a chain of effects on any source (D106 step b: pvj-render with 4 slots a source)."""
+        """True if the player runs a chain of effects on any source (D106 step b: mctl-render with 4 slots a source)."""
         if not self.native_shaders():
             return False
         known = self._native_slots
@@ -1767,13 +1767,13 @@ class Player:
         if (have[0] if have else None) == want:
             return
         if want is None:
-            self.ipc.request("pvj-shader", "clear", 1, slot)
+            self.ipc.request("mctl-shader", "clear", 1, slot)
             self._native_loaded[slot] = None
             return
         if len(self._native_verdicts) > 32:
             self._native_verdicts.clear()
         try:
-            self.ipc.request("pvj-shader", "load", 1, slot, want, wait=self.NATIVE_LOAD_WAIT)
+            self.ipc.request("mctl-shader", "load", 1, slot, want, wait=self.NATIVE_LOAD_WAIT)
         except PlayerError as e:
             message = str(e)
             message = message[5:] if message.startswith("mpv: ") else message
@@ -1791,7 +1791,7 @@ class Player:
         self._native_verdicts[want] = ("ok", "")
 
     def native_verdict(self, path):
-        """("ok" | "refused", message) of pvj-render about the program file `path`, or None if it was never given one."""
+        """("ok" | "refused", message) of mctl-render about the program file `path`, or None if it was never given one."""
         return self._native_verdicts.get(path)
 
     def native_values(self, slot, values, epoch=None, serial=None):
@@ -1814,7 +1814,7 @@ class Player:
                 # not known to be there (its load had no word, a slow build): the renderer says what the slot holds
                 # now; if it is not that program, it is loaded again first
                 try:
-                    rows = self.ipc.request("get_property", "pvj-shaders")
+                    rows = self.ipc.request("get_property", "mctl-shaders")
                     there = next((r.get("path") for r in rows if isinstance(r, dict) and r.get("source") == 1 and r.get("slot") == slot), None)
                 except (PlayerError, TypeError, AttributeError):
                     there = None
@@ -1826,7 +1826,7 @@ class Player:
             if not have or have[0] != path or have[1] != self._seen_pid:
                 return False
             try:
-                self.ipc.request("pvj-shader", "set", 1, slot, values)
+                self.ipc.request("mctl-shader", "set", 1, slot, values)
             except PlayerError as e:
                 # During a shader to clip fade the generator that still draws is the outgoing layer's, and slot 0 is the
                 # front (clip) layer's, which has none: the renderer refuses ("invalid parameter"). Expected, not a failure:
@@ -2036,7 +2036,7 @@ class Player:
 
     def flip(self, horizontal, on):
         """Mirror the picture left-right or upside down (a video filter; about half a core more on a Pi 4 at 1080p)."""
-        label = "@pvjfliph" if horizontal else "@pvjflipv"
+        label = "@mctlfliph" if horizontal else "@mctlflipv"
         try:
             self.ipc.request("vf", "remove", label)
         except PlayerError:
@@ -2126,7 +2126,7 @@ class Player:
         return [i["filename"] for i in items[:limit] if isinstance(i, dict) and isinstance(i.get("filename"), str)]
 
 
-PROGRAM_HEAD = b"//!PVJ 1\n"
+PROGRAM_HEAD = b"//!MCTL 1\n"
 
 
 def is_program(path):

@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
 // The renderer's own shader programs (project-log/DECISIONS.md, D106): ISF generators and effects drawn by
-// pvj-render itself, with their inputs as uniforms set every frame, so a value that moves is never compiled again.
+// mctl-render itself, with their inputs as uniforms set every frame, so a value that moves is never compiled again.
 //
 // The panel (pvj/shaders.py and pvj/effects.py, translate_native) is the only reader of an ISF file: it checks the
 // file, renames what ISF names differently, and writes a "program file" into the player's runtime folder:
 //
-//   //!PVJ 1
+//   //!MCTL 1
 //   //!KIND generator | filter
 //   //!SIZE W H                       a generator's drawing size (Picture detail, D93); a filter draws at the inside size
 //   //!CLOCK 0 | 1                    a filter reads TIME (a generator always does)
@@ -15,7 +15,7 @@
 //   //!INPUT float|bool|long|color|point2D NAME VALUE...
 //   //!CONTROL speed|hue|gain|amount|offset VALUE
 //   //!CODE
-//   ... the code, with exactly one void pvj_main() ...
+//   ... the code, with exactly one void mctl_main() ...
 //
 // This reader takes nothing else: every line before //!CODE is one of these, every name is a plain identifier that is
 // not the language's or this wrapper's, every value a finite number, and the code holds no "//!", no NUL and no
@@ -33,7 +33,7 @@
 // constant expression, an array sized by one) is built with its values written in as constants instead, as classic
 // does; then a change of a value is a new build, at most five a second (state "constants").
 #define _GNU_SOURCE
-#include "pvj.h"
+#include "mctl.h"
 #include "json.h"
 
 #include <ctype.h>
@@ -109,7 +109,7 @@ void fx_prog_free(FxProg *p)
 int fx_prog_kind(const FxProg *p) { return p->kind; }
 const char *fx_prog_path(const FxProg *p) { return p->path; }
 
-// A buffer's name: it never reaches GLSL (the code reads pvj_t<i>), so a plain identifier is enough (the review of #170).
+// A buffer's name: it never reaches GLSL (the code reads mctl_t<i>), so a plain identifier is enough (the review of #170).
 static int fx_plain_ident(const char *s)
 {
     size_t n = strlen(s);
@@ -126,7 +126,7 @@ static int fx_name_ok(const char *s)
     for (size_t i = 0; i < n; i++)
         if (!(isalnum((unsigned char)s[i]) || s[i] == '_')) return 0;
     if (strstr(s, "__") || !strncmp(s, "gl_", 3) || !strncmp(s, "isf_", 4)) return 0;
-    if (!strncmp(s, "pvj_", 4) && strncmp(s, "pvj_in_", 7)) return 0;   // pvj_in_: the panel's renamed inputs
+    if (!strncmp(s, "mctl_", 4) && strncmp(s, "mctl_in_", 7)) return 0;   // mctl_in_: the panel's renamed inputs
     for (int i = 0; TAKEN[i]; i++)
         if (!strcmp(TAKEN[i], s)) return 0;
     return 1;
@@ -193,7 +193,7 @@ int fx_read(const char *path, FxProg **out, char *err, size_t n)
         char *eol = memchr(line, '\n', (size_t)(end - line));
         if (!eol) eol = end;
         *eol = 0;
-        if (first && strcmp(line, "//!PVJ 1")) { snprintf(err, n, "not a program file (no //!PVJ 1 at the top)"); goto bad; }
+        if (first && strcmp(line, "//!MCTL 1")) { snprintf(err, n, "not a program file (no //!MCTL 1 at the top)"); goto bad; }
         if (!first) {
             if (strncmp(line, "//!", 3)) { snprintf(err, n, "a line before //!CODE is not a directive"); goto bad; }
             const char *d = line + 3;
@@ -295,7 +295,7 @@ int fx_read(const char *path, FxProg **out, char *err, size_t n)
     size_t clen = (size_t)(end - line);
     if (memmem(line, clen, "//!", 3)) { snprintf(err, n, "the code holds //!"); goto bad; }
     if (memchr(line, '\\', clen)) { snprintf(err, n, "the code holds a backslash"); goto bad; }
-    if (!memmem(line, clen, "pvj_main", 8)) { snprintf(err, n, "the code has no pvj_main()"); goto bad; }
+    if (!memmem(line, clen, "mctl_main", 8)) { snprintf(err, n, "the code has no mctl_main()"); goto bad; }
     p->code = malloc(clen + 1);
     if (!p->code) { snprintf(err, n, "out of memory"); goto bad; }
     memcpy(p->code, line, clen);
@@ -391,9 +391,9 @@ static GLuint fx_vao, fx_vbo;
 
 static const char *FX_VS =
     "#version 300 es\n"
-    "in vec2 pvj_vert;\n"
-    "out vec2 pvj_pos;\n"
-    "void main() { pvj_pos = pvj_vert * 0.5 + 0.5; gl_Position = vec4(pvj_vert, 0.0, 1.0); }\n";
+    "in vec2 mctl_vert;\n"
+    "out vec2 mctl_pos;\n"
+    "void main() { mctl_pos = mctl_vert * 0.5 + 0.5; gl_Position = vec4(mctl_vert, 0.0, 1.0); }\n";
 
 static void count_gl(long d) { __atomic_add_fetch(&app.fx_gl, d, __ATOMIC_RELAXED); }
 
@@ -475,53 +475,53 @@ static GLuint fx_program(const FxProg *p, const FxValue *vals, int constants, ch
     Buf b;
     buf_init(&b);
     g(&b, "#version 300 es\nprecision highp float;\nprecision highp int;\nprecision highp sampler2D;\n"
-          "in vec2 pvj_pos;\nout vec4 pvj_out;\n"
+          "in vec2 mctl_pos;\nout vec4 mctl_out;\n"
           "uniform float TIME;\nuniform float TIMEDELTA;\nuniform int FRAMEINDEX;\nuniform vec4 DATE;\nuniform vec2 RENDERSIZE;\n"
-          "uniform int PASSINDEX;\nuniform int pvj_final;\n"
-          "#define isf_FragNormCoord pvj_norm\n#define vv_FragNormCoord pvj_norm\n#define PVJ_HP highp\n"
-          "vec2 pvj_norm;\nvec4 pvj_coord;\nvec4 pvj_color;\n");
-    // the buffers, read as ISF's IMG_ calls on them (the panel writes them as pvj_t<i>_...); stored top row first,
+          "uniform int PASSINDEX;\nuniform int mctl_final;\n"
+          "#define isf_FragNormCoord mctl_norm\n#define vv_FragNormCoord mctl_norm\n#define MCTL_HP highp\n"
+          "vec2 mctl_norm;\nvec4 mctl_coord;\nvec4 mctl_color;\n");
+    // the buffers, read as ISF's IMG_ calls on them (the panel writes them as mctl_t<i>_...); stored top row first,
     // as every texture here, and read at a place counted from the bottom left as ISF counts
     for (int i = 0; i < p->ntargets; i++)
-        gf(&b, "uniform sampler2D pvj_t%d;\nuniform vec2 pvj_t%d_sz;\n"
-               "vec4 pvj_t%d_this() { return texture(pvj_t%d, pvj_pos); }\n"
-               "vec4 pvj_t%d_norm(vec2 q) { return texture(pvj_t%d, vec2(q.x, 1.0 - q.y)); }\n"
-               "vec4 pvj_t%d_px(vec2 q) { return texture(pvj_t%d, vec2(q.x, pvj_t%d_sz.y - q.y) / pvj_t%d_sz); }\n"
-               "vec2 pvj_t%d_size() { return pvj_t%d_sz; }\n", i, i, i, i, i, i, i, i, i, i, i, i);
+        gf(&b, "uniform sampler2D mctl_t%d;\nuniform vec2 mctl_t%d_sz;\n"
+               "vec4 mctl_t%d_this() { return texture(mctl_t%d, mctl_pos); }\n"
+               "vec4 mctl_t%d_norm(vec2 q) { return texture(mctl_t%d, vec2(q.x, 1.0 - q.y)); }\n"
+               "vec4 mctl_t%d_px(vec2 q) { return texture(mctl_t%d, vec2(q.x, mctl_t%d_sz.y - q.y) / mctl_t%d_sz); }\n"
+               "vec2 mctl_t%d_size() { return mctl_t%d_sz; }\n", i, i, i, i, i, i, i, i, i, i, i, i);
     if (p->kind == FX_GENERATOR) {
-        g(&b, "uniform mat3 pvj_hue;\nuniform float pvj_gain;\n");
+        g(&b, "uniform mat3 mctl_hue;\nuniform float mctl_gain;\n");
     } else {
         // the picture, read at a place counted from the top left (0 to 1), as on the player's NATIVE stage; outside
         // it, its edge. The same five calls the panel's translation names (effects.py, _block).
-        g(&b, "uniform sampler2D pvj_src;\nuniform float pvj_amount;\n"
-              "vec4 pvj_at(vec2 p) { return vec4(texture(pvj_src, clamp(p, vec2(0.0), vec2(1.0))).rgb, 1.0); }\n"
-              "vec4 pvj_img_this() { return pvj_at(pvj_pos); }\n"
-              "vec4 pvj_img_norm(vec2 q) { return pvj_at(vec2(q.x, 1.0 - q.y)); }\n"
+        g(&b, "uniform sampler2D mctl_src;\nuniform float mctl_amount;\n"
+              "vec4 mctl_at(vec2 p) { return vec4(texture(mctl_src, clamp(p, vec2(0.0), vec2(1.0))).rgb, 1.0); }\n"
+              "vec4 mctl_img_this() { return mctl_at(mctl_pos); }\n"
+              "vec4 mctl_img_norm(vec2 q) { return mctl_at(vec2(q.x, 1.0 - q.y)); }\n"
               // the picture's own size, not the pass's (a pass into a smaller buffer has its own RENDERSIZE): the
               // review of #170
-              "uniform vec2 pvj_src_sz;\n"
-              "vec4 pvj_img_px(vec2 q) { return pvj_at(vec2(q.x, pvj_src_sz.y - q.y) / pvj_src_sz); }\n"
-              "vec2 pvj_img_size() { return pvj_src_sz; }\n");
+              "uniform vec2 mctl_src_sz;\n"
+              "vec4 mctl_img_px(vec2 q) { return mctl_at(vec2(q.x, mctl_src_sz.y - q.y) / mctl_src_sz); }\n"
+              "vec2 mctl_img_size() { return mctl_src_sz; }\n");
     }
     for (int i = 0; i < p->ninputs; i++) input_decl(&b, &vals[i], constants);
     gf(&b, "#line %d\n", p->line);
     g(&b, p->code);
     g(&b, "\nvoid main() {\n"
-          "    pvj_norm = vec2(pvj_pos.x, 1.0 - pvj_pos.y);\n"
-          "    pvj_coord = vec4(pvj_norm * RENDERSIZE, 0.0, 1.0);\n"
-          "    pvj_color = vec4(0.0, 0.0, 0.0, 1.0);\n"
-          "    pvj_main();\n"
+          "    mctl_norm = vec2(mctl_pos.x, 1.0 - mctl_pos.y);\n"
+          "    mctl_coord = vec4(mctl_norm * RENDERSIZE, 0.0, 1.0);\n"
+          "    mctl_color = vec4(0.0, 0.0, 0.0, 1.0);\n"
+          "    mctl_main();\n"
           // a pass into a buffer keeps what the code wrote, alpha and (in a float buffer) values outside 0 to 1
-          "    if (pvj_final == 0) { pvj_out = pvj_color; return; }\n"
-          "    vec3 c = clamp(pvj_color.rgb, 0.0, 1.0) * clamp(pvj_color.a, 0.0, 1.0);\n");
+          "    if (mctl_final == 0) { mctl_out = mctl_color; return; }\n"
+          "    vec3 c = clamp(mctl_color.rgb, 0.0, 1.0) * clamp(mctl_color.a, 0.0, 1.0);\n");
     if (p->kind == FX_GENERATOR)
-        g(&b, "    c = clamp(pvj_hue * c, 0.0, 1.0);\n"
-              "    c = clamp(c * pvj_gain, 0.0, 1.0);\n"
+        g(&b, "    c = clamp(mctl_hue * c, 0.0, 1.0);\n"
+              "    c = clamp(c * mctl_gain, 0.0, 1.0);\n"
               // half a step of noise against bands in slow gradients, as the panel's translation has it
-              "    c += (fract(pvj_coord.x * 0.6113 + pvj_coord.y * 0.3791) - 0.5) / 255.0;\n");
+              "    c += (fract(mctl_coord.x * 0.6113 + mctl_coord.y * 0.3791) - 0.5) / 255.0;\n");
     else
-        g(&b, "    c = mix(texture(pvj_src, pvj_pos).rgb, c, pvj_amount);\n");
-    g(&b, "    pvj_out = vec4(c, 1.0);\n}\n");
+        g(&b, "    c = mix(texture(mctl_src, mctl_pos).rgb, c, mctl_amount);\n");
+    g(&b, "    mctl_out = vec4(c, 1.0);\n}\n");
     if (b.failed) { buf_free(&b); snprintf(err, n, "out of memory"); return 0; }
     GLuint vs = fx_compile(GL_VERTEX_SHADER, FX_VS, err, n);
     GLuint fs = vs ? fx_compile(GL_FRAGMENT_SHADER, b.p, err, n) : 0;
@@ -530,7 +530,7 @@ static GLuint fx_program(const FxProg *p, const FxValue *vals, int constants, ch
     GLuint prog = glCreateProgram();
     glAttachShader(prog, vs);
     glAttachShader(prog, fs);
-    glBindAttribLocation(prog, 0, "pvj_vert");
+    glBindAttribLocation(prog, 0, "mctl_vert");
     glLinkProgram(prog);
     glDeleteShader(vs);
     glDeleteShader(fs);
@@ -555,18 +555,18 @@ static void fx_locations(FxGL *f, const FxProg *p)
     f->u_frame = glGetUniformLocation(f->prog, "FRAMEINDEX");
     f->u_date = glGetUniformLocation(f->prog, "DATE");
     f->u_size = glGetUniformLocation(f->prog, "RENDERSIZE");
-    f->u_hue = glGetUniformLocation(f->prog, "pvj_hue");
-    f->u_gain = glGetUniformLocation(f->prog, "pvj_gain");
-    f->u_src = glGetUniformLocation(f->prog, "pvj_src");
-    f->u_amount = glGetUniformLocation(f->prog, "pvj_amount");
+    f->u_hue = glGetUniformLocation(f->prog, "mctl_hue");
+    f->u_gain = glGetUniformLocation(f->prog, "mctl_gain");
+    f->u_src = glGetUniformLocation(f->prog, "mctl_src");
+    f->u_amount = glGetUniformLocation(f->prog, "mctl_amount");
     f->u_pass = glGetUniformLocation(f->prog, "PASSINDEX");
-    f->u_final = glGetUniformLocation(f->prog, "pvj_final");
-    f->u_srcsz = glGetUniformLocation(f->prog, "pvj_src_sz");
+    f->u_final = glGetUniformLocation(f->prog, "mctl_final");
+    f->u_srcsz = glGetUniformLocation(f->prog, "mctl_src_sz");
     for (int i = 0; i < p->ntargets; i++) {
         char name[32];
-        snprintf(name, sizeof name, "pvj_t%d", i);
+        snprintf(name, sizeof name, "mctl_t%d", i);
         f->u_t[i] = glGetUniformLocation(f->prog, name);
-        snprintf(name, sizeof name, "pvj_t%d_sz", i);
+        snprintf(name, sizeof name, "mctl_t%d_sz", i);
         f->u_tsz[i] = glGetUniformLocation(f->prog, name);
     }
     for (int i = 0; i < p->ninputs; i++) f->u_in[i] = f->constants ? -1 : glGetUniformLocation(f->prog, p->in[i].name);
