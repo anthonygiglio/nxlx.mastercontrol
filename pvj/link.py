@@ -7,7 +7,7 @@ tempo and the place in a four-beat bar and writes them into one small file, `/ru
 Owner's switch (the setting `link`, the box's own), tells the helper on or off over its socket, again after a restart of
 either, and hands what the file says to the box clock (pvj/clock.py). Off is the default.
 
-The panel only reads the file and talks over the socket, as it does with pvj-render; nothing of Link is in this process.
+The panel only reads the file and talks over the socket, as it does with mctl-render; nothing of Link is in this process.
 
 What reaches the clock, and when: only a whole record, written by a helper that is on, with at least one peer, and no
 older than STALE_SECONDS. A session of nobody says nothing, so Link's own default tempo never reaches the clock, and a

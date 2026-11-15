@@ -329,7 +329,7 @@ class Api:
         player_dir = os.path.dirname(getattr(player, "socket_path", "") or "") or paths.player_dir()
         self.screen = screenmode.Screen(self, settings, os.path.dirname(getattr(settings, "path", "") or "") or ".",
                                         player_dir, log=lambda line: self.log(line))
-        # Which program draws (D95): classic mpv or pvj-render; the wish beside settings.json, the report beside the socket.
+        # Which program draws (D95): classic mpv or mctl-render; the wish beside settings.json, the report beside the socket.
         from . import renderer as renderer_mod
         self.renderer = renderer_mod.Renderer(self, settings, os.path.dirname(getattr(settings, "path", "") or "") or ".",
                                               player_dir, log=lambda line: self.log(line))
@@ -463,7 +463,7 @@ class Api:
         return out
 
     def _layered_fade(self, ask=True, kind="crossfade"):
-        """True where the player is pvj-render with two video layers, which draws the transition `kind` itself (D98 a
+        """True where the player is mctl-render with two video layers, which draws the transition `kind` itself (D98 a
         crossfade, D111 a wipe or a slide), and what plays is a plain clip (out of a generator or a live input it
         takes D71's still, on that player too). Asked of the player once per process (Player.crossfades, Player.moves);
         a player without these questions is classic. So the status shows the still's reason for giving up whenever
@@ -1895,9 +1895,9 @@ class Api:
         # that is dark (Blackout, a picture faded out) has nothing to blend from, as the dip skips itself there.
         # Where the box cannot do one it dips; where the still itself fails, time has passed already and the clip
         # is cut to. Whether anything is loaded in the player is the still's own first question.
-        # On pvj-render with two video layers (D98) a crossfade from a plain clip is the renderer's own, and on one that
+        # On mctl-render with two video layers (D98) a crossfade from a plain clip is the renderer's own, and on one that
         # says so (D111) a wipe or a slide too: no still, no freeze, both pictures play, and the box never gives up on it
-        # for a slow still. Out of a generator or a live input, D71's still as on classic (it works on pvj-render too;
+        # for a slow still. Out of a generator or a live input, D71's still as on classic (it works on mctl-render too;
         # _layered_fade).
         blend = layered = False
         if kind in transitions_mod.STYLES:

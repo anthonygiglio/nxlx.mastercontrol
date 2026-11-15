@@ -505,7 +505,7 @@ class SourceRulesTest(unittest.TestCase):
         with open(os.path.join(REPO, "render", "Makefile")) as f:
             mk = f.read()
         first = re.search(r"(?m)^([a-z][a-z-]*):", mk).group(1)
-        self.assertEqual(first, "pvj-render", "plain make, and with it CI's jobs without the package, builds the renderer only")
+        self.assertEqual(first, "mctl-render", "plain make, and with it CI's jobs without the package, builds the renderer only")
         self.assertNotIn("pvj-link", mk.split("# pvj-link (D117)")[0])
 
 

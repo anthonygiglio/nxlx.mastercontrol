@@ -271,7 +271,7 @@ class Lists:
 
 class Clips:
     """The one place between the socket and everything else (Ipc.translate). A source that plays a list reads as the
-    plain clip: `path`, `duration`, `time-pos`, `percent-pos`, `playlist`, the rows of `pvj-sources`, and a seek inside
+    plain clip: `path`, `duration`, `time-pos`, `percent-pos`, `playlist`, the rows of `mctl-sources`, and a seek inside
     the clip lands in the pass that plays now. What is not named here goes through untouched. The answers are worked
     out from what the player says at that moment, so nothing here can go stale."""
 
@@ -279,7 +279,7 @@ class Clips:
         self.lists = lists
 
     def request(self, ask, command, wait=None):
-        head, rest = (command[:2], command[2:]) if command and command[0] == "pvj-source" else ((), command)
+        head, rest = (command[:2], command[2:]) if command and command[0] == "mctl-source" else ((), command)
         if rest and rest[0] == "get_property" and len(rest) == 2:
             read = self._READS.get(rest[1])
             if read is not None:
@@ -323,7 +323,7 @@ class Clips:
         return rows
 
     def _sources(self, get):
-        rows = get("pvj-sources")
+        rows = get("mctl-sources")
         if isinstance(rows, list):
             for row in rows:
                 view = self.lists.view(row.get("path")) if isinstance(row, dict) else None
@@ -332,7 +332,7 @@ class Clips:
         return rows
 
     _READS = {"path": _path, "duration": _duration, "time-pos": _position, "percent-pos": _percent, "playlist": _playlist,
-              "pvj-sources": _sources}
+              "mctl-sources": _sources}
 
     def _seek(self, send, get, value, flags):
         """An absolute place in the clip is that place in the pass that plays (`absolute+exact` is one string). A

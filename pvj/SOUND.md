@@ -183,7 +183,7 @@ A Guest gets nothing of this.
 
 The values are not sound. But six band levels fifty times a second are close to what a channel vocoder carries, and someone determined could make speech in the room partly understandable from them. So (the coordinator's decision after the review of #145):
 
-- **On the box** the levels file keeps 50 a second (pvj-render's phase 4 needs it). It is readable only by group `audio`, who can already record the microphone.
+- **On the box** the levels file keeps 50 a second (mctl-render's phase 4 needs it). It is readable only by group `audio`, who can already record the microphone.
 - **Every reader off the box** (the page's meter on any device, OSC to the D82 targets and the D94 render nodes) gets the bands only as the slow ones: the mean of 200 ms, changed at most 5 times a second. Band levels that move at most 2.5 times a second are below the rate of syllables (about 4 to 5 a second): they carry whether someone speaks, not what. The level, the envelope and the beat may leave up to 20 times a second.
 - **Through the support tunnel** the meter has the level, the envelope and the beat, and no band at all.
 - The page says this in one line above the switches before the Owner switches sending on, and says plainly where the values go: to the paired Owner and Operator devices that open the page, and over OSC to the devices he lists on the box's own network.

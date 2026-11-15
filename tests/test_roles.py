@@ -536,11 +536,11 @@ class GateTableTest(RolesBase):
         for module in (midi, osc, dmx, room, scheduler):
             for call in re.findall(r"api\.handle\(([^\n]*)", inspect.getsource(module)):
                 self.assertRegex(call, r"(MIDI|OSC|DMX|ROOM)_DEVICE", "%s calls the API as something else: %s" % (module.__name__, call))
-        pvj_dir = os.path.dirname(api_mod.__file__)
+        mctl_dir = os.path.dirname(api_mod.__file__)
         def text(name):
-            with open(os.path.join(pvj_dir, name)) as f:
+            with open(os.path.join(mctl_dir, name)) as f:
                 return f.read()
-        callers = sorted(n for n in os.listdir(pvj_dir) if n.endswith(".py") and re.search(r"api\.handle\(", text(n)))
+        callers = sorted(n for n in os.listdir(mctl_dir) if n.endswith(".py") and re.search(r"api\.handle\(", text(n)))
         self.assertEqual(callers, ["dmx.py", "midi.py", "osc.py", "room.py", "scheduler.py", "server.py"])
 
     def test_a_guest_device_can_never_be_taken_for_a_controller(self):

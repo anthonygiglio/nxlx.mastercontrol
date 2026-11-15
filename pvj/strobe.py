@@ -602,7 +602,7 @@ class Strobe:
         mpv's shader list (classic). Raises PlayerError while the player does not answer."""
         ipc = self.api.player.ipc
         try:
-            rows = ipc.request("get_property", "pvj-shaders")
+            rows = ipc.request("get_property", "mctl-shaders")
         except PlayerError as e:
             if not str(e).startswith("mpv: "):
                 raise
@@ -617,7 +617,7 @@ class Strobe:
                     continue
                 if (isinstance(r, dict) and r.get("source") == SOURCE and slot in (1,) + SLOTS and r.get("state") not in (None, "off")
                         and isinstance(r.get("path"), str) and self._is_strobe_file(r["path"], self.NATIVE_MARK)):
-                    ipc.request("pvj-shader", "clear", SOURCE, r["slot"])
+                    ipc.request("mctl-shader", "clear", SOURCE, r["slot"])
                     self.log("pvj-web: strobe: a strobe left running in slot %s by an earlier run was taken off" % r["slot"])
             return
         listed = ipc.request("get_property", "glsl-shaders")

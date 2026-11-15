@@ -87,14 +87,14 @@ class TranslatorTest(unittest.TestCase):
         self.assertEqual(t.count("//!"), 5)                          # only the commands written here
         for line in ("const float speed = 1.0;", "const bool flip = true;", "const int mode = 2;",
                      "const vec4 tint = vec4(1.0, 0.5, 0.25, 1.0);", "const vec2 spot = vec2(0.25, 0.75);", "const bool bang = false;",
-                     "#define RENDERSIZE vec2(1280.0, 720.0)", "#define TIME pvj_time", "precision highp float;",
-                     "    pvj_time = (float(pvj_hi) * pvj_k + float(pvj_lo)) / 30.0 + 0.0;",
-                     "#define isf_FragNormCoord pvj_norm", "void pvj_main()", "    pvj_main();"):
+                     "#define RENDERSIZE vec2(1280.0, 720.0)", "#define TIME mctl_time", "precision highp float;",
+                     "    mctl_time = (float(mctl_hi) * mctl_k + float(mctl_lo)) / 30.0 + 0.0;",
+                     "#define isf_FragNormCoord mctl_norm", "void mctl_main()", "    mctl_main();"):
             self.assertIn(line, t)
         self.assertEqual(len(re.findall(r"\bvec4 hook\(\)", t)), 1)
         for gone in ("gl_FragColor", "gl_FragCoord", "void main"):
             self.assertNotIn(gone, t)
-        self.assertIn("pvj_coord.xy / RENDERSIZE", t)
+        self.assertIn("mctl_coord.xy / RENDERSIZE", t)
         self.assertNotIn("mat3(", t)                                 # no palette shift asked for
 
     def test_compile_errors_point_at_the_lines_of_the_isf_file(self):
@@ -106,7 +106,7 @@ class TranslatorTest(unittest.TestCase):
         # specifications of 1.40 and 3.30, section 3.3; GLSL 1.40 is a Raspberry Pi 4's): the number is picked by
         # the language, and the file's code follows it at once
         out = S.translate(p, (640, 360))
-        self.assertIn("#if defined(GL_ES) || __VERSION__ >= 330\n#define PVJ_LINE %d\n#else\n#define PVJ_LINE %d\n#endif\n#line PVJ_LINE\n%s"
+        self.assertIn("#if defined(GL_ES) || __VERSION__ >= 330\n#define MCTL_LINE %d\n#else\n#define MCTL_LINE %d\n#endif\n#line MCTL_LINE\n%s"
                       % (p["line"], p["line"] - 1, p["code"]), out)
         self.assertEqual(out.count("#line"), 1)
 
@@ -173,8 +173,8 @@ class TranslatorTest(unittest.TestCase):
         for decl in ("uniform sampler2D secret;", "varying vec2 v;", "in vec2 p;", "out vec4 o;", "layout(location = 0) out vec4 o;", "attribute vec2 a;"):
             self.assertIn("uniform, varying, in or out", refusal(self, isf(body=decl + "\n" + ok)), decl)
         # (`out_color`, spelled exactly so, is no longer refused but renamed: see the test of the two renamed names)
-        for name in ("pvj_color", "HOOKED_tex", "pvj_main", "PVJ_HP", "Hooked_pos", "texture0", "texcoord0", "Out_Color", "OUT_COLOR",
-                     "pvj_u_out_color", "pvj_in_color", "input_size"):
+        for name in ("mctl_color", "HOOKED_tex", "mctl_main", "MCTL_HP", "Hooked_pos", "texture0", "texcoord0", "Out_Color", "OUT_COLOR",
+                     "mctl_u_out_color", "mctl_in_color", "input_size"):
             self.assertIn("used by the player", refusal(self, isf(body="float %s = 1.0;\n%s" % (name, ok))))
         # behind a comment, and in the middle of a line: the compiler sees these, so the checks must too
         for hidden in ("/**/#extension GL_OES_standard_derivatives : enable", "/* */ #pragma optimize(off)", "/* a\nb */#version 100",
@@ -185,7 +185,7 @@ class TranslatorTest(unittest.TestCase):
             self.assertIn("uniform, varying, in or out", refusal(self, isf(body=decl + "\n" + ok)), decl)
         self.assertTrue(S.parse(isf(body="void twice(in float a, out float b, inout float c) { b = a; }\n" + ok)))   # parameters are fine
         self.assertIn("used by the player", refusal(self, isf(body="void main() { gl_FragColor = texture2D(texture0, vec2(0.5)); }")))
-        for line in ("#undef PVJ_HP", "#define hook x", "#define HOOK x", "#define TIME 0.0", "#undef RENDERSIZE", "#define gl_Position x",
+        for line in ("#undef MCTL_HP", "#define hook x", "#define HOOK x", "#define TIME 0.0", "#undef RENDERSIZE", "#define gl_Position x",
                      "#define frame 0", "#define a__b 1"):
             self.assertIn("is not allowed", refusal(self, isf(body=line + "\n" + ok)), line)
         self.assertIn("not allowed", refusal(self, isf(body="#define TWO \\\n 2.0\n" + ok)))       # no line continuations
@@ -220,7 +220,7 @@ class TranslatorTest(unittest.TestCase):
             self.assertIn("line continuations", refusal(self, isf(body=body)), body)
         # a // comment that ends in a backslash does not swallow the next line here: that line is read as code
         self.assertIn("uniform, varying, in or out", refusal(self, isf(body="// x \\\nuniform float u;\n" + ok)))
-        self.assertIn("gl_FragColor".replace("gl_FragColor", "pvj_color"), S.translate(S.parse(isf(body="// x \\\n" + ok)), (640, 360)))
+        self.assertIn("gl_FragColor".replace("gl_FragColor", "mctl_color"), S.translate(S.parse(isf(body="// x \\\n" + ok)), (640, 360)))
         # a comment cannot be used to carry something past the checks: what follows it is still read as code
         for body, reason in (("// \u2013\nuniform float u;\n" + ok, "uniform, varying, in or out"),
                              ("/* \u2013 */ #pragma optimize(off)\n" + ok, "not allowed"),
@@ -231,7 +231,7 @@ class TranslatorTest(unittest.TestCase):
 
     def test_two_names_the_player_owns_are_renamed_and_never_reach_it(self):
         """`out_color` (9 generators of ISF-Files) and an input called `color` (3) were refused. Both are now written
-        under a pvj_ name, which a file cannot spell itself; the player's own words stay out of the generated text."""
+        under a mctl_ name, which a file cannot spell itself; the player's own words stay out of the generated text."""
         body = ("vec4 tint(vec4 c) { return c * color; }\n"
                 "void main() {\n    vec4 out_color = tint(vec4(isf_FragNormCoord, 0.5, 1.0));\n    gl_FragColor = out_color + Color;\n}\n")
         p = S.parse(isf(INPUTS=[{"NAME": "color", "TYPE": "color", "DEFAULT": [1, 0, 0, 1]}, {"NAME": "Color", "TYPE": "float"}], body=body))
@@ -240,14 +240,14 @@ class TranslatorTest(unittest.TestCase):
         code = out.split("#line", 1)[1]
         self.assertNotRegex(code, r"\bout_color\b")
         self.assertNotRegex(code, r"(?i)\bcolor\b")
-        self.assertIn("const vec4 pvj_in_color = vec4(1.0, 0.0, 0.0, 1.0);", out)
-        self.assertIn("const float pvj_in_Color = 0.25;", out)
-        self.assertIn("vec4 pvj_u_out_color = tint(", out)
-        self.assertIn("return c * pvj_in_color;", out)
+        self.assertIn("const vec4 mctl_in_color = vec4(1.0, 0.0, 0.0, 1.0);", out)
+        self.assertIn("const float mctl_in_Color = 0.25;", out)
+        self.assertIn("vec4 mctl_u_out_color = tint(", out)
+        self.assertIn("return c * mctl_in_color;", out)
         self.assertEqual(S.clean_values(p, {"Color": 5}), {"Color": 1.0})
         # what stays refused: every other spelling, the names the renaming uses, and a #define of either word
         ok = "void main() { gl_FragColor = vec4(1.0); }"
-        for line in ("float OUT_COLOR;", "float Out_color;", "float pvj_u_out_color;", "float pvj_in_color;"):
+        for line in ("float OUT_COLOR;", "float Out_color;", "float mctl_u_out_color;", "float mctl_in_color;"):
             self.assertIn("used by the player", refusal(self, isf(body=line + "\n" + ok)), line)
         for line in ("#define out_color gl_FragColor", "#define color vec4(1.0)", "#undef out_color"):
             self.assertIn("is not allowed", refusal(self, isf(body=line + "\n" + ok)), line)
@@ -264,8 +264,8 @@ class TranslatorTest(unittest.TestCase):
     def test_input_names_and_numbers_are_checked_strictly(self):
         def one(spec):
             return isf(INPUTS=[spec])
-        for name in ("gl_FragColor", "hook", "frame", "random", "main", "TIME", "RENDERSIZE", "sin", "float", "pvj_x", "isf_x", "HOOKED_pos",
-                     "PVJ_HP", "Hook", "Frame", "RANDOM", "Main", "Gl_x", "hooked_x", "texture0", "TEXCOORD0",    # (Time, rendersize: LenientTest)
+        for name in ("gl_FragColor", "hook", "frame", "random", "main", "TIME", "RENDERSIZE", "sin", "float", "mctl_x", "isf_x", "HOOKED_pos",
+                     "MCTL_HP", "Hook", "Frame", "RANDOM", "Main", "Gl_x", "hooked_x", "texture0", "TEXCOORD0",    # (Time, rendersize: LenientTest)
                      "a b", "a;float b", "1a", "_a", "a__b", "", "x" * 33, "speed\n", "café", None, 7, ["a"]):
             with self.assertRaises(S.ShaderError, msg=repr(name)):
                 S.parse(one({"NAME": name, "TYPE": "float"}))
@@ -324,7 +324,7 @@ class TranslatorTest(unittest.TestCase):
 
     def test_the_code_is_translated_once_per_file_not_at_every_show(self):
         p = S.parse(isf())
-        self.assertIn("void pvj_main()", p["code"])
+        self.assertIn("void mctl_main()", p["code"])
         import unittest.mock
         with unittest.mock.patch.object(S.re, "sub", side_effect=AssertionError("translate must not search the code again")):
             self.assertIn(p["code"], S.translate(p, (1280, 720), {"speed": 2}))
@@ -488,8 +488,8 @@ class LenientTest(unittest.TestCase):
         out = S.translate(p, (640, 360))
         for gone in ("Ana", "Lanterns", "credit", "braces", "not me", "two more"):
             self.assertNotIn(gone, out)
-        self.assertEqual(out.replace("PVJ_LINE %d" % p["line"], "L").replace("PVJ_LINE %d" % (p["line"] - 1), "M"),
-                         S.translate(plain, (640, 360)).replace("PVJ_LINE %d" % plain["line"], "L").replace("PVJ_LINE %d" % (plain["line"] - 1), "M"))
+        self.assertEqual(out.replace("MCTL_LINE %d" % p["line"], "L").replace("MCTL_LINE %d" % (p["line"] - 1), "M"),
+                         S.translate(plain, (640, 360)).replace("MCTL_LINE %d" % plain["line"], "L").replace("MCTL_LINE %d" % (plain["line"] - 1), "M"))
         # Windows line ends, a byte order mark, and bytes instead of text
         for same in (text.replace("\n", "\r\n"), "﻿" + text, text.encode("utf-8"), ("﻿" + text.replace("\n", "\r\n")).encode("utf-8")):
             self.assertEqual(S.parse(same)["code"], plain["code"])
@@ -516,7 +516,7 @@ class LenientTest(unittest.TestCase):
             self.assertIn("MARK", code[at[0] - (p["line"] - 1)], lead)      # the line of the file is the line of the code
             self.assertEqual(p["line"], S.parse(isf(body=body))["line"] + lead.count("\n"))
             out = S.translate(p, (640, 360))
-            self.assertIn("#define PVJ_LINE %d\n#else\n#define PVJ_LINE %d\n#endif\n#line PVJ_LINE\n%s" % (p["line"], p["line"] - 1, p["code"]), out)
+            self.assertIn("#define MCTL_LINE %d\n#else\n#define MCTL_LINE %d\n#endif\n#line MCTL_LINE\n%s" % (p["line"], p["line"] - 1, p["code"]), out)
             self.assertEqual(out.count("#line"), 1)
 
     def test_only_comments_and_blank_space_may_stand_before_the_header(self):
@@ -637,7 +637,7 @@ class LenientTest(unittest.TestCase):
                  (isf(body="#version 100\n" + OK_MAIN), "not allowed"), (isf(body="#include <x>\n" + OK_MAIN), "not allowed"),
                  (isf(body="#line 1\n" + OK_MAIN), "not allowed"), (isf(body="#define hook x\n" + OK_MAIN), "is not allowed"),
                  (isf(body="uniform sampler2D secret;\n" + OK_MAIN), "uniform, varying, in or out"),
-                 (isf(body="float pvj_time;\n" + OK_MAIN), "used by the player"), (isf(body="vec4 hook() { return vec4(1.0); }\n" + OK_MAIN), "used by the player"),
+                 (isf(body="float mctl_time;\n" + OK_MAIN), "used by the player"), (isf(body="vec4 hook() { return vec4(1.0); }\n" + OK_MAIN), "used by the player"),
                  (isf(body=OK_MAIN + "\nvoid main() {}"), "exactly one void main"), (isf(body="float a = 1.0; \\\n" + OK_MAIN), "line continuations"),
                  (isf(body="float café;\n" + OK_MAIN), "ASCII"), (isf(body=OK_MAIN + "/" * S.MAX_SOURCE), "larger than")]
         for text, reason in cases:
@@ -744,32 +744,32 @@ class LenientTest(unittest.TestCase):
         p = S.parse(isf(INPUTS=inputs, body=body))
         self.assertEqual([(i["name"], i["label"]) for i in p["inputs"]], [("time", "Time"), ("Date", "Date"), ("my_time", "my_time")])
         out = S.translate(p, (640, 360), {"time": 1.5})
-        self.assertIn("const float pvj_in_time = 1.5;", out)
-        self.assertIn("const float pvj_in_Date = 0.5;", out)
+        self.assertIn("const float mctl_in_time = 1.5;", out)
+        self.assertIn("const float mctl_in_Date = 0.5;", out)
         self.assertIn("const vec2 my_time = vec2(0.0, 0.0);", out)                 # a name that only holds the word is left alone
-        self.assertIn("#define TIME pvj_time", out)
-        self.assertIn("return sin(TIME * pvj_in_time + time_scale + TIMEDELTA);", out)
-        self.assertIn("float t = pvj_in_time;", out)
-        self.assertIn("vec4(wave(t), pvj_in_Date, my_time.x, 1.0)", out)
+        self.assertIn("#define TIME mctl_time", out)
+        self.assertIn("return sin(TIME * mctl_in_time + time_scale + TIMEDELTA);", out)
+        self.assertIn("float t = mctl_in_time;", out)
+        self.assertIn("vec4(wave(t), mctl_in_Date, my_time.x, 1.0)", out)
         self.assertNotRegex(out, r"\btime\b")
         self.assertNotRegex(out.split("#line", 1)[1], r"\bDate\b")
         # everything outside the shader text keeps the file's own name: values by name, and their limits
         self.assertEqual(S.clean_values(p, {"time": 5, "Date": -1}), {"time": 2.0, "Date": 0.0})
         with self.assertRaises(S.ShaderError):
-            S.clean_values(p, {"pvj_in_time": 1})
+            S.clean_values(p, {"mctl_in_time": 1})
         self.assertEqual(S.shape_of(p, {"time": 1.0}), "[]")
         # both spellings at once are two inputs
         p = S.parse(isf(INPUTS=[{"NAME": "time", "TYPE": "float"}, {"NAME": "Time", "TYPE": "bool"}], body="void main() { gl_FragColor = vec4(Time ? time : 0.0); }"))
         out = S.translate(p, (640, 360))
-        self.assertIn("const float pvj_in_time = 0.5;\nconst bool pvj_in_Time = false;", out)
-        self.assertIn("vec4(pvj_in_Time ? pvj_in_time : 0.0)", out)
+        self.assertIn("const float mctl_in_time = 0.5;\nconst bool mctl_in_Time = false;", out)
+        self.assertIn("vec4(mctl_in_Time ? mctl_in_time : 0.0)", out)
         # in a filter of the playing picture too
         fx = ("/*{\"INPUTS\": [{\"NAME\": \"inputImage\", \"TYPE\": \"image\"}, {\"NAME\": \"time\", \"TYPE\": \"float\"}]}*/\n"
               "void main() { gl_FragColor = IMG_THIS_PIXEL(inputImage) * time * fract(TIME); }\n")
         f = S.parse(fx, S.FILTER)
         self.assertEqual(([i["name"] for i in f["inputs"]], f["clock"]), (["time"], True))
-        self.assertIn("pvj_img_this() * pvj_in_time * fract(TIME)", f["code"])
-        self.assertEqual(S.input_lines(f, {}), ["const float pvj_in_time = 0.5;"])
+        self.assertIn("mctl_img_this() * mctl_in_time * fract(TIME)", f["code"])
+        self.assertEqual(S.input_lines(f, {}), ["const float mctl_in_time = 0.5;"])
 
     def test_one_rule_says_which_reserved_names_are_renamed_and_which_stay_refused(self):
         def one(name):
@@ -779,7 +779,7 @@ class LenientTest(unittest.TestCase):
                      "SIN", "Step", "Length", "Filter", "Input", "Sample", "Sampler2d", "TEXTURE", "img_pixel", "vv_fragnormcoord", "Color", "COLOR", "color"):
             self.assertEqual(one(name), name)
             self.assertTrue(S.renamed(name), name)
-            self.assertEqual(S.ident(name), "pvj_in_" + name)
+            self.assertEqual(S.ident(name), "mctl_in_" + name)
         # a reserved word letter for letter: refused, since renaming it would rename the code's own uses of the word
         for name in ("TIME", "TIMEDELTA", "DATE", "FRAMEINDEX", "PASSINDEX", "RENDERSIZE", "IMG_PIXEL", "float", "mix", "sin", "step", "length", "filter",
                      "input", "sample", "sampler2D", "texture", "texture2D", "vec4", "main", "frame", "random", "hook", "input_size", "pixel_size"):
@@ -787,8 +787,8 @@ class LenientTest(unittest.TestCase):
             self.assertFalse(S.renamed(name), name)
         # the player's and the translator's own words, their patterns and their prefixes: refused in any letter case
         for name in ("Frame", "FRAME", "Random", "RANDOM", "Main", "MAIN", "Hook", "HOOK", "Input_Size", "TARGET_SIZE", "Tex_Offset", "Pixel_Size",
-                     "Out_Color", "out_color", "OUT_COLOR", "TEXCOORD0", "Texture0", "Hooked_pos", "HOOKED", "Gl_x", "GL_FragColor", "Pvj_x", "PVJ_HP",
-                     "pvj_in_time", "Isf_x", "ISF_FragNormCoord", "isf_fragnormcoord", "ti__me", "time__"):
+                     "Out_Color", "out_color", "OUT_COLOR", "TEXCOORD0", "Texture0", "Hooked_pos", "HOOKED", "Gl_x", "GL_FragColor", "Mctl_x", "MCTL_HP",
+                     "mctl_in_time", "Isf_x", "ISF_FragNormCoord", "isf_fragnormcoord", "ti__me", "time__"):
             self.assertIn("is taken", refusal(self, isf(INPUTS=[{"NAME": name, "TYPE": "float"}])), name)
         # every reserved word, in four spellings: it is refused or it is renamed, and never an input under its own name
         taken = 0
@@ -801,7 +801,7 @@ class LenientTest(unittest.TestCase):
                     self.assertNotIn(name.lower(), S._INPUT_RENAMED)
                     continue
                 taken += 1
-                self.assertTrue(S.ident(name).startswith("pvj_in_"), name)
+                self.assertTrue(S.ident(name).startswith("mctl_in_"), name)
                 self.assertTrue(name not in S.RESERVED or name == "color", name)
         self.assertGreater(taken, 250)
         self.assertTrue(S._PLAYER_WORDS <= S.RESERVED)
@@ -811,7 +811,7 @@ class LenientTest(unittest.TestCase):
         # the renamed names cannot be defined, undefined or written by the code itself
         for line in ("#define time 1.0", "#undef time", "#define Time x", "#define Date 1.0", "#define TIME 0.0", "#undef TIME"):
             self.assertIn("is not allowed", refusal(self, isf(INPUTS=[{"NAME": "time", "TYPE": "float"}], body=line + "\n" + OK_MAIN)), line)
-        for line in ("float pvj_in_time = 1.0;", "float PVJ_IN_TIME;", "float pvj_time;"):
+        for line in ("float mctl_in_time = 1.0;", "float MCTL_IN_TIME;", "float mctl_time;"):
             self.assertIn("used by the player", refusal(self, isf(INPUTS=[{"NAME": "time", "TYPE": "float"}], body=line + "\n" + OK_MAIN)), line)
         # in a filter the player's clock names stay refused as inputs, letter for letter and in any letter case
         for name in ("frame", "random", "Frame", "RANDOM"):
@@ -1475,8 +1475,8 @@ class LenientUploadTest(Base):
         self.assertEqual(self.engine.playing["values"], {"time": 1.25, "lit": False})
         with open(os.path.join(self.rundir, self.generated()[-1])) as f:
             text = f.read()
-        self.assertIn("const float pvj_in_time = 1.25;\nconst bool lit = false;", text)
-        self.assertIn("vec4(lit ? pvj_in_time : fract(TIME))", text)
+        self.assertIn("const float mctl_in_time = 1.25;\nconst bool lit = false;", text)
+        self.assertIn("vec4(lit ? mctl_in_time : fract(TIME))", text)
         for gone in ("Ana", "Lanterns", "not me", "\r", "more"):
             self.assertNotIn(gone, text)
         self.assertTrue(text.isascii())

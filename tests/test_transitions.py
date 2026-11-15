@@ -2709,9 +2709,9 @@ class RealPlayer(ServerBase):
 
 
 class LayeredCrossfade(ServerBase):
-    """D98: on pvj-render with two video layers the Mix's crossfade is the renderer's (`pvj-crossfade`), with no still
+    """D98: on mctl-render with two video layers the Mix's crossfade is the renderer's (`mctl-crossfade`), with no still
     and no freeze; on classic mpv it is D71's still exactly as before; where the renderer refuses, a cut. The stand-in
-    answers as pvj-render does when `layers` is on (tests/fakempv.py). The set-up is RealPlayer's."""
+    answers as mctl-render does when `layers` is on (tests/fakempv.py). The set-up is RealPlayer's."""
 
     live_input = RealPlayer.live_input
 
@@ -2759,30 +2759,30 @@ class LayeredCrossfade(ServerBase):
         self.assertEqual(self.lines, [])
         # asked once per player process: the next crossfade does not ask again
         self.api.play({"file": "a.mp4"}, None, "t")
-        self.assertEqual(self.mpv.commands.count("get_property pvj-render"), 1)
+        self.assertEqual(self.mpv.commands.count("get_property mctl-render"), 1)
         self.assertEqual(self.mpv.log[-1], ("fade", "file", "a.mp4"))
 
     def test_on_classic_mpv_the_crossfade_is_the_still_as_before(self):
         self.api.play({"file": "b.mov"}, None, "t")
         self.wait_still_gone()
         self.assertIn("screenshot-to-file", self.mpv.commands, "D71's still")
-        self.assertNotIn("pvj-crossfade", self.mpv.commands)
+        self.assertNotIn("mctl-crossfade", self.mpv.commands)
         self.assertEqual(self.mpv.log[-1], ("load", "file", "b.mov"))
         self.assertEqual(self.mpv.fades, [])
         # classic mpv's "property not found" is remembered for that process: asked once
         self.api.play({"file": "a.mp4"}, None, "t")
         self.wait_still_gone()
-        self.assertEqual(self.mpv.commands.count("get_property pvj-render"), 1)
+        self.assertEqual(self.mpv.commands.count("get_property mctl-render"), 1)
 
     def test_a_cut_or_a_dip_never_asks_about_layers(self):
         for style in ("cut", "dip"):
             self.settings.data["mix"] = T.stored(style, 0.2)
             self.api.play({"file": "b.mov"}, None, "t")
-        self.assertNotIn("get_property pvj-render", self.mpv.commands, "classic plays are unchanged")
+        self.assertNotIn("get_property mctl-render", self.mpv.commands, "classic plays are unchanged")
 
     def test_when_the_renderer_refuses_the_fade_it_is_a_cut_never_black(self):
         self.mpv.layers = True
-        self.mpv.fail.add("pvj-crossfade")
+        self.mpv.fail.add("mctl-crossfade")
         self.assertEqual(self.api.play({"file": "b.mov"}, None, "t"), {"playing": "b.mov"})
         self.assertEqual(self.mpv.log[-1], ("load", "file", "b.mov"), "cut to the clip")
         self.assertEqual(self.mpv.path, self.mpv.playlist[0])
@@ -2807,7 +2807,7 @@ class LayeredCrossfade(ServerBase):
             self.assertEqual(sent.count("set_property pause"), 1, "nothing froze the old clip: %s" % sent)
         self.assertIsNone(self.api.transitions.running)
         self.assertEqual(self.lines, [])
-        self.assertEqual(self.mpv.commands.count("get_property pvj-render"), 1, "asked once per player process")
+        self.assertEqual(self.mpv.commands.count("get_property mctl-render"), 1, "asked once per player process")
 
     def test_a_crossfade_sends_what_it_always_sent(self):
         self.mpv.layers = self.mpv.moves = True
@@ -2825,10 +2825,10 @@ class LayeredCrossfade(ServerBase):
     def test_on_classic_mpv_a_wipe_is_the_still_as_before(self):
         self.settings.data["mix"] = T.stored("wipe-from-top", 0.2)
         self.still_crossfade()
-        self.assertNotIn("pvj-crossfade", self.mpv.commands)
+        self.assertNotIn("mctl-crossfade", self.mpv.commands)
         self.api.play({"file": "a.mp4"}, None, "t")
         self.wait_still_gone()
-        self.assertEqual(self.mpv.commands.count("get_property pvj-render"), 2, "classic's answer is remembered: "
+        self.assertEqual(self.mpv.commands.count("get_property mctl-render"), 2, "classic's answer is remembered: "
                          "the question about layers, as Player.still asks it, and the one about moves, once each")
 
     def test_out_of_a_generator_on_the_new_renderer_a_slide_is_d71s_still(self):
@@ -2849,7 +2849,7 @@ class LayeredCrossfade(ServerBase):
     def test_when_the_renderer_refuses_a_wipe_it_is_a_cut_never_black(self):
         self.mpv.layers = self.mpv.moves = True
         self.settings.data["mix"] = T.stored("wipe-from-left", 1.0)
-        self.mpv.fail.add("pvj-crossfade")
+        self.mpv.fail.add("mctl-crossfade")
         self.assertEqual(self.api.play({"file": "b.mov"}, None, "t"), {"playing": "b.mov"})
         self.assertEqual(self.mpv.log[-1], ("load", "file", "b.mov"), "cut to the clip")
         self.assertNotIn("screenshot-to-file", self.mpv.commands)
@@ -2879,10 +2879,10 @@ class LayeredCrossfade(ServerBase):
         self.settings.data["mix"] = T.stored("wipe-from-left", 1.0)
         self.assertIs(self.player.crossfades(), True)
         self.assertIs(self.player.moves(ask=False), True, "noted with the layers, with no question of its own")
-        self.assertEqual(self.mpv.commands.count("get_property pvj-render"), 1)
+        self.assertEqual(self.mpv.commands.count("get_property mctl-render"), 1)
         self.api.transitions._give_up("the clip dropped 30 frames in 2.0 seconds")
         self.assertNotIn("fallback", self.api._mix_settings(), "the status asks the player nothing, and shows no still's reason")
-        self.assertEqual(self.mpv.commands.count("get_property pvj-render"), 1)
+        self.assertEqual(self.mpv.commands.count("get_property mctl-render"), 1)
 
     def test_a_renderer_without_wipes_noted_with_its_layers_keeps_the_stills_reason(self):
         self.mpv.layers = True          # two layers, and no `moves`
@@ -2900,7 +2900,7 @@ class LayeredCrossfade(ServerBase):
         sent = self.mpv.commands[asked:]
         self.assertIn("screenshot-to-file", sent, "no still: %s" % sent)
         self.assertIn("overlay-add", sent, "the still was not laid over the clip")
-        self.assertNotIn("pvj-crossfade", sent)
+        self.assertNotIn("mctl-crossfade", sent)
         self.assertEqual(self.mpv.log[-1], ("load", "file", "b.mov"))
         self.assertEqual(self.mpv.fades, [])
         self.assertEqual(self.api.transitions.last.get("ended"), "done", self.api.transitions.last)

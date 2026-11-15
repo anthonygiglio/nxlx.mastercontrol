@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Chains of effects on the New renderer (project-log/DECISIONS.md, D106 step b).
 
-pvj-render runs up to three effects in order over any source: slots 1 to 3 of a source 2 to N, and slots 2 and 3
+mctl-render runs up to three effects in order over any source: slots 1 to 3 of a source 2 to N, and slots 2 and 3
 of source 1, whose slot 1 is the one effect of pvj/effects.py (with its worker, Vibes' guard, the floor and the
 controllers). An effect here is put on, given values and taken off through this class: the same effect files, the
 same checks of a file and of its values, the same flash limit and the same presets as pvj/effects.py, written as the

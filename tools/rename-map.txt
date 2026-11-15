@@ -87,10 +87,16 @@ pvj-graphics	mctl-graphics	render	renderer socket property
 pvj-final	mctl-final	render	renderer socket property
 pvj-screen	mctl-screen	render	renderer socket property
 pvj-capture	mctl-capture	render	renderer socket command
+pvj-heap	mctl-heap	render	renderer socket property (J-157)
+pvj-test-blank	mctl-test-blank	render	renderer test hook (TEST_HOOKS build only)
+pvj-test-buffer	mctl-test-buffer	render	renderer test hook (TEST_HOOKS build only)
+pvj-test-refuse	mctl-test-refuse	render	renderer test hook (TEST_HOOKS build only)
+PVJ_VERSION	MCTL_VERSION	render	the renderer's version macro in mctl.h (a C macro, not an environment variable)
 pvj.h	mctl.h	render	renderer C header
 PVJ_H	MCTL_H	render	header guard of pvj.h
 PVJ_JSON_H	MCTL_JSON_H	render	header guard of json.h
 PVJ_HP	MCTL_HP	render	shader precision macro
+PVJ_LINE	MCTL_LINE	render	shader line macro in the generated code
 pvj_*	mctl_*	render	shader helper names (pvj_pos, pvj_t...) and the reserved prefix pvj_
 Pvj_x	Mctl_x	render	a reserved-name case in the shader tests
 PVJWARP*	MCTLWARP*	render	mapper texture names

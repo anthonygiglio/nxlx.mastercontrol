@@ -1,12 +1,12 @@
 <!-- SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
      SPDX-License-Identifier: GPL-3.0-or-later -->
-# pvj-render
+# mctl-render
 
 `link/` beside this holds another program, pvj-link, the Ableton Link follower (D117, pvj/SOUND.md). It is C++, shares
-nothing with pvj-render, and is built only by `make pvj-link`.
+nothing with mctl-render, and is built only by `make pvj-link`.
 
 `raster/` holds pvj-raster (D129), the one program that decodes a picture somebody uploaded (PNG, JPEG, SVG) and writes
-a clean PNG. It shares nothing with pvj-render, needs only libpng and libjpeg headers, and is built only by
+a clean PNG. It shares nothing with mctl-render, needs only libpng and libjpeg headers, and is built only by
 `make pvj-raster` (the installer does that on every board). It reads one request on standard input and answers on
 standard output; systemd runs it for each job with no network and hard limits (`install/pvj-raster@.service`). Its SVG
 reader, nanosvg, is vendored unchanged in `raster/vendor/`. Since slice 2 of D129 it also draws the text and the logos that
@@ -20,7 +20,7 @@ socket: one video layer drawn by libmpv at an internal size, the projection mapp
 final pass, and overlays and on-screen text over it. Chosen on Setup > Screen output (Renderer); classic mpv stays the
 default, and the player's service goes back to it by itself when this program fails.
 
-Phase 2 (D98) adds a second video layer and draws the crossfade itself. `["pvj-crossfade", URL, SECONDS,
+Phase 2 (D98) adds a second video layer and draws the crossfade itself. `["mctl-crossfade", URL, SECONDS,
 "keep-open=no,image-display-duration=inf"]` loads the clip into the idle layer, which the socket speaks to from then on
 (path, pause, the loops, a seek: the new clip's), and mixes the two pictures by real opacity once a vblank, from the
 clip's first frame, in a straight line over SECONDS (0 to 60); then the outgoing layer is stopped. The idle layer
@@ -29,52 +29,52 @@ both layers; a load, a stop, a step in the list or another crossfade ends a fade
 Mix's Crossfade from one clip to another (`Player.play(..., fade=seconds)`); everything else is a cut, as before.
 Classic's crossfade steps a still 20 times a second; this one moves at the screen's rate, with both pictures moving.
 
-A generated loop list (D118) comes as a load like any other, with the decoded queue's `vd-queue-*` keys for that file alone: in `loadfile`'s options, and split off the options of `pvj-crossfade` and of a source's load. `end` is a time in seconds or `none`, and is set for the file that plays alone. A core whose demuxer says its file cannot be read, or that restarts 20 times in a row with no frame between, has its loop taken off, so a list whose clip is gone ends, with no seek into FFmpeg's concat demuxer.
+A generated loop list (D118) comes as a load like any other, with the decoded queue's `vd-queue-*` keys for that file alone: in `loadfile`'s options, and split off the options of `mctl-crossfade` and of a source's load. `end` is a time in seconds or `none`, and is set for the file that plays alone. A core whose demuxer says its file cannot be read, or that restarts 20 times in a row with no frame between, has its loop taken off, so a list whose clip is gone ends, with no seek into FFmpeg's concat demuxer.
 
-The wipes and the slides (D111) are the same stage. `["pvj-crossfade", URL, SECONDS, OPTIONS, MOVE]`, MOVE one of the
+The wipes and the slides (D111) are the same stage. `["mctl-crossfade", URL, SECONDS, OPTIONS, MOVE]`, MOVE one of the
 panel's eight names (`wipe-from-left`, `-right`, `-top`, `-bottom`, `slide-left`, `-right`, `-up`, `-down`): the same
 layers, clock, sound and ends, and the picture of a vblank is cut along an edge at the internal size instead of mixed.
 A slide moves the outgoing picture off and uncovers the incoming one, which stays where it is, as the panel's still
 does. Two scissored draws, so a pixel reads one texture where the mix reads two. The final pass, the effects and the
-level run on the result as on a crossfade's mix. `moves` in the `pvj-render` property says a renderer draws them,
+level run on the result as on a crossfade's mix. `moves` in the `mctl-render` property says a renderer draws them,
 `fade-kind` which one runs or ran last, `fade-steps` how many pictures it drew.
 
 Phase 3 (D106) runs generators and effects itself, with their inputs as uniforms: a value that moves is set, never
-compiled. The panel writes a program file (`src/fx.c` says what it holds) and sends `["pvj-shader", "load", 1, SLOT,
+compiled. The panel writes a program file (`src/fx.c` says what it holds) and sends `["mctl-shader", "load", 1, SLOT,
 PATH]` (slot 0 the generator, 1 the effect; the answer comes once the program is built, or says what the GPU refused,
-and the program before it runs on), `["pvj-shader", "set", 1, SLOT, {NAME: VALUE, "@speed": ..., "@hue": ...,
-"@gain": ..., "@amount": ..., "@offset": ...}]` (all of one set in one frame) and `["pvj-shader", "clear", 1, SLOT]`;
-`get_property pvj-shaders` says each slot's state, TIME, runs, late frames and builds. A generator runs at most
+and the program before it runs on), `["mctl-shader", "set", 1, SLOT, {NAME: VALUE, "@speed": ..., "@hue": ...,
+"@gain": ..., "@amount": ..., "@offset": ...}]` (all of one set in one frame) and `["mctl-shader", "clear", 1, SLOT]`;
+`get_property mctl-shaders` says each slot's state, TIME, runs, late frames and builds. A generator runs at most
 `--fx-fps` times a second (30), an effect when its picture or its values change (or its clock is due). Step c adds ISF passes and buffers (`//!TARGET` and `//!PASS` in the program file: two textures a buffer, persistent
-ones kept between runs, half floats for FLOAT where the GPU has them). Step b gives every source three effect slots (1 to 3, run in order; `pvj-shader` takes SOURCE 1 to the run's number of
+ones kept between runs, half floats for FLOAT where the GPU has them). Step b gives every source three effect slots (1 to 3, run in order; `mctl-shader` takes SOURCE 1 to the run's number of
 sources, and a generator stays source 1's slot 0). While a program
 is on, source 1's brightness is drawn after it (libmpv's own is held at 0) and a screenshot is the renderer's own
 picture (PNG or JPEG by the file's ending, `src/still.c`).
 
 Shader transitions, slice 1 (D130, version 0.9.0): each of source 1's two video layers can hold a generator of its own.
-Slot 0 of source 1 in `pvj-shader` now means the front layer's generator, and the front layer is the incoming one from
+Slot 0 of source 1 in `mctl-shader` now means the front layer's generator, and the front layer is the incoming one from
 the moment a fade starts, so a load, a clear or a value reaches the incoming program. A layer with a generator shows
 the generator's picture in the crossfade and in the wipes and slides; the outgoing generator goes on drawing until the
 fade ends (or is cut by a load, a stop or another crossfade), when the render thread frees it. The effects (slots 1 to 3)
-stay after the mix. `layer-generators` in the `pvj-render` property says a renderer does this. With no generator in
+stay after the mix. `layer-generators` in the `mctl-render` property says a renderer does this. With no generator in
 either layer nothing differs from 0.8.0, and the panel does not use it yet.
 
-Shader transitions, slice 2 (D130, version 0.10.0): `["pvj-fade-to-program", PATH, SECONDS, MOVE?]` builds the generator program
+Shader transitions, slice 2 (D130, version 0.10.0): `["mctl-fade-to-program", PATH, SECONDS, MOVE?]` builds the generator program
 file PATH into the idle layer and fades to it, from a clip or from another program (the mix, or a wipe or slide named as for
-`pvj-crossfade`). It is answered when the program is built (at most 3 s) or refused with the GPU's words; the old picture
+`mctl-crossfade`). It is answered when the program is built (at most 3 s) or refused with the GPU's words; the old picture
 plays on until then, the fade's clock starts at the new program's first drawn frame, and a refusal leaves the screen as it
-was. A `pvj-crossfade` out of a layer that holds a generator is a fade even when that layer's clip is idle. `program-fades`
-in the `pvj-render` property counts the fades into a program asked and says a renderer has the command. The panel does not use
+was. A `mctl-crossfade` out of a layer that holds a generator is a fade even when that layer's clip is idle. `program-fades`
+in the `mctl-render` property counts the fades into a program asked and says a renderer has the command. The panel does not use
 it yet.
 
 Graphics stage (D129 slice 3, version 0.11.0, `src/gfx.c`): text and logos drawn by the GPU over the final picture, below the text
 layer (so the masks, id 30, and the pairing codes, 40 to 43, stay on top; `final_pass` calls `gfx_draw` between the picture and
 the text layer, which puts the graphics in screenshots and captures too). A graphic is a slot, 1 to 8, in the order of the panel's
-list (a later slot over an earlier). Commands: `["pvj-graphic", "load", N, PATH, W, H, LINES]` (PATH: an absolute regular file,
+list (a later slot over an earlier). Commands: `["mctl-graphic", "load", N, PATH, W, H, LINES]` (PATH: an absolute regular file,
 never a link, of W x H premultiplied B G R A, at most the GPU's texture size, 4096 at most; LINES: the lines of text in it, for
-the typewriter), `["pvj-graphic", "set", N, {x, y, motion, seconds, out, speed, loop, opacity}]` (all or nothing; motion is `none`,
-`fade`, `typewriter`, `scroll` or `crawl`), `show`, `hide`, `replay`, `clear` (`["pvj-graphic", WHAT, N]`; `show` may take a fourth word, `still`, and then a fade or typing is not played; a show during a fade out starts at the level the fade out had reached). Properties: `pvj-render`
-gains `graphics` (8) and `graphics-side` (the texture limit); `pvj-graphics` says what each slot holds (`loaded`, `width`,
+the typewriter), `["mctl-graphic", "set", N, {x, y, motion, seconds, out, speed, loop, opacity}]` (all or nothing; motion is `none`,
+`fade`, `typewriter`, `scroll` or `crawl`), `show`, `hide`, `replay`, `clear` (`["mctl-graphic", WHAT, N]`; `show` may take a fourth word, `still`, and then a fade or typing is not played; a show during a fade out starts at the level the fade out had reached). Properties: `mctl-render`
+gains `graphics` (8) and `graphics-side` (the texture limit); `mctl-graphics` says what each slot holds (`loaded`, `width`,
 `height`, `on`, `motion`, `alpha`, `draws`, `loads`, `waiting`), `bytes` against `bytes-max` (48 MB for all the pictures, loaded
 and waiting), `draws`, `uploads` and `gl-objects`. A picture is read and its lines' ink measured by the client's thread, and
 uploaded by the render thread (at most two a frame); each frame the render thread takes `app.lock` once to work out every slot's
@@ -89,7 +89,7 @@ The stats overlay's command (D133, version 0.12.0): `["osd-overlay", ID, "ass-ev
 layer, which draws it last (over the mapping, so it is not warped), in an id of its own that is not `show-text`'s slot (the pairing PIN and the
 recovery codes use that one, and an overlay never replaces them). ID is a whole number from 0 to 63; TEXT is a string of at most 4096 bytes
 (an `ass-events` line needs one; `none` removes the overlay); RES_X and RES_Y 1 to 8192, Z -1000 to 1000, HIDDEN a flag; anything else, mpv's
-`compute_bounds` word too, is "invalid parameter". Any overlay on keeps the text layer on (`text-layer` in the `pvj-render` property), and `osd-overlay: true`
+`compute_bounds` word too, is "invalid parameter". Any overlay on keeps the text layer on (`text-layer` in the `mctl-render` property), and `osd-overlay: true`
 in that property says a renderer has the command (the panel refuses the overlay on one that does not, in plain words).
 
 **Licence:** GPL-3.0-or-later (this folder only; `LICENSE`). It links libmpv, which is GPLv2 or later as Debian
@@ -98,18 +98,18 @@ builds it. The rest of nxlx.mastercontrol is Apache-2.0 and only starts this pro
 **Build** (on the box, by the installer; by hand the same):
 
     sudo apt install gcc make pkg-config libmpv-dev libegl-dev libgles-dev libgbm-dev libdrm-dev
-    make -C render              # render/pvj-render
+    make -C render              # render/mctl-render
     make -C render WERROR=1     # as CI builds it
 
 **Run** (the player's service does this; by hand only with the player stopped, as the display's account):
 
-    render/pvj-render --socket=/run/pvj/player/mpv.sock --drm-device=/dev/dri/card1 --drm-connector=HDMI-A-1 \
+    render/mctl-render --socket=/run/pvj/player/mpv.sock --drm-device=/dev/dri/card1 --drm-connector=HDMI-A-1 \
         --drm-mode=1920x1080@60.00 --detail=540 --fast
 
-`--headless=WxH` draws without a screen (EGL surfaceless), for the tests: `tests/test_pvj_render.py`.
+`--headless=WxH` draws without a screen (EGL surfaceless), for the tests: `tests/test_mctl_render.py`.
 
 A picture goes out at every vblank, a new clip frame or not (the clip's last frame is used again), and
-`get_property pvj-render` counts flips, clip frames drawn and missed vblanks. `--every-vblank` is still taken and
+`get_property mctl-render` counts flips, clip frames drawn and missed vblanks. `--every-vblank` is still taken and
 changes nothing. The socket gives each client a thread of its own (at most 32 at once); a client that takes no
 answer for 2 seconds, or sends nothing for 30, is dropped. libmpv 0.40 and 0.41 leave a GL fence behind at every
 frame with the render API (on the Pi's V3D a file descriptor each); this program deletes it, and
@@ -119,7 +119,7 @@ frame with the render API (on the Pi's V3D a file descriptor each); this program
 crossfade with nothing on the screen is loaded as a cut) and `sound-held` (crossfades whose outgoing core had not closed
 its sound output within a second).
 
-The heap (J-157): pvj-render fixes glibc's threshold for blocks mapped on their own at 128 KiB at start. A block of that
+The heap (J-157): mctl-render fixes glibc's threshold for blocks mapped on their own at 128 KiB at start. A block of that
 size or more (a frame's planes, a large packet) has a mapping of its own and goes back to the system when it is freed.
 Left to glibc, the threshold rose with the first big frame freed, and every crossfade left the arenas more cut up: on
 node-03 the process grew from 62 to 782 MB in 50 crossfades. Blocks under the threshold still come from the arenas, and
@@ -127,10 +127,10 @@ what a clip leaves there is not given back by itself; so when a video layer's fi
 clip a load replaced), a thread of its own calls malloc_trim, at most once a second, never the render thread.
 `MALLOC_MMAP_THRESHOLD_` in the environment, or `glibc.malloc.mmap_threshold` in `GLIBC_TUNABLES` (pvj.env), wins: the
 program then sets no threshold of its own (the trim still runs). On a C library other than glibc none of this is done.
-`get_property pvj-heap` says the heap's bytes `used`, `free` (held by malloc and not given back), `mapped` (blocks mapped
+`get_property mctl-heap` says the heap's bytes `used`, `free` (held by malloc and not given back), `mapped` (blocks mapped
 on their own) and `arena`, the `threshold` the program set (0: none), and `trims`, `trim-ms` and `trim-ms-max`. It walks
-every arena under its lock, so it is a property of its own, for a test or a person, not part of `pvj-render`.
+every arena under its lock, so it is a property of its own, for a test or a person, not part of `mctl-render`.
 
 ## The final pass at 720 lines (D108)
 
-`--final=auto` or `--final=720`: after the first frame pvj-render finds the primary plane and tests that it can scale. If so, the final pass can draw in the top left 720 lines (the width follows the output's shape) of the one GBM surface, and the plane's source rectangle goes in the atomic commit of that frame. `["pvj-final", "full"|720]` changes it from the next frame on; pvj/renderer.py's rule decides under Automatic. Without the argument nothing of this runs. The output's size stays what every size on the socket reports, and the mapping's HOOKED_size. `pvj-render` adds `load`, `final-lines` (0: the output's size), `final-switches` and `final-why`. `["screenshot-to-file", PATH, "pvj-screen"]` is the whole final picture at the screen's size, mapping and text in it, whichever way the pass draws. A build with `make TEST_HOOKS=1` run headless with `PVJ_RENDER_TEST_FINAL=1` draws in the corner of its framebuffer, so all but the plane runs in CI.
+`--final=auto` or `--final=720`: after the first frame mctl-render finds the primary plane and tests that it can scale. If so, the final pass can draw in the top left 720 lines (the width follows the output's shape) of the one GBM surface, and the plane's source rectangle goes in the atomic commit of that frame. `["mctl-final", "full"|720]` changes it from the next frame on; pvj/renderer.py's rule decides under Automatic. Without the argument nothing of this runs. The output's size stays what every size on the socket reports, and the mapping's HOOKED_size. `mctl-render` adds `load`, `final-lines` (0: the output's size), `final-switches` and `final-why`. `["screenshot-to-file", PATH, "mctl-screen"]` is the whole final picture at the screen's size, mapping and text in it, whichever way the pass draws. A build with `make TEST_HOOKS=1` run headless with `PVJ_RENDER_TEST_FINAL=1` draws in the corner of its framebuffer, so all but the plane runs in CI.

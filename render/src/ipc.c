@@ -4,9 +4,9 @@
 // The control socket: mpv's JSON IPC protocol, a fixed subset (project-log/DECISIONS.md, D95). One JSON object a
 // line, {"command": [...], "request_id": n}, answered {"request_id": n, "error": "success", "data": ...}. Anything
 // outside the subset is answered with mpv's own words ("invalid parameter", "property not found"), so the panel's
-// code treats it as it treats mpv refusing something. Phase 2 (D98) adds one command, pvj-crossfade (below), and
+// code treats it as it treats mpv refusing something. Phase 2 (D98) adds one command, mctl-crossfade (below), and
 // every other command speaks to the video layer on the screen, so the panel still sees one player. Sources (D101) add
-// pvj-source, which speaks to source 2 to N on a short list of its own, and the property pvj-sources; every other
+// mctl-source, which speaks to source 2 to N on a short list of its own, and the property mctl-sources; every other
 // command and property still means source 1.
 //
 // The socket is reachable by the panel's group only (0660, as mpv's is made by the player's service). Still every
@@ -19,7 +19,7 @@
 // holds up the render thread. One thread for all, as before, let one slow client stop every other: on the first
 // Pi run the listen queue filled and the panel's plays answered 503 (2026-10-18).
 #define _GNU_SOURCE
-#include "pvj.h"
+#include "mctl.h"
 #include "json.h"
 #ifdef __GLIBC__
 #include <malloc.h>
@@ -317,7 +317,7 @@ static int set_str(mpv_handle *h, const char *name, const char *v) { return mpv_
 // A crossfade that is on its way ends now (under layer_lock): its incoming clip is the picture from here on, the
 // outgoing layer is stopped and idle. Called before anything that changes what the front plays (a load, a stop, a
 // step in its list, a new crossfade), so nothing is ever mixed with a picture nobody asked for.
-// The layer a pvj-fade-to-program is building a program into while layer_lock is let go (D130, slice 3), or -1. Under
+// The layer a mctl-fade-to-program is building a program into while layer_lock is let go (D130, slice 3), or -1. Under
 // layer_lock. Every command that ends a fade ends the build too (end_fade): the builder finds -1 when it takes the lock
 // again, answers that the layer was ended, and the program is asked off.
 static int building = -1;
@@ -355,13 +355,13 @@ static void end_fade(void)
     }
 }
 
-// ["pvj-crossfade", URL, SECONDS, OPTIONS?]: the incoming clip is loaded into the idle layer, which is the one the
+// ["mctl-crossfade", URL, SECONDS, OPTIONS?]: the incoming clip is loaded into the idle layer, which is the one the
 // socket speaks to from this moment (path, pause, time-pos, the loops, a seek: the new clip's, as after a loadfile);
 // the outgoing clip plays on under it, silent (its sound stops at the tap, as D71's freeze stopped it: one sound
 // device, one player on it at a time), and the render thread mixes the two from the incoming clip's first frame on,
 // over SECONDS, then stops the outgoing one. OPTIONS: "keep-open=..,image-display-duration=.." for the incoming clip.
 //
-// ["pvj-crossfade", URL, SECONDS, OPTIONS, MOVE]: all of that, and the picture is a wipe or a slide (MOVE_LIST, the
+// ["mctl-crossfade", URL, SECONDS, OPTIONS, MOVE]: all of that, and the picture is a wipe or a slide (MOVE_LIST, the
 // panel's names, D111) instead of a mix: the same layers, the same clock, the same ends. The property's `moves` says so;
 // a renderer before this one refuses the fifth word.
 //
@@ -383,7 +383,7 @@ static void wait_for_stop(int layer)
     double until = now_s() + STOP_WAIT;
     while (__atomic_load_n(&app.stops_done[layer], __ATOMIC_ACQUIRE) < __atomic_load_n(&app.stops_asked[layer], __ATOMIC_ACQUIRE)) {
         if (now_s() >= until) {
-            LOG("ipc: pvj-crossfade: layer %d has not run its stop after %.1f s", layer, STOP_WAIT);
+            LOG("ipc: mctl-crossfade: layer %d has not run its stop after %.1f s", layer, STOP_WAIT);
             return;
         }
         struct timespec ts = { 0, 1000 * 1000 };
@@ -496,20 +496,20 @@ static void crossfade(int fd, const mpv_node *id, const mpv_node *cmd)
     mpv_free(kept);
     if (r < 0) {
         pthread_mutex_unlock(&layer_lock);
-        LOG("ipc: pvj-crossfade: the incoming clip was not loaded: %s", mpv_error_string(r));
+        LOG("ipc: mctl-crossfade: the incoming clip was not loaded: %s", mpv_error_string(r));
         reply(fd, id, mpv_error_string(r), NULL);
         return;
     }
     // the sound: off the outgoing core, its output closed, then on the incoming one
     int ro = set_str(O, "aid", "no");
-    if (ro < 0) LOG("ipc: pvj-crossfade: the outgoing clip's sound could not be taken off: %s", mpv_error_string(ro));
+    if (ro < 0) LOG("ipc: mctl-crossfade: the outgoing clip's sound could not be taken off: %s", mpv_error_string(ro));
     double until = now_s() + SOUND_WAIT;
     while (has_audio_out(O) && now_s() < until) {
         struct timespec ts = { 0, 5 * 1000 * 1000 };
         nanosleep(&ts, NULL);
     }
     if (has_audio_out(O)) {
-        LOG("ipc: pvj-crossfade: the outgoing clip still holds the sound device after %.1f s; the incoming clip may be silent", SOUND_WAIT);
+        LOG("ipc: mctl-crossfade: the outgoing clip still holds the sound device after %.1f s; the incoming clip may be silent", SOUND_WAIT);
         pthread_mutex_lock(&app.lock);
         app.sound_held++;
         pthread_mutex_unlock(&app.lock);
@@ -551,12 +551,12 @@ static void forward_front(int fd, const mpv_node *id, const mpv_node *cmd, int e
 }
 
 /* ---- sources 2 to N (D101) ------------------------------------------------------------------------------------------ */
-// ["pvj-source", N, "loadfile", URL, FLAG?, OPTIONS?]  FLAG: replace (the default), append or append-play; OPTIONS:
+// ["mctl-source", N, "loadfile", URL, FLAG?, OPTIONS?]  FLAG: replace (the default), append or append-play; OPTIONS:
 //                                                      "keep-open=..,image-display-duration=.." set on that source
 //                                                      before the load (it has nobody else's file to disturb)
-// ["pvj-source", N, "stop"]
-// ["pvj-source", N, "set_property", NAME, VALUE]       NAME from SOURCE_SET
-// ["pvj-source", N, "get_property", NAME]              NAME from SOURCE_GET
+// ["mctl-source", N, "stop"]
+// ["mctl-source", N, "set_property", NAME, VALUE]       NAME from SOURCE_SET
+// ["mctl-source", N, "get_property", NAME]              NAME from SOURCE_GET
 // N is 2 to the number of sources this run has. Source 1 is spoken to by every other command, as before. A load
 // here is a cut: the crossfade (D98) is source 1's alone in this step. The source plays with no sound (aid=no from
 // its start, and aid is on no list). A source's core is its own: nothing here takes layer_lock, and the render
@@ -651,7 +651,7 @@ static void source_command(int fd, const mpv_node *id, const mpv_node *cmd)
         reply(fd, id, "success", &d);
     } else if (!strcmp(what, "set_property") && nargs == 5 && arg_str(cmd, 3)) {
         if (!in_list(SOURCE_SET, arg_str(cmd, 3))) {
-            LOG("ipc: pvj-source set_property %s is not on the list", arg_str(cmd, 3));
+            LOG("ipc: mctl-source set_property %s is not on the list", arg_str(cmd, 3));
             reply(fd, id, "property not found", NULL);
             return;
         }
@@ -669,15 +669,15 @@ static void source_command(int fd, const mpv_node *id, const mpv_node *cmd)
     }
 }
 
-// get_property pvj-sources: one map a source, from 1. What each plays, whether it is idle, the frames it converted
+// get_property mctl-sources: one map a source, from 1. What each plays, whether it is idle, the frames it converted
 // and its picture's height (the panel's warning about load). Asks the cores (a client's thread may): never read to
 // time anything.
 static void heap_property(int fd, const mpv_node *id)
 {
-    // get_property pvj-heap (J-157): the heap's bytes in use and free (held by malloc, not given back), in blocks mapped
+    // get_property mctl-heap (J-157): the heap's bytes in use and free (held by malloc, not given back), in blocks mapped
     // on their own, and from the system for the arenas; the threshold this program set (0: glibc's or the environment's);
     // the trims after a clip's end. mallinfo walks every arena under its lock, so it is a property of its own, asked by a
-    // test or a person, never with the counters of pvj-render that the panel and the pacing tests read often.
+    // test or a person, never with the counters of mctl-render that the panel and the pacing tests read often.
 #ifdef __GLIBC__
 #if __GLIBC_PREREQ(2, 33)
     struct mallinfo2 mi = mallinfo2();
@@ -745,11 +745,11 @@ static void sources_property(int fd, const mpv_node *id)
     for (int s = 0; s < ns; s++) mpv_free(paths[s]);
 }
 
-// ["pvj-graphic", "load", N, PATH, W, H, LINES]  a graphic's picture (D129, gfx.c): PATH is an absolute file of W x H pixels
+// ["mctl-graphic", "load", N, PATH, W, H, LINES]  a graphic's picture (D129, gfx.c): PATH is an absolute file of W x H pixels
 //                                    of premultiplied B G R A (the rasteriser's), LINES the lines of text in it (1 to 6)
-// ["pvj-graphic", "set", N, {x, y, motion, seconds, out, speed, loop, opacity}]   place and motion; all or nothing
-// ["pvj-graphic", "show" | "hide" | "replay" | "clear", N]   ("show" may take a fourth word, "still": the fade or typing is not played)
-// N is the slot, 1 to 8. get_property pvj-graphics says what each slot holds and how often it was drawn. Every handler
+// ["mctl-graphic", "set", N, {x, y, motion, seconds, out, speed, loop, opacity}]   place and motion; all or nothing
+// ["mctl-graphic", "show" | "hide" | "replay" | "clear", N]   ("show" may take a fourth word, "still": the fade or typing is not played)
+// N is the slot, 1 to 8. get_property mctl-graphics says what each slot holds and how often it was drawn. Every handler
 // here takes app.lock alone and briefly (gfx.c), so any number of clients may speak at once and none waits on another.
 static int gfx_motion_of(const char *s)
 {
@@ -818,7 +818,7 @@ static void graphic_command(int fd, const mpv_node *id, const mpv_node *cmd)
     }
 }
 
-// get_property pvj-graphics: the limits, and one map a slot (from 1): what it holds, whether it is on, the alpha it was drawn
+// get_property mctl-graphics: the limits, and one map a slot (from 1): what it holds, whether it is on, the alpha it was drawn
 // with last and the frames it was drawn in.
 static void graphics_property(int fd, const mpv_node *id)
 {
@@ -941,11 +941,11 @@ static void set_shaders(int fd, const mpv_node *id, const mpv_node *val)
 }
 
 /* ---- the renderer's own programs (D106) ---------------------------------------------------------------------------- */
-// ["pvj-shader", "load", SOURCE, SLOT, PATH]   a program file (fx.c) into a slot: 0 the generator, 1 the effect.
+// ["mctl-shader", "load", SOURCE, SLOT, PATH]   a program file (fx.c) into a slot: 0 the generator, 1 the effect.
 //                                              Answered once the render thread has built it (at most 3 s): "success",
 //                                              or why the GPU refused it (the program before it then runs on)
-// ["pvj-shader", "clear", SOURCE, SLOT]
-// ["pvj-shader", "set", SOURCE, SLOT, {NAME: VALUE, ...}]   inputs by name, and @speed, @hue, @gain, @amount, @offset;
+// ["mctl-shader", "clear", SOURCE, SLOT]
+// ["mctl-shader", "set", SOURCE, SLOT, {NAME: VALUE, ...}]   inputs by name, and @speed, @hue, @gain, @amount, @offset;
 //                                              all of one set are taken in one frame. Nothing is built again.
 // SOURCE is 1 to the number of sources; slot 0 is a source's generator (step d: on sources 2 to N it is the source's
 // whole picture, its clip layer idle), slots 1 to 3 are its effects, run in that order (step b).
@@ -1036,7 +1036,7 @@ static void shader_command(int fd, const mpv_node *id, const mpv_node *cmd)
     if (!strcmp(what, "load") && nargs == 5 && arg_str(cmd, 4) && arg_str(cmd, 4)[0] == '/' && strlen(arg_str(cmd, 4)) < 4000) {
         char err[300] = "";
         if (fx_read(arg_str(cmd, 4), &p, err, sizeof err)) {
-            LOG("pvj-shader: %s refused: %s", arg_str(cmd, 4), err);
+            LOG("mctl-shader: %s refused: %s", arg_str(cmd, 4), err);
             reply(fd, id, "invalid parameter", NULL);
             return;
         }
@@ -1078,8 +1078,8 @@ static void shader_command(int fd, const mpv_node *id, const mpv_node *cmd)
     else reply(fd, id, answer[0] ? answer : "success", NULL);
 }
 
-// ["pvj-fade-to-program", PATH, SECONDS, MOVE?]   (D130, slice 2; the property's `program-fades` says the renderer has it)
-// The program file PATH (a generator, read by fx.c's reader as `pvj-shader load` reads it) is built into the IDLE layer's
+// ["mctl-fade-to-program", PATH, SECONDS, MOVE?]   (D130, slice 2; the property's `program-fades` says the renderer has it)
+// The program file PATH (a generator, read by fx.c's reader as `mctl-shader load` reads it) is built into the IDLE layer's
 // generator, that layer becomes the front, and the fade begins: the mix, or a wipe or a slide if MOVE names one (the
 // panel's names, MOVE_LIST). Answered when the program is built (at most 3 s, as a load is): "success" once the fade is
 // under way, or why not, and then nothing has changed on the screen except that a fade that was running has ended on
@@ -1089,7 +1089,7 @@ static void shader_command(int fd, const mpv_node *id, const mpv_node *cmd)
 // With nothing on the screen (no clip, no generator in the front layer) there is nothing to fade from: the program is
 // built into the front layer, a cut from black, as a clip is (D98). The outgoing clip's sound is taken off at the
 // command (a program has none), and its last frame is kept if it ends in the fade.
-// Lock order: fx_lock, then layer_lock (as pvj-shader's level_sync), so a load and this command never wait on each other.
+// Lock order: fx_lock, then layer_lock (as mctl-shader's level_sync), so a load and this command never wait on each other.
 // layer_lock is NOT held across the build (up to 3 s): a Stop, a load, a step in a list, a level or a crossfade from another
 // client is served at once, and the player's 2 s timeout is not reached (the review of #240). `building` names the layer being
 // built into; a command that ends a fade ends the build (end_fade), and this command finds that when it takes the lock again,
@@ -1110,7 +1110,7 @@ static void fade_to_program(int fd, const mpv_node *id, const mpv_node *cmd)
     FxProg *p = NULL;
     char err[300] = "";
     if (fx_read(path, &p, err, sizeof err)) {
-        LOG("pvj-fade-to-program: %s refused: %s", path, err);
+        LOG("mctl-fade-to-program: %s refused: %s", path, err);
         reply(fd, id, "invalid parameter", NULL);
         return;
     }
@@ -1194,7 +1194,7 @@ static void fade_to_program(int fd, const mpv_node *id, const mpv_node *cmd)
     // the outgoing clip keeps its last frame if it ends during the fade, and its sound stops at the command
     set_str(O, "keep-open", "yes");
     int ro = set_str(O, "aid", "no");
-    if (ro < 0) LOG("ipc: pvj-fade-to-program: the outgoing clip's sound could not be taken off: %s", mpv_error_string(ro));
+    if (ro < 0) LOG("ipc: mctl-fade-to-program: the outgoing clip's sound could not be taken off: %s", mpv_error_string(ro));
     pthread_mutex_lock(&app.lock);
     app.fade.phase = FADE_WAITING;
     app.fade.seconds = s;
@@ -1215,7 +1215,7 @@ static void fade_to_program(int fd, const mpv_node *id, const mpv_node *cmd)
     reply(fd, id, "success", NULL);
 }
 
-// get_property pvj-shaders: one map a slot, source 1's first (slots 0 to 3), then each other source's.
+// get_property mctl-shaders: one map a slot, source 1's first (slots 0 to 3), then each other source's.
 static void shaders_property(int fd, const mpv_node *id)
 {
     static const char *const keys[] = { "source", "slot", "kind", "state", "time", "runs", "drops", "inputs", "rebuilds", "width", "height", "path" };
@@ -1278,14 +1278,14 @@ static int shot_write(const char *path, const unsigned char *rgba, int w, int h,
     return r;
 }
 
-// The third word "pvj-screen" asks for the whole final picture at the screen's size, program or no program: libmpv's own
+// The third word "mctl-screen" asks for the whole final picture at the screen's size, program or no program: libmpv's own
 // window is the inside size and has no mapping in it, and a transition's still must be the screen (pvj/transitions.py).
 static int native_screenshot(int fd, const mpv_node *id, const char *path, const char *kind)
 {
     pthread_mutex_lock(&app.lock);
     int on = app.native[0];
     pthread_mutex_unlock(&app.lock);
-    int screen = !strcmp(kind, "pvj-screen");
+    int screen = !strcmp(kind, "mctl-screen");
     if (!on && !screen) return 0;
     size_t n = strlen(path);
     int jpeg = (n > 4 && !strcasecmp(path + n - 4, ".jpg")) || (n > 5 && !strcasecmp(path + n - 5, ".jpeg"));
@@ -1317,7 +1317,7 @@ static void get_property(int fd, const mpv_node *id, const char *name)
     mpv_node d;
     if (!strcmp(name, "pid")) { d = node_int(app.pid); reply(fd, id, "success", &d); return; }
     if (!strcmp(name, "current-vo")) {
-        d = node_str(app.screen_open ? "pvj-render" : "");
+        d = node_str(app.screen_open ? "mctl-render" : "");
         if (!app.screen_open) { reply(fd, id, "property unavailable", NULL); return; }
         reply(fd, id, "success", &d);
         return;
@@ -1363,10 +1363,10 @@ static void get_property(int fd, const mpv_node *id, const char *name)
         if (have) mpv_free_node_contents(&vid);
         return;
     }
-    if (!strcmp(name, "pvj-sources")) { sources_property(fd, id); return; }
-    if (!strcmp(name, "pvj-heap")) { heap_property(fd, id); return; }
-    if (!strcmp(name, "pvj-shaders")) { shaders_property(fd, id); return; }
-    if (!strcmp(name, "pvj-graphics")) { graphics_property(fd, id); return; }
+    if (!strcmp(name, "mctl-sources")) { sources_property(fd, id); return; }
+    if (!strcmp(name, "mctl-heap")) { heap_property(fd, id); return; }
+    if (!strcmp(name, "mctl-shaders")) { shaders_property(fd, id); return; }
+    if (!strcmp(name, "mctl-graphics")) { graphics_property(fd, id); return; }
     pthread_mutex_lock(&app.lock);
     int level_native = app.level_native[0];
     double level = app.level[0];
@@ -1382,17 +1382,17 @@ static void get_property(int fd, const mpv_node *id, const char *name)
         return;
     }
 #ifdef PVJ_RENDER_TEST_HOOKS
-    if (!strcmp(name, "pvj-test-blank")) {
+    if (!strcmp(name, "mctl-test-blank")) {
         d = node_int(__atomic_load_n(&app.blank_draws, __ATOMIC_RELAXED));
         reply(fd, id, "success", &d);
         return;
     }
 #endif
-    if (!strcmp(name, "pvj-render")) {
+    if (!strcmp(name, "mctl-render")) {
         pthread_mutex_lock(&app.lock);
         char state[sizeof app.hook_state];
         memcpy(state, app.hook_state, sizeof state);
-        // Nothing here asks libmpv: this is read to time the flips (tests/test_pvj_render.py, PaceTest), and a question
+        // Nothing here asks libmpv: this is read to time the flips (tests/test_mctl_render.py, PaceTest), and a question
         // to a core sent after the counters were taken let the answer leave late with old counts (CI, mpv 0.37 and
         // 0.40: 63 flips a second measured on a clock of 60). The other layer's idleness comes from its event thread.
         long flips = app.flips, missed = app.missed, drawn = app.drawn, fences = app.fences, freed = app.fences_freed;
@@ -1424,7 +1424,7 @@ static void get_property(int fd, const mpv_node *id, const char *name)
                                             "fx-gl-objects", "fx-passes", "fx-passes-per-second", "load", "final-lines",
                                             "final-switches", "final-why", "moves", "fade-kind", "fade-steps", "layer-generators", "program-fades",
                                             "graphics", "graphics-side", "osd-overlay" };
-        mpv_node vals[45] = { node_str(PVJ_VERSION), node_int(app.in_w), node_int(app.in_h), node_int(app.out_w), node_int(app.out_h),
+        mpv_node vals[45] = { node_str(MCTL_VERSION), node_int(app.in_w), node_int(app.in_h), node_int(app.out_w), node_int(app.out_h),
                               node_dbl(app.out_hz), node_int(flips), node_int(drawn), node_int(missed), node_str(state),
                               { .format = MPV_FORMAT_FLAG }, node_str(app.cfg->hwdec), node_int(fences), node_int(freed),
                               node_int(LAYERS), node_int(front), node_str(PHASES[phase]), node_dbl(progress), node_dbl(seconds),
@@ -1527,9 +1527,9 @@ static void set_level(int fd, const mpv_node *id, const mpv_node *v)
     reply(fd, id, r < 0 ? mpv_error_string(r) : "success", NULL);
 }
 
-// ["pvj-final", "full" | 720]: the size of the final pass from the next frame on (D108); the supervisor's rule asks it
+// ["mctl-final", "full" | 720]: the size of the final pass from the next frame on (D108); the supervisor's rule asks it
 // (pvj/renderer.py). Nothing else changes: the screen's size, the surfaces and the sizes this socket reports stay.
-// Refused where the scaler cannot be used: pvj-render reports why (final-why). The look at final_why and the store are
+// Refused where the scaler cannot be used: mctl-render reports why (final-why). The look at final_why and the store are
 // one step under app.lock, as final_refused writes it there before it clears the wish: a word that comes after a refusal
 // never brings the small frame back, so "said once, then full for good" holds.
 static void final_command(int fd, const mpv_node *id, const mpv_node *v)
@@ -1602,15 +1602,15 @@ static void handle(int fd, const char *line, size_t len)
         int replaces = nargs < 3 || !arg_str(cmd, 2) || !strcmp(arg_str(cmd, 2), "replace");
         if (ok) forward_front(fd, id, cmd, replaces);
         else reply(fd, id, "invalid parameter", NULL);
-    } else if (!strcmp(name, "pvj-shader") && nargs >= 4 && nargs <= 5) {
+    } else if (!strcmp(name, "mctl-shader") && nargs >= 4 && nargs <= 5) {
         shader_command(fd, id, cmd);
-    } else if (!strcmp(name, "pvj-graphic") && nargs >= 3 && nargs <= 7) {
+    } else if (!strcmp(name, "mctl-graphic") && nargs >= 3 && nargs <= 7) {
         graphic_command(fd, id, cmd);
-    } else if (!strcmp(name, "pvj-source") && nargs >= 3) {
+    } else if (!strcmp(name, "mctl-source") && nargs >= 3) {
         source_command(fd, id, cmd);
-    } else if (!strcmp(name, "pvj-crossfade") && nargs >= 3 && nargs <= 5) {
+    } else if (!strcmp(name, "mctl-crossfade") && nargs >= 3 && nargs <= 5) {
         crossfade(fd, id, cmd);
-    } else if (!strcmp(name, "pvj-fade-to-program") && nargs >= 3 && nargs <= 4) {
+    } else if (!strcmp(name, "mctl-fade-to-program") && nargs >= 3 && nargs <= 4) {
         fade_to_program(fd, id, cmd);
     } else if ((!strcmp(name, "stop") || !strcmp(name, "playlist-shuffle")) && nargs == 1) {
         forward_front(fd, id, cmd, !strcmp(name, "stop"));
@@ -1634,8 +1634,8 @@ static void handle(int fd, const char *line, size_t len)
         reply(fd, id, r < 0 ? mpv_error_string(r) : "success", NULL);
     } else if (!strcmp(name, "vf") && nargs == 3 && arg_str(cmd, 1) && arg_str(cmd, 2)) {
         const char *op = arg_str(cmd, 1), *what = arg_str(cmd, 2);
-        int ok = (!strcmp(op, "add") && (!strcmp(what, "@pvjfliph:hflip") || !strcmp(what, "@pvjflipv:vflip")))
-                 || (!strcmp(op, "remove") && (!strcmp(what, "@pvjfliph") || !strcmp(what, "@pvjflipv")));
+        int ok = (!strcmp(op, "add") && (!strcmp(what, "@mctlfliph:hflip") || !strcmp(what, "@mctlflipv:vflip")))
+                 || (!strcmp(op, "remove") && (!strcmp(what, "@mctlfliph") || !strcmp(what, "@mctlflipv")));
         if (ok) {
             mpv_node res;
             int r = command_both(cmd, &res);          // a flip is how the picture looks: both layers (MIRRORED)
@@ -1646,7 +1646,7 @@ static void handle(int fd, const char *line, size_t len)
         }
     } else if (!strcmp(name, "screenshot-to-file") && (nargs == 2 || nargs == 3) && arg_str(cmd, 1) && arg_str(cmd, 1)[0] == '/') {
         const char *f = nargs == 3 ? arg_str(cmd, 2) : "subtitles";
-        if (f && (!strcmp(f, "video") || !strcmp(f, "window") || !strcmp(f, "subtitles") || !strcmp(f, "pvj-screen"))) {
+        if (f && (!strcmp(f, "video") || !strcmp(f, "window") || !strcmp(f, "subtitles") || !strcmp(f, "mctl-screen"))) {
             if (!native_screenshot(fd, id, arg_str(cmd, 1), f)) forward(fd, id, front_handle(), cmd);
         }
         else reply(fd, id, "invalid parameter", NULL);
@@ -1734,20 +1734,20 @@ static void handle(int fd, const char *line, size_t len)
             wake_render();
         }
         reply(fd, id, r < 0 ? mpv_error_string(r) : "success", NULL);
-    } else if (!strcmp(name, "pvj-capture") && nargs == 2) {
+    } else if (!strcmp(name, "mctl-capture") && nargs == 2) {
         capture(fd, id, arg_str(cmd, 1));
 #ifdef PVJ_RENDER_TEST_HOOKS
-    } else if (!strcmp(name, "pvj-test-buffer") && nargs == 2) {
+    } else if (!strcmp(name, "mctl-test-buffer") && nargs == 2) {
         // the buffer as the plane gets it, corner and all: only a test can see the frame that goes out while it is small
         pthread_mutex_lock(&app.lock);
         app.capture_buffer = 1;
         pthread_mutex_unlock(&app.lock);
         capture(fd, id, arg_str(cmd, 1));
-    } else if (!strcmp(name, "pvj-test-refuse") && nargs == 1) {
+    } else if (!strcmp(name, "mctl-test-refuse") && nargs == 1) {
         out_test_refuse();
         reply(fd, id, "success", NULL);
 #endif
-    } else if (!strcmp(name, "pvj-final") && nargs == 2) {
+    } else if (!strcmp(name, "mctl-final") && nargs == 2) {
         final_command(fd, id, arg(cmd, 1));
     } else if (!strcmp(name, "quit") && nargs <= 2) {
         reply(fd, id, "success", NULL);

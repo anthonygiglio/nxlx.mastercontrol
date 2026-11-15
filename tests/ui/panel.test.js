@@ -3341,7 +3341,7 @@ function startServer(env) {          // env: more for the harness's environment 
     assert.deepStrictEqual(await page.$$eval('#mapsource option', (os) => os.map((o) => o.value)), ['1'], 'classic: Source 1 only');
     assert.match(await page.textContent('#mapsourcenote'), /need the New renderer/);
     await page.waitForSelector('#mapsources #srcclassic');
-    // A box on the New renderer with four sources (its answers changed on the way, as the harness has no pvj-render):
+    // A box on the New renderer with four sources (its answers changed on the way, as the harness has no mctl-render):
     // Shows offers Source 1 to 4, and a choice is the surface's own, kept by the box and shown in the list.
     const withSources = (n) => async (route) => {
       const res = await route.fetch();

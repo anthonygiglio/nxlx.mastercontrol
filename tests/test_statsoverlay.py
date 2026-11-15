@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
 """Show stats on output (D133, pvj/statsoverlay.py): the ASS text and its escaping, the sampler, the show-safety rules
-and the routes. The renderer's half (osd-overlay on pvj-render) is in tests/test_pvj_render.py, the panel's in
+and the routes. The renderer's half (osd-overlay on mctl-render) is in tests/test_mctl_render.py, the panel's in
 tests/ui/panel.test.js."""
 import glob
 import json
@@ -24,7 +24,7 @@ class FakeIpc:
     """Stands in for pvj.player.Ipc: answers `request` and `batch` from a dict of properties."""
 
     def __init__(self, pid=100, render=None):
-        self.pid, self.render = pid, render        # render None: classic mpv (no pvj-render property)
+        self.pid, self.render = pid, render        # render None: classic mpv (no mctl-render property)
         self.props = {"path": "/media/Lumia 1.mp4", "hwdec-current": "drm-copy",
                       "video-params": {"w": 1920, "h": 1080, "pixelformat": "yuv420p"}, "estimated-vf-fps": 29.97,
                       "frame-drop-count": 0, "decoder-frame-drop-count": 0}
@@ -39,14 +39,14 @@ class FakeIpc:
 
     def request(self, *cmd, wait=None, link=None):
         """Like mpv: an osd-overlay belongs to the connection that sent it. A plain request is a connection of its own that
-        closes at once (pvj.player.Ipc), so on classic mpv (no pvj-render property) its overlay is gone as soon as it is made.
-        pvj-render keeps its overlays itself."""
+        closes at once (pvj.player.Ipc), so on classic mpv (no mctl-render property) its overlay is gone as soon as it is made.
+        mctl-render keeps its overlays itself."""
         self.sent.append(cmd)
         if self.fail:
             raise PlayerError(self.fail)
         if cmd[:2] == ("get_property", "pid"):
             return self.pid
-        if cmd[:2] == ("get_property", "pvj-render"):
+        if cmd[:2] == ("get_property", "mctl-render"):
             if self.render is None:
                 raise PlayerError("mpv: property not found")
             return self.render
@@ -66,7 +66,7 @@ class FakeIpc:
         out = []
         for c in commands:
             name = c[1]
-            v = self.pid if name == "pid" else (self.render if name == "pvj-render" else self.props.get(name, ERR))
+            v = self.pid if name == "pid" else (self.render if name == "mctl-render" else self.props.get(name, ERR))
             out.append((False, "property unavailable") if v is ERR or v is None else (True, v))
         return out
 
@@ -272,7 +272,7 @@ class SamplerTest(Base):
 
     def test_the_new_renderer_is_read_from_its_property_and_the_shader_drops(self):
         self.ipc.render = dict(RENDER)
-        self.ipc.props["pvj-shaders"] = [{"drops": 3}, {"drops": 4}, "junk"]
+        self.ipc.props["mctl-shaders"] = [{"drops": 3}, {"drops": 4}, "junk"]
         self.s.turn_on()
         self.assertEqual(self.s.state()["renderer"], "new")
         self.ipc.render = dict(RENDER, flips=1060, **{"missed-vblanks": 4})
@@ -393,7 +393,7 @@ class ShowSafetyTest(Base):
         self.assertIsNone(self.ipc.overlay)
 
     def test_a_failed_removal_while_hidden_is_tried_again(self):
-        self.ipc.render = dict(RENDER)                       # pvj-render keeps the text until it is told; classic loses it with the connection
+        self.ipc.render = dict(RENDER)                       # mctl-render keeps the text until it is told; classic loses it with the connection
         self.s.turn_on()
         self.api.access = True
         self.ipc.fail = "no reply from mpv"                  # the player does not take the removal
@@ -669,11 +669,11 @@ class RealMpvTest(unittest.TestCase):
                 break
             except PlayerError:
                 time.sleep(0.1)
-        got = ipc.batch([("get_property", "pid"), ("get_property", "path"), ("get_property", "hwdec-current"), ("get_property", "pvj-render"),
+        got = ipc.batch([("get_property", "pid"), ("get_property", "path"), ("get_property", "hwdec-current"), ("get_property", "mctl-render"),
                          ("get_property", "frame-drop-count")])
         self.assertEqual(got[0], (True, proc.pid))
         self.assertFalse(got[1][0], "nothing is playing: path is not there, said as a refusal and not an error")
-        self.assertEqual(got[3], (False, "property not found"), "classic mpv has no pvj-render: how the overlay knows it is classic")
+        self.assertEqual(got[3], (False, "property not found"), "classic mpv has no mctl-render: how the overlay knows it is classic")
         ipc.request(*so.overlay_command(["node-02  192.168.0.174", "{\fs500}evil"], "br"))
         ipc.request(*so.remove_command())
         self.assertEqual(ipc.request("get_property", "pid"), proc.pid, "mpv is still there")

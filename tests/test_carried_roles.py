@@ -293,10 +293,10 @@ class Decisions(WalkBase):
         import glob
         import os
         import re
-        pvj_dir = os.path.dirname(policy.__file__)
+        mctl_dir = os.path.dirname(policy.__file__)
         near = re.compile(r"via\W{0,12}[\"']node[\"']|[\"']node[\"']\W{0,12}via|SHARED_VIA")
         found = []
-        for path in sorted(glob.glob(os.path.join(pvj_dir, "*.py"))):
+        for path in sorted(glob.glob(os.path.join(mctl_dir, "*.py"))):
             name = os.path.basename(path)
             if name in ("auth.py", "ticket.py", "lease.py", "handover.py"):
                 continue

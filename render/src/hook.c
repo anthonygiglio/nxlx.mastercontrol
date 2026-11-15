@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// The final pass: an mpv user shader on the OUTPUT stage, run by pvj-render at the output's pixels.
+// The final pass: an mpv user shader on the OUTPUT stage, run by mctl-render at the output's pixels.
 //
 // The projection mapping (pvj/mapper.py: warp_shader for the show, shader while editing) is written as an mpv user
 // shader file: //!TEXTURE blocks with their data as hex, then one //!HOOK OUTPUT block of GLSL that defines
@@ -10,7 +10,7 @@
 // video layer (drawn at the internal size) to the screen: HOOKED_size is the output's size, as on mpv's OUTPUT stage,
 // and HOOKED_tex reads the layer, so the mapping's screen pixels mean what they meant. Mapping and scaling are one pass.
 //
-// Sources (D101): `//!BIND SOURCEk` (k from 2 to 8) names another source's picture, which pvj-render supplies at the
+// Sources (D101): `//!BIND SOURCEk` (k from 2 to 8) names another source's picture, which mctl-render supplies at the
 // internal size as SOURCEk_raw, read with SOURCEk_tex(pos) as HOOKED_tex reads source 1. The file names the source by
 // that word only; nothing of the file's text becomes a name in the program but what is on these fixed lists.
 //
@@ -19,7 +19,7 @@
 // with any other directive, is not this pass: it is handed to libmpv, which runs it on the video layer (effects and
 // generators). A file that looks like ours and is damaged is refused.
 #define _GNU_SOURCE
-#include "pvj.h"
+#include "mctl.h"
 #include "json.h"
 
 #include <ctype.h>
@@ -50,7 +50,7 @@ struct Hook {
     HookTex tex[MAX_TEX];
     int nbind;
     char bind[MAX_TEX][64];
-    int nsrc;                   // BIND SOURCEk (D101): the other sources' pictures, supplied by pvj-render
+    int nsrc;                   // BIND SOURCEk (D101): the other sources' pictures, supplied by mctl-render
     int src[MAX_SOURCES];
 };
 
@@ -99,7 +99,7 @@ static int valid_name(const char *s)
     if (n == 0 || n > 60 || !(isalpha((unsigned char)s[0]) || s[0] == '_')) return 0;
     for (size_t i = 0; i < n; i++)
         if (!(isalnum((unsigned char)s[i]) || s[i] == '_')) return 0;
-    if (!strncmp(s, "gl_", 3) || !strncmp(s, "pvj_", 4) || !strncmp(s, "HOOKED", 6)) return 0;
+    if (STARTS(s, "gl_") || STARTS(s, "mctl_") || STARTS(s, "HOOKED")) return 0;
     return 1;
 }
 
@@ -300,7 +300,7 @@ GLuint gl_program(const char *vs, const char *fs, char *err, size_t n)
     GLuint p = glCreateProgram();
     glAttachShader(p, v);
     glAttachShader(p, f);
-    glBindAttribLocation(p, 0, "pvj_vert");
+    glBindAttribLocation(p, 0, "mctl_vert");
     glLinkProgram(p);
     glDeleteShader(v);
     glDeleteShader(f);
@@ -316,12 +316,12 @@ GLuint gl_program(const char *vs, const char *fs, char *err, size_t n)
     return p;
 }
 
-// pvj_pos is mpv's HOOKED_pos: (0, 0) at the top left of the screen, as the mapping's screen pixels are measured.
+// mctl_pos is mpv's HOOKED_pos: (0, 0) at the top left of the screen, as the mapping's screen pixels are measured.
 static const char *VS =
     "#version 300 es\n"
-    "in vec2 pvj_vert;\n"
-    "out vec2 pvj_pos;\n"
-    "void main() { pvj_pos = vec2(pvj_vert.x * 0.5 + 0.5, 0.5 - pvj_vert.y * 0.5); gl_Position = vec4(pvj_vert, 0.0, 1.0); }\n";
+    "in vec2 mctl_vert;\n"
+    "out vec2 mctl_pos;\n"
+    "void main() { mctl_pos = vec2(mctl_vert.x * 0.5 + 0.5, 0.5 - mctl_vert.y * 0.5); gl_Position = vec4(mctl_vert, 0.0, 1.0); }\n";
 
 int hookgl_build(const Hook *h, HookGL *g, char *err, size_t n)
 {
@@ -333,21 +333,21 @@ int hookgl_build(const Hook *h, HookGL *g, char *err, size_t n)
             "precision highp float;\n"
             "precision highp int;\n"
             "precision highp sampler2D;\n"
-            "in vec2 pvj_pos;\n"
-            "out vec4 pvj_out;\n"
+            "in vec2 mctl_pos;\n"
+            "out vec4 mctl_out;\n"
             "uniform sampler2D HOOKED_raw;\n"
             "uniform vec2 HOOKED_size;\n"
             "uniform vec2 HOOKED_pt;\n"
             "uniform vec2 target_size;\n"
             "uniform vec2 input_size;\n"
-            "#define HOOKED_pos pvj_pos\n"
+            "#define HOOKED_pos mctl_pos\n"
             "#define HOOKED_mul 1.0\n"
             // source 1's level while a program of the renderer's is on (D106), else 0: clamp() of a texel then
             // changes nothing, so a mapping draws exactly as before
-            "uniform float pvj_level;\n"
-            "vec4 pvj_lv(vec4 c) { return vec4(clamp(c.rgb + pvj_level, 0.0, 1.0), c.a); }\n"
-            "#define HOOKED_tex(pos) pvj_lv(texture(HOOKED_raw, pos))\n"
-            "#define HOOKED_texOff(off) pvj_lv(texture(HOOKED_raw, pvj_pos + HOOKED_pt * vec2(off)))\n");
+            "uniform float mctl_level;\n"
+            "vec4 mctl_lv(vec4 c) { return vec4(clamp(c.rgb + mctl_level, 0.0, 1.0), c.a); }\n"
+            "#define HOOKED_tex(pos) mctl_lv(texture(HOOKED_raw, pos))\n"
+            "#define HOOKED_texOff(off) mctl_lv(texture(HOOKED_raw, mctl_pos + HOOKED_pt * vec2(off)))\n");
     for (int i = 0; i < h->ntex; i++) {
         char line[200];
         snprintf(line, sizeof line, "uniform sampler2D %s;\nuniform vec2 %s_size;\n", h->tex[i].name, h->tex[i].name);
@@ -364,13 +364,13 @@ int hookgl_build(const Hook *h, HookGL *g, char *err, size_t n)
     }
     buf_str(&fs, "#line 1\n");
     buf_str(&fs, h->body);
-    buf_str(&fs, "\nvoid main() { pvj_out = hook(); }\n");
+    buf_str(&fs, "\nvoid main() { mctl_out = hook(); }\n");
     if (fs.failed) { buf_free(&fs); snprintf(err, n, "out of memory"); return -1; }
     g->prog = gl_program(VS, fs.p, err, n);
     buf_free(&fs);
     if (!g->prog) return -1;
     g->loc_raw = glGetUniformLocation(g->prog, "HOOKED_raw");
-    g->loc_level = glGetUniformLocation(g->prog, "pvj_level");
+    g->loc_level = glGetUniformLocation(g->prog, "mctl_level");
     g->loc_size = glGetUniformLocation(g->prog, "HOOKED_size");
     g->loc_pt = glGetUniformLocation(g->prog, "HOOKED_pt");
     g->loc_target = glGetUniformLocation(g->prog, "target_size");

@@ -106,19 +106,19 @@ class MeasuredFixesTest(Base):
 
     def test_compiler_warnings_about_the_translators_own_names_are_not_passed_on(self):
         head = [("vo/gpu/opengl", "error", "fragment shader source:"), ("vo/gpu/opengl", "error", "[  1] #version 140"),
-                ("vo/gpu/opengl", "error", "[ 31] PVJ_HP float pvj_time;"), ("vo/gpu/opengl", "error", "fragment shader compile log (status=0):")]
-        log = head + [("vo/gpu/opengl", "error", "0:31(1): warning: `pvj_k' used uninitialized"),
-                      ("vo/gpu/opengl", "error", "0:44(9): warning: unused variable `PVJ_HP'"),
+                ("vo/gpu/opengl", "error", "[ 31] MCTL_HP float mctl_time;"), ("vo/gpu/opengl", "error", "fragment shader compile log (status=0):")]
+        log = head + [("vo/gpu/opengl", "error", "0:31(1): warning: `mctl_k' used uninitialized"),
+                      ("vo/gpu/opengl", "error", "0:44(9): warning: unused variable `MCTL_HP'"),
                       ("vo/gpu/opengl", "error", "0:102(14): error: `nonsense' undeclared"),
                       ("vo/gpu/opengl", "error", "0:103(2): warning: `mine' set but not used")]
-        self.assertEqual(S.shader_errors(log), "line 102: `nonsense' undeclared")      # errors only; no warning, no pvj_ name
+        self.assertEqual(S.shader_errors(log), "line 102: `nonsense' undeclared")      # errors only; no warning, no mctl_ name
         # the other spelling of a compiler line (ERROR: 0:6: ...), and a warning of the author's own when nothing else is said
-        self.assertEqual(S.shader_errors(head + [("vo/gpu/opengl", "error", "WARNING: 0:3: 'pvj_norm' : unused"),
+        self.assertEqual(S.shader_errors(head + [("vo/gpu/opengl", "error", "WARNING: 0:3: 'mctl_norm' : unused"),
                                                  ("vo/gpu/opengl", "error", "ERROR: 0:6: 'nonsense' : undeclared identifier")]),
                          "line 6: 'nonsense' : undeclared identifier")
         self.assertEqual(S.shader_errors(head + [("vo/gpu/opengl", "error", "0:9(2): warning: `mine' set but not used")]),
                          "line 9: `mine' set but not used")
-        self.assertEqual(S.shader_errors(head + [("vo/gpu/opengl", "error", "0:31(1): warning: `pvj_k' used uninitialized")]),
+        self.assertEqual(S.shader_errors(head + [("vo/gpu/opengl", "error", "0:31(1): warning: `mctl_k' used uninitialized")]),
                          "the GPU refused the shader")
 
     def test_the_generated_shader_text_never_reaches_the_message(self):
@@ -129,7 +129,7 @@ class MeasuredFixesTest(Base):
         log += [("vo/gpu/opengl", "error", line) for line in text.splitlines()]            # and once more without numbers
         log += [("vo/gpu/opengl", "error", "shader compile log (status=0):"), ("vo/gpu/opengl", "error", "the driver gave up")]
         said = S.shader_errors(log)
-        for internal in ("pvj_", "PVJ_", "//!", "HOOKED", "#define", "precision highp", "vec4 hook"):
+        for internal in ("mctl_", "PVJ_", "//!", "HOOKED", "#define", "precision highp", "vec4 hook"):
             self.assertNotIn(internal, said)
         self.assertIn("the driver gave up", said)
         self.assertLessEqual(len(said), 500)

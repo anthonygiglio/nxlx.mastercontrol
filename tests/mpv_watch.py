@@ -54,14 +54,14 @@ class _Socket(socket.socket):
 
     def recv(self, *a):
         chunk = _real_socket.recv(self, *a)
-        notes = getattr(self, "pvj_notes", None)
+        notes = getattr(self, "mctl_notes", None)
         if notes is not None:
             notes.append((time.monotonic(), chunk))
         return chunk
 
     def close(self):
-        if getattr(self, "pvj_hold", False):
-            self.pvj_closed = time.monotonic()      # the client has given up; the watcher reads on and closes it
+        if getattr(self, "mctl_hold", False):
+            self.mctl_closed = time.monotonic()      # the client has given up; the watcher reads on and closes it
             return
         _real_socket.close(self)
 
@@ -70,7 +70,7 @@ def _make(*a, **k):
     s = _Socket(*a, **k)
     rec = getattr(_local, "rec", None)
     if rec is not None and rec.get("sock") is None:
-        s.pvj_notes, s.pvj_hold = rec["chunks"], True
+        s.mctl_notes, s.mctl_hold = rec["chunks"], True
         rec["sock"] = s
     return s
 
@@ -249,7 +249,7 @@ class WatchedIpc(Ipc):
             took = time.monotonic() - start
             sock = rec["sock"]
             if sock is not None:
-                sock.pvj_hold = False
+                sock.mctl_hold = False
                 sock.close()
             if error is None and self.born is None:
                 self.born = time.monotonic()

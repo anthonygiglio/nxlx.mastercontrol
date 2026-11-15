@@ -245,7 +245,7 @@ class LicenseTest(unittest.TestCase):
             self.assertEqual(hashlib.sha256(f.read()).hexdigest(), OFL_SHA256)
 
     def test_the_renderer_is_gpl_in_its_own_folder(self):
-        """render/ (pvj-render, D95) links libmpv and is GPL-3.0-or-later; nothing in it says Apache-2.0, no new code
+        """render/ (mctl-render, D95) links libmpv and is GPL-3.0-or-later; nothing in it says Apache-2.0, no new code
         outside it says GPL, and the licence text beside it is the FSF's, unchanged."""
         files = [p for p in tracked() if p.startswith("render/")]
         self.assertIn("render/Makefile", files)

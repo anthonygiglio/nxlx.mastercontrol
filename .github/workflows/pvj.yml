@@ -321,7 +321,7 @@ jobs:
   pvj-render:
     # The box's own renderer (render/, D95): built with every warning an error, then run for real, headless (EGL
     # without a surface on Mesa's software GPU, llvmpipe): a picture, a clip, the mapping, an overlay, text, the
-    # socket's answers and refusals, read back by their pixels (tests/test_pvj_render.py), and the player's side
+    # socket's answers and refusals, read back by their pixels (tests/test_mctl_render.py), and the player's side
     # against a stand-in helper (tests/test_renderer.py). Twice: on Ubuntu, and on Debian 13 (the Pi's distribution
     # and its libmpv of mpv 0.40, the release the Pi runs; the job fails on another). x86_64 both times: the same
     # source and the same libmpv release, not the Pi's processor, GPU or screen. A skip here is a failure.
@@ -371,7 +371,7 @@ jobs:
               *) echo "::error::this job is for mpv 0.40.x (the Pi, Debian 13) and apt gave libmpv-dev $v"; exit 1 ;;
             esac
           fi
-      - name: Build pvj-render (every warning an error; as the box builds it, then with the tests' hooks for the tests)
+      - name: Build mctl-render (every warning an error; as the box builds it, then with the tests' hooks for the tests)
         run: |
           make -C render WERROR=1
           make -C render clean
@@ -381,10 +381,10 @@ jobs:
         run: |
           useradd --create-home ci
           chown -R ci: .
-      - name: pvj-render for real, headless, and the player's side (a skip is a failure)
+      - name: mctl-render for real, headless, and the player's side (a skip is a failure)
         timeout-minutes: 15
         run: |
-          run="PVJ_RENDER_TEST=1 LIBGL_ALWAYS_SOFTWARE=1 python3 -X faulthandler -m unittest -v tests.test_pvj_render tests.test_renderer tests.test_graphics_gpu tests.test_graphics_position"
+          run="PVJ_RENDER_TEST=1 LIBGL_ALWAYS_SOFTWARE=1 python3 -X faulthandler -m unittest -v tests.test_mctl_render tests.test_renderer tests.test_graphics_gpu tests.test_graphics_position"
           if [ -n "${{ matrix.container }}" ]; then prlimit --rtprio=1:1 --pid $$     # as LimitRTPRIO=1 in pvj-player.service
           else sudo prlimit --rtprio=1:1 --pid $$; fi
           echo "real-time limit: $(ulimit -r)"
@@ -392,12 +392,12 @@ jobs:
           else sh -c "$run" > /tmp/render.txt 2>&1 || code=$?; fi
           cat /tmp/render.txt
           if grep -q -E "skipped|OK \(skipped" /tmp/render.txt; then
-            echo "::error::a test of pvj-render was skipped: it judges nothing here"
+            echo "::error::a test of mctl-render was skipped: it judges nothing here"
             exit 1
           fi
           grep -q -E "^Ran [1-9]" /tmp/render.txt || { echo "::error::no test ran"; exit 1; }
           exit "${code:-0}"
-      - name: pvj-render's own shader programs (D106), against libmpv's drawing of every bundled shader (a skip is a failure)
+      - name: mctl-render's own shader programs (D106), against libmpv's drawing of every bundled shader (a skip is a failure)
         timeout-minutes: 12
         run: |
           run="PVJ_RENDER_TEST=1 LIBGL_ALWAYS_SOFTWARE=1 python3 -X faulthandler -m unittest -v tests.test_native_shaders"
@@ -405,7 +405,7 @@ jobs:
           else sh -c "$run" > /tmp/native.txt 2>&1 || code=$?; fi
           cat /tmp/native.txt
           if grep -q -E "skipped|OK \(skipped" /tmp/native.txt; then
-            echo "::error::a test of pvj-render's programs was skipped: it judges nothing here"
+            echo "::error::a test of mctl-render's programs was skipped: it judges nothing here"
             exit 1
           fi
           grep -q -E "^Ran [1-9]" /tmp/native.txt || { echo "::error::no test ran"; exit 1; }

@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
 // JSON <-> mpv_node, for the socket. Bounded on purpose: the text comes from another process.
-#ifndef PVJ_JSON_H
-#define PVJ_JSON_H
+#ifndef MCTL_JSON_H
+#define MCTL_JSON_H
 
 #include <stddef.h>
 #include <mpv/client.h>

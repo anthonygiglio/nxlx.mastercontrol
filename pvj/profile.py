@@ -19,7 +19,7 @@ KINDS = ("pi3", "pi4", "pi5", "pi-other", "arm-other", "x86")     # every kind h
 SOURCES_MAX = 8                         # the renderer's own bound on sources (D101)
 
 # One row per tier. "small" is the group that was SMALL_BOARDS (a Pi 3 or 4): Automatic draws 540 lines inside (the spike
-# of 2026-10-16, D95), pvj-render gets mpv's cheap scalers and no deblocking (D120), Automatic final pass is allowed
+# of 2026-10-16, D95), mctl-render gets mpv's cheap scalers and no deblocking (D120), Automatic final pass is allowed
 # (D108), and the panel warns when a 1080p clip goes to a source while two others play (D101).
 #
 # Sources (D101), measured on the owner's Pi 4 (2026-10-20), software H.264 decode alone: 1080p 83 fps for one stream,
@@ -57,7 +57,7 @@ def sources_cap(kind):
 
 
 def inside_lines(kind):
-    """Lines pvj-render draws inside under Automatic, or None for the output's own size."""
+    """Lines mctl-render draws inside under Automatic, or None for the output's own size."""
     return 540 if small(kind) else None
 
 
@@ -66,12 +66,12 @@ def effects_row(kind):
     return of(kind)["effects"] if kind in KINDS else None
 
 
-FX_FPS_DEFAULT = 30             # pvj-render's own default (--fx-fps), the carrier's rate on classic
+FX_FPS_DEFAULT = 30             # mctl-render's own default (--fx-fps), the carrier's rate on classic
 FX_FPS_MAX = 60
 
 
 def fx_fps(kind, refresh):
-    """The --fx-fps to pass pvj-render, or None to leave its default of 30: the lean, standard and unknown tiers never
+    """The --fx-fps to pass mctl-render, or None to leave its default of 30: the lean, standard and unknown tiers never
     pass it; the full tier passes the output's refresh rate (Hz), at most 60 and at least 1, and nothing when the rate
     is not known."""
     if not of(kind)["fx_follows_output"]:

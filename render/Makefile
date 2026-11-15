@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# pvj-render: make            (the program, here)
+# mctl-render: make            (the program, here)
 #             make WERROR=1   (every warning is an error: CI)
 #             make TEST_HOOKS=1 (the tests' hooks, PVJ_RENDER_TEST_*: CI; never the box's own build. make clean
 #                              first when switching, as the objects do not know which build they were)
@@ -27,10 +27,10 @@ LDHARDEN = -pie -Wl,-z,relro,-z,now
 SRC = src/main.c src/out.c src/ipc.c src/hook.c src/json.c src/fx.c src/still.c src/gfx.c
 OBJ = $(SRC:.c=.o)
 
-pvj-render: $(OBJ)
+mctl-render: $(OBJ)
 	$(CC) $(LDFLAGS) $(LDHARDEN) -o $@ $(OBJ) $$($(PKG_CONFIG) --libs $(PKGS)) -lpthread -lm
 
-src/%.o: src/%.c src/pvj.h src/json.h
+src/%.o: src/%.c src/mctl.h src/json.h
 	$(CC) -std=c11 $(CFLAGS) $(DEFS) $(WARN) $(HARDEN) $$($(PKG_CONFIG) --cflags $(PKGS)) -c -o $@ $<
 
 # pvj-link (D117): the Ableton Link follower, a program of its own in C++, built only when asked for, and never by
@@ -60,6 +60,6 @@ pvj-raster: raster/pvj-raster.c raster/gfx.inc.c raster/vendor/nanosvg.h raster/
 	$(CC) -std=c11 $(CFLAGS) $(WARN) $(HARDEN) -isystem raster/vendor $$($(PKG_CONFIG) --cflags libpng libjpeg freetype2) $(LDFLAGS) $(LDHARDEN) -o $@ $< $$($(PKG_CONFIG) --libs libpng libjpeg freetype2) -lm
 
 clean:
-	rm -f pvj-render pvj-link pvj-link-peer pvj-raster $(OBJ)
+	rm -f mctl-render pvj-link pvj-link-peer pvj-raster $(OBJ)
 
 .PHONY: clean

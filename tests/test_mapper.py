@@ -253,7 +253,7 @@ class ShaderTest(unittest.TestCase):
         self.assertEqual([len(h) // 2 for h in hexes], [16 * 16 * 9, 16 * 16 * 9])
         a = struct.unpack("<%df" % (16 * 9 * 4), bytes.fromhex(hexes[0]))
         self.assertEqual(a[2], -M.EDGE)
-        self.assertIn("//!BIND PVJWARPA", text)
+        self.assertIn("//!BIND MCTLWARPA", text)
         self.assertNotIn("if (ka", text)                          # the branch was measured slower
 
 
@@ -325,7 +325,7 @@ class EngineTest(unittest.TestCase):
         self.e.handle({"action": "on", "on": True})
         self.wait_state("on")
         with open(self.api.player.shaders[0]) as f:
-            self.assertIn("//!TEXTURE PVJWARPA", f.read())
+            self.assertIn("//!TEXTURE MCTLWARPA", f.read())
         self.assertEqual(len(self.files()), 1)                               # old files are removed
         self.assertTrue(self.api.player.mode)                                # stretched, 8-bit buffers
         self.assertEqual(oct(os.stat(self.api.player.shaders[0]).st_mode & 0o777), "0o640")

@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// pvj-render: what the parts share. One render thread owns the GL context and presents a picture at every vblank;
+// mctl-render: what the parts share. One render thread owns the GL context and presents a picture at every vblank;
 // the socket has a thread that takes clients and one thread per client, which talk to libmpv directly (its client
 // API may be used from any thread) and to the render thread through `app` under `app.lock`.
-#ifndef PVJ_H
-#define PVJ_H
+#ifndef MCTL_H
+#define MCTL_H
 
 #include <pthread.h>
 #include <stdint.h>
@@ -13,7 +13,10 @@
 #include <GLES3/gl3.h>
 #include <mpv/client.h>
 
-#define PVJ_VERSION "0.12.0"
+#define MCTL_VERSION "0.12.0"
+// Whether the string S starts with the literal PREFIX, by the literal's own length (never a count typed by hand: a
+// rename of a prefix must not leave a stale length behind).
+#define STARTS(s, prefix) (strncmp((s), "" prefix, sizeof(prefix) - 1) == 0)
 #define MAX_SHADERS 16
 #define LAYERS 2                    // source 1's video layers (phase 2, D98): the one on screen and the one a crossfade comes in on
 #define MAX_SOURCES 8               // sources (D101): source 1 is LAYERS layers, each other source one layer
@@ -43,7 +46,7 @@ typedef struct Hook Hook;
 // The renderer's own shader programs (D106, fx.c): ISF generators and effects with their inputs as uniforms.
 #define FX_SLOTS 4                  // per source: 0 the generator (source 1 only, until step d), 1 to 3 its effects in order (D106)
 #define FX_MAX_INPUTS 24
-#define FX_NAME 41                  // an input's name: 32 letters, and the panel's pvj_in_ before it
+#define FX_NAME 41                  // an input's name: 32 letters, and the panel's mctl_in_ before it
 enum { FX_GENERATOR, FX_FILTER };
 enum { FXT_FLOAT, FXT_BOOL, FXT_LONG, FXT_COLOR, FXT_POINT, FXT_N };
 enum { FXC_SPEED, FXC_HUE, FXC_GAIN, FXC_AMOUNT, FXC_OFFSET, FXC_N };
@@ -169,11 +172,11 @@ typedef struct {
         int base_starts;            // the incoming layer's count of started files before its load (see Layer)
         const Move *move;           // a wipe or a slide; NULL: the crossfade's mix
         long steps;                 // pictures drawn with both layers in them, in this transition or the last
-        int program;                // the incoming layer's picture is a generator (pvj-fade-to-program, D130): the clock starts at its first drawn frame
+        int program;                // the incoming layer's picture is a generator (mctl-fade-to-program, D130): the clock starts at its first drawn frame
     } fade;
     long fades, fades_done, fades_cut;  // crossfades asked; run to their end; ended early (a load, a stop, a new fade)
     long fades_from_nothing;        // crossfades asked with nothing on the screen: loaded as a cut instead
-    long program_fades;             // fades into a program asked (pvj-fade-to-program), whether they ran or were a cut from nothing
+    long program_fades;             // fades into a program asked (mctl-fade-to-program), whether they ran or were a cut from nothing
     long sound_held;                // crossfades whose outgoing core had not closed its sound output in time
     // per video layer, kept by its event thread (atomics): files started so far, and which of those starts the last
     // playback restart (a first frame ready, after a load or a seek) and the last failed load belong to. libmpv sends
@@ -182,7 +185,7 @@ typedef struct {
     int stops_asked[MAX_LAYERS], stops_done[MAX_LAYERS];    // the stops that end a fade, and those libmpv has run (atomics)
     int idle[MAX_LAYERS];           // the layer's idle-active, as observed by its event thread (atomics)
     long layer_drawn[MAX_LAYERS];   // frames each layer converted (atomics: the render thread adds, the socket reads)
-    long source_loads[MAX_LAYERS];  // loads asked of source k > 1 (pvj-source k loadfile), by its index
+    long source_loads[MAX_LAYERS];  // loads asked of source k > 1 (mctl-source k loadfile), by its index
     // each source's mix (D101): its opacity (0 to 1) and blend, by layer index (source k > 1 is layer k; source 1's
     // is its own picture, the program, at 1 and normal). Set by the socket's threads under app.lock and read once a
     // frame in the render loop's one look under it, so a frame never mixes two settings.
@@ -257,7 +260,7 @@ typedef struct {
     GLuint tex[8];
     GLint tex_loc[8], tex_size_loc[8];
     int tex_w[8], tex_h[8];
-    // the other sources' pictures the pass reads (D101): `//!BIND SOURCEk`, k from 2 to MAX_SOURCES; pvj-render
+    // the other sources' pictures the pass reads (D101): `//!BIND SOURCEk`, k from 2 to MAX_SOURCES; mctl-render
     // supplies each as SOURCEk_raw (with SOURCEk_tex(pos), as HOOKED_tex), never the file
     int nsrc;
     int src[MAX_SOURCES];

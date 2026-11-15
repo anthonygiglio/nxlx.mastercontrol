@@ -260,7 +260,7 @@ QUIET = {"seq": 0, "flags": 0, "time": 0.0, "blocks": 0, "rate": 0, "rms_db": so
          "idle": True, "fresh": True, "age": 0.0}
 
 # --- the fed sources (D97) ----------------------------------------------------------------------------------------------------
-METER_LABEL = "pvjsound"
+METER_LABEL = "mctlsound"
 # A filter that passes the sound through unchanged and leaves its RMS and peak level per audio frame as metadata.
 METER_FILTER = "@%s:lavfi=[astats=metadata=1:reset=1:measure_perchannel=none:measure_overall=RMS_level+Peak_level]" % METER_LABEL
 METER_EVERY = 0.04              # the player's meter is read 25 times a second

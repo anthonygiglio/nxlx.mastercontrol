@@ -149,7 +149,7 @@ class FakeIpc:
             else:
                 self.filters = [f for f in self.filters if "@" + f != cmd[2]]
             return None
-        if cmd[:2] == ("get_property", "af-metadata/pvjsound"):
+        if cmd[:2] == ("get_property", "af-metadata/mctlsound"):
             if self.level is None:
                 raise PlayerError("mpv: property unavailable")
             return {"lavfi.astats.Overall.RMS_level": self.level, "lavfi.astats.Overall.Peak_level": "-6.0"}
@@ -244,7 +244,7 @@ class RealMpvMeterTest(unittest.TestCase):
         self.assertAlmostEqual(rms, 20 * math.log10(0.25 / math.sqrt(2)) - 3.01, delta=0.5, msg="a 0.25 sine in one of two channels")
         self.assertAlmostEqual(peak, 20 * math.log10(0.25), delta=0.3)
         self.assertIsNone(out.meter(False))
-        self.assertFalse(any(f.get("label") == "pvjsound" for f in api.player.ipc.request("get_property", "af")))
+        self.assertFalse(any(f.get("label") == "mctlsound" for f in api.player.ipc.request("get_property", "af")))
 
 
 # --- 4. levels sent in over OSC ------------------------------------------------------------------------------------------

@@ -183,12 +183,12 @@ class StandIn(Built):
 
     def test_every_structure_has_the_size_and_the_places_ctypes_gives_it(self):
         lib = ctypes.CDLL(self.path)
-        lib.pvj_standin_layout.restype, lib.pvj_standin_layout.argtypes = ctypes.c_int, [ctypes.POINTER(ctypes.c_int), ctypes.c_int]
+        lib.mctl_standin_layout.restype, lib.mctl_standin_layout.argtypes = ctypes.c_int, [ctypes.POINTER(ctypes.c_int), ctypes.c_int]
         want = []
         for s in (ndi._Source, ndi._FindCreate, ndi._RecvCreate, ndi._Video, ndi._Audio, ndi._Perf):
             want += [ctypes.sizeof(s)] + [getattr(s, name).offset for name, _ in s._fields_]
         got = (ctypes.c_int * 64)()
-        n = lib.pvj_standin_layout(got, 64)
+        n = lib.mctl_standin_layout(got, 64)
         self.assertEqual(list(got[:n]), want)
 
     def test_it_has_every_call_the_helper_declares_and_says_what_it_is(self):

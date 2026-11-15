@@ -24,13 +24,13 @@ Two limits you should know now, both from the node-01 numbers in section 6:
 
 Facts read from the code on master (cddfbf5, 2026-11-08):
 
-1. pvj-render has two video layers for Source 1 (D98). A crossfade (`pvj-crossfade`) loads the incoming clip into the idle layer, and the render thread mixes the two layers (`mix_pass`, or `move_pass` for wipes and slides, D111) once a vblank.
+1. mctl-render has two video layers for Source 1 (D98). A crossfade (`mctl-crossfade`) loads the incoming clip into the idle layer, and the render thread mixes the two layers (`mix_pass`, or `move_pass` for wipes and slides, D111) once a vblank.
 2. A shader is not in a layer. It is slot 0 of Source 1 in `render/src/fx.c`: `fx_source(0, picture, ...)` runs after the layers have been mixed and replaces the whole picture. Under it the player keeps a blank "carrier" clip playing in the front layer.
 3. So there is one shader for the whole of Source 1, and a transition has nowhere to hold the old shader while the new one comes in. `Player.fades_from_clip()` answers false whenever a shader or a live pipe is loaded, so `Api._layered_fade` says no and the panel falls back to D71: a photograph of the screen laid over the new picture. That photograph is the frozen still. D73 wrote the rule ("INTO a shader is a cut whatever the transition", `docs/MANUAL.md` line 153), and D98 wrote the exception for "OUT of" a shader, both saying that a shader list per layer, "generators as layers", is the cure. D106 step (d) built the other half (generators as whole pictures of Sources 2 to N). This design is the half left over for Source 1's layers.
 
 ## 2. The design: a generator belongs to a layer
 
-### 2.1 In pvj-render
+### 2.1 In mctl-render
 
 - Source 1 gets two generator slots, one for each of its two video layers (`gen[0]`, `gen[1]`), kept in their own array beside the `gl[source][slot]` table, so no existing slot number moves and D129's graphics can claim slots without meeting these.
 - A layer's picture is its generator's texture when that layer has a generator, else libmpv's texture, as now. `mix_pass` and `move_pass` are handed those two textures. Nothing in `FS_MIX` or `FS_MOVE` changes: they already take any two textures at the inside size.
@@ -44,12 +44,12 @@ Facts read from the code on master (cddfbf5, 2026-11-08):
 
 ### 2.2 Commands (IPC)
 
-Only the pvj-render property gains a word and the socket gains one command. A renderer from before this and a panel from before this stay compatible, as the other transition steps did (D98, D111).
+Only the mctl-render property gains a word and the socket gains one command. A renderer from before this and a panel from before this stay compatible, as the other transition steps did (D98, D111).
 
-- Property `pvj-render` gains `layer-generators` (true) and, from slice 4, `fades-degraded`. Version 0.9.0. A panel asks once per process, as it asks `crossfades` and `moves`.
-- `["pvj-fade-to-program", PATH, SECONDS, MOVE?]`: load the program file at PATH (read by `fx.c`'s reader, same rules as `pvj-shader load`) into the idle layer's generator, make that layer the front, and start the fade (a mix, or a wipe or slide if MOVE names one). Answered when the program is built. If the GPU refuses it, the answer carries the compiler's words and nothing changes on the screen. It is a separate command and not a flavour of `pvj-crossfade` because a clip goes through the hardened libmpv load and a program does not.
-- `["pvj-crossfade", URL, SECONDS, OPTIONS, MOVE?]` (clip in) works as now, and when the outgoing layer holds a generator it keeps that generator running until the end of the fade, then clears it. This is shader to clip.
-- `["pvj-shader", "set"|"load"|"clear", 1, 0, ...]`: slot 0 of Source 1 now means "the front layer's generator". A value that moves goes to the incoming program (the front layer is the incoming one from the moment a fade starts). The panel's value worker therefore needs no change.
+- Property `mctl-render` gains `layer-generators` (true) and, from slice 4, `fades-degraded`. Version 0.9.0. A panel asks once per process, as it asks `crossfades` and `moves`.
+- `["mctl-fade-to-program", PATH, SECONDS, MOVE?]`: load the program file at PATH (read by `fx.c`'s reader, same rules as `mctl-shader load`) into the idle layer's generator, make that layer the front, and start the fade (a mix, or a wipe or slide if MOVE names one). Answered when the program is built. If the GPU refuses it, the answer carries the compiler's words and nothing changes on the screen. It is a separate command and not a flavour of `mctl-crossfade` because a clip goes through the hardened libmpv load and a program does not.
+- `["mctl-crossfade", URL, SECONDS, OPTIONS, MOVE?]` (clip in) works as now, and when the outgoing layer holds a generator it keeps that generator running until the end of the fade, then clears it. This is shader to clip.
+- `["mctl-shader", "set"|"load"|"clear", 1, 0, ...]`: slot 0 of Source 1 now means "the front layer's generator". A value that moves goes to the incoming program (the front layer is the incoming one from the moment a fade starts). The panel's value worker therefore needs no change.
 - The rule of D98 is kept: a load, a stop or a new transition while a fade runs ends that fade at once on its incoming side, then the new one starts from that. See question 2 in section 9 (decided).
 
 ### 2.3 In the panel (Python)
@@ -82,7 +82,7 @@ For a shader or a clip on the New renderer it is never taken. The visible signs:
 - **Pi 4**: the target of the measurements below. Lean values (540 lines inside, `--fast`, final pass Automatic). The budget rule applies.
 - **Pi 5 and desktop (full tier)**: same code. D123 lets each generator run at the screen's rate (up to 60), which doubles each generator's cost against a Pi 4. None of this is measured on a Pi 5 or a desktop. Until it is, the budget rule uses the Pi 4's numbers and the rate guard (section 7) is on. Row LT8 measures it.
 - **Unknown boards** (D122): lean values, so the Pi 4 rule applies.
-- **Pi 3** (classic mpv, D105 frozen): no pvj-render, no layer generators. A shader pad still cuts in (D73), and out of a shader a clip still blends from D71's still, as now. The panel says so in the Mix card in words. A Pi 3 gets no worse and no better.
+- **Pi 3** (classic mpv, D105 frozen): no mctl-render, no layer generators. A shader pad still cuts in (D73), and out of a shader a clip still blends from D71's still, as now. The panel says so in the Mix card in words. A Pi 3 gets no worse and no better.
 
 ## 5. The budget rule (what holds 60 Hz)
 
@@ -95,7 +95,7 @@ So the rule for the transition is: if the two generators together weigh more tha
 
 ## 6. Measured on node-01 (2026-11-08, Pi 4 Model B Rev 1.5, V3D 4.2, renderer 0.8.0, 960 x 540 inside, 1920 x 1080 at 60 Hz on HDMI-A-1, 4 sources, `--fast --skip-deblock --final=auto`)
 
-What was possible without new code. The node's renderer already draws a generator for each of Sources 2 to 4 (D106 step d), with no mapping so no mixing of them. I loaded program files (made from the bundled shaders by the panel's own `translate_native`, at 960 x 540) straight into the renderer's socket and read its own counters (`pvj-render`: flips, missed-vblanks, load; `pvj-shaders`: runs, drops) over 12 to 15 s windows. For the transition cost I did clip to clip crossfades (720p software decode on both sides, which is heavier on the CPU than shader to shader will be) with generators running on Sources 2 and 3. The cost of the mix pass alone is in the first clip row. What is not in these runs: Source 1 doing the fade between two generators (that needs the new code) and a Blackout or an effect on top.
+What was possible without new code. The node's renderer already draws a generator for each of Sources 2 to 4 (D106 step d), with no mapping so no mixing of them. I loaded program files (made from the bundled shaders by the panel's own `translate_native`, at 960 x 540) straight into the renderer's socket and read its own counters (`mctl-render`: flips, missed-vblanks, load; `mctl-shaders`: runs, drops) over 12 to 15 s windows. For the transition cost I did clip to clip crossfades (720p software decode on both sides, which is heavier on the CPU than shader to shader will be) with generators running on Sources 2 and 3. The cost of the mix pass alone is in the first clip row. What is not in these runs: Source 1 doing the fade between two generators (that needs the new code) and a Blackout or an effect on top.
 
 | Case (all at 540, 30 a second asked) | flips a second | vblanks missed | each generator: runs a second | drops |
 | --- | --- | --- | --- | --- |
@@ -116,7 +116,7 @@ Reading it: one shader of any class and any light pair cost nothing visible. The
 
 Not measured, and why: a real shader to shader transition (the code does not exist), missed vblanks seen at the HDMI end, a Pi 5, a desktop, a feedback-buffer shader pair, 720-line generators in pairs. A real measure needs slice 1 (about one to two days of C and tests) and then row LT1 below.
 
-State left behind: nothing playing, no program in any slot (`pvj-shaders` all off), temp files removed. A restart of the player by another session's deploy happened mid-test; the node came back idle, as it began. No pairing, no login, no setting changed.
+State left behind: nothing playing, no program in any slot (`mctl-shaders` all off), temp files removed. A restart of the player by another session's deploy happened mid-test; the node came back idle, as it began. No pairing, no login, no setting changed.
 
 ## 7. Fallbacks when two shaders cannot both hold
 
@@ -131,9 +131,9 @@ Both degradations are logged in the node's event log (D125) with the shaders' na
 
 ## 8. Slices (one pull request each)
 
-1. **Renderer: layer generators.** `gen[2]` for Source 1, layer textures into the mix and the move, fade end clears the outgoing generator, `pvj-shader` slot 0 to the front layer, property words. Headless tests on llvmpipe: two programs at half mix equal the average of each drawn alone (pixel check), a wipe edge with shaders on both sides, 2,000 fades with no object or thread left over (as D106's churn test), ASan and UBSan on the program reader paths. Device rows LT1, LT2.
-2. **Renderer: `pvj-fade-to-program` and clip to and from shader.** Waiting for the build, the first-frame start, the outgoing generator kept running through a clip crossfade. Tests: all eight wipes and slides with a shader side, a refused program leaves the screen, a Stop during a fade. Device rows LT3, LT4.
-3. **Panel: use it.** `fades_native`, `fade_to_program`, no carrier on the New renderer, `LiveEngine.show` and `Api.play` choose the layered path, status and Mix card words, `MANUAL.md` line 153, addenda to D73 and D98. Note for the value worker: during a shader-to-clip fade a `pvj-shader set` to slot 0 is refused ("invalid parameter") while the outgoing generator still draws, because slot 0 is the front (incoming, clip) layer's, which has no program, and slot 0 reads off; the panel must expect that refusal and not read it as a failure (behaviour kept as it is in slice 1, found in the review of #239). A load that waits while its layer is cut is answered "the layer was ended before the load took effect". Tests over the stand-in renderer and the real `Player`; the existing D73 tests that pin "into a shader is a cut" are changed for the New renderer and kept for classic. Device rows LT5, LT6.
+1. **Renderer: layer generators.** `gen[2]` for Source 1, layer textures into the mix and the move, fade end clears the outgoing generator, `mctl-shader` slot 0 to the front layer, property words. Headless tests on llvmpipe: two programs at half mix equal the average of each drawn alone (pixel check), a wipe edge with shaders on both sides, 2,000 fades with no object or thread left over (as D106's churn test), ASan and UBSan on the program reader paths. Device rows LT1, LT2.
+2. **Renderer: `mctl-fade-to-program` and clip to and from shader.** Waiting for the build, the first-frame start, the outgoing generator kept running through a clip crossfade. Tests: all eight wipes and slides with a shader side, a refused program leaves the screen, a Stop during a fade. Device rows LT3, LT4.
+3. **Panel: use it.** `fades_native`, `fade_to_program`, no carrier on the New renderer, `LiveEngine.show` and `Api.play` choose the layered path, status and Mix card words, `MANUAL.md` line 153, addenda to D73 and D98. Note for the value worker: during a shader-to-clip fade a `mctl-shader set` to slot 0 is refused ("invalid parameter") while the outgoing generator still draws, because slot 0 is the front (incoming, clip) layer's, which has no program, and slot 0 reads off; the panel must expect that refusal and not read it as a failure (behaviour kept as it is in slice 1, found in the review of #239). A load that waits while its layer is cut is answered "the layer was ended before the load took effect". Tests over the stand-in renderer and the real `Player`; the existing D73 tests that pin "into a shader is a cut" are changed for the New renderer and kept for classic. Device rows LT5, LT6.
 4. **Budget and the ladder.** The weight table from `shaderlive`, the half rate, the freeze, `fades-degraded`, the event-log lines. Device rows LT7, LT8.
 5. **Later, after decks and graphics exist:** a generator pair for Source 2 and up (decks' B side), Vibes using the chosen Mix transition between shaders, a balance of the node-wide budget when graphics are sources.
 

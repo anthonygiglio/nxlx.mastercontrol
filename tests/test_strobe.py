@@ -11,7 +11,7 @@ What is held here:
 * the routes with the real API and a stand-in for mpv (the classic path: the strobe is the effect, and what was on comes
   back), the roles, the effect in the library;
 * MIDI (note on, note off, a pulled cable, lost messages) and OSC (1 and 0, the lockdown, the sender as holder);
-* the filter itself, run by pvj-render when it is built (CI builds it): the rate cap in the shader's own timing, and a
+* the filter itself, run by mctl-render when it is built (CI builds it): the rate cap in the shader's own timing, and a
   hold on the real renderer being one value.
 """
 import json
@@ -1059,7 +1059,7 @@ class RolesTest(RouteBase):
 
 
 # ---- the real renderer -------------------------------------------------------------------------------------------------
-from tests.test_pvj_render import Renderer, need_program         # noqa: E402
+from tests.test_mctl_render import Renderer, need_program         # noqa: E402
 from pvj import paths                                            # noqa: E402
 from pvj.player import Player as RealPlayer                                    # noqa: E402
 
@@ -1086,7 +1086,7 @@ class NativeTest(unittest.TestCase):
         self.addCleanup(self.strobe.stop)
 
     def slot(self, k):
-        return [s for s in self.r("get_property", "pvj-shaders") if s["source"] == 1 and s["slot"] == k][0]
+        return [s for s in self.r("get_property", "mctl-shaders") if s["source"] == 1 and s["slot"] == k][0]
 
     def test_a_hold_is_a_value_on_the_loaded_copy_and_a_release_is_a_value(self):
         out = self.strobe.set({"arm": True})
@@ -1159,9 +1159,9 @@ class ShaderTimingTest(NativeBase):
 
     def put(self, **values):
         parsed = S.parse(open(os.path.join(E.EFFECTS_DIR, "fx-strobe.fs"), encoding="utf-8").read(), S.FILTER, passes=True)
-        self.r("pvj-shader", "load", 1, 1, self.write(E.translate_native(parsed, values={"flash": 250.0}, controls={"amount": 1.0, "speed": 1.0})))
+        self.r("mctl-shader", "load", 1, 1, self.write(E.translate_native(parsed, values={"flash": 250.0}, controls={"amount": 1.0, "speed": 1.0})))
         self.assertTrue(self.r.wait(lambda: self.slot(1)["state"] != "off", 5))
-        self.r("pvj-shader", "set", 1, 1, dict({"flash": 250.0, "way": 0}, **values))
+        self.r("mctl-shader", "set", 1, 1, dict({"flash": 250.0, "way": 0}, **values))
 
     def test_a_rate_of_99_flashes_no_faster_than_3_a_second(self):
         self.picture()
@@ -1209,7 +1209,7 @@ class FallbackAndArmTest(unittest.TestCase):
     def test_the_renderer_falling_back_mid_hold_does_not_wedge_it_or_fill_the_log(self):
         api, clock, s = rig()
         s.hold(DEVICE, {"holder": "t"})
-        api.player.native = False                               # pvj-render fell back to classic: there is no chain
+        api.player.native = False                               # mctl-render fell back to classic: there is no chain
         s.release(DEVICE, {"holder": "t"})
         self.assertFalse(s.lit)
         self.assertEqual((s.route, s.slot), (None, None))
@@ -1273,7 +1273,7 @@ class RestartTest(unittest.TestCase):
                 calls.append(c)
                 if Ipc.n <= 2:
                     raise PlayerError("player is not running")
-                if c[:2] == ("get_property", "pvj-shaders"):
+                if c[:2] == ("get_property", "mctl-shaders"):
                     return [{"source": 1, "slot": 3, "state": "on", "path": path}]
                 return None
         import tempfile
@@ -1287,7 +1287,7 @@ class RestartTest(unittest.TestCase):
         s = ST.Strobe(api, thread=False)
         self.assertTrue(s.reset_player(tries=5, delay=1.0, sleep=waits.append))
         self.assertEqual(waits, [1.0, 2.0])
-        self.assertIn(("pvj-shader", "clear", 1, 3), calls)
+        self.assertIn(("mctl-shader", "clear", 1, 3), calls)
 
     def test_another_program_in_the_slot_is_left_alone_also_after_a_hold(self):
         calls = []
@@ -1295,17 +1295,17 @@ class RestartTest(unittest.TestCase):
         class Ipc:
             def request(self, *c):
                 calls.append(c)
-                if c[:2] == ("get_property", "pvj-shaders"):
+                if c[:2] == ("get_property", "mctl-shaders"):
                     return [{"source": 1, "slot": 3, "state": "on", "path": "/nonexistent/x.prog"}]
         api = Api()
         api.player.ipc = Ipc()
         s = ST.Strobe(api, thread=False)
         self.assertTrue(s.reset_player(tries=1))
-        self.assertNotIn(("pvj-shader", "clear", 1, 3), calls)
+        self.assertNotIn(("mctl-shader", "clear", 1, 3), calls)
         s.hold(DEVICE, {})
         calls.clear()
         self.assertTrue(s.reset_player(tries=1))
-        self.assertFalse([c for c in calls if c[0] == "pvj-shader" and c[1] == "clear"])
+        self.assertFalse([c for c in calls if c[0] == "mctl-shader" and c[1] == "clear"])
 
     def test_a_leftover_in_the_effect_slot_is_taken_off_too(self):
         calls = []
@@ -1319,13 +1319,13 @@ class RestartTest(unittest.TestCase):
         class Ipc:
             def request(self, *c):
                 calls.append(c)
-                if c[:2] == ("get_property", "pvj-shaders"):
+                if c[:2] == ("get_property", "mctl-shaders"):
                     return [{"source": 1, "slot": 1, "state": "on", "path": path}]
         api = Api()
         api.player.ipc = Ipc()
         s = ST.Strobe(api, thread=False)
         self.assertTrue(s.reset_player(tries=1))
-        self.assertIn(("pvj-shader", "clear", 1, 1), calls)
+        self.assertIn(("mctl-shader", "clear", 1, 1), calls)
 
     def test_a_hold_in_the_first_second_does_not_hide_a_leftover_in_the_other_slot(self):
         calls = []
@@ -1340,15 +1340,15 @@ class RestartTest(unittest.TestCase):
         class Ipc:
             def request(self, *c):
                 calls.append(c)
-                if c[:2] == ("get_property", "pvj-shaders"):
+                if c[:2] == ("get_property", "mctl-shaders"):
                     return [{"source": 1, "slot": 2, "state": "on", "path": path}, {"source": 1, "slot": 3, "state": "on", "path": path}]
         api.player.ipc = Ipc()
         s = ST.Strobe(api, thread=False)
         s.hold(DEVICE, {"holder": "t"})                         # the new run's own hold went to slot 3
         self.assertEqual(s.slot, 3)
         self.assertTrue(s.reset_player(tries=1))
-        self.assertIn(("pvj-shader", "clear", 1, 2), calls)     # the leftover is gone ...
-        self.assertNotIn(("pvj-shader", "clear", 1, 3), calls)  # ... and its own slot is not touched
+        self.assertIn(("mctl-shader", "clear", 1, 2), calls)     # the leftover is gone ...
+        self.assertNotIn(("mctl-shader", "clear", 1, 3), calls)  # ... and its own slot is not touched
         self.assertTrue(lit(api))
 
 
