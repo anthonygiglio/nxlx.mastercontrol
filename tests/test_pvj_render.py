@@ -1318,17 +1318,26 @@ class HeapTest(FadeBase):
     size of each such block freed, so the frames and packets of every clip after the first came from the arenas, and
     each crossfade, with two decoders at once, left them more cut up: on node-03 the renderer grew from 62 to 782 MB in
     50 fades and to 1,905 MB in an hour, with what was in use following the clip on the screen. pvj-render fixes the
-    threshold (main.c, heap_setup). Here: 720p clips through the loop lists the player loads (looplist.QUEUE), the
-    renderer with the unit's MALLOC_ARENA_MAX=2, and the heap's free bytes (held by malloc, not given back) after a
-    warm-up and after more fades. On a desk (WSL, llvmpipe, 2026-11-15), this test without the fixed threshold: 151 MB
-    free after 10 fades and 216 MB after 30, a failure; with it, 61 MB and 83 MB."""
+    threshold (main.c, heap_setup) and trims the heap when a clip ends. Here: 720p clips through the loop lists the player
+    loads (looplist.QUEUE), the renderer with the unit's MALLOC_ARENA_MAX=2 and none of glibc's own settings from the
+    environment, and the heap's free bytes (held by malloc, not given back) after a warm-up and after more fades. The
+    mechanism is checked too, so the test cannot pass for another reason: the threshold read back, the frames in mapped
+    blocks while clips play, and the trims done. On a desk (WSL, llvmpipe, 2026-11-15), this test on a build with the
+    threshold left to glibc and no trim: 142 MB free after 10 fades and 182 MB after 30, 30 MB mapped, a failure; on
+    this one: 14 and 20 MB free, 148 MB mapped, 30 trims, the longest 18 ms."""
     LIMIT = 300.0
-    FREE_MOST = 128 << 20       # bytes free in the heap after the fades, at most
-    GROWTH_MOST = 48 << 20      # ... and their growth from the warm-up's end
+    FREE_MOST = 64 << 20        # bytes free in the heap after the fades, at most
+    GROWTH_MOST = 32 << 20      # ... and their growth from the warm-up's end
+    MAPPED_LEAST = 64 << 20     # bytes in mapped blocks while 720p clips play, at least (glibc's own way: about 28 MB)
+    THRESHOLD = 128 * 1024      # main.c, HEAP_MMAP_THRESHOLD
 
     def setUp(self):
         super().setUp()
         self.r.close()
+        # an inherited MALLOC_MMAP_THRESHOLD_ or GLIBC_TUNABLES would set the threshold in this program's place
+        for name in ("MALLOC_MMAP_THRESHOLD_", "GLIBC_TUNABLES"):
+            if name in os.environ:
+                self.addCleanup(os.environ.__setitem__, name, os.environ.pop(name))
         self.r = Renderer("--headless=1280x720", env={"MALLOC_ARENA_MAX": "2"})
 
     def clips(self):
@@ -1357,7 +1366,7 @@ class HeapTest(FadeBase):
         r("set_property", "loop-file", "inf")
         self.assertTrue(r.wait(lambda: self.st()["drawn"] > 10, 20), r.stderr())
         opts = "keep-open=no,image-display-duration=inf,vd-queue-enable=yes,vd-queue-max-samples=6,vd-queue-max-secs=2"
-        free = []
+        seen = []
         for i in range(1, 31):
             self.assertLess(time.monotonic(), deadline, "the bounded run of fades took too long")
             done = self.st()["fades-done"]
@@ -1366,9 +1375,18 @@ class HeapTest(FadeBase):
             r("set_property", "loop-file", "inf")
             time.sleep(1.0)
             if i in (10, 30):
-                free.append(r("get_property", "pvj-heap")["free"])
-        heap = r("get_property", "pvj-heap")
-        print("\nheap free after 10 and 30 crossfades: %s MB; now %s" % ([f >> 20 for f in free], heap))
+                seen.append(r("get_property", "pvj-heap"))
+        free = [h["free"] for h in seen]
+        heap = seen[1]
+        print("\nthe heap after 10 and 30 crossfades (MB): free %s (at most %d, growth at most %d), mapped %s (at least %d); "
+              "threshold %d; %d trims, %.1f ms in all, the longest %.1f ms"
+              % ([f >> 20 for f in free], self.FREE_MOST >> 20, self.GROWTH_MOST >> 20, [h["mapped"] >> 20 for h in seen],
+                 self.MAPPED_LEAST >> 20, heap["threshold"], heap["trims"], heap["trim-ms"], heap["trim-ms-max"]))
+        # the mechanism: the threshold is the program's, the frames are mapped blocks, and the heap was trimmed at the ends
+        self.assertEqual(heap["threshold"], self.THRESHOLD, heap)
+        self.assertGreaterEqual(heap["mapped"], self.MAPPED_LEAST, "the frames are not in mapped blocks: %s" % heap)
+        self.assertGreaterEqual(heap["trims"], 10, "the heap was not trimmed after the clips ended: %s" % heap)
+        # and what it is for
         self.assertLessEqual(free[1], self.FREE_MOST, "the heap holds what the clips freed: %s" % heap)
         self.assertLessEqual(free[1] - free[0], self.GROWTH_MOST, "the heap's free memory grows with the fades: %s" % free)
         self.assertIsNone(r.proc.poll())

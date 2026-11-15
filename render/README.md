@@ -119,12 +119,17 @@ frame with the render API (on the Pi's V3D a file descriptor each); this program
 crossfade with nothing on the screen is loaded as a cut) and `sound-held` (crossfades whose outgoing core had not closed
 its sound output within a second).
 
-The heap (J-157): pvj-render fixes glibc's threshold for blocks mapped on their own at 256 KiB at start, so a clip's
-frames and packets are given back to the system when it goes. Left to glibc, the threshold rose with the first big frame
-freed, and every crossfade left the arenas more cut up: on node-03 the process grew from 62 to 782 MB in 50 crossfades.
-`MALLOC_MMAP_THRESHOLD_` in the environment (pvj.env) wins. `get_property pvj-heap` says the heap's bytes `used`, `free`
-(held by malloc and not given back), `mapped` (blocks mapped on their own) and `arena`. It walks every arena under its
-lock, so it is a property of its own, for a test or a person, not part of `pvj-render`.
+The heap (J-157): pvj-render fixes glibc's threshold for blocks mapped on their own at 128 KiB at start. A block of that
+size or more (a frame's planes, a large packet) has a mapping of its own and goes back to the system when it is freed.
+Left to glibc, the threshold rose with the first big frame freed, and every crossfade left the arenas more cut up: on
+node-03 the process grew from 62 to 782 MB in 50 crossfades. Blocks under the threshold still come from the arenas, and
+what a clip leaves there is not given back by itself; so when a video layer's file ends (a crossfade's outgoing clip, a
+clip a load replaced), a thread of its own calls malloc_trim, at most once a second, never the render thread.
+`MALLOC_MMAP_THRESHOLD_` in the environment, or `glibc.malloc.mmap_threshold` in `GLIBC_TUNABLES` (pvj.env), wins: the
+program then sets no threshold of its own (the trim still runs). On a C library other than glibc none of this is done.
+`get_property pvj-heap` says the heap's bytes `used`, `free` (held by malloc and not given back), `mapped` (blocks mapped
+on their own) and `arena`, the `threshold` the program set (0: none), and `trims`, `trim-ms` and `trim-ms-max`. It walks
+every arena under its lock, so it is a property of its own, for a test or a person, not part of `pvj-render`.
 
 ## The final pass at 720 lines (D108)
 
