@@ -28,6 +28,9 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
 #include <math.h>
 #include <sched.h>
 #include <signal.h>
@@ -79,6 +82,105 @@ static void on_signal(int s)
     g_signal = s;
     wake_render();
 }
+
+/* ---- the heap (J-157) ---------------------------------------------------------------------------------------------- */
+// glibc serves a block of HEAP_MMAP_THRESHOLD or more by a mapping of its own, given back to the system when it is
+// freed. Left alone, glibc raises that threshold to the size of every such block freed, up to 32 MiB: after the first
+// 4K frame or large packet freed, every decoder's frames and packets came from the two arenas (D114), and each crossfade
+// left them more cut up. The heap held what it freed: on node-03 (2026-11-14) the renderer grew from 62 to 782 MB in 50
+// crossfades with software decoding and to 1,148 MB with hardware decoding, and to 1,905 MB in an hour, while what was
+// in use stayed with the clip on the screen (2026-11-15: 113 to 360 MB in use, 452 MB free and held). A fixed threshold
+// turns the raising off; the frame pools and the cores' caches are made of such blocks, so a clip that goes gives its
+// memory back. MALLOC_MMAP_THRESHOLD_, or glibc.malloc.mmap_threshold in GLIBC_TUNABLES, in the environment (pvj.env)
+// wins, as an operator's word should.
+//
+// Blocks under the threshold still come from the arenas, and what a clip leaves there is not given back by itself (the
+// review of #296: about 0.8 MB a fade at 720p, whose chroma planes are just under 256 KiB). So when a video layer's file
+// has ended (the outgoing clip of a crossfade, or a clip a load replaced: its decoders are closed by then), a thread of its
+// own trims the heap with malloc_trim, which gives back the free pages inside the arenas too. At most one trim a second,
+// a moment after the end, never on the render thread; how long they take is counted (`pvj-heap`).
+#ifndef HEAP_MMAP_THRESHOLD
+#define HEAP_MMAP_THRESHOLD (128 * 1024)
+#endif
+#define HEAP_TRIM_DELAY 0.3             // seconds after a file's end: the core's last frees come first
+#define HEAP_TRIM_GAP 1.0               // seconds between two trims at least
+
+#ifdef __GLIBC__
+static pthread_t trim_thread;
+static int trim_running, trim_wanted, trim_stop;
+static pthread_mutex_t trim_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t trim_cond = PTHREAD_COND_INITIALIZER;
+
+static void heap_setup(void)
+{
+    const char *tun = getenv("GLIBC_TUNABLES");
+    if (getenv("MALLOC_MMAP_THRESHOLD_") || (tun && strstr(tun, "glibc.malloc.mmap_threshold"))) return;
+    if (mallopt(M_MMAP_THRESHOLD, HEAP_MMAP_THRESHOLD)) app.heap_threshold = HEAP_MMAP_THRESHOLD;
+    else LOG("malloc's threshold for mapped blocks could not be set");
+}
+
+static void *trim_loop(void *arg)
+{
+    (void)arg;
+    double last = -1e9;
+    pthread_mutex_lock(&trim_lock);
+    while (!trim_stop) {
+        if (!trim_wanted) { pthread_cond_wait(&trim_cond, &trim_lock); continue; }
+        pthread_mutex_unlock(&trim_lock);
+        double wait = HEAP_TRIM_DELAY, t = now_s();
+        if (t + wait < last + HEAP_TRIM_GAP) wait = last + HEAP_TRIM_GAP - t;
+        struct timespec ts = { (time_t)wait, (long)((wait - (double)(time_t)wait) * 1e9) };
+        nanosleep(&ts, NULL);
+        pthread_mutex_lock(&trim_lock);
+        trim_wanted = 0;                // the ends that came while it waited are this trim's too
+        if (trim_stop) break;
+        pthread_mutex_unlock(&trim_lock);
+        double t0 = now_s();
+        malloc_trim(0);
+        last = now_s();
+        long us = (long)((last - t0) * 1e6);
+        __atomic_add_fetch(&app.heap_trims, 1, __ATOMIC_RELAXED);
+        __atomic_add_fetch(&app.heap_trim_us, us, __ATOMIC_RELAXED);
+        long was = __atomic_load_n(&app.heap_trim_us_max, __ATOMIC_RELAXED);
+        while (us > was && !__atomic_compare_exchange_n(&app.heap_trim_us_max, &was, us, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {}
+        pthread_mutex_lock(&trim_lock);
+    }
+    pthread_mutex_unlock(&trim_lock);
+    return NULL;
+}
+
+static void heap_trim_start(void)
+{
+    if (pthread_create(&trim_thread, NULL, trim_loop, NULL) == 0) trim_running = 1;
+    else LOG("no thread to trim the heap: it is not trimmed after a clip");
+}
+
+// a video layer's file has ended (its event thread)
+static void heap_trim_soon(void)
+{
+    pthread_mutex_lock(&trim_lock);
+    trim_wanted = 1;
+    pthread_cond_signal(&trim_cond);
+    pthread_mutex_unlock(&trim_lock);
+}
+
+static void heap_trim_end(void)
+{
+    if (!trim_running) return;
+    pthread_mutex_lock(&trim_lock);
+    trim_stop = 1;
+    pthread_cond_signal(&trim_cond);
+    pthread_mutex_unlock(&trim_lock);
+    pthread_join(trim_thread, NULL);
+    trim_running = 0;
+}
+#else
+// not glibc (musl, say): its malloc gives freed memory back on its own terms, and none of the above applies
+static void heap_setup(void) {}
+static void heap_trim_start(void) {}
+static void heap_trim_soon(void) {}
+static void heap_trim_end(void) {}
+#endif
 
 /* ---- options ------------------------------------------------------------------------------------------------------- */
 static int opt(const char *a, const char *name, const char **val)
@@ -301,6 +403,7 @@ static void *event_loop(void *arg)
                 wake_render();
             }
             if (ev->event_id == MPV_EVENT_START_FILE) __atomic_add_fetch(&app.starts[i], 1, __ATOMIC_RELEASE);
+            if (ev->event_id == MPV_EVENT_END_FILE) heap_trim_soon();     // its decoders are closed: the heap is trimmed (J-157)
             if (ev->event_id == MPV_EVENT_COMMAND_REPLY && ev->reply_userdata == STOP_REPLY)
                 __atomic_add_fetch(&app.stops_done[i], 1, __ATOMIC_RELEASE);
             if (ev->event_id == MPV_EVENT_PROPERTY_CHANGE) {
@@ -1031,6 +1134,7 @@ static void realtime_priority(void)
 int main(int argc, char **argv)
 {
     Cfg cfg;
+    heap_setup();                       // first: before libmpv and its threads allocate anything
     if (parse_args(argc, argv, &cfg)) return 64;
     app.cfg = &cfg;
     app.pid = getpid();
@@ -1115,6 +1219,7 @@ int main(int argc, char **argv)
         out_close();
         return 2;
     }
+    heap_trim_start();
     pthread_t ipc;
     if (pthread_create(&ipc, NULL, ipc_thread, NULL)) { LOG("no socket thread"); return 2; }
     LOG("drawing %dx%d inside, %dx%d at %.2f Hz out, %d source%s, hwdec %s, socket %s", app.in_w, app.in_h, app.out_w, app.out_h,
@@ -1368,6 +1473,7 @@ int main(int argc, char **argv)
     }
     pthread_join(ipc, NULL);
     ipc_close();
+    heap_trim_end();
     if (have_hook) hookgl_free(&hook_gl);
     fx_free_all();
     gfx_free_all();

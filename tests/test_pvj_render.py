@@ -1313,6 +1313,99 @@ class ManyFadesTest(FadeBase):
                  [w["gl-objects"] for w in warm], [c["gl-objects"] for c in later], self.st()["gl-fences-freed"]))
 
 
+class HeapTest(FadeBase):
+    """A crossfade gives its clip's memory back (J-157). glibc raises its threshold for blocks mapped on their own to the
+    size of each such block freed, so the frames and packets of every clip after the first came from the arenas, and
+    each crossfade, with two decoders at once, left them more cut up: on node-03 the renderer grew from 62 to 782 MB in
+    50 fades and to 1,905 MB in an hour, with what was in use following the clip on the screen. pvj-render fixes the
+    threshold (main.c, heap_setup) and trims the heap when a clip ends. Here: 720p clips through the loop lists the player
+    loads (looplist.QUEUE), the renderer with the unit's MALLOC_ARENA_MAX=2 and none of glibc's own settings from the
+    environment, and the heap's free bytes (held by malloc, not given back) after a warm-up and after more fades. The
+    mechanism is checked too, so the test cannot pass for another reason: the threshold read back, the frames in mapped
+    blocks while clips play, and the trims done. On a desk (WSL, llvmpipe, 2026-11-15), this test on a build with the
+    threshold left to glibc and no trim: 142 MB free after 10 fades and 182 MB after 30, 30 MB mapped, a failure; on
+    this one: 14 and 20 MB free, 148 MB mapped, 30 trims, the longest 18 ms."""
+    LIMIT = 300.0
+    FREE_MOST = 64 << 20        # bytes free in the heap after the fades, at most
+    GROWTH_MOST = 32 << 20      # ... and their growth from the warm-up's end
+    MAPPED_LEAST = 64 << 20     # bytes in mapped blocks while 720p clips play, at least (glibc's own way: about 28 MB)
+    THRESHOLD = 128 * 1024      # main.c, HEAP_MMAP_THRESHOLD
+
+    def setUp(self):
+        super().setUp()
+        self.r.close()
+        # an inherited MALLOC_MMAP_THRESHOLD_ or GLIBC_TUNABLES would set the threshold in this program's place
+        for name in ("MALLOC_MMAP_THRESHOLD_", "GLIBC_TUNABLES"):
+            if name in os.environ:
+                self.addCleanup(os.environ.__setitem__, name, os.environ.pop(name))
+        self.r = Renderer("--headless=1280x720", env={"MALLOC_ARENA_MAX": "2"})
+
+    def clips(self):
+        maker = shutil.which("ffmpeg")
+        if not maker:
+            if STRICT:
+                self.fail("PVJ_RENDER_TEST=1 and no ffmpeg to make the clips")
+            self.skipTest("no ffmpeg to make the clips")
+        clips, lists = [], []
+        for i, source in enumerate(("testsrc2", "testsrc", "smptehdbars", "rgbtestsrc")):
+            name = "heap%d" % i
+            clip = os.path.join(self.tmp, name + ".mp4")
+            subprocess.run([maker, "-v", "error", "-y", "-f", "lavfi", "-i", "%s=s=1280x720:r=30:d=4" % source, "-pix_fmt", "yuv420p",
+                            "-c:v", "libx264", "-preset", "ultrafast", "-g", "30", clip],
+                           check=True, timeout=120, stdin=subprocess.DEVNULL)
+            path = os.path.join(self.tmp, name + ".ffconcat")
+            with open(path, "w") as f:
+                f.write("ffconcat version 1.0\n" + ("file %s.mp4\nduration 4.000000\n" % name) * 200)
+            clips.append(clip)
+            lists.append(path)
+        return clips, lists
+
+    def test_crossfades_give_their_clips_memory_back(self):
+        r = self.r
+        deadline = time.monotonic() + self.LIMIT
+        clips, lists = self.clips()
+        # As the player loads a looping clip (Player._crossfade): its list, with the decoded queue for that file alone. A
+        # libmpv whose loadfile has no index (mpv 0.37, CI's Ubuntu 24.04) refuses a load with per-file options, and the
+        # player then loads the plain clip with the plain options; so does this test (as LoopListTest does). Asked once,
+        # here, never retried in the loop: a refusal there is a failure.
+        refused = None
+        try:
+            r("loadfile", lists[0], "replace", -1, looplist.QUEUE)
+            items, opts = lists, "keep-open=no,image-display-duration=inf," + looplist.QUEUE
+        except PlayerError as e:
+            refused = str(e)
+            r("loadfile", clips[0], "replace")
+            items, opts = clips, "keep-open=no,image-display-duration=inf"
+        r("set_property", "loop-file", "inf")
+        self.assertTrue(r.wait(lambda: self.st()["drawn"] > 10, 20), r.stderr())
+        print("\nHeapTest plays %s" % ("loop lists with the decoded queue" if refused is None
+                                       else "plain clips: a load with per-file options was refused (%s)" % refused))
+        seen = []
+        for i in range(1, 31):
+            self.assertLess(time.monotonic(), deadline, "the bounded run of fades took too long")
+            done = self.st()["fades-done"]
+            r("pvj-crossfade", items[i % 4], 1.0, opts)
+            self.assertTrue(r.wait(lambda: self.st()["fades-done"] > done, 15, 0.05), "fade %d: %s\n%s" % (i, self.st(), r.stderr()))
+            r("set_property", "loop-file", "inf")
+            time.sleep(1.0)
+            if i in (10, 30):
+                seen.append(r("get_property", "pvj-heap"))
+        free = [h["free"] for h in seen]
+        heap = seen[1]
+        print("\nthe heap after 10 and 30 crossfades (MB): free %s (at most %d, growth at most %d), mapped %s (at least %d); "
+              "threshold %d; %d trims, %.1f ms in all, the longest %.1f ms"
+              % ([f >> 20 for f in free], self.FREE_MOST >> 20, self.GROWTH_MOST >> 20, [h["mapped"] >> 20 for h in seen],
+                 self.MAPPED_LEAST >> 20, heap["threshold"], heap["trims"], heap["trim-ms"], heap["trim-ms-max"]))
+        # the mechanism: the threshold is the program's, the frames are mapped blocks, and the heap was trimmed at the ends
+        self.assertEqual(heap["threshold"], self.THRESHOLD, heap)
+        self.assertGreaterEqual(heap["mapped"], self.MAPPED_LEAST, "the frames are not in mapped blocks: %s" % heap)
+        self.assertGreaterEqual(heap["trims"], 10, "the heap was not trimmed after the clips ended: %s" % heap)
+        # and what it is for
+        self.assertLessEqual(free[1], self.FREE_MOST, "the heap holds what the clips freed: %s" % heap)
+        self.assertLessEqual(free[1] - free[0], self.GROWTH_MOST, "the heap's free memory grows with the fades: %s" % free)
+        self.assertIsNone(r.proc.poll())
+
+
 class FadeOnFadeTest(FadeBase):
     """A crossfade asked as the last one ends loads into the layer that fade is stopping. The stop is queued, and libmpv
     runs a blocking command ahead of what is queued, so it has to be seen done first, or it takes the new clip with it:
