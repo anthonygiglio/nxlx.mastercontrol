@@ -44,7 +44,7 @@ function startServer() {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true });
     const page = await ctx.newPage();
     const api = (method, url, body) => page.evaluate(async ([m, u, b]) => {
-      const r = await fetch(u, { method: m, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: m === 'POST' ? JSON.stringify(b || {}) : undefined });
+      const r = await fetch(u, { method: m, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-MCTL-Request': '1' }, body: m === 'POST' ? JSON.stringify(b || {}) : undefined });
       return r.json().catch(() => ({}));
     }, [method, url, body]);
     const card = (title) => page.locator('.card:visible', { has: page.locator('h2', { hasText: new RegExp('^' + title) }) }).first();      // (shown: the Setup index is in the page beside an open page, D72, and its groups have headings too)
@@ -94,7 +94,7 @@ function startServer() {
       await page.evaluate(async (n) => {
         const bytes = new Uint8Array(300000 + n.length * 40000).fill(7);
         await fetch('/api/media/upload?name=' + encodeURIComponent(n), { method: 'POST', credentials: 'same-origin',
-          headers: { 'X-PVJ-Request': '1', 'Content-Type': 'application/octet-stream' }, body: bytes });
+          headers: { 'X-MCTL-Request': '1', 'Content-Type': 'application/octet-stream' }, body: bytes });
       }, name);
     }
     const labels = [['Intro', 'intro.mkv'], ['Tunnel', 'tunnel.mkv'], ['Loop A', 'loop-a.mkv'], ['Loop B', 'loop-b.mkv'], ['Sting', 'sting.mkv'], ['Outro', 'outro.mkv']];

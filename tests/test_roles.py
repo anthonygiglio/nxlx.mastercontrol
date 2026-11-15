@@ -169,7 +169,7 @@ ROWS = {
     ("POST", "/api/graphics/upload"): KINDS["op"],
     ("GET", "/api/graphics/thumb"): KINDS["op"],
     # text and logos on the screen (D129, slice 2): the Operator's and the Owner's; no Guest, ever (a decision of 8 November 2026).
-    # The one change route is also a controller's, on purpose: OSC pushes a line (/pvj/graphic/N/send), behind the owner's OSC switch.
+    # The one change route is also a controller's, on purpose: OSC pushes a line (/mctl/graphic/N/send), behind the owner's OSC switch.
     ("GET", "/api/graphics"): KINDS["op"],
     ("POST", "/api/graphics"): KINDS["live"],
     ("GET", "/api/graphics/fonts"): KINDS["op"],

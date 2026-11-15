@@ -121,7 +121,7 @@ class ServerBase(unittest.TestCase):
         if method == "POST":
             h["Content-Type"] = "application/json"
             if csrf:
-                h["X-PVJ-Request"] = "1"
+                h["X-MCTL-Request"] = "1"
         if token:
             h["Authorization"] = "Bearer " + token
         h.update(headers or {})
@@ -156,7 +156,7 @@ class ServerTest(ServerBase):
         cookie = r.getheader("Set-Cookie")
         self.assertIn("HttpOnly", cookie)
         self.assertIn("SameSite=Strict", cookie)
-        st, body, _ = self.call("GET", "/api/status", headers={"Cookie": "pvj_token=" + token})
+        st, body, _ = self.call("GET", "/api/status", headers={"Cookie": "mctl_token=" + token})
         self.assertEqual(st, 200)
         self.assertEqual(body["device"]["role"], "full")
         self.assertEqual(self.call("GET", "/api/status", token=token)[0], 200)
@@ -242,7 +242,7 @@ class ServerTest(ServerBase):
         _, body, _ = self.call("POST", "/api/devices/invite", {"name": "guest", "role": "view"}, token=full)
         st, _, r = self.call("POST", "/api/session", {"token": body["token"]})
         self.assertEqual(st, 200)
-        self.assertIn("pvj_token=", r.getheader("Set-Cookie"))
+        self.assertIn("mctl_token=", r.getheader("Set-Cookie"))
         self.assertEqual(self.call("POST", "/api/session", {"token": "nope"})[0], 403)
         self.call("POST", "/api/devices/revoke", {"id": body["device"]["id"]}, token=full)
         self.assertEqual(self.call("GET", "/api/status", token=body["token"])[0], 401)
@@ -313,7 +313,7 @@ class ServerTest(ServerBase):
         st, body, _ = self.call("POST", "/api/osc", {"enabled": True, "port": port, "allow": ["10.20.0.0/16"]}, token=full)
         self.assertEqual((st, body["listening"], body["allow"]), (200, True, ["10.20.0.0/16"]))
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
-            sender.sendto(b"/pvj/speed\0\0,f\0\0" + struct.pack(">f", 3.0), ("127.0.0.1", port))
+            sender.sendto(b"/mctl/speed\0,f\0\0" + struct.pack(">f", 3.0), ("127.0.0.1", port))
             deadline = time.time() + 5
             while time.time() < deadline and ("speed", 3.0) not in self.player.calls:
                 time.sleep(0.05)
@@ -719,7 +719,7 @@ class MediaTest(MediaBase):
         import socket
         token, _ = self.pair()
         c = socket.create_connection(("127.0.0.1", self.port), timeout=5)
-        c.sendall(("POST /api/media/upload?name=cut.mp4 HTTP/1.1\r\nHost: 127.0.0.1\r\nX-PVJ-Request: 1\r\n"
+        c.sendall(("POST /api/media/upload?name=cut.mp4 HTTP/1.1\r\nHost: 127.0.0.1\r\nX-MCTL-Request: 1\r\n"
                    "Authorization: Bearer %s\r\nContent-Type: application/octet-stream\r\n"
                    "Content-Length: 5000000\r\n\r\n" % token).encode() + b"x" * 1000)
         time.sleep(0.3)
@@ -734,7 +734,7 @@ class MediaTest(MediaBase):
         token, _ = self.pair()
         slow = socket.create_connection(("127.0.0.1", self.port), timeout=5)
         self.addCleanup(slow.close)
-        slow.sendall(("POST /api/media/upload?name=slow.mp4 HTTP/1.1\r\nHost: 127.0.0.1\r\nX-PVJ-Request: 1\r\n"
+        slow.sendall(("POST /api/media/upload?name=slow.mp4 HTTP/1.1\r\nHost: 127.0.0.1\r\nX-MCTL-Request: 1\r\n"
                       "Authorization: Bearer %s\r\nContent-Type: application/octet-stream\r\n"
                       "Content-Length: 2000\r\n\r\n" % token).encode() + b"x" * 100)
         time.sleep(0.3)
@@ -771,7 +771,7 @@ class MediaHardeningTest(MediaBase):
         import socket
         c = socket.create_connection(("127.0.0.1", self.port), timeout=5)
         self.addCleanup(c.close)
-        c.sendall(("POST /api/media/upload?name=%s HTTP/1.1\r\nHost: 127.0.0.1\r\nX-PVJ-Request: 1\r\n"
+        c.sendall(("POST /api/media/upload?name=%s HTTP/1.1\r\nHost: 127.0.0.1\r\nX-MCTL-Request: 1\r\n"
                    "Authorization: Bearer %s\r\nContent-Type: application/octet-stream\r\n%s"
                    "Content-Length: %d\r\n\r\n" % (name, token, extra_headers, length)).encode() + sent)
         time.sleep(0.3)

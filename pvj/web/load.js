@@ -8,13 +8,13 @@
 //
 // The first script of the page, in the head, so that it is listening before any other file is asked for. It needs
 // nothing from the other files and they need nothing from it, except one line in app.js: the panel draws itself
-// again when a part arrives late (the event "pvjfile").
+// again when a part arrives late (the event "mctlfile").
 //
 // Told apart by what the browser reports, since a page cannot read the status of its own files:
 //   not delivered   the element gets an "error" event (no answer, a cut connection, a status that is not 2xx).
 //                   Asked again; counted per file, so it ends.
 //   arrived, broken the element gets "load", but the script did not leave what it is there to leave (its
-//                   data-gives attribute in index.html names it, as pvjRoom for room.js). Asking again would bring
+//                   data-gives attribute in index.html names it, as mctlRoom for room.js). Asking again would bring
 //                   the same file, so it is not asked for; the page says that the file is at fault.
 // Nothing here loads the page again by itself: an address that came with a code or a token in it would lose that.
 // For a file that did not arrive the notice's button does not load the page again either: it asks for the file once
@@ -22,7 +22,7 @@
 // button, and when that would cost a scanned code the notice says so first.
 //
 // Every script of the page except this one names what it leaves in data-gives (tests/test_page_files.py holds the
-// page to that), app.js too: its last statement sets pvjApp, so a file that cannot be read as a program, or that
+// page to that), app.js too: its last statement sets mctlApp, so a file that cannot be read as a program, or that
 // stops before the panel was started, is named here and the page is not left empty and silent.
 (function () {
   'use strict';
@@ -40,7 +40,7 @@
   // was is not kept here or anywhere else.
   var CODE = /^#(code|pin)=/;
   var hadCode = CODE.test(location.hash);
-  window.pvjLoad = { asked: asked, lost: lost, broken: broken, waits: waits };
+  window.mctlLoad = { asked: asked, lost: lost, broken: broken, waits: waits };
 
   // The path of a script or style sheet of this box that the element stands for; null for anything else (a picture,
   // a font, something from another address, which the page's policy refuses anyway).
@@ -59,7 +59,7 @@
       if (old.getAttribute('data-gives')) fresh.setAttribute('data-gives', old.getAttribute('data-gives'));
       // (a script added by a script runs when it arrives; by then the scripts after it in the page have run, which
       // is why the panel is told below)
-      fresh.addEventListener('load', function () { document.dispatchEvent(new Event('pvjfile')); });
+      fresh.addEventListener('load', function () { document.dispatchEvent(new Event('mctlfile')); });
       fresh.src = old.getAttribute('src');
     } else {
       fresh.rel = 'stylesheet';

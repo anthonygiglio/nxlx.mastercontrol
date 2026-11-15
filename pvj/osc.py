@@ -18,7 +18,7 @@ Deliberate limits:
 * Per-sender rate limit; strict, bounded packet parsing.
 * Three more layers, each off until the owner switches it on (D78): a list of single addresses that may send, a
   rule that the sender's address is one a paired panel device asked from lately, and a key every address must start
-  with (`/k/<key>/pvj/stop`). None of them is encryption: UDP is readable and a source address can be forged by a
+  with (`/k/<key>/mctl/stop`). None of them is encryption: UDP is readable and a source address can be forged by a
   device on the same network, and the key can be read from one captured packet. They keep out devices that are
   merely on the network. What was refused is counted and shown; nothing from a refused packet is applied or kept.
 """
@@ -76,6 +76,20 @@ PRIVATE_NETS = [ipaddress.ip_network(n) for n in (
     "::1/128", "fc00::/7", "fe80::/10")]
 
 # Old addresses that are refused on purpose (or not ported), so logs can say why.
+# The address family before the rename (D138): /pvj/... is still taken for one release and means /mctl/..., so a
+# TouchOSC layout, a Max patch or a QLab cue that was not redone keeps working. What the box sends (the state of
+# oscfeedback.py) uses the new family only. Remove this and current() in the release after the cutover.
+OLD_FAMILY = "/pvj"
+FAMILY = "/mctl"
+
+
+def current(address):
+    """An address of the old family as its new name ("/pvj/stop" -> "/mctl/stop"); any other address as it is."""
+    if address == OLD_FAMILY or address.startswith(OLD_FAMILY + "/"):
+        return FAMILY + address[len(OLD_FAMILY):]
+    return address
+
+
 REFUSED = {"/shutdown", "/reboot", "/rebootall", "/shutdownall", "/piwallmaster", "/piwallloop"}
 
 
@@ -244,7 +258,7 @@ def valid_key(key):
 
 
 def split_key(address):
-    """"/k/<key>/pvj/stop" -> (key, "/pvj/stop"); (None, None) when the address does not have that form."""
+    """"/k/<key>/mctl/stop" -> (key, "/mctl/stop"); (None, None) when the address does not have that form."""
     if not address.startswith(KEY_PREFIX):
         return None, None
     given, slash, rest = address[len(KEY_PREFIX):].partition("/")
@@ -470,17 +484,17 @@ def pressed(args):
     return _number(v) and v > 0.5
 
 
-_ROOM_SCENE = re.compile(r"/pvj/scene/([1-9][0-9]?)")
-_ROOM_GROUP = re.compile(r"/pvj/group/(all|[1-9][0-9]?)/(on|off|mute|mute_picture|mute_sound|input)")
+_ROOM_SCENE = re.compile(r"/mctl/scene/([1-9][0-9]?)")
+_ROOM_GROUP = re.compile(r"/mctl/group/(all|[1-9][0-9]?)/(on|off|mute|mute_picture|mute_sound|input)")
 
 
 def _room(a, args):
-    """The Room module's scenes and group buttons (ROOM.md): /pvj/scene/<n> (press), /pvj/scene with a name or a
-    number, /pvj/group/<n or all>/on, off (press), mute, mute_picture, mute_sound (1 or 0) and input (a code)."""
+    """The Room module's scenes and group buttons (ROOM.md): /mctl/scene/<n> (press), /mctl/scene with a name or a
+    number, /mctl/group/<n or all>/on, off (press), mute, mute_picture, mute_sound (1 or 0) and input (a code)."""
     m = _ROOM_SCENE.fullmatch(a)
     if m:
         return ("/api/room/scene", {"number": int(m.group(1))}) if pressed(args) else None
-    if a == "/pvj/scene":
+    if a == "/mctl/scene":
         v = args[0] if args else None
         if isinstance(v, str):
             return "/api/room/scene", {"name": v}
@@ -512,23 +526,23 @@ def _room(a, args):
 
 # --- the reach the controllers got with D75, from the table MIDI shares (pvj/actions.py) --------------------------
 _NOT_MINE = object()
-_PRESSES = {"/pvj/fade": "fade", "/pvj/clip/next": "clip_next", "/pvj/clip/prev": "clip_prev",
-            "/pvj/effect/next": "effect_next", "/pvj/effect/prev": "effect_prev",
-            "/pvj/shader/next": "shader_next", "/pvj/shader/prev": "shader_prev", "/pvj/clock/tap": "clock_tap"}
+_PRESSES = {"/mctl/fade": "fade", "/mctl/clip/next": "clip_next", "/mctl/clip/prev": "clip_prev",
+            "/mctl/effect/next": "effect_next", "/mctl/effect/prev": "effect_prev",
+            "/mctl/shader/next": "shader_next", "/mctl/shader/prev": "shader_prev", "/mctl/clock/tap": "clock_tap"}
 # address -> (the level's name in the shared table, what the number is multiplied by)
-_LEVELS = {"/pvj/position/x": ("position", 1.0), "/pvj/position/y": ("position_y", 1.0), "/pvj/effect/amount": ("effect_amount", 0.01),
-           "/pvj/shader/speed": ("shader_speed", 1.0), "/pvj/shader/hue": ("shader_hue", 1.0), "/pvj/shader/brightness": ("shader_brightness", 1.0)}
-_SLOT = re.compile(r"/pvj/(shader|effect)/(control|preset)/([1-8])")
-_GRAPHIC = re.compile(r"/pvj/graphic/([1-8])(?:/(text|send))?")
+_LEVELS = {"/mctl/position/x": ("position", 1.0), "/mctl/position/y": ("position_y", 1.0), "/mctl/effect/amount": ("effect_amount", 0.01),
+           "/mctl/shader/speed": ("shader_speed", 1.0), "/mctl/shader/hue": ("shader_hue", 1.0), "/mctl/shader/brightness": ("shader_brightness", 1.0)}
+_SLOT = re.compile(r"/mctl/(shader|effect)/(control|preset)/([1-8])")
+_GRAPHIC = re.compile(r"/mctl/graphic/([1-8])(?:/(text|send))?")
 _SHADER_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,79}")
 
 
 def _fade(path, args):
-    """/pvj/fadeout and /pvj/fadein. A TouchOSC button sends 1 when it is pressed and 0 when it is let go, and
+    """/mctl/fadeout and /mctl/fadein. A TouchOSC button sends 1 when it is pressed and 0 when it is let go, and
     these two used to read that as seconds: a fade of one second, then a refused 0 in the log. Now a 0 is a release
     (nothing, and nothing logged), exactly 1 is a press (the 2 seconds of the panel's button), no argument is a
     press too, and any other number is still the seconds, as it always was. For a real time of 1 second, or to be
-    plain about it, there are /pvj/fadein/seconds and /pvj/fadeout/seconds."""
+    plain about it, there are /mctl/fadein/seconds and /mctl/fadeout/seconds."""
     if not args:
         return path, {"seconds": 2.0}
     v = args[0]
@@ -543,32 +557,32 @@ STROBE_PATHS = ("/api/strobe/hold", "/api/strobe/release")
 
 
 def _strobe(a, args):
-    """The Strobe (pvj/strobe.py). /pvj/strobe is HELD: a button's 1 is a press (the node gives the sender a lease), its 0 is the
+    """The Strobe (pvj/strobe.py). /mctl/strobe is HELD: a button's 1 is a press (the node gives the sender a lease), its 0 is the
     release, and a 1 sent again renews the lease. A message with no argument does nothing (a flash is never started by an
     address alone). The lease of an OSC sender is the panel's half second (strobe.PANEL_TTL): the sender repeats its 1 about every 0.2 s while
     held, and one press with no repeats lasts about half a second; the sender's address is the holder (set by the receiver, not by the message). The rest set the look:
-    /pvj/strobe/rate (flashes a second; the node keeps it to 3, or 12 with its opt-in), /pvj/strobe/colour (a hex colour, or red,
-    green and blue from 0 to 1), /pvj/strobe/flash (milliseconds) and /pvj/strobe/way (colour, black or add)."""
+    /mctl/strobe/rate (flashes a second; the node keeps it to 3, or 12 with its opt-in), /mctl/strobe/colour (a hex colour, or red,
+    green and blue from 0 to 1), /mctl/strobe/flash (milliseconds) and /mctl/strobe/way (colour, black or add)."""
     v = args[0] if args else None
     number = v if _number(v) else None
-    if a == "/pvj/strobe":
+    if a == "/mctl/strobe":
         if v is None:
             return None
         flag = v if isinstance(v, bool) else ((v > 0.5) if number is not None else None)
         if flag is None:
             return None
         return ("/api/strobe/hold" if flag else "/api/strobe/release"), {}
-    if a == "/pvj/strobe/rate":
+    if a == "/mctl/strobe/rate":
         return ("/api/strobe", {"rate": number}) if number is not None else None
-    if a in ("/pvj/strobe/colour", "/pvj/strobe/color"):
+    if a in ("/mctl/strobe/colour", "/mctl/strobe/color"):
         if isinstance(v, str):
             return "/api/strobe", {"colour": v[:16]}
         if len(args) in (3, 4) and all(_number(x) for x in args):
             return "/api/strobe", {"colour": list(args)}
         return None
-    if a == "/pvj/strobe/flash":
+    if a == "/mctl/strobe/flash":
         return ("/api/strobe", {"flash": number}) if number is not None else None
-    if a == "/pvj/strobe/way":
+    if a == "/mctl/strobe/way":
         return ("/api/strobe", {"way": v[:16]}) if isinstance(v, str) else None
     return None
 
@@ -594,40 +608,40 @@ def _reach(a, args):
         if number is None or not 0 <= number <= 1:      # 0 to 1, spread as a controller's knob is
             return None
         return actions.control(kind, n, int(round(number * 127)))
-    if a == "/pvj/fadein":
+    if a == "/mctl/fadein":
         return _fade("/api/fadein", args)
-    if a == "/pvj/fadein/seconds":
+    if a == "/mctl/fadein/seconds":
         return ("/api/fadein", {"seconds": number}) if number is not None else None
-    if a in ("/pvj/flip/h", "/pvj/flip/v"):
+    if a in ("/mctl/flip/h", "/mctl/flip/v"):
         return ("/api/control", {"action": "flip_" + a[-1], "value": flag}) if flag is not None else None
-    if a == "/pvj/effect":
+    if a == "/mctl/effect":
         if not args:
             return actions.press("effect_toggle")
         return ("/api/effects", {"on": flag}) if flag is not None else None
-    if a.startswith("/pvj/strobe"):
+    if a.startswith("/mctl/strobe"):
         return _strobe(a, args)
-    if a == "/pvj/overlay":
+    if a == "/mctl/overlay":
         if not args:
             return actions.press("overlay")
         return ("/api/overlay", {"on": flag}) if flag is not None else None
-    if a == "/pvj/overlay/file":
+    if a == "/mctl/overlay/file":
         return ("/api/overlay", {"file": v}) if isinstance(v, str) else None
-    if a == "/pvj/transition":
+    if a == "/mctl/transition":
         return ("/api/mix", {"transition": v}) if isinstance(v, str) else None
-    if a == "/pvj/transition/duration":
+    if a == "/mctl/transition/duration":
         return ("/api/mix", {"duration": number}) if number is not None else None
-    if a == "/pvj/vibes/dwell":
+    if a == "/mctl/vibes/dwell":
         return ("/api/vibes", {"dwell": number}) if number is not None else None
-    if a.startswith("/pvj/mapping/"):                   # mapping mode (pvj/mapper.py): the box refuses all of it unless the owner's switch is on
-        what = a[len("/pvj/mapping/"):]
+    if a.startswith("/mctl/mapping/"):                   # mapping mode (pvj/mapper.py): the box refuses all of it unless the owner's switch is on
+        what = a[len("/mctl/mapping/"):]
         names = {"surface/next": "map_surface_next", "surface/prev": "map_surface_prev", "corner/next": "map_corner_next",
                  "corner/prev": "map_corner_prev", "left": "map_left", "right": "map_right", "up": "map_up", "down": "map_down", "undo": "map_undo"}
         if what in names:
             return actions.press(names[what]) if pressed(args) else None
         # Entering and leaving. A TouchOSC button sends 1 when it is pressed and 0 when it is let go, and the 0 used
-        # to be "leave": the mode was over as the finger came up (the trap /pvj/fadein had, see _fade). Now a 0 on
-        # /pvj/mapping/mode is a release and does nothing; 1 enters; no argument switches over. Leaving is said
-        # outright with /pvj/mapping/mode/off, and one momentary button does both with /pvj/mapping/mode/toggle.
+        # to be "leave": the mode was over as the finger came up (the trap /mctl/fadein had, see _fade). Now a 0 on
+        # /mctl/mapping/mode is a release and does nothing; 1 enters; no argument switches over. Leaving is said
+        # outright with /mctl/mapping/mode/off, and one momentary button does both with /mctl/mapping/mode/toggle.
         if what == "mode":
             if not args:
                 return actions.NUDGE, {"mode": "toggle"}
@@ -640,7 +654,7 @@ def _reach(a, args):
         if what == "nudge":                             # two whole numbers: steps to the right and steps down
             return (actions.NUDGE, {"steps": whole}) if len(whole) == 2 and len(args) >= 2 else None
         return None
-    if a == "/pvj/graphic/hide":                        # Hide all (D129, design 8.3): the emergency button
+    if a == "/mctl/graphic/hide":                        # Hide all (D129, design 8.3): the emergency button
         return ("/api/graphics", {"all": False}) if pressed(args) else None
     m = _GRAPHIC.fullmatch(a)
     if m:
@@ -655,7 +669,7 @@ def _reach(a, args):
         if what == "text":                              # set the text; it shows if the graphic is on
             return "/api/graphics", {"slot": slot, "text": v}
         return "/api/graphics", {"slot": slot, "text": v, "on": True}       # send: the text, and on, in one message
-    if a == "/pvj/shader":                              # a shader by its name, with ".fs" or without
+    if a == "/mctl/shader":                              # a shader by its name, with ".fs" or without
         if not isinstance(v, str) or not _SHADER_NAME.fullmatch(v):
             return None
         return "/api/shaders/play", {"id": v if v.endswith(".fs") else v + ".fs"}
@@ -669,6 +683,7 @@ NOT_HERE = {"/startslave", "/startaudio", "/startaudioslave", "/startaudiousb", 
 
 def translate(address, args, mix=None):
     """Map an OSC message to (api_path, body), or None if it means nothing here."""
+    address = current(address)                          # the old family is the new one for a release (D138)
     a = address.rstrip("/") if len(address) > 1 else address
 
     def control(action, value=None):
@@ -689,56 +704,56 @@ def translate(address, args, mix=None):
         return (v > 0.5) if _number(v) else None
 
     # -- stable names --------------------------------------------------------
-    if a.startswith(("/pvj/scene", "/pvj/group/")):
+    if a.startswith(("/mctl/scene", "/mctl/group/")):
         return _room(a, args)
     more = _reach(a, args)
     if more is not _NOT_MINE:
         return more
-    if a.startswith("/pvj/pad/"):
+    if a.startswith("/mctl/pad/"):
         parts = a.split("/")[3:]
         if len(parts) == 2 and all(p.isdigit() for p in parts) and pressed(args):
             return "/api/play", {"pad": [int(parts[0]) - 1, int(parts[1]) - 1]}
         return None
-    if a == "/pvj/play/pad":
+    if a == "/mctl/play/pad":
         if len(args) >= 2 and all(isinstance(x, int) and not isinstance(x, bool) for x in args[:2]):
             return "/api/play", {"pad": [args[0] - 1, args[1] - 1]}
         return None
-    if a == "/pvj/play/file":
+    if a == "/mctl/play/file":
         return ("/api/play", {"file": args[0]}) if args and isinstance(args[0], str) else None
-    if a == "/pvj/play/preset":
+    if a == "/mctl/play/preset":
         return ("/api/play", {"preset": args[0]}) if args and isinstance(args[0], str) else None
-    if a == "/pvj/vibes/set":                           # start the rotation through a set, named by its name or id
+    if a == "/mctl/vibes/set":                           # start the rotation through a set, named by its name or id
         return ("/api/vibes", {"on": True, "set": args[0]}) if args and isinstance(args[0], str) else None
-    if a == "/pvj/vibes/previous":
+    if a == "/mctl/vibes/previous":
         return ("/api/vibes", {"previous": True}) if pressed(args) else None
-    if a in ("/pvj/vibes", "/pvj/vibes/next"):          # the shader rotation: start it, or go to the next shader
-        return ("/api/vibes", {"on": True} if a == "/pvj/vibes" else {"next": True}) if pressed(args) else None
-    if a == "/pvj/stop":
+    if a in ("/mctl/vibes", "/mctl/vibes/next"):          # the shader rotation: start it, or go to the next shader
+        return ("/api/vibes", {"on": True} if a == "/mctl/vibes" else {"next": True}) if pressed(args) else None
+    if a == "/mctl/stop":
         return control("stop") if pressed(args) else None
-    if a == "/pvj/pause":
+    if a == "/mctl/pause":
         v = flag()
         if not args:
             return control("pause")
         return control("pause", v) if v is not None else None
-    if a == "/pvj/blackout":
+    if a == "/mctl/blackout":
         v = flag()
         if v is None:
             v = not (mix or {}).get("blackout", False) if not args else None
         return ("/api/blackout", {"on": v}) if v is not None else None
-    if a == "/pvj/fadeout":                             # a button's 1 and 0 are a press and a release, not seconds (_fade)
+    if a == "/mctl/fadeout":                             # a button's 1 and 0 are a press and a release, not seconds (_fade)
         return _fade("/api/fadeout", args)
-    if a == "/pvj/fadeout/seconds":
+    if a == "/mctl/fadeout/seconds":
         return ("/api/fadeout", {"seconds": num()}) if num() is not None else None
-    if a == "/pvj/mix/reset":
+    if a == "/mctl/mix/reset":
         return control("reset") if pressed(args) else None
-    if a in ("/pvj/loop", "/pvj/mute"):
+    if a in ("/mctl/loop", "/mctl/mute"):
         v = flag()
         return control(a.split("/")[2], v) if v is not None else None
-    if a in ("/pvj/seek", "/pvj/speed", "/pvj/volume", "/pvj/opacity", "/pvj/size", "/pvj/position", "/pvj/rotate"):
+    if a in ("/mctl/seek", "/mctl/speed", "/mctl/volume", "/mctl/opacity", "/mctl/size", "/mctl/position", "/mctl/rotate"):
         v = num()
         if v is None:
             return None
-        return control(a.split("/")[2], int(v) if a == "/pvj/rotate" else v)
+        return control(a.split("/")[2], int(v) if a == "/mctl/rotate" else v)
 
     # -- names from the old Node receiver that still make sense --------------
     legacy = {"/stopall": "stop", "/stopvideo": "stop", "/pause": "pause"}
@@ -873,12 +888,14 @@ class OscServer:
         done = 0
         for address, args in messages:
             seen = shown(address, rules["key"])      # for the page and the journal: never with the key in it
+            was = address
+            address = current(address)               # /pvj/... is /mctl/... for one release (D138); seen keeps what was sent
             if (address.rstrip("/") or "/") == oscfeedback.REQUEST:
                 # "Send me everything" (D82). It sets a flag for the target at this address and nothing else: the
                 # state leaves on the feedback thread, under its caps, to the Owner's target only. From any other
                 # address, or with feedback off, nothing is sent to anybody.
                 feedback = self.feedback
-                asked = feedback is not None and feedback.request(plain)
+                asked = feedback is not None and feedback.request(plain, old_family=current(was) != was)
                 self.watch.note(source_ip, asked, "" if asked else NO_STATE, seen)
                 continue
             if address in REFUSED:

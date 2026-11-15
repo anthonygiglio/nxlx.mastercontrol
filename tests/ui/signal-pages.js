@@ -20,7 +20,7 @@ const path = require('path');
 const { pollFor } = require('./poll');   // a wait for a check that fetches (see poll.js: never waitForFunction with one)
 
 const call = (pg, method, url, body) => pg.evaluate(async ([m, u, b]) => {
-  const r = await fetch(u, { method: m, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: m === 'POST' ? JSON.stringify(b || {}) : undefined });
+  const r = await fetch(u, { method: m, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-MCTL-Request': '1' }, body: m === 'POST' ? JSON.stringify(b || {}) : undefined });
   return r.json().catch(() => ({}));
 }, [method, url, body]);
 const post = (t, url, body) => call(t.page, 'POST', url, body);
@@ -130,7 +130,7 @@ async function setUp(t) {
     if (haveClips.indexOf(name) >= 0) continue;
     await page.evaluate(async (n) => {
       await fetch('/api/media/upload?name=' + encodeURIComponent(n), { method: 'POST', credentials: 'same-origin',
-        headers: { 'X-PVJ-Request': '1', 'Content-Type': 'application/octet-stream' }, body: new Uint8Array(300000 + n.length * 40000).fill(7) });
+        headers: { 'X-MCTL-Request': '1', 'Content-Type': 'application/octet-stream' }, body: new Uint8Array(300000 + n.length * 40000).fill(7) });
     }, name);
   }
   const pads = [['Intro', 'intro.mkv'], ['Tunnel', 'tunnel.mkv'], ['Loop A', 'loop-a.mkv'], ['Opening night', 'leyline_opening_night_final_v2.mkv']];

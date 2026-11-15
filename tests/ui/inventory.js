@@ -91,7 +91,7 @@ async function gather(pg) {
 async function prepare(t) {
   const signal = require('./signal-pages.js');
   const call = (url, body) => t.page.evaluate(async ([u, b]) => {
-    const r = await fetch(u, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify(b || {}) });
+    const r = await fetch(u, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-MCTL-Request': '1' }, body: JSON.stringify(b || {}) });
     return r.json().catch(() => ({}));
   }, [url, body]);
   // the two clips the harness makes with a real encoder, where the machine has one: the same names without it
@@ -99,7 +99,7 @@ async function prepare(t) {
     const have = ((await (await fetch('/api/media')).json()).files) || [];
     for (const n of names) {
       if (have.indexOf(n) >= 0) continue;
-      await fetch('/api/media/upload?name=' + encodeURIComponent(n), { method: 'POST', credentials: 'same-origin', headers: { 'X-PVJ-Request': '1', 'Content-Type': 'application/octet-stream' }, body: new Uint8Array(200000).fill(7) });
+      await fetch('/api/media/upload?name=' + encodeURIComponent(n), { method: 'POST', credentials: 'same-origin', headers: { 'X-MCTL-Request': '1', 'Content-Type': 'application/octet-stream' }, body: new Uint8Array(200000).fill(7) });
     }
   }, ['intro.mkv', 'tunnel.mkv']);
   await signal.setUp(t);

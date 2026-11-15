@@ -786,22 +786,22 @@ class ScheduleOscMidiTest(RoomBase):
 
     def test_osc_addresses(self):
         t = osc.translate
-        self.assertEqual(t("/pvj/scene/2", [1.0]), ("/api/room/scene", {"number": 2}))
-        self.assertIsNone(t("/pvj/scene/2", [0.0]))                                       # the release does nothing
-        self.assertEqual(t("/pvj/scene", ["Evening"]), ("/api/room/scene", {"name": "Evening"}))
-        self.assertEqual(t("/pvj/scene", [3]), ("/api/room/scene", {"number": 3}))
-        self.assertEqual(t("/pvj/scene", [2.0]), ("/api/room/scene", {"number": 2}))        # a whole number sent as a float
-        self.assertIsNone(t("/pvj/scene", [2.5]))
-        self.assertIsNone(t("/pvj/scene", [float("nan")]))
-        self.assertEqual(t("/pvj/group/all/off", [1.0]), ("/api/room/group", {"group": "all", "action": "off"}))
-        self.assertEqual(t("/pvj/group/1/on", []), ("/api/room/group", {"number": 1, "action": "on"}))
-        self.assertEqual(t("/pvj/group/2/mute", [1]), ("/api/room/group", {"number": 2, "action": "mute"}))
-        self.assertEqual(t("/pvj/group/2/mute_sound", [0.0]), ("/api/room/group", {"number": 2, "action": "unmute_sound"}))
-        self.assertEqual(t("/pvj/group/1/input", [31.0]), ("/api/room/group", {"number": 1, "action": "input", "input": "31"}))
-        self.assertEqual(t("/pvj/group/1/input", ["32"]), ("/api/room/group", {"number": 1, "action": "input", "input": "32"}))
-        for address, args in (("/pvj/scene/0", [1.0]), ("/pvj/scene/2\n", [1.0]), ("/pvj/scene", []), ("/pvj/scene", [True]),
-                              ("/pvj/group/1/explode", [1.0]), ("/pvj/group/1/mute", []), ("/pvj/group/1/input", [float("inf")]),
-                              ("/pvj/group/1/input", [31.5]), ("/pvj/group/x/on", [1.0]), ("/pvj/group/1/on/", [0.0]), ("/pvj/scenery", [1.0])):
+        self.assertEqual(t("/mctl/scene/2", [1.0]), ("/api/room/scene", {"number": 2}))
+        self.assertIsNone(t("/mctl/scene/2", [0.0]))                                       # the release does nothing
+        self.assertEqual(t("/mctl/scene", ["Evening"]), ("/api/room/scene", {"name": "Evening"}))
+        self.assertEqual(t("/mctl/scene", [3]), ("/api/room/scene", {"number": 3}))
+        self.assertEqual(t("/mctl/scene", [2.0]), ("/api/room/scene", {"number": 2}))        # a whole number sent as a float
+        self.assertIsNone(t("/mctl/scene", [2.5]))
+        self.assertIsNone(t("/mctl/scene", [float("nan")]))
+        self.assertEqual(t("/mctl/group/all/off", [1.0]), ("/api/room/group", {"group": "all", "action": "off"}))
+        self.assertEqual(t("/mctl/group/1/on", []), ("/api/room/group", {"number": 1, "action": "on"}))
+        self.assertEqual(t("/mctl/group/2/mute", [1]), ("/api/room/group", {"number": 2, "action": "mute"}))
+        self.assertEqual(t("/mctl/group/2/mute_sound", [0.0]), ("/api/room/group", {"number": 2, "action": "unmute_sound"}))
+        self.assertEqual(t("/mctl/group/1/input", [31.0]), ("/api/room/group", {"number": 1, "action": "input", "input": "31"}))
+        self.assertEqual(t("/mctl/group/1/input", ["32"]), ("/api/room/group", {"number": 1, "action": "input", "input": "32"}))
+        for address, args in (("/mctl/scene/0", [1.0]), ("/mctl/scene/2\n", [1.0]), ("/mctl/scene", []), ("/mctl/scene", [True]),
+                              ("/mctl/group/1/explode", [1.0]), ("/mctl/group/1/mute", []), ("/mctl/group/1/input", [float("inf")]),
+                              ("/mctl/group/1/input", [31.5]), ("/mctl/group/x/on", [1.0]), ("/mctl/group/1/on/", [0.0]), ("/mctl/scenery", [1.0])):
             self.assertIsNone(t(address, args), address)
         # through the same API path, as the OSC device (a presenter): the scene runs, a full-access call is refused
         a, pa = self.projector("Left")
@@ -809,11 +809,11 @@ class ScheduleOscMidiTest(RoomBase):
         self.scene("Evening", [{"group": "all", "power": "on"}])
         server = osc.OscServer(self.api, log=lambda *_: None)
         handle = lambda address, args: self.api.handle("POST", *t(address, args), osc.OSC_DEVICE, "192.168.0.9")
-        self.assertEqual(handle("/pvj/scene/1", [1.0])[0], 200)
+        self.assertEqual(handle("/mctl/scene/1", [1.0])[0], 200)
         self.assertTrue(wait_for(lambda: a.power == "1"))
-        self.assertEqual(handle("/pvj/group/1/input", [32.0])[0], 200)
+        self.assertEqual(handle("/mctl/group/1/input", [32.0])[0], 200)
         self.assertTrue(wait_for(lambda: a.input == "32"))
-        self.assertEqual(handle("/pvj/scene/7", [1.0])[0], 404)
+        self.assertEqual(handle("/mctl/scene/7", [1.0])[0], 404)
         self.assertEqual(self.api.handle("POST", "/api/room", {"remove_scene": "x"}, osc.OSC_DEVICE, "192.168.0.9")[0], 403)
         self.assertEqual(server.stats["handled"], 0)
 

@@ -73,7 +73,7 @@ def problems(text, exists, source):
         gives = attrs.get("data-gives")
         if not gives:
             out.append("%s has no data-gives: if it arrived and did not start, the page would not say so" % url)
-        elif not re.fullmatch(r"pvj[A-Z][A-Za-z]*", gives):
+        elif not re.fullmatch(r"mctl[A-Z][A-Za-z]*", gives):
             out.append("%s: data-gives=%r is not a name of ours" % (url, gives))
         elif exists(url) and not re.search(r"^\s*window\.%s\s*=[^=]" % re.escape(gives), source(url), re.M):
             out.append("%s never sets window.%s, so load.js would call it broken every time" % (url, gives))
@@ -93,8 +93,8 @@ class PageFilesTest(unittest.TestCase):
         # and the page is what the checks think it is: the loader, four scripts that each leave a name, two sheets
         got = [(kind, url, attrs.get("data-gives")) for kind, url, attrs, _ in files_of(read("index.html"))]
         self.assertEqual(got, [("script", "/load.js", None), ("sheet", "/theme.css", None), ("sheet", "/app.css", None),
-                               ("script", "/shaders.js", "pvjShaders"), ("script", "/effects.js", "pvjEffects"),
-                               ("script", "/app.js", "pvjApp"), ("script", "/room.js", "pvjRoom")])
+                               ("script", "/shaders.js", "mctlShaders"), ("script", "/effects.js", "mctlEffects"),
+                               ("script", "/app.js", "mctlApp"), ("script", "/room.js", "mctlRoom")])
 
     def test_what_the_server_makes_itself_is_only_the_theme_and_it_does_make_it(self):
         self.assertFalse(os.path.exists(os.path.join(WEB, "theme.css")))
@@ -108,11 +108,11 @@ class PageFilesTest(unittest.TestCase):
             self.assertEqual(page.count(old), 1, old)
             return self.shipped(page.replace(old, new))
         # app.js without its attribute: the state of the page before the review, an empty page that says nothing
-        self.assertEqual(changed(' data-gives="pvjApp"', ""),
+        self.assertEqual(changed(' data-gives="mctlApp"', ""),
                          ["/app.js has no data-gives: if it arrived and did not start, the page would not say so"])
-        self.assertEqual(changed('data-gives="pvjRoom"', 'data-gives="pvjRooms"'),
-                         ["/room.js never sets window.pvjRooms, so load.js would call it broken every time"])
-        self.assertEqual(changed('data-gives="pvjRoom"', 'data-gives="onload"'),
+        self.assertEqual(changed('data-gives="mctlRoom"', 'data-gives="mctlRooms"'),
+                         ["/room.js never sets window.mctlRooms, so load.js would call it broken every time"])
+        self.assertEqual(changed('data-gives="mctlRoom"', 'data-gives="onload"'),
                          ["/room.js: data-gives='onload' is not a name of ours"])
         self.assertEqual(changed('<script src="/room.js"', '<script src="/rooms.js"'),
                          ["/rooms.js is named by the page and the box has no such file"])
@@ -126,7 +126,7 @@ class PageFilesTest(unittest.TestCase):
         # the loader at the end of the body, after everything it should have watched
         moved = page.replace('<script src="/load.js"></script>\n', "").replace("</body>", '<script src="/load.js"></script>\n</body>')
         self.assertEqual(self.shipped(moved), [first])
-        self.assertEqual(changed('<script src="/load.js"></script>', '<script src="/load.js" data-gives="pvjLoad"></script>'),
+        self.assertEqual(changed('<script src="/load.js"></script>', '<script src="/load.js" data-gives="mctlLoad"></script>'),
                          ["/load.js watches the others; nothing watches it, and its tag must not say otherwise"])
         self.assertEqual(changed("</body>", "<script>var x = 1;</script>\n</body>"),
                          ["a script with no address: scripts written into the page are refused by its policy"])
@@ -137,17 +137,17 @@ class PageFilesTest(unittest.TestCase):
         self.assertEqual(self.shipped(page.replace('<script src="/load.js"></script>\n<link rel="icon"', '<link rel="icon" href="/x.png">\n<script src="/load.js"></script>\n<link rel="icon"')), [])
 
     def test_app_js_says_it_has_started_as_its_very_last_statement(self):
-        """pvjApp is set after boot() and nowhere else, so a file that cannot be read as a program, or that stops
+        """mctlApp is set after boot() and nowhere else, so a file that cannot be read as a program, or that stops
         before the panel was started, leaves it unset (the browser check "/app.js broken" in tests/ui/delivery.js
         is the same thing seen from the page)."""
         text = read("app.js")
-        self.assertEqual(len(re.findall(r"\bpvjApp\b", re.sub(r"^\s*//.*$", "", text, flags=re.M))), 1)
+        self.assertEqual(len(re.findall(r"\bmctlApp\b", re.sub(r"^\s*//.*$", "", text, flags=re.M))), 1)
         statements = [line.strip() for line in text.rstrip().split("\n") if line.strip() and not line.strip().startswith("//")]
-        self.assertEqual(statements[-3:], ["boot();", "window.pvjApp = true;", "})();"])
+        self.assertEqual(statements[-3:], ["boot();", "window.mctlApp = true;", "})();"])
 
     def test_the_other_scripts_set_their_name_once_they_are_complete(self):
         # each sets its name in one place, at the outer level of its file, not inside something that may not run
-        for name, gives in (("shaders.js", "pvjShaders"), ("effects.js", "pvjEffects"), ("room.js", "pvjRoom")):
+        for name, gives in (("shaders.js", "mctlShaders"), ("effects.js", "mctlEffects"), ("room.js", "mctlRoom")):
             found = re.findall(r"^( *)window\.%s\s*=[^=]" % gives, read(name), re.M)
             self.assertEqual(found, ["  "], name)
 

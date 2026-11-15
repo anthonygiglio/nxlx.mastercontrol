@@ -50,7 +50,7 @@ def http(method, path, body=None, timeout=30):
     req.add_header("Authorization", "Bearer " + os.environ.get("PVJ_TOKEN", ""))
     if data is not None:
         req.add_header("Content-Type", "application/json")
-        req.add_header("X-PVJ-Request", "1")
+        req.add_header("X-MCTL-Request", "1")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             code, raw = r.status, r.read()

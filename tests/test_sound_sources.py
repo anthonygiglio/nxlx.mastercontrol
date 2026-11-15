@@ -286,7 +286,7 @@ class OscInTest(unittest.TestCase):
         self.assertIsNone(self.out._in_latest, "an address nobody listed")
         self.server.handle_packet(msg("/nxlx/sound/in/db", -12.0), "192.168.7.30")
         self.assertIsNone(self.out._in_latest)
-        mixed = fb._BUNDLE + b"".join(struct.pack(">i", len(m)) + m for m in (msg("/nxlx/sound/in/db", -12.0), msg("/pvj/stop")))
+        mixed = fb._BUNDLE + b"".join(struct.pack(">i", len(m)) + m for m in (msg("/nxlx/sound/in/db", -12.0), msg("/mctl/stop")))
         self.server.handle_packet(mixed, "192.168.0.30")
         self.assertIsNone(self.out._in_latest, "a packet with a command in it meets the locks, which refuse it here")
         self.assertEqual(self.handled, [])

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 // SPDX-License-Identifier: Apache-2.0
 // Effects: the panel's part. An effect is a filter over whatever plays (a clip, a stream, a live input); see
-// pvj/effects.py. Loaded after shaders.js, whose controls it draws with (window.pvjShaders.kit), and before app.js,
+// pvj/effects.py. Loaded after shaders.js, whose controls it draws with (window.mctlShaders.kit), and before app.js,
 // which hands over its helpers each time it draws. One thing is drawn here, the Effects card on Shape > Effect: the
 // effect that is on with Previous, On or Off and Next, the list of filters, the controls of the one that is on with
 // Amount first, presets, and the MIDI teach buttons beside what they drive. (Until D72 a compact strip with the
@@ -56,7 +56,7 @@
   }
   var WHERE = { path: '/api/effects/values', gone: 'Not sent: that effect is not on any more.' };
 
-  function kit() { return window.pvjShaders && window.pvjShaders.kit; }
+  function kit() { return window.mctlShaders && window.mctlShaders.kit; }
   // "fx-mirror-quad.fs" reads "Mirror quad", "isf-rgb-invert" reads "RGB invert"
   function nice(name) {
     var words = String(name || '').replace(/\.fs$/, '').replace(/^(fx|isf)-/, '').split(/[-_ ]+/).filter(Boolean)
@@ -474,5 +474,5 @@
     el.appendChild(h('div', { class: 'msg' + (ui.upload && ui.upload.err ? ' err' : ''), id: 'fxuploadmsg', role: 'status', text: ui.upload ? ui.upload.text : '' }));
   }
 
-  window.pvjEffects = { mixCard: mixCard, patch: patch, nice: nice };
+  window.mctlEffects = { mixCard: mixCard, patch: patch, nice: nice };
 })();

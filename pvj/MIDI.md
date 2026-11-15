@@ -200,7 +200,7 @@ A **layer** is a state of a controller in which a few of its controls do somethi
 | Launchpad Mini | the last round button along the top (Top 8), twice | row 7: surface before, next surface, corner before, next corner, then **up** on its sixth pad and undo on its eighth; row 8: the step on its fourth pad, then **left, down, right**: the arrows of a keyboard, under the sixth column |
 | MIDI Mix | no button for it in the standard layout (it has none free with a light); put "Mapping mode on / off" and the nudges on controls from the card | |
 
-Over OSC: the same, behind the same switch (`pvj/OSC.md`, `/pvj/mapping/...`), and behind the three locks on who may send when they are on.
+Over OSC: the same, behind the same switch (`pvj/OSC.md`, `/mctl/mapping/...`), and behind the three locks on who may send when they are on.
 
 **None of this has been on a controller, a projector or the Pi.** Unit tests with a fake player and pipes only.
 

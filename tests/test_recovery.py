@@ -92,7 +92,7 @@ class RecoveryCodesTest(ServerBase):
         self.assertFalse(tests.pin_stands_in(self.pin, json.dumps(body)), body)     # the token may hold its digits
         devices = self.call("GET", "/api/devices", token=self.full)[1]["devices"]
         self.assertEqual([d.get("via") for d in devices if d["name"] == "Anna's phone"], ["recovery"])    # owners see which came by a code
-        self.assertTrue(r.getheader("Set-Cookie").startswith("pvj_token="))
+        self.assertTrue(r.getheader("Set-Cookie").startswith("mctl_token="))
         self.assertEqual(self.call("GET", "/api/recovery", token=body["token"])[0], 200)      # it is an owner now
         line = [x for x in self.lines if "recovery code was used" in x]
         self.assertEqual(len(line), 1)

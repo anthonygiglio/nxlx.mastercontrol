@@ -50,10 +50,11 @@ IDENT = "A-Za-z0-9_"
 # upstream manual as they were at the last upstream commit (ed74df4), kept as the credited original (decision B);
 # RELEASE_NOTES, whose notes are the upstream's; and security.php, the fork's hardening of the old PHP panel, which
 # shares the pvj_ function names and the X-PVJ-Request header with the upstream files it guards, so the two must
-# move together or not at all.
+# move together or not at all. They stay as they are (D138): no node installs or serves the PHP panel, and the
+# header is a contract between its own two files. tests/security_test.sh tests that panel, so it keeps its header.
 SKIP = ("LICENSE.md", "AUTHORS.md", "NOTICE.md", "RELEASE_NOTES.md",
         "index.html", "backend.php", "security.php", "submit_*.php", "time_change.php", "offline.min.js", "favicon.ico",
-        "sync/*", "js/*", "assets/*", "themes/*",
+        "sync/*", "js/*", "assets/*", "themes/*", "tests/security_test.sh",
         "docs/html/*", "docs/index.html", "docs/build.md", "docs/Install_OSC_on35_or_older.md", "docs/OSC_Commands.md",
         "docs/PureData_install.md", "docs/TouchOSC_Layout V.01.md", "docs/projector_passwords.md", "docs/PVJ_2019.svg")
 # The rename's own files name the old names on purpose: never rewritten, and not counted by the guard.
@@ -62,8 +63,8 @@ OWN = ("tools/rename-map.txt", "tools/rename-apply.py", "tools/rename-allow.txt"
 # rows, so an unrelated pull request that adds a pvj module, a PVJ_ variable or a journal line is not blocked before
 # that kind's rename. Every rename pull request adds its kind here and recounts the allow list (--write-allow).
 # Empty in PR 1: until a kind lands, its names are reported (the dry run, the guard's note) and not enforced.
-# text landed in PR 3.
-LANDED = ("text",)
+# text landed in PR 3, protocol in PR 4.
+LANDED = ("text", "protocol")
 
 
 class Row:

@@ -78,23 +78,23 @@ class NothingChangesTest(LayerBase):
         self.assertEqual(osc.layers({"enabled": True, "port": 9876, "allow": []}),
                          {"only_on": False, "only": [], "paired_on": False, "paired_roles": "full", "paired_hours": 12,
                           "key_on": False, "key": ""})
-        self.assertEqual(self.send(msg("/pvj/speed", 2.0)), 1)
+        self.assertEqual(self.send(msg("/mctl/speed", 2.0)), 1)
         self.assertEqual(self.send(msg("/stopall", 1.0), "10.1.2.3"), 1)
-        self.assertEqual(self.send(msg("/pvj/speed", 2.0), "8.8.8.8"), 0)
+        self.assertEqual(self.send(msg("/mctl/speed", 2.0), "8.8.8.8"), 0)
         # nothing is written by itself but the mark of D83 (whether OSC was ever on here), which is no lock and changes nothing by itself
         self.assertEqual(set(self.settings.data["osc"]), {"enabled", "port", "allow", "ever_on"})
 
     def test_a_prefix_is_dropped_while_the_key_layer_is_off(self):
-        self.assertEqual(self.send(msg("/k/whatever/pvj/speed", 3.0)), 1)
+        self.assertEqual(self.send(msg("/k/whatever/mctl/speed", 3.0)), 1)
         self.assertEqual(self.speeds(), [3.0])
 
     def test_damaged_settings_fail_closed(self):
         self.assertEqual(osc.layers({"only_on": "yes", "only": "192.168.1.20"})["only"], [])
         self.rules(only_on=True, only="192.168.1.20")
-        self.assertEqual(self.send(msg("/pvj/speed", 2.0)), 0)
+        self.assertEqual(self.send(msg("/mctl/speed", 2.0)), 0)
         self.rules(only_on=False, key_on=True, key="")
-        self.assertEqual(self.send(msg("/k//pvj/speed", 2.0)), 0)
-        self.assertEqual(self.send(msg("/pvj/speed", 2.0)), 0)
+        self.assertEqual(self.send(msg("/k//mctl/speed", 2.0)), 0)
+        self.assertEqual(self.send(msg("/mctl/speed", 2.0)), 0)
         self.assertEqual(self.why(), osc.WHY_UNSET)
         self.assertEqual(self.speeds(), [])
 
@@ -102,18 +102,18 @@ class NothingChangesTest(LayerBase):
 class OnlyTheseDevicesTest(LayerBase):
     def test_the_list_replaces_the_private_ranges(self):
         self.rules(only_on=True, only=[TABLET])
-        self.assertEqual(self.send(msg("/pvj/speed", 2.0)), 1)
-        self.assertEqual(self.send(msg("/pvj/speed", 3.0), OTHER), 0)          # private, but not listed
+        self.assertEqual(self.send(msg("/mctl/speed", 2.0)), 1)
+        self.assertEqual(self.send(msg("/mctl/speed", 3.0), OTHER), 0)          # private, but not listed
         self.assertEqual(self.send(msg("/stopall", 1.0), "127.0.0.1"), 0)       # loopback too; old names follow the rule
         self.assertEqual(self.speeds(), [2.0])
         self.assertEqual(self.why(OTHER), osc.WHY_ONLY)
         self.assertEqual(self.manager.watch.refused, 2)
         self.rules(only_on=True, only=[])                                       # an empty list lets nobody in
-        self.assertEqual(self.send(msg("/pvj/speed", 4.0)), 0)
+        self.assertEqual(self.send(msg("/mctl/speed", 4.0)), 0)
 
     def test_one_spelling_per_address(self):
         self.rules(only_on=True, only=[TABLET])
-        self.assertEqual(self.send(msg("/pvj/speed", 2.0), "::ffff:" + TABLET), 1)
+        self.assertEqual(self.send(msg("/mctl/speed", 2.0), "::ffff:" + TABLET), 1)
         self.assertEqual(osc.validate_only([" 192.168.1.20 ", "192.168.1.20", "FD12::0001"]), [TABLET, "fd12::1"])
 
     def test_the_private_networks_stay_the_outer_wall(self):
@@ -123,7 +123,7 @@ class OnlyTheseDevicesTest(LayerBase):
         self.assertEqual(osc.validate_only(["203.0.113.7"], osc.parse_networks(["203.0.113.0/24"])), ["203.0.113.7"])
         # an address put in the file by hand, outside the wall: still refused when its packet arrives
         self.rules(only_on=True, only=["8.8.8.8"])
-        self.assertEqual(self.send(msg("/pvj/speed", 2.0), "8.8.8.8"), 0)
+        self.assertEqual(self.send(msg("/mctl/speed", 2.0), "8.8.8.8"), 0)
         self.assertEqual(self.why("8.8.8.8"), osc.WHY_NETWORK)
 
 
@@ -133,10 +133,10 @@ class PairedDeviceTest(LayerBase):
         self.rules(paired_on=True)
 
     def test_only_from_where_a_paired_device_asked(self):
-        self.assertEqual(self.send(msg("/pvj/speed", 2.0)), 0)
+        self.assertEqual(self.send(msg("/mctl/speed", 2.0)), 0)
         self.assertEqual(self.why(), osc.WHY_PAIRED)
         self.device("full", "::ffff:" + TABLET)            # the panel may report an IPv4 address the IPv6 way
-        self.assertEqual(self.send(msg("/pvj/speed", 2.0)), 1)
+        self.assertEqual(self.send(msg("/mctl/speed", 2.0)), 1)
         self.assertEqual(self.send(msg("/stopall", 1.0), OTHER), 0)
         self.assertEqual(self.speeds(), [2.0])
 
@@ -150,27 +150,27 @@ class PairedDeviceTest(LayerBase):
 
     def test_sending_osc_does_not_make_an_address_count(self):
         self.rules(paired_on=False)
-        self.assertEqual(self.send(msg("/pvj/speed", 2.0)), 1)      # goes through Api.handle as the OSC device
+        self.assertEqual(self.send(msg("/mctl/speed", 2.0)), 1)      # goes through Api.handle as the OSC device
         self.rules(paired_on=True)
-        self.assertEqual(self.send(msg("/pvj/speed", 3.0)), 0)
+        self.assertEqual(self.send(msg("/mctl/speed", 3.0)), 0)
 
     def test_roles(self):
         self.device("view", TABLET, "guest")
-        self.assertEqual(self.send(msg("/pvj/speed", 2.0)), 0)       # a guest never counts
+        self.assertEqual(self.send(msg("/mctl/speed", 2.0)), 0)       # a guest never counts
         self.device("live", OTHER, "presenter")
-        self.assertEqual(self.send(msg("/pvj/speed", 2.0), OTHER), 0)   # owner only, until the owner says otherwise
+        self.assertEqual(self.send(msg("/mctl/speed", 2.0), OTHER), 0)   # owner only, until the owner says otherwise
         self.rules(paired_roles="live")
-        self.assertEqual(self.send(msg("/pvj/speed", 2.0), OTHER), 1)
-        self.assertEqual(self.send(msg("/pvj/speed", 2.0)), 0)       # still not the guest
+        self.assertEqual(self.send(msg("/mctl/speed", 2.0), OTHER), 1)
+        self.assertEqual(self.send(msg("/mctl/speed", 2.0)), 0)       # still not the guest
 
     def test_revoke_stops_it_at_once(self):
         _, dev = self.device("full", TABLET)
-        self.assertEqual(self.send(msg("/pvj/speed", 2.0)), 1)
+        self.assertEqual(self.send(msg("/mctl/speed", 2.0)), 1)
         self.assertTrue(self.auth.revoke(dev["id"]))
-        self.assertEqual(self.send(msg("/pvj/speed", 3.0)), 0)
+        self.assertEqual(self.send(msg("/mctl/speed", 3.0)), 0)
         _, dev = self.device("full", TABLET)
         self.auth.revoke_all()
-        self.assertEqual(self.send(msg("/pvj/speed", 4.0)), 0)
+        self.assertEqual(self.send(msg("/mctl/speed", 4.0)), 0)
         self.assertEqual(self.speeds(), [2.0])
         self.assertEqual(self.auth._addresses, {})                   # nothing is kept of a device that is gone
 
@@ -178,38 +178,38 @@ class PairedDeviceTest(LayerBase):
         # the panel has no log out today; this is what one would call, and what a factory reset calls
         token, dev = self.device("full", TABLET)
         self.auth.forget_address(dev["id"])
-        self.assertEqual(self.send(msg("/pvj/speed", 2.0)), 0)
+        self.assertEqual(self.send(msg("/mctl/speed", 2.0)), 0)
         self.auth.authenticate(token, TABLET)
-        self.assertEqual(self.send(msg("/pvj/speed", 2.0)), 1)
+        self.assertEqual(self.send(msg("/mctl/speed", 2.0)), 1)
         self.auth.forget_address()
-        self.assertEqual(self.send(msg("/pvj/speed", 3.0)), 0)
+        self.assertEqual(self.send(msg("/mctl/speed", 3.0)), 0)
 
     def test_it_expires_and_the_hours_are_the_owners(self):
         token, _ = self.device("full", TABLET)
         self.now[0] += 12 * 3600 - 1
-        self.assertEqual(self.send(msg("/pvj/speed", 2.0)), 1)
+        self.assertEqual(self.send(msg("/mctl/speed", 2.0)), 1)
         self.now[0] += 2
-        self.assertEqual(self.send(msg("/pvj/speed", 3.0)), 0)
+        self.assertEqual(self.send(msg("/mctl/speed", 3.0)), 0)
         self.auth.authenticate(token, TABLET)               # opening the panel again starts the hours again
-        self.assertEqual(self.send(msg("/pvj/speed", 4.0)), 1)
+        self.assertEqual(self.send(msg("/mctl/speed", 4.0)), 1)
         self.rules(paired_hours=1)
         self.now[0] += 3601
-        self.assertEqual(self.send(msg("/pvj/speed", 5.0)), 0)
+        self.assertEqual(self.send(msg("/mctl/speed", 5.0)), 0)
         self.assertEqual(self.speeds(), [2.0, 4.0])
 
     def test_two_devices_behind_one_address(self):
         _, a = self.device("full", TABLET, "tablet")
         _, b = self.device("full", TABLET, "phone on the same hotspot")
         self.auth.revoke(a["id"])
-        self.assertEqual(self.send(msg("/pvj/speed", 2.0)), 1)      # the address still counts: the phone is paired
+        self.assertEqual(self.send(msg("/mctl/speed", 2.0)), 1)      # the address still counts: the phone is paired
         self.auth.revoke(b["id"])
-        self.assertEqual(self.send(msg("/pvj/speed", 3.0)), 0)
+        self.assertEqual(self.send(msg("/mctl/speed", 3.0)), 0)
 
     def test_a_device_that_moved_counts_at_its_new_address_only(self):
         token, _ = self.device("full", TABLET)
         self.auth.authenticate(token, OTHER)
-        self.assertEqual(self.send(msg("/pvj/speed", 2.0)), 0)
-        self.assertEqual(self.send(msg("/pvj/speed", 3.0), OTHER), 1)
+        self.assertEqual(self.send(msg("/mctl/speed", 2.0)), 0)
+        self.assertEqual(self.send(msg("/mctl/speed", 3.0), OTHER), 1)
 
 
 class KeyTest(LayerBase):
@@ -218,13 +218,13 @@ class KeyTest(LayerBase):
         self.rules(key_on=True, key=KEY)
 
     def test_missing_wrong_and_right(self):
-        self.assertEqual(self.send(msg("/pvj/speed", 2.0)), 0)
+        self.assertEqual(self.send(msg("/mctl/speed", 2.0)), 0)
         self.assertEqual(self.why(), osc.WHY_NO_KEY)
-        for wrong in ("/k/%s/pvj/speed" % KEY[:-1], "/k/%sX/pvj/speed" % KEY, "/k/" + "0" * 20 + "/pvj/speed",
-                      "/k/%s" % KEY, "/k/%s/" % KEY, "/k//pvj/speed", "/K/%s/pvj/speed" % KEY, "/k/klüç/pvj/speed"):
+        for wrong in ("/k/%s/mctl/speed" % KEY[:-1], "/k/%sX/mctl/speed" % KEY, "/k/" + "0" * 20 + "/mctl/speed",
+                      "/k/%s" % KEY, "/k/%s/" % KEY, "/k//mctl/speed", "/K/%s/mctl/speed" % KEY, "/k/klüç/mctl/speed"):
             self.assertEqual(self.send(msg(wrong, 2.0)), 0, wrong)
         self.assertEqual(self.speeds(), [])
-        self.assertEqual(self.send(msg("/k/%s/pvj/speed" % KEY, 2.0)), 1)
+        self.assertEqual(self.send(msg("/k/%s/mctl/speed" % KEY, 2.0)), 1)
         self.assertEqual(self.send(msg("/k/%s/startlessonce05" % KEY, 1.0)), 1)     # an old name, same rule
         self.assertEqual(self.send(msg("/startlessonce05", 1.0)), 0)
         self.assertEqual(self.send(msg("/k/%s/shutdown" % KEY, 1.0)), 0)             # the key opens nothing more
@@ -237,24 +237,24 @@ class KeyTest(LayerBase):
         self.assertNotIn("key", self.settings.data["osc"])
         self.assertNotEqual(new, KEY)
         self.rules()
-        self.assertEqual(self.send(msg("/k/%s/pvj/speed" % KEY, 2.0)), 0)
-        self.assertEqual(self.send(msg("/k/%s/pvj/speed" % new, 3.0)), 1)
+        self.assertEqual(self.send(msg("/k/%s/mctl/speed" % KEY, 2.0)), 0)
+        self.assertEqual(self.send(msg("/k/%s/mctl/speed" % new, 3.0)), 1)
         self.assertEqual(len({osc.new_key() for _ in range(50)}), 50)
 
     def test_the_comparison_is_constant_time(self):
         with mock.patch("pvj.osc.hmac.compare_digest", side_effect=lambda a, b: a == b) as compare:
-            self.assertEqual(self.send(msg("/k/%s/pvj/speed" % KEY, 2.0)), 1)
-            self.assertEqual(self.send(msg("/k/nope/pvj/speed", 2.0)), 0)
+            self.assertEqual(self.send(msg("/k/%s/mctl/speed" % KEY, 2.0)), 1)
+            self.assertEqual(self.send(msg("/k/nope/mctl/speed", 2.0)), 0)
         self.assertEqual([c.args for c in compare.call_args_list], [(KEY.encode(), KEY.encode()), (b"nope", KEY.encode())])
 
     def test_a_flood_of_wrong_keys_never_holds_the_right_one_up(self):
         # Review of #118 (M1): a limit per sender was a way to lock the tablet out, since its address can be forged.
-        wrong = msg("/k/%s/pvj/volume" % ("f" * 20), 40.0)
+        wrong = msg("/k/%s/mctl/volume" % ("f" * 20), 40.0)
         for i in range(300):                                      # forged as the tablet, inside its message allowance
             self.assertEqual(self.send(wrong), 0)
             if i % 50 == 0:
-                self.assertEqual(self.send(msg("/k/%s/pvj/speed" % KEY, 2.0)), 1, i)
-        self.assertEqual(self.send(msg("/k/%s/pvj/speed" % KEY, 3.0)), 1)
+                self.assertEqual(self.send(msg("/k/%s/mctl/speed" % KEY, 2.0)), 1, i)
+        self.assertEqual(self.send(msg("/k/%s/mctl/speed" % KEY, 3.0)), 1)
         self.assertEqual(self.speeds(), [2.0] * 6 + [3.0])
         self.assertEqual([c for c in self.player.calls if c[0] == "volume"], [])
         row = next(r for r in self.manager.watch.senders() if r["address"] == TABLET)
@@ -263,51 +263,51 @@ class KeyTest(LayerBase):
         self.assertFalse(hasattr(osc, "WHY_KEYS"))
 
     def test_a_key_is_never_shown_and_a_second_prefix_is_refused(self):
-        twice = "/k/%s/k/%s/pvj/speed" % (KEY, KEY)
+        twice = "/k/%s/k/%s/mctl/speed" % (KEY, KEY)
         self.assertEqual(self.send(msg(twice, 2.0)), 0)
         self.assertEqual(self.why(), osc.WHY_TWICE)
-        self.assertEqual(self.send(msg("/k/%s/pvj/%s" % (KEY, KEY), 2.0)), 0)     # let in, means nothing, shown without it
-        self.assertEqual(self.send(msg("/k/%s/pvj/opacity/" % KEY, 500.0)), 0)    # a refused value writes a journal line
+        self.assertEqual(self.send(msg("/k/%s/mctl/%s" % (KEY, KEY), 2.0)), 0)     # let in, means nothing, shown without it
+        self.assertEqual(self.send(msg("/k/%s/mctl/opacity/" % KEY, 500.0)), 0)    # a refused value writes a journal line
         self.rules(key_on=False)
-        self.assertEqual(self.send(msg("/k/x/k/%s/pvj/speed" % KEY, 2.0)), 0)     # also with the lock off
+        self.assertEqual(self.send(msg("/k/x/k/%s/mctl/speed" % KEY, 2.0)), 0)     # also with the lock off
         self.assertEqual(self.speeds(), [])
         kept = json.dumps([self.manager.watch.senders(), self.manager.watch.messages(), self.logs])
         self.assertNotIn(KEY, kept)
-        self.assertIn("/pvj/<key>", kept)
+        self.assertIn("/mctl/<key>", kept)
         self.assertEqual(osc.shown("/a/%s/b" % KEY, KEY), "/a/<key>/b")
 
     def test_one_wrong_message_refuses_the_whole_packet(self):
-        good, bad = msg("/k/%s/pvj/speed" % KEY, 2.0), msg("/pvj/volume", 40.0)
+        good, bad = msg("/k/%s/mctl/speed" % KEY, 2.0), msg("/mctl/volume", 40.0)
         self.assertEqual(self.send(bundle(good, bad)), 0)
         self.assertEqual(self.send(bundle(bad, good)), 0)
-        self.assertEqual(self.send(bundle(good, bundle(msg("/k/x/pvj/speed", 9.0)))), 0)
+        self.assertEqual(self.send(bundle(good, bundle(msg("/k/x/mctl/speed", 9.0)))), 0)
         self.assertEqual([c for c in self.player.calls if c[0] in ("speed", "volume")], [])
-        self.assertEqual(self.send(bundle(good, msg("/k/%s/pvj/speed" % KEY, 3.0))), 2)
+        self.assertEqual(self.send(bundle(good, msg("/k/%s/mctl/speed" % KEY, 3.0))), 2)
 
 
 class TogetherTest(LayerBase):
     def test_a_packet_must_pass_every_layer_that_is_on(self):
         self.rules(only_on=True, only=[TABLET], paired_on=True, key_on=True, key=KEY)
-        keyed = msg("/k/%s/pvj/speed" % KEY, 2.0)
+        keyed = msg("/k/%s/mctl/speed" % KEY, 2.0)
         self.assertEqual(self.send(keyed), 0)
         self.assertEqual(self.why(), osc.WHY_PAIRED)             # listed and keyed, but no paired device there
         self.device("full", TABLET)
         self.device("full", OTHER)
         self.assertEqual(self.send(keyed, OTHER), 0)             # paired and keyed, not listed
         self.assertEqual(self.why(OTHER), osc.WHY_ONLY)
-        self.assertEqual(self.send(msg("/pvj/speed", 2.0)), 0)   # listed and paired, no key
+        self.assertEqual(self.send(msg("/mctl/speed", 2.0)), 0)   # listed and paired, no key
         self.assertEqual(self.why(), osc.WHY_NO_KEY)
         self.assertEqual(self.speeds(), [])
         self.assertEqual(self.send(keyed), 1)
         for off in ("only_on", "paired_on", "key_on"):           # each one alone is enough to refuse
             self.rules(only_on=True, paired_on=True, key_on=True)
             self.rules(**{off: False})
-            self.assertEqual(self.send(msg("/k/%s/pvj/speed" % KEY, 5.0), "10.9.9.9"), 0, off)
+            self.assertEqual(self.send(msg("/k/%s/mctl/speed" % KEY, 5.0), "10.9.9.9"), 0, off)
         self.assertEqual(self.speeds(), [2.0])
 
     def test_the_existing_limits_are_kept(self):
         self.rules(only_on=True, only=[TABLET], key_on=True, key=KEY)
-        keyed = msg("/k/%s/pvj/speed" % KEY, 1.0)
+        keyed = msg("/k/%s/mctl/speed" % KEY, 1.0)
         done = sum(self.send(keyed) for _ in range(int(osc.RATE_BURST) + 100))
         self.assertEqual(done, int(osc.RATE_BURST))
         self.assertEqual(self.why(), osc.WHY_RATE)
@@ -319,43 +319,43 @@ class TogetherTest(LayerBase):
 class WatchTest(LayerBase):
     def test_what_the_owner_sees(self):
         self.rules(only_on=True, only=[TABLET])
-        self.send(msg("/pvj/speed", 2.0))
-        self.send(msg("/pvj/nonsense", 1.0))
-        self.send(msg("/pvj/speed", 3.0), OTHER)
-        self.send(msg("/pvj/speed", 3.0), OTHER)
+        self.send(msg("/mctl/speed", 2.0))
+        self.send(msg("/mctl/nonsense", 1.0))
+        self.send(msg("/mctl/speed", 3.0), OTHER)
+        self.send(msg("/mctl/speed", 3.0), OTHER)
         rows = {s["address"]: s for s in self.manager.watch.senders()}
-        self.assertEqual((rows[TABLET]["messages"], rows[TABLET]["last"], rows[TABLET]["accepted"]), (2, "/pvj/nonsense", True))
+        self.assertEqual((rows[TABLET]["messages"], rows[TABLET]["last"], rows[TABLET]["accepted"]), (2, "/mctl/nonsense", True))
         self.assertEqual((rows[OTHER]["messages"], rows[OTHER]["refused"], rows[OTHER]["last"], rows[OTHER]["accepted"], rows[OTHER]["why"]),
                          (0, 2, "", False, osc.WHY_ONLY))
         log = self.manager.watch.messages()
         self.assertEqual([(m["from"], m["address"], m["ok"], m["why"], m["count"]) for m in log],
-                         [(OTHER, "", False, osc.WHY_ONLY, 2), (TABLET, "/pvj/nonsense", False, osc.DID_NOTHING, 1),
-                          (TABLET, "/pvj/speed", True, "", 1)])
+                         [(OTHER, "", False, osc.WHY_ONLY, 2), (TABLET, "/mctl/nonsense", False, osc.DID_NOTHING, 1),
+                          (TABLET, "/mctl/speed", True, "", 1)])
 
     def test_nothing_from_a_refused_packet_is_kept_or_logged(self):
         self.rules(only_on=True, only=[TABLET], key_on=True, key=KEY)
-        for ip, data in ((OTHER, msg("/pvj/play/file", SECRET_TEXT)), (OTHER, msg("/" + SECRET_TEXT, 1)),
+        for ip, data in ((OTHER, msg("/mctl/play/file", SECRET_TEXT)), (OTHER, msg("/" + SECRET_TEXT, 1)),
                          (TABLET, msg("/" + SECRET_TEXT, SECRET_TEXT)), (TABLET, msg("/k/%s/x" % SECRET_TEXT, SECRET_TEXT)),
-                         (TABLET, msg("/k/%s/pvj/speed" % KEY[:-1], 1.0)),       # a near miss of the key is not shown either
+                         (TABLET, msg("/k/%s/mctl/speed" % KEY[:-1], 1.0)),       # a near miss of the key is not shown either
                          (TABLET, SECRET_TEXT.encode()), ("8.8.8.8", msg("/" + SECRET_TEXT, 1))):
             self.assertEqual(self.send(data, ip), 0)
         kept = json.dumps([self.manager.watch.senders(), self.manager.watch.messages(), self.logs])
         self.assertNotIn(SECRET_TEXT, kept)
         self.assertNotIn(KEY[:-1], kept)
         self.assertEqual(self.player.calls, [])
-        self.send(msg("/k/%s/pvj/speed" % KEY, 2.0))
+        self.send(msg("/k/%s/mctl/speed" % KEY, 2.0))
         kept = json.dumps([self.manager.watch.senders(), self.manager.watch.messages(), self.logs])
         self.assertNotIn(KEY, kept)                                              # nor the right key
-        self.assertIn("/pvj/speed", kept)
+        self.assertIn("/mctl/speed", kept)
 
     def test_the_lists_are_bounded(self):
         self.rules(only_on=True, only=[TABLET])
-        self.send(msg("/pvj/speed", 2.0))                       # the tablet that works
+        self.send(msg("/mctl/speed", 2.0))                       # the tablet that works
         self.send(msg("/x" * 100, 1))
         for i in range(3000):                                   # a spray of senders, each forged
-            self.send(msg("/pvj/speed", 2.0), "10.%d.%d.%d" % (i >> 16 & 255, i >> 8 & 255, i & 255))
+            self.send(msg("/mctl/speed", 2.0), "10.%d.%d.%d" % (i >> 16 & 255, i >> 8 & 255, i & 255))
         for i in range(3000):
-            self.send(msg("/pvj/speed", 2.0), "8.8.%d.%d" % (i >> 8 & 255, i & 255))
+            self.send(msg("/mctl/speed", 2.0), "8.8.%d.%d" % (i >> 8 & 255, i & 255))
         senders = self.manager.watch.senders()
         self.assertLessEqual(len(senders), osc.MAX_SENDERS)
         self.assertLessEqual(len(self.manager.watch.messages()), osc.MAX_LOG)
@@ -365,9 +365,9 @@ class WatchTest(LayerBase):
         self.assertEqual(osc.shown("/aé\n\x00<b>" + "x" * 200), ("/a???<b>" + "x" * 200)[:osc.SHOWN_ADDRESS])
 
     def test_only_the_last_ten_minutes(self):
-        self.send(msg("/pvj/speed", 2.0))
+        self.send(msg("/mctl/speed", 2.0))
         self.now[0] += osc.SENDER_WINDOW + 1
-        self.send(msg("/pvj/speed", 2.0), OTHER)
+        self.send(msg("/mctl/speed", 2.0), OTHER)
         self.assertEqual([s["address"] for s in self.manager.watch.senders()], [OTHER])
 
     def test_a_change_of_who_may_send_keeps_the_socket_open(self):
@@ -378,8 +378,8 @@ class WatchTest(LayerBase):
         self.settings.data["osc"].update(port=first.port, only_on=True, only=[OTHER], allow=["203.0.113.0/24"])
         self.manager.apply()
         self.assertIs(self.manager.server, first)               # no gap in which a message would be lost
-        self.assertEqual(first.handle_packet(msg("/pvj/speed", 2.0), TABLET), 0)
-        self.assertEqual(first.handle_packet(msg("/pvj/speed", 2.0), OTHER), 1)
+        self.assertEqual(first.handle_packet(msg("/mctl/speed", 2.0), TABLET), 0)
+        self.assertEqual(first.handle_packet(msg("/mctl/speed", 2.0), OTHER), 1)
         self.assertTrue(osc.source_allowed("203.0.113.9", first.extra))
         self.settings.data["osc"].update(enabled=False)
         self.manager.apply()
@@ -389,7 +389,7 @@ class WatchTest(LayerBase):
         self.settings.data["osc"].update(enabled=True, port=0)
         self.manager.apply()
         self.addCleanup(self.manager.stop)
-        self.manager.server.handle_packet(msg("/pvj/speed", 2.0), TABLET)
+        self.manager.server.handle_packet(msg("/mctl/speed", 2.0), TABLET)
         self.manager.apply()
         self.assertEqual([s["address"] for s in self.manager.watch.senders()], [TABLET])
 
@@ -415,13 +415,13 @@ class RealSocketTest(LayerBase):
             while time.time() < deadline and server.stats["received"] < want:
                 time.sleep(0.02)
             self.assertEqual(server.stats["received"], want)
-        send(msg("/k/%s/pvj/speed" % KEY, 2.0), 1)               # no paired device has asked from loopback yet
+        send(msg("/k/%s/mctl/speed" % KEY, 2.0), 1)               # no paired device has asked from loopback yet
         self.assertEqual(self.speeds(), [])
         self.auth.authenticate(token, "127.0.0.1")
-        send(msg("/pvj/speed", 3.0), 2)                          # no key
-        send(msg("/k/%s/pvj/speed" % ("a" * 20), 4.0), 3)        # a wrong one
+        send(msg("/mctl/speed", 3.0), 2)                          # no key
+        send(msg("/k/%s/mctl/speed" % ("a" * 20), 4.0), 3)        # a wrong one
         self.assertEqual(self.speeds(), [])
-        send(msg("/k/%s/pvj/speed" % KEY, 3.5), 4)
+        send(msg("/k/%s/mctl/speed" % KEY, 3.5), 4)
         deadline = time.time() + 5
         while time.time() < deadline and not self.speeds():
             time.sleep(0.02)
@@ -514,7 +514,7 @@ class ApiTest(CareBase):
             self.assertNotIn(key, json.dumps(self.h("GET", "/api/status", device=dev)))
         self.assertNotIn(key, json.dumps(self.post({"only_on": False})))
         st, d = self.h("POST", "/api/osc/key", {}, self.full_dev)
-        self.assertEqual((st, d), (200, {"key": key, "prefix": "/k/" + key, "example": "/k/%s/pvj/stop" % key}))
+        self.assertEqual((st, d), (200, {"key": key, "prefix": "/k/" + key, "example": "/k/%s/mctl/stop" % key}))
         st, d = self.h("POST", "/api/osc/key", {"new": True}, self.full_dev)
         self.assertEqual(st, 200)
         self.assertNotEqual(d["key"], key)
@@ -558,9 +558,9 @@ class ApiTest(CareBase):
         self.settings.data["osc"].update(enabled=True, port=0)
         self.assertEqual(self.post({"paired_on": True})[0], 200)
         server = self.api.osc.server
-        self.assertEqual(server.handle_packet(msg("/pvj/speed", 2.0), TABLET), 1)
+        self.assertEqual(server.handle_packet(msg("/mctl/speed", 2.0), TABLET), 1)
         self.assertEqual(self.call("POST", "/api/logout", {}, token=token)[0], 200)
-        self.assertEqual(server.handle_packet(msg("/pvj/speed", 3.0), TABLET), 0)
+        self.assertEqual(server.handle_packet(msg("/mctl/speed", 3.0), TABLET), 0)
         self.assertEqual(self.h("GET", "/api/osc", device=self.full_dev)[1]["senders"][0]["why"], osc.WHY_PAIRED)
         self.assertNotIn(dev["id"], self.auth._addresses)
 
@@ -582,14 +582,14 @@ class ApiTest(CareBase):
         self.settings.data["osc"].update(enabled=True, port=0)
         self.assertEqual(self.post({})[0], 200)                                    # no lock is on
         for ip in (TABLET, OTHER):
-            self.api.osc.server.handle_packet(msg("/pvj/speed", 2.0), ip)
+            self.api.osc.server.handle_packet(msg("/mctl/speed", 2.0), ip)
         rows = {r["address"]: r["panel"] for r in self.h("GET", "/api/osc", device=self.full_dev)[1]["senders"]}
         self.assertEqual(rows, {TABLET: True, OTHER: False})
 
     def test_a_presenter_and_a_guest_see_neither_the_key_nor_the_lists(self):
         self.settings.data["osc"].update(enabled=True, port=0)
         self.assertEqual(self.post({"only_on": True, "only": [TABLET], "key_on": True})[0], 200)
-        self.api.osc.server.handle_packet(msg("/pvj/speed", 2.0), TABLET)
+        self.api.osc.server.handle_packet(msg("/mctl/speed", 2.0), TABLET)
         full = self.h("GET", "/api/osc", device=self.full_dev)[1]
         self.assertEqual([s["address"] for s in full["senders"]], [TABLET])
         self.assertEqual(full["refused"], 1)
@@ -684,7 +684,7 @@ class BoxCareTest(CareBase):
         self.assertNotIn("key", got)
 
     def test_a_factory_reset_clears_all_of_it(self):
-        self.api.osc.watch.note(TABLET, True, "", "/pvj/stop")
+        self.api.osc.watch.note(TABLET, True, "", "/mctl/stop")
         self.assertTrue(self.auth.paired_addresses(3600))
         st, out = self.h("POST", "/api/system/factory-reset", {"confirm": "factory-reset", "media": "keep"}, self.full_dev)
         self.assertEqual(st, 200, out)

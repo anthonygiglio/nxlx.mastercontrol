@@ -1778,7 +1778,7 @@ class VibesTest(Base):
         self.assertIn("module was switched off", self.vibes.status()["last"]["message"])
 
     def test_start_stop_and_next_never_wait_for_a_change_in_progress(self):
-        """They took the lock that a change holds through its dip and the wait for the GPU: a second /pvj/vibes/next
+        """They took the lock that a change holds through its dip and the wait for the GPU: a second /mctl/vibes/next
         stalled every later OSC cue, Blackout and Stop included."""
         import threading
         import time
@@ -2031,10 +2031,10 @@ class OtherWaysInTest(Base):
         s = scheduler.Scheduler(self.api, self.settings, self.api.registry, log=lambda *_: None)
         s._execute(clean["entries"][0], datetime.datetime(2026, 10, 2, 18, 0))
         self.assertEqual(s.last[clean["entries"][0]["id"]]["ok"], True)
-        self.assertEqual(osc.translate("/pvj/vibes", [1.0]), ("/api/vibes", {"on": True}))
-        self.assertEqual(osc.translate("/pvj/vibes", []), ("/api/vibes", {"on": True}))
-        self.assertIsNone(osc.translate("/pvj/vibes", [0.0]))          # a button's release does nothing
-        self.assertEqual(osc.translate("/pvj/vibes/next", [1]), ("/api/vibes", {"next": True}))
+        self.assertEqual(osc.translate("/mctl/vibes", [1.0]), ("/api/vibes", {"on": True}))
+        self.assertEqual(osc.translate("/mctl/vibes", []), ("/api/vibes", {"on": True}))
+        self.assertIsNone(osc.translate("/mctl/vibes", [0.0]))          # a button's release does nothing
+        self.assertEqual(osc.translate("/mctl/vibes/next", [1]), ("/api/vibes", {"next": True}))
         self.assertEqual(calls, [({"on": True}, "autostart"), ({"on": True}, "schedule")])
 
     def test_autostart_reports_a_module_that_is_off_and_does_not_crash(self):

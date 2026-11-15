@@ -63,7 +63,7 @@ export default function Panel({ s, width, height, setScreen, setUpdate }: Props)
   else screen = System()
 
   return (
-    <div className="pvj-frame" style={{ ...(frameVars(s) as CSSProperties), width, height }}>
+    <div className="mctl-frame" style={{ ...(frameVars(s) as CSSProperties), width, height }}>
       <div className="shell">
         {nav === 'top' && tabs}
         <div className="body">

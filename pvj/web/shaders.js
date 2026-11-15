@@ -517,14 +517,14 @@
     }
     function soon(ms) { clearTimeout(soonTimer); soonTimer = setTimeout(function () { if (root.isConnected) refresh(); }, ms); }
     // A column of a desk that is not shown (a phone with the pads open, a laptop under 1700 px: D72) asks nothing;
-    // the timer keeps running, and the panel says when the column is shown again (pvjshown), which asks at once.
+    // the timer keeps running, and the panel says when the column is shown again (mctlshown), which asks at once.
     function hidden() { return root.isConnected && !root.getClientRects().length; }
     function watch() {
       clearTimeout(timer);
       timer = setTimeout(function () { if (!root.isConnected) return; if (hidden()) return watch(); refresh().then(watch); }, data && data.playing ? 3000 : 5000);
     }
-    window.addEventListener('pvjshown', function onShown() {
-      if (!root.isConnected) return window.removeEventListener('pvjshown', onShown);
+    window.addEventListener('mctlshown', function onShown() {
+      if (!root.isConnected) return window.removeEventListener('mctlshown', onShown);
       if (!hidden()) soon(0);
     });
     // Once a second, between two answers from the box: the countdown moves, and a shader that changed on the screen
@@ -1254,6 +1254,6 @@
   // Vibes row on Live, so a set chosen on one screen is the set the other starts.
   var lend = { player: player, activeSet: activeSet, startSet: startSet, body: vibesBody, choose: function (id) { ui.startSet = id; }, detailHigh: detailHigh, loaded: loaded };
   // `kit` is what effects.js draws its controls with: the same controls, the same way of sending.
-  window.pvjShaders = { liveRow: liveRow, patch: patch, page: page, nice: nice, vibes: lend,
+  window.mctlShaders = { liveRow: liveRow, patch: patch, page: page, nice: nice, vibes: lend,
     kit: { makeRig: makeRig, inputControl: inputControl, noteLine: noteLine, slider: slider, syncControls: syncControls, knobOf: knobOf, round: round } };
 })();

@@ -78,7 +78,7 @@ class HttpsBase(ServerBase):
         if method == "POST":
             h["Content-Type"] = "application/json"
             if csrf:
-                h["X-PVJ-Request"] = "1"
+                h["X-MCTL-Request"] = "1"
         if token:
             h["Authorization"] = "Bearer " + token
         if cookie:
@@ -169,19 +169,26 @@ class HttpsTest(HttpsBase):
         st, body, r = self.scall("POST", "/api/pair", {"pin": self.pin, "name": "phone over tls"})
         self.assertEqual(st, 200, body)
         cookie = r.getheader("Set-Cookie")
-        self.assertTrue(cookie.startswith("__Host-pvj_token="), cookie)
+        self.assertTrue(cookie.startswith("__Host-mctl_token="), cookie)
         self.assertIn("; Secure", cookie)
         self.assertIn("HttpOnly", cookie)
         secure_token = body["token"]
         # and over plain http it is the plain cookie, without Secure
         st, body, r = self.call("POST", "/api/pair", {"pin": self.pin, "name": "phone over http"})
-        self.assertTrue(r.getheader("Set-Cookie").startswith("pvj_token="))
+        self.assertTrue(r.getheader("Set-Cookie").startswith("mctl_token="))
         self.assertNotIn("Secure", r.getheader("Set-Cookie"))
         # the secure cookie name is read over TLS, and ignored over plain http (a replay there carries nothing)
-        self.assertEqual(self.scall("GET", "/api/status", cookie="__Host-pvj_token=" + secure_token)[0], 200)
-        self.assertEqual(self.call("GET", "/api/status", headers={"Cookie": "__Host-pvj_token=" + secure_token})[0], 401)
+        self.assertEqual(self.scall("GET", "/api/status", cookie="__Host-mctl_token=" + secure_token)[0], 200)
+        self.assertEqual(self.call("GET", "/api/status", headers={"Cookie": "__Host-mctl_token=" + secure_token})[0], 401)
         # the plain cookie works over TLS too (browsers send it there): nothing is lost by moving
-        self.assertEqual(self.scall("GET", "/api/status", cookie="pvj_token=" + self.full)[0], 200)
+        self.assertEqual(self.scall("GET", "/api/status", cookie="mctl_token=" + self.full)[0], 200)
+        # D138: the secure cookie of the old name, for one release: read over TLS, moved to the new name and expired
+        # (both old names, over TLS); over plain http it is ignored like the new one
+        st, _, r = self.scall("GET", "/api/status", cookie="__Host-pvj_token=" + secure_token)
+        self.assertEqual(st, 200)
+        moved = [v.split(";")[0] for k, v in r.getheaders() if k.lower() == "set-cookie"]
+        self.assertEqual(moved, ["__Host-mctl_token=" + secure_token, "pvj_token=", "__Host-pvj_token="])
+        self.assertEqual(self.call("GET", "/api/status", headers={"Cookie": "__Host-pvj_token=" + secure_token})[0], 401)
         # the device record remembers how its token was issued
         self.assertTrue(self.box.device_secure(self.auth.authenticate(secure_token)))
         self.assertFalse(self.box.device_secure(self.auth.authenticate(self.full)))
@@ -189,9 +196,9 @@ class HttpsTest(HttpsBase):
         st, body, r = self.scall("POST", "/api/logout", {}, token=secure_token)
         cleared = r.getheaders()
         names = [v.split("=")[0] for k, v in cleared if k.lower() == "set-cookie"]
-        self.assertEqual(sorted(names), ["__Host-pvj_token", "pvj_token"])
+        self.assertEqual(sorted(names), ["__Host-mctl_token", "mctl_token"])
         st, body, r = self.call("POST", "/api/logout", {}, token=self.call("POST", "/api/pair", {"pin": self.pin, "name": "x"})[1]["token"])
-        self.assertEqual([v.split("=")[0] for k, v in r.getheaders() if k.lower() == "set-cookie"], ["pvj_token"])
+        self.assertEqual([v.split("=")[0] for k, v in r.getheaders() if k.lower() == "set-cookie"], ["mctl_token"])
         # the status says what the page needs
         st, body, _ = self.scall("GET", "/api/https", token=self.full)
         self.assertTrue(body["secure"])

@@ -13,7 +13,7 @@ A box that answers over UDP can be made to send packets at someone else, so ever
 * No byte of a received packet is ever copied into a packet that is sent. Every packet is built from the box's state.
 * A hard cap on datagrams and bytes, per target and in all, whatever comes in (the numbers are below).
 * Nothing secret is in any packet: no PIN, code or key, no device name or address, no network detail, no path.
-* State has its own namespace, /pvj/state/..., which is no command anywhere in the receiver, so a target that is
+* State has its own namespace, /mctl/state/..., which is no command anywhere in the receiver, so a target that is
   another box (or two boxes that list each other) is driven by nothing.
 * One thread of its own and a socket that never waits: a dead target holds up nobody. The socket's time to live is 1,
   so a packet cannot cross a router even if a check above were wrong.
@@ -36,13 +36,25 @@ PRIVATE = [ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192
 # also its hotspot: NetworkManager runs the hotspot on the Wi-Fi port itself), and none of those names starts so.
 NOT_INTERFACES = ("lo", "wg", "docker", "veth", "br-", "virbr", "tun", "tap", "tailscale", "zt")
 
-PREFIX = "/pvj/state/"
-REQUEST = "/pvj/state"          # a listed target asks for everything; the box itself never sends this address
+PREFIX = "/mctl/state/"
+REQUEST = "/mctl/state"          # a listed target asks for everything; the box itself never sends this address
+# The family before the rename (D138): a target that asked for everything with /pvj/state gets its state as
+# /pvj/state/... for one release, so a TouchOSC layout that was not redone keeps showing it. A target that asked with
+# the new family, or never asked (set by hand), gets the new names. Remove in the release after the cutover.
+OLD_PREFIX = "/pvj/state/"
+
+
+def _old_name(address):
+    return OLD_PREFIX + address[len(PREFIX):] if address.startswith(PREFIX) else address
+
+
+def _new_name(address):
+    return PREFIX + address[len(OLD_PREFIX):] if address.startswith(OLD_PREFIX) else address
 ALIVE = PREFIX + "alive"
 
 MAX_DATAGRAM = 1200             # bytes: under any network's packet size, so nothing is ever split
 TICK = 0.2                      # one look at the box this often: changes within it leave as one
-HEARTBEAT = 2.0                 # /pvj/state/alive this often, changed or not
+HEARTBEAT = 2.0                 # /mctl/state/alive this often, changed or not
 FULL_EVERY = 30.0               # everything again this often, for a layout that was opened late
 REQUEST_EVERY = 2.0             # a target's request for everything is honoured at most this often
 NETS_EVERY = 10.0               # the box's own networks are read again this often
@@ -304,7 +316,7 @@ def control_kind(i):
 
 def _controls(which, engine, on):
     """The eight controls of the shader on screen (or the effect that is on): ([value 0 to 1], [name], [kind]), in
-    the count /pvj/shader/control/<n> and a controller's knobs use (engine.nth_control). A switch is 0 or 1, a
+    the count /mctl/shader/control/<n> and a controller's knobs use (engine.nth_control). A switch is 0 or 1, a
     choice its place in the list, an event 0. The name is the one the panel shows beside the control: the file's
     LABEL, or its NAME when it has none. A slot with no control is 0 and two empty strings."""
     values, names, kinds = [0.0] * SLOTS, [""] * SLOTS, [""] * SLOTS
@@ -320,7 +332,7 @@ def _controls(which, engine, on):
                 continue
             name = _text(i.get("label") or i["name"])
             if which == "effect" and name.lower() == "amount":
-                name = "Amount (the filter's own)"       # as the panel says it: /pvj/effect/amount is the other one
+                name = "Amount (the filter's own)"       # as the panel says it: /mctl/effect/amount is the other one
             names[n - 1], kinds[n - 1] = name[:MAX_NAME], control_kind(i)
             if i["type"] == "event":
                 continue
@@ -459,6 +471,7 @@ class Feedback:
         self._lock = threading.Lock()       # the flags and the counters; never held over a look at the box or a send
         self._targets = [dict(t) for t in targets]
         self._wanted = set()                # addresses of targets that asked for everything
+        self._old_family = set()            # addresses of targets whose last ask used the old family (D138)
         self._per = {}                      # (address, port) -> what was sent there last, its buckets, its counters
         self._nets = (None, [])
         self._all = None
@@ -477,14 +490,21 @@ class Feedback:
             keep = {(t["address"], t["port"]) for t in self._targets}
             self._per = {k: v for k, v in self._per.items() if k in keep}
             self._wanted &= {t["address"] for t in self._targets}
+            self._old_family &= {t["address"] for t in self._targets}
 
-    def request(self, source):
+    def request(self, source, old_family=False):
         """A sender that passed every lock asked for everything. True when its address is a listed target: only
-        then, and only for that target. The answer goes out on the feedback thread, at most every REQUEST_EVERY."""
+        then, and only for that target. The answer goes out on the feedback thread, at most every REQUEST_EVERY.
+        `old_family`: it asked with /pvj/state, so its state goes out under that family (D138) until it asks with
+        the new one."""
         with self._lock:
             if not any(t["address"] == source for t in self._targets):
                 return False
             self._wanted.add(source)
+            if old_family:
+                self._old_family.add(source)
+            else:
+                self._old_family.discard(source)
         self._wake.set()
         return True
 
@@ -560,6 +580,7 @@ class Feedback:
         with self._lock:
             targets = [dict(t) for t in self._targets]
             wanted = set(self._wanted)
+            old_family = set(self._old_family)
         nets = self._local(now)
         live = []
         for t in targets:
@@ -604,15 +625,19 @@ class Feedback:
             sent = st["sent"]
             messages += [m for m in state if m[0] not in sent]
             messages += [m for m in state if m[0] in sent and sent[m[0]] != m[1]]
+            if t["address"] in old_family:      # D138: named as this target asked; what was sent is kept by the new name
+                messages = [(_old_name(a), v) for a, v in messages]
             bad = []
             packed = pack(messages, bad)
             for address, value in bad:          # left out, and not tried again until it changes; the rest leave
+                address = _new_name(address)
                 st["sent"][address] = value
                 self._note("encode", "%s could not be sent (a value that is no number and no text); the rest is sent" % address)
             for data, part in packed:
                 if not self._send(st, data, (t["address"], t["port"]), now):
                     break
                 for address, value in part:
+                    address = _new_name(address)
                     if address == ALIVE:
                         st["beat"] = now
                     else:

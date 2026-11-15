@@ -433,18 +433,18 @@ Actions (`pvj/actions.py` names, so MIDI learn and the OSC table both reach them
 
 | Address | Arguments | What it does |
 | --- | --- | --- |
-| `/pvj/graphic/N` | none or 0/1 | switch over, or set on or off |
-| `/pvj/graphic/N/text` | one string | set the text (cleaned as 4.1) and show it if the graphic is on |
-| `/pvj/graphic/N/send` | one string | set the text **and** switch on, with the motion: one message pushes a line |
-| `/pvj/graphic/N/line` | int | choose line number M from the list and send it |
-| `/pvj/graphic/N/opacity`, `/x`, `/y`, `/scale` | float | the same ranges as the panel's |
-| `/pvj/graphic/N/replay` | none | play the motion again |
-| `/pvj/graphic/hide` | none | hide all |
+| `/mctl/graphic/N` | none or 0/1 | switch over, or set on or off |
+| `/mctl/graphic/N/text` | one string | set the text (cleaned as 4.1) and show it if the graphic is on |
+| `/mctl/graphic/N/send` | one string | set the text **and** switch on, with the motion: one message pushes a line |
+| `/mctl/graphic/N/line` | int | choose line number M from the list and send it |
+| `/mctl/graphic/N/opacity`, `/x`, `/y`, `/scale` | float | the same ranges as the panel's |
+| `/mctl/graphic/N/replay` | none | play the motion again |
+| `/mctl/graphic/hide` | none | hide all |
 
-State sent back (so a TouchOSC label shows what is on): `/pvj/state/graphic/N/on` (0/1) and
-`/pvj/state/graphic/N/text` (string, cut to 64 characters). Not sent: the logo file (as with the overlay's file, OSC.md).
-For TouchOSC (`docs/TouchOSC_Layout V.01.md`): a text field bound to `/pvj/graphic/1/send` with "send on return" is the
-phone-pushes-a-line case; a button bound to `.../N` toggles; a label receiving `/pvj/state/graphic/1/text` shows the
+State sent back (so a TouchOSC label shows what is on): `/mctl/state/graphic/N/on` (0/1) and
+`/mctl/state/graphic/N/text` (string, cut to 64 characters). Not sent: the logo file (as with the overlay's file, OSC.md).
+For TouchOSC (`docs/TouchOSC_Layout V.01.md`): a text field bound to `/mctl/graphic/1/send` with "send on return" is the
+phone-pushes-a-line case; a button bound to `.../N` toggles; a label receiving `/mctl/state/graphic/1/text` shows the
 current line. The Deck/Hub layout work (panel coordination) can place these when the graphics ship.
 
 **Pads and scenes.** A Graphic pad (slice 6) toggles one graphic or sends one line. A Room scene or a saved "Mix" can

@@ -97,8 +97,8 @@ class OffByDefaultTest(Base):
         self.manager.apply()
         self.addCleanup(self.manager.stop)
         server = self.manager.server
-        for data in (msg("/pvj/state"), msg("/pvj/state", 1), msg("/pvj/state/alive", 1.0), msg("/pvj/stop"), msg("/pvj/opacity", 50.0),
-                     bundle(msg("/pvj/state"), msg("/pvj/blackout", 1)), b"junk", b"", msg("/k/%s/pvj/state" % KEY)):
+        for data in (msg("/mctl/state"), msg("/mctl/state", 1), msg("/mctl/state/alive", 1.0), msg("/mctl/stop"), msg("/mctl/opacity", 50.0),
+                     bundle(msg("/mctl/state"), msg("/mctl/blackout", 1)), b"junk", b"", msg("/k/%s/mctl/state" % KEY)):
             for ip in (TABLET, OTHER, "8.8.8.8", "127.0.0.1"):
                 server.handle_packet(data, ip)
         self.assertIsNone(self.manager.feedback)
@@ -203,7 +203,7 @@ class TargetTest(Base):
         # and no packet adds one: a flood of requests from a stranger leaves the list as it was
         self.rules()
         for _ in range(50):
-            self.send(msg("/pvj/state"), "192.168.1.77")
+            self.send(msg("/mctl/state"), "192.168.1.77")
         self.assertEqual(json.dumps(self.settings.data["osc"]["feedback"]), before)
 
     def test_with_the_box_s_networks_unreadable_nothing_is_added(self):
@@ -213,9 +213,9 @@ class TargetTest(Base):
 
     def test_the_form_fills_from_the_last_sender_that_passed_and_nothing_is_added_by_it(self):
         self.rules(only_on=True, only=[TABLET])
-        self.send(msg("/pvj/stop"), OTHER)                 # refused by the list: never suggested
+        self.send(msg("/mctl/stop"), OTHER)                 # refused by the list: never suggested
         self.assertEqual(self.manager.feedback_status()["sender"], "")
-        self.send(msg("/pvj/stop"), TABLET)
+        self.send(msg("/mctl/stop"), TABLET)
         out = self.manager.feedback_status()
         self.assertEqual((out["sender"], out["targets"]), (TABLET, []))
 
@@ -354,7 +354,7 @@ class StateTest(Base):
         part = text[text.index("## State sent back"):]
         part = part[:part.index("\n## ", 5)]
         said = set()
-        for a in re.findall(r"`(/pvj/state/[a-z/<>0-9_]+)`", part):
+        for a in re.findall(r"`(/mctl/state/[a-z/<>0-9_]+)`", part):
             if "<bank>" in a:
                 said |= {a.replace("<bank>", str(b)).replace("<pad>", str(p)) for b in (1, 2, 3) for p in range(1, 13)}
             elif "<n>" in a:
@@ -384,7 +384,7 @@ class StateTest(Base):
         self.assertEqual(self.sock.sent, [], "nothing changed, nothing sent")
         self.rules()
         self.server.feedback = f
-        self.assertEqual(self.send(msg("/pvj/opacity", 25.0)), 1)
+        self.assertEqual(self.send(msg("/mctl/opacity", 25.0)), 1)
         self.assertTrue(f._wake.is_set(), "the receiver only woke the sender")
         self.now[0] += 0.2
         f.tick()
@@ -428,7 +428,7 @@ class StateTest(Base):
 
 class ShaderStateTest(Live):
     """With the Shaders and Vibes module on and a shader on the screen (the engine's own fake player and clock): what
-    goes in over /pvj/shader/... comes back under /pvj/state/shader/... in the same units."""
+    goes in over /mctl/shader/... comes back under /mctl/state/shader/... in the same units."""
 
     def setUp(self):
         super().setUp()
@@ -448,14 +448,14 @@ class ShaderStateTest(Live):
 
     def test_the_shader_s_levels_and_controls_come_back_as_they_went_in(self):
         for tail, value in (("shader/speed", 2.5), ("shader/hue", -90.0), ("shader/brightness", 1.5), ("shader/control/1", 0.5), ("shader/control/2", 1.0)):
-            self.send("/pvj/" + tail, value)
+            self.send("/mctl/" + tail, value)
         got, snap = self.state()
         self.assertTrue(snap["shader_on"])
         self.assertEqual([got[fb.PREFIX + t] for t in ("shader", "shader/speed", "shader/hue", "shader/brightness", "shader/control/2")],
                          ["all", 2.5, -90.0, 1.5, 1.0])
         self.assertAlmostEqual(got[fb.PREFIX + "shader/control/1"], 0.5, delta=1 / 127.0)
         self.assertEqual(got[fb.PREFIX + "shader/control/8"], 0.0, "this shader has six")
-        self.send("/pvj/vibes/dwell", 45)
+        self.send("/mctl/vibes/dwell", 45)
         got, snap = self.state()
         self.assertEqual(got[fb.PREFIX + "vibes/dwell"], 45.0)
         self.api.vibes.running = True                        # the rotation's own flag, as the lights read it
@@ -531,7 +531,7 @@ class ShaderStateTest(Live):
         fb._PARSED["shader"].clear()
 
     def test_the_effect_s_controls_their_names_and_their_kinds(self):
-        """The effect that is on: its eight values as /pvj/effect/control/<n> takes them, and what the panel calls
+        """The effect that is on: its eight values as /mctl/effect/control/<n> takes them, and what the panel calls
         each (effects.js: the filter's own "amount" is told apart from the effect's Amount)."""
         from pvj import shaders as S
         src = '/*{"INPUTS": [{"NAME": "inputImage", "TYPE": "image"}, {"NAME": "amount", "TYPE": "float", "MIN": 0.0, "MAX": 4.0, "DEFAULT": 1.0},' \
@@ -573,7 +573,7 @@ class ShaderStateTest(Live):
             return [a for a, _v, _w in decode(sock.sent)]
         first = looks(10)
         self.assertEqual(len([a for a in first if "/control/" in a and a.endswith("/name")]), 16, "everything once: eight names for the shader, eight for the effect")
-        self.send("/pvj/shader/control/1", 0.9)
+        self.send("/mctl/shader/control/1", 0.9)
         after = looks(10)
         self.assertIn(fb.PREFIX + "shader/control/1", after)
         self.assertEqual([a for a in after if "/control/" in a and a.endswith(("/name", "/kind"))], [], "a knob that moves sends its value, never the names again")
@@ -644,7 +644,7 @@ class CapTest(Base):
         for _ in range(3000):           # three seconds, a look every millisecond, each after a request from every target
             for t in targets:
                 self.server.limiter = osc.RateLimiter(self.clock)
-                self.send(msg("/pvj/state"), t["address"])
+                self.send(msg("/mctl/state"), t["address"])
             f.tick()
             self.now[0] += 0.001
         return f
@@ -724,7 +724,7 @@ class CapTest(Base):
         del self.sock.sent[:]
         for _ in range(4000):           # four seconds of requests, a thousand a second
             self.server.limiter = osc.RateLimiter(self.clock)
-            self.send(msg("/pvj/state"), TABLET)
+            self.send(msg("/mctl/state"), TABLET)
             f.tick()
             self.now[0] += 0.001
         got = [a for a, _v, _w in decode(self.sock.sent) if a != fb.ALIVE]
@@ -738,7 +738,7 @@ class CapTest(Base):
         self.run_for(f, 1)
         del self.sock.sent[:]
         self.now[0] += fb.REQUEST_EVERY
-        request = msg("/pvj/state")
+        request = msg("/mctl/state")
         self.send(request, TABLET)
         self.run_for(f, 1.0, 0.01)
         out = sum(len(d) for d, _w, _t in self.sock.sent)
@@ -756,8 +756,8 @@ class SpoofTest(Base):
         self.run_for(f, 1)
         del self.sock.sent[:]
         for ip in (OTHER, "192.168.1.77", "10.0.0.1", "8.8.8.8", "127.0.0.1", BOX, "192.168.1.255"):
-            self.send(msg("/pvj/state"), ip)
-            self.send(bundle(msg("/pvj/state"), msg("/pvj/state", "x")), ip)
+            self.send(msg("/mctl/state"), ip)
+            self.send(bundle(msg("/mctl/state"), msg("/mctl/state", "x")), ip)
         self.assertEqual(f._wanted, set())
         self.run_for(f, 1.5)
         self.assertEqual([a for a, _v, _w in decode(self.sock.sent) if a != fb.ALIVE], [])
@@ -768,22 +768,22 @@ class SpoofTest(Base):
         f = self.feedback([T1])
         self.rules(key_on=True, key=KEY)
         self.server.feedback = f
-        for data in (msg("/pvj/state"), msg("/k/%s/pvj/state" % ("0" * 20)), msg("/pvj/state")[:-1], b"/pvj/state", b"\0" * 16,
-                     bundle(msg("/k/%s/pvj/state" % KEY), msg("/pvj/state"))):
+        for data in (msg("/mctl/state"), msg("/k/%s/mctl/state" % ("0" * 20)), msg("/mctl/state")[:-1], b"/mctl/state", b"\0" * 16,
+                     bundle(msg("/k/%s/mctl/state" % KEY), msg("/mctl/state"))):
             self.send(data, TABLET)
         self.assertEqual(f._wanted, set())
-        self.send(msg("/k/%s/pvj/state" % KEY), TABLET)
+        self.send(msg("/k/%s/mctl/state" % KEY), TABLET)
         self.assertEqual(f._wanted, {TABLET})
         self.rules(only_on=True, only=[OTHER])
         self.server.feedback = f
         f._wanted.clear()
-        self.send(msg("/pvj/state"), TABLET)
+        self.send(msg("/mctl/state"), TABLET)
         self.assertEqual(f._wanted, set())
         self.server.limiter = osc.RateLimiter(self.clock, rate=0, burst=0)
         self.rules()
         self.server.limiter = osc.RateLimiter(self.clock, rate=0, burst=0)
         self.server.feedback = f
-        self.send(msg("/pvj/state"), TABLET)
+        self.send(msg("/mctl/state"), TABLET)
         self.assertEqual(f._wanted, set(), "over the receiver's own rate limit")
 
     def test_every_packet_goes_to_a_listed_target_whatever_comes_in(self):
@@ -793,8 +793,8 @@ class SpoofTest(Base):
         for n in range(400):
             ip = "192.168.%d.%d" % (n % 3, 1 + n % 250)
             self.server.limiter = osc.RateLimiter(self.clock)
-            self.send(msg("/pvj/state"), ip)
-            self.send(msg("/pvj/opacity", float(n % 100)), ip)
+            self.send(msg("/mctl/state"), ip)
+            self.send(msg("/mctl/opacity", float(n % 100)), ip)
             f.tick()
             self.now[0] += 0.05
         self.assertGreater(len(self.sock.sent), 20)
@@ -864,9 +864,9 @@ class SecretTest(Base):
         for n in range(60):
             self.player.status = lambda n=n: states[n % 3]
             f._player_seen = None
-            self.send(msg("/k/%s/pvj/state" % KEY, "Body-Sentinel-91"), TABLET)
-            self.send(msg("/k/%s/pvj/opacity" % KEY, float(n)), TABLET)
-            self.send(msg("/k/%s/pvj/play/file" % KEY, "Asked-File-Sentinel.mp4"), TABLET)
+            self.send(msg("/k/%s/mctl/state" % KEY, "Body-Sentinel-91"), TABLET)
+            self.send(msg("/k/%s/mctl/opacity" % KEY, float(n)), TABLET)
+            self.send(msg("/k/%s/mctl/play/file" % KEY, "Asked-File-Sentinel.mp4"), TABLET)
             self.api.handle("POST", "/api/blackout", {"on": n % 2 == 0}, self.owner, LAN)
             f.tick()
             self.now[0] += 0.7
@@ -930,8 +930,8 @@ class ThreadTest(Base):
         began = time.monotonic()
         for n in range(200):
             self.server.limiter = osc.RateLimiter(self.clock)
-            self.send(msg("/pvj/state"), TABLET)
-            self.assertEqual(self.send(msg("/pvj/opacity", float(n % 100))), 1)
+            self.send(msg("/mctl/state"), TABLET)
+            self.assertEqual(self.send(msg("/mctl/opacity", float(n % 100))), 1)
             f.status()
         self.assertLess(time.monotonic() - began, 2.0)
         gate.set()
@@ -991,7 +991,7 @@ class RollbackTest(Base):
             m = osc.OscManager(Api(), s, host="127.0.0.1", log=lambda *a: None)
             s.data["osc"].update(enabled=True, port=0)
             m.apply()
-            for data in (b"/pvj/state\\0\\0", b"/pvj/stop\\0\\0\\0"):
+            for data in (b"/mctl/state\\0", b"/mctl/stop\\0\\0"):
                 m.server.handle_packet(data, "192.168.1.20")
             cfg = dict(s.data["osc"], port=9877, enabled=False)       # what its own page's save does: a copy with its keys changed
             s.data["osc"] = cfg

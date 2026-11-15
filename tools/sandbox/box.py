@@ -387,7 +387,7 @@ def request(first_port, role, method, path, body=None):
     port = first_port + ROLES.index(role)
     data = json.dumps(body or {}).encode() if method == "POST" else None
     req = urllib.request.Request("http://127.0.0.1:%d%s" % (port, path), data=data, method=method,
-                                 headers={"Content-Type": "application/json", "X-PVJ-Request": "1"})
+                                 headers={"Content-Type": "application/json", "X-MCTL-Request": "1"})
     try:
         with urllib.request.urlopen(req, timeout=60) as r:
             return None, json.loads(r.read().decode() or "{}")

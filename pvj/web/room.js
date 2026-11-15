@@ -58,7 +58,7 @@
     // The sets are read once when the screen opens and again when the tab is shown again. A presenter (live access)
     // gets the buttons, a guest one line of state. With the module off: nothing, and for the owner the way to it.
     function ambience() {
-      var V = window.pvjShaders && window.pvjShaders.vibes;
+      var V = window.mctlShaders && window.mctlShaders.vibes;
       follow = null;
       if (!V) return null;
       if (!c.moduleOn('shaders')) {
@@ -67,7 +67,7 @@
           h('span', { class: 'hint grow', text: 'Ambience (Vibes) is switched off.' }),
           h('button', { class: 'btn', id: 'roomambopen', text: 'Open Shaders and Vibes', onclick: c.openShaders })));
       }
-      var nice = window.pvjShaders.nice, data = null, held = null, shown = '';
+      var nice = window.mctlShaders.nice, data = null, held = null, shown = '';
       var words = h('span', { id: 'roomambwords' }), under = h('span', { class: 'vibessub', id: 'roomambsub' });
       function post(body, after) {
         c.api('POST', '/api/vibes', body).then(function (r) {
@@ -517,5 +517,5 @@
   }
   function sceneName(id) { return names[id] || '(a scene that was removed, or the Room module is off)'; }
 
-  window.pvjRoom = { screen: screen, scheduleField: scheduleField, sceneName: sceneName, patch: function () { if (follow) follow.draw(); } };
+  window.mctlRoom = { screen: screen, scheduleField: scheduleField, sceneName: sceneName, patch: function () { if (follow) follow.draw(); } };
 })();

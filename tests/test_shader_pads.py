@@ -1524,7 +1524,7 @@ class FromEverywhere(PadBase):
     def test_osc_dmx_and_a_room_scene_name_a_pad_by_its_place_only(self):
         # none of them reads what the pad holds: each sends {"pad": [bank, index]} to the same play
         from pvj import dmx, osc, room
-        self.assertEqual(osc.translate("/pvj/play/pad", [1, 3]), ("/api/play", {"pad": [0, 2]}))
+        self.assertEqual(osc.translate("/mctl/play/pad", [1, 3]), ("/api/play", {"pad": [0, 2]}))
         self.assertEqual(dmx.pad_of(dmx.PAD_STEP * 3), 2)
         self.assertEqual(room.BOX["pad"][1]({"pad": [0, 2]}), [("/api/play", {"pad": [0, 2]})])
 

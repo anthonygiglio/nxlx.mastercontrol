@@ -120,7 +120,7 @@ export function defaults(): Settings {
   }
 }
 
-const KEY = 'pvj-playground-v1'
+const KEY = 'mctl-playground-v1'
 export function load(): Settings {
   const d = defaults()
   try {
