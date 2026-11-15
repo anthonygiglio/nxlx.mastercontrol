@@ -3750,7 +3750,11 @@ function startServer(env) {          // env: more for the harness's environment 
         await route.fulfill({ response: res, json: Object.assign(d, { zone: tzNode.zone, timezone: 'JST', utc_offset_minutes: tzNode.offset_minutes }) });
       });
       await shell.sys(tzPage, 'Schedule');
-      await tzPage.click('#sysswitchon');
+      // the Scheduler is on already when earlier steps left it on (it is, in a full run), off on a new node: switch it on only if
+      // it is off, and put it back as found
+      await tzPage.waitForSelector('#sysswitch');
+      const schedWasOff = (await tzPage.getAttribute('#sysswitch', 'aria-checked')) === 'false';
+      if (schedWasOff) await tzPage.click('#sysswitchon');
       await tzPage.waitForSelector('#schedzone');
       assert.strictEqual(await tzPage.textContent('#schedzone'), 'Node time zone: Asia/Tokyo (JST)');
       await tzPage.waitForSelector('#schedzonewarn');
@@ -3761,8 +3765,10 @@ function startServer(env) {          // env: more for the harness's environment 
       await tzPage.click('#schedzoneset');
       await pollFor(tzPage, () => fetch('/api/timezone').then((r) => r.json()).then((d) => d.zone === 'America/Regina'), 8000);
       assert.deepStrictEqual(tzPosts, [{ zone: 'America/Regina' }, { keep: true }, { zone: 'America/Regina' }], 'the picker sends the chosen zone');
-      await tzPage.click('#sysswitch');                           // the Scheduler is off again, as the next steps expect
-      await tzPage.waitForSelector('#sysoff');
+      if (schedWasOff) {                                          // the Scheduler is back as it was found
+        await tzPage.click('#sysswitch');
+        await tzPage.waitForSelector('#sysoff');
+      }
       const tzId = (await tzPage.evaluate(() => fetch('/api/status').then((r) => r.json()))).device.id;
       await tzPage.close();
       await tzCtx.close();
