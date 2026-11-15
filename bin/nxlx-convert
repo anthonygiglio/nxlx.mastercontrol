@@ -607,6 +607,10 @@ def make_plan(node, force=False, mode="plan"):
     # 9. start and check (a real node only)
     if not node.stage and any(a["op"] != "stop" for a in plan.actions):
         plan.add(9, "start", "reload systemd, udev and tmpfiles, start what was running under its new name, check")
+    # Stopping is planned on every real node; with nothing else to change it is not a conversion, and a node that
+    # already uses the new names must read "Nothing to convert" (a second --run found the stop step and redid it).
+    if all(a["op"] == "stop" for a in plan.actions):
+        plan.actions = []
 
     # carried over unchanged, and what is only reported
     for name in CARRIED:
