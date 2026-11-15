@@ -49,6 +49,7 @@ OUTSIDE = {
     ("POST", "/api/https/remove"): "full",
     ("POST", "/api/https/root"): "full",
     ("POST", "/api/https/owner-only"): "full",
+    ("POST", "/api/https/auto"): "full",          # D139: the signer's address, the root fingerprint, "try now"
 }
 
 # Answered by the server before anyone is asked who they are, and nothing else belongs here:

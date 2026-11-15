@@ -229,10 +229,16 @@ class Peers:
         left = TOTAL_SECONDS - (self.now() - started)
         if left <= 0:
             raise PeerError("the call took too long")
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE                 # the checks below are made by hand, against the pinned root
-        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        # The chain is checked in the handshake, against the pinned root only (D139: a node's certificate may come from the
+        # signer, which only the handshake shows, so a check of the node's certificate alone cannot see the whole path).
+        # Names, the key and the dates are checked below by hand. With no root pinned nothing can pass.
+        ctx = self.https.peer_client_context() if self.https is not None else None
+        verified = ctx is not None
+        if ctx is None:
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            ctx.minimum_version = ssl.TLSVersion.TLSv1_2
         if client and (self.https is None or not self.https.present_to_peer(ctx)):
             raise PeerError("this node has no certificate of its own to show another node")
         conn = http.client.HTTPSConnection(address, port, timeout=min(CONNECT_SECONDS, left), context=ctx)
@@ -240,11 +246,17 @@ class Peers:
             try:
                 conn.connect()
                 der = conn.sock.getpeercert(binary_form=True)
+            except ssl.SSLCertVerificationError:
+                raise PeerError("the certificate at %s is not from this node's root" % address, check=True)
             except (OSError, ssl.SSLError, http.client.HTTPException) as e:
                 raise PeerError("could not connect to %s: %s" % (address, e))
             if not der:
                 raise PeerError("%s showed no certificate" % address, check=True)
-            chains, info = self.https.chains_to_root(der) if self.https is not None else (False, None)
+            try:
+                info = httpsbox.read_certificate(der)
+            except Exception:
+                info = None
+            chains = verified and info is not None
             if info is None:
                 raise PeerError("%s did not show a certificate" % address, check=True)
             if not chains:

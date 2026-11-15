@@ -277,6 +277,7 @@ ROWS = {
     ("POST", "/api/https/remove"): STUDIO("owner"),
     ("POST", "/api/https/root"): STUDIO("owner"),
     ("POST", "/api/https/owner-only"): STUDIO("owner"),
+    ("POST", "/api/https/auto"): STUDIO("owner"),
 }
 
 SCENE, STREAM_SCENE, OFF_SCENE, GROUP = "0a0a0a0a", "0b0b0b0b", "0c0c0c0c", "0d0d0d0d"
@@ -442,7 +443,7 @@ class GateTableTest(RolesBase):
         # the secure connection's routes (D79) come to one place, _https_route, which asks _who(method, path) for
         # every path but the probe, before it looks at which one it is
         https = {k for k in policy.OUTSIDE if k[1] == "/api/https" or k[1].startswith("/api/https/")}
-        self.assertEqual(len(https), 9)
+        self.assertEqual(len(https), 10)
         self.assertEqual(sorted(asked), sorted(set(policy.OUTSIDE) - https))
         route = source[source.index("def _https_route("):source.index("def _method_not_allowed(")]
         self.assertEqual(len(re.findall(r"self\._who\(method, path\)", source)), 1)

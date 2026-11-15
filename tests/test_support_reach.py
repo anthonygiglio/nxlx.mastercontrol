@@ -37,7 +37,7 @@ REFUSED = {
     # the secure connection
     ("GET", "/api/https"), ("GET", "/api/https/request.csr"), ("GET", "/api/https/root.crt"), ("POST", "/api/https/request"),
     ("POST", "/api/https/certificate"), ("POST", "/api/https/undo"), ("POST", "/api/https/remove"), ("POST", "/api/https/root"),
-    ("POST", "/api/https/owner-only"),
+    ("POST", "/api/https/owner-only"), ("POST", "/api/https/auto"),
     # the session's own settings, start and length
     ("POST", "/api/support/config"), ("POST", "/api/support/start"), ("POST", "/api/support/extend"),
     # power-off and factory reset
