@@ -17,6 +17,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const { pollFor } = require('./poll');   // a wait for a check that fetches (see poll.js: never waitForFunction with one)
 
 const call = (pg, method, url, body) => pg.evaluate(async ([m, u, b]) => {
   const r = await fetch(u, { method: m, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: m === 'POST' ? JSON.stringify(b || {}) : undefined });
@@ -143,8 +144,8 @@ async function setUp(t) {
     await post(t, '/api/projectors', { add: { name, host: '127.0.0.1', port: fake < 0 ? 9 : ports[fake], password } });
   }
   await post(t, '/api/projector', { id: 'all', action: 'identify' });
-  await soft(t, 'the projectors did not say which inputs they have', page.waitForFunction((names) => fetch('/api/projectors').then((r) => r.json())
-    .then((d) => names.every((n) => d.projectors.some((p) => p.name === n && p.inputs.length > 0))), PROJECTORS.slice(0, 2).map((x) => x[0]), { timeout: 25000, polling: 1000 }));
+  await soft(t, 'the projectors did not say which inputs they have', pollFor(page, (names) => fetch('/api/projectors').then((r) => r.json())
+    .then((d) => names.every((n) => d.projectors.some((p) => p.name === n && p.inputs.length > 0))), 25000, PROJECTORS.slice(0, 2).map((x) => x[0])));
   ps = await projectors(t);
   for (const [name, , , action, want] of PROJECTORS) {
     const p = ps.filter((x) => x.name === name)[0];
