@@ -11,6 +11,8 @@ with SO_PEERCRED), and runs only these fixed commands, as argument lists, never 
   it starts at the last shutdown time); `timedatectl set-time` with a validated epoch, then network time back on, so
   a network that appears later still corrects it;
 * status: whether the clock is set from the network;
+* timezone, set_timezone (J-129): read the zone systemd reports; set it with `timedatectl set-timezone` for one checked IANA name
+  (tz.valid_zone: a safe pattern and a real zone file, and `timedatectl list-timezones` where it can be asked), then read it back;
 * journal: the node's own pvj-* log lines, read with `journalctl` for a fixed list of units, a capped number of lines
   and a bounded time window (the panel is deliberately not in the systemd-journal group, so this is how it reads them);
 * fleet_announce, fleet_withdraw (D127): write or remove the one avahi service file that announces the node as `_nxlx._tcp`
@@ -34,7 +36,7 @@ import subprocess
 import threading
 import time
 
-from . import paths
+from . import paths, tz as tz_mod
 from .netd import exchange, NetServer, peer_uid  # noqa: F401  (the same small, reviewed socket server)
 
 MIN_EPOCH = 1735689600      # 2025-01-01: anything earlier is a wrong clock, not a date to set
@@ -169,6 +171,37 @@ class SysService:
                 return {"ok": False, "error": "the clock was set but moved again (to %s UTC); a saved clock may be ahead"
                         % datetime.datetime.fromtimestamp(now, datetime.timezone.utc).strftime("%Y-%m-%d %H:%M")}
             return {"ok": True, "now": now}
+
+    # --- the time zone (J-129) -------------------------------------------------
+    zoneinfo_root = tz_mod.ZONEINFO
+
+    def timezone(self):
+        """{"ok", "timezone"}: the zone systemd reports (read-only)."""
+        code, out = self._run(["timedatectl", "show", "--property=Timezone", "--value"])
+        name = out.strip()
+        if code != 0 or not tz_mod.NAME.fullmatch(name):
+            return {"ok": False, "error": "cannot read the time zone"}
+        return {"ok": True, "timezone": name}
+
+    def set_timezone(self, zone):
+        """Set the time zone: the name is checked (tz.valid_zone, then `timedatectl list-timezones` where it can be asked),
+        `timedatectl set-timezone` is run with that one name, and the zone is read back and compared."""
+        if not tz_mod.valid_zone(zone, self.zoneinfo_root):
+            return {"ok": False, "error": "that is not a time zone this node knows"}
+        with self.lock:
+            code, out = self._run(["timedatectl", "list-timezones"])
+            listed = out.split() if code == 0 else []
+            if listed and zone not in listed:
+                return {"ok": False, "error": "that is not a time zone this node knows"}
+            code, out = self._run(["timedatectl", "set-timezone", zone])
+            self._status = None
+            if code != 0:
+                return {"ok": False, "error": "the time zone could not be set: %s" % out.strip()[-160:]}
+            read = self.timezone()
+        if not read["ok"] or read["timezone"] != zone:
+            return {"ok": False, "error": "the time zone was set, but reading it back gave %s" % (read.get("timezone") or "no answer")}
+        self.log("pvj-sysd: time zone set to %s by the panel" % zone)
+        return {"ok": True, "timezone": zone}
 
     def av_output(self, enable, norm):
         """Turn the AV output on or off in config.txt and cmdline.txt (bootcfg.apply: backups first, nothing else touched).
@@ -365,6 +398,10 @@ class SysService:
             return self.power(cmd)
         if cmd == "set_time":
             return self.set_time(message.get("epoch"))
+        if cmd == "timezone":
+            return self.timezone()
+        if cmd == "set_timezone":
+            return self.set_timezone(message.get("zone"))
         if cmd == "update":
             return self.update(message.get("source"), message.get("version"))
         if cmd == "av_output":

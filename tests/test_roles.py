@@ -238,6 +238,9 @@ ROWS = {
     ("POST", "/api/system/reboot"): KINDS["owner"],
     ("POST", "/api/system/poweroff"): STUDIO("owner"),
     ("POST", "/api/system/clock"): KINDS["owner"],
+    # The node's time zone (J-129): the Owner's. A support session of the Owner's role may read it, never set it.
+    ("GET", "/api/timezone"): KINDS["owner"],
+    ("POST", "/api/timezone"): STUDIO("owner"),
     ("GET", "/api/system/update"): KINDS["owner"],
     ("POST", "/api/system/update"): KINDS["owner"],
     ("POST", "/api/system/update/upload"): KINDS["owner"],
@@ -1287,7 +1290,7 @@ class AttackTest(RolesBase):
                  ("/api/osc", {"enabled": True, "paired": False}), ("/api/dmx", {"enabled": True}), ("/api/access/controller", {"join": "live"}),
                  ("/api/modules/control-midi", {"enabled": True}), ("/api/support/start", {"confirm": "start", "role": "full"}),
                  ("/api/support/config", {"allowed": True}), ("/api/sync", {"role": "server"}), ("/api/system/update", {}),
-                 ("/api/system/clock", {"time": "2030-01-01T00:00:00"}), ("/api/network/plan", {}), ("/api/theme/add", {"file": "{}"}),
+                 ("/api/system/clock", {"time": "2030-01-01T00:00:00"}), ("/api/timezone", {"zone": "America/Regina"}),("/api/network/plan", {}), ("/api/theme/add", {"file": "{}"}),
                  ("/api/streams", {"action": "add", "name": "x", "url": "srt://203.0.113.9:9000"}),
                  ("/api/projectors", {"add": {"host": "192.168.0.5"}}))
         for path, body in tries:

@@ -222,6 +222,8 @@ CARRIED = {
     ("POST", "/api/sync"): SAME,
     ("GET", "/api/system"): SAME,
     ("POST", "/api/system/clock"): SAME,
+    ("GET", "/api/timezone"): SAME,
+    ("POST", "/api/timezone"): SAME,
     ("GET", "/api/system/diagnostics"): SAME,
     ("POST", "/api/system/factory-reset"): SAME,
     ("POST", "/api/system/poweroff"): SAME,

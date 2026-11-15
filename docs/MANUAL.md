@@ -326,6 +326,8 @@ Each projector is one row: its name, what it says it is (maker, model) and its a
 
 The Schedule page starts with the box's own time ("Box time now: Sat 3 Oct, 17:30 (PDT)") and what happens next ("Next: today 18:00, Start Vibes"). Entries are listed in time order, with their days in words ("Every day", "Mon to Fri", "Sat, Sun"). **+ Add an entry** asks for the time, the days (seven buttons, with **Every day**, **Weekdays** and **Weekend** above them), what happens (Play a clip, Start Vibes with a choice of set when there are several, Apply a Room scene, Projectors on, Projectors off, Screen to black, Screen back on, Stop playing; Old start script is under Advanced in that list) and a note for yourself. **Edit** and **Remove** are under **More** on each entry. A choice whose feature is switched off is marked ("Start Vibes (Vibes is off)"); choosing it says "Vibes is switched off, so this will do nothing." with a **Switch Vibes on** button that does it there. An entry runs only if the box is on at that minute; a missed entry is not caught up.
 
+**The time zone.** The schedule fires by the node's local time, so the node must be on the right zone. A new node starts on UTC: the first Owner to pair on it sets its zone to the one that phone or laptop is in, and the panel says so. After that the node's zone is only changed by an Owner. If an Owner opens the panel from a place with another zone, a bar at the top asks "This node is on X, your device is on Y. Use Y?" (**Use Y** or **Not now**). The Schedule page shows the node's zone, its time now and a red warning when it differs from your device, and an Owner can pick another zone there (the zone of the device you hold is first in the list). An Operator or a Guest never changes it, and neither does remote support.
+
 Check the box time before relying on the schedule: a Pi has no battery clock, and until the network sets the time the clock is wrong. When the clock was not set from the network the page says so in red and, where the box can, offers **Set the box clock to this phone's time**.
 
 ### NDI® input (beta; one short first run on a Pi 4, not yet watched on a screen)
@@ -517,7 +519,7 @@ A factory reset also removes the box's own key and certificate for the secure co
 | A projector does not answer | PJLink must be switched on in the projector's network menu; check its address and password; a projector that is warming up or cooling down refuses commands for a minute or so (an input change is tried again for 90 seconds by itself) |
 | A projector shows no inputs to choose | Many projectors list their inputs only while switched on: switch it on, wait for "On", then tap **Read inputs** on its row (Setup > Projectors) |
 | The mapped picture stutters | Map at 1920x1080 or less on a Pi 4, and leave Edit on the display when you are done (editing costs more) |
-| Schedule fires at the wrong time | Check "Box time now" at the top of the Schedule page, and its time zone |
+| Schedule fires at the wrong time | Check the node's time and time zone at the top of the Schedule page; an Owner can set the zone there |
 | Someone is helping you from far away | Setup > Backup and reset > Download diagnostics file, and send it; it holds no PIN or password |
 | The box should go to someone else, or start over | Setup > Backup and reset > Factory reset |
 
