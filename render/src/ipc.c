@@ -21,7 +21,9 @@
 #define _GNU_SOURCE
 #include "pvj.h"
 #include "json.h"
+#ifdef __GLIBC__
 #include <malloc.h>
+#endif
 
 #include <errno.h>
 #include <fcntl.h>
@@ -672,16 +674,28 @@ static void source_command(int fd, const mpv_node *id, const mpv_node *cmd)
 // time anything.
 static void heap_property(int fd, const mpv_node *id)
 {
-    // get_property pvj-heap (J-157): the heap's bytes in use and free (held by malloc, not given back) and in blocks
-    // mapped on their own. mallinfo2 walks every arena under its lock, so it is a property of its own, asked by a test or
-    // a person, never with the counters of pvj-render that the panel and the pacing tests read often.
+    // get_property pvj-heap (J-157): the heap's bytes in use and free (held by malloc, not given back), in blocks mapped
+    // on their own, and from the system for the arenas; the threshold this program set (0: glibc's or the environment's);
+    // the trims after a clip's end. mallinfo walks every arena under its lock, so it is a property of its own, asked by a
+    // test or a person, never with the counters of pvj-render that the panel and the pacing tests read often.
+#ifdef __GLIBC__
+#if __GLIBC_PREREQ(2, 33)
     struct mallinfo2 mi = mallinfo2();
-    static const char *const keys[] = { "used", "free", "mapped", "arena" };
-    mpv_node vals[4] = { node_int((int64_t)mi.uordblks), node_int((int64_t)mi.fordblks), node_int((int64_t)mi.hblkhd),
-                         node_int((int64_t)mi.arena) };
-    mpv_node_list list = { .num = 4, .values = vals, .keys = (char **)keys };
+#else
+    struct mallinfo mi = mallinfo();    // int fields: wrong past 2 GiB, enough to see a trend (Debian 11's glibc 2.31)
+#endif
+    static const char *const keys[] = { "used", "free", "mapped", "arena", "threshold", "trims", "trim-ms", "trim-ms-max" };
+    mpv_node vals[8] = { node_int((int64_t)mi.uordblks), node_int((int64_t)mi.fordblks), node_int((int64_t)mi.hblkhd),
+                         node_int((int64_t)mi.arena), node_int(app.heap_threshold),
+                         node_int(__atomic_load_n(&app.heap_trims, __ATOMIC_RELAXED)),
+                         node_dbl(__atomic_load_n(&app.heap_trim_us, __ATOMIC_RELAXED) / 1000.0),
+                         node_dbl(__atomic_load_n(&app.heap_trim_us_max, __ATOMIC_RELAXED) / 1000.0) };
+    mpv_node_list list = { .num = 8, .values = vals, .keys = (char **)keys };
     mpv_node d = { .format = MPV_FORMAT_NODE_MAP, .u.list = &list };
     reply(fd, id, "success", &d);
+#else
+    reply(fd, id, "property unavailable", NULL);
+#endif
 }
 
 static void sources_property(int fd, const mpv_node *id)

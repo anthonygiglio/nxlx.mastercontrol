@@ -224,6 +224,8 @@ typedef struct {
     long flips, missed, drawn, back_drawn;  // drawn: frames of the front layer converted; back_drawn: of the other
     long fences, fences_freed;      // GL fences libmpv made and has not deleted yet; the ones it left that we deleted
     long gl_objects;                // textures, framebuffers, renderbuffers and buffers libmpv holds now (atomics)
+    int heap_threshold;             // malloc's threshold for mapped blocks as this program set it; 0: left to glibc or the environment (J-157)
+    long heap_trims, heap_trim_us, heap_trim_us_max;    // malloc_trim after a clip's end: how many, microseconds in all, the longest (atomics)
 #ifdef PVJ_RENDER_TEST_HOOKS
     long blank_draws;               // tests only: draws of a video layer that left the middle of its picture black (atomics)
 #endif
