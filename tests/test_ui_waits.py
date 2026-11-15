@@ -12,6 +12,7 @@ blanked, then each waitForFunction( has its first argument cut out by matching b
 when it holds async, await, fetch(, .then( or Promise, or when it is a name whose definition in the same file does.
 A name with no definition in the file (a parameter) cannot be judged and is let through.
 """
+import tests  # noqa: F401 (started alone, it still gets the checked locks and its own temp folder)
 import pathlib
 import re
 import unittest
