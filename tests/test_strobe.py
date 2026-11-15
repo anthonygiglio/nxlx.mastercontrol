@@ -895,6 +895,7 @@ class MidiHubTest(RouteBase):
     def test_the_lease_alone_ends_it_if_nothing_renews_it_and_nothing_releases_it(self):
         self.send([0x90, 60, 100])
         self.wait(lambda: self.fx.on is not None)
+        self.wait(lambda: self.hub._strobe)                     # the hub notes the control after the hold has gone through; forgetting it before that left the note to be made later
         self.hub._strobe.clear()                                # the hub forgot it (as if its thread had died)
         self.clock.t += ST.CONTROLLER_TTL + 1
         self.strobe.tick()
