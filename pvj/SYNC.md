@@ -2,7 +2,7 @@
      SPDX-License-Identifier: Apache-2.0 -->
 # Multi-box sync and video wall (beta)
 
-Several boxes play the same clip in step: one **server** leads, the **clients** follow. With the video wall, each box shows its own tile of the picture. This replaces the old PocketVJ "master and slaves" (omxplayer-sync) and PiWall.
+Several boxes play the same clip in step: one **server** leads, the **clients** follow. With the video wall, each box shows its own tile of the picture. This replaces the upstream original's "master and slaves" (omxplayer-sync) and PiWall.
 
 Switch it on under Setup > Boxes in step on every box. Switching it off while a role is set asks first, because the other boxes stop following.
 
