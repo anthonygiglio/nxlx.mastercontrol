@@ -325,10 +325,21 @@ class Strobe:
                     return "waiting"
                 if retry > 0 and self.error is not None:
                     return "error"
-                return self._start(now)
+                status = self._start(now)
+                self._count_from_now(now, self._clock())
+                return status
             if lit and want:
                 self._follow_look()
             return "lit" if lit else "off"
+
+    def _count_from_now(self, began, end):
+        """A start can take a while (a loop point's wait for the picture, a compile). A lease that was not renewed while it
+        ran is counted from its end, so a press held through the start is not ended the moment it lit for the time the
+        start took. One renewed meanwhile keeps its own time."""
+        with self._lock:
+            for h in self.holders.values():
+                if h["seen"] <= began:
+                    h["seen"] = max(h["seen"], end)
 
     def _follow_look(self):
         """A colour or a way that changed while it flashes: sent at once (the timing is the same; see settle)."""
@@ -423,8 +434,8 @@ class Strobe:
         if self.route == "chain":
             self.api.chains.values({"source": SOURCE, "slot": self.slot, "values": self._values(plan),
                                     "controls": {"amount": amount, "speed": plan["speed"]}})
-        else:
-            self.api.effects.put(EFFECT, self._values(plan), {"amount": amount, "speed": plan["speed"]})
+            return None
+        return self.api.effects.put(EFFECT, self._values(plan), {"amount": amount, "speed": plan["speed"]})
 
     def _start(self, now):
         began = time.monotonic()
@@ -450,10 +461,17 @@ class Strobe:
                 if not self.holders:            # let go while it was loading: it is not lit for nobody
                     self._idle_since = self._clock()
                     return "off"
-            self._send(plan, 1.0)
+            sent = self._send(plan, 1.0)
         except ApiError as e:
             self._fail(e)
             return "error"
+        if isinstance(sent, dict) and sent.get("superseded"):
+            # an Off or another put came during the wait at a loop point and won: nothing is on the screen, so it is not
+            # lit, and no error is told; the gap before the next start spaces out the retry
+            with self._lock:
+                self._off_at = self._clock()
+                self._idle_since = self._clock()
+            return "waiting"
         with self._lock:
             self.lit, self.applied, self.error = True, plan, None
             self.started_ms = round((time.monotonic() - began) * 1000.0, 1)

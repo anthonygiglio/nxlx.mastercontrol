@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""Hardware and OS detection, read from /proc and /sys only.
+"""Hardware and OS detection, read from /proc and /sys only (and amixer, for which HDMI sound PCMs have a screen).
 
 Every function takes an optional `root` so tests can point it at a fake tree.
 Nothing here calls vcgencmd, tvservice or other Raspberry Pi specific tools.
@@ -10,6 +10,8 @@ import glob
 import os
 import platform
 import re
+import shutil
+import subprocess
 
 
 def _read(root, path):
@@ -167,6 +169,237 @@ def playback_profile(board, has_desktop):
 def has_desktop(env=None):
     env = os.environ if env is None else env
     return bool(env.get("WAYLAND_DISPLAY") or env.get("DISPLAY"))
+
+
+# --- the sound device of a screen on a PC (J-155, D137) ----------------------------------------------------------------
+# On a PC the ALSA default is the analog jack, so mpv's own "auto" never reaches the screen's HDMI sound. What was
+# measured on an Intel M710q (Kaby Lake HD 630, three screens on HDMI-A-1, -2, -3, 2026-11-14), each PCM playing a tone
+# into capture cards: PCM 3 reached HDMI-A-1 and PCM 8 reached HDMI-A-2 (PCM 7, presumably HDMI-A-3). The HDA driver
+# gives PCMs to pins as screens come, so neither pin order nor port order says which PCM is which screen. The ELD of
+# each PCM (its maker, product and monitor name, from the screen's EDID) also contradicted the EDIDs: PCM 8's ELD had
+# the product of HDMI-A-3's EDID, yet its tone came out on HDMI-A-2. So only these are trusted: which PCMs have a screen
+# (ALSA's "HDMI/DP,pcm=N Jack" controls); one PCM with a screen is the screen's; with several, a match only when every
+# screen on both sides is told apart by name, maker and product. Read through `amixer -c N contents` (alsa-utils).
+_EDID_HEADER = b"\x00\xff\xff\xff\xff\xff\xff\x00"
+_HDA_HDMI_DEVICES = (3, 7, 8, 9, 10, 11)       # HDA's HDMI PCM numbers, in hdmi:DEV=k order, when pcmNp/info says nothing
+_AMIXER_HEAD = re.compile(r"numid=[0-9]+,iface=([A-Z]+),name='([^']*)'(?:,device=([0-9]{1,3}))?")
+_JACK = re.compile(r"HDMI/DP,pcm=([0-9]{1,3}) Jack")
+
+
+def _edid(connector, root="/"):
+    want = re.compile(r"card[0-9]{1,3}-" + re.escape(str(connector)))
+    for path in sorted(glob.glob(os.path.join(root, "sys/class/drm/card*-*"))):
+        if not want.fullmatch(os.path.basename(path)):
+            continue
+        try:
+            with open(os.path.join(path, "edid"), "rb") as f:
+                data = f.read(256)
+        except OSError:
+            continue
+        if len(data) >= 128 and data[:8] == _EDID_HEADER:
+            return data
+    return None
+
+
+def edid_monitor_name(connector, root="/"):
+    """The monitor name in a DRM connector's EDID (its 0xFC descriptor), or None (no screen, no name, unreadable)."""
+    data = _edid(connector, root)
+    for off in (54, 72, 90, 108):
+        d = (data or b"")[off:off + 18]
+        if len(d) == 18 and d[:3] == b"\0\0\0" and d[3] == 0xFC:
+            return d[5:18].split(b"\n")[0].decode("ascii", "replace").strip() or None
+    return None
+
+
+def edid_identity(connector, root="/"):
+    """(monitor name, maker, product) of a DRM connector's screen, maker and product as the ELD carries them
+    (little-endian, "0x2157"), or None without an EDID."""
+    data = _edid(connector, root)
+    if not data:
+        return None
+    return (edid_monitor_name(connector, root) or "", "0x%04x" % int.from_bytes(data[8:10], "little"),
+            "0x%04x" % int.from_bytes(data[10:12], "little"))
+
+
+def eld_identity(eld):
+    """(monitor name, maker, product) from ELD bytes (CEA-861 ELD: name length in byte 4, maker at 16, product at 18,
+    the name from 20), or None for an empty ELD (no screen)."""
+    if len(eld) < 20 or not any(eld):
+        return None
+    mnl = eld[4] & 0x1F
+    name = eld[20:20 + mnl].split(b"\0")[0].decode("ascii", "replace").strip()
+    return (name, "0x%04x" % int.from_bytes(eld[16:18], "little"), "0x%04x" % int.from_bytes(eld[18:20], "little"))
+
+
+def parse_amixer(text):
+    """{pcm device: {"jack": True | False | None, "eld": bytes | None}} from `amixer -c N contents`."""
+    out = {}
+    current = None
+    for line in (text or "").splitlines():
+        head = _AMIXER_HEAD.match(line.strip())
+        if head:
+            iface, name, device = head.groups()
+            jack = _JACK.fullmatch(name) if iface == "CARD" else None
+            if jack:
+                current = (int(jack.group(1)), "jack")
+            elif iface == "PCM" and name == "ELD" and device is not None:
+                current = (int(device), "eld")
+            else:
+                current = None
+            continue
+        value = re.match(r"\s*:\s*values=(.*)$", line)
+        if current is None or not value:
+            continue
+        entry = out.setdefault(current[0], {"jack": None, "eld": None})
+        if current[1] == "jack":
+            entry["jack"] = value.group(1).strip() == "on"
+        else:
+            try:
+                entry["eld"] = bytes(int(v, 16) for v in value.group(1).split(",") if v.strip())
+            except ValueError:
+                entry["eld"] = None
+        current = None
+    return out
+
+
+def _amixer(card, run=None):
+    exe = shutil.which("amixer") if run is None else "amixer"
+    if not exe:
+        return None
+    try:
+        r = (run or subprocess.run)([exe, "-c", str(card), "contents"], capture_output=True, text=True, timeout=3)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def hdmi_sound_screens(root="/", run=None):
+    """The HDMI and DisplayPort sound PCMs that have a screen, by ALSA's jack controls: [{"card", "card_id", "device",
+    "hdmi_index", "identity"}], `identity` being the ELD's (name, maker, product) or None. None when the read failed
+    (amixer missing, failing or timing out on a card), so a caller can tell a failed read from no screens.
+    `run` stands in for subprocess.run (tests)."""
+    found = []
+    failed = False
+    for card_dir in sorted(glob.glob(os.path.join(root, "proc/asound/card[0-9]*"))):
+        m = re.fullmatch(r"card([0-9]{1,3})", os.path.basename(card_dir))
+        card_id = _read("/", os.path.join(card_dir, "id"))
+        if not m or not card_id or not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", card_id):
+            continue
+        text = _amixer(int(m.group(1)), run)
+        if text is None:
+            failed = True
+            continue
+        controls = parse_amixer(text)
+        named = {}
+        for info in glob.glob(os.path.join(card_dir, "pcm*p", "info")):
+            dm = re.fullmatch(r"pcm([0-9]{1,3})p", os.path.basename(os.path.dirname(info)))
+            nm = re.search(r"(?m)^name: HDMI ([0-9]{1,2})\s*$", _read("/", info) or "")
+            if dm and nm:
+                named[int(dm.group(1))] = int(nm.group(1))
+        for device in sorted(controls):
+            if controls[device]["jack"] is not True:
+                continue
+            k = named.get(device, _HDA_HDMI_DEVICES.index(device) if device in _HDA_HDMI_DEVICES else None)
+            eld = controls[device]["eld"]
+            found.append({"card": int(m.group(1)), "card_id": card_id, "device": device, "hdmi_index": k,
+                          "identity": eld_identity(eld) if eld else None})
+    return None if failed else found
+
+
+def hdmi_sound_for(connector, connectors, root="/", run=None, screens=None):
+    """The sound PCM (an item of hdmi_sound_screens, with "how") of the screen on DRM connector `connector`, or None
+    when it cannot be told safely. `connectors` is drm_connectors() (each with "status": "connected" or not).
+
+    1. One PCM with a screen: it is this screen's ("the only screen"), the common case of one projector on a PC.
+    2. Several: only when every PCM's ELD and every connected HDMI or DisplayPort screen's EDID has a (name, maker,
+       product) that no other on its side has, and the connector's is one PCM's ("monitor name and model"). Two
+       screens that look alike on either side give None: on the M710q the ELDs and EDIDs did not agree (D137).
+    `screens` is hdmi_sound_screens() when the caller has read it already."""
+    if connector_kind(connector) not in ("hdmi", "dp"):
+        return None
+    if screens is None:
+        screens = hdmi_sound_screens(root, run)
+    if not screens:
+        return None
+    if len(screens) == 1:
+        return dict(screens[0], how="the only screen")
+    if len(screens) < 2:
+        return None
+    elds = [s["identity"] for s in screens]
+    connected = [c["connector"] for c in connectors if c.get("status") == "connected"
+                 and connector_kind(c.get("connector")) in ("hdmi", "dp")]
+    edids = [edid_identity(c, root) for c in connected]
+    if connector not in connected or None in elds or None in edids:
+        return None
+    if len(set(elds)) != len(elds) or len(set(edids)) != len(edids):
+        return None
+    mine = edid_identity(connector, root)
+    same = [s for s in screens if s["identity"] == mine]
+    return dict(same[0], how="monitor name and model") if len(same) == 1 else None
+
+
+# PC graphics by PCI vendor: the Debian package with its VA-API driver (install/install.sh installs it on x86_64) and the
+# driver files it brings. An Intel PC node played 4K60 HEVC with nothing dropped only once intel-media-va-driver was in
+# (J-152); without it mpv's --hwdec=auto-safe falls back to software decoding without a word.
+VA_VENDORS = {
+    "0x8086": ("Intel", "intel-media-va-driver", ("iHD", "i965")),
+    "0x1002": ("AMD", "mesa-va-drivers", ("radeonsi",)),
+}
+
+
+def gpu_vendors(root="/"):
+    """The PCI vendor ids ("0x8086") of the display controllers (PCI class 0x03xxxx), sorted, each once."""
+    found = set()
+    for dev in glob.glob(os.path.join(root, "sys/bus/pci/devices/*")):
+        cls = _read("/", os.path.join(dev, "class")) or ""
+        vendor = (_read("/", os.path.join(dev, "vendor")) or "").lower()
+        if cls.lower().startswith("0x03") and re.fullmatch(r"0x[0-9a-f]{4}", vendor):
+            found.add(vendor)
+    return sorted(found)
+
+
+def va_drivers(root="/"):
+    """The VA-API driver names installed ("iHD" for iHD_drv_video.so), sorted, each once."""
+    names = set()
+    for d in ("usr/lib/*/dri", "usr/lib/dri", "usr/lib64/dri"):
+        for f in glob.glob(os.path.join(root, d, "*_drv_video.so")):
+            names.add(os.path.basename(f)[:-len("_drv_video.so")])
+    return sorted(names)
+
+
+def va_decoding(root="/", machine=None):
+    """Whether a PC node can decode video in hardware through VA-API, as information (pvj-selftest reports it and never
+    fails on it). `available` is True, False, or None where VA-API is not how this board decodes (a Pi, not x86_64)."""
+    machine = machine or platform.machine()
+    render = sorted(os.path.basename(p) for p in glob.glob(os.path.join(root, "dev/dri/renderD*")))
+    vendors = gpu_vendors(root)
+    drivers = va_drivers(root)
+    out = {"machine": machine, "render_nodes": render, "gpu_vendors": vendors, "va_drivers": drivers, "available": None,
+           "missing_package": None}
+    if machine not in ("x86_64", "amd64"):
+        out["text"] = "Not checked: VA-API is how PC nodes decode in hardware; this board has its own way."
+        return out
+    known = [VA_VENDORS[v] for v in vendors if v in VA_VENDORS]
+    if not render:
+        out["available"] = False
+        out["text"] = "No hardware decoding: there is no /dev/dri/renderD node (no graphics driver is loaded)."
+        return out
+    if not known:
+        out["available"] = bool(drivers)
+        out["text"] = ("A VA-API driver is installed (%s), for graphics this check does not know." % ", ".join(drivers)) if drivers else \
+            "No hardware decoding through VA-API: no Intel or AMD graphics was found, and no VA-API driver is installed."
+        return out
+    for name, package, files in known:
+        have = [d for d in files if d in drivers]
+        if have:
+            out["available"] = True
+            out["text"] = "Hardware decoding is available: the VA-API driver %s for the %s graphics." % (have[0], name)
+            return out
+    name, package, _ = known[0]
+    out["available"] = False
+    out["missing_package"] = package
+    out["text"] = "No hardware decoding: the %s graphics has no VA-API driver. Install %s (the installer does, when it can reach the network)." % (name, package)
+    return out
 
 
 def report(root="/"):

@@ -9,7 +9,7 @@ Decision D79. **Nothing on this page has run on a real box or met a real phone y
 The box can answer on `https://` as well as on `http://`. A browser believes an `https://` address only when the box shows a certificate signed by something the device already trusts. Public authorities do not sign certificates for `.local` names or private addresses, so you sign them yourself:
 
 - **One root certificate of your own**, made once on your computer with `tools/boxcert.py`. Its private key is a file plus a passphrase. It never goes on a box.
-- **One certificate per box**, signed by that root for the names and addresses the box is reached by. The box makes its own private key and a *request*; you sign the request with the tool and upload the certificate. Renew it about once a year.
+- **One certificate per box**, signed by that root for the names and addresses the box is reached by. The box makes its own private key and a *request*; you sign the request with the tool and upload the certificate. Renew it about once a year. **Since D139 a node can do this by itself**: see "Automatic certificates" below.
 - **Each of your devices installs the root once** and then trusts every box you ever add.
 - **Guests stay on `http://`.** They never install anything. A device without the root that opens `https://` sees a full-page warning, so the panel never redirects anybody by itself.
 - **The switch "Owner access only over the secure connection"** keeps the PIN and the owner's sessions off the clear once you have the root on your devices. Guests and presenters by code keep working over `http://`.
@@ -59,6 +59,56 @@ You need: a computer with Python 3 and `openssl` (a Mac has both; Linux has both
 6. **Move to https://** with the link on the page, and **pair again** (the `https://` address is a new origin to the browser, so the old session is not there; the PIN is under People and codes on the `http://` panel, or on the box's display).
 7. **Switch on "Owner access only over the secure connection"** on the same page, now over `https://`. From then on the PIN is refused over `http://`, owner devices paired over `http://` are told to pair again over `https://`, and guests notice nothing.
 8. Repeat step 5 and 6 on each of your other devices. Save the `https://` panel as an app where you had the `http://` one.
+
+## Automatic certificates (D139)
+
+**In plain words.** A small program, the *signing service*, runs on your always-on computer (the HP). It holds a *signer*: a second key that your root vouches for, allowed to sign for `.local` names and private addresses only. Every node asks the service for its certificate by itself, when it is installed, after each update, and again a month before the certificate ends. You do nothing at the node, and every device that trusts your root trusts the new node at once (the FireTab too, after its update). Your root key stays on your Mac and is used only to make the signer.
+
+**Your old root cannot do this.** The root you made on 2026-10-13 was made to sign node certificates only (`pathlen:0`), and every device refuses anything a signer under it signs. So it is replaced once by a new root, in one evening. After that evening nothing is manual.
+
+### The one evening
+
+On the Mac, in the project folder (a checkout that has this change):
+
+1. `python3 tools/boxcert.py --dir ~/nxlx-root-ca-2 make-root`
+   A NEW root in a new folder; choose a new passphrase (typed twice). Your old folder `~/nxlx-root-ca` is not touched.
+2. `python3 tools/boxcert.py --dir ~/nxlx-root-ca-2 make-signer`
+   Asks the new passphrase. Writes the folder `~/nxlx-root-ca-2/signer`.
+3. `python3 tools/boxcert.py --dir ~/nxlx-root-ca move-root --to ~/nxlx-root-ca-2`
+   Asks the OLD passphrase, the last time you need it. Writes a short message, signed by the old root, into `~/nxlx-root-ca-2/signer`: "trust the new root from now on". Nodes that trust the old root believe it because the old root signed it, so you never touch those nodes.
+   It also reserves ("pins") the names and addresses of every node you signed by hand with the old root, from `~/nxlx-root-ca/signed.json` and the certificate files beside it, so nobody can take them before those nodes ask. It lists what it pinned. If it says a node was "Not pinned" (its certificate file is gone), pin that node on the HP after step 6: `python C:\Users\antho\nxlx-signer\bin\nxlx-signer.py pin --cert <that node's certificate file>`.
+4. `python3 tools/boxcert.py --dir ~/nxlx-root-ca-2 root`
+   Prints the new root's fingerprint. Give it to whoever deploys: every install with `--signer` needs it as `--root-fingerprint`, because a new node trusts only the root it was told to expect.
+5. Back up the whole folder `~/nxlx-root-ca-2` (the T5, a password manager), like the old one.
+6. Copy the folder `~/nxlx-root-ca-2/signer` to the HP (a USB stick, say `E:\signer`). On the HP, open PowerShell with "Run as administrator" and run, once:
+   `powershell -ExecutionPolicy Bypass -File \\wsl.localhost\Ubuntu\home\anthony\Projects\nxlx\nxlx.mastercontrol\code\tools\signer\install-windows.ps1 -From E:\signer`
+   It copies the folder to `C:\Users\antho\nxlx-signer` (then delete it from the stick), and from then on the service starts by itself each time you log on to the HP. It says "The signer is running" and prints the address nodes use (`http://yt-1300f.local:8781`).
+7. Install the new root on each of your devices: the file `~/nxlx-root-ca-2/root.pem`, the same steps as the first time (above). Keep the old root on them until every node has moved, then remove it.
+8. Then the nodes are deployed with `--signer http://yt-1300f.local:8781 --root-fingerprint <the fingerprint from step 4>`. Each node moves to the new root, gets its certificate and says so on System > Secure connection. Nothing to do at the nodes.
+
+If step 3 says "You have a fleet list", run the two commands it prints too (the list must be signed by the new root).
+
+### What happens on a node
+
+- The node knows where the service is, and which root to expect, from `install.sh --signer URL --root-fingerprint HEX` (or the two fields on System > Secure connection). It is not discovered: the HP cannot announce itself the way nodes do, and an address you gave is safer than the first answer from the network.
+- It asks the service at start, then every few hours. When its certificate is missing, ends within 30 days, or is not from the root it trusts, it makes a request with its own key (its own request: the one you may make by hand, and the names you saved, stay as they are), sends it, and loads the answer through the same checks as an upload. The root pin holds: the answer must end at the root the node trusts.
+- A node that trusts no root yet takes one only when it was told which, by its fingerprint. Without the fingerprint it does nothing and the page says "Needs the root fingerprint". A service that works for another root than the expected one is not even sent a request.
+- When the service works for another root than the node's, the node asks for the move message and takes the new root only if the move leads to the service's root and its own root signed that message. The fingerprint given at install decides the first root only: once a node trusts a root, only a move signed by that root changes it, so a later move to another root of yours is not blocked by the old setting.
+- If the service does not answer, nothing changes: the node keeps what it has, installs and updates finish as usual, and System > Secure connection says "Waiting for the signer". It tries again every ten minutes.
+- The manual way (request, `boxcert.py sign`, upload) still works, also with the new root.
+
+### The rules the service keeps, and the honest trade-off
+
+- It answers the local network only (10/8, 172.16/12, 192.168/16) and signs `.local` names and the caller's own private address, nothing else. The request must name the node's own `<hostname>.local`, have that name as its only subject, and use the kind of key a node makes (EC P-256).
+- It answers only when it is called by an address or by the HP's own name (`yt-1300f.local`; add others with `--host-name`), never a request a web page sends (one with an Origin header), and a request must say it is JSON. So a web page you open on a computer on your network cannot use it.
+- **First come, first pinned, names and addresses alike.** A name is signed again only for the same node key; if a node was set up again (a new key), the service refuses its name with the way out: on the HP, `python C:\Users\antho\nxlx-signer\bin\nxlx-signer.py release node-01.local`. An address held by another node's key is simply left out of the certificate (the node is still reached by its `.local` name), so an address that moved with DHCP never locks a node out. An address is held only as long as the certificate that carries it, and a node's newer certificate without that address frees it. `... nxlx-signer.py list` shows every name and address it has signed; `... pin --cert FILE` reserves a node's names and addresses before it asks.
+- The pin file is `signed.json` in the signer folder, with `signed.json.bak`, the copy before the last change. If it is missing or damaged, the service signs nothing until you put a good copy back; it never treats a broken file as "nothing reserved".
+- Refusals count against the address that sent them (6 an hour), signings against everybody (30 an hour), so junk from a few addresses cannot block a real node. A node told that its name is taken asks again only every six hours (or when you press Try now). Every signing and every refusal is written to `C:\Users\antho\nxlx-signer\signer.log`.
+- The trade-off: anyone on your network can get a certificate for a `.local` name, or for their own address, that nobody has reserved yet, and your devices would trust it for that name. What is reserved is protected by the pin. Keep the HP on the network you trust.
+
+### If the signer is lost or may be stolen
+
+The signer folder holds a key that is not protected by a passphrase, so treat the HP like a key. If it may have been copied: on the Mac, move `~/nxlx-root-ca-2/signer` away, run `make-signer` again, and install the new folder on the HP with `install-windows.ps1 -From <the new folder>` as in step 6. **Keep the HP's `signed.json` and `signed.json.bak`**: they hold every name and address the service has reserved. The script never replaces a `signed.json` that is already on the HP; and if you set the service up on another computer, carry them over with `boxcert.py --dir ~/nxlx-root-ca-2 make-signer --pins <a copy of the HP's signed.json>`. New nodes then get certificates from the new signer only. A copied signer still makes certificates your devices trust until it runs out (825 days) or you make a new root; that is the same risk as a stolen node key, limited to `.local` names and private addresses. Replace it every two years in any case; the service says so in its log when it can no longer sign for a full year.
 
 ## Adding another device of yours later
 
@@ -135,4 +185,4 @@ The thief has that box's key and certificate and can pretend to be that box, by 
 
 ## What is not built
 
-A box without `openssl` cannot make a key (the page says so). No automatic renewal: the root is not on the box, by design, so a person signs once a year. No revocation list. No certificate for a public address (the root's constraints refuse it; `--no-constraints` at `make-root` is the way out, at the cost above). A root helper that would keep the key from the panel process was rejected (D79). Nothing of this has run on a box or on a real phone.
+A box without `openssl` cannot make a key (the page says so). Renewal is automatic only with the signing service (D139); without it a person signs once a year. No revocation list. No certificate for a public address (the root's constraints refuse it; `--no-constraints` at `make-root` is the way out, at the cost above). A root helper that would keep the key from the panel process was rejected (D79). Nothing of this has run on a box or on a real phone.

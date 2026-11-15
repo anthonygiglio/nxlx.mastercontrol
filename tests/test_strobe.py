@@ -235,6 +235,62 @@ class FastPathTest(unittest.TestCase):
         self.assertEqual(api.effects.on["id"], "fx-grade.fs")
 
 
+    def test_a_slow_start_does_not_use_up_the_lease(self):
+        """An OSC press (a lease of 0.5 s) whose start takes longer than that, a wait at a loop point: it is not ended the
+        moment it lit."""
+        api, clock, s = rig(native=False)
+        put = api.effects.put
+        def slow(*a, **k):
+            clock.t += 0.8
+            return put(*a, **k)
+        api.effects.put = slow
+        s.hold(OSC, {"holder": "osc"})
+        s.tick()
+        st = s.state()
+        self.assertEqual((st["held"], st["on"]), (1, True))
+        clock.t += 0.6                                      # and it does lapse when nothing renews it
+        s.tick()
+        self.assertEqual(s.state()["held"], 0)
+
+
+    def test_a_lease_renewed_during_a_slow_start_ends_at_its_own_time(self):
+        api, clock, s = rig(native=False)
+        put = api.effects.put
+        def slow(*a, **k):
+            clock.t += 0.3
+            with s._lock:
+                for h in s.holders.values():
+                    h["seen"] = clock.t                 # a renewal that came during the start
+            clock.t += 0.5
+            return put(*a, **k)
+        api.effects.put = slow
+        s.hold(OSC, {"holder": "osc"})
+        clock.t += 0.3
+        s.tick()
+        self.assertEqual(s.state()["held"], 0)          # its last renewal was 0.8 s ago (0.5 s lease)
+
+    def test_a_put_that_was_overtaken_leaves_it_not_lit_without_an_error_or_a_storm(self):
+        api, clock, s = rig(native=False)
+        put = api.effects.put
+        answers = [{"ok": True, "id": "fx-strobe.fs", "superseded": True}]
+        def overtaken(*a, **k):
+            api.effects.calls.append(("put-called",))
+            return answers.pop(0) if answers else put(*a, **k)
+        api.effects.put = overtaken
+        out = s.hold(DEVICE, {"holder": "tab"})
+        st = s.state()
+        self.assertEqual((st["on"], st["held"], out["on"]), (False, 1, False))
+        self.assertIsNone(s.error)
+        calls = len(api.effects.calls)
+        s.tick()                                        # no retry within the gap
+        self.assertEqual(len(api.effects.calls), calls)
+        clock.t += 0.1
+        s.hold(DEVICE, {"holder": "tab"}, renew=True)
+        clock.t += 5
+        s.hold(DEVICE, {"holder": "tab"})               # a new press after the gap lights it
+        self.assertTrue(s.state()["on"])
+
+
 class DeadManTest(unittest.TestCase):
     def test_a_lease_that_is_not_renewed_ends_the_strobe_within_half_a_second_of_the_watcher(self):
         api, clock, s = rig()
@@ -616,6 +672,25 @@ class RouteTest(RouteBase):
         self.assertEqual(st, 409)
         self.assertIn("press again", body["error"])
         self.assertEqual(self.post("/api/strobe/release", {"holder": "tab"})[0], 200)       # letting go twice is fine
+
+    def test_a_press_at_a_loop_point_waits_for_the_picture_and_goes_on(self):
+        good = self.mpv.video
+        self.mpv.video = None                               # the start of a pass: no video-params for a moment
+        self.mpv.props.update({"time-pos": 0.1, "seeking": False})
+        def back(_seconds):
+            self.mpv.video = good
+        self.fx._sleep = back
+        st, body, _ = self.post("/api/strobe/hold", {"holder": "tab"})
+        self.assertEqual((st, body.get("ok")), (200, True), body)
+        self.assertEqual(self.fx.on["id"], "fx-strobe.fs")
+
+    def test_a_press_with_no_picture_that_stays_away_is_refused(self):
+        self.mpv.video = None
+        self.mpv.props.update({"time-pos": 0.1, "seeking": False})
+        self.fx._sleep = lambda _s: None
+        st, body, _ = self.post("/api/strobe/hold", {"holder": "tab"})
+        self.assertEqual(st, 409, body)
+        self.assertIn("Nothing with a picture", body["error"])
 
     def test_a_lapsed_hold_is_ended_by_the_watcher_through_the_real_engine(self):
         self.post("/api/strobe/hold", {"holder": "tab"})

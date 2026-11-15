@@ -526,6 +526,8 @@ The project's own three that move (the kaleidoscope's slow turn, the bands' drif
 
 **A restart of the panel.** The player outlives pvj-web. At start-up the panel looks at the player (again with a back-off until it answers) and takes off any strobe it is still drawing: a slot of source 1 on the New renderer, or the strobe's text in mpv's shader list on classic.
 
+**The panel's button** is on Shape > Effect, at the top ([PANEL.md](PANEL.md)): Hold to strobe and the four settings, for Operators and Owners. It is put where a person goes on purpose, not on the transport strip, which is pressed in passing.
+
 **The panel must send a holder of its own for each tab** (a random string made when the page loads, up to 64 characters). A holder is the device and that name; two tabs of one device with no name, or the same name, share one lease, and the first one's release stops the other's strobe.
 
 **Holders.** Up to 8 at once, counted: a holder is a device and the name it gives (a tab, a pad), each with its own lease. The strobe is on while one lease is, and a holder that vanishes loses only its own. A single holder would let a second person's press take the first one's and the first one's release stop the second.

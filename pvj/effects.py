@@ -69,6 +69,13 @@ FPS_SAME = 0.06
 UNFIT_FORMATS = re.compile(r"^(?:xyz|gray|y8|y1[0-6]|ya8|ya16|mono[bw]|pal8)")
 UNFIT = "This picture's format cannot take an effect"
 NO_PICTURE = "Nothing with a picture is playing"
+# At the start of each pass of a looping clip, and for a moment after a seek, mpv has no video-params while the same item
+# is still playing. A put that meets that waits for the picture to come back: up to PICTURE_LOOKS looks, PICTURE_LOOK_GAP
+# seconds apart (half a second at most), when mpv says the item is seeking or at its start (time-pos under
+# PICTURE_START seconds, or not readable). It is then the normal fresh read that decides; nothing is remembered.
+PICTURE_LOOKS = 5
+PICTURE_LOOK_GAP = 0.1
+PICTURE_START = 1.0
 # The box's own callers of the API, by the id of the device they act as (midi.MIDI_DEVICE, osc.OSC_DEVICE,
 # dmx.DMX_DEVICE, room.ROOM_DEVICE). Their calls run on the thread that reads the controller and never ask the player
 # (see Effects._seen). A paired device's id is eight hex digits, so none of these can be one.
@@ -914,6 +921,7 @@ class Effects(S.Engine):
 
     def __init__(self, api, log=print, clock=time.monotonic, tap=S.LogTap, thread=True):
         super().__init__(api, log, clock, tap)
+        self._sleep = time.sleep                    # injected by tests (the looks of _ride_out_gap)
         self.dir = os.path.join(os.path.dirname(api.settings.path), "effects")
         paths.remove_leftovers(self.dir, S.UPLOAD_TEMP)     # as the shaders' folder, a line up in Engine (D70)
         self.bundled_dir = EFFECTS_DIR
@@ -1279,6 +1287,54 @@ class Effects(S.Engine):
                 break
         return clean_picture(params.get("colormatrix"), params.get("colorlevels"), fps)
 
+    def _ride_out_gap(self):
+        """When there is no picture only because the item is at a loop point or in a seek (the player is not idle, the
+        same path is loaded, and it is seeking or at the start of the item), wait for video-params to come back, a
+        few short looks. Does nothing at all when there is a picture, none to wait for, or the screen is a generator's.
+        A stop, another item, a clip with no video or a stream with no frame run out the looks and are refused by
+        the normal read, as before."""
+        try:
+            player = self.api.player
+            ipc = player.ipc
+            up = getattr(player, "_standin_up", None)
+            if up is not None and up():
+                return
+        except Exception:
+            return
+
+        def ask(name):
+            try:
+                return ipc.request("get_property", name)
+            except Exception:
+                return None
+
+        def item():
+            try:
+                now = getattr(player, "path_now", None)
+                path = now() if now else ask("path")
+            except Exception:
+                return None
+            return (path, getattr(player, "source_epoch", None), getattr(player, "clears", None)) if path else None
+
+        def has_picture():
+            return isinstance(ask("video-params"), dict)
+
+        if has_picture():
+            return
+        first = item()
+        if first is None or ask("idle-active") is True:
+            return
+        pos = ask("time-pos")
+        starting = pos is None or (isinstance(pos, (int, float)) and not isinstance(pos, bool) and pos < PICTURE_START)
+        if not starting and ask("seeking") is not True:
+            return
+        for _ in range(PICTURE_LOOKS):
+            self._sleep(PICTURE_LOOK_GAP)
+            if item() != first or ask("idle-active") is True:
+                return
+            if has_picture():
+                return
+
     def _seen(self):
         """The effect that is on, from what this process remembers: no question to the player and no lock, for the
         calls a controller makes (they run on the thread that reads it). A player that was restarted is noticed by
@@ -1293,6 +1349,7 @@ class Effects(S.Engine):
         (`ask`) is told now, with a 409, when no effect could go on: it used to hear "ok" and then nothing happened.
         A controller's call is not: it asks the player nothing, hears "ok", and the worker says why in `error`."""
         if ask:
+            self._ride_out_gap()                    # a loop point or a seek is no reason to refuse a press
             ok, why = self.available()
             if not ok:
                 raise ApiError(409, why)
@@ -1420,6 +1477,10 @@ class Effects(S.Engine):
         native = bool(self.native())                # the New renderer runs the effect itself (D106), asked once a play
         if gen is None:
             self._gen += 1                              # by hand: newer than every wish that waits
+        mine = self._gen
+        self._ride_out_gap()                            # outside the lock: nothing else waits on a gap in the picture
+        if gen is None and self._gen != mine:           # an Off or a newer effect came during the wait: it wins
+            return {"ok": True, "id": sid, "superseded": True}
         with self._lock:
             if gen is not None and gen != self._gen:    # something was asked for after this (an Off, an effect by hand)
                 return None
