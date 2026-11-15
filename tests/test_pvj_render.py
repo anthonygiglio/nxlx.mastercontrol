@@ -1346,31 +1346,45 @@ class HeapTest(FadeBase):
             if STRICT:
                 self.fail("PVJ_RENDER_TEST=1 and no ffmpeg to make the clips")
             self.skipTest("no ffmpeg to make the clips")
-        lists = []
+        clips, lists = [], []
         for i, source in enumerate(("testsrc2", "testsrc", "smptehdbars", "rgbtestsrc")):
             name = "heap%d" % i
+            clip = os.path.join(self.tmp, name + ".mp4")
             subprocess.run([maker, "-v", "error", "-y", "-f", "lavfi", "-i", "%s=s=1280x720:r=30:d=4" % source, "-pix_fmt", "yuv420p",
-                            "-c:v", "libx264", "-preset", "ultrafast", "-g", "30", os.path.join(self.tmp, name + ".mp4")],
+                            "-c:v", "libx264", "-preset", "ultrafast", "-g", "30", clip],
                            check=True, timeout=120, stdin=subprocess.DEVNULL)
             path = os.path.join(self.tmp, name + ".ffconcat")
             with open(path, "w") as f:
                 f.write("ffconcat version 1.0\n" + ("file %s.mp4\nduration 4.000000\n" % name) * 200)
+            clips.append(clip)
             lists.append(path)
-        return lists
+        return clips, lists
 
     def test_crossfades_give_their_clips_memory_back(self):
         r = self.r
         deadline = time.monotonic() + self.LIMIT
-        lists = self.clips()
-        r("loadfile", lists[0], "replace")
+        clips, lists = self.clips()
+        # As the player loads a looping clip (Player._crossfade): its list, with the decoded queue for that file alone. A
+        # libmpv whose loadfile has no index (mpv 0.37, CI's Ubuntu 24.04) refuses a load with per-file options, and the
+        # player then loads the plain clip with the plain options; so does this test (as LoopListTest does). Asked once,
+        # here, never retried in the loop: a refusal there is a failure.
+        refused = None
+        try:
+            r("loadfile", lists[0], "replace", -1, looplist.QUEUE)
+            items, opts = lists, "keep-open=no,image-display-duration=inf," + looplist.QUEUE
+        except PlayerError as e:
+            refused = str(e)
+            r("loadfile", clips[0], "replace")
+            items, opts = clips, "keep-open=no,image-display-duration=inf"
         r("set_property", "loop-file", "inf")
         self.assertTrue(r.wait(lambda: self.st()["drawn"] > 10, 20), r.stderr())
-        opts = "keep-open=no,image-display-duration=inf,vd-queue-enable=yes,vd-queue-max-samples=6,vd-queue-max-secs=2"
+        print("\nHeapTest plays %s" % ("loop lists with the decoded queue" if refused is None
+                                       else "plain clips: a load with per-file options was refused (%s)" % refused))
         seen = []
         for i in range(1, 31):
             self.assertLess(time.monotonic(), deadline, "the bounded run of fades took too long")
             done = self.st()["fades-done"]
-            r("pvj-crossfade", lists[i % 4], 1.0, opts)
+            r("pvj-crossfade", items[i % 4], 1.0, opts)
             self.assertTrue(r.wait(lambda: self.st()["fades-done"] > done, 15, 0.05), "fade %d: %s\n%s" % (i, self.st(), r.stderr()))
             r("set_property", "loop-file", "inf")
             time.sleep(1.0)
