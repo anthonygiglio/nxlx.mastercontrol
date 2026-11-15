@@ -15,6 +15,8 @@ const shell = require('./signal-pages');
 const { go, at, back, stripOpen } = shell;
 // Waiting in the page for a check that fetches or awaits: pollFor(page, check, timeout, arg) polls it (see poll.js).
 const { pollFor } = require('./poll');
+// A route is taken off only once no answer from it is still on its way (see routes.js): else its fulfil throws "Route is already handled".
+const { patchUnroute } = require('./routes');
 
 // One PJLink question to the harness's fake projector, straight over TCP (not through the panel): what it really did.
 function pjlink(port, password, body) {
@@ -54,6 +56,11 @@ function startServer(env) {          // env: more for the harness's environment 
   // nobody awaited, which Node turns into an exit) still tells it so, or its mpv stays behind.
   process.on('exit', () => { server.kill(); });
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || undefined });
+  {
+    const probe = await (await browser.newContext()).newPage();
+    patchUnroute(probe);
+    await probe.context().close();
+  }
   let failed = false;
   // For a failure that comes and goes: every page the test opens is kept, with the box's last answers to it, and
   // when a step fails report() prints what each open page showed at that moment (the screen, the message line, the
@@ -5105,7 +5112,7 @@ function startServer(env) {          // env: more for the harness's environment 
       // and the hold 0.4 s later found none: 409 "Nothing with a picture is playing". So the picture is trusted only once
       // the clip is rolling too: the player reports a position of 0.2 s or more (a frame has been shown), on the same polls.
       // `want(position)` must hold, with an effect available (the same check the hold makes), on `n` samples in a row 100 ms apart.
-      const steady = async (want, n, what) => {
+      const steady = async (want, n, what, nap = 100) => {
         const end = Date.now() + 20000;
         let run = 0, last = null;
         while (run < n) {
@@ -5117,7 +5124,7 @@ function startServer(env) {          // env: more for the harness's environment 
           });
           last = r;
           run = r.available === true && typeof r.at === 'number' && r.at >= 0.2 && want(r.at) ? run + 1 : 0;
-          if (run < n) await page.waitForTimeout(100);
+          if (run < n && nap) await page.waitForTimeout(nap);
         }
       };
       assert.strictEqual(await post('/api/control', { action: 'stop' }), 200);
@@ -5141,7 +5148,11 @@ function startServer(env) {          // env: more for the harness's environment 
       // playing"). Loading the screen above takes about as long as a pass, so the clip's phase at the press is not known.
       // So press in the middle of a pass: the picture is there and the clip is between 0.3 and 0.8 seconds in, which
       // leaves more than a second (the hold below lasts 0.75) before the next pass starts.
-      await steady((at) => at >= 0.3 && at < 0.8, 3, 'no moment in the middle of a pass of the strobe clip');
+      // One look inside the window, taken as fast as the box answers. The window is half a second of a two second pass and three
+      // looks in a row 100 ms apart fit in it only when nothing is slow: on a machine kept busy a look takes long enough that
+      // no three ever fell inside it, and the wait ran out with the clip somewhere else (0.36 s). That the clip is rolling is
+      // already known from the wait above; the window only says where in the pass the press lands.
+      await steady((at) => at >= 0.3 && at < 0.7, 1, 'no moment in the middle of a pass of the strobe clip', 0);
       await page.mouse.down();
       await page.waitForFunction(() => /Flashing|Waiting|Held/.test(document.getElementById('strobestate').textContent), null, { timeout: 8000 });
       assert.strictEqual(await page.getAttribute('#strobehold', 'aria-pressed'), 'true', 'the button is drawn pressed while held');
