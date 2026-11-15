@@ -506,10 +506,11 @@ class RefusalTest(NativeBase):
         self.carrier()
         # a name that starts with the letters mctl but not the prefix mctl_ is the person's own
         self.r("mctl-shader", "load", 1, 0, self.write(re.sub(r"\blevel\b", "mctlSpeed", good)))
-        self.r.wait(lambda: self.r.pixel(10, 10)[0] == 64, 3)
-        # and so is a renamed input under mctl_in_ (the panel's own)
+        self.assertTrue(self.r.wait(lambda: self.r.pixel(10, 10)[0] == 64, 3), "mctlSpeed was taken but drew nothing")
+        # and so is a renamed input under mctl_in_ (the panel's own); the picture is already 64, so this proves it
+        # was taken and the screen kept drawing, not that it drew afresh
         self.r("mctl-shader", "load", 1, 0, self.write(re.sub(r"\blevel\b", "mctl_in_level", good)))
-        self.r.wait(lambda: self.r.pixel(10, 10)[0] == 64, 3)
+        self.assertTrue(self.r.wait(lambda: self.r.pixel(10, 10)[0] == 64, 3), "mctl_in_level stopped the picture")
 
     def test_a_refused_program_leaves_the_one_before_on(self):
         self.carrier()

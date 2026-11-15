@@ -224,6 +224,7 @@ rm -f "$SRC/render/pvj-render"
 [ "$(cat /opt/pvj/previous)" = "$OLD_REL" ] || fail "the old release is not the one a rollback goes to: $(cat /opt/pvj/previous)"
 # What runs or starts the renderer: the package, render/, the commands in bin/ and the node's units. bin/nxlx-convert
 # is left out: its rename table names the old program on purpose, as the name it converts from.
+ls -d /etc/systemd/system/pvj-* >/dev/null 2>&1 || fail "no pvj-* units to search (renamed? update this check)"
 if grep -rIl "pvj-render" "$NEW_REL/pvj" "$NEW_REL/render" /etc/systemd/system/pvj-* \
 	|| grep -rIl --exclude=nxlx-convert "pvj-render" "$NEW_REL/bin"; then
 	fail "a file of the new release or a unit still names pvj-render"
