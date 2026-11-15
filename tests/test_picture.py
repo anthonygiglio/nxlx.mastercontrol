@@ -9,8 +9,8 @@ import unittest
 import zlib
 from unittest import mock
 
-from pvj import autostart, overlay
-from pvj.settings import Settings
+from mctl import autostart, overlay
+from mctl.settings import Settings
 from tests.test_server import ServerBase
 
 
@@ -68,7 +68,7 @@ class OverlayApiTest(ServerBase):
             self.converted.append((os.path.basename(src), w, h))
             open(out, "wb").close()
             return out
-        p = mock.patch("pvj.overlay.convert", fake_convert)
+        p = mock.patch("mctl.overlay.convert", fake_convert)
         p.start()
         self.addCleanup(p.stop)
         self.addCleanup(self.settled)
@@ -102,7 +102,7 @@ class OverlayApiTest(ServerBase):
 
     def test_a_failed_conversion_says_so_in_the_status(self):
         # D100: the picture is made in a worker, so the request no longer waits for it; the status says what failed
-        with mock.patch("pvj.overlay.convert", side_effect=overlay.OverlayError("the picture could not be read")):
+        with mock.patch("mctl.overlay.convert", side_effect=overlay.OverlayError("the picture could not be read")):
             st, body, _ = self.post({"file": "logo.png", "on": True})
             self.assertEqual(st, 200)
             status = self.settled()

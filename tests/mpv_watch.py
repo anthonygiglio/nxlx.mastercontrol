@@ -3,7 +3,7 @@
 """A watch on the control socket of a real mpv, for the tests that draw (tests/test_*_gpu.py). Tests only.
 
 Why: "no reply from mpv" came now and then in CI's GPU jobs and was rerun each time. The player's client
-(pvj/player.py, `Ipc.request`) opens a connection for each request, waits two seconds and closes it, so a failure
+(mctl/player.py, `Ipc.request`) opens a connection for each request, waits two seconds and closes it, so a failure
 said nothing but that: not whether the answer came a moment later or never, not what the player was doing.
 
 What it does, with the product's client left exactly as it is (the request still goes through `Ipc.request`, and a
@@ -18,7 +18,7 @@ request that failed still fails with the same error):
   request takes when asked once more with a long wait, and the end of the player's own log if it writes one
   (PVJ_MPV_LOG=1).
 
-How it sees the connection without a change to the product: while a watch is on, the `socket` that pvj.player
+How it sees the connection without a change to the product: while a watch is on, the `socket` that mctl.player
 uses is a stand-in whose sockets note what they receive and can be kept open after the client closed them.
 """
 import atexit
@@ -29,8 +29,8 @@ import sys
 import threading
 import time
 
-from pvj import player as player_module
-from pvj.player import Ipc, PlayerError
+from mctl import player as player_module
+from mctl.player import Ipc, PlayerError
 
 NO_REPLY = "no reply from mpv"
 LATE_WAIT = 20.0            # how long the original connection is read on for the answer that did not come in time
@@ -76,7 +76,7 @@ def _make(*a, **k):
 
 
 class _SocketModule:
-    """The `socket` module as pvj.player sees it while a watch is on: only `socket.socket` differs."""
+    """The `socket` module as mctl.player sees it while a watch is on: only `socket.socket` differs."""
     socket = staticmethod(_make)
 
     def __getattr__(self, name):

@@ -17,8 +17,8 @@ import time
 import unittest
 import zlib
 
-from pvj import boxcare, overlay, pinscreen, transitions
-from pvj.settings import Settings
+from mctl import boxcare, overlay, pinscreen, transitions
+from mctl.settings import Settings
 from tests.test_server import ServerBase
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -325,7 +325,7 @@ class WorkerTest(Base):
         self.assertEqual(len(self.fake.calls), 2)
 
     def test_the_watch_runs_in_the_autostart_tick(self):
-        from pvj import autostart
+        from mctl import autostart
         self.post({"add": "m1.png", "on": True})
         self.settled()
 

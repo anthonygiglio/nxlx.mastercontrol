@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""Remove a node from this cluster, and Allow again (D132, slice 4d; pvj/handover.py, pvj/peer.py): three real nodes (certificates
+"""Remove a node from this cluster, and Allow again (D132, slice 4d; mctl/handover.py, mctl/peer.py): three real nodes (certificates
 from a throwaway root, the real peer listeners, real Handover, Peers, Auth, Tickets and Leases) and a fake monotonic clock.
 
 * the removal spreads to every approved node that can be reached, and a node that takes it passes it on;
@@ -19,7 +19,7 @@ import time
 import unittest
 
 import tests  # noqa: F401  (the tests package, as every test module imports it: tests/test_lockrank.py)
-from pvj import handover as hv, lease as L, peer
+from mctl import handover as hv, lease as L, peer
 from tests.peerfix import answer
 from tests.test_handover_api import FleetApiBase, ME
 from tests.test_lease import LeaseRig
@@ -529,7 +529,7 @@ class Api(FleetApiBase):
 
     def setUp(self):
         super().setUp()
-        from pvj import lease as lease_mod
+        from mctl import lease as lease_mod
         self.with_certificate()
         self.b = self.peer_b()
         self.peers.push_spawn = lambda fn: fn()

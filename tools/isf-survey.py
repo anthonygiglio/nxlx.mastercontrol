@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
 """How much of a folder of ISF files this box can run: every .fs file is put through the project's own translator
-(pvj/shaders.py) and sorted into a bucket, with the reason when it is refused.
+(mctl/shaders.py) and sorted into a bucket, with the reason when it is refused.
 
     python3 tools/isf-survey.py /path/to/ISF-Files/ISF            a report in plain text
     python3 tools/isf-survey.py /path/to/ISF-Files/ISF --json     the same as JSON
@@ -11,7 +11,7 @@ A developer's tool: it is not installed on a box and reads files only. "Translat
 file, which is not the same as drawing: only a real player with a GPU can say that (tests/test_shaders_gpu.py in CI).
 
 "Translates" is said of a generator: a shader that draws from nothing and takes the screen. A file that is refused
-as a generator is tried once more as an effect, a filter of the playing picture (pvj/effects.py), and the report
+as a generator is tried once more as an effect, a filter of the playing picture (mctl/effects.py), and the report
 says how many of those the box takes that way, each with the work counted from its text.
 
 What a file needs is read from its JSON header and its code independently of the translator (which stops at the
@@ -32,7 +32,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from pvj import effects as E, shaders as S  # noqa: E402
+from mctl import effects as E, shaders as S  # noqa: E402
 
 FEATURES = ("filter", "transition", "passes", "persistent", "audio", "imported", "vertex", "limits", "checks")
 _CALLS = re.compile(r"\b(sin|cos|tan|atan|asin|acos|pow|exp|log|sqrt|length|distance|normalize|mod|fract|smoothstep|mix)\s*\(")

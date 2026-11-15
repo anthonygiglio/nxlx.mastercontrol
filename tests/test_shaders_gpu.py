@@ -21,9 +21,9 @@ import time
 import unittest
 import zlib
 
-from pvj import shaders as S, vibes as V
-from pvj.api import ApiError
-from pvj.player import Player
+from mctl import shaders as S, vibes as V
+from mctl.api import ApiError
+from mctl.player import Player
 from tests import mpv_watch
 from tests.test_server import ServerBase
 from tests.test_shaders import AMBIENT, BUNDLED, PERFORMANCE
@@ -202,7 +202,7 @@ class GpuCase:
         self.assertGreaterEqual(draws, 5 * len(AMBIENT + PERFORMANCE))
 
     def test_every_shader_of_the_third_party_pack_compiles_and_draws_a_picture(self):
-        """The pack from Vidvox's ISF-Files (pvj/shaders.d/isf-files), held to what the project's own ten are held to:
+        """The pack from Vidvox's ISF-Files (mctl/shaders.d/isf-files), held to what the project's own ten are held to:
         the player takes the shader, draws a frame with it, and the picture is varied and not dark. Every file is
         tried before anything fails, so one run names all that do not draw; a line per file is printed as the record."""
         pack = [s for s in self.engine.library() if s["source"] == "bundled" and s["pack"] != "nxlx"]

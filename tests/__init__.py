@@ -49,7 +49,7 @@ def _at_end():
     _left.extend(lockrank.take())
     if _left:
         sys.stdout.flush()
-        sys.stderr.write("\nFAILED: %d breach(es) of the order of the locks (pvj/locks.py) that no test showed:\n%s\n"
+        sys.stderr.write("\nFAILED: %d breach(es) of the order of the locks (mctl/locks.py) that no test showed:\n%s\n"
                          % (len(_left), "\n".join(_left)))
         sys.stderr.flush()
         os._exit(1)
@@ -80,7 +80,7 @@ def _run_and_look(self, result=None):
         seen = list(_left)
         del _left[:]
         try:
-            raise AssertionError("%d breach(es) of the order of the locks (pvj/locks.py):\n%s" % (len(seen), "\n".join(seen)))
+            raise AssertionError("%d breach(es) of the order of the locks (mctl/locks.py):\n%s" % (len(seen), "\n".join(seen)))
         except AssertionError:
             result.addFailure(self, sys.exc_info())
     return out

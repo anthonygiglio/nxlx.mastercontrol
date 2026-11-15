@@ -8,8 +8,8 @@ import tempfile
 import time
 import unittest
 
-from pvj import player
-from pvj.player import Player, PlayerError, expand_media
+from mctl import player
+from mctl.player import Player, PlayerError, expand_media
 import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 HEADLESS = ["--vo=null", "--ao=null"]
@@ -114,7 +114,7 @@ class PlayerTest(unittest.TestCase):
             p.play([SRC])
 
     def test_unsafe_runtime_dir_rejected(self):
-        from pvj import player
+        from mctl import player
         d = tempfile.mkdtemp()
         os.chmod(d, 0o777)
         os.environ["PVJ_RUNTIME_DIR"] = d
@@ -203,7 +203,7 @@ class ServiceTest(unittest.TestCase):
         self.assertIsNone(svc.poll())
 
     def test_group_accessible_dir_ok_world_accessible_rejected(self):
-        from pvj import player
+        from mctl import player
         os.environ["PVJ_RUNTIME_DIR"] = self.dir
         self.addCleanup(os.environ.pop, "PVJ_RUNTIME_DIR")
         self.assertEqual(player.runtime_dir(), self.dir)
@@ -253,7 +253,7 @@ class SocketOpenerTest(unittest.TestCase):
         os.makedirs(rundir, mode=0o700)
         sock = os.path.join(rundir, "player.sock")
         open(sock, "w").close()                       # a stale file from the previous run must not fool it
-        code = ("import sys; sys.path.insert(0, %r); from pvj.player import Player; "
+        code = ("import sys; sys.path.insert(0, %r); from mctl.player import Player; "
                 "Player(mpv_bin=%r, rundir=%r).serve()") % (os.path.join(os.path.dirname(__file__), ".."), fake, rundir)
         proc = subprocess.Popen([sys.executable, "-c", code])
         try:
@@ -316,7 +316,7 @@ class DeafAtTheStartTest(unittest.TestCase):
 
     def start(self, deaf):
         import sys
-        d = tempfile.mkdtemp(prefix="pvjd", dir="/tmp")              # short: a socket's path has little room
+        d = tempfile.mkdtemp(prefix="mctld", dir="/tmp")              # short: a socket's path has little room
         self.addCleanup(shutil.rmtree, d, True)
         os.chmod(d, 0o700)
         fake = os.path.join(d, "fake-mpv")

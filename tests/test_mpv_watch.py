@@ -13,8 +13,8 @@ import threading
 import time
 import unittest
 
-from pvj import player as player_module
-from pvj.player import Ipc, PlayerError
+from mctl import player as player_module
+from mctl.player import Ipc, PlayerError
 from tests import mpv_watch as M
 
 
@@ -72,7 +72,7 @@ class FakeMpv:
 
 class WatchTest(unittest.TestCase):
     def setUp(self):
-        self.dir = tempfile.mkdtemp(prefix="pvjw", dir="/tmp")         # short: a socket's path has little room
+        self.dir = tempfile.mkdtemp(prefix="mctlw", dir="/tmp")         # short: a socket's path has little room
         self.addCleanup(shutil.rmtree, self.dir, True)
         self.path = os.path.join(self.dir, "s")
         self.mpv = FakeMpv(self.path)

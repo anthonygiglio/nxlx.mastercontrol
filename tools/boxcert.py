@@ -887,13 +887,13 @@ _FLEETLIST = []
 
 
 def fleetlist():
-    """pvj/fleetlist.py, the file format and the check a node makes, loaded by its path from the same checkout so the
+    """mctl/fleetlist.py, the file format and the check a node makes, loaded by its path from the same checkout so the
     tool and the node can never read a list differently."""
     if not _FLEETLIST:
         import importlib.util
-        path = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "pvj", "fleetlist.py"))
+        path = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "mctl", "fleetlist.py"))
         if not os.path.isfile(path):
-            raise BoxcertError("the fleet commands need pvj/fleetlist.py from the same checkout as this tool (not found at %s)" % path)
+            raise BoxcertError("the fleet commands need mctl/fleetlist.py from the same checkout as this tool (not found at %s)" % path)
         spec = importlib.util.spec_from_file_location("nxlx_fleetlist", path)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)

@@ -11,8 +11,8 @@ import json
 import os
 import re
 
-from pvj import api as api_mod, auth as auth_mod, boxcare, dmx, midi, osc, policy, room, scheduler, server, support as sp
-from pvj.settings import Settings
+from mctl import api as api_mod, auth as auth_mod, boxcare, dmx, midi, osc, policy, room, scheduler, server, support as sp
+from mctl.settings import Settings
 from tests.test_support import LAN, TUNNEL, SupportBase
 
 # Who asks, in the order of every tuple below.
@@ -103,7 +103,7 @@ ROWS = {
     ("GET", "/api/sources"): KINDS["op"],
     ("POST", "/api/sources"): KINDS["op"],
     ("GET", "/api/effects/chain"): KINDS["op"],
-    # the Strobe (pvj/strobe.py): a flash held down. The Operator's and the Owner's, never a Guest's (a flash in the room is not
+    # the Strobe (mctl/strobe.py): a flash held down. The Operator's and the Owner's, never a Guest's (a flash in the room is not
     # something guest controls open). The hold routes are also a controller's, on purpose: MIDI and OSC hold it, and the node's
     # leases end it if they go. Remote support is refused the ones that start or shape a flash (a helper cannot see the room or
     # let go in time) but may release, which only ever stops it. A state read is for people, not controllers.
@@ -775,7 +775,7 @@ class GuestLimitTest(RolesBase):
         """The rig above cannot run a shader, an effect or a projector to the end, so this is read from the source:
         the functions that save are these and no other, and none is a form a guest may send."""
         import ast
-        from pvj import effects, projector, shaders, vibes
+        from mctl import effects, projector, shaders, vibes
         for module in (shaders, effects, vibes, room, projector):
             name = module.__name__.split(".")[-1]
             saving, calling = set(), set()
@@ -1026,7 +1026,7 @@ class OwnerAnswersTest(RolesBase):
             self.assertNotIn("join", auth_mod.controller_setting({"enabled": True, "join": junk}))
 
     def test_the_display_says_which_of_the_two_the_code_pairs(self):
-        from pvj import pinscreen
+        from mctl import pinscreen
 
         class A:
             role = "view"
@@ -1457,7 +1457,7 @@ class ReviewTest(RolesBase):
         self.assertEqual(self.call("GET", "/api/qr.svg?for=panel", token=self.guest_token)[0], 403)
         self.assertEqual(self.call("GET", "/api/qr.svg?for=view", token=self.guest_token)[0], 403)
         self.assertEqual(self.call("POST", "/api/media/upload?name=g.mp4", raw=b"0123", headers=octet, token=self.guest_token)[0], 403)
-        self.assertEqual(self.call("POST", "/api/system/update/upload?name=u.pvjupdate", raw=b"0123", headers=octet, token=self.guest_token)[0], 403)
+        self.assertEqual(self.call("POST", "/api/system/update/upload?name=u.mctlupdate", raw=b"0123", headers=octet, token=self.guest_token)[0], 403)
         self.assertEqual(self.call("POST", "/api/system/settings/import?confirm=import", raw=b"{}", token=self.guest_token)[0], 403)
         self.api.preview_jpeg = lambda device: b"jpeg"          # the rig's player takes no snapshot
         self.assertEqual(self.call("GET", "/api/preview.jpg", token=self.guest_token)[0], 200)
@@ -1527,5 +1527,5 @@ class UploadTest(RolesBase):
         self.assertEqual(self.upload(op), 200)
         self.assertEqual(self.call("POST", "/api/media/delete", {"name": "new.mp4"}, token=self.guest_token)[0], 403)
         self.assertEqual(self.call("POST", "/api/media/delete", {"name": "new.mp4"}, token=op)[0], 200)
-        self.assertEqual(self.upload(op, "/api/system/update/upload?name=u.pvjupdate"), 403)
+        self.assertEqual(self.upload(op, "/api/system/update/upload?name=u.mctlupdate"), 403)
         self.assertEqual(self.call("GET", "/api/preview.jpg", token=None)[0], 401)

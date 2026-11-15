@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""The profile table (pvj/profile.py) gives every board kind the values master gave it.
+"""The profile table (mctl/profile.py) gives every board kind the values master gave it.
 
 tests/frozen_master_profile.json was written once by running master's own functions (before the table existed) for
 every kind and every setting below; nothing in it is computed by the code under test. If a value here has to change,
@@ -12,7 +12,7 @@ import os
 import unittest
 
 import tests        # the run's own temp folder (tests/__init__.py)
-from pvj import effects as E, hardware, probe as P, profile, renderer as R, shaders as S
+from mctl import effects as E, hardware, probe as P, profile, renderer as R, shaders as S
 
 KINDS = ("pi3", "pi4", "pi5", "x86", "pi-other", "arm-other")
 SCREEN = ["--vo=gpu", "--drm-device=/dev/dri/card1", "--drm-connector=HDMI-A-1", "--drm-mode=1920x1080@60.00"]

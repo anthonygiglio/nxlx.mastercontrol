@@ -22,9 +22,9 @@ import time
 import unittest
 import zlib
 
-from pvj import effects as E, shaders as S, vibes as V
-from pvj.api import ApiError
-from pvj.player import Player, PlayerError
+from mctl import effects as E, shaders as S, vibes as V
+from mctl.api import ApiError
+from mctl.player import Player, PlayerError
 from tests import mpv_watch
 from tests.test_server import ServerBase
 from tests.test_shaders_gpu import GPU, GpuCase, H, W, png_rows
@@ -195,7 +195,7 @@ class FxCase(GpuCase):
         this mpv (0.37) with Mesa's software GPU and mpv's default scalers, a 320 x 180 video played after a
         160 x 90 one was drawn black until a shader was put on or taken off, effect or no effect (that is the
         "flat colour" the generators' own clip test could not explain). And the player runs with --profile=fast,
-        as it does on a Raspberry Pi 4 (pvj/hardware.py): with that cheap scaling the black picture did not come."""
+        as it does on a Raspberry Pi 4 (mctl/hardware.py): with that cheap scaling the black picture did not come."""
         super(GpuCase, self).setUp()
         self.api.board = dict(self.api.board, kind="pi4")       # and the panel takes the box for one: 8-bit buffers under an effect
         log, log_path = mpv_watch.log_args(self.tmp)

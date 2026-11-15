@@ -21,7 +21,7 @@ import threading
 import time
 import unittest
 
-from pvj import ndi
+from mctl import ndi
 from tests import test_ndi as T
 from tests.test_ndi import FakeLib, OldPlayer, frame, wait
 from tests.test_ndi_sound import SoundLib, sound

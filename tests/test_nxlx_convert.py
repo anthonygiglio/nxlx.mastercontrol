@@ -112,6 +112,8 @@ def stage_old_node(src_copy):
     # The release the cutover installs: the programs under their new names (a copy of the old one, renamed), and
     # "current" pointing at it, as install.sh leaves it from rename PR 7 on. 9.9.1 stays as the previous release.
     old, new = os.path.join(root, "opt/pvj/releases/9.9.1"), os.path.join(root, "opt/pvj/releases/9.9.2")
+    # install.sh now stages the package as mctl/; an old node holds it as pvj/
+    os.rename(os.path.join(old, "mctl"), os.path.join(old, "pvj"))
     shutil.copytree(old, new, symlinks=True)
     os.rename(os.path.join(new, "pvj"), os.path.join(new, "mctl"))
     for name in os.listdir(os.path.join(new, "bin")):
@@ -192,9 +194,9 @@ class Base(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.src = tempfile.mkdtemp()
-        for d in ("pvj", "bin", "install"):
+        for d in ("mctl", "bin", "install"):
             shutil.copytree(os.path.join(REPO, d), os.path.join(cls.src, d), ignore=shutil.ignore_patterns("__pycache__"))
-        with open(os.path.join(cls.src, "pvj", "__init__.py"), "w") as f:
+        with open(os.path.join(cls.src, "mctl", "__init__.py"), "w") as f:
             f.write('__version__ = "9.9.1"\n')
         cls.template = stage_old_node(cls.src)
 

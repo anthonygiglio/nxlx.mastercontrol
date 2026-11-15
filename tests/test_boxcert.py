@@ -36,7 +36,7 @@ def openssls():
 
 
 def make_request(exe, folder, names, ips, cn="nxlx-mastercontrol.local", extra=""):
-    """What the box does (pvj/httpsbox.py makes the same request its own way). `extra`: more lines a hostile request
+    """What the box does (mctl/httpsbox.py makes the same request its own way). `extra`: more lines a hostile request
     could carry in its extensions."""
     key, cnf, csr = (os.path.join(folder, n) for n in ("box.key", "req.cnf", "box.csr"))
     subprocess.run([exe, "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", key], check=True, capture_output=True)

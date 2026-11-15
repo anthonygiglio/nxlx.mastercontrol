@@ -1,6 +1,6 @@
 /* SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
  * SPDX-License-Identifier: Apache-2.0 */
-/* The real pvj/web/app.css, scoped under .mctl-frame so Tailwind's reset and the playground chrome never touch it.
+/* The real mctl/web/app.css, scoped under .mctl-frame so Tailwind's reset and the playground chrome never touch it.
    Every hard number the playground can change is a custom property set on the frame; the defaults are app.css's own.
    The 900px media query becomes a container query, so a phone-sized frame shows the phone layout on any screen. */
 .mctl-frame {

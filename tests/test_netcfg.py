@@ -5,8 +5,8 @@ import os
 import tempfile
 import unittest
 
-from pvj import netcfg
-from pvj.netcfg import NetError
+from mctl import netcfg
+from mctl.netcfg import NetError
 import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 WIRED = {"name": "eth0", "kind": "wired", "state": "up", "carrier": True, "mac": "aa", "speed_mbps": 1000}

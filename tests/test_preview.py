@@ -4,8 +4,8 @@ import os
 import time
 import unittest
 
-from pvj import api as api_mod
-from pvj.player import PlayerError
+from mctl import api as api_mod
+from mctl.player import PlayerError
 from tests.test_server import ServerBase
 
 JPEG = b"\xff\xd8\xff\xe0" + b"fake jpeg body" * 20 + b"\xff\xd9"

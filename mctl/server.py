@@ -1,0 +1,1314 @@
+# SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+# SPDX-License-Identifier: Apache-2.0
+"""HTTP front end for the control API and the web panel (standard library only).
+
+Security model, in one place:
+* every API call except hello, pair, session and logout needs a paired device token
+  (HttpOnly SameSite=Strict cookie, or Authorization: Bearer for scripts); logout
+  removes that token from the box and answers with the cookie expired
+* every state-changing call is a POST with JSON, the X-MCTL-Request header and a
+  matching Origin (if the browser sends one), so other websites cannot drive it
+* for one release after the rename (D138) the old header name and the old cookie names are still read: a client
+  that sends them keeps working, and a browser that shows an old cookie gets the new one and loses the old one
+* the panel is served with a Content-Security-Policy that forbids inline script,
+  external resources and framing; over plain http, while a certificate is in use, the page's connect-src also names
+  the box's own https:// origin (page_csp), so the Secure connection page can ask whether this device trusts the box
+* the same panel and API answer on a second, TLS listener when PVJ_HTTPS_PORT is set (D79, mctl/httpsbox.py): there
+  the cookie is __Host-mctl_token with Secure; a switch keeps owner access off plain HTTP (the gate below)
+* the nodes talk to each other on a third listener, when PVJ_PEER_PORT is set (D132, PeerServer): TLS with a client
+  certificate required (the pinned root the only CA); it answers two POSTs and nothing else
+"""
+
+import html
+import json
+import os
+import re
+import signal
+import socket
+import sys
+import threading
+import time
+import traceback
+from http.cookies import SimpleCookie
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlsplit
+
+from . import icon, paths, policy
+from . import autostart as autostart_mod, dmx as dmx_mod, hardware, midi as midi_mod, pinscreen as pinscreen_mod, sysd as sysd_mod, netd as netd_mod, osc as osc_mod, scheduler as scheduler_mod, themes as themes_mod
+from .api import Api, ApiError
+from .auth import Auth
+from .modules import Registry
+from .player import Player
+from .settings import Settings, SettingsError
+
+WEB_DIR = os.path.join(os.path.dirname(__file__), "web")
+
+
+def env_signer(auto):
+    return bool((auto.env.get("PVJ_SIGNER_URL") or "").strip())
+MAX_BODY = 64 * 1024
+COOKIE = "mctl_token"
+SECURE_COOKIE = "__Host-mctl_token"      # over TLS only (D79): the prefix forces Secure, Path=/ and no Domain; a second name,
+                                        # because browsers leave a Secure cookie alone when plain http tries to replace it
+CSRF_HEADER = "X-MCTL-Request"
+# The names before the rename, read for one release and never written (D138, the owner's decision A: nobody is signed
+# out by the rename). Remove these three and their uses in the release after the cutover.
+OLD_CSRF_HEADER = "X-PVJ-Request"
+OLD_COOKIE = "pvj_token"
+OLD_SECURE_COOKIE = "__Host-pvj_token"
+CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; "
+       "connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+CSP_ORIGIN = re.compile(r"https://(?:[a-z0-9.-]{1,253}|\[[0-9a-f:.]{2,45}\])(?::[0-9]{1,5})?")   # the one shape page_csp adds
+
+
+def page_csp(origin, forms=()):
+    """The policy for the HTML document. With `origin` (httpsbox.page_origin: the box's own https:// origin, from a
+    Host header that passed its checks) connect-src names that origin too, and nothing else: no scheme source, no
+    wildcard, no second host. Anything that is not exactly that shape is dropped and the plain policy goes out.
+    `forms` (D132, slice 5: Api.handover_forms, over TLS only): the other nodes' https origins that a hand-over form may be
+    posted to, added to form-action, each of the same one shape, 32 at most; anything else is dropped."""
+    csp = CSP
+    if origin and CSP_ORIGIN.fullmatch(origin):
+        csp = csp.replace("connect-src 'self';", "connect-src 'self' %s;" % origin, 1)
+    extra = [f for f in (forms or ())[:32] if isinstance(f, str) and CSP_ORIGIN.fullmatch(f)]
+    if extra:
+        csp = csp.replace("form-action 'self';", "form-action 'self' %s;" % " ".join(extra), 1)
+    return csp
+TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
+         ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".woff2": "font/woff2"}
+HTML_TAG = b'<html lang="en">'          # in index.html; the style of the chosen theme is written into it (styled_html)
+
+
+def static_files(web_dir):
+    """What the panel may be asked for, as {request path: file under web_dir}: the files at the top of the folder and
+    the .woff2 files in fonts/, nothing else. The map is fixed when the server starts and a request is looked up in
+    it whole, so no request path is ever joined to a folder. A symbolic link is never in it (a file or the fonts
+    folder itself): the panel serves what was installed there, not what something there points at."""
+
+    def plain(path):
+        return os.path.isfile(path) and not os.path.islink(path)
+    out = {"/": "index.html"}
+    if os.path.isdir(web_dir):
+        for name in sorted(os.listdir(web_dir)):
+            if plain(os.path.join(web_dir, name)):
+                out["/" + name] = name
+        fonts = os.path.join(web_dir, "fonts")
+        if os.path.isdir(fonts) and not os.path.islink(fonts):
+            for name in sorted(os.listdir(fonts)):
+                if name.endswith(".woff2") and plain(os.path.join(fonts, name)):
+                    out["/fonts/" + name] = os.path.join("fonts", name)
+    return out
+
+
+def styled_html(body, style):
+    """index.html with the style of the chosen theme on its root element, so the page is drawn in that look from the
+    first paint (a script could only add it later, and the strict policy allows no inline one). Only a name from
+    themes.STYLES is ever written; the default look leaves the page as the file has it."""
+    if style == "default" or style not in themes_mod.STYLES:
+        return body
+    return body.replace(HTML_TAG, HTML_TAG[:-1] + b' data-style="' + style.encode("ascii") + b'">', 1)
+
+
+def host_allowed(host, names):
+    """Is the Host header one of ours? IP addresses (any), localhost, and the names in `names`. A web page on the
+    internet that rebinds its own name to the box's address (DNS rebinding) sends its own name here and is refused,
+    so it cannot drive the panel from a visitor's browser."""
+    import ipaddress
+    if host is None:
+        return True           # no Host header: an old HTTP/1.0 client or a script, never a browser (browsers always send it)
+    host = host.strip().lower()
+    if not host or len(host) > 255:
+        return False
+    if host.startswith("["):                                  # [v6] or [v6]:port
+        end = host.find("]")
+        if end < 0 or (host[end + 1:] and not re.fullmatch(r":[0-9]{1,5}", host[end + 1:])):
+            return False
+        name = host[1:end]
+    else:
+        name, _, port = host.partition(":")
+        if port and not port.isdigit():
+            return False
+    try:
+        ipaddress.ip_address(name.split("%")[0])
+        return True
+    except ValueError:
+        pass
+    return name.rstrip(".") in names
+
+
+def allowed_names(env=None):
+    env = os.environ if env is None else env
+    hostname = socket.gethostname().lower()
+    names = {"localhost", hostname, hostname.split(".")[0] + ".local"}
+    names.update(n.strip().lower() for n in env.get("PVJ_ALLOWED_HOSTS", "").split(",") if n.strip())
+    return names
+
+
+def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None):
+    host_names = allowed_names() if host_names is None else host_names
+    static = static_files(web_dir)
+
+    class Handler(BaseHTTPRequestHandler):
+        server_version = "mctl"
+        sys_version = ""
+        timeout = 10  # per read; the lifetime timer below bounds the whole connection
+
+        def setup(self):
+            super().setup()
+            # A client that trickles one byte every few seconds would keep a thread for ever.
+            self._reaper = threading.Timer(max_lifetime, self._kill)
+            self._reaper.daemon = True
+            self._reaper.start()
+
+        def _kill(self):
+            try:
+                self.connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+        def finish(self):
+            self._reaper.cancel()
+            super().finish()
+
+        def log_message(self, fmt, *args):
+            if len(args) >= 2 and "/api/strobe/renew" in str(args[0]) and str(args[1]) == "200":
+                return                  # a held strobe renews five times a second: not worth a line in the journal each
+            sys.stderr.write("%s %s\n" % (self.client_address[0], fmt % args))
+
+        # --- plumbing ---------------------------------------------------
+        def _send(self, status, body, content_type, extra=None, cache="no-store"):
+            try:
+                self.send_response(status)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("X-Frame-Options", "DENY")
+                self.send_header("Referrer-Policy", "no-referrer")
+                self.send_header("Content-Security-Policy", self._csp(content_type))
+                self.send_header("Cache-Control", cache)
+                extra = list(extra or [])
+                extra += self._cookie_moved(extra)  # after the policy above, which may have read a page's cookie
+                for k, v in extra:
+                    self.send_header(k, v)
+                self.end_headers()
+                if self.command != "HEAD":
+                    self.wfile.write(body)
+            except OSError:
+                # The client went away (a phone that lost its connection): nothing to tell, nothing to log.
+                self.close_connection = True
+
+        def _json(self, status, payload, extra=None):
+            self._send(status, json.dumps(payload).encode(), "application/json", extra)
+
+        def _secure(self):
+            return bool(getattr(self.server, "secure", False))
+
+        def _csp(self, content_type):
+            """The HTML document over plain http, with a certificate in use, may connect to the box's own https://
+            origin (D79, the trust check); over TLS 'self' already is that origin, and no other answer is a document."""
+            if not content_type.startswith("text/html"):
+                return CSP
+            if self._secure():                    # over TLS: the other nodes a hand-over form may go to (D132, slice 5)
+                forms = getattr(api, "handover_forms", None)
+                # only for a paired Operator or Owner, the devices that have the Nodes list: the PIN screen and a Guest's page
+                # do not learn which nodes this one trusts (review of PR 276)
+                return page_csp(None, forms() if forms is not None and self._paired_staff() else ())
+            box = self._https()
+            return page_csp(box.trusted_origin(self.headers.get("Host")) if box is not None else None)
+
+        def _paired_staff(self):
+            """Yes or no: this request carries the token of a paired Operator or Owner (not a support login). Only for the page's
+            policy (_csp): the HTML document is served to everybody, without the gate, so there is no device of the gate to reuse,
+            and nothing here is handed to a route; a route gets its device from _who or _api only (tests/test_roles.py)."""
+            token = self._token()
+            device = auth.authenticate(token) if token else None
+            return bool(device is not None and device.get("role") in ("live", "full") and not device.get("remote"))
+
+        def parse_request(self):
+            self._old_cookie, self._old_sent = None, False      # one request at a time on a kept-alive connection
+            return super().parse_request()
+
+        def _token(self):
+            self._old_cookie, self._old_sent = None, False
+            jar = SimpleCookie()
+            try:
+                jar.load(self.headers.get("Cookie", ""))
+            except Exception:
+                jar = {}
+            self._old_sent = OLD_COOKIE in jar or (self._secure() and OLD_SECURE_COOKIE in jar)      # D138
+            header = self.headers.get("Authorization", "")
+            if header.startswith("Bearer "):
+                return header[7:].strip()
+            if not jar:
+                return None
+            if self._secure() and SECURE_COOKIE in jar:     # the secure name is read over TLS only
+                return jar[SECURE_COOKIE].value
+            if self._secure() and OLD_SECURE_COOKIE in jar:     # D138: the name before the rename, for one release
+                self._old_cookie, self._old_secure = jar[OLD_SECURE_COOKIE].value, True
+                return self._old_cookie
+            if COOKIE in jar:
+                return jar[COOKIE].value
+            if OLD_COOKIE in jar:
+                self._old_cookie, self._old_secure = jar[OLD_COOKIE].value, False
+                return self._old_cookie
+            return None
+
+        def _cookie_moved(self, extra):
+            """D138: the request was signed in by a cookie of the old name and its token is still paired: the same token
+            under the new name, and the old names expired, so the browser moves over without a new pairing. Nothing when
+            the answer sets or clears a cookie itself (a pairing, a sign-in, a logout), or the token is not paired. A
+            cookie of the old name beside a new one (a device paired again) is only expired."""
+            token, sent = getattr(self, "_old_cookie", None), getattr(self, "_old_sent", False)
+            self._old_cookie, self._old_sent = None, False
+            if not sent or any(k == "Set-Cookie" for k, _ in extra):
+                return []
+            if not token:                           # signed in by the new name or a Bearer token: the old one only goes
+                return self._old_cookies_cleared()
+            if auth.authenticate(token) is not None:
+                life = 31536000                     # as long as a pairing's cookie (/api/pair)
+            elif api.support.authenticate(token) is not None:
+                life = supportd_max_seconds()       # as long as a support login's cookie
+            else:
+                return []
+            # the new name of the same strength: a plain cookie (which plain http can plant) never becomes __Host-
+            return [("Set-Cookie", self._cookie_set(token, life, secure=getattr(self, "_old_secure", False)))] \
+                + self._old_cookies_cleared()
+
+        def _old_cookies_cleared(self):
+            """The old names with no life left (D138), with the attributes they were set with."""
+            gone = "=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
+            out = [("Set-Cookie", OLD_COOKIE + gone)]
+            if self._secure():
+                out.append(("Set-Cookie", OLD_SECURE_COOKIE + "=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"))
+            return out
+
+        def _cookie_set(self, token, max_age, secure=None):
+            if self._secure() if secure is None else (secure and self._secure()):
+                return "%s=%s; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=%d" % (SECURE_COOKIE, token, max_age)
+            return "%s=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=%d" % (COOKIE, token, max_age)
+
+        def _cookies_cleared(self):
+            """The same attributes as the cookie that was set, with no life left: the browser drops it (D77). Over TLS
+            both names, over plain http the plain one (a Secure cookie is never sent there and cannot be touched)."""
+            gone = "=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
+            out = [("Set-Cookie", COOKIE + gone)]
+            if self._secure():
+                out.append(("Set-Cookie", SECURE_COOKIE + "=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"))
+            if getattr(self, "_old_sent", False):          # a logout also drops a cookie of the old name (D138)
+                out += self._old_cookies_cleared()
+            return out
+
+        def _https(self):
+            return getattr(api, "https", None)
+
+        def _gate(self, device, path):
+            """D79: while "Owner access only over the secure connection" is on, why this request is refused, or None."""
+            box = self._https()
+            return box.owner_gate(device, self._secure(), path) if box is not None else None
+
+        def _csrf_ok(self):
+            if self.headers.get(CSRF_HEADER) != "1" and self.headers.get(OLD_CSRF_HEADER) != "1":
+                return False
+            origin = self.headers.get("Origin")
+            if origin:
+                try:
+                    # netloc keeps IPv6 brackets and the port exactly as the browser wrote them
+                    got = urlsplit(origin).netloc.lower()
+                except ValueError:
+                    return False
+                if not got or got != (self.headers.get("Host") or "").lower():
+                    return False
+            return True
+
+        def _body(self):
+            try:
+                length = int(self.headers.get("Content-Length", ""))
+            except ValueError:
+                return None, (411, "Content-Length required")
+            if length < 0 or length > MAX_BODY:
+                return None, (413, "body too large")
+            if not (self.headers.get("Content-Type") or "").startswith("application/json"):
+                return None, (415, "send application/json")
+            if self.headers.get("Transfer-Encoding"):
+                return None, (501, "chunked bodies are not supported; send Content-Length")
+            try:
+                data = json.loads(self.rfile.read(length) or b"{}")
+            except (ValueError, RecursionError):  # RecursionError: absurdly nested JSON
+                return None, (400, "invalid JSON")
+            if not isinstance(data, dict):
+                return None, (400, "JSON object expected")
+            return data, None
+
+        # --- routing ----------------------------------------------------
+        def do_HEAD(self):
+            self.do_GET()
+
+        def _preview(self):
+            """GET /api/preview.jpg: what the screen is showing (any paired device, even view-only)."""
+            try:
+                device = self._who("GET", "/api/preview.jpg")
+                self._send(200, api.preview_jpeg(device), "image/jpeg")
+            except ApiError as e:
+                self._json(e.status, {"error": e.message})
+
+        def _graphics_thumb(self):
+            """GET /api/graphics/thumb?name=logo.png: the thumbnail PNG of a stored graphic (Operator and up). The only
+            picture the panel serves from the graphics store is a PNG that pvj-raster wrote."""
+            try:
+                self._who("GET", "/api/graphics/thumb")
+                name = (parse_qs(urlsplit(self.path).query).get("name") or [""])[0]
+                self._send(200, api.graphics_thumb(name), "image/png")
+            except ApiError as e:
+                self._json(e.status, {"error": e.message})
+            except Exception:
+                traceback.print_exc()
+                self._json(500, {"error": "internal error"})
+
+        def _graphics_preview(self, body=None):
+            """GET /api/graphics/preview.png?id=g1234: the node-made picture of one graphic as it is saved. POST the same
+            path with {"id", "text"} for a line as typed and not yet sent: the line travels in the body, so it is not in
+            the address or the access log. Operator and up, at most 5 a second. Only a PNG that pvj-raster wrote is ever sent."""
+            try:
+                if body is not None:
+                    self._who("POST", "/api/graphics/preview.png")
+                else:
+                    self._who("GET", "/api/graphics/preview.png")
+                if body is not None:
+                    ident = body.get("id") if isinstance(body.get("id"), str) else ""
+                    typed = body.get("text") if isinstance(body.get("text"), str) else None      # drawn in the preview only
+                else:
+                    ident = (parse_qs(urlsplit(self.path).query).get("id") or [""])[0]
+                    typed = None
+                self._send(200, api.graphics_preview(ident, typed[:2000] if typed is not None else None), "image/png")
+            except ApiError as e:
+                self._json(e.status, {"error": e.message})
+            except Exception:
+                traceback.print_exc()
+                self._json(500, {"error": "internal error"})
+
+        def _qr(self):
+            """GET /api/qr.svg?for=panel|view|live: a QR code to print or show. A presenter gets the panel address
+            and the guest code; the presenter code needs full access (checked in access_qr)."""
+            try:
+                device = self._who("GET", "/api/qr.svg")
+                target = (parse_qs(urlsplit(self.path).query).get("for") or [""])[0]
+                self._send(200, api.access_qr(target, self.headers.get("Host", ""), device), "image/svg+xml")
+            except ApiError as e:
+                self._json(e.status, {"error": e.message})
+
+        def _host_ok(self):
+            if host_allowed(self.headers.get("Host"), host_names):
+                return True
+            self.close_connection = True
+            self._json(421, {"error": "unknown host name; open the node by its address or add the name to PVJ_ALLOWED_HOSTS"})
+            return False
+
+        def do_GET(self):
+            if not self._host_ok():
+                return
+            path = urlsplit(self.path).path
+            if path == "/api/preview.jpg":
+                return self._preview()
+            if path == "/api/qr.svg":
+                return self._qr()
+            if path == "/api/graphics/thumb":
+                return self._graphics_thumb()
+            if path == "/api/graphics/preview.png":
+                return self._graphics_preview()
+            if path == "/api/https" or path.startswith("/api/https/") or path == "/api/fleet/card":
+                return self._https_route("GET", path, {})
+            if path.startswith("/api/"):
+                return self._api("GET", path, {})
+            if path == "/theme.css":
+                return self._send(200, api.theme_css().encode(), TYPES[".css"])
+            if path in icon.PATHS:          # a bookmark or a home-screen tile asks for these; they were 404 on the box
+                return self._send(200, icon.png(), icon.TYPE)
+            name = static.get(path)
+            if name is None:
+                return self._json(404, {"error": "not found"})
+            with open(os.path.join(web_dir, name), "rb") as f:
+                body = f.read()
+            if name == "index.html":
+                body = styled_html(body, api.theme_style())
+            ext = os.path.splitext(name)[1]
+            # a font's name holds the start of its checksum, so the same name is always the same bytes and may be
+            # kept (a phone that fetched it at every page would show the fallback type first each time); everything
+            # else is never kept
+            self._send(200, body, TYPES.get(ext, "application/octet-stream"), cache="max-age=86400" if ext == ".woff2" else "no-store")
+
+        def _upload(self, update=False):
+            """Raw-body upload: POST /api/media/upload?name=clip.mp4[&replace=1]. Streams to disk."""
+            parts = urlsplit(self.path)
+            query = parse_qs(parts.query)
+            try:
+                device = self._who("POST", "/api/system/update/upload" if update else "/api/media/upload")
+                if (self.headers.get("Content-Type") or "").split(";")[0].strip() != "application/octet-stream":
+                    raise ApiError(415, "send application/octet-stream")
+                try:
+                    length = int(self.headers.get("Content-Length", ""))
+                except ValueError:
+                    length = None
+                name = (query.get("name") or [""])[0]
+                replace = (query.get("replace") or ["0"])[0] == "1"
+                # Authenticated owner: the short connection lifetime would cut a big file off, so use
+                # an idle timeout instead (the connection cap still applies).
+                if self.headers.get("Transfer-Encoding"):
+                    raise ApiError(501, "chunked uploads are not supported; send Content-Length")
+                token = self._token()
+
+                def still_paired():
+                    if (auth.authenticate(token) or api.support.authenticate(token)) is None:  # revoked or ended: stop at once
+                        raise ApiError(403, "this device was removed")
+                self._reaper.cancel()
+                self.connection.settimeout(30)
+                # read1 returns what has arrived, so slow senders are noticed after every packet
+                if update:
+                    result = api.update_upload(name, length, self.rfile.read1, check=still_paired)
+                else:
+                    result = api.upload(name, length, self.rfile.read1, replace, check=still_paired)
+                api.presence.changed(device, "POST", "/api/system/update/upload" if update else "/api/media/upload")      # D126
+                # D84: what a support login changed is in its session's log (these two paths are answered here)
+                from . import support as support_mod
+                if update:              # never displaced: which bundle, by name and sha256
+                    api.support.note(device, support_mod.upload_line(True, result), always=True)
+                else:                   # routine: one counted line, with a few of the names
+                    api.support.note(device, "uploaded a clip", major=False, detail=result.get("name", ""))
+                self._json(200, result)
+            except ApiError as e:
+                self.close_connection = True  # an unread body must not be parsed as the next request
+                self._json(e.status, {"error": e.message})
+            except (OSError, ValueError):
+                self.close_connection = True
+            except Exception:
+                traceback.print_exc()
+                self.close_connection = True
+                self._json(500, {"error": "internal error"})
+
+        def _graphics_upload(self):
+            """Raw-body upload: POST /api/graphics/upload?name=logo.png[&replace=1]. A PNG, JPEG or SVG; the answer is the
+            stored PNG's name, or the plain reason. Nothing is decoded here (mctl/raster.py, pvj-raster)."""
+            query = parse_qs(urlsplit(self.path).query)
+            try:
+                device = self._who("POST", "/api/graphics/upload")
+                if (self.headers.get("Content-Type") or "").split(";")[0].strip() != "application/octet-stream":
+                    raise ApiError(415, "send application/octet-stream")
+                try:
+                    length = int(self.headers.get("Content-Length", ""))
+                except ValueError:
+                    length = None
+                if self.headers.get("Transfer-Encoding"):
+                    raise ApiError(501, "chunked uploads are not supported; send Content-Length")
+                name = (query.get("name") or [""])[0]
+                replace = (query.get("replace") or ["0"])[0] == "1"
+                token = self._token()
+
+                def still_paired():
+                    if (auth.authenticate(token) or api.support.authenticate(token)) is None:
+                        raise ApiError(403, "this device was removed")
+                self._reaper.cancel()
+                self.connection.settimeout(30)
+                result = api.graphics_upload(name, length, self.rfile.read1, replace, check=still_paired)
+                api.presence.changed(device, "POST", "/api/graphics/upload")
+                api.support.note(device, "uploaded a graphic", major=False, detail=result.get("name", ""))
+                self._json(200, result)
+            except ApiError as e:
+                self.close_connection = True  # an unread body must not be parsed as the next request
+                self._json(e.status, {"error": e.message})
+            except (OSError, ValueError):
+                self.close_connection = True
+            except Exception:
+                traceback.print_exc()
+                self.close_connection = True
+                self._json(500, {"error": "internal error"})
+
+        def _settings_import(self):
+            """POST /api/system/settings/import?confirm=import: the body is the exported file itself. It is read
+            here as bytes (larger than MAX_BODY allows) and parsed once, strictly, by boxcare."""
+            from . import boxcare
+            try:
+                device = self._who("POST", "/api/system/settings/import")
+                if not (self.headers.get("Content-Type") or "").startswith("application/json"):
+                    raise ApiError(415, "send application/json")
+                if self.headers.get("Transfer-Encoding"):
+                    raise ApiError(501, "chunked bodies are not supported; send Content-Length")
+                try:
+                    length = int(self.headers.get("Content-Length", ""))
+                except ValueError:
+                    raise ApiError(411, "Content-Length required")
+                if length < 0 or length > boxcare.MAX_IMPORT:
+                    raise ApiError(413, "the file is too large for a settings file")
+                raw = self.rfile.read(length)
+                confirm = (parse_qs(urlsplit(self.path).query).get("confirm") or [""])[0]
+                out = api.boxcare.import_settings(raw, confirm, device, self.client_address[0])
+                api.presence.changed(device, "POST", "/api/system/settings/import")           # D126
+                self._json(200, out)
+            except ApiError as e:
+                self.close_connection = True  # an unread body must not be parsed as the next request
+                self._json(e.status, {"error": e.message})
+            except OSError:
+                self.close_connection = True
+            except Exception:
+                traceback.print_exc()
+                self.close_connection = True
+                self._json(500, {"error": "internal error"})
+
+        def do_POST(self):
+            if not self._host_ok():
+                return
+            path = urlsplit(self.path).path
+            if path in ("/handover", "/handover/switch"):
+                return self._handover_form(path)                # D132: a browser form, not an API call (no JSON, no X-MCTL-Request)
+            if not path.startswith("/api/"):
+                return self._json(404, {"error": "not found"})
+            if not self._csrf_ok():
+                return self._json(403, {"error": "cross-site or missing request header"})
+            if path == "/api/media/upload":
+                return self._upload()
+            if path == "/api/system/update/upload":
+                return self._upload(update=True)
+            if path == "/api/graphics/upload":
+                return self._graphics_upload()
+            if path == "/api/system/settings/import":
+                return self._settings_import()
+            body, err = self._body()
+            if err:
+                return self._json(err[0], {"error": err[1]})
+            if path.startswith("/api/https/"):
+                return self._https_route("POST", path, body)
+            if path == "/api/graphics/preview.png":
+                return self._graphics_preview(body)
+            self._api("POST", path, body)
+
+        def _https_route(self, method, path, body):
+            """The secure connection's own routes (D79, mctl/httpsbox.py), answered here because they need to know the
+            scheme and the Host of the request, which the API's handlers do not see. Full access for all but the
+            probe; the files (the request to sign, the root to install) are plain downloads for the owner's browser."""
+            from .httpsbox import HttpsError
+            box = self._https()
+            host = self.headers.get("Host", "")
+            try:
+                if box is None:
+                    raise ApiError(404, "not found")
+                if path == "/api/https/probe":              # does this device trust the box: a tiny answer, nothing secret
+                    if method != "GET":
+                        raise ApiError(405, "method not allowed")
+                    return self._json(200, {"https": self._secure()})
+                if path == "/api/fleet/card":               # D132: the facts mDNS announces and the hash of the public key; over TLS only
+                    if method != "GET" or not self._secure():
+                        raise ApiError(404, "not found")
+                    card = api.handover.card() if api.handover is not None else None
+                    if card is None:
+                        raise ApiError(404, "not found")
+                    return self._json(200, card)
+                device = self._who(method, path)
+                api.require(device, "full")
+                if method == "GET":
+                    if path == "/api/https":
+                        return self._json(200, box.status(self._secure(), host, device))
+                    if path == "/api/https/request.csr":
+                        text = box.request_pem()
+                        if text is None:
+                            raise ApiError(404, "no request has been made yet")
+                        return self._send(200, text.encode(), "application/pkcs10",
+                                          [("Content-Disposition", 'attachment; filename="%s.csr"' % box.hostname())])
+                    if path == "/api/https/root.crt":
+                        text = box.root_pem()
+                        if text is None:
+                            raise ApiError(404, "the node has no root certificate to give: upload a certificate file that holds the root after the node's certificate")
+                        return self._send(200, text.encode(), "application/x-x509-ca-cert",
+                                          [("Content-Disposition", 'attachment; filename="nxlx-root.crt"')])
+                    raise ApiError(405 if path in ("/api/https/request", "/api/https/certificate", "/api/https/undo", "/api/https/remove", "/api/https/owner-only", "/api/https/root", "/api/https/auto") else 404,
+                                   "method not allowed" if path.startswith("/api/https/") else "not found")
+                if path == "/api/https/request":
+                    names = body.get("names") if "names" in body else box.default_names()
+                    return self._json(200, box.make_request(names, body.get("new_key") is True))
+                if path == "/api/https/certificate":
+                    leaf = box.install(body.get("certificate"), host)
+                    api.log("pvj-web: certificate uploaded by device %s (%s)" % (device["id"], device["name"]))
+                    return self._json(200, {"installed": True, "status": box.status(self._secure(), host, device)})
+                if path == "/api/https/undo":
+                    box.undo()
+                    return self._json(200, {"undone": True, "status": box.status(self._secure(), host, device)})
+                if path == "/api/https/remove":
+                    had = box.remove()
+                    return self._json(200, {"removed": had, "status": box.status(self._secure(), host, device)})
+                if path == "/api/https/root":
+                    out = box.replace_root(body.get("root"), body.get("confirm"), self._secure(), box.device_secure(device))
+                    api.log("pvj-web: root replaced by device %s (%s)" % (device["id"], device["name"]))
+                    return self._json(200, dict(out, status=box.status(self._secure(), host, device)))
+                if path == "/api/https/auto":               # D139: where the signer is, and "try now"; the try runs in its own thread
+                    from .autocert import URL as SIGNER_URL, clean_fingerprint
+                    auto = getattr(api, "autocert", None)
+                    if auto is None:
+                        raise ApiError(404, "not found")
+                    change = {}
+                    if "signer_url" in body:
+                        url = body.get("signer_url")
+                        if not isinstance(url, str) or (url.strip() and not SIGNER_URL.fullmatch(url.strip())):
+                            raise ApiError(400, "give the signer's address as http://name-or-address:port, or nothing to use the node's default")
+                        change["signer_url"] = url.strip()
+                    if "root_fingerprint" in body:
+                        fp = body.get("root_fingerprint")
+                        if not isinstance(fp, str) or (fp.strip() and clean_fingerprint(fp) is None):
+                            raise ApiError(400, "the root fingerprint is the 64 hex digits python3 tools/boxcert.py root prints, or nothing")
+                        change["root_fingerprint"] = clean_fingerprint(fp) or ""
+                    if change:
+                        with api.settings.lock:
+                            section = dict(api.settings.data.get("https") or {})
+                            section.update(change)
+                            # a node with no root takes a first root only when it knows which (D139 review)
+                            if box.root_info()[0] is None and (section.get("signer_url") or env_signer(auto)) and \
+                                    not (clean_fingerprint(section.get("root_fingerprint") or "") or auto.env.get("PVJ_ROOT_FINGERPRINT")):
+                                raise ApiError(400, "this node trusts no root yet: give the root fingerprint with the signer's address")
+                            api.settings.data["https"] = section
+                            api.settings.save()
+                    auto.kick()
+                    return self._json(200, {"signer_url": auto.url(), "root_fingerprint": auto.want_root(), "status": box.status(self._secure(), host, device)})
+                if path == "/api/https/owner-only":
+                    on = box.set_owner_only(body.get("on"), self._secure(), box.device_secure(device))
+                    return self._json(200, {"owner_only": on, "status": box.status(self._secure(), host, device)})
+                raise ApiError(404, "not found")
+            except HttpsError as e:
+                self._json(e.status, {"error": e.message})
+            except ApiError as e:
+                self._json(e.status, {"error": e.message})
+            except Exception:
+                traceback.print_exc()
+                self._json(500, {"error": "internal error"})
+
+        def _page(self, status, title, lines, extra=None, script=None, form=None):
+            """A tiny page of this node's own (no inline script or style: the policy forbids them). `lines`: plain sentences."""
+            parts = ["<!doctype html>", '<html lang="en"><head><meta charset="utf-8"><title>%s</title></head><body>' % html.escape(title)]
+            parts += ["<p>%s</p>" % html.escape(line) for line in lines]
+            if form:
+                parts.append('<form method="post" action="%s"><input type="hidden" name="handle" value="%s"><button type="submit">%s</button></form>'
+                             % (html.escape(form[0]), html.escape(form[1]), html.escape(form[2])))
+            if script:
+                parts.append('<script src="%s"></script>' % html.escape(script))
+            parts.append('<p><a href="/">Open the panel</a></p></body></html>')
+            self._send(status, "".join(parts).encode("utf-8"), TYPES[".html"], extra)
+
+        def _handover_form(self, path):
+            """POST /handover and POST /handover/switch (D132, design 5): the form a browser posts to this node with a ticket from
+            another node, and the confirm button of the page that answers when this device is already signed in here as
+            something higher. TLS only; plain http answers 404 and names the https address (no redirect). Every failure ends
+            at a page with one sentence and a link to the panel, where the PIN works as before."""
+            box = self._https()
+            if not self._secure() or api.tickets is None or api.handover is None:
+                return self._json(404, {"error": "not found", "https": box.https_address(self.headers.get("Host")) if box is not None else None})
+            node = (api.handover.own()[1] or "This node")
+            source = self.client_address[0]
+
+            def refused(sentence):
+                self._page(403, "Not signed in", ["%s did not accept the hand-over: %s. Use the PIN." % (node, sentence.rstrip("."))])
+            if api.support.is_remote(source):
+                return refused("a hand-over is not taken through a support session")
+            if (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/x-www-form-urlencoded" \
+                    or self.headers.get("Transfer-Encoding"):
+                return refused("that was not a hand-over form")
+            try:
+                length = int(self.headers.get("Content-Length", ""))
+            except ValueError:
+                return refused("that was not a hand-over form")
+            if length < 0 or length > 2048:
+                return refused("that was not a hand-over form")
+            try:
+                found = parse_qs(self.rfile.read(length).decode("ascii"), keep_blank_values=True, strict_parsing=True, max_num_fields=8)
+            except (ValueError, UnicodeDecodeError):
+                return refused("that was not a hand-over form")
+            if any(len(v) != 1 for v in found.values()):
+                return refused("that was not a hand-over form")
+            fields = {k: v[0] for k, v in found.items()}
+            token = self._token()
+            here = auth.authenticate(token) if token else None
+            origin = self.headers.get("Origin")
+            if path == "/handover/switch":
+                # the button of our own page: same origin, and the cookie that proves this is the browser that was signed in here
+                host = (self.headers.get("Host") or "").lower()
+                parts = urlsplit(origin) if origin else None
+                if here is None or parts is None or parts.scheme != "https" or not host or parts.netloc.lower() != host or set(fields) != {"handle"}:
+                    return refused("that switch was not made from this node's own page")
+                result = api.tickets.confirm(fields["handle"], source)
+            else:
+                result = api.tickets.signin(fields, origin, source, here["role"] if here else None)
+            if result["result"] == "signed-in":
+                cookie = ("Set-Cookie", self._cookie_set(result["token"], 31536000))
+                return self._page(200, "Signed in", ["Signed in to %s as %s." % (node, result["name"])], [cookie], script="/handover.js")
+            if result["result"] == "confirm":
+                return self._page(200, "Switch?", ["You are already signed in here as %s. Switch to %s from %s?" % (result["have"], result["would"], result["from"])],
+                                  form=("/handover/switch", result["handle"], "Switch"))
+            refused(result["sentence"])
+
+        def _method_not_allowed(self):
+            self._json(405, {"error": "method not allowed"}, [("Allow", "GET, POST")])
+
+        do_PUT = do_DELETE = do_PATCH = _method_not_allowed
+
+        def _seen_from(self):
+            """The connection's own address (never a header), for Auth to remember where a paired device asks from
+            (D78). Not through the support tunnel: that address is the tunnel's, not a device at the studio."""
+            client = self.client_address[0]
+            return None if api.support.is_remote(client) else client
+
+        def _who(self, method, path):
+            """The device behind this request (a paired device, or support during a session), after Api.gate: the
+            support tunnel's rules (through the tunnel only support's login works, and some things are never allowed
+            there) and the path's minimum role from policy.OUTSIDE. Used only for the paths answered outside the
+            route table."""
+            token = self._token()
+            device = auth.authenticate(token, self._seen_from()) or api.support.authenticate(token)
+            # the same gate as the route table (D80); a path that has no row asks for an Owner
+            api.gate(method, path, {}, device, self.client_address[0], need=policy.OUTSIDE.get((method, path), "full"))
+            gate = self._gate(device, path)                 # D79: owner access only over the secure connection
+            if gate:
+                raise ApiError(403, gate)
+            api.presence.seen(device)                       # a request answered outside Api.handle is still a request (D126)
+            return device
+
+        def _api(self, method, path, body):
+            token = self._token()
+            device = auth.authenticate(token, self._seen_from()) or api.support.authenticate(token)
+            gate = self._gate(device, path)
+            if gate:
+                return self._json(403, {"error": gate, "https": self._https().https_address()})
+            box = self._https()
+            if method == "POST" and path == "/api/pair" and box is not None and not box.pin_allowed(self._secure()) \
+                    and len(str(body.get("pin", ""))) != 6:
+                # a 6-digit code (a guest or presenter, or the code from a controller) is still taken over plain http
+                return self._json(403, {"error": "the PIN pairs an owner over the secure connection only: open %s and pair there"
+                                        % box.https_address(), "https": box.https_address()})
+            api.request.secure = self._secure()                # which listener this request came in on, for the routes that need TLS (D132)
+            api.request.host = self.headers.get("Host")        # and the Host it was asked for, for the one that names this node's origin (a ticket)
+            try:
+                status, payload = api.handle(method, path, body, device, self.client_address[0])
+            except Exception:
+                # Never drop the connection silently: log for the journal, tell the client plainly.
+                traceback.print_exc()
+                return self._json(500, {"error": "internal error"})
+            extra = []
+            if status == 200 and path == "/api/pair" and box is not None and not self._secure() and box.effective() \
+                    and isinstance(payload.get("device"), dict) and payload["device"].get("role") == "full":
+                # a six-digit OWNER code from a controller (D61) pairs full access: over plain http while the switch
+                # is on that is refused too, and the device it just made is taken back (review of #119)
+                auth.revoke(payload["device"].get("id"))
+                return self._json(403, {"error": "full access is paired over the secure connection only: open %s and use the code there" % box.https_address(),
+                                        "https": box.https_address()})
+            if status == 200 and path in ("/api/pair", "/api/session") and payload.get("token"):
+                extra.append(("Set-Cookie", self._cookie_set(payload["token"], 31536000)))
+                if self._secure() and path == "/api/pair" and box is not None and isinstance(payload.get("device"), dict):
+                    # a token MADE over TLS (D79). Never at /api/session: that is a token that already existed (a
+                    # guest link, or one sniffed off plain http) and only the cookie is new (review of #119, M1)
+                    box.mark_secure(payload["device"].get("id"))
+            if status == 200 and path == "/api/logout":
+                extra.extend(self._cookies_cleared())
+            if status == 200 and path == "/api/support/login" and payload.get("token"):
+                # support's login ends with the session on the box; the cookie only has to cover the longest a
+                # session can last (the studio may extend it), and is useless after that
+                extra.append(("Set-Cookie", self._cookie_set(payload["token"], supportd_max_seconds())))
+            if payload.get("retry_after"):
+                extra.append(("Retry-After", str(payload["retry_after"])))
+            self._json(status, payload, extra)
+
+    return Handler
+
+
+class MctlServer(ThreadingHTTPServer):
+    """Threaded server with a hard cap on simultaneous connections, so a flood of idle
+    sockets cannot exhaust threads; extra connections get a plain 503 straight away.
+
+    The queue of connections the kernel has finished and this server has not yet taken (the listen backlog) is 128,
+    not the 5 that socketserver asks for. A browser opens six connections at once for the files of the page, and
+    every request here is its own connection (HTTP/1.0), so two or three people opening the panel in the same
+    second ask for more than five before the loop below has taken the first. What the kernel does with the one too
+    many differs: macOS resets it (a script of the page then never arrives, measured 2026-10-08). Linux, as
+    documented, drops the handshake and leaves the client to ask again about a second later; that was measured on
+    CI's Linux only (Ubuntu 24.04, 2026-10-08: with a queue of 5 and nobody taking connections, 33 and 34 of 40
+    had not connected after half a second, in two runs) and not on the Pi. 128 is the largest value every kernel
+    in use here grants (the kernel lowers a larger one to its own limit, net.core.somaxconn or kern.ipc.somaxconn). A waiting connection costs the
+    kernel a little memory and this process nothing: no thread and no file descriptor until it is taken, and then
+    the cap below decides. So the bound on threads and descriptors is still max_connections."""
+
+    daemon_threads = True
+    request_queue_size = 128
+
+    def __init__(self, address, handler, max_connections=64):
+        super().__init__(address, handler)
+        self._slots = threading.BoundedSemaphore(max_connections)
+
+    def process_request(self, request, client_address):
+        if not self._slots.acquire(blocking=False):
+            try:
+                request.sendall(b"HTTP/1.0 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            except OSError:
+                pass
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            # The thread did not start (the system had no thread to give), so process_request_thread below will
+            # never run for this connection and never give its place back: give it back here. Without this every
+            # such failure took one of the places for good, and after max_connections of them the panel answered
+            # nothing but 503 until the service was started again. socketserver closes the connection and logs.
+            self._slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
+
+
+class TlsServer(MctlServer):
+    """The same panel on a second port, over TLS (D79). The handshake happens in the connection's own thread, after
+    the connection cap was taken, so a client that connects and says nothing, or one that refuses the certificate,
+    costs the accept loop nothing. With no certificate loaded (box.context None) every connection is closed at once:
+    "HTTPS off" and "no certificate" are the same thing and need no restart to change."""
+
+    secure = True
+
+    def __init__(self, address, handler, box, max_connections=64):
+        super().__init__(address, handler, max_connections)
+        self.box = box
+        box.port = self.server_address[1]
+
+    def _context(self):
+        return self.box.context
+
+    def handle_error(self, request, client_address):
+        """A client that walked away or was turned away (a reset, a closed connection, a failed handshake) is not worth a traceback
+        in the journal: another node checks this node's certificate and closes the connection (D132), and a scan of the peer port
+        ends this way every time."""
+        import ssl
+        if isinstance(sys.exc_info()[1], (OSError, ssl.SSLError)):
+            return
+        super().handle_error(request, client_address)
+
+    def process_request_thread(self, request, client_address):
+        import ssl
+        ctx = self._context()
+        if ctx is None:
+            self.shutdown_request(request)
+            self._slots.release()
+            return
+        try:
+            request.settimeout(10)
+            request = ctx.wrap_socket(request, server_side=True)
+        except (ssl.SSLError, OSError, ValueError):       # a device without the root walks away mid-handshake
+            self.shutdown_request(request)
+            self._slots.release()
+            return
+        super().process_request_thread(request, client_address)
+
+
+def make_peer_handler(api, max_lifetime=30.0):
+    """The peer listener's handler (D132): two POSTs and nothing else. The caller is proved by the handshake (the certificate
+    it showed chains to the pinned root); `Peers.authenticate` then reads the key usage, the dates and the key hash from that
+    certificate, and the answers below decide with that key, never with what the body claims."""
+    from .peer import PeerError
+    from .ticket import TicketError
+    from .lease import LeaseError
+
+    class PeerHandler(BaseHTTPRequestHandler):
+        server_version = "mctl"
+        sys_version = ""
+        timeout = 10
+
+        def setup(self):
+            super().setup()
+            self._reaper = threading.Timer(max_lifetime, self._kill)
+            self._reaper.daemon = True
+            self._reaper.start()
+
+        def _kill(self):
+            try:
+                self.connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+        def finish(self):
+            self._reaper.cancel()
+            super().finish()
+
+        def log_message(self, fmt, *args):
+            sys.stderr.write("%s %s\n" % (self.client_address[0], fmt % args))
+
+        def _json(self, status, payload):
+            data = json.dumps(payload).encode()
+            try:
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.end_headers()
+                if self.command != "HEAD":
+                    self.wfile.write(data)
+            except OSError:
+                self.close_connection = True
+
+        def _not_found(self):
+            self._json(404, {"error": "not found"})
+
+        do_GET = do_HEAD = do_PUT = do_DELETE = do_PATCH = _not_found
+
+        def do_POST(self):
+            path = urlsplit(self.path).path
+            if path not in ("/api/fleet/peer", "/api/handover/redeem", "/api/handover/lease", "/api/handover/poke") or api.peers is None:
+                return self._not_found()
+            source = self.client_address[0]
+            try:
+                der = self.connection.getpeercert(binary_form=True)
+            except (AttributeError, ValueError):
+                der = None
+            try:
+                if not der:
+                    raise PeerError("a certificate is needed", 403)
+                key = api.peers.authenticate(der, source)
+                try:
+                    length = int(self.headers.get("Content-Length", ""))
+                except ValueError:
+                    raise PeerError("Content-Length required", 411)
+                if length < 0 or length > MAX_BODY:
+                    raise PeerError("body too large", 413)
+                if not (self.headers.get("Content-Type") or "").startswith("application/json") or self.headers.get("Transfer-Encoding"):
+                    raise PeerError("send application/json with a Content-Length", 415)
+                try:
+                    body = json.loads(self.rfile.read(length) or b"{}")
+                except (ValueError, RecursionError):
+                    raise PeerError("invalid JSON", 400)
+                if not isinstance(body, dict):
+                    raise PeerError("JSON object expected", 400)
+                if path == "/api/fleet/peer":
+                    out = api.peers.handle_peer(body, source, key)
+                elif path in ("/api/handover/lease", "/api/handover/poke"):
+                    leases = getattr(api, "leases", None)
+                    if leases is None:
+                        return self._not_found()
+                    out = leases.answer(body, key, source) if path.endswith("/lease") else leases.poked(body, key, source)
+                elif api.tickets is None:
+                    return self._not_found()
+                else:
+                    out = api.tickets.redeem(body, key, source)
+            except (PeerError, TicketError, LeaseError) as e:
+                self.close_connection = True
+                return self._json(e.status, {"error": e.message})
+            except Exception:
+                traceback.print_exc()
+                self.close_connection = True
+                return self._json(500, {"error": "internal error"})
+            self._json(200, out)
+
+    return PeerHandler
+
+
+class PeerServer(TlsServer):
+    """The listener the nodes call each other on (D132, slice 4a): TLS that asks every caller for a certificate and accepts only
+    one that chains to the pinned root (HttpsBox.peer_context). A browser, a scanner or a node without a certificate of the
+    root's never gets past the handshake. With no certificate or no root, every connection is closed at once. It does not
+    set the panel's port on the box."""
+
+    def __init__(self, address, handler, box, max_connections=32):
+        MctlServer.__init__(self, address, handler, max_connections)
+        self.box = box
+
+    def _context(self):
+        return self.box.peer_context()
+
+
+def write_pin_file(rundir, pin):
+    """Show-the-PIN channel: a tmpfs file the display or an admin can read. Cleared on reboot."""
+    path = paths.pin_file(rundir)
+    # Owner only: the panel writes it and root reads it (`sudo pvj-pin`). The player's account, which opens
+    # untrusted media and shares group pvj, has no business reading the full-access PIN.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    with os.fdopen(fd, "w") as f:
+        os.fchmod(f.fileno(), 0o600)
+        f.write(pin + "\n")
+
+
+def supportd_max_seconds():
+    from . import supportd
+    return supportd.MAX_TOTAL_MINUTES * 60
+
+
+def build_fleet(api, settings, state, board):
+    """The node's announcement and its list of other nodes (mctl/fleet.py, D127). Nothing is sent or asked here."""
+    from . import __version__, fleet as fleet_mod
+    own_id, kept = fleet_mod.node_id(state)
+    if not kept:
+        print("pvj-web: the node id could not be kept in %s; it will be new at the next start" % state, file=sys.stderr)
+    api.node_id = own_id                     # the one id this node has: the fleet card says the same as the announcement
+    tier = hardware.tier(board["kind"])
+
+    def describe():
+        secure = api.https.context is not None and bool(api.https.port)
+        port = api.https.port if secure else (api.support.panel_port or 80)
+        return {"id": own_id, "name": fleet_mod.clean_hostname(socket.gethostname()), "tier": tier, "version": __version__,
+                "port": port, "https": secure}
+
+    known = [0.0, []]
+
+    def addresses():
+        if time.monotonic() - known[0] >= fleet_mod.CACHE_SECONDS or not known[1]:       # `ip` is run at most once per listing
+            known[:] = [time.monotonic(), [a["local"] for e in api._ip_json() if e.get("ifname") not in ("lo", "wg-pvj")
+                                           for a in e.get("addr_info", []) if a.get("family") == "inet" and a.get("local")]]
+        return list(known[1])
+
+    return fleet_mod.Fleet(describe, lambda: fleet_mod.stored_on(settings.data.get("fleet")), api.sysd,
+                           lambda: fleet_mod.scan(fleet_mod.net_transport(addresses)),
+                           log=lambda m: print(m, file=sys.stderr), event=api.event)
+
+
+def peer_port(env):
+    """The port the nodes call each other on: PVJ_PEER_PORT, the same on every node (the unit sets 8443); the default of the
+    peer client is the same number, so a node that does not listen still knows where to call the others."""
+    from . import peer as peer_mod
+    try:
+        return int(env.get("PVJ_PEER_PORT", "") or 0) or peer_mod.DEFAULT_PEER_PORT
+    except ValueError:
+        return peer_mod.DEFAULT_PEER_PORT
+
+
+def build_handover(api, settings, state, env):
+    """The fleet list, the acceptances and the deny file beside tls/ (mctl/handover.py, D132). Reads files, calls nobody."""
+    from . import fleet as fleet_mod, handover as handover_mod
+    own_id = getattr(api, "node_id", None) or fleet_mod.node_id(state)[0]
+    hv = handover_mod.Handover(state, api.https, settings, lambda: {"id": own_id, "name": fleet_mod.clean_hostname(socket.gethostname())},
+                               event=api.event, log=api.log, openssl=env.get("PVJ_OPENSSL", "openssl"))
+    hv.load()
+    from . import peer as peer_mod
+
+    def lookup(node_id):
+        view = api.fleet.view() if api.fleet is not None else {}
+        return [(r["address"], r["port"], r.get("name")) for r in view.get("nodes", []) if r.get("id") == node_id and r.get("https")]
+
+    api.peers = peer_mod.Peers(hv, api.https, lookup, log=api.log, peer_port=peer_port(env))
+    from . import ticket as ticket_mod
+    api.tickets = ticket_mod.Tickets(hv, api.peers, api.auth, api.https, event=api.event, log=api.log)
+    from . import lease as lease_mod, screenmode
+    api.leases = lease_mod.Leases(hv, api.peers, api.auth, api.https, event=api.event, log=api.log, boot=screenmode.boot_id)
+    api.tickets.leases = api.leases                      # a hand-over gives the device a lease (D132, slice 4b)
+    api.auth.on_lent_gone = api.leases.poke              # a device lent to other nodes that is removed here: they are poked
+    hv.on_change = api.leases.sweep                      # the list, an acceptance or the deny list changed: what is no longer approved goes at once
+    return hv
+
+
+def build(env=None, player=None):
+    env = os.environ if env is None else env
+    state = env.get("PVJ_STATE_DIR", "/var/lib/pvj")
+    media = env.get("PVJ_MEDIA_DIR", os.path.join(state, "video"))
+    settings = Settings(os.path.join(state, "settings.json"))
+    settings.load()
+    board = hardware.detect_board()
+    auth = Auth(settings, rotate_on_start=True)
+    registry = Registry(settings, board["kind"])
+    addons = os.path.join(state, "addons")
+    themes = themes_mod.load_themes()        # the looks the box comes with; the owner's own are read by the Api's store
+    player = player or Player()
+    rundir = player.rundir
+    attach = getattr(player, "attach_lists", None)
+    if attach is not None:                  # the seamless loop of a plain clip (D118), on the New renderer only
+        from . import looplist, renderer as renderer_mod
+        attach(looplist.Lists(paths.loops_dir(rundir), getattr(player, "mpv_bin", "mpv"),
+                              enabled=lambda: renderer_mod.loop_lists(settings.data.get("renderer"))))
+    api = Api(player, settings, auth, registry, themes, media, board, addons_dir=addons,
+              spawn=env.get("PVJ_DEV_SPAWN") == "1", on_pin=lambda pin: write_pin_file(rundir, pin))
+    api.net = netd_mod.NetdClient(os.path.join(env.get("PVJ_NETD_DIR") or rundir, paths.NETD_SOCKET))
+    from . import capture as capture_mod
+    api.capture = capture_mod.Capture(rundir, getattr(player, "mpv_bin", "mpv"))
+    api.sysd = sysd_mod.SysdClient(paths.sysd_socket())
+    from . import events as events_mod, screenmode
+    api.events = events_mod.EventLog(os.path.join(state, events_mod.FILE), boot_id=screenmode.boot_id, log=lambda m: print(m, file=sys.stderr))
+    api.events.start()          # a boot id that is not the one in the file: the node restarted
+    if hasattr(player, "on_restart"):
+        def player_restarted():
+            api.event("player", "The player restarted by itself (it stopped or crashed).")
+            api.stats.stop_if_on("the player restarted")
+        player.on_restart = player_restarted
+    # The player outlives this program: whatever the stats overlay drew before a restart of the panel is taken off, however
+    # long the player takes to come up (D133). It is never on at a start.
+    threading.Thread(target=api.stats.reset_player, name="stats-overlay-reset", daemon=True).start()
+    # and a strobe that was lit when the panel went down is taken off the same way (the player keeps drawing it with nobody holding it)
+    threading.Thread(target=api.strobe.reset_player, name="strobe-reset", daemon=True).start()
+    # The NDI helper's client. NDI is opt-in per box (D62): PVJ_NDI_DIR is set only by the drop-in that root's
+    # `pvj-ndi-runtime install` writes for the panel's unit (mctl/ndisetup.py). Without it this box has no helper, the
+    # socket is never tried, and the page says how to set NDI up. With it, the helper is idle until the module is on.
+    from . import ndi as ndi_mod
+    ndi_log = lambda m: print(m, file=sys.stderr)      # noqa: E731
+    api.ndi = ndi_mod.Input(ndi_mod.Client(paths.ndi_socket(env)), paths.ndi_fifo(env),
+                            ndi_mod.Wanted(lambda: registry.enabled("inputs-ndi"), lambda: settings.data, log=ndi_log), log=ndi_log,
+                            pipe_owner=ndi_mod.pipe_owner, setup=bool(env.get("PVJ_NDI_DIR")),
+                            config_dir=paths.ndi_config_dir(env))
+    # The NDI discovery server's supervisor (D85): only on a box where root set it up (the panel's drop-in names its folder).
+    from . import ndiscovery as ndisc_mod
+    ndisc_dir = paths.ndisc_dir(env)
+    api.ndisc = ndisc_mod.Manager(ndi_mod.Client(os.path.join(ndisc_dir, ndisc_mod.SOCKET)) if ndisc_dir else None,
+                                  lambda: settings.data, lambda: registry.enabled("ndi-discovery"),
+                                  lambda: ndisc_mod.box_addresses(api._run_ip()), log=ndi_log)
+    api.ndi.own_server = api._own_discovery      # root makes the pipe (M3, 2026-10-11)
+    try:                                     # whatever the helper answers, the panel starts
+        api.ndi.sync()
+    except Exception as e:
+        print("pvj-web: NDI helper not told the settings: %s" % e, file=sys.stderr)
+    from . import httpsbox as httpsbox_mod
+    api.https = httpsbox_mod.HttpsBox(os.path.join(state, "tls"), settings, openssl=env.get("PVJ_OPENSSL", "openssl"),
+                                      addresses=lambda: [a["local"] for e in api._ip_json() if e.get("ifname") not in ("lo", "wg-pvj")
+                                                         for a in e.get("addr_info", []) if a.get("family") == "inet" and a.get("local")],
+                                      clock_trusted=lambda: api.clock_status().get("clock_from_network"), log=api.log)
+    api.https.load()                         # a certificate that will not load leaves HTTP as it is, with the reason on the page
+    from . import autocert as autocert_mod
+    api.autocert = autocert_mod.AutoCert(api.https, settings, env, log=api.log)     # D139: started in main(), after the listeners
+    api.fleet = build_fleet(api, settings, state, board)         # other nodes on the network (D127); the first announcement is in main()
+    api.handover = build_handover(api, settings, state, env)     # who this node trusts to carry devices (D132): files only, no call to another node
+    from . import supportd as supportd_mod
+    api.support.client = supportd_mod.SupportdClient(paths.supportd_socket())
+    api.support.panel_port = int(env.get("PVJ_PORT", "8080"))
+    api.support.close_leftover()
+    api.health.start()                       # notices a short undervoltage with nobody looking
+    try:
+        api.shaders.tidy()                   # shader texts an earlier panel process left in the runtime folder
+    except Exception as e:
+        print("pvj-web: old shader texts not removed: %s" % e, file=sys.stderr)
+    try:
+        api.effects.tidy()                   # an effect an earlier panel process left on comes off: nobody knows its values
+    except Exception as e:
+        print("pvj-web: an old effect was not taken off: %s" % e, file=sys.stderr)
+    try:
+        api.transitions.tidy()               # the still of a crossfade an earlier panel process left on the screen comes off
+    except Exception as e:
+        print("pvj-web: an old transition was not tidied: %s" % e, file=sys.stderr)
+    try:
+        api.screen.start()                   # the screen's mode the player reads (D90); a try left from before goes back
+    except Exception as e:
+        print("pvj-web: screen output not written: %s" % e, file=sys.stderr)
+    try:
+        api.renderer.start()                 # which program the player runs (D95)
+    except Exception as e:
+        print("pvj-web: the renderer's wish not written: %s" % e, file=sys.stderr)
+    try:
+        api.sync.apply()                     # lead or follow, as the settings say
+    except Exception as e:                   # a busy port must not stop the panel
+        print("pvj-web: sync not started: %s" % e, file=sys.stderr)
+    api.projectors.apply()                   # background status of the projectors, if that module is on
+    api.sweep_stale_uploads()  # temp files left by a power cut can be gigabytes
+    api.osc = osc_mod.OscManager(api, settings)
+    api.scheduler = scheduler_mod.Scheduler(api, settings, registry)
+    api.autostart = autostart_mod.Autostart(api, settings)
+    api.pinscreen = pinscreen_mod.PinScreen(api, auth)
+    from . import recovery as recovery_mod
+    api.recovery = recovery_mod.Recovery(api, auth, log=lambda line: print(line, flush=True))    # the stick way in (D81)
+    api.recovery.start()                                                                           # its scan thread: no disk IO under the PIN screen's lock
+    api.dmx = dmx_mod.DmxManager(api, settings)
+    api.midi = midi_mod.MidiHub(api, settings)
+    write_pin_file(rundir, auth.current_pin)
+    try:
+        api.osc.apply()
+    except osc_mod.OscError as e:
+        print("pvj-web: OSC not started: %s" % e, file=sys.stderr)
+    for name, manager in (("DMX", api.dmx), ("MIDI", api.midi)):
+        try:
+            manager.apply()
+        except Exception as e:  # a missing controller or a busy port must not stop the panel
+            print("pvj-web: %s not started: %s" % (name, e), file=sys.stderr)
+    return api, auth, rundir
+
+
+def main(argv=None):
+    env = os.environ
+    try:
+        api, auth, rundir = build(env)
+    except SettingsError as e:
+        print("pvj-web: %s" % e, file=sys.stderr)
+        return 1
+    host, port = env.get("PVJ_BIND", "0.0.0.0"), int(env.get("PVJ_PORT", "8080"))
+    httpd = MctlServer((host, port), make_handler(api, auth))
+    tls_port = int(env.get("PVJ_HTTPS_PORT", "0") or 0)
+    tlsd = None
+    if tls_port:
+        try:
+            tlsd = TlsServer((host, tls_port), make_handler(api, auth), api.https)
+            threading.Thread(target=tlsd.serve_forever, name="mctl-https", daemon=True).start()
+        except OSError as e:                 # the port in use or not allowed: the plain panel still comes up
+            print("pvj-web: https not listening on %s:%d: %s" % (host, tls_port, e), file=sys.stderr)
+    if getattr(api, "autocert", None) is not None:
+        api.autocert.start()                 # D139: asks the signer in its own thread; a silent signer never holds the panel up
+    peerd = None
+    if int(env.get("PVJ_PEER_PORT", "0") or 0):
+        try:
+            peerd = PeerServer((host, peer_port(env)), make_peer_handler(api), api.https)
+            threading.Thread(target=peerd.serve_forever, name="mctl-peer", daemon=True).start()
+        except OSError as e:                 # the port in use: the panel still comes up, and this node can call the others
+            print("pvj-web: the peer port is not listening on %s:%d: %s" % (host, peer_port(env), e), file=sys.stderr)
+    api.scheduler.start()
+    api.autostart.start()
+    api.pinscreen.start()
+    if api.leases is not None:
+        api.leases.start()                   # the check of carried devices, the 24 hour lapse and the sweep (D132, slice 4b)
+    if api.fleet is not None:
+        api.fleet.tick()                   # the announcement, now that the ports are known (D127)
+    ndi_stop = threading.Event()
+
+    def ndi_watch():                         # a sender that changes size: the helper says so, the pipe is loaded again
+        n = 0
+        while not ndi_stop.wait(1.0):
+            n += 1
+            try:
+                if n % 10 == 0:              # the discovery server follows its network's address (DHCP)
+                    api.ndisc_tick()
+                api.ndi_tick()
+            except Exception as e:
+                print("pvj-web: NDI watch: %s" % e, file=sys.stderr)
+            try:
+                api.events_tick()            # the update result, the renderer's fall back, a projector without an answer (D125)
+            except Exception as e:
+                print("pvj-web: event watch: %s" % e, file=sys.stderr)
+            if n % 15 == 0 and api.fleet is not None:
+                api.fleet.tick()             # a new name, version or port, or a retry: nothing is sent when nothing changed (D127)
+            try:
+                api.render_tick()            # a render node's picture that went: back to what played before (D94)
+            except Exception as e:
+                print("pvj-web: render watch: %s" % e, file=sys.stderr)
+            try:
+                api.sound_tick()             # the sound service told again after a restart; the sending thread (D96)
+            except Exception as e:
+                print("pvj-web: sound watch: %s" % e, file=sys.stderr)
+    threading.Thread(target=ndi_watch, name="ndi-watch", daemon=True).start()
+    print("pvj-web: listening on %s:%d%s; pairing PIN %s (also in %s/pin)"
+          % (host, port, " and https on %d (%s)" % (tls_port, "certificate loaded" if api.https.context else "no certificate yet") if tlsd else "",
+             auth.current_pin, rundir), flush=True)
+    signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt))
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        httpd.server_close()
+        if tlsd:
+            tlsd.shutdown()
+            tlsd.server_close()
+        if peerd:
+            peerd.shutdown()
+            peerd.server_close()
+        api.scheduler.stop()
+        if api.events is not None:
+            api.events.flush()
+        api.autostart.stop()
+        api.pinscreen.stop()
+        if api.leases is not None:
+            api.leases.stop()
+        if api.capture:
+            api.capture.stop()
+        ndi_stop.set()
+        api.sound.stop()
+        if api.ndi:
+            api.ndi.stop()
+        api.dmx.stop()
+        api.strobe.stop()
+        api.midi.stop()
+        api.room.stop()
+        api.projectors.stop(final=True)
+        if api.osc:
+            api.osc.stop()
+    return 0

@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""The Strobe (pvj/strobe.py, pvj/effects.d/fx-strobe.fs): a flash held down that stops the moment it is let go.
+"""The Strobe (mctl/strobe.py, mctl/effects.d/fx-strobe.fs): a flash held down that stops the moment it is let go.
 
 What is held here:
 * the state machine, against stand-ins for the chain and the effect engine and a clock the test moves: the fast path (a
@@ -23,9 +23,9 @@ import time
 import unittest
 
 import tests        # noqa: F401  (the run's own temp folder, ranked locks)
-from pvj import actions, effects as E, midi, osc, policy, shaders as S, strobe as ST
-from pvj.api import ApiError
-from pvj.player import PlayerError
+from mctl import actions, effects as E, midi, osc, policy, shaders as S, strobe as ST
+from mctl.api import ApiError
+from mctl.player import PlayerError
 from tests.test_effects import Base as FxBase
 from tests.test_osc import msg
 
@@ -1060,8 +1060,8 @@ class RolesTest(RouteBase):
 
 # ---- the real renderer -------------------------------------------------------------------------------------------------
 from tests.test_mctl_render import Renderer, need_program         # noqa: E402
-from pvj import paths                                            # noqa: E402
-from pvj.player import Player as RealPlayer                                    # noqa: E402
+from mctl import paths                                            # noqa: E402
+from mctl.player import Player as RealPlayer                                    # noqa: E402
 
 
 class NativeTest(unittest.TestCase):
@@ -1118,7 +1118,7 @@ class NativeTest(unittest.TestCase):
         self.strobe.release({"id": "ab12cd34", "role": "live"}, {"all": True})
 
     def test_a_restart_of_the_panel_with_the_slot_at_amount_1_ends_with_no_flashing(self):
-        from pvj import fxchain
+        from mctl import fxchain
         self.strobe.hold({"id": "ab12cd34", "role": "live"}, {"holder": "t"})
         self.assertEqual(self.slot(3)["state"], "on")
         self.api.chains = fxchain.Chains(self.api)                # the panel restarted: empty records, no holders, slot None

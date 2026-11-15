@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""Turn design tokens exported from Figma into a theme file for the box (pvj/THEMES.md, "Make your own theme").
+"""Turn design tokens exported from Figma into a theme file for the box (mctl/THEMES.md, "Make your own theme").
 
     tools/figma-theme.py tokens.json --id my-look --name "My look" -o my-look.json
 
@@ -12,11 +12,11 @@ It reads either of two shapes of JSON:
 * a flat object of name to value: {"colour/page": "#0b0b0d", "shape/corner": 8}.
 
 Names are matched without regard to letter case, "colour" or "color", spaces or hyphens, and "/" or "."; the names
-of the Figma file "nxlx.mastercontrol Signal UI kit", the names in pvj/THEMES.md and the code names of app.css
+of the Figma file "nxlx.mastercontrol Signal UI kit", the names in mctl/THEMES.md and the code names of app.css
 (bg, --bg, var(--ar-room)) all work. A name it does not know is listed at the end and changes nothing.
 
 Whatever the tokens do not give comes from a base theme (--base, "signal" unless said otherwise). The result is
-checked by the box's own validator (pvj/themes.py), the contrast of every pairing is printed, and the file is
+checked by the box's own validator (mctl/themes.py), the contrast of every pairing is printed, and the file is
 written only if the box would accept it. Standard library only. This tool is never installed on the box.
 """
 import argparse
@@ -27,7 +27,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from pvj import themes  # noqa: E402
+from mctl import themes  # noqa: E402
 
 # normalised name -> (where it goes, key). The first spelling of each is the one THEMES.md documents.
 NAMES = {}
@@ -253,7 +253,7 @@ def convert(data, base, theme_id, name, style="signal", mode=None, flags=None):
     for place, (got, shown) in list(shared.items()) + list(exact.items()):      # an exact name wins over a shared one
         claimed[place] = (got, shown)
     if not claimed:
-        raise Problem("no name in the export is one a theme uses (see pvj/THEMES.md, \"Names the converter knows\"); found: %s"
+        raise Problem("no name in the export is one a theme uses (see mctl/THEMES.md, \"Names the converter knows\"); found: %s"
                       % ", ".join(sorted(report["ignored"])[:12]))
     theme = {"id": theme_id, "name": name, "style": style, "tokens": dict(base["tokens"])}
     for part in ("areas", "states"):

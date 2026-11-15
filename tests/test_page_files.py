@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""The files the panel's page names, and what pvj/web/load.js needs of the page to watch over them (D68).
+"""The files the panel's page names, and what mctl/web/load.js needs of the page to watch over them (D68).
 
 load.js can only tell "arrived and did not start" for a script whose tag says what the script leaves behind
 (data-gives), and it can only see a file fail if it was listening before that file was asked for. A script added to
@@ -11,11 +11,11 @@ import re
 import unittest
 from html.parser import HTMLParser
 
-from pvj import server
+from mctl import server
 import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 WEB = server.WEB_DIR
-# Named by the page and not a file in pvj/web: the server makes it from the theme in use (server.py, do_GET).
+# Named by the page and not a file in mctl/web: the server makes it from the theme in use (server.py, do_GET).
 MADE_BY_THE_SERVER = {"/theme.css"}
 
 

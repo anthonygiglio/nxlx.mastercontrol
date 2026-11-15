@@ -3,8 +3,8 @@
 import json
 import unittest
 
-from pvj import streams
-from pvj.settings import Settings
+from mctl import streams
+from mctl.settings import Settings
 from tests.test_server import ServerBase
 
 

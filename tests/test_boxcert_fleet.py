@@ -17,7 +17,7 @@ import threading
 import unittest
 
 import tests  # noqa: F401  (the tests package, as every test module imports it: tests/test_lockrank.py)
-from pvj import fleetlist as FL
+from mctl import fleetlist as FL
 from tests.test_boxcert import boxcert, make_request, openssls
 
 PASS = "correct horse battery"

@@ -3,7 +3,7 @@
 """One box of the design sandbox: the real panel, with nothing real behind it, in one scenario.
 
 Started by tools/sandbox/serve.py (one at a time; a new scenario is a new process, so nothing of the one before is
-left over). It builds the panel as pvj/server.py does, in a temporary folder of its own, with what the browser test's
+left over). It builds the panel as mctl/server.py does, in a temporary folder of its own, with what the browser test's
 harness puts behind it (tests/ui/harness.py): a headless mpv (no picture, no sound) when this machine has mpv, else no
 player at all; fake PJLink projectors on loopback; a fake NetworkManager; the report of a 1440p monitor. Then it pairs
 one device per role and serves the panel on four ports of 127.0.0.1, one per way of looking at it:
@@ -13,7 +13,7 @@ one device per role and serves the panel on four ports of 127.0.0.1, one per way
 
 Each port hands the panel that role's token itself (the server's own `_token`), so the browser needs no cookie and
 three roles can be open side by side in one browser. Everything else is the box's own code: the routes, the roles
-(pvj/policy.py), the page and its policy. Then the scenario (a JSON file, see README.md) is put in place through
+(mctl/policy.py), the page and its policy. Then the scenario (a JSON file, see README.md) is put in place through
 the box's own routes, as the Owner, and one JSON line says the box is ready.
 
 Run by hand only to look at one scenario: python3 tools/sandbox/box.py <scenario.json> <first port>.
@@ -241,8 +241,8 @@ def run(sc, tmp, first_port, stop):
     os.makedirs(rundir, mode=0o700)
     os.environ.update(PVJ_STATE_DIR=tmp, PVJ_MEDIA_DIR=media, PVJ_DEV_SPAWN="1")
 
-    from pvj import server, capture
-    from pvj.player import Player, PlayerError
+    from mctl import server, capture
+    from mctl.player import Player, PlayerError
     from tests.test_server import make_test_video
 
     has_mpv = bool(shutil.which("mpv"))
@@ -282,7 +282,7 @@ def run(sc, tmp, first_port, stop):
 
 
 def serve_box(sc, tmp, first_port, stop, api, auth, rundir, has_mpv, servers, fakes):
-    from pvj import server, screenmode, projector, overlay, midi as midi_mod
+    from mctl import server, screenmode, projector, overlay, midi as midi_mod
 
     # What the browser test's harness puts behind the panel (tests/ui/harness.py), without its delivery fake; MIDI
     # sees no controller at all (a real one plugged into this computer is not read).
@@ -299,7 +299,7 @@ def serve_box(sc, tmp, first_port, stop, api, auth, rundir, has_mpv, servers, fa
         size = (int(used.group(1)), int(used.group(2)))
         api.player.osd_size = lambda: size
     from tests.test_netd import FakeNm, make_sysfs
-    from pvj.netd import NetService
+    from mctl.netd import NetService
     nm = FakeNm()
     nm.scan_text = "Leyline Staff:72:WPA2:36\nVenue Guest:40::1\n"
     keyfiles = os.path.join(tmp, "nm-connections")
@@ -364,7 +364,7 @@ def serve_box(sc, tmp, first_port, stop, api, auth, rundir, has_mpv, servers, fa
         return Handler
 
     for i, role in enumerate(ROLES):
-        httpd = server.PvjServer(("127.0.0.1", first_port + i), handler_for(role))
+        httpd = server.MctlServer(("127.0.0.1", first_port + i), handler_for(role))
         servers[role] = httpd
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
 

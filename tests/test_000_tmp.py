@@ -20,7 +20,7 @@ import unittest
 from unittest import mock
 
 import tests
-from pvj import shaderlive
+from mctl import shaderlive
 from tests import tmpguard
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -52,7 +52,7 @@ class Outer(unittest.TestCase):
     def setUp(self):
         # Not in this run's own folder: a run started here makes its folder in this one, and a test's socket two
         # levels further down still has to fit in about 100 bytes.
-        self.tmp = tempfile.mkdtemp(prefix="pvjo", dir="/tmp" if os.path.isdir("/tmp") else None)
+        self.tmp = tempfile.mkdtemp(prefix="mctlo", dir="/tmp" if os.path.isdir("/tmp") else None)
         self.addCleanup(shutil.rmtree, self.tmp, True)
 
 
@@ -314,7 +314,7 @@ class Sweep(Outer):
         shutil.move(target, os.path.join(outside, P + "target"))                    # ours, but not in this folder
         os.symlink(os.path.join(outside, P + "target"), os.path.join(self.tmp, P + "link00"))
         self.folder("tmpabcd1234", age=age)                                         # another name, even with a marker
-        self.folder("pvj-test-abcd1234", age=age)
+        self.folder("mctl-test-abcd1234", age=age)
         self.folder(P + "nomark", mark=False)
         self.folder(P + "strngr", age=age, made_by="someone else")
         open(os.path.join(self.tmp, P + "afile0"), "w").close()

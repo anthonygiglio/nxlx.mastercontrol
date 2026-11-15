@@ -6,8 +6,8 @@ import os
 import tempfile
 import unittest
 
-from pvj import support as sp, supportd as sd
-from pvj.settings import Settings
+from mctl import support as sp, supportd as sd
+from mctl.settings import Settings
 from tests.test_server import ServerBase
 
 KEY = base64.b64encode(b"k" * 32).decode()

@@ -5,10 +5,10 @@ import os
 import tempfile
 import unittest
 
-from pvj import scheduler
-from pvj.api import ApiError
-from pvj.modules import Registry
-from pvj.settings import Settings
+from mctl import scheduler
+from mctl.api import ApiError
+from mctl.modules import Registry
+from mctl.settings import Settings
 from tests.test_server import ServerBase
 
 MON_9 = datetime.datetime(2026, 9, 28, 9, 0, 0)   # a Monday

@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """An effect over a generator shader (D74) on a real mpv that really draws: the rig of tests/test_effects_gpu.py.
 
-It began as a spike: before anything in pvj/ was changed, a generator's text and an effect's text were handed to the
+It began as a spike: before anything in mctl/ was changed, a generator's text and an effect's text were handed to the
 player together through its socket, to see what it does with the pair (the first commit of the branch has that
-version; its answers are in D74 and in pvj/SHADERS.md). What it found is held here, now through the engines: the
+version; its answers are in D74 and in mctl/SHADERS.md). What it found is held here, now through the engines: the
 pair is the effect of the generator's picture, the order of the player's list decides that, the effect meets the
 generator's drawing size and is capped by Effect detail only below it, both clocks run, Blackout and the opacity
 darken the pair, a refused pair leaves the generator on, and a refusal of one of the two is not taken for the other's.
@@ -19,8 +19,8 @@ import sys
 import time
 import unittest
 
-from pvj import effects as E, shaders as S
-from pvj.api import ApiError
+from mctl import effects as E, shaders as S
+from mctl.api import ApiError
 from tests.test_effects_gpu import BROKEN, CLIP, GPU, H, INVERT, ONLY, SAME, SWAP_HALVES, W, FxCase, differ, grid
 from tests.test_server import ServerBase
 from tests.test_shaders_gpu import BROKEN as BROKEN_GENERATOR

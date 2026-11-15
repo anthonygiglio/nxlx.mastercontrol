@@ -14,7 +14,7 @@ import threading
 import time
 import unittest
 
-from pvj import shaderlive as L, shaders as S
+from mctl import shaderlive as L, shaders as S
 from tests.test_server import ServerBase
 from tests.test_shaders_gpu import BROKEN, GPU, PROBE, GpuCase, H, W
 

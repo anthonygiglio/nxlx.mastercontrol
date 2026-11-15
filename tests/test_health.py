@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from pvj import health
+from mctl import health
 from tests.test_server import ServerBase
 
 
@@ -73,15 +73,15 @@ class ReportTest(unittest.TestCase):
         sysfs, proc, run = tree(alarm=False)
         roomy = lambda path: mock.Mock(f_frsize=4096, f_blocks=(100 * health.GB) // 4096, f_bavail=(60 * health.GB) // 4096)       # plenty free, whatever the runner has
         h = health.Health(Api(), run, sysfs=sysfs, proc=proc, log=lambda *_: None, statvfs=roomy)
-        with mock.patch("pvj.hardware.temperatures", lambda *a, **k: [{"celsius": 55.0}]), mock.patch.dict(os.environ, {"PVJ_STATE_DIR": run}):
+        with mock.patch("mctl.hardware.temperatures", lambda *a, **k: [{"celsius": 55.0}]), mock.patch.dict(os.environ, {"PVJ_STATE_DIR": run}):
             r = h.report()
         self.assertEqual((r["cpu_percent"], r["memory_percent"], r["memory_mb"]), (50, 25, 3906))
         self.assertIn("http://192.168.0.169/", r["addresses"])
         self.assertNotIn("http://127.0.0.1/", r["addresses"])
         self.assertEqual((r["temperature"]["state"], r["overall"]), ("ok", "ok"))
-        with mock.patch("pvj.hardware.temperatures", lambda *a, **k: [{"celsius": 86.0}]), mock.patch.dict(os.environ, {"PVJ_STATE_DIR": run}):
+        with mock.patch("mctl.hardware.temperatures", lambda *a, **k: [{"celsius": 86.0}]), mock.patch.dict(os.environ, {"PVJ_STATE_DIR": run}):
             self.assertEqual(h.report()["overall"], "bad")
-        with mock.patch("pvj.hardware.temperatures", lambda *a, **k: [{"celsius": 81.0}]):
+        with mock.patch("mctl.hardware.temperatures", lambda *a, **k: [{"celsius": 81.0}]):
             self.assertEqual(h.temperature()["state"], "warn")
 
     def test_a_helper_that_does_not_answer_is_a_problem(self):
@@ -93,7 +93,7 @@ class ReportTest(unittest.TestCase):
                 raise OSError("not running")
         api.sysd = Down()
         h = health.Health(api, run, sysfs=sysfs, proc=proc)
-        with mock.patch("pvj.hardware.temperatures", lambda *a, **k: []):
+        with mock.patch("mctl.hardware.temperatures", lambda *a, **k: []):
             r = h.report()
         self.assertEqual(r["helpers"][0], {"name": "pvj-sysd", "label": "System helper (restart, power off, clock)", "running": False})
         self.assertEqual(r["overall"], "bad")
@@ -146,7 +146,7 @@ class StorageTest(unittest.TestCase):
         self.assertEqual((r["id"], r["state"], r["folders"]), ("media+state", "warn", ["media", "state"]))
         self.assertTrue(r["text"].startswith("Storage: 1.4 GB free on the node's disk (clips and settings) (5 percent)"), r["text"])
         self.assertEqual(set(r), {"id", "name", "folders", "state", "text", "free_bytes", "total_bytes", "free_percent"})
-        with mock.patch("pvj.hardware.temperatures", lambda *a, **k: [{"celsius": 50.0}]):
+        with mock.patch("mctl.hardware.temperatures", lambda *a, **k: [{"celsius": 50.0}]):
             rep = h.report()
         self.assertEqual((rep["overall"], rep["storage"][0]["state"]), ("warn", "warn"))
 
@@ -157,7 +157,7 @@ class StorageTest(unittest.TestCase):
         self.assertTrue(a["text"].startswith("Storage: 300 MB free on the media disk (0 percent)"), a["text"])
         self.assertIn("Free space now", a["text"])
         self.assertIn("the system disk (settings and logs)", b["text"])
-        with mock.patch("pvj.hardware.temperatures", lambda *a, **k: [{"celsius": 50.0}]):
+        with mock.patch("mctl.hardware.temperatures", lambda *a, **k: [{"celsius": 50.0}]):
             self.assertEqual(h.report()["overall"], "bad")
 
     def test_a_missing_or_unreadable_folder_is_said_and_never_raises(self):
@@ -217,7 +217,7 @@ class ApiTest(ServerBase):
 
 class AddressOnScreenTest(unittest.TestCase):
     def test_the_address_alone_shows_no_code(self):
-        from pvj.pinscreen import PinScreen
+        from mctl.pinscreen import PinScreen
 
         class Auth:
             current_pin = "1234"

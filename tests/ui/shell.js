@@ -889,7 +889,7 @@ const FX_STRIP = {
 const CROSSFADE = 'D71: Crossfade is built, so its button reads "Crossfade" (button: Crossfade), on Play > Pads with the wipes and slides';
 const OWN_ROW = 'D77: the owner\'s own row under Paired devices has Log out (#logoutbtn) in place of Remove';
 const ONE_FADE = 'D75: Fade in and Fade out are one button, #fade on the strip, which reads Fade out and then Fade in (and flashes) while the picture is down';
-// D75 drew the three standard layouts afresh in zones after the owner tried the controllers (pvj/MIDI.md has the
+// D75 drew the three standard layouts afresh in zones after the owner tried the controllers (mctl/MIDI.md has the
 // drawings and what moved): on the harness's nanoKONTROL2 and Launchpad Mini these labels are gone, and the label
 // in each reason stands for the old one on the same card.
 const LAYOUT = (now) => 'D75: the standard layouts were drawn afresh; on the same card it is now ' + now;

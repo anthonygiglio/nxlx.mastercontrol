@@ -4,7 +4,7 @@
 // The renderer's own shader programs (project-log/DECISIONS.md, D106): ISF generators and effects drawn by
 // mctl-render itself, with their inputs as uniforms set every frame, so a value that moves is never compiled again.
 //
-// The panel (pvj/shaders.py and pvj/effects.py, translate_native) is the only reader of an ISF file: it checks the
+// The panel (mctl/shaders.py and mctl/effects.py, translate_native) is the only reader of an ISF file: it checks the
 // file, renames what ISF names differently, and writes a "program file" into the player's runtime folder:
 //
 //   //!MCTL 1

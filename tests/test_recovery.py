@@ -14,7 +14,7 @@ import types
 import unittest
 from unittest import mock
 
-from pvj import auth as auth_mod, pinscreen as pinscreen_mod, recovery as recovery_mod
+from mctl import auth as auth_mod, pinscreen as pinscreen_mod, recovery as recovery_mod
 import tests
 from tests.test_server import ServerBase
 from tests.test_support import LAN, SupportBase
@@ -104,7 +104,7 @@ class RecoveryCodesTest(ServerBase):
         self.assertEqual((body["log"][-1]["kind"], body["log"][-1]["name"], body["log"][-1]["left"]), ("code", "Anna's phone", 7))
 
     def test_a_code_paired_owner_is_a_full_owner_under_d80_and_a_guest_or_operator_device_may_redeem(self):
-        from pvj import policy
+        from mctl import policy
         codes = self.make()
         st, body, _ = self.redeem(codes[0], "from nothing")                       # an unpaired device
         self.assertEqual(st, 200, body)
@@ -374,7 +374,7 @@ class StickTest(ServerBase):
         self.assertNotIn(pin, text)
         devices = self.call("GET", "/api/devices", token=body["token"])[1]["devices"]
         self.assertEqual([d.get("via") for d in devices if d["name"] == "found phone"], ["stick"])
-        from pvj import policy
+        from mctl import policy
         dev = [d for d in self.settings.data["devices"] if d["id"] == body["device"]["id"]][0]
         self.assertEqual(auth_mod.Auth.role_of(dev), "full")                     # a stick-paired device is a full Owner under D80
         self.assertFalse(policy.is_controller(dev) or policy.held_to_legacy(dev))
@@ -469,7 +469,7 @@ class StickTest(ServerBase):
                 time.sleep(0.05)
             self.assertIsNotNone(self.rec.active())
             self.assertTrue(calls)
-            self.assertEqual(set(calls), {"pvj-recovery-stick"}, set(calls))
+            self.assertEqual(set(calls), {"mctl-recovery-stick"}, set(calls))
             self.remove()
             deadline = time.time() + 5
             while time.time() < deadline and self.rec.active() is not None:
@@ -560,7 +560,7 @@ class StickTest(ServerBase):
     def test_it_needs_no_paired_device_no_player_and_survives_a_player_restart(self):
         self.auth.revoke_all()
         self.player.running = False
-        self.player.ipc = types.SimpleNamespace(request=lambda *a: (_ for _ in ()).throw(__import__("pvj.player", fromlist=["PlayerError"]).PlayerError("down")))
+        self.player.ipc = types.SimpleNamespace(request=lambda *a: (_ for _ in ()).throw(__import__("mctl.player", fromlist=["PlayerError"]).PlayerError("down")))
         self.insert()
         self.assertFalse(self.screen.tick())                 # the player is down: nothing drawn, the PIN is set anyway
         pin = self.auth.current_pin

@@ -34,7 +34,7 @@ enum { FINAL_OFF, FINAL_AUTO, FINAL_720 };
 enum { BLEND_NORMAL, BLENDS };
 extern const char *const BLEND_NAMES[BLENDS];
 // The wipes and the slides (D111): the mixing stage's other way of laying the incoming layer over the outgoing one.
-// By the panel's names (pvj/transitions.py). `axis`: 0 the edge runs across the columns, 1 across the rows; `low`: the
+// By the panel's names (mctl/transitions.py). `axis`: 0 the edge runs across the columns, 1 across the rows; `low`: the
 // incoming picture is on the side of column 0 or of the top row; `shift`: the outgoing picture moves away (a slide)
 // instead of standing where it is and being cut (a wipe).
 #define MOVES 8

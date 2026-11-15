@@ -5,9 +5,9 @@ import tempfile
 import unittest
 from unittest import mock
 
-from pvj import autostart
-from pvj.player import PlayerError
-from pvj.settings import Settings
+from mctl import autostart
+from mctl.player import PlayerError
+from mctl.settings import Settings
 from tests.test_server import ServerBase
 
 DEVICES = [{"name": "auto", "description": "Autoselect device"},
@@ -41,7 +41,7 @@ class AudioTest(ServerBase):
         self.ipc = FakeIpc()
         self.player.ipc = self.ipc
         self.full = self.call("POST", "/api/pair", {"pin": self.pin, "name": "t"})[1]["token"]
-        p = mock.patch("pvj.api.hardware.drm_connectors", return_value=connectors(("HDMI-A-1", "connected"), ("HDMI-A-2", "disconnected")))
+        p = mock.patch("mctl.api.hardware.drm_connectors", return_value=connectors(("HDMI-A-1", "connected"), ("HDMI-A-2", "disconnected")))
         p.start()
         self.addCleanup(p.stop)
 
@@ -56,11 +56,11 @@ class AudioTest(ServerBase):
         self.assertEqual(self.sets(), ["alsa/sysdefault:CARD=vc4hdmi0"])
 
     def test_the_second_hdmi_port_and_no_screen(self):
-        with mock.patch("pvj.api.hardware.drm_connectors", return_value=connectors(("HDMI-A-1", "disconnected"), ("HDMI-A-2", "connected"))):
+        with mock.patch("mctl.api.hardware.drm_connectors", return_value=connectors(("HDMI-A-1", "disconnected"), ("HDMI-A-2", "connected"))):
             self.assertEqual(self.api.apply_audio(), "alsa/sysdefault:CARD=vc4hdmi1")
-        with mock.patch("pvj.api.hardware.drm_connectors", return_value=connectors(("HDMI-A-1", "disconnected"))):
+        with mock.patch("mctl.api.hardware.drm_connectors", return_value=connectors(("HDMI-A-1", "disconnected"))):
             self.assertEqual(self.api.apply_audio(), "auto")                 # nothing to prefer: mpv decides
-        with mock.patch("pvj.api.hardware.drm_connectors", return_value=[]):
+        with mock.patch("mctl.api.hardware.drm_connectors", return_value=[]):
             self.assertEqual(self.api.apply_audio(), "auto")                 # a PC with no Pi connectors
 
     def test_choosing_an_output_is_saved_applied_and_survives_a_restart_of_the_program(self):
@@ -103,7 +103,7 @@ class AudioTest(ServerBase):
                     current[0] = cmd[2]
                 return FakeIpc.request(inner, *cmd)
         self.player.ipc = Ipc()
-        with mock.patch("pvj.api.hardware.drm_connectors", return_value=connectors(("HDMI-A-1", "disconnected"))):
+        with mock.patch("mctl.api.hardware.drm_connectors", return_value=connectors(("HDMI-A-1", "disconnected"))):
             self.assertEqual(self.api.ensure_audio(), "auto")                # no screen yet: mpv's own choice
         current[0] = "alsa/plughw:CARD=Headphones,DEV=0"
         self.assertEqual(self.api.ensure_audio(), "alsa/sysdefault:CARD=vc4hdmi0")     # the screen came on

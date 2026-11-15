@@ -15,9 +15,9 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 def copy_source(version):
     src = tempfile.mkdtemp()
-    for d in ("pvj", "bin", "install"):
+    for d in ("mctl", "bin", "install"):
         shutil.copytree(os.path.join(REPO, d), os.path.join(src, d), ignore=shutil.ignore_patterns("__pycache__"))
-    init = os.path.join(src, "pvj", "__init__.py")
+    init = os.path.join(src, "mctl", "__init__.py")
     with open(init, "w") as f:
         f.write('__version__ = "%s"\n' % version)
     return src
@@ -47,7 +47,7 @@ class InstallTest(unittest.TestCase):
         r = install(self.src, self.stage)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual(os.readlink(self.p("opt/pvj/current")), "/opt/pvj/releases/9.9.1")
-        self.assertTrue(os.path.isfile(self.p("opt/pvj/releases/9.9.1/pvj/player.py")))
+        self.assertTrue(os.path.isfile(self.p("opt/pvj/releases/9.9.1/mctl/player.py")))
         self.assertFalse(os.path.exists(self.p("opt/pvj/releases/9.9.1.new")))
         self.assertEqual(os.readlink(self.p("usr/local/bin/pvj-player")), "/opt/pvj/current/bin/pvj-player")
         unit = self.read(self.p("etc/systemd/system/pvj-player.service"))
@@ -236,12 +236,12 @@ class InstallTest(unittest.TestCase):
 
     def test_same_version_reinstall_replaces_files_without_leftovers(self):
         install(self.src, self.stage)
-        with open(os.path.join(self.src, "pvj", "marker.py"), "w") as f:
+        with open(os.path.join(self.src, "mctl", "marker.py"), "w") as f:
             f.write("X = 1\n")
         self.assertEqual(install(self.src, self.stage).returncode, 0)
         rel = self.p("opt/pvj/releases")
         self.assertEqual(os.listdir(rel), ["9.9.1"])  # no .old or .new left behind
-        self.assertTrue(os.path.isfile(os.path.join(rel, "9.9.1", "pvj", "marker.py")))
+        self.assertTrue(os.path.isfile(os.path.join(rel, "9.9.1", "mctl", "marker.py")))
         self.assertEqual(os.readlink(self.p("opt/pvj/current")), "/opt/pvj/releases/9.9.1")
 
     def test_account_chosen_at_first_install_is_kept_when_user_is_omitted(self):
@@ -298,10 +298,10 @@ class InstallTest(unittest.TestCase):
         return sorted(found)
 
     def opt_in(self):
-        """What root's `pvj-ndi-runtime install` leaves in /etc, written by the same code (pvj/ndisetup.py)."""
+        """What root's `pvj-ndi-runtime install` leaves in /etc, written by the same code (mctl/ndisetup.py)."""
         import sys
         sys.path.insert(0, REPO)
-        from pvj import ndisetup
+        from mctl import ndisetup
         ndisetup.write_units(self.stage, "/opt/pvj")
 
     def test_a_plain_install_leaves_nothing_of_ndi_but_the_program_and_its_command(self):
@@ -347,13 +347,13 @@ class InstallTest(unittest.TestCase):
         self.assertNotIn("@PVJ", unit)
         self.assertIn("User=pvj-ndi\n", unit)
         self.assertIn("IPAddressDeny=any\n", unit)
-        with open(os.path.join(REPO, "pvj", "systemd", "pvj-ndi.service")) as f:
+        with open(os.path.join(REPO, "mctl", "systemd", "pvj-ndi.service")) as f:
             self.assertEqual(unit, f.read().replace("@PVJ_DIR@", "/opt/pvj/current"))
         self.assertIn("SupplementaryGroups=pvj-ndi\n", self.read(self.p(self.NDI_FILES[1])))
         self.assertIn("Environment=PVJ_NDI_DIR=/run/pvj-ndi\n", self.read(self.p(self.NDI_FILES[1])))
         self.assertIn("SupplementaryGroups=pvj-ndi\n", self.read(self.p(self.NDI_FILES[2])))
         self.assertEqual(os.readlink(self.p("opt/pvj/current")), "/opt/pvj/releases/9.9.2")
-        self.assertFalse([n for n in os.listdir(self.p("opt/pvj/releases/9.9.2/pvj")) if n == "__pycache__"])     # root's run left no compiled files
+        self.assertFalse([n for n in os.listdir(self.p("opt/pvj/releases/9.9.2/mctl")) if n == "__pycache__"])     # root's run left no compiled files
         # the installer's own units still do not name the group: only the drop-ins do
         self.assertNotIn("pvj-ndi", self.read(self.p("etc/systemd/system/pvj-web.service")))
 
@@ -367,7 +367,7 @@ class InstallTest(unittest.TestCase):
         # Review L1: the folder went into install.json as it was typed, and the NDI setup takes it only one way.
         import sys
         sys.path.insert(0, REPO)
-        from pvj import ndisetup
+        from mctl import ndisetup
         r = install(self.src, self.stage, "--prefix", "/srv/box/pvj///")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual(json.loads(self.read(self.p("etc/pvj/install.json")))["prefix"], "/srv/box/pvj")

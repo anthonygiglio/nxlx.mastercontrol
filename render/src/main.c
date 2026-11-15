@@ -563,7 +563,7 @@ static int layer_open(Layer *l, int index, const Cfg *c, int w, int h)
     if (!l->h) return -1;
     // first, so that what goes wrong while the core starts (the text core's window is made then) reaches the journal
     mpv_request_log_messages(l->h, c->verbose ? "info" : "warn");
-    // as classic mpv is started (pvj/player.py, mpv_command): media only, nothing a file can point elsewhere
+    // as classic mpv is started (mctl/player.py, mpv_command): media only, nothing a file can point elsewhere
     hard(l->h, "config", "no");
     set(l->h, "vo", "libmpv");
     set(l->h, "idle", "yes");
@@ -1007,7 +1007,7 @@ static int write_capture(const char *path, int small, GLuint picture, int text_o
 // the buffer (by then the GPU has written it) and hands the pixels to the client's thread, which encodes them
 // (ipc.c, native_screenshot). Nothing here waits for an encoder or a file (the review of #167).
 // Kind 2 is the whole final picture at the screen's size, the mapping and the text in it, drawn once more into the
-// readback's own framebuffer: a transition's still of the screen (pvj/transitions.py), whatever the final pass's size.
+// readback's own framebuffer: a transition's still of the screen (mctl/transitions.py), whatever the final pass's size.
 static struct { int serial, w, h; GLuint tex, fbo, pbo; } shot_read;      // a readback on its way (serial > 0)
 
 static void shot_hand(int serial, unsigned char *rgba, int w, int h)

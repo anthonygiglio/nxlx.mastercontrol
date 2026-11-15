@@ -201,6 +201,7 @@ PVJLEN	MCTLLEN	package	probe line marker
 PVJ-STANDIN	MCTL-STANDIN	package	source names of the NDI stand-in (tests)
 pvj-https	mctl-https	package	thread name
 pvj-recovery-stick	mctl-recovery-stick	package	thread name
+pvj-autocert	mctl-autocert	package	thread name and user agent of the certificate client
 pvjmaster	mctlmaster	package	test package name
 pvjupdate	mctlupdate	package	a refused upload name in tests
 pvjd	mctld	package	temp name prefix (tests)

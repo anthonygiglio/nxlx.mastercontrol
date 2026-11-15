@@ -17,11 +17,11 @@ Inventory of components bundled with or fetched by the legacy code. Licences are
 | TCPSClient (Nozomu Miura) | `sync/TCPSClient.bin` | Unknown, no source in repo |
 | pwomxplayer / PiWall (Alex Goodyear) | `sync/` | Unknown |
 | HPlayer (Atelier de Dispositifs Numériques) | `sync/` | Unknown |
-| ISF-Files generator shaders (VIDVOX and contributors) | `pvj/shaders.d/isf-files/` | MIT (verified, see below) |
-| ISF-Files filter shaders, for effects (VIDVOX and contributors) | `pvj/effects.d/isf-files/` | MIT (verified, see below) |
-| Archivo (The Archivo Project Authors), a Latin subset | `pvj/web/fonts/` | SIL OFL 1.1 (verified, see below) |
-| JetBrains Mono (The JetBrains Mono Project Authors), a Latin subset of the Medium weight | `pvj/web/fonts/` | SIL OFL 1.1 (verified, see below) |
-| Eleven fonts for text on the screen (Archivo, JetBrains Mono, Inter, Bebas Neue, Oswald, Anton, Montserrat, Orbitron, Press Start 2P, Roboto Condensed, Noto Sans), unchanged TrueType files | `pvj/fonts/` | SIL OFL 1.1, each read from its own release (verified, see below) |
+| ISF-Files generator shaders (VIDVOX and contributors) | `mctl/shaders.d/isf-files/` | MIT (verified, see below) |
+| ISF-Files filter shaders, for effects (VIDVOX and contributors) | `mctl/effects.d/isf-files/` | MIT (verified, see below) |
+| Archivo (The Archivo Project Authors), a Latin subset | `mctl/web/fonts/` | SIL OFL 1.1 (verified, see below) |
+| JetBrains Mono (The JetBrains Mono Project Authors), a Latin subset of the Medium weight | `mctl/web/fonts/` | SIL OFL 1.1 (verified, see below) |
+| Eleven fonts for text on the screen (Archivo, JetBrains Mono, Inter, Bebas Neue, Oswald, Anton, Montserrat, Orbitron, Press Start 2P, Roboto Condensed, Noto Sans), unchanged TrueType files | `mctl/fonts/` | SIL OFL 1.1, each read from its own release (verified, see below) |
 | FreeType: linked by pvj-raster to draw text; not shipped, the box's own package | `render/raster/` builds against it | FreeType licence (FTL) or GPL-2.0, at the user's choice |
 | libmpv (mpv), linked by mctl-render; not shipped, the box's own package | `render/` builds against it | GPLv2 or later as Debian builds it (see below) |
 | Mesa's EGL, OpenGL ES and GBM, libdrm, glibc: linked by mctl-render; not shipped | `render/` builds against them | MIT (Mesa, libdrm), LGPL-2.1 (glibc) |
@@ -37,7 +37,7 @@ under its own licence, as NDI's runtime (D62). The patch is this project's (Apac
 
 ## Fonts of the panel's "Signal" look (new code's side of the tree)
 
-Two typefaces are shipped with the panel, in `pvj/web/fonts/`, for the look called Signal (D54 in the project log). They are served by the box itself; nothing is fetched from the internet. They are **not** this project's work and are not under its Apache-2.0 licence.
+Two typefaces are shipped with the panel, in `mctl/web/fonts/`, for the look called Signal (D54 in the project log). They are served by the box itself; nothing is fetched from the internet. They are **not** this project's work and are not under its Apache-2.0 licence.
 
 | File | What it is | SHA-256 |
 | --- | --- | --- |
@@ -49,18 +49,18 @@ Two typefaces are shipped with the panel, in `pvj/web/fonts/`, for the look call
 - Source: https://github.com/google/fonts at commit `9710da1eacb3be272583c3224dcb70f9da6eadbb` (read 2026-10-04): `ofl/archivo/Archivo[wdth,wght].ttf` (SHA-256 `0e094a7d3c7c4c25cf1310c4b30014f1dae9332220b1c2c88f4fa996f0b05053`) and `ofl/jetbrainsmono/JetBrainsMono[wght].ttf` (SHA-256 `48715a42ec242c21e9f02692891e147d022299a52e48d5e413e1a942193ffeda`), each with the `OFL.txt` beside it. The families' own projects are https://github.com/Omnibus-Type/Archivo and https://github.com/JetBrains/JetBrainsMono.
 - Licence: SIL Open Font License 1.1. Copyright lines, from the two `OFL.txt` files: "Copyright 2020 The Archivo Project Authors (https://github.com/Omnibus-Type/Archivo)" and "Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)". Neither file declares a Reserved Font Name, so a changed version may keep the family's name.
 - **The shipped files are Modified Versions in the licence's sense**, made with fontTools 4.62.1 (`fontTools.varLib.instancer` and `fontTools.subset`, WOFF2 through the `brotli` module): the axes were limited as the table says, and the glyphs cut down to Basic Latin (U+0020 to U+007E), Latin-1 Supplement (U+00A0 to U+00FF) and the signs U+2013, U+2014, U+2018, U+2019, U+201C, U+201D, U+2022, U+2026, U+2039, U+203A, U+2190 to U+2193 and U+2212. Layout features kept: `kern`, `liga`, `calt`, `tnum`, `zero` for Archivo; `kern`, `zero` for JetBrains Mono. The name table is unchanged. Nothing else was altered. A sign outside this set (the transport arrows on the Live screen, a name in another script) is drawn in the device's own font.
-- The licence asks that the fonts are not sold by themselves and that the copyright notice and the licence travel with every copy: the two `OFL-*.txt` files are in the same folder, so they are in every release bundle and on every box (a release holds only `pvj/`, `bin/` and `install/`). The licence text for REUSE is `LICENSES/OFL-1.1.txt`; both families are declared in `REUSE.toml`.
-- Each font's file name holds the first eight digits of its SHA-256, because the box lets a browser keep a font for a day: a font that is ever rebuilt gets a new name (rename the file, and the name in `pvj/web/app.css`, `REUSE.toml`, this file and the tests).
+- The licence asks that the fonts are not sold by themselves and that the copyright notice and the licence travel with every copy: the two `OFL-*.txt` files are in the same folder, so they are in every release bundle and on every box (a release holds only `mctl/`, `bin/` and `install/`). The licence text for REUSE is `LICENSES/OFL-1.1.txt`; both families are declared in `REUSE.toml`.
+- Each font's file name holds the first eight digits of its SHA-256, because the box lets a browser keep a font for a day: a font that is ever rebuilt gets a new name (rename the file, and the name in `mctl/web/app.css`, `REUSE.toml`, this file and the tests).
 - A test (`tests/test_license.py`) pins the four checksums, the name and the declaration.
 
 ## Fonts for text on the screen (D129, slice 2)
 
-The node draws text itself (design/text-and-logo-sources_2026-11-08.md). Eleven open-licence families are bundled in `pvj/fonts/`, one unchanged TrueType file each, and are read by `pvj-raster` (render/raster/gfx.inc.c) to make a picture of a line of text. They are **not** this project's work and are not under its Apache-2.0 licence. They are never sent to a browser: the panel previews with pictures the node makes.
+The node draws text itself (design/text-and-logo-sources_2026-11-08.md). Eleven open-licence families are bundled in `mctl/fonts/`, one unchanged TrueType file each, and are read by `pvj-raster` (render/raster/gfx.inc.c) to make a picture of a line of text. They are **not** this project's work and are not under its Apache-2.0 licence. They are never sent to a browser: the panel previews with pictures the node makes.
 
 - Source: https://github.com/google/fonts at commit `9710da1eacb3be272583c3224dcb70f9da6eadbb` (the commit the two panel fonts above were read from), folder `ofl/<family>/`, read on 8 November 2026. The font file and the family's `OFL.txt` were fetched from that one commit; each `OFL.txt` was read in full and each begins with the copyright line below and "This Font Software is licensed under the SIL Open Font License, Version 1.1". **None of the files was changed** (not subset, not instanced, not renamed inside); only the file names here are ours (lower case, no brackets).
 - The design document of 8 November expected the Apache licence 2.0 for Roboto Condensed. The release says SIL OFL 1.1 (copyright line below), so that is what is recorded. Licences were taken from the releases, not from the design.
 - Reserved Font Names are declared by two families: **Orbitron** ("Orbitron") and **Press Start 2P** ("Press Start 2P"). The files are bundled unchanged, so nothing is reused under another name. The other nine declare none.
-- The licence asks that the fonts are not sold by themselves and that the copyright notice and the licence travel with every copy: each family's `OFL-<Family>.txt` is in `pvj/fonts/` beside the font, so it is in every release bundle and on every node. The licence text for REUSE is `LICENSES/OFL-1.1.txt`; every file is declared in `REUSE.toml`. The two OFL files of Archivo and JetBrains Mono are the same files as in `pvj/web/fonts/` (the same checksums).
+- The licence asks that the fonts are not sold by themselves and that the copyright notice and the licence travel with every copy: each family's `OFL-<Family>.txt` is in `mctl/fonts/` beside the font, so it is in every release bundle and on every node. The licence text for REUSE is `LICENSES/OFL-1.1.txt`; every file is declared in `REUSE.toml`. The two OFL files of Archivo and JetBrains Mono are the same files as in `mctl/web/fonts/` (the same checksums).
 - Axes. The variable fonts keep all their axes; the node sets only the weight (`wght`) and leaves every other axis at its default. A static font has the one weight.
 
 | File | Family, copyright line from its `OFL.txt` | Weights | SHA-256 of the file | SHA-256 of its `OFL-*.txt` |
@@ -89,10 +89,10 @@ Generator shaders from Vidvox's public ISF collection, bundled with the Shaders 
 
 - Source: https://github.com/Vidvox/ISF-Files, folder `ISF/`
 - Commit: `395072d48b3ce7351ccb20a5fda54470591324df` (2026-06-04)
-- Licence: MIT. The repository's `LICENSE` covers the whole repository, names the year 2018 and **no copyright holder**; it is copied unchanged to `pvj/shaders.d/isf-files/LICENSE` and printed below. GitHub reports the repository as MIT as well.
-- Each file is **byte for byte the upstream file**; only the file name differs (lower case, hyphens for spaces, the prefix `isf-`, because the release tooling and the shader ids are happier without spaces). `pvj/shaders.d/isf-files/SHA256SUMS` holds the checksums and a test compares them. Each file keeps its own `CREDIT` field, which the panel shows.
+- Licence: MIT. The repository's `LICENSE` covers the whole repository, names the year 2018 and **no copyright holder**; it is copied unchanged to `mctl/shaders.d/isf-files/LICENSE` and printed below. GitHub reports the repository as MIT as well.
+- Each file is **byte for byte the upstream file**; only the file name differs (lower case, hyphens for spaces, the prefix `isf-`, because the release tooling and the shader ids are happier without spaces). `mctl/shaders.d/isf-files/SHA256SUMS` holds the checksums and a test compares them. Each file keeps its own `CREDIT` field, which the panel shows.
 - Declared in `REUSE.toml` as MIT (the two noise shaders with Ashima Arts and Stefan Gustavson as further copyright holders); the licence text for REUSE is `LICENSES/MIT.txt`.
-- **The notices travel with the files.** A release and the image carry only `pvj/`, `bin/` and `install/`, not this document, so both licence texts lie in the pack folder itself: `pvj/shaders.d/isf-files/LICENSE` (ISF-Files) and `pvj/shaders.d/isf-files/LICENSE.webgl-noise` (the simplex noise inside two of the files). A test pins both by checksum.
+- **The notices travel with the files.** A release and the image carry only `mctl/`, `bin/` and `install/`, not this document, so both licence texts lie in the pack folder itself: `mctl/shaders.d/isf-files/LICENSE` (ISF-Files) and `mctl/shaders.d/isf-files/LICENSE.webgl-noise` (the simplex noise inside two of the files). A test pins both by checksum.
 
 How the files were chosen (2026-10-04): of the 327 `.fs` files upstream, only generators that the box's translator takes and that drew a varied picture on a real player in CI were candidates, and of those only files whose origin is clear. A file was left out when its own comments point to code from somewhere whose terms could not be established as allowing redistribution; see "Not bundled" below.
 
@@ -134,7 +134,7 @@ SOFTWARE.
 
 ### Notices of code inside those files
 
-Two files say they contain code from another MIT project and only name the licence. The notice that project asks to be kept, which is also shipped unchanged as `pvj/shaders.d/isf-files/LICENSE.webgl-noise`:
+Two files say they contain code from another MIT project and only name the licence. The notice that project asks to be kept, which is also shipped unchanged as `mctl/shaders.d/isf-files/LICENSE.webgl-noise`:
 
 `isf-simplex-noise.fs` and `isf-ridgelines.fs` hold the 2D simplex noise of https://github.com/ashima/webgl-noise (its `LICENSE`, read 2026-10-04):
 
@@ -184,15 +184,15 @@ The sources outside GitHub were not opened (this work was limited to GitHub), so
 
 ### Not bundled for another reason: the licence is clear, the picture check was not passed
 
-Eighteen more generators are, as far as their comments say, VIDVOX's own under the same MIT licence (Line Group.fs also holds a dither based on https://github.com/hughsk/glsl-dither, MIT, by Hugh Kennedy). They were tried on the real player in CI and did not pass the check every bundled shader must pass (taken by the player on OpenGL ES and on desktop OpenGL, a varied picture of more than 40 colours, not dark), so they are not in the pack. Nothing about their licence stands in the way of adding them later or of uploading them. The list and what CI saw are in [pvj/SHADERS.md](pvj/SHADERS.md).
+Eighteen more generators are, as far as their comments say, VIDVOX's own under the same MIT licence (Line Group.fs also holds a dither based on https://github.com/hughsk/glsl-dither, MIT, by Hugh Kennedy). They were tried on the real player in CI and did not pass the check every bundled shader must pass (taken by the player on OpenGL ES and on desktop OpenGL, a varied picture of more than 40 colours, not dark), so they are not in the pack. Nothing about their licence stands in the way of adding them later or of uploading them. The list and what CI saw are in [mctl/SHADERS.md](mctl/SHADERS.md).
 
 ## Shader pack: ISF-Files filters, for effects (new code's side of the tree)
 
-Filter shaders from the same collection, the same commit and under the same MIT licence as the generators above, bundled as the pack of **effects** (filters put on over the playing picture, [pvj/SHADERS.md](pvj/SHADERS.md#effects)). They are **not** this project's work and are not under its Apache-2.0 licence. The project's own filters lie beside the pack folder (`pvj/effects.d/fx-*.fs`, Apache-2.0).
+Filter shaders from the same collection, the same commit and under the same MIT licence as the generators above, bundled as the pack of **effects** (filters put on over the playing picture, [mctl/SHADERS.md](mctl/SHADERS.md#effects)). They are **not** this project's work and are not under its Apache-2.0 licence. The project's own filters lie beside the pack folder (`mctl/effects.d/fx-*.fs`, Apache-2.0).
 
 - Source: https://github.com/Vidvox/ISF-Files, folder `ISF/`, commit `395072d48b3ce7351ccb20a5fda54470591324df`.
-- Licence: MIT, the repository's `LICENSE` (printed above), copied unchanged to `pvj/effects.d/isf-files/LICENSE`, so the notice travels with the files in a release.
-- Each file is **byte for byte the upstream file** under a name without spaces (lower case, hyphens, the prefix `isf-`). `pvj/effects.d/isf-files/SHA256SUMS` holds the checksums; a test compares every file with it and pins the list itself.
+- Licence: MIT, the repository's `LICENSE` (printed above), copied unchanged to `mctl/effects.d/isf-files/LICENSE`, so the notice travels with the files in a release.
+- Each file is **byte for byte the upstream file** under a name without spaces (lower case, hyphens, the prefix `isf-`). `mctl/effects.d/isf-files/SHA256SUMS` holds the checksums; a test compares every file with it and pins the list itself.
 - Declared in `REUSE.toml` as MIT. None of these files holds the simplex noise or names any other project, so no further notice is needed.
 
 | File here | Upstream name | CREDIT in the file |

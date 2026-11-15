@@ -18,7 +18,7 @@ import time
 import unittest
 import wave
 
-from pvj import osc, oscfeedback as fb, render, sound, soundout
+from mctl import osc, oscfeedback as fb, render, sound, soundout
 from tests.test_roles import LAN, TUNNEL, RolesBase
 from tests.test_sound import DEVICE, FakeApi, FakeChild, ServiceBase, Stub, proc_dir, sine, wait_for
 
@@ -136,8 +136,8 @@ class FakeIpc:
         self.calls, self.filters, self.level, self.take = [], [], level, take
 
     def request(self, *cmd):
-        """As pvj.player.Ipc: the answer's data, or PlayerError."""
-        from pvj.player import PlayerError
+        """As mctl.player.Ipc: the answer's data, or PlayerError."""
+        from mctl.player import PlayerError
         self.calls.append(cmd)
         if cmd[:2] == ("get_property", "af"):
             return [{"name": "lavfi", "label": f} for f in self.filters]
@@ -222,7 +222,7 @@ class BoxSoundTest(unittest.TestCase):
 @unittest.skipUnless(shutil.which("mpv"), "no mpv here")
 class RealMpvMeterTest(unittest.TestCase):
     def test_a_real_player_measures_a_tone_it_plays(self):
-        from pvj.player import Ipc
+        from mctl.player import Ipc
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
         wav = os.path.join(d, "t.wav")
@@ -302,7 +302,7 @@ class OscInTest(unittest.TestCase):
         self.assertLessEqual(self.out.in_stats["taken"], soundout.IN_BURST + 2, "a burst, then held to the rate")
         self.assertGreater(self.out.in_stats["held"], 0)
         self.assertEqual(self.out.osc_in([("/nxlx/sound/in/run", ["x"])], "192.168.0.44"), 0)
-        with open(os.path.join(REPO, "pvj", "soundout.py")) as f:
+        with open(os.path.join(REPO, "mctl", "soundout.py")) as f:
             part = f.read().split("def osc_in(")[1].split("\n    def ")[0]
         self.assertNotIn("sendto", part)
 
@@ -382,7 +382,7 @@ class RollbackTest(unittest.TestCase):
             subprocess.run(["git", "-C", REPO, "rev-parse", "--verify", "-q", master], check=True, capture_output=True)
         except (OSError, subprocess.CalledProcessError):
             self.skipTest("no %s here to read the older release from" % master)
-        from pvj.settings import Settings
+        from mctl.settings import Settings
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
         path = os.path.join(d, "settings.json")

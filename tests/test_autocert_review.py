@@ -17,7 +17,7 @@ import time
 import unittest
 from unittest import mock
 
-from pvj import autocert, httpsbox
+from mctl import autocert, httpsbox
 from tests import test_autocert as ta
 from tests.test_boxcert import boxcert, make_request
 

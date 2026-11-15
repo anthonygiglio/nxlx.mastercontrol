@@ -3,7 +3,7 @@
 import os
 import unittest
 
-from pvj.player import Player
+from mctl.player import Player
 from tests.test_server import ServerBase
 
 

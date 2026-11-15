@@ -13,7 +13,7 @@ import unittest
 from unittest import mock
 
 import tests        # the run's own temp folder (tests/__init__.py)
-from pvj import bootcfg, hardware, latescreen, screenmode as S, sysd
+from mctl import bootcfg, hardware, latescreen, screenmode as S, sysd
 from tests.test_boxcare import Base as CareBase
 
 BOOT = "boot-1"
@@ -44,7 +44,7 @@ CMDLINE = "console=serial0,115200 console=tty1 root=PARTUUID=abcd-02 rootfstype=
 
 def tree(layout, files=None):
     """A fake root: sys/class/drm/cardN-NAME/{status,modes} from (card, name, status, modes), and boot files."""
-    root = tempfile.mkdtemp(prefix="pvj-output-")
+    root = tempfile.mkdtemp(prefix="mctl-output-")
     for card, name, status, modes in layout:
         d = os.path.join(root, "sys/class/drm/card%d-%s" % (card, name))
         os.makedirs(d)
@@ -256,7 +256,7 @@ class ScreenSettingTest(unittest.TestCase):
     """Screen.set_output and what the other steps keep of it."""
 
     def make(self, layout=PI4):
-        from pvj.settings import Settings
+        from mctl.settings import Settings
         self.dir = tempfile.mkdtemp()
         self.settings = Settings(os.path.join(self.dir, "settings.json"))
         self.settings.load()
@@ -641,9 +641,9 @@ class ApiTest(CareBase):
         self.api.screen._connectors = lambda: hardware.drm_connectors(self.root)
         self.api.board = dict(self.api.board, kind="pi4", model="Raspberry Pi 4 Model B Rev 1.4")
         self.boot = {"found": True, "kms": True, "composite": False, "tvout": False, "norm": None}
-        patches = [mock.patch("pvj.hardware.outputs", lambda root="/": [c for c in hardware.drm_connectors(self.root)
+        patches = [mock.patch("mctl.hardware.outputs", lambda root="/": [c for c in hardware.drm_connectors(self.root)
                                                                            if not c["connector"].lower().startswith("writeback")]),
-                   mock.patch("pvj.bootcfg.state", lambda root="/": dict(self.boot))]
+                   mock.patch("mctl.bootcfg.state", lambda root="/": dict(self.boot))]
         for p in patches:
             p.start()
             self.addCleanup(p.stop)
@@ -664,7 +664,7 @@ class ApiTest(CareBase):
         self.assertEqual(self.call("GET", "/api/output", token=self.full)[0], 200)
 
     def test_never_through_the_support_tunnel(self):
-        from pvj import support
+        from mctl import support
         for route in (("POST", "/api/output"), ("POST", "/api/output/av")):
             self.assertIn(route, support.REMOTE_DENY)
         self.assertNotIn(("GET", "/api/output"), support.REMOTE_DENY, "a helper may read the list")

@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""The one-time ticket (D132, slice 4a; pvj/ticket.py): node A holds a ticket for one device and one node, node B redeems it by
+"""The one-time ticket (D132, slice 4a; mctl/ticket.py): node A holds a ticket for one device and one node, node B redeems it by
 calling A back over the real peer listener (a client certificate required) and records the carried device. Two real nodes
 (certificates from a throwaway root, real Handover, Peers, Auth and Tickets, real peer servers on loopback) and a fake
 monotonic clock for the 60 seconds. One-time use (also under two threads), expiry, replay, the wrong node, the wrong secret,
@@ -13,7 +13,7 @@ import threading
 import unittest
 
 import tests  # noqa: F401  (the tests package, as every test module imports it: tests/test_lockrank.py)
-from pvj import auth as auth_mod, ticket as T
+from mctl import auth as auth_mod, ticket as T
 from tests.peerfix import list_data, sign_list
 from tests.test_boxcert import openssls
 from tests.test_peer import A_ID, B_ID, C_ID, FLEET, Clock, PeerBase
@@ -614,7 +614,7 @@ class Redeeming(Rig):
         self.assertEqual(self.carried(self.b), [])
 
     def test_a_peer_certificate_is_judged_for_both_ends_of_its_dates_only_while_the_clock_is_trusted(self):
-        from pvj import fleetlist as FL
+        from mctl import fleetlist as FL
         self.pair()
         der = FL.certificate_der(self.a.cert_pem)
         info = T.peer_mod.httpsbox.read_certificate(der)

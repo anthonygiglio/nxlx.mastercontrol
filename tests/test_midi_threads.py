@@ -9,7 +9,7 @@ import threading
 import time
 import unittest
 
-from pvj import auth as auth_mod, midi
+from mctl import auth as auth_mod, midi
 from tests import test_controller_code as base
 
 NOTE_JOIN, PAD = base.NOTE_JOIN, base.PAD
@@ -339,7 +339,7 @@ class Reserve(unittest.TestCase):
 
     def setUp(self):
         import tempfile
-        from pvj.settings import Settings
+        from mctl.settings import Settings
         self.settings = Settings(os.path.join(tempfile.mkdtemp(), "s.json"))
         self.settings.load()
         base.switch(self.settings, owner=True)

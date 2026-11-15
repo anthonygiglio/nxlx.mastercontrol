@@ -21,8 +21,8 @@ def parse(path):
     return keys
 
 
-NDI_UNITS = os.path.join(REPO, "pvj", "systemd")      # the NDI helper's unit travels with the program: it is written
-                                                      # only on a box that opted in (pvj/ndisetup.py), never by the installer
+NDI_UNITS = os.path.join(REPO, "mctl", "systemd")      # the NDI helper's unit travels with the program: it is written
+                                                      # only on a box that opted in (mctl/ndisetup.py), never by the installer
 
 
 def load_units(directory=None):
@@ -193,7 +193,7 @@ class RuntimeFolderTest(unittest.TestCase):
     """Each service has a runtime folder nobody else can take (D45; found on a real Pi 4, 2026-10-04)."""
 
     def setUp(self):
-        from pvj import paths
+        from mctl import paths
         self.paths, self.units = paths, load_units()
 
     def env(self, unit):
@@ -354,7 +354,7 @@ class RuntimeFolderTest(unittest.TestCase):
             self.assertIn('f="${PVJ_RUNTIME_DIR:-%s}/%s"' % (self.paths.WEB_DIR, self.paths.PIN), f.read())
 
     def test_no_code_names_a_runtime_path_outside_the_paths_module(self):
-        for path in glob.glob(os.path.join(REPO, "pvj", "*.py")):
+        for path in glob.glob(os.path.join(REPO, "mctl", "*.py")):
             if os.path.basename(path) == "paths.py":
                 continue
             with open(path) as f:
@@ -365,7 +365,7 @@ class RuntimeFolderTest(unittest.TestCase):
                 self.assertNotRegex(ln, r"""["']/run/pvj""", "%s: %s" % (os.path.basename(path), ln.strip()))
 
     def test_every_runtime_path_in_bin_and_install_is_one_the_paths_module_knows(self):
-        # Shell and unit files cannot import pvj/paths.py, so every /run/pvj... they name must be one of its paths.
+        # Shell and unit files cannot import mctl/paths.py, so every /run/pvj... they name must be one of its paths.
         p = self.paths
         known = {p.RUN, p.RUN + "/.d45", p.PLAYER_DIR, p.WEB_DIR, p.NETD_DIR, p.SYSD_DIR, p.SUPPORTD_DIR, p.UPDATE_DIR, p.NDI_PIPE_DIR, p.NDI_PIPE_DIR + "/" + p.NDI_FIFO,
                  p.UPDATE_RESULT, p.WEB_DIR + "/" + p.PIN, p.WEB_DIR + "/player.sock", p.WEB_DIR + "/netd.sock",
@@ -499,7 +499,7 @@ class WebUnitLightsTest(unittest.TestCase):
         # major number) and a link are each refused, and none leaves a handle open
         import tempfile
         from unittest import mock
-        from pvj import midi
+        from mctl import midi
         tmp = tempfile.mkdtemp()
         plain, fifo, link = os.path.join(tmp, "file"), os.path.join(tmp, "fifo"), os.path.join(tmp, "link")
         open(plain, "w").close()
@@ -525,7 +525,7 @@ class WebUnitLightsTest(unittest.TestCase):
     def test_the_program_opens_only_a_midi_node_by_the_shape_of_its_path(self):
         # what the unit cannot say, the code does: the one place that opens a device for writing checks the path's
         # shape, refuses links, and wants a character device with ALSA's major number
-        from pvj import midi
+        from mctl import midi
         self.assertEqual(midi.ALSA_MAJOR, 116)
         for path in ("/dev/snd/pcmC0D0p", "/dev/snd/controlC0", "/dev/snd/seq", "/dev/snd/timer", "/dev/snd/midiC0D0/../pcmC0D0p",
                      "/dev/snd/midiC0D0\n", "/dev/null", "midiC0D0", 7, None):
@@ -553,7 +553,7 @@ class WebUnitTest(unittest.TestCase):
 class NetdUnitTest(unittest.TestCase):
     def test_the_network_helper_may_write_where_it_puts_wi_fi_profiles(self):
         # found by review: ProtectSystem=strict made /etc read-only, so every Wi-Fi join would have failed
-        from pvj import netcfg
+        from mctl import netcfg
         keys = load_units()["pvj-netd.service"]
         self.assertEqual(keys["ProtectSystem"], ["strict"])
         paths = [p.lstrip("-") for p in words(keys, "ReadWritePaths")]
@@ -575,13 +575,13 @@ class NdiUnitTest(unittest.TestCase):
     lines were not tried one by one there."""
 
     def setUp(self):
-        from pvj import ndisetup
+        from mctl import ndisetup
         self.setup = ndisetup
         self.units = load_units()
         self.ndi = self.units["pvj-ndi.service"]
         with open(os.path.join(REPO, "install", "install.sh")) as f:
             self.sh = f.read()
-        with open(os.path.join(REPO, "pvj", "ndisetup.py")) as f:
+        with open(os.path.join(REPO, "mctl", "ndisetup.py")) as f:
             self.py = f.read()
         self.dropins = {}
         for name, text in (("pvj-web.service", ndisetup.WEB_TEXT), ("pvj-player.service", ndisetup.PLAYER_TEXT)):
@@ -595,7 +595,7 @@ class NdiUnitTest(unittest.TestCase):
     def test_its_own_account_and_group_and_never_the_groups_that_reach_the_player_the_screen_or_sound(self):
         self.assertEqual((self.ndi["User"], self.ndi["Group"]), (["pvj-ndi"], ["pvj-ndi"]))
         self.assertNotIn("SupplementaryGroups", self.ndi)
-        # the account is made by the opt-in command only (pvj/ndisetup.py), with these flags, and never by the installer
+        # the account is made by the opt-in command only (mctl/ndisetup.py), with these flags, and never by the installer
         self.assertIn('["useradd", "--system", "--no-create-home", "--shell", "/usr/sbin/nologin", "--gid", GROUP, ACCOUNT]', self.py)
         self.assertEqual((self.setup.ACCOUNT, self.setup.GROUP), ("pvj-ndi", "pvj-ndi"))
         for line in self.sh.splitlines():                  # and nothing ever puts the account into another group
@@ -626,7 +626,7 @@ class NdiUnitTest(unittest.TestCase):
         self.assertEqual(self.setup.PLAYER_DROPIN, "/etc/systemd/system/pvj-player.service.d/50-pvj-ndi.conf")
         self.assertEqual(sorted(self.setup.RESTART), ["pvj-player.service", "pvj-web.service"])
         self.assertEqual((self.ndi["RuntimeDirectory"], self.ndi["RuntimeDirectoryMode"], self.ndi["UMask"]), (["pvj-ndi"], ["0750"], ["0027"]))
-        from pvj import paths
+        from mctl import paths
         env = dict(w.split("=", 1) for w in words(self.ndi, "Environment"))
         web = dict(w.split("=", 1) for w in words(self.dropins["pvj-web.service"], "Environment"))
         self.assertNotIn("PVJ_NDI_DIR", " ".join(words(self.units["pvj-web.service"], "Environment")))     # the panel's own unit does not say it
@@ -738,7 +738,7 @@ class NdiUnitTest(unittest.TestCase):
 
     def test_the_library_cannot_reach_the_internet_and_the_panel_takes_only_addresses_the_unit_allows(self):
         import ipaddress
-        from pvj import ndi
+        from mctl import ndi
         self.assertEqual(self.ndi["IPAddressDeny"], ["any"])
         allow = words(self.ndi, "IPAddressAllow")
         self.assertEqual(allow, ["link-local", "multicast", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"])      # not localhost
@@ -746,7 +746,7 @@ class NdiUnitTest(unittest.TestCase):
         self.assertEqual(set(ndi.PRIVATE_NETS), nets)
 
     def test_the_library_is_given_nowhere_to_write_that_lasts_and_comes_from_a_folder_that_is_roots(self):
-        from pvj import ndi
+        from mctl import ndi
         env = dict(w.split("=", 1) for w in words(self.ndi, "Environment"))
         self.assertEqual((env["HOME"], env["NDI_CONFIG_DIR"]), ("/tmp", "/run/pvj-ndi-config"))     # the panel's to write, never the helper's (ndisetup.TMPFILES_TEXT)
         self.assertFalse(ndi.LIB_DIR.startswith(("/usr/lib", "/lib", "/usr/local/lib", "/var", "/run", "/tmp")))   # not the system path, not writable state

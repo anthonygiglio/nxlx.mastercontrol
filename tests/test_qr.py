@@ -9,7 +9,7 @@ import tempfile
 import unittest
 import zlib
 
-from pvj import qr
+from mctl import qr
 import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 

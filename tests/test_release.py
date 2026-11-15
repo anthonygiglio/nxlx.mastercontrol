@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import unittest
 
-from pvj import update
+from mctl import update
 import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -15,7 +15,7 @@ SCRIPT = os.path.join(REPO, "tools", "make-release.sh")
 
 
 def version():
-    with open(os.path.join(REPO, "pvj", "__init__.py")) as f:
+    with open(os.path.join(REPO, "mctl", "__init__.py")) as f:
         return re.search(r'^__version__ = "([^"]+)"', f.read(), re.M).group(1)
 
 
@@ -45,10 +45,10 @@ class ReleaseTest(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(work, "backend.php")), "legacy code must not ship")
         self.assertFalse(os.path.exists(os.path.join(work, "sync")))
         # the Signal look's fonts and their licence texts ship, byte for byte: a box at a venue has no internet
-        fonts = os.path.join(work, "pvj", "web", "fonts")
+        fonts = os.path.join(work, "mctl", "web", "fonts")
         self.assertEqual(sorted(os.listdir(fonts)), ["OFL-Archivo.txt", "OFL-JetBrainsMono.txt", "archivo-latin.06fa7831.woff2", "jetbrains-mono-500-latin.6c95bc2f.woff2"])
         for name in os.listdir(fonts):
-            with open(os.path.join(fonts, name), "rb") as shipped, open(os.path.join(REPO, "pvj", "web", "fonts", name), "rb") as ours:
+            with open(os.path.join(fonts, name), "rb") as shipped, open(os.path.join(REPO, "mctl", "web", "fonts", name), "rb") as ours:
                 self.assertEqual(shipped.read(), ours.read(), name)
 
     def test_wrong_or_missing_version_refused(self):
@@ -60,14 +60,14 @@ class ReleaseTest(unittest.TestCase):
         clone = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, clone, True)
         subprocess.run(["git", "clone", "-q", "--local", REPO, clone], check=True)
-        with open(os.path.join(clone, "pvj", "README.md"), "a") as f:
+        with open(os.path.join(clone, "mctl", "README.md"), "a") as f:
             f.write("\nuncommitted edit\n")
-        with open(os.path.join(clone, "pvj", "__init__.py")) as f:
+        with open(os.path.join(clone, "mctl", "__init__.py")) as f:
             ver = re.search(r'^__version__ = "([^"]+)"', f.read(), re.M).group(1)
         r = build(ver, cwd=clone)
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("uncommitted", r.stderr)
-        subprocess.run(["git", "checkout", "-q", "--", "pvj/README.md"], cwd=clone, check=True)
+        subprocess.run(["git", "checkout", "-q", "--", "mctl/README.md"], cwd=clone, check=True)
         self.assertEqual(build(ver, cwd=clone).returncode, 0)
 
     @unittest.skipUnless(shutil.which("ssh-keygen"), "ssh-keygen not installed")

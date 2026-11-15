@@ -55,7 +55,7 @@ PrivateTmp=yes
 # panel light a known MIDI controller's buttons. It is every ALSA node, not only MIDI ones:
 # systemd can name a class of devices or one fixed node, and a controller's node appears when
 # it is plugged in. The program itself opens only /dev/snd/midiC<n>D<n> of a controller that
-# matched a profile, and writes only the fixed messages of that profile (pvj/midi.py).
+# matched a profile, and writes only the fixed messages of that profile (mctl/midi.py).
 DevicePolicy=closed
 DeviceAllow=/dev/null rw
 DeviceAllow=/dev/zero rw

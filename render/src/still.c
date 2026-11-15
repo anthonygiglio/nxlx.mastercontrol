@@ -5,7 +5,7 @@
 // screenshot is of its layer, which then holds only the generator's blank carrier, so the renderer writes its own.
 //
 //   PNG   8-bit RGB with no row filter and stored (not compressed) deflate blocks: what Player.still asks of mpv
-//         (screenshot-png-compression 0, screenshot-png-filter 0) and what pvj/transitions.py read_still takes.
+//         (screenshot-png-compression 0, screenshot-png-filter 0) and what mctl/transitions.py read_still takes.
 //   JPEG  baseline, 4:4:4, the tables of the JPEG standard's annex K, scaled by quality as mpv's libjpeg scales them:
 //         the panel's preview (api.preview_jpeg).
 //

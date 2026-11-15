@@ -7,10 +7,10 @@ import threading
 import time
 import unittest
 
-from pvj import dmx, midi
-from pvj.dmx import DmxManager, DmxMapper, DmxServer
-from pvj.midi import MidiHub, MidiParser
-from pvj.settings import Settings
+from mctl import dmx, midi
+from mctl.dmx import DmxManager, DmxMapper, DmxServer
+from mctl.midi import MidiHub, MidiParser
+from mctl.settings import Settings
 from tests.test_server import ServerBase
 
 

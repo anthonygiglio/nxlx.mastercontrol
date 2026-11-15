@@ -4,7 +4,7 @@ import os
 import subprocess
 import unittest
 
-from pvj import sysd
+from mctl import sysd
 from tests.test_server import ServerBase
 
 
@@ -175,7 +175,7 @@ class ApiTest(ServerBase):
 
     def test_writeback_connectors_are_not_screens(self):
         from unittest import mock
-        with mock.patch("pvj.api.hardware.drm_connectors", return_value=[
+        with mock.patch("mctl.api.hardware.drm_connectors", return_value=[
                 {"connector": "HDMI-A-1", "status": "connected", "modes": []},
                 {"connector": "Writeback-1", "status": "unknown", "modes": []}]):
             body = self.call("GET", "/api/system", token=self.full)[1]

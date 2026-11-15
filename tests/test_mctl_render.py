@@ -5,7 +5,7 @@
 The program is built first (`make -C render TEST_HOOKS=1`; a build without the hooks skips the one test that needs
 them, and fails it where PVJ_RENDER_TEST=1). Without it these tests are skipped, except where PVJ_RENDER_TEST=1
 (the CI job mctl-render), where a missing program, a missing clip maker or a missing font is a failure: there a skip
-would judge nothing. Every question goes through pvj.player.Ipc, the panel's own client, so what is tested is what the
+would judge nothing. Every question goes through mctl.player.Ipc, the panel's own client, so what is tested is what the
 panel will meet. The pictures are read back with mctl-render's own `mctl-capture` (the final picture as it would go to
 the screen) and judged by their pixels.
 """
@@ -24,8 +24,8 @@ import unittest
 import zlib
 
 import tests        # the run's own temp folder (tests/__init__.py)
-from pvj import looplist, mapper
-from pvj.player import Ipc, Player, PlayerError
+from mctl import looplist, mapper
+from mctl.player import Ipc, Player, PlayerError
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 BIN = os.environ.get("PVJ_RENDER_BIN") or os.path.join(REPO, "render", "mctl-render")
@@ -516,11 +516,11 @@ class TextLayerTest(Base):
         self.assertFalse(self.r("get_property", "mctl-render")["text-layer"])
 
     def test_masks_combined_into_one_picture_are_drawn_as_the_overlay(self):
-        # D100: the panel's combined masks (pvj/overlay.py) go to mctl-render as one overlay-add, as to classic mpv.
+        # D100: the panel's combined masks (mctl/overlay.py) go to mctl-render as one overlay-add, as to classic mpv.
         # The picture is combined here in plain Python by the same rule as overlay.combine (premultiplied, a later
         # mask "over" an earlier one), so this needs no mpv program: the CI job has libmpv only. mpv's own combining
         # is tested in tests/test_masks.py.
-        from pvj import overlay
+        from mctl import overlay
         masks = [lambda x, y: (0, 0, 0, 255) if x < W // 2 else (0, 0, 0, 0),                          # black left half
                  lambda x, y: (255, 0, 255, 255) if y >= H // 2 and x < W // 4 else (0, 0, 0, 0)]      # magenta, over it
         pixels = bytearray()
@@ -1571,7 +1571,7 @@ class MoveTest(MoveBase):
         """The panel's own class Move says where the old picture's part is at a moment; the picture must agree in
         all eight, at two moments, and on both sides of the edge: the part that is left shows what the old
         picture shows there (standing in a wipe, moved in a slide) and the rest is the incoming picture, unmoved."""
-        from pvj import transitions as T
+        from mctl import transitions as T
         r = self.r
         self.assertEqual(len(T.WIPES + T.SLIDES), 8)
         for name in T.WIPES + T.SLIDES:
@@ -1803,7 +1803,7 @@ class MovePaceTest(MoveBase):
 class ManyMovesTest(MoveBase):
     def test_sixty_in_a_row_leave_nothing_behind(self):
         r = self.r
-        from pvj import transitions as T
+        from mctl import transitions as T
         names = T.WIPES + T.SLIDES
         r.load(self.red)
         for n in range(60):
@@ -1818,10 +1818,10 @@ class ManyMovesTest(MoveBase):
 
 
 class PlayerFadeTest(FadeBase):
-    """pvj/player.py's crossfade through the real mctl-render: Player.play(..., fade=seconds)."""
+    """mctl/player.py's crossfade through the real mctl-render: Player.play(..., fade=seconds)."""
 
     def player(self):
-        from pvj.player import Player
+        from mctl.player import Player
         p = Player(rundir=self.tmp)
         p.socket_path = self.r.sock
         p.ipc = Ipc(self.r.sock, timeout=10.0)
@@ -2439,7 +2439,7 @@ class FinalPassTest(unittest.TestCase):
                 self.assertTrue(near(at(x, y), want), "the frame at screen point %d,%d: %s" % (x, y, at(x, y)))
 
     def still(self, r, path):
-        from pvj.transitions import read_still
+        from mctl.transitions import read_still
         open(path, "w").close()
         r("screenshot-to-file", path, "mctl-screen")
         return read_still(path, (self.FW, self.FH))
@@ -2557,10 +2557,10 @@ class SourceFadeTest(SourcesBase):
 
 
 class PlayerSourcesTest(SourcesBase):
-    """pvj/player.py's side through the real mctl-render: Player.sources, play_to, stop_source, sources_state."""
+    """mctl/player.py's side through the real mctl-render: Player.sources, play_to, stop_source, sources_state."""
 
     def player(self):
-        from pvj.player import Player
+        from mctl.player import Player
         p = Player(rundir=self.tmp)
         p.socket_path = self.r.sock
         p.ipc = Ipc(self.r.sock, timeout=10.0)

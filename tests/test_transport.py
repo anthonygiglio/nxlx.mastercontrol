@@ -3,9 +3,9 @@
 import threading
 import unittest
 
-from pvj import screenmode
-from pvj.api import Fader
-from pvj.player import Player, PlayerError
+from mctl import screenmode
+from mctl.api import Fader
+from mctl.player import Player, PlayerError
 from tests.test_server import ServerBase
 
 

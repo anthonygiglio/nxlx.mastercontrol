@@ -12,8 +12,8 @@ import os
 import types
 from unittest import mock
 
-from pvj import boxcare, osc, policy, support as sp, themes
-from pvj.api import ApiError
+from mctl import boxcare, osc, policy, support as sp, themes
+from mctl.api import ApiError
 from tests.test_boxcare import Base as CareBase
 from tests.test_roles import ROWS, WHO
 from tests.test_support import LAN, TUNNEL
@@ -481,7 +481,7 @@ class SecondReviewTest(Base):
         that a request chooses (what varies goes into `detail`, which is counted and kept only for a few)."""
         import inspect
         import re as re_mod
-        from pvj import api as api_mod, boxcare as boxcare_mod, server as server_mod
+        from mctl import api as api_mod, boxcare as boxcare_mod, server as server_mod
         calls = []
         for mod in (api_mod, boxcare_mod, server_mod):
             src = inspect.getsource(mod)
@@ -530,7 +530,7 @@ class SecondReviewTest(Base):
         self.assertEqual(len(self.did()), n)
 
     def test_m2_a_code_control_refused_is_in_the_log(self):
-        from pvj import midi
+        from mctl import midi
         hub = midi.MidiHub(self.api, self.settings, log=lambda *_: None, open_fn=lambda p: (_ for _ in ()).throw(OSError()),
                            lister=lambda: [], scan_interval=0.05)
         self.api.midi = hub
@@ -779,7 +779,7 @@ class AttackTest(Base):
         self.assertEqual(self.remote("POST", "/api/osc/feedback", {"add": {"name": "me", "address": "192.168.1.60", "port": 53}}, dev)[0], 400)
         self.assertEqual(self.settings.data["osc"].get("feedback", []), [])
         # by a file: the form is taken, and at every send the tunnel's address is still no device on the box's own network
-        from pvj import oscfeedback
+        from mctl import oscfeedback
         self.assertIsNotNone(oscfeedback.not_local(TUNNEL, oscfeedback.local_nets(self.api._ip_json())))
 
     def test_the_key_he_saw_is_said_and_the_owner_is_told_to_make_a_new_one(self):
@@ -892,7 +892,7 @@ class AttackTest(Base):
     def test_a_control_that_shows_an_access_code_is_never_set_or_changed_by_a_session(self):
         """Decided after the first build: the Operator's rule (D80) for every support session whatever its role,
         except that a session may take such a mapping away. By the route and by a file."""
-        from pvj import midi
+        from mctl import midi
         hub = midi.MidiHub(self.api, self.settings, log=lambda *_: None, open_fn=lambda p: (_ for _ in ()).throw(OSError()),
                            lister=lambda: [], scan_interval=0.05)
         self.api.midi = hub

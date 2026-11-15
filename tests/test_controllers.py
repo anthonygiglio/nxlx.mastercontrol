@@ -12,8 +12,8 @@ import threading
 import time
 import unittest
 
-from pvj import boxcare, midi, vibes as V
-from pvj.midi import MidiHub, MidiMapper
+from mctl import boxcare, midi, vibes as V
+from mctl.midi import MidiHub, MidiMapper
 from tests.test_midi import Recorder
 from tests.test_server import ServerBase
 from tests.test_shader_engine import ALL, Live
@@ -190,7 +190,7 @@ class ProfileFilesTest(unittest.TestCase):
 
     def test_the_files_are_covered_by_the_licence_file(self):
         with open(os.path.join(ROOT, "REUSE.toml")) as f:
-            self.assertIn('"pvj/controllers.d/**"', f.read())
+            self.assertIn('"mctl/controllers.d/**"', f.read())
 
 
 # /proc/asound/cards as the owner's Pi shows it with the three controllers plugged in (ids, names and USB ids as reported

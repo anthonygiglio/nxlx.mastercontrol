@@ -5,9 +5,9 @@ real API with a fake player. No real controller and no real console has been use
 import random
 import unittest
 
-from pvj import midi, vibes as V
-from pvj.dmx import DmxMapper, DmxServer, vibes_of
-from pvj.midi import MidiHub, MidiMapper
+from mctl import midi, vibes as V
+from mctl.dmx import DmxMapper, DmxServer, vibes_of
+from mctl.midi import MidiHub, MidiMapper
 from tests.test_control import artnet
 from tests.test_shaders import Base
 

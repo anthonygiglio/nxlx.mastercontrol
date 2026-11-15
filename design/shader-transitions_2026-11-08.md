@@ -62,7 +62,7 @@ Only the mctl-render property gains a word and the socket gains one command. A r
 
 ### 2.4 How the fade from a still is retired
 
-The still (D71, `pvj/transitions.py`) is not deleted. It stays for four cases only:
+The still (D71, `mctl/transitions.py`) is not deleted. It stays for four cases only:
 
 1. classic mpv, which includes every Pi 3
 2. a renderer without `layer-generators`

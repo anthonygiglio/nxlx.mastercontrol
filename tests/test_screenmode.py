@@ -15,9 +15,9 @@ import unittest
 from unittest import mock
 
 import tests  # noqa: F401  (the lock order and a temp folder of its own, tests/__init__.py)
-from pvj import mapper as M, screenmode as S
-from pvj.player import Player, PlayerError
-from pvj.settings import Settings
+from mctl import mapper as M, screenmode as S
+from mctl.player import Player, PlayerError
+from mctl.settings import Settings
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BOOT = "11111111-2222-3333-4444-555555555555"
@@ -335,7 +335,7 @@ class CardTest(unittest.TestCase):
             self.assertIsNone(S.clean_report(dict(rep, device_arg=bad))["device_arg"], bad)
 
     def test_the_kernels_card_number_from_sys(self):
-        from pvj import hardware
+        from mctl import hardware
         tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, tmp, True)
         for name, status in (("card1-HDMI-A-1", "connected"), ("card1-HDMI-A-2", "disconnected"), ("card1-Writeback-1", "unknown")):
@@ -415,10 +415,10 @@ class PrepareTest(unittest.TestCase):
     def test_serve_passes_it_to_mpv(self):
         p = Player(mpv_bin="mpv", extra_args=["--vo=gpu", "--gpu-context=drm"], rundir=self.run_dir)
         seen = []
-        with mock.patch("pvj.player.detach_socket_opener"), \
-                mock.patch("pvj.player.os.execvp", side_effect=lambda f, a: seen.append(a)), \
-                mock.patch("pvj.screenmode.list_modes", return_value=(S.parse_help(XGA), "")), \
-                mock.patch("pvj.screenmode.hardware.drm_connectors", return_value=connected()), \
+        with mock.patch("mctl.player.detach_socket_opener"), \
+                mock.patch("mctl.player.os.execvp", side_effect=lambda f, a: seen.append(a)), \
+                mock.patch("mctl.screenmode.list_modes", return_value=(S.parse_help(XGA), "")), \
+                mock.patch("mctl.screenmode.hardware.drm_connectors", return_value=connected()), \
                 mock.patch.dict(os.environ, self.env):
             p.serve()
         self.assertEqual(seen[0][-1], "--drm-mode=1024x768@60.00")

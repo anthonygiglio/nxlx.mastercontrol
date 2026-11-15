@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Test helpers for the peer channel (D132, slices 3 and 4a): a node made of the real Handover and Peers, a certificate from
 a throwaway root, a small TLS server that answers the card the way the panel's port does, and the REAL peer listener of
-pvj/server.py (a client certificate required, the pinned root the only CA) on a port of its own. Not a test module. The
+mctl/server.py (a client certificate required, the pinned root the only CA) on a port of its own. Not a test module. The
 roots here have no name constraints so that loopback addresses can be used."""
 import base64
 import http.server
@@ -15,8 +15,8 @@ import subprocess
 import threading
 import types
 
-from pvj import fleetlist as FL, handover as hv, httpsbox, peer, server
-from pvj.settings import Settings
+from mctl import fleetlist as FL, handover as hv, httpsbox, peer, server
+from mctl.settings import Settings
 from tests.test_boxcert import boxcert, make_request
 
 PASS = "correct horse battery"

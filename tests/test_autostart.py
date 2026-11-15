@@ -6,10 +6,10 @@ import sys
 import tempfile
 import unittest
 
-from pvj import autostart
-from pvj.api import ApiError
-from pvj.player import PlayerError
-from pvj.settings import Settings
+from mctl import autostart
+from mctl.api import ApiError
+from mctl.player import PlayerError
+from mctl.settings import Settings
 from tests.test_server import ServerBase
 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
@@ -39,7 +39,7 @@ class ImportTest(unittest.TestCase):
     def test_every_module_imports_first_on_its_own(self):
         # a circular import only shows when a module is the first one loaded
         for mod in ("api", "autostart", "scheduler", "dmx", "midi", "streams", "osc", "server", "settings"):
-            r = subprocess.run([sys.executable, "-c", "import pvj.%s" % mod], cwd=ROOT, capture_output=True, text=True)
+            r = subprocess.run([sys.executable, "-c", "import mctl.%s" % mod], cwd=ROOT, capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, "%s: %s" % (mod, r.stderr[-300:]))
 
 

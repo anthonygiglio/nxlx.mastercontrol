@@ -9,8 +9,8 @@ import threading
 import time
 import unittest
 
-from pvj import midi
-from pvj.midi import MidiMapper
+from mctl import midi
+from mctl.midi import MidiMapper
 from tests.test_controllers import BY_ID, HubBase, MIX, NANO, PAD
 from tests.test_lights import C_MIX, C_NANO, C_PAD, LightsHubBase, WriterBase, snap, value
 from tests.test_midi import Recorder

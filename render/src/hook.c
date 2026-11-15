@@ -3,7 +3,7 @@
 //
 // The final pass: an mpv user shader on the OUTPUT stage, run by mctl-render at the output's pixels.
 //
-// The projection mapping (pvj/mapper.py: warp_shader for the show, shader while editing) is written as an mpv user
+// The projection mapping (mctl/mapper.py: warp_shader for the show, shader while editing) is written as an mpv user
 // shader file: //!TEXTURE blocks with their data as hex, then one //!HOOK OUTPUT block of GLSL that defines
 // `vec4 hook()`, reading the picture with HOOKED_tex(pos) at HOOKED_pos and knowing the screen's size as HOOKED_size.
 // mpv runs it on the final picture at the screen's size. Here the same text is compiled into the pass that scales the

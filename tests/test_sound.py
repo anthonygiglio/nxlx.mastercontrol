@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""Sound reactivity (D96, pvj/SOUND.md): the analysis on generated signals, the levels file's layout, the service
+"""Sound reactivity (D96, mctl/SOUND.md): the analysis on generated signals, the levels file's layout, the service
 idling and capturing from a stand-in arecord, its socket, OSC bytes on a loopback socket and the caps, the slow
 shader input, who may do what (remote support may not switch the microphone on), the unit's sandbox, and an older
 release loading the settings. No audio device is needed: every signal is made here."""
@@ -19,7 +19,7 @@ import threading
 import time
 import unittest
 
-from pvj import netd, paths, sound, soundout
+from mctl import netd, paths, sound, soundout
 from tests.test_roles import LAN, TUNNEL, RolesBase
 from tests.test_units import load_units, words
 
@@ -72,7 +72,7 @@ def run(signal, analyzer=None):
 
 
 def proc_dir(test, cards=CARDS, pcm=PCM):
-    d = tempfile.mkdtemp(prefix="pvj-asound-")
+    d = tempfile.mkdtemp(prefix="mctl-asound-")
     test.addCleanup(shutil.rmtree, d, True)
     with open(os.path.join(d, "cards"), "w") as f:
         f.write(cards)
@@ -212,7 +212,7 @@ class AnalysisTest(unittest.TestCase):
 
     def test_the_cost_is_bounded(self):
         """A bounded benchmark, as the decision's numbers were taken (D96): ten seconds of sound. The bound here is
-        loose (a CI machine is slow and shared); the numbers in pvj/SOUND.md are from a quiet laptop."""
+        loose (a CI machine is slow and shared); the numbers in mctl/SOUND.md are from a quiet laptop."""
         sig = sine(220, 0.3, 10.0)
         a = sound.Analyzer()
         t0 = time.process_time()
@@ -251,7 +251,7 @@ class LayoutTest(unittest.TestCase):
         self.assertEqual(struct.unpack_from("<II", raw, 120), (zlib.crc32(raw[:120]), 41))
 
     def test_the_doc_has_the_same_table(self):
-        with open(os.path.join(REPO, "pvj", "SOUND.md")) as f:
+        with open(os.path.join(REPO, "mctl", "SOUND.md")) as f:
             doc = f.read()
         for row in ("| 0 | 4 bytes | magic `NXSD` |", "| 8 | u32 | sequence number", "| 16 | f64 |", "| 32 | f32 | RMS level",
                     "| 60 | u32 | beat count", "| 68 | 8 x f32 | band levels", "| 100 | f32 | peak, dB |", "| 104 | 6 x u16 | slow bands", "| 120 | u32 | CRC-32",
@@ -552,7 +552,7 @@ class OscTest(unittest.TestCase):
         self.assertAlmostEqual(by["/nxlx/sound/band/1"][1][0], 0.15, places=5, msg="the slow bands, never the fast ones")
         self.assertEqual(parse_bundle(soundout.beat_message(42)), [("/nxlx/sound/beat", ",i", [42])])
         self.assertLess(len(soundout.values_bundle(record()) + soundout.bands_bundle(record())), 600)
-        with open(os.path.join(REPO, "pvj", "SOUND.md")) as f:
+        with open(os.path.join(REPO, "mctl", "SOUND.md")) as f:
             doc = f.read()
         for a in ("level", "db", "envelope", "pulse", "bpm", "band/<n>", "bands", "beat"):
             self.assertIn("`/nxlx/sound/%s`" % a, doc)
@@ -634,7 +634,7 @@ class OscTest(unittest.TestCase):
                 return {}
 
             def _look_up(self, node, st, wait):
-                from pvj.render import RenderError
+                from mctl.render import RenderError
                 raise RenderError("not yet", 409)
         api.render = Bridge()
         out = soundout.Sound(api, socket_path="/nonexistent", levels_path="/nonexistent", log=lambda *_: None)
@@ -834,7 +834,7 @@ class SettingTest(unittest.TestCase):
         self.assertEqual(soundout.stored({"on": True, "device": DEVICE})["device"], DEVICE)
 
     def test_the_default_settings_have_it_off(self):
-        from pvj.settings import default_settings
+        from mctl.settings import default_settings
         self.assertEqual(soundout.stored(default_settings()["sound"]), soundout.DEFAULT)
         self.assertFalse(default_settings()["sound"]["on"])
 
@@ -915,7 +915,7 @@ class RoutesTest(RolesBase):
         self.assertIn("/api/sound", did)
 
     def test_it_is_the_boxs_own_and_in_no_settings_file(self):
-        from pvj import boxcare
+        from mctl import boxcare
         self.assertIn("sound", boxcare.BOX_OWN)
         self.assertEqual(self.h("POST", "/api/sound", {"device": DEVICE, "on": True}, self.owner)[0], 200)
         st, out = self.h("POST", "/api/system/settings/export", {}, self.owner)
@@ -930,7 +930,7 @@ class RollbackTest(unittest.TestCase):
             subprocess.run(["git", "-C", REPO, "rev-parse", "--verify", "-q", master], check=True, capture_output=True)
         except (OSError, subprocess.CalledProcessError):
             self.skipTest("no %s here to read the older release from" % master)
-        from pvj.settings import Settings as RealSettings
+        from mctl.settings import Settings as RealSettings
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
         path = os.path.join(d, "settings.json")
@@ -1065,7 +1065,7 @@ class ReviewTest(unittest.TestCase):
         self.assertEqual(len(asked), n + 1, "a change of the setting is taken at once")
 
     def test_m2_no_core_dump_for_the_service_or_its_child(self):
-        code = "import json, resource; from pvj import sound; r = sound.no_core_dumps(); print(json.dumps([list(r['core']), r['dumpable']]))"
+        code = "import json, resource; from mctl import sound; r = sound.no_core_dumps(); print(json.dumps([list(r['core']), r['dumpable']]))"
         r = subprocess.run([sys.executable, "-c", code], cwd=REPO, capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 0, r.stderr)
         core, dumpable = json.loads(r.stdout)
@@ -1074,12 +1074,12 @@ class ReviewTest(unittest.TestCase):
         if sys.platform.startswith("linux"):
             self.assertEqual(dumpable, 0)
         self.assertEqual(load_units()["pvj-sound.service"]["LimitCORE"], ["0"])
-        with open(os.path.join(REPO, "pvj", "sound.py")) as f:
+        with open(os.path.join(REPO, "mctl", "sound.py")) as f:
             main = f.read().split("def main(")[1]
         self.assertLess(main.index("no_core_dumps()"), main.index("Service("), "before anything is captured")
 
     def test_m1_the_page_says_what_is_true(self):
-        with open(os.path.join(REPO, "pvj", "web", "app.js")) as f:
+        with open(os.path.join(REPO, "mctl", "web", "app.js")) as f:
             js = f.read()
         self.assertNotIn("They leave the box only to the devices you list here", js)
         self.assertIn("id: 'soundbandwarn', text: d.bands_warning", js)

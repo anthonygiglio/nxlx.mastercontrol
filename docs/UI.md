@@ -76,7 +76,7 @@ Flip left-right and upside down for rear projection or a mirror rig. The overlay
 
 ### Projection mapping (beta)
 
-Shown when the Projection mapper module is on. The canvas is the screen, drawn small: here a 3x2 grid named Back wall and a quad named Side panel, the chosen surface in yellow with its chosen corner in pink. Below: nudge buttons, the surface list in layer order, and saved mappings. See [MAPPER.md](../pvj/MAPPER.md).
+Shown when the Projection mapper module is on. The canvas is the screen, drawn small: here a 3x2 grid named Back wall and a quad named Side panel, the chosen surface in yellow with its chosen corner in pink. Below: nudge buttons, the surface list in layer order, and saved mappings. See [MAPPER.md](../mctl/MAPPER.md).
 
 ![Projection mapping card with a grid and a quad on the canvas](images/ui/mapper.png)
 
@@ -116,29 +116,29 @@ This box: versions, storage, the screen outputs (their modes under Advanced), th
 
 ### Beta modules
 
-| Weekly schedule (see [SCHEDULE.md](../pvj/SCHEDULE.md)) | Streams (see [STREAMS.md](../pvj/STREAMS.md)) |
+| Weekly schedule (see [SCHEDULE.md](../mctl/SCHEDULE.md)) | Streams (see [STREAMS.md](../mctl/STREAMS.md)) |
 | --- | --- |
 | ![Schedule card](images/ui/schedule.png) | ![Streams card](images/ui/streams.png) |
 
 The schedule above has an entry of each kind: projectors on, play a clip, a legacy start script, blackout and projectors off.
 
-NDI input (see [NDI.md](../pvj/NDI.md)), a Setup page beside Streams under Show tools since 2026-10-11 (D62): the senders found on the network with a Play button each (the Operator's), a Sound switch and the addresses the box also asks (the Owner's). On a box that was not set up for NDI the page says so and names the one command; the runtime is never part of the box. While an NDI source, the capture input or a stream plays, the strip's Speed reads "1.00x · live" (the bar shows the Mix speed, kept for the next clip).
+NDI input (see [NDI.md](../mctl/NDI.md)), a Setup page beside Streams under Show tools since 2026-10-11 (D62): the senders found on the network with a Play button each (the Operator's), a Sound switch and the addresses the box also asks (the Owner's). On a box that was not set up for NDI the page says so and names the one command; the runtime is never part of the box. While an NDI source, the capture input or a stream plays, the strip's Speed reads "1.00x · live" (the bar shows the Mix speed, kept for the next clip).
 
-Projectors (see [PROJECTORS.md](../pvj/PROJECTORS.md)): one row per projector with one power button that follows its state (Turn on, Warming up..., Turn off, Cooling down...), the input list, and More (blank the picture, mute the sound, name the inputs, check, edit, remove); All on and All off for two or more. The one with a password says so; the password itself is never shown.
+Projectors (see [PROJECTORS.md](../mctl/PROJECTORS.md)): one row per projector with one power button that follows its state (Turn on, Warming up..., Turn off, Cooling down...), the input list, and More (blank the picture, mute the sound, name the inputs, check, edit, remove); All on and All off for two or more. The one with a password says so; the password itself is never shown.
 
 ![Projectors card with two projectors](images/ui/projectors.png)
 
-| DMX (see [DMX.md](../pvj/DMX.md)) | MIDI (see [MIDI.md](../pvj/MIDI.md)) |
+| DMX (see [DMX.md](../mctl/DMX.md)) | MIDI (see [MIDI.md](../mctl/MIDI.md)) |
 | --- | --- |
 | ![DMX card](images/ui/dmx.png) | ![MIDI card](images/ui/midi.png) |
 
-Network settings (wired and Wi-Fi) always revert by themselves unless you confirm them. See [NETWORK.md](../pvj/NETWORK.md).
+Network settings (wired and Wi-Fi) always revert by themselves unless you confirm them. See [NETWORK.md](../mctl/NETWORK.md).
 
 ![Network card](images/ui/network.png)
 
 ### Control, appearance and access
 
-| OSC (see [OSC.md](../pvj/OSC.md)) | Appearance | Access |
+| OSC (see [OSC.md](../mctl/OSC.md)) | Appearance | Access |
 | --- | --- | --- |
 | ![OSC card](images/ui/control-osc.png) | ![Appearance card](images/ui/appearance.png) | ![Access card with a guest and a presenter code and their QR codes](images/ui/access.png) |
 
@@ -174,6 +174,6 @@ What changes shape: a card on a phone loses its box (a label, then what belongs 
 
 Everything that can be tapped is at least 44 px, and 56 px where staff press on Room and Live; no text is under 13 px. The browser test checks these on every screen, page and state, at 390 and 1366 px in the dark and at 390 px in the light, together with the contrast of every text against what is behind it, that no word in capitals is cut, that no sentence is in capitals and that no state wears an area's colour.
 
-The pictures are taken by `tests/ui/screenshots.js` from the list in `tests/ui/signal-pages.js` (every screen, every System page, and states such as a question asked in place, a network change waiting to be confirmed, a page whose module is off, the pairing screen), named `signal-<page>-phone` and `-laptop`, with `-phone-light` for some; they are in the `ui-screenshots` artifact of each CI run, and the five above are copies of them at half size. Each main screen is titled with its area's name in capitals (LIVE, not the panel's name, which is the small line under it). The values, the rules and the decisions that Figma does not hold are in [pvj/THEMES.md](../pvj/THEMES.md).
+The pictures are taken by `tests/ui/screenshots.js` from the list in `tests/ui/signal-pages.js` (every screen, every System page, and states such as a question asked in place, a network change waiting to be confirmed, a page whose module is off, the pairing screen), named `signal-<page>-phone` and `-laptop`, with `-phone-light` for some; they are in the `ui-screenshots` artifact of each CI run, and the five above are copies of them at half size. Each main screen is titled with its area's name in capitals (LIVE, not the panel's name, which is the small line under it). The values, the rules and the decisions that Figma does not hold are in [mctl/THEMES.md](../mctl/THEMES.md).
 
 The Appearance picture further up is older than this: the card now has two more buttons, Signal and Signal light.

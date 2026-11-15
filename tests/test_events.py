@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""The event log (pvj/events.py, D125), the helper's journal command (pvj/sysd.py) and the diagnostics that use them."""
+"""The event log (mctl/events.py, D125), the helper's journal command (mctl/sysd.py) and the diagnostics that use them."""
 import json
 import os
 import subprocess
@@ -9,7 +9,7 @@ import unittest
 from unittest import mock
 
 import tests        # the run's own temp folder (tests/__init__.py)
-from pvj import events, sysd
+from mctl import events, sysd
 from tests.test_boxcare import Base as CareBase, PIN
 
 
@@ -264,11 +264,11 @@ class JournalCommandTest(unittest.TestCase):
     def test_it_says_whether_the_journal_is_kept_and_whether_the_root_is_read_only(self):
         s = self.make("a\n")
         s.journal_dir = tempfile.mkdtemp()
-        with mock.patch("pvj.rootfs.current_state", return_value="overlay"):
+        with mock.patch("mctl.rootfs.current_state", return_value="overlay"):
             r = s.journal()
         self.assertEqual((r["persistent"], r["read_only_root"]), (True, True))
         s.journal_dir = "/nonexistent-journal-dir"
-        with mock.patch("pvj.rootfs.current_state", return_value="normal"):
+        with mock.patch("mctl.rootfs.current_state", return_value="normal"):
             r = s.journal()
         self.assertEqual((r["persistent"], r["read_only_root"]), (False, False))
 
@@ -333,7 +333,7 @@ class ApiTest(CareBase):
         self.assertNotIn("Left wall", text)
         self.assertIn("[projector] A projector did not answer.", ev["lines"][0])
         self.assertIn("survive a restart", ev["note"])
-        with mock.patch("pvj.rootfs.current_state", return_value="overlay"):
+        with mock.patch("mctl.rootfs.current_state", return_value="overlay"):
             note = self.h("GET", "/api/system/diagnostics", {}, self.full_dev)[1]["file"]["events"]["note"]
         self.assertIn("lost at a restart", note)
 
@@ -343,7 +343,7 @@ class ApiTest(CareBase):
         self.assertNotIn("7391", json.dumps(self.api.events.events()))
         notes = []
         self.api.event = lambda *a, **k: notes.append((a, k))
-        from pvj.scheduler import Scheduler
+        from mctl.scheduler import Scheduler
         sched = Scheduler(self.api, self.settings, self.api.registry)
         import datetime
         sched._execute({"id": "e1", "label": "Doors", "action": "scene", "scene": "abcd"}, datetime.datetime(2026, 11, 7, 10, 0))
@@ -351,7 +351,7 @@ class ApiTest(CareBase):
         self.assertEqual(notes[0][1], {"who": "Doors"})
 
     def test_the_player_restart_hook_is_called_for_an_unexpected_pid_only(self):
-        from pvj.player import Player
+        from mctl.player import Player
         p = Player.__new__(Player)
         import threading
         p._pid_lock, p._seen_pid, p._own_start, p._new_expected = threading.Lock(), 10, False, False

@@ -1,0 +1,1382 @@
+# SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+# SPDX-License-Identifier: Apache-2.0
+"""Looking after the box: settings export and import, a diagnostics file, and factory reset.
+
+All four are for full-access devices, and all four are done by the unprivileged panel itself (no root helper): the
+settings file and the media folder already belong to it.
+
+What happens to secrets (see also docs/MANUAL.md):
+
+* The PIN, paired devices and their tokens, remote-support settings (server address, keys) and the support history
+  are NEVER exported and NEVER imported. They belong to one box: an import leaves the box's own as they are, and a
+  file that carries them is refused. Join codes and support codes live in memory only and are in no file.
+* Projector passwords and the secrets in a stream address are left out of an export unless the person ticks
+  "include passwords"; that cannot be asked for through the remote-support tunnel. What is secret in an address is
+  decided in one place (streams._pieces): a user name and password; for RTMP the stream key (the last part of the
+  path) and the whole query; for SRT the passphrase, the streamid and every query name not on a short list of
+  harmless ones; for RTSP query names that sound like a secret. Importing a file without them keeps the password
+  the box already has for the same projector (same id, address and port), and the box's own full address of a stream
+  with the same id when the file's address is that address without its secrets: a shortened address never replaces
+  a working one.
+* The diagnostics file never contains any of these, with or without a tick: its settings are built from a list of
+  what may be shown, a net over key names catches what a later version might add, and every piece of text in it
+  (log lines too) is scrubbed of the secrets the box knows and of anything that looks like a login in an address.
+
+An import goes the way a normal load does: the same migrations (a file from a newer version is refused, an older one
+is brought up to date), then every section through the same checks the panel's own forms use. The checks here know
+the settings as of schema KNOWN_SCHEMA; a section a later version adds is not exported and not imported (the box keeps
+its own) until its check is added to SECTIONS.
+
+Themes the owner added (System > Look) travel with the settings: an export of a box that has any carries them
+whole under "themes", beside the settings, and an import checks each one with the same code that checks a theme added
+through the panel (mctl/themes.py) and keeps it, so the look a settings file names is there to be used. A file from a
+box with no added themes has no such part, and is the file earlier versions wrote. A factory reset removes them.
+
+(Before D84 an import was refused through the remote-support tunnel; a reset still is.) An import can switch on OSC, DMX or MIDI
+(new ways to control the box) and a reset removes every paired device.
+"""
+
+import contextlib
+import hashlib
+import copy
+import ipaddress
+import json
+import os
+import re
+import socket
+import subprocess
+import time
+from urllib.parse import unquote
+
+from . import dmx as dmx_mod, midi as midi_mod, ndi as ndi_mod, osc as osc_mod, projector as projector_mod, streams as streams_mod
+from . import mapper as mapper_mod, scheduler as scheduler_mod, sync as sync_mod, themes as themes_mod
+from . import autostart as autostart_mod, room as room_mod, shaderlive as shaderlive_mod, shaders as shaders_mod
+from . import render as render_mod, transitions as transitions_mod, overlay as overlay_mod
+from .api import ApiError, MEDIA_EXTENSIONS, valid_name
+from .settings import SettingsError, default_control, default_settings, migrate
+
+FORMAT = "nxlx.mastercontrol settings"
+FORMAT_VERSION = 1
+KNOWN_SCHEMA = 14                    # the section checks below know the settings as of this schema (14 changed none of them; "ndi" and "recovery" came without a schema change)
+MAX_IMPORT = 1024 * 1024             # bytes: a full mapper with every saved mapping is well under this
+MAX_NUMBER_DIGITS = 40
+MAX_DEPTH = 24
+# never exported, never imported. "controller_code" (D61) is a way to hand out access, so a file cannot switch it on
+NEVER = ("auth", "devices", "support", "support_log", "controller_code", "guest_controls", "ndi_discovery")      # ndi_discovery (D85): which network a listener is on belongs to this box
+# The box's own and no secret: in the diagnostics file, never in an export, and a file that holds it is not imported
+# (it is noted and the box's own stays). "screen" (D90): the mode is chosen for the screen on this box, and an import
+# would set it with nobody in the room to keep it or let it go back.
+BOX_OWN = ("screen", "renderer", "sound", "link", "fleet", "timezone")    # "renderer" (D95): chosen for this box and its screen, like the mode; "sound"
+                                             # (D96): this box's own capture device, so no file can switch a microphone on
+ENVELOPE = ("format", "format_version", "exported", "version", "box", "passwords_included", "settings", "themes")
+KEEP_IMPORT_BACKUPS = 3
+KEEP_SESSION_BACKUPS = 3          # copies of the settings from before a support session's first import, one per session
+LOG_UNITS = ("pvj-web.service", "pvj-player.service", "pvj-sysd.service", "pvj-netd.service", "pvj-supportd.service")
+LOG_LINES, LOG_LINE_MAX = 300, 400
+CONFIRM_IMPORT, CONFIRM_RESET = "import", "factory-reset"
+SECRET_WORDS = "pass|pwd|psk|secret|token|key|auth|sign"       # a name holding one of these is followed by a secret
+_ID = re.compile(r"[0-9a-f]{8}")
+_SECRET_KEY = re.compile(r"pass|secret|token|salt|hash|credential|(^|_)(pin|key|code|login)(_|$)", re.I)
+_LOG_PIN = re.compile(r"(?i)\b(pin|code)\b([ :=]+)(?=[A-Za-z-]*[0-9])[A-Za-z0-9-]{4,}")
+_LOG_URL_LOGIN = re.compile(r"([a-z][a-z0-9+.-]*://)[^/@\s]+@", re.I)
+_LOG_BEARER = re.compile(r"(?i)\b(authorization[\"']?\s*[:=]\s*[\"']?)(?:[a-z]+\s+)?[^\s\"',;]+|\b(bearer\s+)[^\s\"',;]+")
+_LOG_PAIR = re.compile(r"(?i)\b([a-z0-9_.-]*(?:%s)[a-z0-9_.-]*[\"']?\s*[:=]\s*[\"']?)[^&\s\"',;]+" % SECRET_WORDS)
+_LOG_ENCODED = re.compile(r"([A-Za-z0-9_.-]*%[0-9A-Fa-f]{2}[A-Za-z0-9_.%-]*=)([^&\s\"',;]+)")      # pass%70hrase=...
+_SECRET_WORD = re.compile(SECRET_WORDS, re.I)
+
+
+def bad(message, status=400):
+    return ApiError(status, message)
+
+
+# ---- strict JSON -------------------------------------------------------------------------------------------------
+def parse_strict(raw):
+    """A settings file from untrusted bytes: UTF-8 only, one JSON object, no repeated keys at any level, no NaN or
+    Infinity (spelled out or as a number too large to hold), no absurd numbers or nesting. Raises ApiError."""
+    if not isinstance(raw, (bytes, bytearray)):
+        raise bad("send the file as the request body")
+    if len(raw) > MAX_IMPORT:
+        raise bad("the file is too large for a settings file", 413)
+    try:
+        text = bytes(raw).decode("utf-8")
+    except UnicodeDecodeError:
+        raise bad("the file is not UTF-8 text")
+
+    def pairs(items):
+        out = {}
+        for k, v in items:
+            if k in out:
+                raise ValueError("the key %r appears twice" % k)
+            out[k] = v
+        return out
+
+    def constant(name):
+        raise ValueError("%s is not a number a settings file may hold" % name)
+
+    def real(text):
+        if len(text) > MAX_NUMBER_DIGITS:
+            raise ValueError("a number is too long")
+        v = float(text)
+        if v != v or v in (float("inf"), float("-inf")):
+            raise ValueError("a number is too large")
+        return v
+
+    def whole(text):
+        if len(text) > MAX_NUMBER_DIGITS:
+            raise ValueError("a number is too long")
+        return int(text)
+    try:
+        data = json.loads(text, object_pairs_hook=pairs, parse_constant=constant, parse_float=real, parse_int=whole)
+    except RecursionError:
+        raise bad("the file is nested too deeply")
+    except ValueError as e:
+        raise bad("the file is not valid JSON: %s" % e)
+    if not isinstance(data, dict):
+        raise bad("the file does not hold a settings export")
+    if _depth(data) > MAX_DEPTH:
+        raise bad("the file is nested too deeply")
+    return data
+
+
+def _depth(value):
+    """How deeply `value` is nested, without recursion (the parser may hand back something very deep)."""
+    deepest, todo = 0, [(value, 1)]
+    while todo:
+        v, level = todo.pop()
+        deepest = max(deepest, level)
+        if deepest > MAX_DEPTH:
+            break
+        if isinstance(v, dict):
+            todo.extend((x, level + 1) for x in v.values())
+        elif isinstance(v, list):
+            todo.extend((x, level + 1) for x in v)
+    return deepest
+
+
+# ---- stream addresses (what is secret in one is decided in streams.py, for the panel and for the files alike) ------
+strip_login, stream_secrets, stream_where = streams_mod.strip_login, streams_mod.stream_secrets, streams_mod.stream_where
+
+
+# ---- the section checks (each: the section from the file -> a clean section; raises on anything wrong) -----------
+def _text(v, limit, what):
+    if not isinstance(v, str) or len(v) > limit or re.search(r"[\x00-\x1f\x7f]", v):
+        raise ValueError("%s must be text of up to %d characters" % (what, limit))
+    return v
+
+
+def _flag(v, what):
+    if not isinstance(v, bool):
+        raise ValueError("%s must be true or false" % what)
+    return v
+
+
+def _obj(v, what="it"):
+    if not isinstance(v, dict):
+        raise ValueError("%s must be an object" % what)
+    return v
+
+
+def _media_name(v, what, extensions=MEDIA_EXTENSIONS):
+    if v == "":
+        return v
+    if not valid_name(v) or not v.lower().endswith(extensions):
+        raise ValueError("%s is not a media file name" % what)
+    return v
+
+
+def check_pads(v, care):
+    banks = _obj(v).get("banks")
+    if not isinstance(banks, list) or len(banks) != 3:
+        raise ValueError("there must be 3 banks")
+    out = []
+    for bank in banks:
+        pads = _obj(bank, "a bank").get("pads")
+        if not isinstance(pads, list) or len(pads) != 12:
+            raise ValueError("a bank has 12 pads")
+        clean = []
+        for pad in pads:
+            _obj(pad, "a pad")
+            item = {"label": _text(pad.get("label", ""), 40, "a pad label"), "file": _media_name(pad.get("file", ""), "a pad's clip")}
+            held = pad.get("shader") not in (None, "")
+            if "ending" in pad and not (held and item["file"] == ""):       # a shader has no end: nothing is kept for it
+                if pad["ending"] not in ("loop", "stop", "hold"):
+                    raise ValueError("a pad ends with loop, stop or hold")
+                item["ending"] = pad["ending"]
+            if held:
+                # A pad that holds a generator shader (D73). Its name is checked as a name, not looked up: the file
+                # may come to the box after the settings, and a pad whose shader is not there says so when tapped.
+                sid = pad["shader"]
+                if item["file"] != "":
+                    raise ValueError("a pad holds a clip or a shader, not both")
+                if not isinstance(sid, str) or not shaders_mod.FILE.fullmatch(sid) or not valid_name(sid):
+                    raise ValueError("a pad's shader is not a shader file name")
+                item["shader"] = sid
+                if pad.get("preset") not in (None, ""):
+                    if not shaderlive_mod.name_ok(pad["preset"]):
+                        raise ValueError("a pad's preset must be a name of 1 to 40 characters")
+                    item["preset"] = pad["preset"]
+            elif pad.get("ndi") not in (None, ""):
+                # A pad that holds an NDI source (D62): the id alone, checked as an id and not looked up. Whether it
+                # is allowed on this box is asked when the pad is pressed (the file's `ndi` section says which are).
+                if item["file"] != "":
+                    raise ValueError("a pad holds a clip or an NDI source, not both")
+                if not isinstance(pad["ndi"], str) or not ndi_mod._ID.fullmatch(pad["ndi"]):
+                    raise ValueError("a pad's NDI source is not a source id")
+                item = {"label": item["label"], "file": "", "ndi": pad["ndi"]}
+            elif pad.get("render") is not None:
+                # A pad that holds a render cue (D94): its form, by the panel's own check. The node it names is looked
+                # up when the pad is pressed (the file's `render` section says which nodes there are).
+                if item["file"] != "":
+                    raise ValueError("a pad holds a clip or a render cue, not both")
+                item = {"label": item["label"], "file": "", "render": render_mod.cue_form(pad["render"])}
+            clean.append(item)
+        name = _text(bank.get("name", ""), 40, "a bank name")
+        if not name:
+            raise ValueError("a bank needs a name")
+        out.append({"name": name, "pads": clean})
+    return {"banks": out}
+
+
+def check_modules(v, care):
+    """Only switches for modules this box knows; one that is not built or does not run on this board is left off
+    (a stored "on" would otherwise count, whatever the board), and so is one whose requirement is off."""
+    enabled = _obj(_obj(v).get("enabled", {}), "enabled")
+    registry = care.api.registry
+    out = {}
+    for mid, on in enabled.items():
+        _flag(on, "a module switch")
+        m = registry.manifests.get(mid)
+        if m is None:
+            care.note("module %s is not known to this version; left out" % _printable(mid))
+        elif m["type"] != "core":
+            out[mid] = on
+    for mid in sorted(k for k, on in out.items() if on):
+        m = registry.manifests[mid]
+        if m["status"] != "ready" or not registry._supported(m):
+            out[mid] = False
+            care.note("module %s does not run on this node; left off" % m["name"])
+    changed = True
+    while changed:                       # a requirement that is off switches off what needs it, however deep
+        changed = False
+        for mid in sorted(k for k, on in out.items() if on):
+            for dep in registry.manifests[mid]["requires"]:
+                d = registry.manifests.get(dep)
+                dep_on = bool(d) and (d["type"] == "core" or out.get(dep, bool(d.get("default_enabled")) and d["status"] == "ready"
+                                                                    and registry._supported(d)))
+                if not dep_on:
+                    out[mid], changed = False, True
+                    care.note("module %s needs %s, which is off; left off" % (registry.manifests[mid]["name"], dep))
+                    break
+    return {"enabled": out}
+
+
+def check_theme(v, care):
+    name, accent = _obj(v).get("name"), v.get("accent")
+    theme = care.incoming_themes.get(name) if isinstance(name, str) else None        # a theme the file itself brings
+    if theme is None and (not isinstance(name, str) or name not in care.api.themes):
+        care.note("the theme %s is not on this node; the theme was left as it is" % _printable(name))
+        return copy.deepcopy(care.api.settings.data["theme"])
+    faint = themes_mod.accent_problems(theme or care.api.themes[name], accent)        # as the Look page's own check
+    if faint and faint != ["accent must be #rrggbb"]:
+        raise ValueError("this accent cannot be used with the theme %s: %s" % (_printable(name), "; ".join(faint)))
+    try:
+        themes_mod.css(theme or care.api.themes[name], accent)
+    except themes_mod.ThemeError as e:
+        raise ValueError(str(e))
+    return {"name": name, "accent": accent}
+
+
+def check_mix(v, care):
+    # A newer transition is kept beside "dip" as `style` (mctl/transitions.py), so that a file from this release is
+    # taken by an older one. A style this release does not know (a file from a newer one) is left out with a note.
+    mode, duration, style = _obj(v).get("transition"), v.get("duration"), v.get("style")
+    if mode not in transitions_mod.OLD:
+        raise ValueError("transition must be cut or dip")
+    if isinstance(duration, bool) or not isinstance(duration, (int, float)) or not 0.1 <= duration <= 10:
+        raise ValueError("duration must be 0.1 to 10 seconds")
+    if style is not None and style not in transitions_mod.STYLES:
+        care.note("the transition %s is not known to this version; %s is used" % (_printable(style), mode))
+        style = None
+    return transitions_mod.stored(style or mode, duration)
+
+
+def check_osc(v, care):
+    port = _obj(v).get("port")
+    if isinstance(port, bool) or not isinstance(port, int) or not 1024 <= port <= 65535:
+        raise ValueError("port must be 1024 to 65535")
+    out = {"enabled": _flag(v.get("enabled"), "enabled"), "port": port, "allow": osc_mod.validate_allow(v.get("allow", []))}
+    # The three layers (D78), each checked like a request. The key is never read from a file: the box keeps its own
+    # (BoxCare._osc_layers), and an export never carries one.
+    out.update(osc_mod.validate_layers(v, osc_mod.parse_networks(out["allow"])))
+    # "Send state back" (D82): the switch and the targets, their form only. Whether a target is on one of this box's
+    # own networks is decided again at every send, so a file from another building sends nothing here.
+    out.update(osc_mod.oscfeedback.validate(v))
+    return out
+
+
+def check_schedule(v, care):
+    return scheduler_mod.validate(v)
+
+
+def check_streams(v, care):
+    streams_mod.validate_saved(v)
+    return [{"id": s["id"], "name": streams_mod.clean_name(s["name"]), "url": s["url"]} for s in v]
+
+
+def check_control(v, care):
+    _obj(v)
+    blank = default_control()
+    dmx = dmx_mod.validate(_obj(v.get("dmx", {}), "dmx"), blank["dmx"])
+    midi_in = _obj(v.get("midi", {}), "midi")
+    midi = midi_mod.validate(midi_in, blank["midi"])
+    entries = midi_in.get("map", [])
+    if not isinstance(entries, list) or len(entries) > midi_mod.MAX_MAP:
+        raise ValueError("at most %d MIDI mappings" % midi_mod.MAX_MAP)
+    midi["map"] = [midi_mod.validate_entry(e, keep_id=True) for e in entries]
+    if len({e["id"] for e in midi["map"]}) != len(midi["map"]):
+        raise ValueError("two MIDI mappings have the same id")
+    if len({(e["kind"], e["number"], e["source"], e["channel"]) for e in midi["map"]}) != len(midi["map"]):
+        raise ValueError("two MIDI mappings are for the same control")        # the panel replaces; a file may not hold both
+    if "controllers" in midi_in:                # the standard layout of a controller switched off; absent means all on
+        midi["controllers"] = midi_mod.validate_controllers(midi_in["controllers"])
+    if "lights" in midi_in:                     # a controller's lights switched on or off, and their brightness
+        midi["lights"] = midi_mod.validate_lights_choice(midi_in["lights"])
+    return {"dmx": dmx, "midi": midi}
+
+
+def check_autostart(v, care):
+    return autostart_mod.validate(_obj(v), None)
+
+
+def check_audio(v, care):
+    device = _text(_obj(v).get("device"), 200, "the sound output")
+    return {"device": device or "auto"}             # an output this box does not have plays as Automatic
+
+
+def check_overlay(v, care):
+    name = _obj(v).get("file", "")
+    if not isinstance(name, str):
+        raise ValueError("file must be text")
+    out = {"file": _media_name(name, "the picture", (".png",)), "on": _flag(v.get("on", False), "on")}
+    if "masks" in v:                            # the list of masks (D100); a file from before has its one picture only
+        if not isinstance(v["masks"], list) or len(v["masks"]) > overlay_mod.MAX_MASKS:
+            raise ValueError("masks must be a list of up to %d" % overlay_mod.MAX_MASKS)
+        seen = set()
+        for m in v["masks"]:
+            if not isinstance(m, dict) or not isinstance(m.get("file"), str):
+                raise ValueError("a mask needs a file")
+            _media_name(m["file"], "a mask", (".png",))
+            _flag(m.get("on", True), "a mask's on")
+            if not m["file"] or m["file"] in seen:
+                raise ValueError("a mask is named twice or not at all")
+            seen.add(m["file"])
+        out["masks"] = v["masks"]
+    masks = overlay_mod.masks_of(out)
+    if out["on"] and not masks:
+        raise ValueError("a picture that is on needs a file")
+    # a file from before D100 comes in as it was (its one picture is read as the first mask: overlay.masks_of)
+    return overlay_mod.stored(masks, out["on"]) if "masks" in out else out
+
+
+def _projector_details(v):
+    """What a projector said it is, as projector.py stores it: text cleaned the way an answer from the projector is,
+    the input list only codes the standard knows. A key this version does not know is dropped."""
+    _obj(v, "a projector's details")
+    out = {}
+    for key, limit in (("name", 64), ("maker", 32), ("model", 32), ("info", 32)):
+        if key in v:
+            if v[key] is not None and not isinstance(v[key], str):
+                raise ValueError("a projector's %s must be text" % key)
+            out[key] = None if v[key] is None else projector_mod.clean_text(v[key], limit)
+    if "class" in v:
+        if v["class"] is not None and not (isinstance(v["class"], str) and re.fullmatch(r"[1-9]", v["class"])):
+            raise ValueError("a projector's class is one digit")
+        out["class"] = v["class"]
+    if "inputs" in v:
+        codes = v["inputs"]
+        if codes is not None and not (isinstance(codes, list) and len(set(map(str, codes))) == len(codes)
+                                      and all(isinstance(c, str) and projector_mod._INPUT.fullmatch(c) for c in codes)):
+            raise ValueError("a projector's inputs are codes such as 31, each once")
+        out["inputs"] = None if codes is None else list(codes)
+    if "read" in v:
+        if type(v["read"]) is not int or v["read"] < 0:
+            raise ValueError("when a projector's details were read must be a time")
+        out["read"] = v["read"]
+    return out
+
+
+def check_projectors(v, care):
+    if not isinstance(v, list) or len(v) > projector_mod.MAX_PROJECTORS:
+        raise ValueError("at most %d projectors" % projector_mod.MAX_PROJECTORS)
+    out, seen = [], set()
+    for entry in v:
+        clean = projector_mod.validate(entry)
+        given = entry.get("id")                    # validate() makes a new id; the file's own is kept if it is one
+        if isinstance(given, str) and _ID.fullmatch(given) and given not in seen:
+            clean["id"] = given
+        seen.add(clean["id"])
+        if "details" in entry:
+            clean["details"] = _projector_details(entry["details"])
+        if "labels" in entry:
+            # A label is typed for an input the projector listed at the time, and the box keeps it when the list
+            # later changes or goes (a refresh that lists fewer inputs, an Edit to another address): such a label
+            # is stored and not shown. So the box's own export can hold a label for a code that is not in the
+            # list, or with no list at all, and that must import: the code only has to be of the standard's form.
+            labels = {code: projector_mod.validate_label([code], code, label) for code, label in _obj(entry["labels"], "labels").items()}
+            clean["labels"] = {code: label for code, label in labels.items() if label}
+        try:                                       # an address is judged now; a name is looked up (and judged) at each use
+            ipaddress.ip_address(clean["host"])
+        except ValueError:
+            pass
+        else:
+            projector_mod.private_address(clean["host"])
+        out.append(clean)
+    return out
+
+
+def _screen(v):
+    if (not isinstance(v, list) or len(v) != 2
+            or not all(isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= 16384 for n in v)):
+        raise ValueError("a screen is [width, height]")
+    return list(v)
+
+
+def check_mapper(v, care):
+    _obj(v)
+    sets_in = _obj(v.get("sets", {}), "sets")
+    if len(sets_in) > mapper_mod.MAX_SETS:
+        raise ValueError("at most %d saved mappings" % mapper_mod.MAX_SETS)
+    sets = {}
+    for name, one in sets_in.items():
+        if not mapper_mod.NAME.fullmatch(name) or name != name.strip():
+            raise ValueError("a mapping name is 1 to 40 letters, digits, spaces or . _ -")
+        _obj(one, "a saved mapping")
+        sets[name] = {"screen": _screen(one.get("screen")), "surfaces": mapper_mod.validate_mapping({"surfaces": one.get("surfaces", [])})}
+    surfaces = mapper_mod.validate_mapping({"surfaces": v.get("surfaces", [])})
+    screen = v.get("screen")
+    return {"on": _flag(v.get("on", False), "on"), "screen": None if screen is None else _screen(screen),
+            "surfaces": surfaces, "sets": sets}
+
+
+def check_sync(v, care):
+    return sync_mod.validate(_obj(v), sync_mod.blank())
+
+
+def check_shaders(v, care):
+    """The Shaders and Vibes settings, by the rules its own API applies (shaders.py): how long a shader stays, whether
+    it varies, the height it is drawn at, and the shaders left out of the rotation (names only; the uploaded shader
+    files themselves are not part of a settings file). The section is in the settings only once something was changed."""
+    _obj(v)
+    out = shaders_mod.default_config()
+    del out["height"]                       # not chosen: the box that reads it uses the default for its own board
+    out.update(shaderlive_mod.check_extra(v))       # presets, rotation sets, what the guard noted, the clock
+    board = (getattr(getattr(care, "api", None), "board", None) or {}).get("kind")
+    if board and "heavy" in out:            # what was too heavy for another kind of board says nothing about this one
+        out["heavy"] = {sid: m for sid, m in out["heavy"].items() if m.get("board") in (None, board)}
+    if "dwell" in v:
+        d = v["dwell"]
+        if isinstance(d, bool) or not isinstance(d, (int, float)) or d != d or not shaders_mod.DWELL_MIN <= d <= shaders_mod.DWELL_MAX:
+            raise ValueError("each shader stays %d to %d seconds" % (shaders_mod.DWELL_MIN, shaders_mod.DWELL_MAX))
+        out["dwell"] = int(d)
+    if "vary" in v:
+        out["vary"] = _flag(v["vary"], "vary")
+    if "height" in v:
+        if type(v["height"]) is not int or v["height"] not in shaders_mod.HEIGHTS:
+            raise ValueError("height must be one of %s" % ", ".join(str(h) for h in shaders_mod.HEIGHTS))
+        out["height"] = v["height"]
+    if shaderlive_mod.HEIGHT_AUTO in v:     # Automatic picture detail (D93): true, or false for a height chosen by hand
+        out[shaderlive_mod.HEIGHT_AUTO] = _flag(v[shaderlive_mod.HEIGHT_AUTO], shaderlive_mod.HEIGHT_AUTO)
+    if "disabled" in v:
+        names = v["disabled"]
+        if (not isinstance(names, list) or len(names) > shaders_mod.MAX_UPLOADS + 64 or len(set(map(str, names))) != len(names)
+                or not all(isinstance(n, str) and shaders_mod.FILE.fullmatch(n) for n in names)):
+            raise ValueError("disabled must be a list of shader file names, each once")
+        out["disabled"] = list(names)
+    if "included" in v:                     # shaders that are out of the rotation by default and were put into it
+        names = v["included"]
+        if (not isinstance(names, list) or len(names) > shaders_mod.MAX_UPLOADS + 64 or len(set(map(str, names))) != len(names)
+                or not all(isinstance(n, str) and shaders_mod.FILE.fullmatch(n) for n in names)):
+            raise ValueError("included must be a list of shader file names, each once")
+        out["included"] = list(names)
+    return out
+
+
+def check_room(v, care):
+    """Groups of projectors and scenes, by the Room module's own rules (room.py). Only the form is checked: a scene or
+    group may name a projector, clip or stream that is not on this box, and it is then skipped when the scene runs."""
+    return room_mod.validate(_obj(v))
+
+
+def check_ndi(v, care):
+    """The addresses the NDI input also asks for sources, by its own rules (private IPv4 literals, a bounded list)."""
+    return ndi_mod.validate_saved(v)
+
+
+def check_render(v, care):
+    """The render nodes (D94), form only: where a cue may really go is decided at every send."""
+    return render_mod.validate(v)
+
+
+def check_recovery(v, care):
+    """The stick switch only (D81). The code hashes belong to one box: never in a file, never taken from one."""
+    on = _obj(v).get("usb", True)
+    if not isinstance(on, bool):
+        raise ValueError("usb must be true or false")
+    return {"usb": on}
+
+
+# Every section that is exported and imported, in the order they are checked.
+SECTIONS = (("pads", check_pads), ("modules", check_modules), ("theme", check_theme), ("mix", check_mix), ("osc", check_osc),
+            ("schedule", check_schedule), ("streams", check_streams), ("control", check_control),
+            ("autostart", check_autostart), ("audio", check_audio), ("overlay", check_overlay),
+            ("projectors", check_projectors), ("mapper", check_mapper), ("sync", check_sync), ("shaders", check_shaders),
+            ("room", check_room), ("recovery", check_recovery), ("ndi", check_ndi), ("render", check_render))
+# D84. An import through a support session of the Owner's role takes every section but these, which are set by
+# routes no support session may use (support.REMOTE_DENY_PREFIX): the file's part is dropped, the box's own stays.
+# REMOTE_SETS says, for every section, the route that sets it at the panel: a test holds each one that is not in
+# REMOTE_KEPT to be a route a support session of the Owner's role may use, so a new section needs a row and a thought.
+REMOTE_KEPT = ("recovery",)
+REMOTE_SETS = {"pads": "/api/pads", "modules": "/api/modules/*", "theme": "/api/theme", "mix": "/api/mix", "osc": "/api/osc",
+               "schedule": "/api/schedule", "streams": "/api/streams", "control": "/api/midi", "autostart": "/api/autostart",
+               "audio": "/api/audio", "overlay": "/api/overlay", "projectors": "/api/projectors", "mapper": "/api/mapper",
+               "sync": "/api/sync", "shaders": "/api/shaders", "room": "/api/room", "recovery": "/api/recovery/usb", "ndi": "/api/ndi",
+               "render": "/api/render"}
+CHECK_ERRORS = (ValueError, KeyError, TypeError, AttributeError, osc_mod.OscError, streams_mod.StreamError,
+                scheduler_mod.ScheduleError, dmx_mod.DmxError, midi_mod.MidiError, autostart_mod.AutostartError,
+                projector_mod.ProjectorError, themes_mod.ThemeError, room_mod.RoomError, ndi_mod.NdiError)
+
+
+def _printable(v):
+    return re.sub(r"[^A-Za-z0-9 ._-]", "?", str(v))[:40]
+
+
+FEEDBACK_KEYS = ("feedback_on", "feedback")      # "Send state back" (D82): the Owner's, at the studio
+
+# ---- diagnostics: what may be shown of the settings --------------------------------------------------------------
+def _net(value):
+    """A copy with every value under a key that sounds like a secret removed (for what a later version may add)."""
+    if isinstance(value, dict):
+        return {k: ("(removed)" if _SECRET_KEY.search(str(k)) else _net(v)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_net(v) for v in value]
+    return value
+
+
+def public_settings(data, support_configured=None):
+    """The settings with every secret removed, for the diagnostics file. Built from what may be shown, not by
+    taking things out: a section this version does not know is named, not copied."""
+    out = {"schema": data.get("schema")}
+    for name, _check in SECTIONS:
+        if name in ("streams", "projectors", "recovery") or name not in data:
+            continue
+        out[name] = _net(copy.deepcopy(data[name]))
+    if isinstance(out.get("render"), dict):      # where the box sends cues (D94): device addresses, as the state targets
+        for n in out["render"].get("nodes") or []:
+            if isinstance(n, dict) and "host" in n:
+                n["host"] = "(set)"
+    if isinstance(out.get("osc"), dict):         # where the box sends its state (D82): a device's address and the Owner's
+        for key in FEEDBACK_KEYS:                # name for it. A diagnostics file leaves the box, so never in one.
+            out["osc"].pop(key, None)
+    rec = data.get("recovery") if isinstance(data.get("recovery"), dict) else {}
+    codes = rec.get("codes") if isinstance(rec.get("codes"), dict) else None
+    out["recovery"] = {"usb": rec.get("usb") is not False, "codes_left": len(codes.get("hashes") or []) if codes else None,
+                       "made": codes.get("made") if codes else None}
+    out["streams"] = [{"id": s.get("id"), "name": s.get("name"), "from": stream_where(s.get("url")),
+                       "has_login": strip_login(s.get("url")) != s.get("url")} for s in data.get("streams", [])]
+    out["projectors"] = [{"id": p.get("id"), "name": p.get("name"), "host": p.get("host"), "port": p.get("port"),
+                          "has_password": bool(p.get("password"))} for p in data.get("projectors", [])]
+    out["devices"] = [{"name": d.get("name"), "role": d.get("role"), "created": d.get("created")} for d in data.get("devices", [])]
+    support = data.get("support") or {}
+    out["support"] = {"allowed": bool(support.get("allowed")), "max_minutes": support.get("max_minutes"),
+                      "server_set": bool(support.get("endpoint")), "configured": support_configured}
+    out["support_log"] = [{k: e.get(k) for k in ("started", "ended", "minutes", "role", "reason", "logins")}
+                          for e in data.get("support_log", []) if isinstance(e, dict)]
+    from . import auth as auth_mod
+    out["controller_code"] = auth_mod.controller_setting(data.get("controller_code"))      # what it means: never owner without enabled
+    for name in BOX_OWN:
+        if isinstance(data.get(name), dict):
+            out[name] = copy.deepcopy(data[name])
+    known = {n for n, _ in SECTIONS} | set(NEVER) | set(BOX_OWN) | {"schema"}
+    out["not_shown"] = sorted(k for k in data if k not in known) + ["auth (the PIN)"]
+    return out
+
+
+def scrub(value, secrets):
+    """Every piece of text in `value` without the given secrets, without a login in an address, without what follows
+    a name that sounds like a secret ("passphrase=", "psk=", "password:", "Authorization: Bearer", also when the name
+    is percent-encoded), and without what follows "PIN" or "code" (the panel writes its pairing PIN to the log at
+    every start)."""
+    if isinstance(value, str):
+        for s in secrets:
+            value = value.replace(s, "(removed)")
+        value = _LOG_URL_LOGIN.sub(r"\1(removed)@", value)
+        value = _LOG_BEARER.sub(lambda m: (m.group(1) or m.group(2)) + "(removed)", value)
+        value = _LOG_PAIR.sub(r"\1(removed)", value)
+        value = _LOG_ENCODED.sub(lambda m: m.group(1) + "(removed)" if _SECRET_WORD.search(unquote(m.group(1))) else m.group(0), value)
+        return _LOG_PIN.sub(r"\1\2(removed)", value)
+    if isinstance(value, dict):
+        return {scrub(k, secrets) if isinstance(k, str) else k: scrub(v, secrets) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [scrub(v, secrets) for v in value]
+    return value
+
+
+class BoxCare:
+    def __init__(self, api, runner=subprocess.run, now=time.time, hostname=socket.gethostname):
+        self.api = api
+        self._run, self._now, self._hostname = runner, now, hostname
+        self._notes = []
+        self.incoming_themes = {}            # the added themes of the file being checked, by id (set by check_file)
+
+    def note(self, text):
+        self._notes.append(text)
+
+    @property
+    def settings(self):
+        return self.api.settings
+
+    def routes(self):
+        return {
+            ("POST", "/api/system/settings/export"): ("full", self.export),
+            ("POST", "/api/system/settings/import"): ("full", self._import_route),
+            ("GET", "/api/system/diagnostics"): ("full", self.diagnostics),
+            ("GET", "/api/events"): ("full", self.events_route),
+            ("POST", "/api/system/factory-reset"): ("full", self.factory_reset),
+        }
+
+    def _local(self, client, what):
+        """Refuse through the remote-support tunnel (the route table refuses it too; this holds even if that changes)."""
+        if self.api.support.is_remote(client):
+            raise ApiError(403, "%s cannot be done through remote support; ask someone at the studio" % what)
+
+    @contextlib.contextmanager
+    def _busy(self, what, usb_copy=False):
+        """One import or reset at a time, and none beside an update (or, for a reset, a copy from USB). The flag is
+        set under the lock a copy and an update start under, and the update is looked at only after it is set: so
+        neither can begin between the check and the work. Raises 409 instead of waiting."""
+        api = self.api
+        with api._import_lock:
+            if api._care_busy:
+                raise ApiError(409, "%s is running; try again when it has finished" % api._care_busy)
+            if usb_copy and api._import.get("active"):
+                raise ApiError(409, "a copy from USB is running; reset when it has finished")
+            api._care_busy = what
+        try:
+            if api._update_running():
+                raise ApiError(409, "an update is running; try again when it has finished")
+            yield
+        finally:
+            with api._import_lock:
+                api._care_busy = None
+
+    def _name(self, kind):
+        host = re.sub(r"[^A-Za-z0-9-]", "", self._hostname() or "")[:40] or "box"
+        return "nxlx-%s-%s-%s.json" % (kind, host, time.strftime("%Y%m%d-%H%M%S", time.gmtime(self._now())))
+
+    # ---- export ------------------------------------------------------------------------------------------------
+    def export(self, body, device, client):
+        """{"passwords": false}: the settings as one file. With "passwords": true the projector passwords and the full
+        stream addresses (logins, stream keys, passphrases) are in it, never through the support tunnel. The PIN,
+        devices and remote support never are."""
+        passwords = body.get("passwords", False)
+        if not isinstance(passwords, bool):
+            raise bad("passwords must be true or false")
+        if passwords:
+            self._local(client, "an export with passwords")
+        with self.settings.lock:
+            data = copy.deepcopy(self.settings.data)
+        out = {"schema": data["schema"]}
+        for name, _check in SECTIONS:
+            if name in data:
+                out[name] = data[name]
+        if isinstance(out.get("osc"), dict):
+            out["osc"].pop("key", None)          # the key has its own section, never exported (D78); this is for a file not yet moved
+            for key in (osc_mod.EVER_ON, osc_mod.PAIRED_DEFAULT):
+                out["osc"].pop(key, None)        # this box's own history (D83), not a setting
+            # (D82 took the feedback switch and its targets out of an export asked for by a support session. Since D84
+            # a session that reaches this route has the Owner's role and reads and changes them on their own route, so
+            # the export holds them for it as for the Owner. A diagnostics file still never does: it leaves the box.)
+        if "recovery" in out:
+            out["recovery"] = {"usb": self.api.auth.usb_enabled()}      # the switch only: the code hashes stay on the box (D81)
+        out["projectors"] = [dict({"id": p["id"], "name": p["name"], "host": p["host"], "port": p["port"],
+                                   "password": p.get("password", "") if passwords else ""},
+                                  **{k: p[k] for k in ("details", "labels", "protocol") if k in p})       # what it said it is; input labels; Epson control (D99)
+                             for p in out.get("projectors", [])]
+        out["streams"] = [{"id": s["id"], "name": s["name"], "url": s["url"] if passwords else strip_login(s["url"])}
+                          for s in out.get("streams", [])]
+        from . import __version__
+        file = {"format": FORMAT, "format_version": FORMAT_VERSION, "exported": int(self._now()), "version": __version__,
+                "box": self._hostname(), "passwords_included": passwords, "settings": out}
+        added = self.api.theme_store.added(self.api.themes)
+        if added:                                # only then: a file without them is one every earlier version reads
+            file["themes"] = added
+        return {"name": self._name("settings"), "file": file}
+
+    # ---- import ------------------------------------------------------------------------------------------------
+    def _import_route(self, body, device, client):
+        # server.py reads this path's body itself (as bytes, up to MAX_IMPORT) and calls import_settings
+        raise bad("send the exported file as the request body")
+
+    def check_file(self, raw):
+        """(clean sections, notes, passwords_included) from the bytes of an export. Changes nothing. Raises ApiError."""
+        envelope = parse_strict(raw)
+        if envelope.get("format") != FORMAT:
+            raise bad("this is not a settings export of nxlx.mastercontrol")
+        if type(envelope.get("format_version")) is not int or envelope["format_version"] != FORMAT_VERSION:      # true == 1
+            raise bad("this export has a format this version does not know; update the node first", 409)
+        extra = sorted(k for k in envelope if k not in ENVELOPE)
+        if extra:
+            raise bad("the file has parts that do not belong in a settings export: %s" % ", ".join(_printable(k) for k in extra))
+        passwords = envelope.get("passwords_included", False)
+        if not isinstance(passwords, bool):
+            raise bad("passwords_included must be true or false")
+        data = envelope.get("settings")
+        if not isinstance(data, dict):
+            raise bad("the file holds no settings")
+        held = sorted(k for k in data if k in NEVER)
+        if held:
+            raise bad("the file holds access data (%s), which is never imported; use a file made by Export" % ", ".join(held))
+        current = self.settings._current
+        if isinstance(data.get("schema"), bool) or not isinstance(data.get("schema"), int):
+            raise bad("the file does not say which settings schema it holds")
+        schema, present = data["schema"], set(data)       # an older file: the migrations add the sections it lacks
+        try:
+            migrate(data, self.settings._migrations, current)          # the same path as a normal load
+        except SettingsError as e:
+            if data["schema"] > current:
+                raise bad("the file is from a newer version (settings schema %d, this node knows %d); update the node first"
+                          % (data["schema"], current), 409)
+            raise bad("the file cannot be used: %s" % e)
+        except Exception as e:                   # a migration met something an older version never wrote
+            raise bad("the file cannot be used: its settings are not what schema %s held (%s)" % (schema, type(e).__name__))
+        known = {n for n, _ in SECTIONS}
+        unknown = sorted(k for k in data if k not in known and k != "schema" and k not in default_settings())
+        if unknown:
+            raise bad("the file has sections this version does not know: %s" % ", ".join(_printable(k) for k in unknown))
+        self._notes = []
+        self.incoming_themes = self._check_themes(envelope)
+        clean = {}
+        for name, check in SECTIONS:
+            if name not in present or name not in data:      # what a migration added is a default, not the file's word
+                self.note("%s is not in the file; left as it is" % name)
+                continue
+            try:
+                clean[name] = check(data[name], self)
+            except CHECK_ERRORS as e:
+                raise bad("%s: %s" % (name, e))
+        for name in sorted(k for k in data if k not in known and k != "schema" and k not in NEVER):
+            self.note("%s is not imported by this version; left as it is" % name)
+        a = clean.get("autostart")
+        if a and a["mode"] == "pad":             # the pad it starts: the file's, or the box's own when the file has no pads
+            b, i = a["pad"]
+            with self.settings.lock:
+                banks = copy.deepcopy((clean if "pads" in clean else self.settings.data)["pads"]["banks"])
+            if not (b < len(banks) and (banks[b]["pads"][i].get("file") or banks[b]["pads"][i].get("shader"))):
+                raise bad("autostart: the pad it starts has no clip and no shader")
+        return clean, list(self._notes), passwords
+
+    def _check_themes(self, envelope):
+        """{id: theme} for the added themes a file brings, each read by the function that reads a theme added through
+        the panel (themes.checked: 16 KB each, whole numbers only, fixed keys, colours and names by whole match,
+        numbers within their ranges, contrast). Each is written out again as text for that, so there is one reader
+        and one rule set. One that fails refuses the whole file. Raises ApiError."""
+        if "themes" not in envelope:
+            return {}
+        found, out = envelope["themes"], {}
+        if not isinstance(found, list) or len(found) > themes_mod.MAX_ADDED:
+            raise bad("themes: a list of at most %d themes is expected" % themes_mod.MAX_ADDED)
+        mine = self.api.themes
+        for n, theme in enumerate(found):
+            label = "themes: theme %d" % (n + 1)
+            if isinstance(theme, dict) and isinstance(theme.get("name"), str) and themes_mod._NAME.fullmatch(theme["name"]):
+                label = "themes: %s" % _printable(theme["name"])
+            try:
+                theme = themes_mod.checked(json.dumps(theme))
+            except (themes_mod.ThemeError, ValueError, TypeError) as e:
+                raise bad("%s: %s" % (label, e))
+            tid = theme["id"]
+            if tid in out:
+                raise bad("%s: the id %s is in the file twice" % (label, tid))
+            if tid in mine and mine[tid].get("source") != "addon":
+                raise bad("%s: the id %s belongs to a look that comes with the node" % (label, tid))
+            if themes_mod.name_taken(theme, mine):
+                raise bad("%s: %s" % (label, themes_mod.NAME_TAKEN % theme["name"]))
+            out[tid] = themes_mod.clean(theme)
+        after = {k for k, t in list(mine.items()) if t.get("source") == "addon"} | set(out)
+        if len(after) > themes_mod.MAX_ADDED:
+            raise bad("themes: the file's themes and this node's own would be %d together, and %d is the most; remove some under Look first"
+                      % (len(after), themes_mod.MAX_ADDED), 409)
+        return out
+
+    @staticmethod
+    def _osc_layers(new, current):
+        """The OSC part of an import, for this box (D78), changed in `new`: what the file says about the three locks
+        is taken; what it does not say (a file from an earlier version) stays as this box has it, so an old file
+        cannot switch a lock off; the key is never the file's. It is this box's own, in its own section, and one is
+        made if the file switches the lock on and the box has none."""
+        mine, out = current.get("osc") or {}, dict(new["osc"])
+        for k in ("only_on", "only", "paired_on", "paired_roles", "paired_hours", "key_on", "feedback_on", "feedback"):
+            if k not in out and k in mine:
+                out[k] = copy.deepcopy(mine[k])
+        out.pop("key", None)
+        # D83: whether OSC was ever on is this box's own fact, never the file's, and an import never lowers it. A
+        # file that has OSC on is the owner's own settings and comes as it is (its locks too): no lock is added.
+        # (The review of #124: this read the traces again, `used_before(current)`, so a new box whose port had been
+        # changed was marked "was on" by importing its own export and lost the lock. Only the mark counts once it is
+        # written, osc.never_on; and the mark is always written here, so what the file brings is never read as a trace.)
+        out[osc_mod.EVER_ON] = bool(out.get("enabled")) or not osc_mod.never_on(current)
+        out.pop(osc_mod.PAIRED_DEFAULT, None)
+        new["osc"] = out
+        key = osc_mod.stored_key(current)
+        if key or out.get("key_on"):
+            new[osc_mod.KEY_SECTION] = {"key": key or osc_mod.new_key()}
+
+    def _keep_secrets(self, clean, current):
+        """A file made without passwords: keep the one this box already has for the same projector, and the box's
+        own full address of a stream whose shortened form is what the file holds."""
+        kept = 0
+        mine = {p["id"]: p for p in current.get("projectors", [])}
+        for p in clean.get("projectors", []):
+            old = mine.get(p["id"])
+            if not p["password"] and old and old.get("password") and (old["host"], old["port"]) == (p["host"], p["port"]):
+                p["password"] = old["password"]
+                kept += 1
+        mine = {s["id"]: s for s in current.get("streams", [])}
+        for s in clean.get("streams", []):
+            old = mine.get(s["id"])
+            if old and old["url"] != s["url"] and self._shortened(old["url"], s["url"]):
+                s["url"] = old["url"]
+                kept += 1
+        return kept
+
+    @staticmethod
+    def _shortened(full, short):
+        """Is `short` what is left of `full` after its secrets were cut, once or more than once? An RTMP address
+        loses the last part of its path at every export, so a file that went through a box that never had the
+        stream holds less than this box's own export would. Cutting never changes the scheme, host or port."""
+        while True:
+            less = strip_login(full)
+            if less == short:
+                return True
+            if less == full or not less:
+                return False
+            full = less
+
+    def _backup(self, session=None):
+        """The settings as they are now, beside the file, for whoever wants them back (mode 0600; the last few).
+
+        `session`: the id of the support session whose login is importing (D84, the security review: three imports
+        by a helper pushed the owner's own copies out). A session's copies are kept apart and never remove one of
+        the owner's: the first import of a session keeps the settings as they were before that session touched
+        them (`.before-support-session-<id>-<time>`, one per session, the last KEEP_SESSION_BACKUPS sessions, so
+        only a new session, which someone at the studio starts, can push one out), and its later imports turn over
+        among themselves (`.before-support-import-<time>`, the last KEEP_IMPORT_BACKUPS)."""
+        now = int(self._now())
+        if session is None:
+            suffix, name, keep = ".before-import-", ".before-import-%d" % now, KEEP_IMPORT_BACKUPS
+        elif not any((".before-support-session-%s-" % session) in p for p in self._siblings(".before-support-session-")):
+            suffix, name, keep = ".before-support-session-", ".before-support-session-%s-%d" % (session, now), KEEP_SESSION_BACKUPS
+        else:
+            suffix, name, keep = ".before-support-import-", ".before-support-import-%d" % now, KEEP_IMPORT_BACKUPS
+        path = self.settings.path + name
+        self.settings._write(path, self.settings.data)
+        old = self._siblings(suffix)
+        if session is not None and suffix == ".before-support-session-":
+            old = sorted(old, key=lambda p: (int(p.rsplit("-", 1)[-1]) if p.rsplit("-", 1)[-1].isdigit() else 0, p))    # by time, not by id
+        for gone in old[:-keep]:
+            self._unlink(gone)
+        return os.path.basename(path)
+
+    def _siblings(self, suffix):
+        """Files beside settings.json named settings.json<suffix>..., oldest first (plain files only)."""
+        folder, base = os.path.dirname(self.settings.path) or ".", os.path.basename(self.settings.path)
+        found = []
+        try:
+            for entry in os.scandir(folder):
+                if entry.name.startswith(base + suffix) and entry.is_file(follow_symlinks=False):
+                    found.append(entry.path)
+        except OSError:
+            pass
+        return sorted(found, key=lambda p: (len(p), p))
+
+    @staticmethod
+    def _unlink(path):
+        try:
+            os.unlink(path)
+            return True
+        except OSError:
+            return False
+
+    def _replace(self, new):
+        """Swap the settings in place (others hold the dictionary itself), never passing through an empty state."""
+        data = self.settings.data
+        for k, v in new.items():
+            data[k] = v
+        for k in [k for k in data if k not in new]:
+            del data[k]
+
+    def _apply(self):
+        """Make the running box match the settings. Nothing here may stop the rest: what fails is reported."""
+        api, problems = self.api, []
+        api.mapper.edit.update(on=False, selected=None, corner=0)
+
+        def control():
+            with api._control_lock:
+                for manager in (api.dmx, api.midi):
+                    if manager is not None:
+                        manager.apply()
+        for label, fn in (("OSC", api.osc.apply if api.osc else None), ("DMX and MIDI", control), ("Sync", api.sync.apply),
+                          ("Mapper", api.mapper.apply), ("Picture over the video", api.apply_overlay),
+                          ("Text and logos", getattr(getattr(api, "gfx", None), "apply", None)),
+                          ("Sound output", api.apply_audio), ("Projectors", api.projectors.apply),
+                          # the screen's mode (D90) is no section of a file; a reset puts it back to Automatic
+                          ("Screen output", getattr(getattr(api, "screen", None), "sync", None)),
+                          ("Renderer", getattr(getattr(api, "renderer", None), "sync", None))):
+            if fn is None:
+                continue
+            try:
+                fn()
+            except Exception as e:
+                problems.append("%s: %s" % (label, getattr(e, "message", None) or e))
+        return problems
+
+    def import_settings(self, raw, confirm, device, client):
+        """Check an exported file and make it the box's settings. The PIN, devices and remote support stay as they
+        are. Nothing is changed unless the whole file passes."""
+        remote = self.api._remote_owner(device, client, "an import")       # D84: a support session of the Owner's role
+        if confirm != CONFIRM_IMPORT:
+            raise bad("send confirm=%s" % CONFIRM_IMPORT)
+        with self._busy("an import"):
+            out = self._import(raw, device, remote)
+        if remote:
+            # which file it was (its sha256: not a secret) and what it changed, so the owner can tell afterwards
+            self.api.support.note(device, "imported a settings file, sha256 %s; changed: %s%s" % (
+                hashlib.sha256(raw if isinstance(raw, bytes) else str(raw).encode()).hexdigest(), ", ".join(out["changed"]) or "nothing",
+                "; left as the node has it: %s" % ", ".join(out["kept_for_support"]) if out["kept_for_support"] else ""), always=True)
+        return out
+
+    def _remote_parts(self, clean, notes):
+        """Two parts of sections a helper's file may otherwise bring, held to what the routes hold him to (D84):
+        the networks OSC accepts from (none added from outside, Api.remote_allow_refused) and the MIDI controls
+        that show an access code (none added or changed, and the standard layouts stay as switched here). Changed
+        in `clean`; returns what was left as the box has it."""
+        kept, current, api = [], self.settings.data, self.api
+        from . import support as support_mod
+        if "modules" in clean:              # a file switches on no module that a session may not switch on (off is allowed)
+            wants = clean["modules"].get("enabled") or {}
+            have = (current.get("modules") or {}).get("enabled") or {}
+            for mid in sorted(support_mod.REMOTE_NO_MODULE_ON):
+                if wants.get(mid) and not have.get(mid):
+                    wants[mid] = False
+                    kept.append("modules.%s" % mid)
+                    notes.append("%s: not switched on by a file through remote support; left off" % mid)
+        if "ndi" in clean:
+            # NDI (D85): no address to ask for sources and no discovery server that is not on one of the box's own
+            # networks now (the tunnel never counts), unless the box has it already; and the switch that points the
+            # input at this box's own discovery server, whose routes no session may use, is not set by a file.
+            mine = current.get("ndi") or {}
+            nets = api.ndi_nets()               # once for the file: reading them starts a program
+            for part in ("addresses", "discovery"):
+                had = list(mine.get(part) or [])
+                if any(a not in had and not api.ndi_on_own_net(a, nets) for a in clean["ndi"].get(part, [])):
+                    clean["ndi"][part] = had
+                    kept.append("ndi.%s" % part)
+                    notes.append("NDI: an address that is not on one of this node's own networks is not added through remote support; %s left as this node has them" % part)
+            if clean["ndi"].get("own_discovery") and mine.get("own_discovery") is not True:
+                clean["ndi"].pop("own_discovery")
+                if "own_discovery" in mine:
+                    clean["ndi"]["own_discovery"] = mine["own_discovery"]
+                kept.append("ndi.own_discovery")
+                notes.append("NDI: using this node's own discovery server is not switched on by a file through remote support")
+        if "render" in clean:
+            # Render nodes (D94): a file through remote support adds no node whose IPv4 host is not another device on
+            # one of the box's own networks now (the route's rule; the tunnel's network never counts). A `.local`
+            # name is held to that rule at every send, as on the route.
+            had = render_mod.stored(current.get("render"))
+            known = {(n["host"], n["port"]) for n in had}
+            nets = api.ndi_nets()
+            if any(render_mod.is_ipv4_text(n["host"]) and (n["host"], n["port"]) not in known and api.render.why_not(n["host"], nets)
+                   for n in clean["render"]["nodes"]):
+                clean["render"] = {"nodes": had}
+                kept.append("render.nodes")
+                notes.append("Render nodes: a host that is not on one of this node's own networks is not added through remote support; the nodes are left as this node has them")
+        if "osc" in clean:
+            mine = list((current.get("osc") or {}).get("allow") or [])
+            if api.remote_allow_refused(clean["osc"].get("allow", []), mine):
+                clean["osc"]["allow"] = mine
+                kept.append("osc.allow")
+                notes.append("OSC: a network from outside is not added through remote support; the networks OSC accepts from are left as this node has them")
+        if "control" in clean:
+            midi, have = clean["control"]["midi"], (current.get("control") or {}).get("midi") or {}
+            old = list(have.get("map") or [])
+            new = [e for e in midi.get("map", []) if not api._owner_action(e.get("action")) or e in old]
+            if len(new) != len(midi.get("map", [])):
+                midi["map"] = new
+                kept.append("control.midi.map (access code controls)")
+                notes.append("MIDI: a control that shows an access code is not added or changed through remote support; left out")
+            if midi.get("controllers") != have.get("controllers"):
+                if "controllers" in have:
+                    midi["controllers"] = copy.deepcopy(have["controllers"])
+                else:
+                    midi.pop("controllers", None)
+                kept.append("control.midi.controllers")
+                notes.append("MIDI: which standard layouts are on is left as this node has it through remote support (a layout can hold a control that shows an access code)")
+        return kept
+
+    def _import(self, raw, device, remote=False):
+        clean, notes, passwords = self.check_file(raw)
+        kept_for_support = []
+        if remote:
+            # What stays refused to every support session cannot come in by a file either: those sections of the
+            # file are dropped, and the box's own stay. (The PIN, devices, codes, remote support itself and the
+            # secure connection are no part of any settings file: check_file refuses a file that names them.)
+            for name in REMOTE_KEPT:
+                if clean.pop(name, None) is not None:
+                    kept_for_support.append(name)
+                    notes.append("%s: not taken from a file through remote support; left as this node has it" % name)
+            kept_for_support += self._remote_parts(clean, notes)
+        incoming = dict(self.incoming_themes)
+        with self.settings.lock:
+            current = self.settings.data
+            kept = 0 if passwords else self._keep_secrets(clean, current)
+            # The checks know schema KNOWN_SCHEMA: what a later schema adds to these sections is put back by its own
+            # migration. Only what came from the file goes through it; the box's own sections are already current,
+            # and a migration is not written to run twice.
+            fresh = dict(copy.deepcopy(clean), schema=min(KNOWN_SCHEMA, self.settings._current))
+            try:
+                migrate(fresh, self.settings._migrations, self.settings._current)
+            except Exception as e:
+                raise bad("the file cannot be brought up to this version's settings: %s" % (e if isinstance(e, SettingsError) else type(e).__name__))
+            new = copy.deepcopy(current)
+            new.update({k: fresh[k] for k in clean})
+            if "osc" in clean:
+                self._osc_layers(new, current)
+            if "recovery" in clean:              # the file's switch beside the box's own codes and events (D81)
+                new["recovery"] = dict(current.get("recovery") or {}, usb=clean["recovery"]["usb"])
+            changed = sorted(k for k in clean if new.get(k) != current.get(k))
+            try:
+                backup = self._backup(self.api.support.session["id"] if remote and self.api.support.session else None)
+            except OSError as e:
+                raise ApiError(500, "could not keep a copy of the present settings, so nothing was changed: %s" % (e.strerror or e))
+            previous = copy.deepcopy(current)
+            self._replace(new)
+            try:
+                self.settings.save()
+            except OSError as e:                 # a full or read-only disk: the box goes on with what it had
+                self._replace(previous)
+                self._unlink(os.path.join(os.path.dirname(self.settings.path) or ".", backup))
+                raise ApiError(500, "the settings could not be saved, so nothing was changed: %s" % (e.strerror or e))
+        problems, themes = [], []
+        for tid in sorted(incoming):             # after the settings are safe: a look that could not be kept is drawn
+            try:                                 # as the box's own until it can (api._stored_theme), never an error
+                self.api.theme_store.add(incoming[tid], self.api.themes)
+                themes.append(tid)
+            except themes_mod.ThemeError as e:
+                problems.append("Look: the theme %s could not be kept: %s" % (_printable(incoming[tid]["name"]), e))
+        problems += self._apply()
+        print("pvj-web: settings imported by %s" % device["name"], flush=True)
+        return {"imported": sorted(clean), "notes": notes, "problems": problems, "backup": backup,
+                "passwords_kept": kept, "passwords_in_file": passwords, "themes": themes, "kept_for_support": kept_for_support,
+                "changed": changed}
+
+    # ---- diagnostics -------------------------------------------------------------------------------------------
+    def _secrets(self, data):
+        """Every secret the box knows right now, to take out of any text in the diagnostics file."""
+        api, found = self.api, set()
+        found.add(getattr(api.auth, "current_pin", None))
+        auth = data.get("auth") or {}
+        found.update((auth.get("pin_hash"), auth.get("pin_salt")))
+        found.update(d.get("token_hash") for d in data.get("devices", []))
+        found.update(p.get("password") for p in data.get("projectors", []))
+        for s in data.get("streams", []):
+            found.update(stream_secrets(s.get("url")))
+        found.add((data.get("support") or {}).get("server_key"))
+        found.add(osc_mod.stored_key(data) or None)        # the OSC key (D78), should it ever reach a log line
+        try:
+            found.update(j["code"] for j in api.auth.list_joins())
+        except Exception:
+            pass
+        try:                                     # the code a MIDI controller put on the display (D61), while it is active
+            shown = api.auth.controller_digits()
+            found.add(shown[1] if shown else None)
+        except Exception:
+            pass
+        session = api.support.session
+        if session:
+            code = session.get("code") or ""
+            found.update((code, code[:4] + "-" + code[4:]))
+            found.update(session.get("tokens", {}))
+        return sorted((s for s in found if isinstance(s, str) and len(s) >= 3), key=len, reverse=True)
+
+    def _helper_log(self, secrets):
+        """The log through the root helper (pvj-sysd), which may read the system journal that this service may not: this
+        start's lines and, when the journal is kept across restarts, the end of the one before. None when there is no
+        helper here or it did not answer (the caller then tries the direct way, and says why). Each line is scrubbed whole and only then
+        cut to length, as in read_log. A dict when it answered; else the reason as text (or None when there is no
+        helper here)."""
+        sysd = getattr(self.api, "sysd", None)
+        if sysd is None:
+            return None
+        try:
+            now = sysd.request({"cmd": "journal", "lines": LOG_LINES, "hours": 24, "boot": 0})
+        except OSError as e:
+            return str(e)
+        if not now.get("ok") or not isinstance(now.get("lines"), list):
+            return str(now.get("error") or "it gave no lines")
+        clean = lambda rows: [scrub(l, secrets)[:LOG_LINE_MAX] for l in rows if isinstance(l, str)]
+        lines = clean(now["lines"])
+        persistent, readonly = bool(now.get("persistent")), bool(now.get("read_only_root"))
+        out = {"readable": bool(lines), "lines": lines, "journal": {"persistent": persistent, "read_only_root": readonly}}
+        keep = ("The system log is kept in memory on this node (the read-only root, or no persistent journal), so lines from before "
+                "the last restart are gone." if readonly or not persistent else
+                "The system log is kept on the disk, so the end of the start before this one is below.")
+        if persistent and not readonly:
+            try:
+                before = sysd.request({"cmd": "journal", "lines": 100, "boot": -1})
+            except OSError:
+                before = {}
+            if before.get("ok") and isinstance(before.get("lines"), list):
+                out["previous_start"] = clean(before["lines"])
+        if lines:
+            out["note"] = ("the last %d lines of this start from the node's own services (pvj-*), with PINs, codes and logins "
+                           "removed. %s" % (len(lines), keep))
+        else:
+            out["note"] = "No pvj-* log lines were found for this start. %s" % keep
+        return out
+
+    def read_log(self, secrets=()):
+        helper = self._helper_log(secrets)
+        if isinstance(helper, dict):
+            return helper
+        out = self._direct_log(secrets)
+        if helper:         # why the helper did not give it (the text it sent, scrubbed), so the cause can be found
+            out["note"] = "%s The system helper could not give the log: %s" % (out["note"], scrub(helper, secrets)[:200])
+        return out
+
+    def _direct_log(self, secrets=()):
+        """The services' recent log lines, if this unprivileged service may read them. It is told apart: lines came
+        back, none came back (the usual case: the panel's user is not in the systemd-journal group, on purpose),
+        or the command could not run. Each line is scrubbed whole and only then cut to length: cut first, a secret
+        that straddles the cut would lose the end that makes it recognisable and keep its beginning."""
+        argv = ["journalctl", "--no-pager", "-q", "-b", "-n", str(LOG_LINES), "-o", "short-iso"]
+        for unit in LOG_UNITS:
+            argv += ["-u", unit]
+        try:
+            r = self._run(argv, capture_output=True, text=True, timeout=10, errors="replace")
+        except (OSError, subprocess.SubprocessError) as e:
+            return {"readable": False, "lines": [], "note": "the system log could not be read: %s" % (getattr(e, "strerror", None) or type(e).__name__)}
+        lines = [scrub(line, secrets)[:LOG_LINE_MAX] for line in [x for x in (r.stdout or "").splitlines() if x.strip()][-LOG_LINES:]]
+        if r.returncode != 0:
+            return {"readable": False, "lines": [], "note": "the system log could not be read: %s" % (r.stderr or "").strip()[-200:]}
+        if not lines:
+            return {"readable": False, "lines": [],
+                    "note": "No log lines came back. The panel runs as its own unprivileged user, which is not allowed to read the "
+                            "system log. On the node: sudo journalctl -b -u 'pvj-*'"}
+        return {"readable": True, "lines": lines, "note": "the last %d lines of this start, with PINs, codes and logins removed" % len(lines)}
+
+    def _events_for_file(self):
+        """What happened, newest first, one line each, without any device name or address (the file leaves the node)."""
+        log = getattr(self.api, "events", None)
+        if log is None:
+            return {"lines": [], "note": "The event log is not running."}
+        from . import rootfs
+        info = log.state(rootfs.current_state() == "overlay")
+        return {"lines": [log.line(e) for e in log.events(who=False)], "note": info["note"]}
+
+    def events_route(self, body, device, client):
+        """GET /api/events (the Owner's): {"events": [{"t", "kind", "text", "who"?, "n"?}] newest first, "cap", "kept", "note"}.
+        The text is scrubbed of everything secret the node knows; names and addresses are in `who` for the Owner only."""
+        log = getattr(self.api, "events", None)
+        if log is None:
+            raise ApiError(503, "the event log is not running")
+        from . import rootfs
+        with self.settings.lock:
+            data = copy.deepcopy(self.settings.data)
+        secrets = self._secrets(data)
+        api = self.api
+        tunnel = bool(api.support.is_remote(client) or (isinstance(device, dict) and device.get("remote")))
+        # a support login is the Owner's role but not the Owner: names and addresses never leave the node (D125)
+        rows = []
+        for e in log.events():
+            row = dict({k: v for k, v in e.items() if k != "who"}, text=scrub(e["text"], secrets))
+            if e.get("who") and not tunnel:
+                row["who"] = scrub(e["who"], secrets)
+            rows.append(row)
+        return dict(log.state(rootfs.current_state() == "overlay"), events=rows)
+
+    def diagnostics(self, body, device, client):
+        """One file to send to whoever is helping: versions, the board, module states, health, the last update, the
+        log if it can be read, and the settings with every secret removed."""
+        api = self.api
+        with self.settings.lock:
+            data = copy.deepcopy(self.settings.data)
+        secrets = self._secrets(data)
+
+        def part(fn):
+            try:
+                return fn()
+            except Exception as e:                # a missing piece must not cost the rest
+                return {"error": "not available: %s" % (getattr(e, "message", None) or type(e).__name__)}
+
+        def player():
+            """What plays, with a stream shown only as where it comes from (its saved name stays): a path can be a
+            stream key, and the address may be one that is not among the saved streams."""
+            status = api._public_player_status()
+            if isinstance(status.get("path"), str) and "://" in status["path"]:
+                status["path"] = stream_where(status["path"])
+            return status
+        from . import __version__
+        out = {"made": int(self._now()), "made_utc": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(self._now())),
+               "version": __version__, "settings_schema": data.get("schema"), "board": dict(api.board),
+               "system": part(lambda: api.system_info({}, device, client)),
+               "player": part(player),
+               "modules": part(lambda: [{k: m[k] for k in ("id", "version", "type", "status", "supported", "enabled")}
+                                        for m in api.registry.list()]),
+               "health": part(api.health.report),
+               "update": part(lambda: {k: v for k, v in api.update_status({}, device, client).items() if k != "version"}),
+               "log": part(lambda: self.read_log(secrets)),
+               "events": part(self._events_for_file),
+               "settings": public_settings(data, part(api.support.configured)),
+               "left_out": "The PIN, device tokens, join and support codes, remote-support keys and addresses, projector "
+                           "passwords and stream logins are never in this file."}
+        return {"name": self._name("diagnostics"), "file": scrub(out, secrets)}
+
+    # ---- factory reset -----------------------------------------------------------------------------------------
+    def _media_on_usb(self):
+        """True when the media folder is on (or is) a USB drive: PVJ_MEDIA_DIR may point there, and a reset must
+        never empty a drive someone plugged in."""
+        api = self.api
+        media = os.path.realpath(api.media_dir)
+        for root in (api.usb_root, api.usb_link):
+            try:
+                root = os.path.realpath(root)
+                if os.path.commonpath([media, root]) == root:
+                    return True
+            except (ValueError, OSError, TypeError):
+                pass
+        return False
+
+    def _delete_media(self, problems):
+        """The clips in the box's own media folder: media files (and left-over upload pieces) at its top level only,
+        plain files and links, one by one. Anything else someone put there stays."""
+        api, removed = self.api, 0
+        with api._media_lock:
+            try:
+                entries = list(os.scandir(api.media_dir))
+            except OSError as e:
+                problems.append("the media folder could not be read: %s" % (e.strerror or e))
+                return 0
+            for entry in entries:
+                if not (entry.is_symlink() or entry.is_file(follow_symlinks=False)):
+                    continue
+                if not (entry.name.lower().endswith(MEDIA_EXTENSIONS) or entry.name.startswith(".upload-")):
+                    continue
+                if self._unlink(entry.path):
+                    removed += 1
+                else:
+                    problems.append("could not delete %s" % _printable(entry.name))
+        return removed
+
+    def _wipe_access(self):
+        """Settings back to defaults, no device, no join code, a new PIN: one step, under the two locks every way
+        in needs (pairing holds the first, adding a device the second; both in the order pair() takes them). A full
+        device's request that was already past its token check cannot leave a join code or an invited device
+        behind: it runs before all of this, and what it made is wiped here, or after all of it, and then the API
+        takes back what it made (api._still_paired). Returns the new PIN."""
+        auth = self.api.auth
+        with auth._pair_lock, self.settings.lock:
+            previous = copy.deepcopy(self.settings.data)
+            new = default_settings()
+            new["schema"] = self.settings._current
+            new["auth"] = dict(previous["auth"])           # replaced below: the box is never without a PIN
+            self._replace(new)
+            auth._joins.clear()
+            auth._controller, auth._controller_made, auth.controller_last = None, [], None     # a code shown from a controller
+            auth._fails.clear()
+            auth._global_fails = []
+            auth._locked_until.clear()
+            try:
+                pin = auth._new_pin()                      # saves the emptied settings with the new PIN
+            except OSError as e:
+                self._replace(previous)
+                raise ApiError(500, "the settings could not be saved, so the node was not reset: %s" % (e.strerror or e))
+            auth.last_seen.clear()
+            auth._joins.clear()
+            auth._revoked(None)             # nobody is connected after a reset, and nothing is told of what they changed (D126)
+        return pin
+
+    def factory_reset(self, body, device, client):
+        """{"confirm": "factory-reset", "media": "keep" | "delete"}: playback stopped, settings back to defaults, every
+        paired device, join code and support session gone, a new PIN (so the PIN screen returns), and the clips kept
+        or deleted (never on a USB drive)."""
+        self._local(client, "a factory reset")
+        if body.get("confirm") != CONFIRM_RESET:
+            raise bad('send {"confirm": "%s"}' % CONFIRM_RESET)
+        media = body.get("media")
+        if media not in ("keep", "delete"):
+            raise bad('say what happens to the clips: "media": "keep" or "delete"')
+        with self._busy("a factory reset", usb_copy=True):
+            return self._reset(media, device, client)
+
+    def _reset(self, media, device, client):
+        api = self.api
+        if media == "delete" and self._media_on_usb():
+            raise ApiError(409, "the clips of this node are on a USB drive, which a reset never empties; choose to keep the clips")
+        if not api._upload_lock.acquire(blocking=False):
+            raise ApiError(409, "an upload is running; reset when it has finished")
+        try:
+            problems, deleted = [], 0
+            # Playback stops and the picture comes back from black either way: the PIN is only drawn on an idle
+            # player, and nobody would see it behind a looping clip or a blackout.
+            try:
+                api.vibes.stop()                          # the shader rotation would put the next shader over the PIN
+            except Exception:
+                pass
+            api.room.stop()                               # a scene still under way sends nothing more
+            for call, body in ((api.blackout, {"on": False}), (api.control, {"action": "reset"}), (api.control, {"action": "stop"})):
+                try:
+                    call(body, device, client)
+                except Exception:
+                    pass
+            with api.support.lock:
+                if api.support.session:
+                    api.support._end("factory reset", tell_helper=True)
+            api.auth.cancel_join(None)
+            if api.pinscreen is not None:
+                try:
+                    api.pinscreen.hide()
+                except Exception:
+                    pass
+            pin = self._wipe_access()
+            api.auth.forget_address()                     # OSC (D78): no remembered address, sender or message is left
+            if api.osc:
+                api.osc.watch.clear()
+            with api.support.lock:                        # one started between the first look and the wipe; none can be now
+                if api.support.session:
+                    api.support._end("factory reset", tell_helper=True)
+            if api.on_pin:
+                api.on_pin(pin)
+            with self.settings.lock:                      # the automatic backup would still hold the old devices
+                self.settings._write(self.settings.path + ".bak", self.settings.data)
+            for suffix in (".before-import-", ".before-support-session-", ".before-support-import-", ".bak-v", ".rolled-back-"):
+                for path in self._siblings(suffix):
+                    if not self._unlink(path):
+                        problems.append("could not remove %s" % os.path.basename(path))
+            try:
+                for name in os.listdir(api._update_inbox()):
+                    self._unlink(os.path.join(api._update_inbox(), name))
+            except OSError:
+                pass
+            if media == "delete":
+                deleted = self._delete_media(problems)
+            problems += api.theme_store.clear(api.themes)      # the owner's added themes go with the settings
+            if api.https is not None:
+                problems += api.https.wipe()                   # the box's key and certificate: HTTP only, as a new box (D79)
+            if getattr(api, "handover", None) is not None:
+                problems += api.handover.wipe()                # the fleet list, the acceptances and the deny file (D132)
+            problems += self._apply()
+        finally:
+            api._upload_lock.release()
+        print("pvj-web: factory reset by %s (clips %s)" % (device["name"], "deleted" if media == "delete" else "kept"), flush=True)
+        return {"reset": True, "media": media, "deleted": deleted, "problems": problems,
+                "note": "Every device is unpaired. The new PIN is on the node's display (or: sudo pvj-pin)."}

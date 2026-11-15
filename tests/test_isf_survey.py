@@ -137,7 +137,7 @@ class SurveyTest(unittest.TestCase):
         self.assertLess(len(files["euro.fs"]), survey.S.MAX_HEADER)                                   # in characters it would fit
 
     def test_the_bundled_pack_translates_whole(self):
-        rows = survey.survey(os.path.join(REPO, "pvj", "shaders.d", "isf-files"))
+        rows = survey.survey(os.path.join(REPO, "mctl", "shaders.d", "isf-files"))
         self.assertEqual(len(rows), 7)
         self.assertEqual([r["file"] for r in rows if not r["translates"]], [])
 

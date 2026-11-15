@@ -11,8 +11,8 @@ import time
 import unittest
 from unittest import mock
 
-from pvj import sysd, update
-from pvj.update import UpdateError
+from mctl import sysd, update
+from mctl.update import UpdateError
 from tests.test_server import ServerBase
 from tests.test_update import make_bundle, root_for_main
 
@@ -314,7 +314,7 @@ class ApiTest(ServerBase):
 
     def test_a_done_line_for_another_version_is_not_shown(self):
         # A box rolled back by an older pvj-update (which wrote nothing): "updated to 9.9.9" is no longer true.
-        from pvj import __version__
+        from mctl import __version__
         with open(self.result, "w") as f:
             json.dump({"state": "done", "message": "updated to 9.9.9", "version": "9.9.9", "at": 5}, f)
         self.assertIsNone(self.call("GET", "/api/system/update", token=self.full)[1]["last"])

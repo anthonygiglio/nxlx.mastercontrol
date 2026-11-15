@@ -11,7 +11,7 @@ from tests.test_boxcare import Base
 
 class StatusNameTest(Base):
     def name(self, host):
-        with mock.patch("pvj.api.socket.gethostname", return_value=host):
+        with mock.patch("mctl.api.socket.gethostname", return_value=host):
             return self.api.status({}, None, "t")["system"]["name"]
 
     def test_the_status_names_the_node_by_its_host_name(self):

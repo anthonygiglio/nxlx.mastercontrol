@@ -16,8 +16,8 @@ two sizes (the second has the proportions of 1080p and 720p outputs; `--final=72
 import time
 
 import tests  # noqa: F401  (the package: ranked locks and a temp folder of its own, as every test module)
-from pvj import graphics
-from pvj.player import Ipc
+from mctl import graphics
+from mctl.player import Ipc
 from tests.test_graphics import Base
 from tests.test_graphics_motion import MotionBase
 from tests.test_mctl_render import Renderer, need_program

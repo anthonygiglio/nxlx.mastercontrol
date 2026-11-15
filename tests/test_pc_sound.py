@@ -8,7 +8,7 @@ import types
 import unittest
 from unittest import mock
 
-from pvj import hardware
+from mctl import hardware
 from tests.test_audio import FakeIpc
 from tests.test_hardware import make_tree
 from tests.test_server import ServerBase
@@ -173,7 +173,7 @@ class HdmiSoundTest(unittest.TestCase):
         self.assertEqual(hardware.hdmi_sound_screens(self.tree(drm(HDMI_A_1=edid("A"))), runner(amixer_text(KABY_PCMS))), [])
         bad = self.tree({"proc/asound/card1/id": "bad id;\n"})
         self.assertEqual(hardware.hdmi_sound_screens(bad, runner(amixer_text(KABY_PCMS))), [])
-        with mock.patch("pvj.hardware.shutil.which", return_value=None):
+        with mock.patch("mctl.hardware.shutil.which", return_value=None):
             self.assertIsNone(hardware.hdmi_sound_screens(root))                                 # no amixer at all
 
     def test_edid_reading(self):
@@ -215,7 +215,7 @@ class PcAutomaticSoundTest(ServerBase):
         self.api.SOUND_ROOT = root
         self.api.SOUND_RUN = runner(amixer_text({3: eld(*DELL), 7: None, 8: eld(*LG)}))
         self.using = [None]
-        p = mock.patch("pvj.api.hardware.drm_connectors", return_value=conns(HDMI_A_1="x", HDMI_A_2="y"))
+        p = mock.patch("mctl.api.hardware.drm_connectors", return_value=conns(HDMI_A_1="x", HDMI_A_2="y"))
         p.start()
         self.addCleanup(p.stop)
         p = mock.patch.object(self.api.screen, "report", side_effect=lambda: {"connector": self.using[0]} if self.using[0] else None)
@@ -306,7 +306,7 @@ class PcAutomaticSoundTest(ServerBase):
         self.ipc.devices = PC_DEVICES
         self.api.SOUND_RUN = runner("", returncode=1)                    # amixer failed
         self.assertEqual(self.api.apply_audio(), "auto")
-        with mock.patch("pvj.api.hardware.hdmi_sound_for", side_effect=OSError("boom")):
+        with mock.patch("mctl.api.hardware.hdmi_sound_for", side_effect=OSError("boom")):
             self.assertEqual(self.api.apply_audio(), "auto")          # a read that fails never stops the sound
 
     def test_a_pi_is_unchanged(self):

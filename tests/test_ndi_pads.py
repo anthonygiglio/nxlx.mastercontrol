@@ -12,9 +12,9 @@ import threading
 import time
 import unittest
 
-from pvj import boxcare, boxstate, midi, ndi, policy
-from pvj.api import Api
-from pvj.settings import Settings
+from mctl import boxcare, boxstate, midi, ndi, policy
+from mctl.api import Api
+from mctl.settings import Settings
 from tests.test_ndi import FakeClient, FakeLib, frame, wait
 from tests.test_roles import CONTROLLER_DEVICES, LAN, TUNNEL, RolesBase, SCENE
 
@@ -383,7 +383,7 @@ class Identities(PadBase):
         self.feed()
         self.assertEqual(self.h("POST", "/api/room/scene", {"scene": SCENE}, self.operator)[0], 200)
         self.assertTrue(wait(lambda: self.shown() == 1))
-        from pvj import scheduler
+        from mctl import scheduler
         self.assertTrue(wait(lambda: self.api.room._scene_job is None or not self.api.room._report(self.api.room._scene_job)["running"]))
         sched = scheduler.Scheduler(self.api, self.settings, self.api.registry, log=lambda *_: None)
         self.api.room._last_box = None                      # the same scene again within a few seconds is not started twice (BOX_GAP)

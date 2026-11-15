@@ -13,7 +13,7 @@ import threading
 import unittest
 
 import tests  # noqa: F401  (the tests package, as every test module imports it: tests/test_lockrank.py)
-from pvj import events as events_mod, fleetlist as FL, handover as hv, peer as peer_mod, policy, server, ticket as ticket_mod
+from mctl import events as events_mod, fleetlist as FL, handover as hv, peer as peer_mod, policy, server, ticket as ticket_mod
 from tests.peerfix import PeerNode, list_data, sign_list
 from tests.test_boxcert import openssls
 from tests.test_https import HttpsBase, PASS, boxcert
@@ -344,7 +344,7 @@ class Push(FleetApiBase):
         self.assertIsNone(self.hv.list)
 
     def test_if_the_logout_fails_the_owner_is_told_which_device_to_remove(self):
-        from pvj.api import ApiError
+        from mctl.api import ApiError
         self.with_certificate()
         self.make_list()
 
@@ -598,7 +598,7 @@ class PeerRoute(FleetApiBase):
         self.assertEqual(self.pcall(self.b, "/api/fleet/peer", good)[0], 429)           # the same source stays stopped for the minute
 
     def test_a_support_session_can_not_reach_the_owners_routes(self):
-        from pvj import support as sp
+        from mctl import support as sp
         self.assertTrue(any(p == "/api/fleet" for p in sp.REMOTE_DENY_PREFIX))
 
     def test_junk_sent_to_the_real_route_does_not_stop_the_owners_look_or_sync(self):

@@ -9,7 +9,7 @@ import unittest
 from unittest import mock
 
 import tests  # noqa: F401  (tests/test_lockrank.py checks that every test module imports the package)
-from pvj import sysd, tz
+from mctl import sysd, tz
 from tests.test_server import ServerBase
 
 HAVE_ZONES = os.path.isfile(os.path.join(tz.ZONEINFO, "America", "Regina"))
@@ -164,10 +164,10 @@ class Route(ServerBase):
     def setUp(self):
         super().setUp()
         self.sysd = self.api.sysd = FakeSysd()
-        p = mock.patch("pvj.api.tz_mod.current_name", lambda *a, **k: self.sysd.zone)
+        p = mock.patch("mctl.api.tz_mod.current_name", lambda *a, **k: self.sysd.zone)
         p.start()
         self.addCleanup(p.stop)
-        t = mock.patch("pvj.api.time.tzset", lambda: None)       # the real one would re-read this machine's own zone
+        t = mock.patch("mctl.api.time.tzset", lambda: None)       # the real one would re-read this machine's own zone
         t.start()
         self.addCleanup(t.stop)
 
@@ -343,15 +343,15 @@ class Route(ServerBase):
 @unittest.skipUnless(HAVE_ZONES, "needs the system's zoneinfo")
 class ScheduleReport(unittest.TestCase):
     def test_the_status_names_the_zone_and_the_offset(self):
-        from pvj import scheduler
-        from pvj.settings import Settings
+        from mctl import scheduler
+        from mctl.settings import Settings
 
         class Reg:
             def enabled(self, name):
                 return True
         s = Settings(os.path.join(tempfile.mkdtemp(), "s.json"))
         s.load()
-        with mock.patch("pvj.scheduler.tz_mod.current_name", lambda *a, **k: "America/Regina"):
+        with mock.patch("mctl.scheduler.tz_mod.current_name", lambda *a, **k: "America/Regina"):
             st = scheduler.Scheduler(None, s, Reg()).status()
         self.assertEqual(st["zone"], "America/Regina")
         self.assertIsInstance(st["utc_offset_minutes"], int)

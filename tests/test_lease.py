@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""The lease on a carried device (D132, slice 4b; pvj/lease.py): two real nodes (certificates from a throwaway root, the real peer
+"""The lease on a carried device (D132, slice 4b; mctl/lease.py): two real nodes (certificates from a throwaway root, the real peer
 listeners, real Handover, Peers, Auth, Tickets and Leases) and fake clocks. A good answer of the home node renews; the lapse is
 24 hours after the last answer, not a second before, by the wall clock only while it is trusted and otherwise by the monotonic
 clock; a demotion lowers the carried role and nothing raises it; a removal signs the device out (by the poke, and by the
@@ -13,8 +13,8 @@ import time
 import unittest
 
 import tests  # noqa: F401  (the tests package, as every test module imports it: tests/test_lockrank.py)
-from pvj import auth as auth_mod, lease as L
-from pvj.settings import Settings
+from mctl import auth as auth_mod, lease as L
+from mctl.settings import Settings
 from tests.test_peer import A_ID, B_ID, C_ID, Clock
 from tests.test_ticket import Rig, SOURCE
 

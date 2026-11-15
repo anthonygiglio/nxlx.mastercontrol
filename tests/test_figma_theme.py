@@ -10,7 +10,7 @@ import sys
 import tempfile
 import unittest
 
-from pvj import themes
+from mctl import themes
 import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
@@ -236,7 +236,7 @@ class Converter(unittest.TestCase):
         with open(os.path.join(tmp, "t.json"), "rb") as f:
             self.assertEqual(themes.checked(f.read())["id"], "cli-test")
         with open(os.path.join(ROOT, "tools", "make-release.sh")) as f:
-            self.assertIn('git ls-files pvj bin install', f.read())          # a release holds pvj, bin and install: never tools/
+            self.assertIn('git ls-files "$pkg" bin install', f.read())          # a release holds the package, bin and install: never tools/
         with open(TOOL) as f:
             head = f.read(300)
         self.assertIn("SPDX-License-Identifier: Apache-2.0", head)

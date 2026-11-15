@@ -16,7 +16,7 @@ import tempfile
 import time
 import unittest
 
-from pvj import mapper, renderer
+from mctl import mapper, renderer
 from tests.test_server import ServerBase
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -43,12 +43,12 @@ def renamed(shader):
 
 
 def old_mapper():
-    """pvj/mapper.py as the release before had it, unchanged, loaded as a module of its own."""
+    """mctl/mapper.py as the release before had it, unchanged, loaded as a module of its own."""
     text = subprocess.run(["git", "-C", REPO, "show", BEFORE + ":pvj/mapper.py"], check=True, capture_output=True).stdout
     d = tempfile.mkdtemp()
     pkg = os.path.join(d, "oldpvj")
     os.makedirs(pkg)
-    shutil.copy(os.path.join(REPO, "pvj", "locks.py"), os.path.join(pkg, "locks.py"))
+    shutil.copy(os.path.join(REPO, "mctl", "locks.py"), os.path.join(pkg, "locks.py"))
     open(os.path.join(pkg, "__init__.py"), "w").close()
     with open(os.path.join(pkg, "mapper.py"), "wb") as f:
         f.write(text)
@@ -104,7 +104,7 @@ class ValidateTest(unittest.TestCase):
         self.assertEqual(mapper.shown_source({}, 8), 1)
 
     def test_an_import_takes_the_key_and_refuses_a_bad_one(self):
-        from pvj import boxcare
+        from mctl import boxcare
         good = {"on": True, "screen": [1920, 1080], "surfaces": [quad("a1a1a1a1", 0, 100, 100, 2)], "sets": {}}
         self.assertEqual(boxcare.check_mapper(good, None)["surfaces"][0]["source"], 2)
         with self.assertRaises(ValueError):
@@ -231,13 +231,13 @@ print(json.dumps({"schema": s.data["schema"], "n": len(clean), "sources": [x.get
         self.assertEqual((out["n"], out["checked"], out["binds"]), (2, 2, 0), "both surfaces drawn, from its one picture")
         self.assertEqual(out["sources"], [None, None], "the older release does not keep the key")
         # forward again: the file the older release saved loads here, every surface on Source 1
-        from pvj.settings import Settings
+        from mctl.settings import Settings
         back = Settings(copy).load()["mapper"]
         self.assertEqual([mapper.source_of(s) for s in mapper.validate_mapping({"surfaces": back["surfaces"]})], [1, 1])
 
 
 class SourcesPlayer:
-    """The parts of pvj.player.Player that D101 adds, recorded; `n` sources."""
+    """The parts of mctl.player.Player that D101 adds, recorded; `n` sources."""
 
     def __init__(self, base, n=4, rows=None):
         self.base, self.n, self.rows = base, n, rows
@@ -299,7 +299,7 @@ class PlayToSourceTest(ApiBase):
         self.assertEqual(len(self.player.plays), 1)
 
     def test_what_is_not_a_clip_is_refused_in_plain_words(self):
-        from pvj.api import Api
+        from mctl.api import Api
         banks = self.settings.data["pads"]["banks"]
         self.assertIsNotNone(Api.pad_shader(banks[0]["pads"][1]))
         self.assertIsNotNone(Api.pad_ndi(banks[0]["pads"][2]))

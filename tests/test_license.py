@@ -10,7 +10,7 @@ import unittest
 import tests        # the run's own temp folder and the locks' checker, however this module is started (tests/__init__.py)
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-NEW_DIRS = ("pvj/", "bin/", "install/", "image/", "tests/", "tools/")
+NEW_DIRS = ("mctl/", "bin/", "install/", "image/", "tests/", "tools/")
 NEW_FILES = {"security.php", ".github/workflows/ci.yml", ".github/workflows/pvj.yml",
              ".github/workflows/image.yml", ".github/workflows/security-tests.yml"}
 GPL3_SHA256 = "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"     # the FSF's GPL-3.0 text
@@ -47,7 +47,7 @@ def matches(path, pattern):
     return re.fullmatch(rx, path) is not None
 
 
-FONTS = "pvj/web/fonts/"
+FONTS = "mctl/web/fonts/"
 # The two fonts as built from github.com/google/fonts at commit 9710da1e (THIRD_PARTY_LICENSES.md says how), and each
 # family's OFL.txt as fetched there on 2026-10-04.
 FONT_SUMS = {"archivo-latin.06fa7831.woff2": "06fa7831060c673ef6e553b846635fb1e7eaf558e717ddfeb7c0a24fd9280529",
@@ -56,7 +56,7 @@ FONT_SUMS = {"archivo-latin.06fa7831.woff2": "06fa7831060c673ef6e553b846635fb1e7
              "OFL-JetBrainsMono.txt": "b2fe5e8987594e9ffd1d2ca52a2f5d73eb8335243893c5d6254b5ad69269591d"}
 OFL_SHA256 = "8eea8287e5876b539670cadb82e99f9a7afddec6f6730811be1daf25d2e9bcfd"      # SPDX's text of OFL-1.1 (license-list-data)
 
-ISF_PACK = "pvj/shaders.d/isf-files/"
+ISF_PACK = "mctl/shaders.d/isf-files/"
 ISF_LICENSE_SHA256 = "83e4dd21429a91fb7cea67a476032a9641425e5355df2e0f589a738b6ec9fd2c"      # upstream's LICENSE, as cloned
 # github.com/ashima/webgl-noise LICENSE, as fetched on 2026-10-04: the notice for the simplex noise in two of the files
 WEBGL_NOISE_LICENSE_SHA256 = "bdafce1bb01517c9ae6c4f3620c01340790b5e9d039ae9e356347d1174250916"
@@ -65,8 +65,8 @@ WEBGL_NOISE_LICENSE_SHA256 = "bdafce1bb01517c9ae6c4f3620c01340790b5e9d039ae9e356
 ISF_SUMS_SHA256 = "38066ce8878457610d44950a371fca5f2a78bac89132c16b94169a1535d00a4e"
 ISF_FILES = ["isf-color-bars.fs", "isf-corner-colors.fs", "isf-linear-gradient.fs", "isf-radial-gradient.fs", "isf-ridgelines.fs",
              "isf-simplex-noise.fs", "isf-sine-warp-gradient.fs"]
-# -- the effects pack (pvj/effects.d/isf-files): filters from the same repository at the same commit --
-FX_PACK = "pvj/effects.d/isf-files/"
+# -- the effects pack (mctl/effects.d/isf-files): filters from the same repository at the same commit --
+FX_PACK = "mctl/effects.d/isf-files/"
 FX_SUMS_SHA256 = "7b68f9458af80da4a7dbf5bbaba00dcd05d0a047177dbfe243aa986bb3d1022b"
 FX_FILES = ["isf-chromatic-aberration.fs",
             "isf-color-monochrome.fs",
@@ -123,9 +123,9 @@ class LicenseTest(unittest.TestCase):
         shaders = [p for p in files if p.endswith(".fs")]
         self.assertEqual([os.path.basename(p) for p in shaders], ISF_FILES)       # the pack, by name: a change is a decision
         # tools/make-release.sh hands the file list to tar split at white space: no shipped file may have any in its name
-        self.assertEqual([p for p in tracked() if p.startswith(("pvj/", "bin/", "install/")) and re.search(r"\s", p)], [])
+        self.assertEqual([p for p in tracked() if p.startswith(("mctl/", "bin/", "install/")) and re.search(r"\s", p)], [])
         self.assertTrue(all(re.fullmatch(r"isf-[a-z0-9-]+\.fs", os.path.basename(p)) for p in shaders), shaders)
-        # The notices ship with the files: a release holds only pvj/, bin/ and install/, so a notice that is only in
+        # The notices ship with the files: a release holds only mctl/, bin/ and install/, so a notice that is only in
         # THIRD_PARTY_LICENSES.md at the top of the repository never reaches a box.
         notices = [ISF_PACK + "LICENSE", ISF_PACK + "LICENSE.webgl-noise"]
         self.assertEqual(sorted(set(files) - set(shaders)), notices + [ISF_PACK + "SHA256SUMS"])
@@ -184,13 +184,13 @@ class LicenseTest(unittest.TestCase):
         by_licence = {}
         for licence, patterns, holders in annotations(holders=True):
             for p in tracked():
-                if p.startswith("pvj/effects.d/") and any(matches(p, pattern) for pattern in patterns):
+                if p.startswith("mctl/effects.d/") and any(matches(p, pattern) for pattern in patterns):
                     by_licence.setdefault(p, []).append((licence, holders))
         for p in shaders + [FX_PACK + "LICENSE"]:
             self.assertEqual({licence for licence, _ in by_licence.get(p, [])}, {"MIT"}, p)
             self.assertIn("ISF-Files", by_licence[p][-1][1], p)
             self.assertNotIn("Ashima", by_licence[p][-1][1], p)                   # none of these holds the simplex noise
-        own = sorted(p for p in tracked() if re.fullmatch(r"pvj/effects\.d/[^/]+\.fs", p))
+        own = sorted(p for p in tracked() if re.fullmatch(r"mctl/effects\.d/[^/]+\.fs", p))
         self.assertEqual(len(own), 13)               # twelve filters and the Strobe
         for p in own + [FX_PACK + "SHA256SUMS"]:
             self.assertEqual([licence for licence, _ in by_licence.get(p, [])], ["Apache-2.0"], p)
@@ -216,7 +216,7 @@ class LicenseTest(unittest.TestCase):
 
     def test_the_fonts_keep_their_own_licence_and_are_declared(self):
         """Archivo and JetBrains Mono (SIL OFL 1.1) are somebody else's work: never labelled Apache-2.0, each with its
-        own OFL.txt beside it (a release holds only pvj/, bin/ and install/), pinned by checksum and in the inventory."""
+        own OFL.txt beside it (a release holds only mctl/, bin/ and install/), pinned by checksum and in the inventory."""
         files = sorted(p for p in tracked() if p.startswith(FONTS))
         self.assertEqual(files, sorted(FONTS + n for n in FONT_SUMS))
         with open(os.path.join(REPO, "THIRD_PARTY_LICENSES.md")) as f:

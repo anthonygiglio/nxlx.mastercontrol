@@ -9,10 +9,10 @@ import threading
 import time
 import unittest
 
-from pvj import auth as auth_mod, boxcare, controllercode, midi, pinscreen
-from pvj.auth import Auth, AuthError
-from pvj.player import Player, PlayerError
-from pvj.settings import Settings
+from mctl import auth as auth_mod, boxcare, controllercode, midi, pinscreen
+from mctl.auth import Auth, AuthError
+from mctl.player import Player, PlayerError
+from mctl.settings import Settings
 from tests import test_controller_code as base
 from tests.test_pinscreen import Api as PinApi
 

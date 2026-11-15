@@ -107,7 +107,7 @@ static const char *const SETTABLE[] = {
     "audio-device", "brightness", "video-zoom", "video-pan-x", "video-pan-y", "video-rotate", "video-crop",
     "keepaspect", "fbo-format", "screenshot-format", "screenshot-jpeg-quality", "screenshot-png-compression",
     "screenshot-png-filter", "screenshot-high-bit-depth",
-    // a live input's pipe (pvj/player.py, _play_pipe, MKV_ONLY, PIPE_DEFAULTS)
+    // a live input's pipe (mctl/player.py, _play_pipe, MKV_ONLY, PIPE_DEFAULTS)
     "demuxer", "demuxer-rawvideo-w", "demuxer-rawvideo-h", "demuxer-rawvideo-mp-format", "demuxer-rawvideo-fps",
     "cache", "cache-pause", "initial-audio-sync", "demuxer-readahead-secs", "demuxer-max-bytes", "vd", "ad", "sid",
     "ordered-chapters", "cover-art-auto", "embeddedfonts", "audio-delay", NULL };
@@ -1279,7 +1279,7 @@ static int shot_write(const char *path, const unsigned char *rgba, int w, int h,
 }
 
 // The third word "mctl-screen" asks for the whole final picture at the screen's size, program or no program: libmpv's own
-// window is the inside size and has no mapping in it, and a transition's still must be the screen (pvj/transitions.py).
+// window is the inside size and has no mapping in it, and a transition's still must be the screen (mctl/transitions.py).
 static int native_screenshot(int fd, const mpv_node *id, const char *path, const char *kind)
 {
     pthread_mutex_lock(&app.lock);
@@ -1528,7 +1528,7 @@ static void set_level(int fd, const mpv_node *id, const mpv_node *v)
 }
 
 // ["mctl-final", "full" | 720]: the size of the final pass from the next frame on (D108); the supervisor's rule asks it
-// (pvj/renderer.py). Nothing else changes: the screen's size, the surfaces and the sizes this socket reports stay.
+// (mctl/renderer.py). Nothing else changes: the screen's size, the surfaces and the sizes this socket reports stay.
 // Refused where the scaler cannot be used: mctl-render reports why (final-why). The look at final_why and the store are
 // one step under app.lock, as final_refused writes it there before it clears the wish: a word that comes after a refusal
 // never brings the small frame back, so "said once, then full for good" holds.

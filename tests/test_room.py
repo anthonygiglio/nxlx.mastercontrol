@@ -9,7 +9,7 @@ import threading
 import time
 import unittest
 
-from pvj import midi, osc, projector, room, scheduler, settings as settings_mod
+from mctl import midi, osc, projector, room, scheduler, settings as settings_mod
 from tests.test_projector import FakeProjector, LOOPBACK_OK, wait_for
 from tests.test_server import ServerBase
 

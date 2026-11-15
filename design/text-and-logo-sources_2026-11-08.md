@@ -29,18 +29,18 @@ Words used in this document:
 
 | Fact | Where |
 | --- | --- |
-| Sources 2 to 8 are one libmpv core each in `mctl-render`; source 1 is the player. The mapping picks a source per surface. | D101, `pvj/PANEL.md` section 12 |
+| Sources 2 to 8 are one libmpv core each in `mctl-render`; source 1 is the player. The mapping picks a source per surface. | D101, `mctl/PANEL.md` section 12 |
 | Generators (ISF shaders) and effects are drawn by `mctl-render` itself, with values set every frame; each source has a chain of up to 3 effects. | D106, D74, D55 |
-| One overlay picture (mpv `overlay-add`, id 30 after the review of slice 2; it was 10) is the mask list: up to 8 PNGs combined by mpv into one premultiplied BGRA picture at screen size, in a worker thread, newest change wins. Works on classic mpv too. | D100, `pvj/overlay.py` |
+| One overlay picture (mpv `overlay-add`, id 30 after the review of slice 2; it was 10) is the mask list: up to 8 PNGs combined by mpv into one premultiplied BGRA picture at screen size, in a worker thread, newest change wins. Works on classic mpv too. | D100, `mctl/overlay.py` |
 | `mctl-render` has a "text layer": a second libmpv that plays nothing and draws overlays and `show-text` above everything. | `render/src/main.c` |
-| Media upload: Operator and up, one at a time, hidden temp file, size and rate limits, extension list `VIDEO + IMAGE + AUDIO`. Images are `.png .jpg .jpeg .bmp .gif` and are playable as clips. There are no thumbnails. | `pvj/api.py`, `pvj/player.py` |
-| Fonts on the node: Archivo and JetBrains Mono (OFL), bundled for the panel's Signal look as web fonts only. `LICENSES/OFL-1.1.txt` is in the repo. | `pvj/web/fonts`, D54 |
+| Media upload: Operator and up, one at a time, hidden temp file, size and rate limits, extension list `VIDEO + IMAGE + AUDIO`. Images are `.png .jpg .jpeg .bmp .gif` and are playable as clips. There are no thumbnails. | `mctl/api.py`, `mctl/player.py` |
+| Fonts on the node: Archivo and JetBrains Mono (OFL), bundled for the panel's Signal look as web fonts only. `LICENSES/OFL-1.1.txt` is in the repo. | `mctl/web/fonts`, D54 |
 | Tiers: `hardware.tier()` gives lean (Pi 3, and unknown boards by D122), standard (Pi 4, Pi 400, CM4), full (Pi 5, x86). A Pi 3's graphics chip is OpenGL ES 2, so it runs classic mpv, never `mctl-render`. | D122, D123, journal 2026-11-07 board tiers |
-| Roles: Owner (`full`), Operator (`live`), Guest (`view`). A Guest may only send a fixed list (`policy.GUEST`). | `pvj/PANEL.md` section 1 |
+| Roles: Owner (`full`), Operator (`live`), Guest (`view`). A Guest may only send a fixed list (`policy.GUEST`). | `mctl/PANEL.md` section 1 |
 | No Python imaging library on the node (no Pillow, no numpy). | D100 |
 
 Not found: the "universal hardware plan" the brief mentions is not on `origin/master` (there is no `design/` folder
-there). The tier rules above come from `pvj/hardware.py`, `pvj/profile.py` and decisions D122 and D123. This file
+there). The tier rules above come from `mctl/hardware.py`, `mctl/profile.py` and decisions D122 and D123. This file
 creates `design/`.
 
 ## 2. What you do (the experience)
@@ -273,7 +273,7 @@ On the lean tier only colour effects exist, baked in by the rasteriser.
 
 ## 6. Where it lives in the panel
 
-Following `pvj/PANEL.md` (D102): colours by area, pages "as it is", and the rule that a change to a screen changes its
+Following `mctl/PANEL.md` (D102): colours by area, pages "as it is", and the rule that a change to a screen changes its
 section in the same pull request.
 
 - **Play > Graphics** (new, area Play, colour `clips`): the live screen. A list of up to 8 graphics, each a card with
@@ -421,7 +421,7 @@ Owner and Operator both reach all of it except fonts.
 
 ### 8.3 Controllers: MIDI, OSC, TouchOSC
 
-Actions (`pvj/actions.py` names, so MIDI learn and the OSC table both reach them):
+Actions (`mctl/actions.py` names, so MIDI learn and the OSC table both reach them):
 
 - `graphic_N_toggle` (N = slot 1 to 8): show or hide.
 - `graphic_N_line_next`, `graphic_N_line_prev`: step through the Lines and send.
@@ -429,7 +429,7 @@ Actions (`pvj/actions.py` names, so MIDI learn and the OSC table both reach them
 - `graphic_replay_N`: play the motion again.
 - `graphics_hide_all`.
 
-**OSC** (addresses follow `pvj/OSC.md`: behind the same three locks; the Owner's OSC switch must be on):
+**OSC** (addresses follow `mctl/OSC.md`: behind the same three locks; the Owner's OSC switch must be on):
 
 | Address | Arguments | What it does |
 | --- | --- | --- |

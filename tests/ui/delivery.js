@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 // SPDX-License-Identifier: Apache-2.0
-// A file of the page that the box does not deliver (D68, pvj/web/load.js). The harness withholds a named file on
+// A file of the page that the box does not deliver (D68, mctl/web/load.js). The harness withholds a named file on
 // request (tests/ui/harness.py, the file <delivery_file>: one line a request, "drop", "busy" or "broken"), so each
 // case here happens exactly once and on purpose; nothing waits for a failure that may or may not come.
 //
