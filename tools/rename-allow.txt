@@ -167,6 +167,7 @@
 8	project-log/journal/2026-11-14-rename-4.md
 1	project-log/journal/2026-11-15-auto-tz.md
 24	project-log/journal/2026-11-15-rename-5.md
+6	project-log/journal/2026-11-15-rename-6.md
 2	project-log/journal/2026-11-15-slider-ends.md
 4	project-log/journal/2026-11-15-xfade-leak.md
 3	project-log/lessons/2026-11-11-stats-overlay-owned-by-connection.md
