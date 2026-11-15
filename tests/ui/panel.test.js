@@ -13,8 +13,8 @@ const crypto = require('crypto');
 // the transport strip's More on a phone.
 const shell = require('./signal-pages');
 const { go, at, back, stripOpen } = shell;
-// Waiting in the page for a check that fetches (never page.waitForFunction with an async function: it never polls).
-const { until } = require('./poll');
+// Waiting in the page for a check that fetches or awaits: pollFor(page, check, timeout, arg) polls it (see poll.js).
+const { pollFor } = require('./poll');
 
 // One PJLink question to the harness's fake projector, straight over TCP (not through the panel): what it really did.
 function pjlink(port, password, body) {
@@ -450,7 +450,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await go(page, 'play/pads');
     await page.waitForSelector('#transitioncard');
     await page.click('#transitioncard button:has-text("Crossfade")');
-    await page.waitForFunction(() => fetch('/api/status').then((r) => r.json()).then((j) => j.mix.transition === 'crossfade'));
+    await pollFor(page, () => fetch('/api/status').then((r) => r.json()).then((j) => j.mix.transition === 'crossfade'));
     await page.waitForSelector('button.on:has-text("Crossfade")');
     {
       // a slow status answer: the chosen transition is still the one shown as chosen once the answer is in
@@ -463,7 +463,7 @@ function startServer(env) {          // env: more for the harness's environment 
     }
     for (const [label, value] of [['Wipe from left', 'wipe-from-left'], ['Wipe from bottom', 'wipe-from-bottom'], ['Slide off left', 'slide-left'], ['Slide off down', 'slide-down']]) {
       await page.click('button:has-text("' + label + '")');
-      await page.waitForFunction((v) => fetch('/api/status').then((r) => r.json()).then((j) => j.mix.transition === v), value);
+      await pollFor(page, (v) => fetch('/api/status').then((r) => r.json()).then((j) => j.mix.transition === v), undefined, value);
       await page.waitForSelector('button.on:has-text("' + label + '")');
     }
     // A box that gave up on the transition says why under the picker, in words that stay inside a phone's width, and
@@ -521,7 +521,7 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.unroute('**/api/status');
     }
     await page.click('button:has-text("Dip to black")');
-    await page.waitForFunction(() => fetch('/api/status').then((r) => r.json()).then((j) => j.mix.transition === 'dip'));
+    await pollFor(page, () => fetch('/api/status').then((r) => r.json()).then((j) => j.mix.transition === 'dip'));
     await page.waitForSelector('button.on:has-text("Dip to black")');
     // Shape > Picture (what Mix held): drag a slider and check the throttle keeps request count sane
     await go(page, 'shape/picture');
@@ -706,7 +706,7 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.waitForSelector('#graphic-1-outlinewidth', { timeout: 8000 });
       const slid = await page.evaluate(() => { const r = document.getElementById('graphic-1-size'); r.value = '20'; r.dispatchEvent(new Event('input', { bubbles: true })); r.dispatchEvent(new Event('change', { bubbles: true })); return r.value; });
       assert.strictEqual(slid, '20');
-      await until(page, async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].text.size === 20, 8000);
+      await pollFor(page, async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].text.size === 20, 8000);
       gfx = await get('/api/graphics');
       assert.deepStrictEqual([gfx.items[0].place.anchor, gfx.items[0].text.outline.on, gfx.items[0].text.size], ['tl', true, 20]);
       assert.strictEqual(await page.inputValue('#graphic-1-size'), '20', 'a slider that was moved stays where it was put (the card is not drawn again under the hand)');
@@ -741,7 +741,7 @@ function startServer(env) {          // env: more for the harness's environment 
       const moveSlider = (id, v) => page.evaluate(([i, x]) => { const r = document.getElementById(i); r.value = String(x); r.dispatchEvent(new Event('input', { bubbles: true })); r.dispatchEvent(new Event('change', { bubbles: true })); return r.value; }, [id, v]);
       await moveSlider('graphic-1-fadein', 2.5);
       await moveSlider('graphic-1-fadeout', 1.5);
-      await until(page, async () => { const m = (await fetch('/api/graphics').then((r) => r.json())).items[0].motion; return m.seconds === 2.5 && m.out === 1.5; }, 8000);
+      await pollFor(page, async () => { const m = (await fetch('/api/graphics').then((r) => r.json())).items[0].motion; return m.seconds === 2.5 && m.out === 1.5; }, 8000);
       assert.strictEqual(await page.textContent('label[for="graphic-1-fadein"] .k'), '2.5 s', 'the time is said in seconds');
       await page.waitForFunction(() => !document.getElementById('graphic-1-replay').disabled, null, { timeout: 8000 });
       motionPosts.length = 0;
@@ -754,7 +754,7 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.waitForSelector('#graphic-1-typetime');
       assert.strictEqual(await page.locator('#graphic-1-fadein, #graphic-1-fadeout').count(), 0, 'the fade times go with the fade');
       await moveSlider('graphic-1-typetime', 4);
-      await until(page, async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].motion.seconds === 4, 8000);
+      await pollFor(page, async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].motion.seconds === 4, 8000);
       // the same screen on a node with the New renderer's stage (the harness switches on the file): all five, speed and loop
       const stageFile = path.join(path.dirname(info.midi_dir), 'gpu-stage');
       require('fs').writeFileSync(stageFile, '');
@@ -766,7 +766,7 @@ function startServer(env) {          // env: more for the harness's environment 
         assert.strictEqual(await page.locator('#graphic-1-motionnote').count(), 0, 'and there is no note about steps');
         // the position selector keeps what is stored through every motion change, and says what a moving one makes of it
         await page.click('#graphic-1-anchor-tl');
-        await until(page, async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].place.anchor === 'tl', 8000);
+        await pollFor(page, async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].place.anchor === 'tl', 8000);
         await page.click('#graphic-1-motion-crawl');
         await page.waitForSelector('#graphic-1-speed');
         assert.strictEqual(await page.getAttribute('#graphic-1-anchor-tl', 'aria-pressed'), 'true', 'the selector still shows the stored place after the motion changed');
@@ -774,7 +774,7 @@ function startServer(env) {          // env: more for the harness's environment 
         assert(/only the row counts/.test(await page.textContent('#graphic-1-anchorhint')), 'a crawl says that only the row counts');
         assert(await page.isDisabled('#graphic-1-x') && !(await page.isDisabled('#graphic-1-y')), 'the nudge across does nothing for a crawl, the nudge down does');
         await page.click('#graphic-1-anchor-br');
-        await until(page, async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].place.anchor === 'br', 8000);
+        await pollFor(page, async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].place.anchor === 'br', 8000);
         assert.strictEqual(await page.getAttribute('#graphic-1-anchor-br', 'aria-pressed'), 'true');
         assert.strictEqual(await page.getAttribute('#graphic-1-anchor-tl', 'aria-pressed'), 'false');
         // a card refresh (a GET) that was asked before a tap and answers after it must not draw the old place again
@@ -826,11 +826,11 @@ function startServer(env) {          // env: more for the harness's environment 
         assert.strictEqual(await page.locator('#graphic-1-typetime').count(), 0);
         assert(/like a ticker/.test(await page.textContent('#graphic-1-motionhint')));
         await moveSlider('graphic-1-speed', 40);
-        await until(page, async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].motion.speed === 40, 8000);
+        await pollFor(page, async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].motion.speed === 40, 8000);
         assert.strictEqual(await page.textContent('label[for="graphic-1-speed"] .k'), '40% of the screen a second');
         assert.strictEqual(await page.getAttribute('#graphic-1-loop', 'aria-checked'), 'false');
         await page.click('#graphic-1-loop');
-        await until(page, async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].motion.loop === true, 8000);
+        await pollFor(page, async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].motion.loop === true, 8000);
         await page.click('#graphic-1-motion-scroll');
         await page.waitForSelector('#graphic-1-speed');
         assert.strictEqual((await get('/api/graphics')).items[0].motion.kind, 'scroll');
@@ -848,7 +848,7 @@ function startServer(env) {          // env: more for the harness's environment 
       assert(await page.isDisabled('#graphic-1-replay'), 'a motion this node cannot draw is not replayed');
       assert.strictEqual((await get('/api/graphics')).items[0].motion.kind, 'scroll', 'and it is kept');
       await page.click('#graphic-1-motion-none');
-      await until(page, async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].motion.kind === 'none', 8000);
+      await pollFor(page, async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].motion.kind === 'none', 8000);
       await fitsCard('#graphicscard', 'Graphics, settings open');
       await fitsPhone('Graphics, settings open');
       // logo files: a text file is refused in words, a PNG is kept and gets a thumbnail
@@ -866,7 +866,7 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.waitForSelector('#graphic-2-file');
       assert.strictEqual(await page.textContent('#graphic-2-state'), 'Off');
       await page.selectOption('#graphic-2-file', 'mara-logo.png');
-      await until(page, async () => (await fetch('/api/graphics').then((r) => r.json())).items[1].logo.file === 'mara-logo.png', 8000);
+      await pollFor(page, async () => (await fetch('/api/graphics').then((r) => r.json())).items[1].logo.file === 'mara-logo.png', 8000);
       await page.click('#graphic-2-show');
       await page.waitForFunction(() => document.getElementById('graphic-2-state').textContent === 'On the screen', null, { timeout: 10000 });
       assert.strictEqual((await get('/api/graphics')).showing, 2);
@@ -1420,7 +1420,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.fill('#dmxuni', '2');
     await page.fill('#dmxstart', '101');
     await page.click('#dmxsave');
-    await page.waitForFunction(() => fetch('/api/dmx').then((r) => r.json()).then((d) => d.universe === 2 && d.start === 101));
+    await pollFor(page, () => fetch('/api/dmx').then((r) => r.json()).then((d) => d.universe === 2 && d.start === 101));
     await page.waitForSelector('#dmxline:has-text("Listening for Art-Net on universe 2.")');
     await page.waitForSelector('#dmxchannels tr[data-ch="101"]');
     assert.strictEqual(await page.textContent('#dmxchannels tbody tr >> nth=0 >> td >> nth=0'), '101', 'the table follows the start channel');
@@ -1924,7 +1924,7 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.waitForFunction(() => /1024 to 65535/.test(document.getElementById('ndiscerr').textContent));
       await page.fill('#ndiscport', '6000');
       await page.click('#ndiscsave');
-      await page.waitForFunction(() => fetch('/api/ndi/discovery').then((r) => r.json()).then((d) => d.network === 'all' && d.port === 6000));
+      await pollFor(page, () => fetch('/api/ndi/discovery').then((r) => r.json()).then((d) => d.network === 'all' && d.port === 6000));
       const before = page.viewportSize();
       await page.setViewportSize({ width: 320, height: before.height });
       // asked and measured in one step in the page: between two steps the saved answer draws the cards again (seen in CI, 2026-10-12)
@@ -2941,7 +2941,7 @@ function startServer(env) {          // env: more for the harness's environment 
     if (await pjlink(info.projector_ports[0], 'secret1', 'INPT ?') !== '32') problems.push('the scene did not switch the main wall to input 32');
     if (await pjlink(info.projector_ports[0], 'secret1', 'AVMT ?') !== '21') problems.push('the scene did not mute the sound of the main wall only');
     if (await pjlink(info.projector_ports[1], '', 'POWR ?') !== '3') problems.push('the scene did not switch the painting wall on');
-    await page.waitForFunction(() => fetch('/api/status').then((r) => r.json()).then((d) => /tunnel/.test((d.player || {}).path || '')), null, { timeout: 8000 });
+    await pollFor(page, () => fetch('/api/status').then((r) => r.json()).then((d) => /tunnel/.test((d.player || {}).path || '')), 8000);
     await go(page, 'room/walls');
     await page.waitForSelector('.room-group:has-text("Painting wall") .room-state:has-text("Warming up")', { timeout: 15000 });
     await page.waitForSelector('.room-group:has-text("Main wall") .room-text:has-text("On · Box · sound muted")', { timeout: 15000 });
@@ -3185,7 +3185,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.fill('#wallbezel', '3');
     await page.click('#wallsave');
     try {
-      await page.waitForFunction(() => fetch('/api/sync').then((r) => r.json()).then((d) => d.config.wall.cols === 2 && d.config.wall.col === 1 && d.config.wall.bezel === 3), null, { timeout: 15000 });
+      await pollFor(page, () => fetch('/api/sync').then((r) => r.json()).then((d) => d.config.wall.cols === 2 && d.config.wall.col === 1 && d.config.wall.bezel === 3), 15000);
     } catch (e) { throw new Error(e.message.split('\n')[0] + ' | the wall was not saved: ' + await syncState()); }
     // The card is rebuilt by the answer to the save above and, while it is a server, every 2 seconds. A column chosen
     // just before such a rebuild must still be there at the click. It is set without an event (as the Network step
@@ -3196,7 +3196,7 @@ function startServer(env) {          // env: more for the harness's environment 
     assert(await page.isVisible('#wallcols'), 'a wall in use stays unfolded through a redraw');
     await page.click('#wallsave');
     try {
-      await page.waitForFunction(() => fetch('/api/sync').then((r) => r.json()).then((d) => d.config.wall.col === 0), null, { timeout: 15000 });
+      await pollFor(page, () => fetch('/api/sync').then((r) => r.json()).then((d) => d.config.wall.col === 0), 15000);
     } catch (e) { throw new Error(e.message.split('\n')[0] + ' | the column was not saved: ' + await syncState()); }
     // a tile outside the wall can no longer be chosen in the panel; the box still refuses one
     assert.strictEqual(await post('/api/sync', { wall: { cols: 2, rows: 1, col: 2, row: 0, bezel: 3 } }), 400, 'the box refuses a tile outside the wall');
@@ -3217,6 +3217,9 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.click('#mapadd-quad');
     await page.waitForSelector('.map-entry:has-text("Quad")');
     await page.waitForSelector('#mapsel:has-text("corner 1 of 4")');
+    // (On a phone the canvas starts above the top of the window, where the mouse cannot reach it: the drag below
+    // went nowhere, and the wait for the corner to move was a no-op that never noticed.)
+    await page.locator('#mapcanvas').scrollIntoViewIfNeeded();
     const box = await page.locator('#mapcanvas').boundingBox();
     assert(box && box.width > 200 && box.height > 100, 'the mapping canvas is drawn');
     const before = await page.evaluate(() => fetch('/api/mapper').then((r) => r.json()).then((d) => d.surfaces[0].vertices[0]));
@@ -3225,7 +3228,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.mouse.down();
     await page.mouse.move(box.x + box.width / 8, box.y + box.height / 8, { steps: 5 });
     await page.mouse.up();
-    await page.waitForFunction((b) => fetch('/api/mapper').then((r) => r.json()).then((d) => d.surfaces[0].vertices[0][0] < b[0] - 100), before);
+    await pollFor(page, (b) => fetch('/api/mapper').then((r) => r.json()).then((d) => d.surfaces[0].vertices[0][0] < b[0] - 100), undefined, before);
     await page.selectOption('#mapstep', '50');
     const x0 = await page.evaluate(() => fetch('/api/mapper').then((r) => r.json()).then((d) => d.surfaces[0].vertices[0][0]));
     // The card is drawn again by the answer to every change. drawnAgain() marks the line at its top and waits until
@@ -3235,7 +3238,7 @@ function startServer(env) {          // env: more for the harness's environment 
     const drawnAgain = () => page.waitForFunction(() => { const l = document.getElementById('mapstatus'); return l && !l.dataset.seen; }, null, { timeout: 8000 });
     await markMap();
     await page.click('#mapright');
-    await page.waitForFunction((x) => fetch('/api/mapper').then((r) => r.json()).then((d) => Math.abs(d.surfaces[0].vertices[0][0] - (x + 50)) < 0.01), x0);
+    await pollFor(page, (x) => fetch('/api/mapper').then((r) => r.json()).then((d) => Math.abs(d.surfaces[0].vertices[0][0] - (x + 50)) < 0.01), undefined, x0);
     await drawnAgain();
     // A name is typed while the card is drawn again. This is the failure that came and went here ("Main stage" not
     // seen in 30 s): the answer to the nudge arrived between the moment the name field was chosen and the typing,
@@ -3263,7 +3266,7 @@ function startServer(env) {          // env: more for the harness's environment 
     holdBack = false;
     await page.unroute('**/api/mapper', slowAnswer);
     assert.strictEqual(await page.inputValue('#mapsetname'), 'Main stage', 'what was typed across the redraw is all there');
-    await page.waitForFunction((x) => fetch('/api/mapper').then((r) => r.json()).then((d) => Math.abs(d.surfaces[0].vertices[0][0] - x) < 0.01), x0);     // the nudge back was taken
+    await pollFor(page, (x) => fetch('/api/mapper').then((r) => r.json()).then((d) => Math.abs(d.surfaces[0].vertices[0][0] - x) < 0.01), undefined, x0);     // the nudge back was taken
     // Save with the cursor left in the name field, as on Safari and iOS, where a tapped button does not take it
     // (Chromium's click would): the button's own click() presses it and moves nothing.
     const press = (id) => page.evaluate((x) => document.getElementById(x).click(), id);
@@ -3570,7 +3573,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.fill('#support-address', '10.77.0.40');
     await page.fill('#support-network', '10.77.0.0/24');
     await page.click('#supportsave');
-    await page.waitForFunction(() => fetch('/api/support').then((r) => r.json()).then((d) => d.config.address === '10.77.0.40'));
+    await pollFor(page, () => fetch('/api/support').then((r) => r.json()).then((d) => d.config.address === '10.77.0.40'));
     await page.click('#sysswitch');
     await page.waitForSelector('#sysswitch[aria-checked="true"]');
     assert.strictEqual((await get('/api/support')).config.allowed, true, 'the page switch allowed remote support');
@@ -4160,25 +4163,27 @@ function startServer(env) {          // env: more for the harness's environment 
     assert(/does not stop Vibes/.test(await page.textContent('#slidernote')) && /save a preset/.test(await page.textContent('#slidernote')), 'the page says what a control does to Vibes and how to keep its value');
     const speedNow = () => get('/api/shaders').then((d) => d.playing && d.playing.values.speed);
     await page.evaluate((v) => { const el = document.getElementById('shin-speed'); el.value = v; el.dispatchEvent(new Event('input')); el.dispatchEvent(new Event('change')); }, speed.max);
-    await page.waitForFunction((v) => fetch('/api/shaders').then((r) => r.json()).then((d) => d.playing && Math.abs(d.playing.values.speed - v) < 1e-6), speed.max);
+    // (The slider moves in steps of a 200th of its range, and its top step comes to 1.991 of 2: the box is to hold
+    // the value the slider gave, within one step of the top. The wait used to be a no-op, so this never showed.)
+    await pollFor(page, ([v, step]) => fetch('/api/shaders').then((r) => r.json()).then((d) => d.playing && Math.abs(d.playing.values.speed - v) <= step + 1e-6), undefined, [speed.max, (speed.max - speed.min) / 200]);
     await page.click('#shadersliders button[aria-label="Reset ' + speed.label + '"]');
-    await page.waitForFunction((v) => fetch('/api/shaders').then((r) => r.json()).then((d) => d.playing && Math.abs(d.playing.values.speed - v) < 1e-6), speed.default);
+    await pollFor(page, (v) => fetch('/api/shaders').then((r) => r.json()).then((d) => d.playing && Math.abs(d.playing.values.speed - v) < 1e-6), undefined, speed.default);
     await page.waitForSelector('#shin-speed');
     await page.evaluate((v) => { const el = document.getElementById('shin-speed'); el.value = v; el.dispatchEvent(new Event('change')); }, speed.min);
-    await page.waitForFunction((v) => fetch('/api/shaders').then((r) => r.json()).then((d) => d.playing && Math.abs(d.playing.values.speed - v) < 1e-6), speed.min);
+    await pollFor(page, (v) => fetch('/api/shaders').then((r) => r.json()).then((d) => d.playing && Math.abs(d.playing.values.speed - v) < 1e-6), undefined, speed.min);
     await page.click('#shaderresetall');
-    await page.waitForFunction((v) => fetch('/api/shaders').then((r) => r.json()).then((d) => d.playing && Math.abs(d.playing.values.speed - v) < 1e-6), speed.default);
+    await pollFor(page, (v) => fetch('/api/shaders').then((r) => r.json()).then((d) => d.playing && Math.abs(d.playing.values.speed - v) < 1e-6), undefined, speed.default);
     assert.strictEqual(typeof await speedNow(), 'number');
     // Vibes settings apply on tap, with a brief "Saved"; there is no Save button
     assert.strictEqual(await page.locator('#shadersave').count(), 0, 'no Save button for the Vibes settings');
     assert.deepStrictEqual(await page.$$eval('#vibesdwell option', (os) => os.map((o) => o.textContent)),
       ['30 seconds', '1 minute', '2 minutes', '3 minutes', '5 minutes', '10 minutes', '15 minutes', '30 minutes', '1 hour']);
     await page.selectOption('#vibesdwell', '60');
-    await page.waitForFunction(() => fetch('/api/shaders').then((r) => r.json()).then((d) => d.config.dwell === 60));
+    await pollFor(page, () => fetch('/api/shaders').then((r) => r.json()).then((d) => d.config.dwell === 60));
     await page.waitForSelector('#saved-dwell:text-is("Saved")');
     const vary = (await get('/api/shaders')).config.vary;
     await page.click('#vibesvary');
-    await page.waitForFunction((was) => fetch('/api/shaders').then((r) => r.json()).then((d) => d.config.vary === !was), vary);
+    await pollFor(page, (was) => fetch('/api/shaders').then((r) => r.json()).then((d) => d.config.vary === !was), undefined, vary);
     await page.waitForSelector('#vibesvary[aria-checked="' + String(!vary) + '"]');
     // A time that is not in the list (set from a MIDI knob or the API) shows as it is, never as a wrong one
     assert.strictEqual(await post('/api/shaders', { action: 'config', dwell: 45 }), 200);
@@ -4296,7 +4301,7 @@ function startServer(env) {          // env: more for the harness's environment 
     const V = (values) => ({ values, id: AID });
     const C = (controls) => ({ controls, id: AID });
     const VALUES = '/api/shaders/values';
-    const boxHas = (name, v) => page.waitForFunction(([n, x]) => fetch('/api/shaders').then((r) => r.json()).then((d) => d.playing && JSON.stringify(d.playing.values[n]) === JSON.stringify(x)), [name, v]);
+    const boxHas = (name, v) => pollFor(page, ([n, x]) => fetch('/api/shaders').then((r) => r.json()).then((d) => d.playing && JSON.stringify(d.playing.values[n]) === JSON.stringify(x)), undefined, [name, v]);
     const aPoll = () => page.waitForResponse((r) => r.url().endsWith('/api/shaders') && r.request().method() === 'GET', { timeout: 20000 });
     const setRange = (id, v, events) => page.evaluate(([i, x, evs]) => { const el = document.getElementById(i); el.value = x; evs.forEach((e) => el.dispatchEvent(new Event(e))); }, [id, v, events]);
     // a number: a slider that sends while it is dragged (a few times a second, not once per step), keeps its place
@@ -4406,7 +4411,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await setRange('shc-brightness', 1.5, ['input', 'change']);
     await wasSent(VALUES, C({ brightness: 1.5 }), 'Brightness trim');
     assert.strictEqual(sentTo('/api/shaders/play').length, 0, 'no control sends a Play');
-    await page.waitForFunction(() => fetch('/api/shaders').then((r) => r.json()).then((d) => d.playing && d.playing.values.lit === true && d.playing.values.mode === 5 && d.playing.controls.brightness === 1.5 && d.playing.controls.speed === 2));
+    await pollFor(page, () => fetch('/api/shaders').then((r) => r.json()).then((d) => d.playing && d.playing.values.lit === true && d.playing.values.mode === 5 && d.playing.controls.brightness === 1.5 && d.playing.controls.speed === 2));
     // a refusal is said at the control: here a value for a shader that has just left the screen
     {
       const said = await page.evaluate(() => fetch('/api/shaders/play', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PVJ-Request': '1' }, body: JSON.stringify({ id: 'nxlx-tide.fs' }) }).then(() => {
@@ -4519,10 +4524,10 @@ function startServer(env) {          // env: more for the harness's environment 
       assert(/usual here/.test(await page.$eval('#shaderheight option[value="' + render.default + '"]', (o) => o.textContent)), 'and marks the usual one');
       const other = render.heights.find((x) => x !== render.height);
       await page.selectOption('#shaderheight', String(other));
-      await page.waitForFunction((x) => fetch('/api/shaders').then((r) => r.json()).then((d) => d.config.height === x), other);
+      await pollFor(page, (x) => fetch('/api/shaders').then((r) => r.json()).then((d) => d.config.height === x), undefined, other);
       await page.waitForSelector('#shaderheight');
       await page.selectOption('#shaderheight', String(render.height));
-      await page.waitForFunction((x) => fetch('/api/shaders').then((r) => r.json()).then((d) => d.config.height === x), render.height);
+      await pollFor(page, (x) => fetch('/api/shaders').then((r) => r.json()).then((d) => d.config.height === x), undefined, render.height);
       // A saved picture detail above this board's usual one (a box set up by the first version): a plain line beside
       // the load says so, and one tap puts it back
       const saved = (await get('/api/shaders')).config.height, above = render.heights.find((x) => x > render.default);
@@ -4654,13 +4659,13 @@ function startServer(env) {          // env: more for the harness's environment 
       assert.strictEqual((await get('/api/shaders')).active, show.id, 'made the usual set');
     }
     await page.click('#setstart');
-    await page.waitForFunction(() => fetch('/api/shaders').then((r) => r.json()).then((d) => d.vibes.running && d.vibes.set && d.vibes.set.name === 'Show' && d.playing), null, { timeout: 20000 });
+    await pollFor(page, () => fetch('/api/shaders').then((r) => r.json()).then((d) => d.vibes.running && d.vibes.set && d.vibes.set.name === 'Show' && d.playing), 20000);
     await page.waitForFunction(() => /Vibes is playing the set Show/.test(document.getElementById('shaderline').textContent), null, { timeout: 20000 });
     // moving a control while Vibes runs does not end it
     await page.waitForSelector('#shc-hue');
     await setRange('shc-hue', 45, ['input', 'change']);
     await wasSent(VALUES, (b) => b.controls && b.controls.hue === 45, 'Colour turn during Vibes');
-    await page.waitForFunction(() => fetch('/api/shaders').then((r) => r.json()).then((d) => d.vibes.running && d.playing && d.playing.controls.hue === 45), null, { timeout: 20000 });
+    await pollFor(page, () => fetch('/api/shaders').then((r) => r.json()).then((d) => d.vibes.running && d.playing && d.playing.controls.hue === 45), 20000);
     // The keys: the arrows step, space stops and starts Vibes
     await page.evaluate(() => document.activeElement.blur());
     assert(/Space/.test(await page.textContent('#shaderkeys')), 'the keys are said on the page');
@@ -4670,18 +4675,18 @@ function startServer(env) {          // env: more for the harness's environment 
     await wasSent('/api/shaders/step', { dir: -1 }, 'the left arrow');
     await page.keyboard.press('Space');
     await wasSent('/api/vibes', { on: false }, 'space, while Vibes runs');
-    await page.waitForFunction(() => fetch('/api/shaders').then((r) => r.json()).then((d) => !d.vibes.running));
+    await pollFor(page, () => fetch('/api/shaders').then((r) => r.json()).then((d) => !d.vibes.running));
     await page.waitForSelector('#vibesbtn:text-is("Start Vibes")');
     await page.keyboard.press('Space');
-    await page.waitForFunction(() => fetch('/api/shaders').then((r) => r.json()).then((d) => d.vibes.running && d.vibes.set.name === 'Show'), null, { timeout: 20000 });
+    await pollFor(page, () => fetch('/api/shaders').then((r) => r.json()).then((d) => d.vibes.running && d.vibes.set.name === 'Show'), 20000);
     await page.waitForSelector('#vibesbtn:text-is("Stop Vibes")', { timeout: 20000 });
     // Previous and Next are buttons too, and work without Vibes
     await page.click('#vibesbtn');
-    await page.waitForFunction(() => fetch('/api/shaders').then((r) => r.json()).then((d) => !d.vibes.running));
+    await pollFor(page, () => fetch('/api/shaders').then((r) => r.json()).then((d) => !d.vibes.running));
     {
       const n = sentTo('/api/shaders/step').length;
       await page.click('#shadernext');
-      await page.waitForFunction(() => fetch('/api/shaders').then((r) => r.json()).then((d) => !d.vibes.running && d.playing), null, { timeout: 20000 });
+      await pollFor(page, () => fetch('/api/shaders').then((r) => r.json()).then((d) => !d.vibes.running && d.playing), 20000);
       assert.deepStrictEqual(sentTo('/api/shaders/step').slice(n), [{ dir: 1 }], 'Next steps without Vibes');
       assert.strictEqual(await page.textContent('#shaderprev'), 'Previous');
     }
@@ -4694,11 +4699,11 @@ function startServer(env) {          // env: more for the harness's environment 
     assert.strictEqual(await page.getAttribute('#shaderfaster', 'aria-checked'), 'false', 'and it is off until someone switches it on');
     if (!(await page.isVisible('#shaderfaster'))) await page.click('#shaderadvanced summary');
     await page.click('#shaderfaster');
-    await page.waitForFunction(() => fetch('/api/shaders').then((r) => r.json()).then((d) => d.config.faster === true));
+    await pollFor(page, () => fetch('/api/shaders').then((r) => r.json()).then((d) => d.config.faster === true));
     await page.waitForFunction(() => document.getElementById('shc-speed').max === '4' && !document.getElementById('speedlimit'), null, { timeout: 20000 });
     await page.waitForSelector('#shaderfaster[aria-checked="true"]');
     await page.click('#shaderfaster');
-    await page.waitForFunction(() => fetch('/api/shaders').then((r) => r.json()).then((d) => d.config.faster === false));
+    await pollFor(page, () => fetch('/api/shaders').then((r) => r.json()).then((d) => d.config.faster === false));
     await page.waitForFunction(() => document.getElementById('shc-speed').max === '1', null, { timeout: 20000 });
     // A set is renamed and deleted in place
     assert.strictEqual(await post('/api/shaders', { action: 'set', op: 'add', name: 'Temp', shaders: ['nxlx-silk.fs'] }), 200);
@@ -4710,7 +4715,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.click('.renamerow button:has-text("Save")');
     await page.waitForSelector('#setediting:text-is("Editing: Late")');
     await page.selectOption('#vibesorder', 'listed');
-    await page.waitForFunction(() => fetch('/api/shaders').then((r) => r.json()).then((d) => d.sets.some((e) => e.name === 'Late' && e.order === 'listed')));
+    await pollFor(page, () => fetch('/api/shaders').then((r) => r.json()).then((d) => d.sets.some((e) => e.name === 'Late' && e.order === 'listed')));
     await page.waitForSelector('#setdelete');
     await page.click('#setdelete');
     await page.waitForSelector('#confirmrow:has-text("Delete the set Late?")');
@@ -4791,7 +4796,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await presenter.waitForSelector('#vibesbtn:text-is("Start Vibes")');
     await presenter.click('#vibesbtn');
     await presenter.waitForSelector('#vibesbtn:text-is("Stop Vibes")', { timeout: 15000 });
-    await presenter.waitForFunction(() => fetch('/api/shaders').then((r) => r.json()).then((d) => d.vibes.running && d.vibes.set.name === 'Ambient' && d.sets.find((e) => e.id === d.active).name === 'Show'), null, { timeout: 20000 });
+    await pollFor(presenter, () => fetch('/api/shaders').then((r) => r.json()).then((d) => d.vibes.running && d.vibes.set.name === 'Ambient' && d.sets.find((e) => e.id === d.active).name === 'Show'), 20000);
     await presenter.waitForSelector('#shadernext');
     await presenter.click('#vibesbtn');
     await presenter.waitForSelector('#vibesbtn:text-is("Start Vibes")', { timeout: 15000 });
@@ -4991,7 +4996,7 @@ function startServer(env) {          // env: more for the harness's environment 
       await staff.click('#roomamb');
       assert.strictEqual((await stopped).status(), 200, 'a tap stops it');
       await staff.waitForFunction(() => (document.getElementById('roomambwords') || {}).textContent === 'Start ambience');
-      await page.waitForFunction(() => fetch('/api/shaders').then((r) => r.json()).then((d) => !d.vibes.running), null, { timeout: 20000 });
+      await pollFor(page, () => fetch('/api/shaders').then((r) => r.json()).then((d) => !d.vibes.running), 20000);
       await guest2.waitForFunction(() => (document.getElementById('roomambstate') || {}).textContent === 'Ambience is not playing.', null, { timeout: 20000 });
       await staff.waitForFunction(() => document.getElementById('roomambnext').hidden && document.getElementById('roomamb').getAttribute('aria-pressed') === 'false', null, { timeout: 20000 });
       await fitsOn(staff, "a presenter's Room screen with ambience stopped");
@@ -5037,7 +5042,7 @@ function startServer(env) {          // env: more for the harness's environment 
         }
       };
       assert.strictEqual(await post('/api/control', { action: 'stop' }), 200);
-      await page.waitForFunction(() => fetch('/api/effects').then((r) => r.json()).then((d) => d.available === false), null, { timeout: 20000 });
+      await pollFor(page, () => fetch('/api/effects').then((r) => r.json()).then((d) => d.available === false), 20000);
       assert.strictEqual(await post('/api/play', { file: 'intro.mkv' }), 200);
       // (Not page.waitForFunction with an async function: Playwright waits for the promise it returns and then takes the
       // wait as done whatever it said, so such a wait never polls. The polling is here, one page.evaluate at a time.)
@@ -5216,7 +5221,7 @@ function startServer(env) {          // env: more for the harness's environment 
         const back = page.waitForResponse((r) => r.url().endsWith('/api/effects/config') && r.request().method() === 'POST');
         await page.selectOption('#fxdetailpick', String(det.default));
         assert.strictEqual((await back).status(), 200);
-        await page.waitForFunction((want) => fetch('/api/effects').then((r) => r.json()).then((d) => d.detail.value === want), det.default, { timeout: 15000 });
+        await pollFor(page, (want) => fetch('/api/effects').then((r) => r.json()).then((d) => d.detail.value === want), 15000, det.default);
         if (det.default === 'auto') await lineIs(/^Automatic: working at /);
         await fxName('fxname', 'Vignette');
       }
@@ -5226,7 +5231,7 @@ function startServer(env) {          // env: more for the harness's environment 
       const sent = page.waitForResponse((r) => r.url().endsWith('/api/effects/values'));
       await page.$eval('#fx-amount', (el) => { el.value = 0.4; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); });
       assert.strictEqual((await sent).status(), 200, 'a move of Amount is sent');
-      await page.waitForFunction(() => fetch('/api/effects').then((r) => r.json()).then((d) => d.on && d.on.controls.amount === 0.4), null, { timeout: 15000 });
+      await pollFor(page, () => fetch('/api/effects').then((r) => r.json()).then((d) => d.on && d.on.controls.amount === 0.4), 15000);
       // the MIDI buttons are beside what they drive (the owner's)
       for (const a of ['effect_amount', 'effect_prev', 'effect_toggle', 'effect_next', 'effect_control_1', 'effect_control_4']) {
         assert.strictEqual(await page.locator('#fxcard [data-midi="' + a + '"]').count(), 1, 'a MIDI button for ' + a);
@@ -5402,7 +5407,7 @@ function startServer(env) {          // env: more for the harness's environment 
         await until([6], 'the pad with the preset Slow was tapped');
         assert.strictEqual((await get('/api/status')).player.shader_preset, 'Slow');
         assert.strictEqual(await post('/api/vibes', { on: true }), 200);
-        await page.waitForFunction(() => fetch('/api/status').then((r) => r.json()).then((s) => s.player.vibes === true && typeof s.player.shader === 'string'), null, { timeout: 20000 });
+        await pollFor(page, () => fetch('/api/status').then((r) => r.json()).then((s) => s.player.vibes === true && typeof s.player.shader === 'string'), 20000);
         await until([], 'Vibes is the one showing a shader');
         assert.strictEqual(await post('/api/vibes', { on: false }), 200);
         assert.strictEqual(await post('/api/control', { action: 'stop' }), 200);
