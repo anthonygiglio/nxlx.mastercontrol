@@ -1,0 +1,345 @@
+# SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# The rename table: every old pocketvj / pvj name and its new name, the one source of truth for the rename
+# (rename-pvj-assessment.md, PR 1; decision D135). tools/rename-apply.py reads it; tests/test_old_names.py checks it.
+#
+# One row a line, four fields separated by tabs: old, new, kind, note. Lines starting with # are comments.
+# Kinds, one per pull request of the plan:
+#   text      the product word in prose (PR 3)
+#   protocol  OSC, header, cookie, browser keys and globals (PR 4)
+#   render    the C renderer and the names it shares with the player (PR 5)
+#   package   the Python package pvj to mctl and names inside it (PR 6)
+#   system    units, accounts, the shared group, folders, commands (PR 7)
+#   release   update bundles, signing, USB names (PR 8)
+#   env       environment variables (PR 8)
+#   ci        workflow, runner, image and job names (PR 10)
+#   keep      a phrase that never changes (the credit, upstream addresses); new is the same as old
+#
+# Prefixes: nxlx for what an admin sees on a node, mctl for what a performer, a device or other software sees.
+# The shared service group is nxlx-svc (node-01 already has a login group called nxlx).
+#
+# How a row matches (the same in the apply script and the tests):
+#   - Exact, case-sensitive text. The longest row wins where two start at the same place.
+#   - A row that starts with a letter, digit or _ does not match after one of those (so "xpvj" and
+#     "test_pvj_x" are not touched by "pvj..."). A row that starts with / also does not match after one of those
+#     or after a dot (so "../pvj" and "code/pvj" are paths, not OSC addresses).
+#   - A row that ends with a letter, digit or _ does not match before one of those or before a dash (so
+#     "pvj-ndi" does not take "pvj-ndisc", and ":pvj" does not take ":pvj-ndi").
+#   - A row ending in * is a family: the rest of the name (letters, digits, _) is kept, so "PVJ_*" turns
+#     PVJ_RUNTIME_DIR into NXLX_RUNTIME_DIR.
+#   - "pvj" on its own is ambiguous (package, group, prose) and has no row: the apply script reports such places as
+#     not covered, and a later pull request adds a row with enough context.
+#   - Never search for the new name mctl without a word boundary: systemctl contains it.
+#
+# old	new	kind	note
+
+# -- keep --
+PocketVJ CP v3	PocketVJ CP v3	keep	the upstream project's name, in the credit
+PocketVJ-CP-v3	PocketVJ-CP-v3	keep	the upstream repository's name and its links
+PocketVJ-CP-v2	PocketVJ-CP-v2	keep	an upstream file name in the upstream notes
+pocketvj.com	pocketvj.com	keep	the upstream web site
+PocketVJ_OSC	PocketVJ_OSC	keep	the upstream TouchOSC layout's file name
+
+# -- text --
+PocketVJ	Mastercontrol	text	the product word
+Pocket VJ	Mastercontrol	text	the product word
+pocketVJ	Mastercontrol	text	the product word
+pocketvj	mastercontrol	text	the product word, small letters
+
+# -- protocol --
+/pvj	/mctl	protocol	OSC addresses (/pvj/stop) and feedback (/pvj/state/...)
+/k/%s/pvj	/k/%s/mctl	protocol	OSC address behind the optional key prefix, as code builds it
+X-PVJ-Request	X-MCTL-Request	protocol	HTTP header of every state-changing call
+pvj_token	mctl_token	protocol	login cookie (also __Host-pvj_token); decision A: the old name is read for one release
+pvj-peer	mctl-peer	protocol	user agent of one node calling another
+server_version = "pvj"	server_version = "mctl"	protocol	HTTP server banner
+pvj.nodes.opened	mctl.nodes.opened	protocol	browser localStorage key; the panel copies the old key once
+pvjApp	mctlApp	protocol	panel window global
+pvjRoom	mctlRoom	protocol	panel window global
+pvjRooms	mctlRooms	protocol	panel window global
+pvjShaders	mctlShaders	protocol	panel window global
+pvjEffects	mctlEffects	protocol	panel window global
+pvjWalk	mctlWalk	protocol	panel window global
+pvjLoad	mctlLoad	protocol	panel window global (load.js)
+pvjAsked	mctlAsked	protocol	browser test global
+pvjHttpsPlatform	mctlHttpsPlatform	protocol	panel window global for the browser test
+pvj-look	mctl-look	protocol	panel page event
+pvjfile	mctlfile	protocol	panel file marker
+pvjshown	mctlshown	protocol	panel marker
+pvj-frame	mctl-frame	protocol	panel playground CSS class
+pvj-playground-v1	mctl-playground-v1	protocol	panel playground localStorage key
+\bpvjApp	\bmctlApp	protocol	regex source
+\nX-PVJ-Request	\nX-MCTL-Request	protocol	the header right after \n in a string
+
+# -- render --
+pvj-render	mctl-render	render	renderer binary and socket property; app name, nxlx-render-node is the Max patch
+pvj-render-	mctl-render-	render	temp and cache name prefixes
+pvj-renderer-	mctl-renderer-	render	temp name prefix
+pvj-shader	mctl-shader	render	renderer socket command
+pvj-shaders	mctl-shaders	render	renderer socket property
+pvj-source	mctl-source	render	renderer socket property
+pvj-sources	mctl-sources	render	renderer socket property
+pvj-crossfade	mctl-crossfade	render	renderer socket command
+pvj-fade-to-program	mctl-fade-to-program	render	renderer socket command
+pvj-graphic	mctl-graphic	render	renderer socket command
+pvj-graphics	mctl-graphics	render	renderer socket property
+pvj-final	mctl-final	render	renderer socket property
+pvj-screen	mctl-screen	render	renderer socket property
+pvj-capture	mctl-capture	render	renderer socket command
+pvj.h	mctl.h	render	renderer C header
+PVJ_H	MCTL_H	render	header guard of pvj.h
+PVJ_JSON_H	MCTL_JSON_H	render	header guard of json.h
+PVJ_HP	MCTL_HP	render	shader precision macro
+pvj_*	mctl_*	render	shader helper names (pvj_pos, pvj_t...) and the reserved prefix pvj_
+Pvj_x	Mctl_x	render	a reserved-name case in the shader tests
+PVJWARP*	MCTLWARP*	render	mapper texture names
+//!PVJ	//!MCTL	render	first line of a generated shader program
+pvjfliph	mctlfliph	render	mpv filter label
+pvjflipv	mctlflipv	render	mpv filter label
+pvjsound	mctlsound	render	mpv filter label
+prefix="pvj"	prefix="mctl"	render	shader name prefix in effects.py
+test_pvj_render	test_mctl_render	render	renderer test module; keep the CI job names until PR 10
+\bpvj_*	\bmctl_*	render	regex source \bpvj_ in the shader checks
+
+# -- package --
+pvj/	mctl/	package	the package folder in a path
+../pvj	../mctl	package	links from docs/ and tests to the package folder
+@/pvj/	@/mctl/	package	the package folder in a release, after @PVJ_DIR@ (not an OSC address)
+from pvj import	from mctl import	package	import line
+import pvj	import mctl	package	import line
+pvj.actions	mctl.actions	package	module path
+pvj.api	mctl.api	package	module path
+pvj.auth	mctl.auth	package	module path
+pvj.autostart	mctl.autostart	package	module path
+pvj.bootcfg	mctl.bootcfg	package	module path
+pvj.boxcare	mctl.boxcare	package	module path
+pvj.boxstate	mctl.boxstate	package	module path
+pvj.capture	mctl.capture	package	module path
+pvj.cli	mctl.cli	package	module path
+pvj.clock	mctl.clock	package	module path
+pvj.controllercode	mctl.controllercode	package	module path
+pvj.dmx	mctl.dmx	package	module path
+pvj.effects	mctl.effects	package	module path
+pvj.events	mctl.events	package	module path
+pvj.fleet	mctl.fleet	package	module path
+pvj.fleetlist	mctl.fleetlist	package	module path
+pvj.fxchain	mctl.fxchain	package	module path
+pvj.graphics	mctl.graphics	package	module path
+pvj.handover	mctl.handover	package	module path
+pvj.hardware	mctl.hardware	package	module path
+pvj.health	mctl.health	package	module path
+pvj.httpsbox	mctl.httpsbox	package	module path
+pvj.icon	mctl.icon	package	module path
+pvj.latescreen	mctl.latescreen	package	module path
+pvj.lease	mctl.lease	package	module path
+pvj.link	mctl.link	package	module path
+pvj.locks	mctl.locks	package	module path
+pvj.looplist	mctl.looplist	package	module path
+pvj.mapper	mctl.mapper	package	module path
+pvj.midi	mctl.midi	package	module path
+pvj.modules	mctl.modules	package	module path
+pvj.ndi	mctl.ndi	package	module path
+pvj.ndiscovery	mctl.ndiscovery	package	module path
+pvj.ndisetup	mctl.ndisetup	package	module path
+pvj.netcfg	mctl.netcfg	package	module path
+pvj.netd	mctl.netd	package	module path
+pvj.osc	mctl.osc	package	module path
+pvj.oscfeedback	mctl.oscfeedback	package	module path
+pvj.overlay	mctl.overlay	package	module path
+pvj.paths	mctl.paths	package	module path
+pvj.peer	mctl.peer	package	module path
+pvj.pinscreen	mctl.pinscreen	package	module path
+pvj.player	mctl.player	package	module path
+pvj.policy	mctl.policy	package	module path
+pvj.presence	mctl.presence	package	module path
+pvj.presets	mctl.presets	package	module path
+pvj.probe	mctl.probe	package	module path
+pvj.profile	mctl.profile	package	module path
+pvj.projector	mctl.projector	package	module path
+pvj.qr	mctl.qr	package	module path
+pvj.raster	mctl.raster	package	module path
+pvj.recovery	mctl.recovery	package	module path
+pvj.render	mctl.render	package	module path
+pvj.renderer	mctl.renderer	package	module path
+pvj.room	mctl.room	package	module path
+pvj.rootfs	mctl.rootfs	package	module path
+pvj.scheduler	mctl.scheduler	package	module path
+pvj.screenmode	mctl.screenmode	package	module path
+pvj.selftest	mctl.selftest	package	module path
+pvj.server	mctl.server	package	module path
+pvj.settings	mctl.settings	package	module path
+pvj.shaderlive	mctl.shaderlive	package	module path
+pvj.shaders	mctl.shaders	package	module path
+pvj.sound	mctl.sound	package	module path
+pvj.soundout	mctl.soundout	package	module path
+pvj.statsoverlay	mctl.statsoverlay	package	module path
+pvj.streams	mctl.streams	package	module path
+pvj.strobe	mctl.strobe	package	module path
+pvj.support	mctl.support	package	module path
+pvj.supportd	mctl.supportd	package	module path
+pvj.sync	mctl.sync	package	module path
+pvj.sysd	mctl.sysd	package	module path
+pvj.themes	mctl.themes	package	module path
+pvj.ticket	mctl.ticket	package	module path
+pvj.transitions	mctl.transitions	package	module path
+pvj.update	mctl.update	package	module path
+pvj.usb	mctl.usb	package	module path
+pvj.vibes	mctl.vibes	package	module path
+pvj.__file__	mctl.__file__	package	package attribute
+pvj.__version__	mctl.__version__	package	package attribute
+_pvj_audio	_mctl_audio	package	attribute set on the NDI library
+PvjServer	MctlServer	package	HTTP server class
+PVJINFO	MCTLINFO	package	probe line marker
+PVJLEN	MCTLLEN	package	probe line marker
+PVJ-STANDIN	MCTL-STANDIN	package	source names of the NDI stand-in (tests)
+pvj-https	mctl-https	package	thread name
+pvj-recovery-stick	mctl-recovery-stick	package	thread name
+pvjmaster	mctlmaster	package	test package name
+pvjupdate	mctlupdate	package	a refused upload name in tests
+pvjd	mctld	package	temp name prefix (tests)
+pvjo	mctlo	package	temp name prefix (tests)
+pvjw	mctlw	package	temp name prefix (tests)
+pvj-preview	mctl-preview	package	temp file (tests)
+pvj-ci-mpv	mctl-ci-mpv	package	temp file (tests)
+pvj-t-	mctl-t-	package	the tests' temp folder prefix (D69)
+pvj-test-	mctl-test-	package	temp and test names
+pvj-asound-	mctl-asound-	package	temp name prefix (tests)
+pvj-batch-	mctl-batch-	package	temp name prefix (tests)
+pvj-clock-	mctl-clock-	package	temp name prefix (tests)
+pvj-fleet-	mctl-fleet-	package	temp name prefix (tests)
+pvj-gfx-	mctl-gfx-	package	temp name prefix (tests)
+pvj-held-	mctl-held-	package	temp name prefix (tests)
+pvj-latescreen-	mctl-latescreen-	package	temp name prefix (tests)
+pvj-native-	mctl-native-	package	temp name prefix (tests)
+pvj-output-	mctl-output-	package	temp name prefix (tests)
+pvj-standin-	mctl-standin-	package	temp name prefix (tests)
+pvj-stats-	mctl-stats-	package	temp name prefix (tests)
+pvj-statsmpv-	mctl-statsmpv-	package	temp name prefix (tests)
+
+# -- system --
+pvj-link-	nxlx-link-	system	temp or connection name prefix, same family as the service
+pvj-ndi-mpv-	nxlx-ndi-mpv-	system	temp or connection name prefix, same family as the service
+pvj-sound-	nxlx-sound-	system	temp or connection name prefix, same family as the service
+pvj-update-	nxlx-update-	system	temp or connection name prefix, same family as the service
+pvj-wlan0-try-	nxlx-wlan0-try-	system	temp or connection name prefix, same family as the service
+pvj-web	nxlx-web	system	service, account
+pvj-player	nxlx-player	system	service, account, binary
+pvj-netd	nxlx-netd	system	service
+pvj-sysd	nxlx-sysd	system	service
+pvj-sound	nxlx-sound	system	service, account
+pvj-supportd	nxlx-supportd	system	service
+pvj-support	nxlx-support	system	state folder of the support helper
+pvj-link	nxlx-link	system	service, account, helper binary
+pvj-link-peer	nxlx-link-peer	system	helper binary
+test_pvj_link	test_nxlx_link	system	test module of the Link helper
+pvj-raster	nxlx-raster	system	socket, service template, account
+pvj-ndi	nxlx-ndi	system	service, account, group, folder
+pvj-ndi-discovery	nxlx-ndi-discovery	system	service
+pvj-ndisc	nxlx-ndisc	system	account, group
+pvj-ndi-runtime	nxlx-ndi-runtime	system	command
+pvj-ndi-server	nxlx-ndi-server	system	folder
+pvj-ndi-config	nxlx-ndi-config	system	runtime folder
+pvj-ndi-pipe	nxlx-ndi-pipe	system	runtime folder
+pvj-update	nxlx-update	system	command, runtime folder
+pvj-update-usb	nxlx-update-usb	system	service template
+pvj-update-inbox	nxlx-update-inbox	system	service template
+pvj-usb	nxlx-usb	system	service template, command, udev rule
+pvj-pin	nxlx-pin	system	command
+pvj-selftest	nxlx-selftest	system	command
+pvj-rootfs	nxlx-rootfs	system	command
+pvj-dev	nxlx-dev	system	deploy and login account (owner: part of the rename)
+pvj-tmpfiles	nxlx-tmpfiles	system	tmpfiles file
+pvj-wireguard	nxlx-wireguard	system	modules-load file
+pvj-persistent-log	nxlx-persistent-log	system	journald drop-in
+pvj-hub	nxlx-hub	system	support hub file
+pvj-install	nxlx-install	system	installer log prefix
+pvj-backups	nxlx-backups	system	folder
+pvj-deploy	nxlx-deploy	system	deploy name
+pvj-eth0	nxlx-eth0	system	NetworkManager connection
+pvj-eth0-try	nxlx-eth0-try	system	NetworkManager connection
+pvj-eth0-old	nxlx-eth0-old	system	NetworkManager connection
+pvj-wlan0	nxlx-wlan0	system	NetworkManager connection
+pvj-wlan0-try	nxlx-wlan0-try	system	NetworkManager connection
+pvj-wlan0-old	nxlx-wlan0-old	system	NetworkManager connection
+pvj-planted-by-root	nxlx-planted-by-root	system	file of the real-install test
+pvjdisplay	nxlxdisplay	system	display account of the real-install test
+pvj-%d	nxlx-%d	system	fallback runtime folder off a node
+wg-pvj	wg-nxlx	system	remote support tunnel interface
+pvj0	nxlx0	system	support hub interface
+pvj_hub	nxlx_hub	system	support hub nft table
+pvj_support	nxlx_support	system	support helper nft table
+opt/pvj	opt/nxlx	system	folder /opt/pvj
+etc/pvj	etc/nxlx	system	folder /etc/pvj
+var/lib/pvj	var/lib/nxlx	system	folder /var/lib/pvj
+run/pvj	run/nxlx	system	folder /run/pvj
+media/pvj	media/nxlx	system	USB mount folder
+pvj.env	nxlx.env	system	environment file /etc/pvj/pvj.env
+/pvj.env	/nxlx.env	system	the same file joined to a folder in code (before the OSC row takes /pvj)
+box/pvj	box/nxlx	system	the tests' install prefix /srv/box/pvj, the stand-in for /opt/pvj
+//pvj	//nxlx	system	a doubled slash in a refused install path (tests)
+RuntimeDirectory=pvj	RuntimeDirectory=nxlx	system	a unit's folder under /run
+StateDirectory=pvj	StateDirectory=nxlx	system	a unit's folder under /var/lib
+pvj.conf	nxlx.conf	system	tmpfiles file
+:pvj	:nxlx-svc	system	shared group in owner:group
+Group=pvj	Group=nxlx-svc	system	shared group in a unit
+group "pvj"	group "nxlx-svc"	system	shared group in prose
+group pvj	group nxlx-svc	system	shared group in prose and commands
+--gid pvj	--gid nxlx-svc	system	shared group in useradd
+--system pvj	--system nxlx-svc	system	shared group in groupadd
+-aG pvj	-aG nxlx-svc	system	shared group in usermod
+getgrnam("pvj")	getgrnam("nxlx-svc")	system	shared group looked up in code
+for g in pvj	for g in nxlx-svc	system	shared group in install.sh's group loop
+PVJ-SUPPORTD	NXLX-SUPPORTD	system	the support helper's name in capitals
+pvj-ndi-	nxlx-ndi-	system	a name of the NDI family with more after it
+pvj-web pvj	nxlx-web nxlx-svc	system	owner and shared group in the tmpfiles line
+"pvj-"	"nxlx-"	system	the prefix of unit and connection names, as a string
+pvj-<	nxlx-<	system	a name pattern in prose: pvj-<iface>-try, pvj-<uid>, pvj-<version>
+pvj-* 	nxlx-* 	system	the units as a glob in prose (pvj-* log lines)
+'pvj-*'	'nxlx-*'	system	the units as a glob in a command
+(pvj-*)	(nxlx-*)	system	the units as a glob in prose
+`pvj-*`	`nxlx-*`	system	the units as a glob in prose
+
+# -- release --
+pvj-release	nxlx-release	release	signing principal and namespace
+pvj-recover	nxlx-recover	release	recovery stick file
+pvj-update/	nxlx-update/	release	USB update folder
+pvj-N	nxlx-N	release	bundle name pattern in texts
+pvj-x	nxlx-x	release	a refused bundle name in tests
+pvj-0	nxlx-0	release	bundle name pvj-N.N.N.tar.gz
+pvj-1	nxlx-1	release	bundle name pvj-N.N.N.tar.gz
+pvj-2	nxlx-2	release	bundle name pvj-N.N.N.tar.gz
+pvj-3	nxlx-3	release	bundle name pvj-N.N.N.tar.gz
+pvj-4	nxlx-4	release	bundle name pvj-N.N.N.tar.gz
+pvj-5	nxlx-5	release	bundle name pvj-N.N.N.tar.gz
+pvj-6	nxlx-6	release	bundle name pvj-N.N.N.tar.gz
+pvj-7	nxlx-7	release	bundle name pvj-N.N.N.tar.gz
+pvj-8	nxlx-8	release	bundle name pvj-N.N.N.tar.gz
+pvj-9	nxlx-9	release	bundle name pvj-N.N.N.tar.gz
+PVJ-RECOVER	NXLX-RECOVER	release	the recovery stick file's name in capitals
+pvj-*.tar.gz	nxlx-*.tar.gz	release	bundles as a glob
+pvj-$version	nxlx-$version	release	bundle name in make-release.sh
+pvj-(	nxlx-(	release	bundle name in a regular expression
+
+# -- env --
+PVJ_*	NXLX_*	env	every PVJ_ variable (PVJ_RUNTIME_DIR, PVJ_RENDER_TEST...) and the prefix itself
+@PVJ	@NXLX	env	install template marker
+\bPVJ_*	\bNXLX_*	env	regex source \bPVJ_
+\nPVJ_*	\nNXLX_*	env	a variable right after \n in a string
+-DPVJ_*	-DNXLX_*	env	a C define on a compiler command line
+
+# -- ci --
+pvj.yml	nxlx.yml	ci	workflow file
+pvj platform layer	nxlx platform layer	ci	workflow name
+pvj-device	nxlx-device	ci	self-hosted runner label
+stage-pvj	stage-nxlx	ci	pi-gen stage folder
+install-pvj	install-nxlx	ci	pi-gen step folder
+pvj-src	nxlx-src	ci	image build folder
+pocketvj/	mastercontrol/	ci	image.yml checkout folder
+path: pocketvj	path: mastercontrol	ci	image.yml checkout folder
+  pvj-render:	  mctl-render:	ci	CI job id (required check, rename with the ruleset)
+name: pvj-render (	name: mctl-render (	ci	CI job name (required check, rename with the ruleset)
+  pvj-link:	  nxlx-link:	ci	CI job id
+name: pvj-link (	name: nxlx-link (	ci	CI job name
+  pvj-raster:	  nxlx-raster:	ci	CI job id
+name: pvj-raster (	name: nxlx-raster (	ci	CI job name
