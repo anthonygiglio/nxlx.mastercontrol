@@ -117,7 +117,9 @@
     var k = kit(), h = c.h, note = k.noteLine();
     var ch = rig.channel('c:' + o.key, function (v) { var b = { controls: {} }; b.controls[o.key] = v; return b; }, note.say);
     var out = h('span', { class: 'slidervalue', text: o.text(o.value) }), cur = o.value;
-    var input = k.slider({ id: o.id, min: o.min, max: o.max, step: (o.max - o.min) / 100, value: o.value }, ch, function (v, done) {
+    var g = k.grid(o.min, o.max, 100);                              // 100 steps with exact ends (shaders.js, grid)
+    var input = k.slider({ id: o.id, min: o.min, max: o.max, step: g.step, value: o.value }, ch, function (v, done) {
+      v = g.value(v);
       cur = v; out.textContent = o.text(v);
       if (done) ch.settle(v); else ch.push(v);
     });

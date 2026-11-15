@@ -4163,9 +4163,9 @@ function startServer(env) {          // env: more for the harness's environment 
     assert(/does not stop Vibes/.test(await page.textContent('#slidernote')) && /save a preset/.test(await page.textContent('#slidernote')), 'the page says what a control does to Vibes and how to keep its value');
     const speedNow = () => get('/api/shaders').then((d) => d.playing && d.playing.values.speed);
     await page.evaluate((v) => { const el = document.getElementById('shin-speed'); el.value = v; el.dispatchEvent(new Event('input')); el.dispatchEvent(new Event('change')); }, speed.max);
-    // (The slider moves in steps of a 200th of its range, and its top step comes to 1.991 of 2: the box is to hold
-    // the value the slider gave, within one step of the top. The wait used to be a no-op, so this never showed.)
-    await pollFor(page, ([v, step]) => fetch('/api/shaders').then((r) => r.json()).then((d) => d.playing && Math.abs(d.playing.values.speed - v) <= step + 1e-6), undefined, [speed.max, (speed.max - speed.min) / 200]);
+    // The slider's top position is the top value exactly: its last step falls a hair short in the browser (1.991 of
+    // 2), and the panel sends the end itself.
+    await pollFor(page, (v) => fetch('/api/shaders').then((r) => r.json()).then((d) => d.playing && Math.abs(d.playing.values.speed - v) < 1e-6), undefined, speed.max);
     await page.click('#shadersliders button[aria-label="Reset ' + speed.label + '"]');
     await pollFor(page, (v) => fetch('/api/shaders').then((r) => r.json()).then((d) => d.playing && Math.abs(d.playing.values.speed - v) < 1e-6), undefined, speed.default);
     await page.waitForSelector('#shin-speed');

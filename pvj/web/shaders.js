@@ -166,6 +166,18 @@
     return { el: el, say: say };
   }
   // A range input that tells its channel when it is held.
+  // A slider of n equal steps between lo and hi whose ends are exact. A range input allows only lo + k x step up to hi,
+  // and (hi - lo) / n can come out a hair too big in floating point, so the browser stopped one step short (Tide's
+  // speed reached 1.991 of 2). The browser gets a step a billionth smaller, so all n steps fit, and value() turns
+  // what the input says back into its position k and gives lo + k x (hi - lo) / n: the same middle values as before,
+  // and hi and lo themselves at the ends.
+  function grid(lo, hi, n) {
+    var step = (hi - lo) / n * (1 - 1e-9);
+    return { step: step, value: function (v) {
+      var k = Math.round((v - lo) / step);
+      return k >= n ? hi : k <= 0 ? lo : +(lo + k * (hi - lo) / n).toPrecision(12);
+    } };
+  }
   function slider(attrs, ch, onInput) {
     var el = document.createElement('input');
     el.type = 'range';
@@ -190,9 +202,10 @@
     function resetBtn(fn) { return opt.compact ? null : h('button', { class: 'btn ctlreset', text: 'Reset', 'aria-label': 'Reset ' + label, onclick: fn }); }
     function acts(fn) { var r = resetBtn(fn); return r || opt.extra ? h('div', { class: 'ctlacts' }, opt.extra || null, r) : null; }
     function wrap(kind) { return h('div', { class: 'ctl ctl-' + kind + (opt.compact ? ' compact' : ''), 'data-input': i.name, 'data-type': i.type }); }
-    function numberSlider(lo, hi, step, def, text) {
+    function numberSlider(lo, hi, step, def, text, g) {           // g: a grid() for float inputs, or none for whole steps
       var cur = now;
-      var input = slider({ id: id, min: lo, max: hi, step: step, value: now }, ch, function (v, done) {
+      var input = slider({ id: id, min: lo, max: hi, step: g ? g.step : step, value: now }, ch, function (v, done) {
+        if (g) v = g.value(v);
         cur = v; out.textContent = text(v);
         if (done) ch.settle(v); else ch.push(v);
       });
@@ -208,7 +221,7 @@
     switch (i.type) {
       case 'float':
         if (!(i.max > i.min)) return null;
-        return numberSlider(i.min, i.max, (i.max - i.min) / 200, i['default'], round);
+        return numberSlider(i.min, i.max, 0, i['default'], round, grid(i.min, i.max, 200));    // 200 steps, exact ends
       case 'bool': {
         var sw = h('button', { class: 'switch', id: id, role: 'switch', 'aria-checked': now ? 'true' : 'false', 'aria-label': label, onclick: function () {
           var want = sw.getAttribute('aria-checked') !== 'true';
@@ -333,7 +346,9 @@
       cur = v; out.textContent = text(v);
       if (freeze) freeze.setAttribute('aria-checked', v === 0 ? 'true' : 'false');
     }
-    var input = slider({ id: id, min: spec.min, max: spec.max, step: which === 'hue' ? 1 : (spec.max - spec.min) / 200, value: now }, ch, function (v, done) {
+    var g = which === 'hue' ? null : grid(spec.min, spec.max, 200);
+    var input = slider({ id: id, min: spec.min, max: spec.max, step: g ? g.step : 1, value: now }, ch, function (v, done) {
+      if (g) v = g.value(v);
       shown(v);
       if (which === 'speed' && v > 0) ui.lastSpeed = v;
       if (done) ch.settle(v); else ch.push(v);
@@ -1255,5 +1270,5 @@
   var lend = { player: player, activeSet: activeSet, startSet: startSet, body: vibesBody, choose: function (id) { ui.startSet = id; }, detailHigh: detailHigh, loaded: loaded };
   // `kit` is what effects.js draws its controls with: the same controls, the same way of sending.
   window.mctlShaders = { liveRow: liveRow, patch: patch, page: page, nice: nice, vibes: lend,
-    kit: { makeRig: makeRig, inputControl: inputControl, noteLine: noteLine, slider: slider, syncControls: syncControls, knobOf: knobOf, round: round } };
+    kit: { makeRig: makeRig, inputControl: inputControl, noteLine: noteLine, slider: slider, grid: grid, syncControls: syncControls, knobOf: knobOf, round: round } };
 })();
