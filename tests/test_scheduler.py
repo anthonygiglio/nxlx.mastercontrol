@@ -65,6 +65,25 @@ class SchedulerTest(unittest.TestCase):
         self.assertEqual(self.at(MON_9 + datetime.timedelta(seconds=30)), [])  # same minute again
         self.assertEqual(self.api.calls, [("play", {"file": "a.mp4", "loop": True})])
 
+    def test_a_zone_change_moves_the_wall_clock_and_nothing_is_replayed_or_made_up(self):
+        """Changing the node's zone (J-129) moves the local clock the entries are read against: the scheduler sees a jump.
+        West (the clock goes back): nothing fires at the jump, and an entry in the hours that now repeat fires again when
+        they come round. East (the clock goes forward): the hours skipped are not replayed, so an entry in them is missed."""
+        hour = datetime.timedelta(hours=1)
+        minute = datetime.timedelta(minutes=1)
+        self.set([entry(id="00000001", time="09:00", days=[0, 1]), entry(id="00000002", time="12:00", days=[0, 1])])
+        self.at(MON_9 - minute)
+        self.assertEqual(self.at(MON_9), ["00000001"])                      # 09:00 in the old zone
+        west = MON_9 - 6 * hour + minute                                    # 03:01 in the new zone (UTC-6 from UTC)
+        self.assertEqual(self.at(west), [])                                 # the clock went backwards: nothing fires, nothing is replayed
+        self.assertEqual(self.at(MON_9 - minute), [])                       # a jump forward by hours: not replayed either
+        self.assertEqual(self.at(MON_9), ["00000001"])                      # the repeated hour comes round: it fires a second time
+        east = MON_9 + 5 * hour                                             # 14:00: 12:00 was skipped
+        self.assertEqual(self.at(east), [])
+        self.assertEqual(self.at(east + minute), [])
+        self.assertEqual(sum(1 for c in self.api.calls if c[0] == "play"), 2)
+        self.assertNotIn("00000002", [i for i in self.s.last if self.s.last[i]["ok"]])     # the skipped entry never ran
+
     def test_wrong_day_and_time_do_not_fire(self):
         self.set([entry(days=[1])])
         self.at(MON_9 - datetime.timedelta(minutes=1))

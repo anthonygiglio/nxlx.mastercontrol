@@ -3704,7 +3704,12 @@ function startServer(env) {          // env: more for the harness's environment 
       const tzPosts = [], pairs = [];
       await tzPage.route('**/api/timezone', async (route) => {
         const req = route.request();
-        if (req.method() === 'POST') { tzPosts.push(req.postDataJSON()); Object.assign(tzNode, { zone: req.postDataJSON().zone, confirmed: true, offset_minutes: -360 }); }
+        if (req.method() === 'POST') {
+          const sent = req.postDataJSON();
+          tzPosts.push(sent);
+          if (sent.keep) tzNode.confirmed = true;                 // "the zone it is on is right": nothing else changes
+          else Object.assign(tzNode, { zone: sent.zone, confirmed: true, offset_minutes: -360 });
+        }
         await route.fulfill({ json: tzNode });
       });
       tzPage.on('request', (r) => { if (r.method() === 'POST' && /\/api\/pair$/.test(r.url())) pairs.push(r.postDataJSON()); });
@@ -3730,13 +3735,14 @@ function startServer(env) {          // env: more for the harness's environment 
       Object.assign(tzNode, { zone: 'Europe/London', confirmed: false });
       await tzPage.reload();
       await tzPage.waitForSelector('#tzprompt');
-      await tzPage.click('#tzskip');
+      await Promise.all([tzPage.waitForResponse((r) => /\/api\/timezone$/.test(r.url()) && r.request().method() === 'POST'), tzPage.click('#tzskip')]);
       await tzPage.waitForSelector('#tzprompt', { state: 'detached' });
       await tzPage.reload();
       await tzPage.waitForSelector('#nowscreen');
       await pollFor(tzPage, () => fetch('/api/timezone').then((r) => r.json()).then((d) => d.zone === 'Europe/London'), 8000);
       assert.strictEqual(await tzPage.locator('#tzprompt').count(), 0, 'Not now is remembered');
-      assert.deepStrictEqual(tzPosts, [{ zone: 'America/Regina' }], 'Not now changes nothing');
+      assert.deepStrictEqual(tzPosts, [{ zone: 'America/Regina' }, { keep: true }], 'Not now tells the node its zone is right and changes nothing else');
+      assert.strictEqual(tzNode.zone, 'Europe/London');
       // the schedule card: the node's zone, the difference from this device, a warning, and the Owner's picker with this device's zone first
       Object.assign(tzNode, { zone: 'Asia/Tokyo', confirmed: false, offset_minutes: 540 });
       await tzPage.route('**/api/schedule', async (route) => {
@@ -3754,7 +3760,7 @@ function startServer(env) {          // env: more for the harness's environment 
       assert.strictEqual(await tzPage.inputValue('#schedzonesel'), 'America/Regina', 'and chosen');
       await tzPage.click('#schedzoneset');
       await pollFor(tzPage, () => fetch('/api/timezone').then((r) => r.json()).then((d) => d.zone === 'America/Regina'), 8000);
-      assert.deepStrictEqual(tzPosts, [{ zone: 'America/Regina' }, { zone: 'America/Regina' }], 'the picker sends the chosen zone');
+      assert.deepStrictEqual(tzPosts, [{ zone: 'America/Regina' }, { keep: true }, { zone: 'America/Regina' }], 'the picker sends the chosen zone');
       await tzPage.click('#sysswitch');                           // the Scheduler is off again, as the next steps expect
       await tzPage.waitForSelector('#sysoff');
       const tzId = (await tzPage.evaluate(() => fetch('/api/status').then((r) => r.json()))).device.id;

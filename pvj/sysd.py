@@ -12,7 +12,7 @@ with SO_PEERCRED), and runs only these fixed commands, as argument lists, never 
   a network that appears later still corrects it;
 * status: whether the clock is set from the network;
 * timezone, set_timezone (J-129): read the zone systemd reports; set it with `timedatectl set-timezone` for one checked IANA name
-  (tz.valid_zone: a safe pattern and a real zone file, and `timedatectl list-timezones` where it can be asked), then read it back;
+  (tz.valid_zone: a safe pattern and a real zone file, and `timedatectl list-timezones` must name it), then read it back;
 * journal: the node's own pvj-* log lines, read with `journalctl` for a fixed list of units, a capped number of lines
   and a bounded time window (the panel is deliberately not in the systemd-journal group, so this is how it reads them);
 * fleet_announce, fleet_withdraw (D127): write or remove the one avahi service file that announces the node as `_nxlx._tcp`
@@ -184,16 +184,16 @@ class SysService:
         return {"ok": True, "timezone": name}
 
     def set_timezone(self, zone):
-        """Set the time zone: the name is checked (tz.valid_zone, then `timedatectl list-timezones` where it can be asked),
+        """Set the time zone: the name is checked (tz.valid_zone, then `timedatectl list-timezones`, which must name it: no list, no change),
         `timedatectl set-timezone` is run with that one name, and the zone is read back and compared."""
         if not tz_mod.valid_zone(zone, self.zoneinfo_root):
             return {"ok": False, "error": "that is not a time zone this node knows"}
         with self.lock:
             code, out = self._run(["timedatectl", "list-timezones"])
             listed = out.split() if code == 0 else []
-            if listed and zone not in listed:
+            if zone not in listed:          # fails closed: a list that cannot be read, or is empty, allows nothing
                 return {"ok": False, "error": "that is not a time zone this node knows"}
-            code, out = self._run(["timedatectl", "set-timezone", zone])
+            code, out = self._run(["timedatectl", "set-timezone", "--", zone])
             self._status = None
             if code != 0:
                 return {"ok": False, "error": "the time zone could not be set: %s" % out.strip()[-160:]}

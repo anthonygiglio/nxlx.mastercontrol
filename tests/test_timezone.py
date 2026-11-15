@@ -25,8 +25,17 @@ class NameCheck(unittest.TestCase):
         for name in ("", None, 5, ["UTC"], "Not/AZone", "America", "../etc/passwd", "../etc", "America/../Europe/London",
                      "/etc/passwd", "/usr/share/zoneinfo/UTC", "America//Regina", "America/Regina/", " America/Regina", "America/Regina\n",
                      "UTC; reboot", "a b", "UTC\x00", ".", "..", "America/.Regina", "posix/UTC", "right/UTC", "x" * 100,
-                     "tzdata.zi", "zone.tab", "leapseconds"):
+                     "tzdata.zi", "zone.tab", "leapseconds", "localtime", "posixrules", "Factory", "posixrules/x"):
             self.assertFalse(tz.valid_zone(name), repr(name))
+
+    def test_names_that_are_links_to_the_systems_own_files_or_not_places_are_refused(self):
+        with tempfile.TemporaryDirectory() as root:
+            for name in ("localtime", "posixrules", "Factory", "lowercase", "Good"):
+                with open(os.path.join(root, name), "wb") as f:
+                    f.write(b"TZif2" + b"\0" * 20)
+            self.assertTrue(tz.valid_zone("Good", root))
+            for name in ("localtime", "posixrules", "Factory", "lowercase"):
+                self.assertFalse(tz.valid_zone(name, root), name)
 
     def test_a_link_out_of_the_folder_is_refused(self):
         with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as other:
@@ -63,8 +72,8 @@ class NameCheck(unittest.TestCase):
 class FakeTimedate:
     """timedatectl as the helper calls it, keeping a zone."""
 
-    def __init__(self, zone="Etc/UTC", fail_set=False, lies=False, list_fails=False):
-        self.zone, self.fail_set, self.lies, self.list_fails = zone, fail_set, lies, list_fails
+    def __init__(self, zone="Etc/UTC", fail_set=False, lies=False, list_fails=False, empty_list=False):
+        self.zone, self.fail_set, self.lies, self.list_fails, self.empty_list = zone, fail_set, lies, list_fails, empty_list
         self.calls = []
 
     def __call__(self, argv, **kw):
@@ -73,12 +82,12 @@ class FakeTimedate:
         if argv[:2] == ["timedatectl", "list-timezones"]:
             if self.list_fails:
                 return subprocess.CompletedProcess(argv, 1, stdout="", stderr="no")
-            out = "\n".join(["America/Regina", "Europe/London", "UTC"]) + "\n"
+            out = "" if self.empty_list else "\n".join(["America/Regina", "Europe/London", "UTC"]) + "\n"
         elif argv[:2] == ["timedatectl", "set-timezone"]:
             if self.fail_set:
                 code, out = 1, "Access denied"
             elif not self.lies:
-                self.zone = argv[2]
+                self.zone = argv[-1]
         elif argv[:2] == ["timedatectl", "show"]:
             out = self.zone + "\n"
         return subprocess.CompletedProcess(argv, code, stdout=out, stderr="")
@@ -97,7 +106,7 @@ class HelperAction(unittest.TestCase):
     def test_sets_the_zone_and_reads_it_back(self):
         s = self.make()
         self.assertEqual(s.handle({"cmd": "set_timezone", "zone": "America/Regina"}), {"ok": True, "timezone": "America/Regina"})
-        self.assertEqual(self.sets(), [["timedatectl", "set-timezone", "America/Regina"]])
+        self.assertEqual(self.sets(), [["timedatectl", "set-timezone", "--", "America/Regina"]])      # "--": a name is never an option
         self.assertIn(["timedatectl", "show", "--property=Timezone", "--value"], self.run.calls)
         self.assertEqual(s.handle({"cmd": "timezone"}), {"ok": True, "timezone": "America/Regina"})
 
@@ -114,9 +123,11 @@ class HelperAction(unittest.TestCase):
         self.assertFalse(s.handle({"cmd": "set_timezone", "zone": "Asia/Tokyo"})["ok"])         # a real file, not in the fake list
         self.assertEqual(self.sets(), [])
 
-    def test_where_the_list_cannot_be_asked_the_file_check_stands(self):
-        s = self.make(list_fails=True)
-        self.assertTrue(s.handle({"cmd": "set_timezone", "zone": "Asia/Tokyo"})["ok"])
+    def test_a_list_that_cannot_be_asked_or_is_empty_allows_nothing(self):
+        for kw in ({"list_fails": True}, {"empty_list": True}):
+            s = self.make(**kw)
+            self.assertFalse(s.handle({"cmd": "set_timezone", "zone": "America/Regina"})["ok"], kw)
+            self.assertEqual(self.sets(), [], kw)
 
     def test_a_failure_to_set_or_a_wrong_read_back_is_reported(self):
         self.assertFalse(self.make(fail_set=True).handle({"cmd": "set_timezone", "zone": "America/Regina"})["ok"])
@@ -231,6 +242,14 @@ class Route(ServerBase):
         self.assertNotIn("timezone", self.pair({"tz": "America/Regina"})[1])
         self.assertEqual(self.sysd.sets(), [])
 
+    def test_a_kept_zone_is_never_changed_by_a_later_pairing(self):
+        tok = self.owner()
+        self.call("POST", "/api/timezone", {"keep": True}, token=tok)       # what "Not now" sends
+        self.assertTrue(self.settings.data["timezone"]["confirmed"])
+        self.settings.data["devices"] = []
+        self.assertNotIn("timezone", self.pair({"tz": "America/Regina"})[1])
+        self.assertEqual(self.sysd.sets(), [])
+
     def test_a_pairing_after_the_auto_set_does_not_change_it_again(self):
         self.pair({"tz": "America/Regina"})
         self.sysd.zone = "Etc/UTC"                                   # even if something put it back
@@ -264,13 +283,55 @@ class Route(ServerBase):
         self.assertNotIn("timezone", out)
         self.assertEqual(self.sysd.sets(), [])
 
-    def test_a_failure_to_set_never_stops_the_pairing(self):
+    def test_a_failure_to_set_never_stops_the_pairing_and_is_said(self):
         self.sysd.fail = True
         st, out = self.pair({"tz": "America/Regina"})[:2]
         self.assertEqual(st, 200)
         self.assertIn("token", out)
-        self.assertNotIn("timezone", out)
+        self.assertIn("could not be set to America/Regina", out["timezone"]["error"])
+        self.assertNotIn("zone", out["timezone"])
         self.assertNotIn("timezone", self.settings.data)
+
+    def test_a_zone_set_but_not_saved_says_so_at_pairing_and_on_the_route(self):
+        real_save = self.settings.save
+
+        def full_disk(*a, **k):                     # the device is saved; the zone's own flag is what cannot be
+            if "timezone" in self.settings.data:
+                raise OSError("disk full")
+            return real_save(*a, **k)
+        with mock.patch.object(self.settings, "save", full_disk):
+            st, out = self.pair({"tz": "America/Regina"})[:2]
+        self.assertEqual(st, 200)
+        self.assertEqual(out["timezone"]["zone"], "America/Regina")
+        self.assertIn("could not save", out["timezone"]["warning"])
+        tok = out["token"]
+        with mock.patch.object(self.settings, "save", full_disk):
+            st, body =self.call("POST", "/api/timezone", {"zone": "Europe/London"}, token=tok)[:2]
+            self.assertEqual((st, body["zone"]), (200, "Europe/London"))
+            self.assertIn("could not save", body["warning"])
+            self.assertIn("could not save", self.call("POST", "/api/timezone", {"keep": True}, token=tok)[1]["warning"])
+
+    def test_a_node_that_already_has_an_owner_is_only_offered_the_change(self):
+        self.owner()                                              # an Owner device is paired already (a node upgraded from UTC)
+        st, out = self.pair({"tz": "America/Regina"})[:2]
+        self.assertEqual(st, 200)
+        self.assertNotIn("timezone", out)
+        self.assertEqual(self.sysd.sets(), [])
+        self.assertNotIn("timezone", self.settings.data)
+
+    def test_a_node_with_schedule_entries_is_only_offered_the_change(self):
+        self.settings.data["schedule"] = {"enabled": True, "entries": [{"id": "abcd1234", "time": "20:00", "days": [0], "action": "stop"}]}
+        st, out = self.pair({"tz": "America/Regina"})[:2]
+        self.assertEqual(st, 200)
+        self.assertNotIn("timezone", out)
+        self.assertEqual(self.sysd.sets(), [])
+        self.assertNotIn("timezone", self.settings.data)
+
+    def test_other_devices_do_not_count_as_owners(self):
+        self.auth._add_device("op", "live", via="code")           # an Operator and a Guest on the node do not stop the first Owner
+        self.auth._add_device("guest", "view", via="code")
+        st, out = self.pair({"tz": "America/Regina"})[:2]
+        self.assertEqual(out["timezone"]["zone"], "America/Regina")
 
     def test_no_helper_no_set_at_pairing(self):
         self.api.sysd = None

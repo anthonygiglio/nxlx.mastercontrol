@@ -638,35 +638,60 @@ class Api:
             return None
 
     def _zone_confirm(self, how):
-        with self.settings.lock:
-            self.settings.data["timezone"] = {"confirmed": True, "how": how}
-            self.settings.save()
+        """Remember that an Owner's word is behind the zone. Returns None, or a sentence when it could not be saved."""
+        try:
+            with self.settings.lock:
+                self.settings.data["timezone"] = {"confirmed": True, "how": how}
+                self.settings.save()
+            return None
+        except Exception as e:
+            self.log("pvj-web: the time zone choice was not saved: %s" % e)
+            return "The zone is set, but the node could not save that it was confirmed, so a later pairing may offer to change it."
 
     def _zone_apply(self, zone, how):
-        """Set the zone through the helper, then let this process see it, and remember that an Owner's word is behind it."""
+        """Set the zone through the helper (which reads it back and refuses on a mismatch: an ApiError), let this process
+        see it, and remember it. Returns None, or a sentence about what could not be saved."""
         self._sysd({"cmd": "set_timezone", "zone": zone})
         if hasattr(time, "tzset"):
             time.tzset()
-        self._zone_confirm(how)
+        warning = self._zone_confirm(how)
         self.log("pvj-web: time zone set to %s (%s)" % (zone, how))
+        return warning
 
     def _first_pairing_zone(self, dev, body, client):
-        """The first Owner to pair on a node whose zone nobody has confirmed, and which is still on UTC (what an image
-        gives), sets it to the browser's own. Never from a guest or an operator, never over remote support, never over a
-        zone an Owner confirmed, and a failure never stops the pairing. Returns {"zone", "was"} when it set one."""
+        """The first Owner to pair on a node that is new in every way (still on UTC, no zone confirmed, no other Owner
+        device, no schedule entry) sets the zone to the browser's own. Never from a guest or an operator, never over remote
+        support, and a failure never stops the pairing. Returns {"zone", "was"} (and "warning") when it set one, {"error"}
+        when it tried and the zone is not as asked, None when it did not try. A node that has Owners or entries already is
+        only offered the change, by the bar (J-129)."""
         try:
             zone = body.get("tz")
             if (not isinstance(dev, dict) or dev.get("role") != "full" or self.support.is_remote(client) or self.sysd is None
                     or self.zone_confirmed() or not tz_mod.valid_zone(zone)):
                 return None
+            with self.settings.lock:
+                others = [d for d in self.settings.data.get("devices", []) if isinstance(d, dict) and d.get("role") == "full" and d.get("id") != dev.get("id")]
+                entries = (self.settings.data.get("schedule") or {}).get("entries") or []
+            if others or entries:
+                return None
             was = self.node_zone()
             if not tz_mod.is_utc(was) or tz_mod.is_utc(zone):
                 return None
-            self._zone_apply(zone, "first pairing")
-            return {"zone": zone, "was": was}
-        except Exception as e:             # ApiError, OSError, a settings file that cannot be written
-            self.log("pvj-web: the time zone was not set at pairing: %s" % e)
+        except Exception as e:
+            self.log("pvj-web: the time zone was not looked at pairing: %s" % e)
             return None
+        try:
+            warning = self._zone_apply(zone, "first pairing")
+        except ApiError as e:
+            self.log("pvj-web: the time zone was not set at pairing: %s" % e)
+            return {"error": "The node's time zone could not be set to %s: %s" % (zone, getattr(e, "message", e))}
+        except Exception as e:             # a failure here never stops the pairing
+            self.log("pvj-web: the time zone was not set at pairing: %s" % e)
+            return {"error": "The node's time zone could not be set to %s." % zone}
+        out = {"zone": zone, "was": was}
+        if warning:
+            out["warning"] = warning
+        return out
 
     def get_timezone(self, body, device, client):
         if Api._zones is None:
@@ -680,13 +705,13 @@ class Api:
         if self.through_support(device, client):
             raise ApiError(403, "the time zone is set from the studio, not through remote support")
         if body.get("keep") is True:
-            self._zone_confirm("kept")
-            return self.get_timezone({}, device, client)
+            warning = self._zone_confirm("kept")
+            return dict(self.get_timezone({}, device, client), **({"warning": warning} if warning else {}))
         zone = body.get("zone")
         if not tz_mod.valid_zone(zone):
             raise bad("zone must be the name of a time zone, like America/Regina")
-        self._zone_apply(zone, "owner")
-        return self.get_timezone({}, device, client)
+        warning = self._zone_apply(zone, "owner")
+        return dict(self.get_timezone({}, device, client), **({"warning": warning} if warning else {}))
 
     def _recovery_used(self, dev, client):
         """After a pairing (D81): a recovery code was burnt (one journal line, never the code), or the PIN shown for a

@@ -223,7 +223,9 @@
         S.device = r.data.device;
         S.token = r.data.token;
         // the first Owner to pair on a node still on UTC set its time zone to this device's (J-129): said once
-        if (r.data.timezone) { S.msg = 'This node was on ' + r.data.timezone.was + '. Its time zone is now ' + r.data.timezone.zone + ', the one this device is in. Change it on the Schedule page.'; S.msgErr = false; }
+        var tzr = r.data.timezone;
+        if (tzr && tzr.error) { S.msg = tzr.error + ' Set it on the Schedule page.'; S.msgErr = true; }
+        else if (tzr) { S.msg = 'This node was on ' + tzr.was + '. Its time zone is now ' + tzr.zone + ', the one this device is in. Change it on the Schedule page.' + (tzr.warning ? ' ' + tzr.warning : ''); S.msgErr = !!tzr.warning; }
         start();
       });
     }
@@ -341,7 +343,7 @@
   function tzSet(zone, after) {
     return act('POST', '/api/timezone', { zone: zone }, function (d) {
       tzInfo = d;
-      say('Node time zone set to ' + zone + '.');
+      say(d.warning || ('Node time zone set to ' + zone + '.'), !!d.warning);
       if (after) after(d); else render();
     });
   }
@@ -353,6 +355,11 @@
       h('span', { class: 'row' },
         h('button', { class: 'btn small', id: 'tzuse', text: 'Use ' + b, onclick: function () { tzSet(b); } }),
         h('button', { class: 'btn small', id: 'tzskip', text: 'Not now', onclick: function () {
+          // the node is told its zone stands (it then never changes it at a pairing); this browser also stops asking
+          act('POST', '/api/timezone', { keep: true }, function (d) {
+            tzInfo = d;
+            if (d.warning) say(d.warning, true);
+          });
           try { localStorage.setItem('nxlx.tzskip', tzInfo.zone + '>' + b); } catch (e) { /* kept for this visit only */ }
           tzHide = true;
           render();

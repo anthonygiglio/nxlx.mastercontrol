@@ -16,15 +16,16 @@ ZONEINFO = "/usr/share/zoneinfo"
 NAME = re.compile(r"[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+){0,2}")
 NAME_MAX = 64
 SKIP_FIRST = ("posix", "right", "SystemV")       # the same names again under another folder; not for a choice
-UTC_NAMES = frozenset(("UTC", "Etc/UTC", "Etc/UCT", "UCT", "Etc/Universal", "Universal", "Etc/Zulu", "Zulu"))
+NOT_ZONES = frozenset(("localtime", "posixrules", "Factory"))
+UTC_NAMES =frozenset(("UTC", "Etc/UTC", "Etc/UCT", "UCT", "Etc/Universal", "Universal", "Etc/Zulu", "Zulu"))
 
 
 def valid_zone(name, root=ZONEINFO):
     """True if `name` is a safe IANA zone name that exists as a time zone file under `root`."""
     if not isinstance(name, str) or not name or len(name) > NAME_MAX or not NAME.fullmatch(name):
         return False
-    if name.split("/")[0] in SKIP_FIRST:
-        return False
+    if name.split("/")[0] in SKIP_FIRST or name in NOT_ZONES or ("/" not in name and name == name.lower()):
+        return False                  # "localtime" is a link to /etc/localtime, "posixrules" and "Factory" are not places
     path = os.path.join(root, name)
     try:
         real, base = os.path.realpath(path), os.path.realpath(root)
