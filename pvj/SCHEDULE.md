@@ -10,14 +10,26 @@ Play a clip or a legacy start script, stop, black out or show the screen, or swi
 
 ## Clock rules
 
-- Times use the box's own clock and time zone. A Pi has no battery clock: until the network sets the time, its clock is wrong. Check the "Box time now" line at the top of the Schedule page before a show; when the clock was not set from the network, the page says so in red.
+- Times use the node's own clock and time zone (see "The time zone" below). A Pi has no battery clock: until the network sets the time, its clock is wrong. Check the "Box time now" line at the top of the Schedule page before a show; when the clock was not set from the network, the page says so in red.
 - Each entry fires at most once per minute.
 - The scheduler only fires for minutes it actually watched. If the clock jumps (the network sets the time, someone changes it) or the service stalls for more than two minutes, the skipped minutes are not replayed. A wrong clock therefore cannot fire old events. Nothing fires for the minute the service starts.
 - A failed entry (for example, a clip that was deleted) is recorded in the panel under "Last run" and does not stop other entries.
 
+## The time zone
+
+Entries fire by the node's local time, so a node on the wrong zone fires an 8 pm entry at the wrong hour. A node set up from an image starts on UTC. The panel looks after the zone like this (J-129):
+
+- **The first Owner to pair** on a node that is new in every way sets it to the zone of that device's browser, and the panel says so ("This node was on Etc/UTC. Its time zone is now America/Regina ..."). "New" means all of: still on UTC, no zone confirmed, no other Owner device, and no schedule entry. A node that already has Owners or entries (one upgraded from UTC, say) is only offered the change by the bar below. A Guest or an Operator pairing never sets it, nor does a pairing through remote support, nor a node already on another zone. If the set fails, the pairing still works and the reply says that the zone could not be set; if it was set but the node could not save that it was confirmed, the reply says that too.
+- **A mismatch is offered, never forced.** When an Owner opens the panel and the node's zone differs from the browser's, a bar at the top says "This node is on X, your device is on Y. Use Y?" with **Use Y** and **Not now**. **Not now** tells the node its present zone is right (`POST /api/timezone` with `{"keep": true}`, which sets the confirmed flag), so no later pairing changes it; this browser also stops asking for that pair of zones.
+- **A zone an Owner confirmed is never changed by itself.** The node keeps a flag (`timezone.confirmed` in the settings, which belongs to the node and is not exported or imported). It is set when an Owner sets a zone, taps **Use**, or keeps the zone (`{"keep": true}`), and by the first-pairing set.
+- **On the Schedule page** the node's zone (`America/Regina (CST)`), the node's time now, and a red warning when the zone or the offset differs from this device ("the node's time is 2 h behind this device"). An Owner can change the zone there: a list of zones with this device's zone first, and **Set zone**.
+- **Only an Owner sets it, and never through remote support.** The panel's web service does not change the zone itself: it asks the root helper (pvj-sysd), which checks the name (letters, digits, `_`, `+`, `-`, at most three parts split by `/`, a real file under /usr/share/zoneinfo that starts with `TZif`, and a name that `timedatectl list-timezones` knows), runs `timedatectl set-timezone` with that one name, and reads the zone back.
+- The scheduler reads the zone again at every check, so a change takes effect at once, without a restart. The local clock then jumps, and the scheduler never replays a jump: after a change to a zone further west, entries in the hours that now repeat can fire again; after a change further east, entries in the hours that were skipped are missed that day.
+- The helper names the zone after `--` and refuses a name that `timedatectl list-timezones` does not list (no list, no change), and `localtime`, `posixrules` and `Factory`.
+
 ## API
 
-`GET /api/schedule` (view) and `POST /api/schedule` (full) with `{"enabled": bool, "entries": [{"id"?, "label"?, "time": "HH:MM", "days": [0-6, Monday is 0], "action": "play|preset|stop|blackout|show|projector_on|projector_off|vibes|scene", "file"?, "loop"?, "preset"?, "scene"?}]}`. The whole list is replaced on each save. At most 50 entries.
+`GET /api/schedule` (view; it also reports `timezone`, the short name such as `CST`, `zone`, the IANA name, and `utc_offset_minutes`) and `POST /api/schedule` (full) with `{"enabled": bool, "entries": [{"id"?, "label"?, "time": "HH:MM", "days": [0-6, Monday is 0], "action": "play|preset|stop|blackout|show|projector_on|projector_off|vibes|scene", "file"?, "loop"?, "preset"?, "scene"?}]}`. The whole list is replaced on each save. At most 50 entries.
 
 ## Not verified on real hardware
 
@@ -34,3 +46,5 @@ Tested with a fake clock and a fake player in a container-style setup only. Not 
 - An entry runs only if the box is on at that minute. A missed entry is not caught up (see the clock rules above).
 
 The clock's own state comes from `GET /api/system` (`clock.clock_from_network`); `GET /api/schedule` does not carry it.
+
+The time zone has its own routes (Owner only): `GET /api/timezone` gives `{zone, confirmed, can_set, now, offset_minutes, zones}`; `POST /api/timezone` takes `{"zone": "America/Regina"}` (or `{"keep": true}` to say the present zone is right) and is refused through remote support. `POST /api/pair` also takes the browser's own `tz` for the first-pairing set.

@@ -66,6 +66,8 @@ REFUSED = {
     ("POST", "/api/fleet/remove"), ("POST", "/api/fleet/allow"), ("POST", "/api/fleet/allow/by"),
     # a ticket for a device paired here to open another node signed in (D132 4a): support stays at the node it was given to
     ("POST", "/api/handover/ticket"),
+    # the node's time zone (D141): it moves every schedule entry, so it is set by the Owner in the room
+    ("POST", "/api/timezone"),
 }
 # and one module's switch, which the table of routes holds only as /api/modules/*
 REFUSED_MODULES = {("POST", "/api/modules/ndi-discovery")}

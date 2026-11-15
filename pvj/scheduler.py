@@ -24,6 +24,7 @@ import threading
 import time
 import uuid
 
+from . import tz as tz_mod
 from .api import ApiError, MEDIA_EXTENSIONS, valid_name
 
 ACTIONS = ("play", "stop", "blackout", "show", "preset", "projector_on", "projector_off", "vibes", "scene")
@@ -35,6 +36,13 @@ _ID = re.compile(r"^[0-9a-f]{8}$")
 
 class ScheduleError(Exception):
     pass
+
+
+def _reread_zone():
+    """The time zone can change while the node runs (the Owner sets it on the panel, or by hand): this process reads
+    /etc/localtime again, so the entries fire by the zone the node is on now and not the one it started with (J-129)."""
+    if hasattr(time, "tzset"):
+        time.tzset()
 
 
 def default_schedule():
@@ -123,12 +131,17 @@ class Scheduler:
 
     def status(self):
         cfg = self.settings.data.get("schedule") or default_schedule()
+        _reread_zone()
         now = self._now()
+        # "timezone": the short name in use ("CST"); "zone": the IANA name ("America/Regina", None when it cannot be read);
+        # "utc_offset_minutes": how far the node's local time is from UTC now (J-129)
         return {"enabled": cfg["enabled"], "entries": cfg["entries"], "active": self.active(), "last": dict(self.last),
-                "now": now.strftime("%Y-%m-%d %H:%M:%S"), "timezone": time.strftime("%Z") or "local"}
+                "now": now.strftime("%Y-%m-%d %H:%M:%S"), "timezone": time.strftime("%Z") or "local",
+                "zone": tz_mod.current_name(), "utc_offset_minutes": time.localtime().tm_gmtoff // 60}
 
     def tick(self):
         """Handle every minute since the last tick. Returns the ids fired."""
+        _reread_zone()
         now = self._now().replace(second=0, microsecond=0)
         previous, self._checked = self._checked, now
         if previous is None or now <= previous:

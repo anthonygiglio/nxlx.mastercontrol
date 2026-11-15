@@ -98,6 +98,9 @@ REMOTE_DENY = {
     # the NDI discovery server (D85): a program listening on the network is opened by the Owner in the room. Its
     # switch is here; its own routes are under a prefix below.
     ("POST", "/api/modules/ndi-discovery"): "a program that listens on the network is switched by the owner in the room (D85)",
+    # the time zone (J-129): the hour every schedule entry fires at. A helper may read it; the Owner sets it, and a zone
+    # picked from afar would move a show's start by hours with nobody in the room to notice
+    ("POST", "/api/timezone"): "the node's time zone moves every schedule entry; the owner sets it at the studio",
     # a reset removes every paired device, the owner's too (see boxcare.py)
     ("POST", "/api/system/factory-reset"): "a reset removes every device, the owner's too",
 }

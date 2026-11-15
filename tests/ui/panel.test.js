@@ -3695,6 +3695,85 @@ function startServer(env) {          // env: more for the harness's environment 
     await again.waitForFunction(() => /wrong or was used/.test(document.getElementById('msg').textContent));
     await again.close();
     await againCtx.close();
+    // J-129: an Owner's browser that is in another time zone than the node is offered the browser's zone in one tap. The
+    // harness has no system helper (so no real zone to set), so the node's answers about its zone are given on their way.
+    {
+      const tzCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, timezoneId: 'America/Regina' });
+      const tzPage = await tzCtx.newPage();
+      const tzNode = { zone: 'Asia/Tokyo', confirmed: false, can_set: true, zones: ['America/Regina', 'Asia/Tokyo', 'Europe/London'], now: 1790000000, offset_minutes: 540 };
+      const tzPosts = [], pairs = [];
+      await tzPage.route('**/api/timezone', async (route) => {
+        const req = route.request();
+        if (req.method() === 'POST') {
+          const sent = req.postDataJSON();
+          tzPosts.push(sent);
+          if (sent.keep) tzNode.confirmed = true;                 // "the zone it is on is right": nothing else changes
+          else Object.assign(tzNode, { zone: sent.zone, confirmed: true, offset_minutes: -360 });
+        }
+        await route.fulfill({ json: tzNode });
+      });
+      tzPage.on('request', (r) => { if (r.method() === 'POST' && /\/api\/pair$/.test(r.url())) pairs.push(r.postDataJSON()); });
+      await tzPage.goto(base);
+      await tzPage.waitForSelector('.pin');
+      for (let i = 0; i < 4; i++) await tzPage.fill(`input[aria-label="PIN digit ${i + 1}"]`, info.pin[i]);
+      await tzPage.click('#pairbtn');
+      await tzPage.waitForSelector('#tzprompt');
+      assert.strictEqual(pairs.length, 1);
+      assert.strictEqual(pairs[0].tz, 'America/Regina', 'the pairing carries the browser\'s own zone');
+      assert.strictEqual(await tzPage.textContent('#tzprompttext'), 'This node is on Asia/Tokyo, your device is on America/Regina. Use America/Regina?');
+      assert.strictEqual(await tzPage.textContent('#tzuse'), 'Use America/Regina');
+      assert.deepStrictEqual(tzPosts, [], 'nothing is changed until the Owner taps');
+      await tzPage.click('#tzuse');
+      await tzPage.waitForSelector('#tzprompt', { state: 'detached' });
+      assert.deepStrictEqual(tzPosts, [{ zone: 'America/Regina' }], 'one tap sends the browser\'s zone and nothing else');
+      await pollFor(tzPage, () => fetch('/api/timezone').then((r) => r.json()).then((d) => d.zone === 'America/Regina' && d.confirmed === true), 8000);
+      // the same zones: no prompt after a reload; and "Not now" is remembered for this pair of zones
+      await tzPage.reload();
+      await tzPage.waitForSelector('#nowscreen');
+      await pollFor(tzPage, () => fetch('/api/timezone').then((r) => r.json()).then((d) => d.zone === 'America/Regina'), 8000);
+      assert.strictEqual(await tzPage.locator('#tzprompt').count(), 0, 'no prompt when the zones agree');
+      Object.assign(tzNode, { zone: 'Europe/London', confirmed: false });
+      await tzPage.reload();
+      await tzPage.waitForSelector('#tzprompt');
+      await Promise.all([tzPage.waitForResponse((r) => /\/api\/timezone$/.test(r.url()) && r.request().method() === 'POST'), tzPage.click('#tzskip')]);
+      await tzPage.waitForSelector('#tzprompt', { state: 'detached' });
+      await tzPage.reload();
+      await tzPage.waitForSelector('#nowscreen');
+      await pollFor(tzPage, () => fetch('/api/timezone').then((r) => r.json()).then((d) => d.zone === 'Europe/London'), 8000);
+      assert.strictEqual(await tzPage.locator('#tzprompt').count(), 0, 'Not now is remembered');
+      assert.deepStrictEqual(tzPosts, [{ zone: 'America/Regina' }, { keep: true }], 'Not now tells the node its zone is right and changes nothing else');
+      assert.strictEqual(tzNode.zone, 'Europe/London');
+      // the schedule card: the node's zone, the difference from this device, a warning, and the Owner's picker with this device's zone first
+      Object.assign(tzNode, { zone: 'Asia/Tokyo', confirmed: false, offset_minutes: 540 });
+      await tzPage.route('**/api/schedule', async (route) => {
+        const res = await route.fetch(), d = await res.json();
+        await route.fulfill({ response: res, json: Object.assign(d, { zone: tzNode.zone, timezone: 'JST', utc_offset_minutes: tzNode.offset_minutes }) });
+      });
+      await shell.sys(tzPage, 'Schedule');
+      // the Scheduler is on already when earlier steps left it on (it is, in a full run), off on a new node: switch it on only if
+      // it is off, and put it back as found
+      await tzPage.waitForSelector('#sysswitch');
+      const schedWasOff = (await tzPage.getAttribute('#sysswitch', 'aria-checked')) === 'false';
+      if (schedWasOff) await tzPage.click('#sysswitchon');
+      await tzPage.waitForSelector('#schedzone');
+      assert.strictEqual(await tzPage.textContent('#schedzone'), 'Node time zone: Asia/Tokyo (JST)');
+      await tzPage.waitForSelector('#schedzonewarn');
+      assert(/^This node is on Asia\/Tokyo and this device is on America\/Regina: the node's time is 15 h ahead of this device\. Entries run at the node's time\.$/.test(await tzPage.textContent('#schedzonewarn')), await tzPage.textContent('#schedzonewarn'));
+      await tzPage.waitForSelector('#schedzonesel');
+      assert.deepStrictEqual(await tzPage.$$eval('#schedzonesel option', (os) => os.slice(0, 2).map((o) => o.textContent)), ['America/Regina (this device)', 'Asia/Tokyo'], 'this device\'s zone is first');
+      assert.strictEqual(await tzPage.inputValue('#schedzonesel'), 'America/Regina', 'and chosen');
+      await tzPage.click('#schedzoneset');
+      await pollFor(tzPage, () => fetch('/api/timezone').then((r) => r.json()).then((d) => d.zone === 'America/Regina'), 8000);
+      assert.deepStrictEqual(tzPosts, [{ zone: 'America/Regina' }, { keep: true }, { zone: 'America/Regina' }], 'the picker sends the chosen zone');
+      if (schedWasOff) {                                          // the Scheduler is back as it was found
+        await tzPage.click('#sysswitch');
+        await tzPage.waitForSelector('#sysoff');
+      }
+      const tzId = (await tzPage.evaluate(() => fetch('/api/status').then((r) => r.json()))).device.id;
+      await tzPage.close();
+      await tzCtx.close();
+      assert.strictEqual(await page.evaluate((id) => fetch('/api/devices/revoke', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-MCTL-Request': '1' }, body: JSON.stringify({ id }) }).then((r) => r.status), tzId), 200, 'the extra owner device is taken off again');
+    }
     // over plain http while the owner-only switch is on, the code is not asked for at all (review of #122, M2): the
     // page learns it from hello (stubbed here: this box has no certificate) and offers the https address instead
     const httpsCtx = await browser.newContext({ viewport: { width: 320, height: 844 } });

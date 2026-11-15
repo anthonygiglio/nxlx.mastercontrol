@@ -210,7 +210,7 @@
     var WRONG = { code: 'That code is wrong or has expired. Ask for a new one.', pin: 'Wrong PIN.', recovery: 'That recovery code is wrong or was used already.' };
     function join(secret, button, kind) {
       button.disabled = true;
-      api('POST', '/api/pair', { pin: secret, name: name.value || 'device' }).then(function (r) {
+      api('POST', '/api/pair', { pin: secret, name: name.value || 'device', tz: browserZone() }).then(function (r) {
         button.disabled = false;
         if (!r.ok) {
           var wait = r.data.retry_after ? ' Try again in ' + r.data.retry_after + ' seconds.' : '';
@@ -222,6 +222,10 @@
         S.scanned = null;
         S.device = r.data.device;
         S.token = r.data.token;
+        // the first Owner to pair on a node still on UTC set its time zone to this device's (J-129): said once
+        var tzr = r.data.timezone;
+        if (tzr && tzr.error) { S.msg = tzr.error + ' Set it on the Schedule page.'; S.msgErr = true; }
+        else if (tzr) { S.msg = 'This node was on ' + tzr.was + '. Its time zone is now ' + tzr.zone + ', the one this device is in. Change it on the Schedule page.' + (tzr.warning ? ' ' + tzr.warning : ''); S.msgErr = !!tzr.warning; }
         start();
       });
     }
@@ -315,6 +319,55 @@
       h('p', { text: 'You reached this node through its support tunnel. Ask the studio for the support code shown in their panel (Setup > Remote support) and type it here. It works only during their session.' }),
       h('label', { class: 'k', for: 'supportcode', text: 'Support code' }), code, go,
       h('div', { id: 'msg', class: 'msg', role: 'status' })));
+  }
+  // ---- the node's time zone (J-129) -----------------------------------------------------------------
+  // The schedule runs on the node's local time. An Owner's browser says its own zone; when the node's differs, the panel
+  // offers one tap to use the browser's (the node never changes it by itself once an Owner has confirmed it; the first
+  // Owner to pair on a node still on UTC sets it at pairing, see join()).
+  var tzInfo = null;           // GET /api/timezone (Owner): zone, confirmed, can_set, zones
+  function browserZone() { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) { return ''; } }
+  function sameZone(a, b) { return a === b || (/^(Etc\/)?(UTC|UCT|Universal|Zulu)$/.test(a) && /^(Etc\/)?(UTC|UCT|Universal|Zulu)$/.test(b)); }
+  function tzAsk() { return !!(tzInfo && tzInfo.can_set && can('full') && !(S.device && S.device.remote)); }
+  var tzHide = false;          // "Not now" was pressed on this page (the choice is also kept in this browser, per pair of zones)
+  function tzSkipped() { if (tzHide) return true; try { return localStorage.getItem('nxlx.tzskip') === tzInfo.zone + '>' + browserZone(); } catch (e) { return false; } }
+  function tzMismatch() { var b = browserZone(); return tzAsk() && !!b && !!tzInfo.zone && !sameZone(b, tzInfo.zone); }
+  function loadTz() {
+    if (!S.device || !can('full') || S.device.remote) return Promise.resolve();
+    return api('GET', '/api/timezone').then(function (r) {
+      if (!r.ok) return;
+      var had = JSON.stringify([tzInfo && tzInfo.zone, tzInfo && tzInfo.can_set]);
+      tzInfo = r.data;
+      if (had !== JSON.stringify([tzInfo.zone, tzInfo.can_set]) && tzMismatch() && !tzSkipped()) whenFree('render', render);
+    });
+  }
+  function tzSet(zone, after) {
+    return act('POST', '/api/timezone', { zone: zone }, function (d) {
+      tzInfo = d;
+      say(d.warning || ('Node time zone set to ' + zone + '.'), !!d.warning);
+      if (after) after(d); else render();
+    });
+  }
+  function tzBanner() {
+    if (!tzMismatch() || tzSkipped()) return null;
+    var b = browserZone();
+    return h('div', { class: 'support-banner tz-banner', id: 'tzprompt', role: 'status' },
+      h('span', { id: 'tzprompttext', text: 'This node is on ' + tzInfo.zone + ', your device is on ' + b + '. Use ' + b + '?' }),
+      h('span', { class: 'row' },
+        h('button', { class: 'btn small', id: 'tzuse', text: 'Use ' + b, onclick: function () { tzSet(b); } }),
+        h('button', { class: 'btn small', id: 'tzskip', text: 'Not now', onclick: function () {
+          // the node is told its zone stands (it then never changes it at a pairing); this browser also stops asking
+          act('POST', '/api/timezone', { keep: true }, function (d) {
+            tzInfo = d;
+            if (d.warning) say(d.warning, true);
+          });
+          try { localStorage.setItem('nxlx.tzskip', tzInfo.zone + '>' + b); } catch (e) { /* kept for this visit only */ }
+          tzHide = true;
+          render();
+        } })));
+  }
+  function minutesText(m) {
+    var a = Math.abs(m), hrs = Math.floor(a / 60), rest = a % 60;
+    return (hrs ? hrs + ' h' : '') + (hrs && rest ? ' ' : '') + (rest ? rest + ' min' : '');
   }
   function mins(sec) { return sec >= 120 ? Math.round(sec / 60) + ' min' : Math.max(0, sec) + ' s'; }
   function supportBanner() {
@@ -6402,6 +6455,7 @@
       last = d;
       body.textContent = '';
       body.appendChild(h('div', { class: 'state', id: 'schedclock', text: 'Node time now: ' + boxTimeText(d) }));
+      zoneBlock(d);
       var next = schedNextEntry(d);
       if (next) body.appendChild(h('div', { class: 'state', id: 'schednext', text: 'Next: ' + (next.off === 0 ? 'today' : next.off === 1 ? 'tomorrow' : next.off === 7 ? 'next ' + next.day : next.day) + ' ' + next.e.time + ', ' + schedWhat(next.e) }));
       if (clock && clock.clock_from_network === false) body.appendChild(h('div', { class: 'hint warn', id: 'schedclockwarn' },
@@ -6433,6 +6487,33 @@
       var side = addBlock('sched', 'an entry', !d.entries.length || !!schedForm.id, function (cancel) { return form(d, cancel); }, redraw);
       body.appendChild(h('div', { class: 'split' }, list, h('div', { class: 'splitside' }, side)));
     }
+    // The node's zone, how far it is from this device, a warning when they differ, and for the Owner the way to change it (J-129)
+    function zoneBlock(d) {
+      var zone = d.zone || d.timezone, mine = browserZone();
+      body.appendChild(h('div', { class: 'state', id: 'schedzone', text: 'Node time zone: ' + zone + (d.zone && d.timezone ? ' (' + d.timezone + ')' : '') }));
+      var diff = typeof d.utc_offset_minutes === 'number' ? d.utc_offset_minutes + new Date().getTimezoneOffset() : 0;     // node's offset minus this device's
+      var differs = (d.zone && mine && !sameZone(d.zone, mine)) || diff !== 0;
+      if (differs) body.appendChild(h('div', { class: 'hint warn', id: 'schedzonewarn',
+        text: 'This node is on ' + zone + ' and this device is on ' + (mine || 'another zone') + (diff ? ': the node\'s time is ' + minutesText(diff) + (diff < 0 ? ' behind' : ' ahead of') + ' this device' : '')
+          + '. Entries run at the node\'s time.' }));
+      if (!tzAsk()) return;
+      var sel = h('select', { class: 'text-input', id: 'schedzonesel', 'aria-label': 'Time zone of this node' });
+      var all = (tzInfo.zones && tzInfo.zones.length ? tzInfo.zones : (Intl.supportedValuesOf ? Intl.supportedValuesOf('timeZone') : [])).slice();
+      var seen = {};
+      [mine].concat(all).forEach(function (z) {
+        if (!z || seen[z]) return;
+        seen[z] = true;
+        sel.appendChild(h('option', { value: z, text: z === mine ? z + ' (this device)' : z }));
+      });
+      if (!seen[tzInfo.zone]) sel.appendChild(h('option', { value: tzInfo.zone, text: tzInfo.zone }));
+      sel.value = mine && !sameZone(mine, tzInfo.zone) ? mine : tzInfo.zone;
+      body.appendChild(h('div', { class: 'row' },
+        h('label', { class: 'k', for: 'schedzonesel', text: 'Change the zone' }), sel,
+        h('button', { class: 'btn', id: 'schedzoneset', text: 'Set zone', onclick: function () {
+          if (sel.value === tzInfo.zone) return say('The node is on ' + tzInfo.zone + ' already.');
+          tzSet(sel.value, function () { refresh(); });
+        } })));
+    }
     function loadClock() {
       api('GET', '/api/system').then(function (r) {
         if (!r.ok || !body.isConnected) return;
@@ -6458,6 +6539,7 @@
       });
     }
     refresh(); loadClock(); loadSets();
+    loadTz().then(function () { if (last && body.isConnected && tzAsk() && !asking(body)) draw(last); });
     return card;
   }
   // ---- network (wired) ------------------------------------------------
@@ -8972,7 +9054,7 @@
     S.menu = menuKey();
     markArea();
     // (one message line for the whole build, above its columns: say() writes to the first it finds)
-    app.appendChild(h('div', { class: 'shell wsp', id: 'wsp' }, supportBanner(),
+    app.appendChild(h('div', { class: 'shell wsp', id: 'wsp' }, supportBanner(), tzBanner(),
       h('div', { class: 'frame' }, c.head, c.side, c.sub,
         h('main', { class: 'ws', id: 'wsmain', 'data-screen': c.key, tabindex: -1 },
           h('div', { id: 'msg', class: 'msg' + (S.msgErr ? ' err' : ''), role: 'status', text: S.msg }), desk),
@@ -8999,7 +9081,7 @@
     if (held && held.offsetParent && !held.disabled) held.focus({ preventScroll: true });
     else keepNavCursor(focus);
   }
-  function start() { loadAll().then(function () { if (S.device) render(); else render(); }); }
+  function start() { loadAll().then(function () { if (S.device) render(); else render(); loadTz(); }); }
 
   // A guest link carries its token in the URL fragment, which is never sent to the server in a request line.
   function boot() {
@@ -9020,7 +9102,7 @@
     var m = /^#token=([A-Za-z0-9_-]+)$/.exec(location.hash);
     var first = m ? api('POST', '/api/session', { token: m[1] }).then(function () { history.replaceState(null, '', location.pathname); }) : Promise.resolve();
     first.then(function () { return api('GET', '/api/status'); }).then(function (r) {
-      if (r.ok) { S.device = r.data.device; S.status = r.data; return loadAll().then(render); }
+      if (r.ok) { S.device = r.data.device; S.status = r.data; return loadAll().then(render).then(loadTz); }
       return api('GET', '/api/hello').then(function (h2) { S.hello = h2.ok ? h2.data : {}; S.remote = !!(h2.ok && h2.data.remote); render(); });
     });
     setInterval(poll, 1000);
