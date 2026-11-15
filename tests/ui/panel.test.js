@@ -13,6 +13,8 @@ const crypto = require('crypto');
 // the transport strip's More on a phone.
 const shell = require('./signal-pages');
 const { go, at, back, stripOpen } = shell;
+// Waiting in the page for a check that fetches (never page.waitForFunction with an async function: it never polls).
+const { until } = require('./poll');
 
 // One PJLink question to the harness's fake projector, straight over TCP (not through the panel): what it really did.
 function pjlink(port, password, body) {
@@ -704,7 +706,7 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.waitForSelector('#graphic-1-outlinewidth', { timeout: 8000 });
       const slid = await page.evaluate(() => { const r = document.getElementById('graphic-1-size'); r.value = '20'; r.dispatchEvent(new Event('input', { bubbles: true })); r.dispatchEvent(new Event('change', { bubbles: true })); return r.value; });
       assert.strictEqual(slid, '20');
-      await page.waitForFunction(async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].text.size === 20, null, { timeout: 8000 });
+      await until(page, async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].text.size === 20, 8000);
       gfx = await get('/api/graphics');
       assert.deepStrictEqual([gfx.items[0].place.anchor, gfx.items[0].text.outline.on, gfx.items[0].text.size], ['tl', true, 20]);
       assert.strictEqual(await page.inputValue('#graphic-1-size'), '20', 'a slider that was moved stays where it was put (the card is not drawn again under the hand)');
@@ -739,7 +741,7 @@ function startServer(env) {          // env: more for the harness's environment 
       const moveSlider = (id, v) => page.evaluate(([i, x]) => { const r = document.getElementById(i); r.value = String(x); r.dispatchEvent(new Event('input', { bubbles: true })); r.dispatchEvent(new Event('change', { bubbles: true })); return r.value; }, [id, v]);
       await moveSlider('graphic-1-fadein', 2.5);
       await moveSlider('graphic-1-fadeout', 1.5);
-      await page.waitForFunction(async () => { const m = (await fetch('/api/graphics').then((r) => r.json())).items[0].motion; return m.seconds === 2.5 && m.out === 1.5; }, null, { timeout: 8000 });
+      await until(page, async () => { const m = (await fetch('/api/graphics').then((r) => r.json())).items[0].motion; return m.seconds === 2.5 && m.out === 1.5; }, 8000);
       assert.strictEqual(await page.textContent('label[for="graphic-1-fadein"] .k'), '2.5 s', 'the time is said in seconds');
       await page.waitForFunction(() => !document.getElementById('graphic-1-replay').disabled, null, { timeout: 8000 });
       motionPosts.length = 0;
@@ -752,7 +754,7 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.waitForSelector('#graphic-1-typetime');
       assert.strictEqual(await page.locator('#graphic-1-fadein, #graphic-1-fadeout').count(), 0, 'the fade times go with the fade');
       await moveSlider('graphic-1-typetime', 4);
-      await page.waitForFunction(async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].motion.seconds === 4, null, { timeout: 8000 });
+      await until(page, async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].motion.seconds === 4, 8000);
       // the same screen on a node with the New renderer's stage (the harness switches on the file): all five, speed and loop
       const stageFile = path.join(path.dirname(info.midi_dir), 'gpu-stage');
       require('fs').writeFileSync(stageFile, '');
@@ -764,7 +766,7 @@ function startServer(env) {          // env: more for the harness's environment 
         assert.strictEqual(await page.locator('#graphic-1-motionnote').count(), 0, 'and there is no note about steps');
         // the position selector keeps what is stored through every motion change, and says what a moving one makes of it
         await page.click('#graphic-1-anchor-tl');
-        await page.waitForFunction(async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].place.anchor === 'tl', null, { timeout: 8000 });
+        await until(page, async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].place.anchor === 'tl', 8000);
         await page.click('#graphic-1-motion-crawl');
         await page.waitForSelector('#graphic-1-speed');
         assert.strictEqual(await page.getAttribute('#graphic-1-anchor-tl', 'aria-pressed'), 'true', 'the selector still shows the stored place after the motion changed');
@@ -772,7 +774,7 @@ function startServer(env) {          // env: more for the harness's environment 
         assert(/only the row counts/.test(await page.textContent('#graphic-1-anchorhint')), 'a crawl says that only the row counts');
         assert(await page.isDisabled('#graphic-1-x') && !(await page.isDisabled('#graphic-1-y')), 'the nudge across does nothing for a crawl, the nudge down does');
         await page.click('#graphic-1-anchor-br');
-        await page.waitForFunction(async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].place.anchor === 'br', null, { timeout: 8000 });
+        await until(page, async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].place.anchor === 'br', 8000);
         assert.strictEqual(await page.getAttribute('#graphic-1-anchor-br', 'aria-pressed'), 'true');
         assert.strictEqual(await page.getAttribute('#graphic-1-anchor-tl', 'aria-pressed'), 'false');
         // a card refresh (a GET) that was asked before a tap and answers after it must not draw the old place again
@@ -824,11 +826,11 @@ function startServer(env) {          // env: more for the harness's environment 
         assert.strictEqual(await page.locator('#graphic-1-typetime').count(), 0);
         assert(/like a ticker/.test(await page.textContent('#graphic-1-motionhint')));
         await moveSlider('graphic-1-speed', 40);
-        await page.waitForFunction(async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].motion.speed === 40, null, { timeout: 8000 });
+        await until(page, async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].motion.speed === 40, 8000);
         assert.strictEqual(await page.textContent('label[for="graphic-1-speed"] .k'), '40% of the screen a second');
         assert.strictEqual(await page.getAttribute('#graphic-1-loop', 'aria-checked'), 'false');
         await page.click('#graphic-1-loop');
-        await page.waitForFunction(async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].motion.loop === true, null, { timeout: 8000 });
+        await until(page, async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].motion.loop === true, 8000);
         await page.click('#graphic-1-motion-scroll');
         await page.waitForSelector('#graphic-1-speed');
         assert.strictEqual((await get('/api/graphics')).items[0].motion.kind, 'scroll');
@@ -846,7 +848,7 @@ function startServer(env) {          // env: more for the harness's environment 
       assert(await page.isDisabled('#graphic-1-replay'), 'a motion this node cannot draw is not replayed');
       assert.strictEqual((await get('/api/graphics')).items[0].motion.kind, 'scroll', 'and it is kept');
       await page.click('#graphic-1-motion-none');
-      await page.waitForFunction(async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].motion.kind === 'none', null, { timeout: 8000 });
+      await until(page, async () => (await fetch('/api/graphics').then((r) => r.json())).items[0].motion.kind === 'none', 8000);
       await fitsCard('#graphicscard', 'Graphics, settings open');
       await fitsPhone('Graphics, settings open');
       // logo files: a text file is refused in words, a PNG is kept and gets a thumbnail
@@ -864,7 +866,7 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.waitForSelector('#graphic-2-file');
       assert.strictEqual(await page.textContent('#graphic-2-state'), 'Off');
       await page.selectOption('#graphic-2-file', 'mara-logo.png');
-      await page.waitForFunction(async () => (await fetch('/api/graphics').then((r) => r.json())).items[1].logo.file === 'mara-logo.png', null, { timeout: 8000 });
+      await until(page, async () => (await fetch('/api/graphics').then((r) => r.json())).items[1].logo.file === 'mara-logo.png', 8000);
       await page.click('#graphic-2-show');
       await page.waitForFunction(() => document.getElementById('graphic-2-state').textContent === 'On the screen', null, { timeout: 10000 });
       assert.strictEqual((await get('/api/graphics')).showing, 2);
