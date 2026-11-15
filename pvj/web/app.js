@@ -3806,7 +3806,8 @@
       var auto = d.devices.filter(function (x) { return x.name === d.automatic_is; })[0];
       var now = d.devices.filter(function (x) { return x.name === (d.device === 'auto' ? d.automatic_is : d.device); })[0];
       body.appendChild(h('div', { class: 'state', id: 'audioline', text: d.device === 'auto' ?
-        'Automatic' + (now ? ': ' + label(now) : '') + '. On a Pi this is the HDMI port with the screen on it.' : 'Fixed to ' + (now ? label(now) : d.device) + '.' }));
+        'Automatic' + (now ? ': ' + label(now) : '') + '. This is the HDMI sound of the screen, when the node can tell which it is.' : 'Fixed to ' + (now ? label(now) : d.device) + '.' }));
+      if (d.automatic_note && d.device === 'auto') body.appendChild(h('div', { class: 'hint', id: 'audionote', text: d.automatic_note + '.' }));
       if (full) {
         var result = h('div', { class: 'msg inmsg', id: 'audiosaved', role: 'status', text: saved ? 'Saved' : '' });
         var sel = h('select', { class: 'text-input', id: 'audiodev', onchange: function () {
