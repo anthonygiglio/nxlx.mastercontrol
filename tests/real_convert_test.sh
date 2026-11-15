@@ -155,7 +155,8 @@ grep -q '^OnBootSec=' /etc/systemd/system/nxlx-convert-undo.timer || fail "the u
 for u in "${ACTIVE[@]}"; do
 	systemctl is-active --quiet "nxlx-$u.service" || fail "nxlx-$u did not start under its new name"
 done
-"${CONVERT[@]}" --run | grep -q "Nothing to convert" || fail "a second run did something"
+second="$("${CONVERT[@]}" --run 2>&1)" || true
+grep -q "Nothing to convert" <<<"$second" || { echo "$second" | tail -40; fail "a second run did something"; }
 
 step "--confirm takes the timer away"
 "${CONVERT[@]}" --confirm
