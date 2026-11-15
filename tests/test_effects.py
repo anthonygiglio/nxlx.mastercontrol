@@ -662,6 +662,128 @@ class Base(ServerBase):
         return self.fx.state()
 
 
+class LoopGapTest(Base):
+    """At a loop point mpv has no video-params for a moment while the same item plays (D140): a put waits a few short
+    looks for the picture to come back, and only a fresh read ever decides."""
+    def setUp(self):
+        super().setUp()
+        self.good = self.mpv.video
+        self.mpv.props.update({"time-pos": 0.2, "seeking": False})
+        self.sleeps = []
+        self.on_sleep = lambda n: None
+        self.fx._sleep = self.sleep
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.on_sleep(len(self.sleeps))
+
+    def gap(self, **props):
+        self.mpv.video = None
+        self.mpv.props.update(props)
+
+    def test_a_gap_that_ends_within_the_window_lets_the_effect_on(self):
+        self.gap()
+        self.on_sleep = lambda n: setattr(self.mpv, "video", self.good) if n == 2 else None
+        self.fx.put("fx-wash.fs")
+        self.assertIsNotNone(self.fx.on)
+        self.assertEqual(self.sleeps, [E.PICTURE_LOOK_GAP] * 2)
+
+    def test_a_seek_is_a_gap_too(self):
+        self.gap(**{"time-pos": 50.0, "seeking": True})
+        self.on_sleep = lambda n: setattr(self.mpv, "video", self.good)
+        self.fx.put("fx-wash.fs")
+        self.assertIsNotNone(self.fx.on)
+
+    def test_a_gap_with_no_position_is_waited_for_too(self):
+        self.gap(**{"time-pos": None})
+        self.on_sleep = lambda n: setattr(self.mpv, "video", self.good)
+        self.fx.put("fx-wash.fs")
+        self.assertIsNotNone(self.fx.on)
+
+    def test_a_gap_that_does_not_end_is_refused_after_the_window(self):
+        self.gap()
+        with self.assertRaises(ApiError) as caught:
+            self.fx.put("fx-wash.fs")
+        self.assertEqual((caught.exception.status, E.NO_PICTURE in caught.exception.message), (409, True))
+        self.assertEqual(len(self.sleeps), E.PICTURE_LOOKS)
+        self.assertLessEqual(sum(self.sleeps), 0.5 + 1e-9)
+
+    def test_a_stop_during_the_wait_is_refused(self):
+        self.gap()
+        self.on_sleep = lambda n: self.player.clear() if n == 1 else None
+        with self.assertRaises(ApiError):
+            self.fx.put("fx-wash.fs")
+        self.assertEqual(len(self.sleeps), 1)
+
+    def test_another_item_during_the_wait_is_refused(self):
+        self.gap()
+        def other(n):
+            self.mpv.props["path"] = "/media/b.mp4"         # another item, one that has no picture of its own
+        self.on_sleep = other
+        with self.assertRaises(ApiError):
+            self.fx.put("fx-wash.fs")
+        self.assertEqual(len(self.sleeps), 1)
+
+    def test_the_panels_toggle_step_and_preset_wait_too_and_once(self):
+        for call in (lambda: self.fx.toggle(ask=True), lambda: self.fx.step(1, ask=True)):
+            self.sleeps.clear()
+            self.fx.off()
+            self.gap()
+            self.on_sleep = lambda n: setattr(self.mpv, "video", self.good)
+            call()                                          # no 409 at the loop point
+            self.assertEqual(len(self.sleeps), 1)           # the one wait of the request; the worker's put finds a picture
+            self.mpv.video = self.good
+
+    def test_an_off_during_the_wait_wins_over_the_put_by_hand(self):
+        self.gap()
+        def off_and_back(n):
+            self.fx.off()
+            self.mpv.video = self.good
+        self.on_sleep = off_and_back
+        out = self.fx.put("fx-wash.fs")
+        self.assertTrue(out.get("superseded"))
+        self.assertIsNone(self.fx.on)
+
+    def test_nothing_waits_when_there_is_no_gap(self):
+        self.fx.put("fx-wash.fs")
+        self.assertEqual(self.sleeps, [])
+        self.fx.off()
+        self.gap(**{"time-pos": 20.0})                      # no picture in the middle of an item: not a loop point
+        with self.assertRaises(ApiError):
+            self.fx.put("fx-wash.fs")
+        self.player.clear()                                 # nothing playing
+        with self.assertRaises(ApiError):
+            self.fx.put("fx-wash.fs")
+        self.mpv.props["idle-active"] = True
+        self.assertEqual(self.sleeps, [])
+
+    def test_a_picture_the_hooks_cannot_take_is_refused_without_a_wait(self):
+        self.mpv.video = {"colormatrix": "xyz", "colorlevels": "full", "pixelformat": "xyz12"}
+        with self.assertRaises(ApiError) as caught:
+            self.fx.put("fx-wash.fs")
+        self.assertIn(E.UNFIT, caught.exception.message)
+        self.assertEqual(self.sleeps, [])
+
+    def test_a_generator_on_the_new_renderer_waits_for_nothing(self):
+        self.player._standin_up = lambda: True
+        self.gap()
+        self.fx._ride_out_gap()
+        self.assertEqual(self.sleeps, [])
+
+    def test_a_player_whose_ipc_cannot_be_read_says_no_picture(self):
+        class Gone:
+            @property
+            def ipc(self):
+                raise PlayerError("gone")
+        real = self.api.player
+        self.api.player = Gone()
+        try:
+            self.assertIsNone(self.fx.picture())
+            self.fx._ride_out_gap()
+        finally:
+            self.api.player = real
+
+
 class LibraryTest(Base):
     def test_the_bundled_filters_are_the_projects_own_and_the_pack(self):
         rows = self.state()["effects"]
