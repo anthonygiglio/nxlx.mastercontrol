@@ -192,7 +192,11 @@
     function wrap(kind) { return h('div', { class: 'ctl ctl-' + kind + (opt.compact ? ' compact' : ''), 'data-input': i.name, 'data-type': i.type }); }
     function numberSlider(lo, hi, step, def, text) {
       var cur = now;
+      // A value within half a step of either end is that end, exactly (see the float case below for why the top
+      // position is a hair under the top).
+      function ends(v) { return hi - v < step / 2 ? hi : (v - lo < step / 2 ? lo : v); }
       var input = slider({ id: id, min: lo, max: hi, step: step, value: now }, ch, function (v, done) {
+        v = ends(v);
         cur = v; out.textContent = text(v);
         if (done) ch.settle(v); else ch.push(v);
       });
@@ -208,7 +212,10 @@
     switch (i.type) {
       case 'float':
         if (!(i.max > i.min)) return null;
-        return numberSlider(i.min, i.max, (i.max - i.min) / 200, i['default'], round);
+        // 200 steps. A range input allows only bottom + n x step up to its top, and (top - bottom) / 200 can come out a
+        // hair too big (Tide's speed: 0.2 + 200 x 0.009 is over 2), so the browser stopped one step short, at 1.991.
+        // A step a billionth smaller puts the last position just under the top, and ends() makes it the top.
+        return numberSlider(i.min, i.max, (i.max - i.min) / 200 * (1 - 1e-9), i['default'], round);
       case 'bool': {
         var sw = h('button', { class: 'switch', id: id, role: 'switch', 'aria-checked': now ? 'true' : 'false', 'aria-label': label, onclick: function () {
           var want = sw.getAttribute('aria-checked') !== 'true';
