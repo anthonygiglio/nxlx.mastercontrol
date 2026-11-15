@@ -1,0 +1,8 @@
+<!-- SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+     SPDX-License-Identifier: Apache-2.0 -->
+## 2026-11-15, the New renderer's memory over crossfades (J-157)
+
+- Found why pvj-render grew with every crossfade on node-03 (62 to 782 MB in 50 with software decoding, to 1,148 MB with vaapi-copy, 238 to 1,905 MB in an hour): not a lost decoder, texture or EGL image (GL objects, fences and threads stayed flat), but glibc's heap. Its threshold for mapped blocks rises with every large block freed, so frames and packets came from the two arenas and two decoders at once cut them up. In use followed the clip (113 MB at 1080p, 360 MB at 4K); free and held grew from 244 to 452 MB.
+- Fix: pvj-render fixes M_MMAP_THRESHOLD at 256 KiB at start (main.c, heap_setup); MALLOC_MMAP_THRESHOLD_ in pvj.env still wins. New property `pvj-heap` (used, free, mapped, arena). Test: HeapTest in tests/test_pvj_render.py, which fails without the fix on a desk (216 MB free after 30 fades against 128 allowed) and passes with it (83 MB).
+- node-03 with the fix, leak.sh 50 crossfades: software decoding 63 MB at the start, 405 to 416 MB at each 4K reading and 193 to 197 MB at each 1080p one, 416 MB at the end; vaapi-copy 63 MB, 4K readings 264 to 306 MB, 294 MB at the end. One-hour soak.sh: the player's processes 215 MB at the start and 321 MB at the end, the 4K readings 536 MB in the first minutes and 563 MB in the last; pvj-render's RssAnon 209 MB after the hour with 40 MB of heap in use and 51 MB free. No restarts.
+- Not run on a Pi 4. node-03 got master back afterwards, with its settings as they were.

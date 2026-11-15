@@ -119,6 +119,13 @@ frame with the render API (on the Pi's V3D a file descriptor each); this program
 crossfade with nothing on the screen is loaded as a cut) and `sound-held` (crossfades whose outgoing core had not closed
 its sound output within a second).
 
+The heap (J-157): pvj-render fixes glibc's threshold for blocks mapped on their own at 256 KiB at start, so a clip's
+frames and packets are given back to the system when it goes. Left to glibc, the threshold rose with the first big frame
+freed, and every crossfade left the arenas more cut up: on node-03 the process grew from 62 to 782 MB in 50 crossfades.
+`MALLOC_MMAP_THRESHOLD_` in the environment (pvj.env) wins. `get_property pvj-heap` says the heap's bytes `used`, `free`
+(held by malloc and not given back), `mapped` (blocks mapped on their own) and `arena`. It walks every arena under its
+lock, so it is a property of its own, for a test or a person, not part of `pvj-render`.
+
 ## The final pass at 720 lines (D108)
 
 `--final=auto` or `--final=720`: after the first frame pvj-render finds the primary plane and tests that it can scale. If so, the final pass can draw in the top left 720 lines (the width follows the output's shape) of the one GBM surface, and the plane's source rectangle goes in the atomic commit of that frame. `["pvj-final", "full"|720]` changes it from the next frame on; pvj/renderer.py's rule decides under Automatic. Without the argument nothing of this runs. The output's size stays what every size on the socket reports, and the mapping's HOOKED_size. `pvj-render` adds `load`, `final-lines` (0: the output's size), `final-switches` and `final-why`. `["screenshot-to-file", PATH, "pvj-screen"]` is the whole final picture at the screen's size, mapping and text in it, whichever way the pass draws. A build with `make TEST_HOOKS=1` run headless with `PVJ_RENDER_TEST_FINAL=1` draws in the corner of its framebuffer, so all but the plane runs in CI.

@@ -1313,6 +1313,67 @@ class ManyFadesTest(FadeBase):
                  [w["gl-objects"] for w in warm], [c["gl-objects"] for c in later], self.st()["gl-fences-freed"]))
 
 
+class HeapTest(FadeBase):
+    """A crossfade gives its clip's memory back (J-157). glibc raises its threshold for blocks mapped on their own to the
+    size of each such block freed, so the frames and packets of every clip after the first came from the arenas, and
+    each crossfade, with two decoders at once, left them more cut up: on node-03 the renderer grew from 62 to 782 MB in
+    50 fades and to 1,905 MB in an hour, with what was in use following the clip on the screen. pvj-render fixes the
+    threshold (main.c, heap_setup). Here: 720p clips through the loop lists the player loads (looplist.QUEUE), the
+    renderer with the unit's MALLOC_ARENA_MAX=2, and the heap's free bytes (held by malloc, not given back) after a
+    warm-up and after more fades. On a desk (WSL, llvmpipe, 2026-11-15), this test without the fixed threshold: 151 MB
+    free after 10 fades and 216 MB after 30, a failure; with it, 61 MB and 83 MB."""
+    LIMIT = 300.0
+    FREE_MOST = 128 << 20       # bytes free in the heap after the fades, at most
+    GROWTH_MOST = 48 << 20      # ... and their growth from the warm-up's end
+
+    def setUp(self):
+        super().setUp()
+        self.r.close()
+        self.r = Renderer("--headless=1280x720", env={"MALLOC_ARENA_MAX": "2"})
+
+    def clips(self):
+        maker = shutil.which("ffmpeg")
+        if not maker:
+            if STRICT:
+                self.fail("PVJ_RENDER_TEST=1 and no ffmpeg to make the clips")
+            self.skipTest("no ffmpeg to make the clips")
+        lists = []
+        for i, source in enumerate(("testsrc2", "testsrc", "smptehdbars", "rgbtestsrc")):
+            name = "heap%d" % i
+            subprocess.run([maker, "-v", "error", "-y", "-f", "lavfi", "-i", "%s=s=1280x720:r=30:d=4" % source, "-pix_fmt", "yuv420p",
+                            "-c:v", "libx264", "-preset", "ultrafast", "-g", "30", os.path.join(self.tmp, name + ".mp4")],
+                           check=True, timeout=120, stdin=subprocess.DEVNULL)
+            path = os.path.join(self.tmp, name + ".ffconcat")
+            with open(path, "w") as f:
+                f.write("ffconcat version 1.0\n" + ("file %s.mp4\nduration 4.000000\n" % name) * 200)
+            lists.append(path)
+        return lists
+
+    def test_crossfades_give_their_clips_memory_back(self):
+        r = self.r
+        deadline = time.monotonic() + self.LIMIT
+        lists = self.clips()
+        r("loadfile", lists[0], "replace")
+        r("set_property", "loop-file", "inf")
+        self.assertTrue(r.wait(lambda: self.st()["drawn"] > 10, 20), r.stderr())
+        opts = "keep-open=no,image-display-duration=inf,vd-queue-enable=yes,vd-queue-max-samples=6,vd-queue-max-secs=2"
+        free = []
+        for i in range(1, 31):
+            self.assertLess(time.monotonic(), deadline, "the bounded run of fades took too long")
+            done = self.st()["fades-done"]
+            r("pvj-crossfade", lists[i % 4], 1.0, opts)
+            self.assertTrue(r.wait(lambda: self.st()["fades-done"] > done, 15, 0.05), "fade %d: %s\n%s" % (i, self.st(), r.stderr()))
+            r("set_property", "loop-file", "inf")
+            time.sleep(1.0)
+            if i in (10, 30):
+                free.append(r("get_property", "pvj-heap")["free"])
+        heap = r("get_property", "pvj-heap")
+        print("\nheap free after 10 and 30 crossfades: %s MB; now %s" % ([f >> 20 for f in free], heap))
+        self.assertLessEqual(free[1], self.FREE_MOST, "the heap holds what the clips freed: %s" % heap)
+        self.assertLessEqual(free[1] - free[0], self.GROWTH_MOST, "the heap's free memory grows with the fades: %s" % free)
+        self.assertIsNone(r.proc.poll())
+
+
 class FadeOnFadeTest(FadeBase):
     """A crossfade asked as the last one ends loads into the layer that fade is stopping. The stop is queued, and libmpv
     runs a blocking command ahead of what is queued, so it has to be seen done first, or it takes the new clip with it:
