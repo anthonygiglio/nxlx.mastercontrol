@@ -21,6 +21,7 @@
 #define _GNU_SOURCE
 #include "pvj.h"
 #include "json.h"
+#include <malloc.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -669,6 +670,20 @@ static void source_command(int fd, const mpv_node *id, const mpv_node *cmd)
 // get_property pvj-sources: one map a source, from 1. What each plays, whether it is idle, the frames it converted
 // and its picture's height (the panel's warning about load). Asks the cores (a client's thread may): never read to
 // time anything.
+static void heap_property(int fd, const mpv_node *id)
+{
+    // get_property pvj-heap (J-157): the heap's bytes in use and free (held by malloc, not given back) and in blocks
+    // mapped on their own. mallinfo2 walks every arena under its lock, so it is a property of its own, asked by a test or
+    // a person, never with the counters of pvj-render that the panel and the pacing tests read often.
+    struct mallinfo2 mi = mallinfo2();
+    static const char *const keys[] = { "used", "free", "mapped", "arena" };
+    mpv_node vals[4] = { node_int((int64_t)mi.uordblks), node_int((int64_t)mi.fordblks), node_int((int64_t)mi.hblkhd),
+                         node_int((int64_t)mi.arena) };
+    mpv_node_list list = { .num = 4, .values = vals, .keys = (char **)keys };
+    mpv_node d = { .format = MPV_FORMAT_NODE_MAP, .u.list = &list };
+    reply(fd, id, "success", &d);
+}
+
 static void sources_property(int fd, const mpv_node *id)
 {
     static const char *const keys[] = { "source", "idle", "path", "drawn", "height", "pause", "loads", "opacity", "blend" };
@@ -1335,6 +1350,7 @@ static void get_property(int fd, const mpv_node *id, const char *name)
         return;
     }
     if (!strcmp(name, "pvj-sources")) { sources_property(fd, id); return; }
+    if (!strcmp(name, "pvj-heap")) { heap_property(fd, id); return; }
     if (!strcmp(name, "pvj-shaders")) { shaders_property(fd, id); return; }
     if (!strcmp(name, "pvj-graphics")) { graphics_property(fd, id); return; }
     pthread_mutex_lock(&app.lock);

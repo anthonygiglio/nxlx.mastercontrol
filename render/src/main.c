@@ -28,6 +28,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <malloc.h>
 #include <math.h>
 #include <sched.h>
 #include <signal.h>
@@ -78,6 +79,23 @@ static void on_signal(int s)
 {
     g_signal = s;
     wake_render();
+}
+
+/* ---- the heap (J-157) ---------------------------------------------------------------------------------------------- */
+// glibc serves a block of HEAP_MMAP_THRESHOLD or more by a mapping of its own, given back to the system when it is
+// freed. Left alone, glibc raises that threshold to the size of every such block freed, up to 32 MiB: after the first
+// 4K frame or large packet freed, every decoder's frames and packets came from the two arenas (D114), and each crossfade
+// left them more cut up. The heap held what it freed: on node-03 (2026-11-14) the renderer grew from 62 to 782 MB in 50
+// crossfades with software decoding and to 1,148 MB with hardware decoding, and to 1,905 MB in an hour, while what was
+// in use stayed with the clip on the screen (2026-11-15: 113 to 360 MB in use, 452 MB free and held). A fixed threshold
+// turns the raising off; the frame pools and the cores' caches are made of such blocks, so a clip that goes gives its
+// memory back. MALLOC_MMAP_THRESHOLD_ in the environment (pvj.env) wins, as an operator's word should.
+#define HEAP_MMAP_THRESHOLD (256 * 1024)
+
+static void heap_setup(void)
+{
+    if (getenv("MALLOC_MMAP_THRESHOLD_")) return;
+    if (!mallopt(M_MMAP_THRESHOLD, HEAP_MMAP_THRESHOLD)) LOG("malloc's threshold for mapped blocks could not be set");
 }
 
 /* ---- options ------------------------------------------------------------------------------------------------------- */
@@ -1031,6 +1049,7 @@ static void realtime_priority(void)
 int main(int argc, char **argv)
 {
     Cfg cfg;
+    heap_setup();                       // first: before libmpv and its threads allocate anything
     if (parse_args(argc, argv, &cfg)) return 64;
     app.cfg = &cfg;
     app.pid = getpid();
