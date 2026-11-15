@@ -253,6 +253,44 @@ class FastPathTest(unittest.TestCase):
         self.assertEqual(s.state()["held"], 0)
 
 
+    def test_a_lease_renewed_during_a_slow_start_ends_at_its_own_time(self):
+        api, clock, s = rig(native=False)
+        put = api.effects.put
+        def slow(*a, **k):
+            clock.t += 0.3
+            with s._lock:
+                for h in s.holders.values():
+                    h["seen"] = clock.t                 # a renewal that came during the start
+            clock.t += 0.5
+            return put(*a, **k)
+        api.effects.put = slow
+        s.hold(OSC, {"holder": "osc"})
+        clock.t += 0.3
+        s.tick()
+        self.assertEqual(s.state()["held"], 0)          # its last renewal was 0.8 s ago (0.5 s lease)
+
+    def test_a_put_that_was_overtaken_leaves_it_not_lit_without_an_error_or_a_storm(self):
+        api, clock, s = rig(native=False)
+        put = api.effects.put
+        answers = [{"ok": True, "id": "fx-strobe.fs", "superseded": True}]
+        def overtaken(*a, **k):
+            api.effects.calls.append(("put-called",))
+            return answers.pop(0) if answers else put(*a, **k)
+        api.effects.put = overtaken
+        out = s.hold(DEVICE, {"holder": "tab"})
+        st = s.state()
+        self.assertEqual((st["on"], st["held"], out["on"]), (False, 1, False))
+        self.assertIsNone(s.error)
+        calls = len(api.effects.calls)
+        s.tick()                                        # no retry within the gap
+        self.assertEqual(len(api.effects.calls), calls)
+        clock.t += 0.1
+        s.hold(DEVICE, {"holder": "tab"}, renew=True)
+        clock.t += 5
+        s.hold(DEVICE, {"holder": "tab"})               # a new press after the gap lights it
+        self.assertTrue(s.state()["on"])
+
+
 class DeadManTest(unittest.TestCase):
     def test_a_lease_that_is_not_renewed_ends_the_strobe_within_half_a_second_of_the_watcher(self):
         api, clock, s = rig()
