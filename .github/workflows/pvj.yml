@@ -166,7 +166,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: ShellCheck the installer and image scripts (strict)
-        run: shellcheck install/install.sh tools/make-release.sh image/stage-pvj/prerun.sh image/stage-pvj/00-install-pvj/01-run.sh tests/real_install_test.sh
+        run: shellcheck install/install.sh tools/make-release.sh image/stage-pvj/prerun.sh image/stage-pvj/00-install-pvj/01-run.sh tests/real_install_test.sh tests/real_convert_test.sh
+
+  real-convert:
+    # The node converter (bin/nxlx-convert, D136) run for real, as root, under the runner's systemd: today's release
+    # installed, a stand-in release with the new names made by tools/rename-apply.py, then --plan, --run (in its own
+    # unit), --confirm, --undo and the timed undo, with usermod, groupmod, visudo, systemctl and the timer for real.
+    # Not a required check. The runner is thrown away afterwards; not a test of a Raspberry Pi.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install mpv
+        timeout-minutes: 10   # usually half a minute; see the note at the top of this file
+        run: tools/ci-apt.sh mpv
+      - name: Convert a real install, confirm, undo, and the timed undo
+        run: sudo PVJ_REAL_CONVERT_TEST=yes-this-machine-is-disposable bash tests/real_convert_test.sh
 
   real-install:
     # The installer run for real, as root, under the runner's systemd: who owns what in /run/pvj after an upgrade
