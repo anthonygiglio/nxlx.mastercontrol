@@ -46,6 +46,28 @@ step() { printf '\n=== %s\n' "$*"; }
 has_user() { getent passwd "$1" >/dev/null; }
 has_group() { getent group "$1" >/dev/null; }
 uid_of() { id -u "$1"; }
+# A player that was started a moment ago has its socket before it answers on it, and the converter counts a player
+# that does not answer as one that plays (when in doubt, the show goes on). Wait, at most 60 seconds, until it says
+# it is idle, as the converter itself asks it, before a plan or a run that must not be refused for that.
+player_idle() {
+	python3 - "$SRC/bin/nxlx-convert" <<'EOF'
+import importlib.machinery, importlib.util, sys
+loader = importlib.machinery.SourceFileLoader("nxlx_convert", sys.argv[1])
+spec = importlib.util.spec_from_loader("nxlx_convert", loader)
+conv = importlib.util.module_from_spec(spec)
+loader.exec_module(conv)
+sys.exit(0 if conv.show_playing(conv.Node("")) is False else 1)
+EOF
+}
+wait_player_idle() {
+	systemctl is-active --quiet pvj-player.service || return 0
+	local end=$((SECONDS + 60))
+	while [ "$SECONDS" -lt "$end" ]; do
+		if player_idle; then return 0; fi
+		sleep 1
+	done
+	echo "the player has not said it is idle in 60 seconds; going on" >&2
+}
 names() {      # what a plan must not change: accounts, groups, folders, unit files, links, sudoers
 	{
 		getent passwd | cut -d: -f1,3,6
@@ -96,6 +118,7 @@ mv -T /opt/pvj/current.tmp /opt/pvj/current
 rm -rf "$NEW"
 
 step "--plan changes nothing; with the old release current it refuses"
+wait_player_idle
 ln -sfn "$OLD_CURRENT" /opt/pvj/current.tmp && mv -T /opt/pvj/current.tmp /opt/pvj/current
 if out="$("${CONVERT[@]}" --plan)"; then fail "a plan on a release without the new names was not refused"; fi
 grep -q "does not have the new names" <<<"$out" || fail "the refusal does not say why: $out"
@@ -178,6 +201,7 @@ done
 
 step "the timed undo (its service started at once instead of after 15 minutes)"
 ln -sfn "$REL" /opt/pvj/current.tmp && mv -T /opt/pvj/current.tmp /opt/pvj/current
+wait_player_idle          # restarted a moment ago, above
 "${CONVERT[@]}" --run || fail "the second run failed"
 systemctl start nxlx-convert-undo.service || fail "the timed undo failed"
 { has_user pvj-dev && [ -d /opt/pvj ]; } || fail "the timed undo did not put the old names back"

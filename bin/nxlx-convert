@@ -596,14 +596,24 @@ def make_plan(node, force=False, mode="plan", release=None):
         plan.check(chosen is not None and os.path.isdir(node.p(chosen)) and not os.path.islink(node.p(chosen)),
                    "the release %s is in /opt/pvj/releases" % release if chosen else
                    "the release %s is not a folder in /opt/pvj/releases (or /opt/nxlx/releases)" % release)
+    put_previous = False
     if cur and os.path.islink(node.p(cur)):
         target = os.readlink(node.p(cur))
         new_target = "/opt/nxlx/releases/" + release if chosen else renamed(m, target)
         # "previous" is the release the node ran before, under its new path: what a rollback looks at. With
         # --release it is written by the run (before current moves, so a run that stops between the two and
-        # carries on still knows it), and put back by the undo.
+        # carries on still knows it), and put back by the undo. When the release is already current, "previous"
+        # is left to step 6, which rewrites the path it names like the other files.
         if chosen and new_target != target and target.startswith("/") and release_name(target) != release:
             text = "/opt/nxlx/releases/%s\n" % release_name(target)
+            prev = where(node, "opt/nxlx/previous")
+            # Checked here, not half-way through the run: a link or a folder is not overwritten (it fails the change
+            # after the folders have moved, and every run after it).
+            plain = prev is None or (not os.path.islink(node.p(prev)) and os.path.isfile(node.p(prev)))
+            plan.check(plain, "the note \"previous\" is a plain file, or not there yet" if plain else
+                       "/%s is not a plain file (a link, or a folder): it would be replaced with the release before; "
+                       "look at it by hand" % prev)
+            put_previous = True
             plan.add(5, "put", "write /opt/nxlx/previous (%s)" % text.strip(), path="opt/nxlx/previous", data=text)
         if new_target != target:
             plan.add(5, "link", "point /opt/nxlx/current at %s" % new_target,
@@ -617,7 +627,7 @@ def make_plan(node, force=False, mode="plan", release=None):
 
     # 6. the text files the converter owns
     for new in OWNED_TEXT:
-        if chosen and new == "opt/nxlx/previous":
+        if put_previous and new == "opt/nxlx/previous":
             continue                    # written whole in step 5 (above)
         now = where(node, new) or where(node, new.replace("nxlx.env", "pvj.env"))
         if not now or os.path.islink(node.p(now)):
@@ -853,22 +863,83 @@ def show_playing(node):
 
 
 # --- doing it ---------------------------------------------------------------------------------------------------
+class JournalBroken(Exception):
+    pass
+
+
 class Journal:
+    """One JSON record a line. A power cut while a record is written can leave its line torn (cut short, or the
+    disk's zeros): that is only ever the last line, and it is passed over with a warning, and moved aside (into a
+    copy of the journal) before the next record is written. A line that cannot be read anywhere else means the
+    journal is not what this converter wrote: nothing is done by it."""
+    warned = set()
+
     def __init__(self, node):
         self.node = node
         self.path = node.p(JOURNAL)
 
-    def records(self):
+    def _read(self):
+        """(records, the offset where a torn last line starts or None)."""
         try:
-            with open(self.path) as f:
-                return [json.loads(line) for line in f if line.strip()]
+            with open(self.path, "rb") as f:
+                data = f.read()
         except FileNotFoundError:
-            return []
+            return [], None
+        out, bad, at = [], [], 0
+        for i, raw in enumerate(data.split(b"\n")):
+            line = raw.strip(b" \t\r\0")
+            if line:
+                try:
+                    rec = json.loads(line.decode("utf-8"))
+                    if not isinstance(rec, dict):
+                        raise ValueError("not a record")
+                    out.append(rec)
+                except ValueError:
+                    bad.append((i + 1, at))
+            at += len(raw) + 1
+        if not bad:
+            return out, None
+        lineno, start = bad[-1]
+        if len(bad) > 1 or data[start:].strip(b" \t\r\n\0").count(b"\n"):
+            raise JournalBroken("the converter's journal /%s cannot be read at line %d: it is not as this converter "
+                                "wrote it, so nothing is done by it. Look at it by hand"
+                                % (os.path.relpath(self.path, self.node.root or "/"), bad[0][0]))
+        if self.path not in Journal.warned:
+            Journal.warned.add(self.path)
+            try:
+                sys.stderr.write("nxlx-convert: warning: the last line of the journal (line %d) is cut short, most "
+                                 "likely by a power cut while it was written; it is passed over\n" % lineno)
+            except (OSError, ValueError):
+                pass
+        return out, start
+
+    def records(self):
+        return self._read()[0]
 
     def write(self, rec):
         os.makedirs(os.path.dirname(self.path), mode=0o700, exist_ok=True)
         rec["at"] = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        _, torn = self._read()
+        if torn is not None:
+            # The torn line is kept in a copy of the whole journal, then cut off, so the next record starts a line.
+            keep = "%s.torn-%s" % (self.path, rec["at"].replace(":", ""))
+            shutil.copyfile(self.path, keep)
+            os.chmod(keep, 0o600)
+            with open(self.path, "r+b") as f:
+                f.truncate(torn)
+                f.flush()
+                os.fsync(f.fileno())
+        lead = ""
+        try:
+            with open(self.path, "rb") as f:
+                f.seek(0, os.SEEK_END)
+                if f.tell():
+                    f.seek(-1, os.SEEK_END)
+                    lead = "" if f.read(1) == b"\n" else "\n"      # a whole record whose newline was cut off
+        except FileNotFoundError:
+            pass
         with open(self.path, "a") as f:
+            f.write(lead)
             f.write(json.dumps(rec, sort_keys=True) + "\n")
             f.flush()
             os.fsync(f.fileno())
@@ -939,6 +1010,14 @@ def injected_failure(node, n):
     fail = os.environ.get("NXLX_CONVERT_FAIL_AT") if node.stage else None
     if fail and int(fail) == n:
         raise RuntimeError("an injected failure before change %d (tests)" % n)
+
+
+def cut_off(node, n):
+    """Tests only (stage mode): NXLX_CONVERT_CUT_AT=n stops the process dead after change n is made and before its
+    end is written in the journal, as a power cut would."""
+    cut = os.environ.get("NXLX_CONVERT_CUT_AT") if node.stage else None
+    if cut and int(cut) == n:
+        os._exit(137)
 
 
 def conversion_state(records):
@@ -1040,6 +1119,7 @@ class Runner:
                                        ", ".join(sorted({u for _, u in left})), ", ".join(str(p) for p, _ in left[:5])))
         elif op == "start":
             start_real(node, self.journal)
+        cut_off(node, self.n + 1)
         self.journal.write(dict(rec, state="done"))
         self.n += 1
 
@@ -1061,7 +1141,8 @@ def units_to_start(records):
     undone = {(r.get("run"), r.get("n")) for r in records if r.get("state") == "undone"}
     active = set()
     for r in records:
-        if r.get("op") == "stop" and r.get("state") == "done" and (r.get("run"), r.get("n")) not in undone:
+        # a stop whose "done" was never written (a power cut) may have stopped them all the same
+        if r.get("op") == "stop" and r.get("state") in ("begin", "done") and (r.get("run"), r.get("n")) not in undone:
             active.update(r.get("active", []))
     return [u for u in STOP_ORDER if u in active]
 
@@ -1267,7 +1348,7 @@ def report(plan, out=None, force=False):
     if changes:
         w("\nBackup\n  %d entries, %d KB, to /%s/<run>/backup.tar (root only, 0600); the videos are not copied "
           "(their folder is only renamed)\n" % (len(plan.backup), (backup_size(node, plan) + 1023) // 1024, BACKUP))
-        w("  carried over byte for byte and checked after: %s\n" % (", ".join(sorted(plan.carried)) or "nothing found"))
+        w("  carried over byte for byte, checked before the services start again: %s\n" % (", ".join(sorted(plan.carried)) or "nothing found"))
     if plan.left:
         w("\nOld names left after the conversion (reported, not changed)\n")
         for path, left in sorted(plan.left.items()):
@@ -1320,6 +1401,7 @@ def detach(node):
 def cmd_run(node, force, release=None):
     if detach(node):
         return run_detached("run", force, release)
+    Journal(node).records()         # a journal this converter cannot read stops it here, before anything is armed
     plan = make_plan(node, force, mode="run", release=release)
     report(plan, None, force)
     blocked = plan.blockers(force)
@@ -1357,8 +1439,13 @@ def cmd_run(node, force, release=None):
                    "carried": plan.carried, "undo": armed})
     say("\nConverting (backup %s; undo %s)\n" % ("/" + os.path.relpath(tar, node.root or "/"), armed))
     runner = Runner(node, plan, journal, run_id, run_dir)
+    checked = False
     try:
         for a in plan.actions:
+            if a["op"] == "start" and not checked:
+                checked = True
+                if not check_carried(node, journal, run_id, plan.carried):
+                    return EXIT_FAILED
             runner.do(a)
             say("  done %3d  %s\n" % (runner.n, a["text"]))
     except Exception as e:      # noqa: BLE001 - every failure stops the run and is said, never swallowed
@@ -1368,17 +1455,13 @@ def cmd_run(node, force, release=None):
             % (runner.n + 1, e, runner.n, len(plan.actions),
                "" if node.stage else " The undo timer runs by itself in %s." % UNDO_AFTER))
         return EXIT_FAILED
+    if not checked and not check_carried(node, journal, run_id, plan.carried):
+        return EXIT_FAILED
     try:
         injected_failure(node, runner.n + 1)
     except RuntimeError as e:
         journal.write({"run": run_id, "state": "failed", "n": runner.n, "error": str(e)})
         say("\nFAILED after the last change: %s. Run --run again (it starts and checks), or --undo.\n" % e)
-        return EXIT_FAILED
-    first = first_carried(journal.records())
-    bad = [n for n, h in (first or plan.carried).items() if sha(node.p("var/lib/nxlx/" + n)) != h]
-    if bad:
-        journal.write({"run": run_id, "state": "failed", "error": "changed: " + ", ".join(bad)})
-        say("\nFAILED: %s changed during the conversion; run --undo\n" % ", ".join(bad))
         return EXIT_FAILED
     journal.write({"run": run_id, "state": "finished"})
     say("\nConverted: %d changes. Check the node, then: sudo nxlx-convert --confirm%s\n" % (
@@ -1386,19 +1469,49 @@ def cmd_run(node, force, release=None):
     return EXIT_OK
 
 
-def first_carried(records):
-    """The hashes of what is carried over, from the start of the latest conversion: the run that carries on after a
-    failure must compare with the node before the first run, not with itself."""
+def first_start(records):
+    """The index of the first start of the latest conversion (the starts after the last undo or confirm), or None."""
     starts = [i for i, r in enumerate(records) if r.get("state") == "start"]
     if not starts:
         return None
-    # back to the first start of this conversion: the starts after the last undo or confirm
     first = starts[-1]
     for i in reversed(starts):
         if any(r.get("state") in ("undo-finished", "confirmed") for r in records[i + 1:first + 1]):
             break
         first = i
-    return records[first].get("carried")
+    return first
+
+
+def first_carried(records):
+    """The hashes of what is carried over, from the start of the latest conversion: the run that carries on after a
+    failure must compare with the node before the first run, not with itself."""
+    first = first_start(records)
+    return None if first is None else records[first].get("carried")
+
+
+def carried_checked(records):
+    """Whether a run of the latest conversion has checked what is carried over and found it the same."""
+    first = first_start(records)
+    return first is not None and any(r.get("state") == "carried-same" for r in records[first:])
+
+
+def check_carried(node, journal, run_id, carried=None):
+    """Compare what is carried over (settings.json, node-id) with the node before the first run, and write the
+    result in the journal. Done once, after the last change and before step 9 starts the services: the panel writes
+    settings.json at every start (a new PIN), so after that a difference means nothing. A run that carries on after
+    the services were started finds the result in the journal and does not compare again."""
+    recs = journal.records()
+    if carried_checked(recs):
+        return True
+    first = first_carried(recs)
+    bad = [n for n, h in (first or carried or {}).items() if sha(node.p("var/lib/nxlx/" + n)) != h]
+    if bad:
+        journal.write({"run": run_id, "state": "failed", "error": "changed: " + ", ".join(bad)})
+        say("\nFAILED: %s changed during the conversion (before any service was started again); run --undo\n"
+            % ", ".join(bad))
+        return False
+    journal.write({"run": run_id, "state": "carried-same", "names": sorted(first or carried or {})})
+    return True
 
 
 def finish_pending(node, plan):
@@ -1419,6 +1532,10 @@ def finish_pending(node, plan):
         return EXIT_REFUSED
     journal.write({"run": run_id, "state": "start", "carry_on": True, "carried": first_carried(journal.records()),
                    "undo": armed})
+    # Checked before anything starts, once: an earlier run that got as far as starting the services has its result
+    # in the journal (the panel has rewritten settings.json since, so comparing again would always fail).
+    if not check_carried(node, journal, run_id, plan.carried):
+        return EXIT_FAILED
     try:
         injected_failure(node, 1)
         if not node.stage:
@@ -1426,12 +1543,6 @@ def finish_pending(node, plan):
     except Exception as e:      # noqa: BLE001
         journal.write({"run": run_id, "state": "failed", "n": 0, "error": str(e)})
         say("\nFAILED: %s. Put the cause right and run --run again, or run --undo.\n" % e)
-        return EXIT_FAILED
-    carried = first_carried(journal.records()) or {}
-    bad = [n for n, h in carried.items() if sha(node.p("var/lib/nxlx/" + n)) != h]
-    if bad:
-        journal.write({"run": run_id, "state": "failed", "error": "changed: " + ", ".join(bad)})
-        say("\nFAILED: %s changed during the conversion; run --undo\n" % ", ".join(bad))
         return EXIT_FAILED
     journal.write({"run": run_id, "state": "finished"})
     say("\nConverted: the run is finished. Check the node, then: sudo nxlx-convert --confirm%s\n" % (
@@ -1442,7 +1553,7 @@ def finish_pending(node, plan):
 def cmd_confirm(node):
     journal = Journal(node)
     if not any(r.get("state") == "start" for r in journal.records()):
-        say("Nothing to confirm: this node was never converted.\n")
+        say("Nothing to confirm: the journal has no conversion of this node.%s\n" % disarm_left_timer(node))
         return EXIT_OK
     lock = take_lock(node)
     if lock is None:
@@ -1493,10 +1604,43 @@ def undo_blocks(done):
     return out
 
 
+def timer_left(node):
+    return any(os.path.lexists(node.p(rel)) for rel in (UNDO_TIMER, UNDO_WANTS, UNDO_SERVICE))
+
+
+def disarm_left_timer(node, inside=False):
+    """A timer with no conversion in the journal (the journal was lost): nothing for it to undo, so it is taken
+    away, or it would keep install.sh waiting for a confirm that can never be given."""
+    if not timer_left(node):
+        return ""
+    lock = take_lock(node)
+    if lock is None:
+        return " The undo timer is still there: %s." % BUSY
+    disarm_undo(node, inside=inside)
+    os.close(lock)
+    return " The undo timer that was left is taken away."
+
+
+def pending_changes(recs):
+    """The records of the changes to put back, in the journal's order: every "done" that is not undone, and every
+    "begin" without its "done" (a power cut between the change and its record: the change may be made). Undoing
+    one of those is safe either way, as every undo looks at what is there first, or puts back the original."""
+    undone = {(r.get("run"), r.get("n")) for r in recs if r.get("state") == "undone"}
+    done = {(r.get("run"), r.get("n")) for r in recs if r.get("state") == "done"}
+    out = []
+    for r in recs:
+        key = (r.get("run"), r.get("n"))
+        if key in undone or "op" not in r:
+            continue
+        if r.get("state") == "done" or (r.get("state") == "begin" and key not in done):
+            out.append(r)
+    return out
+
+
 def cmd_undo(node, force, auto):
     journal = Journal(node)
     if not journal.records():
-        say("Nothing to undo.\n")
+        say("Nothing to undo.%s\n" % disarm_left_timer(node, inside=auto))
         return EXIT_OK
     lock = take_lock(node)
     if lock is None:
@@ -1511,12 +1655,15 @@ def cmd_undo(node, force, auto):
         if playing and not force:
             say("Refused, nothing was changed: a show is playing (%s). Give --force to undo anyway.\n" % playing)
             return EXIT_REFUSED
-    undone = {(r["run"], r["n"]) for r in recs if r.get("state") == "undone"}
-    done = [r for r in recs if r.get("state") == "done" and (r["run"], r["n"]) not in undone]
+    done = pending_changes(recs)
     if not done:
         disarm_undo(node, inside=auto)
         say("Nothing to undo.\n")
         return EXIT_OK
+    cut = [r for r in done if r.get("state") == "begin"]
+    for r in cut:
+        say("  change %d of run %s was begun and its end not written (cut off, or it failed): it is put back if it "
+            "was made\n" % (r["n"] + 1, r["run"]))
     # The same check as --run: an account that is logged in cannot get its old name back.
     users = node.users()
     back = {r["new"]: r["old"] for r in done if r["op"] == "user"}
@@ -1589,6 +1736,8 @@ def undo_one(node, r):
             for old, new in FOLDERS:            # a link inside a folder that was already moved back
                 if r["path"].startswith(new + "/"):
                     path = node.p(old + r["path"][len(new):])
+        if r.get("state") == "begin" and not os.path.lexists(path):
+            return                              # a change that was begun only: no link there to point back
         tmp = path + ".nxlx-convert.tmp"
         os.symlink(r["old"], tmp)
         os.replace(tmp, path)
@@ -1646,6 +1795,20 @@ def main(argv=None):
         return EXIT_REFUSED
     if a.release is not None and (a.undo or a.confirm):
         ap.error("--release goes with --plan or --run")
+    try:
+        return command(node, a)
+    except JournalBroken as e:
+        if a.state:                 # its output is the state alone (install.sh reads it)
+            try:
+                sys.stderr.write("nxlx-convert: refused: %s\n" % e)
+            except (OSError, ValueError):
+                pass
+        else:
+            say("Refused, nothing was changed: %s\n" % e)
+        return EXIT_REFUSED
+
+
+def command(node, a):
     if a.state:
         print(conversion_state(Journal(node).records()))
         return EXIT_OK

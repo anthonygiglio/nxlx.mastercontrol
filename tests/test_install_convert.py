@@ -159,6 +159,23 @@ class InstallConvertsAnOldNode(unittest.TestCase):
         self.assertIn("the conversion renames only the node's own accounts", r.stderr)
         self.assertEqual(snapshot(self.root), before)
 
+    def test_an_old_account_name_given_again_after_the_conversion_is_the_same_account(self):
+        """--user pvj-player on a later install, once the node has the new names: the converted account, under its
+        new name, never a second account made beside it."""
+        r = self.install()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.convert("--confirm").returncode, 0)
+        again = self.install("--user", "pvj-player")
+        self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
+        self.assertIn("--user pvj-player: since the conversion this account is called nxlx-player", again.stdout)
+        self.assertEqual(json.loads(self.read("etc/nxlx/install.json"))["user"], "nxlx-player")
+        player = self.read("etc/systemd/system/nxlx-player.service")
+        self.assertIn("User=nxlx-player", player)
+        self.assertNotIn("pvj-player", player)
+        other = self.install("--user", "pvj-somebody")
+        self.assertNotEqual(other.returncode, 0, other.stdout)
+        self.assertIn("an old-style name that is not one of the node's own accounts", other.stderr)
+
     def convert(self, *args):
         return subprocess.run(["python3", os.path.join(REPO, "bin", "nxlx-convert"), "--root", self.root, *args],
                               capture_output=True, text=True, timeout=120)

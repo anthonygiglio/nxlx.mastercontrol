@@ -142,7 +142,11 @@ UID_WEB="$(id -u pvj-web)"
 UID_DEV="$(id -u pvj-dev)"
 GID_SVC="$(getent group pvj | cut -d: -f3)"
 wait_for 20 test -f /var/lib/pvj/settings.json || fail "the old panel wrote no settings"
-SETTINGS_SHA="$(sha256sum < /var/lib/pvj/settings.json)"
+# The panel makes a new PIN at every start and writes its hash into the auth section of settings.json, so a panel
+# that starts again rewrites the file. The converter checks the file byte for byte before it starts anything (its
+# journal says so, below); after the start everything but the auth section must still be the same, key for key.
+settings_but_auth() { python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); d.pop("auth", None); print(json.dumps(d, sort_keys=True))' "$1"; }
+SETTINGS_REST="$(settings_but_auth /var/lib/pvj/settings.json)"
 
 step "this release over it, through install.sh: the node is converted"
 "$SRC/install/install.sh" --offline 2>&1 | tee "$OUT"
@@ -182,7 +186,12 @@ visudo -c -q -f /etc/sudoers.d/010_nxlx-dev || fail "the converted sudoers file 
 sudo -l -U nxlx-dev | grep -q NOPASSWD || fail "nxlx-dev lost sudo"
 is /etc/udev/rules.d/99-nxlx-usb.rules "root:root 644 regular file"
 is /etc/tmpfiles.d/nxlx.conf "root:root 644 regular file"
-[ "$(sha256sum < /var/lib/nxlx/settings.json)" = "$SETTINGS_SHA" ] || fail "the settings changed in the conversion"
+grep -q '"state": "carried-same"' /var/backups/nxlx-convert/journal.jsonl || fail "the converter did not find the settings and the node id the same before it started the services"
+settings_now="$(settings_but_auth /var/lib/nxlx/settings.json)"
+if [ "$settings_now" != "$SETTINGS_REST" ]; then
+	diff <(tr ',' '\n' <<<"$SETTINGS_REST") <(tr ',' '\n' <<<"$settings_now") >&2 || true
+	fail "the settings changed in the conversion (more than the PIN the panel makes at every start)"
+fi
 only_the_new_layout
 services_and_their_files nxlx-dev
 [ "$(status_code "$OLD_TOKEN")" = 200 ] || fail "the device paired before the conversion was signed out"

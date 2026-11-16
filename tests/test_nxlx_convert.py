@@ -247,7 +247,7 @@ class Plan(Base):
                      "move the home /home/pvj-dev to /home/nxlx-dev",
                      "rename /etc/sudoers.d/010_pvj-dev to 010_nxlx-dev", "rename the accounts in /etc/subuid",
                      "/opt/nxlx/releases/9.9.1.new: left from an install that was cut short",
-                     "carried over byte for byte and checked after: node-id, settings.json",
+                     "carried over byte for byte, checked before the services start again: node-id, settings.json",
                      "Nothing was changed. Run with --run to convert."):
             self.assertIn(said, out)
         self.assertNotIn("REFUSED", out)
@@ -620,6 +620,137 @@ class SecondReview(Base):
         self.assertFalse(os.path.exists(self.p("opt/pvj/releases/9.9.1/render/pvj-raster")))
         out = convert(self.root, "--plan").stdout
         self.assertIn("has the programs the converted units run", out)
+
+
+def changes(out):
+    """{number: text} of the changes a plan lists."""
+    return {int(n): t for n, t in re.findall(r"(?m)^    +(\d+)  (.*)$", out)}
+
+
+class ThirdReview(Base):
+    """The findings of the second review of rename PR 7 (2026-11-16)."""
+
+    def journal(self):
+        return self.p("var/backups/nxlx-convert/journal.jsonl")
+
+    def records(self):
+        with open(self.journal()) as f:
+            return [json.loads(line) for line in f if line.strip()]
+
+    def test_what_is_carried_over_is_checked_before_the_start_and_never_again(self):
+        """The panel writes settings.json at every start (a new PIN): the check is made before step 9, and its result
+        is in the journal, so a run that carries on after a failed start does not compare again."""
+        total = len(changes(convert(self.root, "--plan").stdout))
+        r = convert(self.root, "--run", env={"NXLX_CONVERT_FAIL_AT": str(total + 1)})       # where step 9 is
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertEqual([x["state"] for x in self.records() if x.get("state") == "carried-same"], ["carried-same"])
+        with open(self.p("var/lib/nxlx/settings.json"), "a") as f:           # the panel started and wrote a PIN
+            f.write(" ")
+        again = convert(self.root, "--run")
+        self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
+        self.assertIn("starting and checking again", again.stdout)
+        self.assertEqual(convert(self.root, "--confirm").returncode, 0)
+
+    def test_a_change_to_what_is_carried_over_before_the_start_still_fails_the_run(self):
+        total = len(changes(convert(self.root, "--plan").stdout))
+        self.assertEqual(convert(self.root, "--run", env={"NXLX_CONVERT_FAIL_AT": str(total // 2)}).returncode, 1)
+        with open(self.p("var/lib/nxlx/settings.json"), "a") as f:
+            f.write(" ")
+        r = convert(self.root, "--run")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("FAILED: settings.json changed during the conversion (before any service was started again)",
+                      r.stdout)
+        self.assertNotIn("carried-same", [x.get("state") for x in self.records()])
+        self.assertEqual(convert(self.root, "--state").stdout.strip(), "pending")
+
+    def test_a_torn_last_line_of_the_journal_is_passed_over_and_one_in_the_middle_refuses(self):
+        before = snapshot(self.root)
+        self.assertEqual(convert(self.root, "--run").returncode, 0)
+        with open(self.journal(), "a") as f:
+            f.write('{"run": "20261116T000000Z-1", "n": 3, "op": "wri')              # a power cut while writing
+        s = convert(self.root, "--state")
+        self.assertEqual((s.returncode, s.stdout), (0, "unconfirmed\n"), s.stderr)
+        self.assertIn("the last line of the journal (line", s.stderr)
+        u = convert(self.root, "--undo", "--auto")                  # the timed undo, which must still work
+        self.assertEqual(u.returncode, 0, u.stdout + u.stderr)
+        self.assertIn("Undone", u.stdout)
+        self.assertEqual(snapshot(self.root), before)
+        self.assertTrue(any(n.startswith("journal.jsonl.torn-") for n in os.listdir(self.p("var/backups/nxlx-convert"))),
+                        "the torn line is kept in a copy")
+        self.records()                                              # every line reads again
+        self.assertEqual(convert(self.root, "--state").stderr, "")
+        # A line that cannot be read in the middle: refused, and nothing is armed or changed.
+        with open(self.journal()) as f:
+            lines = f.readlines()
+        lines.insert(len(lines) // 2, "not a record\n")
+        with open(self.journal(), "w") as f:
+            f.writelines(lines)
+        half = snapshot(self.root, skip=())
+        for args in (("--state",), ("--run",), ("--undo", "--auto"), ("--confirm",)):
+            r = convert(self.root, *args)
+            self.assertEqual(r.returncode, 2, "%s: %s %s" % (args, r.stdout, r.stderr))
+            self.assertIn("cannot be read at line", r.stdout + r.stderr)
+            self.assertNotIn("Traceback", r.stderr)
+        self.assertEqual(snapshot(self.root, skip=()), half)
+
+    def test_a_change_cut_off_before_its_end_was_written_is_undone(self):
+        """A power cut between a change and its "done" record: the timed undo puts that change back too, and does
+        not say "Nothing to undo" (which took the timer away and left the node half converted)."""
+        listed = changes(convert(self.root, "--plan").stdout)
+        before = snapshot(self.root)
+        first_effect = min(n for n, t in listed.items() if not t.startswith("check that no process"))
+        folder = next(n for n, t in listed.items() if t == "move /opt/pvj to /opt/nxlx")
+        for at in sorted({first_effect, folder, folder + 1, len(listed) // 2, len(listed)}):
+            with self.subTest(cut_at=at, change=listed[at]):
+                shutil.rmtree(self.root)
+                shutil.copytree(self.template, self.root, symlinks=True)
+                r = convert(self.root, "--run", env={"NXLX_CONVERT_CUT_AT": str(at)})
+                self.assertEqual(r.returncode, 137, r.stdout + r.stderr)
+                self.assertEqual(self.records()[-1]["state"], "begin")
+                u = convert(self.root, "--undo", "--auto")
+                self.assertEqual(u.returncode, 0, u.stdout + u.stderr)
+                self.assertIn("change %d of run" % at, u.stdout)
+                self.assertIn("Undone: the node uses the old names again.", u.stdout)
+                self.assertEqual(snapshot(self.root), before, "undo after a cut at %d" % at)
+                self.assertFalse(os.path.exists(self.p("etc/systemd/system/nxlx-convert-undo.timer")))
+                self.assertIn("Nothing to undo.", convert(self.root, "--undo").stdout)
+
+    def test_a_timer_left_without_its_journal_is_taken_away(self):
+        for end in (("--confirm",), ("--undo", "--auto"), ("--undo",)):
+            with self.subTest(end=end):
+                shutil.rmtree(self.root)
+                shutil.copytree(self.template, self.root, symlinks=True)
+                self.assertEqual(convert(self.root, "--run").returncode, 0)
+                os.unlink(self.journal())                                  # the journal is lost
+                r = convert(self.root, *end)
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                self.assertIn("The undo timer that was left is taken away.", r.stdout)
+                for gone in ("nxlx-convert-undo.timer", "nxlx-convert-undo.service", "timers.target.wants"):
+                    self.assertFalse(os.path.lexists(self.p("etc/systemd/system", gone)), gone)
+
+    def test_a_previous_that_is_a_link_is_refused_by_the_plan_not_half_way(self):
+        os.unlink(self.p("opt/pvj/current"))
+        os.symlink("/opt/pvj/releases/9.9.1", self.p("opt/pvj/current"))
+        os.unlink(self.p("opt/pvj/previous"))
+        os.symlink("/etc/shadow", self.p("opt/pvj/previous"))
+        before = snapshot(self.root, skip=())
+        r = convert(self.root, "--run", "--release", "9.9.2")
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("/opt/pvj/previous is not a plain file", r.stdout)
+        self.assertEqual(snapshot(self.root, skip=()), before)
+
+    def test_a_release_that_is_already_current_still_has_previous_rewritten(self):
+        """--run --release X with X already current: "previous" keeps its release, under the new path."""
+        self.assertEqual(os.readlink(self.p("opt/pvj/current")), "/opt/pvj/releases/9.9.2")
+        before = snapshot(self.root)
+        plan = convert(self.root, "--plan", "--release", "9.9.2").stdout
+        self.assertIn("rewrite /opt/nxlx/previous (1 names)", plan)
+        r = convert(self.root, "--run", "--release", "9.9.2")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.read("opt/nxlx/previous"), "/opt/nxlx/releases/9.9.1\n")
+        self.assertEqual(os.readlink(self.p("opt/nxlx/current")), "/opt/nxlx/releases/9.9.2")
+        self.assertEqual(convert(self.root, "--undo").returncode, 0)
+        self.assertEqual(snapshot(self.root), before)
 
 
 class Refusals(Base):

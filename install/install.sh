@@ -465,8 +465,6 @@ if [ "$OLD_LAYOUT" = 1 ] || [ "$CONV_STATE" = pending ]; then
 		2) die "the conversion was refused and nothing on the node was changed by it (the reasons are above); version $VERSION waits in $old_top/releases. Put the cause right and run this installer again" ;;
 		*) die "the conversion stopped half-way (see above). Run this installer again to carry on, or go back with: sudo python3 /var/backups/nxlx-convert/nxlx-convert --undo (it also runs by itself 15 minutes after the start)" ;;
 		esac
-		# The accounts have their new names now.
-		case "$PVJ_USER" in pvj-*) PVJ_USER="nxlx-${PVJ_USER#pvj-}" ;; esac
 	fi
 elif [ "$CONV_STATE" = unconfirmed ] || [ -e "$ROOT/etc/systemd/system/nxlx-convert-undo.timer" ]; then
 	# Waiting for its confirm: by the journal, or by the undo timer that is still armed (whatever the journal says).
@@ -483,6 +481,18 @@ fi
 if [ -z "$PVJ_USER" ]; then
 	if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then PVJ_USER="$SUDO_USER"; else PVJ_USER=nxlx-player; fi
 fi
+# From here on the node has the new names (converted by this run, or before), so the accounts the converter renames
+# are known only by their new names: an old one given again (--user pvj-player, on every later install) is the same
+# account, never a second one made beside it. Any other old-style name is refused, as before a conversion.
+case "$PVJ_USER" in
+pvj-player | pvj-dev | pvj-web | pvj-sound | pvj-link | pvj-raster | pvj-ndi | pvj-ndisc)
+	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && id "$PVJ_USER" >/dev/null 2>&1 && ! id "nxlx-${PVJ_USER#pvj-}" >/dev/null 2>&1; then
+		die "--user $PVJ_USER: this node has that account but not nxlx-${PVJ_USER#pvj-}, and no old layout the conversion would rename it with; look at it by hand"
+	fi
+	log "--user $PVJ_USER: since the conversion this account is called nxlx-${PVJ_USER#pvj-}"
+	PVJ_USER="nxlx-${PVJ_USER#pvj-}" ;;
+pvj-*) die "--user $PVJ_USER: an old-style name that is not one of the node's own accounts; give the account's new name, or leave --user out" ;;
+esac
 
 if [ "$REAL" = 1 ]; then
 	getent group nxlx-svc >/dev/null || run groupadd --system nxlx-svc
