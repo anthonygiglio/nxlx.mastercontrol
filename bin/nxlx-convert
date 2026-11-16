@@ -678,7 +678,8 @@ def system_entries(node, m, plan, base, step, sudoers=False):
                         # A program behind ConditionPathExists is optional (the renderer, Link and the picture
                         # helper are built on the node when its tools allow); the others must be there.
                         optional = set(re.findall(r"(?m)^ConditionPathExists=(/opt/nxlx/current/\S+)", out))
-                        for path in re.findall(r"(?m)^Exec[A-Za-z]*=[-@+!:]*(/opt/nxlx/current/\S+)", out):
+                        # (the picture helper's unit runs it through /bin/sh -c '... exec PROGRAM ...' to find its fonts)
+                        for path in re.findall(r"(?m)^Exec[A-Za-z]*=(?:[-@+!:]*|/bin/sh -c '[^'\n]*\bexec )(/opt/nxlx/current/\S+)", out):
                             plan.needs[path] = plan.needs.get(path, True) and path in optional
                     if left:
                         plan.left["/" + rel] = left

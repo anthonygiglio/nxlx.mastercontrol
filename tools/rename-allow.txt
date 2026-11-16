@@ -10,7 +10,7 @@
 # Empty while no kind has landed. At the end of the rename only the credit and the upstream original are left.
 #
 # count	path
-4	.github/workflows/pvj.yml
+3	.github/workflows/pvj.yml
 1	NOTICE.md
 7	RELEASE_NOTES.md
 2	backend.php
@@ -59,12 +59,13 @@
 3	docs/html/searchindex.js
 1	index.html
 2	install/install.sh
+2	install/pvj-raster@.service
 3	mctl/OSC.md
 1	mctl/README.md
 4	mctl/osc.py
 4	mctl/oscfeedback.py
 3	mctl/server.py
-1	mctl/update.py
+2	mctl/update.py
 1	mctl/web/app.js
 337	project-log/DECISIONS.md
 305	project-log/JOURNAL.md
@@ -166,8 +167,9 @@
 4	project-log/journal/2026-11-14-rename-3.md
 8	project-log/journal/2026-11-14-rename-4.md
 1	project-log/journal/2026-11-15-auto-tz.md
+2	project-log/journal/2026-11-15-release-0-1-1.md
 24	project-log/journal/2026-11-15-rename-5.md
-6	project-log/journal/2026-11-15-rename-6.md
+9	project-log/journal/2026-11-15-rename-6.md
 2	project-log/journal/2026-11-15-slider-ends.md
 4	project-log/journal/2026-11-15-xfade-leak.md
 3	project-log/lessons/2026-11-11-stats-overlay-owned-by-connection.md
@@ -191,6 +193,7 @@
 1	sync/shutdownall
 13	tests/real_install_test.sh
 1	tests/security_test.sh
+1	tests/test_graphics.py
 5	tests/test_https.py
 3	tests/test_install.py
 2	tests/test_masks.py
@@ -206,6 +209,7 @@
 2	tests/test_osc_feedback.py
 1	tests/test_projector.py
 2	tests/test_recovery.py
+2	tests/test_release.py
 3	tests/test_render.py
 2	tests/test_screenmode.py
 2	tests/test_shader_engine.py
@@ -216,3 +220,4 @@
 1	tests/test_update.py
 6	themes/offline-language-english.css
 2	tools/boxcert.py
+6	tools/make-release.sh

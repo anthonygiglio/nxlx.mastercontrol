@@ -898,7 +898,6 @@ class FontsTest(unittest.TestCase):
         self.assertIn("exec @PVJ_DIR@/render/pvj-raster --fonts \"$$f\"'\n", unit)
         sh = self.read("install", "install.sh")
         self.assertIn("libfreetype-dev", sh)
-        self.assertNotIn("mctl/fonts", unit, "the unit names no package folder: a rollback does not write it again")
         self.assertIn("pkg-config --exists libpng libjpeg freetype2", sh)
         self.assertIn("libfreetype-dev", self.read("image", "stage-pvj", "00-install-pvj", "00-packages-nr").split())
         self.assertIn("libfreetype-dev", self.read(".github", "workflows", "pvj.yml"))

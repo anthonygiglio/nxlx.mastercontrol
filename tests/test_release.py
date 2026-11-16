@@ -89,7 +89,7 @@ class ReleaseTest(unittest.TestCase):
         self.addCleanup(shutil.rmtree, old, True)
         subprocess.run(["tar", "-x", "-C", old], input=tar, check=True)
         script = "import json, sys\nfrom pvj import update\nprint(json.dumps(update.inspect_bundle(sys.argv[1])))\n"
-        run = subprocess.run([sys.executable, "-I", "-c", script, work], cwd=old, capture_output=True, text=True,
+        run = subprocess.run([sys.executable, "-c", script, work], cwd=old, capture_output=True, text=True,
                              env=dict(os.environ, PYTHONPATH=old))
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertEqual(json.loads(run.stdout.strip().splitlines()[-1])["version"], version())
