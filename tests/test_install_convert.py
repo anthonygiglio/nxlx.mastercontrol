@@ -181,6 +181,27 @@ class InstallConvertsAnOldNode(unittest.TestCase):
         r = self.install()
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
+    def test_a_converter_that_cannot_answer_stops_the_installer_before_any_change(self):
+        """Only exit code 0 means "no leftovers": a crash, a kill or a missing answer is no yes."""
+        self.confirmed_node()
+        for name, body in (("silent exit 1", "exit 1"), ("traceback", "echo 'Traceback (most recent call last):' >&2; exit 1"),
+                           ("killed", "kill -9 $$"), ("garbage and exit 0 is the converter's own word", None)):
+            if body is None:
+                continue
+            d = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, d, True)
+            stub = os.path.join(d, "python3")
+            with open(stub, "w") as f:
+                f.write('#!/bin/bash\nfor a in "$@"; do if [ "$a" = --stale-names ]; then %s; fi; done\nexec %s "$@"\n'
+                        % (body, shutil.which("python3")))
+            os.chmod(stub, 0o755)
+            before = snapshot(self.root)
+            r = subprocess.run([os.path.join(REPO, "install", "install.sh"), "--stage", self.root], capture_output=True,
+                               text=True, timeout=120, env=dict(os.environ, PATH=d + ":" + os.environ["PATH"]))
+            self.assertNotEqual(r.returncode, 0, name)
+            self.assertIn("cannot ask the converter", r.stderr, name)
+            self.assertEqual(snapshot(self.root), before, name)
+
     def test_what_the_converter_leaves_alone_is_no_reason_to_refuse(self):
         """The installer asks the converter, so a name the converter's rows do not take (pvj-release-2026 in a key's
         comment, MYPVJ_FOO) is left as it is and the install goes on."""
