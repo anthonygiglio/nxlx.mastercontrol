@@ -451,13 +451,13 @@ class SecondReviewTest(Base):
         for n in range(110):
             self.assertEqual(self.remote("POST", "/api/theme/add", {"file": json.dumps(mine(id="t%d" % n))}, dev)[0], 200)
             self.assertEqual(self.remote("POST", "/api/theme/remove", {"id": "t%d" % n}, dev)[0], 200)
-        self.api.support.note(dev, sp.upload_line(True, {"name": "pvj-9.9.9.tar.gz", "sha256": "ab" * 32}), always=True)
+        self.api.support.note(dev, sp.upload_line(True, {"name": "nxlx-9.9.9.tar.gz", "sha256": "ab" * 32}), always=True)
         self.care.import_settings(json.dumps(self.export()).encode(), "import", dev, TUNNEL)
         self.assertEqual(self.remote("POST", "/api/devices/revoke", {"id": self.view_dev["id"]}, dev)[0], 200)
         entry = self.settings.data["support_log"][0]
         kept = [d["what"] for d in entry["always"]]
         self.assertEqual(len(kept), 3, kept)
-        self.assertIn("uploaded a software update: pvj-9.9.9.tar.gz", kept[0])
+        self.assertIn("uploaded a software update: nxlx-9.9.9.tar.gz", kept[0])
         self.assertIn("imported a settings file, sha256 ", kept[1])
         self.assertIn("removed the guest device " + self.view_dev["id"], kept[2])
         themes = [d for d in entry["major"] if "theme" in d["what"]]
@@ -577,9 +577,9 @@ class SecondReviewTest(Base):
         self.assertIn("changed: " + ", ".join(out["changed"]), line)
         data = b"not a real bundle" * 100
         parts = [data]
-        got = self.api.update_upload("pvj-9.9.9.tar.gz", len(data), lambda n: parts.pop() if parts else b"")
+        got = self.api.update_upload("nxlx-9.9.9.tar.gz", len(data), lambda n: parts.pop() if parts else b"")
         self.assertEqual(got["sha256"], hashlib.sha256(data).hexdigest())
-        self.assertEqual(sp.upload_line(True, got), "uploaded a software update: pvj-9.9.9.tar.gz, sha256 " + got["sha256"])
+        self.assertEqual(sp.upload_line(True, got), "uploaded a software update: nxlx-9.9.9.tar.gz, sha256 " + got["sha256"])
         self.assertEqual(sp.upload_line(False, {"name": "a.mp4", "size": 3}), "uploaded a clip: a.mp4")
 
     def test_a_backup_from_before_the_session_that_no_session_can_push_out(self):

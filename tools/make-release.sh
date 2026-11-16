@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-# Build a release bundle for nxlx-update: dist/pvj-<version>.tar.gz, its .sha256
-# and (with --key) an OpenSSH signature dist/pvj-<version>.tar.gz.sig.
+# Build a release bundle for nxlx-update: dist/nxlx-<version>.tar.gz, its .sha256
+# and (with --key) an OpenSSH signature dist/nxlx-<version>.tar.gz.sig.
 #
-#   tools/make-release.sh 4.0.1 [--key ~/.ssh/pvj-release] [--allow-dirty]
+#   tools/make-release.sh 4.0.1 [--key ~/.ssh/nxlx-release] [--allow-dirty]
 #
 # The version must match mctl/__init__.py. The archive is reproducible: the same
 # commit always gives the same bytes, so anyone can check a release.
@@ -38,7 +38,7 @@ if [ "$dirty_ok" = 0 ] && ! git diff --quiet HEAD -- "$pkg" bin install render; 
 fi
 
 mkdir -p dist
-out="dist/pvj-$version.tar.gz"
+out="dist/nxlx-$version.tar.gz"
 files="$(git ls-files "$pkg" bin install render | sort)"      # render/ is source only (D95): it is built on the box
 [ -n "$files" ] || { echo "no tracked files found (run inside the git checkout)" >&2; exit 1; }
 # No stubs for the updater of the releases before the rename (PR 6 had them, for one release): from the rename of the
@@ -46,7 +46,7 @@ files="$(git ls-files "$pkg" bin install render | sort)"      # render/ is sourc
 # installer would have to rename the node under a running update; the first install of this release on such a node is
 # install.sh over ssh, which converts the node (bin/nxlx-convert).
 # shellcheck disable=SC2086
-tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner --transform "s,^,pvj-$version/," \
+tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner --transform "s,^,nxlx-$version/," \
 	-cf - $files | gzip -n -9 > "$out"
 sum="$(sha256sum "$out" | cut -d' ' -f1)"
 printf '%s  %s\n' "$sum" "$(basename "$out")" > "$out.sha256"
@@ -55,7 +55,7 @@ echo "sha256 $sum"
 
 if [ -n "$key" ]; then
 	rm -f "$out.sig"
-	ssh-keygen -Y sign -f "$key" -n pvj-release "$out" >/dev/null
+	ssh-keygen -Y sign -f "$key" -n nxlx-release "$out" >/dev/null
 	echo "signed $out.sig"
 else
 	echo "not signed (pass --key to sign); nxlx-update refuses unsigned bundles" >&2

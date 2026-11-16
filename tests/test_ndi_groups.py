@@ -143,9 +143,9 @@ class ConfigFile(unittest.TestCase):
         rw = [l for l in unit.splitlines() if l.startswith("ReadWritePaths=")]
         self.assertEqual(rw, ["ReadWritePaths=/run/nxlx-ndi -/run/nxlx-ndi-pipe"], "the helper must not be able to write its own configuration")
         self.assertIn("d %s 0750 nxlx-web nxlx-ndi -\n" % paths.NDI_CONFIG_DIR, ndisetup.TMPFILES_TEXT)
-        self.assertIn("Environment=PVJ_NDI_CONFIG_DIR=%s\n" % paths.NDI_CONFIG_DIR, ndisetup.WEB_TEXT)
+        self.assertIn("Environment=NXLX_NDI_CONFIG_DIR=%s\n" % paths.NDI_CONFIG_DIR, ndisetup.WEB_TEXT)
         self.assertIn("ReadWritePaths=-%s\n" % paths.NDI_CONFIG_DIR, ndisetup.WEB_TEXT)
-        self.assertEqual(paths.ndi_config_dir({"PVJ_NDI_CONFIG_DIR": "/a"}), "/a")
+        self.assertEqual(paths.ndi_config_dir({"NXLX_NDI_CONFIG_DIR": "/a"}), "/a")
         self.assertIsNone(paths.ndi_config_dir({}))
 
 

@@ -713,12 +713,12 @@ static void fx_off(FxGL *f)
     memset(f, 0, sizeof *f);
 }
 
-#ifdef PVJ_RENDER_TEST_HOOKS
-// For the tests only, in a build made with `make TEST_HOOKS=1`: PVJ_RENDER_TEST_SLOW_BUILD=<ms> makes every build
+#ifdef NXLX_RENDER_TEST_HOOKS
+// For the tests only, in a build made with `make TEST_HOOKS=1`: NXLX_RENDER_TEST_SLOW_BUILD=<ms> makes every build
 // of a program take that much longer, as a slow GPU's compiler may (tests/test_native_shaders.py, SlowBuildTest).
 static void slow_build(void)
 {
-    const char *v = getenv("PVJ_RENDER_TEST_SLOW_BUILD");
+    const char *v = getenv("NXLX_RENDER_TEST_SLOW_BUILD");
     long ms = v ? strtol(v, NULL, 10) : 0;
     if (ms <= 0 || ms > 10000) return;
     struct timespec t = { ms / 1000, (ms % 1000) * 1000000L };
@@ -730,7 +730,7 @@ static void slow_build(void)
 // from its offset); on failure the program that ran before runs on, untouched.
 static int fx_build(FxGL *f, int s, int k, FxProg *p, char *err, size_t n)
 {
-#ifdef PVJ_RENDER_TEST_HOOKS
+#ifdef NXLX_RENDER_TEST_HOOKS
     slow_build();
 #endif
     char err2[sizeof ((FxSlot *)0)->answer] = "";

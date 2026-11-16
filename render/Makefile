@@ -3,7 +3,7 @@
 #
 # mctl-render: make            (the program, here)
 #             make WERROR=1   (every warning is an error: CI)
-#             make TEST_HOOKS=1 (the tests' hooks, PVJ_RENDER_TEST_*: CI; never the box's own build. make clean
+#             make TEST_HOOKS=1 (the tests' hooks, NXLX_RENDER_TEST_*: CI; never the box's own build. make clean
 #                              first when switching, as the objects do not know which build they were)
 #             make clean
 # Needs a C11 compiler, make, pkg-config and the headers of libmpv, EGL, GLES, GBM and libdrm
@@ -19,7 +19,7 @@ WARN += -Werror
 endif
 DEFS =
 ifeq ($(TEST_HOOKS),1)
-DEFS += -DPVJ_RENDER_TEST_HOOKS
+DEFS += -DNXLX_RENDER_TEST_HOOKS
 endif
 HARDEN = -fstack-protector-strong -D_FORTIFY_SOURCE=2 -fPIE
 LDHARDEN = -pie -Wl,-z,relro,-z,now

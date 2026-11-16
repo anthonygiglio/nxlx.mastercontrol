@@ -2543,7 +2543,7 @@ def main(argv=None):
         allowed.add(pwd.getpwnam("nxlx-web").pw_uid)
     except KeyError:
         allowed.add(os.getuid())                   # on a desk: whoever runs it
-    service = Service(rundir, os.environ.get("PVJ_NDI_LIB") or os.path.join(LIB_DIR, LIB_NAME), log=lambda m: print(m, flush=True),
+    service = Service(rundir, os.environ.get("NXLX_NDI_LIB") or os.path.join(LIB_DIR, LIB_NAME), log=lambda m: print(m, flush=True),
                       fifo=paths.ndi_fifo())      # root's pipe in root's folder (mctl/ndisetup.py); never unlinked by this helper
     service.on_unload = lambda: threading.Timer(0.5, os._exit, [0]).start()      # Restart=always brings up a clean one
     server = NetServer(os.path.join(rundir, paths.NDI_SOCKET), service, lambda uid: uid in allowed)

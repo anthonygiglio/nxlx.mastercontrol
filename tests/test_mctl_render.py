@@ -3,7 +3,7 @@
 """mctl-render (render/, D95) run for real, headless: EGL without a surface on Mesa's software GPU, no screen.
 
 The program is built first (`make -C render TEST_HOOKS=1`; a build without the hooks skips the one test that needs
-them, and fails it where PVJ_RENDER_TEST=1). Without it these tests are skipped, except where PVJ_RENDER_TEST=1
+them, and fails it where NXLX_RENDER_TEST=1). Without it these tests are skipped, except where NXLX_RENDER_TEST=1
 (the CI job mctl-render), where a missing program, a missing clip maker or a missing font is a failure: there a skip
 would judge nothing. Every question goes through mctl.player.Ipc, the panel's own client, so what is tested is what the
 panel will meet. The pictures are read back with mctl-render's own `mctl-capture` (the final picture as it would go to
@@ -28,8 +28,8 @@ from mctl import looplist, mapper
 from mctl.player import Ipc, Player, PlayerError
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-BIN = os.environ.get("PVJ_RENDER_BIN") or os.path.join(REPO, "render", "mctl-render")
-STRICT = os.environ.get("PVJ_RENDER_TEST") == "1"
+BIN = os.environ.get("NXLX_RENDER_BIN") or os.path.join(REPO, "render", "mctl-render")
+STRICT = os.environ.get("NXLX_RENDER_TEST") == "1"
 W, H = 320, 180
 
 RED, GREEN, BLUE, WHITE, BLACK, MAGENTA = (255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 255), (0, 0, 0), (255, 0, 255)
@@ -181,7 +181,7 @@ class Renderer:
 def need_program(case):
     if not (os.path.isfile(BIN) and os.access(BIN, os.X_OK)):
         if STRICT:
-            case.fail("PVJ_RENDER_TEST=1 and there is no %s: build it with make -C render" % BIN)
+            case.fail("NXLX_RENDER_TEST=1 and there is no %s: build it with make -C render" % BIN)
         case.skipTest("mctl-render is not built (make -C render)")
 
 
@@ -212,7 +212,7 @@ class Base(unittest.TestCase):
 
 class GraphicsChipTest(unittest.TestCase):
     """A screen is not drawn by a software rasteriser (render/src/out.c): exit 5 and a plain message. Headless, which the
-    tests and CI run on llvmpipe, stays allowed. The hook PVJ_RENDER_TEST_GL_RENDERER judges a name as a screen's
+    tests and CI run on llvmpipe, stays allowed. The hook NXLX_RENDER_TEST_GL_RENDERER judges a name as a screen's
     GL_RENDERER is judged."""
 
     def setUp(self):
@@ -220,7 +220,7 @@ class GraphicsChipTest(unittest.TestCase):
         hooks = "with test hooks" in subprocess.run([BIN, "--version"], capture_output=True, text=True, timeout=10).stdout
         if not hooks:
             if STRICT:
-                self.fail("PVJ_RENDER_TEST=1 and mctl-render was built without TEST_HOOKS=1")
+                self.fail("NXLX_RENDER_TEST=1 and mctl-render was built without TEST_HOOKS=1")
             self.skipTest("mctl-render was built without TEST_HOOKS=1")
         self.tmp = tempfile.mkdtemp(prefix="mctl-render-gpu-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
@@ -228,7 +228,7 @@ class GraphicsChipTest(unittest.TestCase):
     def run_named(self, name):
         return subprocess.run([BIN, "--socket=" + os.path.join(self.tmp, "x.sock"), "--headless=64x64"], stdin=subprocess.DEVNULL,
                               capture_output=True, text=True, timeout=30,
-                              env=dict(os.environ, LIBGL_ALWAYS_SOFTWARE="1", PVJ_RENDER_TEST_GL_RENDERER=name))
+                              env=dict(os.environ, LIBGL_ALWAYS_SOFTWARE="1", NXLX_RENDER_TEST_GL_RENDERER=name))
 
     def test_a_software_rasteriser_ends_the_start_with_its_own_code_and_a_plain_message(self):
         for name in ("llvmpipe (LLVM 15.0.6, 256 bits)", "softpipe", "Mesa swrast", "Software Rasterizer", "LLVMPIPE"):
@@ -239,7 +239,7 @@ class GraphicsChipTest(unittest.TestCase):
 
     def test_a_real_chip_starts(self):
         for name in ("V3D 4.2.14.0", "Mali-G610", "AMD Radeon RX 6600"):
-            r = Renderer(env={"PVJ_RENDER_TEST_GL_RENDERER": name})
+            r = Renderer(env={"NXLX_RENDER_TEST_GL_RENDERER": name})
             self.addCleanup(r.close)
             self.assertIn("graphics chip: " + name, r.stderr())
 
@@ -634,9 +634,9 @@ class TextLayerTest(Base):
         hooks = "with test hooks" in subprocess.run([BIN, "--version"], capture_output=True, text=True, timeout=10).stdout
         if not hooks:
             if STRICT:
-                self.fail("PVJ_RENDER_TEST=1 and mctl-render was built without its test hooks: make -C render TEST_HOOKS=1")
+                self.fail("NXLX_RENDER_TEST=1 and mctl-render was built without its test hooks: make -C render TEST_HOOKS=1")
             self.skipTest("mctl-render was built without its test hooks (make -C render clean; make -C render TEST_HOOKS=1)")
-        r = Renderer(env={"PVJ_RENDER_TEST_SLOW_START": "500"})
+        r = Renderer(env={"NXLX_RENDER_TEST_SLOW_START": "500"})
         self.addCleanup(r.close)
         r("set_property", "image-display-duration", "inf")
         r.load(self.picture)
@@ -671,12 +671,12 @@ class TextLayerTest(Base):
 
 
 def make_clip(case, path, seconds=3, source="testsrc2"):
-    """A 30 fps H.264 clip of W x H made with ffmpeg (a skip without it, a failure where PVJ_RENDER_TEST=1).
+    """A 30 fps H.264 clip of W x H made with ffmpeg (a skip without it, a failure where NXLX_RENDER_TEST=1).
     `source`: ffmpeg's test source, or "color=c=red" for one plain colour."""
     maker = shutil.which("ffmpeg")
     if not maker:
         if STRICT:
-            case.fail("PVJ_RENDER_TEST=1 and no ffmpeg to make the clip")
+            case.fail("NXLX_RENDER_TEST=1 and no ffmpeg to make the clip")
         case.skipTest("no ffmpeg to make a clip")
     sep = ":" if "=" in source else "="
     subprocess.run([maker, "-v", "error", "-y", "-f", "lavfi", "-i", "%s%ss=320x180:r=30:d=%d" % (source, sep, seconds), "-pix_fmt", "yuv420p",
@@ -909,11 +909,11 @@ class ClipTest(Base):
 
 
 def need_hooks(case):
-    """The renderer must be a TEST_HOOKS build (a skip without, a failure where PVJ_RENDER_TEST=1)."""
+    """The renderer must be a TEST_HOOKS build (a skip without, a failure where NXLX_RENDER_TEST=1)."""
     if "with test hooks" in subprocess.run([BIN, "--version"], capture_output=True, text=True, timeout=10).stdout:
         return
     if STRICT:
-        case.fail("PVJ_RENDER_TEST=1 and mctl-render was built without its test hooks: make -C render TEST_HOOKS=1")
+        case.fail("NXLX_RENDER_TEST=1 and mctl-render was built without its test hooks: make -C render TEST_HOOKS=1")
     case.skipTest("mctl-render was built without its test hooks (make -C render clean; make -C render TEST_HOOKS=1)")
 
 
@@ -922,7 +922,7 @@ def make_clip_with_black_end(case, path, bright=2, black=0.2):
     maker = shutil.which("ffmpeg")
     if not maker:
         if STRICT:
-            case.fail("PVJ_RENDER_TEST=1 and no ffmpeg to make the clip")
+            case.fail("NXLX_RENDER_TEST=1 and no ffmpeg to make the clip")
         case.skipTest("no ffmpeg to make a clip")
     subprocess.run([maker, "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x40a0e0:s=320x180:r=30:d=%s" % bright,
                     "-f", "lavfi", "-i", "color=c=black:s=320x180:r=30:d=%s" % black,
@@ -1359,7 +1359,7 @@ class HeapTest(FadeBase):
         maker = shutil.which("ffmpeg")
         if not maker:
             if STRICT:
-                self.fail("PVJ_RENDER_TEST=1 and no ffmpeg to make the clips")
+                self.fail("NXLX_RENDER_TEST=1 and no ffmpeg to make the clips")
             self.skipTest("no ffmpeg to make the clips")
         clips, lists = [], []
         for i, source in enumerate(("testsrc2", "testsrc", "smptehdbars", "rgbtestsrc")):
@@ -1432,10 +1432,10 @@ class FadeOnFadeTest(FadeBase):
         hooks = "with test hooks" in subprocess.run([BIN, "--version"], capture_output=True, text=True, timeout=10).stdout
         if not hooks:
             if STRICT:
-                self.fail("PVJ_RENDER_TEST=1 and mctl-render was built without its test hooks: make -C render TEST_HOOKS=1")
+                self.fail("NXLX_RENDER_TEST=1 and mctl-render was built without its test hooks: make -C render TEST_HOOKS=1")
             self.skipTest("mctl-render was built without its test hooks (make -C render clean; make -C render TEST_HOOKS=1)")
         self.r.close()
-        self.r = r = Renderer(env={"PVJ_RENDER_TEST_SLOW_STOP": "100"})
+        self.r = r = Renderer(env={"NXLX_RENDER_TEST_SLOW_STOP": "100"})
         r("set_property", "image-display-duration", "inf")
         r.load(self.red)
         self.assertTrue(r.wait(lambda: self.centre() == RED, 10), self.st())
@@ -1454,7 +1454,7 @@ def make_clip_with_sound(case, path, seconds=3):
     maker = shutil.which("ffmpeg")
     if not maker:
         if STRICT:
-            case.fail("PVJ_RENDER_TEST=1 and no ffmpeg to make the clip")
+            case.fail("NXLX_RENDER_TEST=1 and no ffmpeg to make the clip")
         case.skipTest("no ffmpeg to make a clip")
     subprocess.run([maker, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=30:d=%d" % seconds,
                     "-f", "lavfi", "-i", "sine=frequency=440:duration=%d" % seconds, "-pix_fmt", "yuv420p",
@@ -2219,7 +2219,7 @@ class SourceScalerTest(OwnersMappingBase):
     # The fault of D101's addendum, without --fast (how a PC or a Pi 5 draws): mpv up to 0.41 left the padding of its
     # 6-tap scaler table uninitialised, and on llvmpipe a small upscaled picture was drawn black or dim into a source in
     # about half of fresh processes (6 to 7 of 10 runs here). mctl-render now gives every core scalers of 8 taps or
-    # more (render/src/main.c, layer_open); with them 0 of 30. Until 2026-10-23 an opt-in reproducer (PVJ_SOURCE_RACE=1).
+    # more (render/src/main.c, layer_open); with them 0 of 30. Until 2026-10-23 an opt-in reproducer (NXLX_SOURCE_RACE=1).
     ARGS = ("--sources=4",)
 
     def test_the_owners_mapping_with_the_triangle_on_source_2_after_changes_of_the_mapping(self):
@@ -2263,9 +2263,9 @@ class FinalPassTest(unittest.TestCase):
             hooks = "with test hooks" in subprocess.run([BIN, "--version"], capture_output=True, text=True, timeout=10).stdout
             if not hooks:
                 if STRICT:
-                    self.fail("PVJ_RENDER_TEST=1 and mctl-render was built without TEST_HOOKS=1")
+                    self.fail("NXLX_RENDER_TEST=1 and mctl-render was built without TEST_HOOKS=1")
                 self.skipTest("mctl-render was built without TEST_HOOKS=1")
-        r = Renderer("--headless=%dx%d" % (self.FW, self.FH), "--detail=450", *args, env={"PVJ_RENDER_TEST_FINAL": "1"} if test_final else None)
+        r = Renderer("--headless=%dx%d" % (self.FW, self.FH), "--detail=450", *args, env={"NXLX_RENDER_TEST_FINAL": "1"} if test_final else None)
         self.addCleanup(r.close)
         r("set_property", "image-display-duration", "inf")
         self.picture = os.path.join(self.tmp, "q.png")

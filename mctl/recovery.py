@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""The recovery stick (D81): a USB stick with an empty file named `pvj-recover` (or `pvj-recover.txt`) at its top
+"""The recovery stick (D81): a USB stick with an empty file named `nxlx-recover` (or `nxlx-recover.txt`) at its top
 makes the box draw a FRESH owner PIN on its own screen for STICK_SECONDS, for an owner who lost every device and
 stands at the box. It proves presence at the box and needs no keyboard, no network and no paired device.
 
@@ -22,7 +22,7 @@ import time
 
 from . import locks
 
-NAMES = ("pvj-recover", "pvj-recover.txt")   # compared case-blind: a vfat or exfat stick may upper-case a short name
+NAMES = ("nxlx-recover", "nxlx-recover.txt")   # compared case-blind: a vfat or exfat stick may upper-case a short name
 STICK_SECONDS = 120
 STICK_PER_HOUR = 6
 STICK_NOTICE_SECONDS = 10   # "The PIN was used by <name>" stays on the display this long after the one use (review of #122, M1)

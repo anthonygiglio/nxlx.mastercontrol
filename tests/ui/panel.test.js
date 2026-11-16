@@ -41,7 +41,7 @@ function pjlink(port, password, body) {
 const shots = process.env.SHOTS || '';
 const pyBin = process.env.PYTHON || 'python3';
 
-function startServer(env) {          // env: more for the harness's environment (PVJ_HARNESS_NO_PLAYER: a box with no player)
+function startServer(env) {          // env: more for the harness's environment (NXLX_HARNESS_NO_PLAYER: a box with no player)
   return new Promise((resolve, reject) => {
     const p = spawn(pyBin, [path.join(__dirname, 'harness.py')], { cwd: path.join(__dirname, '..', '..'), stdio: ['ignore', 'pipe', 'inherit'], env: Object.assign({}, process.env, env || {}) });
     let buf = '';
@@ -3681,7 +3681,7 @@ function startServer(env) {          // env: more for the harness's environment 
     assert(await lost.isHidden('#recoverycode'), 'the code field is folded until asked for');
     assert(/Locked out\?/.test(await lost.textContent('.screen')), 'the pairing screen has the Locked out help');
     await lost.click('#lockedout summary');
-    assert(/pvj-recover/.test(await lost.textContent('#lockedout')) && /factory reset/.test(await lost.textContent('#lockedout')), 'the help names the stick and the reset');
+    assert(/nxlx-recover/.test(await lost.textContent('#lockedout')) && /factory reset/.test(await lost.textContent('#lockedout')), 'the help names the stick and the reset');
     await lost.click('#recoverylink');
     await lost.fill('#recoverycode', 'ABCD-EFGH-JKL0');
     await lost.click('#recoverybtn');
@@ -6047,7 +6047,7 @@ function startServer(env) {          // env: more for the harness's environment 
           assert.deepStrictEqual(await flag(url, { enabled: false }), [200, false], 'the first box lets go of ' + url + ' for the inventory');
           held.push(url);
         }
-        const bare = await startServer({ PVJ_HARNESS_NO_PLAYER: '1' });
+        const bare = await startServer({ NXLX_HARNESS_NO_PLAYER: '1' });
         const base2 = 'http://127.0.0.1:' + bare.info.port, mine = [];
         try {
           const fresh = async () => { const c = await browser.newContext({ viewport: { width: 1366, height: 900 } }); mine.push(c); const pg = await c.newPage(); pg.on('pageerror', (e) => problems.push('inventory pageerror: ' + e.message)); return pg; };

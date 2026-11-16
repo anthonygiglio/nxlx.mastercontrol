@@ -4,7 +4,7 @@
 it approves. Nothing here signs a device in (mctl/ticket.py does, over this channel); the lease and the poke (mctl/lease.py, slice 4b)
 use it too. What is here:
 
-* **The peer port (4a).** Calls between nodes go to a dedicated TLS listener (`PVJ_PEER_PORT`, 8443 on every node unless the
+* **The peer port (4a).** Calls between nodes go to a dedicated TLS listener (`NXLX_PEER_PORT`, 8443 on every node unless the
   discovery row says another), which asks the caller for a certificate (CERT_REQUIRED, the pinned root the only CA) and
   where the caller is proved by the handshake: its certificate chains to the root, has the clientAuth key usage, and the
   hash of its public key is the one the list or an acceptance gives for the id it names. The caller's own claim of a key
@@ -57,7 +57,7 @@ from . import fleetlist, httpsbox
 from .fleet import local_enough
 from .handover import WIRE_ENTRIES, HandoverError, fingerprint
 
-DEFAULT_PEER_PORT = 8443        # the peer listener of every node, unless the discovery row names another (PVJ_PEER_PORT on this node)
+DEFAULT_PEER_PORT = 8443        # the peer listener of every node, unless the discovery row names another (NXLX_PEER_PORT on this node)
 CONNECT_SECONDS, TOTAL_SECONDS = 3.0, 6.0
 NODE_FAILS, TARGET_FAILS, SOURCE_FAILS, FAIL_WINDOW = 10, 5, 5, 60.0
 HEAVY_ANSWERS, ADOPT_TRIES, PULLS_PER_SOURCE = 2, 2, 2      # per source and minute: answers with the list or denies, lists tried, pulls started

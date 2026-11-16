@@ -879,7 +879,7 @@ class HttpsBox:
         """A certificate the signing service sent (D139), through the same checks as an upload (install): with a root
         pinned, the chain must end at it. With none pinned yet, the root in the answer is pinned, as the first manual
         upload does, but only when the node was told which root to expect (`want_root`: https.root_fingerprint or
-        PVJ_ROOT_FINGERPRINT, set at install; the D139 review: never a first root from whoever answers over plain http),
+        NXLX_ROOT_FINGERPRINT, set at install; the D139 review: never a first root from whoever answers over plain http),
         that root is the one in the answer and the one the signer said it works for, and the chain checks out against it."""
         leaf, chain_pem, root_pem = self.check(chain_text, None)
         if self.root_info()[0] is None:

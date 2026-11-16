@@ -117,8 +117,8 @@ class PlayerTest(unittest.TestCase):
         from mctl import player
         d = tempfile.mkdtemp()
         os.chmod(d, 0o777)
-        os.environ["PVJ_RUNTIME_DIR"] = d
-        self.addCleanup(os.environ.pop, "PVJ_RUNTIME_DIR")
+        os.environ["NXLX_RUNTIME_DIR"] = d
+        self.addCleanup(os.environ.pop, "NXLX_RUNTIME_DIR")
         with self.assertRaises(PlayerError):
             player.runtime_dir()
 
@@ -132,7 +132,7 @@ class CliTest(unittest.TestCase):
     def run_cli(self, *args):
         import subprocess
         import sys
-        env = dict(os.environ, PVJ_RUNTIME_DIR=self.dir)
+        env = dict(os.environ, NXLX_RUNTIME_DIR=self.dir)
         return subprocess.run([sys.executable, os.path.join(os.path.dirname(__file__), "..", "bin", "nxlx-player"),
                                "--mpv-arg=--vo=null", "--mpv-arg=--ao=null", *args],
                               capture_output=True, text=True, env=env, timeout=30)
@@ -170,7 +170,7 @@ class ServiceTest(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp()
         os.chmod(self.dir, 0o770)
-        self.env = dict(os.environ, PVJ_RUNTIME_DIR=self.dir)
+        self.env = dict(os.environ, NXLX_RUNTIME_DIR=self.dir)
         self.cli = [__import__("sys").executable,
                     os.path.join(os.path.dirname(__file__), "..", "bin", "nxlx-player"),
                     "--mpv-arg=--vo=null", "--mpv-arg=--ao=null"]
@@ -204,8 +204,8 @@ class ServiceTest(unittest.TestCase):
 
     def test_group_accessible_dir_ok_world_accessible_rejected(self):
         from mctl import player
-        os.environ["PVJ_RUNTIME_DIR"] = self.dir
-        self.addCleanup(os.environ.pop, "PVJ_RUNTIME_DIR")
+        os.environ["NXLX_RUNTIME_DIR"] = self.dir
+        self.addCleanup(os.environ.pop, "NXLX_RUNTIME_DIR")
         self.assertEqual(player.runtime_dir(), self.dir)
         os.chmod(self.dir, 0o775)
         with self.assertRaises(PlayerError):

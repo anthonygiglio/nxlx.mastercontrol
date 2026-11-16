@@ -4,7 +4,7 @@
 routes, who may use them, OSC, the fonts' licences and the files that build the helper.
 
 Everything here runs without the real helper (a stand-in draws a plain block); the real program's text and logo jobs are
-in tests/test_raster.py (RealGraphicsTest, with PVJ_RASTER_TEST=1). Nothing here has run on a Pi. Every wait is bounded."""
+in tests/test_raster.py (RealGraphicsTest, with NXLX_RASTER_TEST=1). Nothing here has run on a Pi. Every wait is bounded."""
 import hashlib
 import json
 import os
@@ -870,32 +870,20 @@ class FontsTest(unittest.TestCase):
         api = self.read("mctl", "api.py") + self.read("mctl", "server.py")
         self.assertNotIn("fonts_dir", api, "nothing serves the folder")
 
-    def test_the_picture_helper_finds_the_fonts_in_either_layout_of_a_release(self):
-        """A rollback to the release before the rename only repoints "current": the unit written by the newer install
-        stays, and that release has pvj/fonts. The unit's command must find the fonts in both."""
-        import subprocess
-        import tempfile
+    def test_the_picture_helper_is_told_the_fonts_folder_of_the_release_and_no_other(self):
+        """The unit names mctl/fonts only (rename PR 8): a release with the old package folder is not one the updater
+        goes back to, and the converter's undo brings the old unit back with it. The folder is where the fonts are."""
         unit = self.read("install", "nxlx-raster@.service")
         line = [l for l in unit.splitlines() if l.startswith("ExecStart=")][0]
-        self.assertTrue(line.startswith("ExecStart=/bin/sh -c '") and line.endswith("'"), line)
-        script = line[len("ExecStart=/bin/sh -c '"):-1].replace("$$", "$")
-        for layout in ("mctl", "pvj"):
-            root = tempfile.mkdtemp()
-            self.addCleanup(shutil.rmtree, root, True)
-            os.makedirs(os.path.join(root, layout, "fonts"))
-            os.makedirs(os.path.join(root, "render"))
-            prog = os.path.join(root, "render", "nxlx-raster")
-            with open(prog, "w") as f:
-                f.write('#!/bin/sh\necho "$@"\n')
-            os.chmod(prog, 0o755)
-            done = subprocess.run(["/bin/sh", "-c", script.replace("@PVJ_DIR@", root)], capture_output=True, text=True, timeout=20)
-            self.assertEqual((done.returncode, done.stdout.strip()), (0, "--fonts " + os.path.join(root, layout, "fonts")), layout)
+        self.assertEqual(line, "ExecStart=@NXLX_DIR@/render/nxlx-raster --fonts @NXLX_DIR@/mctl/fonts")
+        self.assertNotIn("pvj", unit.lower())
+        self.assertTrue(os.path.isfile(os.path.join(HERE, "mctl", "fonts", "archivo.ttf")))
 
     def test_the_helper_is_built_with_freetype_and_told_where_the_fonts_are(self):
         self.assertIn("freetype2", self.read("render", "Makefile"))
         self.assertIn("gfx.inc.c", self.read("render", "Makefile"))
         unit = self.read("install", "nxlx-raster@.service")
-        self.assertIn("exec @PVJ_DIR@/render/nxlx-raster --fonts \"$$f\"'\n", unit)
+        self.assertIn("--fonts @NXLX_DIR@/mctl/fonts\n", unit)
         sh = self.read("install", "install.sh")
         self.assertIn("libfreetype-dev", sh)
         self.assertIn("pkg-config --exists libpng libjpeg freetype2", sh)
@@ -907,7 +895,7 @@ class FontsTest(unittest.TestCase):
     def test_the_paths_of_the_font_folder(self):
         from mctl import paths
         self.assertEqual(paths.fonts_dir({}), os.path.join(HERE, "mctl", "fonts"))
-        self.assertEqual(paths.fonts_dir({"PVJ_FONTS_DIR": "/x"}), "/x")
+        self.assertEqual(paths.fonts_dir({"NXLX_FONTS_DIR": "/x"}), "/x")
 
 
 class RealPlayerTest(ServerBase):
@@ -980,7 +968,7 @@ class ClientTest(unittest.TestCase):
             return type("R", (), {"stdout": b"ERR no\n"})()
         sp.run = run
         self.addCleanup(setattr, sp, "run", real)
-        c = raster.Client(exec_bin="/bin/true", env={"PVJ_FONTS_DIR": "/some/fonts"})
+        c = raster.Client(exec_bin="/bin/true", env={"NXLX_FONTS_DIR": "/some/fonts"})
         with self.assertRaises(raster.RasterError):
             c.graphic("kind text\nTEXT\nx")
         self.assertEqual(seen[0][0], ["/bin/true", "--self-limit", "--fonts", "/some/fonts"])

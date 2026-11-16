@@ -4,7 +4,7 @@
 GPU output in a window on a virtual display, Mesa's software GPU), judged on screenshots of the window.
 
 CI's three effects-gpu jobs run these: tests/test_effects_gpu.py, the module the workflow names, loads this one when
-it is run. Run alone:  PVJ_GPU_TEST=1 xvfb-run -a python3 -m tests.test_transitions_gpu
+it is run. Run alone:  NXLX_GPU_TEST=1 xvfb-run -a python3 -m tests.test_transitions_gpu
 
 What is held here: the still is the screen (with an effect, with a shader at the mapping's stage, over a generator),
 it stays whole until the new clip's first frame (a pipe that opens late), the picture then goes from the old to the
@@ -409,13 +409,13 @@ for _name in dir(FxCase):                     # the effects' own tests run from 
         setattr(CrossCase, _name, None)
 
 if ONLY != "desktop":
-    @unittest.skipUnless(GPU and shutil.which("mpv"), "set PVJ_GPU_TEST=1 and run under a display (xvfb-run) with mpv")
+    @unittest.skipUnless(GPU and shutil.which("mpv"), "set NXLX_GPU_TEST=1 and run under a display (xvfb-run) with mpv")
     class GlesCrossfadeTest(CrossCase, ServerBase):
         ES = "yes"
 
 
 if ONLY != "gles":
-    @unittest.skipUnless(GPU and shutil.which("mpv"), "set PVJ_GPU_TEST=1 and run under a display (xvfb-run) with mpv")
+    @unittest.skipUnless(GPU and shutil.which("mpv"), "set NXLX_GPU_TEST=1 and run under a display (xvfb-run) with mpv")
     class DesktopGlCrossfadeTest(CrossCase, ServerBase):
         ES = "no"
 
@@ -424,7 +424,7 @@ class ScaledCase(CrossCase):
     """D89 on a real mpv: whether the player draws an overlay at a size of its own (mpv 0.38 on), and, where it does,
     a still of the window read at half its size and a still of a clip smaller than the screen, each laid where it
     belongs. Where it does not (mpv 0.37, the effects-gpu jobs) the same tests hold the full-size way of D71. The job
-    ndi-mpv runs this class on the Pi's release of mpv (0.40), with PVJ_SCALE_WANT=yes: there it must scale.
+    ndi-mpv runs this class on the Pi's release of mpv (0.40), with NXLX_SCALE_WANT=yes: there it must scale.
     A software GPU and a 320 x 180 window, as for the rest of this file: no figure here is a Pi's."""
 
     def setUp(self):
@@ -462,7 +462,7 @@ class ScaledCase(CrossCase):
         expect = (int(m.group(1)), int(m.group(2))) >= (0, 38)
         print("scaled still, ES %s: %s draws an overlay at a size of its own: %s" % (self.ES, self.version, self.scales))
         self.assertEqual(self.scales, expect, "%s says %s" % (self.version, self.scales))
-        want = os.environ.get("PVJ_SCALE_WANT")
+        want = os.environ.get("NXLX_SCALE_WANT")
         if want:
             self.assertEqual(self.scales, want == "yes", "this job is for an mpv that %s" % ("scales" if want == "yes" else "does not"))
         self.assertEqual(self.real.ipc.request("get_property", "osd-dimensions")["w"], W)
@@ -584,13 +584,13 @@ for _name in dir(CrossCase):                  # the crossfade's own tests run fr
         setattr(ScaledCase, _name, None)
 
 if ONLY != "desktop":
-    @unittest.skipUnless(GPU and shutil.which("mpv"), "set PVJ_GPU_TEST=1 and run under a display (xvfb-run) with mpv")
+    @unittest.skipUnless(GPU and shutil.which("mpv"), "set NXLX_GPU_TEST=1 and run under a display (xvfb-run) with mpv")
     class GlesScaledTest(ScaledCase, ServerBase):
         ES = "yes"
 
 
 if ONLY != "gles":
-    @unittest.skipUnless(GPU and shutil.which("mpv"), "set PVJ_GPU_TEST=1 and run under a display (xvfb-run) with mpv")
+    @unittest.skipUnless(GPU and shutil.which("mpv"), "set NXLX_GPU_TEST=1 and run under a display (xvfb-run) with mpv")
     class DesktopGlScaledTest(ScaledCase, ServerBase):
         ES = "no"
 

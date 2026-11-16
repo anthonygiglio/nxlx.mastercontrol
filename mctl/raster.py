@@ -141,13 +141,13 @@ def inspect(data, filename):
 class Client:
     """Asks nxlx-raster to do a job. On a node that is its socket, which systemd starts a helper behind for each job.
 
-    `exec_bin` (or PVJ_RASTER_EXEC) runs the program directly with its own ceilings instead; that is for tests and
+    `exec_bin` (or NXLX_RASTER_EXEC) runs the program directly with its own ceilings instead; that is for tests and
     for a developer's desk. No unit of the node sets it."""
 
     def __init__(self, socket_path=None, exec_bin=None, env=None, fonts_dir=None):
         env = os.environ if env is None else env
         self.socket_path = socket_path or paths.raster_socket(env)
-        self.exec_bin = exec_bin or env.get("PVJ_RASTER_EXEC") or None
+        self.exec_bin = exec_bin or env.get("NXLX_RASTER_EXEC") or None
         self.fonts_dir = fonts_dir or paths.fonts_dir(env)       # only for the direct run: the unit passes its own
 
     def available(self):

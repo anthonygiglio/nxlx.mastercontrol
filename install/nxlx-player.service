@@ -10,9 +10,9 @@ After=local-fs.target systemd-udevd.service
 StartLimitIntervalSec=0
 
 [Service]
-# The installer replaces @PVJ_USER@ with the account that owns the screen and
-# sound card, and @PVJ_DIR@ with the install directory.
-User=@PVJ_USER@
+# The installer replaces @NXLX_USER@ with the account that owns the screen and
+# sound card, and @NXLX_DIR@ with the install directory.
+User=@NXLX_USER@
 Group=nxlx-svc
 SupplementaryGroups=video render audio input
 # Its own folder for the control socket and the preview picture: only this account can create, replace or remove
@@ -29,11 +29,11 @@ StateDirectory=nxlx-player/late-screen
 StateDirectoryMode=0750
 UMask=0007
 EnvironmentFile=-/etc/nxlx/nxlx.env
-Environment=PVJ_RUNTIME_DIR=/run/nxlx/player
+Environment=NXLX_RUNTIME_DIR=/run/nxlx/player
 # Two malloc arenas, not one per decoder thread (D114). Measured on a Pi 4 with four sources: 396 MB at 2 hours and flat,
 # against 793 MB and climbing, for the same CPU and flips. nxlx.env can set another value: an EnvironmentFile wins.
 Environment=MALLOC_ARENA_MAX=2
-ExecStart=@PVJ_DIR@/bin/nxlx-player serve
+ExecStart=@NXLX_DIR@/bin/nxlx-player serve
 # The most real-time priority a process of this unit may ask for: 1, the lowest. It grants nothing by itself and needs
 # no capability; only mctl-render's render thread asks (SCHED_RR 1, render/src/main.c), and mpv never does. The kernel
 # holds a real-time thread that never yields to 95% of its core (sched_rt_runtime_us), so the panel keeps its share.

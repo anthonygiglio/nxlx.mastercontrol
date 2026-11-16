@@ -248,7 +248,7 @@ class ScratchSweep(UpdaterBase):
         with mock.patch("tempfile.mkdtemp", mkdtemp), self.assertRaises(UpdateError):
             self.u.check(os.path.join(self.dir, "no-such-bundle.tar.gz"))
         with mock.patch("tempfile.mkdtemp", mkdtemp), self.assertRaises(UpdateError):
-            self.u.check(self.put("pvj-1.0.0.tar.gz", text="not a bundle"), allow_unsigned=True)
+            self.u.check(self.put("nxlx-1.0.0.tar.gz", text="not a bundle"), allow_unsigned=True)
         self.assertEqual(len(made), 1)
         self.assertEqual(os.path.dirname(made[0]), self.prefix)
         self.assertTrue(update.SCRATCH_NAME.fullmatch(os.path.basename(made[0])), made[0])
@@ -415,7 +415,7 @@ class ScratchPlace(UpdaterBase):
 
         self.assertFalse(os.path.exists(self.prefix))
         with mock.patch("tempfile.mkdtemp", mkdtemp), self.assertRaises(UpdateError):
-            self.u.check(self.put("pvj-1.0.0.tar.gz", text="not a bundle"), allow_unsigned=True)
+            self.u.check(self.put("nxlx-1.0.0.tar.gz", text="not a bundle"), allow_unsigned=True)
         self.assertEqual([d for _, d in made], [self.prefix])
         self.assertEqual(stat.S_IMODE(os.stat(self.prefix).st_mode) & 0o022, 0, "others may not write in the install")
         self.assertEqual(self.names(self.prefix), [], "the work folder of a refused bundle is gone again")
@@ -423,7 +423,7 @@ class ScratchPlace(UpdaterBase):
     def test_where_the_install_folder_cannot_be_made_the_update_is_refused(self):
         self.put("opt")                                          # a file where the folder would go
         calls = []
-        bundle = self.put("pvj-1.0.0.tar.gz", text="not a bundle")
+        bundle = self.put("nxlx-1.0.0.tar.gz", text="not a bundle")
         with mock.patch("tempfile.mkdtemp", lambda *a, **k: calls.append(k) or self.fail("made a folder")):
             with self.assertRaises(UpdateError) as e:
                 self.u.check(bundle, allow_unsigned=True)
@@ -439,7 +439,7 @@ class ScratchPlace(UpdaterBase):
             raise OSError(30, "Read-only file system")
 
         with mock.patch("tempfile.mkdtemp", mkdtemp), self.assertRaises(UpdateError) as e:
-            self.u.check(self.put("pvj-1.0.0.tar.gz", text="not a bundle"), allow_unsigned=True)
+            self.u.check(self.put("nxlx-1.0.0.tar.gz", text="not a bundle"), allow_unsigned=True)
         self.assertEqual(seen, [self.prefix])
         self.assertIn("Read-only file system", str(e.exception))
 
@@ -522,7 +522,7 @@ class Lock(Folder):
         second.close()
 
     def test_the_default_is_one_fixed_file_and_the_environment_may_name_another(self):
-        with mock.patch.dict(os.environ, {"PVJ_UPDATE_LOCK": os.path.join(self.dir, "mine.lock")}):
+        with mock.patch.dict(os.environ, {"NXLX_UPDATE_LOCK": os.path.join(self.dir, "mine.lock")}):
             f = update.take_lock()
             f.close()
         self.assertEqual(self.names(), ["mine.lock"])
@@ -620,7 +620,7 @@ class Lock(Folder):
 
     def test_the_default_lock_takes_the_old_name_without_being_asked(self):
         new, old = os.path.join(self.dir, "run", "update.lock"), os.path.join(self.dir, "old.lock")
-        env = {k: v for k, v in os.environ.items() if k != "PVJ_UPDATE_LOCK"}
+        env = {k: v for k, v in os.environ.items() if k != "NXLX_UPDATE_LOCK"}
         with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(update, "DEFAULT_LOCK", new), \
                 mock.patch.object(update, "OLD_LOCK", old):
             mine = update.take_lock()                            # as main() calls it on a box
@@ -643,7 +643,7 @@ class Lock(Folder):
         mine = os.path.join(self.dir, "mine.lock")
         with mock.patch("os.open", spy):
             update.take_lock(mine).close()
-            with mock.patch.dict(os.environ, {"PVJ_UPDATE_LOCK": mine}):
+            with mock.patch.dict(os.environ, {"NXLX_UPDATE_LOCK": mine}):
                 update.take_lock().close()
         self.assertEqual(set(opened), {mine})
         del opened[:]
@@ -652,7 +652,7 @@ class Lock(Folder):
             opened.append(path)
             raise PermissionError(13, "Permission denied")
 
-        env = {k: v for k, v in os.environ.items() if k != "PVJ_UPDATE_LOCK"}
+        env = {k: v for k, v in os.environ.items() if k != "NXLX_UPDATE_LOCK"}
         with mock.patch.dict(os.environ, env, clear=True), mock.patch("os.open", nowhere), \
                 mock.patch("os.stat", return_value=os.stat(self.dir)), self.assertRaises(UpdateError):
             update.take_lock()
@@ -665,8 +665,8 @@ class CommandLine(Folder):
     def setUp(self):
         super().setUp()
         self.lock = os.path.join(self.dir, "lock")
-        p = mock.patch.dict(os.environ, {"PVJ_UPDATE_LOCK": self.lock,
-                                         "PVJ_UPDATE_RESULT": os.path.join(self.dir, "result.json")})
+        p = mock.patch.dict(os.environ, {"NXLX_UPDATE_LOCK": self.lock,
+                                         "NXLX_UPDATE_RESULT": os.path.join(self.dir, "result.json")})
         p.start()
         self.addCleanup(p.stop)
         p = root_for_main()
@@ -712,12 +712,12 @@ class CommandLine(Folder):
     def test_a_check_takes_the_lock_too_because_it_makes_a_work_folder(self):
         # Review of #108, finding 1: `check` made its `.update-XXXXXXXX` without the lock, so an update started
         # meanwhile swept it, and "holding the lock proves that no such folder is in use" was not true.
-        code, out, err = self.main("check", "pvj-1.0.0.tar.gz")
+        code, out, err = self.main("check", "nxlx-1.0.0.tar.gz")
         self.assertEqual((code, self.calls), (0, ["sweep", "check"]), err)
         del self.calls[:]
         held = update.take_lock()
         self.addCleanup(held.close)
-        code, out, err = self.main("check", "pvj-1.0.0.tar.gz")
+        code, out, err = self.main("check", "nxlx-1.0.0.tar.gz")
         self.assertEqual((code, self.calls), (1, []))
         self.assertIn("another update or check is running", err)
 
@@ -772,7 +772,7 @@ class CommandLine(Folder):
             self.assertEqual((said["state"], said["message"]), ("failed", "another update or check is running"), before)
             self.assertIn("another update or check is running", err)
         os.unlink(result)
-        self.main("check", "pvj-1.0.0.tar.gz")                   # a refused check has no result file to write
+        self.main("check", "nxlx-1.0.0.tar.gz")                   # a refused check has no result file to write
         self.assertFalse(os.path.exists(result))
 
 class EndToEnd(UpdaterBase):
@@ -797,8 +797,8 @@ class EndToEnd(UpdaterBase):
         self.result = os.path.join(self.dir, "result.json")
         real = functools.partial(Updater, root=self.root, install=lambda *a: None, restart=lambda: None,
                                  health=lambda: True)
-        for p in (mock.patch.dict(os.environ, {"PVJ_UPDATE_LOCK": os.path.join(self.dir, "lock"),
-                                               "PVJ_UPDATE_RESULT": self.result}),
+        for p in (mock.patch.dict(os.environ, {"NXLX_UPDATE_LOCK": os.path.join(self.dir, "lock"),
+                                               "NXLX_UPDATE_RESULT": self.result}),
                   root_for_main(),                               # main() asks for root before anything else
                   mock.patch.object(update, "Updater", real)):
             p.start()

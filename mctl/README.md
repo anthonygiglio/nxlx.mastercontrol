@@ -1,4 +1,4 @@
-# pvj: platform layer (Phase 2, work in progress)
+# Mastercontrol: platform layer
 
 Python 3, standard library only. Replaces omxplayer, D-Bus, `tvservice` and `vcgencmd` with mpv and `/sys`.
 
@@ -50,7 +50,7 @@ Not ported yet: slave, stream and wifi presets, network sync between boxes (mast
 
 ## Running as a service
 
-`install/nxlx-player.service` runs `nxlx-player serve` under systemd as the account that owns the screen and sound card (`@PVJ_USER@`, `@PVJ_DIR@` are filled in by the installer, which is not written yet). It restarts the player if it dies, and puts the control socket in its own folder `/run/nxlx/player` (the player's account, group `pvj`, mode 0750: the group can reach the socket, only the player can replace it; the preview picture is written there too, and the panel only reads it). The web panel runs as its own user in that group and uses the socket. Every service has such a folder of its own under a `/run/nxlx` that belongs to root; all the paths are in `mctl/paths.py` (D45). A world-accessible runtime directory is refused.
+`install/nxlx-player.service` runs `nxlx-player serve` under systemd as the account that owns the screen and sound card (`@NXLX_USER@`, `@NXLX_DIR@` are filled in by the installer). It restarts the player if it dies, and puts the control socket in its own folder `/run/nxlx/player` (the player's account, group `nxlx-svc`, mode 0750: the group can reach the socket, only the player can replace it; the preview picture is written there too, and the panel only reads it). The web panel runs as its own user in that group and uses the socket. Every service has such a folder of its own under a `/run/nxlx` that belongs to root; all the paths are in `mctl/paths.py` (D45). A world-accessible runtime directory is refused.
 
 Not verified on a real device: the unit passes `systemd-analyze verify` here, but restart-on-crash, the group permissions and DRM access need a test on a Pi.
 
@@ -58,7 +58,7 @@ Not verified on a real device: the unit passes `systemd-analyze verify` here, bu
 
 `nxlx-usb` (run by `nxlx-usb@<partition>.service`, started from `install/99-nxlx-usb.rules`) mounts each USB partition under `/media/nxlx/<label>` and points `/media/usb` at the most recent one, which is what the old `startmasterusb` presets expect. Pulling the drive stops the unit, which unmounts it.
 
-- Read-only by default, with `nosuid,nodev,noexec`; set `PVJ_USB_RW=1` in `/etc/nxlx/nxlx.env` to allow writing. A drive pulled mid-write is the usual way to corrupt one at a gig.
+- Read-only by default, with `nosuid,nodev,noexec`; set `NXLX_USB_RW=1` in `/etc/nxlx/nxlx.env` to allow writing. A drive pulled mid-write is the usual way to corrupt one at a gig.
 - Filesystems: vfat, exfat, ext2/3/4, ntfs (kernel `ntfs3` driver). Anything else is refused.
 - Labels are cleaned to `a-z 0-9 . _ -`; two drives with the same label get `-2`, `-3`.
 - It never touches a disk that also holds the running system, so a mini PC booted from a USB SSD keeps its own disk safe. The old backend mounted `/dev/sda` blindly.
@@ -70,13 +70,13 @@ Tested with a fake `blkid`/`mount` (label cleaning, options, collisions, refusal
 
 `sudo nxlx-rootfs enable` makes the system disk effectively read-only: everything written after boot lives in RAM and is gone at the next reboot, so pulling the plug cannot corrupt the SD card or SSD. `nxlx-rootfs disable` turns it off, `nxlx-rootfs status` reports the state. It uses the tools the system already has: `raspi-config` on Raspberry Pi OS, the `overlayroot` package elsewhere (`sudo apt install overlayroot`). It never reboots for you.
 
-- **Media must not live on the system disk.** Files added while the overlay is active are lost at reboot, so `enable` refuses if `PVJ_MEDIA_DIR` is on the same filesystem as `/` (override with `--force`). Use a second disk or a USB drive.
+- **Media must not live on the system disk.** Files added while the overlay is active are lost at reboot, so `enable` refuses if `NXLX_MEDIA_DIR` is on the same filesystem as `/` (override with `--force`). Use a second disk or a USB drive.
 - **Settings are read-only too.** Changes to `/etc/nxlx` need `nxlx-rootfs disable`, a reboot, the edit, then `enable` and another reboot.
 - USB drives already mount read-only by default, so they are unaffected.
 
 Tested with fake tools and fake `/proc/mounts`. Not tested on a real device: the `raspi-config` and `overlayroot` commands (especially `overlayroot-chroot` when disabling from inside an active overlay) and the reboot behaviour. Do that on a spare card first.
 
-## Web panel and control API (Phase 4, in progress)
+## Web panel and control API
 
 `bin/nxlx-web` (service `install/nxlx-web.service`) replaces the ~1900 line PHP backend with a small Python 3 server (standard library only) and a plain HTML, CSS and JavaScript panel with no framework and no CDN, so it works offline. Screens built so far, from the approved wireframes: Connect (pairing), Live (banks, pads, now playing, fade out, freeze, blackout), Mix (opacity, size, position, speed, transition, rotate, loop, mute, reset), Media, and System (vitals, modules, autostart, weekly schedule, streams, network, OSC, DMX, MIDI, appearance, access). Pictures: [docs/UI.md](../docs/UI.md). User manual: [docs/MANUAL.md](../docs/MANUAL.md).
 
@@ -105,7 +105,7 @@ Tested with fake tools and fake `/proc/mounts`. Not tested on a real device: the
 
 **Modules** are JSON manifests in `mctl/modules.d`: core modules are locked on, optional ones switch on and off, board support and dependencies are enforced, and modules that are not built yet (AES67/Dante, presenter, wall, layout import, media library, PiWall) are listed as "Not built yet" and cannot be switched on. **Themes** are token files (`mctl/themes.d`, plus your own in `<state>/addons/themes`, which updates never touch); colours are validated as `#rrggbb` and text on an accent is chosen for contrast automatically. A theme may also name a **style**, one of a fixed set of looks that `app.css` has a block for (today the default one and `signal`); see [THEMES.md](THEMES.md).
 
-**Library file tools** (Media screen, full-access devices only): upload clips from the phone or laptop with a progress bar, rename, delete, and see free space. Uploads stream to a hidden temporary file and are renamed into place only when complete, so a lost connection never leaves a half file in the list; only video, image and audio extensions are accepted; a name that already exists is refused unless replacement is asked for; files larger than `PVJ_MAX_UPLOAD_MB` (default 8192) or that would leave less than 200 MB free are refused before any data is read; only one upload runs at a time; a sender slower than 20 KB/s after the first 30 seconds is cut off, and so is one whose device is removed mid-upload. A new file is published without ever overwriting (if the name appears during the upload, the upload is refused). Left-over temporary files from a power cut are swept at start-up and before each upload. Names are checked in bytes and for invisible or direction-changing characters. Renaming and deleting only touch real files inside the media folder (never links, never paths); pads follow a renamed clip, and deleting a clip tells you how many pads used it. Not built: folders, tags, thumbnails and clip preview from the desktop Library wireframe.
+**Library file tools** (Media screen, full-access devices only): upload clips from the phone or laptop with a progress bar, rename, delete, and see free space. Uploads stream to a hidden temporary file and are renamed into place only when complete, so a lost connection never leaves a half file in the list; only video, image and audio extensions are accepted; a name that already exists is refused unless replacement is asked for; files larger than `NXLX_MAX_UPLOAD_MB` (default 8192) or that would leave less than 200 MB free are refused before any data is read; only one upload runs at a time; a sender slower than 20 KB/s after the first 30 seconds is cut off, and so is one whose device is removed mid-upload. A new file is published without ever overwriting (if the name appears during the upload, the upload is refused). Left-over temporary files from a power cut are swept at start-up and before each upload. Names are checked in bytes and for invisible or direction-changing characters. Renaming and deleting only touch real files inside the media folder (never links, never paths); pads follow a renamed clip, and deleting a clip tells you how many pads used it. Not built: folders, tags, thumbnails and clip preview from the desktop Library wireframe.
 
 **OSC** is built, off by default, receive-only and limited to private networks; see [OSC.md](OSC.md) for the addresses and the safety rules.
 
@@ -117,9 +117,13 @@ Tested with fake tools and fake `/proc/mounts`. Not tested on a real device: the
 
 **Also built (all beta or off by default):** [autostart](AUTOSTART.md), [weekly schedule](SCHEDULE.md), [streams](STREAMS.md), [sound reactivity](SOUND.md) (levels only, from a capture device; never run on a Pi), [NDI input](NDI.md) (one short first run on a Pi 4 on 2026-10-08, by SSH; nobody has watched it on a screen yet; needs NDI's runtime from the owner), [projectors](PROJECTORS.md) (PJLink, and Epson control for freeze, brightness, Eco and the colour mode), [projection mapping](MAPPER.md), [shaders and Vibes](SHADERS.md), [remote support](../docs/REMOTE-SUPPORT.md), [DMX](DMX.md) and [MIDI](MIDI.md), each with its own safety notes and a list of what was not verified.
 
-**Not built yet:** on classic mpv, a crossfade in which both pictures move (there the crossfade blends from a still of the screen, as do the wipes and the slides; see `mctl/transitions.py` and D71; the New renderer draws all of them itself with both clips playing, D98 and D111), a push, a luma dissolve and ISF transitions, the desktop screens (Presenter, Wall), AES67/Dante (ST 2110 only through a gateway, see D30), Wi-Fi and hotspot, updates from the network, a panel update button, and shutdown and reboot buttons. The old PHP panel still exists for the legacy Pi 3 line.
+**Not built yet:** on classic mpv, a crossfade in which both pictures move (there the crossfade blends from a still of the screen, as do the wipes and the slides; see `mctl/transitions.py` and D71; the New renderer draws all of them itself with both clips playing, D98 and D111), a push, a luma dissolve and ISF transitions, the desktop screens (Presenter, Wall), AES67/Dante (ST 2110 only through a gateway, see D30), Wi-Fi and hotspot, updates from the network, and shutdown and reboot buttons. The old PHP panel still exists for the legacy Pi 3 line.
 
 **Tested:** unit tests for settings, auth, modules and themes; HTTP tests for authentication, CSRF, roles, path confinement and validation; an end-to-end test through HTTP into a real headless mpv; and a real-browser test (Playwright) that pairs, assigns and plays a pad, drags a slider, switches theme, opens a guest link and fails on any CSP violation. Not tested on a real Pi, on real touch hardware, or with a real display.
+
+## Settings by environment variable
+
+The services read their settings from environment variables named `NXLX_*` (`NXLX_USB_RW`, `NXLX_MEDIA_DIR`, `NXLX_PORT` and so on), set by their units and by `/etc/nxlx/nxlx.env`, which the installer creates once and then leaves to you. The code reads only these names. A node that still has the old `PVJ_*` names (installed before the rename) gets them rewritten, in the env file and in the unit files, by `nxlx-convert`, which keeps the original of every file it rewrites; `sudo nxlx-convert --undo` puts the old names back.
 
 ## Updates and rollback
 
@@ -127,16 +131,18 @@ Releases are signed bundles, installed by `sudo nxlx-update`. Nothing is fetched
 
 **One-time setup (your signing key).**
 
-1. On your own computer: `ssh-keygen -t ed25519 -f ~/.ssh/pvj-release -C nxlx-release`. Keep the private key safe and offline.
+1. On your own computer: `ssh-keygen -t ed25519 -f ~/.ssh/nxlx-release -C nxlx-release`. Keep the private key safe and offline.
 2. On each box add one line to `/etc/nxlx/allowed_signers` (the installer creates the file empty; until a key is listed every update is refused):
-   `pvj-release namespaces="pvj-release" ssh-ed25519 AAAA...your public key...`
+   `nxlx-release namespaces="nxlx-release" ssh-ed25519 AAAA...your public key...`
 
-**Making a release.** Set the version in `mctl/__init__.py`, commit, then `tools/make-release.sh 4.0.1 --key ~/.ssh/pvj-release`. It writes `dist/pvj-4.0.1.tar.gz`, `.sha256` and `.sig`. The archive is reproducible (same commit, same bytes) and contains only `mctl/`, `bin/` and `install/`, never the legacy code.
+**Names.** A release bundle is `nxlx-N.N.N.tar.gz` with `nxlx-N.N.N.tar.gz.sig` and (optional) `.sha256` beside it, signed with the principal and namespace `nxlx-release`. The updater takes only these names: a file called `pvj-N.N.N.tar.gz`, or a signature made under the namespace `pvj-release`, is not offered and does not verify. On a node converted by `nxlx-convert` the line in `/etc/nxlx/allowed_signers` is rewritten from `pvj-release` to `nxlx-release` (the key stays as it was; `--undo` puts it back). To use a bundle built before the rename, build it again from its commit with the current `tools/make-release.sh`, or rename it and sign it again with your key: `mv pvj-N.N.N.tar.gz nxlx-N.N.N.tar.gz; ssh-keygen -Y sign -f ~/.ssh/nxlx-release -n nxlx-release nxlx-N.N.N.tar.gz`, then write the checksum again (`sha256sum nxlx-N.N.N.tar.gz > nxlx-N.N.N.tar.gz.sha256`). A node that runs a release of the system rename without these names (the state between rename steps 7 and 8, which no node is meant to be in) cannot take this release, and there is no supported way on from there: `install/install.sh` asks the converter (`nxlx-convert --stale-names`), refuses before it changes anything and names the first file; its own updater looks for the old bundle name. `nxlx-convert --run` by hand rewrites the names but leaves the earlier release's code in place until `--confirm`, and an undo of it puts back variable names this release does not read. A bundle of a release with the old program names is refused whatever it is called; the way back to one is `sudo nxlx-convert --undo`. The recovery stick file is `nxlx-recover` (or `nxlx-recover.txt`).
 
-**Installing.** Put the three files in a `pvj-update/` folder on a USB stick, plug it in and run `sudo nxlx-update usb`; or `sudo nxlx-update apply pvj-4.0.1.tar.gz`. `nxlx-update check FILE` verifies without installing (it unpacks the bundle in the install, so it takes the update lock and is refused while an update runs); `nxlx-update status` shows the current and previous release.
+**Making a release.** Set the version in `mctl/__init__.py`, commit, then `tools/make-release.sh 4.0.1 --key ~/.ssh/nxlx-release`. It writes `dist/nxlx-4.0.1.tar.gz`, `.sha256` and `.sig`. The archive is reproducible (same commit, same bytes) and contains only `mctl/`, `bin/` and `install/`, never the legacy code.
+
+**Installing.** Put the three files in a `nxlx-update/` folder on a USB stick, plug it in and run `sudo nxlx-update usb`; or `sudo nxlx-update apply nxlx-4.0.1.tar.gz`. `nxlx-update check FILE` verifies without installing (it unpacks the bundle in the install, so it takes the update lock and is refused while an update runs); `nxlx-update status` shows the current and previous release. The panel's Updates card (System > Updates) lists what is in the `nxlx-update/` folder of a stick and what was uploaded, and installs it the same way.
 
 **What it checks before touching anything:** SHA-256, the OpenSSH Ed25519 signature against your key, safe unpacking (no absolute or `..` paths, no links or device files, no setuid bits, size limits), enough disk space, a newer version, and that the settings format is not being downgraded (`--force` overrides the last two). It then backs up `settings.json`, installs into a new folder under `/opt/nxlx/releases`, switches `/opt/nxlx/current` atomically, restarts the services and waits for the panel to answer. **If it does not answer, the previous release and your settings are put back automatically.**
 
 **Rolling back by hand:** `sudo nxlx-update rollback` (the panel's Updates card then says "rolled back to N.N.N"). Settings migrations only go forward, so rollback restores the backup taken before the update; anything changed since is set aside as `settings.json.rolled-back-<time>`, not deleted. The last five backups are kept.
 
-**Not built yet:** a button in the panel (the panel runs unprivileged and cannot install), fetching updates over the network, and the Stable/Beta/Nightly channels, which need a hosted release feed. Tested here with the real installer in stage mode and real OpenSSH signatures; not tested with a real `systemctl` restart, on a Pi, or with a real USB stick.
+**Not built yet:** fetching updates over the network, and the Stable/Beta/Nightly channels, which need a hosted release feed. Tested here with the real installer in stage mode and real OpenSSH signatures; not tested with a real `systemctl` restart, on a Pi, or with a real USB stick.

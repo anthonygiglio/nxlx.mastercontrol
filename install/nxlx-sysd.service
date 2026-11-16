@@ -13,8 +13,8 @@ UMask=0027
 # Its own folder, root:nxlx-svc 0750: members of group nxlx-svc can reach the socket but cannot replace it.
 RuntimeDirectory=nxlx-sysd
 RuntimeDirectoryMode=0750
-Environment=PVJ_SYSD_DIR=/run/nxlx-sysd
-ExecStart=@PVJ_DIR@/bin/nxlx-sysd
+Environment=NXLX_SYSD_DIR=/run/nxlx-sysd
+ExecStart=@NXLX_DIR@/bin/nxlx-sysd
 Restart=always
 RestartSec=2
 

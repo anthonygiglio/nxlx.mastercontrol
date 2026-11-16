@@ -7,8 +7,8 @@ system's temp folder; on 2026-10-08 that filled the development Mac's disk. A te
 `tempfile.mkdtemp()` and friends, and every program a test starts (it inherits TMPDIR), now land in one folder,
 `<temp>/mctl-t-XXXXXX`, and that folder goes when the process ends.
 
-    PVJ_KEEP_TMP=1   keep the folder (to look at what a failing test left); its path is printed at the end
-    PVJ_TEST_TMP     set by this module: the folder of the running suite; a Python that a test starts uses the
+    NXLX_KEEP_TMP=1   keep the folder (to look at what a failing test left); its path is printed at the end
+    NXLX_TEST_TMP     set by this module: the folder of the running suite; a Python that a test starts uses the
                      same one, as long as the process that made it is alive, and leaves the removing to it
 
 What ends a run and what happens to the folder:
@@ -45,8 +45,8 @@ import time
 PREFIX = "mctl-t-"
 MARKER = ".mctl-test-tmp"
 MADE_BY = "nxlx.mastercontrol tests/tmpguard.py"
-ENV = "PVJ_TEST_TMP"
-KEEP = "PVJ_KEEP_TMP"
+ENV = "NXLX_TEST_TMP"
+KEEP = "NXLX_KEEP_TMP"
 DEAD_AFTER = 2 * 3600           # its process is gone: longer than any run (CI stops one after 20 minutes)
 KEPT_AFTER = 48 * 3600          # its process is gone and it was kept on purpose
 LIVE_AFTER = 14 * 24 * 3600     # a process has its number: a paused run for two weeks, or the number was given out again

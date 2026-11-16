@@ -10,5 +10,5 @@ After=dev-%i.device
 Type=oneshot
 RemainAfterExit=yes
 EnvironmentFile=-/etc/nxlx/nxlx.env
-ExecStart=@PVJ_DIR@/bin/nxlx-usb mount /dev/%I
-ExecStop=@PVJ_DIR@/bin/nxlx-usb unmount /dev/%I
+ExecStart=@NXLX_DIR@/bin/nxlx-usb mount /dev/%I
+ExecStop=@NXLX_DIR@/bin/nxlx-usb unmount /dev/%I

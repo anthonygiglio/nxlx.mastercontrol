@@ -547,7 +547,7 @@ class StillTest(NativeBase):
         ffmpeg = shutil.which("ffmpeg")
         if not ffmpeg:
             if STRICT:
-                self.fail("PVJ_RENDER_TEST=1 and no ffmpeg to read the JPEG back")
+                self.fail("NXLX_RENDER_TEST=1 and no ffmpeg to read the JPEG back")
             self.skipTest("no ffmpeg to read the JPEG back")
         raw = subprocess.run([ffmpeg, "-v", "error", "-i", jpg, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True, check=True).stdout
         self.assertEqual(len(raw), W * H * 3)
@@ -745,14 +745,14 @@ class SlowBuildTest(NativeBase):
         need_program(self)
         if "with test hooks" not in subprocess.run([BIN, "--version"], capture_output=True, text=True).stdout:
             if STRICT:
-                self.fail("PVJ_RENDER_TEST=1 and mctl-render was built without its test hooks: make -C render TEST_HOOKS=1")
+                self.fail("NXLX_RENDER_TEST=1 and mctl-render was built without its test hooks: make -C render TEST_HOOKS=1")
             self.skipTest("mctl-render was built without its test hooks")
         self.tmp = tempfile.mkdtemp(prefix="mctl-native-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.n = 0
 
     def player_for(self, ms):
-        self.r = Renderer(env={"PVJ_RENDER_TEST_SLOW_BUILD": str(ms)})
+        self.r = Renderer(env={"NXLX_RENDER_TEST_SLOW_BUILD": str(ms)})
         self.addCleanup(lambda: self.r.close())
         self.r("set_property", "image-display-duration", "inf")
         d = tempfile.mkdtemp(prefix="mctl-native-run-")
@@ -964,11 +964,11 @@ class ChainSlowBuildTest(unittest.TestCase):
         need_program(self)
         if "with test hooks" not in subprocess.run([BIN, "--version"], capture_output=True, text=True).stdout:
             if STRICT:
-                self.fail("PVJ_RENDER_TEST=1 and mctl-render was built without its test hooks: make -C render TEST_HOOKS=1")
+                self.fail("NXLX_RENDER_TEST=1 and mctl-render was built without its test hooks: make -C render TEST_HOOKS=1")
             self.skipTest("mctl-render was built without its test hooks")
         self.tmp = tempfile.mkdtemp(prefix="mctl-native-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.r = Renderer("--sources=4", env={"PVJ_RENDER_TEST_SLOW_BUILD": "4000"})
+        self.r = Renderer("--sources=4", env={"NXLX_RENDER_TEST_SLOW_BUILD": "4000"})
         self.addCleanup(lambda: self.r.close())
         d = tempfile.mkdtemp(prefix="mctl-native-run-")
         self.addCleanup(shutil.rmtree, d, True)
@@ -1696,13 +1696,13 @@ class LayerGeneratorTest(NativeBase):
         self.settled()
 
     BAD = "//!MCTL 1\n//!KIND generator\n//!SIZE 320 180\n//!CODE\nvoid mctl_main() { not glsl }\n"
-    TRIES = int(os.environ.get("PVJ_LOST_CLEAR_TRIES", "6"))
+    TRIES = int(os.environ.get("NXLX_LOST_CLEAR_TRIES", "6"))
 
     def test_a_cut_then_a_refused_load_at_once_still_takes_the_outgoing_generator_off(self):
         """The review of #239 (High): a crossfade that cuts a fade between two generators asks the outgoing layer's
         generator off (end_fade), and a load that lands before the render thread's next turn used to overwrite that
         clear; if the load was then refused, the old generator stayed as the new front picture and was never freed.
-        Timing dependent, so it is tried TRIES times (PVJ_LOST_CLEAR_TRIES)."""
+        Timing dependent, so it is tried TRIES times (NXLX_LOST_CLEAR_TRIES)."""
         green = os.path.join(self.tmp, "green.png")
         png(green, W, H, lambda x, y: GREEN)
         self.carrier()
@@ -1751,11 +1751,11 @@ class LayerLoadAnswerTest(NativeBase):
         need_program(self)
         if "with test hooks" not in subprocess.run([BIN, "--version"], capture_output=True, text=True).stdout:
             if STRICT:
-                self.fail("PVJ_RENDER_TEST=1 and mctl-render was built without its test hooks: make -C render TEST_HOOKS=1")
+                self.fail("NXLX_RENDER_TEST=1 and mctl-render was built without its test hooks: make -C render TEST_HOOKS=1")
             self.skipTest("mctl-render was built without its test hooks")
         self.tmp = tempfile.mkdtemp(prefix="mctl-native-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.r = Renderer(env={"PVJ_RENDER_TEST_SLOW_BUILD": "3500"})
+        self.r = Renderer(env={"NXLX_RENDER_TEST_SLOW_BUILD": "3500"})
         self.addCleanup(lambda: self.r.close())
         self.r("set_property", "image-display-duration", "inf")
         self.n = 0
@@ -1797,7 +1797,7 @@ class ManyLayerFadesTest(NativeBase):
     """A show fades between shaders all night: fades with a generator on each side, some cut short by the next, leave no
     program, texture, descriptor or thread behind. Bounded by a deadline."""
 
-    FADES = int(os.environ.get("PVJ_LAYER_FADES", "160"))     # 160 in CI (about 80 s); the design's 2,000 by hand
+    FADES = int(os.environ.get("NXLX_LAYER_FADES", "160"))     # 160 in CI (about 80 s); the design's 2,000 by hand
     LIMIT = max(420.0, FADES * 0.7)
 
     def test_fades_between_generators_leave_nothing_behind(self):
@@ -2130,11 +2130,11 @@ class ProgramFadeSlowBuildTest(ProgramFadeBase):
         need_program(self)
         if "with test hooks" not in subprocess.run([BIN, "--version"], capture_output=True, text=True).stdout:
             if STRICT:
-                self.fail("PVJ_RENDER_TEST=1 and mctl-render was built without its test hooks: make -C render TEST_HOOKS=1")
+                self.fail("NXLX_RENDER_TEST=1 and mctl-render was built without its test hooks: make -C render TEST_HOOKS=1")
             self.skipTest("mctl-render was built without its test hooks")
         self.tmp = tempfile.mkdtemp(prefix="mctl-native-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.r = Renderer(env={"PVJ_RENDER_TEST_SLOW_BUILD": str(ms)})
+        self.r = Renderer(env={"NXLX_RENDER_TEST_SLOW_BUILD": str(ms)})
         self.addCleanup(lambda: self.r.close())
         self.r("set_property", "image-display-duration", "inf")
         self.n = 0
@@ -2192,7 +2192,7 @@ class ManyProgramFadesTest(ProgramFadeBase):
     """A show fades between clips and shaders all night: fades into and out of programs, some cut short by the next, leave
     no program, texture, descriptor or thread behind. Bounded by a deadline."""
 
-    FADES = int(os.environ.get("PVJ_PROGRAM_FADES", "120"))
+    FADES = int(os.environ.get("NXLX_PROGRAM_FADES", "120"))
     LIMIT = max(420.0, FADES * 0.8)
 
     def test_fades_into_and_out_of_programs_leave_nothing_behind(self):
@@ -2337,11 +2337,11 @@ class ProgramBuildDoesNotHoldTheLayersTest(ProgramFadeBase):
         need_program(self)
         if "with test hooks" not in subprocess.run([BIN, "--version"], capture_output=True, text=True).stdout:
             if STRICT:
-                self.fail("PVJ_RENDER_TEST=1 and mctl-render was built without its test hooks: make -C render TEST_HOOKS=1")
+                self.fail("NXLX_RENDER_TEST=1 and mctl-render was built without its test hooks: make -C render TEST_HOOKS=1")
             self.skipTest("mctl-render was built without its test hooks")
         self.tmp = tempfile.mkdtemp(prefix="mctl-native-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.r = Renderer(env={"PVJ_RENDER_TEST_SLOW_BUILD": str(ms)})
+        self.r = Renderer(env={"NXLX_RENDER_TEST_SLOW_BUILD": str(ms)})
         self.addCleanup(lambda: self.r.close())
         self.r("set_property", "image-display-duration", "inf")
         self.n = 0
@@ -2436,14 +2436,14 @@ class TwoClientStressTest(ProgramFadeBase):
     levels, sets, clears and stops. The renderer must live, every answer must be success or a refusal in the renderer's words,
     no program or object may be left after a stop and a clear, and descriptors and threads must be flat."""
 
-    SECONDS = float(os.environ.get("PVJ_STRESS_SECONDS", "10"))
+    SECONDS = float(os.environ.get("NXLX_STRESS_SECONDS", "10"))
 
     def test_the_back_to_back_fade_the_instant_the_last_one_ends_is_never_refused(self):
         red = self.pic("red", RED)
         gens = [self.generator(solid(0, 0, 0.8)), self.generator(solid(0, 0.8, 0))]
         self.r.load(red)
         refused = []
-        for i in range(int(os.environ.get("PVJ_ENDED_TRIES", "25"))):
+        for i in range(int(os.environ.get("NXLX_ENDED_TRIES", "25"))):
             self.to_program(gens[i % 2], 0.03)
             self.assertTrue(self.r.wait(lambda: self.st()["fade"] == "off", 20, 0.002), self.st())
             try:

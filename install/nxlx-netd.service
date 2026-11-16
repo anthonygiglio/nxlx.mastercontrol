@@ -22,8 +22,8 @@ RuntimeDirectoryMode=0750
 # Saved state of an unconfirmed change: root only, survives a reboot (so never in /run).
 StateDirectory=nxlx-netd
 StateDirectoryMode=0700
-Environment=PVJ_RUNTIME_DIR=/run/nxlx/netd
-ExecStart=@PVJ_DIR@/bin/nxlx-netd
+Environment=NXLX_RUNTIME_DIR=/run/nxlx/netd
+ExecStart=@NXLX_DIR@/bin/nxlx-netd
 Restart=always
 RestartSec=2
 

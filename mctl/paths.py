@@ -27,14 +27,14 @@ with the helper's socket and the PIN in it, to whichever of them started last.
 
 Environment:
 
-* `PVJ_RUNTIME_DIR` is the folder THIS process owns and writes (each unit sets it to its own folder). Without it,
+* `NXLX_RUNTIME_DIR` is the folder THIS process owns and writes (each unit sets it to its own folder). Without it,
   on a desk, it is `$XDG_RUNTIME_DIR/nxlx` or `/tmp/nxlx-<uid>`.
-* `PVJ_PLAYER_DIR` and `PVJ_NETD_DIR` say where the panel finds the folders of its peers. Without them a peer's
+* `NXLX_PLAYER_DIR` and `NXLX_NETD_DIR` say where the panel finds the folders of its peers. Without them a peer's
   files are looked for in the process's own folder: one private folder for everything, which is what the tests
   and a player started by hand use.
-* `PVJ_SYSD_DIR`, `PVJ_SUPPORTD_DIR` and `PVJ_UPDATE_RESULT` are as before.
-* `PVJ_NDI_DIR` is the NDI helper's folder. It is set for the panel only on a box that was set up for NDI, and the
-  panel takes its absence to mean exactly that: no helper here (server.py). `PVJ_NDI_PIPE_DIR` is the pipe's folder
+* `NXLX_SYSD_DIR`, `NXLX_SUPPORTD_DIR` and `NXLX_UPDATE_RESULT` are as before.
+* `NXLX_NDI_DIR` is the NDI helper's folder. It is set for the panel only on a box that was set up for NDI, and the
+  panel takes its absence to mean exactly that: no helper here (server.py). `NXLX_NDI_PIPE_DIR` is the pipe's folder
   (tests and a desk only; on a box it is the fixed root-owned folder).
 
 A process creates and checks only its own folder (`own_dir`). It never creates a peer's folder: a missing one
@@ -91,7 +91,7 @@ def _env(env):
 def own_path(env=None):
     """The folder this process writes into (not created, not checked)."""
     env = _env(env)
-    base = env.get("PVJ_RUNTIME_DIR")
+    base = env.get("NXLX_RUNTIME_DIR")
     if not base:
         xdg = env.get("XDG_RUNTIME_DIR")
         base = os.path.join(xdg, "nxlx") if xdg else "/tmp/nxlx-%d" % os.getuid()
@@ -115,31 +115,31 @@ def own_dir(env=None):
 
 def player_dir(env=None):
     """Where the player keeps its socket. Only the player creates it."""
-    return _env(env).get("PVJ_PLAYER_DIR") or own_path(env)
+    return _env(env).get("NXLX_PLAYER_DIR") or own_path(env)
 
 
 def netd_dir(env=None):
     """Where the network helper keeps its socket. Only the helper creates it."""
-    return _env(env).get("PVJ_NETD_DIR") or own_path(env)
+    return _env(env).get("NXLX_NETD_DIR") or own_path(env)
 
 
 def sysd_dir(env=None):
-    return _env(env).get("PVJ_SYSD_DIR") or SYSD_DIR
+    return _env(env).get("NXLX_SYSD_DIR") or SYSD_DIR
 
 
 def supportd_dir(env=None):
-    return _env(env).get("PVJ_SUPPORTD_DIR") or SUPPORTD_DIR
+    return _env(env).get("NXLX_SUPPORTD_DIR") or SUPPORTD_DIR
 
 
 def state_dir(env=None):
     """The panel's state folder (settings.json, and screen-mode.json, which the player reads: D90)."""
-    return _env(env).get("PVJ_STATE_DIR") or STATE_DIR
+    return _env(env).get("NXLX_STATE_DIR") or STATE_DIR
 
 
 def player_state_dir(env=None):
     """The player's own state folder (a StateDirectory= of nxlx-player.service, owned by the account that runs it): what the
     player must remember across a restart of its service, keyed by the boot (mctl/latescreen.py)."""
-    return _env(env).get("PVJ_PLAYER_STATE_DIR") or PLAYER_STATE_DIR
+    return _env(env).get("NXLX_PLAYER_STATE_DIR") or PLAYER_STATE_DIR
 
 
 def player_socket(env=None):
@@ -164,7 +164,7 @@ def supportd_socket(env=None):
 
 def ndi_dir(env=None):
     """The NDI helper's folder: its socket for the panel and the pipe the player reads. Only the helper creates it."""
-    return _env(env).get("PVJ_NDI_DIR") or NDI_DIR
+    return _env(env).get("NXLX_NDI_DIR") or NDI_DIR
 
 
 def ndi_socket(env=None):
@@ -173,7 +173,7 @@ def ndi_socket(env=None):
 
 def ndi_pipe_dir(env=None):
     """The pipe's folder: root's, made once (see the table above). Not the helper's own folder."""
-    return _env(env).get("PVJ_NDI_PIPE_DIR") or NDI_PIPE_DIR
+    return _env(env).get("NXLX_NDI_PIPE_DIR") or NDI_PIPE_DIR
 
 
 NDISC_DIR = "/run/nxlx-ndisc"              # the NDI discovery server's supervisor: its socket for the panel (mctl/ndiscovery.py, D85)
@@ -181,7 +181,7 @@ NDISC_DIR = "/run/nxlx-ndisc"              # the NDI discovery server's supervis
 
 def ndisc_dir(env=None):
     """The discovery server's supervisor's folder, or None on a box where it is not set up (the panel's drop-in names it)."""
-    return _env(env).get("PVJ_NDISC_DIR") or None
+    return _env(env).get("NXLX_NDISC_DIR") or None
 
 
 NDI_CONFIG_DIR = "/run/nxlx-ndi-config"    # the NDI library's configuration file: the panel writes it, the helper reads it (mctl/ndisetup.py)
@@ -190,7 +190,7 @@ NDI_CONFIG_DIR = "/run/nxlx-ndi-config"    # the NDI library's configuration fil
 def ndi_config_dir(env=None):
     """Where the panel writes the NDI library's configuration file, or None on a box whose NDI set-up does not
     have the folder (the panel's drop-in names it: mctl/ndisetup.py)."""
-    return _env(env).get("PVJ_NDI_CONFIG_DIR") or None
+    return _env(env).get("NXLX_NDI_CONFIG_DIR") or None
 
 
 SOUND_DIR = "/run/nxlx-sound"              # the sound-analysis service (mctl/sound.py, D96): its socket and the levels file
@@ -200,7 +200,7 @@ SOUND_LEVELS = "levels"
 
 def sound_dir(env=None):
     """The sound service's folder: its socket for the panel and the levels file (group audio). Only the service creates it."""
-    return _env(env).get("PVJ_SOUND_DIR") or SOUND_DIR
+    return _env(env).get("NXLX_SOUND_DIR") or SOUND_DIR
 
 
 def sound_socket(env=None):
@@ -218,7 +218,7 @@ LINK_STATE = "state"
 
 def link_dir(env=None):
     """The Link helper's folder: its socket for the panel and its state file (group nxlx-link). Only the service creates it."""
-    return _env(env).get("PVJ_LINK_DIR") or LINK_DIR
+    return _env(env).get("NXLX_LINK_DIR") or LINK_DIR
 
 
 def link_socket(env=None):
@@ -235,12 +235,12 @@ RASTER_SOCKET = "/run/nxlx-raster.sock"   # nxlx-raster (render/raster/, D129): 
 def fonts_dir(env=None):
     """The folder of the bundled fonts (mctl/fonts: open-licence fonts only, D129). The picture helper reads them by name
     from here; no browser is ever sent one."""
-    return _env(env).get("PVJ_FONTS_DIR") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
+    return _env(env).get("NXLX_FONTS_DIR") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
 
 
 def raster_socket(env=None):
     """The picture helper's socket (install/nxlx-raster.socket). Group nxlx-raster may connect: the panel alone is in it."""
-    return _env(env).get("PVJ_RASTER_SOCKET") or RASTER_SOCKET
+    return _env(env).get("NXLX_RASTER_SOCKET") or RASTER_SOCKET
 
 
 def ndi_fifo(env=None):
@@ -248,7 +248,7 @@ def ndi_fifo(env=None):
 
 
 def update_result(env=None):
-    return _env(env).get("PVJ_UPDATE_RESULT") or UPDATE_RESULT
+    return _env(env).get("NXLX_UPDATE_RESULT") or UPDATE_RESULT
 
 
 def pin_file(rundir):

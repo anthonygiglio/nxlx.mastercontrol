@@ -1381,7 +1381,7 @@ static void get_property(int fd, const mpv_node *id, const char *name)
         reply(fd, id, "success", &d);
         return;
     }
-#ifdef PVJ_RENDER_TEST_HOOKS
+#ifdef NXLX_RENDER_TEST_HOOKS
     if (!strcmp(name, "mctl-test-blank")) {
         d = node_int(__atomic_load_n(&app.blank_draws, __ATOMIC_RELAXED));
         reply(fd, id, "success", &d);
@@ -1736,7 +1736,7 @@ static void handle(int fd, const char *line, size_t len)
         reply(fd, id, r < 0 ? mpv_error_string(r) : "success", NULL);
     } else if (!strcmp(name, "mctl-capture") && nargs == 2) {
         capture(fd, id, arg_str(cmd, 1));
-#ifdef PVJ_RENDER_TEST_HOOKS
+#ifdef NXLX_RENDER_TEST_HOOKS
     } else if (!strcmp(name, "mctl-test-buffer") && nargs == 2) {
         // the buffer as the plane gets it, corner and all: only a test can see the frame that goes out while it is small
         pthread_mutex_lock(&app.lock);

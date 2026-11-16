@@ -8,8 +8,8 @@ conversion to RGB and back done by the effect: only there do Blackout and opacit
 light), that the picture is right for YUV and RGB pictures of several kinds, sizes and shapes, letterboxed and
 stretched, that the projection mapping shows the filtered picture, and that every bundled filter draws.
 
-Run:  PVJ_GPU_TEST=1 xvfb-run -a python3 -m tests.test_effects_gpu
-CI runs it three ways: OpenGL ES, desktop OpenGL, and (with Mesa told to be a 3.1 driver and PVJ_GPU_ONLY=desktop)
+Run:  NXLX_GPU_TEST=1 xvfb-run -a python3 -m tests.test_effects_gpu
+CI runs it three ways: OpenGL ES, desktop OpenGL, and (with Mesa told to be a 3.1 driver and NXLX_GPU_ONLY=desktop)
 desktop OpenGL 3.1 with GLSL 1.40, the context mpv makes on a Raspberry Pi 4. Run directly, a skip is a failure.
 A software GPU: the pass times printed here are ratios between shaders, nothing about a real board.
 """
@@ -983,16 +983,16 @@ for _name in dir(GpuCase):                    # the generators' tests run in the
     if _name.startswith("test_"):
         setattr(FxCase, _name, None)
 
-ONLY = os.environ.get("PVJ_GPU_ONLY")          # "gles" or "desktop": CI runs each way of drawing in a job of its own
+ONLY = os.environ.get("NXLX_GPU_ONLY")          # "gles" or "desktop": CI runs each way of drawing in a job of its own
 
 if ONLY != "desktop":
-    @unittest.skipUnless(GPU and shutil.which("mpv"), "set PVJ_GPU_TEST=1 and run under a display (xvfb-run) with mpv")
+    @unittest.skipUnless(GPU and shutil.which("mpv"), "set NXLX_GPU_TEST=1 and run under a display (xvfb-run) with mpv")
     class GlesEffectTest(FxCase, ServerBase):
         ES = "yes"
 
 
 if ONLY != "gles":
-    @unittest.skipUnless(GPU and shutil.which("mpv"), "set PVJ_GPU_TEST=1 and run under a display (xvfb-run) with mpv")
+    @unittest.skipUnless(GPU and shutil.which("mpv"), "set NXLX_GPU_TEST=1 and run under a display (xvfb-run) with mpv")
     class DesktopGlEffectTest(FxCase, ServerBase):
         ES = "no"
 

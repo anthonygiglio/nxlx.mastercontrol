@@ -67,9 +67,9 @@ class FilesTest(Base):
                                  "d /run/nxlx-ndi-config 0750 nxlx-web nxlx-ndi -"])      # the library's configuration file: the panel's to write
         unit = self.read(ndisetup.UNIT_PATH)
         self.assertIn("ExecStart=/opt/nxlx/current/bin/nxlx-ndi\n", unit)
-        self.assertNotIn("@PVJ", unit)
+        self.assertNotIn("@NXLX", unit)
         with open(ndisetup.TEMPLATE) as f:                 # nothing but the folder differs from the template the tests pin
-            self.assertEqual(unit, f.read().replace("@PVJ_DIR@", "/opt/nxlx/current"))
+            self.assertEqual(unit, f.read().replace("@NXLX_DIR@", "/opt/nxlx/current"))
         self.assertEqual(self.read(ndisetup.WEB_DROPIN), ndisetup.WEB_TEXT)
         self.assertEqual(self.read(ndisetup.PLAYER_DROPIN), ndisetup.PLAYER_TEXT)
         for path in self.tree():
@@ -803,8 +803,8 @@ class RollbackTest(unittest.TestCase):
         with open(ndisetup.TEMPLATE) as f:
             text = f.read()
         unit, service = text.split("[Service]")
-        self.assertIn("\nConditionPathExists=@PVJ_DIR@/bin/nxlx-ndi\n", unit)      # in [Unit], and the very file ExecStart names
-        self.assertIn("\nExecStart=@PVJ_DIR@/bin/nxlx-ndi\n", service)
+        self.assertIn("\nConditionPathExists=@NXLX_DIR@/bin/nxlx-ndi\n", unit)      # in [Unit], and the very file ExecStart names
+        self.assertIn("\nExecStart=@NXLX_DIR@/bin/nxlx-ndi\n", service)
         self.assertIn("ConditionPathExists=/opt/nxlx/current/bin/nxlx-ndi\n", ndisetup.unit_text("/opt/nxlx"))
         self.assertNotIn("AssertPathExists", text)         # an assertion that is not met is a failure; a condition is not
 
@@ -1080,20 +1080,20 @@ class PanelNotSetUpTest(unittest.TestCase):
         self.assertEqual((st["setup"], st["helper"]), (True, False))           # set up, and its helper is down: a different thing to say
 
     def test_the_panel_takes_the_mark_from_its_environment_which_only_root_sets(self):
-        # The panel believes PVJ_NDI_DIR in its environment and nothing else. Two things can put it there, both
+        # The panel believes NXLX_NDI_DIR in its environment and nothing else. Two things can put it there, both
         # root's: the drop-in the opt-in writes, and /etc/nxlx/nxlx.env (the unit's EnvironmentFile, root's file).
         # Set there by hand on a box without the helper, the page says "the helper is not running": wrong words,
         # no harm, and not something the panel's own account can do.
         src = inspect.getsource(server.build)
-        self.assertIn('setup=bool(env.get("PVJ_NDI_DIR"))', src)
-        self.assertEqual(src.count("PVJ_NDI_DIR"), 2)      # the line and the comment that explains it
+        self.assertIn('setup=bool(env.get("NXLX_NDI_DIR"))', src)
+        self.assertEqual(src.count("NXLX_NDI_DIR"), 2)      # the line and the comment that explains it
         with open(os.path.join(os.path.dirname(ndisetup.__file__), "..", "install", "nxlx-web.service")) as f:
             self.assertIn("EnvironmentFile=-/etc/nxlx/nxlx.env\n", f.read())
         with open(os.path.join(os.path.dirname(ndisetup.__file__), "..", "install", "install.sh")) as f:
-            self.assertNotIn("PVJ_NDI", f.read())          # the installer never writes it into nxlx.env
-        self.assertIn("Environment=PVJ_NDI_DIR=" + paths.NDI_DIR + "\n", ndisetup.WEB_TEXT)
+            self.assertNotIn("NXLX_NDI", f.read())          # the installer never writes it into nxlx.env
+        self.assertIn("Environment=NXLX_NDI_DIR=" + paths.NDI_DIR + "\n", ndisetup.WEB_TEXT)
         with open(os.path.join(os.path.dirname(ndisetup.__file__), "..", "install", "nxlx-web.service")) as f:
-            self.assertNotIn("PVJ_NDI_DIR", f.read())
+            self.assertNotIn("NXLX_NDI_DIR", f.read())
 
     def test_a_missing_socket_on_a_box_that_did_opt_in_answers_at_once(self):
         d = tempfile.mkdtemp()

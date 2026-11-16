@@ -23,21 +23,21 @@ UMask=0007
 RuntimeDirectory=nxlx/web
 RuntimeDirectoryMode=0750
 RuntimeDirectoryPreserve=yes
-# PVJ_RUNTIME_DIR is always the folder this service itself writes; the others say where its peers are.
-Environment=PVJ_RUNTIME_DIR=/run/nxlx/web
-Environment=PVJ_PLAYER_DIR=/run/nxlx/player
-Environment=PVJ_NETD_DIR=/run/nxlx/netd
-Environment=PVJ_STATE_DIR=/var/lib/nxlx
-Environment=PVJ_BIND=0.0.0.0
-Environment=PVJ_PORT=80
+# NXLX_RUNTIME_DIR is always the folder this service itself writes; the others say where its peers are.
+Environment=NXLX_RUNTIME_DIR=/run/nxlx/web
+Environment=NXLX_PLAYER_DIR=/run/nxlx/player
+Environment=NXLX_NETD_DIR=/run/nxlx/netd
+Environment=NXLX_STATE_DIR=/var/lib/nxlx
+Environment=NXLX_BIND=0.0.0.0
+Environment=NXLX_PORT=80
 # The same panel over TLS, once the owner has uploaded a certificate (D79, docs/HTTPS.md); the key lives in
 # /var/lib/nxlx/tls, made 0700 by this service's account. Port 443 is covered by CAP_NET_BIND_SERVICE like port 80.
-Environment=PVJ_HTTPS_PORT=443
+Environment=NXLX_HTTPS_PORT=443
 # The port the nodes call each other on (D132): TLS that asks every caller for a certificate from the pinned root. Not a panel,
 # the same number on every node. Unlike 443 it needs no privilege.
-Environment=PVJ_PEER_PORT=8443
+Environment=NXLX_PEER_PORT=8443
 EnvironmentFile=-/etc/nxlx/nxlx.env
-ExecStart=@PVJ_DIR@/bin/nxlx-web
+ExecStart=@NXLX_DIR@/bin/nxlx-web
 Restart=always
 RestartSec=1
 # A live-input helper started by this service goes with it (it stays in the service's control group).

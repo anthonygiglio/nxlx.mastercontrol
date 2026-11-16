@@ -6,9 +6,9 @@ pass there whatever the shader held. Here every claim is checked on the picture 
 once on OpenGL ES (the stricter shader language) and once on desktop OpenGL (what mpv made on a real Pi 4: a
 desktop OpenGL 3.1 context with GLSL 1.40; tests/test_shaderlive_gpu.py also runs with Mesa told to be one).
 
-Run:  PVJ_GPU_TEST=1 xvfb-run -a python3 -m tests.test_shaders_gpu
+Run:  NXLX_GPU_TEST=1 xvfb-run -a python3 -m tests.test_shaders_gpu
 Run that way (as CI does), a skipped test is a failure, so a missing display or GPU cannot pass as green. Under the
-usual test discovery it is skipped unless PVJ_GPU_TEST is set.
+usual test discovery it is skipped unless NXLX_GPU_TEST is set.
 This is a software GPU: it says nothing about speed, and nothing about the GPU driver of a real board.
 """
 import json
@@ -28,7 +28,7 @@ from tests import mpv_watch
 from tests.test_server import ServerBase
 from tests.test_shaders import AMBIENT, BUNDLED, PERFORMANCE
 
-GPU = os.environ.get("PVJ_GPU_TEST") == "1"
+GPU = os.environ.get("NXLX_GPU_TEST") == "1"
 W, H = 320, 180
 CLIP = "av://lavfi:testsrc=size=160x90:rate=25"
 PROBE = "/*{}*/\nvoid main() { gl_FragColor = vec4(isf_FragNormCoord, 0.25, 1.0); }\n"
@@ -419,12 +419,12 @@ class GpuCase:
         self.assertFalse(v.running)
 
 
-@unittest.skipUnless(GPU and shutil.which("mpv"), "set PVJ_GPU_TEST=1 and run under a display (xvfb-run) with mpv")
+@unittest.skipUnless(GPU and shutil.which("mpv"), "set NXLX_GPU_TEST=1 and run under a display (xvfb-run) with mpv")
 class GlesShaderTest(GpuCase, ServerBase):
     ES = "yes"
 
 
-@unittest.skipUnless(GPU and shutil.which("mpv"), "set PVJ_GPU_TEST=1 and run under a display (xvfb-run) with mpv")
+@unittest.skipUnless(GPU and shutil.which("mpv"), "set NXLX_GPU_TEST=1 and run under a display (xvfb-run) with mpv")
 class DesktopGlShaderTest(GpuCase, ServerBase):
     ES = "no"
 

@@ -179,7 +179,7 @@ class MoveAfterPinTest(ta.SignerBase):
         box.install(read(out), None)                                       # pinned the old root, as installed with its fingerprint
         boxcert.move_root(self.exe, old, self.ca, lambda p: ta.OLD_PASS, quiet)
         fake = ta.FakeSigner(self, self.signer)
-        st = autocert.AutoCert(box, settings, env={"PVJ_SIGNER_URL": fake.url, "PVJ_ROOT_FINGERPRINT": old_fp}).run_once()
+        st = autocert.AutoCert(box, settings, env={"NXLX_SIGNER_URL": fake.url, "NXLX_ROOT_FINGERPRINT": old_fp}).run_once()
         self.assertEqual(st["state"], "done", st)
         self.assertIn("Moved to the new root", st["message"])
         self.assertEqual(box.root_info()[1], boxcert.read_cert(self.exe, os.path.join(self.ca, "root.pem"))["fingerprint"])

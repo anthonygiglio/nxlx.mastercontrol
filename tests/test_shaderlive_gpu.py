@@ -4,7 +4,7 @@
 changes the picture, TIME goes on across a change of a value and of the speed, a preset applies, the picture is never
 black during a change, and this mpv has no way to take a new value without a new shader text.
 
-Run:  PVJ_GPU_TEST=1 xvfb-run -a python3 -m tests.test_shaderlive_gpu
+Run:  NXLX_GPU_TEST=1 xvfb-run -a python3 -m tests.test_shaderlive_gpu
 A software GPU: the times printed here say what a change costs in CI, not on a real board.
 """
 import os
@@ -277,15 +277,15 @@ for _name in dir(GpuCase):                    # the first version's tests run in
     if _name.startswith("test_"):
         setattr(LiveCase, _name, None)
 
-ONLY = os.environ.get("PVJ_GPU_ONLY")          # "desktop": the run that makes Mesa a GL 3.1 driver has no use for GLES
+ONLY = os.environ.get("NXLX_GPU_ONLY")          # "desktop": the run that makes Mesa a GL 3.1 driver has no use for GLES
 
 if ONLY != "desktop":
-    @unittest.skipUnless(GPU and shutil.which("mpv"), "set PVJ_GPU_TEST=1 and run under a display (xvfb-run) with mpv")
+    @unittest.skipUnless(GPU and shutil.which("mpv"), "set NXLX_GPU_TEST=1 and run under a display (xvfb-run) with mpv")
     class GlesLiveTest(LiveCase, ServerBase):
         ES = "yes"
 
 
-@unittest.skipUnless(GPU and shutil.which("mpv"), "set PVJ_GPU_TEST=1 and run under a display (xvfb-run) with mpv")
+@unittest.skipUnless(GPU and shutil.which("mpv"), "set NXLX_GPU_TEST=1 and run under a display (xvfb-run) with mpv")
 class DesktopGlLiveTest(LiveCase, ServerBase):
     ES = "no"
 

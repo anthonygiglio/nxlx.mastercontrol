@@ -979,8 +979,8 @@ class UnitTest(unittest.TestCase):
         self.assertEqual(u["DeviceAllow"], ["/dev/null rw", "/dev/urandom r", "char-alsa rw"])
         self.assertNotIn("ReadWritePaths", u)
         self.assertNotIn("PrivateUsers", u)            # it would hide the caller's uid from the peer check
-        self.assertEqual(u["ConditionPathExists"], ["@PVJ_DIR@/bin/nxlx-sound"], "an older release without the program skips it")
-        self.assertEqual(dict(w.split("=", 1) for w in words(u, "Environment"))["PVJ_SOUND_DIR"], paths.SOUND_DIR)
+        self.assertEqual(u["ConditionPathExists"], ["@NXLX_DIR@/bin/nxlx-sound"], "an older release without the program skips it")
+        self.assertEqual(dict(w.split("=", 1) for w in words(u, "Environment"))["NXLX_SOUND_DIR"], paths.SOUND_DIR)
 
     def test_the_installer_makes_the_account_before_the_unit_and_enables_it_and_the_image_too(self):
         with open(os.path.join(REPO, "install", "install.sh")) as f:

@@ -8,7 +8,7 @@ disk. Rules of this module:
 
 * every USB partition gets its own folder under /media/nxlx/<label>
 * /media/usb points at the most recently mounted one (what old presets expect)
-* mounted read-only unless PVJ_USB_RW=1, with nosuid,nodev,noexec, because a
+* mounted read-only unless NXLX_USB_RW=1, with nosuid,nodev,noexec, because a
   drive yanked mid-write at a gig is the usual way to corrupt it
 * never touch a disk that also holds the running system
 """
@@ -109,9 +109,9 @@ def mount(devnode, env=None, runner=subprocess.run, proc_mounts="/proc/mounts", 
     env = os.environ if env is None else env
     if not DEVNODE.match(devnode or ""):
         raise UsbError("refusing %r (not a USB disk device node)" % devnode)
-    base = env.get("PVJ_USB_BASE", DEFAULT_BASE)
-    link = env.get("PVJ_USB_LINK", DEFAULT_LINK)
-    rw = env.get("PVJ_USB_RW", "0") == "1"
+    base = env.get("NXLX_USB_BASE", DEFAULT_BASE)
+    link = env.get("NXLX_USB_LINK", DEFAULT_LINK)
+    rw = env.get("NXLX_USB_RW", "0") == "1"
 
     mounts = read_mounts(proc_mounts)
     if any(dev == devnode for dev, _ in mounts):
@@ -165,8 +165,8 @@ def unmount(devnode, env=None, runner=subprocess.run, proc_mounts="/proc/mounts"
     env = os.environ if env is None else env
     if not DEVNODE.match(devnode or ""):
         raise UsbError("refusing %r" % devnode)
-    link = env.get("PVJ_USB_LINK", DEFAULT_LINK)
-    base = env.get("PVJ_USB_BASE", DEFAULT_BASE)
+    link = env.get("NXLX_USB_LINK", DEFAULT_LINK)
+    base = env.get("NXLX_USB_BASE", DEFAULT_BASE)
     points = [p for dev, p in read_mounts(proc_mounts) if dev == devnode]
     for point in points:
         if os.path.dirname(point.rstrip("/")) != base.rstrip("/"):
@@ -191,7 +191,7 @@ def main(argv=None):
         elif len(argv) == 2 and argv[0] == "unmount":
             unmount(argv[1])
         elif argv == ["list"]:
-            base = os.environ.get("PVJ_USB_BASE", DEFAULT_BASE)
+            base = os.environ.get("NXLX_USB_BASE", DEFAULT_BASE)
             for dev, point in read_mounts():
                 if os.path.dirname(point.rstrip("/")) == base.rstrip("/"):
                     print(dev, point)

@@ -73,13 +73,13 @@ class ReportTest(unittest.TestCase):
         sysfs, proc, run = tree(alarm=False)
         roomy = lambda path: mock.Mock(f_frsize=4096, f_blocks=(100 * health.GB) // 4096, f_bavail=(60 * health.GB) // 4096)       # plenty free, whatever the runner has
         h = health.Health(Api(), run, sysfs=sysfs, proc=proc, log=lambda *_: None, statvfs=roomy)
-        with mock.patch("mctl.hardware.temperatures", lambda *a, **k: [{"celsius": 55.0}]), mock.patch.dict(os.environ, {"PVJ_STATE_DIR": run}):
+        with mock.patch("mctl.hardware.temperatures", lambda *a, **k: [{"celsius": 55.0}]), mock.patch.dict(os.environ, {"NXLX_STATE_DIR": run}):
             r = h.report()
         self.assertEqual((r["cpu_percent"], r["memory_percent"], r["memory_mb"]), (50, 25, 3906))
         self.assertIn("http://192.168.0.169/", r["addresses"])
         self.assertNotIn("http://127.0.0.1/", r["addresses"])
         self.assertEqual((r["temperature"]["state"], r["overall"]), ("ok", "ok"))
-        with mock.patch("mctl.hardware.temperatures", lambda *a, **k: [{"celsius": 86.0}]), mock.patch.dict(os.environ, {"PVJ_STATE_DIR": run}):
+        with mock.patch("mctl.hardware.temperatures", lambda *a, **k: [{"celsius": 86.0}]), mock.patch.dict(os.environ, {"NXLX_STATE_DIR": run}):
             self.assertEqual(h.report()["overall"], "bad")
         with mock.patch("mctl.hardware.temperatures", lambda *a, **k: [{"celsius": 81.0}]):
             self.assertEqual(h.temperature()["state"], "warn")
@@ -123,7 +123,7 @@ class StorageTest(unittest.TestCase):
         sysfs, proc, run = tree()
         self.calls = calls
         h = health.Health(A(), run, sysfs=sysfs, proc=proc, log=lambda *_: None, statvfs=statvfs, stat=stat, clock=clock or (lambda: 1000.0))
-        env = mock.patch.dict(os.environ, {"PVJ_STATE_DIR": state})
+        env = mock.patch.dict(os.environ, {"NXLX_STATE_DIR": state})
         env.start()
         self.addCleanup(env.stop)
         return h
@@ -195,7 +195,7 @@ class StorageTest(unittest.TestCase):
         with mock.patch("subprocess.run", side_effect=AssertionError("a program was started")), \
                 mock.patch("subprocess.Popen", side_effect=AssertionError("a program was started")):
             h = health.Health(type("A", (), {"media_dir": tempfile.mkdtemp()})(), tempfile.mkdtemp(), log=lambda *_: None)
-            with mock.patch.dict(os.environ, {"PVJ_STATE_DIR": tempfile.mkdtemp()}):
+            with mock.patch.dict(os.environ, {"NXLX_STATE_DIR": tempfile.mkdtemp()}):
                 rows = h.storage()
         self.assertTrue(rows and rows[0]["free_bytes"] > 0)
 

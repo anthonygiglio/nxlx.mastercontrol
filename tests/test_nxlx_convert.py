@@ -161,8 +161,8 @@ def convert(root, *args, env=None):
 class FakePlayer:
     """An mpv IPC socket at the player's place that answers idle-active (or never answers)."""
 
-    def __init__(self, root, idle):
-        self.path = os.path.join(root, "run/pvj/player/player.sock")
+    def __init__(self, root, idle, rel="run/pvj/player/player.sock"):
+        self.path = os.path.join(root, rel)
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.bind(self.path)
@@ -274,7 +274,7 @@ class Plan(Base):
             if kind in ("system", "env", "release"):
                 self.assertIn(old, {r.old for r in mine}, "a %s row the converter does not carry: %s" % (kind, old))
         self.assertIn("system", kinds)
-        self.assertFalse(conv.RELEASE_NAMES_LIVE, "release names change with rename PR 8, not before")
+        self.assertTrue(conv.RELEASE_NAMES_LIVE and conv.ENV_NAMES_LIVE, "rename PR 8 turned both on")
 
 
 class Run(Base):
@@ -295,14 +295,14 @@ class Run(Base):
         self.assertIn("User=nxlx-web", web)
         self.assertIn("Group=nxlx-svc", web)
         self.assertIn("ExecStart=/opt/nxlx/current/bin/nxlx-web", web)
-        self.assertIn("Environment=PVJ_RUNTIME_DIR=/run/nxlx/web", web)      # the variable names change with rename PR 8
+        self.assertIn("Environment=NXLX_RUNTIME_DIR=/run/nxlx/web", web)     # the variable names changed with rename PR 8
         self.assertIn("RuntimeDirectory=nxlx/web", web)
         self.assertIn("User=nxlx-dev", self.read("etc/systemd/system/nxlx-player.service"))
         self.assertIn("SupplementaryGroups=nxlx-ndi", self.read("etc/systemd/system/nxlx-web.service.d/50-nxlx-ndi.conf"))
-        self.assertIn("PVJ_MEDIA_DIR=/var/lib/nxlx/video", self.read("etc/nxlx/nxlx.env"))
+        self.assertIn("NXLX_MEDIA_DIR=/var/lib/nxlx/video", self.read("etc/nxlx/nxlx.env"))
         inst = json.loads(self.read("etc/nxlx/install.json"))
         self.assertEqual((inst["prefix"], inst["user"]), ("/opt/nxlx", "nxlx-dev"))
-        self.assertIn("pvj-release", self.read("etc/nxlx/allowed_signers"), "held until rename PR 8")
+        self.assertIn("nxlx-release", self.read("etc/nxlx/allowed_signers"))
         self.assertEqual(self.read("etc/sudoers.d/010_nxlx-dev"), "nxlx-dev ALL=(ALL) NOPASSWD:ALL\n")
         self.assertEqual(stat.S_IMODE(os.stat(self.p("etc/sudoers.d/010_nxlx-dev")).st_mode), 0o440)
         self.assertIn("ExecStart=/opt/nxlx/current/bin/nxlx-ndi", self.read("etc/systemd/system/nxlx-ndi.service"))
@@ -519,15 +519,263 @@ class ReviewFixes(Base):
         self.assertNotIn("planted.json", r.stdout)
         self.assertNotIn("linked.json", r.stdout)
 
-    def test_variable_names_are_held_until_rename_pr_8_and_only_their_values_change(self):
+    def test_variable_and_signing_names_are_rewritten_and_the_keys_are_kept(self):
         conv = load_converter()
-        self.assertFalse(conv.ENV_NAMES_LIVE, "the programs of rename PR 7 still read PVJ_*")
+        self.assertTrue(conv.ENV_NAMES_LIVE and conv.RELEASE_NAMES_LIVE)
+        key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPVJ_notAKeyJustTheLetters"
+        write(self.root, "etc/pvj/allowed_signers", '# who may sign updates\npvj-release namespaces="pvj-release" %s owner\n' % key)
         r = convert(self.root, "--run")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn("environment variable names (PVJ_*) are held until rename PR 8", r.stdout)
-        self.assertIn("Environment=PVJ_NDI_LIB=/opt/nxlx-ndi/lib", self.read("etc/systemd/system/nxlx-ndi.service"))
-        self.assertNotIn("NXLX_", self.read("etc/systemd/system/nxlx-web.service"))
-        self.assertNotIn("NXLX_", self.read("etc/nxlx/nxlx.env"))
+        self.assertNotIn("held until", r.stdout)
+        self.assertEqual(self.read("etc/nxlx/allowed_signers"),
+                         '# who may sign updates\nnxlx-release namespaces="nxlx-release" %s owner\n' % key,
+                         "principal and namespace change, the key line stays as it was")
+        self.assertIn("Environment=NXLX_NDI_LIB=/opt/nxlx-ndi/lib", self.read("etc/systemd/system/nxlx-ndi.service"))
+        self.assertIn("Environment=NXLX_NDI_DIR=/run/nxlx-ndi", self.read("etc/systemd/system/nxlx-web.service.d/50-nxlx-ndi.conf"))
+        self.assertIn("Environment=NXLX_NDI_PIPE_DIR=/run/nxlx-ndi-pipe",
+                      self.read("etc/systemd/system/nxlx-player.service.d/50-nxlx-ndi.conf"))
+        env = self.read("etc/nxlx/nxlx.env")
+        self.assertRegex(env, r"(?m)^NXLX_MEDIA_DIR=/var/lib/nxlx/video$")
+        for name in ("etc/nxlx/nxlx.env", "etc/systemd/system/nxlx-web.service", "etc/systemd/system/nxlx-ndi.service"):
+            self.assertNotIn("PVJ_", self.read(name), name)
+
+    def test_the_undo_puts_the_variable_and_signing_names_back_byte_for_byte(self):
+        write(self.root, "etc/pvj/allowed_signers", 'pvj-release namespaces="pvj-release" ssh-ed25519 AAAAC3Nza owner\n')
+        before = snapshot(self.root)
+        self.assertEqual(convert(self.root, "--run").returncode, 0)
+        self.assertIn("NXLX_MEDIA_DIR", self.read("etc/nxlx/nxlx.env"))
+        r = convert(self.root, "--undo")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(snapshot(self.root), before)
+        self.assertIn("PVJ_MEDIA_DIR", self.read("etc/pvj/pvj.env"))
+        self.assertIn('pvj-release namespaces="pvj-release"', self.read("etc/pvj/allowed_signers"))
+        r = convert(self.root, "--run")                      # and again after an undo
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn('nxlx-release namespaces="nxlx-release"', self.read("etc/nxlx/allowed_signers"))
+
+    def test_a_second_run_leaves_the_rewritten_names_alone(self):
+        write(self.root, "etc/pvj/allowed_signers", 'pvj-release namespaces="pvj-release" ssh-ed25519 AAAAC3Nza owner\n')
+        self.assertEqual(convert(self.root, "--run").returncode, 0)
+        once = snapshot(self.root)
+        r = convert(self.root, "--run")
+        self.assertIn("Nothing to convert", r.stdout)
+        self.assertEqual(snapshot(self.root), once)
+
+    def pr7(self):
+        """The converter of rename PR 7 (variable and signing names held), kept in a temp file, or None."""
+        r = subprocess.run(["git", "-C", REPO, "show", "168eb53:bin/nxlx-convert"], capture_output=True)
+        if r.returncode != 0:
+            self.skipTest("no 168eb53 here to convert the node as rename PR 7 did")
+        path = os.path.join(tempfile.mkdtemp(), "nxlx-convert-pr7")
+        with open(path, "wb") as f:
+            f.write(r.stdout)
+        os.chmod(path, 0o755)
+        self.addCleanup(shutil.rmtree, os.path.dirname(path), True)
+        return path
+
+    def converted_by_pr7(self):
+        """A node that took rename PR 7's conversion AND confirmed it (its journal is kept): new folders, accounts
+        and units, the old variable names in nxlx.env and the units, pvj-release in allowed_signers."""
+        pr7 = self.pr7()
+        write(self.root, "etc/pvj/allowed_signers", 'pvj-release namespaces="pvj-release" ssh-ed25519 AAAAC3Nza owner\n')
+        for args in (("--run",), ("--confirm",)):
+            r = subprocess.run([pr7, "--root", self.root, *args], capture_output=True, text=True, timeout=120)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("PVJ_MEDIA_DIR", self.read("etc/nxlx/nxlx.env"))
+        self.assertIn("pvj-release", self.read("etc/nxlx/allowed_signers"))
+        return snapshot(self.root)
+
+    def test_a_node_converted_and_confirmed_before_rename_pr_8_gets_a_second_pass_and_its_undo_covers_only_that(self):
+        """The first conversion is confirmed and its journal kept. A second pass followed by --undo (by hand or the
+        timer) puts back only the second pass: every change before the confirm is the node's state now."""
+        pr7 = self.converted_by_pr7()
+        journal_before = self.read("var/backups/nxlx-convert/journal.jsonl")
+        plan = convert(self.root, "--plan").stdout
+        self.assertIn("This is a second pass", plan)
+        self.assertIn("install the earlier release again", plan)
+        for rel in ("etc/nxlx/nxlx.env", "etc/nxlx/allowed_signers", "etc/systemd/system/nxlx-web.service",
+                    "etc/systemd/system/nxlx-ndi.service"):
+            self.assertIn("rewrite /" + rel, plan)
+        self.assertNotIn("rename account", plan)
+        self.assertNotIn("move /", plan)
+        r = convert(self.root, "--run")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("a second pass", r.stdout.split("Converted:")[-1])
+        self.assertNotIn("PVJ_", self.read("etc/nxlx/nxlx.env"))
+        self.assertIn('nxlx-release namespaces="nxlx-release" ssh-ed25519 AAAAC3Nza owner', self.read("etc/nxlx/allowed_signers"))
+        self.assertIn("NXLX_RUNTIME_DIR", self.read("etc/systemd/system/nxlx-web.service"))
+        self.assertTrue(self.read("var/backups/nxlx-convert/journal.jsonl").startswith(journal_before), "the journal is kept whole")
+        u = convert(self.root, "--undo")
+        self.assertEqual(u.returncode, 0, u.stdout + u.stderr)
+        undone = [l for l in u.stdout.splitlines() if l.startswith("  undone  ")]
+        self.assertEqual(len(undone), 12, u.stdout)
+        self.assertTrue(all(l.startswith("  undone  rewrite /etc/") for l in undone), "only the rewrites of the second pass: " + u.stdout)
+        self.assertTrue(os.path.isdir(self.p("opt/nxlx")))
+        self.assertFalse(os.path.lexists(self.p("opt/pvj")))
+        self.assertIn("nxlx-dev:", self.read("etc/passwd"))
+        self.assertNotIn("pvj-dev:", self.read("etc/passwd"))
+        self.assertEqual(snapshot(self.root), pr7, "back to the node as rename PR 7 left it")
+        self.assertIn("install the earlier release again", u.stdout, "an undo of a second pass says what it leaves")
+        self.assertNotIn("the node uses the old names again", u.stdout)
+
+    def test_the_timed_undo_of_a_second_pass_covers_only_the_second_pass_and_a_confirm_keeps_it(self):
+        pr7 = self.converted_by_pr7()
+        self.assertEqual(convert(self.root, "--run").returncode, 0)
+        u = convert(self.root, "--undo", "--auto")
+        self.assertEqual(u.returncode, 0, u.stdout + u.stderr)
+        self.assertEqual(snapshot(self.root), pr7)
+        self.assertEqual(convert(self.root, "--run").returncode, 0)          # again after the undo
+        self.assertEqual(convert(self.root, "--confirm").returncode, 0)
+        after = snapshot(self.root)
+        self.assertIn("Not undone", convert(self.root, "--undo", "--auto").stdout)
+        self.assertEqual(snapshot(self.root), after)
+        self.assertIn("Nothing to convert", convert(self.root, "--run").stdout)
+
+    def test_the_first_conversion_is_not_called_a_second_pass(self):
+        r = convert(self.root, "--run")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("second pass", r.stdout)
+        u = convert(self.root, "--undo")
+        self.assertIn("Undone: the node uses the old names again.", u.stdout)
+
+    def partly_failed_undo_then_run(self, fail_at=None):
+        """Run, a timed undo that cannot put back the login account, the old panel then rewrites settings.json (a new
+        PIN at its start), then --run again: the carried-file check is this run's own."""
+        env = {"NXLX_CONVERT_FAIL_AT": str(fail_at)} if fail_at else None
+        r = convert(self.root, "--run", env=env)
+        self.assertEqual(r.returncode, 1 if fail_at else 0, r.stdout + r.stderr)
+        write(self.root, "proc/4242/status", "Name:\tbash\nUid:\t1001\t1001\t1001\t1001\n")
+        write(self.root, "proc/4242/cgroup", "0::/user.slice/user-1001.slice/session-3.scope\n")
+        u = convert(self.root, "--undo", "--auto")
+        self.assertEqual(u.returncode, 1, u.stdout)
+        shutil.rmtree(self.p("proc/4242"))
+        with open(self.p("var/lib/pvj/settings.json"), "a") as f:
+            f.write("\n")
+        r = convert(self.root, "--run")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("changed during the conversion", r.stdout)
+        recs = [json.loads(l) for l in open(self.p("var/backups/nxlx-convert/journal.jsonl"))]
+        starts = [i for i, x in enumerate(recs) if x.get("state") == "start"]
+        self.assertTrue(any(x.get("state") == "carried-same" for x in recs[starts[-1]:]), "this run wrote its own record")
+        self.assertEqual(convert(self.root, "--confirm").returncode, 0)
+
+    def test_the_carried_check_after_a_partly_failed_undo_belongs_to_the_next_run_when_the_first_finished(self):
+        self.partly_failed_undo_then_run()
+
+    def test_the_carried_check_after_a_partly_failed_undo_belongs_to_the_next_run_when_the_first_failed(self):
+        total = int(convert(self.root, "--plan").stdout.split("Changes (")[1].split(")")[0])
+        self.partly_failed_undo_then_run(total)
+
+    def test_only_variable_and_signing_names_in_the_settings_files_are_stale_names(self):
+        conv = load_converter()
+        node = conv.Node(self.root)
+        self.assertEqual(conv.stale_names(node), [], "the old node has no new folders: nothing of the new layout is stale")
+        self.converted_by_pr7()
+        found = conv.stale_names(node)
+        files = [f for f, _ in found]
+        self.assertIn("/etc/nxlx/nxlx.env", files)
+        self.assertIn("/etc/nxlx/allowed_signers", files)
+        self.assertIn("/etc/systemd/system/nxlx-web.service", files)
+        self.assertIn("/etc/systemd/system/nxlx-web.service.d/50-nxlx-ndi.conf", files)
+        # a comment, a file that is not the node's own, and a name the table does not take are not stale
+        for rel in ("etc/nxlx/nxlx.env", "etc/nxlx/allowed_signers"):
+            write(self.root, rel, "# PVJ_PORT and pvj-release in a comment\nMYPVJ_FOO=1\nX=pvj-release-2026\n")
+        for rel in list(files):
+            if "nxlx-" in rel and rel.startswith("/etc/systemd"):
+                os.unlink(self.p(rel.lstrip("/")))
+        write(self.root, "usr/local/bin/mine", "# pvj-web PVJ_PORT\n")
+        self.assertEqual(conv.stale_names(node), [])
+        r = subprocess.run([CONVERT, "--root", self.root, "--stale-names"], capture_output=True, text=True)
+        self.assertEqual((r.returncode, r.stdout), (0, ""))
+        write(self.root, "etc/nxlx/nxlx.env", "PVJ_PORT=81\n")
+        r = subprocess.run([CONVERT, "--root", self.root, "--stale-names"], capture_output=True, text=True)
+        self.assertEqual((r.returncode, r.stdout), (4, "/etc/nxlx/nxlx.env: PVJ_PORT\n"))
+
+    def test_the_undo_does_not_stop_the_usb_drives_mount_instances_either(self):
+        conv = load_converter()
+        fake = type("R", (), {"returncode": 0, "stderr": "", "stdout": "nxlx-web.service loaded active running x\n"
+                              "nxlx-usb@sda1.service loaded active exited x\npvj-usb@sdb1.service loaded active exited x\n"
+                              "nxlx-convert-undo.timer loaded active waiting x\n"})()
+        old = conv.sh
+        conv.sh = lambda *a, **k: fake
+        try:
+            self.assertEqual([u for u, _ in conv.loaded_units_new()], ["nxlx-web.service"])
+            self.assertEqual([u for u, _ in conv.loaded_units()], ["nxlx-web.service"])
+        finally:
+            conv.sh = old
+
+    def test_a_partly_failed_undo_is_no_boundary_for_the_next_run_and_its_undo(self):
+        """Run, then a timed undo that cannot put back the login account (it is in use), then --run again and
+        --undo: the whole node is back as it was, as before the journal looked only at the latest conversion."""
+        old = snapshot(self.root)
+        self.assertEqual(convert(self.root, "--run").returncode, 0)
+        write(self.root, "proc/4242/status", "Name:\tbash\nUid:\t1001\t1001\t1001\t1001\n")
+        write(self.root, "proc/4242/cgroup", "0::/user.slice/user-1001.slice/session-3.scope\n")
+        u = convert(self.root, "--undo", "--auto")
+        self.assertEqual(u.returncode, 1, u.stdout)
+        self.assertIn("NOT UNDONE", u.stdout)
+        shutil.rmtree(self.p("proc/4242"))
+        r = convert(self.root, "--run")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        u = convert(self.root, "--undo")
+        self.assertEqual(u.returncode, 0, u.stdout + u.stderr)
+        self.assertEqual(snapshot(self.root), old)
+        self.assertIn("pvj-dev:", self.read("etc/passwd"))
+        self.assertTrue(os.path.isdir(self.p("home/pvj-dev")))
+        self.assertIn("010_pvj-dev", os.listdir(self.p("etc/sudoers.d")))
+
+    def test_a_node_with_the_new_names_is_checked_under_the_new_paths_too(self):
+        """A second pass stops the services, so the player on /run/nxlx, an update lock and a stick under /media/nxlx
+        refuse it the way the old paths refuse the first conversion."""
+        self.converted_by_pr7()
+        player = FakePlayer(self.root, False, "run/nxlx/player/player.sock")
+        self.addCleanup(player.close)
+        before = snapshot(self.root, skip=())
+        plan = convert(self.root, "--plan")
+        self.assertIn("a show is playing", plan.stdout)
+        r = convert(self.root, "--run")
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertEqual(snapshot(self.root, skip=()), before, "nothing was changed")
+        player.close()
+        os.unlink(self.p("run/nxlx/player/player.sock"))
+        write(self.root, "proc/mounts", "/dev/mmcblk0p2 / ext4 rw,noatime 0 0\n/dev/sda1 /media/nxlx/STICK vfat rw 0 0\n")
+        r = convert(self.root, "--run")
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("/media/nxlx/STICK", r.stdout)
+        write(self.root, "proc/mounts", "/dev/mmcblk0p2 / ext4 rw,noatime 0 0\n")
+        write(self.root, "run/nxlx-update/update.lock", "")
+        with open(self.p("run/nxlx-update/update.lock")) as held:
+            fcntl.flock(held, fcntl.LOCK_EX)
+            r = convert(self.root, "--run")
+            self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+            self.assertIn("an update is running", r.stdout)
+
+    def test_the_services_a_run_stops_and_starts_are_the_ones_since_the_last_confirm_under_either_name(self):
+        conv = load_converter()
+        recs = [{"run": "r1", "state": "start"},
+                {"run": "r1", "n": 0, "op": "stop", "state": "done", "active": ["pvj-web.service", "pvj-player.service"]},
+                {"run": "r1", "state": "finished"}, {"state": "confirmed"},
+                {"run": "r2", "state": "start"},
+                {"run": "r2", "n": 0, "op": "stop", "state": "done", "active": ["nxlx-player.service", "nxlx-web.service"]}]
+        self.assertEqual(conv.units_to_start(recs), ["nxlx-web.service", "nxlx-player.service"],
+                         "the first run's units are not started again by the second run's undo or start")
+        self.assertEqual(conv.units_to_start(recs[:3]), ["pvj-web.service", "pvj-player.service"])
+        fake = type("R", (), {"stdout": "pvj-web.service loaded active running x\n"
+                                        "nxlx-web.service loaded active running x\n"
+                                        "nxlx-convert-undo.timer loaded active waiting x\n"
+                                        "nxlx-raster@7.service loaded inactive dead x\n"
+                                        "nxlx-usb@sda1.service loaded active exited x\n"
+                                        "pvj-usb@sdb1.service loaded active exited x\n"
+                                        "other.service loaded active running x\n"})()
+        old = conv.sh
+        conv.sh = lambda *a, **k: fake
+        try:
+            self.assertEqual(conv.loaded_units(), [("pvj-web.service", "active"), ("nxlx-web.service", "active"),
+                                                   ("nxlx-raster@7.service", "inactive")])
+        finally:
+            conv.sh = old
+        # the plan of a node with the new names stops its nxlx-* units too (a real node only)
+        self.assertEqual([u for u in conv.stop_order() if u.startswith("nxlx-")][0], "nxlx-web.service")
 
     def test_the_undo_timer_is_a_unit_that_survives_a_restart_and_is_armed_again(self):
         total = len(re.findall(r"(?m)^    +\d+  ", convert(self.root, "--plan").stdout))

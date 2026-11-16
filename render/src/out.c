@@ -287,13 +287,13 @@ static int kms_open(const Cfg *cfg, char *err, size_t n)
 }
 
 // Headless there is no plane, so --final says why and the output's size stays. For the tests only, in a build made with
-// `make TEST_HOOKS=1`: PVJ_RENDER_TEST_FINAL=1 lets the final pass draw in the corner of the framebuffer as it does on
+// `make TEST_HOOKS=1`: NXLX_RENDER_TEST_FINAL=1 lets the final pass draw in the corner of the framebuffer as it does on
 // a screen, so everything but the plane itself runs in CI (the sizes the socket reports, the capture, the mapping).
 static void headless_final(const Cfg *cfg)
 {
     if (cfg->final_mode == FINAL_OFF) return;
-#ifdef PVJ_RENDER_TEST_HOOKS
-    if (getenv("PVJ_RENDER_TEST_FINAL")) {
+#ifdef NXLX_RENDER_TEST_HOOKS
+    if (getenv("NXLX_RENDER_TEST_FINAL")) {
         if (app.out_h <= FINAL_LINES) { final_refused("the output has no more than 720 lines"); return; }
         small_h = FINAL_LINES;
         small_w = ((int)lround((double)app.out_w * small_h / app.out_h)) & ~1;
@@ -322,10 +322,10 @@ static int headless_open(const Cfg *cfg, char *err, size_t n)
     ctx = eglCreateContext(dpy, got > 0 ? cfgs[0] : EGL_NO_CONFIG_KHR, EGL_NO_CONTEXT, cta);
     if (ctx == EGL_NO_CONTEXT) return fail(err, n, "no OpenGL ES 3 context (surfaceless)");
     if (!eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, ctx)) return fail(err, n, "eglMakeCurrent without a surface failed");
-#ifdef PVJ_RENDER_TEST_HOOKS
-    // Tests only: PVJ_RENDER_TEST_GL_RENDERER=<name> is judged as GL_RENDERER is on a screen, so the refusal of a software
+#ifdef NXLX_RENDER_TEST_HOOKS
+    // Tests only: NXLX_RENDER_TEST_GL_RENDERER=<name> is judged as GL_RENDERER is on a screen, so the refusal of a software
     // rasteriser runs in CI, where every headless run is on llvmpipe and must go on being allowed.
-    const char *fake = getenv("PVJ_RENDER_TEST_GL_RENDERER");
+    const char *fake = getenv("NXLX_RENDER_TEST_GL_RENDERER");
     if (fake) {
         LOG("graphics chip: %s (from the test hook)", fake);
         if (software_gl(fake)) return refuse_software(fake, err, n);
@@ -357,7 +357,7 @@ GLuint out_target(void) { return headless ? h_fbo : 0; }
 
 int out_final_usable(void) { return __atomic_load_n(&plane_ok, __ATOMIC_ACQUIRE); }
 
-#ifdef PVJ_RENDER_TEST_HOOKS
+#ifdef NXLX_RENDER_TEST_HOOKS
 // Tests only: the kernel's refusal of a scaled frame at run time, which no headless run can meet.
 void out_test_refuse(void) { final_refused("the display refused the scaled frame"); }
 #endif
@@ -493,7 +493,7 @@ int out_present(void)
     if (headless) {
         // paced by the clock: a frame at most every 1/60 s
         glFlush();
-#ifdef PVJ_RENDER_TEST_HOOKS
+#ifdef NXLX_RENDER_TEST_HOOKS
         if (plane_ok) {
             if (draw_h != plane_h) __atomic_add_fetch(&app.final_switches, 1, __ATOMIC_RELAXED);
             plane_h = draw_h;

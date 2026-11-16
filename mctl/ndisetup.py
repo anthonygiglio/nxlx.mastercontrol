@@ -63,10 +63,10 @@ PACKAGES = (("avahi-daemon", ("/usr/sbin/avahi-daemon",)),
 _SAYS = "# Written by nxlx-ndi-runtime (mctl/ndisetup.py) when NDI was set up on this box; removed by 'nxlx-ndi-runtime remove'.\n"
 # In a drop-in these two settings add to what the unit itself has; they do not replace it.
 WEB_TEXT = (_SAYS + "# The panel may reach the NDI helper's socket (D62). This file is also the mark that the box opted in.\n"
-            "[Service]\nSupplementaryGroups=nxlx-ndi\nEnvironment=PVJ_NDI_DIR=/run/nxlx-ndi\n"
+            "[Service]\nSupplementaryGroups=nxlx-ndi\nEnvironment=NXLX_NDI_DIR=/run/nxlx-ndi\n"
             # The folder of the NDI library's configuration file (the discovery servers): the panel writes it, the
             # helper reads it. The dash: a box updated and not yet restarted has no such folder, and the panel starts.
-            "Environment=PVJ_NDI_CONFIG_DIR=/run/nxlx-ndi-config\nReadWritePaths=-/run/nxlx-ndi-config\n")
+            "Environment=NXLX_NDI_CONFIG_DIR=/run/nxlx-ndi-config\nReadWritePaths=-/run/nxlx-ndi-config\n")
 # The pipe the player reads is made ONCE by root, in a folder of root's, at boot and by `nxlx-ndi-runtime install`
 # (systemd-tmpfiles --create). The helper writes it by its group (0660 root:nxlx-ndi) and can neither unlink, rename
 # nor replace it (the folder is 0750 root:nxlx-ndi), so the name the player opens is always that pipe. The player
@@ -110,8 +110,8 @@ def read_prefix(root=""):
 
 def unit_text(prefix, template=None):
     with open(template or TEMPLATE) as f:
-        text = f.read().replace("@PVJ_DIR@", check_prefix(prefix) + "/current")
-    if "@PVJ" in text:
+        text = f.read().replace("@NXLX_DIR@", check_prefix(prefix) + "/current")
+    if "@NXLX" in text:
         raise SetupError("the unit template has a placeholder that was not filled in")
     return text
 

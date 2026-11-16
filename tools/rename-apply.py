@@ -64,7 +64,7 @@ OWN = ("tools/rename-map.txt", "tools/rename-apply.py", "tools/rename-allow.txt"
 # that kind's rename. Every rename pull request adds its kind here and recounts the allow list (--write-allow).
 # Empty in PR 1: until a kind lands, its names are reported (the dry run, the guard's note) and not enforced.
 # text landed in PR 3, protocol in PR 4, render in PR 5, package in PR 6, system in PR 7.
-LANDED = ("text", "protocol", "render", "package", "system")
+LANDED = ("text", "protocol", "render", "package", "system", "release", "env")
 
 
 class Row:

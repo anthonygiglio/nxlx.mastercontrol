@@ -171,13 +171,12 @@ PVJ_*	NXLX_*	env
 -DPVJ_*	-DNXLX_*	env
 """
 
-# Release names (signing namespace, bundle and USB names) change with rename PR 8. Until that pull request sets
-# this to True the converter holds them as they are, so a node converted early still accepts its signed bundles.
-RELEASE_NAMES_LIVE = False
-# Environment variables (PVJ_* to NXLX_*) change with rename PR 8 too. The programs of the system rename (PR 7) still
-# read PVJ_*, so until then the converter keeps the variable names in the units, drop-ins and nxlx.env it rewrites
-# (only their values, the paths, take the new names).
-ENV_NAMES_LIVE = False
+# Release names (signing namespace, bundle and USB names) and environment variable names (PVJ_* to NXLX_*) changed
+# with rename PR 8. The converter rewrites them in every file it owns: the units and drop-ins, nxlx.env (its keys),
+# and allowed_signers (principal and namespace; the keys stay). The rows are the same on a node converted in PR 7,
+# whose files have the new folder names and the old variable and signing names: a second run finds only those.
+RELEASE_NAMES_LIVE = True
+ENV_NAMES_LIVE = True
 
 IDENT = "A-Za-z0-9_"
 OLD = re.compile(r"pvj|pocket[ _-]?vj", re.I)
@@ -206,14 +205,14 @@ GROUP_NEW = {"pvj": "nxlx-svc"}     # node-01 already has a login group called n
 STOP_ORDER = ["pvj-web.service", "pvj-player.service", "pvj-ndi.service", "pvj-ndi-discovery.service",
               "pvj-link.service", "pvj-sound.service", "pvj-supportd.service", "pvj-sysd.service",
               "pvj-netd.service", "pvj-raster.socket"]
-PLAYER_SOCKET = "run/pvj/player/player.sock"
-UPDATE_LOCKS = ["run/pvj-update/update.lock", "run/lock/pvj-update.lock"]
+PLAYER_SOCKETS = ["run/pvj/player/player.sock", "run/nxlx/player/player.sock"]     # the node before or after the rename
+UPDATE_LOCKS = ["run/pvj-update/update.lock", "run/lock/pvj-update.lock", "run/nxlx-update/update.lock"]
 CARRIED = ["settings.json", "node-id"]      # in /var/lib/pvj: must come out byte for byte the same
 BACKED_UP = ["etc/passwd", "etc/group", "etc/shadow", "etc/gshadow", "etc/subuid", "etc/subgid",
              "var/lib/pvj/settings.json", "var/lib/pvj/node-id", "var/lib/pvj/tls", "var/lib/pvj/events.json",
              "var/lib/pvj/renderer.json", "var/lib/pvj/screen-mode.json", "opt/pvj/previous", "opt/pvj/current",
              "etc/pvj"]
-EXIT_OK, EXIT_FAILED, EXIT_REFUSED = 0, 1, 2
+EXIT_OK, EXIT_FAILED, EXIT_REFUSED, EXIT_STALE = 0, 1, 2, 4
 
 
 class Refused(Exception):
@@ -428,6 +427,18 @@ def sha(path, limit=CARRIED_MAX):
 
 
 # --- the plan -------------------------------------------------------------------------------------------------------
+def second_pass(node):
+    """True on a node that has the new folders already: what is left to do is the variable and signing names (and
+    whatever else a text file still holds), not the conversion."""
+    return not any(node.exists(rel) for rel in ("opt/pvj", "etc/pvj", "var/lib/pvj"))
+
+
+SECOND_PASS_TEXT = ("This is a second pass: the node has the new folders and accounts already, and only the variable "
+                    "and signing names (PVJ_*, pvj-release) and what else still holds an old name are rewritten. "
+                    "An undo puts the old variable and signing names back, and this release does not read them: after "
+                    "an undo, install the earlier release again before the node starts.")
+
+
 class Plan:
     def __init__(self, node, m):
         self.node, self.m = node, m
@@ -499,8 +510,8 @@ def make_plan(node, force=False, mode="plan", release=None):
     plan.check(not ro, "the root file system is writable" if not ro else
                "the root file system is read-only (%s): nothing would persist. Turn the read-only root off first "
                "(sudo pvj-rootfs off) and restart" % ro[0][1])
-    usb = [mp for mp, _, _ in node.mounts() if mp.startswith("/media/pvj/")]
-    plan.check(not usb, "no USB drive is mounted under /media/pvj" if not usb else
+    usb = [mp for mp, _, _ in node.mounts() if mp.startswith(("/media/pvj/", "/media/nxlx/"))]
+    plan.check(not usb, "no USB drive is mounted under /media/pvj or /media/nxlx" if not usb else
                "a USB drive is mounted at %s: take it out (or sudo umount it) first" % ", ".join(usb))
     # The update lock is taken, and kept for as long as this process runs, so no update starts in the middle.
     plan.locks, held = [], []
@@ -562,8 +573,8 @@ def make_plan(node, force=False, mode="plan", release=None):
 
     # 3. stop the services (a real node only), then make sure no process of an account to be renamed is left
     if not node.stage:
-        plan.add(3, "stop", "stop the services in order (%s), then every other loaded pvj-* unit (the picture "
-                 "helper's jobs, updates)" % ", ".join(STOP_ORDER), units=STOP_ORDER)
+        plan.add(3, "stop", "stop the services in order (%s), then every other loaded pvj-* or nxlx-* unit (the "
+                 "picture helper's jobs, updates)" % ", ".join(STOP_ORDER), units=STOP_ORDER)
     if uids:
         plan.add(3, "idle", "check that no process of an account to be renamed is left",
                  uids=sorted([k, v] for k, v in uids.items()))
@@ -721,10 +732,6 @@ def make_plan(node, force=False, mode="plan", release=None):
                               "rename PR 4): " + "; ".join("%s (%d)" % kv for kv in sorted(found.items())[:10]))
     if node.exists("run/pvj"):
         plan.notes.append("/run/pvj and its siblings: left alone, /run is rebuilt at boot")
-    if not RELEASE_NAMES_LIVE:
-        plan.notes.append("release names (pvj-release, pvj-recover, bundle names) are held until rename PR 8")
-    if not ENV_NAMES_LIVE:
-        plan.notes.append("environment variable names (PVJ_*) are held until rename PR 8; only their values change")
 
     # The backup: the account files, what is carried over, and every file a step touches (not the videos).
     seen = set()
@@ -821,9 +828,20 @@ def scan_state(node, rel):
 
 
 def show_playing(node):
-    """None when no player answers (not running), False when it is idle, else a few words on what plays. A player
-    that is there but does not answer counts as playing: when in doubt, the show goes on."""
-    path = node.p(PLAYER_SOCKET)
+    """None when no player answers (not running), False when it is idle, else a few words on what plays. The player
+    is looked for under both names of its folder: a node that has the new names is asked too (a second pass stops its
+    services as well)."""
+    found = [show_playing_at(node, rel) for rel in PLAYER_SOCKETS]
+    for f in found:
+        if f:
+            return f
+    return False if any(f is False for f in found) else None
+
+
+def show_playing_at(node, rel):
+    """The answer of one socket: None, False or what plays. A player that is there but does not answer counts as
+    playing: when in doubt, the show goes on."""
+    path = node.p(rel)
     if not os.path.exists(path):
         return None
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -1074,7 +1092,7 @@ class Runner:
             loaded = loaded_units()
             names = [u for u, _ in loaded]
             rec.update(active=[u for u, state in loaded if state == "active"],
-                       units=[u for u in STOP_ORDER if u in names] + sorted(u for u in names if u not in STOP_ORDER))
+                       units=[u for u in stop_order() if u in names] + sorted(u for u in names if u not in stop_order()))
         self.journal.write(dict(rec, state="begin"))
         injected_failure(node, self.n + 1)
         if op == "rename":
@@ -1128,26 +1146,38 @@ class Runner:
 
 
 def loaded_units():
-    """[(unit, active state)] of every loaded unit whose name starts with pvj- (a real node)."""
-    r = sh(["systemctl", "list-units", "--all", "--plain", "--no-legend", "--full", "pvj-*"], check=False)
+    """[(unit, active state)] of every loaded unit whose name starts with pvj- or nxlx- (a real node), not the
+    converter's own and not the USB drives' mount instances (their stop unmounts the drive and nothing starts them
+    again; a drive that is mounted is a refusal of the plan anyway). The nxlx-* ones are there on a node that has the new names already: its second pass changes
+    their files and environment, so they are stopped and started again like the first conversion's."""
+    r = sh(["systemctl", "list-units", "--all", "--plain", "--no-legend", "--full", "pvj-*", "nxlx-*"], check=False)
     out = []
     for line in r.stdout.splitlines():
         parts = line.split()
-        if len(parts) >= 3 and parts[0].startswith("pvj-"):
+        if (len(parts) >= 3 and parts[0].startswith(("pvj-", "nxlx-")) and not parts[0].startswith("nxlx-convert")
+                and not parts[0].startswith(("pvj-usb@", "nxlx-usb@"))):
             out.append((parts[0], parts[2]))
     return out
 
 
+def stop_order():
+    """The main units in the order they are stopped, under their old names and under the new ones (a second pass
+    on a node that has the new names stops the nxlx-* units)."""
+    m = Matcher(rows())
+    return STOP_ORDER + [renamed(m, u) for u in STOP_ORDER]
+
+
 def units_to_start(records):
-    """The main units that were running before any run that is not undone stopped them, in STOP_ORDER. Every run
-    counts, so a run that carries on after a failure starts what the first one stopped."""
+    """The main units that were running before any run since the last confirm, not undone, stopped them, in stop
+    order. Every such run counts, so a run that carries on after a failure starts what the first one stopped."""
+    records = since_confirm(records)
     undone = {(r.get("run"), r.get("n")) for r in records if r.get("state") == "undone"}
     active = set()
     for r in records:
         # a stop whose "done" was never written (a power cut) may have stopped them all the same
         if r.get("op") == "stop" and r.get("state") in ("begin", "done") and (r.get("run"), r.get("n")) not in undone:
             active.update(r.get("active", []))
-    return [u for u in STOP_ORDER if u in active]
+    return [u for u in stop_order() if u in active]
 
 
 def start_real(node, journal):
@@ -1348,6 +1378,8 @@ def report(plan, out=None, force=False):
             w("  step %d, %s\n" % (a["step"], names[a["step"]]))
             last = a["step"]
         w("    %3d  %s\n" % (i, a["text"]))
+    if changes and second_pass(node):
+        w("\n%s\n" % SECOND_PASS_TEXT)
     if changes:
         w("\nBackup\n  %d entries, %d KB, to /%s/<run>/backup.tar (root only, 0600); the videos are not copied "
           "(their folder is only renamed)\n" % (len(plan.backup), (backup_size(node, plan) + 1023) // 1024, BACKUP))
@@ -1406,6 +1438,7 @@ def cmd_run(node, force, release=None):
         return run_detached("run", force, release)
     Journal(node).records()         # a journal this converter cannot read stops it here, before anything is armed
     plan = make_plan(node, force, mode="run", release=release)
+    sp = second_pass(node)          # before the changes: afterwards every node has the new folders
     report(plan, None, force)
     blocked = plan.blockers(force)
     if blocked:
@@ -1439,8 +1472,10 @@ def cmd_run(node, force, release=None):
         return EXIT_REFUSED
     tar = make_backup(node, plan, run_dir)
     journal.write({"run": run_id, "state": "start", "backup": os.path.relpath(tar, node.root or "/"),
-                   "carried": plan.carried, "undo": armed})
+                   "carried": plan.carried, "undo": armed, "second_pass": sp})
     say("\nConverting (backup %s; undo %s)\n" % ("/" + os.path.relpath(tar, node.root or "/"), armed))
+    if sp:
+        say("%s\n" % SECOND_PASS_TEXT)
     runner = Runner(node, plan, journal, run_id, run_dir)
     checked = False
     try:
@@ -1467,19 +1502,25 @@ def cmd_run(node, force, release=None):
         say("\nFAILED after the last change: %s. Run --run again (it starts and checks), or --undo.\n" % e)
         return EXIT_FAILED
     journal.write({"run": run_id, "state": "finished"})
-    say("\nConverted: %d changes. Check the node, then: sudo nxlx-convert --confirm%s\n" % (
-        runner.n, "" if node.stage else " (within %s, or it is undone)" % UNDO_AFTER))
+    say("\nConverted: %d changes%s. Check the node, then: sudo nxlx-convert --confirm%s\n" % (
+        runner.n, " (a second pass: variable and signing names; an undo needs the earlier release installed again)"
+        if sp else "",
+        "" if node.stage else " (within %s, or it is undone)" % UNDO_AFTER))
     return EXIT_OK
 
 
-def first_start(records):
-    """The index of the first start of the latest conversion (the starts after the last undo or confirm), or None."""
+def first_start(records, strict=False):
+    """The index of the first start of the latest conversion (the starts after the last complete undo or confirm),
+    or None. An undo that left changes in place (failed > 0) is no boundary for what is to be put back: they are
+    still to be. With strict, every undo is a boundary: the services were started again by it, so what is carried
+    over (settings.json: the panel writes a new PIN at every start) is no longer what an earlier run saw."""
     starts = [i for i, r in enumerate(records) if r.get("state") == "start"]
     if not starts:
         return None
     first = starts[-1]
     for i in reversed(starts):
-        if any(r.get("state") in ("undo-finished", "confirmed") for r in records[i + 1:first + 1]):
+        if any(r.get("state") == "confirmed" or (r.get("state") == "undo-finished" and (strict or not r.get("failed")))
+               for r in records[i + 1:first + 1]):
             break
         first = i
     return first
@@ -1488,13 +1529,13 @@ def first_start(records):
 def first_carried(records):
     """The hashes of what is carried over, from the start of the latest conversion: the run that carries on after a
     failure must compare with the node before the first run, not with itself."""
-    first = first_start(records)
+    first = first_start(records, strict=True)
     return None if first is None else records[first].get("carried")
 
 
 def carried_checked(records):
     """Whether a run of the latest conversion has checked what is carried over and found it the same."""
-    first = first_start(records)
+    first = first_start(records, strict=True)
     return first is not None and any(r.get("state") == "carried-same" for r in records[first:])
 
 
@@ -1533,8 +1574,9 @@ def finish_pending(node, plan):
     except Exception as e:      # noqa: BLE001
         say("\nRefused, nothing on the node was changed: the undo timer could not be armed (%s)\n" % e)
         return EXIT_REFUSED
-    journal.write({"run": run_id, "state": "start", "carry_on": True, "carried": first_carried(journal.records()),
-                   "undo": armed})
+    recs = journal.records()
+    journal.write({"run": run_id, "state": "start", "carry_on": True, "carried": first_carried(recs),
+                   "undo": armed, "second_pass": bool(recs[first_start(recs)].get("second_pass"))})
     # Checked before anything starts, once: an earlier run that got as far as starting the services has its result
     # in the journal (the panel has rewritten settings.json since, so comparing again would always fail).
     if not check_carried(node, journal, run_id, plan.carried):
@@ -1624,10 +1666,20 @@ def disarm_left_timer(node, inside=False):
     return " The undo timer that was left is taken away."
 
 
+def since_confirm(recs):
+    """The journal of the latest conversion: from the first start after the last confirm or undo. What an earlier
+    conversion made and the owner confirmed is the node's state now, never put back by an undo of a later run (a
+    second pass on a node converted before). The journal itself is kept whole for the audit. A manual undo right
+    after a confirm still covers that conversion, as it is the latest."""
+    first = first_start(recs)
+    return recs if first is None else recs[first:]
+
+
 def pending_changes(recs):
     """The records of the changes to put back, in the journal's order: every "done" that is not undone, and every
     "begin" without its "done" (a power cut between the change and its record: the change may be made). Undoing
     one of those is safe either way, as every undo looks at what is there first, or puts back the original."""
+    recs = since_confirm(recs)
     undone = {(r.get("run"), r.get("n")) for r in recs if r.get("state") == "undone"}
     done = {(r.get("run"), r.get("n")) for r in recs if r.get("state") == "done"}
     out = []
@@ -1659,6 +1711,7 @@ def cmd_undo(node, force, auto):
             say("Refused, nothing was changed: a show is playing (%s). Give --force to undo anyway.\n" % playing)
             return EXIT_REFUSED
     done = pending_changes(recs)
+    starts_in_window = [r for r in since_confirm(recs) if r.get("state") == "start"]
     if not done:
         disarm_undo(node, inside=auto)
         say("Nothing to undo.\n")
@@ -1714,8 +1767,11 @@ def cmd_undo(node, force, auto):
         for u in reversed(active):
             sh(["systemctl", "start", u], check=False)
     journal.write({"state": "undo-finished", "failed": failed})
+    only_second = bool(starts_in_window) and all(r.get("second_pass") for r in starts_in_window)
     say("%s The backup stays in /%s.\n" % (
-        "Undone: the node uses the old names again." if not failed else
+        ("Undone: the variable and signing names are the old ones again (PVJ_*, pvj-release). This release does not "
+         "read them: install the earlier release again before the node starts, or run --run again."
+         if only_second else "Undone: the node uses the old names again.") if not failed else
         "Undone with %d change(s) that could not be put back, listed above. Run --undo again once the cause is "
         "gone." % failed, BACKUP))
     return EXIT_FAILED if failed else EXIT_OK
@@ -1725,7 +1781,7 @@ def loaded_units_new():
     """[(unit, active state)] of every loaded unit whose name starts with nxlx- but is not the converter's own."""
     r = sh(["systemctl", "list-units", "--all", "--plain", "--no-legend", "--full", "nxlx-*"], check=False)
     return [(p[0], p[2]) for p in (line.split() for line in r.stdout.splitlines())
-            if len(p) >= 3 and p[0].startswith("nxlx-") and not p[0].startswith("nxlx-convert")]
+            if len(p) >= 3 and p[0].startswith("nxlx-") and not p[0].startswith(("nxlx-convert", "nxlx-usb@", "pvj-usb@"))]
 
 
 def undo_one(node, r):
@@ -1783,6 +1839,8 @@ def main(argv=None):
     ap.add_argument("--release", help="with --plan or --run: point current at this release folder of "
                     "/opt/pvj/releases as part of the run (install.sh)")
     ap.add_argument("--auto", action="store_true", help=argparse.SUPPRESS)       # the undo timer: skip if confirmed
+    g.add_argument("--stale-names", action="store_true", help="list the files of the new layout that still hold old "
+                   "variable or signing names (PVJ_*, pvj-release); exit 4 if there are any (install.sh)")
     g.add_argument("--state", action="store_true", help="print the state of the latest conversion and stop: none, "
                    "pending, unconfirmed, confirmed or undone (install.sh)")
     a = ap.parse_args(argv)
@@ -1811,7 +1869,51 @@ def main(argv=None):
         return EXIT_REFUSED
 
 
+STALE_FILES = ["etc/nxlx/nxlx.env", "etc/nxlx/allowed_signers"]
+
+
+def stale_names(node):
+    """[(file, the old name)] of the variable and signing names (the env and release kinds of the table, nothing
+    else) that a node with the new folders still holds in the files its settings come from: nxlx.env,
+    allowed_signers and the nxlx-* units and their drop-ins. A comment line does not count. This is what install.sh
+    asks, so it and the converter agree on what a leftover is."""
+    m = Matcher(rows())
+    files = [rel for rel in STALE_FILES if node.exists(rel)]
+    base = node.p("etc/systemd/system")
+    if os.path.isdir(base):
+        for name in sorted(os.listdir(base)):
+            full = os.path.join(base, name)
+            if name.startswith("nxlx-") and name.endswith((".service", ".socket")) and not os.path.islink(full):
+                files.append("etc/systemd/system/" + name)
+            elif name.startswith("nxlx-") and name.endswith((".service.d", ".socket.d")) and os.path.isdir(full):
+                files += ["etc/systemd/system/%s/%s" % (name, n) for n in sorted(os.listdir(full)) if n.endswith(".conf")]
+    found = []
+    for rel in files:
+        path = node.p(rel)
+        if os.path.islink(path):
+            continue
+        text = is_text(path)
+        if text is None:
+            continue
+        for line in text.split("\n"):
+            if line.lstrip().startswith("#"):
+                continue
+            for mt in m.rx.finditer(line):
+                if m.rows[mt.lastindex - 1].kind in ("env", "release"):
+                    found.append(("/" + rel, mt.group(0)))
+                    break
+            else:
+                continue
+            break
+    return found
+
+
 def command(node, a):
+    if a.stale_names:
+        found = stale_names(node)
+        for path, name in found:
+            print("%s: %s" % (path, name))
+        return EXIT_STALE if found else EXIT_OK
     if a.state:
         print(conversion_state(Journal(node).records()))
         return EXIT_OK

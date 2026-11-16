@@ -4,7 +4,7 @@
 # Device test: run on a real board (Pi, mini PC) and write a report folder.
 #   tools/device-test.sh [OUT_DIR]
 # Environment:
-#   PVJ_DEVICE_PLAY=1   also play a test pattern on the real display (needs a screen attached)
+#   NXLX_DEVICE_PLAY=1   also play a test pattern on the real display (needs a screen attached)
 # It never changes the network, never installs anything and never needs root.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -30,7 +30,7 @@ status=0
 
 echo "== self-test"
 args=(--json "$OUT/selftest.json")
-[ "${PVJ_DEVICE_PLAY:-0}" = "1" ] && args+=(--play)
+[ "${NXLX_DEVICE_PLAY:-0}" = "1" ] && args+=(--play)
 python3 bin/nxlx-selftest "${args[@]}" >"$OUT/selftest.txt" 2>&1 || status=1
 tail -n 25 "$OUT/selftest.txt"
 

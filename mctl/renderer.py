@@ -114,9 +114,9 @@ def sources_for(board_kind, chosen=None):
 
 
 def binary(env=None):
-    """Where the program is built: render/mctl-render beside mctl/ in this release (PVJ_RENDER_BIN overrides, tests)."""
+    """Where the program is built: render/mctl-render beside mctl/ in this release (NXLX_RENDER_BIN overrides, tests)."""
     env = os.environ if env is None else env
-    return env.get("PVJ_RENDER_BIN") or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "render", "mctl-render")
+    return env.get("NXLX_RENDER_BIN") or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "render", "mctl-render")
 
 
 def available(env=None):

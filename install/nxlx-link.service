@@ -5,7 +5,7 @@ Description=nxlx.mastercontrol Ableton Link follower (tempo and beat only; off u
 # The program is built at install from Debian's ableton-link-dev (D117). Where the package was missing, or after a
 # rollback to a release from before D117, this unit is here and its program is not. A condition that is not met is not
 # a failure: the unit is skipped, once, and nothing is started again (as the NDI helper's, D62).
-ConditionPathExists=@PVJ_DIR@/render/nxlx-link
+ConditionPathExists=@NXLX_DIR@/render/nxlx-link
 StartLimitIntervalSec=0
 
 [Service]
@@ -18,9 +18,9 @@ UMask=0027
 # Its own folder: the socket for the panel and the state file (0640, group nxlx-link). Nobody else writes here.
 RuntimeDirectory=nxlx-link
 RuntimeDirectoryMode=0750
-Environment=PVJ_LINK_DIR=/run/nxlx-link
+Environment=NXLX_LINK_DIR=/run/nxlx-link
 Environment=HOME=/nonexistent
-ExecStart=@PVJ_DIR@/render/nxlx-link
+ExecStart=@NXLX_DIR@/render/nxlx-link
 Restart=always
 RestartSec=2
 

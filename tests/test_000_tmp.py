@@ -24,7 +24,7 @@ from mctl import shaderlive
 from tests import tmpguard
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-INNER = "PVJ_TMP_INNER_RUN"                     # set for the runs this module starts, which load this module too
+INNER = "NXLX_TMP_INNER_RUN"                     # set for the runs this module starts, which load this module too
 # Small, quick modules that between them make folders, files, sockets in a temp folder and start programs.
 SUBSET = ["tests.test_settings", "tests.test_auth", "tests.test_paths", "tests.test_presets", "tests.test_sysd",
           "tests.test_run_folders"]
@@ -116,7 +116,7 @@ class NothingIsLeft(Outer):
         kept = os.listdir(self.tmp)
         self.assertEqual(len(kept), 1)
         self.assertIn(os.path.join(self.tmp, kept[0]), r.stderr)
-        self.assertIn("PVJ_KEEP_TMP", r.stderr)
+        self.assertIn("NXLX_KEEP_TMP", r.stderr)
         inside = [n for n in os.listdir(os.path.join(self.tmp, kept[0])) if n != tmpguard.MARKER]
         self.assertTrue(os.path.exists(os.path.join(self.tmp, kept[0], inside[0], "evidence")))
 

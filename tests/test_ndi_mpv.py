@@ -16,12 +16,12 @@ same code the real-install test uses (tests/ndi_standin/mpvword.py).
 What is not: systemd, the accounts and root's pipe (tests/real_install_test.sh has those), NDI's own library, a
 screen, a sound device, a Raspberry Pi's processor.
 
-It runs only where it is asked for (PVJ_NDI_MPV_TEST=1): it takes minutes, and its answer belongs to one mpv. There,
+It runs only where it is asked for (NXLX_NDI_MPV_TEST=1): it takes minutes, and its answer belongs to one mpv. There,
 a missing mpv or C compiler is a failure, not a skip.
 
 Two kinds of case, as in the real-install test. A case that passed on master's pvj is asked with `must` and is
 always fatal. A case that failed there (the faults the Pi showed) is asked with `known` and is under the one switch:
-with PVJ_NDI_FINDINGS_FATAL=yes it fails like any other, and CI's job sets that since the mending; without it, it
+with NXLX_NDI_FINDINGS_FATAL=yes it fails like any other, and CI's job sets that since the mending; without it, it
 prints a line beginning FINDING and is counted as skipped, with the reason. CI's job also runs the still cases on
 the pvj code from before the mending, where they must fail.
 
@@ -44,9 +44,9 @@ from tests.test_ndi import FakeClient
 from tests.test_server import ServerBase
 from tests.test_support import LAN
 
-ASKED = os.environ.get("PVJ_NDI_MPV_TEST") == "1"
-FATAL = os.environ.get("PVJ_NDI_FINDINGS_FATAL", "no") == "yes"
-WANT = os.environ.get("PVJ_NDI_MPV_WANT", "")      # the start of the version this run is for, such as "0.40."
+ASKED = os.environ.get("NXLX_NDI_MPV_TEST") == "1"
+FATAL = os.environ.get("NXLX_NDI_FINDINGS_FATAL", "no") == "yes"
+WANT = os.environ.get("NXLX_NDI_MPV_WANT", "")      # the start of the version this run is for, such as "0.40."
 MPV = shutil.which("mpv")
 
 MOVING, SOUND, STILL = "MCTL-STANDIN (moving)", "MCTL-STANDIN (moving with sound)", "MCTL-STANDIN (one still then sound)"
@@ -148,12 +148,12 @@ class ApiRig(mpvword.Rig):
         return path
 
 
-@unittest.skipUnless(ASKED, "asked for with PVJ_NDI_MPV_TEST=1 only (CI's job ndi-mpv, on the Pi's mpv): it takes minutes and its answer belongs to one mpv")
+@unittest.skipUnless(ASKED, "asked for with NXLX_NDI_MPV_TEST=1 only (CI's job ndi-mpv, on the Pi's mpv): it takes minutes and its answer belongs to one mpv")
 class NdiOnARealMpv(ServerBase):
     @classmethod
     def setUpClass(cls):
         if not MPV or not ndi_standin.CC:
-            raise AssertionError("PVJ_NDI_MPV_TEST=1 and %s is not here: this run was asked for and cannot say anything"
+            raise AssertionError("NXLX_NDI_MPV_TEST=1 and %s is not here: this run was asked for and cannot say anything"
                                  % ("mpv" if not MPV else "a C compiler"))
         cls.build = tempfile.mkdtemp(prefix="nxlx-ndi-mpv-")
         cls.lib = os.path.join(cls.build, ndi.LIB_NAME)
@@ -243,7 +243,7 @@ class NdiOnARealMpv(ServerBase):
             if FATAL:
                 self.fail("on %s: %s" % (self.version, e))
             say("FINDING (%s): %s. %s" % (self.version, words, e))
-            self.skipTest("FINDING, not fatal while PVJ_NDI_FINDINGS_FATAL is not 'yes': %s: %s" % (words, str(e)[:400]))
+            self.skipTest("FINDING, not fatal while NXLX_NDI_FINDINGS_FATAL is not 'yes': %s: %s" % (words, str(e)[:400]))
         say("GOOD, and it was a known finding (%s): %s. If this is the mended code, make findings fatal." % (self.version, words))
 
     def for_the_record(self, words, case, *args, **kw):
@@ -260,7 +260,7 @@ class NdiOnARealMpv(ServerBase):
     # ---- the mpv this run is for
     def test_00_the_mpv_is_the_one_this_run_is_for(self):
         if not WANT:
-            self.skipTest("no version was asked for (PVJ_NDI_MPV_WANT); this run's mpv is: %s" % self.version)
+            self.skipTest("no version was asked for (NXLX_NDI_MPV_WANT); this run's mpv is: %s" % self.version)
         self.assertRegex(self.version, r"^mpv v?%s" % WANT.replace(".", r"\."),
                          "this job is for the Pi's mpv; if Debian moved on, so will the Pi at its next upgrade: look at both")
 

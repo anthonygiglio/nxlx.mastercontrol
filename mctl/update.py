@@ -30,8 +30,8 @@ import urllib.request
 
 from . import paths
 
-PRINCIPAL = "pvj-release"
-NAMESPACE = "pvj-release"
+PRINCIPAL = "nxlx-release"
+NAMESPACE = "nxlx-release"
 MAX_BUNDLE_BYTES = 300 * 1024 * 1024
 MAX_FILES = 5000
 KEEP_BACKUPS = 5
@@ -138,7 +138,7 @@ def safe_extract(bundle, dest):
         strip = None
         if len(tops) == 1:
             only = next(iter(tops))
-            # a single top-level folder (pvj-1.2.3/) is stripped; a lone file is not
+            # a single top-level folder (nxlx-1.2.3/) is stripped; a lone file is not
             if any(m.name.startswith(only + "/") for m in members):
                 strip = only
         for m in members:
@@ -485,7 +485,7 @@ class Updater:
         self._restart()
 
     # --- USB ------------------------------------------------------------
-    BUNDLE_NAME = re.compile(r"pvj-(\d+\.\d+\.\d+)\.tar\.gz")
+    BUNDLE_NAME = re.compile(r"nxlx-(\d+\.\d+\.\d+)\.tar\.gz")
 
     def open_inbox(self):
         """The upload folder, opened without following a link: nxlx-web owns /var/lib/nxlx and could replace the
@@ -516,7 +516,7 @@ class Updater:
     def clear_inbox(self, dir_fd):
         """Remove what was uploaded, whatever the outcome: a bundle is tried once. Only inside the opened folder."""
         for name in os.listdir(dir_fd):
-            if name.startswith("pvj-"):
+            if name.startswith(("nxlx-", "pvj-")):      # also what an old name left behind: cleaned, never taken
                 try:
                     os.unlink(name, dir_fd=dir_fd)
                 except OSError:
@@ -524,7 +524,7 @@ class Updater:
 
     def usb_bundles(self, base="/media/nxlx"):
         found = []
-        for path in glob.glob(os.path.join(base, "*", "pvj-update", "*.tar.gz")):
+        for path in glob.glob(os.path.join(base, "*", "nxlx-update", "*.tar.gz")):
             m = self.BUNDLE_NAME.fullmatch(os.path.basename(path))
             if m:
                 found.append((parse_version(m.group(1)), path))
@@ -559,13 +559,13 @@ class Updater:
             with open(self.real(self.etc_dir + "/nxlx.env")) as f:
                 for line in f:
                     line = line.strip()
-                    if line.startswith("PVJ_PORT="):
+                    if line.startswith("NXLX_PORT="):
                         value = line.split("=", 1)[1].strip().strip("'\"")
                         if value.isdigit():
                             return value
         except OSError:
             pass
-        return os.environ.get("PVJ_PORT", "80")
+        return os.environ.get("NXLX_PORT", "80")
 
     def _http_health(self, timeout=30):
         port = self.configured_port()
@@ -592,7 +592,7 @@ def main(argv=None):
         p.add_argument("--sha256")
         p.add_argument("--allow-unsigned", action="store_true", help="development only")
         p.add_argument("--force", action="store_true")
-    for name, text in (("usb", "apply the newest bundle in <usb>/pvj-update/"),
+    for name, text in (("usb", "apply the newest bundle in <usb>/nxlx-update/"),
                        ("inbox", "apply the newest bundle uploaded through the panel")):
         p = sub.add_parser(name, help=text)
         p.add_argument("--result", help="write the progress and outcome as JSON here (for the panel)")
@@ -610,7 +610,7 @@ def main(argv=None):
         # Run from a terminal: the panel's Updates card reads this file, and it would go on saying "updated to X"
         # after a rollback. No folder is made for it here. On a box it is in the update units' folder, which is
         # also the lock's, and take_lock() makes that one where no unit has run yet; so there it is always written.
-        result = os.environ.get("PVJ_UPDATE_RESULT", DEFAULT_RESULT)
+        result = os.environ.get("NXLX_UPDATE_RESULT", DEFAULT_RESULT)
 
     def report(state, message, version=None):
         if not result:
@@ -680,10 +680,10 @@ def main(argv=None):
                 else:
                     bundles = u.inbox_bundles(inbox) if inbox is not None else []
                 if args.version:
-                    bundles = [b for b in bundles if os.path.basename(b) == "pvj-%s.tar.gz" % args.version]
+                    bundles = [b for b in bundles if os.path.basename(b) == "nxlx-%s.tar.gz" % args.version]
                 if not bundles:
                     raise UpdateError(("version %s is no longer there" % args.version if args.version else "no update bundle found")
-                                      + (" (in pvj-update/ on a USB drive)" if args.cmd == "usb" else " (upload it again)"))
+                                      + (" (in nxlx-update/ on a USB drive)" if args.cmd == "usb" else " (upload it again)"))
                 log("using %s" % os.path.basename(bundles[0]))
                 version = u.apply(bundles[0], log=log, dir_fd=inbox)
                 report("done", "updated to %s" % version, version)
@@ -752,7 +752,7 @@ def take_lock(path=None, old=None):
     go), or None when another update holds it. Raises UpdateError when the lock file cannot be used at all.
     `old` is the lock's earlier name, taken as well where the lock is the default one (see _old_lock)."""
     import fcntl
-    named = path or os.environ.get("PVJ_UPDATE_LOCK")
+    named = path or os.environ.get("NXLX_UPDATE_LOCK")
     path = named or DEFAULT_LOCK
     if old is None and not named:
         old = OLD_LOCK
@@ -773,7 +773,7 @@ def take_lock(path=None, old=None):
     except OSError as e:
         # There is one lock file and everybody uses it. This used to fall back to a file in the caller's own temp
         # folder, and two updaters that fell back differently, or only one of them, both ran (D70). Whoever
-        # cannot use the lock does not update; on a desk, name another file in PVJ_UPDATE_LOCK.
+        # cannot use the lock does not update; on a desk, name another file in NXLX_UPDATE_LOCK.
         raise UpdateError("cannot use the update lock %s: %s" % (path, e.strerror or e))
     st = os.fstat(fd)
     if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:

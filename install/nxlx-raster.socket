@@ -5,7 +5,7 @@ Description=nxlx.mastercontrol picture helper socket (uploaded logos are decoded
 # The program is built at install (render/raster/nxlx-raster.c, from libpng and libjpeg headers). Where it could not be
 # built, or after a rollback to a release from before D129, this unit is here and its program is not: the socket is then
 # skipped, once, and the panel says picture upload is not available. That is no failure.
-ConditionPathExists=@PVJ_DIR@/render/nxlx-raster
+ConditionPathExists=@NXLX_DIR@/render/nxlx-raster
 
 [Socket]
 # One helper process per connection (nxlx-raster@.service), so a hijacked decoder has seen one file and nothing else.

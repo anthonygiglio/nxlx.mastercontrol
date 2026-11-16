@@ -850,7 +850,7 @@ class ImportTest(Base):
         result = os.path.join(tempfile.mkdtemp(), "result.json")
         with open(result, "w") as f:
             json.dump({"state": "running", "message": "installing", "at": int(time.time())}, f)
-        with mock.patch.dict(os.environ, {"PVJ_UPDATE_RESULT": result}):
+        with mock.patch.dict(os.environ, {"NXLX_UPDATE_RESULT": result}):
             self.assertEqual(self.send(self.export())[0], 409)
             for at in ("soon", [1], {"a": 1}, None, True, "1790000000"):          # a time that is not a number: not an error 500
                 with open(result, "w") as f:
@@ -1219,7 +1219,7 @@ class FactoryResetTest(Base):
         result = os.path.join(tempfile.mkdtemp(), "result.json")
         with open(result, "w") as f:
             json.dump({"state": "running", "message": "installing", "at": int(time.time())}, f)
-        with mock.patch.dict(os.environ, {"PVJ_UPDATE_RESULT": result}):
+        with mock.patch.dict(os.environ, {"NXLX_UPDATE_RESULT": result}):
             st, out = self.reset(**ok)
             self.assertEqual((st, "update" in out["error"]), (409, True))
         self.api._import = {"active": True}
@@ -1291,7 +1291,7 @@ class FactoryResetTest(Base):
                 json.dump(old, f)
         inbox = self.api._update_inbox()
         os.makedirs(inbox, exist_ok=True)
-        open(os.path.join(inbox, "pvj-9.9.9.tar.gz"), "w").close()
+        open(os.path.join(inbox, "nxlx-9.9.9.tar.gz"), "w").close()
         media = sorted(os.listdir(self.media))
         st, out = self.call("POST", "/api/system/factory-reset", {"confirm": "factory-reset", "media": "keep"}, token=self.full)[:2]
         self.assertEqual(st, 200, out)
@@ -1411,7 +1411,7 @@ class FactoryResetTest(Base):
         self.assertIn("a.mp4", os.listdir(self.media))
 
     def test_clips_on_a_usb_drive_are_never_deleted(self):
-        """PVJ_MEDIA_DIR may point at a USB drive (the read-only root needs media off the system disk)."""
+        """NXLX_MEDIA_DIR may point at a USB drive (the read-only root needs media off the system disk)."""
         stick = os.path.join(self.usb, "STICK")
         link = os.path.join(self.tmp, "usb-link")
         os.symlink(stick, link)

@@ -13,9 +13,9 @@ Security model, in one place:
 * the panel is served with a Content-Security-Policy that forbids inline script,
   external resources and framing; over plain http, while a certificate is in use, the page's connect-src also names
   the box's own https:// origin (page_csp), so the Secure connection page can ask whether this device trusts the box
-* the same panel and API answer on a second, TLS listener when PVJ_HTTPS_PORT is set (D79, mctl/httpsbox.py): there
+* the same panel and API answer on a second, TLS listener when NXLX_HTTPS_PORT is set (D79, mctl/httpsbox.py): there
   the cookie is __Host-mctl_token with Secure; a switch keeps owner access off plain HTTP (the gate below)
-* the nodes talk to each other on a third listener, when PVJ_PEER_PORT is set (D132, PeerServer): TLS with a client
+* the nodes talk to each other on a third listener, when NXLX_PEER_PORT is set (D132, PeerServer): TLS with a client
   certificate required (the pinned root the only CA); it answers two POSTs and nothing else
 """
 
@@ -45,7 +45,7 @@ WEB_DIR = os.path.join(os.path.dirname(__file__), "web")
 
 
 def env_signer(auto):
-    return bool((auto.env.get("PVJ_SIGNER_URL") or "").strip())
+    return bool((auto.env.get("NXLX_SIGNER_URL") or "").strip())
 MAX_BODY = 64 * 1024
 COOKIE = "mctl_token"
 SECURE_COOKIE = "__Host-mctl_token"      # over TLS only (D79): the prefix forces Secure, Path=/ and no Domain; a second name,
@@ -140,7 +140,7 @@ def allowed_names(env=None):
     env = os.environ if env is None else env
     hostname = socket.gethostname().lower()
     names = {"localhost", hostname, hostname.split(".")[0] + ".local"}
-    names.update(n.strip().lower() for n in env.get("PVJ_ALLOWED_HOSTS", "").split(",") if n.strip())
+    names.update(n.strip().lower() for n in env.get("NXLX_ALLOWED_HOSTS", "").split(",") if n.strip())
     return names
 
 
@@ -400,7 +400,7 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
             if host_allowed(self.headers.get("Host"), host_names):
                 return True
             self.close_connection = True
-            self._json(421, {"error": "unknown host name; open the node by its address or add the name to PVJ_ALLOWED_HOSTS"})
+            self._json(421, {"error": "unknown host name; open the node by its address or add the name to NXLX_ALLOWED_HOSTS"})
             return False
 
         def do_GET(self):
@@ -658,7 +658,7 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                             section.update(change)
                             # a node with no root takes a first root only when it knows which (D139 review)
                             if box.root_info()[0] is None and (section.get("signer_url") or env_signer(auto)) and \
-                                    not (clean_fingerprint(section.get("root_fingerprint") or "") or auto.env.get("PVJ_ROOT_FINGERPRINT")):
+                                    not (clean_fingerprint(section.get("root_fingerprint") or "") or auto.env.get("NXLX_ROOT_FINGERPRINT")):
                                 raise ApiError(400, "this node trusts no root yet: give the root fingerprint with the signer's address")
                             api.settings.data["https"] = section
                             api.settings.save()
@@ -1062,11 +1062,11 @@ def build_fleet(api, settings, state, board):
 
 
 def peer_port(env):
-    """The port the nodes call each other on: PVJ_PEER_PORT, the same on every node (the unit sets 8443); the default of the
+    """The port the nodes call each other on: NXLX_PEER_PORT, the same on every node (the unit sets 8443); the default of the
     peer client is the same number, so a node that does not listen still knows where to call the others."""
     from . import peer as peer_mod
     try:
-        return int(env.get("PVJ_PEER_PORT", "") or 0) or peer_mod.DEFAULT_PEER_PORT
+        return int(env.get("NXLX_PEER_PORT", "") or 0) or peer_mod.DEFAULT_PEER_PORT
     except ValueError:
         return peer_mod.DEFAULT_PEER_PORT
 
@@ -1076,7 +1076,7 @@ def build_handover(api, settings, state, env):
     from . import fleet as fleet_mod, handover as handover_mod
     own_id = getattr(api, "node_id", None) or fleet_mod.node_id(state)[0]
     hv = handover_mod.Handover(state, api.https, settings, lambda: {"id": own_id, "name": fleet_mod.clean_hostname(socket.gethostname())},
-                               event=api.event, log=api.log, openssl=env.get("PVJ_OPENSSL", "openssl"))
+                               event=api.event, log=api.log, openssl=env.get("NXLX_OPENSSL", "openssl"))
     hv.load()
     from . import peer as peer_mod
 
@@ -1097,8 +1097,8 @@ def build_handover(api, settings, state, env):
 
 def build(env=None, player=None):
     env = os.environ if env is None else env
-    state = env.get("PVJ_STATE_DIR", "/var/lib/nxlx")
-    media = env.get("PVJ_MEDIA_DIR", os.path.join(state, "video"))
+    state = env.get("NXLX_STATE_DIR", "/var/lib/nxlx")
+    media = env.get("NXLX_MEDIA_DIR", os.path.join(state, "video"))
     settings = Settings(os.path.join(state, "settings.json"))
     settings.load()
     board = hardware.detect_board()
@@ -1114,8 +1114,8 @@ def build(env=None, player=None):
         attach(looplist.Lists(paths.loops_dir(rundir), getattr(player, "mpv_bin", "mpv"),
                               enabled=lambda: renderer_mod.loop_lists(settings.data.get("renderer"))))
     api = Api(player, settings, auth, registry, themes, media, board, addons_dir=addons,
-              spawn=env.get("PVJ_DEV_SPAWN") == "1", on_pin=lambda pin: write_pin_file(rundir, pin))
-    api.net = netd_mod.NetdClient(os.path.join(env.get("PVJ_NETD_DIR") or rundir, paths.NETD_SOCKET))
+              spawn=env.get("NXLX_DEV_SPAWN") == "1", on_pin=lambda pin: write_pin_file(rundir, pin))
+    api.net = netd_mod.NetdClient(os.path.join(env.get("NXLX_NETD_DIR") or rundir, paths.NETD_SOCKET))
     from . import capture as capture_mod
     api.capture = capture_mod.Capture(rundir, getattr(player, "mpv_bin", "mpv"))
     api.sysd = sysd_mod.SysdClient(paths.sysd_socket())
@@ -1132,14 +1132,14 @@ def build(env=None, player=None):
     threading.Thread(target=api.stats.reset_player, name="stats-overlay-reset", daemon=True).start()
     # and a strobe that was lit when the panel went down is taken off the same way (the player keeps drawing it with nobody holding it)
     threading.Thread(target=api.strobe.reset_player, name="strobe-reset", daemon=True).start()
-    # The NDI helper's client. NDI is opt-in per box (D62): PVJ_NDI_DIR is set only by the drop-in that root's
+    # The NDI helper's client. NDI is opt-in per box (D62): NXLX_NDI_DIR is set only by the drop-in that root's
     # `nxlx-ndi-runtime install` writes for the panel's unit (mctl/ndisetup.py). Without it this box has no helper, the
     # socket is never tried, and the page says how to set NDI up. With it, the helper is idle until the module is on.
     from . import ndi as ndi_mod
     ndi_log = lambda m: print(m, file=sys.stderr)      # noqa: E731
     api.ndi = ndi_mod.Input(ndi_mod.Client(paths.ndi_socket(env)), paths.ndi_fifo(env),
                             ndi_mod.Wanted(lambda: registry.enabled("inputs-ndi"), lambda: settings.data, log=ndi_log), log=ndi_log,
-                            pipe_owner=ndi_mod.pipe_owner, setup=bool(env.get("PVJ_NDI_DIR")),
+                            pipe_owner=ndi_mod.pipe_owner, setup=bool(env.get("NXLX_NDI_DIR")),
                             config_dir=paths.ndi_config_dir(env))
     # The NDI discovery server's supervisor (D85): only on a box where root set it up (the panel's drop-in names its folder).
     from . import ndiscovery as ndisc_mod
@@ -1153,7 +1153,7 @@ def build(env=None, player=None):
     except Exception as e:
         print("nxlx-web: NDI helper not told the settings: %s" % e, file=sys.stderr)
     from . import httpsbox as httpsbox_mod
-    api.https = httpsbox_mod.HttpsBox(os.path.join(state, "tls"), settings, openssl=env.get("PVJ_OPENSSL", "openssl"),
+    api.https = httpsbox_mod.HttpsBox(os.path.join(state, "tls"), settings, openssl=env.get("NXLX_OPENSSL", "openssl"),
                                       addresses=lambda: [a["local"] for e in api._ip_json() if e.get("ifname") not in ("lo", "wg-nxlx")
                                                          for a in e.get("addr_info", []) if a.get("family") == "inet" and a.get("local")],
                                       clock_trusted=lambda: api.clock_status().get("clock_from_network"), log=api.log)
@@ -1164,7 +1164,7 @@ def build(env=None, player=None):
     api.handover = build_handover(api, settings, state, env)     # who this node trusts to carry devices (D132): files only, no call to another node
     from . import supportd as supportd_mod
     api.support.client = supportd_mod.SupportdClient(paths.supportd_socket())
-    api.support.panel_port = int(env.get("PVJ_PORT", "8080"))
+    api.support.panel_port = int(env.get("NXLX_PORT", "8080"))
     api.support.close_leftover()
     api.health.start()                       # notices a short undervoltage with nobody looking
     try:
@@ -1222,9 +1222,9 @@ def main(argv=None):
     except SettingsError as e:
         print("nxlx-web: %s" % e, file=sys.stderr)
         return 1
-    host, port = env.get("PVJ_BIND", "0.0.0.0"), int(env.get("PVJ_PORT", "8080"))
+    host, port = env.get("NXLX_BIND", "0.0.0.0"), int(env.get("NXLX_PORT", "8080"))
     httpd = MctlServer((host, port), make_handler(api, auth))
-    tls_port = int(env.get("PVJ_HTTPS_PORT", "0") or 0)
+    tls_port = int(env.get("NXLX_HTTPS_PORT", "0") or 0)
     tlsd = None
     if tls_port:
         try:
@@ -1235,7 +1235,7 @@ def main(argv=None):
     if getattr(api, "autocert", None) is not None:
         api.autocert.start()                 # D139: asks the signer in its own thread; a silent signer never holds the panel up
     peerd = None
-    if int(env.get("PVJ_PEER_PORT", "0") or 0):
+    if int(env.get("NXLX_PEER_PORT", "0") or 0):
         try:
             peerd = PeerServer((host, peer_port(env)), make_peer_handler(api), api.https)
             threading.Thread(target=peerd.serve_forever, name="mctl-peer", daemon=True).start()

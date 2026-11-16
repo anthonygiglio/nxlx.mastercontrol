@@ -295,7 +295,7 @@
     } });
     var help = h('details', { class: 'fold', id: 'lockedout' }, h('summary', { class: 'k', text: 'Locked out?' }),
       h('div', { class: 'hint', text: 'If every owner phone is lost: a recovery code from the sheet the owner printed (above). ' +
-        'Or, at the node, a USB stick with an empty file named pvj-recover at its top: the node shows a fresh PIN on its own screen for 2 minutes, which works once (unless the owner switched that off). ' +
+        'Or, at the node, a USB stick with an empty file named nxlx-recover at its top: the node shows a fresh PIN on its own screen for 2 minutes, which works once (unless the owner switched that off). ' +
         'Or sudo nxlx-pin at a keyboard on the node. As the last resort a factory reset from the node\'s console removes every device and makes a new PIN (the clips can be kept).' }));
     return h('div', { class: 'recovery' }, open, entry, help);
   }
@@ -5467,8 +5467,8 @@
       body.appendChild(pick);
       body.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn grow', id: 'updateupload', text: 'Upload an update', onclick: function () { pick.click(); } })));
       body.appendChild(h('details', { class: 'fold', id: 'updatehow' }, h('summary', { text: 'How to get an update' }), h('div', { class: 'list sp' },
-        h('div', { class: 'hint', text: 'An update is two files with the same name: pvj-N.N.N.tar.gz and pvj-N.N.N.tar.gz.sig (N.N.N is the version). A .sha256 file may come with them and is optional.' }),
-        h('div', { class: 'hint', text: 'From a USB stick: put both files in a folder named pvj-update on the stick, plug it into the node, and the version shows here.' }),
+        h('div', { class: 'hint', text: 'An update is two files with the same name: nxlx-N.N.N.tar.gz and nxlx-N.N.N.tar.gz.sig (N.N.N is the version). A .sha256 file may come with them and is optional.' }),
+        h('div', { class: 'hint', text: 'From a USB stick: put both files in a folder named nxlx-update on the stick, plug it into the node, and the version shows here.' }),
         h('div', { class: 'hint', text: 'From this phone or laptop: tap Upload an update and choose both files.' }),
         h('div', { class: 'hint', text: 'Only updates signed with your key are installed. An older version is refused. A failed update goes back by itself.' }))));
       later();
@@ -7714,7 +7714,7 @@
       body.textContent = '';
       body.appendChild(h('div', { class: 'hint', id: 'recoveryhint', text: 'Two ways in that need no paired phone and no keyboard at the node. ' +
         'Recovery codes: one-time codes you print and keep where you keep the node\'s keys, never with the node; at the pairing screen "I have a recovery code" pairs a phone as ' + roleName('full') + '. ' +
-        'A USB stick: a stick with an empty file named pvj-recover at its top makes the node draw a fresh owner PIN on its own screen for 2 minutes.' }));
+        'A USB stick: a stick with an empty file named nxlx-recover at its top makes the node draw a fresh owner PIN on its own screen for 2 minutes.' }));
       var c = d.codes;
       body.appendChild(h('div', { class: 'field', id: 'recoverystate', text: c ? c.left + ' of ' + c.count + ' codes left · made ' + when(c.made) + ' by ' + (c.by || 'an owner') : 'No recovery codes yet.' }));
       if (c && c.left <= 2) body.appendChild(h('div', { class: 'hint warn', id: 'recoveryfew', text: (c.left ? 'Only ' + plural(c.left, 'code') + ' left.' : 'No codes left.') + ' Make a new set soon and keep the new sheet; the old sheet is then waste paper.' }));

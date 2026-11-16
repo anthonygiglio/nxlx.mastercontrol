@@ -26,7 +26,7 @@ a window". Stop it with Ctrl+C.
   nowhere. The projectors are fakes on this computer, the network is a fake, and no address of a node is used.
   The hold covers the panel's own sockets only: a name is still looked up through this computer's resolver, and a
   program the box starts (mpv, given a Streams address) can reach that address.
-- The box reads nothing of this computer's own: the `PVJ_` variables of your shell are not passed on, a webcam or a MIDI
+- The box reads nothing of this computer's own: the `NXLX_` variables of your shell are not passed on, a webcam or a MIDI
   controller plugged in is not seen, and USB sticks, update results and helper sockets (sound, NDI, Ableton Link) are
   looked for in the box's own folder (empty).
 - Stop it with Ctrl+C (or a kill): the box, its player and its folder go with it. Only one scenario loads at a time; a

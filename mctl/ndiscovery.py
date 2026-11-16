@@ -53,7 +53,7 @@ WEB_DROPIN = ndisetup.SYSTEMD + "/nxlx-web.service.d/50-nxlx-ndisc.conf"       #
 TEMPLATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "systemd", UNIT)
 WEB_TEXT = ("# Written by nxlx-ndi-runtime (mctl/ndiscovery.py) when the NDI discovery server was set up on this box; removed by\n"
             "# 'nxlx-ndi-runtime server remove'. The panel may reach the server's supervisor (D85). This file is also the mark.\n"
-            "[Service]\nSupplementaryGroups=nxlx-ndisc\nEnvironment=PVJ_NDISC_DIR=/run/nxlx-ndisc\n")
+            "[Service]\nSupplementaryGroups=nxlx-ndisc\nEnvironment=NXLX_NDISC_DIR=/run/nxlx-ndisc\n")
 COMMAND = 'sudo nxlx-ndi-runtime server install "/path/to/NDI SDK for Linux"'
 NOT_SET_UP = "the NDI discovery server is not set up on this node; someone with a keyboard or SSH on the node runs: " + COMMAND
 SOCKET = "ndisc.sock"
@@ -665,14 +665,14 @@ class Service:
 def main(argv=None):
     import pwd
     from .netd import NetServer
-    rundir = os.environ.get("PVJ_NDISC_DIR") or paths.NDISC_DIR
+    rundir = os.environ.get("NXLX_NDISC_DIR") or paths.NDISC_DIR
     os.makedirs(rundir, mode=0o750, exist_ok=True)
     allowed = set()
     try:
         allowed.add(pwd.getpwnam("nxlx-web").pw_uid)
     except KeyError:
         allowed.add(os.getuid())                   # on a desk: whoever runs it
-    service = Service(os.environ.get("PVJ_NDISC_PROGRAM") or SERVER_PATH, log=lambda m: print(m, flush=True))
+    service = Service(os.environ.get("NXLX_NDISC_PROGRAM") or SERVER_PATH, log=lambda m: print(m, flush=True))
     server = NetServer(os.path.join(rundir, SOCKET), service, lambda uid: uid in allowed)
     print("nxlx-ndi-discovery: ready (%s)" % (server_problem(service.program) or "NDI's program is in place; idle until the panel says on"), flush=True)
     try:

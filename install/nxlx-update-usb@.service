@@ -13,7 +13,7 @@ User=root
 RuntimeDirectory=nxlx-update
 RuntimeDirectoryMode=0755
 RuntimeDirectoryPreserve=yes
-ExecStart=@PVJ_DIR@/bin/nxlx-update usb --version %i --result /run/nxlx-update/result.json
+ExecStart=@NXLX_DIR@/bin/nxlx-update usb --version %i --result /run/nxlx-update/result.json
 # Stopped before the end (the time limit below): say so, so the panel does not show "Updating" for ever.
-ExecStopPost=-@PVJ_DIR@/bin/nxlx-update finish --result /run/nxlx-update/result.json
+ExecStopPost=-@NXLX_DIR@/bin/nxlx-update finish --result /run/nxlx-update/result.json
 TimeoutStartSec=30min

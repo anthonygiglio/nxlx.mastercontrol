@@ -11,7 +11,7 @@ Wants=avahi-daemon.service
 # After a rollback to a release from before the NDI input this unit is still here and its program is not. Without
 # this line it would fail every two seconds for ever (Restart=always, no start limit) into the kept journal. A
 # condition that is not met is not a failure: the unit is skipped, once, and nothing is started again.
-ConditionPathExists=@PVJ_DIR@/bin/nxlx-ndi
+ConditionPathExists=@NXLX_DIR@/bin/nxlx-ndi
 StartLimitIntervalSec=0
 
 [Service]
@@ -25,7 +25,7 @@ Group=nxlx-ndi
 UMask=0027
 RuntimeDirectory=nxlx-ndi
 RuntimeDirectoryMode=0750
-Environment=PVJ_NDI_DIR=/run/nxlx-ndi
+Environment=NXLX_NDI_DIR=/run/nxlx-ndi
 # The runtime keeps its settings under $HOME/.ndi unless told otherwise. It is told a folder that it can read and
 # cannot write: /run/nxlx-ndi-config, which root makes for the panel's account (tmpfiles, mctl/ndisetup.py). The
 # panel writes one file there, ndi-config.v1.json, with the discovery servers the Owner chose and how pictures travel
@@ -33,7 +33,7 @@ Environment=PVJ_NDI_DIR=/run/nxlx-ndi
 # below, so anything it writes there is bounded, is seen by nobody else and is gone at the next start.
 Environment=HOME=/tmp
 Environment=NDI_CONFIG_DIR=/run/nxlx-ndi-config
-ExecStart=@PVJ_DIR@/bin/nxlx-ndi
+ExecStart=@NXLX_DIR@/bin/nxlx-ndi
 Restart=always
 RestartSec=2
 

@@ -353,7 +353,7 @@ class PrepareTest(unittest.TestCase):
         self.run_dir = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.state, True)
         self.addCleanup(shutil.rmtree, self.run_dir, True)
-        self.env = {"PVJ_STATE_DIR": self.state}
+        self.env = {"NXLX_STATE_DIR": self.state}
         self.asked = []
 
     def run_mpv(self, text):

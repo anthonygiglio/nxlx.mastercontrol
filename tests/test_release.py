@@ -29,7 +29,7 @@ def build(*args, cwd=REPO):
 
 class ReleaseTest(unittest.TestCase):
     def setUp(self):
-        self.out = os.path.join(REPO, "dist", "pvj-%s.tar.gz" % version())
+        self.out = os.path.join(REPO, "dist", "nxlx-%s.tar.gz" % version())
         self.addCleanup(shutil.rmtree, os.path.join(REPO, "dist"), True)
 
     def test_bundle_is_valid_reproducible_and_installable_by_the_updater(self):
@@ -52,6 +52,16 @@ class ReleaseTest(unittest.TestCase):
         for name in os.listdir(fonts):
             with open(os.path.join(fonts, name), "rb") as shipped, open(os.path.join(REPO, "mctl", "web", "fonts", name), "rb") as ours:
                 self.assertEqual(shipped.read(), ours.read(), name)
+
+    def test_the_script_writes_the_new_names_only(self):
+        r = build(version(), "--allow-dirty")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(sorted(os.listdir(os.path.join(REPO, "dist"))),
+                         ["nxlx-%s.tar.gz" % version(), "nxlx-%s.tar.gz.sha256" % version()])
+        with open(self.out + ".sha256") as f:
+            self.assertEqual(f.read().split()[1], "nxlx-%s.tar.gz" % version())
+        tops = subprocess.run(["tar", "-tzf", self.out], capture_output=True, text=True, check=True).stdout.split("\n")
+        self.assertTrue(all(t.startswith("nxlx-%s/" % version()) for t in tops if t), "one folder inside, named like the bundle")
 
     def test_the_updater_installed_before_the_system_rename_refuses_the_bundle(self):
         """A node with the old names runs the updater of its own release, which looks for bin/pvj-player and (before
@@ -116,10 +126,21 @@ class ReleaseTest(unittest.TestCase):
             fields = f.read().split()
         allowed = os.path.join(d, "allowed")
         with open(allowed, "w") as f:
-            f.write('pvj-release namespaces="pvj-release" %s %s\n' % (fields[0], fields[1]))
+            f.write('nxlx-release namespaces="nxlx-release" %s %s\n' % (fields[0], fields[1]))
         r = build(version(), "--key", key, "--allow-dirty")
         self.assertEqual(r.returncode, 0, r.stderr)
         update.verify_signature(self.out, self.out + ".sig", allowed)
+        self.assertEqual(sorted(os.listdir(os.path.join(REPO, "dist"))), ["nxlx-%s.tar.gz" % version(),
+                         "nxlx-%s.tar.gz.sha256" % version(), "nxlx-%s.tar.gz.sig" % version()])
+        with open(self.out + ".sig") as f:
+            self.assertIn("BEGIN SSH SIGNATURE", f.read())
+        # the namespace is nxlx-release: the same signature does not verify under the old one
+        run = subprocess.run(["ssh-keygen", "-Y", "check-novalidate", "-n", "pvj-release", "-s", self.out + ".sig"],
+                             stdin=open(self.out, "rb"), capture_output=True)
+        self.assertNotEqual(run.returncode, 0)
+        run = subprocess.run(["ssh-keygen", "-Y", "check-novalidate", "-n", "nxlx-release", "-s", self.out + ".sig"],
+                             stdin=open(self.out, "rb"), capture_output=True)
+        self.assertEqual(run.returncode, 0, run.stderr)
 
 
 if __name__ == "__main__":

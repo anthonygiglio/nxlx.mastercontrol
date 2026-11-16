@@ -48,10 +48,10 @@ def make_tree(version, schema=None):
 
 def make_bundle(version, schema=None, top=True):
     tree = make_tree(version, schema)
-    out = os.path.join(tempfile.mkdtemp(), "pvj-%s.tar.gz" % version)
+    out = os.path.join(tempfile.mkdtemp(), "nxlx-%s.tar.gz" % version)
     with tarfile.open(out, "w:gz") as tar:
         for sub in ("mctl", "bin", "install"):
-            tar.add(os.path.join(tree, sub), arcname=("pvj-%s/%s" % (version, sub)) if top else sub)
+            tar.add(os.path.join(tree, sub), arcname=("nxlx-%s/%s" % (version, sub)) if top else sub)
     with open(out + ".sha256", "w") as f:
         f.write(update.sha256_file(out) + "  " + os.path.basename(out) + "\n")
     shutil.rmtree(tree, True)           # the copy of the source is in the bundle now: 3 MB a call (D69)
@@ -118,7 +118,7 @@ class HelperTest(unittest.TestCase):
                 update.verify_sha256(f, bad)
 
     def test_safe_extract_strips_top_folder_and_drops_setuid(self):
-        info = tarfile.TarInfo("pvj-1.0.0/bin/tool")
+        info = tarfile.TarInfo("nxlx-1.0.0/bin/tool")
         info.size, info.mode = 3, 0o4777
         d = tempfile.mkdtemp()
         update.safe_extract(tar_with([(info, b"abc")]), d)
@@ -185,7 +185,7 @@ class SignatureTest(unittest.TestCase):
             fields = f.read().split()
         allowed = os.path.join(self.d, name + ".allowed")
         with open(allowed, "w") as f:
-            f.write('%s namespaces="pvj-release" %s %s\n' % (update.PRINCIPAL, fields[0], fields[1]))
+            f.write('%s namespaces="nxlx-release" %s %s\n' % (update.PRINCIPAL, fields[0], fields[1]))
         return key, allowed
 
     def sign(self, key, path):
@@ -381,12 +381,12 @@ class UpdaterTest(unittest.TestCase):
         self.addCleanup(httpd.shutdown)
         port = httpd.server_address[1]
         with open(os.path.join(self.env.root, "etc/nxlx/nxlx.env"), "w") as f:
-            f.write("# panel port\nPVJ_PORT=%d\n" % port)
+            f.write("# panel port\nNXLX_PORT=%d\n" % port)
         real = Updater(root=self.env.root)
         self.assertEqual(real.configured_port(), str(port))
         self.assertTrue(real._http_health(timeout=3))
         with open(os.path.join(self.env.root, "etc/nxlx/nxlx.env"), "w") as f:
-            f.write("PVJ_PORT=1\n")
+            f.write("NXLX_PORT=1\n")
         self.assertFalse(real._http_health(timeout=1.2))
 
     @unittest.skipUnless(os.geteuid() == 0, "needs root to set file owners")
@@ -410,12 +410,41 @@ class UpdaterTest(unittest.TestCase):
 
     def test_usb_bundles_newest_first(self):
         base = tempfile.mkdtemp()
-        for label, names in (("A", ["pvj-1.2.0.tar.gz", "notes.txt"]), ("B", ["pvj-1.10.0.tar.gz", "pvj-1.9.0.tar.gz"])):
-            os.makedirs(os.path.join(base, label, "pvj-update"))
+        for label, names in (("A", ["nxlx-1.2.0.tar.gz", "notes.txt"]), ("B", ["nxlx-1.10.0.tar.gz", "nxlx-1.9.0.tar.gz"])):
+            os.makedirs(os.path.join(base, label, "nxlx-update"))
             for n in names:
-                open(os.path.join(base, label, "pvj-update", n), "w").close()
+                open(os.path.join(base, label, "nxlx-update", n), "w").close()
         found = [os.path.basename(p) for p in self.u.usb_bundles(base)]
-        self.assertEqual(found, ["pvj-1.10.0.tar.gz", "pvj-1.9.0.tar.gz", "pvj-1.2.0.tar.gz"])
+        self.assertEqual(found, ["nxlx-1.10.0.tar.gz", "nxlx-1.9.0.tar.gz", "nxlx-1.2.0.tar.gz"])
+
+    def test_the_old_bundle_names_and_the_old_usb_folder_are_not_offered(self):
+        """Rename PR 8: a bundle is nxlx-N.N.N.tar.gz in the folder nxlx-update. One kept under the old names is
+        re-signed and renamed by the owner; the updater does not take it as it is."""
+        base = tempfile.mkdtemp()
+        for folder, names in (("nxlx-update", ["pvj-1.4.0.tar.gz", "nxlx-1.3.0.tar.gz"]), ("pvj-update", ["nxlx-1.5.0.tar.gz", "pvj-1.6.0.tar.gz"])):
+            os.makedirs(os.path.join(base, "STICK", folder), exist_ok=True)
+            for n in names:
+                open(os.path.join(base, "STICK", folder, n), "w").close()
+        self.assertEqual([os.path.basename(p) for p in self.u.usb_bundles(base)], ["nxlx-1.3.0.tar.gz"])
+        self.assertIsNone(update.Updater.BUNDLE_NAME.fullmatch("pvj-1.4.0.tar.gz"))
+        self.assertEqual((update.PRINCIPAL, update.NAMESPACE), ("nxlx-release", "nxlx-release"))
+
+    @unittest.skipUnless(HAVE_SSH, "ssh-keygen not installed")
+    def test_a_signature_made_under_the_old_namespace_does_not_verify(self):
+        d = tempfile.mkdtemp()
+        key = os.path.join(d, "k")
+        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", key], check=True)
+        with open(key + ".pub") as f:
+            fields = f.read().split()
+        with open(self.u.allowed_signers(), "w") as f:
+            f.write('%s namespaces="%s" %s %s\n' % (update.PRINCIPAL, update.NAMESPACE, fields[0], fields[1]))
+        bundle = make_bundle("1.0.0")
+        subprocess.run(["ssh-keygen", "-Y", "sign", "-f", key, "-n", "pvj-release", bundle], check=True, capture_output=True)
+        with self.assertRaises(update.UpdateError):
+            update.verify_signature(bundle, bundle + ".sig", self.u.allowed_signers())
+        os.unlink(bundle + ".sig")
+        subprocess.run(["ssh-keygen", "-Y", "sign", "-f", key, "-n", "nxlx-release", bundle], check=True, capture_output=True)
+        update.verify_signature(bundle, bundle + ".sig", self.u.allowed_signers())      # signed again, it does
 
     @unittest.skipUnless(HAVE_SSH, "ssh-keygen not installed")
     def test_signed_bundle_end_to_end(self):
@@ -425,7 +454,7 @@ class UpdaterTest(unittest.TestCase):
         with open(key + ".pub") as f:
             fields = f.read().split()
         with open(self.u.allowed_signers(), "w") as f:
-            f.write('%s namespaces="pvj-release" %s %s\n' % (update.PRINCIPAL, fields[0], fields[1]))
+            f.write('%s namespaces="nxlx-release" %s %s\n' % (update.PRINCIPAL, fields[0], fields[1]))
         bundle = make_bundle("1.0.0")
         subprocess.run(["ssh-keygen", "-Y", "sign", "-f", key, "-n", update.NAMESPACE, bundle], check=True, capture_output=True)
         self.assertEqual(self.u.apply(bundle, log=lambda *_: None), "1.0.0")
