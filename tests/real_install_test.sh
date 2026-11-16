@@ -37,8 +37,11 @@ fail() {
 	echo "--- listing" >&2
 	listing >&2 || true
 	echo "--- journal" >&2
-	journalctl -b --no-pager -u nxlx-player -u nxlx-web -u nxlx-netd -u nxlx-sysd -u nxlx-ndi \
-		-u pvj-player -u pvj-web -u pvj-netd -u pvj-sysd -u pvj-ndi -n 80 >&2 || true
+	journalctl -b --no-pager -u 'nxlx-*' -u 'pvj-*' -n 200 >&2 || true
+	echo "--- units and jobs" >&2
+	systemctl list-units --all --no-pager --plain 'nxlx-*' 'pvj-*' >&2 || true
+	systemctl list-jobs --no-pager >&2 || true
+	systemctl list-timers --all --no-pager 'nxlx-*' >&2 || true
 	exit 1
 }
 step() { printf '\n=== %s\n' "$*"; }
@@ -65,8 +68,14 @@ refused() {       # refused ACCOUNT command...: the command must fail
 	if runuser -u "$who" -- "$@" >/dev/null 2>&1; then fail "as $who this worked and must not: $*"; fi
 	echo "refused, as it must be ($who): $*"
 }
+logged() {        # logged COMMAND...: run it into $OUT; when it fails, dump the journal (fail), the pipe alone would just stop
+	local rc=0
+	"$@" > "$OUT" 2>&1 || rc=$?
+	cat "$OUT"
+	[ "$rc" = 0 ] || fail "the installer stopped with exit code $rc: $*"
+}
 installer() {
-	"$SRC/install/install.sh" --offline --user "$A" "$@" 2>&1 | tee "$OUT"
+	logged "$SRC/install/install.sh" --offline --user "$A" "$@"
 }
 only_the_new_layout() {
 	local extra
@@ -131,7 +140,7 @@ git -C "$SRC" archive "$BEFORE" mctl bin install render | tar -x -C "$OLDSRC" ||
 useradd --create-home --shell /bin/bash pvj-dev
 printf 'pvj-dev ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/010_pvj-dev
 chmod 440 /etc/sudoers.d/010_pvj-dev
-"$OLDSRC/install/install.sh" --offline --user pvj-dev 2>&1 | tee "$OUT"
+logged "$OLDSRC/install/install.sh" --offline --user pvj-dev
 OLD_CURRENT="$(readlink /opt/pvj/current)"
 wait_for 40 systemctl is-active --quiet pvj-web.service || fail "the old release's panel did not start"
 wait_for 40 test -f /run/pvj/web/pin || fail "the old panel wrote no PIN file"
@@ -150,7 +159,7 @@ settings_but_auth() { python3 -c 'import json, sys; d = json.load(open(sys.argv[
 SETTINGS_REST="$(settings_but_auth /var/lib/pvj/settings.json)"
 
 step "this release over it, through install.sh: the node is converted"
-"$SRC/install/install.sh" --offline 2>&1 | tee "$OUT"
+logged "$SRC/install/install.sh" --offline
 grep -q "CONVERTED from the old names" "$OUT" || fail "the installer did not convert the node"
 for u in pvj-web pvj-player pvj-sound pvj-link pvj-raster pvj-dev; do
 	if getent passwd "$u" >/dev/null; then fail "the account $u is still there"; fi
@@ -220,7 +229,7 @@ left="$(find /etc/systemd/system /usr/local/bin -name '*nxlx-*' ! -name 'nxlx-co
 [ -z "$left" ] || fail "the undo left names of this release: $left"
 
 step "this release again, then kept with nxlx-convert --confirm"
-"$SRC/install/install.sh" --offline 2>&1 | tee "$OUT"
+logged "$SRC/install/install.sh" --offline
 grep -q "CONVERTED from the old names" "$OUT" || fail "the second conversion did not happen"
 /usr/local/bin/nxlx-convert --confirm || fail "the confirm failed"
 if systemctl is-enabled --quiet nxlx-convert-undo.timer 2>/dev/null; then fail "the undo timer is still enabled after the confirm"; fi
@@ -945,7 +954,7 @@ listing
 step "uninstall on a box that opted in: the helper and the drop-ins go with the rest"
 ndi_setup enable
 wait_for 40 systemctl is-active --quiet nxlx-ndi.service || fail "nxlx-ndi is not active before the uninstall"
-"$SRC/install/install.sh" --uninstall 2>&1 | tee "$OUT"
+logged "$SRC/install/install.sh" --uninstall
 for path in /etc/systemd/system/nxlx-ndi.service /etc/systemd/system/nxlx-web.service.d /etc/systemd/system/nxlx-player.service.d \
 	/etc/systemd/system/multi-user.target.wants/nxlx-ndi.service /usr/local/bin/nxlx-ndi-runtime /run/nxlx-ndi /opt/nxlx; do
 	if [ -e "$path" ] || [ -L "$path" ]; then fail "after the uninstall there is still $path"; fi
