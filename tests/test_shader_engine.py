@@ -129,7 +129,7 @@ class MeasuredFixesTest(Base):
         log += [("vo/gpu/opengl", "error", line) for line in text.splitlines()]            # and once more without numbers
         log += [("vo/gpu/opengl", "error", "shader compile log (status=0):"), ("vo/gpu/opengl", "error", "the driver gave up")]
         said = S.shader_errors(log)
-        for internal in ("mctl_", "PVJ_", "//!", "HOOKED", "#define", "precision highp", "vec4 hook"):
+        for internal in ("mctl_", "NXLX_", "//!", "HOOKED", "#define", "precision highp", "vec4 hook"):
             self.assertNotIn(internal, said)
         self.assertIn("the driver gave up", said)
         self.assertLessEqual(len(said), 500)

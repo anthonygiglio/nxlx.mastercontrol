@@ -179,23 +179,23 @@ def loopback_only():
 
 
 def private_env(tmp):
-    """The box's environment: every PVJ_ variable of the shell it was started from taken out (PVJ_ALLOWED_HOSTS would
+    """The box's environment: every NXLX_ variable of the shell it was started from taken out (NXLX_ALLOWED_HOSTS would
     widen the Host check), and each folder or file the panel reads from one put inside the box's own folder, so
     nothing of this computer's USB sticks, update results or helper sockets is read (the review of #155)."""
-    for k in [k for k in os.environ if k.startswith("PVJ_")]:
+    for k in [k for k in os.environ if k.startswith("NXLX_")]:
         del os.environ[k]
-    folders = {"PVJ_RUNTIME_DIR": "runtime", "PVJ_USB_BASE": "usb", "PVJ_SYSD_DIR": "sysd", "PVJ_SUPPORTD_DIR": "supportd",
-               "PVJ_SOUND_DIR": "sound", "PVJ_NETD_DIR": "netd", "PVJ_NDI_CONFIG_DIR": "ndi-config", "PVJ_NDI_PIPE_DIR": "ndi-pipe",
+    folders = {"NXLX_RUNTIME_DIR": "runtime", "NXLX_USB_BASE": "usb", "NXLX_SYSD_DIR": "sysd", "NXLX_SUPPORTD_DIR": "supportd",
+               "NXLX_SOUND_DIR": "sound", "NXLX_NETD_DIR": "netd", "NXLX_NDI_CONFIG_DIR": "ndi-config", "NXLX_NDI_PIPE_DIR": "ndi-pipe",
                # the NDI helper, the discovery server and the Ableton Link follower (D117): without these the panel
                # falls back to /run/nxlx-ndi and /run/nxlx-link, a real helper's socket on this computer (the second
                # review of #155). An NDI folder set means "set up for NDI": the sandbox shows the helper not running.
-               "PVJ_NDI_DIR": "ndi", "PVJ_NDISC_DIR": "ndisc", "PVJ_LINK_DIR": "link"}
+               "NXLX_NDI_DIR": "ndi", "NXLX_NDISC_DIR": "ndisc", "NXLX_LINK_DIR": "link"}
     for k, rel in folders.items():                       # folders the panel looks in: there, and empty
         path = os.path.join(tmp, rel)
         os.makedirs(path, mode=0o700, exist_ok=True)
         os.environ[k] = path
-    names = {"PVJ_USB_DIR": "usb-newest", "PVJ_USB_LINK": "usb-link", "PVJ_UPDATE_RESULT": "update-result.json",
-             "PVJ_UPDATE_LOCK": "update.lock"}
+    names = {"NXLX_USB_DIR": "usb-newest", "NXLX_USB_LINK": "usb-link", "NXLX_UPDATE_RESULT": "update-result.json",
+             "NXLX_UPDATE_LOCK": "update.lock"}
     for k, rel in names.items():                         # a link, a file: a name inside the folder, not made
         os.environ[k] = os.path.join(tmp, rel)
 
@@ -239,7 +239,7 @@ def run(sc, tmp, first_port, stop):
     rundir = os.path.join(tmp, "run")
     os.makedirs(media)
     os.makedirs(rundir, mode=0o700)
-    os.environ.update(PVJ_STATE_DIR=tmp, PVJ_MEDIA_DIR=media, PVJ_DEV_SPAWN="1")
+    os.environ.update(NXLX_STATE_DIR=tmp, NXLX_MEDIA_DIR=media, NXLX_DEV_SPAWN="1")
 
     from mctl import server, capture
     from mctl.player import Player, PlayerError

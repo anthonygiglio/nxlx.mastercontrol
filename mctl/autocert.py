@@ -3,8 +3,8 @@
 """Automatic certificates (D139, docs/HTTPS.md "Automatic certificates"): the node asks the owner's signing service
 (tools/nxlx-signer.py) for its certificate by itself, so it has HTTPS with no step from the owner.
 
-Where the signer is: the setting `https.signer_url`, else PVJ_SIGNER_URL. Which root to expect: `https.root_fingerprint`,
-else PVJ_ROOT_FINGERPRINT. install.sh --signer writes both into /etc/nxlx/nxlx.env and refuses one without the other.
+Where the signer is: the setting `https.signer_url`, else NXLX_SIGNER_URL. Which root to expect: `https.root_fingerprint`,
+else NXLX_ROOT_FINGERPRINT. install.sh --signer writes both into /etc/nxlx/nxlx.env and refuses one without the other.
 Nothing is discovered: the signer runs on a computer that cannot announce itself the way nodes do (mctl/fleet.py
 announces through avahi, which a Windows computer does not have), and an address the owner gave is safer than the
 first stranger to answer.
@@ -99,12 +99,12 @@ class AutoCert:
     def url(self):
         u = self._section().get("signer_url")
         if not isinstance(u, str) or not u.strip():
-            u = self.env.get("PVJ_SIGNER_URL", "")
+            u = self.env.get("NXLX_SIGNER_URL", "")
         u = (u or "").strip()
         return u.rstrip("/") if URL.fullmatch(u) else None
 
     def want_root(self):
-        return clean_fingerprint(self._section().get("root_fingerprint")) or clean_fingerprint(self.env.get("PVJ_ROOT_FINGERPRINT", ""))
+        return clean_fingerprint(self._section().get("root_fingerprint")) or clean_fingerprint(self.env.get("NXLX_ROOT_FINGERPRINT", ""))
 
     # -- the state the page shows --
     def _read_state(self):

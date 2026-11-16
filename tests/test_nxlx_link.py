@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """The real helper nxlx-link (render/link/, D117) beside a real stand-in peer, on this machine's own network.
 
-Skipped unless PVJ_LINK_TEST=1 and both programs are built: most machines have no ableton-link-dev, and those must stay
+Skipped unless NXLX_LINK_TEST=1 and both programs are built: most machines have no ableton-link-dev, and those must stay
 green. CI's job nxlx-link builds them on Debian 13 and treats a skip as a failure. Bounded: every wait here has an end.
 Nothing here has met Ableton Live, a phone or a Pi."""
 import json
@@ -36,7 +36,7 @@ def wait_for(look, seconds):
     return look()
 
 
-@unittest.skipUnless(os.environ.get("PVJ_LINK_TEST") == "1", "PVJ_LINK_TEST=1 runs the real helper")
+@unittest.skipUnless(os.environ.get("NXLX_LINK_TEST") == "1", "NXLX_LINK_TEST=1 runs the real helper")
 class RealHelperTest(unittest.TestCase):
     def setUp(self):
         if not (os.access(HELPER, os.X_OK) and os.access(PEER, os.X_OK)):
@@ -45,7 +45,7 @@ class RealHelperTest(unittest.TestCase):
             self.skipTest("no network but the loopback")
         self.dir = tempfile.mkdtemp(prefix="nxlx-link-")
         self.addCleanup(shutil.rmtree, self.dir, True)
-        self.helper = subprocess.Popen([HELPER], env=dict(os.environ, PVJ_LINK_DIR=self.dir), stdout=subprocess.DEVNULL)
+        self.helper = subprocess.Popen([HELPER], env=dict(os.environ, NXLX_LINK_DIR=self.dir), stdout=subprocess.DEVNULL)
         self.addCleanup(self.stop, self.helper)
         self.state = os.path.join(self.dir, "state")
         self.sock = os.path.join(self.dir, "link.sock")

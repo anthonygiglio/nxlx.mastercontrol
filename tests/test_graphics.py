@@ -4,7 +4,7 @@
 routes, who may use them, OSC, the fonts' licences and the files that build the helper.
 
 Everything here runs without the real helper (a stand-in draws a plain block); the real program's text and logo jobs are
-in tests/test_raster.py (RealGraphicsTest, with PVJ_RASTER_TEST=1). Nothing here has run on a Pi. Every wait is bounded."""
+in tests/test_raster.py (RealGraphicsTest, with NXLX_RASTER_TEST=1). Nothing here has run on a Pi. Every wait is bounded."""
 import hashlib
 import json
 import os
@@ -888,14 +888,14 @@ class FontsTest(unittest.TestCase):
             with open(prog, "w") as f:
                 f.write('#!/bin/sh\necho "$@"\n')
             os.chmod(prog, 0o755)
-            done = subprocess.run(["/bin/sh", "-c", script.replace("@PVJ_DIR@", root)], capture_output=True, text=True, timeout=20)
+            done = subprocess.run(["/bin/sh", "-c", script.replace("@NXLX_DIR@", root)], capture_output=True, text=True, timeout=20)
             self.assertEqual((done.returncode, done.stdout.strip()), (0, "--fonts " + os.path.join(root, layout, "fonts")), layout)
 
     def test_the_helper_is_built_with_freetype_and_told_where_the_fonts_are(self):
         self.assertIn("freetype2", self.read("render", "Makefile"))
         self.assertIn("gfx.inc.c", self.read("render", "Makefile"))
         unit = self.read("install", "nxlx-raster@.service")
-        self.assertIn("exec @PVJ_DIR@/render/nxlx-raster --fonts \"$$f\"'\n", unit)
+        self.assertIn("exec @NXLX_DIR@/render/nxlx-raster --fonts \"$$f\"'\n", unit)
         sh = self.read("install", "install.sh")
         self.assertIn("libfreetype-dev", sh)
         self.assertIn("pkg-config --exists libpng libjpeg freetype2", sh)
@@ -907,7 +907,7 @@ class FontsTest(unittest.TestCase):
     def test_the_paths_of_the_font_folder(self):
         from mctl import paths
         self.assertEqual(paths.fonts_dir({}), os.path.join(HERE, "mctl", "fonts"))
-        self.assertEqual(paths.fonts_dir({"PVJ_FONTS_DIR": "/x"}), "/x")
+        self.assertEqual(paths.fonts_dir({"NXLX_FONTS_DIR": "/x"}), "/x")
 
 
 class RealPlayerTest(ServerBase):
@@ -980,7 +980,7 @@ class ClientTest(unittest.TestCase):
             return type("R", (), {"stdout": b"ERR no\n"})()
         sp.run = run
         self.addCleanup(setattr, sp, "run", real)
-        c = raster.Client(exec_bin="/bin/true", env={"PVJ_FONTS_DIR": "/some/fonts"})
+        c = raster.Client(exec_bin="/bin/true", env={"NXLX_FONTS_DIR": "/some/fonts"})
         with self.assertRaises(raster.RasterError):
             c.graphic("kind text\nTEXT\nx")
         self.assertEqual(seen[0][0], ["/bin/true", "--self-limit", "--fonts", "/some/fonts"])

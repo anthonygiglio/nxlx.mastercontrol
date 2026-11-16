@@ -19,14 +19,14 @@
 #   --uninstall      remove the service and program files (keeps /etc/nxlx and media)
 #   --purge          with --uninstall, also remove /etc/nxlx
 #   --signer URL     the owner's signing service, e.g. http://hp.local:8781 (D139): the node asks it for its
-#                    HTTPS certificate by itself; written into /etc/nxlx/nxlx.env as PVJ_SIGNER_URL
+#                    HTTPS certificate by itself; written into /etc/nxlx/nxlx.env as NXLX_SIGNER_URL
 #   --root-fingerprint HEX   required with --signer: the SHA-256 of the owner's root (boxcert.py root); a node with
-#                    no root yet takes only that root (PVJ_ROOT_FINGERPRINT)
+#                    no root yet takes only that root (NXLX_ROOT_FINGERPRINT)
 set -euo pipefail
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PREFIX=/opt/nxlx
-PVJ_USER=""
+NXLX_USER=""
 WEB_USER=""
 MEDIA=/var/lib/nxlx/video
 OFFLINE=0
@@ -47,7 +47,7 @@ run() {
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--prefix) PREFIX="${2:?}"; shift 2 ;;
-	--user) PVJ_USER="${2:?}"; shift 2 ;;
+	--user) NXLX_USER="${2:?}"; shift 2 ;;
 	--web-user) WEB_USER="${2:?}"; shift 2 ;;
 	--media) MEDIA="${2:?}"; shift 2 ;;
 	--offline) OFFLINE=1; shift ;;
@@ -81,7 +81,7 @@ while [ "${#PREFIX}" -gt 1 ] && [ "${PREFIX%/}" != "$PREFIX" ]; do PREFIX="${PRE
 case "$PREFIX" in *//*) die "--prefix must not contain //" ;; esac
 case "$PREFIX" in /*) ;; *) die "--prefix must be an absolute path" ;; esac
 case "$MEDIA" in /*) ;; *) die "--media must be an absolute path" ;; esac
-for name in "$PVJ_USER" "$WEB_USER"; do
+for name in "$NXLX_USER" "$WEB_USER"; do
 	[[ "$name" =~ ^([a-z_][a-z0-9_-]*)?$ ]] || die "user names may only use a-z, 0-9, _ and -"
 done
 # Refuse prefixes that would make uninstall dangerous (/, /opt, /usr, ...).
@@ -268,11 +268,11 @@ fi
 # until intel-media-va-driver was in, and dropped none with it). The graphics is read from sysfs (PCI class 0x03, display):
 # Intel (vendor 8086) gets intel-media-va-driver, AMD (1002) gets mesa-va-drivers, and vainfo comes with either, so a
 # person can see what the driver decodes. Best effort: a failed install is said and the install goes on, in software.
-# A Pi decodes its own way and gets none of this. In stage mode (tests) PVJ_INSTALL_ARCH and PVJ_INSTALL_PCI stand in
+# A Pi decodes its own way and gets none of this. In stage mode (tests) NXLX_INSTALL_ARCH and NXLX_INSTALL_PCI stand in
 # for the machine and /sys/bus/pci/devices; a real install reads the real ones.
 va_arch="$(uname -m)"
 va_pci=/sys/bus/pci/devices
-if [ "$REAL" = 0 ]; then va_arch="${PVJ_INSTALL_ARCH:-$va_arch}"; va_pci="${PVJ_INSTALL_PCI:-$va_pci}"; fi
+if [ "$REAL" = 0 ]; then va_arch="${NXLX_INSTALL_ARCH:-$va_arch}"; va_pci="${NXLX_INSTALL_PCI:-$va_pci}"; fi
 if [ "$va_arch" = x86_64 ]; then
 	va_pkgs=()
 	va_names=()
@@ -434,9 +434,9 @@ KEEP_RELEASE=0       # a conversion waits for its confirm: the release in place 
 if [ "$OLD_LAYOUT" = 1 ] || [ "$CONV_STATE" = pending ]; then
 	[ "$PREFIX" = /opt/nxlx ] || die "this node still has the old names (/opt/pvj): run the installer once without --prefix, which converts it to /opt/nxlx"
 	# The accounts the converter renames; any other old-style name given with --user is not one of them.
-	case "$PVJ_USER" in
+	case "$NXLX_USER" in
 	"" | pvj-player | pvj-dev | pvj-web | pvj-sound | pvj-link | pvj-raster | pvj-ndi | pvj-ndisc) ;;
-	pvj-*) die "--user $PVJ_USER: the conversion renames only the node's own accounts (pvj-player, pvj-dev and the services'); give the account's name as it will be after the conversion, or leave --user out" ;;
+	pvj-*) die "--user $NXLX_USER: the conversion renames only the node's own accounts (pvj-player, pvj-dev and the services'); give the account's name as it will be after the conversion, or leave --user out" ;;
 	esac
 	old_top=/opt/pvj
 	[ -d "$ROOT/opt/pvj" ] || old_top=/opt/nxlx      # a conversion that stopped half-way, carried on below
@@ -474,54 +474,65 @@ elif [ "$CONV_STATE" = unconfirmed ] || [ -e "$ROOT/etc/systemd/system/nxlx-conv
 	KEEP_RELEASE=1
 fi
 
-# --- accounts -----------------------------------------------------------
-if [ -z "$PVJ_USER" ] && [ -f "$ETC/install.json" ]; then
-	PVJ_USER="$(sed -n 's/.*"user": "\([a-z_][a-z0-9_-]*\)".*/\1/p' "$ETC/install.json" | head -n 1)"
+# A node that took the system rename (rename PR 7) before the variable and signing names changed (rename PR 8) has the
+# new folders and accounts, with PVJ_* names in nxlx.env and pvj-release in allowed_signers. This release reads only
+# the new names, so say so: the converter's second pass rewrites those two files (and nothing else).
+if [ "$OLD_LAYOUT" = 0 ] && [ "$CONV_STATE" != pending ]; then
+	for held in "$ETC/nxlx.env" "$ETC/allowed_signers"; do
+		if [ -f "$held" ] && grep -v '^[[:space:]]*#' "$held" | grep -qE 'PVJ_[A-Z0-9_]+|pvj-release'; then
+			log "WARNING: ${held#"$ROOT"} still has the old variable or signing names (PVJ_*, pvj-release), which this release does not read: run sudo nxlx-convert --run to rewrite them (--undo puts them back)"
+		fi
+	done
 fi
-if [ -z "$PVJ_USER" ]; then
-	if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then PVJ_USER="$SUDO_USER"; else PVJ_USER=nxlx-player; fi
+
+# --- accounts -----------------------------------------------------------
+if [ -z "$NXLX_USER" ] && [ -f "$ETC/install.json" ]; then
+	NXLX_USER="$(sed -n 's/.*"user": "\([a-z_][a-z0-9_-]*\)".*/\1/p' "$ETC/install.json" | head -n 1)"
+fi
+if [ -z "$NXLX_USER" ]; then
+	if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then NXLX_USER="$SUDO_USER"; else NXLX_USER=nxlx-player; fi
 fi
 # From here on the node has the new names (converted by this run, or before), so the accounts the converter renames
 # are known only by their new names: an old one given again (--user pvj-player, on every later install) is the same
 # account, never a second one made beside it. Any other old-style name is refused, as before a conversion.
-case "$PVJ_USER" in
+case "$NXLX_USER" in
 pvj-player | pvj-dev | pvj-web | pvj-sound | pvj-link | pvj-raster | pvj-ndi | pvj-ndisc)
-	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && id "$PVJ_USER" >/dev/null 2>&1 && ! id "nxlx-${PVJ_USER#pvj-}" >/dev/null 2>&1; then
-		die "--user $PVJ_USER: this node has that account but not nxlx-${PVJ_USER#pvj-}, and no old layout the conversion would rename it with; look at it by hand"
+	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && id "$NXLX_USER" >/dev/null 2>&1 && ! id "nxlx-${NXLX_USER#pvj-}" >/dev/null 2>&1; then
+		die "--user $NXLX_USER: this node has that account but not nxlx-${NXLX_USER#pvj-}, and no old layout the conversion would rename it with; look at it by hand"
 	fi
-	log "--user $PVJ_USER: since the conversion this account is called nxlx-${PVJ_USER#pvj-}"
-	PVJ_USER="nxlx-${PVJ_USER#pvj-}" ;;
-pvj-*) die "--user $PVJ_USER: an old-style name that is not one of the node's own accounts; give the account's new name, or leave --user out" ;;
+	log "--user $NXLX_USER: since the conversion this account is called nxlx-${NXLX_USER#pvj-}"
+	NXLX_USER="nxlx-${NXLX_USER#pvj-}" ;;
+pvj-*) die "--user $NXLX_USER: an old-style name that is not one of the node's own accounts; give the account's new name, or leave --user out" ;;
 esac
 
 if [ "$REAL" = 1 ]; then
 	getent group nxlx-svc >/dev/null || run groupadd --system nxlx-svc
-	if ! id "$PVJ_USER" >/dev/null 2>&1; then
-		log "creating system user $PVJ_USER"
-		run useradd --system --create-home --home-dir /var/lib/nxlx-player --shell /usr/sbin/nologin --gid nxlx-svc "$PVJ_USER"
+	if ! id "$NXLX_USER" >/dev/null 2>&1; then
+		log "creating system user $NXLX_USER"
+		run useradd --system --create-home --home-dir /var/lib/nxlx-player --shell /usr/sbin/nologin --gid nxlx-svc "$NXLX_USER"
 	fi
 	# Older installs made /var/lib/nxlx the player's home, which let the player account replace settings.json.
 	# Give it its own home, changing only the home entry: nothing is moved out of /var/lib/nxlx.
-	if [ "$(getent passwd "$PVJ_USER" | cut -d: -f6)" = /var/lib/nxlx ]; then
-		log "moving the home of $PVJ_USER from /var/lib/nxlx to /var/lib/nxlx-player (no files are moved)"
+	if [ "$(getent passwd "$NXLX_USER" | cut -d: -f6)" = /var/lib/nxlx ]; then
+		log "moving the home of $NXLX_USER from /var/lib/nxlx to /var/lib/nxlx-player (no files are moved)"
 		run mkdir -p /var/lib/nxlx-player
-		run chown "$PVJ_USER":nxlx-svc /var/lib/nxlx-player
+		run chown "$NXLX_USER":nxlx-svc /var/lib/nxlx-player
 		run chmod 0750 /var/lib/nxlx-player
 		# usermod refuses while the account has a running process (the player; found on a real Pi 4), and this
 		# script stops at the first error. The player is started again at the end.
 		if [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then systemctl stop nxlx-player.service 2>/dev/null || true; fi
-		run usermod -d /var/lib/nxlx-player "$PVJ_USER"
+		run usermod -d /var/lib/nxlx-player "$NXLX_USER"
 	fi
 	# A display account that an installer from before the rename made (--user with a new name) has its home at
 	# /var/lib/pvj-player, which the conversion moved to /var/lib/nxlx-player with everything in it. The converter
 	# moves the homes of the pvj-* accounts it renames; this one keeps its name, so only its home entry is changed.
-	if [ "$(getent passwd "$PVJ_USER" | cut -d: -f6)" = /var/lib/pvj-player ] && [ -d /var/lib/nxlx-player ] && [ ! -e /var/lib/pvj-player ]; then
-		log "the home of $PVJ_USER moved with the conversion: /var/lib/pvj-player is now /var/lib/nxlx-player (no files are moved)"
+	if [ "$(getent passwd "$NXLX_USER" | cut -d: -f6)" = /var/lib/pvj-player ] && [ -d /var/lib/nxlx-player ] && [ ! -e /var/lib/pvj-player ]; then
+		log "the home of $NXLX_USER moved with the conversion: /var/lib/pvj-player is now /var/lib/nxlx-player (no files are moved)"
 		if [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then systemctl stop nxlx-player.service 2>/dev/null || true; fi
-		run usermod -d /var/lib/nxlx-player "$PVJ_USER"
+		run usermod -d /var/lib/nxlx-player "$NXLX_USER"
 	fi
 	for g in nxlx-svc video render audio input; do
-		getent group "$g" >/dev/null && run usermod -aG "$g" "$PVJ_USER"
+		getent group "$g" >/dev/null && run usermod -aG "$g" "$NXLX_USER"
 	done
 	if [ -n "$WEB_USER" ]; then run usermod -aG nxlx-svc "$WEB_USER"; fi
 	# The web panel runs as its own account with no screen or sound access.
@@ -588,15 +599,15 @@ if [ ! -e "$ETC/nxlx.env" ]; then
 	if [ "$DRY" = 0 ]; then
 		cat > "$ETC/nxlx.env" <<ENV
 # Settings for the nxlx-player service. Edit, then: sudo systemctl restart nxlx-player
-PVJ_MEDIA_DIR=$MEDIA
-PVJ_USB_DIR=/media/usb
+NXLX_MEDIA_DIR=$MEDIA
+NXLX_USB_DIR=/media/usb
 # USB drives are mounted read-only under /media/nxlx/<label>. Set to 1 to allow writing.
-PVJ_USB_RW=0
+NXLX_USB_RW=0
 # Web panel: port and address. The panel is for a private network; do not expose it to the internet.
-# PVJ_PORT=80
-# PVJ_BIND=0.0.0.0
+# NXLX_PORT=80
+# NXLX_BIND=0.0.0.0
 # Largest single upload from the panel, in MB.
-# PVJ_MAX_UPLOAD_MB=8192
+# NXLX_MAX_UPLOAD_MB=8192
 ENV
 	fi
 else
@@ -613,20 +624,20 @@ set_env() {
 	fi
 	log "set $1 in $ETC/nxlx.env"
 }
-if [ -n "$SIGNER" ]; then set_env PVJ_SIGNER_URL "${SIGNER%/}"; fi
-if [ -n "$ROOT_FP" ]; then set_env PVJ_ROOT_FINGERPRINT "$ROOT_FP"; fi
+if [ -n "$SIGNER" ]; then set_env NXLX_SIGNER_URL "${SIGNER%/}"; fi
+if [ -n "$ROOT_FP" ]; then set_env NXLX_ROOT_FINGERPRINT "$ROOT_FP"; fi
 # Public keys whose signatures nxlx-update accepts (one line per key, see install/README.md).
 if [ ! -e "$ETC/allowed_signers" ] && [ "$DRY" = 0 ]; then
 	cat > "$ETC/allowed_signers" <<KEYS
 # Add your release signing key here. Format:
-#   pvj-release namespaces="pvj-release" ssh-ed25519 AAAA... comment
+#   nxlx-release namespaces="nxlx-release" ssh-ed25519 AAAA... comment
 # Until a key is listed, nxlx-update refuses every bundle.
 KEYS
 	chmod 644 "$ETC/allowed_signers"
 fi
 run mkdir -p "$ROOT$MEDIA"
 if [ "$REAL" = 1 ] && [ "$DRY" = 0 ]; then
-	chown "$PVJ_USER":nxlx-svc "$MEDIA"; chmod 2775 "$MEDIA"
+	chown "$NXLX_USER":nxlx-svc "$MEDIA"; chmod 2775 "$MEDIA"
 	# settings.json lives in /var/lib/nxlx and only the web panel may write there. The player (group nxlx-svc) may pass
 	# through to the media folder and read, but not create, rename or replace files: 2750, owned by nxlx-web.
 	mkdir -p /var/lib/nxlx; chown nxlx-web:nxlx-svc /var/lib/nxlx; chmod 2750 /var/lib/nxlx
@@ -635,24 +646,24 @@ if [ "$REAL" = 1 ] && [ "$DRY" = 0 ]; then
 fi
 if [ "$DRY" = 0 ]; then
 	printf '{"version": "%s", "prefix": "%s", "user": "%s", "installed": "%s"}\n' \
-		"$VERSION" "$PREFIX" "$PVJ_USER" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$ETC/install.json"
+		"$VERSION" "$PREFIX" "$NXLX_USER" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$ETC/install.json"
 fi
 
 # --- service ------------------------------------------------------------
 run mkdir -p "$(dirname "$UNIT")"
 if [ "$DRY" = 0 ]; then
-	sed -e "s|@PVJ_USER@|$PVJ_USER|g" -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-player.service" > "$UNIT"
-	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-web.service" > "$WEB_UNIT"
-	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-netd.service" > "$NET_UNIT"
-	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-sysd.service" > "$SYS_UNIT"
-	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-supportd.service" > "$SUP_UNIT"
-	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-sound.service" > "$SOUND_UNIT"
-	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-link.service" > "$LINK_UNIT"
-	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-raster@.service" > "$RASTER_UNIT"
-	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-raster.socket" > "$RASTER_SOCKET_UNIT"
+	sed -e "s|@NXLX_USER@|$NXLX_USER|g" -e "s|@NXLX_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-player.service" > "$UNIT"
+	sed -e "s|@NXLX_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-web.service" > "$WEB_UNIT"
+	sed -e "s|@NXLX_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-netd.service" > "$NET_UNIT"
+	sed -e "s|@NXLX_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-sysd.service" > "$SYS_UNIT"
+	sed -e "s|@NXLX_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-supportd.service" > "$SUP_UNIT"
+	sed -e "s|@NXLX_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-sound.service" > "$SOUND_UNIT"
+	sed -e "s|@NXLX_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-link.service" > "$LINK_UNIT"
+	sed -e "s|@NXLX_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-raster@.service" > "$RASTER_UNIT"
+	sed -e "s|@NXLX_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-raster.socket" > "$RASTER_SOCKET_UNIT"
 	# Updates from the panel: started on request by nxlx-sysd, never enabled.
-	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-update-usb@.service" > "$UPD_USB_UNIT"
-	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-update-inbox@.service" > "$UPD_INBOX_UNIT"
+	sed -e "s|@NXLX_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-update-usb@.service" > "$UPD_USB_UNIT"
+	sed -e "s|@NXLX_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-update-inbox@.service" > "$UPD_INBOX_UNIT"
 	run rm -f "$ROOT/etc/systemd/system/nxlx-update-usb.service" "$ROOT/etc/systemd/system/nxlx-update-inbox.service"  # the names before they took a version
 	# The support helper may not load kernel modules itself (its sandbox), so WireGuard's is loaded at boot.
 	mkdir -p "$(dirname "$WG_LOAD")"
@@ -695,7 +706,7 @@ run_folder_is_sound() {
 	while IFS= read -r -d '' entry; do
 		case "${entry##*/}" in
 		.d45) continue ;;
-		player) want="$PVJ_USER:nxlx-svc 750" ;;
+		player) want="$NXLX_USER:nxlx-svc 750" ;;
 		web) want="nxlx-web:nxlx-svc 750" ;;
 		netd) want="root:nxlx-svc 750" ;;
 		*)
@@ -804,7 +815,7 @@ fi
 # USB automount: udev starts nxlx-usb@<partition>.service, which mounts by label.
 run mkdir -p "$(dirname "$USB_RULE")"
 if [ "$DRY" = 0 ]; then
-	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-usb@.service" > "$USB_UNIT"
+	sed -e "s|@NXLX_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-usb@.service" > "$USB_UNIT"
 	cp "$SRC/install/99-nxlx-usb.rules" "$USB_RULE"
 fi
 if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && command -v udevadm >/dev/null; then udevadm control --reload || true; fi

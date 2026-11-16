@@ -5,7 +5,7 @@
 (tests/ndi_standin/standin.c) plays on a really installed box: asked of the panel over its own API, as a paired
 device asks, and of the player over its control socket, as root. Nothing here reaches into the helper.
 
-    PVJ_TOKEN=<a paired device's token> python3 -B box_check.py play NAME raw|matroska
+    NXLX_TOKEN=<a paired device's token> python3 -B box_check.py play NAME raw|matroska
                                                                back NAME SECONDS
                                                                sound on|off
                                                                soundown   (each picture's own sound again)
@@ -35,9 +35,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import mpvword  # noqa: E402
 from mpvword import CASES, FRAMES_A_SECOND, HEIGHT, WIDTH, Failed, wait  # noqa: E402
 
-BASE = os.environ.get("PVJ_PANEL", "http://127.0.0.1")
-PLAYER = os.environ.get("PVJ_PLAYER_SOCKET", "/run/nxlx/player/player.sock")
-PIPE = os.environ.get("PVJ_NDI_PIPE", "/run/nxlx-ndi-pipe/ndi.fifo")
+BASE = os.environ.get("NXLX_PANEL", "http://127.0.0.1")
+PLAYER = os.environ.get("NXLX_PLAYER_SOCKET", "/run/nxlx/player/player.sock")
+PIPE = os.environ.get("NXLX_NDI_PIPE", "/run/nxlx-ndi-pipe/ndi.fifo")
 ASKED = ("path", "idle-active", "core-idle", "pause", "eof-reached", "playback-time", "time-pos", "audio-pts", "track-list/count",
          "track-list", "video-params", "audio-params", "vo-configured", "current-vo", "current-ao", "video-codec", "audio-codec-name",
          "estimated-frame-number", "frame-drop-count", "demuxer-cache-state/underrun", "paused-for-cache", "seeking", "mpv-version")
@@ -47,7 +47,7 @@ def http(method, path, body=None, timeout=30):
     """(status, the answer as JSON or as text)."""
     data = None if body is None else json.dumps(body).encode()
     req = urllib.request.Request(BASE + path, data=data, method=method)
-    req.add_header("Authorization", "Bearer " + os.environ.get("PVJ_TOKEN", ""))
+    req.add_header("Authorization", "Bearer " + os.environ.get("NXLX_TOKEN", ""))
     if data is not None:
         req.add_header("Content-Type", "application/json")
         req.add_header("X-MCTL-Request", "1")

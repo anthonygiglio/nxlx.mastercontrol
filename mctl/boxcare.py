@@ -1243,7 +1243,7 @@ class BoxCare:
 
     # ---- factory reset -----------------------------------------------------------------------------------------
     def _media_on_usb(self):
-        """True when the media folder is on (or is) a USB drive: PVJ_MEDIA_DIR may point there, and a reset must
+        """True when the media folder is on (or is) a USB drive: NXLX_MEDIA_DIR may point there, and a reset must
         never empty a drive someone plugged in."""
         api = self.api
         media = os.path.realpath(api.media_dir)

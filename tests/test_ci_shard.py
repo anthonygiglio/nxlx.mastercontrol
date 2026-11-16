@@ -115,9 +115,9 @@ class Workflow(unittest.TestCase):
     def test_the_shader_steps_still_say_a_skip_is_a_failure(self):
         gpu = job(self.y, "shaders-gpu")
         for module in ("tests.test_shaders_gpu", "tests.test_shaderlive_gpu"):
-            self.assertIn("PVJ_GPU_TEST=1 xvfb-run", gpu)
+            self.assertIn("NXLX_GPU_TEST=1 xvfb-run", gpu)
             self.assertIn(module, gpu)
-        self.assertIn("PVJ_GPU_ONLY=desktop", gpu)
+        self.assertIn("NXLX_GPU_ONLY=desktop", gpu)
         self.assertIn("a skip here is a failure", gpu)
 
 

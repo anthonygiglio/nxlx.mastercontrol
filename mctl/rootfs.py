@@ -100,7 +100,7 @@ def main(argv=None):
     ap.add_argument("action", choices=["status", "enable", "disable"])
     ap.add_argument("--force", action="store_true", help="enable even if media is on the system disk")
     args = ap.parse_args(argv)
-    media = os.environ.get("PVJ_MEDIA_DIR", "/var/lib/nxlx/video")
+    media = os.environ.get("NXLX_MEDIA_DIR", "/var/lib/nxlx/video")
     kind = hardware.detect_board()["kind"]
     try:
         if args.action == "status":

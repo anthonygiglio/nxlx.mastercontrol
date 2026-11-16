@@ -613,7 +613,7 @@ class ShaderStateTest(Live):
         self.assertEqual(sizes["usual"][0], 132, "92 before D83: 8 effect values, and a name and a kind for 16 controls")
         self.assertLessEqual(sizes["usual"][2], 6000, sizes)
         self.assertLessEqual(sizes["worst"][2], 9000, sizes)
-        if os.environ.get("PVJ_SAY_SIZES"):
+        if os.environ.get("NXLX_SAY_SIZES"):
             print(sizes)
 
 

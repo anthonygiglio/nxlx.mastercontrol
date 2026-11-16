@@ -235,7 +235,7 @@ static int parse_args(int argc, char **argv, Cfg *c)
         else if (!strcmp(a, "--skip-deblock")) c->skip_deblock = 1;
         else if (!strcmp(a, "--every-vblank")) c->every_vblank = 1;
         else if (!strcmp(a, "--verbose")) c->verbose = 1;
-#ifdef PVJ_RENDER_TEST_HOOKS
+#ifdef NXLX_RENDER_TEST_HOOKS
         else if (!strcmp(a, "--version")) { printf("mctl-render %s (with test hooks)\n", MCTL_VERSION); exit(0); }
 #else
         else if (!strcmp(a, "--version")) { printf("mctl-render %s\n", MCTL_VERSION); exit(0); }
@@ -484,13 +484,13 @@ static int target(Layer *l, int w, int h)
     return 0;
 }
 
-#ifdef PVJ_RENDER_TEST_HOOKS
+#ifdef NXLX_RENDER_TEST_HOOKS
 // For the tests only, and only in a build made with `make TEST_HOOKS=1` (CI; the box's own build has none):
-// PVJ_RENDER_TEST_SLOW_START=<ms> waits that long after the text core's mpv_initialize, as a loaded machine may, so
+// NXLX_RENDER_TEST_SLOW_START=<ms> waits that long after the text core's mpv_initialize, as a loaded machine may, so
 // that the core is surely idle before anything else is done to it (tests/test_mctl_render.py).
 static void slow_start(void)
 {
-    const char *v = getenv("PVJ_RENDER_TEST_SLOW_START");
+    const char *v = getenv("NXLX_RENDER_TEST_SLOW_START");
     long ms = v ? strtol(v, NULL, 10) : 0;
     if (ms <= 0 || ms > 5000) return;
     struct timespec t = { ms / 1000, (ms % 1000) * 1000000L };
@@ -507,8 +507,8 @@ static void send_stop(mpv_handle *h, int i)
     LOG("layer %d: the stop at the end of a fade was refused: %s", i, mpv_error_string(r));
 }
 
-#ifdef PVJ_RENDER_TEST_HOOKS
-// PVJ_RENDER_TEST_SLOW_STOP=<ms> holds back the stop that ends a fade until the next fade has loaded, or for that long,
+#ifdef NXLX_RENDER_TEST_HOOKS
+// NXLX_RENDER_TEST_SLOW_STOP=<ms> holds back the stop that ends a fade until the next fade has loaded, or for that long,
 // as a core busy with its clip reaches it after a blocking command (tests/test_mctl_render.py). The hold stays well under
 // STOP_WAIT, or the load goes ahead without the stop and the test sees what it is there to catch.
 static mpv_handle *held_stop;
@@ -528,8 +528,8 @@ static void send_held_stop(int phase)
 static void stop_outgoing(mpv_handle *h, int i)
 {
     __atomic_add_fetch(&app.stops_asked[i], 1, __ATOMIC_RELEASE);
-#ifdef PVJ_RENDER_TEST_HOOKS
-    const char *v = getenv("PVJ_RENDER_TEST_SLOW_STOP");
+#ifdef NXLX_RENDER_TEST_HOOKS
+    const char *v = getenv("NXLX_RENDER_TEST_SLOW_STOP");
     long ms = v ? strtol(v, NULL, 10) : 0;
     if (ms > 0 && ms <= 5000) {
         held_stop = h;
@@ -645,7 +645,7 @@ static int layer_open(Layer *l, int index, const Cfg *c, int w, int h)
         }
     }
     if (mpv_initialize(l->h) < 0) return -1;
-#ifdef PVJ_RENDER_TEST_HOOKS
+#ifdef NXLX_RENDER_TEST_HOOKS
     if (is_text) slow_start();
 #endif
     if (!is_text) {
@@ -673,7 +673,7 @@ static void layer_render(Layer *l)
     render_last_fence = NULL;
     last_call_delete = 0;
     int r = mpv_render_context_render(l->rc, rp);
-#ifdef PVJ_RENDER_TEST_HOOKS
+#ifdef NXLX_RENDER_TEST_HOOKS
     // Tests only: a draw of a video layer that leaves the middle of its picture black is counted (mctl-test-blank), so a
     // test with a clip that has no black there sees a blank picture even when it is on the screen for one flip.
     if (r >= 0 && l->index >= 0 && l->index < LAYERS) {
@@ -1262,7 +1262,7 @@ int main(int argc, char **argv)
         gfx_take();
         Layer *front = &video[fi], *back = &video[1 - fi];
         int fresh = 0;                                      // source 1's picture is new this frame (D106)
-#ifdef PVJ_RENDER_TEST_HOOKS
+#ifdef NXLX_RENDER_TEST_HOOKS
         send_held_stop(phase);
 #endif
         if (fi != was_front) { front->dirty = 1; was_front = fi; fresh = 1; }

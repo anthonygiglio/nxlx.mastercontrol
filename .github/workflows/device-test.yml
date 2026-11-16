@@ -31,7 +31,7 @@ jobs:
           persist-credentials: false
       - name: Run the device test
         env:
-          PVJ_DEVICE_PLAY: ${{ inputs.play && '1' || '0' }}
+          NXLX_DEVICE_PLAY: ${{ inputs.play && '1' || '0' }}
         run: tools/device-test.sh device-report
       - name: Upload the report
         if: always()

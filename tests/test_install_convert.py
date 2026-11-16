@@ -98,12 +98,13 @@ class InstallConvertsAnOldNode(unittest.TestCase):
             self.assertNotIn("pvj", name)
         web = self.read("etc/systemd/system/nxlx-web.service")
         for line in ("User=nxlx-web", "Group=nxlx-svc", "ExecStart=/opt/nxlx/current/bin/nxlx-web",
-                     "EnvironmentFile=-/etc/nxlx/nxlx.env", "Environment=PVJ_RUNTIME_DIR=/run/nxlx/web"):
+                     "EnvironmentFile=-/etc/nxlx/nxlx.env", "Environment=NXLX_RUNTIME_DIR=/run/nxlx/web"):
             self.assertIn(line, web)
         self.assertIn("User=nxlx-player", self.read("etc/systemd/system/nxlx-player.service"), "the old account's new name")
         inst = json.loads(self.read("etc/nxlx/install.json"))
         self.assertEqual((inst["prefix"], inst["user"], inst["version"]), ("/opt/nxlx", "nxlx-player", version()))
-        self.assertIn("PVJ_MEDIA_DIR=/var/lib/nxlx/video", self.read("etc/nxlx/nxlx.env"))
+        self.assertIn("NXLX_MEDIA_DIR=/var/lib/nxlx/video", self.read("etc/nxlx/nxlx.env"))
+        self.assertNotIn("PVJ_", self.read("etc/nxlx/nxlx.env"))
         self.assertEqual(os.readlink(self.p("usr/local/bin/nxlx-convert")), "/opt/nxlx/current/bin/nxlx-convert")
         self.assertTrue(os.path.isfile(self.p("etc/systemd/system/nxlx-convert-undo.timer")), "the undo is armed")
         # A second run is a plain install: nothing is converted again, and the old release is still "previous".
@@ -119,6 +120,23 @@ class InstallConvertsAnOldNode(unittest.TestCase):
         self.assertTrue(os.path.isfile(self.p("etc/systemd/system/pvj-web.service")))
         self.assertIn("ExecStart=/opt/pvj/current/bin/pvj-web", self.read("etc/systemd/system/pvj-web.service"))
         self.assertFalse(os.path.exists(self.p("opt/nxlx")))
+
+    def test_a_node_with_the_new_folders_and_the_old_variable_names_is_told_to_run_the_converter(self):
+        self.assertEqual(self.install().returncode, 0)
+        subprocess.run(["python3", os.path.join(REPO, "bin", "nxlx-convert"), "--root", self.root, "--confirm"],
+                       capture_output=True, text=True, timeout=120)
+        clean = self.install()
+        self.assertEqual(clean.returncode, 0, clean.stdout + clean.stderr)
+        self.assertNotIn("WARNING", clean.stdout)
+        with open(self.p("etc/nxlx/nxlx.env"), "a") as f:
+            f.write("PVJ_PORT=81\n")
+        with open(self.p("etc/nxlx/allowed_signers"), "w") as f:
+            f.write('# pvj-release is only a comment here\npvj-release namespaces="pvj-release" ssh-ed25519 AAAA owner\n')
+        again = self.install()
+        self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
+        self.assertIn("/etc/nxlx/nxlx.env still has the old variable or signing names", again.stdout)
+        self.assertIn("/etc/nxlx/allowed_signers still has the old variable or signing names", again.stdout)
+        self.assertIn("sudo nxlx-convert --run", again.stdout)
 
     def test_a_refused_conversion_stops_the_installer_and_changes_nothing_but_the_waiting_release(self):
         os.makedirs(self.p("proc"))

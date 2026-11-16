@@ -245,8 +245,8 @@ class ServeTest(RendererBase):
         os.environ["STANDIN_MODE"], os.environ["STANDIN_LOG"] = "exit:2", self.calls
         self.addCleanup(os.environ.pop, "STANDIN_MODE", None)
         self.addCleanup(os.environ.pop, "STANDIN_LOG", None)
-        os.environ["PVJ_RENDER_BIN"] = self.standin
-        self.addCleanup(os.environ.pop, "PVJ_RENDER_BIN", None)
+        os.environ["NXLX_RENDER_BIN"] = self.standin
+        self.addCleanup(os.environ.pop, "NXLX_RENDER_BIN", None)
         state = os.path.join(self.dir, "state")
         os.makedirs(state, exist_ok=True)
         screenmode.write_json(os.path.join(state, renderer.WANTED), wish or {"use": "new"})

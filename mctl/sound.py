@@ -866,7 +866,7 @@ def main(argv=None):
         allowed.add(pwd.getpwnam("nxlx-web").pw_uid)
     except KeyError:
         allowed.add(os.getuid())                   # on a desk: whoever runs it
-    service = Service(os.path.join(rundir, paths.SOUND_LEVELS), program=os.environ.get("PVJ_ARECORD") or "/usr/bin/arecord",
+    service = Service(os.path.join(rundir, paths.SOUND_LEVELS), program=os.environ.get("NXLX_ARECORD") or "/usr/bin/arecord",
                       log=lambda m: print(m, flush=True))
     worker = threading.Thread(target=service.run, name="sound-capture", daemon=True)
     worker.start()

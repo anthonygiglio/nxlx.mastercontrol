@@ -407,9 +407,9 @@ class FakeSigner:
 
 class HookTest(SignerBase):
     def auto(self, box, settings, url, now=time.time, fp=True):
-        env = {"PVJ_SIGNER_URL": url} if url else {}
+        env = {"NXLX_SIGNER_URL": url} if url else {}
         if fp:
-            env["PVJ_ROOT_FINGERPRINT"] = boxcert.read_cert(self.exe, os.path.join(self.ca, "root.pem"))["fingerprint"]
+            env["NXLX_ROOT_FINGERPRINT"] = boxcert.read_cert(self.exe, os.path.join(self.ca, "root.pem"))["fingerprint"]
         return autocert.AutoCert(box, settings, env=env, now=now)
 
     def test_a_new_node_gets_its_certificate_and_then_leaves_the_signer_alone(self):

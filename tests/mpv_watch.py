@@ -16,7 +16,7 @@ request that failed still fails with the same error):
   load, whether the player answers a cheap question on a new connection and how long that takes, WHEN THE ANSWER TO
   THE ORIGINAL REQUEST CAME on its own connection (which is kept open and read on for a while), how long the same
   request takes when asked once more with a long wait, and the end of the player's own log if it writes one
-  (PVJ_MPV_LOG=1).
+  (NXLX_MPV_LOG=1).
 
 How it sees the connection without a change to the product: while a watch is on, the `socket` that mctl.player
 uses is a stand-in whose sockets note what they receive and can be kept open after the client closed them.
@@ -342,7 +342,7 @@ class WatchedIpc(Ipc):
             log = tail(self.log_path)
             lines += ["the end of the player's own log (%s):" % self.log_path] + ["    " + x for x in log] if log else ["the player's log %s could not be read" % self.log_path]
         else:
-            lines.append("the player writes no log of its own (PVJ_MPV_LOG=1 makes it)")
+            lines.append("the player writes no log of its own (NXLX_MPV_LOG=1 makes it)")
         lines.append("=" * 100)
         self.say(lines)
 
@@ -384,8 +384,8 @@ def _alive(pid):
 
 
 def log_args(folder):
-    """(extra arguments for mpv, the log's path or None): with PVJ_MPV_LOG=1 the player writes its own log."""
-    if os.environ.get("PVJ_MPV_LOG") != "1":
+    """(extra arguments for mpv, the log's path or None): with NXLX_MPV_LOG=1 the player writes its own log."""
+    if os.environ.get("NXLX_MPV_LOG") != "1":
         return [], None
     path = os.path.join(folder, "mpv.log")
     return ["--log-file=" + path], path

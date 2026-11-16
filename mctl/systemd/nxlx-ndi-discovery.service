@@ -10,7 +10,7 @@
 [Unit]
 Description=nxlx.mastercontrol NDI discovery server (unprivileged, runs the owner's copy of NDI's program)
 After=network.target
-ConditionPathExists=@PVJ_DIR@/bin/nxlx-ndi-discovery
+ConditionPathExists=@NXLX_DIR@/bin/nxlx-ndi-discovery
 StartLimitIntervalSec=0
 
 [Service]
@@ -22,9 +22,9 @@ Group=nxlx-ndisc
 UMask=0027
 RuntimeDirectory=nxlx-ndisc
 RuntimeDirectoryMode=0750
-Environment=PVJ_NDISC_DIR=/run/nxlx-ndisc
+Environment=NXLX_NDISC_DIR=/run/nxlx-ndisc
 Environment=HOME=/tmp
-ExecStart=@PVJ_DIR@/bin/nxlx-ndi-discovery
+ExecStart=@NXLX_DIR@/bin/nxlx-ndi-discovery
 Restart=always
 RestartSec=2
 

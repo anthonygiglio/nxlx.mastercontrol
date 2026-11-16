@@ -10,7 +10,7 @@ generator's drawing size and is capped by Effect detail only below it, both cloc
 darken the pair, a refused pair leaves the generator on, and a refusal of one of the two is not taken for the other's.
 
 CI's three effects-gpu jobs run these: tests/test_effects_gpu.py, the module the workflow names, loads this one when
-it is run. Run alone:  PVJ_GPU_TEST=1 xvfb-run -a python3 -m tests.test_pair_gpu
+it is run. Run alone:  NXLX_GPU_TEST=1 xvfb-run -a python3 -m tests.test_pair_gpu
 A software GPU: nothing here says what the pair costs a real board.
 """
 import os
@@ -381,21 +381,21 @@ for _name in PairCase.__dict__:               # and the pair's tests once, on th
 
 
 if ONLY != "desktop":
-    @unittest.skipUnless(GPU and shutil.which("mpv"), "set PVJ_GPU_TEST=1 and run under a display (xvfb-run) with mpv")
+    @unittest.skipUnless(GPU and shutil.which("mpv"), "set NXLX_GPU_TEST=1 and run under a display (xvfb-run) with mpv")
     class GlesPairTest(PairCase, ServerBase):
         ES = "yes"
 
-    @unittest.skipUnless(GPU and shutil.which("mpv"), "set PVJ_GPU_TEST=1 and run under a display (xvfb-run) with mpv")
+    @unittest.skipUnless(GPU and shutil.which("mpv"), "set NXLX_GPU_TEST=1 and run under a display (xvfb-run) with mpv")
     class GlesPlainPairTest(PlainCase, ServerBase):
         ES = "yes"
 
 
 if ONLY != "gles":
-    @unittest.skipUnless(GPU and shutil.which("mpv"), "set PVJ_GPU_TEST=1 and run under a display (xvfb-run) with mpv")
+    @unittest.skipUnless(GPU and shutil.which("mpv"), "set NXLX_GPU_TEST=1 and run under a display (xvfb-run) with mpv")
     class DesktopGlPairTest(PairCase, ServerBase):
         ES = "no"
 
-    @unittest.skipUnless(GPU and shutil.which("mpv"), "set PVJ_GPU_TEST=1 and run under a display (xvfb-run) with mpv")
+    @unittest.skipUnless(GPU and shutil.which("mpv"), "set NXLX_GPU_TEST=1 and run under a display (xvfb-run) with mpv")
     class DesktopGlPlainPairTest(PlainCase, ServerBase):
         ES = "no"
 

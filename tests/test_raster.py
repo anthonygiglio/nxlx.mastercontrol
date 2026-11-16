@@ -6,7 +6,7 @@ Three layers:
 
 * the checks that need no decoder, and the store, against a stand-in for the helper (runs everywhere);
 * the routes and who may use them, over HTTP (runs everywhere);
-* the real program render/nxlx-raster, fed good files, damaged files and hostile ones (runs only with PVJ_RASTER_TEST=1
+* the real program render/nxlx-raster, fed good files, damaged files and hostile ones (runs only with NXLX_RASTER_TEST=1
   and the program built: make -C render nxlx-raster; CI's job nxlx-raster does that and treats a skip as a failure).
 
 Nothing here has run on a Pi, and none of it has run the program under its systemd unit (only a static look at the unit).
@@ -30,7 +30,7 @@ from tests.test_roles import RolesBase
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HELPER = os.path.join(HERE, "render", "nxlx-raster")
-REAL = os.environ.get("PVJ_RASTER_TEST") == "1"
+REAL = os.environ.get("NXLX_RASTER_TEST") == "1"
 
 # --- files made here -------------------------------------------------------------------------------------------------
 
@@ -651,7 +651,7 @@ class UnitTest(unittest.TestCase):
                      "usermod -aG nxlx-raster nxlx-web", "make -C \"$RELEASE.new/render\" nxlx-raster", "systemctl enable nxlx-raster.socket",
                      "libpng-dev", "libjpeg-dev"):
             self.assertIn(want, sh)
-        self.assertNotIn("usermod -aG nxlx-raster \"$PVJ_USER\"", sh)         # the player is not in its group
+        self.assertNotIn("usermod -aG nxlx-raster \"$NXLX_USER\"", sh)         # the player is not in its group
         self.assertNotIn("usermod -aG nxlx-raster nxlx-sound", sh)
         # no condition on the board: nothing between the build and the enable asks which board this is
         build = sh[sh.index("# The picture helper (D129), built the same way"):sh.index("previous=\"\"")]
@@ -671,7 +671,7 @@ class UnitTest(unittest.TestCase):
 
 
 # --- 4. the real program ---------------------------------------------------------------------------------------------
-@unittest.skipUnless(REAL, "PVJ_RASTER_TEST=1 runs the real nxlx-raster")
+@unittest.skipUnless(REAL, "NXLX_RASTER_TEST=1 runs the real nxlx-raster")
 class RealRasterTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -946,7 +946,7 @@ def bgra_pixels(done):
     return [tuple(d[i:i + 4]) for i in range(0, len(d), 4)]
 
 
-@unittest.skipUnless(REAL, "PVJ_RASTER_TEST=1 runs the real nxlx-raster")
+@unittest.skipUnless(REAL, "NXLX_RASTER_TEST=1 runs the real nxlx-raster")
 class RealGraphicsTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

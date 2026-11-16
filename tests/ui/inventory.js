@@ -20,7 +20,7 @@
 //
 // The state: tests/ui/signal-pages.js setUp (modules on, projectors, walls, scenes, a schedule, streams, codes, a
 // mapping, two controllers), with nothing playing, Vibes off and no effect on, in a harness that has NO player
-// (PVJ_HARNESS_NO_PLAYER=1), because the fixture was made on a machine without mpv and what a card offers can depend
+// (NXLX_HARNESS_NO_PLAYER=1), because the fixture was made on a machine without mpv and what a card offers can depend
 // on the player. So the inventory holds the panel's layout, not what appears only while a clip or a shader plays;
 // the steps of tests/ui/panel.test.js that play something hold those.
 //

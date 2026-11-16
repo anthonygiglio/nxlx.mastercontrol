@@ -45,9 +45,9 @@ def parse_legacy_name(name):
 def resolve_files(preset, media_dir=None, usb_dir=None):
     """Files a preset plays: everything in the folder, or those starting with the index."""
     if preset["usb"]:
-        root = usb_dir or os.environ.get("PVJ_USB_DIR", DEFAULT_USB_DIR)
+        root = usb_dir or os.environ.get("NXLX_USB_DIR", DEFAULT_USB_DIR)
     else:
-        root = media_dir or os.environ.get("PVJ_MEDIA_DIR", DEFAULT_MEDIA_DIR)
+        root = media_dir or os.environ.get("NXLX_MEDIA_DIR", DEFAULT_MEDIA_DIR)
     try:
         with os.scandir(root) as it:            # bounded: a USB drive can hold any number of entries
             names = sorted(e.name for _, e in zip(range(SCAN_LIMIT), it) if not e.name.startswith("."))

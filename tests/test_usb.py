@@ -32,7 +32,7 @@ class UsbTest(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
         self.base = os.path.join(self.tmp, "nxlx")
         self.link = os.path.join(self.tmp, "usb")
-        self.env = {"PVJ_USB_BASE": self.base, "PVJ_USB_LINK": self.link}
+        self.env = {"NXLX_USB_BASE": self.base, "NXLX_USB_LINK": self.link}
         self.mounts = os.path.join(self.tmp, "mounts")
         self.set_mounts("/dev/nvme0n1p2 / ext4 rw 0 0\n")
         self.logs = []
@@ -74,7 +74,7 @@ class UsbTest(unittest.TestCase):
 
     def test_rw_only_when_asked(self):
         r = FakeRunner({"/dev/sdb1": "TYPE=ext4\nLABEL=X\n"})
-        self.mount("/dev/sdb1", r, dict(self.env, PVJ_USB_RW="1"))
+        self.mount("/dev/sdb1", r, dict(self.env, NXLX_USB_RW="1"))
         self.assertTrue(r.calls[-1][4].startswith("rw,"))
 
     def test_same_label_twice_gets_distinct_folders(self):

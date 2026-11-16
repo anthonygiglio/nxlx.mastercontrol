@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 [Unit]
 Description=nxlx.mastercontrol picture helper (one uploaded picture, then it exits; D129)
-ConditionPathExists=@PVJ_DIR@/render/nxlx-raster
+ConditionPathExists=@NXLX_DIR@/render/nxlx-raster
 
 [Service]
 # Started by nxlx-raster.socket for each connection, with the connection as its standard input and output. It reads one
@@ -20,7 +20,7 @@ Environment=HOME=/nonexistent
 # The fonts are in mctl/fonts, or in pvj/fonts in a release from before the rename. A rollback only repoints
 # "current" and does not write this file again, so the unit looks at which one the current release has (for one
 # release; $$ is a $ for systemd).
-ExecStart=/bin/sh -c 'f=@PVJ_DIR@/mctl/fonts; [ -d "$$f" ] || f=@PVJ_DIR@/pvj/fonts; exec @PVJ_DIR@/render/nxlx-raster --fonts "$$f"'
+ExecStart=/bin/sh -c 'f=@NXLX_DIR@/mctl/fonts; [ -d "$$f" ] || f=@NXLX_DIR@/pvj/fonts; exec @NXLX_DIR@/render/nxlx-raster --fonts "$$f"'
 # A job that is not done in 15 seconds is killed from outside as well as by the program's own alarm.
 RuntimeMaxSec=15
 

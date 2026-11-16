@@ -20,7 +20,7 @@ class LayoutTest(unittest.TestCase):
             self.assertNotEqual(d, paths.RUN)
 
     def test_on_a_box_every_path_comes_from_the_units_environment(self):
-        env = {"PVJ_RUNTIME_DIR": paths.WEB_DIR, "PVJ_PLAYER_DIR": paths.PLAYER_DIR, "PVJ_NETD_DIR": paths.NETD_DIR}
+        env = {"NXLX_RUNTIME_DIR": paths.WEB_DIR, "NXLX_PLAYER_DIR": paths.PLAYER_DIR, "NXLX_NETD_DIR": paths.NETD_DIR}
         self.assertEqual(paths.own_path(env), "/run/nxlx/web")
         self.assertEqual(paths.player_socket(env), "/run/nxlx/player/player.sock")
         self.assertEqual(paths.preview_file(env), "/run/nxlx/player/preview.jpg")     # mpv writes it
@@ -32,18 +32,18 @@ class LayoutTest(unittest.TestCase):
         self.assertEqual(paths.capture_fifo(paths.own_path(env)), "/run/nxlx/web/capture.fifo")
 
     def test_the_player_and_the_helper_see_their_own_folder(self):
-        self.assertEqual(paths.player_socket({"PVJ_RUNTIME_DIR": paths.PLAYER_DIR}), "/run/nxlx/player/player.sock")
-        self.assertEqual(paths.netd_socket({"PVJ_RUNTIME_DIR": paths.NETD_DIR}), "/run/nxlx/netd/netd.sock")
+        self.assertEqual(paths.player_socket({"NXLX_RUNTIME_DIR": paths.PLAYER_DIR}), "/run/nxlx/player/player.sock")
+        self.assertEqual(paths.netd_socket({"NXLX_RUNTIME_DIR": paths.NETD_DIR}), "/run/nxlx/netd/netd.sock")
 
     def test_without_peer_folders_everything_is_in_the_one_private_folder(self):
-        env = {"PVJ_RUNTIME_DIR": "/somewhere/private"}
+        env = {"NXLX_RUNTIME_DIR": "/somewhere/private"}
         self.assertEqual(paths.player_socket(env), "/somewhere/private/player.sock")
         self.assertEqual(paths.netd_socket(env), "/somewhere/private/netd.sock")
         self.assertEqual(paths.own_path({"XDG_RUNTIME_DIR": "/run/user/1000"}), "/run/user/1000/nxlx")
         self.assertEqual(paths.own_path({}), "/tmp/nxlx-%d" % os.getuid())
 
     def test_the_other_helpers_and_the_update_result_can_be_pointed_elsewhere(self):
-        env = {"PVJ_SYSD_DIR": "/a", "PVJ_SUPPORTD_DIR": "/b", "PVJ_UPDATE_RESULT": "/c/r.json"}
+        env = {"NXLX_SYSD_DIR": "/a", "NXLX_SUPPORTD_DIR": "/b", "NXLX_UPDATE_RESULT": "/c/r.json"}
         self.assertEqual((paths.sysd_socket(env), paths.supportd_socket(env), paths.update_result(env)),
                          ("/a/sysd.sock", "/b/supportd.sock", "/c/r.json"))
 
@@ -54,21 +54,21 @@ class OwnDirTest(unittest.TestCase):
 
     def test_a_missing_folder_is_created_private(self):
         d = os.path.join(self.base, "new")
-        self.assertEqual(paths.own_dir({"PVJ_RUNTIME_DIR": d}), d)
+        self.assertEqual(paths.own_dir({"NXLX_RUNTIME_DIR": d}), d)
         self.assertEqual(os.stat(d).st_mode & 0o777, 0o700)
 
     def test_a_folder_others_can_enter_is_refused(self):
         for mode in (0o755, 0o777, 0o771):
             os.chmod(self.base, mode)
             with self.assertRaises(paths.UnsafeDirectory):
-                paths.own_dir({"PVJ_RUNTIME_DIR": self.base})
+                paths.own_dir({"NXLX_RUNTIME_DIR": self.base})
         os.chmod(self.base, 0o750)
-        self.assertEqual(paths.own_dir({"PVJ_RUNTIME_DIR": self.base}), self.base)
+        self.assertEqual(paths.own_dir({"NXLX_RUNTIME_DIR": self.base}), self.base)
 
     def test_a_peers_folder_is_never_created(self):
         missing = os.path.join(self.base, "player")
-        env = {"PVJ_RUNTIME_DIR": os.path.join(self.base, "web"), "PVJ_PLAYER_DIR": missing,
-               "PVJ_NETD_DIR": os.path.join(self.base, "netd")}
+        env = {"NXLX_RUNTIME_DIR": os.path.join(self.base, "web"), "NXLX_PLAYER_DIR": missing,
+               "NXLX_NETD_DIR": os.path.join(self.base, "netd")}
         paths.own_dir(env)
         paths.player_socket(env), paths.preview_file(env), paths.netd_socket(env)
         self.assertEqual(os.listdir(self.base), ["web"])

@@ -277,7 +277,7 @@ function UpdateCard({ state, setState, progressBar, say }: { state: UpdateState;
         )}
         {state === 'uploading' && (
           <>
-            <div className="k">Uploading pvj-3.5.0.tar.gz ({Math.round(pct * 0.84)} of 84 MB)</div>
+            <div className="k">Uploading nxlx-3.5.0.tar.gz ({Math.round(pct * 0.84)} of 84 MB)</div>
             {progressBar && <div className="progress"><div style={{ width: pct + '%' }} /></div>}
           </>
         )}
@@ -303,7 +303,7 @@ function UpdateCard({ state, setState, progressBar, say }: { state: UpdateState;
             </div>
           </div>
         )}
-        {state === 'nothing' && <div className="k">No update waiting. Put pvj-N.N.N.tar.gz with its .sig file in a pvj-update folder on a USB stick, or upload them here.</div>}
+        {state === 'nothing' && <div className="k">No update waiting. Put nxlx-N.N.N.tar.gz with its .sig file in an nxlx-update folder on a USB stick, or upload them here.</div>}
         {state !== 'running' && state !== 'uploading' && (
           <button className="btn small" style={{ marginTop: 8 }} onClick={() => setState('uploading')}>Upload an update (.tar.gz and .sig)</button>
         )}

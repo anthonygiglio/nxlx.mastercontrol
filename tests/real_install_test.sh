@@ -15,10 +15,10 @@
 # thrown away afterwards (the CI runner). It refuses without the variable below. It is not a test of a Raspberry
 # Pi: there is no display here, and the systemd is the runner's, not the box's.
 #
-#   sudo PVJ_REAL_INSTALL_TEST=yes-this-machine-is-disposable bash tests/real_install_test.sh
+#   sudo NXLX_REAL_INSTALL_TEST=yes-this-machine-is-disposable bash tests/real_install_test.sh
 set -euo pipefail
 
-[ "${PVJ_REAL_INSTALL_TEST:-}" = "yes-this-machine-is-disposable" ] || { echo "refusing: read the top of this file" >&2; exit 2; }
+[ "${NXLX_REAL_INSTALL_TEST:-}" = "yes-this-machine-is-disposable" ] || { echo "refusing: read the top of this file" >&2; exit 2; }
 [ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 2; }
 [ -d /run/systemd/system ] || { echo "no systemd here" >&2; exit 2; }
 if [ -e /opt/pvj ] || [ -e /opt/nxlx ] || getent passwd pvj-dev >/dev/null || getent passwd nxlx-dev >/dev/null || [ -e /run/nxlx ] || [ -e /opt/nxlx-ndi ] || getent passwd nxlx-ndi >/dev/null; then echo "refusing: this machine already has an install" >&2; exit 2; fi
@@ -450,7 +450,7 @@ ndi_setup enable
 is /etc/systemd/system/nxlx-ndi.service "root:root 644 regular file"
 is "$NDI_WEB_DROPIN" "root:root 644 regular file"
 is "$NDI_PLAYER_DROPIN" "root:root 644 regular file"
-sed -e "s|@PVJ_DIR@|/opt/nxlx/current|g" "$SRC/mctl/systemd/nxlx-ndi.service" | cmp - /etc/systemd/system/nxlx-ndi.service || fail "the helper's unit is not the template"
+sed -e "s|@NXLX_DIR@|/opt/nxlx/current|g" "$SRC/mctl/systemd/nxlx-ndi.service" | cmp - /etc/systemd/system/nxlx-ndi.service || fail "the helper's unit is not the template"
 systemctl is-enabled --quiet nxlx-ndi.service || fail "nxlx-ndi is not enabled after the opt-in"
 if ! wait_for 40 systemctl is-active --quiet nxlx-ndi.service; then
 	systemctl status nxlx-ndi.service --no-pager -l >&2 || true
@@ -530,7 +530,7 @@ rm "$NDI_PLAYER_DROPIN"
 installer
 grep -q "this box has NDI set up" "$OUT" || fail "the installer did not see the opt-in"
 if grep -q "could not write the NDI helper" "$OUT"; then fail "the installer could not write the helper's unit again"; fi
-sed -e "s|@PVJ_DIR@|/opt/nxlx/current|g" "$SRC/mctl/systemd/nxlx-ndi.service" | cmp - /etc/systemd/system/nxlx-ndi.service || fail "the helper's unit was not written again"
+sed -e "s|@NXLX_DIR@|/opt/nxlx/current|g" "$SRC/mctl/systemd/nxlx-ndi.service" | cmp - /etc/systemd/system/nxlx-ndi.service || fail "the helper's unit was not written again"
 is "$NDI_PLAYER_DROPIN" "root:root 644 regular file"
 systemctl is-enabled --quiet nxlx-ndi.service || fail "nxlx-ndi is no longer enabled after a plain install"
 wait_for 40 systemctl is-active --quiet nxlx-ndi.service || fail "nxlx-ndi is not active after a plain install"
@@ -559,7 +559,7 @@ nothing_of_ndi
 services_and_their_files
 
 step "a helper's unit without the mark (a setup cut short, or a box from when the helper went on every box) is removed by the next install"
-sed -e "s|@PVJ_DIR@|/opt/nxlx/current|g" "$SRC/mctl/systemd/nxlx-ndi.service" > /etc/systemd/system/nxlx-ndi.service
+sed -e "s|@NXLX_DIR@|/opt/nxlx/current|g" "$SRC/mctl/systemd/nxlx-ndi.service" > /etc/systemd/system/nxlx-ndi.service
 systemctl daemon-reload
 systemctl enable --now nxlx-ndi.service
 wait_for 40 systemctl is-active --quiet nxlx-ndi.service || fail "the helper without a mark did not start (the test's own set-up)"
@@ -581,7 +581,7 @@ is /opt/nxlx-ndi-server/ndi-discovery-server "root:root 755 regular file"
 [ "$(id -nG nxlx-ndisc)" = nxlx-ndisc ] || fail "the account nxlx-ndisc is in: $(id -nG nxlx-ndisc)"
 [ "$(getent passwd nxlx-ndisc | cut -d: -f7)" = /usr/sbin/nologin ] || fail "the account nxlx-ndisc has a shell"
 is /etc/systemd/system/nxlx-ndi-discovery.service "root:root 644 regular file"
-sed -e "s|@PVJ_DIR@|/opt/nxlx/current|g" "$SRC/mctl/systemd/nxlx-ndi-discovery.service" | cmp - /etc/systemd/system/nxlx-ndi-discovery.service || fail "the discovery server's unit is not the template"
+sed -e "s|@NXLX_DIR@|/opt/nxlx/current|g" "$SRC/mctl/systemd/nxlx-ndi-discovery.service" | cmp - /etc/systemd/system/nxlx-ndi-discovery.service || fail "the discovery server's unit is not the template"
 systemctl is-enabled --quiet nxlx-ndi-discovery.service || fail "nxlx-ndi-discovery is not enabled after the set-up"
 if ! wait_for 40 systemctl is-active --quiet nxlx-ndi-discovery.service; then
 	systemctl status nxlx-ndi-discovery.service --no-pager -l >&2 || true
@@ -677,7 +677,7 @@ NDI_BIG_CHANGES="MCTL-STANDIN (big changes size)"
 NDI_BIG_CHANGES_SOUND="MCTL-STANDIN (big changes size with sound)"
 NDI_SOUND_ONLY="MCTL-STANDIN (sound only)"
 box() {            # the questions to the panel and the player (tests/ndi_standin/box_check.py); the token stays off the command line
-	PVJ_TOKEN="$TOKEN" python3 -B "$SRC/tests/ndi_standin/box_check.py" "$@"
+	NXLX_TOKEN="$TOKEN" python3 -B "$SRC/tests/ndi_standin/box_check.py" "$@"
 }
 sound_connections_of() {   # sound_connections_of PID: how often that helper process said it opened a connection for the box's sound source
 	journalctl --sync >/dev/null 2>&1 || true
@@ -788,10 +788,10 @@ box case syncinfo "$NDI_SOUND" || ndi_fail "sound on: the source did not play wh
 # this was written. They failed because of that fault (the hand-over of the pipe; mended on the branch
 # ndi-pipe-reuse). Each step but the chain starts clean (a new helper, a new player), so that one finding
 # does not make the next; the chain at the end cleans nothing, because carry-over is what it is for. While it says "no", a step that fails prints a line beginning FINDING, the run goes on and
-# stays green, and its last line lists every finding. Set it to "yes" (here, or PVJ_NDI_FINDINGS_FATAL=yes in the
+# stays green, and its last line lists every finding. Set it to "yes" (here, or NXLX_NDI_FINDINGS_FATAL=yes in the
 # environment) and the first of them fails the run: that is how to see that the fault is mended, and what this
 # becomes once it is.
-NDI_FINDINGS_FATAL="${PVJ_NDI_FINDINGS_FATAL:-yes}"       # "yes" since the mending (2026-10-12); "no" brings the FINDING lines back
+NDI_FINDINGS_FATAL="${NXLX_NDI_FINDINGS_FATAL:-yes}"       # "yes" since the mending (2026-10-12); "no" brings the FINDING lines back
 NDI_FINDINGS=""
 ndi_case() {       # ndi_case "what is handed over" box_check-arguments...
 	local words="$1"

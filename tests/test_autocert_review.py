@@ -307,7 +307,7 @@ class NodeTest(ta.SignerBase):
     def test_h2_a_node_with_no_root_takes_none_without_the_fingerprint(self):
         fake = ta.FakeSigner(self, self.signer)
         box, settings = self.node_box()
-        st = autocert.AutoCert(box, settings, env={"PVJ_SIGNER_URL": fake.url}).run_once()
+        st = autocert.AutoCert(box, settings, env={"NXLX_SIGNER_URL": fake.url}).run_once()
         self.assertEqual(st["state"], "needs-fingerprint")
         self.assertIsNone(box.root_info()[0])
         self.assertFalse(os.path.exists(box.path("key.pem")), "nothing made, nothing sent")
@@ -315,11 +315,11 @@ class NodeTest(ta.SignerBase):
         # told the wrong root: the signer is not even sent a request
         evil = os.path.join(self.tmp, "evil")
         ta.make_root(self.exe, evil)
-        st = autocert.AutoCert(box, settings, env={"PVJ_SIGNER_URL": fake.url, "PVJ_ROOT_FINGERPRINT": self.fp(evil)}).run_once()
+        st = autocert.AutoCert(box, settings, env={"NXLX_SIGNER_URL": fake.url, "NXLX_ROOT_FINGERPRINT": self.fp(evil)}).run_once()
         self.assertEqual(st["state"], "refused")
         self.assertIn("nothing was sent", st["message"])
         self.assertIsNone(box.root_info()[0])
-        st = autocert.AutoCert(box, settings, env={"PVJ_SIGNER_URL": fake.url, "PVJ_ROOT_FINGERPRINT": self.fp()}).run_once()
+        st = autocert.AutoCert(box, settings, env={"NXLX_SIGNER_URL": fake.url, "NXLX_ROOT_FINGERPRINT": self.fp()}).run_once()
         self.assertEqual(st["state"], "done", st)
         self.assertEqual(box.root_info()[1], self.fp())
 
@@ -347,7 +347,7 @@ class NodeTest(ta.SignerBase):
         box.make_request(["testbox.local", "stage.local"])            # the owner's own, waiting to be downloaded
         before = box.request_pem()
         settings.data["https"]["names"] = ["stage.local", "panel.local"]
-        st = autocert.AutoCert(box, settings, env={"PVJ_SIGNER_URL": fake.url, "PVJ_ROOT_FINGERPRINT": self.fp()}).run_once()
+        st = autocert.AutoCert(box, settings, env={"NXLX_SIGNER_URL": fake.url, "NXLX_ROOT_FINGERPRINT": self.fp()}).run_once()
         self.assertEqual(st["state"], "done", st)
         self.assertEqual(settings.data["https"]["names"], ["stage.local", "panel.local"])
         self.assertEqual(box.request_pem(), before)
@@ -366,7 +366,7 @@ class InstallOptionsTest(unittest.TestCase):
 
     def test_l4_and_h2_the_signer_options(self):
         fp = "ab" * 32
-        for bad in ("http://x;rm -rf /", "http://x\nPVJ_BIND=0.0.0.0", "ftp://x", "http://x:8781/path", "http://$(id)"):
+        for bad in ("http://x;rm -rf /", "http://x\nNXLX_BIND=0.0.0.0", "ftp://x", "http://x:8781/path", "http://$(id)"):
             r, env = self.run_install("--signer", bad, "--root-fingerprint", fp)
             self.assertNotEqual(r.returncode, 0, bad)
             self.assertIn("--signer must look like", r.stderr)
@@ -375,8 +375,8 @@ class InstallOptionsTest(unittest.TestCase):
         self.assertIn("needs --root-fingerprint", r.stderr)
         r, env = self.run_install("--signer", "http://yt-1300f.local:8781", "--root-fingerprint", "AB:" * 31 + "AB")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("PVJ_SIGNER_URL=http://yt-1300f.local:8781\n", env)
-        self.assertIn("PVJ_ROOT_FINGERPRINT=%s\n" % fp, env)
+        self.assertIn("NXLX_SIGNER_URL=http://yt-1300f.local:8781\n", env)
+        self.assertIn("NXLX_ROOT_FINGERPRINT=%s\n" % fp, env)
 
 
 if __name__ == "__main__":

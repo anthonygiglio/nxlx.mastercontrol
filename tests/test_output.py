@@ -202,7 +202,7 @@ class PrepareTest(unittest.TestCase):
         state, run = tempfile.mkdtemp(), tempfile.mkdtemp()
         S.write_json(os.path.join(state, S.WANTED), {"mode": "auto", "output": "HDMI-A-2"})
         lines = []
-        out = S.prepare(["--vo=gpu", "--gpu-context=drm"], run, "mpv", env={"PVJ_STATE_DIR": state},
+        out = S.prepare(["--vo=gpu", "--gpu-context=drm"], run, "mpv", env={"NXLX_STATE_DIR": state},
                         run=lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, stdout=help_text((0, "HDMI-A-1", HDMI_HELP)), stderr=""),
                         sysfs=sysfs_of(PI4), boot=BOOT, log=lines.append)
         self.assertEqual(out[1], "--drm-connector=HDMI-A-1")

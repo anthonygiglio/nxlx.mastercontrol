@@ -344,7 +344,7 @@ def main(argv=None):
     import grp
     import pwd
     rundir = paths.supportd_dir()
-    keydir = os.environ.get("PVJ_SUPPORT_KEYS", "/var/lib/nxlx-support")
+    keydir = os.environ.get("NXLX_SUPPORT_KEYS", "/var/lib/nxlx-support")
     os.makedirs(rundir, exist_ok=True)
     allowed = {0}
     try:

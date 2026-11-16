@@ -15,8 +15,8 @@ RuntimeDirectory=nxlx-supportd
 RuntimeDirectoryMode=0750
 StateDirectory=nxlx-support
 StateDirectoryMode=0700
-Environment=PVJ_SUPPORTD_DIR=/run/nxlx-supportd PVJ_SUPPORT_KEYS=/var/lib/nxlx-support
-ExecStart=@PVJ_DIR@/bin/nxlx-supportd
+Environment=NXLX_SUPPORTD_DIR=/run/nxlx-supportd NXLX_SUPPORT_KEYS=/var/lib/nxlx-support
+ExecStart=@NXLX_DIR@/bin/nxlx-supportd
 Restart=always
 RestartSec=2
 

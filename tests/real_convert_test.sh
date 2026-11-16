@@ -14,10 +14,10 @@
 # It creates and renames accounts, installs to /opt/pvj and writes sudoers. Run it ONLY on a machine that is thrown
 # away afterwards (the CI runner). It refuses without the variable below. It is not a test of a Raspberry Pi.
 #
-#   sudo PVJ_REAL_CONVERT_TEST=yes-this-machine-is-disposable bash tests/real_convert_test.sh
+#   sudo NXLX_REAL_CONVERT_TEST=yes-this-machine-is-disposable bash tests/real_convert_test.sh
 set -euo pipefail
 
-[ "${PVJ_REAL_CONVERT_TEST:-}" = "yes-this-machine-is-disposable" ] || { echo "refusing: read the top of this file" >&2; exit 2; }
+[ "${NXLX_REAL_CONVERT_TEST:-}" = "yes-this-machine-is-disposable" ] || { echo "refusing: read the top of this file" >&2; exit 2; }
 [ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 2; }
 [ -d /run/systemd/system ] || { echo "no systemd here" >&2; exit 2; }
 if [ -e /opt/pvj ] || [ -e /opt/nxlx ] || getent passwd pvj-dev >/dev/null || getent passwd nxlx-dev >/dev/null; then

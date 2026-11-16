@@ -226,7 +226,7 @@ class RuntimeFolderTest(unittest.TestCase):
 
     def test_each_folder_has_one_owner_and_the_mode_the_code_expects(self):
         p = self.paths
-        want = {"nxlx/player": ("nxlx-player.service", "@PVJ_USER@", "0750", "no"),
+        want = {"nxlx/player": ("nxlx-player.service", "@NXLX_USER@", "0750", "no"),
                 "nxlx/web": ("nxlx-web.service", "nxlx-web", "0750", "yes"),
                 "nxlx/netd": ("nxlx-netd.service", "root", "0750", "no"),
                 "nxlx-sysd": ("nxlx-sysd.service", "root", "0750", "no"),
@@ -256,20 +256,20 @@ class RuntimeFolderTest(unittest.TestCase):
 
     def test_every_unit_is_told_its_own_folder_and_the_panel_where_its_peers_are(self):
         p = self.paths
-        self.assertEqual(self.env("nxlx-player.service")["PVJ_RUNTIME_DIR"], p.PLAYER_DIR)
-        self.assertEqual(self.env("nxlx-netd.service")["PVJ_RUNTIME_DIR"], p.NETD_DIR)
+        self.assertEqual(self.env("nxlx-player.service")["NXLX_RUNTIME_DIR"], p.PLAYER_DIR)
+        self.assertEqual(self.env("nxlx-netd.service")["NXLX_RUNTIME_DIR"], p.NETD_DIR)
         web = self.env("nxlx-web.service")
-        self.assertEqual((web["PVJ_RUNTIME_DIR"], web["PVJ_PLAYER_DIR"], web["PVJ_NETD_DIR"]), (p.WEB_DIR, p.PLAYER_DIR, p.NETD_DIR))
+        self.assertEqual((web["NXLX_RUNTIME_DIR"], web["NXLX_PLAYER_DIR"], web["NXLX_NETD_DIR"]), (p.WEB_DIR, p.PLAYER_DIR, p.NETD_DIR))
         self.assertEqual(p.player_socket(web), p.player_socket(self.env("nxlx-player.service")))
         self.assertEqual(p.netd_socket(web), p.netd_socket(self.env("nxlx-netd.service")))
-        self.assertEqual(self.env("nxlx-sysd.service")["PVJ_SYSD_DIR"], p.SYSD_DIR)
-        self.assertEqual(self.env("nxlx-supportd.service")["PVJ_SUPPORTD_DIR"], p.SUPPORTD_DIR)
+        self.assertEqual(self.env("nxlx-sysd.service")["NXLX_SYSD_DIR"], p.SYSD_DIR)
+        self.assertEqual(self.env("nxlx-supportd.service")["NXLX_SUPPORTD_DIR"], p.SUPPORTD_DIR)
         for unit in ("nxlx-update-usb@.service", "nxlx-update-inbox@.service"):
             self.assertIn("--result " + p.UPDATE_RESULT, " ".join(self.units[unit]["ExecStart"]))
         # a version from before D45 that an update rolled back to keeps working in its own folder: for those the
-        # only name is PVJ_RUNTIME_DIR, and it must never point a service at a folder it cannot write
+        # only name is NXLX_RUNTIME_DIR, and it must never point a service at a folder it cannot write
         for unit, own in (("nxlx-player.service", "nxlx/player"), ("nxlx-web.service", "nxlx/web"), ("nxlx-netd.service", "nxlx/netd")):
-            self.assertEqual(self.env(unit)["PVJ_RUNTIME_DIR"], "/run/" + self.units[unit]["RuntimeDirectory"][0])
+            self.assertEqual(self.env(unit)["NXLX_RUNTIME_DIR"], "/run/" + self.units[unit]["RuntimeDirectory"][0])
             self.assertEqual(self.units[unit]["RuntimeDirectory"], [own])
 
     def test_a_sandboxed_service_may_write_its_own_folder_and_no_other_runtime_folder(self):
@@ -351,7 +351,7 @@ class RuntimeFolderTest(unittest.TestCase):
 
     def test_the_pin_command_reads_where_the_panel_writes(self):
         with open(os.path.join(REPO, "bin", "nxlx-pin")) as f:
-            self.assertIn('f="${PVJ_RUNTIME_DIR:-%s}/%s"' % (self.paths.WEB_DIR, self.paths.PIN), f.read())
+            self.assertIn('f="${NXLX_RUNTIME_DIR:-%s}/%s"' % (self.paths.WEB_DIR, self.paths.PIN), f.read())
 
     def test_no_code_names_a_runtime_path_outside_the_paths_module(self):
         for path in glob.glob(os.path.join(REPO, "mctl", "*.py")):
@@ -618,7 +618,7 @@ class NdiUnitTest(unittest.TestCase):
         # The opt-in gives it to exactly these two, in drop-ins, where the setting adds to the unit's own list.
         self.assertEqual(sorted(self.dropins), ["nxlx-player.service", "nxlx-web.service"])
         self.assertEqual(self.dropins["nxlx-player.service"], {"SupplementaryGroups": ["nxlx-ndi"]})
-        self.assertEqual(self.dropins["nxlx-web.service"], {"SupplementaryGroups": ["nxlx-ndi"], "Environment": ["PVJ_NDI_DIR=/run/nxlx-ndi", "PVJ_NDI_CONFIG_DIR=/run/nxlx-ndi-config"],
+        self.assertEqual(self.dropins["nxlx-web.service"], {"SupplementaryGroups": ["nxlx-ndi"], "Environment": ["NXLX_NDI_DIR=/run/nxlx-ndi", "NXLX_NDI_CONFIG_DIR=/run/nxlx-ndi-config"],
                                                            "ReadWritePaths": ["-/run/nxlx-ndi-config"]})      # the library's configuration file is the panel's to write
         for text in (self.setup.WEB_TEXT, self.setup.PLAYER_TEXT):
             self.assertEqual([line for line in text.splitlines() if line.startswith("[")], ["[Service]"])
@@ -629,13 +629,13 @@ class NdiUnitTest(unittest.TestCase):
         from mctl import paths
         env = dict(w.split("=", 1) for w in words(self.ndi, "Environment"))
         web = dict(w.split("=", 1) for w in words(self.dropins["nxlx-web.service"], "Environment"))
-        self.assertNotIn("PVJ_NDI_DIR", " ".join(words(self.units["nxlx-web.service"], "Environment")))     # the panel's own unit does not say it
-        self.assertEqual(env["PVJ_NDI_DIR"], paths.NDI_DIR)
+        self.assertNotIn("NXLX_NDI_DIR", " ".join(words(self.units["nxlx-web.service"], "Environment")))     # the panel's own unit does not say it
+        self.assertEqual(env["NXLX_NDI_DIR"], paths.NDI_DIR)
         self.assertEqual(paths.ndi_socket(web), paths.ndi_socket(env))
         # the pipe is not in the helper's folder: root makes it once, in a folder of root's, so the helper can write it
         # and cannot replace it with a link (the review of 2026-10-11, M3)
         self.assertEqual((paths.NDI_PIPE_DIR, paths.ndi_fifo(web)), ("/run/nxlx-ndi-pipe", "/run/nxlx-ndi-pipe/" + paths.NDI_FIFO))
-        self.assertEqual(paths.ndi_fifo({"PVJ_NDI_PIPE_DIR": "/x"}), "/x/" + paths.NDI_FIFO)
+        self.assertEqual(paths.ndi_fifo({"NXLX_NDI_PIPE_DIR": "/x"}), "/x/" + paths.NDI_FIFO)
 
     def test_the_group_exists_before_any_unit_that_names_it_is_written_or_started(self):
         # systemd refuses to start a unit whose extra group does not exist: the player would stay down. In the opt-in
@@ -671,8 +671,8 @@ class NdiUnitTest(unittest.TestCase):
         # was a failure every two seconds into the kept journal. A condition that is not met is not a failure.
         n = self.ndi
         self.assertEqual((n["Restart"], n["RestartSec"], n["StartLimitIntervalSec"]), (["always"], ["2"], ["0"]))
-        self.assertEqual(n["ConditionPathExists"], ["@PVJ_DIR@/bin/nxlx-ndi"])
-        self.assertEqual(n["ExecStart"], ["@PVJ_DIR@/bin/nxlx-ndi"])
+        self.assertEqual(n["ConditionPathExists"], ["@NXLX_DIR@/bin/nxlx-ndi"])
+        self.assertEqual(n["ExecStart"], ["@NXLX_DIR@/bin/nxlx-ndi"])
         with open(os.path.join(NDI_UNITS, "nxlx-ndi.service")) as f:
             self.assertLess(f.read().index("ConditionPathExists="), self.read_service_at())
 

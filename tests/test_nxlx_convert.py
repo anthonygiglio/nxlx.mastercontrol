@@ -274,7 +274,7 @@ class Plan(Base):
             if kind in ("system", "env", "release"):
                 self.assertIn(old, {r.old for r in mine}, "a %s row the converter does not carry: %s" % (kind, old))
         self.assertIn("system", kinds)
-        self.assertFalse(conv.RELEASE_NAMES_LIVE, "release names change with rename PR 8, not before")
+        self.assertTrue(conv.RELEASE_NAMES_LIVE and conv.ENV_NAMES_LIVE, "rename PR 8 turned both on")
 
 
 class Run(Base):
@@ -295,14 +295,14 @@ class Run(Base):
         self.assertIn("User=nxlx-web", web)
         self.assertIn("Group=nxlx-svc", web)
         self.assertIn("ExecStart=/opt/nxlx/current/bin/nxlx-web", web)
-        self.assertIn("Environment=PVJ_RUNTIME_DIR=/run/nxlx/web", web)      # the variable names change with rename PR 8
+        self.assertIn("Environment=NXLX_RUNTIME_DIR=/run/nxlx/web", web)     # the variable names changed with rename PR 8
         self.assertIn("RuntimeDirectory=nxlx/web", web)
         self.assertIn("User=nxlx-dev", self.read("etc/systemd/system/nxlx-player.service"))
         self.assertIn("SupplementaryGroups=nxlx-ndi", self.read("etc/systemd/system/nxlx-web.service.d/50-nxlx-ndi.conf"))
-        self.assertIn("PVJ_MEDIA_DIR=/var/lib/nxlx/video", self.read("etc/nxlx/nxlx.env"))
+        self.assertIn("NXLX_MEDIA_DIR=/var/lib/nxlx/video", self.read("etc/nxlx/nxlx.env"))
         inst = json.loads(self.read("etc/nxlx/install.json"))
         self.assertEqual((inst["prefix"], inst["user"]), ("/opt/nxlx", "nxlx-dev"))
-        self.assertIn("pvj-release", self.read("etc/nxlx/allowed_signers"), "held until rename PR 8")
+        self.assertIn("nxlx-release", self.read("etc/nxlx/allowed_signers"))
         self.assertEqual(self.read("etc/sudoers.d/010_nxlx-dev"), "nxlx-dev ALL=(ALL) NOPASSWD:ALL\n")
         self.assertEqual(stat.S_IMODE(os.stat(self.p("etc/sudoers.d/010_nxlx-dev")).st_mode), 0o440)
         self.assertIn("ExecStart=/opt/nxlx/current/bin/nxlx-ndi", self.read("etc/systemd/system/nxlx-ndi.service"))
@@ -519,15 +519,81 @@ class ReviewFixes(Base):
         self.assertNotIn("planted.json", r.stdout)
         self.assertNotIn("linked.json", r.stdout)
 
-    def test_variable_names_are_held_until_rename_pr_8_and_only_their_values_change(self):
+    def test_variable_and_signing_names_are_rewritten_and_the_keys_are_kept(self):
         conv = load_converter()
-        self.assertFalse(conv.ENV_NAMES_LIVE, "the programs of rename PR 7 still read PVJ_*")
+        self.assertTrue(conv.ENV_NAMES_LIVE and conv.RELEASE_NAMES_LIVE)
+        key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPVJ_notAKeyJustTheLetters"
+        write(self.root, "etc/pvj/allowed_signers", '# who may sign updates\npvj-release namespaces="pvj-release" %s owner\n' % key)
         r = convert(self.root, "--run")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn("environment variable names (PVJ_*) are held until rename PR 8", r.stdout)
-        self.assertIn("Environment=PVJ_NDI_LIB=/opt/nxlx-ndi/lib", self.read("etc/systemd/system/nxlx-ndi.service"))
-        self.assertNotIn("NXLX_", self.read("etc/systemd/system/nxlx-web.service"))
-        self.assertNotIn("NXLX_", self.read("etc/nxlx/nxlx.env"))
+        self.assertNotIn("held until", r.stdout)
+        self.assertEqual(self.read("etc/nxlx/allowed_signers"),
+                         '# who may sign updates\nnxlx-release namespaces="nxlx-release" %s owner\n' % key,
+                         "principal and namespace change, the key line stays as it was")
+        self.assertIn("Environment=NXLX_NDI_LIB=/opt/nxlx-ndi/lib", self.read("etc/systemd/system/nxlx-ndi.service"))
+        self.assertIn("Environment=NXLX_NDI_DIR=/run/nxlx-ndi", self.read("etc/systemd/system/nxlx-web.service.d/50-nxlx-ndi.conf"))
+        self.assertIn("Environment=NXLX_NDI_PIPE_DIR=/run/nxlx-ndi-pipe",
+                      self.read("etc/systemd/system/nxlx-player.service.d/50-nxlx-ndi.conf"))
+        env = self.read("etc/nxlx/nxlx.env")
+        self.assertRegex(env, r"(?m)^NXLX_MEDIA_DIR=/var/lib/nxlx/video$")
+        for name in ("etc/nxlx/nxlx.env", "etc/systemd/system/nxlx-web.service", "etc/systemd/system/nxlx-ndi.service"):
+            self.assertNotIn("PVJ_", self.read(name), name)
+
+    def test_the_undo_puts_the_variable_and_signing_names_back_byte_for_byte(self):
+        write(self.root, "etc/pvj/allowed_signers", 'pvj-release namespaces="pvj-release" ssh-ed25519 AAAAC3Nza owner\n')
+        before = snapshot(self.root)
+        self.assertEqual(convert(self.root, "--run").returncode, 0)
+        self.assertIn("NXLX_MEDIA_DIR", self.read("etc/nxlx/nxlx.env"))
+        r = convert(self.root, "--undo")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(snapshot(self.root), before)
+        self.assertIn("PVJ_MEDIA_DIR", self.read("etc/pvj/pvj.env"))
+        self.assertIn('pvj-release namespaces="pvj-release"', self.read("etc/pvj/allowed_signers"))
+        r = convert(self.root, "--run")                      # and again after an undo
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn('nxlx-release namespaces="nxlx-release"', self.read("etc/nxlx/allowed_signers"))
+
+    def test_a_second_run_leaves_the_rewritten_names_alone(self):
+        write(self.root, "etc/pvj/allowed_signers", 'pvj-release namespaces="pvj-release" ssh-ed25519 AAAAC3Nza owner\n')
+        self.assertEqual(convert(self.root, "--run").returncode, 0)
+        once = snapshot(self.root)
+        r = convert(self.root, "--run")
+        self.assertIn("Nothing to convert", r.stdout)
+        self.assertEqual(snapshot(self.root), once)
+
+    def test_a_node_converted_before_rename_pr_8_gets_only_the_variable_and_signing_names(self):
+        """A node that took the system rename (PR 7) has the new folders, accounts and units, with the old variable
+        names in its units and nxlx.env and the old signing names in allowed_signers: a second pass rewrites those
+        and nothing else, and its undo puts them back."""
+        write(self.root, "etc/pvj/allowed_signers", 'pvj-release namespaces="pvj-release" ssh-ed25519 AAAAC3Nza owner\n')
+        self.assertEqual(convert(self.root, "--run").returncode, 0)
+        held = []
+        for rel in ("etc/nxlx/nxlx.env", "etc/nxlx/allowed_signers", "etc/systemd/system/nxlx-web.service",
+                    "etc/systemd/system/nxlx-ndi.service", "etc/systemd/system/nxlx-web.service.d/50-nxlx-ndi.conf"):
+            text = self.read(rel).replace("NXLX_", "PVJ_").replace("nxlx-release", "pvj-release")
+            write(self.root, rel, text)
+            held.append(rel)
+        shutil.rmtree(self.p("var/backups"))                 # the first conversion was confirmed long ago
+        os.unlink(self.p("etc/systemd/system/timers.target.wants/nxlx-convert-undo.timer"))
+        os.unlink(self.p("etc/systemd/system/nxlx-convert-undo.timer"))
+        os.unlink(self.p("etc/systemd/system/nxlx-convert-undo.service"))
+        pr7 = snapshot(self.root, skip=())
+        plan = convert(self.root, "--plan").stdout
+        for rel in held:
+            self.assertIn("rewrite /" + rel, plan)
+        self.assertNotIn("rename account", plan)
+        self.assertNotIn("move /", plan)
+        r = convert(self.root, "--run")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("PVJ_", self.read("etc/nxlx/nxlx.env"))
+        self.assertIn('nxlx-release namespaces="nxlx-release" ssh-ed25519 AAAAC3Nza owner', self.read("etc/nxlx/allowed_signers"))
+        self.assertIn("NXLX_RUNTIME_DIR", self.read("etc/systemd/system/nxlx-web.service"))
+        self.assertEqual(convert(self.root, "--undo").returncode, 0)
+        after = snapshot(self.root, skip=("var/backups", "etc/systemd/system/nxlx-convert-undo.timer",
+                                          "etc/systemd/system/nxlx-convert-undo.service",
+                                          "etc/systemd/system/timers.target.wants"))
+        want = {k: v for k, v in pr7.items() if not k.startswith(("var/backups", "etc/systemd/system/timers.target.wants"))}
+        self.assertEqual(after, want, "the undo of the second pass goes back to the node of rename PR 7")
 
     def test_the_undo_timer_is_a_unit_that_survives_a_restart_and_is_armed_again(self):
         total = len(re.findall(r"(?m)^    +\d+  ", convert(self.root, "--plan").stdout))

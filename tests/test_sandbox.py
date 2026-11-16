@@ -146,7 +146,7 @@ class PrivateEnvTest(unittest.TestCase):
         self.addCleanup(restore)
         tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, tmp, True)
-        os.environ["PVJ_LINK_DIR"] = "/run/nxlx-link"            # from the developer's shell: taken out, then the box's own
+        os.environ["NXLX_LINK_DIR"] = "/run/nxlx-link"            # from the developer's shell: taken out, then the box's own
         box.private_env(tmp)
         for fn in (paths.link_dir, paths.link_socket, paths.ndi_dir, paths.ndi_socket, paths.ndisc_dir, paths.ndi_config_dir,
                    paths.ndi_pipe_dir, paths.sound_dir, paths.sound_socket, paths.sysd_dir, paths.supportd_dir):
@@ -568,14 +568,14 @@ class BoxKeepsToThisMachineTest(unittest.TestCase):
         cls.addClassCleanup(cls.restore)          # also when a box fails to start (the second review of #155)
         os.environ["TMPDIR"] = cls.tmp
         tempfile.tempdir = None
-        os.environ["PVJ_ALLOWED_HOSTS"] = "evil.example"       # from the developer's shell: must not reach the box
+        os.environ["NXLX_ALLOWED_HOSTS"] = "evil.example"       # from the developer's shell: must not reach the box
         cls.boxes = serve.Boxes(free_ports(4))
         cls.addClassCleanup(cls.boxes.close)
         cls.st = cls.boxes.start("idle")
 
     @classmethod
     def restore(cls):
-        os.environ.pop("PVJ_ALLOWED_HOSTS", None)
+        os.environ.pop("NXLX_ALLOWED_HOSTS", None)
         if cls.old is None:
             os.environ.pop("TMPDIR", None)
         else:
@@ -608,7 +608,7 @@ class BoxKeepsToThisMachineTest(unittest.TestCase):
         self.assertEqual(wide, [])
 
     def test_the_shells_pvj_variables_do_not_reach_the_box(self):
-        # with PVJ_ALLOWED_HOSTS from the shell, the panel would take this Host as its own
+        # with NXLX_ALLOWED_HOSTS from the shell, the panel would take this Host as its own
         st, _out = self.post("/api/osc", {"enabled": True}, host="evil.example")
         self.assertNotEqual(st, 200)
 

@@ -752,7 +752,7 @@ class HostCheckTest(ServerBase):
 
     def test_extra_names_from_the_environment(self):
         from mctl import server
-        self.assertIn("screen.studio", server.allowed_names({"PVJ_ALLOWED_HOSTS": " Screen.Studio , ,other"}))
+        self.assertIn("screen.studio", server.allowed_names({"NXLX_ALLOWED_HOSTS": " Screen.Studio , ,other"}))
 
 
 class QrEndpointTest(ServerBase):

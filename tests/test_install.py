@@ -54,7 +54,7 @@ class InstallTest(unittest.TestCase):
         self.assertIn("User=gigbox", unit)
         self.assertIn("ExecStart=/opt/nxlx/current/bin/nxlx-player serve", unit)
         self.assertRegex(unit, r"(?m)^LimitRTPRIO=1$")       # the render thread's SCHED_RR 1, without a capability
-        self.assertNotIn("@PVJ", unit)
+        self.assertNotIn("@NXLX", unit)
         web = self.read(self.p("etc/systemd/system/nxlx-web.service"))
         self.assertIn("ExecStart=/opt/nxlx/current/bin/nxlx-web", web)
         self.assertIn("User=nxlx-web", web)
@@ -66,19 +66,19 @@ class InstallTest(unittest.TestCase):
         self.assertNotRegex(web, r"(?m)^DeviceAllow=char-alsa r$")
         self.assertNotRegex(web, r"(?m)^PrivateDevices=yes")
         self.assertIn("NoNewPrivileges=yes", web)
-        self.assertNotIn("@PVJ", web)
+        self.assertNotIn("@NXLX", web)
         net = self.read(self.p("etc/systemd/system/nxlx-netd.service"))
         self.assertIn("ExecStart=/opt/nxlx/current/bin/nxlx-netd", net)
         self.assertIn("ConditionPathExists=/usr/bin/nmcli", net)
-        self.assertNotIn("@PVJ", net)
+        self.assertNotIn("@NXLX", net)
         self.assertEqual(os.readlink(self.p("usr/local/bin/nxlx-pin")), "/opt/nxlx/current/bin/nxlx-pin")
         self.assertEqual(os.readlink(self.p("usr/local/bin/nxlx-update")), "/opt/nxlx/current/bin/nxlx-update")
-        self.assertIn("pvj-release", self.read(self.p("etc/nxlx/allowed_signers")))
-        self.assertIn("PVJ_MEDIA_DIR=/var/lib/nxlx/video", self.read(self.p("etc/nxlx/nxlx.env")))
-        self.assertIn("PVJ_USB_RW=0", self.read(self.p("etc/nxlx/nxlx.env")))
+        self.assertIn("nxlx-release", self.read(self.p("etc/nxlx/allowed_signers")))
+        self.assertIn("NXLX_MEDIA_DIR=/var/lib/nxlx/video", self.read(self.p("etc/nxlx/nxlx.env")))
+        self.assertIn("NXLX_USB_RW=0", self.read(self.p("etc/nxlx/nxlx.env")))
         usb_unit = self.read(self.p("etc/systemd/system/nxlx-usb@.service"))
         self.assertIn("ExecStart=/opt/nxlx/current/bin/nxlx-usb mount /dev/%I", usb_unit)
-        self.assertNotIn("@PVJ", usb_unit)
+        self.assertNotIn("@NXLX", usb_unit)
         self.assertIn("nxlx-usb@%k.service", self.read(self.p("etc/udev/rules.d/99-nxlx-usb.rules")))
         self.assertEqual(os.readlink(self.p("usr/local/bin/nxlx-usb")), "/opt/nxlx/current/bin/nxlx-usb")
         self.assertEqual(os.readlink(self.p("usr/local/bin/nxlx-rootfs")), "/opt/nxlx/current/bin/nxlx-rootfs")
@@ -97,7 +97,7 @@ class InstallTest(unittest.TestCase):
         for unit, folder in (("nxlx-player", "nxlx/player"), ("nxlx-web", "nxlx/web"), ("nxlx-netd", "nxlx/netd")):
             text = self.read(self.p("etc/systemd/system/%s.service" % unit))
             self.assertIn("RuntimeDirectory=%s\n" % folder, text)
-            self.assertIn("Environment=PVJ_RUNTIME_DIR=/run/%s\n" % folder, text)
+            self.assertIn("Environment=NXLX_RUNTIME_DIR=/run/%s\n" % folder, text)
             self.assertNotIn("RuntimeDirectory=nxlx\n", text)
         self.assertFalse(os.path.exists(self.p("run")))          # a fresh install makes nothing under /run itself
 
@@ -217,7 +217,7 @@ class InstallTest(unittest.TestCase):
     def test_rerun_is_idempotent_and_keeps_edited_settings(self):
         install(self.src, self.stage)
         with open(self.p("etc/nxlx/nxlx.env"), "a") as f:
-            f.write("PVJ_MEDIA_DIR=/mnt/mine\n")
+            f.write("NXLX_MEDIA_DIR=/mnt/mine\n")
         r = install(self.src, self.stage)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("keeping existing", r.stdout)
@@ -319,7 +319,7 @@ class InstallTest(unittest.TestCase):
             for name in ("nxlx-web.service", "nxlx-player.service"):
                 unit = self.read(self.p("etc/systemd/system/" + name))
                 self.assertNotIn("nxlx-ndi", unit, name)                   # a group that does not exist would keep the unit from starting
-                self.assertNotIn("PVJ_NDI", unit, name)
+                self.assertNotIn("NXLX_NDI", unit, name)
             self.assertFalse(os.path.exists(self.p("opt/nxlx-ndi")))
             self.assertNotRegex(r.stdout + r.stderr, r"(?i)avahi|\bndi\b", extra)      # it asks for no package and says nothing of NDI
         # a second run over it: still nothing
@@ -344,13 +344,13 @@ class InstallTest(unittest.TestCase):
         unit = self.read(self.p(self.NDI_FILES[0]))
         self.assertNotIn("--from-an-older-version", unit)
         self.assertIn("ExecStart=/opt/nxlx/current/bin/nxlx-ndi\n", unit)
-        self.assertNotIn("@PVJ", unit)
+        self.assertNotIn("@NXLX", unit)
         self.assertIn("User=nxlx-ndi\n", unit)
         self.assertIn("IPAddressDeny=any\n", unit)
         with open(os.path.join(REPO, "mctl", "systemd", "nxlx-ndi.service")) as f:
-            self.assertEqual(unit, f.read().replace("@PVJ_DIR@", "/opt/nxlx/current"))
+            self.assertEqual(unit, f.read().replace("@NXLX_DIR@", "/opt/nxlx/current"))
         self.assertIn("SupplementaryGroups=nxlx-ndi\n", self.read(self.p(self.NDI_FILES[1])))
-        self.assertIn("Environment=PVJ_NDI_DIR=/run/nxlx-ndi\n", self.read(self.p(self.NDI_FILES[1])))
+        self.assertIn("Environment=NXLX_NDI_DIR=/run/nxlx-ndi\n", self.read(self.p(self.NDI_FILES[1])))
         self.assertIn("SupplementaryGroups=nxlx-ndi\n", self.read(self.p(self.NDI_FILES[2])))
         self.assertEqual(os.readlink(self.p("opt/nxlx/current")), "/opt/nxlx/releases/9.9.2")
         self.assertFalse([n for n in os.listdir(self.p("opt/nxlx/releases/9.9.2/mctl")) if n == "__pycache__"])     # root's run left no compiled files
@@ -415,7 +415,7 @@ class InstallTest(unittest.TestCase):
         self.opt_in()
         target = os.path.join(tempfile.mkdtemp(), "kept.conf")
         with open(target, "w") as f:
-            f.write("[Service]\nSupplementaryGroups=nxlx-ndi\nEnvironment=PVJ_NDI_DIR=/run/nxlx-ndi\n")
+            f.write("[Service]\nSupplementaryGroups=nxlx-ndi\nEnvironment=NXLX_NDI_DIR=/run/nxlx-ndi\n")
         os.unlink(self.p(self.NDI_FILES[1]))
         os.symlink(target, self.p(self.NDI_FILES[1]))                     # the mark is now a link to a file with the same words
         wants = self.p("etc/systemd/system/multi-user.target.wants")
@@ -428,7 +428,7 @@ class InstallTest(unittest.TestCase):
         self.assertEqual(self.ndi_names(), ["usr/local/bin/nxlx-ndi-runtime"])      # no unit, no drop-in, no link, and (N3) no link to start it
         self.assertFalse(os.path.lexists(os.path.join(wants, "nxlx-ndi.service")))
         with open(target) as f:
-            self.assertIn("PVJ_NDI_DIR", f.read())                        # what the link pointed to was not touched
+            self.assertIn("NXLX_NDI_DIR", f.read())                        # what the link pointed to was not touched
 
     def test_a_folder_in_the_place_of_the_unit_does_not_stop_the_install(self):
         # Second review, L1: "rm -f" on a folder fails, and under "set -e" that ended every install and update here.
@@ -483,7 +483,7 @@ class InstallTest(unittest.TestCase):
         return pci
 
     def _va_install(self, arch, pci, *extra):
-        env = dict(os.environ, PVJ_INSTALL_ARCH=arch, PVJ_INSTALL_PCI=pci)
+        env = dict(os.environ, NXLX_INSTALL_ARCH=arch, NXLX_INSTALL_PCI=pci)
         return subprocess.run([os.path.join(self.src, "install", "install.sh"), "--stage", self.stage, "--user", "gigbox", *extra],
                               capture_output=True, text=True, timeout=60, env=env)
 
@@ -534,7 +534,7 @@ class InstallTest(unittest.TestCase):
         self.assertEqual(len(line), 1, line)
         self.assertIn('|| log "could not install ${va_need[*]}; the install goes on', line[0])
         # the stand-ins for the machine and sysfs are for stage mode only: a real install reads the real ones
-        self.assertIn('if [ "$REAL" = 0 ]; then va_arch="${PVJ_INSTALL_ARCH:-$va_arch}"', text)
+        self.assertIn('if [ "$REAL" = 0 ]; then va_arch="${NXLX_INSTALL_ARCH:-$va_arch}"', text)
 
     # Time sync (J-154): a system without any gets systemd-timesyncd, best effort; one that has one is left alone.
     def test_a_system_without_time_sync_is_told_and_stage_mode_installs_nothing(self):

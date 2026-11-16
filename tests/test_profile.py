@@ -16,7 +16,7 @@ from mctl import effects as E, hardware, probe as P, profile, renderer as R, sha
 
 KINDS = ("pi3", "pi4", "pi5", "x86", "pi-other", "arm-other")
 SCREEN = ["--vo=gpu", "--drm-device=/dev/dri/card1", "--drm-connector=HDMI-A-1", "--drm-mode=1920x1080@60.00"]
-ENV = {"PVJ_RENDER_BIN": "BIN"}
+ENV = {"NXLX_RENDER_BIN": "BIN"}
 ROWS = [{"source": 1, "height": 1080, "idle": False}, {"source": 2, "height": 720, "idle": False}, {"source": 3, "height": 720, "idle": False}]
 INFOS = {"h264_4k30": {"codec": "h264", "width": 3840, "height": 2160, "fps": 30}, "h264_1080p60": {"codec": "h264", "width": 1920, "height": 1080, "fps": 60},
          "h264_1080p24": {"codec": "h264", "width": 1920, "height": 1080, "fps": 24}, "h264_720p": {"codec": "h264", "width": 1280, "height": 720, "fps": 30},

@@ -4,7 +4,7 @@
 Description=nxlx.mastercontrol sound analysis (levels only; no network, no sound kept)
 # After a rollback to a release from before D96 this unit is still here and its program is not. A condition that is
 # not met is not a failure: the unit is skipped, once, and nothing is started again (as the NDI helper's, D62).
-ConditionPathExists=@PVJ_DIR@/bin/nxlx-sound
+ConditionPathExists=@NXLX_DIR@/bin/nxlx-sound
 StartLimitIntervalSec=0
 
 [Service]
@@ -18,9 +18,9 @@ UMask=0027
 # Its own folder: the socket for the panel and the levels file (0640, group audio). Nobody else writes here.
 RuntimeDirectory=nxlx-sound
 RuntimeDirectoryMode=0750
-Environment=PVJ_SOUND_DIR=/run/nxlx-sound
+Environment=NXLX_SOUND_DIR=/run/nxlx-sound
 Environment=HOME=/nonexistent
-ExecStart=@PVJ_DIR@/bin/nxlx-sound
+ExecStart=@NXLX_DIR@/bin/nxlx-sound
 Restart=always
 RestartSec=2
 

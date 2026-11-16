@@ -31,16 +31,16 @@ for name in ("intro.mkv", "tunnel.mkv"):
         os.link(clip, os.path.join(media, name))
 rundir = os.path.join(tmp, "run")
 os.makedirs(rundir, mode=0o700)
-os.environ.update(PVJ_STATE_DIR=tmp, PVJ_MEDIA_DIR=media, PVJ_DEV_SPAWN="1")
+os.environ.update(NXLX_STATE_DIR=tmp, NXLX_MEDIA_DIR=media, NXLX_DEV_SPAWN="1")
 # The picture helper (D129): a stand-in that answers with plain blocks of the right shape, so the browser test judges the
-# panel and does not need a compiler. PVJ_HARNESS_REAL_RASTER=1 uses the real program (make -C render nxlx-raster).
-if os.environ.get("PVJ_HARNESS_REAL_RASTER"):
-    os.environ.setdefault("PVJ_RASTER_EXEC", os.path.join(os.path.dirname(__file__), "..", "..", "render", "nxlx-raster"))
+# panel and does not need a compiler. NXLX_HARNESS_REAL_RASTER=1 uses the real program (make -C render nxlx-raster).
+if os.environ.get("NXLX_HARNESS_REAL_RASTER"):
+    os.environ.setdefault("NXLX_RASTER_EXEC", os.path.join(os.path.dirname(__file__), "..", "..", "render", "nxlx-raster"))
 else:
-    os.environ["PVJ_RASTER_EXEC"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "raster-stand-in.py")
-# PVJ_HARNESS_NO_PLAYER=1: a box whose player is not there (the panel says "Player not running"). The control
+    os.environ["NXLX_RASTER_EXEC"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "raster-stand-in.py")
+# NXLX_HARNESS_NO_PLAYER=1: a box whose player is not there (the panel says "Player not running"). The control
 # inventory (tests/ui/inventory.js) is taken that way, as its fixture was made on a machine without mpv.
-_mpv = os.path.join(tmp, "no-such-mpv") if os.environ.get("PVJ_HARNESS_NO_PLAYER") else "mpv"
+_mpv = os.path.join(tmp, "no-such-mpv") if os.environ.get("NXLX_HARNESS_NO_PLAYER") else "mpv"
 player = Player(mpv_bin=_mpv, extra_args=["--vo=null", "--ao=null"], rundir=rundir)
 api, auth, _ = server.build(os.environ, player=player)
 

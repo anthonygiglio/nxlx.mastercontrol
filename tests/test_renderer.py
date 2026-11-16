@@ -78,7 +78,7 @@ class Base(unittest.TestCase):
             f.write("#!%s\n%s" % (sys.executable, STANDIN))
         os.chmod(self.standin, 0o755)
         self.calls = os.path.join(self.dir, "calls.txt")
-        self.env = {"PVJ_RENDER_BIN": self.standin}
+        self.env = {"NXLX_RENDER_BIN": self.standin}
         self.sock = os.path.join(self.dir, "player.sock")
         self.lines = []
 
@@ -342,7 +342,7 @@ class ChoiceTest(Base):
         os.makedirs(state, exist_ok=True)
         if wish is not None:
             screenmode.write_json(os.path.join(state, renderer.WANTED), wish)
-        env = dict(self.env if env is None else env, PVJ_STATE_DIR=state)
+        env = dict(self.env if env is None else env, NXLX_STATE_DIR=state)
         with mock.patch.object(renderer.paths, "state_dir", lambda e=None: state):
             return renderer.chosen(self.dir, list(extra), windowed, env, board_kind)
 
@@ -352,7 +352,7 @@ class ChoiceTest(Base):
         self.assertEqual(self.chosen({"use": "new", "detail": 720}), ("new", 720, ""))
         self.assertEqual(self.chosen({"use": "new"}, extra=("--vo=gpu",))[0], "classic", "a desktop: no DRM")
         self.assertIn("desktop", self.chosen({"use": "new"}, windowed=True)[2])
-        self.assertIn("not built", self.chosen({"use": "new"}, env={"PVJ_RENDER_BIN": os.path.join(self.dir, "none")})[2])
+        self.assertIn("not built", self.chosen({"use": "new"}, env={"NXLX_RENDER_BIN": os.path.join(self.dir, "none")})[2])
         os.chmod(self.standin, 0o644)
         self.assertIn("not built", self.chosen({"use": "new"})[2], "not executable")
 
@@ -361,7 +361,7 @@ class ChoiceTest(Base):
             got = self.chosen({"use": "new", "detail": 720}, board_kind=kind)
             self.assertEqual(got[:2], ("classic", 720), kind)
             self.assertIn("OpenGL ES 3", got[2])
-        self.assertEqual(renderer.clean(screenmode.read_json(renderer.wanted_path(dict(self.env, PVJ_STATE_DIR=os.path.join(self.dir, "state")))))["use"], "new",
+        self.assertEqual(renderer.clean(screenmode.read_json(renderer.wanted_path(dict(self.env, NXLX_STATE_DIR=os.path.join(self.dir, "state")))))["use"], "new",
                          "the choice stays saved, for a card moved to a Pi 4")
         self.assertEqual(self.chosen({"use": "classic"}, board_kind="pi3"), ("classic", "auto", ""), "nothing to explain")
         for kind in ("pi4", "pi5", "x86", "arm-other"):
@@ -592,8 +592,8 @@ class ServeTest(Base):
         os.environ["STANDIN_MODE"], os.environ["STANDIN_LOG"] = mode, self.calls
         self.addCleanup(os.environ.pop, "STANDIN_MODE", None)
         self.addCleanup(os.environ.pop, "STANDIN_LOG", None)
-        os.environ["PVJ_RENDER_BIN"] = self.standin
-        self.addCleanup(os.environ.pop, "PVJ_RENDER_BIN", None)
+        os.environ["NXLX_RENDER_BIN"] = self.standin
+        self.addCleanup(os.environ.pop, "NXLX_RENDER_BIN", None)
         state = os.path.join(self.dir, "state")
         os.makedirs(state)
         screenmode.write_json(os.path.join(state, renderer.WANTED), wish)
@@ -721,7 +721,7 @@ class PanelTest(CareBase):
         with open(self.bin, "w") as f:
             f.write("#!/bin/sh\nexit 0\n")
         os.chmod(self.bin, 0o755)
-        self.api.renderer.env = {"PVJ_RENDER_BIN": self.bin}
+        self.api.renderer.env = {"NXLX_RENDER_BIN": self.bin}
         self.quits = []
         self.api.player.quit = lambda: self.quits.append(1)
         for f in (self.api.renderer.report_file, self.api.renderer.wanted_file):       # nothing of another test's
@@ -818,7 +818,7 @@ class PanelTest(CareBase):
         self.assertEqual(self.quits, [])
 
     def test_new_is_refused_where_it_is_not_built(self):
-        self.api.renderer.env = {"PVJ_RENDER_BIN": os.path.join(self.bdir, "missing")}
+        self.api.renderer.env = {"NXLX_RENDER_BIN": os.path.join(self.bdir, "missing")}
         st, out = self.r("POST", "/api/renderer", {"use": "new"})
         self.assertEqual(st, 409, out)
         self.assertEqual(self.quits, [])

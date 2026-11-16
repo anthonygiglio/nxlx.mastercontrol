@@ -110,11 +110,11 @@ jobs:
       - name: Shaders on a real mpv with a software GPU (xvfb, Mesa; a skip here is a failure)
         run: |
           tools/ci-apt.sh xvfb xauth libegl1 libgles2 libgl1-mesa-dri
-          PVJ_GPU_TEST=1 xvfb-run -a -s "-screen 0 1280x720x24" python -m tests.test_shaders_gpu
+          NXLX_GPU_TEST=1 xvfb-run -a -s "-screen 0 1280x720x24" python -m tests.test_shaders_gpu
       - name: Performing with shaders on the real mpv (values, speed, presets, no black frame; a skip is a failure)
-        run: PVJ_GPU_TEST=1 xvfb-run -a -s "-screen 0 1280x720x24" python -m tests.test_shaderlive_gpu
+        run: NXLX_GPU_TEST=1 xvfb-run -a -s "-screen 0 1280x720x24" python -m tests.test_shaderlive_gpu
       - name: The same on desktop OpenGL 3.1 with GLSL 1.40, the context mpv makes on a Raspberry Pi 4
-        run: MESA_GL_VERSION_OVERRIDE=3.1 MESA_GLSL_VERSION_OVERRIDE=140 PVJ_GPU_TEST=1 PVJ_GPU_ONLY=desktop xvfb-run -a -s "-screen 0 1280x720x24" python -m tests.test_shaderlive_gpu
+        run: MESA_GL_VERSION_OVERRIDE=3.1 MESA_GLSL_VERSION_OVERRIDE=140 NXLX_GPU_TEST=1 NXLX_GPU_ONLY=desktop xvfb-run -a -s "-screen 0 1280x720x24" python -m tests.test_shaderlive_gpu
 
   test:
     # The checks "test (3.9)" and "test (3.12)" are required by name by the ruleset "Protect master". Since D104 they
@@ -147,11 +147,11 @@ jobs:
       matrix:
         include:
           - way: OpenGL ES
-            env: PVJ_GPU_ONLY=gles
+            env: NXLX_GPU_ONLY=gles
           - way: desktop OpenGL
-            env: PVJ_GPU_ONLY=desktop
+            env: NXLX_GPU_ONLY=desktop
           - way: desktop OpenGL 3.1 with GLSL 1.40 (a Raspberry Pi 4)
-            env: PVJ_GPU_ONLY=desktop MESA_GL_VERSION_OVERRIDE=3.1 MESA_GLSL_VERSION_OVERRIDE=140
+            env: NXLX_GPU_ONLY=desktop MESA_GL_VERSION_OVERRIDE=3.1 MESA_GLSL_VERSION_OVERRIDE=140
     name: effects-gpu (${{ matrix.way }})
     steps:
       - uses: actions/checkout@v4
@@ -162,7 +162,7 @@ jobs:
         timeout-minutes: 10
         run: tools/ci-apt.sh mpv xvfb xauth libegl1 libgles2 libgl1-mesa-dri
       - name: Effects on the real mpv (a skip here is a failure)
-        run: env ${{ matrix.env }} PVJ_GPU_TEST=1 xvfb-run -a -s "-screen 0 1280x720x24" python -m tests.test_effects_gpu
+        run: env ${{ matrix.env }} NXLX_GPU_TEST=1 xvfb-run -a -s "-screen 0 1280x720x24" python -m tests.test_effects_gpu
 
   shellcheck:
     runs-on: ubuntu-24.04
@@ -187,7 +187,7 @@ jobs:
         timeout-minutes: 10   # usually half a minute; see the note at the top of this file
         run: tools/ci-apt.sh mpv
       - name: Convert a real install, confirm, undo, and the timed undo
-        run: sudo PVJ_REAL_CONVERT_TEST=yes-this-machine-is-disposable bash tests/real_convert_test.sh
+        run: sudo NXLX_REAL_CONVERT_TEST=yes-this-machine-is-disposable bash tests/real_convert_test.sh
 
   real-install:
     # The installer run for real, as root, under the runner's systemd: first the release before the rename of the
@@ -207,7 +207,7 @@ jobs:
       - name: The mpv of this job (Ubuntu's, NOT the Pi's; the job ndi-mpv runs the Pi's)
         run: mpv --version | head -n 1
       - name: Real install as root and the owners of the runtime folders
-        run: sudo PVJ_REAL_INSTALL_TEST=yes-this-machine-is-disposable bash tests/real_install_test.sh
+        run: sudo NXLX_REAL_INSTALL_TEST=yes-this-machine-is-disposable bash tests/real_install_test.sh
 
   ndi-mpv:
     # The NDI input against the mpv the Pi runs. On 2026-10-12 a mended hand-over of the pipe was green in real-install
@@ -257,11 +257,11 @@ jobs:
           chown -R ci: .
       - name: NDI against this mpv (the stand-in library, the real helper code, the real Api, the real Player; findings are printed, see the test's top)
         timeout-minutes: 30
-        # PVJ_NDI_FINDINGS_FATAL=yes since the mending (2026-10-12): the cases that failed on master's pvj fail the job
+        # NXLX_NDI_FINDINGS_FATAL=yes since the mending (2026-10-12): the cases that failed on master's pvj fail the job
         # here too. Without it they are printed as FINDING and skipped.
         # Sound from another sender (D87, cases 40 to 46) is in the same run and fatal, every one of them: nothing
         # of it is under the switch. test_47 is for the record and never fatal.
-        run: su ci -c "PVJ_NDI_MPV_TEST=1 PVJ_NDI_MPV_WANT=0.40. PVJ_NDI_FINDINGS_FATAL=yes python3 -X faulthandler -m unittest -v tests.test_ndi_mpv"
+        run: su ci -c "NXLX_NDI_MPV_TEST=1 NXLX_NDI_MPV_WANT=0.40. NXLX_NDI_FINDINGS_FATAL=yes python3 -X faulthandler -m unittest -v tests.test_ndi_mpv"
       - name: The crossfade's smaller still on this mpv (D89, overlay-add with a display size; a virtual display and Mesa's software GPU; a skip is a failure)
         # mpv 0.38 on draws an overlay at a size of its own; the other jobs run Ubuntu's 0.37, which refuses it, so
         # this is the one job where the scaled still is drawn by a real mpv. A software GPU in a 320 x 180 window on
@@ -278,7 +278,7 @@ jobs:
             sleep 5
           done
           [ "$ok" = 1 ] || exit 1
-          su ci -c "PVJ_GPU_TEST=1 PVJ_GPU_ONLY=gles PVJ_SCALE_WANT=yes xvfb-run -a -s '-screen 0 1280x720x24' python3 -X faulthandler -m unittest -v tests.test_transitions_gpu.GlesScaledTest" > /tmp/scaled.txt 2>&1 || code=$?
+          su ci -c "NXLX_GPU_TEST=1 NXLX_GPU_ONLY=gles NXLX_SCALE_WANT=yes xvfb-run -a -s '-screen 0 1280x720x24' python3 -X faulthandler -m unittest -v tests.test_transitions_gpu.GlesScaledTest" > /tmp/scaled.txt 2>&1 || code=$?
           cat /tmp/scaled.txt
           if grep -q -E "skipped|OK \(skipped" /tmp/scaled.txt; then
             echo "::error::the scaled still's tests were skipped: they judge nothing here"
@@ -307,7 +307,7 @@ jobs:
           su ci -c "grep -rlw 'mctl' /tmp/stuck/tests | xargs -r sed -i -E -e 's/(^|[^A-Za-z0-9_-])mctl([. ])/\\1pvj\\2/g' -e 's/\"mctl\"/\"pvj\"/g' -e 's#(^|[^/A-Za-z0-9_-])mctl/#\\1pvj/#g'"
           bad=0
           for t in test_13_one_still_picture_then_only_sound_for_thirty_five_seconds test_15_one_still_picture_then_sound_after_a_short_gap test_16_one_still_picture_then_sound_after_a_long_gap; do
-            if su ci -c "cd /tmp/stuck && PVJ_NDI_MPV_TEST=1 PVJ_NDI_FINDINGS_FATAL=yes python3 -m unittest tests.test_ndi_mpv.NdiOnARealMpv.$t" > /tmp/stuck/out.txt 2>&1; then
+            if su ci -c "cd /tmp/stuck && NXLX_NDI_MPV_TEST=1 NXLX_NDI_FINDINGS_FATAL=yes python3 -m unittest tests.test_ndi_mpv.NdiOnARealMpv.$t" > /tmp/stuck/out.txt 2>&1; then
               echo "::error::$t PASSES on the code that was stuck on the Pi: it does not judge what the Pi showed"
               tail -n 40 /tmp/stuck/out.txt
               bad=1
@@ -323,7 +323,7 @@ jobs:
           # One sync case too, for the record and without a verdict: first sound late by a fifth of a second gave
           # avsync 0.206 for 1.8 seconds on the helper as it was before 7d59ead; what master's does is printed here.
           t=test_31_sync_first_sound_late_by_a_fifth_of_a_second
-          if su ci -c "cd /tmp/stuck && PVJ_NDI_MPV_TEST=1 PVJ_NDI_FINDINGS_FATAL=yes python3 -m unittest tests.test_ndi_mpv.NdiOnARealMpv.$t" > /tmp/stuck/out.txt 2>&1; then
+          if su ci -c "cd /tmp/stuck && NXLX_NDI_MPV_TEST=1 NXLX_NDI_FINDINGS_FATAL=yes python3 -m unittest tests.test_ndi_mpv.NdiOnARealMpv.$t" > /tmp/stuck/out.txt 2>&1; then
             echo "FOR THE RECORD: $t PASSES on the code from before the mending (this sync case does not tell the two apart):"
           else
             echo "FOR THE RECORD: $t FAILS on the code from before the mending:"
@@ -398,7 +398,7 @@ jobs:
       - name: mctl-render for real, headless, and the player's side (a skip is a failure)
         timeout-minutes: 15
         run: |
-          run="PVJ_RENDER_TEST=1 LIBGL_ALWAYS_SOFTWARE=1 python3 -X faulthandler -m unittest -v tests.test_mctl_render tests.test_renderer tests.test_graphics_gpu tests.test_graphics_position"
+          run="NXLX_RENDER_TEST=1 LIBGL_ALWAYS_SOFTWARE=1 python3 -X faulthandler -m unittest -v tests.test_mctl_render tests.test_renderer tests.test_graphics_gpu tests.test_graphics_position"
           if [ -n "${{ matrix.container }}" ]; then prlimit --rtprio=1:1 --pid $$     # as LimitRTPRIO=1 in nxlx-player.service
           else sudo prlimit --rtprio=1:1 --pid $$; fi
           echo "real-time limit: $(ulimit -r)"
@@ -414,7 +414,7 @@ jobs:
       - name: mctl-render's own shader programs (D106), against libmpv's drawing of every bundled shader (a skip is a failure)
         timeout-minutes: 12
         run: |
-          run="PVJ_RENDER_TEST=1 LIBGL_ALWAYS_SOFTWARE=1 python3 -X faulthandler -m unittest -v tests.test_native_shaders"
+          run="NXLX_RENDER_TEST=1 LIBGL_ALWAYS_SOFTWARE=1 python3 -X faulthandler -m unittest -v tests.test_native_shaders"
           if [ -n "${{ matrix.container }}" ]; then su ci -c "$run" > /tmp/native.txt 2>&1 || code=$?
           else sh -c "$run" > /tmp/native.txt 2>&1 || code=$?; fi
           cat /tmp/native.txt
@@ -429,7 +429,7 @@ jobs:
     # The Ableton Link follower (render/link/, D117): built with every warning an error against Debian 13's own
     # ableton-link-dev (the Pi's distribution; arch-independent headers, so this is the source the Pi builds), then run
     # for real beside a stand-in peer inside the container, on its own network and nowhere else. A skip here is a
-    # failure. No other job needs the package: tests/test_nxlx_link.py skips without PVJ_LINK_TEST=1.
+    # failure. No other job needs the package: tests/test_nxlx_link.py skips without NXLX_LINK_TEST=1.
     name: pvj-link (Debian 13)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -458,7 +458,7 @@ jobs:
       - name: nxlx-link for real, beside a stand-in peer (a skip is a failure)
         timeout-minutes: 5
         run: |
-          PVJ_LINK_TEST=1 python3 -X faulthandler -m unittest -v tests.test_nxlx_link > /tmp/link.txt 2>&1 || code=$?
+          NXLX_LINK_TEST=1 python3 -X faulthandler -m unittest -v tests.test_nxlx_link > /tmp/link.txt 2>&1 || code=$?
           cat /tmp/link.txt
           if grep -q -E "skipped|OK \(skipped" /tmp/link.txt; then
             echo "::error::a test of nxlx-link was skipped: it judges nothing here"
@@ -470,7 +470,7 @@ jobs:
   pvj-raster:
     # The picture helper (render/raster/, D129): built with every warning an error against Debian 13's own libpng and
     # libjpeg (the Pi's distribution), then run for real on good, damaged and hostile pictures (tests/test_raster.py with
-    # PVJ_RASTER_TEST=1). A skip here is a failure. Other jobs run the same module without the program, where the real
+    # NXLX_RASTER_TEST=1). A skip here is a failure. Other jobs run the same module without the program, where the real
     # tests skip and the checks around them still run.
     name: pvj-raster (Debian 13)
     runs-on: ubuntu-24.04
@@ -500,7 +500,7 @@ jobs:
       - name: nxlx-raster for real, on good, damaged and hostile pictures (a skip is a failure)
         timeout-minutes: 8
         run: |
-          PVJ_RASTER_TEST=1 python3 -X faulthandler -m unittest -v tests.test_raster > /tmp/raster.txt 2>&1 || code=$?
+          NXLX_RASTER_TEST=1 python3 -X faulthandler -m unittest -v tests.test_raster > /tmp/raster.txt 2>&1 || code=$?
           cat /tmp/raster.txt
           if grep -q -E "skipped|OK \(skipped" /tmp/raster.txt; then
             echo "::error::a test of nxlx-raster was skipped: it judges nothing here"

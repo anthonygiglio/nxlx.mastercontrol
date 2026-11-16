@@ -171,13 +171,12 @@ PVJ_*	NXLX_*	env
 -DPVJ_*	-DNXLX_*	env
 """
 
-# Release names (signing namespace, bundle and USB names) change with rename PR 8. Until that pull request sets
-# this to True the converter holds them as they are, so a node converted early still accepts its signed bundles.
-RELEASE_NAMES_LIVE = False
-# Environment variables (PVJ_* to NXLX_*) change with rename PR 8 too. The programs of the system rename (PR 7) still
-# read PVJ_*, so until then the converter keeps the variable names in the units, drop-ins and nxlx.env it rewrites
-# (only their values, the paths, take the new names).
-ENV_NAMES_LIVE = False
+# Release names (signing namespace, bundle and USB names) and environment variable names (PVJ_* to NXLX_*) changed
+# with rename PR 8. The converter rewrites them in every file it owns: the units and drop-ins, nxlx.env (its keys),
+# and allowed_signers (principal and namespace; the keys stay). The rows are the same on a node converted in PR 7,
+# whose files have the new folder names and the old variable and signing names: a second run finds only those.
+RELEASE_NAMES_LIVE = True
+ENV_NAMES_LIVE = True
 
 IDENT = "A-Za-z0-9_"
 OLD = re.compile(r"pvj|pocket[ _-]?vj", re.I)
@@ -721,10 +720,6 @@ def make_plan(node, force=False, mode="plan", release=None):
                               "rename PR 4): " + "; ".join("%s (%d)" % kv for kv in sorted(found.items())[:10]))
     if node.exists("run/pvj"):
         plan.notes.append("/run/pvj and its siblings: left alone, /run is rebuilt at boot")
-    if not RELEASE_NAMES_LIVE:
-        plan.notes.append("release names (pvj-release, pvj-recover, bundle names) are held until rename PR 8")
-    if not ENV_NAMES_LIVE:
-        plan.notes.append("environment variable names (PVJ_*) are held until rename PR 8; only their values change")
 
     # The backup: the account files, what is carried over, and every file a step touches (not the videos).
     seen = set()

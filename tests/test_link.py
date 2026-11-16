@@ -365,7 +365,7 @@ class SettingTest(unittest.TestCase):
 
     def test_the_runtime_paths(self):
         self.assertEqual(paths.link_state(), "/run/nxlx-link/state")
-        self.assertEqual(paths.link_socket({"PVJ_LINK_DIR": "/x"}), "/x/link.sock")
+        self.assertEqual(paths.link_socket({"NXLX_LINK_DIR": "/x"}), "/x/link.sock")
 
 
 class RouteTest(RolesBase):
@@ -441,8 +441,8 @@ class UnitAndInstallTest(unittest.TestCase):
         self.assertNotIn("SupplementaryGroups", u)
         self.assertNotIn("PrivateUsers", u)            # it would hide the caller's uid from the peer check
         self.assertNotIn("PrivateNetwork", u)
-        self.assertEqual(u["ExecStart"], ["@PVJ_DIR@/render/nxlx-link"])
-        self.assertEqual(u["ConditionPathExists"], ["@PVJ_DIR@/render/nxlx-link"], "where it could not be built the unit is skipped, no failure")
+        self.assertEqual(u["ExecStart"], ["@NXLX_DIR@/render/nxlx-link"])
+        self.assertEqual(u["ConditionPathExists"], ["@NXLX_DIR@/render/nxlx-link"], "where it could not be built the unit is skipped, no failure")
 
     def test_it_is_kept_from_what_the_rest_of_the_box_has(self):
         hidden = " ".join(self.u["InaccessiblePaths"])

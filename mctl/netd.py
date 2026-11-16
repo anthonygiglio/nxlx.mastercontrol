@@ -554,7 +554,7 @@ def main(argv=None):
     import grp
     import pwd
     import sys
-    rundir = os.environ.get("PVJ_RUNTIME_DIR") or paths.NETD_DIR     # its own folder, root:nxlx-svc 0750 (the unit)
+    rundir = os.environ.get("NXLX_RUNTIME_DIR") or paths.NETD_DIR     # its own folder, root:nxlx-svc 0750 (the unit)
     os.makedirs(rundir, mode=0o750, exist_ok=True)
     allowed = {0}
     try:

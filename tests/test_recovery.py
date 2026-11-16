@@ -307,11 +307,11 @@ class StickTest(ServerBase):
         self.auth._now = lambda: 1700000000 + int(self.clock.t)       # the log's times follow the test's clock too
         self.pair("owner")                      # a paired device: the first-run screen is off, as at a venue
 
-    def insert(self, name="pvj-recover", content=b""):
+    def insert(self, name="nxlx-recover", content=b""):
         with open(os.path.join(self.drive, name), "wb") as f:
             f.write(content)
 
-    def remove(self, name="pvj-recover"):
+    def remove(self, name="nxlx-recover"):
         os.unlink(os.path.join(self.drive, name))
 
     def texts(self):
@@ -532,25 +532,29 @@ class StickTest(ServerBase):
         self.assertEqual(self.call("GET", "/api/recovery", token=full)[1]["stick"]["last"]["how"], "switched off")
 
     def test_only_a_regular_file_at_the_top_of_a_drive_counts_and_clips_beside_it_still_list(self):
-        os.makedirs(os.path.join(self.drive, "pvj-recover"))              # a folder of that name
+        os.makedirs(os.path.join(self.drive, "nxlx-recover"))              # a folder of that name
         self.screen.tick()
         self.assertIsNone(self.rec.active())
-        os.rmdir(os.path.join(self.drive, "pvj-recover"))
+        os.rmdir(os.path.join(self.drive, "nxlx-recover"))
         outside = os.path.join(self.tmp, "real")
         open(outside, "w").close()
-        os.symlink(outside, os.path.join(self.drive, "pvj-recover"))      # a symlink
+        os.symlink(outside, os.path.join(self.drive, "nxlx-recover"))      # a symlink
         self.screen.tick()
         self.assertIsNone(self.rec.active())
-        os.unlink(os.path.join(self.drive, "pvj-recover"))
+        os.unlink(os.path.join(self.drive, "nxlx-recover"))
         os.makedirs(os.path.join(self.drive, "sub"))
-        self.insert("sub/pvj-recover")                                     # not at the top
+        self.insert("sub/nxlx-recover")                                     # not at the top
         self.screen.tick()
         self.assertIsNone(self.rec.active())
-        self.insert("pvj-recover.md")                                      # another name
+        self.insert("pvj-recover")                                          # the name before the rename: not taken
+        self.screen.tick()
+        self.assertIsNone(self.rec.active())
+        self.remove("pvj-recover")
+        self.insert("nxlx-recover.md")                                      # another name
         self.insert("clip.mp4", b"x" * 10)
         self.screen.tick()
         self.assertIsNone(self.rec.active())
-        self.insert("PVJ-RECOVER.TXT", b"anything, never read")           # case-blind, the .txt form, a stick with clips
+        self.insert("NXLX-RECOVER.TXT", b"anything, never read")           # case-blind, the .txt form, a stick with clips
         self.screen.tick()
         self.assertIsNotNone(self.rec.active())
         self.assertEqual([f["name"] for d in self.api.usb_drives() for f in d["files"]], ["clip.mp4"])

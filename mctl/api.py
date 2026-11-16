@@ -104,7 +104,7 @@ NDI_NO_SNAPSHOT = ("no snapshot of this NDI source could be made (the player cou
 OVERTAKEN = object()          # what Api._as_newest returns when its `ready` check said the wish was overtaken
 PREVIEW_MIN_INTERVAL = 3.0    # seconds: a snapshot stalls playback for about a quarter second on a Pi 4, so viewers share one frame
 PREVIEW_MAX_BYTES = 8 * 1024 * 1024
-MAX_UPLOAD_BYTES = int(os.environ.get("PVJ_MAX_UPLOAD_MB", "8192")) * 1024 * 1024
+MAX_UPLOAD_BYTES = int(os.environ.get("NXLX_MAX_UPLOAD_MB", "8192")) * 1024 * 1024
 FREE_SPACE_RESERVE = 200 * 1024 * 1024  # never fill the disk completely: the system needs room to work
 CHUNK = 256 * 1024
 MIN_UPLOAD_RATE = 20 * 1024   # bytes/second: slower than this after the grace period is abandoned
@@ -228,8 +228,8 @@ class Api:
         if addons_dir:
             self.theme_store.load(self.themes)              # so the store knows the file of each; what is there already stays
         self.media_dir = media_dir
-        self.usb_root = usb_root or os.environ.get("PVJ_USB_BASE", "/media/nxlx")     # one folder per mounted drive
-        self.usb_link = usb_link or os.environ.get("PVJ_USB_DIR", "/media/usb")      # the newest drive, for the old presets
+        self.usb_root = usb_root or os.environ.get("NXLX_USB_BASE", "/media/nxlx")     # one folder per mounted drive
+        self.usb_link = usb_link or os.environ.get("NXLX_USB_DIR", "/media/usb")      # the newest drive, for the old presets
         self.board = board
         self.addons_dir = addons_dir
         self.spawn = spawn        # True only for development: start mpv ourselves
@@ -289,7 +289,7 @@ class Api:
         from . import raster as raster_mod
         self.raster = raster_mod
         self.graphics = raster_mod.Store(      # the logos people upload (D129): the helper's PNGs, beside settings.json
-            os.environ.get("PVJ_GRAPHICS_DIR") or os.path.join(
+            os.environ.get("NXLX_GRAPHICS_DIR") or os.path.join(
                 os.path.dirname(getattr(settings, "path", "") or "") or os.path.dirname(os.path.realpath(media_dir)), "graphics"),
             valid_name, raster_mod.Client(), free_space=lambda: self._free_space())
         from . import overlay as overlay_mod
@@ -2392,7 +2392,7 @@ class Api:
             return {"clock_from_network": None, "now": int(time.time())}
 
     # --- updates from the panel (D33) ---------------------------------------------------------
-    UPDATE_NAME = re.compile(r"pvj-([0-9]+\.[0-9]+\.[0-9]+)\.tar\.gz(\.sig|\.sha256)?")
+    UPDATE_NAME = re.compile(r"nxlx-([0-9]+\.[0-9]+\.[0-9]+)\.tar\.gz(\.sig|\.sha256)?")
     UPDATE_MAX = 300 * 1024 * 1024           # the same limit as nxlx-update
     UPDATE_SIDE_MAX = 64 * 1024              # a signature or a checksum file
 
@@ -2421,7 +2421,7 @@ class Api:
         from . import __version__
         import glob
         usb = []
-        for path in sorted(glob.glob(os.path.join(self.usb_root, "*", "pvj-update", "pvj-*.tar.gz"))):
+        for path in sorted(glob.glob(os.path.join(self.usb_root, "*", "nxlx-update", "nxlx-*.tar.gz"))):
             m = self.UPDATE_NAME.fullmatch(os.path.basename(path))
             if m and not m.group(2):
                 usb.append({"drive": path.split(os.sep)[-3], "version": m.group(1), "signed": os.path.isfile(path + ".sig")})
@@ -2461,7 +2461,7 @@ class Api:
         nxlx-update verifies the signature as root, on its own copy, when the update is started)."""
         m = self.UPDATE_NAME.fullmatch(name or "")
         if not m:
-            raise bad("an update is named pvj-N.N.N.tar.gz (with .sig and .sha256 beside it)")
+            raise bad("an update is named nxlx-N.N.N.tar.gz (with .sig and .sha256 beside it)")
         limit = self.UPDATE_SIDE_MAX if m.group(2) else self.UPDATE_MAX
         if not isinstance(length, int) or length <= 0:
             raise ApiError(411, "Content-Length required")

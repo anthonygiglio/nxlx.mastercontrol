@@ -1,4 +1,4 @@
-{"made_from":"master at 022de3e (the merge of #99), before the Workspace shell (D65)","how":"tests/ui/inventory.js walkBefore, in headless Edge 153 on the dev Mac, the harness started with no player (PVJ_HARNESS_NO_PLAYER); taken twice with the same result. The panel repairs of #100 (afba416) gave the same list.","roles":{
+{"made_from":"master at 022de3e (the merge of #99), before the Workspace shell (D65)","how":"tests/ui/inventory.js walkBefore, in headless Edge 153 on the dev Mac, the harness started with no player (NXLX_HARNESS_NO_PLAYER); taken twice with the same result. The panel repairs of #100 (afba416) gave the same list.","roles":{
 "owner":{"#autodelay":["System > At power-up"],
 "#autofile":["System > At power-up"],
 "#autoloop":["System > At power-up"],

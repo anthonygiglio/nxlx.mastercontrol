@@ -97,8 +97,8 @@ void gfx_init(void)
     GLint m = 0;
     glGetIntegerv(GL_MAX_TEXTURE_SIZE, &m);
     side_max = m < 1024 ? 1024 : m > GFX_SIDE_MAX ? GFX_SIDE_MAX : m;
-#ifdef PVJ_RENDER_TEST_HOOKS
-    const char *t = getenv("PVJ_RENDER_TEST_MAX_TEXTURE");     // tests: a small limit, to see a long crawl refused
+#ifdef NXLX_RENDER_TEST_HOOKS
+    const char *t = getenv("NXLX_RENDER_TEST_MAX_TEXTURE");     // tests: a small limit, to see a long crawl refused
     if (t && atoi(t) >= 64 && atoi(t) < side_max) side_max = atoi(t);
 #endif
     for (int i = 0; i < GFX_SLOTS; i++) defaults(&app.gfx[i]);

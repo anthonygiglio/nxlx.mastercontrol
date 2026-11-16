@@ -438,7 +438,7 @@ class RendererChoiceTest(ServerBase):
     def setUp(self):
         super().setUp()
         self.owner, _ = self.pair("owner")
-        self.api.renderer.env = dict(os.environ, PVJ_RENDER_BIN=sys.executable)       # "built"
+        self.api.renderer.env = dict(os.environ, NXLX_RENDER_BIN=sys.executable)       # "built"
         self.api.player.quit = lambda: None
 
     def test_the_owner_chooses_the_number_of_sources(self):

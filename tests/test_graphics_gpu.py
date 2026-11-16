@@ -14,7 +14,7 @@ What is held here:
 * several clients at once, each speaking on its own socket, change nothing for the others and leave nothing behind;
 * the output rate with four graphics on (a crawl among them).
 
-Without the program these are skipped, except where PVJ_RENDER_TEST=1 (the CI job mctl-render).
+Without the program these are skipped, except where NXLX_RENDER_TEST=1 (the CI job mctl-render).
 """
 import os
 import random
@@ -322,13 +322,13 @@ class ReviewTest(Base):
 
 
 class SmallTextureTest(Base):
-    ENV = {"PVJ_RENDER_TEST_MAX_TEXTURE": "256"}
+    ENV = {"NXLX_RENDER_TEST_MAX_TEXTURE": "256"}
 
     def setUp(self):
         need_program(self)
         if not hooks_built():
             if STRICT:
-                self.fail("PVJ_RENDER_TEST=1 and mctl-render was built without TEST_HOOKS=1")
+                self.fail("NXLX_RENDER_TEST=1 and mctl-render was built without TEST_HOOKS=1")
             self.skipTest("mctl-render was built without TEST_HOOKS=1")
         super().setUp()
 

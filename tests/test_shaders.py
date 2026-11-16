@@ -2009,7 +2009,7 @@ class GpuStepTest(unittest.TestCase):
         """"A skip here is a failure" was not true: unittest exits 0 when every test was skipped."""
         import subprocess
         import sys
-        env = {k: v for k, v in os.environ.items() if k != "PVJ_GPU_TEST"}
+        env = {k: v for k, v in os.environ.items() if k != "NXLX_GPU_TEST"}
         r = subprocess.run([sys.executable, "-m", "tests.test_shaders_gpu"], capture_output=True, text=True, env=env, timeout=120,
                            cwd=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
         self.assertEqual(r.returncode, 1, r.stdout[-300:] + r.stderr[-300:])

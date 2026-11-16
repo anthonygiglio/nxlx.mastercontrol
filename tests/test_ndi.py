@@ -1836,7 +1836,7 @@ class OffMeansNoNdiCodeTest(unittest.TestCase):
             pass                                                         # a file in the pipe's place (root's folder: the helper cannot remove it)
         import pwd
         web = mock.Mock(pw_uid=4242)
-        with mock.patch.dict(os.environ, {"PVJ_NDI_DIR": d, "PVJ_NDI_PIPE_DIR": d}), mock.patch("mctl.netd.NetServer", Server), \
+        with mock.patch.dict(os.environ, {"NXLX_NDI_DIR": d, "NXLX_NDI_PIPE_DIR": d}), mock.patch("mctl.netd.NetServer", Server), \
                 mock.patch.object(pwd, "getpwnam", lambda name: web if name == "nxlx-web" else (_ for _ in ()).throw(KeyError(name))), \
                 mock.patch("builtins.print"):
             self.assertEqual(ndi.main([]), 0)

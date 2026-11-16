@@ -566,7 +566,7 @@ int openServer(const std::string& path)
 
 int main()
 {
-  const char* env = std::getenv("PVJ_LINK_DIR");
+  const char* env = std::getenv("NXLX_LINK_DIR");
   const std::string dir = env != nullptr && env[0] != '\0' ? env : "/run/nxlx-link";
   const passwd* panel = getpwnam("nxlx-web");
   const uid_t allowed = panel != nullptr ? panel->pw_uid : getuid();  // on a desk: whoever runs it

@@ -161,10 +161,10 @@ class SetUp(unittest.TestCase):
         with open(self.root + D.UNIT_PATH) as f:
             unit = f.read()
         self.assertIn("ExecStart=/opt/nxlx/current/bin/nxlx-ndi-discovery\n", unit)
-        self.assertNotIn("@PVJ", unit)
+        self.assertNotIn("@NXLX", unit)
         with open(self.root + D.WEB_DROPIN) as f:
             lines = [l for l in f.read().splitlines() if l and not l.startswith("#")]
-        self.assertEqual(lines, ["[Service]", "SupplementaryGroups=nxlx-ndisc", "Environment=PVJ_NDISC_DIR=/run/nxlx-ndisc"])
+        self.assertEqual(lines, ["[Service]", "SupplementaryGroups=nxlx-ndisc", "Environment=NXLX_NDISC_DIR=/run/nxlx-ndisc"])
         self.assertEqual([c for c in self.ran if c[1] != "is-active"],
                          [["systemctl", "daemon-reload"], ["systemctl", "enable", D.UNIT], ["systemctl", "restart", D.UNIT],
                           ["systemctl", "try-restart", "nxlx-web.service"]])
@@ -265,7 +265,7 @@ class UnitFile(unittest.TestCase):
         self.assertNotIn("SupplementaryGroups", k)
         self.assertEqual((k["CapabilityBoundingSet"], k["AmbientCapabilities"], k["NoNewPrivileges"]), ([""], [""], ["yes"]))
         self.assertEqual((k["ProtectSystem"], k["ProtectHome"], k["PrivateDevices"], k["ReadWritePaths"]), (["strict"], ["yes"], ["yes"], ["/run/nxlx-ndisc"]))
-        self.assertEqual(k["ExecStart"], ["@PVJ_DIR@/bin/nxlx-ndi-discovery"])
+        self.assertEqual(k["ExecStart"], ["@NXLX_DIR@/bin/nxlx-ndi-discovery"])
         self.assertEqual((k["Restart"], k["RestartSec"], k["StartLimitIntervalSec"]), (["always"], ["2"], ["0"]))
 
     def test_it_is_sandboxed_at_least_as_tightly_as_the_ndi_helper(self):
