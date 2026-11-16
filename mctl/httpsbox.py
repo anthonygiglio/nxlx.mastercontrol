@@ -391,7 +391,7 @@ class HttpsBox:
             section["owner_only"] = on
             self.settings.data[SETTINGS_KEY] = section
             self.settings.save()
-        self.log("pvj-web: owner access only over the secure connection switched %s" % ("on" if on else "off"))
+        self.log("nxlx-web: owner access only over the secure connection switched %s" % ("on" if on else "off"))
         return on
 
     def owner_gate(self, device, secure, path):
@@ -525,7 +525,7 @@ class HttpsBox:
             section["names"] = extra[:MAX_NAMES]
             self.settings.data[SETTINGS_KEY] = section
             self.settings.save()
-        self.log("pvj-web: certificate request made for %s" % ", ".join(dns + ips))
+        self.log("nxlx-web: certificate request made for %s" % ", ".join(dns + ips))
         return {"request": self._read(REQUEST), "names": dns + ips, "file": self.hostname() + ".csr"}
 
     def _run(self, args, timeout=60):
@@ -778,7 +778,7 @@ class HttpsBox:
                 self._unlink(NEW)
                 raise HttpsError("the certificate could not be saved on the node: %s" % (e.strerror or e), 500)
             self.context, self.info, self.load_error, self.chained = ctx, leaf, None, chained
-        self.log("pvj-web: certificate installed for %s, ends %s (serial %s)" % (", ".join(leaf["dns"] + leaf["ips"]), self.date(leaf["not_after"]), leaf["serial"]))
+        self.log("nxlx-web: certificate installed for %s, ends %s (serial %s)" % (", ".join(leaf["dns"] + leaf["ips"]), self.date(leaf["not_after"]), leaf["serial"]))
         return leaf
 
     def replace_root(self, pem_text, confirm, secure, device_secure):
@@ -816,7 +816,7 @@ class HttpsBox:
             current = self._read(CERT)
             if self.context is not None and current and self.info and self.has_openssl():
                 self.chained = self._issued_by_stored_root(current, self.info)      # usually False until the next upload
-        self.log("pvj-web: the root was replaced: %s -> %s" % ((old_fp or "none")[:19], new_fp[:19]))
+        self.log("nxlx-web: the root was replaced: %s -> %s" % ((old_fp or "none")[:19], new_fp[:19]))
         return {"old": old_fp, "new": new_fp, "name": info["subject"]}
 
     def apply_root_move(self, body, sig_text, expect_to=None):
@@ -872,7 +872,7 @@ class HttpsBox:
             current = self._read(CERT)
             if self.context is not None and current and self.info and self.has_openssl():
                 self.chained = self._issued_by_stored_root(current, self.info)
-        self.log("pvj-web: the root was moved by a message the old root signed: %s -> %s" % (fingerprint(stored_der)[:19], fingerprint(blocks[0][0])[:19]))
+        self.log("nxlx-web: the root was moved by a message the old root signed: %s -> %s" % (fingerprint(stored_der)[:19], fingerprint(blocks[0][0])[:19]))
         return {"old": fingerprint(stored_der), "new": fingerprint(blocks[0][0])}
 
     def install_from_signer(self, chain_text, signer_root_fp, want_root=None):
@@ -923,14 +923,14 @@ class HttpsBox:
                 self._unlink(PREVIOUS)
             self.context, self.info, self.load_error = ctx, infos[0], None
             self.chained = self._issued_by_stored_root(prev, self.info) if self._read(ROOT) and self.has_openssl() else None
-        self.log("pvj-web: the earlier certificate is in use again")
+        self.log("nxlx-web: the earlier certificate is in use again")
         return self.info
 
     def _drop_certificate(self, why):
         for name in (CERT, PREVIOUS):
             self._unlink(name)
         self.context, self.info = None, None
-        self.log("pvj-web: HTTPS off (%s); the panel answers on http only" % why)
+        self.log("nxlx-web: HTTPS off (%s); the panel answers on http only" % why)
 
     def remove(self):
         """HTTP only. The key stays for the next request; the root stays for devices (it is public)."""
@@ -976,7 +976,7 @@ class HttpsBox:
             except (HttpsError, ValueError, IndexError, OSError) as e:
                 self.context, self.info = None, None
                 self.load_error = getattr(e, "message", None) or str(e)
-                self.log("pvj-web: the certificate on disk was not loaded: %s" % self.load_error)
+                self.log("nxlx-web: the certificate on disk was not loaded: %s" % self.load_error)
                 return False
 
     # -- what the page shows --

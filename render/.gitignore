@@ -3,8 +3,8 @@
 # built here by make, never committed
 /mctl-render
 *.o
-/pvj-link
-/pvj-link-peer
-/pvj-raster
+/nxlx-link
+/nxlx-link-peer
+/nxlx-raster
 /raster-build.log
 /link-build.log

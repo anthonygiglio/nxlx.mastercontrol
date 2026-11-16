@@ -187,22 +187,22 @@ class ServiceTest(unittest.TestCase):
         before = dict(self.nm.profiles["Wired connection 1"])
         st = self.svc.apply(dict(STATIC))
         self.assertEqual((st["pending"]["iface"], st["pending"]["seconds_left"]), ("eth0", 60))
-        cand = self.nm.profiles["pvj-eth0-try"]
+        cand = self.nm.profiles["nxlx-eth0-try"]
         self.assertEqual((cand["ipv4.method"], cand["ipv4.addresses"], cand["connection.autoconnect"]),
                          ("manual", "192.168.50.20/24", "no"))
-        self.assertEqual(self.nm.active, "pvj-eth0-try")
+        self.assertEqual(self.nm.active, "nxlx-eth0-try")
         self.assertEqual(self.nm.profiles["Wired connection 1"], before)
-        self.assertNotIn("pvj-eth0", self.nm.profiles)
+        self.assertNotIn("nxlx-eth0", self.nm.profiles)
         self.assertTrue(os.path.exists(self.state))
 
     def test_confirm_makes_the_candidate_the_permanent_profile(self):
         self.svc.apply(dict(STATIC))
         self.assertIsNone(self.svc.confirm()["pending"])
-        self.assertNotIn("pvj-eth0-try", self.nm.profiles)
-        final = self.nm.profiles["pvj-eth0"]
+        self.assertNotIn("nxlx-eth0-try", self.nm.profiles)
+        final = self.nm.profiles["nxlx-eth0"]
         self.assertEqual((final["connection.autoconnect"], final["connection.autoconnect-priority"], final["ipv4.method"]),
                          ("yes", "101", "manual"))
-        self.assertEqual(self.nm.active, "pvj-eth0")
+        self.assertEqual(self.nm.active, "nxlx-eth0")
         self.assertFalse(os.path.exists(self.state))
         self.now[0] += 1000
         self.assertFalse(self.svc.tick())
@@ -212,8 +212,18 @@ class ServiceTest(unittest.TestCase):
         self.svc.confirm()
         self.svc.apply({"iface": "eth0", "mode": "linklocal"})
         self.svc.confirm()
-        self.assertEqual(self.nm.profiles["pvj-eth0"]["ipv4.method"], "link-local")
-        self.assertEqual([n for n in self.nm.profiles if n.startswith("pvj-")], ["pvj-eth0"])
+        self.assertEqual(self.nm.profiles["nxlx-eth0"]["ipv4.method"], "link-local")
+        self.assertEqual([n for n in self.nm.profiles if n.startswith("nxlx-")], ["nxlx-eth0"])
+
+    def test_a_profile_confirmed_before_the_system_rename_goes_with_the_first_confirmed_change(self):
+        """A converted node keeps its pvj-eth0 profile (NetworkManager is not the converter's); it is the old setup
+        once a change is confirmed, so it is removed then, and not before (an unconfirmed change goes back to it)."""
+        self.nm.profiles["pvj-eth0"] = dict(self.nm.profiles["Wired connection 1"], uuid="0f0f0f0f-0000-4000-8000-000000000001")
+        self.svc.apply(dict(STATIC))
+        self.assertIn("pvj-eth0", self.nm.profiles, "kept while the change can still be undone")
+        self.svc.confirm()
+        self.assertNotIn("pvj-eth0", self.nm.profiles)
+        self.assertEqual([n for n in self.nm.profiles if n.startswith(("nxlx-", "pvj-"))], ["nxlx-eth0"])
 
     def test_unconfirmed_change_reverts_at_the_deadline(self):
         self.svc.apply(dict(STATIC, revert_seconds=30))
@@ -222,7 +232,7 @@ class ServiceTest(unittest.TestCase):
         self.now[0] += 2
         self.assertTrue(self.svc.tick())
         self.assertEqual(self.nm.active, "Wired connection 1")
-        self.assertNotIn("pvj-eth0-try", self.nm.profiles)
+        self.assertNotIn("nxlx-eth0-try", self.nm.profiles)
         self.assertIsNone(self.svc.status()["pending"])
         self.assertFalse(os.path.exists(self.state))
 
@@ -230,26 +240,26 @@ class ServiceTest(unittest.TestCase):
     def test_reverting_a_change_to_a_confirmed_profile_restores_it_exactly_and_reactivates_it(self):
         self.svc.apply(dict(STATIC))
         self.svc.confirm()
-        confirmed = dict(self.nm.profiles["pvj-eth0"])
+        confirmed = dict(self.nm.profiles["nxlx-eth0"])
         self.svc.apply({"iface": "eth0", "mode": "linklocal"})
-        self.assertEqual(self.nm.profiles["pvj-eth0"], confirmed)  # never edited in place
+        self.assertEqual(self.nm.profiles["nxlx-eth0"], confirmed)  # never edited in place
         self.svc.revert()
-        self.assertEqual(self.nm.profiles["pvj-eth0"], confirmed)
-        self.assertEqual(self.nm.active, "pvj-eth0")  # and it is the one in use again
+        self.assertEqual(self.nm.profiles["nxlx-eth0"], confirmed)
+        self.assertEqual(self.nm.active, "nxlx-eth0")  # and it is the one in use again
 
     def test_power_cut_while_pending_keeps_the_old_network_and_the_restart_undoes_the_candidate(self):
         self.svc.apply(dict(STATIC))
         self.svc.confirm()
-        confirmed = dict(self.nm.profiles["pvj-eth0"])
+        confirmed = dict(self.nm.profiles["nxlx-eth0"])
         self.svc.apply({"iface": "eth0", "mode": "dhcp"})
         # ---- the box loses power here. What is on disk:
-        self.assertEqual(self.nm.profiles["pvj-eth0"], confirmed)  # old profile untouched, still autoconnect
-        self.assertEqual(self.nm.profiles["pvj-eth0-try"]["connection.autoconnect"], "no")
+        self.assertEqual(self.nm.profiles["nxlx-eth0"], confirmed)  # old profile untouched, still autoconnect
+        self.assertEqual(self.nm.profiles["nxlx-eth0-try"]["connection.autoconnect"], "no")
         # ---- boot: the helper starts and finds the saved state
         reborn = self.make_service()
         self.assertTrue(reborn.recover())
-        self.assertNotIn("pvj-eth0-try", self.nm.profiles)
-        self.assertEqual(self.nm.active, "pvj-eth0")
+        self.assertNotIn("nxlx-eth0-try", self.nm.profiles)
+        self.assertEqual(self.nm.active, "nxlx-eth0")
         self.assertFalse(os.path.exists(self.state))
         self.assertFalse(reborn.recover())
 
@@ -307,13 +317,13 @@ class ServiceTest(unittest.TestCase):
         self.assertFalse(os.path.exists(self.state))
 
     def test_a_failed_apply_undoes_itself_and_says_how_it_went(self):
-        self.nm.fail_on = "connection up id pvj-eth0-try"
+        self.nm.fail_on = "connection up id nxlx-eth0-try"
         with self.assertRaises(NetError) as cm:
             self.svc.apply(dict(STATIC))
         self.assertIn("previous setup was restored", str(cm.exception))
         self.nm.fail_on = None
         self.assertEqual(self.nm.active, "Wired connection 1")
-        self.assertNotIn("pvj-eth0-try", self.nm.profiles)
+        self.assertNotIn("nxlx-eth0-try", self.nm.profiles)
         self.assertIsNone(self.svc.status()["pending"])
 
     def test_a_failed_apply_whose_undo_also_fails_does_not_claim_a_restore(self):
@@ -360,7 +370,7 @@ class ServiceTest(unittest.TestCase):
         out = self.svc.plan(dict(STATIC))
         self.assertTrue(any("ipv4.addresses 192.168.50.20/24" in c for c in out["commands"]))
         self.assertEqual(self.nm.nmcli_calls(), [])
-        self.assertNotIn("pvj-eth0-try", self.nm.profiles)
+        self.assertNotIn("nxlx-eth0-try", self.nm.profiles)
 
     def test_missing_nmcli_is_a_clear_error(self):
         def gone(argv, **kw):
@@ -467,35 +477,35 @@ class WifiServiceTest(unittest.TestCase):
         reply = self.svc.handle({"cmd": "apply", "config": dict(JOIN)})
         self.assertTrue(reply["ok"], reply)
         self.assertEqual(reply["pending"]["ssid"], "Leyline Staff")
-        self.assertEqual(self.keyfiles(), ["pvj-wlan0-try-0000aaaa.nmconnection"])
+        self.assertEqual(self.keyfiles(), ["nxlx-wlan0-try-0000aaaa.nmconnection"])
         path = os.path.join(self.kdir, self.keyfiles()[0])
         self.assertEqual(oct(os.stat(path).st_mode & 0o777), "0o600")
-        cand = self.nm.profiles["pvj-wlan0-try"]
+        cand = self.nm.profiles["nxlx-wlan0-try"]
         self.assertEqual((cand["_ssid"], cand["_kf"]["wifi-security.psk"], cand["ipv4.method"], cand["connection.autoconnect"]),
                          ("Leyline Staff", "s3cret\\spass", "auto", "no"))
-        self.assertEqual(self.nm.wifi_active, "pvj-wlan0-try")
+        self.assertEqual(self.nm.wifi_active, "nxlx-wlan0-try")
         self.assertEqual(self.nm.active, "Wired connection 1")      # the wired port is not touched
         self.assert_no_password_anywhere(reply)
 
     def test_confirm_keeps_the_new_network(self):
         self.svc.apply(dict(JOIN))
         self.svc.confirm()
-        self.assertEqual(self.nm.wifi_active, "pvj-wlan0")
-        self.assertEqual(self.nm.profiles["pvj-wlan0"]["connection.autoconnect"], "yes")
+        self.assertEqual(self.nm.wifi_active, "nxlx-wlan0")
+        self.assertEqual(self.nm.profiles["nxlx-wlan0"]["connection.autoconnect"], "yes")
         self.assertIn("Home", self.nm.profiles)
         self.assertFalse(os.path.exists(self.state))
         # a second change replaces the first: the old confirmed profile and its file go
         self.svc.apply(dict(JOIN, ssid="Other"))
         self.svc.confirm()
-        self.assertEqual(self.nm.profiles["pvj-wlan0"]["_ssid"], "Other")
-        self.assertEqual(self.keyfiles(), ["pvj-wlan0-try-0000bbbb.nmconnection"])
+        self.assertEqual(self.nm.profiles["nxlx-wlan0"]["_ssid"], "Other")
+        self.assertEqual(self.keyfiles(), ["nxlx-wlan0-try-0000bbbb.nmconnection"])
 
     def test_no_confirmation_goes_back_to_the_previous_network_and_removes_the_keyfile(self):
         self.svc.apply(dict(JOIN))
         self.now[0] += 121
         self.assertTrue(self.svc.tick())
         self.assertEqual(self.nm.wifi_active, "Home")
-        self.assertNotIn("pvj-wlan0-try", self.nm.profiles)
+        self.assertNotIn("nxlx-wlan0-try", self.nm.profiles)
         self.assertEqual(self.keyfiles(), [])
         self.assertFalse(os.path.exists(self.state))
         self.assert_no_password_anywhere()
@@ -513,9 +523,9 @@ class WifiServiceTest(unittest.TestCase):
         self.svc.apply(dict(JOIN))
         with open(self.state) as f:
             self.assertEqual(json.load(f)["keyfile"], "0000aaaa")
-        fresh = self.make_service()          # pvj-netd restarted (or the box rebooted)
+        fresh = self.make_service()          # nxlx-netd restarted (or the box rebooted)
         self.assertTrue(fresh.recover())
-        self.assertNotIn("pvj-wlan0-try", self.nm.profiles)
+        self.assertNotIn("nxlx-wlan0-try", self.nm.profiles)
         self.assertEqual((self.nm.radio, self.keyfiles()), ("disabled", []))
 
     def test_a_keyfile_written_but_never_loaded_is_removed(self):
@@ -527,15 +537,15 @@ class WifiServiceTest(unittest.TestCase):
         self.assertIsNone(self.svc.status()["pending"])
 
     def test_a_failed_connection_goes_back(self):
-        self.nm.fail_on = "connection up id pvj-wlan0-try"
+        self.nm.fail_on = "connection up id nxlx-wlan0-try"
         with self.assertRaises(NetError):
             self.svc.apply(dict(JOIN))
         self.assertEqual((self.nm.wifi_active, self.keyfiles()), ("Home", []))
-        self.assertNotIn("pvj-wlan0-try", self.nm.profiles)
+        self.assertNotIn("nxlx-wlan0-try", self.nm.profiles)
 
     def test_hotspot(self):
         self.svc.apply({"iface": "wlan0", "mode": "hotspot", "ssid": "NXLX", "password": "s3cret pass", "band": "a"})
-        cand = self.nm.profiles["pvj-wlan0-try"]
+        cand = self.nm.profiles["nxlx-wlan0-try"]
         self.assertEqual((cand["_mode"], cand["_kf"]["wifi.band"], cand["ipv4.method"], cand["ipv4.addresses"]),
                          ("ap", "a", "shared", "10.43.0.1/24"))
         self.svc.confirm()
@@ -582,7 +592,7 @@ class WifiServiceTest(unittest.TestCase):
         victim = os.path.join(self.dir, "victim")
         with open(victim, "w") as f:
             f.write("do not touch")
-        os.symlink(victim, os.path.join(self.kdir, "pvj-wlan0-try-0000aaaa.nmconnection"))
+        os.symlink(victim, os.path.join(self.kdir, "nxlx-wlan0-try-0000aaaa.nmconnection"))
         with self.assertRaises(NetError):
             self.svc.apply(dict(JOIN))
         with open(victim) as f:
@@ -617,7 +627,7 @@ class WifiServiceTest(unittest.TestCase):
     def test_a_timeout_during_an_undo_is_a_failed_try_not_the_end_of_the_undo(self):
         # found by review: one slow nmcli made the helper drop the undo and delete its state for good
         self.svc.apply(dict(JOIN))
-        self.nm.hang_on = "connection.id connection show id pvj-wlan0-try"
+        self.nm.hang_on = "connection.id connection show id nxlx-wlan0-try"
         self.now[0] += 121
         self.assertFalse(self.svc.tick())
         self.assertTrue(self.svc.status()["reverting"])
@@ -630,37 +640,37 @@ class WifiServiceTest(unittest.TestCase):
     def test_a_confirm_that_fails_part_way_can_still_be_undone(self):
         # found by review: the old profile was deleted before the new one had its name, so the undo had nothing to go back to
         self.svc.apply(dict(JOIN))
-        self.svc.confirm()                                   # pvj-wlan0 is now "Leyline Staff"
+        self.svc.confirm()                                   # nxlx-wlan0 is now "Leyline Staff"
         self.svc.apply(dict(JOIN, ssid="Other"))
-        self.nm.fail_on = "modify id pvj-wlan0-try connection.id pvj-wlan0"
+        self.nm.fail_on = "modify id nxlx-wlan0-try connection.id nxlx-wlan0"
         with self.assertRaises(NetError):
             self.svc.confirm()
-        self.assertEqual(self.nm.profiles["pvj-wlan0"]["_ssid"], "Leyline Staff")   # renamed back
-        self.assertNotIn("pvj-wlan0-old", self.nm.profiles)
+        self.assertEqual(self.nm.profiles["nxlx-wlan0"]["_ssid"], "Leyline Staff")   # renamed back
+        self.assertNotIn("nxlx-wlan0-old", self.nm.profiles)
         self.nm.fail_on = None
         self.now[0] += 121
         self.assertTrue(self.svc.tick())
-        self.assertEqual(self.nm.wifi_active, "pvj-wlan0")
-        self.assertEqual(self.nm.profiles["pvj-wlan0"]["_ssid"], "Leyline Staff")
+        self.assertEqual(self.nm.wifi_active, "nxlx-wlan0")
+        self.assertEqual(self.nm.profiles["nxlx-wlan0"]["_ssid"], "Leyline Staff")
 
     def test_an_old_profile_that_cannot_be_deleted_does_not_undo_a_confirm(self):
         self.svc.apply(dict(JOIN))
         self.svc.confirm()
         self.svc.apply(dict(JOIN, ssid="Other"))
-        self.nm.fail_on = "delete id pvj-wlan0-old"
+        self.nm.fail_on = "delete id nxlx-wlan0-old"
         self.assertIsNone(self.svc.confirm()["pending"])
-        self.assertEqual((self.nm.wifi_active, self.nm.profiles["pvj-wlan0"]["_ssid"]), ("pvj-wlan0", "Other"))
+        self.assertEqual((self.nm.wifi_active, self.nm.profiles["nxlx-wlan0"]["_ssid"]), ("nxlx-wlan0", "Other"))
         self.assertTrue(any("could not delete the old profile" in m for m in self.logs))
         self.nm.fail_on = None
         self.svc.apply(dict(JOIN, ssid="Third"))
         self.svc.confirm()                                   # the leftover goes now
-        self.assertNotIn("pvj-wlan0-old", self.nm.profiles)
-        self.assertEqual(self.nm.profiles["pvj-wlan0"]["_ssid"], "Third")
+        self.assertNotIn("nxlx-wlan0-old", self.nm.profiles)
+        self.assertEqual(self.nm.profiles["nxlx-wlan0"]["_ssid"], "Third")
 
     def test_the_password_reaches_networkmanager_exactly(self):
         for pw in ("s3cret pass", " lead and trail ", "back\\slash\\\\s", "#;[x]=y \\ "):
             self.svc.apply(dict(JOIN, password=pw))
-            self.assertEqual(self.nm.profiles["pvj-wlan0-try"]["_kf"]["_psk"], pw)
+            self.assertEqual(self.nm.profiles["nxlx-wlan0-try"]["_kf"]["_psk"], pw)
             self.svc.revert()
 
     def test_scan_marks_in_use_from_the_box_not_from_the_air(self):

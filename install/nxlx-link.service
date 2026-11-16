@@ -5,22 +5,22 @@ Description=nxlx.mastercontrol Ableton Link follower (tempo and beat only; off u
 # The program is built at install from Debian's ableton-link-dev (D117). Where the package was missing, or after a
 # rollback to a release from before D117, this unit is here and its program is not. A condition that is not met is not
 # a failure: the unit is skipped, once, and nothing is started again (as the NDI helper's, D62).
-ConditionPathExists=@PVJ_DIR@/render/pvj-link
+ConditionPathExists=@PVJ_DIR@/render/nxlx-link
 StartLimitIntervalSec=0
 
 [Service]
 # Its own account and its own group (D117): this is the one part that takes packets from anyone on the network, so it
-# has nothing else of the box's. It is NOT in group "pvj" (the player's socket, the settings, the PIN) or "audio" (the
-# microphone, the levels). The panel alone joins group pvj-link, and the socket checks the caller's uid too.
-User=pvj-link
-Group=pvj-link
+# has nothing else of the box's. It is NOT in group "nxlx-svc" (the player's socket, the settings, the PIN) or "audio" (the
+# microphone, the levels). The panel alone joins group nxlx-link, and the socket checks the caller's uid too.
+User=nxlx-link
+Group=nxlx-link
 UMask=0027
-# Its own folder: the socket for the panel and the state file (0640, group pvj-link). Nobody else writes here.
-RuntimeDirectory=pvj-link
+# Its own folder: the socket for the panel and the state file (0640, group nxlx-link). Nobody else writes here.
+RuntimeDirectory=nxlx-link
 RuntimeDirectoryMode=0750
-Environment=PVJ_LINK_DIR=/run/pvj-link
+Environment=PVJ_LINK_DIR=/run/nxlx-link
 Environment=HOME=/nonexistent
-ExecStart=@PVJ_DIR@/render/pvj-link
+ExecStart=@PVJ_DIR@/render/nxlx-link
 Restart=always
 RestartSec=2
 
@@ -36,7 +36,7 @@ PrivateTmp=yes
 DevicePolicy=closed
 DeviceAllow=/dev/null rw
 DeviceAllow=/dev/urandom r
-InaccessiblePaths=-/var/lib/pvj -/etc/pvj -/run/pvj -/run/pvj-sound -/run/pvj-ndi -/run/pvj-sysd -/run/pvj-supportd
+InaccessiblePaths=-/var/lib/nxlx -/etc/nxlx -/run/nxlx -/run/nxlx-sound -/run/nxlx-ndi -/run/nxlx-sysd -/run/nxlx-supportd
 # Bounds: one small loop and Link's own thread, on a node near 80 percent while playing.
 MemoryMax=32M
 LimitCORE=0

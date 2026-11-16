@@ -3,16 +3,16 @@
 """NDI input: receive a sender's picture and hand it to the one mpv as raw frames in a pipe (D62, mctl/NDI.md).
 
 NDI(R) is a registered trademark of Vizrt NDI AB. Nothing of NDI's is in this file or this repository: the runtime
-library (libndi.so.6) is proprietary and is put on the box by its owner (`pvj-ndi-runtime`, below). It is loaded
+library (libndi.so.6) is proprietary and is put on the box by its owner (`nxlx-ndi-runtime`, below). It is loaded
 with ctypes; the structures further down were written from the layout the SDK's public headers describe.
 
 Three parts, in one file so the bounds live in one place:
 
-* `pvj-ndi` (Service, Receiver, CtypesLibrary): a small daemon under its own account and sandbox. It is the only
+* `nxlx-ndi` (Service, Receiver, CtypesLibrary): a small daemon under its own account and sandbox. It is the only
   process that loads the library, so a library taken over by a bad packet has that account's reach and no more: no
-  player socket, no PIN, no settings, no internet (mctl/systemd/pvj-ndi.service).
+  player socket, no PIN, no settings, no internet (mctl/systemd/nxlx-ndi.service).
 * the panel's side (Client, Input): asks the daemon over a Unix socket and tells the player to read the pipe.
-* `pvj-ndi-runtime` (runtime_main): root's command that sets NDI up on a box: it copies the library into place after
+* `nxlx-ndi-runtime` (runtime_main): root's command that sets NDI up on a box: it copies the library into place after
   checking what it is, then installs the helper (mctl/ndisetup.py). Until it is run a box has no helper at all.
 
 Everything that comes from the network, through a closed-source library, is hostile until checked: source names
@@ -46,7 +46,7 @@ import unicodedata
 
 from . import locks, paths
 
-LIB_DIR = "/opt/pvj-ndi"                  # the application's own folder, root's: NDI asks that the library stay off the system path
+LIB_DIR = "/opt/nxlx-ndi"                  # the application's own folder, root's: NDI asks that the library stay off the system path
 LIB_NAME = "libndi.so.6"
 LIB_MAX_BYTES = 96 * 1024 * 1024
 MAX_SOURCES = 64
@@ -156,7 +156,7 @@ PRIVATE_NETS = tuple(ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0
 STATES = ("connecting", "ready", "playing", "still", "waiting", "changed", "refused", "stopped")
 ENDED = ("changed", "refused", "stopped")
 # The one command, run by root at the box, that sets NDI up (the library and the helper; mctl/ndisetup.py has the same words).
-SETUP_COMMAND = 'sudo pvj-ndi-runtime install "/path/to/NDI SDK for Linux"'
+SETUP_COMMAND = 'sudo nxlx-ndi-runtime install "/path/to/NDI SDK for Linux"'
 NOT_SET_UP = "NDI is not set up on this node; someone with a keyboard or SSH on the node runs: " + SETUP_COMMAND
 
 _ID = re.compile(r"[0-9a-f]{12}")
@@ -551,7 +551,7 @@ class Wanted:
         if problem != self.problem:
             self.problem = problem
             if problem:
-                self.log("pvj-web: %s" % problem)
+                self.log("nxlx-web: %s" % problem)
         return on, addresses
 
 
@@ -847,7 +847,7 @@ def runtime_problem(path, owner_uids=(0,), machine=None):
     except OSError:
         return "the NDI runtime is not on this node yet"
     if not stat.S_ISREG(st.st_mode) or st.st_uid not in owner_uids or st.st_mode & 0o022 or st.st_size > LIB_MAX_BYTES:
-        return "the NDI runtime file is not a plain file that only root can change; install it again with pvj-ndi-runtime"
+        return "the NDI runtime file is not a plain file that only root can change; install it again with nxlx-ndi-runtime"
     found, want = elf_machine(path), machine if machine is not None else box_machine()
     if found is None:
         return "the NDI runtime file is not a program library"
@@ -1086,7 +1086,7 @@ class Receiver:
                 try:
                     self.lib.recv_close(handle)
                 except Exception as e:
-                    self.log("pvj-ndi: closing the source: %s" % e)
+                    self.log("nxlx-ndi: closing the source: %s" % e)
 
     def _leave(self):
         """A thread that used the connection is out of the library for good. The last one out gives the connection
@@ -1226,7 +1226,7 @@ class Receiver:
                     # wait as long as a capture would have, and write it down once, not at every turn.
                     if not lost:
                         lost = self._lost = True
-                        self.log("pvj-ndi: the connection to %s dropped; waiting for it" % self.source["name"])
+                        self.log("nxlx-ndi: the connection to %s dropped; waiting for it" % self.source["name"])
                     self._stop.wait(0.25)
                     continue
                 if f is None:
@@ -1234,7 +1234,7 @@ class Receiver:
                     continue
                 if lost:
                     lost = self._lost = False
-                    self.log("pvj-ndi: %s is back" % self.source["name"])
+                    self.log("nxlx-ndi: %s is back" % self.source["name"])
                 try:
                     fmt, stride = check_frame(f)
                     if self.format is None:
@@ -1723,7 +1723,7 @@ class Receiver:
             self._release()
         elif not self._said_stuck:
             self._said_stuck = True
-            self.log("pvj-ndi: the NDI runtime did not come back from %s; its connection is left open, not freed under it" % self.source["name"])
+            self.log("nxlx-ndi: the NDI runtime did not come back from %s; its connection is left open, not freed under it" % self.source["name"])
 
 
 # ---- the box's one sound source ----------------------------------------------------------------------------------
@@ -1834,7 +1834,7 @@ class SoundFeed:
             try:
                 self.lib.recv_close(handle)
             except Exception as e:
-                self.log("pvj-ndi: closing the sound source: %s" % e)
+                self.log("nxlx-ndi: closing the sound source: %s" % e)
 
     def _run(self):
         name, alone = self.source["name"], None
@@ -1847,7 +1847,7 @@ class SoundFeed:
                     now = self._clock()
                     alone = now if alone is None else alone
                     if now - alone > self._idle:
-                        self.log("pvj-ndi: no picture has used the sound of %s for %d seconds; its connection is given back" % (name, self._idle))
+                        self.log("nxlx-ndi: no picture has used the sound of %s for %d seconds; its connection is given back" % (name, self._idle))
                         return
                 else:
                     alone = None
@@ -1855,7 +1855,7 @@ class SoundFeed:
                 if a is AUDIO_LOST:
                     if not self.lost:
                         self.lost = True
-                        self.log("pvj-ndi: the connection to the sound source %s dropped; waiting for it" % name)
+                        self.log("nxlx-ndi: the connection to the sound source %s dropped; waiting for it" % name)
                     self._stop.wait(0.25)          # the library says "down" again at once for as long as it is
                     continue
                 if a is None:
@@ -1865,7 +1865,7 @@ class SoundFeed:
                     continue
                 if self.lost:
                     self.lost = False
-                    self.log("pvj-ndi: the sound source %s is back" % name)
+                    self.log("nxlx-ndi: the sound source %s is back" % name)
                 try:
                     # The receiver is taken under the lock and called without it: a picture that is being closed
                     # never waits for a block of sound, and a block handed to a receiver that has just ended is
@@ -1884,7 +1884,7 @@ class SoundFeed:
                             if not go:
                                 r = None
                                 if held_for:
-                                    self.log("pvj-ndi: the sound source %s keeps changing its sound; pictures play without it for %d seconds"
+                                    self.log("nxlx-ndi: the sound source %s keeps changing its sound; pictures play without it for %d seconds"
                                              % (self.source["name"], int(math.ceil(held_for))))
                     except NdiError:
                         pass
@@ -1901,7 +1901,7 @@ class SoundFeed:
                 finally:
                     self.lib.recv_free_audio(self._handle, a)
         except Exception as e:
-            self.log("pvj-ndi: the sound source %s stopped: %s" % (name, str(e)[-160:]))
+            self.log("nxlx-ndi: the sound source %s stopped: %s" % (name, str(e)[-160:]))
         finally:
             self._stop.set()
             self._release()
@@ -1917,7 +1917,7 @@ class SoundFeed:
             if t.is_alive():
                 if not self._said_stuck:
                     self._said_stuck = True
-                    self.log("pvj-ndi: the NDI runtime did not come back from the sound source %s; its connection is left open, not freed under it"
+                    self.log("nxlx-ndi: the NDI runtime did not come back from the sound source %s; its connection is left open, not freed under it"
                              % self.source["name"])
                 return
         self._release()
@@ -1925,7 +1925,7 @@ class SoundFeed:
 
 # ---- the daemon ------------------------------------------------------------------------------------------------------
 class Service:
-    """What pvj-ndi answers, one JSON line each: status, configure, open, close. It does nothing on the network until
+    """What nxlx-ndi answers, one JSON line each: status, configure, open, close. It does nothing on the network until
     the panel has said the module is on (configure), and it knows no settings but what the panel sends."""
 
     def __init__(self, rundir, lib_path, loader=load_library, problem=runtime_problem, log=print, clock=time.monotonic,
@@ -1983,7 +1983,7 @@ class Service:
                 self.lib = self._loader(self.lib_path)
                 self.discovery, self.transport = loaded_with, travels
                 self.version, self.lib_error = self.lib.version(), ""
-                self.log("pvj-ndi: loaded the NDI runtime (%s)" % self.version)
+                self.log("nxlx-ndi: loaded the NDI runtime (%s)" % self.version)
             except NdiError as e:
                 self.lib_error = str(e)
         return self.lib
@@ -2037,7 +2037,7 @@ class Service:
                 # "Off" means no NDI code running. A library cannot be unloaded from a process, so the process ends
                 # (after this answer has gone) and systemd starts a new one, which loads nothing until told "on".
                 if self.lib is not None and self.on_unload is not None:
-                    self.log("pvj-ndi: the NDI input was switched off; starting again without the NDI runtime")
+                    self.log("nxlx-ndi: the NDI input was switched off; starting again without the NDI runtime")
                     self.on_unload()
             elif (self.lib is not None and self.on_unload is not None and self.config_dir
                     and ((discovery != self.discovery and config_discovery(self.config_dir) == discovery)
@@ -2055,7 +2055,7 @@ class Service:
                 self._close_receiver()
                 self._close_feed()
                 self._close_finder()
-                self.log("pvj-ndi: the library's configuration file changed; starting again to read it")
+                self.log("nxlx-ndi: the library's configuration file changed; starting again to read it")
                 self.on_unload()
                 return dict(self.status(), restarting=True)
             elif self._load() is not None and (self._finder is None or addresses != self.addresses or groups != self.groups):
@@ -2122,10 +2122,10 @@ class Service:
         try:
             feed.start()
         except Exception as e:
-            self.log("pvj-ndi: the sound source %s could not be opened: %s" % (row["name"], str(e)[-160:]))
+            self.log("nxlx-ndi: the sound source %s could not be opened: %s" % (row["name"], str(e)[-160:]))
             feed.close()
             return None
-        self.log("pvj-ndi: sound comes from %s" % row["name"])
+        self.log("nxlx-ndi: sound comes from %s" % row["name"])
         self.feed = feed
         return feed
 
@@ -2178,7 +2178,7 @@ class Service:
                     self._sources, self._cut = clean_sources(self.lib.find_sources(self._finder), self.addresses,
                                                              set(self.allowed) | ({r.source["id"]} if r is not None else set()))
                 except Exception as e:
-                    self.log("pvj-ndi: reading the sources: %s" % e)
+                    self.log("nxlx-ndi: reading the sources: %s" % e)
                     self._sources, self._cut = [], False
                 self._sources_at = now
             return list(self._sources)
@@ -2245,7 +2245,7 @@ class Service:
         if stale and self.lock.acquire(blocking=False):
             try:
                 if self.waiting is waiting and self.held is held:   # a hand-over that came meanwhile is not undone
-                    self.log("pvj-ndi: the panel did not hand the new source over in time; it is closed, and what was kept of the picture before")
+                    self.log("nxlx-ndi: the panel did not hand the new source over in time; it is closed, and what was kept of the picture before")
                     self.waiting = None
                     self._close_receiver()
                     self._drop_held()
@@ -2274,7 +2274,7 @@ class Service:
             # neither" is then true. When one sender is left, the look below opens it again.
             try:
                 if self.feed is feed:
-                    self.log("pvj-ndi: the sound source is not one sender of the name the owner allowed any more; its connection is given back")
+                    self.log("nxlx-ndi: the sound source is not one sender of the name the owner allowed any more; its connection is given back")
                     self._close_feed()
             finally:
                 self.lock.release()
@@ -2367,13 +2367,13 @@ class Service:
                 return {"ok": False, "error": "the NDI helper could not look at its pipe (%s)" % (e.strerror or "error")}
             if st is not None and not stat.S_ISFIFO(st.st_mode):
                 # Not a pipe, and not this helper's to remove (root's folder on a box): said, not "fixed"
-                self.log("pvj-ndi: %s is not a pipe; not touching it" % self.fifo)
+                self.log("nxlx-ndi: %s is not a pipe; not touching it" % self.fifo)
                 return {"ok": False, "error": "what is in the NDI pipe's place is not a pipe; look at %s" % self.fifo}
             if st is None:
                 try:
                     os.mkfifo(self.fifo, 0o640)    # a desk or the tests: the helper writes; the player reads through the helper's group
                 except OSError as e:
-                    self.log("pvj-ndi: could not make the pipe %s: %s" % (self.fifo, e))
+                    self.log("nxlx-ndi: could not make the pipe %s: %s" % (self.fifo, e))
                     return {"ok": False, "error": "the NDI helper could not make its pipe (%s)" % (e.strerror or "error")}
             # A sender may change size while it is being opened (a screen capture whose window moves to the next
             # clip: on the Pi, 2026-10-12, a first press was answered "the source changed to 1540 x 866 at 30.0
@@ -2388,7 +2388,7 @@ class Service:
                 again = reply.pop("again", False)
                 if not again or attempt == OPEN_TRIES - 1 or self.open_budget() - (time.monotonic() - began) - after < TRY_LEAST:
                     break
-                self.log("pvj-ndi: %s changed while it was being opened (%s); opening it again" % (match[0]["name"], reply.get("error")))
+                self.log("nxlx-ndi: %s changed while it was being opened (%s); opening it again" % (match[0]["name"], reply.get("error")))
                 with self._find_lock:
                     self._sources_at = None
                 match = [s for s in self.sources() if s["id"] == sid] or match
@@ -2460,7 +2460,7 @@ class Service:
                                                             % (row["name"], self._first_frame))}
         with self._find_lock:
             self.sound_only.pop(sid, None)         # it has a picture after all
-        self.log("pvj-ndi: %s is %d x %d at %s" % ((row["name"],) + r.format))
+        self.log("nxlx-ndi: %s is %d x %d at %s" % ((row["name"],) + r.format))
         self.waiting = (r, self._clock())          # the panel has the player let go, then asks for the hand-over
         return {"ok": True, "playing": st}
 
@@ -2501,7 +2501,7 @@ class Service:
             self._close_receiver()
             if over["state"] in ENDED and over["message"]:      # it ended by itself while the pipe was looked at
                 return dict({"ok": False, "error": over["message"]}, **({"again": True} if over["state"] == "changed" else {}))
-            self.log("pvj-ndi: the player still held the pipe %.1f seconds after the source before; %s is not written" % (self._pipe_clear, row["name"]))
+            self.log("nxlx-ndi: the player still held the pipe %.1f seconds after the source before; %s is not written" % (self._pipe_clear, row["name"]))
             return {"ok": False, "error": PIPE_HELD}
         r.go()
         return {"ok": True, "playing": st}
@@ -2540,14 +2540,14 @@ def main(argv=None):
     os.makedirs(rundir, mode=0o750, exist_ok=True)
     allowed = set()
     try:
-        allowed.add(pwd.getpwnam("pvj-web").pw_uid)
+        allowed.add(pwd.getpwnam("nxlx-web").pw_uid)
     except KeyError:
         allowed.add(os.getuid())                   # on a desk: whoever runs it
     service = Service(rundir, os.environ.get("PVJ_NDI_LIB") or os.path.join(LIB_DIR, LIB_NAME), log=lambda m: print(m, flush=True),
                       fifo=paths.ndi_fifo())      # root's pipe in root's folder (mctl/ndisetup.py); never unlinked by this helper
     service.on_unload = lambda: threading.Timer(0.5, os._exit, [0]).start()      # Restart=always brings up a clean one
     server = NetServer(os.path.join(rundir, paths.NDI_SOCKET), service, lambda uid: uid in allowed)
-    print("pvj-ndi: ready (%s)" % (service.runtime()["problem"] or "the NDI runtime is in place"), flush=True)
+    print("nxlx-ndi: ready (%s)" % (service.runtime()["problem"] or "the NDI runtime is in place"), flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -2582,7 +2582,7 @@ def json_depth(raw):
 
 
 def pipe_owner():
-    """Who owns the pipe on a box: root, which makes it once (the tmpfiles lines pvj-ndi-runtime writes). The helper
+    """Who owns the pipe on a box: root, which makes it once (the tmpfiles lines nxlx-ndi-runtime writes). The helper
     writes it by its group and is not its owner (Input.check_pipe)."""
     return 0
 
@@ -2600,7 +2600,7 @@ def helper_uid():
     root's and not this account's, and the panel expects root (pipe_owner); nothing in the program asks this now."""
     import pwd
     try:
-        return pwd.getpwnam("pvj-ndi").pw_uid
+        return pwd.getpwnam("nxlx-ndi").pw_uid
     except KeyError:
         return os.getuid()
 
@@ -2627,15 +2627,15 @@ class Client:
         try:
             raw = self._exchange(message, timeout or self.timeout)
         except (OSError, ValueError):
-            raise NdiError("the NDI helper (pvj-ndi) is not running")
+            raise NdiError("the NDI helper (nxlx-ndi) is not running")
         try:
             if json_depth(raw) > self.MAX_NESTING:
                 raise ValueError("nested too deep")
             reply = json.loads(raw)
         except (ValueError, RecursionError, MemoryError):
-            raise NdiError("the NDI helper (pvj-ndi) gave a bad answer")
+            raise NdiError("the NDI helper (nxlx-ndi) gave a bad answer")
         if not isinstance(reply, dict):
-            raise NdiError("the NDI helper (pvj-ndi) gave a bad answer")
+            raise NdiError("the NDI helper (nxlx-ndi) gave a bad answer")
         self._status = None
         return reply
 
@@ -2717,7 +2717,7 @@ class Input:
         # False on a box where nobody ran the opt-in command (server.py): there is no helper and never was, so its
         # socket is not even tried, and the page says how to set NDI up in place of "the helper is not running".
         self.setup = setup
-        self._pipe_owner = pipe_owner      # the uid the helper's pipe must belong to (server.py: the pvj-ndi account)
+        self._pipe_owner = pipe_owner      # the uid the helper's pipe must belong to (server.py: the nxlx-ndi account)
         self.current = None                # {"id", "name"} while the player reads the pipe
         self.lock = locks.make("ndi", reentrant=True)      # open, load in the player and note, as one step (like the capture input); its place: mctl/locks.py
         self._retry_at, self._retry_wait, self._retry_said = 0.0, self.RETRY_SECONDS, ""
@@ -2776,7 +2776,7 @@ class Input:
                                          "allowed": [r["id"] for r in self._allowed()]}, timeout=10)
         except Exception as e:             # never out of here: this runs while the panel starts
             if not isinstance(e, NdiError):
-                self.log("pvj-web: the NDI helper was not told the settings: %s" % type(e).__name__)
+                self.log("nxlx-web: the NDI helper was not told the settings: %s" % type(e).__name__)
             return {"ok": False}
         if reply.get("ok") is not True:    # it answered, and refused: that is not "not running", and the page says which
             return {"ok": False, "answered": True, "error": _text(reply.get("error")) or "the NDI helper refused the settings"}
@@ -2828,7 +2828,7 @@ class Input:
         wanted = self._discovery()
         if not self.config_dir:
             self.config_problem = ("a discovery server needs this node's NDI set-up refreshed: update the node, or run "
-                                   "'sudo pvj-ndi-runtime refresh' at the node, then restart it") if wanted else ""
+                                   "'sudo nxlx-ndi-runtime refresh' at the node, then restart it") if wanted else ""
             return wanted
         path, text = os.path.join(self.config_dir, CONFIG_NAME), config_text(wanted)
         try:
@@ -2855,7 +2855,7 @@ class Input:
         except OSError as e:
             self.config_problem = ("the NDI discovery setting could not be written (%s); if the node was updated and not restarted since, restart it"
                                    % (e.strerror or type(e).__name__))
-            self.log("pvj-web: %s" % self.config_problem)
+            self.log("nxlx-web: %s" % self.config_problem)
         return wanted
 
     def _allowed(self):
@@ -2873,7 +2873,7 @@ class Input:
             return [], NOT_SET_UP
         st = self.client.status()
         if st.get("ok") is not True:
-            return [], "the NDI helper (pvj-ndi) is not running"
+            return [], "the NDI helper (nxlx-ndi) is not running"
         rt = st.get("runtime") if isinstance(st.get("runtime"), dict) else {}
         if rt.get("loaded") is not True:
             return [], _text(rt.get("problem")) or "the NDI runtime has not been loaded yet"
@@ -2911,7 +2911,7 @@ class Input:
             # Wanted and not on the screen (the helper is away or started again, the sender is not found, the
             # player lost the pipe): the watch is bringing it back, and the page says why it is not there. Never
             # nothing playing and no reason.
-            why = self._retry_said or (playing or {}).get("message") or ("the NDI helper (pvj-ndi) is not running" if not helper
+            why = self._retry_said or (playing or {}).get("message") or ("the NDI helper (nxlx-ndi) is not running" if not helper
                                                                          else "the NDI helper has no source open")
             playing, ended = None, {"name": cur["name"], "message": "%s; trying again" % why}
         return {"setup": self.setup, "helper": helper, "notice": "; ".join(notice), "sound": sound, "headroom_db": AUDIO_HEADROOM_DB,
@@ -2966,7 +2966,7 @@ class Input:
             raise NdiError(_text(reply.get("error")) or "the source could not be opened")
         p = _playing(reply.get("playing"))
         if p is None or p["id"] != sid or not all(k in p for k in ("width", "height", "fps")):
-            raise NdiError("the NDI helper (pvj-ndi) gave a bad answer")
+            raise NdiError("the NDI helper (nxlx-ndi) gave a bad answer")
         self._wanted()                     # what the owner wants, as it is saved now
         if p["container"] == "matroska" and not self.sound_wanted():
             # The helper says what the pipe carries, but it does not decide how the player reads it: with sound
@@ -3084,7 +3084,7 @@ class Input:
                     self.current, self.ended = None, {"name": cur["name"], "message": PLAYER_STUCK}
                     self.client_close()
                 self._stuck_once, self._retry_wait, self._retry_said = False, self.RETRY_SECONDS, ""
-                self.log("pvj-web: NDI source %s: the player did not open it, twice; ended" % cur["name"])
+                self.log("nxlx-web: NDI source %s: the player did not open it, twice; ended" % cur["name"])
                 return False
             if opened is not True:
                 if opened is False:
@@ -3102,7 +3102,7 @@ class Input:
                 self._retry_said = ""
                 return False
             self._stuck_once, self._retry_said = True, PLAYER_STUCK
-            self.log("pvj-web: NDI source %s: the player has not opened it; shown again once" % cur["name"])
+            self.log("nxlx-web: NDI source %s: the player has not opened it; shown again once" % cur["name"])
         # Try again later and later (a sender switched off for the night must not be asked every 3 seconds for
         # ever), and write the reason down when it changes, not at every try: the journal is kept on the card.
         waited = self._retry_wait
@@ -3116,14 +3116,14 @@ class Input:
                 # three seconds for ever: the pause grows as for a source that is gone, and is three seconds again
                 # once the source has been on the screen for PLAYED_SECONDS (above).
                 self._retry_at, self._retry_said = self._clock() + waited, ""
-                self.log("pvj-web: NDI source %s lost the player while its pipe was what plays; shown again" % cur["name"])
+                self.log("nxlx-web: NDI source %s lost the player while its pipe was what plays; shown again" % cur["name"])
             else:
                 self._retry_at, self._retry_wait, self._retry_said = self._clock() + self.RETRY_SECONDS, self.RETRY_SECONDS, ""
         except Exception as e:                     # the source may be gone for now; a later tick tries again
             said = str(e)[:200]
             if said != self._retry_said:
                 self._retry_said = said
-                self.log("pvj-web: NDI source %s not shown again yet: %s" % (cur["name"], said))
+                self.log("nxlx-web: NDI source %s not shown again yet: %s" % (cur["name"], said))
         return True
 
 
@@ -3214,7 +3214,7 @@ def install_runtime(source, dest_dir=LIB_DIR, machine=None, chown=True):
             os.chmod(dest_dir, 0o755)
         problem = runtime_problem(tmp, owner_uids=(0,) if chown else (os.getuid(),), machine=machine)
         if problem:
-            raise NdiError(problem.replace("install it again with pvj-ndi-runtime", "not installed"))
+            raise NdiError(problem.replace("install it again with nxlx-ndi-runtime", "not installed"))
         os.chmod(tmp, 0o644)                                             # readable by the helper only now
         dest = os.path.join(dest_dir, LIB_NAME)
         os.replace(tmp, dest)
@@ -3235,16 +3235,16 @@ def install_runtime(source, dest_dir=LIB_DIR, machine=None, chown=True):
 
 
 def runtime_main(argv=None, out=sys.stdout, setup=None):
-    """`pvj-ndi-runtime`: root's one command that opts a box in to NDI (the library, then the helper: mctl/ndisetup.py),
+    """`nxlx-ndi-runtime`: root's one command that opts a box in to NDI (the library, then the helper: mctl/ndisetup.py),
     and the one that opts it out again."""
     if setup is None:
         from . import ndisetup as setup
     argv = sys.argv[1:] if argv is None else argv
     dest = os.path.join(LIB_DIR, LIB_NAME)
-    usage = ("usage: pvj-ndi-runtime install <the unpacked NDI SDK folder, or libndi.so.6> | status | remove\n"
-             "       pvj-ndi-runtime server install <NDI's folder, or ndi-discovery-server> | status | remove\n"
+    usage = ("usage: nxlx-ndi-runtime install <the unpacked NDI SDK folder, or libndi.so.6> | status | remove\n"
+             "       nxlx-ndi-runtime server install <NDI's folder, or ndi-discovery-server> | status | remove\n"
              "install: sets NDI up on this node. It copies NDI's library into place, then installs and starts the NDI\n"
-             "  helper (the service pvj-ndi with an account of its own; avahi-daemon if it is missing) and restarts the\n"
+             "  helper (the service nxlx-ndi with an account of its own; avahi-daemon if it is missing) and restarts the\n"
              "  panel and the player. Until it has been run, a node has nothing of NDI on it and nothing of it runs.\n"
              "remove: takes the helper and the library off again.\n"
              "The NDI runtime is proprietary. Get the NDI SDK for Linux from https://ndi.video/ and read its licence\n"
@@ -3258,13 +3258,13 @@ def runtime_main(argv=None, out=sys.stdout, setup=None):
         return ndiscovery.server_main(argv[1:], out)
     if len(argv) == 1 and argv[0] == "status":
         print(runtime_problem(dest) or "the NDI runtime is in place: %s" % dest, file=out)
-        print("NDI is set up on this node (the helper pvj-ndi is installed)" if setup.opted_in()
+        print("NDI is set up on this node (the helper nxlx-ndi is installed)" if setup.opted_in()
               else "NDI is not set up on this node; to set it up: %s" % setup.COMMAND, file=out)
         return 0
     if os.geteuid() != 0 and argv and argv[0] in ("install", "remove"):
-        print("pvj-ndi-runtime: run it with sudo", file=out)
+        print("nxlx-ndi-runtime: run it with sudo", file=out)
         return 1
-    say = lambda m: print("pvj-ndi-runtime: %s" % m, file=out)      # noqa: E731
+    say = lambda m: print("nxlx-ndi-runtime: %s" % m, file=out)      # noqa: E731
     if len(argv) == 2 and argv[0] == "install":
         try:
             setup.check()                  # whatever can refuse the setup, before anything on the box is changed
@@ -3277,17 +3277,17 @@ def runtime_main(argv=None, out=sys.stdout, setup=None):
                     digest = hashlib.sha256(f.read()).hexdigest()
                 print("sha256 %s  (compare with: sha256sum <the SDK's libndi.so.6>)" % digest, file=out)
             except OSError as e:
-                print("pvj-ndi-runtime: could not read the placed library back to hash it: %s" % e, file=out)
+                print("nxlx-ndi-runtime: could not read the placed library back to hash it: %s" % e, file=out)
             return 1 if setup.enable(say=say) is False else 0      # False: set up, and the helper did not stay up
         except (NdiError, setup.SetupError, OSError) as e:
-            print("pvj-ndi-runtime: %s" % e, file=out)
+            print("nxlx-ndi-runtime: %s" % e, file=out)
             return 1
     if len(argv) == 1 and argv[0] == "remove":
         code = 0
         try:
             setup.disable(say=say)
         except (setup.SetupError, OSError) as e:      # said, and the library still goes
-            print("pvj-ndi-runtime: %s" % e, file=out)
+            print("nxlx-ndi-runtime: %s" % e, file=out)
             code = 1
         try:
             try:
@@ -3300,7 +3300,7 @@ def runtime_main(argv=None, out=sys.stdout, setup=None):
                 pass
             print("removed NDI's library (%s)" % dest, file=out)
         except OSError as e:
-            print("pvj-ndi-runtime: %s could not be removed (%s)" % (dest, e.strerror or "error"), file=out)
+            print("nxlx-ndi-runtime: %s could not be removed (%s)" % (dest, e.strerror or "error"), file=out)
             code = 1
         return code
     print(usage, file=out)

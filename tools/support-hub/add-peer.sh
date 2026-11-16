@@ -9,7 +9,7 @@
 set -euo pipefail
 
 DIR=/etc/wireguard
-CONF="$DIR/pvj0.conf"
+CONF="$DIR/nxlx0.conf"
 [ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 1; }
 [ -f "$CONF" ] || { echo "no hub here; run setup-hub.sh first" >&2; exit 1; }
 
@@ -24,7 +24,7 @@ free() {  # first free host number from $1 to $2
 	done
 	echo "no free address left" >&2; exit 1
 }
-reload() { wg syncconf pvj0 <(wg-quick strip pvj0); }
+reload() { wg syncconf nxlx0 <(wg-quick strip nxlx0); }
 exists() { grep -qxF "# $1" "$CONF"; }
 
 case "$kind" in
@@ -46,7 +46,7 @@ support)
 	priv=$(wg genkey); pub=$(printf '%s' "$priv" | wg pubkey)
 	printf '\n# %s\n[Peer]\nPublicKey = %s\nAllowedIPs = 10.77.0.%s/32\n' "$name" "$pub" "$n" >> "$CONF"
 	reload
-	endpoint=$(cat "$DIR/pvj0.endpoint")
+	endpoint=$(cat "$DIR/nxlx0.endpoint")
 	cat <<CLIENT
 # WireGuard config for support laptop $name. Import it in the WireGuard app; keep it private.
 [Interface]
@@ -54,7 +54,7 @@ PrivateKey = $priv
 Address = 10.77.0.$n/32
 
 [Peer]
-PublicKey = $(cat "$DIR/pvj0.pub")
+PublicKey = $(cat "$DIR/nxlx0.pub")
 Endpoint = $endpoint
 AllowedIPs = 10.77.0.0/24
 PersistentKeepalive = 25

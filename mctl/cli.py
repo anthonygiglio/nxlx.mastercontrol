@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""Command line front end: `pvj-player <command> [args]`."""
+"""Command line front end: `nxlx-player <command> [args]`."""
 
 import argparse
 import json
@@ -11,7 +11,7 @@ from .player import Player, PlayerError
 
 
 def build_parser():
-    p = argparse.ArgumentParser(prog="pvj-player", description="Control the nxlx.mastercontrol mpv player")
+    p = argparse.ArgumentParser(prog="nxlx-player", description="Control the nxlx.mastercontrol mpv player")
     p.add_argument("--mpv-arg", action="append", default=[], help="extra argument for mpv (repeatable)")
     sub = p.add_subparsers(dest="cmd", required=True)
     pl = sub.add_parser("play", help="play files, folders or URLs (switches clips without a black gap)")
@@ -63,7 +63,7 @@ def main(argv=None):
             preset = presets.parse_legacy_name(args.preset)
             files = presets.resolve_files(preset, args.media_dir, args.usb_dir)
             if preset["sync_master"]:
-                print("pvj-player: network sync is not ported yet; playing locally only", file=sys.stderr)
+                print("nxlx-player: network sync is not ported yet; playing locally only", file=sys.stderr)
             extra = hardware.playback_profile(hardware.detect_board(), hardware.has_desktop())["mpv_args"]
             player.extra_args = extra + player.extra_args
             player.play(files, loop=preset["loop"], spawn=not args.no_spawn)
@@ -78,6 +78,6 @@ def main(argv=None):
         else:
             getattr(player, c)(args.value)
     except PlayerError as e:
-        print("pvj-player: %s" % e, file=sys.stderr)
+        print("nxlx-player: %s" % e, file=sys.stderr)
         return 1
     return 0

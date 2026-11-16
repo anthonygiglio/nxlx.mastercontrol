@@ -70,6 +70,10 @@ jobs:
         run: git fetch --depth=1 origin 1a6484b835f0494b0e80ec7972f9b9d272478d01
       - name: The release before D101 (sources), for the rollback tests of tests/test_sources.py
         run: git fetch --depth=1 origin 06d10674578b3178a6783845160279aa31f96311
+      - name: The release before the rename of the system names (tests/test_nxlx_convert.py installs its old node with it; tests/test_release.py runs its updater)
+        run: git fetch --depth=1 origin 0ff0ddbeb662efb405186a0e774839cb1f61b2de
+      - name: The release before the package rename (tests/test_release.py runs its updater on this release's bundle)
+        run: git fetch --depth=1 origin 1057087dcc9939af9044f68d03ef3ea72a322116
       - name: Install mpv
         timeout-minutes: 10   # usually half a minute; see the note at the top of this file
         run: tools/ci-apt.sh mpv
@@ -166,17 +170,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: ShellCheck the installer and image scripts (strict)
-        run: shellcheck install/install.sh tools/make-release.sh image/stage-pvj/prerun.sh image/stage-pvj/00-install-pvj/01-run.sh tests/real_install_test.sh tests/real_convert_test.sh
+        run: shellcheck install/install.sh tools/make-release.sh image/stage-nxlx/prerun.sh image/stage-nxlx/00-install-nxlx/01-run.sh tests/real_install_test.sh tests/real_convert_test.sh
 
   real-convert:
-    # The node converter (bin/nxlx-convert, D136) run for real, as root, under the runner's systemd: today's release
-    # installed, a stand-in release with the new names made by tools/rename-apply.py, then --plan, --run (in its own
+    # The node converter (bin/nxlx-convert, D136) run for real, as root, under the runner's systemd: the release
+    # before the rename of the system names installed, this checkout as the new release, then --plan, --run (in its own
     # unit), --confirm, --undo and the timed undo, with usermod, groupmod, visudo, systemctl and the timer for real.
     # Not a required check. The runner is thrown away afterwards; not a test of a Raspberry Pi.
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - name: The release before the rename of the system names (the old node is installed from it)
+        run: git fetch --depth=1 origin 0ff0ddbeb662efb405186a0e774839cb1f61b2de
       - name: Install mpv
         timeout-minutes: 10   # usually half a minute; see the note at the top of this file
         run: tools/ci-apt.sh mpv
@@ -184,13 +190,17 @@ jobs:
         run: sudo PVJ_REAL_CONVERT_TEST=yes-this-machine-is-disposable bash tests/real_convert_test.sh
 
   real-install:
-    # The installer run for real, as root, under the runner's systemd: who owns what in /run/pvj after an upgrade
-    # over an old shared folder, restarts, a crash and a reinstall (D45). The runner is thrown away afterwards.
+    # The installer run for real, as root, under the runner's systemd: first the release before the rename of the
+    # system names, installed by its own installer and upgraded through this one (the node is converted, undone and
+    # converted again: rename PR 7); then who owns what in /run/nxlx after an upgrade over an old shared folder,
+    # restarts, a crash and a reinstall (D45). The runner is thrown away afterwards.
     # Not a test of a Raspberry Pi: no display, and not the box's systemd.
     runs-on: ubuntu-24.04
-    timeout-minutes: 25       # about ten since the NDI hand-over steps (each looks at mpv for ten seconds)
+    timeout-minutes: 30       # about ten since the NDI hand-over steps (each looks at mpv for ten seconds), and the upgrade
     steps:
       - uses: actions/checkout@v4
+      - name: The release before the rename of the system names (installed first, then upgraded through install.sh)
+        run: git fetch --depth=1 origin 0ff0ddbeb662efb405186a0e774839cb1f61b2de
       - name: Install mpv
         timeout-minutes: 10   # usually half a minute; see the note at the top of this file
         run: tools/ci-apt.sh mpv
@@ -389,7 +399,7 @@ jobs:
         timeout-minutes: 15
         run: |
           run="PVJ_RENDER_TEST=1 LIBGL_ALWAYS_SOFTWARE=1 python3 -X faulthandler -m unittest -v tests.test_mctl_render tests.test_renderer tests.test_graphics_gpu tests.test_graphics_position"
-          if [ -n "${{ matrix.container }}" ]; then prlimit --rtprio=1:1 --pid $$     # as LimitRTPRIO=1 in pvj-player.service
+          if [ -n "${{ matrix.container }}" ]; then prlimit --rtprio=1:1 --pid $$     # as LimitRTPRIO=1 in nxlx-player.service
           else sudo prlimit --rtprio=1:1 --pid $$; fi
           echo "real-time limit: $(ulimit -r)"
           if [ -n "${{ matrix.container }}" ]; then setpriv --reuid=ci --regid=ci --clear-groups env HOME=/home/ci sh -c "$run" > /tmp/render.txt 2>&1 || code=$?     # su would drop the limit
@@ -419,7 +429,7 @@ jobs:
     # The Ableton Link follower (render/link/, D117): built with every warning an error against Debian 13's own
     # ableton-link-dev (the Pi's distribution; arch-independent headers, so this is the source the Pi builds), then run
     # for real beside a stand-in peer inside the container, on its own network and nowhere else. A skip here is a
-    # failure. No other job needs the package: tests/test_pvj_link.py skips without PVJ_LINK_TEST=1.
+    # failure. No other job needs the package: tests/test_nxlx_link.py skips without PVJ_LINK_TEST=1.
     name: pvj-link (Debian 13)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -441,17 +451,17 @@ jobs:
             sleep 5
           done
           exit 1
-      - name: Build pvj-link and the stand-in peer (every warning an error)
+      - name: Build nxlx-link and the stand-in peer (every warning an error)
         run: |
           dpkg-query -W -f '${Version}\n' ableton-link-dev
-          make -C render WERROR=1 pvj-link pvj-link-peer
-      - name: pvj-link for real, beside a stand-in peer (a skip is a failure)
+          make -C render WERROR=1 nxlx-link nxlx-link-peer
+      - name: nxlx-link for real, beside a stand-in peer (a skip is a failure)
         timeout-minutes: 5
         run: |
-          PVJ_LINK_TEST=1 python3 -X faulthandler -m unittest -v tests.test_pvj_link > /tmp/link.txt 2>&1 || code=$?
+          PVJ_LINK_TEST=1 python3 -X faulthandler -m unittest -v tests.test_nxlx_link > /tmp/link.txt 2>&1 || code=$?
           cat /tmp/link.txt
           if grep -q -E "skipped|OK \(skipped" /tmp/link.txt; then
-            echo "::error::a test of pvj-link was skipped: it judges nothing here"
+            echo "::error::a test of nxlx-link was skipped: it judges nothing here"
             exit 1
           fi
           grep -q -E "^Ran [1-9]" /tmp/link.txt || { echo "::error::no test ran"; exit 1; }
@@ -483,17 +493,17 @@ jobs:
             sleep 5
           done
           exit 1
-      - name: Build pvj-raster (every warning an error)
+      - name: Build nxlx-raster (every warning an error)
         run: |
           dpkg-query -W -f '${Package} ${Version}\n' libpng-dev libjpeg62-turbo-dev libfreetype-dev
-          make -C render WERROR=1 pvj-raster
-      - name: pvj-raster for real, on good, damaged and hostile pictures (a skip is a failure)
+          make -C render WERROR=1 nxlx-raster
+      - name: nxlx-raster for real, on good, damaged and hostile pictures (a skip is a failure)
         timeout-minutes: 8
         run: |
           PVJ_RASTER_TEST=1 python3 -X faulthandler -m unittest -v tests.test_raster > /tmp/raster.txt 2>&1 || code=$?
           cat /tmp/raster.txt
           if grep -q -E "skipped|OK \(skipped" /tmp/raster.txt; then
-            echo "::error::a test of pvj-raster was skipped: it judges nothing here"
+            echo "::error::a test of nxlx-raster was skipped: it judges nothing here"
             exit 1
           fi
           grep -q -E "^Ran [1-9]" /tmp/raster.txt || { echo "::error::no test ran"; exit 1; }

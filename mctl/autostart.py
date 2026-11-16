@@ -135,7 +135,7 @@ class Autostart:
         self._level_owed -= 1
         if self._level_owed <= 0:
             self._level_owed = 0
-            self.log("pvj-web: could not put the picture's level back on the restarted player: %s" % why)
+            self.log("nxlx-web: could not put the picture's level back on the restarted player: %s" % why)
 
     def run_now(self, drive=None):
         """Do what the settings say (in usb mode, `drive` is the drive just plugged in). Returns the message; errors
@@ -175,7 +175,7 @@ class Autostart:
             result = {"ok": False, "message": "error: %s" % e}
         result["at"] = time.strftime("%Y-%m-%d %H:%M:%S")
         self.last = result
-        self.log("pvj-web: autostart %s: %s" % (cfg["mode"], result["message"]))
+        self.log("nxlx-web: autostart %s: %s" % (cfg["mode"], result["message"]))
         return result["message"]
 
     def _drives_with_clips(self):
@@ -204,7 +204,7 @@ class Autostart:
             return False
         label = sorted(new)[0]
         self._usb_last_run = now_t
-        self.log("pvj-web: autostart: USB drive %s plugged in" % label)
+        self.log("nxlx-web: autostart: USB drive %s plugged in" % label)
         self.run_now(drive=label)
         return True
 
@@ -218,7 +218,7 @@ class Autostart:
             try:
                 screen.watch(pid)
             except Exception as e:
-                self.log("pvj-web: screen output: %s" % e)
+                self.log("nxlx-web: screen output: %s" % e)
         if pid is not None and pid == self.seen_pid and self._ticks % AUDIO_CHECK_EVERY == 0:
             ensure = getattr(self.api, "ensure_audio", None)
             if ensure:
@@ -228,13 +228,13 @@ class Autostart:
             try:                            # the screen's size changed, or a mask's file was replaced or deleted (D100)
                 masks.watch()
             except Exception as e:
-                self.log("pvj-web: masks: %s" % e)
+                self.log("nxlx-web: masks: %s" % e)
         gfx = getattr(self.api, "gfx", None)
         if gfx is not None and pid is not None and pid == self.seen_pid:
             try:                            # the screen's size changed, or a logo's file was replaced or deleted (D129)
                 gfx.watch()
             except Exception as e:
-                self.log("pvj-web: graphics: %s" % e)
+                self.log("nxlx-web: graphics: %s" % e)
         if self._level_owed and pid is not None and pid == self.seen_pid:
             self._restore_level()           # it did not land when the player was first seen
         if self.settings.data["autostart"].get("mode") != "usb":
@@ -250,7 +250,7 @@ class Autostart:
             try:
                 apply_audio()
             except Exception as e:
-                self.log("pvj-web: could not set the sound output: %s" % e)
+                self.log("nxlx-web: could not set the sound output: %s" % e)
         self._level_owed = LEVEL_TRIES
         self._restore_level()
         apply_overlay = getattr(self.api, "apply_overlay", None)
@@ -258,25 +258,25 @@ class Autostart:
             try:
                 apply_overlay()
             except Exception as e:
-                self.log("pvj-web: could not put the overlay back: %s" % e)
+                self.log("nxlx-web: could not put the overlay back: %s" % e)
         apply_graphics = getattr(getattr(self.api, "gfx", None), "apply", None)
         if apply_graphics and self.settings.data.get("graphics", {}).get("items"):    # and the text and logos
             try:
                 apply_graphics(restarted=True)
             except Exception as e:
-                self.log("pvj-web: could not put the graphics back: %s" % e)
+                self.log("nxlx-web: could not put the graphics back: %s" % e)
         sync = getattr(self.api, "sync", None)
         if sync is not None:                 # a restarted player lost the wall crop
             try:
                 sync.apply_wall(force=True)
             except Exception as e:
-                self.log("pvj-web: could not put the wall crop back: %s" % e)
+                self.log("nxlx-web: could not put the wall crop back: %s" % e)
         apply_mapper = getattr(self.api, "apply_mapper", None)
         if apply_mapper and self.settings.data.get("mapper", {}).get("surfaces"):   # it lost the mapping too
             try:
                 apply_mapper()
             except Exception as e:
-                self.log("pvj-web: could not put the mapping back: %s" % e)
+                self.log("nxlx-web: could not put the mapping back: %s" % e)
         cfg = self.settings.data["autostart"]
         if cfg["mode"] == "off":
             return False
@@ -295,7 +295,7 @@ class Autostart:
                 try:
                     self.tick()
                 except Exception as e:
-                    self.log("pvj-web: autostart error: %s" % e)
+                    self.log("nxlx-web: autostart error: %s" % e)
         self._thread = threading.Thread(target=loop, name="autostart", daemon=True)
         self._thread.start()
 

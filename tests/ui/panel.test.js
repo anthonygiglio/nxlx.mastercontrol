@@ -1685,7 +1685,7 @@ function startServer(env) {          // env: more for the harness's environment 
     await page.waitForSelector('#ndiruntime');
     assert(/NDI is not set up on this node/.test(await page.textContent('#ndinotsetup')), 'a box that did not opt in says so in plain words');
     assert(!/is not running/.test(await page.textContent('#ndiruntime')), 'and does not speak of a helper that stopped: there never was one');
-    assert.strictEqual(await page.textContent('#ndicommand'), 'sudo pvj-ndi-runtime install "/path/to/NDI SDK for Linux"', 'the one command is named');
+    assert.strictEqual(await page.textContent('#ndicommand'), 'sudo nxlx-ndi-runtime install "/path/to/NDI SDK for Linux"', 'the one command is named');
     assert.strictEqual((await get('/api/ndi')).setup, false, 'the route says the same');
     assert((await page.textContent('#ndimark')).includes('NDI® is a registered trademark of Vizrt NDI AB.'), 'the trademark sentence is beside the list of sources');
     assert.deepStrictEqual(await page.$$eval('#ndimark a', (as) => as.map((a) => [a.getAttribute('href'), a.getAttribute('rel'), a.getAttribute('target')])),
@@ -1877,7 +1877,7 @@ function startServer(env) {          // env: more for the harness's environment 
       await page.waitForSelector('.ndidisc-entry:has-text("192.168.1.5:5959")');
       const scoped = await get('/api/ndi');
       assert.deepStrictEqual([scoped.discovery, scoped.discovery_now], [['192.168.1.5:5959'], []], 'saved, and not said to be in force on a box that cannot hand it to NDI');
-      assert(!/pvj-ndi-runtime refresh/.test(scoped.notice), 'a box with no NDI set-up at all is not told to refresh one: ' + scoped.notice);
+      assert(!/nxlx-ndi-runtime refresh/.test(scoped.notice), 'a box with no NDI set-up at all is not told to refresh one: ' + scoped.notice);
       assert.strictEqual(await page.textContent('#ndiscopenow'), 'Not looking yet: NDI is not set up on this node.', 'and the line still says why nothing is looked for');
       assert.strictEqual(await page.textContent('#ndiallowedempty'), 'No pad holds an NDI source yet.');
       const before = page.viewportSize();
@@ -1908,7 +1908,7 @@ function startServer(env) {          // env: more for the harness's environment 
       await switchOn(DS);
       await page.waitForSelector('#ndiscnotsetup');
       assert(/is not set up on this node, so nothing listens/.test(await page.textContent('#ndiscnotsetup')), 'a box without the set-up says so');
-      assert.strictEqual(await page.textContent('#ndisccommand'), 'sudo pvj-ndi-runtime server install "/path/to/NDI SDK for Linux"', 'the one command is named');
+      assert.strictEqual(await page.textContent('#ndisccommand'), 'sudo nxlx-ndi-runtime server install "/path/to/NDI SDK for Linux"', 'the one command is named');
       // The two halves (2026-10-12): the page says it RUNS a server, and whether this box's own input asks it. NDI
       // input is off here, so the line says that and there is no switch.
       assert.strictEqual(await page.textContent('#ndisccard h2'), 'The discovery server this node runs');

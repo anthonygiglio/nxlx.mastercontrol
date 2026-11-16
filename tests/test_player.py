@@ -133,7 +133,7 @@ class CliTest(unittest.TestCase):
         import subprocess
         import sys
         env = dict(os.environ, PVJ_RUNTIME_DIR=self.dir)
-        return subprocess.run([sys.executable, os.path.join(os.path.dirname(__file__), "..", "bin", "pvj-player"),
+        return subprocess.run([sys.executable, os.path.join(os.path.dirname(__file__), "..", "bin", "nxlx-player"),
                                "--mpv-arg=--vo=null", "--mpv-arg=--ao=null", *args],
                               capture_output=True, text=True, env=env, timeout=30)
 
@@ -159,7 +159,7 @@ class CliTest(unittest.TestCase):
         self.dir = tempfile.mkdtemp()
         info = json.loads(self.run_cli("info").stdout)
         self.assertIn("board", info)
-        r = subprocess.run([sys.executable, os.path.join(os.path.dirname(__file__), "..", "bin", "pvj-selftest")],
+        r = subprocess.run([sys.executable, os.path.join(os.path.dirname(__file__), "..", "bin", "nxlx-selftest")],
                            capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertTrue(all(c["ok"] for c in json.loads(r.stdout)["checks"]))
@@ -172,7 +172,7 @@ class ServiceTest(unittest.TestCase):
         os.chmod(self.dir, 0o770)
         self.env = dict(os.environ, PVJ_RUNTIME_DIR=self.dir)
         self.cli = [__import__("sys").executable,
-                    os.path.join(os.path.dirname(__file__), "..", "bin", "pvj-player"),
+                    os.path.join(os.path.dirname(__file__), "..", "bin", "nxlx-player"),
                     "--mpv-arg=--vo=null", "--mpv-arg=--ao=null"]
 
     def run_cli(self, *args):

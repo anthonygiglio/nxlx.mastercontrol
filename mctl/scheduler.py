@@ -199,7 +199,7 @@ class Scheduler:
             result = {"ok": False, "message": "error: %s" % e}
         result["at"] = minute.strftime("%Y-%m-%d %H:%M")
         self.last[entry["id"]] = result
-        self.log("pvj-web: schedule %s %s at %s: %s" % (entry["id"], action, result["at"], result["message"]))
+        self.log("nxlx-web: schedule %s %s at %s: %s" % (entry["id"], action, result["at"], result["message"]))
         if action == "scene" or not result["ok"]:       # the event log (D125): a scene that ran, and any entry that failed
             what = "scene" if action == "scene" else action.replace("_", " ")
             text = ("A scheduled %s ran." % what) if result["ok"] else ("A scheduled %s failed: %s" % (what, result["message"]))
@@ -218,7 +218,7 @@ class Scheduler:
                 try:
                     self.tick()
                 except Exception as e:
-                    self.log("pvj-web: scheduler error: %s" % e)
+                    self.log("nxlx-web: scheduler error: %s" % e)
         self._thread = threading.Thread(target=loop, name="scheduler", daemon=True)
         self._thread.start()
 

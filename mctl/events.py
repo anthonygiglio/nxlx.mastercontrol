@@ -120,7 +120,7 @@ class EventLog:
             os.replace(tmp, self.path)
         except OSError as e:
             if self._ok:
-                self.log("pvj-web: the event log could not be written (%s); it goes on in memory" % (e.strerror or e))
+                self.log("nxlx-web: the event log could not be written (%s); it goes on in memory" % (e.strerror or e))
             self._ok = False
             return
         self._ok = True

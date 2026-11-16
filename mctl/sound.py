@@ -1,10 +1,10 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""Sound reactivity (D96, mctl/SOUND.md): the service `pvj-sound` and what it shares with the panel.
+"""Sound reactivity (D96, mctl/SOUND.md): the service `nxlx-sound` and what it shares with the panel.
 
 The service runs `arecord` on the capture device the Owner chose, analyses each block of 20 ms in pure Python
 (level, envelope, onsets and beats with a rough tempo, six bands) and writes the result into one file of 128 bytes,
-`/run/pvj-sound/levels`, whose layout is fixed below (LEVELS). It has no network at all (its unit), keeps no settings
+`/run/nxlx-sound/levels`, whose layout is fixed below (LEVELS). It has no network at all (its unit), keeps no settings
 (the panel tells it what the Owner chose over its socket, which answers the panel's account only) and stores no
 sound: the samples of one block live in memory for that block.
 
@@ -639,7 +639,7 @@ class Service:
     def _set(self, state, why):
         with self.lock:
             if (self.state, self.why) != (state, why):
-                self.log("pvj-sound: %s (%s)" % (state, why))
+                self.log("nxlx-sound: %s (%s)" % (state, why))
             self.state, self.why = state, why
 
     # -- the file --
@@ -713,7 +713,7 @@ class Service:
                     self._feed_run(want)
                 except Exception as e:           # as for a capture: said, and the thread goes on
                     self._set("problem", "the analysis stopped (%s); starting again" % type(e).__name__)
-                    self.log("pvj-sound: the analysis of a feed stopped: %r" % e)
+                    self.log("nxlx-sound: the analysis of a feed stopped: %r" % e)
                     time.sleep(0.2)
                 continue
             elif not want["device"]:
@@ -728,7 +728,7 @@ class Service:
                         continue                 # it ended because the wish changed: look again at once
                 except Exception as e:           # a fault of this program must not end the thread with the socket still answering
                     self._set("problem", "the analysis stopped (%s); starting again" % type(e).__name__)
-                    self.log("pvj-sound: the analysis stopped: %r" % e)
+                    self.log("nxlx-sound: the analysis stopped: %r" % e)
                 wait = BACKOFF[min(self.fails, len(BACKOFF) - 1)]
                 self.fails += 1
                 self.publish(IDLE, F_IDLE)
@@ -863,7 +863,7 @@ def main(argv=None):
     os.makedirs(rundir, mode=0o750, exist_ok=True)
     allowed = set()
     try:
-        allowed.add(pwd.getpwnam("pvj-web").pw_uid)
+        allowed.add(pwd.getpwnam("nxlx-web").pw_uid)
     except KeyError:
         allowed.add(os.getuid())                   # on a desk: whoever runs it
     service = Service(os.path.join(rundir, paths.SOUND_LEVELS), program=os.environ.get("PVJ_ARECORD") or "/usr/bin/arecord",
@@ -871,7 +871,7 @@ def main(argv=None):
     worker = threading.Thread(target=service.run, name="sound-capture", daemon=True)
     worker.start()
     server = NetServer(os.path.join(rundir, paths.SOUND_SOCKET), service, lambda uid: uid in allowed)
-    print("pvj-sound: ready; it analyses levels only and keeps no sound", flush=True)
+    print("nxlx-sound: ready; it analyses levels only and keeps no sound", flush=True)
     import signal
     signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt))
     try:

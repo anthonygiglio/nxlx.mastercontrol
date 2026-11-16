@@ -6,15 +6,15 @@ StartLimitIntervalSec=0
 
 [Service]
 # Root, but with no capabilities of its own: it only asks systemd (reboot, poweroff) and systemd-timedated
-# (set the clock) over D-Bus, and answers only root and pvj-web on its socket.
+# (set the clock) over D-Bus, and answers only root and nxlx-web on its socket.
 User=root
-Group=pvj
+Group=nxlx-svc
 UMask=0027
-# Its own folder, root:pvj 0750: members of group pvj can reach the socket but cannot replace it.
-RuntimeDirectory=pvj-sysd
+# Its own folder, root:nxlx-svc 0750: members of group nxlx-svc can reach the socket but cannot replace it.
+RuntimeDirectory=nxlx-sysd
 RuntimeDirectoryMode=0750
-Environment=PVJ_SYSD_DIR=/run/pvj-sysd
-ExecStart=@PVJ_DIR@/bin/pvj-sysd
+Environment=PVJ_SYSD_DIR=/run/nxlx-sysd
+ExecStart=@PVJ_DIR@/bin/nxlx-sysd
 Restart=always
 RestartSec=2
 
@@ -30,7 +30,7 @@ DevicePolicy=closed
 DeviceAllow=/dev/vcio rw
 # D127: the one avahi service file that announces the node to the local network (mctl/FLEET.md). D128: the Pi's boot files, for the AV output choice.
 # "-": no error where avahi is not installed or the boot folder is not there.
-ReadWritePaths=/run/pvj-sysd -/etc/avahi/services -/boot/firmware
+ReadWritePaths=/run/nxlx-sysd -/etc/avahi/services -/boot/firmware
 PrivateNetwork=yes
 IPAddressDeny=any
 MemoryDenyWriteExecute=yes

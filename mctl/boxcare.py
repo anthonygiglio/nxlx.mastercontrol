@@ -71,7 +71,7 @@ BOX_OWN = ("screen", "renderer", "sound", "link", "fleet", "timezone")    # "ren
 ENVELOPE = ("format", "format_version", "exported", "version", "box", "passwords_included", "settings", "themes")
 KEEP_IMPORT_BACKUPS = 3
 KEEP_SESSION_BACKUPS = 3          # copies of the settings from before a support session's first import, one per session
-LOG_UNITS = ("pvj-web.service", "pvj-player.service", "pvj-sysd.service", "pvj-netd.service", "pvj-supportd.service")
+LOG_UNITS = ("nxlx-web.service", "nxlx-player.service", "nxlx-sysd.service", "nxlx-netd.service", "nxlx-supportd.service")
 LOG_LINES, LOG_LINE_MAX = 300, 400
 CONFIRM_IMPORT, CONFIRM_RESET = "import", "factory-reset"
 SECRET_WORDS = "pass|pwd|psk|secret|token|key|auth|sign"       # a name holding one of these is followed by a secret
@@ -1074,7 +1074,7 @@ class BoxCare:
             except themes_mod.ThemeError as e:
                 problems.append("Look: the theme %s could not be kept: %s" % (_printable(incoming[tid]["name"]), e))
         problems += self._apply()
-        print("pvj-web: settings imported by %s" % device["name"], flush=True)
+        print("nxlx-web: settings imported by %s" % device["name"], flush=True)
         return {"imported": sorted(clean), "notes": notes, "problems": problems, "backup": backup,
                 "passwords_kept": kept, "passwords_in_file": passwords, "themes": themes, "kept_for_support": kept_for_support,
                 "changed": changed}
@@ -1109,7 +1109,7 @@ class BoxCare:
         return sorted((s for s in found if isinstance(s, str) and len(s) >= 3), key=len, reverse=True)
 
     def _helper_log(self, secrets):
-        """The log through the root helper (pvj-sysd), which may read the system journal that this service may not: this
+        """The log through the root helper (nxlx-sysd), which may read the system journal that this service may not: this
         start's lines and, when the journal is kept across restarts, the end of the one before. None when there is no
         helper here or it did not answer (the caller then tries the direct way, and says why). Each line is scrubbed whole and only then
         cut to length, as in read_log. A dict when it answered; else the reason as text (or None when there is no
@@ -1138,10 +1138,10 @@ class BoxCare:
             if before.get("ok") and isinstance(before.get("lines"), list):
                 out["previous_start"] = clean(before["lines"])
         if lines:
-            out["note"] = ("the last %d lines of this start from the node's own services (pvj-*), with PINs, codes and logins "
+            out["note"] = ("the last %d lines of this start from the node's own services (nxlx-*), with PINs, codes and logins "
                            "removed. %s" % (len(lines), keep))
         else:
-            out["note"] = "No pvj-* log lines were found for this start. %s" % keep
+            out["note"] = "No nxlx-* log lines were found for this start. %s" % keep
         return out
 
     def read_log(self, secrets=()):
@@ -1171,7 +1171,7 @@ class BoxCare:
         if not lines:
             return {"readable": False, "lines": [],
                     "note": "No log lines came back. The panel runs as its own unprivileged user, which is not allowed to read the "
-                            "system log. On the node: sudo journalctl -b -u 'pvj-*'"}
+                            "system log. On the node: sudo journalctl -b -u 'nxlx-*'"}
         return {"readable": True, "lines": lines, "note": "the last %d lines of this start, with PINs, codes and logins removed" % len(lines)}
 
     def _events_for_file(self):
@@ -1377,6 +1377,6 @@ class BoxCare:
             problems += self._apply()
         finally:
             api._upload_lock.release()
-        print("pvj-web: factory reset by %s (clips %s)" % (device["name"], "deleted" if media == "delete" else "kept"), flush=True)
+        print("nxlx-web: factory reset by %s (clips %s)" % (device["name"], "deleted" if media == "delete" else "kept"), flush=True)
         return {"reset": True, "media": media, "deleted": deleted, "problems": problems,
-                "note": "Every device is unpaired. The new PIN is on the node's display (or: sudo pvj-pin)."}
+                "note": "Every device is unpaired. The new PIN is on the node's display (or: sudo nxlx-pin)."}

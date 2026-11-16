@@ -15,7 +15,7 @@ Show safety (the owner's rules; D133). All of these are tested:
 
 * the state lives only in this object, in memory. It is never written to settings, an export, a preset, a scene, the
   schedule, autostart, the Room or the fleet, and nothing but the route handler (`Api.set_stats_overlay`) turns it on;
-* at every start of pvj-web it sends `osd-overlay ID none` (`reset_player`), because the player outlives a restart of this
+* at every start of nxlx-web it sends `osd-overlay ID none` (`reset_player`), because the player outlives a restart of this
   program and may still be drawing the last text;
 * it goes off by itself when the player is another process (a crash, a screen mode, a renderer change or a fall back),
   after an auto-off time (15 minutes by default, 1 to 240 asked for), and when the player does not answer for a while;
@@ -25,7 +25,7 @@ Show safety (the owner's rules; D133). All of these are tested:
 
 The sampler is a thread that exists only while the overlay is on. It looks once a second: one connection to the player
 for all the questions (`Ipc.batch`), /proc/stat for the CPU, /proc/meminfo, the thermal zones, and every five seconds the
-firmware's throttling word from the root helper (`pvj-sysd`, command `throttled`). Where the helper is missing or older, the
+firmware's throttling word from the root helper (`nxlx-sysd`, command `throttled`). Where the helper is missing or older, the
 overlay says "throttling: unknown" and carries on.
 """
 
@@ -259,7 +259,7 @@ class StatsOverlay:
             raise
         if not was_on:
             self.api.event("player", "Stats on the output were turned on (%s, off by itself in %d minutes)." % (CORNER_WORDS[corner], minutes), who=who, urgent=False)
-            self.log("pvj-web: stats on the output on (%s, %d minutes)" % (corner, minutes))
+            self.log("nxlx-web: stats on the output on (%s, %d minutes)" % (corner, minutes))
         self._start_thread()
         return self.state()
 
@@ -276,7 +276,7 @@ class StatsOverlay:
                 self.api.event("player", "Stats on the output went off by themselves: %s." % why, urgent=False)
             else:
                 self.api.event("player", "Stats on the output were turned off.", who=who, urgent=False)
-            self.log("pvj-web: stats on the output off%s" % (" (%s)" % why if why else ""))
+            self.log("nxlx-web: stats on the output off%s" % (" (%s)" % why if why else ""))
         return was_on
 
     def stop_if_on(self, why):
@@ -363,7 +363,7 @@ class StatsOverlay:
         return ok
 
     def reset_player(self, tries=None, delay=1.0, sleep=time.sleep, cap=30.0):
-        """At every start of pvj-web: the player outlives this program, so what it was told to draw last is taken off. Tries
+        """At every start of nxlx-web: the player outlives this program, so what it was told to draw last is taken off. Tries
         again with a back-off (delay, then twice that, and so on up to `cap` seconds) until the player takes it or says it does
         not know the command (a renderer before 0.12.0 has nothing to take off); `tries` bounds it for a test. It also ends when
         the overlay has been turned on since, which needed a player that answers. True when cleared."""
@@ -400,7 +400,7 @@ class StatsOverlay:
             try:
                 self.tick()
             except Exception as e:                  # never takes the panel down
-                self.log("pvj-web: stats overlay: %s" % e)
+                self.log("nxlx-web: stats overlay: %s" % e)
             if not self.on:
                 return
 
@@ -537,7 +537,7 @@ class StatsOverlay:
         out = []
         try:
             for entry in self.api._ip_json():
-                if entry.get("ifname") in ("lo", "wg-pvj"):
+                if entry.get("ifname") in ("lo", "wg-nxlx"):
                     continue
                 for a in entry.get("addr_info", []):
                     if a.get("family") == "inet" and a.get("local"):
@@ -569,7 +569,7 @@ class StatsOverlay:
         return max(0, min(100, round(100.0 * (1 - (idle - prev[1]) / (total - prev[0])))))
 
     def _ask_helper(self):
-        """The firmware's throttling word from pvj-sysd, or None (helper missing, too old, or not a Pi). A short timeout: a
+        """The firmware's throttling word from nxlx-sysd, or None (helper missing, too old, or not a Pi). A short timeout: a
         helper that hangs must not stall the sampler."""
         client = getattr(self.api, "sysd", None)
         path = getattr(client, "path", None)

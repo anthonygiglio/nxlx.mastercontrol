@@ -74,8 +74,8 @@ class Env:
         self.root = tempfile.mkdtemp()
         self.restarts = 0
         self.healthy = True
-        os.makedirs(os.path.join(self.root, "etc/pvj"))
-        os.makedirs(os.path.join(self.root, "var/lib/pvj"))
+        os.makedirs(os.path.join(self.root, "etc/nxlx"))
+        os.makedirs(os.path.join(self.root, "var/lib/nxlx"))
         self.updater = Updater(root=self.root, install=self.install, restart=self.restart, health=lambda: self.healthy)
         test.addCleanup(shutil.rmtree, self.root, True)
 
@@ -89,11 +89,11 @@ class Env:
         self.restarts += 1
 
     def write_settings(self, schema=1, marker="x"):
-        with open(os.path.join(self.root, "var/lib/pvj/settings.json"), "w") as f:
+        with open(os.path.join(self.root, "var/lib/nxlx/settings.json"), "w") as f:
             json.dump({"schema": schema, "marker": marker}, f)
 
     def settings(self):
-        with open(os.path.join(self.root, "var/lib/pvj/settings.json")) as f:
+        with open(os.path.join(self.root, "var/lib/nxlx/settings.json")) as f:
             return json.load(f)
 
     def trust_nothing(self):
@@ -151,21 +151,26 @@ class HelperTest(unittest.TestCase):
         info = update.inspect_bundle(tree)
         self.assertEqual(info["version"], "2.3.4")
         self.assertGreaterEqual(info["schema"], 1)
-        os.unlink(os.path.join(tree, "bin", "pvj-web"))
+        os.unlink(os.path.join(tree, "bin", "nxlx-web"))
         with self.assertRaises(UpdateError):
             update.inspect_bundle(tree)
 
-    def test_inspect_bundle_takes_the_layout_before_the_rename_too(self):
-        """For one release a rollback bundle with the package folder under its old name (pvj/) passes."""
-        tree = make_tree("2.3.4")
-        self.addCleanup(shutil.rmtree, tree, True)
-        os.rename(os.path.join(tree, "mctl"), os.path.join(tree, "pvj"))
-        info = update.inspect_bundle(tree)
-        self.assertEqual(info["version"], "2.3.4")
-        self.assertGreaterEqual(info["schema"], 1)
-        os.unlink(os.path.join(tree, "pvj", "__init__.py"))
-        with self.assertRaises(UpdateError):
-            update.inspect_bundle(tree)
+    def test_inspect_bundle_refuses_a_release_from_before_the_system_rename(self):
+        """A bundle with the old program names (bin/pvj-player) or the old package folder would install the old
+        layout beside the converted one (rename PR 7): refused, with the way back named."""
+        for old in ("bin", "pvj"):
+            tree = make_tree("2.3.4")
+            self.addCleanup(shutil.rmtree, tree, True)
+            if old == "bin":
+                for name in ("nxlx-player", "nxlx-web"):
+                    os.rename(os.path.join(tree, "bin", name), os.path.join(tree, "bin", name.replace("nxlx-", "pvj-")))
+            else:
+                os.rename(os.path.join(tree, "mctl"), os.path.join(tree, "pvj"))
+                os.unlink(os.path.join(tree, "bin", "nxlx-player"))
+            with self.assertRaises(UpdateError) as e:
+                update.inspect_bundle(tree)
+            self.assertIn("before the rename of the system names", str(e.exception))
+            self.assertIn("nxlx-convert --undo", str(e.exception))
 
 
 @unittest.skipUnless(HAVE_SSH, "ssh-keygen not installed")
@@ -234,7 +239,7 @@ class UpdaterTest(unittest.TestCase):
         self.assertEqual((st["current"], st["previous"], st["releases"]), ("1.1.0", "1.0.0", ["1.0.0", "1.1.0"]))
         self.assertEqual(len(os.listdir(self.u.backup_dir())), 1)  # the first install had no settings to back up
         self.assertGreater(self.env.restarts, 0)
-        self.assertTrue(os.path.isfile(os.path.join(self.env.root, "opt/pvj/releases/1.1.0/bin/pvj-web")))
+        self.assertTrue(os.path.isfile(os.path.join(self.env.root, "opt/nxlx/releases/1.1.0/bin/nxlx-web")))
 
     def test_failed_health_check_rolls_back_automatically(self):
         self.apply("1.0.0")
@@ -269,7 +274,7 @@ class UpdaterTest(unittest.TestCase):
         with self.assertRaises(UpdateError):
             self.u.apply(fresh, log=lambda *_: None)  # signature required by default
         self.assertIsNone(self.u.status()["current"])
-        self.assertFalse(os.path.isdir(os.path.join(self.env.root, "opt/pvj/releases")) and os.listdir(os.path.join(self.env.root, "opt/pvj/releases")))
+        self.assertFalse(os.path.isdir(os.path.join(self.env.root, "opt/nxlx/releases")) and os.listdir(os.path.join(self.env.root, "opt/nxlx/releases")))
 
     def test_installer_failure_leaves_current_untouched(self):
         self.apply("1.0.0")
@@ -290,13 +295,27 @@ class UpdaterTest(unittest.TestCase):
         st = self.u.status()
         self.assertEqual((st["current"], st["previous"]), ("1.0.0", "1.1.0"))
         self.assertEqual(self.env.settings()["marker"], "v1-era")
-        aside = [n for n in os.listdir(os.path.join(self.env.root, "var/lib/pvj")) if "rolled-back" in n]
+        aside = [n for n in os.listdir(os.path.join(self.env.root, "var/lib/nxlx")) if "rolled-back" in n]
         self.assertEqual(len(aside), 1)  # newer settings set aside, not deleted
 
     def test_rollback_without_previous_is_an_error(self):
         self.apply("1.0.0")
         with self.assertRaises(UpdateError):
             self.u.rollback(log=lambda *_: None)
+
+    def test_rollback_to_a_release_from_before_the_system_rename_is_refused_and_changes_nothing(self):
+        """After a conversion the previous release is the one with the old names (bin/pvj-web): it does not run under
+        the new units, so only the converter's undo goes back to it (rename PR 7)."""
+        self.apply("1.0.0")
+        self.apply("1.1.0")
+        old = os.path.join(self.env.root, "opt/nxlx/releases/1.0.0/bin")
+        for name in os.listdir(old):
+            os.rename(os.path.join(old, name), os.path.join(old, name.replace("nxlx-", "pvj-")))
+        before = (self.u.status(), self.env.restarts)
+        with self.assertRaises(UpdateError) as e:
+            self.u.rollback(log=lambda *_: None)
+        self.assertIn("nxlx-convert --undo", str(e.exception))
+        self.assertEqual((self.u.status(), self.env.restarts), before)
 
     def test_whitespace_only_checksum_file_is_a_clean_error(self):
         bundle = make_bundle("1.0.0")
@@ -361,12 +380,12 @@ class UpdaterTest(unittest.TestCase):
         self.addCleanup(httpd.server_close)
         self.addCleanup(httpd.shutdown)
         port = httpd.server_address[1]
-        with open(os.path.join(self.env.root, "etc/pvj/pvj.env"), "w") as f:
+        with open(os.path.join(self.env.root, "etc/nxlx/nxlx.env"), "w") as f:
             f.write("# panel port\nPVJ_PORT=%d\n" % port)
         real = Updater(root=self.env.root)
         self.assertEqual(real.configured_port(), str(port))
         self.assertTrue(real._http_health(timeout=3))
-        with open(os.path.join(self.env.root, "etc/pvj/pvj.env"), "w") as f:
+        with open(os.path.join(self.env.root, "etc/nxlx/nxlx.env"), "w") as f:
             f.write("PVJ_PORT=1\n")
         self.assertFalse(real._http_health(timeout=1.2))
 
@@ -375,8 +394,8 @@ class UpdaterTest(unittest.TestCase):
         self.apply("1.0.0")
         self.env.write_settings(marker="v1")
         self.apply("1.1.0")
-        path = os.path.join(self.env.root, "var/lib/pvj/settings.json")
-        os.chown(path, 23456, 34567)  # as if pvj-web owns it
+        path = os.path.join(self.env.root, "var/lib/nxlx/settings.json")
+        os.chown(path, 23456, 34567)  # as if nxlx-web owns it
         self.u.rollback(log=lambda *_: None)
         st = os.stat(path)
         self.assertEqual((st.st_uid, st.st_gid, st.st_mode & 0o777), (23456, 34567, 0o600))

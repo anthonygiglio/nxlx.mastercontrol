@@ -299,7 +299,7 @@ class EveryChangeTest(Base):
         self.h("POST", "/api/osc", {}, self.full_dev, LAN)
         self.assertEqual([l for l in self.lines[n:] if "remote support support-" in l], [])
         self.h("POST", "/api/pin/show", {}, dev, TUNNEL)            # a refusal is a line of its own kind (the security review)
-        self.assertEqual([l for l in self.lines[n:] if "remote support support-" in l], ["pvj-web: remote support support-1: was refused POST /api/pin/show"])
+        self.assertEqual([l for l in self.lines[n:] if "remote support support-" in l], ["nxlx-web: remote support support-1: was refused POST /api/pin/show"])
 
 
 class NdiTest(Base):
@@ -374,7 +374,7 @@ class NdiTest(Base):
 
     def test_a_file_adds_no_ndi_address_or_discovery_server_off_the_boxes_own_networks(self):
         self.api._ip_json = lambda: [{"ifname": "eth0", "addr_info": [{"family": "inet", "local": "192.168.1.5", "prefixlen": 24}]},
-                                     {"ifname": "wg-pvj", "addr_info": [{"family": "inet", "local": "10.77.0.5", "prefixlen": 24}]}]
+                                     {"ifname": "wg-nxlx", "addr_info": [{"family": "inet", "local": "10.77.0.5", "prefixlen": 24}]}]
         with self.settings.lock:
             self.settings.data["ndi"] = {"addresses": ["10.9.9.9"], "discovery": ["10.9.9.8:5959"]}
         for part, bad, ok in (("addresses", ["10.9.9.9", "10.77.0.9"], ["10.9.9.9", "192.168.1.40"]),
@@ -402,7 +402,7 @@ class NdiTest(Base):
         network's own and broadcast addresses are no device; a studio network that overlaps the support session's
         network does not make the tunnel's addresses local; and with no way to read the networks nothing is local."""
         self.api._ip_json = lambda: [{"ifname": "eth0", "addr_info": [{"family": "inet", "local": "192.168.1.5", "prefixlen": 24}]},
-                                     {"ifname": "wg-pvj", "addr_info": [{"family": "inet", "local": "10.77.0.5", "prefixlen": 24}]}]
+                                     {"ifname": "wg-nxlx", "addr_info": [{"family": "inet", "local": "10.77.0.5", "prefixlen": 24}]}]
         on = self.api.ndi_on_own_net
         self.assertEqual([on(a) for a in ("192.168.1.40", "192.168.1.41:5960", "192.168.1.5", "192.168.1.5:5959", "192.168.1.0",
                                           "192.168.1.255", "10.77.0.9", "192.168.2.5", "x")],
@@ -771,7 +771,7 @@ class AttackTest(Base):
 
     def test_feedback_targets_cannot_be_pointed_at_the_helper_or_out_of_the_building(self):
         self.api._ip_json = lambda: [{"ifname": "eth0", "addr_info": [{"family": "inet", "local": "192.168.1.5", "prefixlen": 24}]},
-                                     {"ifname": "wg-pvj", "addr_info": [{"family": "inet", "local": "10.77.0.5", "prefixlen": 24}]}]
+                                     {"ifname": "wg-nxlx", "addr_info": [{"family": "inet", "local": "10.77.0.5", "prefixlen": 24}]}]
         dev = self.session("full")
         for address in (TUNNEL, "10.77.0.1", "203.0.113.9", "8.8.8.8", "192.168.1.5", "192.168.1.255", "127.0.0.1", "192.168.2.9"):
             st, out = self.remote("POST", "/api/osc/feedback", {"add": {"name": "me", "address": address, "port": 9000}}, dev)
@@ -858,7 +858,7 @@ class AttackTest(Base):
         outlives the session. Through the tunnel one may be removed or narrowed, and one added only if it is private
         and the box is directly connected to it; by the route and by a file."""
         self.api._ip_json = lambda: [{"ifname": "eth0", "addr_info": [{"family": "inet", "local": "192.168.1.5", "prefixlen": 24}]},
-                                     {"ifname": "wg-pvj", "addr_info": [{"family": "inet", "local": "10.77.0.5", "prefixlen": 24}]}]
+                                     {"ifname": "wg-nxlx", "addr_info": [{"family": "inet", "local": "10.77.0.5", "prefixlen": 24}]}]
         self.settings.data["osc"]["allow"] = ["192.168.7.0/24", "172.16.0.0/16"]
         dev = self.session("full")
         with mock.patch.object(self.api.osc, "apply", lambda: None):

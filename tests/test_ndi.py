@@ -408,8 +408,8 @@ class ReceiverTest(unittest.TestCase):
         self.assertIn("did not open", r.status()["message"])
 
     def test_roots_pipe_is_written_by_a_helper_that_is_not_root(self):
-        """Found on the owner's Pi, 2026-10-12: on a box the pipe is root's (0660 root:pvj-ndi) and the helper runs
-        as pvj-ndi, and the helper took only a pipe of its own, so every source ended "the input pipe was replaced"."""
+        """Found on the owner's Pi, 2026-10-12: on a box the pipe is root's (0660 root:nxlx-ndi) and the helper runs
+        as nxlx-ndi, and the helper took only a pipe of its own, so every source ended "the input pipe was replaced"."""
         real = os.fstat
 
         class Owned:                                                     # the same pipe, said to be somebody's
@@ -495,7 +495,7 @@ class FakeClient:
     def request(self, message, timeout=None):
         self.sent.append(message)
         if self.down:
-            raise ndi.NdiError("the NDI helper (pvj-ndi) is not running")
+            raise ndi.NdiError("the NDI helper (nxlx-ndi) is not running")
         if self.answer is not None:
             return self.answer
         return json.loads(json.dumps(self.service.handle(json.loads(json.dumps(message)))))
@@ -518,7 +518,7 @@ class ServiceTest(unittest.TestCase):
             if self.missing:
                 raise ndi.NdiError("the NDI runtime is not on this node yet")
             return self.lib
-        self.s = ndi.Service(self.dir, "/opt/pvj-ndi/libndi.so.6", loader=loader, log=lambda *_: None, first_frame=0.3,
+        self.s = ndi.Service(self.dir, "/opt/nxlx-ndi/libndi.so.6", loader=loader, log=lambda *_: None, first_frame=0.3,
                              problem=lambda path: "the NDI runtime is not on this node yet" if self.missing else None)
         self.addCleanup(self.s.close)
         self.rid = ndi.source_id("RESOLUME (Output)", "192.168.0.20")
@@ -665,7 +665,7 @@ class InputTest(unittest.TestCase):
         self.assertEqual((st["helper"], st["runtime"]["loaded"], st["addresses"], [s["name"] for s in st["sources"]]),
                          (True, True, ["10.0.0.5"], ["RESOLUME (Output)"]))
         self.assertEqual(st["install"]["get"], "https://ndi.video/")
-        self.assertIn("pvj-ndi-runtime install", st["install"]["command"])
+        self.assertIn("nxlx-ndi-runtime install", st["install"]["command"])
         self.i.status()
         self.assertEqual(len(self.lib.finders), 1)
         self.wanted[1] = []
@@ -1100,7 +1100,7 @@ class PlayerPipeFormatTest(unittest.TestCase):
         p = Player.__new__(Player)
         p.ipc, p._lock = Ipc(), threading.RLock()
         p.is_running, p._end_source = (lambda: True), (lambda: None)
-        p.play_pipe("/run/pvj-ndi/ndi.fifo", 1920, 1080, 59.94, "uyvy422")
+        p.play_pipe("/run/nxlx-ndi/ndi.fifo", 1920, 1080, 59.94, "uyvy422")
         load = [a for a in sent if a[0] == "loadfile"][0]
         self.assertIn("demuxer-rawvideo-mp-format=uyvy422", load[4])
         self.assertIn("demuxer-rawvideo-fps=59.94", load[4])
@@ -1496,7 +1496,7 @@ class ReplySizeTest(unittest.TestCase):
                 self.assertIsNotNone(ndi.clean_name(name), kind)
                 worst.append((name.encode(), ("h" * 85 + "%03d.local:65535" % n).encode()[-ndi.MAX_WHERE:]))
         lib = FakeLib(worst)
-        s = ndi.Service(d, "/opt/pvj-ndi/libndi.so.6", loader=lambda path: lib, problem=lambda path: None, log=lambda *_: None, first_frame=0.3)
+        s = ndi.Service(d, "/opt/nxlx-ndi/libndi.so.6", loader=lambda path: lib, problem=lambda path: None, log=lambda *_: None, first_frame=0.3)
         self.addCleanup(s.close)
         s.handle({"cmd": "configure", "on": True, "addresses": ["192.168.100.%d" % n for n in range(100, 116)]})
         st = s.handle({"cmd": "status"})
@@ -1548,11 +1548,11 @@ class LostConnectionTest(unittest.TestCase):
         time.sleep(1.0)
         self.assertLessEqual(len(calls), 8, "the capture thread span")
         self.assertGreaterEqual(len(calls), 2)
-        self.assertEqual(logged, ["pvj-ndi: the connection to RESOLUME (Output) dropped; waiting for it"])
+        self.assertEqual(logged, ["nxlx-ndi: the connection to RESOLUME (Output) dropped; waiting for it"])
         back.set()
         self.assertTrue(r.first.wait(3))
         self.assertTrue(wait(lambda: len(logged) == 2))
-        self.assertEqual(logged[1], "pvj-ndi: RESOLUME (Output) is back")
+        self.assertEqual(logged[1], "nxlx-ndi: RESOLUME (Output) is back")
         started = time.monotonic()
         r.close()
         self.assertLess(time.monotonic() - started, 1.5)
@@ -1752,11 +1752,11 @@ class WatchTest(unittest.TestCase):
         self.assertEqual(gaps[:6], [3, 6, 12, 24, 48, 60])
         self.assertEqual(set(gaps[5:]), {60})
         self.assertLess(len(tries), 1500)                                # it was 28,800 a day
-        self.assertEqual(self.logged, ["pvj-web: NDI source RESOLUME (Output) not shown again yet: that source is not on the network now"])
+        self.assertEqual(self.logged, ["nxlx-web: NDI source RESOLUME (Output) not shown again yet: that source is not on the network now"])
         self.assertEqual(self.i.current["id"], self.rid)                 # still wanted: it comes back when the sender does
 
         def other(sid):
-            raise ndi.NdiError("the NDI helper (pvj-ndi) is not running")
+            raise ndi.NdiError("the NDI helper (nxlx-ndi) is not running")
         self.now[0] += 61
         self.i.tick(other)
         self.assertEqual(len(self.logged), 2)                            # a new reason is a new line
@@ -1811,14 +1811,14 @@ class OffMeansNoNdiCodeTest(unittest.TestCase):
         self.assertEqual(asked, [])
         reply = s.handle({"cmd": "configure", "on": False, "addresses": []})
         self.assertEqual((asked, reply["ok"], reply["on"], lib.closed_finders), ([1], True, False, 2))     # the answer still goes out
-        self.assertIn("pvj-ndi: the NDI input was switched off; starting again without the NDI runtime", logged)
+        self.assertIn("nxlx-ndi: the NDI input was switched off; starting again without the NDI runtime", logged)
 
     def test_the_helper_as_started_ends_itself_and_answers_only_the_panels_account(self):
         import inspect
         src = inspect.getsource(ndi.main)
         self.assertIn("service.on_unload = lambda: threading.Timer(0.5, os._exit, [0]).start()", src)
         # who may ask: the panel's account, and nobody else (not root, not the player, which is in the folder's group)
-        self.assertIn('allowed.add(pwd.getpwnam("pvj-web").pw_uid)', src)
+        self.assertIn('allowed.add(pwd.getpwnam("nxlx-web").pw_uid)', src)
         self.assertIn("lambda uid: uid in allowed", src)
         self.assertNotIn("allowed = {0}", src)
         from unittest import mock
@@ -1837,7 +1837,7 @@ class OffMeansNoNdiCodeTest(unittest.TestCase):
         import pwd
         web = mock.Mock(pw_uid=4242)
         with mock.patch.dict(os.environ, {"PVJ_NDI_DIR": d, "PVJ_NDI_PIPE_DIR": d}), mock.patch("mctl.netd.NetServer", Server), \
-                mock.patch.object(pwd, "getpwnam", lambda name: web if name == "pvj-web" else (_ for _ in ()).throw(KeyError(name))), \
+                mock.patch.object(pwd, "getpwnam", lambda name: web if name == "nxlx-web" else (_ for _ in ()).throw(KeyError(name))), \
                 mock.patch("builtins.print"):
             self.assertEqual(ndi.main([]), 0)
         self.assertEqual(made["path"], os.path.join(d, paths.NDI_SOCKET))
@@ -1917,10 +1917,10 @@ class PipeCheckTest(NdiApiTest):
         from unittest import mock
         import pwd
         from mctl import server
-        # root makes the pipe (the tmpfiles lines pvj-ndi-runtime writes), so root is its owner; the helper only writes it
+        # root makes the pipe (the tmpfiles lines nxlx-ndi-runtime writes), so root is its owner; the helper only writes it
         self.assertIn("pipe_owner=ndi_mod.pipe_owner", inspect.getsource(server.build))
         self.assertEqual(ndi.pipe_owner(), 0)
-        with mock.patch.object(pwd, "getpwnam", lambda name: mock.Mock(pw_uid=777) if name == "pvj-ndi" else None):
+        with mock.patch.object(pwd, "getpwnam", lambda name: mock.Mock(pw_uid=777) if name == "nxlx-ndi" else None):
             self.assertEqual(ndi.helper_uid(), 777)
 
         def none(name):
@@ -2105,7 +2105,7 @@ class SourceIsPlainTextTest(unittest.TestCase):
         # Escapes for a bidirectional override and a zero-width space once landed in this file as the characters.
         here = os.path.dirname(os.path.abspath(__file__))
         for path in (os.path.join(here, "test_ndi.py"), os.path.join(here, "..", "mctl", "ndi.py"),
-                     os.path.join(here, "..", "mctl", "systemd", "pvj-ndi.service"), os.path.join(here, "..", "bin", "pvj-ndi-runtime"),
+                     os.path.join(here, "..", "mctl", "systemd", "nxlx-ndi.service"), os.path.join(here, "..", "bin", "nxlx-ndi-runtime"),
                      os.path.join(here, "..", "mctl", "ndisetup.py"), os.path.join(here, "test_ndi_setup.py")):
             with open(path, encoding="utf-8") as f:
                 odd = sorted({"U+%04X" % ord(ch) for ch in f.read() if ord(ch) > 126 or (ord(ch) < 32 and ch not in "\n\t")})
@@ -2513,15 +2513,15 @@ class LostPlayerTest(NdiApiTest):
                 return pid[0]
         p = Player.__new__(Player)
         p.ipc, p._lock = Ipc(), threading.RLock()
-        p._pipe, p._pipe_pid, p._pipe_path = True, 41, "/run/pvj-ndi-pipe/ndi.fifo"
-        self.assertFalse(p.pipe_restarted("/run/pvj-ndi-pipe/ndi.fifo"))        # the same mpv: nothing was lost
+        p._pipe, p._pipe_pid, p._pipe_path = True, 41, "/run/nxlx-ndi-pipe/ndi.fifo"
+        self.assertFalse(p.pipe_restarted("/run/nxlx-ndi-pipe/ndi.fifo"))        # the same mpv: nothing was lost
         pid[0] = 77                                                             # another process
         self.assertFalse(p.pipe_restarted("/run/mctl-capture/capture.fifo"))     # not this pipe
-        self.assertTrue(p.pipe_restarted("/run/pvj-ndi-pipe/ndi.fifo"))
-        self.assertFalse(p.pipe_is("/run/pvj-ndi-pipe/ndi.fifo"))               # and it does not play
-        self.assertTrue(p.pipe_restarted("/run/pvj-ndi-pipe/ndi.fifo"))         # until something is loaded
+        self.assertTrue(p.pipe_restarted("/run/nxlx-ndi-pipe/ndi.fifo"))
+        self.assertFalse(p.pipe_is("/run/nxlx-ndi-pipe/ndi.fifo"))               # and it does not play
+        self.assertTrue(p.pipe_restarted("/run/nxlx-ndi-pipe/ndi.fifo"))         # until something is loaded
         p._pipe, p._pipe_gone = False, None                                     # what every load and clear does
-        self.assertFalse(p.pipe_restarted("/run/pvj-ndi-pipe/ndi.fifo"))
+        self.assertFalse(p.pipe_restarted("/run/nxlx-ndi-pipe/ndi.fifo"))
 
     def test_a_first_press_whose_pipe_is_not_what_it_should_be_keeps_its_reason_for_the_page(self):
         """Low 8: with nothing playing before, the refusal left "ended" empty: black, and no reason on the page."""
@@ -2678,7 +2678,7 @@ class HelperRestartTest(NdiApiTest):
             self.assertFalse(self.api.ndi_tick())                    # no helper: nothing to ask, nothing forgotten
             self.assertEqual(self.api.ndi.current["id"], self.rid)
             page = self.call("GET", "/api/ndi", token=self.full)[1]  # and the page says why the screen is black
-            self.assertEqual((page["playing"], page["ended"]), (None, {"name": "RESOLUME (Output)", "message": "the NDI helper (pvj-ndi) is not running; trying again"}))
+            self.assertEqual((page["playing"], page["ended"]), (None, {"name": "RESOLUME (Output)", "message": "the NDI helper (nxlx-ndi) is not running; trying again"}))
             self.assertIsNone(self.lit(False))                       # black: the pad is not lit while nothing of it is on the screen
             self.back(sources=False)
             self.assertTrue(self.api.ndi_tick())                     # the new helper is told the settings; the sender is not found yet
@@ -2735,7 +2735,7 @@ class HelperRestartTest(NdiApiTest):
         self.enable()
         undo = self.dies_while_connecting()
         st, body, _ = self.call("POST", "/api/play", {"ndi": self.rid}, token=self.full)
-        self.assertEqual((st, body["error"]), (409, "the NDI helper (pvj-ndi) is not running"))
+        self.assertEqual((st, body["error"]), (409, "the NDI helper (nxlx-ndi) is not running"))
         self.assertIsNone(self.api.ndi.current)
         undo()
         self.back()
@@ -2854,35 +2854,35 @@ class PlayerLetsGoTest(NdiApiTest):
                 return 41
         p = Player.__new__(Player)
         p.ipc, p._lock, p.path = Ipc(), threading.RLock(), None
-        self.assertIsNone(p.release_pipe("/run/pvj-ndi-pipe/ndi.fifo"))         # nothing was loaded
+        self.assertIsNone(p.release_pipe("/run/nxlx-ndi-pipe/ndi.fifo"))         # nothing was loaded
         p._pipe, p._pipe_pid, p._pipe_path = True, 41, "/run/mctl-capture/capture.fifo"
-        self.assertIsNone(p.release_pipe("/run/pvj-ndi-pipe/ndi.fifo"))         # the capture input's pipe plays: not ours to end
+        self.assertIsNone(p.release_pipe("/run/nxlx-ndi-pipe/ndi.fifo"))         # the capture input's pipe plays: not ours to end
         self.assertNotIn(("stop",), sent)
         del sent[:]
-        p._pipe_path = "/run/pvj-ndi-pipe/ndi.fifo"
-        self.assertIs(p.release_pipe("/run/pvj-ndi-pipe/ndi.fifo"), True)
+        p._pipe_path = "/run/nxlx-ndi-pipe/ndi.fifo"
+        self.assertIs(p.release_pipe("/run/nxlx-ndi-pipe/ndi.fifo"), True)
         self.assertEqual(sent, [("stop",)] + [("get_property", "idle-active")] * 3)
         # mpv is idle now: the panel's record no longer says that the pipe plays (the open that follows may fail)
-        self.assertEqual((p._pipe, p.pipe_is("/run/pvj-ndi-pipe/ndi.fifo")), (False, False))
+        self.assertEqual((p._pipe, p.pipe_is("/run/nxlx-ndi-pipe/ndi.fifo")), (False, False))
         p._pipe = True       # asked until mpv itself says it holds nothing
-        self.assertTrue(p.pipe_is("/run/pvj-ndi-pipe/ndi.fifo"))                # still what the panel loaded last (the watch goes by it)
+        self.assertTrue(p.pipe_is("/run/nxlx-ndi-pipe/ndi.fifo"))                # still what the panel loaded last (the watch goes by it)
         idle[:] = [False]
         p.RELEASE_SECONDS = 0.2
         began = time.monotonic()
-        self.assertIs(p.release_pipe("/run/pvj-ndi-pipe/ndi.fifo"), False)      # a player that does not let go: said, and bounded
+        self.assertIs(p.release_pipe("/run/nxlx-ndi-pipe/ndi.fifo"), False)      # a player that does not let go: said, and bounded
         self.assertLess(time.monotonic() - began, 1.0)
         # a panel that started again remembers no load, and its mpv still has the pipe: mpv's own word counts
-        p._pipe, p.path, idle[:] = False, "/run/pvj-ndi-pipe/ndi.fifo", [True]
+        p._pipe, p.path, idle[:] = False, "/run/nxlx-ndi-pipe/ndi.fifo", [True]
         del sent[:]
-        self.assertIs(p.release_pipe("/run/pvj-ndi-pipe/ndi.fifo"), True)
+        self.assertIs(p.release_pipe("/run/nxlx-ndi-pipe/ndi.fifo"), True)
         self.assertEqual(sent, [("get_property", "path"), ("stop",), ("get_property", "idle-active")])
         p.path = "/media/a.mp4"
-        self.assertIsNone(p.release_pipe("/run/pvj-ndi-pipe/ndi.fifo"))         # mpv plays a clip: nothing is stopped
+        self.assertIsNone(p.release_pipe("/run/nxlx-ndi-pipe/ndi.fifo"))         # mpv plays a clip: nothing is stopped
         self.assertEqual(sent[-1], ("get_property", "path"))
         p._pipe, p.ipc.down = True, "no reply from mpv"
-        self.assertIs(p.release_pipe("/run/pvj-ndi-pipe/ndi.fifo"), False)      # no answer from a player that is there: not "let go"
+        self.assertIs(p.release_pipe("/run/nxlx-ndi-pipe/ndi.fifo"), False)      # no answer from a player that is there: not "let go"
         p.ipc.down = Player.NOT_RUNNING
-        self.assertIs(p.release_pipe("/run/pvj-ndi-pipe/ndi.fifo"), True)       # a player that is not there holds nothing
+        self.assertIs(p.release_pipe("/run/nxlx-ndi-pipe/ndi.fifo"), True)       # a player that is not there holds nothing
         try:                                                                    # and these are the words the real Ipc gives for it
             Ipc_real(os.path.join(tempfile.mkdtemp(), "none.sock")).request("get_property", "pid")
         except PlayerError as e:
@@ -3029,17 +3029,17 @@ class PlayerDidNotOpenTest(NdiApiTest):
                 return tracks[0]
         p = Player.__new__(Player)
         p.ipc, p._lock = Ipc(), threading.RLock()
-        p._pipe, p._pipe_pid, p._pipe_path, p._pipe_since = True, 41, "/run/pvj-ndi-pipe/ndi.fifo", time.monotonic()
-        self.assertIsNone(p.pipe_stuck("/run/pvj-ndi-pipe/ndi.fifo"))          # just loaded: too early
+        p._pipe, p._pipe_pid, p._pipe_path, p._pipe_since = True, 41, "/run/nxlx-ndi-pipe/ndi.fifo", time.monotonic()
+        self.assertIsNone(p.pipe_stuck("/run/nxlx-ndi-pipe/ndi.fifo"))          # just loaded: too early
         self.assertEqual(sent, [])
         p._pipe_since -= Player.PIPE_OPENING_SECONDS + 0.1
-        self.assertIs(p.pipe_stuck("/run/pvj-ndi-pipe/ndi.fifo"), True)
+        self.assertIs(p.pipe_stuck("/run/nxlx-ndi-pipe/ndi.fifo"), True)
         self.assertEqual(sent, [("get_property", "track-list/count")])
         self.assertIsNone(p.pipe_stuck("/run/mctl-capture/capture.fifo"))       # not this pipe
         tracks[0] = 2
-        self.assertIs(p.pipe_stuck("/run/pvj-ndi-pipe/ndi.fifo"), False)
+        self.assertIs(p.pipe_stuck("/run/nxlx-ndi-pipe/ndi.fifo"), False)
         tracks[0] = PlayerError("no answer")
-        self.assertIsNone(p.pipe_stuck("/run/pvj-ndi-pipe/ndi.fifo"))
+        self.assertIsNone(p.pipe_stuck("/run/nxlx-ndi-pipe/ndi.fifo"))
 
 
 if __name__ == "__main__":

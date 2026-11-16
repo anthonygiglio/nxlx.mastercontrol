@@ -207,7 +207,7 @@ class UpdaterBase(Folder):
         super().setUp()
         self.root = self.dir
         self.u = Updater(root=self.root, install=lambda *a: None, restart=lambda: None, health=lambda: True)
-        self.prefix = os.path.join(self.root, "opt/pvj")
+        self.prefix = os.path.join(self.root, "opt/nxlx")
         self.me = os.getuid()
 
 
@@ -219,17 +219,17 @@ class ScratchSweep(UpdaterBase):
         self.addCleanup(os.umask, os.umask(0o022))               # the install is 755, as install.sh makes it
 
     def plant(self, name=".update-abcd1234"):
-        self.put("opt/pvj", name, "bundle.tar.gz", text="x" * 1000)
-        self.put("opt/pvj", name, "tree", "mctl", "__init__.py")
+        self.put("opt/nxlx", name, "bundle.tar.gz", text="x" * 1000)
+        self.put("opt/nxlx", name, "tree", "mctl", "__init__.py")
         return name
 
     def test_a_planted_work_folder_is_removed_and_nothing_else_in_the_install(self):
         self.plant()
-        self.put("opt/pvj", "releases", "1.0.0", "mctl", "__init__.py")
-        self.put("opt/pvj", "previous")
-        self.put("opt/pvj", ".update-abcd1234x", "keep")         # nine characters: not a name check() makes
-        self.put("opt/pvj", ".updates", "keep")
-        self.put("opt/pvj", ".update-file0000")                  # a file, not a folder
+        self.put("opt/nxlx", "releases", "1.0.0", "mctl", "__init__.py")
+        self.put("opt/nxlx", "previous")
+        self.put("opt/nxlx", ".update-abcd1234x", "keep")         # nine characters: not a name check() makes
+        self.put("opt/nxlx", ".updates", "keep")
+        self.put("opt/nxlx", ".update-file0000")                  # a file, not a folder
         os.symlink("releases/1.0.0", os.path.join(self.prefix, "current"))
         self.assertEqual(self.u.sweep_scratch(owner=self.me), [".update-abcd1234"])
         self.assertEqual(self.names(self.prefix), [".update-abcd1234x", ".update-file0000", ".updates", "current", "previous",
@@ -280,7 +280,7 @@ class ScratchSweep(UpdaterBase):
         os.symlink(os.path.join(outside, "file"), os.path.join(tree, "mctl", "to-a-file"))
         os.symlink(os.path.join(outside, "nothing"), os.path.join(tree, "to-nothing"))
         os.mkfifo(os.path.join(tree, "a-pipe"))
-        os.chmod(self.put("opt/pvj", inside, "tree", "read-only"), 0o400)
+        os.chmod(self.put("opt/nxlx", inside, "tree", "read-only"), 0o400)
         self.assertEqual(self.u.sweep_scratch(owner=self.me), [inside])
         self.assertEqual(self.names(self.prefix), [])
         self.assertEqual(self.names(outside), ["file", "folder"])
@@ -306,19 +306,19 @@ class ScratchSweep(UpdaterBase):
         self.assertEqual(self.names(outside), ["precious"])
 
     def test_an_install_whose_path_leads_elsewhere_after_the_look_is_emptied_where_it_was_looked_at(self):
-        # The install is <dir>/a/opt/pvj. Between the look at the work folder and its removal, somebody who can
+        # The install is <dir>/a/opt/nxlx. Between the look at the work folder and its removal, somebody who can
         # write above the install moves `a` away and puts a tree of their own choosing at the same path. The
         # moment is made by hand: once, at whichever comes first of the old re-check and the new walk.
         u = Updater(root=os.path.join(self.dir, "a"))
-        prefix = os.path.join(self.dir, "a", "opt", "pvj")
-        self.put("a", "opt", "pvj", ".update-abcd1234", "tree", "x")
+        prefix = os.path.join(self.dir, "a", "opt", "nxlx")
+        self.put("a", "opt", "nxlx", ".update-abcd1234", "tree", "x")
         done = []
 
         def swap():
             if not done:
                 done.append(True)
                 os.rename(os.path.join(self.dir, "a"), os.path.join(self.dir, "b"))
-                self.put("a", "opt", "pvj", ".update-abcd1234", "precious")
+                self.put("a", "opt", "nxlx", ".update-abcd1234", "precious")
 
         def after(real):
             def wrapped(*a, **k):
@@ -338,7 +338,7 @@ class ScratchSweep(UpdaterBase):
         self.assertTrue(done)
         self.assertEqual(self.names(os.path.join(prefix, ".update-abcd1234")), ["precious"], "not the one looked at")
         self.assertEqual(gone, [".update-abcd1234"])
-        self.assertEqual(self.names(os.path.join(self.dir, "b", "opt", "pvj")), [])
+        self.assertEqual(self.names(os.path.join(self.dir, "b", "opt", "nxlx")), [])
 
     def test_a_work_folder_that_cannot_be_emptied_is_left_and_is_no_error(self):
         name = self.plant()
@@ -511,7 +511,7 @@ class Lock(Folder):
         update.take_lock(path).close()
 
     def test_a_missing_lock_folder_is_made_and_the_lock_still_excludes(self):
-        path = os.path.join(self.dir, "lock", "pvj-update.lock")
+        path = os.path.join(self.dir, "lock", "nxlx-update.lock")
         first = update.take_lock(path)
         self.addCleanup(first.close)
         self.assertTrue(os.path.isfile(path))
@@ -534,8 +534,8 @@ class Lock(Folder):
 
     def test_the_lock_is_in_the_update_units_folder_which_they_make_for_root_alone(self):
         self.assertEqual(os.path.dirname(update.DEFAULT_LOCK), paths.UPDATE_DIR)
-        self.assertEqual(update.OLD_LOCK, "/run/lock/pvj-update.lock")
-        for unit in ("pvj-update-usb@.service", "pvj-update-inbox@.service"):
+        self.assertEqual(update.OLD_LOCK, "/run/lock/pvj-update.lock")      # its name then: an older updater takes it
+        for unit in ("nxlx-update-usb@.service", "nxlx-update-inbox@.service"):
             text = self.read(os.path.join(os.path.dirname(__file__), "..", "install", unit))
             for line in ("User=root", "RuntimeDirectory=" + os.path.basename(paths.UPDATE_DIR),
                          "RuntimeDirectoryMode=0755", "RuntimeDirectoryPreserve=yes"):
@@ -599,7 +599,7 @@ class Lock(Folder):
         before = self.names()
         for what, old in (("a folder", self.dir), ("a link", os.path.join(self.dir, "link")), ("a pipe", pipe),
                           ("a file with two names", twice), ("in a file", os.path.join(target, "lock")),
-                          ("no such folder", os.path.join(self.dir, "missing", "pvj-update.lock"))):
+                          ("no such folder", os.path.join(self.dir, "missing", "nxlx-update.lock"))):
             f = update.take_lock(new, old=old)
             self.assertIsNotNone(f, what)
             f.close()
@@ -787,12 +787,13 @@ class EndToEnd(UpdaterBase):
         super().setUp()
         import functools
         self.addCleanup(os.umask, os.umask(0o022))
-        self.put("opt/pvj", "releases", "1.0.0", "mctl", "__init__.py")
-        self.put("opt/pvj", "releases", "2.0.0", "mctl", "__init__.py")
-        self.put("opt/pvj", "previous", text="/opt/pvj/releases/1.0.0\n")
-        os.symlink("/opt/pvj/releases/2.0.0", os.path.join(self.prefix, "current"))
+        self.put("opt/nxlx", "releases", "1.0.0", "mctl", "__init__.py")
+        self.put("opt/nxlx", "releases", "1.0.0", "bin", "nxlx-web")      # a release with the new names (rename PR 7)
+        self.put("opt/nxlx", "releases", "2.0.0", "mctl", "__init__.py")
+        self.put("opt/nxlx", "previous", text="/opt/nxlx/releases/1.0.0\n")
+        os.symlink("/opt/nxlx/releases/2.0.0", os.path.join(self.prefix, "current"))
         self.left = os.path.join(self.prefix, ".update-abcd1234")
-        self.put("opt/pvj", ".update-abcd1234", "tree", "mctl", "__init__.py")
+        self.put("opt/nxlx", ".update-abcd1234", "tree", "mctl", "__init__.py")
         self.result = os.path.join(self.dir, "result.json")
         real = functools.partial(Updater, root=self.root, install=lambda *a: None, restart=lambda: None,
                                  health=lambda: True)
@@ -809,7 +810,7 @@ class EndToEnd(UpdaterBase):
         with redirect_stdout(out), redirect_stderr(err):
             code = update.main(["rollback"])
         self.assertEqual(code, 0, err.getvalue())
-        self.assertEqual(os.readlink(os.path.join(self.prefix, "current")), "/opt/pvj/releases/1.0.0")
+        self.assertEqual(os.readlink(os.path.join(self.prefix, "current")), "/opt/nxlx/releases/1.0.0")
         self.assertEqual(json.loads(self.read(self.result))["state"], "done")
         return out.getvalue()
 

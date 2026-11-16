@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""pvj-selftest: run on each device and send the JSON report back.
+"""nxlx-selftest: run on each device and send the JSON report back.
 
-    bin/pvj-selftest            checks that need no display
-    bin/pvj-selftest --play     also plays a 6 second test pattern on the real screen
+    bin/nxlx-selftest            checks that need no display
+    bin/nxlx-selftest --play     also plays a 6 second test pattern on the real screen
 """
 
 import argparse
@@ -121,7 +121,7 @@ def clock_sync(root="/", ask=None):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="pvj-selftest")
+    ap = argparse.ArgumentParser(prog="nxlx-selftest")
     ap.add_argument("--play", action="store_true", help="also play a test pattern on the real display")
     ap.add_argument("--json", metavar="FILE", help="write the report to FILE as well")
     args = ap.parse_args(argv)

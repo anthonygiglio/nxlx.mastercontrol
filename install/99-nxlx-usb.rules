@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+# SPDX-License-Identifier: Apache-2.0
+# Automount USB drive partitions through systemd: the unit is started when the
+# partition appears and stopped (unmounting it) when the drive is pulled.
+ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="partition", ENV{ID_BUS}=="usb", ENV{ID_FS_USAGE}=="filesystem", TAG+="systemd", ENV{SYSTEMD_WANTS}+="nxlx-usb@%k.service"
+# Whole-disk drives with no partition table (common for USB sticks).
+ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", ENV{ID_BUS}=="usb", ENV{ID_FS_USAGE}=="filesystem", TAG+="systemd", ENV{SYSTEMD_WANTS}+="nxlx-usb@%k.service"

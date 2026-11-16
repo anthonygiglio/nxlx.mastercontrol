@@ -1,6 +1,6 @@
 <!-- SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
      SPDX-License-Identifier: Apache-2.0 -->
-# Sound reactivity (`pvj-sound`, D96)
+# Sound reactivity (`nxlx-sound`, D96)
 
 The box listens to a capture device (a USB audio input, a line in) and turns what it hears into a few numbers: how loud, a smoothed envelope, beats and a tempo, and six band levels. Those numbers drive the picture: a shader input on the classic renderer today (slowly), OSC to other programs, and every frame in the new renderer's phase 4 (D95).
 
@@ -10,9 +10,9 @@ The box listens to a capture device (a USB audio input, a line in) and turns wha
 
 | Part | Where | What it does |
 | --- | --- | --- |
-| The service | `mctl/sound.py`, `bin/pvj-sound`, `install/pvj-sound.service` | Runs `arecord` on the chosen device, analyses each block, writes the levels file. No network at all. |
-| The levels file | `/run/pvj-sound/levels` | 128 bytes, the layout below, 50 times a second (once a second while idle). Group `audio`, 0640. |
-| The service's socket | `/run/pvj-sound/sound.sock` | Answers the panel's account only: `status`, `configure`. |
+| The service | `mctl/sound.py`, `bin/nxlx-sound`, `install/nxlx-sound.service` | Runs `arecord` on the chosen device, analyses each block, writes the levels file. No network at all. |
+| The levels file | `/run/nxlx-sound/levels` | 128 bytes, the layout below, 50 times a second (once a second while idle). Group `audio`, 0640. |
+| The service's socket | `/run/nxlx-sound/sound.sock` | Answers the panel's account only: `status`, `configure`. |
 | The panel's side | `mctl/soundout.py`, `Api.get_sound` and the routes | The page, the meter, OSC out, the shader mapping, telling the service what the Owner chose. |
 
 ## Sources (D97)
@@ -76,7 +76,7 @@ Ten and twenty seconds of generated sound (a sine, a hum and noise, a burst ever
 
 ## The levels file
 
-`/run/pvj-sound/levels`, 128 bytes, little-endian, written in place. Version 1. Add fields only in the reserved bytes and raise the version only for a change a reader must know; never move a field.
+`/run/nxlx-sound/levels`, 128 bytes, little-endian, written in place. Version 1. Add fields only in the reserved bytes and raise the version only for a change a reader must know; never move a field.
 
 | Offset | Type | Field |
 | --- | --- | --- |
@@ -113,7 +113,7 @@ One tempo and one beat position for the box, kept by itself between beats like a
 
 | Source | What feeds it | How far it is trusted | Stays in charge for |
 | --- | --- | --- | --- |
-| `link` | Ableton Link, through the helper `pvj-link` (below) | most: the tempo and the place in the bar at once, every time | 5 s, counted from the record's own time |
+| `link` | Ableton Link, through the helper `nxlx-link` (below) | most: the tempo and the place in the bar at once, every time | 5 s, counted from the record's own time |
 | `tap` | taps, or a tempo typed in | sets the tempo and the phase at once | until `clear`: the hand wins and sound never takes over from it |
 | `osc` | `/nxlx/sound/in/bpm` and `/nxlx/sound/in/beat` | the tempo at once; a beat sets the phase at once | 5 s |
 | `sound` | this service's tempo and beats | only at a confidence of 0.5 or more (`SOUND_MIN_CONFIDENCE`), and then only the tempo and a gentle push of the phase: a hit more than 0.3 beat from the grid is ignored, a nearer one moves the phase by 15 percent of its distance | 3 s |
@@ -151,9 +151,9 @@ The box can follow a Link session on its network: it takes the tempo and the pla
 
 | Part | Where | What it does |
 | --- | --- | --- |
-| The helper | `render/link/pvj-link.cpp`, `install/pvj-link.service` | A small C++ program built at install from Debian's `ableton-link-dev`. GPL-3.0-or-later, its own account and group, no capabilities, a read-only system, no devices. |
-| The state file | `/run/pvj-link/state` | 56 bytes, the layout at the top of `pvj-link.cpp`: the tempo, the place in the bar, the peers, and when (CLOCK_MONOTONIC). At most 20 times a second, once a second while nobody is there. Group `pvj-link`, 0640. |
-| The socket | `/run/pvj-link/link.sock` | Answers the panel's account only: `status`, `on`, `off`. |
+| The helper | `render/link/nxlx-link.cpp`, `install/nxlx-link.service` | A small C++ program built at install from Debian's `ableton-link-dev`. GPL-3.0-or-later, its own account and group, no capabilities, a read-only system, no devices. |
+| The state file | `/run/nxlx-link/state` | 56 bytes, the layout at the top of `nxlx-link.cpp`: the tempo, the place in the bar, the peers, and when (CLOCK_MONOTONIC). At most 20 times a second, once a second while nobody is there. Group `nxlx-link`, 0640. |
+| The socket | `/run/nxlx-link/link.sock` | Answers the panel's account only: `status`, `on`, `off`. |
 | The panel's side | `mctl/link.py` | The setting, telling the helper, reading the file where the levels are read, `link` in `GET /api/tempo` and `GET /api/sound`. |
 
 **What it does on the network.** Off: nothing, not even listening; the Link object is disabled. On and alone: it listens for another peer on Link's multicast address (224.76.78.75, port 20808) and sends nothing; the only thing that leaves the box is the network's own join for that address. When it hears a peer it waits 0.75 s and then enables Link, because when two Link sessions meet the **older one wins** and the younger takes its tempo: a box that sat alone in a session of its own would hand Link's default tempo to any program that switched Link on (seen on a desk, two peers: the newer one went from 133 to 120 BPM). Waiting makes sure the box is always the younger. When the last peer has been gone for a second it disables Link and listens again.

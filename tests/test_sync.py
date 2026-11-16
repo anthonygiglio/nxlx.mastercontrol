@@ -223,9 +223,9 @@ class ManagerTest(unittest.TestCase):
 
     def test_only_media_and_usb_files_are_synced(self):
         props = {"path": "/srv/video/show.mp4", "time-pos": 1.0}
-        m, _ = self.manager(props, media_dir="/srv/video", usb_root="/media/pvj")
+        m, _ = self.manager(props, media_dir="/srv/video", usb_root="/media/nxlx")
         self.assertEqual(m.state()["f"], "show.mp4")
-        for path in ("/run/pvj/capture.fifo", "srt://10.0.0.5:9000", "/etc/passwd", "av://lavfi:smptehdbars"):
+        for path in ("/run/nxlx/capture.fifo", "srt://10.0.0.5:9000", "/etc/passwd", "av://lavfi:smptehdbars"):
             props["path"] = path
             self.assertEqual(m.state()["st"], "stop", path)          # clients stop instead of showing "missing file"
 
@@ -270,7 +270,7 @@ class ManagerTest(unittest.TestCase):
         self.assertFalse(first.is_alive())
 
     def test_server_state_from_the_player(self):
-        props = {"path": "/var/lib/pvj/video/show.mp4", "time-pos": 12.3456, "speed": 1.0, "pause": False,
+        props = {"path": "/var/lib/nxlx/video/show.mp4", "time-pos": 12.3456, "speed": 1.0, "pause": False,
                  "loop-file": "inf", "duration": 90.0}
 
         class Ipc:
@@ -280,7 +280,7 @@ class ManagerTest(unittest.TestCase):
         class Api:
             mix = {"blackout": True}
             player = type("P", (), {"ipc": Ipc()})()
-        Api.media_dir = "/var/lib/pvj/video"
+        Api.media_dir = "/var/lib/nxlx/video"
         m = sync.SyncManager(Api(), None, log=lambda *_: None)
         st = m.state()
         self.assertEqual((st["st"], st["f"], st["p"], st["lp"], st["d"], st["bk"]), ("play", "show.mp4", 12.346, True, 90.0, True))

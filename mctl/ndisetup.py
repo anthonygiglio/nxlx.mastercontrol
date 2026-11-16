@@ -3,16 +3,16 @@
 """Setting the NDI helper up on a box, and taking it off again. Root's code, and all of root's code for this.
 
 The NDI input is opt-in (D62, the owner's answer of 2026-10-08). A box that was only installed has nothing of it
-beyond program files: no pvj-ndi unit, no pvj-ndi account or group, no avahi added, nothing in the units of the
-panel and the player. One command at the box, `sudo pvj-ndi-runtime install <the NDI SDK>` (mctl/ndi.py), puts the
+beyond program files: no nxlx-ndi unit, no nxlx-ndi account or group, no avahi added, nothing in the units of the
+panel and the player. One command at the box, `sudo nxlx-ndi-runtime install <the NDI SDK>` (mctl/ndi.py), puts the
 library in place and then calls enable() here, which:
 
   1. installs avahi-daemon and libavahi-client3 with apt-get where they are missing (the library finds senders
      through them); a failure is said and is not the end;
-  2. makes the group and the account pvj-ndi (the account in no other group); one that is already there and is
+  2. makes the group and the account nxlx-ndi (the account in no other group); one that is already there and is
      not what this would have made (root, a shared number, a login shell, another group) is refused;
-  3. writes /etc/systemd/system/pvj-ndi.service from the template beside this file (mctl/systemd/), and two drop-ins
-     that give the panel and the player the extra group pvj-ndi; the panel's also says where the helper's folder is,
+  3. writes /etc/systemd/system/nxlx-ndi.service from the template beside this file (mctl/systemd/), and two drop-ins
+     that give the panel and the player the extra group nxlx-ndi; the panel's also says where the helper's folder is,
      which is how the panel knows the box is set up;
   4. reloads systemd, enables and starts the helper, and restarts the panel and the player if they are running
      (an extra group only reaches a process when it starts).
@@ -25,7 +25,7 @@ The panel's drop-in is the mark that the box opted in. It is written last and re
 (install/install.sh) looks for it: a box that has it gets its unit and drop-ins written again by refresh() here at
 every install or update, so there is one writer of these files; a box that does not have it is left alone.
 
-`sudo pvj-ndi-runtime remove` calls disable(): the helper is stopped and disabled, the unit and the drop-ins go,
+`sudo nxlx-ndi-runtime remove` calls disable(): the helper is stopped and disabled, the unit and the drop-ins go,
 the panel and the player are restarted. The account, the group and the avahi packages stay (avahi may have been on
 the box before, and other things may use it); the command says so and how to remove them.
 
@@ -44,40 +44,40 @@ import subprocess
 import sys
 import tempfile
 
-UNIT = "pvj-ndi.service"
+UNIT = "nxlx-ndi.service"
 SYSTEMD = "/etc/systemd/system"
 UNIT_PATH = SYSTEMD + "/" + UNIT
-WEB_DROPIN = SYSTEMD + "/pvj-web.service.d/50-pvj-ndi.conf"           # also the mark that this box opted in
-PLAYER_DROPIN = SYSTEMD + "/pvj-player.service.d/50-pvj-ndi.conf"
-TMPFILES_PATH = "/etc/tmpfiles.d/pvj-ndi.conf"                         # the pipe's folder and the pipe, root's (M3, 2026-10-11)
-ACCOUNT = GROUP = "pvj-ndi"
-RESTART = ("pvj-web.service", "pvj-player.service")                   # the units the drop-ins change
+WEB_DROPIN = SYSTEMD + "/nxlx-web.service.d/50-nxlx-ndi.conf"           # also the mark that this box opted in
+PLAYER_DROPIN = SYSTEMD + "/nxlx-player.service.d/50-nxlx-ndi.conf"
+TMPFILES_PATH = "/etc/tmpfiles.d/nxlx-ndi.conf"                         # the pipe's folder and the pipe, root's (M3, 2026-10-11)
+ACCOUNT = GROUP = "nxlx-ndi"
+RESTART = ("nxlx-web.service", "nxlx-player.service")                   # the units the drop-ins change
 TEMPLATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "systemd", UNIT)
-INSTALL_JSON = "/etc/pvj/install.json"
-DEFAULT_PREFIX = "/opt/pvj"
-COMMAND = 'sudo pvj-ndi-runtime install "/path/to/NDI SDK for Linux"'
+INSTALL_JSON = "/etc/nxlx/install.json"
+DEFAULT_PREFIX = "/opt/nxlx"
+COMMAND = 'sudo nxlx-ndi-runtime install "/path/to/NDI SDK for Linux"'
 # A package, and the files of which one shows that it is there.
 PACKAGES = (("avahi-daemon", ("/usr/sbin/avahi-daemon",)),
             ("libavahi-client3", ("/usr/lib/*/libavahi-client.so.3", "/usr/lib/libavahi-client.so.3")))
 
-_SAYS = "# Written by pvj-ndi-runtime (mctl/ndisetup.py) when NDI was set up on this box; removed by 'pvj-ndi-runtime remove'.\n"
+_SAYS = "# Written by nxlx-ndi-runtime (mctl/ndisetup.py) when NDI was set up on this box; removed by 'nxlx-ndi-runtime remove'.\n"
 # In a drop-in these two settings add to what the unit itself has; they do not replace it.
 WEB_TEXT = (_SAYS + "# The panel may reach the NDI helper's socket (D62). This file is also the mark that the box opted in.\n"
-            "[Service]\nSupplementaryGroups=pvj-ndi\nEnvironment=PVJ_NDI_DIR=/run/pvj-ndi\n"
+            "[Service]\nSupplementaryGroups=nxlx-ndi\nEnvironment=PVJ_NDI_DIR=/run/nxlx-ndi\n"
             # The folder of the NDI library's configuration file (the discovery servers): the panel writes it, the
             # helper reads it. The dash: a box updated and not yet restarted has no such folder, and the panel starts.
-            "Environment=PVJ_NDI_CONFIG_DIR=/run/pvj-ndi-config\nReadWritePaths=-/run/pvj-ndi-config\n")
-# The pipe the player reads is made ONCE by root, in a folder of root's, at boot and by `pvj-ndi-runtime install`
-# (systemd-tmpfiles --create). The helper writes it by its group (0660 root:pvj-ndi) and can neither unlink, rename
-# nor replace it (the folder is 0750 root:pvj-ndi), so the name the player opens is always that pipe. The player
+            "Environment=PVJ_NDI_CONFIG_DIR=/run/nxlx-ndi-config\nReadWritePaths=-/run/nxlx-ndi-config\n")
+# The pipe the player reads is made ONCE by root, in a folder of root's, at boot and by `nxlx-ndi-runtime install`
+# (systemd-tmpfiles --create). The helper writes it by its group (0660 root:nxlx-ndi) and can neither unlink, rename
+# nor replace it (the folder is 0750 root:nxlx-ndi), so the name the player opens is always that pipe. The player
 # reads it by the same group. (The review of 2026-10-11, M3: before, the helper made the pipe in its own folder and
 # could have swapped it for a link between the panel's look and the player's opening.)
 # The third line is the folder of the NDI library's configuration file: the panel's account owns and writes it, the
 # helper enters it by its group and can change nothing in it.
-TMPFILES_TEXT = (_SAYS + "d /run/pvj-ndi-pipe 0750 root pvj-ndi -\np /run/pvj-ndi-pipe/ndi.fifo 0660 root pvj-ndi -\n"
-                 "d /run/pvj-ndi-config 0750 pvj-web pvj-ndi -\n")
-PLAYER_TEXT = (_SAYS + "# The player may read the picture from the NDI helper's pipe (D62); the helper itself is not in group pvj.\n"
-               "[Service]\nSupplementaryGroups=pvj-ndi\n")
+TMPFILES_TEXT = (_SAYS + "d /run/nxlx-ndi-pipe 0750 root nxlx-ndi -\np /run/nxlx-ndi-pipe/ndi.fifo 0660 root nxlx-ndi -\n"
+                 "d /run/nxlx-ndi-config 0750 nxlx-web nxlx-ndi -\n")
+PLAYER_TEXT = (_SAYS + "# The player may read the picture from the NDI helper's pipe (D62); the helper itself is not in group nxlx-svc.\n"
+               "[Service]\nSupplementaryGroups=nxlx-ndi\n")
 
 _PREFIX = re.compile(r"/[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)+")
 
@@ -99,7 +99,7 @@ def check_prefix(prefix):
 
 
 def read_prefix(root=""):
-    """Where the installer put the program (it writes this file); /opt/pvj when it does not say."""
+    """Where the installer put the program (it writes this file); /opt/nxlx when it does not say."""
     try:
         with open(root + INSTALL_JSON) as f:
             prefix = json.load(f).get("prefix")
@@ -123,7 +123,7 @@ def _write(path, text):
     if os.path.islink(folder) or os.path.islink(path) or os.path.isdir(path):
         raise SetupError("%s is not a plain file in a plain folder (a link or a folder is in its place); it was not written. "
                          "Look at what is there and remove it by hand" % path)
-    fd, tmp = tempfile.mkstemp(prefix=".pvj-ndi-", dir=folder)
+    fd, tmp = tempfile.mkstemp(prefix=".nxlx-ndi-", dir=folder)
     try:
         with os.fdopen(fd, "w") as f:
             f.write(text)
@@ -213,17 +213,17 @@ JUST_MADE = ("; it was made a moment ago by this command and is not what was ask
 
 
 def check_account(user=_user, group=_group, groups=grp.getgrall, users=pwd.getpwall, tail=NOTHING_YET, name=None):
-    """Refuses, and changes nothing. A group or an account pvj-ndi that is already there must be what this setup
+    """Refuses, and changes nothing. A group or an account nxlx-ndi that is already there must be what this setup
     would have made. Anything else is refused, not repaired: the helper loads closed-source code that reads the
     network, and whoever is in its group can enter its folder (the socket, the pipe).
 
     The group, whether or not the account exists yet: not root's group (gid 0), a number no other group has (an
-    account made with `--gid pvj-ndi` into a number shared with group pvj would be in pvj), no members, and nobody
+    account made with `--gid nxlx-ndi` into a number shared with group nxlx-svc would be in nxlx-svc), no members, and nobody
     else's own group. Members are refused because the panel and the player are let in by their units
     (SupplementaryGroups= in a drop-in), never by membership; a name in the list is an account that could read the
     pipe and talk to the socket's folder without anyone having decided that.
 
-    The account: not root, a uid of its own, no login shell, pvj-ndi as its own group and no other group.
+    The account: not root, a uid of its own, no login shell, nxlx-ndi as its own group and no other group.
     What is not there yet is fine. `tail` ends each refusal: before anything is made, or after (ensure_account).
     `name` is another account held to the same rules (the discovery server's, mctl/ndiscovery.py)."""
     ACCOUNT = GROUP = name or globals()["ACCOUNT"]
@@ -260,7 +260,7 @@ def check_account(user=_user, group=_group, groups=grp.getgrall, users=pwd.getpw
 
 def ensure_account(run=_run, say=print, user=_user, group=_group, groups=grp.getgrall, users=pwd.getpwall, name=None):
     """The helper's group and account, made if they are missing: a system account without a home or a shell, whose
-    only group is pvj-ndi. What is already there is checked (check_account) before anything is made. What was made
+    only group is nxlx-ndi. What is already there is checked (check_account) before anything is made. What was made
     is checked again, because a box's own rules for new accounts (extra groups, a shell) can change what useradd
     makes; that refusal says that something was made, and how to remove it."""
     ACCOUNT = GROUP = name or globals()["ACCOUNT"]
@@ -285,7 +285,7 @@ def _systemd_runs():
 
 
 def _overlay():
-    """True while the read-only root (pvj-rootfs) is active: what is written now is gone at the next boot."""
+    """True while the read-only root (nxlx-rootfs) is active: what is written now is gone at the next boot."""
     from . import rootfs
     try:
         return rootfs.current_state() == "overlay"
@@ -293,15 +293,15 @@ def _overlay():
         return False
 
 
-OVERLAY_WARNING = ("the read-only root is active on this node (pvj-rootfs): everything this command writes is in memory and is "
-                   "gone at the next restart, and with it the NDI setup. To keep it: sudo pvj-rootfs disable, restart, run "
-                   "this command again, sudo pvj-rootfs enable, restart.")
+OVERLAY_WARNING = ("the read-only root is active on this node (nxlx-rootfs): everything this command writes is in memory and is "
+                   "gone at the next restart, and with it the NDI setup. To keep it: sudo nxlx-rootfs disable, restart, run "
+                   "this command again, sudo nxlx-rootfs enable, restart.")
 
 
 def check(root="", account=check_account):
     """Everything that can refuse a setup, looked at before anything on the box is changed (before the library is
     copied, a package installed or an account made): the install folder the installer wrote down and the unit's
-    template, something that is not a plain file where the three files go, and a group or an account pvj-ndi that
+    template, something that is not a plain file where the three files go, and a group or an account nxlx-ndi that
     is already there. Raises SetupError or OSError."""
     unit_text(read_prefix(root))
     check_paths(root)
@@ -375,7 +375,7 @@ def enable(run=_run, say=print, systemd=_systemd_runs, account=ensure_account, w
         if run(["systemctl", "enable", UNIT]) != 0:
             raise SetupError("could not enable %s" % UNIT)
         if run(["systemctl", "restart", UNIT]) != 0:
-            raise SetupError("could not start %s; see: journalctl -u pvj-ndi -n 30" % UNIT)
+            raise SetupError("could not start %s; see: journalctl -u nxlx-ndi -n 30" % UNIT)
     except (SetupError, OSError):          # OSError: a file that could not be written (a full or read-only disk)
         if not was:                        # the box is put back to not set up: no mark, no unit, nothing enabled
             run(["systemctl", "disable", "--now", UNIT] if systemd() else ["systemctl", "disable", UNIT])
@@ -384,7 +384,7 @@ def enable(run=_run, say=print, systemd=_systemd_runs, account=ensure_account, w
             if systemd():
                 run(["systemctl", "daemon-reload"])
             say("the setup failed and was undone: this node is not set up for NDI. NDI's library, the account and group %s "
-                "and any package installed above stay (sudo pvj-ndi-runtime remove takes the library off)." % ACCOUNT)
+                "and any package installed above stay (sudo nxlx-ndi-runtime remove takes the library off)." % ACCOUNT)
         raise
     running = _stays_up(run, sleep)
     say("restarting the panel and the player so they may reach the NDI helper (the screen goes dark for a moment)")
@@ -393,11 +393,11 @@ def enable(run=_run, say=print, systemd=_systemd_runs, account=ensure_account, w
     if wet:
         say(OVERLAY_WARNING)
     if running:
-        say("NDI is set up on this node: the helper pvj-ndi is installed and was running %d seconds after its start. "
+        say("NDI is set up on this node: the helper nxlx-ndi is installed and was running %d seconds after its start. "
             "Switch the input on under System > NDI input." % STAYS_UP_SECONDS)
     else:
-        say("NDI is set up on this node, but the helper pvj-ndi is NOT running: it was started and did not stay up. "
-            "See: journalctl -u pvj-ndi -n 30. The setup was left in place (sudo pvj-ndi-runtime remove takes it off).")
+        say("NDI is set up on this node, but the helper nxlx-ndi is NOT running: it was started and did not stay up. "
+            "See: journalctl -u nxlx-ndi -n 30. The setup was left in place (sudo nxlx-ndi-runtime remove takes it off).")
     return running
 
 
@@ -425,7 +425,7 @@ def disable(run=_run, say=print, systemd=_systemd_runs, root=""):
 
 
 def refresh_main(argv, out=sys.stdout):
-    """`pvj-ndi-runtime refresh [--root DIR] [--prefix DIR]`: the installer's call. Not for people. DIR and every
+    """`nxlx-ndi-runtime refresh [--root DIR] [--prefix DIR]`: the installer's call. Not for people. DIR and every
     folder above it are trusted: it is the installer's own --stage folder, never a path somebody else can write."""
     root, prefix, argv = "", None, list(argv)
     while argv:
@@ -434,17 +434,17 @@ def refresh_main(argv, out=sys.stdout):
         elif len(argv) >= 2 and argv[0] == "--prefix":
             prefix = argv[1]
         else:
-            print("usage: pvj-ndi-runtime refresh [--root DIR] [--prefix DIR]\n"
+            print("usage: nxlx-ndi-runtime refresh [--root DIR] [--prefix DIR]\n"
                   "The installer's call. DIR is the installer's own --stage folder and is trusted, with every folder above it.", file=out)
             return 2
         argv = argv[2:]
     if not root and os.geteuid() != 0:
-        print("pvj-ndi-runtime: run it with sudo", file=out)
+        print("nxlx-ndi-runtime: run it with sudo", file=out)
         return 1
     try:
-        if refresh(root, prefix, say=lambda m: print("pvj-ndi-runtime: %s" % m, file=out)):
-            print("pvj-ndi-runtime: this node has NDI set up; its helper's unit was written again", file=out)
+        if refresh(root, prefix, say=lambda m: print("nxlx-ndi-runtime: %s" % m, file=out)):
+            print("nxlx-ndi-runtime: this node has NDI set up; its helper's unit was written again", file=out)
         return 0
     except (SetupError, OSError) as e:
-        print("pvj-ndi-runtime: %s" % e, file=out)
+        print("nxlx-ndi-runtime: %s" % e, file=out)
         return 1

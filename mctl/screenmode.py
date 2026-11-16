@@ -14,7 +14,7 @@ at 75 Hz, the costliest size there is for a Pi 4 and an uneven beat for 29.97 an
 * **A mode chosen by hand** on System > Screen output, from the screen's own list. It is tried for KEEP_SECONDS and
   goes back by itself unless it is confirmed, as a network change does.
 
-Who does what. The player's service (`pvj-player serve`, the display account) decides, just before it becomes mpv:
+Who does what. The player's service (`nxlx-player serve`, the display account) decides, just before it becomes mpv:
 it asks mpv for the screen's modes (`mpv --drm-mode=help`, the only list that has the rates exactly as mpv will
 compare them; /sys/class/drm has the sizes only), reads what is wanted from WANTED in the state folder (written by
 the panel, which owns the settings; the player may not read settings.json), and passes one `--drm-mode` that is in
@@ -236,7 +236,7 @@ def read_json(path):
 
 
 def write_json(path, data, mode=0o640):
-    """Write a small JSON object whole (a temp file renamed over the old one), readable by the group (pvj)."""
+    """Write a small JSON object whole (a temp file renamed over the old one), readable by the group (nxlx-svc)."""
     folder = os.path.dirname(path) or "."
     # A name of its own for each write (O_EXCL, random): two threads of the panel writing at once each rename their
     # own file; with one name per process the second rename failed (found while testing the review's L2).
@@ -396,7 +396,7 @@ def prepare(extra_args, rundir, mpv_bin="mpv", env=None, run=subprocess.run, sys
     and `--drm-connector=NAME` for that screen where the kernel says which card it is on (D91), with REPORT written.
 
     Only where the player draws through DRM itself (`--gpu-context=drm`, a box without a desktop) and nobody gave a
-    --drm-mode, --drm-connector or --drm-device by hand (`pvj-player --mpv-arg`, which wins). Never raises: a player that cannot choose a mode starts
+    --drm-mode, --drm-connector or --drm-device by hand (`nxlx-player --mpv-arg`, which wins). Never raises: a player that cannot choose a mode starts
     with the screen's own, as before."""
     if "--gpu-context=drm" not in extra_args or any(a.startswith(("--drm-mode", "--drm-connector", "--drm-device")) for a in extra_args):
         return []
@@ -412,16 +412,16 @@ def prepare(extra_args, rundir, mpv_bin="mpv", env=None, run=subprocess.run, sys
                "connector": None, "modes": [], "own": None, "automatic": None}
     rep.update(pid=os.getpid(), boot=boot or "", at=int(time.time()))
     if rep.get("output_why"):
-        log("pvj-player: screen output: %s" % rep["output_why"])
+        log("nxlx-player: screen output: %s" % rep["output_why"])
     if rep["why"]:
-        log("pvj-player: screen output: %s" % rep["why"])
+        log("nxlx-player: screen output: %s" % rep["why"])
     args = screen_args(rep)
     if args:
-        log("pvj-player: screen output: %s on %s (%s)" % (text_words(rep["used"]), rep["connector"], " ".join(args)))
+        log("nxlx-player: screen output: %s on %s (%s)" % (text_words(rep["used"]), rep["connector"], " ".join(args)))
     try:
         write_json(os.path.join(rundir, REPORT), rep)
     except OSError as e:
-        log("pvj-player: screen output: the report was not written (%s)" % e)
+        log("nxlx-player: screen output: the report was not written (%s)" % e)
     return args
 
 
@@ -553,11 +553,11 @@ class Screen:
 
     def _restart(self, why):
         """End the player; its service starts a new one, which reads WANTED. Never raises."""
-        self.log("pvj-web: screen output: restarting the player (%s)" % why)
+        self.log("nxlx-web: screen output: restarting the player (%s)" % why)
         try:
             self.api.player.quit()
         except Exception as e:
-            self.log("pvj-web: screen output: the player did not take the restart (%s)" % e)
+            self.log("nxlx-web: screen output: the player did not take the restart (%s)" % e)
 
     def start(self):
         """At the panel's start: WANTED says what the settings say. A try that was on when the panel stopped goes back
@@ -576,7 +576,7 @@ class Screen:
         try:
             self._write(want)
         except OSError as e:
-            self.log("pvj-web: screen output: %s not written (%s)" % (self.wanted_file, e))
+            self.log("nxlx-web: screen output: %s not written (%s)" % (self.wanted_file, e))
             return False
         if trial and trial["boot"] == boot:
             self.note = "A mode that was being tried when the panel restarted went back by itself."
@@ -662,10 +662,10 @@ class Screen:
             try:
                 self._write(self._base(self.saved()))      # also drops this boot's skips: they were earned with another screen
             except OSError as e:
-                self.log("pvj-web: screen output: %s not written (%s)" % (self.wanted_file, e))
+                self.log("nxlx-web: screen output: %s not written (%s)" % (self.wanted_file, e))
         self._drop_retry()
         self.note = ""
-        self.log("pvj-web: screen output: the output is now %s" % ("Automatic" if output == AUTO else output))
+        self.log("nxlx-web: screen output: the output is now %s" % ("Automatic" if output == AUTO else output))
         self._restart("the output is now %s" % ("Automatic" if output == AUTO else output))
         return self.outputs()
 
@@ -736,10 +736,10 @@ class Screen:
             try:
                 self._write(self._base(p["mode"]))
             except OSError as e:
-                self.log("pvj-web: screen output: %s not written (%s)" % (self.wanted_file, e))
+                self.log("nxlx-web: screen output: %s not written (%s)" % (self.wanted_file, e))
             self._end_pending()
             self.note = ""
-        self.log("pvj-web: screen output: %s kept" % text_words(p["mode"]))
+        self.log("nxlx-web: screen output: %s kept" % text_words(p["mode"]))
         return self.state()
 
     def revert(self, note=""):
@@ -762,7 +762,7 @@ class Screen:
             try:
                 self._write(self._base(p["previous"]))
             except OSError as e:
-                self.log("pvj-web: screen output: %s not written (%s)" % (self.wanted_file, e))
+                self.log("nxlx-web: screen output: %s not written (%s)" % (self.wanted_file, e))
             self.note = note or "Went back to %s." % ("Automatic" if p["previous"] == AUTO else text_words(p["previous"]))
         self._restart("going back from %s" % text_words(p["mode"]))
         return True
@@ -792,7 +792,7 @@ class Screen:
             return None
         if rep.get("why") and rep["why"] not in self._said:
             self._said.add(rep["why"])
-            self.log("pvj-web: screen output: %s" % rep["why"])
+            self.log("nxlx-web: screen output: %s" % rep["why"])
         did = None
         with self._lock:
             p = self.pending
@@ -825,7 +825,7 @@ class Screen:
             self._started(pid, rep)
             return did
         failed = rep.get("used")
-        self.log("pvj-web: screen output: the player was given %s and has no screen" % text_words(failed))
+        self.log("nxlx-web: screen output: the player was given %s and has no screen" % text_words(failed))
         with self._lock:
             p = self.pending
         if p is not None and rep.get("trial"):
@@ -847,7 +847,7 @@ class Screen:
             # not barred yet: the screen may still be waking up (a projector says it is connected before it takes a
             # mode); the same arguments are tried once more when it keeps still (_settle). The status says so (why);
             # the page's note is kept for results only, so the same sentence is not on the page twice.
-            self.log("pvj-web: screen output: %s gave no screen; trying it once more when the screen keeps still" % text_words(failed))
+            self.log("nxlx-web: screen output: %s gave no screen; trying it once more when the screen keeps still" % text_words(failed))
             return "waiting"
         try:
             # the arguments it was given, not the mode alone, kept beside this boot's earlier ones (D92): a different
@@ -855,7 +855,7 @@ class Screen:
             have = self._wanted()
             self._write(dict(have, skip=with_skip(have, self._boot(), failed, screen_args(rep))))
         except OSError as e:
-            self.log("pvj-web: screen output: %s not written (%s)" % (self.wanted_file, e))
+            self.log("nxlx-web: screen output: %s not written (%s)" % (self.wanted_file, e))
             return did
         self.note = "%s did not start on this screen; the player was started with the screen's own mode." % text_words(failed)
         self._restart("%s gave no screen" % text_words(failed))
@@ -901,7 +901,7 @@ class Screen:
                 return                          # another mode is on now: nothing to say of the one that waited
             self._retried.discard((self._boot(), r["key"]))
         self.note = "%s started on the second try." % text_words(r["mode"])
-        self.log("pvj-web: screen output: %s started on the second try" % text_words(r["mode"]))
+        self.log("nxlx-web: screen output: %s started on the second try" % text_words(r["mode"]))
 
     def _drop_retry(self):
         with self._step:

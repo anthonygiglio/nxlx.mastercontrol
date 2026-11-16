@@ -120,7 +120,7 @@ class Handover:
             try:
                 self.on_change()
             except Exception as e:                     # whatever the sweep does, the change itself stands
-                self.log("pvj-web: the sweep after a change of trust failed: %s" % e)
+                self.log("nxlx-web: the sweep after a change of trust failed: %s" % e)
 
     # -- files --
     def path(self, name):
@@ -226,7 +226,7 @@ class Handover:
                     break
                 except HandoverError as e:
                     self.problem = self.problem or e.message
-                    self.log("pvj-web: the fleet list on disk%s is not in use: %s" % (" (the previous one)" if suffix else "", e.message))
+                    self.log("nxlx-web: the fleet list on disk%s is not in use: %s" % (" (the previous one)" if suffix else "", e.message))
             if self.list is None and self.floor is not None and self.problem is None:
                 self.problem = "the fleet list on disk (serial %d) is not in use" % self.floor.serial
             if self.list is None and self.problem and self.floor is not None:
@@ -331,7 +331,7 @@ class Handover:
                     out.append({k: r[k] for k in keys})
             return out
         except (ValueError, KeyError, TypeError, UnicodeDecodeError):
-            self.log("pvj-web: %s could not be read and is ignored" % name)
+            self.log("nxlx-web: %s could not be read and is ignored" % name)
             return []
 
     def _save_pairings(self):
@@ -392,10 +392,10 @@ class Handover:
         if isinstance(value, int) and not isinstance(value, bool):
             kept = min(max(value, 1), top)
             if kept != value:
-                self.log("pvj-web: deny.json: the epoch of %s (%d) is out of range and was set to %d" % (what, value, kept))
+                self.log("nxlx-web: deny.json: the epoch of %s (%d) is out of range and was set to %d" % (what, value, kept))
             return kept
         if value is not None:
-            self.log("pvj-web: deny.json: the epoch of %s is not a number and was set to 1" % what)
+            self.log("nxlx-web: deny.json: the epoch of %s is not a number and was set to 1" % what)
         return 1
 
     def _load_deny(self):
@@ -437,7 +437,7 @@ class Handover:
                 kept = DENY_FILE
             note = "%s is there but could not be used (%s), so NO removal is in force from it: the file was kept as %s; remove the nodes again or restore it" % (
                 DENY_FILE, e, kept)
-            self.log("pvj-web: " + note)
+            self.log("nxlx-web: " + note)
             self.deny_problem = note
             return [], []
 

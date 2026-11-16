@@ -359,11 +359,11 @@ class StartTest(unittest.TestCase):
 
     def test_the_unit_has_a_state_folder_of_its_own_for_the_count(self):
         here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        with open(os.path.join(here, "install", "pvj-player.service")) as f:
+        with open(os.path.join(here, "install", "nxlx-player.service")) as f:
             lines = f.read().split("\n")
         self.assertNotIn("RuntimeDirectoryPreserve=restart", lines)
-        self.assertIn("StateDirectory=pvj-player/late-screen", lines)
-        self.assertEqual(latescreen.paths.PLAYER_STATE_DIR, "/var/lib/pvj-player/late-screen")
+        self.assertIn("StateDirectory=nxlx-player/late-screen", lines)
+        self.assertEqual(latescreen.paths.PLAYER_STATE_DIR, "/var/lib/nxlx-player/late-screen")
 
 
 if __name__ == "__main__":

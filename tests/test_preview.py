@@ -95,7 +95,7 @@ class PreviewTest(ServerBase):
         target = os.path.join(self.tmp, "victim.txt")
         with open(target, "w") as f:
             f.write("do not overwrite")
-        os.symlink(target, os.path.join(self.rundir, "preview.jpg"))       # planted by someone in group pvj
+        os.symlink(target, os.path.join(self.rundir, "preview.jpg"))       # planted by someone in group nxlx-svc
         st, body, _ = self.call("GET", "/api/preview.jpg", token=self.full)
         self.assertEqual((st, body), (200, JPEG))
         with open(target) as f:

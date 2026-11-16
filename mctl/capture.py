@@ -4,7 +4,7 @@
 
 Why a separate process: on a Raspberry Pi 4 with mpv 0.40, closing a V4L2 capture inside the player crashed the player
 (SIGBUS or SIGSEGV) in 4 of 5 switches back to a file, in libavdevice's buffer teardown. So the player never opens the
-device. A helper mpv, run by the web service, reads the device and writes raw frames to a pipe in its own runtime folder (/run/pvj/web); the player
+device. A helper mpv, run by the web service, reads the device and writes raw frames to a pipe in its own runtime folder (/run/nxlx/web); the player
 plays the pipe with the raw video demuxer. Leaving the input stops the helper; if its teardown crashes, only the helper
 dies (0 player crashes in 5 switches, against 4 in 5 before). Measured on a Pi 4 with a MACROSILICON USB3 HDMI capture
 stick (YUYV only), through the pipe: 720p30 and 1080p30 dropped no frames and kept real time; 720p60 dropped 9 frames a
@@ -86,7 +86,7 @@ class Capture:
         if not isinstance(device, str) or not DEVICE.fullmatch(device) or device not in [d["id"] for d in self.lister()]:
             raise CaptureError("no such input")
         self.stop()
-        os.mkfifo(self.fifo, 0o640)       # the panel writes, the player (group pvj) only reads
+        os.mkfifo(self.fifo, 0o640)       # the panel writes, the player (group nxlx-svc) only reads
         return MODES[mode]
 
     def start(self, device, mode, timeout=5.0):
@@ -124,7 +124,7 @@ class Capture:
         try:                                    # a busy, unplugged or unhappy device ends the helper at once: say so
             proc.wait(timeout=1.0)
         except subprocess.TimeoutExpired:
-            self.log("pvj-web: live input %s %s started" % (device, mode))
+            self.log("nxlx-web: live input %s %s started" % (device, mode))
             return
         self.stop()
         raise CaptureError("the input could not be opened (in use by something else, unplugged, or that size is not offered)")

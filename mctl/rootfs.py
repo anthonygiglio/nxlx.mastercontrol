@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""pvj-rootfs: protect the system disk from power loss with a read-only root.
+"""nxlx-rootfs: protect the system disk from power loss with a read-only root.
 
 With an overlay root, everything written since boot lives in RAM and vanishes
 at reboot, so a pulled plug cannot corrupt the SD card or SSD. This module does
@@ -88,7 +88,7 @@ def change(action, board_kind, media_dir, force=False, runner=subprocess.run,
         r = runner(cmd, capture_output=True, text=True)
         if r.returncode != 0:
             raise RootfsError("%s failed: %s" % (" ".join(cmd[:3]), (r.stderr or r.stdout).strip()))
-    log("%s requested. Reboot to apply. Settings in /etc/pvj can only be changed with the root writable." % action)
+    log("%s requested. Reboot to apply. Settings in /etc/nxlx can only be changed with the root writable." % action)
 
 
 def main(argv=None):
@@ -96,11 +96,11 @@ def main(argv=None):
     import json
 
     from . import hardware
-    ap = argparse.ArgumentParser(prog="pvj-rootfs", description=__doc__.split("\n")[0])
+    ap = argparse.ArgumentParser(prog="nxlx-rootfs", description=__doc__.split("\n")[0])
     ap.add_argument("action", choices=["status", "enable", "disable"])
     ap.add_argument("--force", action="store_true", help="enable even if media is on the system disk")
     args = ap.parse_args(argv)
-    media = os.environ.get("PVJ_MEDIA_DIR", "/var/lib/pvj/video")
+    media = os.environ.get("PVJ_MEDIA_DIR", "/var/lib/nxlx/video")
     kind = hardware.detect_board()["kind"]
     try:
         if args.action == "status":
@@ -110,6 +110,6 @@ def main(argv=None):
                 raise RootfsError("run as root (sudo)")
             change(args.action, kind, media, force=args.force)
     except RootfsError as e:
-        print("pvj-rootfs: %s" % e, file=sys.stderr)
+        print("nxlx-rootfs: %s" % e, file=sys.stderr)
         return 1
     return 0

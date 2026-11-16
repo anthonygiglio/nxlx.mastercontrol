@@ -33,10 +33,10 @@ mctl-render: $(OBJ)
 src/%.o: src/%.c src/mctl.h src/json.h
 	$(CC) -std=c11 $(CFLAGS) $(DEFS) $(WARN) $(HARDEN) $$($(PKG_CONFIG) --cflags $(PKGS)) -c -o $@ $<
 
-# pvj-link (D117): the Ableton Link follower, a program of its own in C++, built only when asked for, and never by
-# the plain "make" above: make pvj-link. Needs a C++17 compiler and Link's headers, which pull in asio's
+# nxlx-link (D117): the Ableton Link follower, a program of its own in C++, built only when asked for, and never by
+# the plain "make" above: make nxlx-link. Needs a C++17 compiler and Link's headers, which pull in asio's
 # (Debian and Ubuntu: g++ ableton-link-dev libasio-dev; nothing of Link is kept in this repository). LINK_INCLUDE is for
-# a folder of headers that is not a system one. pvj-link-peer is a stand-in peer for tests/test_pvj_link.py, never installed.
+# a folder of headers that is not a system one. nxlx-link-peer is a stand-in peer for tests/test_nxlx_link.py, never installed.
 CXX ?= c++
 CXXFLAGS ?= -O2
 LINK_INCLUDE ?=
@@ -46,20 +46,20 @@ ifeq ($(WERROR),1)
 LINK_WARN += -Werror
 endif
 
-pvj-link: link/pvj-link.cpp
+nxlx-link: link/nxlx-link.cpp
 	$(CXX) -std=c++17 $(CXXFLAGS) $(LINK_DEFS) $(LINK_WARN) $(HARDEN) $(LDFLAGS) $(LDHARDEN) -o $@ $< -pthread -latomic
 
-pvj-link-peer: link/link-peer.cpp
+nxlx-link-peer: link/link-peer.cpp
 	$(CXX) -std=c++17 $(CXXFLAGS) $(LINK_DEFS) $(LINK_WARN) $(HARDEN) $(LDFLAGS) $(LDHARDEN) -o $@ $< -pthread -latomic
 
-# pvj-raster (D129): the one program that decodes an uploaded picture, run by systemd as a throwaway process with no
-# network and hard limits (install/pvj-raster@.service). Plain make does not build it: make pvj-raster. Needs libpng,
+# nxlx-raster (D129): the one program that decodes an uploaded picture, run by systemd as a throwaway process with no
+# network and hard limits (install/nxlx-raster@.service). Plain make does not build it: make nxlx-raster. Needs libpng,
 # libjpeg and FreeType headers (Debian and Ubuntu: libpng-dev libjpeg-dev libfreetype-dev). The SVG reader is nanosvg, vendored unchanged in
 # raster/vendor with its licence; -isystem keeps its own warnings out of ours.
-pvj-raster: raster/pvj-raster.c raster/gfx.inc.c raster/vendor/nanosvg.h raster/vendor/nanosvgrast.h
+nxlx-raster: raster/nxlx-raster.c raster/gfx.inc.c raster/vendor/nanosvg.h raster/vendor/nanosvgrast.h
 	$(CC) -std=c11 $(CFLAGS) $(WARN) $(HARDEN) -isystem raster/vendor $$($(PKG_CONFIG) --cflags libpng libjpeg freetype2) $(LDFLAGS) $(LDHARDEN) -o $@ $< $$($(PKG_CONFIG) --libs libpng libjpeg freetype2) -lm
 
 clean:
-	rm -f mctl-render pvj-link pvj-link-peer pvj-raster $(OBJ)
+	rm -f mctl-render nxlx-link nxlx-link-peer nxlx-raster $(OBJ)
 
 .PHONY: clean

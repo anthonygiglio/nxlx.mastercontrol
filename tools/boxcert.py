@@ -1256,7 +1256,7 @@ def fleet_push(exe, folder, host, port, ask, token_file=None, out=print, timeout
     try:
         conn.connect()                      # the node's certificate is checked against your root BEFORE anything is asked or sent
         if token is None:
-            pin = ask("PIN of %s (on its display, or `sudo pvj-pin`; used once, not kept): " % host)
+            pin = ask("PIN of %s (on its display, or `sudo nxlx-pin`; used once, not kept): " % host)
             st, res = call("POST", "/api/pair", {"pin": pin, "name": "boxcert push"}, None)
             if st != 200 or not res.get("token"):
                 raise BoxcertError("%s did not pair this computer (%s). Nothing was sent." % (host, res.get("error") or "answered %d" % st))

@@ -4,7 +4,7 @@
 (tools/nxlx-signer.py) for its certificate by itself, so it has HTTPS with no step from the owner.
 
 Where the signer is: the setting `https.signer_url`, else PVJ_SIGNER_URL. Which root to expect: `https.root_fingerprint`,
-else PVJ_ROOT_FINGERPRINT. install.sh --signer writes both into /etc/pvj/pvj.env and refuses one without the other.
+else PVJ_ROOT_FINGERPRINT. install.sh --signer writes both into /etc/nxlx/nxlx.env and refuses one without the other.
 Nothing is discovered: the signer runs on a computer that cannot announce itself the way nodes do (mctl/fleet.py
 announces through avahi, which a Windows computer does not have), and an address the owner gave is safer than the
 first stranger to answer.
@@ -220,7 +220,7 @@ class AutoCert:
         if not isinstance(answer.get("chain"), str):
             raise SignerSaid(502, "the signer sent no certificate")
         leaf = self.box.install_from_signer(answer["chain"], signer_fp, want)
-        self.log("pvj-web: certificate from the signer at %s (%s), until %s" % (url, why, self.box.date(leaf["not_after"])))
+        self.log("nxlx-web: certificate from the signer at %s (%s), until %s" % (url, why, self.box.date(leaf["not_after"])))
         return self._set("done", moved + "For %s, until %s." % (", ".join(leaf["dns"] + leaf["ips"]), self.box.date(leaf["not_after"])), url)
 
     # -- the thread --

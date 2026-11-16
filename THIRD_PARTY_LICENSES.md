@@ -22,12 +22,12 @@ Inventory of components bundled with or fetched by the legacy code. Licences are
 | Archivo (The Archivo Project Authors), a Latin subset | `mctl/web/fonts/` | SIL OFL 1.1 (verified, see below) |
 | JetBrains Mono (The JetBrains Mono Project Authors), a Latin subset of the Medium weight | `mctl/web/fonts/` | SIL OFL 1.1 (verified, see below) |
 | Eleven fonts for text on the screen (Archivo, JetBrains Mono, Inter, Bebas Neue, Oswald, Anton, Montserrat, Orbitron, Press Start 2P, Roboto Condensed, Noto Sans), unchanged TrueType files | `mctl/fonts/` | SIL OFL 1.1, each read from its own release (verified, see below) |
-| FreeType: linked by pvj-raster to draw text; not shipped, the box's own package | `render/raster/` builds against it | FreeType licence (FTL) or GPL-2.0, at the user's choice |
+| FreeType: linked by nxlx-raster to draw text; not shipped, the box's own package | `render/raster/` builds against it | FreeType licence (FTL) or GPL-2.0, at the user's choice |
 | libmpv (mpv), linked by mctl-render; not shipped, the box's own package | `render/` builds against it | GPLv2 or later as Debian builds it (see below) |
 | Mesa's EGL, OpenGL ES and GBM, libdrm, glibc: linked by mctl-render; not shipped | `render/` builds against them | MIT (Mesa, libdrm), LGPL-2.1 (glibc) |
-| Ableton Link and asio, compiled into pvj-link at install; not shipped, the box's own packages | `render/link/` builds against them | GPL-2.0-or-later (Link), BSL-1.0 (asio) (see below) |
-| nanosvg (Mikko Mononen), the SVG reader of pvj-raster, vendored unchanged | `render/raster/vendor/` | zlib (verified, see below) |
-| libpng, libjpeg-turbo: linked by pvj-raster; not shipped, the box's own packages | `render/raster/` builds against them | libpng licence, IJG / BSD-3-Clause / zlib (libjpeg-turbo) |
+| Ableton Link and asio, compiled into nxlx-link at install; not shipped, the box's own packages | `render/link/` builds against them | GPL-2.0-or-later (Link), BSL-1.0 (asio) (see below) |
+| nanosvg (Mikko Mononen), the SVG reader of nxlx-raster, vendored unchanged | `render/raster/vendor/` | zlib (verified, see below) |
+| libpng, libjpeg-turbo: linked by nxlx-raster; not shipped, the box's own packages | `render/raster/` builds against them | libpng licence, IJG / BSD-3-Clause / zlib (libjpeg-turbo) |
 
 ## Not bundled: jit.ndi for the Max render node patch (D94)
 
@@ -55,7 +55,7 @@ Two typefaces are shipped with the panel, in `mctl/web/fonts/`, for the look cal
 
 ## Fonts for text on the screen (D129, slice 2)
 
-The node draws text itself (design/text-and-logo-sources_2026-11-08.md). Eleven open-licence families are bundled in `mctl/fonts/`, one unchanged TrueType file each, and are read by `pvj-raster` (render/raster/gfx.inc.c) to make a picture of a line of text. They are **not** this project's work and are not under its Apache-2.0 licence. They are never sent to a browser: the panel previews with pictures the node makes.
+The node draws text itself (design/text-and-logo-sources_2026-11-08.md). Eleven open-licence families are bundled in `mctl/fonts/`, one unchanged TrueType file each, and are read by `nxlx-raster` (render/raster/gfx.inc.c) to make a picture of a line of text. They are **not** this project's work and are not under its Apache-2.0 licence. They are never sent to a browser: the panel previews with pictures the node makes.
 
 - Source: https://github.com/google/fonts at commit `9710da1eacb3be272583c3224dcb70f9da6eadbb` (the commit the two panel fonts above were read from), folder `ofl/<family>/`, read on 8 November 2026. The font file and the family's `OFL.txt` were fetched from that one commit; each `OFL.txt` was read in full and each begins with the copyright line below and "This Font Software is licensed under the SIL Open Font License, Version 1.1". **None of the files was changed** (not subset, not instanced, not renamed inside); only the file names here are ours (lower case, no brackets).
 - The design document of 8 November expected the Apache licence 2.0 for Roboto Condensed. The release says SIL OFL 1.1 (copyright line below), so that is what is recorded. Licences were taken from the releases, not from the design.
@@ -274,30 +274,30 @@ Nothing else is linked, and no code of mpv, Mesa, kmscube or another project is 
 picks a connector and a mode (`video/out/drm_common.c`) and mpv's user-shader format were read in mpv's open source and
 are followed as behaviour, so that the panel's arguments and shaders mean the same to both programs.
 
-## pvj-link and Ableton Link (D117)
+## nxlx-link and Ableton Link (D117)
 
-`render/link/` holds pvj-link, a program of this project written for the box (not third-party code), and a stand-in peer
+`render/link/` holds nxlx-link, a program of this project written for the box (not third-party code), and a stand-in peer
 for its test. Both are under **GPL-3.0-or-later**, like the rest of `render/`, because they compile in Ableton Link, which
 is GPL-2.0-or-later in the form Debian packages it (Ableton also sells other terms; this project does not use them).
 GPL-3.0-or-later is compatible with GPLv2-or-later code. Link's headers come with asio's, which are under the Boost
-Software License 1.0, compatible with the GPL. The rest of the tree stays Apache-2.0: the panel only talks to pvj-link
+Software License 1.0, compatible with the GPL. The rest of the tree stays Apache-2.0: the panel only talks to nxlx-link
 over a Unix socket and reads a file it writes, as it does with mctl-render.
 
 Nothing of Link or asio is in the repository, a release bundle or the image's own files: the headers are Debian's
 `ableton-link-dev` and `libasio-dev`, installed on the box like the renderer's build packages, with their copyright files
-at `/usr/share/doc/<package>/copyright`, and pvj-link is built from source on the box. Without them there is no pvj-link,
+at `/usr/share/doc/<package>/copyright`, and nxlx-link is built from source on the box. Without them there is no nxlx-link,
 and nothing else changes.
 
 | Library | On the Pi (Debian 13) | Built and tested in CI | Licence |
 | --- | --- | --- | --- |
-| Ableton Link, headers only | `ableton-link-dev` 3.1.2 | Debian 13's (the job pvj-link) | GPL-2.0-or-later |
+| Ableton Link, headers only | `ableton-link-dev` 3.1.2 | Debian 13's (the job nxlx-link) | GPL-2.0-or-later |
 | asio, standalone, headers only | `libasio-dev` | Debian 13's | BSL-1.0 |
 
 The name "Ableton Link" says what the box can join. It carries no logo, and this project is not made by or with Ableton.
 
-## pvj-raster, nanosvg, libpng and libjpeg (D129)
+## nxlx-raster, nanosvg, libpng and libjpeg (D129)
 
-`render/raster/pvj-raster.c` is a program of this project, written for the box, under **GPL-3.0-or-later** like the rest of
+`render/raster/nxlx-raster.c` is a program of this project, written for the box, under **GPL-3.0-or-later** like the rest of
 `render/`. It decodes the pictures people upload (PNG with libpng, JPEG with libjpeg-turbo, SVG with nanosvg) and writes a
 clean PNG. libpng and libjpeg-turbo are the box's own packages (`libpng-dev`, `libjpeg-dev`), linked and not shipped, with
 their copyright files at `/usr/share/doc/<package>/copyright`.

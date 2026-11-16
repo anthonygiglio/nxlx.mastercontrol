@@ -110,7 +110,7 @@ class CheapRenderingTest(unittest.TestCase):
 
 
 class VaDecodingTest(unittest.TestCase):
-    """Hardware decoding on a PC node (J-152): pvj-selftest reports it as information, from the graphics, the VA-API
+    """Hardware decoding on a PC node (J-152): nxlx-selftest reports it as information, from the graphics, the VA-API
     driver files and the render node."""
     LIB = "usr/lib/x86_64-linux-gnu/dri/"
 
@@ -171,7 +171,7 @@ class VaDecodingTest(unittest.TestCase):
 
 
 class ClockSyncTest(unittest.TestCase):
-    """pvj-selftest says whether the clock is synchronised (J-154), as information that never fails the report."""
+    """nxlx-selftest says whether the clock is synchronised (J-154), as information that never fails the report."""
 
     def test_timedatectl_answers_first(self):
         from mctl import selftest

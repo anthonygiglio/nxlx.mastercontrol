@@ -38,7 +38,7 @@ def words(keys, *names):
 def start_order(units, implicit=False):
     """The start-order graph: edges[a] holds b when a must start before b. With `implicit`, also what systemd adds
     by itself to a service that keeps its default dependencies (after sysinit.target and basic.target), and the
-    fact that sysinit.target waits for systemd-tmpfiles-setup.service, which is what creates /run/pvj at boot."""
+    fact that sysinit.target waits for systemd-tmpfiles-setup.service, which is what creates /run/nxlx at boot."""
     edges = {}
     if implicit:
         edges.setdefault("systemd-tmpfiles-setup.service", set()).add("sysinit.target")
@@ -118,34 +118,34 @@ class UnitOrderingTest(unittest.TestCase):
             self.assertEqual(set(words(keys, "Requires", "BindsTo", "PartOf", "Requisite")) & ours, set(), name)
             self.assertEqual(set(words(keys, "Before")) & ours, set(), name)
             after = set(words(keys, "After")) & ours
-            self.assertEqual(after, {"pvj-player.service"} if name == "pvj-web.service" else set(), name)
+            self.assertEqual(after, {"nxlx-player.service"} if name == "nxlx-web.service" else set(), name)
 
     def test_the_check_would_have_caught_the_old_player_unit(self):
-        old = {"pvj-player.service": {"After": ["multi-user.target systemd-udev-settle.service"], "WantedBy": ["multi-user.target"]},
-               "pvj-web.service": {"After": ["network.target pvj-player.service"], "WantedBy": ["multi-user.target"]}}
+        old = {"nxlx-player.service": {"After": ["multi-user.target systemd-udev-settle.service"], "WantedBy": ["multi-user.target"]},
+               "nxlx-web.service": {"After": ["network.target nxlx-player.service"], "WantedBy": ["multi-user.target"]}}
         self.assertIsNotNone(ordering_cycle(old))
 
 
 class PlayerUnitTest(unittest.TestCase):
     def test_player_unit_has_no_shell_hook_for_the_socket(self):
-        # The socket is opened up by `pvj-player serve` (tests/test_player.py). A unit hook ran before mpv had made
+        # The socket is opened up by `nxlx-player serve` (tests/test_player.py). A unit hook ran before mpv had made
         # its new socket and changed the stale one, so it did nothing (found on a real Pi 4).
-        self.assertNotIn("ExecStartPost", load_units()["pvj-player.service"])
+        self.assertNotIn("ExecStartPost", load_units()["nxlx-player.service"])
 
-    def test_player_runs_in_the_pvj_group_so_the_panel_can_reach_the_socket(self):
-        self.assertEqual(load_units()["pvj-player.service"]["Group"], ["pvj"])
-        self.assertEqual(load_units()["pvj-web.service"]["Group"], ["pvj"])
+    def test_player_runs_in_the_shared_group_so_the_panel_can_reach_the_socket(self):
+        self.assertEqual(load_units()["nxlx-player.service"]["Group"], ["nxlx-svc"])
+        self.assertEqual(load_units()["nxlx-web.service"]["Group"], ["nxlx-svc"])
 
     def test_player_may_ask_for_real_time_priority_1_and_has_no_capability_for_it(self):
         # mctl-render's render thread asks for SCHED_RR 1 (render/src/main.c). The resource limit alone lets an
         # unprivileged account do that, so the unit grows no capability, and no other unit gets the limit.
-        player = load_units()["pvj-player.service"]
+        player = load_units()["nxlx-player.service"]
         self.assertEqual(player["LimitRTPRIO"], ["1"])
         for key in ("AmbientCapabilities", "CapabilityBoundingSet", "CapabilityAmbient", "LimitRTTIME", "CPUSchedulingPolicy",
                     "CPUSchedulingPriority", "RestrictRealtime"):
             self.assertNotIn(key, player, key)
         for name, keys in load_units().items():
-            if name != "pvj-player.service":
+            if name != "nxlx-player.service":
                 self.assertNotIn("LimitRTPRIO", keys, name)
                 self.assertNotIn("CAP_SYS_NICE", " ".join(words(keys, "AmbientCapabilities", "CapabilityBoundingSet")), name)
 
@@ -203,89 +203,89 @@ class RuntimeFolderTest(unittest.TestCase):
         self.assertEqual(runtime_folder_faults(self.units), [])
 
     def test_the_check_would_have_caught_the_old_units(self):
-        shared = {"RuntimeDirectory": ["pvj"], "RuntimeDirectoryMode": ["0770"], "RuntimeDirectoryPreserve": ["yes"]}
-        old = {"pvj-player.service": dict(shared, User=["gigbox"], Group=["pvj"]),
-               "pvj-web.service": dict(shared, User=["pvj-web"], Group=["pvj"]),
-               "pvj-netd.service": dict(shared, User=["root"], Group=["pvj"])}
+        shared = {"RuntimeDirectory": ["nxlx"], "RuntimeDirectoryMode": ["0770"], "RuntimeDirectoryPreserve": ["yes"]}
+        old = {"nxlx-player.service": dict(shared, User=["gigbox"], Group=["nxlx-svc"]),
+               "nxlx-web.service": dict(shared, User=["nxlx-web"], Group=["nxlx-svc"]),
+               "nxlx-netd.service": dict(shared, User=["root"], Group=["nxlx-svc"])}
         faults = "\n".join(runtime_folder_faults(old))
         self.assertIn("different users", faults)
         self.assertIn("writable by its group", faults)
-        nested = {"a.service": {"RuntimeDirectory": ["pvj"], "User": ["pvj-web"]},
-                  "b.service": {"RuntimeDirectory": ["pvj/netd"], "User": ["root"]}}
-        self.assertIn("the parent of pvj/netd", "\n".join(runtime_folder_faults(nested)))
+        nested = {"a.service": {"RuntimeDirectory": ["nxlx"], "User": ["nxlx-web"]},
+                  "b.service": {"RuntimeDirectory": ["nxlx/netd"], "User": ["root"]}}
+        self.assertIn("the parent of nxlx/netd", "\n".join(runtime_folder_faults(nested)))
 
     def test_the_parent_is_no_units_own_folder_so_it_stays_roots(self):
         folders = runtime_folders(self.units)
         parent = self.paths.RUN[len("/run/"):]
-        self.assertEqual(parent, "pvj")
+        self.assertEqual(parent, "nxlx")
         self.assertNotIn(parent, folders)
-        self.assertEqual(sorted(d for d in folders if d.startswith(parent + "/")), ["pvj/netd", "pvj/player", "pvj/web"])
+        self.assertEqual(sorted(d for d in folders if d.startswith(parent + "/")), ["nxlx/netd", "nxlx/player", "nxlx/web"])
         # and nothing gives a service write access to the parent through the sandbox either
         for name, keys in self.units.items():
             self.assertNotIn(self.paths.RUN, [p.lstrip("-+") for p in words(keys, "ReadWritePaths", "BindPaths")], name)
 
     def test_each_folder_has_one_owner_and_the_mode_the_code_expects(self):
         p = self.paths
-        want = {"pvj/player": ("pvj-player.service", "@PVJ_USER@", "0750", "no"),
-                "pvj/web": ("pvj-web.service", "pvj-web", "0750", "yes"),
-                "pvj/netd": ("pvj-netd.service", "root", "0750", "no"),
-                "pvj-sysd": ("pvj-sysd.service", "root", "0750", "no"),
-                "pvj-supportd": ("pvj-supportd.service", "root", "0750", "no")}
+        want = {"nxlx/player": ("nxlx-player.service", "@PVJ_USER@", "0750", "no"),
+                "nxlx/web": ("nxlx-web.service", "nxlx-web", "0750", "yes"),
+                "nxlx/netd": ("nxlx-netd.service", "root", "0750", "no"),
+                "nxlx-sysd": ("nxlx-sysd.service", "root", "0750", "no"),
+                "nxlx-supportd": ("nxlx-supportd.service", "root", "0750", "no")}
         folders = runtime_folders(self.units)
         for d, owner in want.items():
             self.assertEqual(folders[d], {owner}, d)
-            self.assertEqual(self.units[owner[0]]["Group"], ["pvj"], d)      # the panel reaches each through group pvj
-        self.assertEqual({user for _u, user, _m, _k in folders["pvj-update"]}, {"root"})
-        # the NDI helper's folder is the one that is NOT reached through group pvj (D62)
-        self.assertEqual(folders["pvj-ndi"], {("pvj-ndi.service", "pvj-ndi", "0750", "no")})
-        self.assertEqual("/run/pvj-ndi", p.NDI_DIR)
+            self.assertEqual(self.units[owner[0]]["Group"], ["nxlx-svc"], d)      # the panel reaches each through group nxlx-svc
+        self.assertEqual({user for _u, user, _m, _k in folders["nxlx-update"]}, {"root"})
+        # the NDI helper's folder is the one that is NOT reached through group nxlx-svc (D62)
+        self.assertEqual(folders["nxlx-ndi"], {("nxlx-ndi.service", "nxlx-ndi", "0750", "no")})
+        self.assertEqual("/run/nxlx-ndi", p.NDI_DIR)
         # and the NDI discovery server's supervisor has a folder and an account of its own (D85)
-        self.assertEqual(folders["pvj-ndisc"], {("pvj-ndi-discovery.service", "pvj-ndisc", "0750", "no")})
-        self.assertEqual("/run/pvj-ndisc", p.NDISC_DIR)
-        # and the sound analysis has its own folder and account, reached through group audio, never pvj (D96)
-        self.assertEqual(folders["pvj-sound"], {("pvj-sound.service", "pvj-sound", "0750", "no")})
-        self.assertEqual(self.units["pvj-sound.service"]["Group"], ["audio"])
-        self.assertEqual("/run/pvj-sound", p.SOUND_DIR)
+        self.assertEqual(folders["nxlx-ndisc"], {("nxlx-ndi-discovery.service", "nxlx-ndisc", "0750", "no")})
+        self.assertEqual("/run/nxlx-ndisc", p.NDISC_DIR)
+        # and the sound analysis has its own folder and account, reached through group audio, never nxlx-svc (D96)
+        self.assertEqual(folders["nxlx-sound"], {("nxlx-sound.service", "nxlx-sound", "0750", "no")})
+        self.assertEqual(self.units["nxlx-sound.service"]["Group"], ["audio"])
+        self.assertEqual("/run/nxlx-sound", p.SOUND_DIR)
         # and the Ableton Link follower too, in a group of its own that only the panel joins (D117)
-        self.assertEqual(folders["pvj-link"], {("pvj-link.service", "pvj-link", "0750", "no")})
-        self.assertEqual(self.units["pvj-link.service"]["Group"], ["pvj-link"])
-        self.assertEqual("/run/pvj-link", p.LINK_DIR)
-        self.assertEqual(set(folders), set(want) | {"pvj-update", "pvj-ndi", "pvj-ndisc", "pvj-sound", "pvj-link"})
+        self.assertEqual(folders["nxlx-link"], {("nxlx-link.service", "nxlx-link", "0750", "no")})
+        self.assertEqual(self.units["nxlx-link.service"]["Group"], ["nxlx-link"])
+        self.assertEqual("/run/nxlx-link", p.LINK_DIR)
+        self.assertEqual(set(folders), set(want) | {"nxlx-update", "nxlx-ndi", "nxlx-ndisc", "nxlx-sound", "nxlx-link"})
         self.assertEqual(["/run/" + d for d in want], [p.PLAYER_DIR, p.WEB_DIR, p.NETD_DIR, p.SYSD_DIR, p.SUPPORTD_DIR])
-        self.assertEqual("/run/pvj-update", p.UPDATE_DIR)
+        self.assertEqual("/run/nxlx-update", p.UPDATE_DIR)
 
     def test_every_unit_is_told_its_own_folder_and_the_panel_where_its_peers_are(self):
         p = self.paths
-        self.assertEqual(self.env("pvj-player.service")["PVJ_RUNTIME_DIR"], p.PLAYER_DIR)
-        self.assertEqual(self.env("pvj-netd.service")["PVJ_RUNTIME_DIR"], p.NETD_DIR)
-        web = self.env("pvj-web.service")
+        self.assertEqual(self.env("nxlx-player.service")["PVJ_RUNTIME_DIR"], p.PLAYER_DIR)
+        self.assertEqual(self.env("nxlx-netd.service")["PVJ_RUNTIME_DIR"], p.NETD_DIR)
+        web = self.env("nxlx-web.service")
         self.assertEqual((web["PVJ_RUNTIME_DIR"], web["PVJ_PLAYER_DIR"], web["PVJ_NETD_DIR"]), (p.WEB_DIR, p.PLAYER_DIR, p.NETD_DIR))
-        self.assertEqual(p.player_socket(web), p.player_socket(self.env("pvj-player.service")))
-        self.assertEqual(p.netd_socket(web), p.netd_socket(self.env("pvj-netd.service")))
-        self.assertEqual(self.env("pvj-sysd.service")["PVJ_SYSD_DIR"], p.SYSD_DIR)
-        self.assertEqual(self.env("pvj-supportd.service")["PVJ_SUPPORTD_DIR"], p.SUPPORTD_DIR)
-        for unit in ("pvj-update-usb@.service", "pvj-update-inbox@.service"):
+        self.assertEqual(p.player_socket(web), p.player_socket(self.env("nxlx-player.service")))
+        self.assertEqual(p.netd_socket(web), p.netd_socket(self.env("nxlx-netd.service")))
+        self.assertEqual(self.env("nxlx-sysd.service")["PVJ_SYSD_DIR"], p.SYSD_DIR)
+        self.assertEqual(self.env("nxlx-supportd.service")["PVJ_SUPPORTD_DIR"], p.SUPPORTD_DIR)
+        for unit in ("nxlx-update-usb@.service", "nxlx-update-inbox@.service"):
             self.assertIn("--result " + p.UPDATE_RESULT, " ".join(self.units[unit]["ExecStart"]))
         # a version from before D45 that an update rolled back to keeps working in its own folder: for those the
         # only name is PVJ_RUNTIME_DIR, and it must never point a service at a folder it cannot write
-        for unit, own in (("pvj-player.service", "pvj/player"), ("pvj-web.service", "pvj/web"), ("pvj-netd.service", "pvj/netd")):
+        for unit, own in (("nxlx-player.service", "nxlx/player"), ("nxlx-web.service", "nxlx/web"), ("nxlx-netd.service", "nxlx/netd")):
             self.assertEqual(self.env(unit)["PVJ_RUNTIME_DIR"], "/run/" + self.units[unit]["RuntimeDirectory"][0])
             self.assertEqual(self.units[unit]["RuntimeDirectory"], [own])
 
     def test_a_sandboxed_service_may_write_its_own_folder_and_no_other_runtime_folder(self):
-        for unit, own in (("pvj-web.service", self.paths.WEB_DIR), ("pvj-netd.service", self.paths.NETD_DIR),
-                          ("pvj-sysd.service", self.paths.SYSD_DIR), ("pvj-supportd.service", self.paths.SUPPORTD_DIR)):
+        for unit, own in (("nxlx-web.service", self.paths.WEB_DIR), ("nxlx-netd.service", self.paths.NETD_DIR),
+                          ("nxlx-sysd.service", self.paths.SYSD_DIR), ("nxlx-supportd.service", self.paths.SUPPORTD_DIR)):
             self.assertEqual(self.units[unit]["ProtectSystem"], ["strict"], unit)
             run = [w.lstrip("-+") for w in words(self.units[unit], "ReadWritePaths") if w.lstrip("-+").startswith("/run")]
             self.assertEqual(run, [own], unit)
 
     def test_tmpfiles_keeps_the_parent_with_root_and_the_links_for_an_older_panel_in_the_panels_folder(self):
         p = self.paths
-        with open(os.path.join(REPO, "install", "pvj-tmpfiles.conf")) as f:
+        with open(os.path.join(REPO, "install", "nxlx-tmpfiles.conf")) as f:
             lines = [ln.split() for ln in f if ln.strip() and not ln.startswith("#")]
         self.assertEqual(lines[0], ["d", p.RUN, "0755", "root", "root", "-"])
         self.assertEqual(lines[1], ["f", p.RUN + "/.d45", "0644", "root", "root", "-"])     # the installer's "done"
-        self.assertEqual(lines[2], ["d", p.WEB_DIR, "0750", "pvj-web", "pvj", "-"])
+        self.assertEqual(lines[2], ["d", p.WEB_DIR, "0750", "nxlx-web", "nxlx-svc", "-"])
         # inside the panel's folder root makes links only, and sets no owner or mode there
         for ln in lines[3:]:
             self.assertEqual((ln[0], ln[2:5]), ("L+", ["-", "-", "-"]), ln)
@@ -309,28 +309,28 @@ class RuntimeFolderTest(unittest.TestCase):
         sh = self.installer()
         real = sh[sh.index('[ -d /run/systemd/system ]; then\n\tprepare_run_folder'):]
         order = [real.index(x) for x in ("prepare_run_folder", "systemctl daemon-reload", "fix_run_folder",
-                                         "systemctl restart pvj-player.service")]
+                                         "systemctl restart nxlx-player.service")]
         # before the reload a player that restarts by itself runs its old unit and takes the folder back; between
-        # the reload and the emptying a restart would let systemd chown a name planted as /run/pvj/player
+        # the reload and the emptying a restart would let systemd chown a name planted as /run/nxlx/player
         self.assertEqual(order, sorted(order))
         prepare = self.function(sh, "prepare_run_folder")
         self.assertIn('systemctl stop "${RUN_UNITS[@]}"', prepare)
         self.assertLess(prepare.index("is-active"), prepare.index("systemctl stop"))
-        self.assertIn("RUN_UNITS=(pvj-player.service pvj-web.service pvj-netd.service)", sh)
+        self.assertIn("RUN_UNITS=(nxlx-player.service nxlx-web.service nxlx-netd.service)", sh)
         self.assertNotIn("systemctl start", sh[:sh.index("fix_run_folder\n\tif systemctl restart systemd-journald")])
         body = self.function(sh, "fix_run_folder")
         steps = [body.index(x) for x in ("chown root:root", "chmod 0755", 'rm -f "$RUN_MARK"', "-mindepth 1 -delete || die",
                                          "systemd-tmpfiles --create")]
         self.assertEqual(steps, sorted(steps))     # take it, forget "done", empty it or stop, and only then "done"
         # an update from the panel installs with --no-start and restarts only the player and the panel
-        self.assertIn("systemctl try-restart pvj-netd.service", sh)
+        self.assertIn("systemctl try-restart nxlx-netd.service", sh)
         self.assertIn('systemctl start "${RUN_WAS_ACTIVE[@]}"', sh)
         self.assertIn('"$TMPFILES"', sh[sh.index("uninstall() {"):sh.index("if [ \"$UNINSTALL\" = 1 ]")])
 
     def test_root_never_writes_chowns_or_chmods_a_name_inside_a_folder_an_account_owns(self):
-        # Found by the review: the installer wrote a note into /run/pvj/web as root, and a link planted there by
+        # Found by the review: the installer wrote a note into /run/nxlx/web as root, and a link planted there by
         # the panel's account sent the write, the chown and the chmod anywhere. In these functions root may only
-        # chown and chmod /run/pvj itself, remove names, and let tmpfiles write the marker in /run/pvj.
+        # chown and chmod /run/nxlx itself, remove names, and let tmpfiles write the marker in /run/nxlx.
         sh = self.installer()
         for name in ("run_folder_is_sound", "prepare_run_folder", "fix_run_folder"):
             body = "\n".join(ln.split("  #")[0] for ln in self.function(sh, name).splitlines() if not ln.lstrip().startswith("#"))
@@ -342,15 +342,15 @@ class RuntimeFolderTest(unittest.TestCase):
                     self.assertTrue(targets, ln)
                     for t in targets:
                         self.assertIn(t, ("$RUN_DIR", "$RUN_MARK", "${RUN_UNITS[@]}", "$REAL", "$RUN_EMPTY"), ln)
-            for word in ("/web", "/player", "/netd", "undervoltage", "pvj-web:pvj"):
-                self.assertNotIn(word, body.replace('web) want="pvj-web:pvj 750"', ""), "%s in %s" % (word, name))
+            for word in ("/web", "/player", "/netd", "undervoltage", "nxlx-web:nxlx-svc"):
+                self.assertNotIn(word, body.replace('web) want="nxlx-web:nxlx-svc 750"', ""), "%s in %s" % (word, name))
         self.assertNotIn("undervoltage", sh)
         # the marker is in the folder that is root's, never in a service's
         self.assertIn('RUN_MARK="$RUN_DIR/.d45"', sh)
-        self.assertIn('RUN_DIR="$ROOT/run/pvj"', sh)
+        self.assertIn('RUN_DIR="$ROOT/run/nxlx"', sh)
 
     def test_the_pin_command_reads_where_the_panel_writes(self):
-        with open(os.path.join(REPO, "bin", "pvj-pin")) as f:
+        with open(os.path.join(REPO, "bin", "nxlx-pin")) as f:
             self.assertIn('f="${PVJ_RUNTIME_DIR:-%s}/%s"' % (self.paths.WEB_DIR, self.paths.PIN), f.read())
 
     def test_no_code_names_a_runtime_path_outside_the_paths_module(self):
@@ -362,10 +362,10 @@ class RuntimeFolderTest(unittest.TestCase):
             for ln in code:
                 if '"""' in ln:
                     continue
-                self.assertNotRegex(ln, r"""["']/run/pvj""", "%s: %s" % (os.path.basename(path), ln.strip()))
+                self.assertNotRegex(ln, r"""["']/run/nxlx""", "%s: %s" % (os.path.basename(path), ln.strip()))
 
     def test_every_runtime_path_in_bin_and_install_is_one_the_paths_module_knows(self):
-        # Shell and unit files cannot import mctl/paths.py, so every /run/pvj... they name must be one of its paths.
+        # Shell and unit files cannot import mctl/paths.py, so every /run/nxlx... they name must be one of its paths.
         p = self.paths
         known = {p.RUN, p.RUN + "/.d45", p.PLAYER_DIR, p.WEB_DIR, p.NETD_DIR, p.SYSD_DIR, p.SUPPORTD_DIR, p.UPDATE_DIR, p.NDI_PIPE_DIR, p.NDI_PIPE_DIR + "/" + p.NDI_FIFO,
                  p.UPDATE_RESULT, p.WEB_DIR + "/" + p.PIN, p.WEB_DIR + "/player.sock", p.WEB_DIR + "/netd.sock",
@@ -377,7 +377,7 @@ class RuntimeFolderTest(unittest.TestCase):
             if path.endswith(".md") or not os.path.isfile(path):
                 continue    # a folder such as bin/__pycache__ (a test that loads a program writes one)
             with open(path) as f:
-                for found in re.findall(r"/run/pvj[A-Za-z0-9_./<>-]*", f.read()):
+                for found in re.findall(r"/run/nxlx[A-Za-z0-9_./<>-]*", f.read()):
                     found = found.rstrip(".")
                     seen.add(found)
                     self.assertIn(found, known, "%s names %s" % (os.path.basename(path), found))
@@ -392,31 +392,31 @@ class InstallerOwnershipTest(unittest.TestCase):
             self.sh = f.read()
 
     def test_the_player_gets_its_own_home_and_old_installs_are_moved_without_moving_files(self):
-        self.assertIn("--home-dir /var/lib/pvj-player", self.sh)
-        self.assertNotIn("--home-dir /var/lib/pvj ", self.sh)
-        self.assertRegex(self.sh, r"usermod -d /var/lib/pvj-player")
+        self.assertIn("--home-dir /var/lib/nxlx-player", self.sh)
+        self.assertNotIn("--home-dir /var/lib/nxlx ", self.sh)
+        self.assertRegex(self.sh, r"usermod -d /var/lib/nxlx-player")
         self.assertNotRegex(self.sh, r"usermod[^\n]*\s-m\b")                     # -m would move settings and media
 
     def test_the_player_is_stopped_before_its_home_is_changed(self):
         # usermod fails while the account has a running process, and the installer stops at the first error
-        stop = self.sh.index("systemctl stop pvj-player.service")
-        change = self.sh.index("usermod -d /var/lib/pvj-player")
+        stop = self.sh.index("systemctl stop nxlx-player.service")
+        change = self.sh.index("usermod -d /var/lib/nxlx-player")
         self.assertLess(stop, change)
 
     def test_the_state_folder_belongs_to_the_web_user_and_is_not_group_writable(self):
-        self.assertIn("chown pvj-web:pvj /var/lib/pvj;", self.sh)
-        self.assertIn("chmod 2750 /var/lib/pvj", self.sh)
-        self.assertNotIn("chmod 2775 /var/lib/pvj;", self.sh)
+        self.assertIn("chown nxlx-web:nxlx-svc /var/lib/nxlx;", self.sh)
+        self.assertIn("chmod 2750 /var/lib/nxlx", self.sh)
+        self.assertNotIn("chmod 2775 /var/lib/nxlx;", self.sh)
 
 class SysdUnitTest(unittest.TestCase):
     def test_the_system_helper_has_no_capabilities_and_only_unix_sockets(self):
-        u = load_units()["pvj-sysd.service"]
+        u = load_units()["nxlx-sysd.service"]
         self.assertEqual(u["CapabilityBoundingSet"], [""])
         self.assertEqual(u["NoNewPrivileges"], ["yes"])
         self.assertEqual(words(u, "RestrictAddressFamilies"), ["AF_UNIX"])
         self.assertEqual(u["ProtectSystem"], ["strict"])
         for key, value in (("PrivateNetwork", "yes"), ("MemoryDenyWriteExecute", "yes"), ("RestrictSUIDSGID", "yes"),
-                           ("RuntimeDirectory", "pvj-sysd"), ("RuntimeDirectoryMode", "0750"), ("SystemCallFilter", "@system-service")):
+                           ("RuntimeDirectory", "nxlx-sysd"), ("RuntimeDirectoryMode", "0750"), ("SystemCallFilter", "@system-service")):
             self.assertEqual(u[key], [value], key)
         self.assertNotIn("PrivateUsers", u)            # it would hide the caller's uid from the peer check
         # D133: vcgencmd get_throttled needs /dev/vcio, which a private /dev does not have: a device policy with that one entry instead
@@ -425,19 +425,19 @@ class SysdUnitTest(unittest.TestCase):
 
     def test_installer_and_image_enable_it(self):
         with open(os.path.join(REPO, "install", "install.sh")) as f:
-            self.assertIn("pvj-sysd.service", f.read())
-        with open(os.path.join(REPO, "image", "stage-pvj", "00-install-pvj", "01-run.sh")) as f:
-            self.assertIn("pvj-sysd.service", f.read())
+            self.assertIn("nxlx-sysd.service", f.read())
+        with open(os.path.join(REPO, "image", "stage-nxlx", "00-install-nxlx", "01-run.sh")) as f:
+            self.assertIn("nxlx-sysd.service", f.read())
 
 
 class SupportdUnitTest(unittest.TestCase):
     def test_the_support_helper_has_only_net_admin_and_its_own_folders(self):
-        u = load_units()["pvj-supportd.service"]
+        u = load_units()["nxlx-supportd.service"]
         self.assertEqual(u["CapabilityBoundingSet"], ["CAP_NET_ADMIN"])
         self.assertEqual(u["NoNewPrivileges"], ["yes"])
         self.assertEqual(sorted(words(u, "RestrictAddressFamilies")), ["AF_INET", "AF_INET6", "AF_NETLINK", "AF_UNIX"])
-        for key, value in (("ProtectSystem", "strict"), ("RuntimeDirectory", "pvj-supportd"), ("RuntimeDirectoryMode", "0750"),
-                           ("StateDirectory", "pvj-support"), ("StateDirectoryMode", "0700"), ("MemoryDenyWriteExecute", "yes"),
+        for key, value in (("ProtectSystem", "strict"), ("RuntimeDirectory", "nxlx-supportd"), ("RuntimeDirectoryMode", "0750"),
+                           ("StateDirectory", "nxlx-support"), ("StateDirectoryMode", "0700"), ("MemoryDenyWriteExecute", "yes"),
                            ("SystemCallFilter", "@system-service"), ("ProtectKernelModules", "yes")):
             self.assertEqual(u[key], [value], key)
         self.assertNotIn("PrivateUsers", u)            # it would hide the caller's uid from the peer check
@@ -446,18 +446,18 @@ class SupportdUnitTest(unittest.TestCase):
     def test_installer_and_image_enable_it_and_load_wireguard(self):
         with open(os.path.join(REPO, "install", "install.sh")) as f:
             sh = f.read()
-        self.assertIn("pvj-supportd.service", sh)
+        self.assertIn("nxlx-supportd.service", sh)
         self.assertIn("echo wireguard >", sh)
         self.assertIn("wireguard-tools", sh)
-        with open(os.path.join(REPO, "image", "stage-pvj", "00-install-pvj", "01-run.sh")) as f:
-            self.assertIn("pvj-supportd.service", f.read())
-        with open(os.path.join(REPO, "image", "stage-pvj", "00-install-pvj", "00-packages-nr")) as f:
+        with open(os.path.join(REPO, "image", "stage-nxlx", "00-install-nxlx", "01-run.sh")) as f:
+            self.assertIn("nxlx-supportd.service", f.read())
+        with open(os.path.join(REPO, "image", "stage-nxlx", "00-install-nxlx", "00-packages-nr")) as f:
             self.assertEqual({"wireguard-tools", "nftables"} - set(f.read().split()), set())
 
 
 class WebUnitCaptureTest(unittest.TestCase):
     def test_the_panel_may_read_capture_devices_and_only_those_besides_alsa(self):
-        web = load_units()["pvj-web.service"]
+        web = load_units()["nxlx-web.service"]
         self.assertIn("video", words(web, "SupplementaryGroups"))
         self.assertIn("char-video4linux rw", web["DeviceAllow"])
         self.assertEqual(web["DevicePolicy"], ["closed"])
@@ -468,19 +468,19 @@ class WebUnitLightsTest(unittest.TestCase):
     the whole device policy and the rest of the sandbox, so nothing else widens with it or after it."""
 
     def test_the_device_policy_is_exactly_this(self):
-        web = load_units()["pvj-web.service"]
+        web = load_units()["nxlx-web.service"]
         self.assertEqual(web["DevicePolicy"], ["closed"])
         self.assertEqual(web["DeviceAllow"], ["/dev/null rw", "/dev/zero rw", "/dev/full rw", "/dev/random r", "/dev/urandom r",
                                               "char-alsa rw", "char-video4linux rw"])
         self.assertNotIn("PrivateDevices", web)             # it would hide /dev/snd; the policy above stands in for it
 
     def test_nothing_else_in_the_sandbox_widened(self):
-        web = load_units()["pvj-web.service"]
-        self.assertEqual((web["User"], web["Group"], words(web, "SupplementaryGroups")), (["pvj-web"], ["pvj"], ["audio", "video"]))
+        web = load_units()["nxlx-web.service"]
+        self.assertEqual((web["User"], web["Group"], words(web, "SupplementaryGroups")), (["nxlx-web"], ["nxlx-svc"], ["audio", "video"]))
         self.assertEqual(web["CapabilityBoundingSet"], ["CAP_NET_BIND_SERVICE"])
         self.assertEqual(web["AmbientCapabilities"], ["CAP_NET_BIND_SERVICE"])
         self.assertEqual(sorted(words(web, "RestrictAddressFamilies")), ["AF_INET", "AF_INET6", "AF_NETLINK", "AF_UNIX"])
-        self.assertEqual(words(web, "ReadWritePaths"), ["/var/lib/pvj", "/run/pvj/web"])
+        self.assertEqual(words(web, "ReadWritePaths"), ["/var/lib/nxlx", "/run/nxlx/web"])
         for key, value in (("NoNewPrivileges", "yes"), ("ProtectSystem", "strict"), ("ProtectHome", "yes"), ("PrivateTmp", "yes"),
                            ("ProtectKernelTunables", "yes"), ("ProtectKernelModules", "yes"), ("ProtectControlGroups", "yes"),
                            ("RestrictNamespaces", "yes"), ("LockPersonality", "yes"), ("SystemCallArchitectures", "native"), ("UMask", "0007")):
@@ -490,7 +490,7 @@ class WebUnitLightsTest(unittest.TestCase):
         for name, keys in load_units().items():
             # the player plays sound; it has no device policy of this kind. The sound analysis (D96) reads a capture
             # device through alsa-lib, which opens it read-write; its own test pins the rest of its sandbox.
-            if name not in ("pvj-web.service", "pvj-player.service", "pvj-sound.service"):
+            if name not in ("nxlx-web.service", "nxlx-player.service", "nxlx-sound.service"):
                 self.assertFalse([v for v in keys.get("DeviceAllow", []) if "alsa" in v], name)
 
     def test_the_check_after_the_open_refuses_what_is_not_an_alsa_device_and_leaks_no_handle(self):
@@ -545,7 +545,7 @@ class WebUnitLightsTest(unittest.TestCase):
 class WebUnitTest(unittest.TestCase):
     def test_the_panel_may_read_the_boxs_addresses(self):
         # `ip -j addr` needs a netlink socket; the sandbox refused it and the Network card showed no addresses on a Pi 4
-        families = words(load_units()["pvj-web.service"], "RestrictAddressFamilies")
+        families = words(load_units()["nxlx-web.service"], "RestrictAddressFamilies")
         self.assertIn("AF_NETLINK", families)
         self.assertNotIn("AF_PACKET", families)
 
@@ -554,14 +554,14 @@ class NetdUnitTest(unittest.TestCase):
     def test_the_network_helper_may_write_where_it_puts_wi_fi_profiles(self):
         # found by review: ProtectSystem=strict made /etc read-only, so every Wi-Fi join would have failed
         from mctl import netcfg
-        keys = load_units()["pvj-netd.service"]
+        keys = load_units()["nxlx-netd.service"]
         self.assertEqual(keys["ProtectSystem"], ["strict"])
         paths = [p.lstrip("-") for p in words(keys, "ReadWritePaths")]
         self.assertIn(netcfg.KEYFILE_DIR, paths)
-        self.assertEqual(sorted(paths), sorted(["/run/pvj/netd", "/var/lib/pvj-netd", netcfg.KEYFILE_DIR]))
+        self.assertEqual(sorted(paths), sorted(["/run/nxlx/netd", "/var/lib/nxlx-netd", netcfg.KEYFILE_DIR]))
 
     def test_the_network_helper_may_read_the_boxs_addresses(self):
-        families = words(load_units()["pvj-netd.service"], "RestrictAddressFamilies")
+        families = words(load_units()["nxlx-netd.service"], "RestrictAddressFamilies")
         self.assertEqual(sorted(families), ["AF_NETLINK", "AF_UNIX"])
 
 
@@ -578,13 +578,13 @@ class NdiUnitTest(unittest.TestCase):
         from mctl import ndisetup
         self.setup = ndisetup
         self.units = load_units()
-        self.ndi = self.units["pvj-ndi.service"]
+        self.ndi = self.units["nxlx-ndi.service"]
         with open(os.path.join(REPO, "install", "install.sh")) as f:
             self.sh = f.read()
         with open(os.path.join(REPO, "mctl", "ndisetup.py")) as f:
             self.py = f.read()
         self.dropins = {}
-        for name, text in (("pvj-web.service", ndisetup.WEB_TEXT), ("pvj-player.service", ndisetup.PLAYER_TEXT)):
+        for name, text in (("nxlx-web.service", ndisetup.WEB_TEXT), ("nxlx-player.service", ndisetup.PLAYER_TEXT)):
             keys = {}
             for line in text.splitlines():
                 m = re.match(r"^([A-Za-z]+)=(.*)$", line.strip())
@@ -593,48 +593,48 @@ class NdiUnitTest(unittest.TestCase):
             self.dropins[name] = keys
 
     def test_its_own_account_and_group_and_never_the_groups_that_reach_the_player_the_screen_or_sound(self):
-        self.assertEqual((self.ndi["User"], self.ndi["Group"]), (["pvj-ndi"], ["pvj-ndi"]))
+        self.assertEqual((self.ndi["User"], self.ndi["Group"]), (["nxlx-ndi"], ["nxlx-ndi"]))
         self.assertNotIn("SupplementaryGroups", self.ndi)
         # the account is made by the opt-in command only (mctl/ndisetup.py), with these flags, and never by the installer
         self.assertIn('["useradd", "--system", "--no-create-home", "--shell", "/usr/sbin/nologin", "--gid", GROUP, ACCOUNT]', self.py)
-        self.assertEqual((self.setup.ACCOUNT, self.setup.GROUP), ("pvj-ndi", "pvj-ndi"))
+        self.assertEqual((self.setup.ACCOUNT, self.setup.GROUP), ("nxlx-ndi", "nxlx-ndi"))
         for line in self.sh.splitlines():                  # and nothing ever puts the account into another group
             if "usermod" in line:
-                self.assertNotIn("pvj-ndi", line, line)
+                self.assertNotIn("nxlx-ndi", line, line)
         self.assertNotIn("usermod", self.py)
         # no other unit runs as this account or in this group as its main group
         for name, keys in self.units.items():
-            if name != "pvj-ndi.service":
-                self.assertNotEqual(keys.get("User"), ["pvj-ndi"], name)
-                self.assertNotEqual(keys.get("Group"), ["pvj-ndi"], name)
+            if name != "nxlx-ndi.service":
+                self.assertNotEqual(keys.get("User"), ["nxlx-ndi"], name)
+                self.assertNotEqual(keys.get("Group"), ["nxlx-ndi"], name)
 
     def test_only_the_panel_and_the_player_are_let_into_its_folder_and_only_by_the_opt_in_drop_ins(self):
         # No unit as the installer writes it names the group: on a box that did not opt in the group does not exist,
         # and systemd does not start a unit that names a group the system does not have.
-        self.assertEqual([n for n, k in self.units.items() if "pvj-ndi" in words(k, "SupplementaryGroups")], [])
-        for name in ("pvj-web.service", "pvj-player.service"):
+        self.assertEqual([n for n, k in self.units.items() if "nxlx-ndi" in words(k, "SupplementaryGroups")], [])
+        for name in ("nxlx-web.service", "nxlx-player.service"):
             with open(os.path.join(REPO, "install", name)) as f:
-                self.assertNotRegex(f.read(), r"pvj-ndi|NDI", name)
+                self.assertNotRegex(f.read(), r"nxlx-ndi|NDI", name)
         # The opt-in gives it to exactly these two, in drop-ins, where the setting adds to the unit's own list.
-        self.assertEqual(sorted(self.dropins), ["pvj-player.service", "pvj-web.service"])
-        self.assertEqual(self.dropins["pvj-player.service"], {"SupplementaryGroups": ["pvj-ndi"]})
-        self.assertEqual(self.dropins["pvj-web.service"], {"SupplementaryGroups": ["pvj-ndi"], "Environment": ["PVJ_NDI_DIR=/run/pvj-ndi", "PVJ_NDI_CONFIG_DIR=/run/pvj-ndi-config"],
-                                                           "ReadWritePaths": ["-/run/pvj-ndi-config"]})      # the library's configuration file is the panel's to write
+        self.assertEqual(sorted(self.dropins), ["nxlx-player.service", "nxlx-web.service"])
+        self.assertEqual(self.dropins["nxlx-player.service"], {"SupplementaryGroups": ["nxlx-ndi"]})
+        self.assertEqual(self.dropins["nxlx-web.service"], {"SupplementaryGroups": ["nxlx-ndi"], "Environment": ["PVJ_NDI_DIR=/run/nxlx-ndi", "PVJ_NDI_CONFIG_DIR=/run/nxlx-ndi-config"],
+                                                           "ReadWritePaths": ["-/run/nxlx-ndi-config"]})      # the library's configuration file is the panel's to write
         for text in (self.setup.WEB_TEXT, self.setup.PLAYER_TEXT):
             self.assertEqual([line for line in text.splitlines() if line.startswith("[")], ["[Service]"])
-        self.assertEqual(self.setup.WEB_DROPIN, "/etc/systemd/system/pvj-web.service.d/50-pvj-ndi.conf")
-        self.assertEqual(self.setup.PLAYER_DROPIN, "/etc/systemd/system/pvj-player.service.d/50-pvj-ndi.conf")
-        self.assertEqual(sorted(self.setup.RESTART), ["pvj-player.service", "pvj-web.service"])
-        self.assertEqual((self.ndi["RuntimeDirectory"], self.ndi["RuntimeDirectoryMode"], self.ndi["UMask"]), (["pvj-ndi"], ["0750"], ["0027"]))
+        self.assertEqual(self.setup.WEB_DROPIN, "/etc/systemd/system/nxlx-web.service.d/50-nxlx-ndi.conf")
+        self.assertEqual(self.setup.PLAYER_DROPIN, "/etc/systemd/system/nxlx-player.service.d/50-nxlx-ndi.conf")
+        self.assertEqual(sorted(self.setup.RESTART), ["nxlx-player.service", "nxlx-web.service"])
+        self.assertEqual((self.ndi["RuntimeDirectory"], self.ndi["RuntimeDirectoryMode"], self.ndi["UMask"]), (["nxlx-ndi"], ["0750"], ["0027"]))
         from mctl import paths
         env = dict(w.split("=", 1) for w in words(self.ndi, "Environment"))
-        web = dict(w.split("=", 1) for w in words(self.dropins["pvj-web.service"], "Environment"))
-        self.assertNotIn("PVJ_NDI_DIR", " ".join(words(self.units["pvj-web.service"], "Environment")))     # the panel's own unit does not say it
+        web = dict(w.split("=", 1) for w in words(self.dropins["nxlx-web.service"], "Environment"))
+        self.assertNotIn("PVJ_NDI_DIR", " ".join(words(self.units["nxlx-web.service"], "Environment")))     # the panel's own unit does not say it
         self.assertEqual(env["PVJ_NDI_DIR"], paths.NDI_DIR)
         self.assertEqual(paths.ndi_socket(web), paths.ndi_socket(env))
         # the pipe is not in the helper's folder: root makes it once, in a folder of root's, so the helper can write it
         # and cannot replace it with a link (the review of 2026-10-11, M3)
-        self.assertEqual((paths.NDI_PIPE_DIR, paths.ndi_fifo(web)), ("/run/pvj-ndi-pipe", "/run/pvj-ndi-pipe/" + paths.NDI_FIFO))
+        self.assertEqual((paths.NDI_PIPE_DIR, paths.ndi_fifo(web)), ("/run/nxlx-ndi-pipe", "/run/nxlx-ndi-pipe/" + paths.NDI_FIFO))
         self.assertEqual(paths.ndi_fifo({"PVJ_NDI_PIPE_DIR": "/x"}), "/x/" + paths.NDI_FIFO)
 
     def test_the_group_exists_before_any_unit_that_names_it_is_written_or_started(self):
@@ -645,9 +645,9 @@ class NdiUnitTest(unittest.TestCase):
             body = body[:body.index("\ndef ", 1)]
             self.assertLess(body.index("account(run=run, say=say)"), body.index("write_units("), fn)
         # and in the installer the refresh comes before systemd is told to read the units again and before any restart
-        refresh = self.sh.index('"$RELEASE/bin/pvj-ndi-runtime" refresh')
+        refresh = self.sh.index('"$RELEASE/bin/nxlx-ndi-runtime" refresh')
         self.assertLess(refresh, self.sh.index("\tsystemctl daemon-reload\n\tfix_run_folder"))
-        self.assertLess(refresh, self.sh.index("systemctl restart pvj-player.service"))
+        self.assertLess(refresh, self.sh.index("systemctl restart nxlx-player.service"))
         self.assertLess(self.sh.index('mv -T "$ROOT$PREFIX/current.tmp"'), refresh)      # the program it runs is the one just installed
 
     def test_the_sandbox_is_exactly_this(self):
@@ -660,9 +660,9 @@ class NdiUnitTest(unittest.TestCase):
                            ("RestrictNamespaces", "yes"), ("RestrictRealtime", "yes"), ("RestrictSUIDSGID", "yes"),
                            ("LockPersonality", "yes"), ("SystemCallArchitectures", "native")):
             self.assertEqual(n[key], [value], key)
-        self.assertEqual(words(n, "ReadWritePaths"), ["/run/pvj-ndi", "-/run/pvj-ndi-pipe"])
+        self.assertEqual(words(n, "ReadWritePaths"), ["/run/nxlx-ndi", "-/run/nxlx-ndi-pipe"])
         self.assertEqual(sorted(words(n, "RestrictAddressFamilies")), ["AF_INET", "AF_INET6", "AF_NETLINK", "AF_UNIX"])
-        self.assertEqual(words(n, "InaccessiblePaths"), ["-/var/lib/pvj", "-/etc/pvj", "-/run/pvj"])
+        self.assertEqual(words(n, "InaccessiblePaths"), ["-/var/lib/nxlx", "-/etc/nxlx", "-/run/nxlx"])
         for key in ("DeviceAllow", "BindPaths", "StateDirectory", "ExecStartPre", "ExecStartPost", "EnvironmentFile"):
             self.assertNotIn(key, n, key)
 
@@ -671,13 +671,13 @@ class NdiUnitTest(unittest.TestCase):
         # was a failure every two seconds into the kept journal. A condition that is not met is not a failure.
         n = self.ndi
         self.assertEqual((n["Restart"], n["RestartSec"], n["StartLimitIntervalSec"]), (["always"], ["2"], ["0"]))
-        self.assertEqual(n["ConditionPathExists"], ["@PVJ_DIR@/bin/pvj-ndi"])
-        self.assertEqual(n["ExecStart"], ["@PVJ_DIR@/bin/pvj-ndi"])
-        with open(os.path.join(NDI_UNITS, "pvj-ndi.service")) as f:
+        self.assertEqual(n["ConditionPathExists"], ["@PVJ_DIR@/bin/nxlx-ndi"])
+        self.assertEqual(n["ExecStart"], ["@PVJ_DIR@/bin/nxlx-ndi"])
+        with open(os.path.join(NDI_UNITS, "nxlx-ndi.service")) as f:
             self.assertLess(f.read().index("ConditionPathExists="), self.read_service_at())
 
     def read_service_at(self):
-        with open(os.path.join(NDI_UNITS, "pvj-ndi.service")) as f:
+        with open(os.path.join(NDI_UNITS, "nxlx-ndi.service")) as f:
             return f.read().index("[Service]")
 
     def test_the_installer_removes_a_helper_that_nobody_set_up(self):
@@ -685,7 +685,7 @@ class NdiUnitTest(unittest.TestCase):
         # on every box) is disabled and removed by the next install; the mark decides, nothing else.
         block = self.sh[self.sh.index("NDI_OPTED_IN=0"):self.sh.index("# USB automount")]
         orphan = block[block.index('elif [ -e "$NDI_UNIT" ] || [ -L "$NDI_UNIT" ] || [ -e "$NDI_PLAYER_DROPIN" ] || [ -L "$NDI_PLAYER_DROPIN" ] || [ -L "$NDI_WANTS" ] || [ -e "$NDI_TMPFILES" ] || [ -L "$NDI_TMPFILES" ]; then'):]
-        self.assertIn("systemctl disable --now pvj-ndi.service", orphan)
+        self.assertIn("systemctl disable --now nxlx-ndi.service", orphan)
         self.assertNotIn("userdel", orphan)
         self.assertLess(self.sh.index('elif [ -e "$NDI_UNIT" ]'), self.sh.index("\tsystemctl daemon-reload\n\tfix_run_folder"))
         # Second review, L1: under "set -e" an rm that fails (a folder in the place of the unit) ended every install
@@ -695,10 +695,10 @@ class NdiUnitTest(unittest.TestCase):
         for line in rm:
             self.assertRegex(line, r' \|\| log "WARNING: could not remove', line)
         self.assertIn('run rm -f "$NDI_UNIT" "$NDI_PLAYER_DROPIN" "$NDI_TMPFILES" "$NDI_WANTS" || log', orphan)       # N3: the link "enable" made goes too, and root's pipe lines (M3)
-        self.assertEqual(self.sh.count('NDI_WANTS="$ROOT/etc/systemd/system/multi-user.target.wants/pvj-ndi.service"'), 1)
+        self.assertEqual(self.sh.count('NDI_WANTS="$ROOT/etc/systemd/system/multi-user.target.wants/nxlx-ndi.service"'), 1)
         # and the mark is asked for once more right before that rm: a setup that finished meanwhile is left alone
         again = orphan.index("if ndi_mark; then")
-        self.assertLess(orphan.index("systemctl disable --now pvj-ndi.service"), again)
+        self.assertLess(orphan.index("systemctl disable --now nxlx-ndi.service"), again)
         self.assertLess(again, orphan.index('run rm -f "$NDI_UNIT"'))
         self.assertIn("else\n\t\t# Never the end of an install", orphan[again:])
 
@@ -713,12 +713,12 @@ class NdiUnitTest(unittest.TestCase):
         self.assertNotIn("readlink", block)                # what it points to is never looked at or touched
 
     def test_a_dot_is_not_a_folder_name(self):
-        # Second review, N4: "--prefix /opt/pvj/./" became "/opt/pvj/.".
+        # Second review, N4: "--prefix /opt/nxlx/./" became "/opt/nxlx/.".
         self.assertIn('[[ "$path" =~ (^|/)\\.(/|$) ]] && die "paths may not contain . components"', self.sh)
-        for bad in ("/opt/pvj/.", "/opt/./pvj", "/./opt/pvj"):
+        for bad in ("/opt/nxlx/.", "/opt/./pvj", "/./opt/nxlx"):
             with self.assertRaises(self.setup.SetupError, msg=bad):
                 self.setup.check_prefix(bad)
-        self.assertEqual(self.setup.check_prefix("/opt/pvj.2/x-1"), "/opt/pvj.2/x-1")      # a dot inside a name is fine
+        self.assertEqual(self.setup.check_prefix("/opt/nxlx.2/x-1"), "/opt/nxlx.2/x-1")      # a dot inside a name is fine
 
     def test_a_helper_that_ends_is_started_again_as_written_and_why_that_was_left(self):
         # Second review, N6. What ends the helper: (1) the module switched off with the library loaded, on purpose,
@@ -731,10 +731,10 @@ class NdiUnitTest(unittest.TestCase):
             self.assertNotIn(key, n, key)
 
     def test_the_install_folder_is_written_one_way(self):
-        # Review L1: "--prefix /opt/pvj/" went into install.json as written, and the NDI setup refuses that spelling.
+        # Review L1: "--prefix /opt/nxlx/" went into install.json as written, and the NDI setup refuses that spelling.
         self.assertIn('while [ "${#PREFIX}" -gt 1 ] && [ "${PREFIX%/}" != "$PREFIX" ]; do PREFIX="${PREFIX%/}"; done', self.sh)
         self.assertIn('case "$PREFIX" in *//*) die "--prefix must not contain //" ;; esac', self.sh)
-        self.assertLess(self.sh.index('PREFIX="${PREFIX%/}"'), self.sh.index('ETC="$ROOT/etc/pvj"'))
+        self.assertLess(self.sh.index('PREFIX="${PREFIX%/}"'), self.sh.index('ETC="$ROOT/etc/nxlx"'))
 
     def test_the_library_cannot_reach_the_internet_and_the_panel_takes_only_addresses_the_unit_allows(self):
         import ipaddress
@@ -748,7 +748,7 @@ class NdiUnitTest(unittest.TestCase):
     def test_the_library_is_given_nowhere_to_write_that_lasts_and_comes_from_a_folder_that_is_roots(self):
         from mctl import ndi
         env = dict(w.split("=", 1) for w in words(self.ndi, "Environment"))
-        self.assertEqual((env["HOME"], env["NDI_CONFIG_DIR"]), ("/tmp", "/run/pvj-ndi-config"))     # the panel's to write, never the helper's (ndisetup.TMPFILES_TEXT)
+        self.assertEqual((env["HOME"], env["NDI_CONFIG_DIR"]), ("/tmp", "/run/nxlx-ndi-config"))     # the panel's to write, never the helper's (ndisetup.TMPFILES_TEXT)
         self.assertFalse(ndi.LIB_DIR.startswith(("/usr/lib", "/lib", "/usr/local/lib", "/var", "/run", "/tmp")))   # not the system path, not writable state
         self.assertNotIn("libndi", self.sh)                # the installer never fetches or copies the runtime
         self.assertNotRegex(self.sh, r"ndi\.(video|tv)|downloads\.ndi")
@@ -757,13 +757,13 @@ class NdiUnitTest(unittest.TestCase):
     def test_a_plain_install_and_the_image_set_nothing_of_ndi_up(self):
         """The owner's answer of 2026-10-08: the helper is opt-in. The installer may only act on NDI behind the mark
         that the opt-in command leaves, and the image build never opts in."""
-        self.assertFalse(os.path.exists(os.path.join(REPO, "install", "pvj-ndi.service")))     # not among the units the installer writes
+        self.assertFalse(os.path.exists(os.path.join(REPO, "install", "nxlx-ndi.service")))     # not among the units the installer writes
         self.assertTrue(os.path.isfile(self.setup.TEMPLATE))
         self.assertEqual(os.path.dirname(self.setup.TEMPLATE), NDI_UNITS)
         # no package, account or group for NDI, and no unit written, anywhere in the installer's commands
         commands = "\n".join(line for line in self.sh.splitlines() if not line.lstrip().startswith("#"))
-        for never in ("avahi", "groupadd --system pvj-ndi", "--gid pvj-ndi", '> "$NDI_UNIT"', '> "$NDI_MARK"', '> "$NDI_PLAYER_DROPIN"',
-                      "ndisetup", 'pvj-ndi-runtime" install', "pvj-ndi-runtime install \""):
+        for never in ("avahi", "groupadd --system nxlx-ndi", "--gid nxlx-ndi", '> "$NDI_UNIT"', '> "$NDI_MARK"', '> "$NDI_PLAYER_DROPIN"',
+                      "ndisetup", 'nxlx-ndi-runtime" install', "nxlx-ndi-runtime install \""):
             self.assertNotIn(never, commands, never)
         # every line of the installer that acts on the helper is inside the uninstall or behind the mark
         # the mark is a plain file and never a link; NDI_OPTED_IN is set only right after that was asked
@@ -774,20 +774,20 @@ class NdiUnitTest(unittest.TestCase):
         self.assertLess(self.sh.index("NDI_OPTED_IN=0"), mark)
         install = self.sh[self.sh.index('if [ "$UNINSTALL" = 1 ]'):]
         acts = [line.strip() for line in install.splitlines()
-                if not line.lstrip().startswith("#") and re.search(r"systemctl [a-z-]+( --now)? pvj-ndi(?!-discovery)|pvj-ndi-runtime\" refresh", line)]
+                if not line.lstrip().startswith("#") and re.search(r"systemctl [a-z-]+( --now)? nxlx-ndi(?!-discovery)|nxlx-ndi-runtime\" refresh", line)]
         self.assertEqual(len(acts), 6, acts)               # two more are in the removal of a helper without the mark (below)
         # the discovery server (D85) the same: the installer acts on it only behind ITS mark, and never sets it up
         disc = [line.strip() for line in install.splitlines()
-                if not line.lstrip().startswith("#") and re.search(r"pvj-ndi-discovery|pvj-ndi-runtime\" server", line)]
+                if not line.lstrip().startswith("#") and re.search(r"nxlx-ndi-discovery|nxlx-ndi-runtime\" server", line)]
         self.assertEqual(len(disc), 3, disc)
         self.assertIn('server refresh --root "$ROOT" --prefix "$PREFIX"', disc[0])
         self.assertEqual(self.sh.count("NDISC_SET_UP=1"), 1)
         self.assertIn('if [ -f "$NDISC_MARK" ] && [ ! -L "$NDISC_MARK" ]; then\n\tNDISC_SET_UP=1', self.sh)
-        self.assertIn('if [ "$NDISC_SET_UP" = 1 ] && [ -f "$NDISC_UNIT" ]; then\n\t\tsystemctl enable pvj-ndi-discovery.service', self.sh)
-        for never in ("groupadd --system pvj-ndisc", '> "$NDISC_UNIT"', '> "$NDISC_MARK"', 'pvj-ndi-runtime" server install', "ndiscovery"):
+        self.assertIn('if [ "$NDISC_SET_UP" = 1 ] && [ -f "$NDISC_UNIT" ]; then\n\t\tsystemctl enable nxlx-ndi-discovery.service', self.sh)
+        for never in ("groupadd --system nxlx-ndisc", '> "$NDISC_UNIT"', '> "$NDISC_MARK"', 'nxlx-ndi-runtime" server install', "ndiscovery"):
             self.assertNotIn(never, commands, never)
-        self.assertIn("systemctl disable --now pvj-ndi.service", acts[1])
-        self.assertIn("systemctl enable --now pvj-ndi.service", acts[2])       # only where the mark turned up meanwhile
+        self.assertIn("systemctl disable --now nxlx-ndi.service", acts[1])
+        self.assertIn("systemctl enable --now nxlx-ndi.service", acts[2])       # only where the mark turned up meanwhile
         del acts[1:3]
         block = install[install.index("NDI_OPTED_IN=1"):]
         self.assertIn(acts[0], block[:block.index("\nfi\n")])
@@ -797,24 +797,24 @@ class NdiUnitTest(unittest.TestCase):
         for line in acts[1:]:
             self.assertIn(line, guarded)
         # an opted-in box stays opted in and moves to the new program, also with --no-start
-        self.assertIn("systemctl enable pvj-ndi.service", guarded)
-        self.assertIn("systemctl restart pvj-ndi.service", guarded)
-        self.assertIn("systemctl try-restart pvj-ndi.service", guarded)
+        self.assertIn("systemctl enable nxlx-ndi.service", guarded)
+        self.assertIn("systemctl restart nxlx-ndi.service", guarded)
+        self.assertIn("systemctl try-restart nxlx-ndi.service", guarded)
         # the image: exactly the services it enabled before NDI (and the sound analysis, which is on every box and
         # idle until the Owner chooses a device, D96), and no opt-in
-        with open(os.path.join(REPO, "image", "stage-pvj", "00-install-pvj", "01-run.sh")) as f:
+        with open(os.path.join(REPO, "image", "stage-nxlx", "00-install-nxlx", "01-run.sh")) as f:
             image = f.read()
-        self.assertNotRegex(image, r"pvj-ndi|NDI")
-        self.assertIn("systemctl enable pvj-player.service pvj-web.service pvj-netd.service pvj-sysd.service pvj-supportd.service pvj-sound.service pvj-link.service pvj-raster.socket\n", image)
-        with open(os.path.join(REPO, "image", "stage-pvj", "00-install-pvj", "00-packages-nr")) as f:
+        self.assertNotRegex(image, r"nxlx-ndi|NDI")
+        self.assertIn("systemctl enable nxlx-player.service nxlx-web.service nxlx-netd.service nxlx-sysd.service nxlx-supportd.service nxlx-sound.service nxlx-link.service nxlx-raster.socket\n", image)
+        with open(os.path.join(REPO, "image", "stage-nxlx", "00-install-nxlx", "00-packages-nr")) as f:
             self.assertNotIn("avahi", f.read())
-        for name in ("pvj-ndi", "pvj-ndi-runtime"):
+        for name in ("nxlx-ndi", "nxlx-ndi-runtime"):
             self.assertTrue(os.access(os.path.join(REPO, "bin", name), os.X_OK), name)
 
     def test_uninstall_takes_the_helper_and_the_drop_ins_the_mark_first(self):
         body = self.sh[self.sh.index("uninstall() {"):self.sh.index('if [ "$UNINSTALL" = 1 ]')]
-        self.assertIn('run rm -f "$NDI_MARK" "$NDI_PLAYER_DROPIN" "$NDI_TMPFILES" "$NDI_UNIT" "$NDI_WANTS" "$BIN_LINKS/pvj-ndi-runtime" || log', body)
-        self.assertIn("systemctl disable --now pvj-ndi.service", body)
+        self.assertIn('run rm -f "$NDI_MARK" "$NDI_PLAYER_DROPIN" "$NDI_TMPFILES" "$NDI_UNIT" "$NDI_WANTS" "$BIN_LINKS/nxlx-ndi-runtime" || log', body)
+        self.assertIn("systemctl disable --now nxlx-ndi.service", body)
         self.assertEqual(self.sh.count('NDI_MARK="$ROOT' + self.setup.WEB_DROPIN + '"'), 1)       # the installer and the opt-in agree on the three paths
         self.assertEqual(self.sh.count('NDI_PLAYER_DROPIN="$ROOT' + self.setup.PLAYER_DROPIN + '"'), 1)
         self.assertEqual(self.sh.count('NDI_UNIT="$ROOT' + self.setup.UNIT_PATH + '"'), 1)
@@ -837,11 +837,11 @@ class NdiUnitTest(unittest.TestCase):
         self.assertEqual(words(n, "TemporaryFileSystem"), ["/tmp:rw,nosuid,nodev,size=8M,mode=1777", "/var/tmp:rw,nosuid,nodev,size=8M,mode=1777"])
         env = dict(w.split("=", 1) for w in words(n, "Environment"))
         self.assertEqual(env["HOME"], "/tmp")              # a home in the bounded private /tmp, not in /run
-        self.assertEqual(words(n, "ReadWritePaths"), ["/run/pvj-ndi", "-/run/pvj-ndi-pipe"])
+        self.assertEqual(words(n, "ReadWritePaths"), ["/run/nxlx-ndi", "-/run/nxlx-ndi-pipe"])
         self.assertEqual(n["Restart"], ["always"])         # the helper ends itself when the module goes off, and comes back clean
 
     def test_the_system_bus_stays_reachable_and_the_unit_says_why(self):
-        with open(os.path.join(NDI_UNITS, "pvj-ndi.service")) as f:
+        with open(os.path.join(NDI_UNITS, "nxlx-ndi.service")) as f:
             text = f.read()
         self.assertIn("The system bus is NOT denied, and cannot be", text)
         self.assertIn("libavahi-client", text)
@@ -851,7 +851,7 @@ class NdiUnitTest(unittest.TestCase):
 
     def test_uninstall_says_what_stays_and_purge_takes_the_runtime(self):
         body = self.sh[self.sh.index("uninstall() {"):self.sh.index('if [ "$UNINSTALL" = 1 ]')]
-        self.assertIn('if [ "$PURGE" = 1 ]; then run rm -rf "${ROOT}/opt/pvj-ndi"; fi', body)
-        self.assertIn("/opt/pvj-ndi (your copy of the NDI runtime, if this box was set up for NDI) unless --purge", body)
-        self.assertIn("and pvj-ndi on a box that was set up for NDI) and the groups pvj and pvj-ndi are left in place", body)
+        self.assertIn('if [ "$PURGE" = 1 ]; then run rm -rf "${ROOT}/opt/nxlx-ndi"; fi', body)
+        self.assertIn("/opt/nxlx-ndi (your copy of the NDI runtime, if this box was set up for NDI) unless --purge", body)
+        self.assertIn("and nxlx-ndi on a box that was set up for NDI) and the groups nxlx-svc and nxlx-ndi are left in place", body)
         self.assertNotIn("userdel", body)

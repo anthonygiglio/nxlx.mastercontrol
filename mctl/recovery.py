@@ -4,7 +4,7 @@
 makes the box draw a FRESH owner PIN on its own screen for STICK_SECONDS, for an owner who lost every device and
 stands at the box. It proves presence at the box and needs no keyboard, no network and no paired device.
 
-* The drive is mounted by the existing mounter (mctl/usb.py: /media/pvj/<label>, read-only, noexec). Only the name
+* The drive is mounted by the existing mounter (mctl/usb.py: /media/nxlx/<label>, read-only, noexec). Only the name
   and the kind of the file are looked at (lstat: a regular file, never a symlink or a folder); it is never opened.
 * poll() is asked by the PIN screen's tick (every 3 s). It fires on the change from absent to present: once per
   insertion, and once at boot when a stick is in. At most STICK_PER_HOUR an hour; while the switch (`recovery.usb`,
@@ -85,7 +85,7 @@ class Recovery:
                 try:
                     label = stick_present(self.api.usb_root)
                 except Exception as e:                      # a drive that vanished mid-scan
-                    self.log("pvj-web: recovery stick check: %s" % e)
+                    self.log("nxlx-web: recovery stick check: %s" % e)
                     label = self._label
                 changed, self._label = label != self._label, label
                 if changed and self._active is not None:
@@ -95,7 +95,7 @@ class Recovery:
                         if self.poll() and self.api.pinscreen is not None:
                             self.api.pinscreen.tick()
                     except Exception as e:
-                        self.log("pvj-web: recovery stick check: %s" % e)
+                        self.log("nxlx-web: recovery stick check: %s" % e)
                 self._stop.wait(min(interval, 1.0) if self._active is not None else interval)
         self._thread = threading.Thread(target=loop, name="mctl-recovery-stick", daemon=True)
         self._thread.start()
@@ -151,25 +151,25 @@ class Recovery:
         """Call with the lock held. A fresh PIN on the screen, or a journal line saying why not."""
         label = "".join(c for c in str(label)[:32] if c.isprintable())    # the mounter sanitises labels already; the journal line is kept clean here too
         if not self.auth.usb_enabled():
-            self.log("pvj-web: a recovery stick was put in (%s) but the stick way is switched off; nothing shown" % label)
+            self.log("nxlx-web: a recovery stick was put in (%s) but the stick way is switched off; nothing shown" % label)
             return False
         if boot:                                             # a stick already in when this process started (review of #122, L5)
             last = self.auth.last_recovery_event("stick")
             age = self._now() - last["t"] if last and isinstance(last.get("t"), (int, float)) else None
             if age is not None and 0 <= age < 3600.0:
-                self.log("pvj-web: a recovery stick (%s) is in at start, but the PIN was shown for a stick %d minutes ago; nothing shown "
+                self.log("nxlx-web: a recovery stick (%s) is in at start, but the PIN was shown for a stick %d minutes ago; nothing shown "
                          "(take the stick out and put it back in to show it)" % (label, age // 60))
                 return False
         t = self._clock()
         self._made = [x for x in self._made if t - x < 3600.0]
         if len(self._made) >= STICK_PER_HOUR:
-            self.log("pvj-web: a recovery stick was put in (%s) but the PIN was shown %d times this hour; nothing shown"
+            self.log("nxlx-web: a recovery stick was put in (%s) but the PIN was shown %d times this hour; nothing shown"
                      % (label, STICK_PER_HOUR))
             return False
         try:
             self.auth.rotate_pin()                       # new digits, and any lockout lifted
         except OSError as e:
-            self.log("pvj-web: a recovery stick was put in but a new PIN could not be saved: %s" % e)
+            self.log("nxlx-web: a recovery stick was put in but a new PIN could not be saved: %s" % e)
             return False
         shown = int(self._now())
         self._active = {"until": t + STICK_SECONDS, "shown": shown, "label": label}
@@ -178,7 +178,7 @@ class Recovery:
             self.auth.recovery_event("stick", label=label)
         except OSError:
             pass
-        self.log("pvj-web: the owner PIN is on the box's screen for %d s: a recovery stick was put in (%s)" % (STICK_SECONDS, label))
+        self.log("nxlx-web: the owner PIN is on the box's screen for %d s: a recovery stick was put in (%s)" % (STICK_SECONDS, label))
         return True
 
     def _end(self, how):
@@ -190,8 +190,8 @@ class Recovery:
         try:
             self.auth.rotate_pin()
         except OSError as e:
-            self.log("pvj-web: the PIN shown for a recovery stick could not be replaced: %s" % e)
-        self.log("pvj-web: the PIN shown for a recovery stick is off the screen (%s) and replaced" % how)
+            self.log("nxlx-web: the PIN shown for a recovery stick could not be replaced: %s" % e)
+        self.log("nxlx-web: the PIN shown for a recovery stick is off the screen (%s) and replaced" % how)
         return True
 
     def used(self, device):
@@ -212,8 +212,8 @@ class Recovery:
             self.auth.mark_via(device.get("id"), "stick")
             self.auth.recovery_event("stick-used", name=name)
         except OSError as e:
-            self.log("pvj-web: the use of the PIN shown for a recovery stick could not be written down: %s" % e)
-        self.log("pvj-web: the PIN shown for a recovery stick was used by device %s (%s)" % (device.get("id"), name))
+            self.log("nxlx-web: the use of the PIN shown for a recovery stick could not be written down: %s" % e)
+        self.log("nxlx-web: the PIN shown for a recovery stick was used by device %s (%s)" % (device.get("id"), name))
         screen = self.api.pinscreen
         if screen is not None:
             screen.recovery_notice(name)

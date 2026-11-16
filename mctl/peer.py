@@ -623,7 +623,7 @@ class Peers:
             try:
                 self.hello(node_id)
             except PeerError as e:
-                self.log("pvj-web: asking a node for its removals failed: %s" % e.message)
+                self.log("nxlx-web: asking a node for its removals failed: %s" % e.message)
             finally:
                 with self.lock:
                     self._pulling.discard(node_id)

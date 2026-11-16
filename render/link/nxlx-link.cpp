@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// pvj-link (D117, mctl/SOUND.md): the box follows an Ableton Link session.
+// nxlx-link (D117, mctl/SOUND.md): the box follows an Ableton Link session.
 //
 // It reads a session's tempo and its place in a four-beat bar and writes them into one small file for the panel. It
 // never sets a tempo, a beat or play and stop: there is no commit of a session state anywhere in this program. The
@@ -20,7 +20,7 @@
 // CLOCK_MONOTONIC time", in the box's own clock.
 //
 // The record is 56 bytes, little-endian, written in place, at most 20 times a second and once a second while nobody is
-// there. mctl/link.py has the same layout (pack, unpack); tests/test_link.py and tests/test_pvj_link.py hold them together.
+// there. mctl/link.py has the same layout (pack, unpack); tests/test_link.py and tests/test_nxlx_link.py hold them together.
 //
 //   offset  0  4 bytes  magic NXLK
 //           4  u16      version (1)
@@ -194,7 +194,7 @@ public:
     if (pwrite(mFd, b, RECORD_SIZE, 0) != static_cast<ssize_t>(RECORD_SIZE) && !mSaid)
     {
       mSaid = true;
-      std::fprintf(stderr, "pvj-link: the state file cannot be written: %s\n", std::strerror(errno));
+      std::fprintf(stderr, "nxlx-link: the state file cannot be written: %s\n", std::strerror(errno));
     }
   }
 
@@ -567,8 +567,8 @@ int openServer(const std::string& path)
 int main()
 {
   const char* env = std::getenv("PVJ_LINK_DIR");
-  const std::string dir = env != nullptr && env[0] != '\0' ? env : "/run/pvj-link";
-  const passwd* panel = getpwnam("pvj-web");
+  const std::string dir = env != nullptr && env[0] != '\0' ? env : "/run/nxlx-link";
+  const passwd* panel = getpwnam("nxlx-web");
   const uid_t allowed = panel != nullptr ? panel->pw_uid : getuid();  // on a desk: whoever runs it
 
   struct sigaction act;
@@ -581,18 +581,18 @@ int main()
   StateFile file;
   if (!file.open(dir + "/state"))
   {
-    std::fprintf(stderr, "pvj-link: cannot open %s/state: %s\n", dir.c_str(), std::strerror(errno));
+    std::fprintf(stderr, "nxlx-link: cannot open %s/state: %s\n", dir.c_str(), std::strerror(errno));
     return 1;
   }
   const int server = openServer(dir + "/link.sock");
   if (server < 0)
   {
-    std::fprintf(stderr, "pvj-link: cannot open %s/link.sock: %s\n", dir.c_str(), std::strerror(errno));
+    std::fprintf(stderr, "nxlx-link: cannot open %s/link.sock: %s\n", dir.c_str(), std::strerror(errno));
     return 1;
   }
 
   Helper helper;
-  std::printf("pvj-link: ready; off until the owner switches it on, and it only ever follows\n");
+  std::printf("nxlx-link: ready; off until the owner switches it on, and it only ever follows\n");
   std::fflush(stdout);
   double last = 0.0;
   double deaf = 0.0;     // the listener is left alone until then, so datagrams from the network cannot spin this loop

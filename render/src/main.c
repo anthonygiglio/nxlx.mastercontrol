@@ -91,7 +91,7 @@ static void on_signal(int s)
 // crossfades with software decoding and to 1,148 MB with hardware decoding, and to 1,905 MB in an hour, while what was
 // in use stayed with the clip on the screen (2026-11-15: 113 to 360 MB in use, 452 MB free and held). A fixed threshold
 // turns the raising off; the frame pools and the cores' caches are made of such blocks, so a clip that goes gives its
-// memory back. MALLOC_MMAP_THRESHOLD_, or glibc.malloc.mmap_threshold in GLIBC_TUNABLES, in the environment (pvj.env)
+// memory back. MALLOC_MMAP_THRESHOLD_, or glibc.malloc.mmap_threshold in GLIBC_TUNABLES, in the environment (nxlx.env)
 // wins, as an operator's word should.
 //
 // Blocks under the threshold still come from the arenas, and what a clip leaves there is not given back by itself (the
@@ -1119,7 +1119,7 @@ done:
 // busy it waited for a core and the turn's worst stage took 82 to 91 ms; at real-time priority no flip was longer than
 // 2 vblanks (a scratch build on the Pi 4, 20 s windows). Only this thread: on Linux pid 0 is the calling thread, and
 // RESET_ON_FORK keeps any thread or child it starts later at normal priority. It is allowed by the unit's
-// LimitRTPRIO=1 (install/pvj-player.service), no capability. Without that (a desktop, CI, an older unit) it is said
+// LimitRTPRIO=1 (install/nxlx-player.service), no capability. Without that (a desktop, CI, an older unit) it is said
 // once and the program runs as it always did; this never stops it from starting.
 static void realtime_priority(void)
 {

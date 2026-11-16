@@ -5,7 +5,7 @@
 Two halves, both standard library only:
 
 * Announcing. Each node says `_nxlx._tcp` by mDNS, with TXT records for its id, name, tier and version. The panel
-  does not speak mDNS itself: it asks the root helper (pvj-sysd) to write one static avahi service file, which
+  does not speak mDNS itself: it asks the root helper (nxlx-sysd) to write one static avahi service file, which
   avahi-daemon (already on Raspberry Pi OS) serves and refreshes. A change of name, version, port or the switch rewrites
   that file; nothing runs between changes. Without avahi the node works as before and says so (state `no-avahi`).
 * Listing. `Browser` sends one multicast DNS question for `_nxlx._tcp.local` from an ordinary UDP port (a "legacy
@@ -54,7 +54,7 @@ STATES = {
     "off": "Discovery is switched off on this node: it announces nothing and does not look for other nodes.",
     "no-avahi": "avahi-daemon is not installed on this node, so it cannot announce itself. It still works, and it can still list other nodes.",
     "avahi-stopped": "avahi-daemon is installed but not running, so other nodes cannot see this one yet.",
-    "no-helper": "The system helper (pvj-sysd) is not running, so this node cannot announce itself.",
+    "no-helper": "The system helper (nxlx-sysd) is not running, so this node cannot announce itself.",
     "error": "The announcement could not be written; the node's log says why. It tries again every minute.",
 }
 
@@ -79,7 +79,7 @@ def stored_on(section):
 # --- the node's own id ------------------------------------------------------------------------------------------------
 def node_id(state_dir):
     """The node's stable id: 32 hex digits, made once from the system's random source and kept in `node-id` in the state
-    folder (/var/lib/pvj), so it survives a restart, a rename and an update. It is made on first use, never at build, so
+    folder (/var/lib/nxlx), so it survives a restart, a rename and an update. It is made on first use, never at build, so
     a card imaged from a master copy gets its own. It is not a secret and not a credential (it is announced to the
     whole network); a node on the read-only root cannot keep it, and then has a new one at each start. Returns
     (id, kept)."""
@@ -364,7 +364,7 @@ class Browser:
             while len(self._seen) > MAX_ROWS:
                 del self._seen[min(self._seen, key=lambda k: self._seen[k][1])]
             if err and err != self._error:
-                self._log("pvj-web: looking for other nodes failed: %s" % err)
+                self._log("nxlx-web: looking for other nodes failed: %s" % err)
             self._error, self._scanned, self._running = err, t, False
         self._done.set()
 
@@ -424,12 +424,12 @@ class Fleet:
         """The reason an attempt failed, in the log once per change of reason: the attempt is repeated every minute."""
         if text != self._last_why:
             self._last_why = text
-            self._log("pvj-web: " + text)
+            self._log("nxlx-web: " + text)
 
     def _set_state(self, state):
         if state != self.state:
             self.state = state
-            self._log("pvj-web: discovery of other nodes: %s" % state)
+            self._log("nxlx-web: discovery of other nodes: %s" % state)
             if state in SHORT:
                 self._event("network", "Other nodes cannot see this one: %s." % SHORT[state])
 
@@ -440,7 +440,7 @@ class Fleet:
             with self._lock:
                 self._tick(force)
         except Exception as e:
-            self._log("pvj-web: announcing this node failed: %s" % e)
+            self._log("nxlx-web: announcing this node failed: %s" % e)
             self._set_state("error")
 
     def _tick(self, force):

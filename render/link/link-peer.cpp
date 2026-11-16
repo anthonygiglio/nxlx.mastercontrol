@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// A stand-in for a program on the network, for tests/test_pvj_link.py only (never installed): one Link peer that sets a
+// A stand-in for a program on the network, for tests/test_nxlx_link.py only (never installed): one Link peer that sets a
 // tempo, as Ableton Live or a phone app would, and prints what it sees five times a second.
 //
-//   pvj-link-peer BPM SECONDS [BPM2]    (BPM2: the tempo it changes to half way through)
+//   nxlx-link-peer BPM SECONDS [BPM2]    (BPM2: the tempo it changes to half way through)
 //
 // Each line is {"time": CLOCK_MONOTONIC seconds, "peers": n, "bpm": x, "phase": place in a bar of 4 at that time}.
 

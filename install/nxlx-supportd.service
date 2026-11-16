@@ -6,17 +6,17 @@ After=network.target
 StartLimitIntervalSec=0
 
 [Service]
-# Root with one capability: it creates the WireGuard interface wg-pvj and its firewall table, and answers only root
-# and pvj-web on its socket. It removes any tunnel left by an earlier run when it starts and when it stops.
+# Root with one capability: it creates the WireGuard interface wg-nxlx and its firewall table, and answers only root
+# and nxlx-web on its socket. It removes any tunnel left by an earlier run when it starts and when it stops.
 User=root
-Group=pvj
+Group=nxlx-svc
 UMask=0027
-RuntimeDirectory=pvj-supportd
+RuntimeDirectory=nxlx-supportd
 RuntimeDirectoryMode=0750
-StateDirectory=pvj-support
+StateDirectory=nxlx-support
 StateDirectoryMode=0700
-Environment=PVJ_SUPPORTD_DIR=/run/pvj-supportd PVJ_SUPPORT_KEYS=/var/lib/pvj-support
-ExecStart=@PVJ_DIR@/bin/pvj-supportd
+Environment=PVJ_SUPPORTD_DIR=/run/nxlx-supportd PVJ_SUPPORT_KEYS=/var/lib/nxlx-support
+ExecStart=@PVJ_DIR@/bin/nxlx-supportd
 Restart=always
 RestartSec=2
 
@@ -27,7 +27,7 @@ ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
-ReadWritePaths=/run/pvj-supportd
+ReadWritePaths=/run/nxlx-supportd
 MemoryDenyWriteExecute=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes

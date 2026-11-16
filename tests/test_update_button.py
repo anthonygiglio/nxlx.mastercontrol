@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""The update button: the updater's inbox and progress file, pvj-sysd's update command, the API and the units."""
+"""The update button: the updater's inbox and progress file, nxlx-sysd's update command, the API and the units."""
 import json
 import os
 import shutil
@@ -23,7 +23,7 @@ HAVE_SSH = shutil.which("ssh-keygen") is not None
 class InboxTest(unittest.TestCase):
     def setUp(self):
         self.root = tempfile.mkdtemp()
-        self.inbox = os.path.join(self.root, "var/lib/pvj/update-inbox")
+        self.inbox = os.path.join(self.root, "var/lib/nxlx/update-inbox")
         os.makedirs(self.inbox)
         self.u = update.Updater(root=self.root)
 
@@ -39,14 +39,14 @@ class InboxTest(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(self.inbox)), ["notes.txt", "xpvj-9.9.9.tar.gz"])
 
     def test_a_linked_inbox_is_not_followed(self):
-        # pvj-web owns /var/lib/pvj: it could swap the folder for a link to a system folder full of pvj-* files.
+        # nxlx-web owns /var/lib/nxlx: it could swap the folder for a link to a system folder full of nxlx-* files.
         victim = tempfile.mkdtemp()
-        open(os.path.join(victim, "pvj-web.service"), "w").close()
+        open(os.path.join(victim, "nxlx-web.service"), "w").close()
         os.rmdir(self.inbox)
         os.symlink(victim, self.inbox)
         with self.assertRaises(UpdateError):
             self.u.open_inbox()
-        self.assertEqual(os.listdir(victim), ["pvj-web.service"])
+        self.assertEqual(os.listdir(victim), ["nxlx-web.service"])
 
     def test_links_devices_and_fifos_are_refused(self):
         os.symlink("/dev/zero", os.path.join(self.inbox, "pvj-1.0.0.tar.gz"))
@@ -193,7 +193,7 @@ class CommandLineTest(unittest.TestCase):
             held.close()
 
     def test_a_rollback_from_a_terminal_replaces_the_last_update_line(self):
-        # The Updates card went on saying "Last update: updated to 2.0.0" after `sudo pvj-update rollback`.
+        # The Updates card went on saying "Last update: updated to 2.0.0" after `sudo nxlx-update rollback`.
         with open(self.result, "w") as f:
             json.dump({"state": "done", "message": "updated to 2.0.0", "version": "2.0.0", "at": 1}, f)
 
@@ -219,7 +219,7 @@ class CommandLineTest(unittest.TestCase):
             self.assertFalse(os.path.exists(os.path.dirname(os.environ["PVJ_UPDATE_RESULT"])))
             # On a box it is in the folder of the lock, and that one is made where no update unit has run yet
             # (second review of #108, finding 6: the comment in main() still said that it never is).
-            both = os.path.join(os.path.dirname(self.result), "run-pvj-update")
+            both = os.path.join(os.path.dirname(self.result), "run-nxlx-update")
             os.environ["PVJ_UPDATE_LOCK"] = os.path.join(both, "update.lock")
             os.environ["PVJ_UPDATE_RESULT"] = os.path.join(both, "result.json")
             self.assertEqual(update.main(["rollback"]), 0)
@@ -264,13 +264,13 @@ class SysdUpdateTest(unittest.TestCase):
     def test_starts_a_fixed_template_unit_for_a_checked_version(self):
         s, calls = self.service()
         self.assertTrue(s.handle({"cmd": "update", "source": "inbox", "version": "1.2.3"})["ok"])
-        self.assertEqual(calls[-1], ["systemctl", "start", "--no-block", "pvj-update-inbox@1.2.3.service"])
+        self.assertEqual(calls[-1], ["systemctl", "start", "--no-block", "nxlx-update-inbox@1.2.3.service"])
         for source, version in (("../../x", "1.2.3"), ("usb; reboot", "1.2.3"), (None, "1.2.3"), ("usb", None),
                                 ("usb", "1.2"), ("usb", "1.2.3 x"), ("usb", "1.2.3\n"), ("usb", 123), ("usb", "-1.2.3")):
             self.assertFalse(s.handle({"cmd": "update", "source": source, "version": version})["ok"], (source, version))
 
     def test_refuses_a_second_update_while_one_runs(self):
-        s, calls = self.service(running="pvj-update-usb@1.0.0.service loaded activating start Update")
+        s, calls = self.service(running="nxlx-update-usb@1.0.0.service loaded activating start Update")
         r = s.handle({"cmd": "update", "source": "inbox", "version": "1.0.0"})
         self.assertFalse(r["ok"])
         self.assertIn("already running", r["error"])
@@ -313,7 +313,7 @@ class ApiTest(ServerBase):
         self.assertEqual(self.asked, [{"cmd": "update", "source": "inbox", "version": "0.3.0"}])
 
     def test_a_done_line_for_another_version_is_not_shown(self):
-        # A box rolled back by an older pvj-update (which wrote nothing): "updated to 9.9.9" is no longer true.
+        # A box rolled back by an older nxlx-update (which wrote nothing): "updated to 9.9.9" is no longer true.
         from mctl import __version__
         with open(self.result, "w") as f:
             json.dump({"state": "done", "message": "updated to 9.9.9", "version": "9.9.9", "at": 5}, f)
@@ -368,14 +368,14 @@ class ApiTest(ServerBase):
 class UnitsTest(unittest.TestCase):
     def test_update_units_run_the_updater_on_request_only(self):
         for src in ("usb", "inbox"):
-            with open(os.path.join(REPO, "install", "pvj-update-%s@.service" % src)) as f:
+            with open(os.path.join(REPO, "install", "nxlx-update-%s@.service" % src)) as f:
                 text = f.read()
-            self.assertIn("pvj-update %s --version %%i --result /run/pvj-update/result.json" % src, text)
-            self.assertIn("ExecStopPost=-@PVJ_DIR@/bin/pvj-update finish --result /run/pvj-update/result.json", text)
+            self.assertIn("nxlx-update %s --version %%i --result /run/nxlx-update/result.json" % src, text)
+            self.assertIn("ExecStopPost=-@PVJ_DIR@/bin/nxlx-update finish --result /run/nxlx-update/result.json", text)
             self.assertNotIn("\n[Install]", text)                      # never started at boot
             self.assertIn("RuntimeDirectoryPreserve=yes", text)        # the panel reads the outcome after the restart
         with open(os.path.join(REPO, "install", "install.sh")) as f:
-            self.assertIn("pvj-update-inbox@.service", f.read())
+            self.assertIn("nxlx-update-inbox@.service", f.read())
 
 
 if __name__ == "__main__":

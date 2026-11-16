@@ -3,9 +3,9 @@
 """Logos and other pictures people upload (D129, design/text-and-logo-sources_2026-11-08.md sections 5 and 7).
 
 The panel never decodes an upload. It does the cheap checks that need no decoder (size, the type from the first
-bytes, the sizes written in a PNG or JPEG header, the kind of JPEG), and only then sends the bytes to pvj-raster
-(render/raster/pvj-raster.c): a separate program, run by systemd for each job as its own account with no network,
-no files of the box's, a syscall filter and hard limits (install/pvj-raster@.service). What comes back is a fresh PNG
+bytes, the sizes written in a PNG or JPEG header, the kind of JPEG), and only then sends the bytes to nxlx-raster
+(render/raster/nxlx-raster.c): a separate program, run by systemd for each job as its own account with no network,
+no files of the box's, a syscall filter and hard limits (install/nxlx-raster@.service). What comes back is a fresh PNG
 written from pixels, so nothing else the file carried survives. That PNG is stored in the graphics store; the upload is
 never kept, and the panel never serves anything but the stored PNG or a thumbnail of it.
 
@@ -22,7 +22,7 @@ import time
 
 from . import paths
 
-# The limits of the design's section 7.2. pvj-raster holds the same numbers and checks them again.
+# The limits of the design's section 7.2. nxlx-raster holds the same numbers and checks them again.
 MAX_PICTURE_BYTES = 10 * 1024 * 1024        # a PNG or a JPEG
 MAX_SVG_BYTES = 1024 * 1024
 MAX_SIDE = 8192                             # the header's width or height
@@ -139,7 +139,7 @@ def inspect(data, filename):
 
 
 class Client:
-    """Asks pvj-raster to do a job. On a node that is its socket, which systemd starts a helper behind for each job.
+    """Asks nxlx-raster to do a job. On a node that is its socket, which systemd starts a helper behind for each job.
 
     `exec_bin` (or PVJ_RASTER_EXEC) runs the program directly with its own ceilings instead; that is for tests and
     for a developer's desk. No unit of the node sets it."""

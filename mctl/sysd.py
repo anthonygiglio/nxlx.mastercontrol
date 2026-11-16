@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""pvj-sysd: the small root helper for reboot, power off and setting the clock, on behalf of the unprivileged panel.
+"""nxlx-sysd: the small root helper for reboot, power off and setting the clock, on behalf of the unprivileged panel.
 
 The old panel had Reboot, Power off and Set time buttons (it ran `sudo reboot` and `date -s` from PHP). Here the panel
-(user pvj-web) sends one JSON line over a Unix socket in /run/pvj-sysd; this daemon answers only root and pvj-web (checked
+(user nxlx-web) sends one JSON line over a Unix socket in /run/nxlx-sysd; this daemon answers only root and nxlx-web (checked
 with SO_PEERCRED), and runs only these fixed commands, as argument lists, never a shell:
 
 * reboot, poweroff: `systemctl reboot|poweroff`, one second after answering, so the panel gets its reply;
@@ -13,7 +13,7 @@ with SO_PEERCRED), and runs only these fixed commands, as argument lists, never 
 * status: whether the clock is set from the network;
 * timezone, set_timezone (J-129): read the zone systemd reports; set it with `timedatectl set-timezone` for one checked IANA name
   (tz.valid_zone: a safe pattern and a real zone file, and `timedatectl list-timezones` must name it), then read it back;
-* journal: the node's own pvj-* log lines, read with `journalctl` for a fixed list of units, a capped number of lines
+* journal: the node's own nxlx-* log lines, read with `journalctl` for a fixed list of units, a capped number of lines
   and a bounded time window (the panel is deliberately not in the systemd-journal group, so this is how it reads them);
 * fleet_announce, fleet_withdraw (D127): write or remove the one avahi service file that announces the node as `_nxlx._tcp`
   (fields checked against fixed patterns, a fixed template, nothing run; the only file outside /run this helper writes);
@@ -21,7 +21,7 @@ with SO_PEERCRED), and runs only these fixed commands, as argument lists, never 
   takes effect at the next start of the node;
 * throttled (the stats overlay): `vcgencmd get_throttled`, a fixed argument list, read-only; the reply is the number the firmware
   keeps (bit 0 under-voltage now, 1 capped now, 2 throttled now, 3 soft temperature limit now; bits 16 to 19 the same since boot);
-* update: start pvj-update-usb@V.service or pvj-update-inbox@V.service (fixed template units, V a checked version: pvj-update checks the signature,
+* update: start nxlx-update-usb@V.service or nxlx-update-inbox@V.service (fixed template units, V a checked version: nxlx-update checks the signature,
   refuses older versions and rolls back by itself).
 
 It holds no capabilities of its own (systemd and timedated do the work), and OSC, MIDI and DMX cannot reach it.
@@ -42,9 +42,9 @@ from .netd import exchange, NetServer, peer_uid  # noqa: F401  (the same small, 
 MIN_EPOCH = 1735689600      # 2025-01-01: anything earlier is a wrong clock, not a date to set
 MAX_EPOCH = 2082758400      # 2036-01-01: a phone set to a far future year would otherwise stick (timesyncd saves the
                             # clock and never moves it back), so such a date is refused, not set
-JOURNAL_UNITS = ("pvj-web.service", "pvj-player.service", "pvj-sysd.service", "pvj-netd.service", "pvj-supportd.service",
-                 "pvj-sound.service", "pvj-link.service", "pvj-ndi*.service", "pvj-update-usb@*.service",
-                 "pvj-update-inbox@*.service", "pvj-usb@*.service")      # the node's own, a fixed list: nothing else is asked for
+JOURNAL_UNITS = ("nxlx-web.service", "nxlx-player.service", "nxlx-sysd.service", "nxlx-netd.service", "nxlx-supportd.service",
+                 "nxlx-sound.service", "nxlx-link.service", "nxlx-ndi*.service", "nxlx-update-usb@*.service",
+                 "nxlx-update-inbox@*.service", "nxlx-usb@*.service")      # the node's own, a fixed list: nothing else is asked for
 JOURNAL_LINES, JOURNAL_LINES_MAX = 300, 500
 JOURNAL_HOURS, JOURNAL_HOURS_MAX = 24, 24 * 7
 JOURNAL_LINE_MAX = 400
@@ -105,8 +105,8 @@ class SysService:
             code, out = self._run(["systemctl", verb])
             if code != 0:
                 self._power_requested = None
-                self.log("pvj-sysd: systemctl %s failed: %s" % (verb, out.strip()[-200:]))
-        self.log("pvj-sysd: %s requested by the panel" % verb)
+                self.log("nxlx-sysd: systemctl %s failed: %s" % (verb, out.strip()[-200:]))
+        self.log("nxlx-sysd: %s requested by the panel" % verb)
         self._schedule(1.0, go)
         return {"ok": True, verb: True}
 
@@ -133,7 +133,7 @@ class SysService:
         m = self._marker()
         if m and os.path.exists(m):
             ok = self._ntp_on()
-            self.log("pvj-sysd: network time was left off by an interrupted clock change; %s"
+            self.log("nxlx-sysd: network time was left off by an interrupted clock change; %s"
                      % ("switched it back on" if ok else "could NOT switch it back on"))
             return ok
         return None
@@ -166,7 +166,7 @@ class SysService:
             if not back_on:
                 return {"ok": False, "error": "the clock was set, but network time could not be switched back on"}
             now = int(self._now())
-            self.log("pvj-sysd: clock set to %s UTC by the panel" % stamp)
+            self.log("nxlx-sysd: clock set to %s UTC by the panel" % stamp)
             if abs(now - epoch) > 120:
                 return {"ok": False, "error": "the clock was set but moved again (to %s UTC); a saved clock may be ahead"
                         % datetime.datetime.fromtimestamp(now, datetime.timezone.utc).strftime("%Y-%m-%d %H:%M")}
@@ -200,7 +200,7 @@ class SysService:
             read = self.timezone()
         if not read["ok"] or read["timezone"] != zone:
             return {"ok": False, "error": "the time zone was set, but reading it back gave %s" % (read.get("timezone") or "no answer")}
-        self.log("pvj-sysd: time zone set to %s by the panel" % zone)
+        self.log("nxlx-sysd: time zone set to %s by the panel" % zone)
         return {"ok": True, "timezone": zone}
 
     def av_output(self, enable, norm):
@@ -220,7 +220,7 @@ class SysService:
                 if e.state:
                     out["state"] = e.state          # a file may have been left changed: the panel can show what the boot files say now
                 return out
-        self.log("pvj-sysd: AV output %s%s by the panel; backups %s" % ("on (%s)" % norm if enable else "off", "" if res["changed"] else " (nothing to change)",
+        self.log("nxlx-sysd: AV output %s%s by the panel; backups %s" % ("on (%s)" % norm if enable else "off", "" if res["changed"] else " (nothing to change)",
                                                                        ", ".join(res["backups"]) or "none"))
         return {"ok": True, "changed": res["changed"], "backups": res["backups"], "restart_needed": res["changed"],
                 "enabled": res["state"]["composite"], "norm": res["state"]["norm"]}
@@ -246,7 +246,7 @@ class SysService:
         return int(min(max(value, low), high))
 
     def journal(self, lines=None, hours=None, boot=None):
-        """The node's own pvj-* log lines: {"ok", "lines", "boot", "persistent", "read_only_root", "cut"}. `lines` (at most
+        """The node's own nxlx-* log lines: {"ok", "lines", "boot", "persistent", "read_only_root", "cut"}. `lines` (at most
         500, default 300), `hours` (1 to 168, default 24; the current boot only) and `boot` (0 this start, -1 the one
         before; anything else is 0) are bounded here. Raw: the panel, which knows the secrets, scrubs them. The reply is
         cut from the old end to fit what the panel reads."""
@@ -261,7 +261,7 @@ class SysService:
         code, out = self._run(argv, timeout=JOURNAL_SECONDS)
         if code != 0:
             why = ("it did not answer within %d seconds" % JOURNAL_SECONDS) if "timed out" in out else out.strip()[-160:]
-            self.log("pvj-sysd: journalctl failed: %s" % why)         # so the node's own journal says why (device row EV1)
+            self.log("nxlx-sysd: journalctl failed: %s" % why)         # so the node's own journal says why (device row EV1)
             return {"ok": False, "error": "the system log could not be read: %s" % why}
         rows = [l[:JOURNAL_LINE_MAX] for l in out.splitlines() if l.strip()][-lines:]
         kept, used = [], 0
@@ -281,7 +281,7 @@ class SysService:
     UPDATE_VERSION = re.compile(r"[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}")
 
     def update(self, source, version):
-        """Start pvj-update-<source>@<version>.service, a fixed template unit (pvj-update checks the signature,
+        """Start nxlx-update-<source>@<version>.service, a fixed template unit (nxlx-update checks the signature,
         refuses older versions and rolls back by itself). Only the source, from a fixed list, and a version that
         is three numbers reach systemctl."""
         if source not in self.UPDATE_SOURCES:
@@ -290,13 +290,13 @@ class SysService:
             return {"ok": False, "error": "version must look like 1.2.3"}
         with self.lock:                       # two requests at once must not both see "nothing running"
             code, out = self._run(["systemctl", "list-units", "--plain", "--no-legend", "--state=active,activating",
-                                   "pvj-update-usb@*.service", "pvj-update-inbox@*.service"])
+                                   "nxlx-update-usb@*.service", "nxlx-update-inbox@*.service"])
             if code != 0 or out.strip():
                 return {"ok": False, "error": "an update is already running"}
-            code, out = self._run(["systemctl", "start", "--no-block", "pvj-update-%s@%s.service" % (source, version)])
+            code, out = self._run(["systemctl", "start", "--no-block", "nxlx-update-%s@%s.service" % (source, version)])
         if code != 0:
             return {"ok": False, "error": "could not start the update: %s" % out.strip()[-160:]}
-        self.log("pvj-sysd: update to %s from %s started by the panel" % (version, source))
+        self.log("nxlx-sysd: update to %s from %s started by the panel" % (version, source))
         return {"ok": True, "started": source, "version": version}
 
     # --- announcing the node to the local network (D127) ------------------------------------------------------------
@@ -330,7 +330,7 @@ class SysService:
             return {"ok": True, "avahi": "missing"}
         text = ("<?xml version=\"1.0\" standalone='no'?>\n"
                 "<!DOCTYPE service-group SYSTEM \"avahi-service.dtd\">\n"
-                "<!-- Written by pvj-sysd for nxlx.mastercontrol; the panel's discovery switch removes it. -->\n"
+                "<!-- Written by nxlx-sysd for nxlx.mastercontrol; the panel's discovery switch removes it. -->\n"
                 "<service-group>\n  <name replace-wildcards=\"yes\">%h</name>\n  <service>\n    <type>_nxlx._tcp</type>\n"
                 "    <port>" + str(port) + "</port>\n"
                 "    <txt-record>txtvers=1</txt-record>\n"
@@ -364,7 +364,7 @@ class SysService:
                 self._fleet_failed("the avahi service file was not written: %s" % e)
                 return {"ok": False, "error": "the service file could not be written"}
             self._fleet_fail = None
-        self.log("pvj-sysd: announcing this node as %s (id %s)" % (name, ident[:8]))
+        self.log("nxlx-sysd: announcing this node as %s (id %s)" % (name, ident[:8]))
         return {"ok": True, "avahi": state}
 
     def _fleet_failed(self, text):
@@ -372,14 +372,14 @@ class SysService:
         (on a read-only root every time would be the same line)."""
         if text != self._fleet_fail:
             self._fleet_fail = text
-            self.log("pvj-sysd: " + text)
+            self.log("nxlx-sysd: " + text)
 
     def fleet_withdraw(self):
         """Remove the service file (the switch is off). Nothing to do is also ok."""
         with self.lock:
             try:
                 os.unlink(os.path.join(self.avahi_services, self.FLEET_FILE))
-                self.log("pvj-sysd: no longer announcing this node")
+                self.log("nxlx-sysd: no longer announcing this node")
             except FileNotFoundError:
                 pass
             except OSError as e:
@@ -427,33 +427,33 @@ class SysdClient:
         try:
             reply = json.loads(exchange(self.path, message, self.timeout))
         except socket.timeout:
-            raise OSError("the system helper (pvj-sysd) did not answer in time; the change may still be going on")
+            raise OSError("the system helper (nxlx-sysd) did not answer in time; the change may still be going on")
         except (OSError, ValueError):
-            raise OSError("the system helper (pvj-sysd) is not running")
+            raise OSError("the system helper (nxlx-sysd) is not running")
         if not isinstance(reply, dict):
-            raise OSError("the system helper (pvj-sysd) gave a bad answer")
+            raise OSError("the system helper (nxlx-sysd) gave a bad answer")
         return reply
 
 def main(argv=None):
     import grp
     import pwd
-    # Its own folder (root:pvj 0750): nobody but root can create or replace anything in it, so no member of group
-    # pvj can put a fake socket in its place.
+    # Its own folder (root:nxlx-svc 0750): nobody but root can create or replace anything in it, so no member of group
+    # nxlx-svc can put a fake socket in its place.
     rundir = paths.sysd_dir()
     os.makedirs(rundir, exist_ok=True)
     allowed = {0}
     try:
-        allowed.add(pwd.getpwnam("pvj-web").pw_uid)
+        allowed.add(pwd.getpwnam("nxlx-web").pw_uid)
     except KeyError:
         pass
     service = SysService(log=lambda m: print(m, flush=True), rundir=rundir)
     service.recover()
     server = NetServer(os.path.join(rundir, paths.SYSD_SOCKET), service, lambda uid: uid in allowed)
     try:
-        os.chown(server.server_address, 0, grp.getgrnam("pvj").gr_gid, follow_symlinks=False)
+        os.chown(server.server_address, 0, grp.getgrnam("nxlx-svc").gr_gid, follow_symlinks=False)
     except (KeyError, OSError):
         pass
-    print("pvj-sysd: ready", flush=True)
+    print("nxlx-sysd: ready", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

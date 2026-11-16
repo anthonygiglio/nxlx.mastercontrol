@@ -1,20 +1,20 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""pvj-supportd: the small root helper that opens and closes a remote support tunnel, on behalf of the panel.
+"""nxlx-supportd: the small root helper that opens and closes a remote support tunnel, on behalf of the panel.
 
 A support session is started by someone at the studio (the panel checks who may). This helper only does the network
 part, as fixed argument lists, never a shell:
 
-* start: a WireGuard interface `wg-pvj` that dials out to the owner's support server (nothing listens on the internet
+* start: a WireGuard interface `wg-nxlx` that dials out to the owner's support server (nothing listens on the internet
   at the studio), with this box's own key, and a firewall table that lets in only the panel (TCP 80) and ping from
   the tunnel, blocks everything else there (OSC, DMX, SSH and the rest), forwards nothing, and lets the box start no
   connection into the tunnel. It closes by itself at the deadline, which this helper keeps, not the panel;
 * extend: a new deadline for the running session, without touching the tunnel;
 * stop: removes both; status: whether it is up, until when, and when the support server last answered;
-* key: this box's public key (the private key is made on first use and never leaves /var/lib/pvj-support).
+* key: this box's public key (the private key is made on first use and never leaves /var/lib/nxlx-support).
 
 It fails closed: at start-up it removes any interface or firewall table left by an earlier run (a crash or a power cut
-never leaves a tunnel open), and a reboot ends a session. It answers only root and pvj-web on its socket.
+never leaves a tunnel open), and a reboot ends a session. It answers only root and nxlx-web on its socket.
 """
 
 import base64
@@ -31,8 +31,8 @@ import time
 from . import paths
 from .netd import exchange, NetServer  # the same small, reviewed socket server
 
-IFACE = "wg-pvj"
-TABLE = "pvj_support"
+IFACE = "wg-nxlx"
+TABLE = "nxlx_support"
 PANEL_PORT = 80
 MIN_MINUTES, MAX_MINUTES = 5, 240
 MAX_TOTAL_MINUTES = 480          # however often it is extended, a session ends 8 hours after it started
@@ -194,7 +194,7 @@ class SupportService:
         self._run(["ip", "link", "delete", IFACE])
         still_up, _ = self._run(["ip", "link", "show", IFACE])
         if still_up == 0:
-            self.log("pvj-supportd: could not remove %s; its firewall stays in place" % IFACE)
+            self.log("nxlx-supportd: could not remove %s; its firewall stays in place" % IFACE)
         else:
             self._run(["nft", "delete", "table", "inet", TABLE])
         if self._cancel:
@@ -203,7 +203,7 @@ class SupportService:
         had = self.session is not None
         self.session = None
         if had:
-            self.log("pvj-supportd: support tunnel closed (%s)" % reason)
+            self.log("nxlx-supportd: support tunnel closed (%s)" % reason)
 
     def start(self, message):
         cfg = check_config(message)
@@ -232,7 +232,7 @@ class SupportService:
             self.session = {"started": self._clock(), "until": self._clock() + seconds, "until_epoch": int(self._now() + seconds),
                             "address": cfg["address"], "network": cfg["network"], "endpoint": cfg["endpoint"]}
             self._cancel = self._timer(seconds, self._expire)
-            self.log("pvj-supportd: support tunnel open to %s for %d minutes, as %s (box key %s)"
+            self.log("nxlx-supportd: support tunnel open to %s for %d minutes, as %s (box key %s)"
                      % (cfg["endpoint"], cfg["minutes"], cfg["address"], key))
             return self.status_locked()
 
@@ -251,7 +251,7 @@ class SupportService:
             self.session["until"] = self._clock() + seconds
             self.session["until_epoch"] = int(self._now() + seconds)
             self._cancel = self._timer(seconds, self._expire)
-            self.log("pvj-supportd: support session now ends in %d minutes" % minutes)
+            self.log("nxlx-supportd: support session now ends in %d minutes" % minutes)
             return self.status_locked()
 
     def _expire(self):
@@ -332,11 +332,11 @@ class SupportdClient:
         try:
             reply = json.loads(exchange(self.path, message, self.timeout))
         except socket.timeout:
-            raise OSError("the remote support helper (pvj-supportd) did not answer in time")
+            raise OSError("the remote support helper (nxlx-supportd) did not answer in time")
         except (OSError, ValueError):
-            raise OSError("the remote support helper (pvj-supportd) is not running")
+            raise OSError("the remote support helper (nxlx-supportd) is not running")
         if not isinstance(reply, dict):
-            raise OSError("the remote support helper (pvj-supportd) gave a bad answer")
+            raise OSError("the remote support helper (nxlx-supportd) gave a bad answer")
         return reply
 
 
@@ -344,21 +344,21 @@ def main(argv=None):
     import grp
     import pwd
     rundir = paths.supportd_dir()
-    keydir = os.environ.get("PVJ_SUPPORT_KEYS", "/var/lib/pvj-support")
+    keydir = os.environ.get("PVJ_SUPPORT_KEYS", "/var/lib/nxlx-support")
     os.makedirs(rundir, exist_ok=True)
     allowed = {0}
     try:
-        allowed.add(pwd.getpwnam("pvj-web").pw_uid)
+        allowed.add(pwd.getpwnam("nxlx-web").pw_uid)
     except KeyError:
         pass
     service = SupportService(keydir, log=lambda m: print(m, flush=True))
     service.teardown("the helper started")      # fail closed: nothing from an earlier run stays open
     server = NetServer(os.path.join(rundir, paths.SUPPORTD_SOCKET), service, lambda uid: uid in allowed)
     try:
-        os.chown(server.server_address, 0, grp.getgrnam("pvj").gr_gid, follow_symlinks=False)
+        os.chown(server.server_address, 0, grp.getgrnam("nxlx-svc").gr_gid, follow_symlinks=False)
     except (KeyError, OSError):
         pass
-    print("pvj-supportd: ready", flush=True)
+    print("nxlx-supportd: ready", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -260,7 +260,7 @@ class Press(PadBase):
     def test_the_module_off_the_helper_away_and_the_runtime_missing_each_say_why(self):
         self.client.down = True
         st, out = self.press(self.operator)
-        self.assertEqual((st, out["error"]), (409, "the NDI helper (pvj-ndi) is not running"))
+        self.assertEqual((st, out["error"]), (409, "the NDI helper (nxlx-ndi) is not running"))
         self.client.down = False
         self.api.ndi.setup = False
         st, out = self.press(self.operator)

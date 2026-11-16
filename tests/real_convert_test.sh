@@ -5,11 +5,11 @@
 # show. usermod and groupmod, visudo, systemctl stopping and starting the units, the undo timer as a unit file,
 # the run in its own transient unit, and the timed undo.
 #
-# The old node is today's release installed by install/install.sh, with a login account pvj-dev that has sudo
-# and runs the player (node-02's shape). The release the cutover would install is a stand-in: this checkout with
-# every kind of tools/rename-map.txt applied by tools/rename-apply.py, copied into the releases folder and made
-# "current", as install.sh will do from rename PR 7 on. Its programs are the renamed code of this commit, which
-# nothing else runs yet, so a service that does not start under its new name is shown here first.
+# The old node is the release before the rename of the system names (master at 0ff0ddb, rename PR 7) installed by
+# its own install/install.sh, with a login account pvj-dev that has sudo and runs the player (node-02's shape). The
+# release the cutover installs is this checkout, copied into the releases folder and made "current" by hand here, so
+# the converter's own steps are seen one by one (install.sh does the same with --release; the real-install job runs
+# that whole road). The converter holds the release and variable names until rename PR 8, as this code does.
 #
 # It creates and renames accounts, installs to /opt/pvj and writes sudoers. Run it ONLY on a machine that is thrown
 # away afterwards (the CI runner). It refuses without the variable below. It is not a test of a Raspberry Pi.
@@ -46,6 +46,28 @@ step() { printf '\n=== %s\n' "$*"; }
 has_user() { getent passwd "$1" >/dev/null; }
 has_group() { getent group "$1" >/dev/null; }
 uid_of() { id -u "$1"; }
+# A player that was started a moment ago has its socket before it answers on it, and the converter counts a player
+# that does not answer as one that plays (when in doubt, the show goes on). Wait, at most 60 seconds, until it says
+# it is idle, as the converter itself asks it, before a plan or a run that must not be refused for that.
+player_idle() {
+	python3 - "$SRC/bin/nxlx-convert" <<'EOF'
+import importlib.machinery, importlib.util, sys
+loader = importlib.machinery.SourceFileLoader("nxlx_convert", sys.argv[1])
+spec = importlib.util.spec_from_loader("nxlx_convert", loader)
+conv = importlib.util.module_from_spec(spec)
+loader.exec_module(conv)
+sys.exit(0 if conv.show_playing(conv.Node("")) is False else 1)
+EOF
+}
+wait_player_idle() {
+	systemctl is-active --quiet pvj-player.service || return 0
+	local end=$((SECONDS + 60))
+	while [ "$SECONDS" -lt "$end" ]; do
+		if player_idle; then return 0; fi
+		sleep 1
+	done
+	echo "the player has not said it is idle in 60 seconds; going on" >&2
+}
 names() {      # what a plan must not change: accounts, groups, folders, unit files, links, sudoers
 	{
 		getent passwd | cut -d: -f1,3,6
@@ -56,11 +78,14 @@ names() {      # what a plan must not change: accounts, groups, folders, unit fi
 	} | sort
 }
 
-step "the old node: today's release, the login account pvj-dev (sudo, runs the player)"
+step "the old node: the release before the system rename, the login account pvj-dev (sudo, runs the player)"
+BEFORE=0ff0ddbeb662efb405186a0e774839cb1f61b2de     # master with release 0.1.1, before rename PR 7 (fetched by the job)
+OLDSRC="$(mktemp -d)"
+git -C "$SRC" archive "$BEFORE" mctl bin install render | tar -x -C "$OLDSRC" || fail "no $BEFORE here (the job fetches it)"
 useradd --create-home --shell /bin/bash pvj-dev
 echo 'pvj-dev ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/010_pvj-dev
 chmod 440 /etc/sudoers.d/010_pvj-dev
-bash "$SRC/install/install.sh" --user pvj-dev
+bash "$OLDSRC/install/install.sh" --user pvj-dev
 OLD_CURRENT="$(readlink /opt/pvj/current)"
 ACTIVE=()
 for u in "${MAIN[@]}"; do
@@ -71,22 +96,19 @@ UID_WEB="$(uid_of pvj-web)"
 UID_DEV="$(uid_of pvj-dev)"
 GID_SVC="$(getent group pvj | cut -d: -f3)"
 
-step "the release with the new names (a stand-in made by the rename table)"
+step "the release with the new names: this checkout"
 NEW="$(mktemp -d)"
 git -C "$SRC" archive HEAD | tar -x -C "$NEW"
-python3 "$SRC/tools/rename-apply.py" --root "$NEW" --write >/dev/null
 VERSION="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$NEW/mctl/__init__.py")"
-[ -n "$VERSION" ] || fail "the stand-in has no mctl/__init__.py"
+[ -n "$VERSION" ] || fail "this checkout has no mctl/__init__.py"
 REL="/opt/pvj/releases/$VERSION-nxlx"
 mkdir -p "$REL"
 cp -a "$NEW/mctl" "$NEW/bin" "$NEW/render" "$REL/"
 # The programs install.sh built on this runner for the old release, under their new names, as install.sh will
 # build them for the new one (the converter asks for each one the node had).
-for prog in render link link-peer raster; do
-	if [ -x "$OLD_CURRENT/render/pvj-$prog" ]; then
-		new="mctl-render"
-		[ "$prog" = render ] || new="nxlx-$prog"
-		cp -a "$OLD_CURRENT/render/pvj-$prog" "$REL/render/$new"
+for prog in mctl-render pvj-link pvj-link-peer pvj-raster; do      # the renderer has had its new name since rename PR 5
+	if [ -x "$OLD_CURRENT/render/$prog" ]; then
+		cp -a "$OLD_CURRENT/render/$prog" "$REL/render/${prog/#pvj-/nxlx-}"
 	fi
 done
 chown -R root:root "$REL"
@@ -96,6 +118,7 @@ mv -T /opt/pvj/current.tmp /opt/pvj/current
 rm -rf "$NEW"
 
 step "--plan changes nothing; with the old release current it refuses"
+wait_player_idle
 ln -sfn "$OLD_CURRENT" /opt/pvj/current.tmp && mv -T /opt/pvj/current.tmp /opt/pvj/current
 if out="$("${CONVERT[@]}" --plan)"; then fail "a plan on a release without the new names was not refused"; fi
 grep -q "does not have the new names" <<<"$out" || fail "the refusal does not say why: $out"
@@ -178,6 +201,7 @@ done
 
 step "the timed undo (its service started at once instead of after 15 minutes)"
 ln -sfn "$REL" /opt/pvj/current.tmp && mv -T /opt/pvj/current.tmp /opt/pvj/current
+wait_player_idle          # restarted a moment ago, above
 "${CONVERT[@]}" --run || fail "the second run failed"
 systemctl start nxlx-convert-undo.service || fail "the timed undo failed"
 { has_user pvj-dev && [ -d /opt/pvj ]; } || fail "the timed undo did not put the old names back"

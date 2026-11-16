@@ -53,46 +53,39 @@ class ReleaseTest(unittest.TestCase):
             with open(os.path.join(fonts, name), "rb") as shipped, open(os.path.join(REPO, "mctl", "web", "fonts", name), "rb") as ours:
                 self.assertEqual(shipped.read(), ours.read(), name)
 
-    def test_the_bundle_passes_the_updater_installed_before_the_rename_and_the_stubs_are_never_installed(self):
-        """For one release the bundle holds pvj/__init__.py and pvj/settings.py (two stub lines), so that the updater
-        already on a node, which reads only those, takes it. That updater is run here from a pinned commit of master."""
-        before = "1057087dcc9939af9044f68d03ef3ea72a322116"       # master with release 0.1.1, before the package was renamed
+    def test_the_updater_installed_before_the_system_rename_refuses_the_bundle(self):
+        """A node with the old names runs the updater of its own release, which looks for bin/pvj-player and (before
+        the package rename) pvj/__init__.py, and refuses a bundle without them. That is wanted from rename PR 7 on:
+        the panel's Update button on such a node refuses this release, and the first install is install.sh over ssh,
+        which converts the node. The updaters of the releases before are run here from pinned commits of master."""
+        befores = {"1057087dcc9939af9044f68d03ef3ea72a322116": "pvj",    # release 0.1.1 before the package rename
+                   "0ff0ddbeb662efb405186a0e774839cb1f61b2de": "mctl"}   # release 0.1.1 after it (PR 6), before PR 7
         r = build(version(), "--allow-dirty")
         self.assertEqual(r.returncode, 0, r.stderr)
         work = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, work, True)
         update.safe_extract(self.out, work)
-        with open(os.path.join(work, "pvj", "__init__.py")) as f:
-            self.assertIn('__version__ = "%s"' % version(), f.read())
-        with open(os.path.join(work, "pvj", "settings.py")) as f:
-            stub = f.read()
-        with open(os.path.join(REPO, "mctl", "settings.py")) as f:
-            self.assertIn(re.search(r"^SCHEMA = \d+$", f.read(), re.M).group(0), stub)
-        self.assertEqual(sorted(os.listdir(os.path.join(work, "pvj"))), ["__init__.py", "settings.py"], "only the two stubs")
-        info = update.inspect_bundle(work)                         # the new updater reads mctl/ and ignores the stubs
-        self.assertEqual(info["version"], version())
-        # the installer copies mctl, bin and render into the release: the stubs are not installed
-        root = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, root, True)
-        done = subprocess.run([os.path.join(work, "install", "install.sh"), "--stage", root, "--user", "someone"],
-                              capture_output=True, text=True, timeout=120)
-        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-        release = os.path.join(root, "opt", "pvj", "releases", version())
-        self.assertTrue(os.path.isfile(os.path.join(release, "mctl", "__init__.py")))
-        self.assertFalse(os.path.exists(os.path.join(release, "pvj")), "a stub was installed")
-        # the updater of the release before: master's own inspect_bundle, on this bundle
-        try:
-            tar = subprocess.run(["git", "-C", REPO, "archive", before, "pvj"], check=True, capture_output=True).stdout
-        except (OSError, subprocess.CalledProcessError):
-            self.skipTest("no %s here to read the release before from" % before)
-        old = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, old, True)
-        subprocess.run(["tar", "-x", "-C", old], input=tar, check=True)
-        script = "import json, sys\nfrom pvj import update\nprint(json.dumps(update.inspect_bundle(sys.argv[1])))\n"
-        run = subprocess.run([sys.executable, "-c", script, work], cwd=old, capture_output=True, text=True,
-                             env=dict(os.environ, PYTHONPATH=old))
-        self.assertEqual(run.returncode, 0, run.stderr)
-        self.assertEqual(json.loads(run.stdout.strip().splitlines()[-1])["version"], version())
+        self.assertFalse(os.path.exists(os.path.join(work, "pvj")), "no stubs for the old updater any more")
+        self.assertFalse(os.path.exists(os.path.join(work, "bin", "pvj-player")))
+        self.assertEqual(update.inspect_bundle(work)["version"], version(), "this release's updater takes it")
+        ran = 0
+        for before, pkg in befores.items():
+            try:
+                tar = subprocess.run(["git", "-C", REPO, "archive", before, pkg], check=True, capture_output=True).stdout
+            except (OSError, subprocess.CalledProcessError):
+                continue
+            old = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, old, True)
+            subprocess.run(["tar", "-x", "-C", old], input=tar, check=True)
+            script = ("import sys\nfrom %s import update\ntry:\n    update.inspect_bundle(sys.argv[1])\n"
+                      "except update.UpdateError as e:\n    print('refused:', e)\nelse:\n    print('taken')\n" % pkg)
+            run = subprocess.run([sys.executable, "-c", script, work], cwd=old, capture_output=True, text=True,
+                                 env=dict(os.environ, PYTHONPATH=old))
+            self.assertEqual(run.returncode, 0, run.stderr)
+            self.assertIn("refused: bundle is missing", run.stdout, before)
+            ran += 1
+        if not ran:
+            self.skipTest("none of %s here to read the releases before from" % ", ".join(befores))
 
     def test_wrong_or_missing_version_refused(self):
         self.assertNotEqual(build("9.9.9").returncode, 0)

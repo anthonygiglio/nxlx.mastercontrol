@@ -296,7 +296,7 @@
     var help = h('details', { class: 'fold', id: 'lockedout' }, h('summary', { class: 'k', text: 'Locked out?' }),
       h('div', { class: 'hint', text: 'If every owner phone is lost: a recovery code from the sheet the owner printed (above). ' +
         'Or, at the node, a USB stick with an empty file named pvj-recover at its top: the node shows a fresh PIN on its own screen for 2 minutes, which works once (unless the owner switched that off). ' +
-        'Or sudo pvj-pin at a keyboard on the node. As the last resort a factory reset from the node\'s console removes every device and makes a new PIN (the clips can be kept).' }));
+        'Or sudo nxlx-pin at a keyboard on the node. As the last resort a factory reset from the node\'s console removes every device and makes a new PIN (the clips can be kept).' }));
     return h('div', { class: 'recovery' }, open, entry, help);
   }
   // ---- remote support --------------------------------------------------
@@ -1532,7 +1532,7 @@
   // Play > Graphics (a page of Setup that is also a screen of Play, as Mapping is a screen of Shape). Two cards: the
   // graphics themselves (up to 8, each a text or a logo, each with its own Show / Hide and Replay, and a big Hide all at
   // the top) and the logo files (upload, thumbnails, rename, delete). The node makes a small picture of each graphic with
-  // pvj-raster; the New renderer's GPU draws it and moves it (fade, typewriter, scroll, crawl), and on classic mpv the
+  // nxlx-raster; the New renderer's GPU draws it and moves it (fade, typewriter, scroll, crawl), and on classic mpv the
   // fade and the typewriter are stepped about twelve times a second and scroll and crawl are not offered (the node says
   // which it is: `mode` and `note`). Keys, effects and "over or as a source" are said to come later, in words, and not
   // offered. A typed line is previewed by the node (the preview is a picture the node makes, so it is what the wall gets)
@@ -2708,7 +2708,7 @@
     health: function (d) {
       var host = /^https?:\/\/([^.\/:]+)\.local/.exec((d.addresses || [])[0] || ''), name = host ? host[1] : 'This node';
       var lines = [['Power', d.power], ['Temperature', d.temperature], ['Player', d.player]];
-      (d.helpers || []).forEach(function (x) { if (!x.running && x.name !== 'pvj-netd') lines.push([x.label, { state: 'bad', text: 'Not running' }]); });
+      (d.helpers || []).forEach(function (x) { if (!x.running && x.name !== 'nxlx-netd') lines.push([x.label, { state: 'bad', text: 'Not running' }]); });
       (d.projectors || []).forEach(function (x) { lines.push(['Projector ' + x.name, x]); });
       (d.storage || []).forEach(function (x) { lines.push(['Storage', storageLine(x)]); });      // free space on each disk (mctl/health.py)
       if (d.osc_open) lines.push(['OSC', { state: 'warn', text: 'open, anyone on this network can control the node' }]);    // D83
@@ -3426,8 +3426,8 @@
       body.appendChild(row('healthload', 'Load', busy ? 'warn' : 'ok',
         (d.cpu_percent === null ? '?' : d.cpu_percent + '% of all cores') + (d.memory_percent === null ? '' : ' · memory ' + d.memory_percent + '% of ' + d.memory_mb + ' MB')));
       d.helpers.forEach(function (x) {
-        body.appendChild(row('health-' + x.name, x.label, x.running ? 'ok' : (x.name === 'pvj-netd' ? 'unknown' : 'bad'),
-          x.running ? 'Running' : (x.name === 'pvj-netd' ? 'Not running (only needed for network settings)' : 'Not running')));
+        body.appendChild(row('health-' + x.name, x.label, x.running ? 'ok' : (x.name === 'nxlx-netd' ? 'unknown' : 'bad'),
+          x.running ? 'Running' : (x.name === 'nxlx-netd' ? 'Not running (only needed for network settings)' : 'Not running')));
       });
       (d.projectors || []).forEach(function (x) { body.appendChild(row('healthproj-' + x.id, 'Projector: ' + x.name, x.state, x.text)); });
       (d.storage || []).forEach(function (x) { var l = storageLine(x); body.appendChild(row('healthstorage-' + String(x.id).replace(/\W/g, '-'), 'Storage', l.state, l.text)); });
@@ -4618,7 +4618,7 @@
     }
     function stateLine(d) {
       var hlp = d.helper || {};
-      if (!hlp.running) return ['problem', 'The sound service (pvj-sound) is not running on this node. Restarting the node usually brings it back.'];
+      if (!hlp.running) return ['problem', 'The sound service (nxlx-sound) is not running on this node. Restarting the node usually brings it back.'];
       if (!d.config.on) return ['off', 'Off. Nothing is listened to.'];
       if (d.config.source !== 'device') {
         var nm = (d.inputs.filter(function (x) { return x.id === d.config.source; })[0] || {}).name || d.config.source;
@@ -4935,7 +4935,7 @@
           h('div', { text: 'It prints the program\'s sha256 so you can compare it with your copy. Then come back to this page.' })));
         return;
       }
-      if (!d.supervisor) { state.appendChild(h('div', { class: 'hint warn', id: 'ndiscdown', text: 'The discovery server\'s service (pvj-ndi-discovery) is not running on this node, so nothing listens. Restarting the node usually brings it back.' })); return; }
+      if (!d.supervisor) { state.appendChild(h('div', { class: 'hint warn', id: 'ndiscdown', text: 'The discovery server\'s service (nxlx-ndi-discovery) is not running on this node, so nothing listens. Restarting the node usually brings it back.' })); return; }
       if (!d.installed) {
         state.appendChild(h('div', { class: 'hint warn', id: 'ndiscmissing' }, h('div', { text: ndiSentence(d.problem || 'NDI\'s program is not on this node yet') + ' Someone with a keyboard or SSH on the node runs:' }),
           h('div', { class: 'addr', id: 'ndisccommand', text: d.install.command })));
@@ -5156,7 +5156,7 @@
         h('div', { text: '2. On the node, run this one command. It puts NDI\'s library in place, installs the NDI helper and restarts the panel and the player (the screen goes dark for a moment):' }),
         h('div', { class: 'addr', id: 'ndicommand', text: d.install.command }),
         h('div', { text: 'Then this page lists the senders. The address list below can be filled in meanwhile.' }));
-      if (!d.helper) return h('div', { class: 'hint warn', id: 'ndiruntime' }, h('div', { text: 'The NDI helper (pvj-ndi) is not running on this node, so no source can be found or shown. Restarting the node usually brings it back.' }));
+      if (!d.helper) return h('div', { class: 'hint warn', id: 'ndiruntime' }, h('div', { text: 'The NDI helper (nxlx-ndi) is not running on this node, so no source can be found or shown. Restarting the node usually brings it back.' }));
       if (d.runtime.loaded && !d.runtime.problem) return null;
       if (d.runtime.present) return h('div', { class: 'hint warn', id: 'ndiruntime' }, h('div', { text: ndiSentence(d.runtime.problem || 'the NDI runtime is on the node but has not been loaded yet') }));
       return h('div', { class: 'hint warn', id: 'ndiruntime' },
@@ -5390,7 +5390,7 @@
     refresh();
     return [srcCard, allowedCard, soundCard, scopeCard, addrCard];
   }
-  // ---- updates (signed bundles, installed by pvj-update as root; D33) ----
+  // ---- updates (signed bundles, installed by nxlx-update as root; D33) ----
   var updateTimer = null;
   function updateCard() {
     var body = h('div', { class: 'list sp', id: 'updatebody' }, h('div', { class: 'hint', text: 'Loading...' }));
@@ -7479,7 +7479,7 @@
     var pinHide = null;
     function hidePin() { clearTimeout(pinHide); pinField.value = ''; }
     function showPin(pin) { pinField.value = pin; pinOut.textContent = ''; clearTimeout(pinHide); pinHide = setTimeout(function () { if (pinField.isConnected) hidePin(); }, PIN_SHOW_MS); }
-    var UNKNOWN = 'This panel has not known the PIN since the node started (it keeps only a check value of it). New PIN makes one and shows it here; sudo pvj-pin on the node prints the current one.';
+    var UNKNOWN = 'This panel has not known the PIN since the node started (it keeps only a check value of it). New PIN makes one and shows it here; sudo nxlx-pin on the node prints the current one.';
     // Asks the box for the PIN; `then(pin)` with it, or `unknown()` (by default a note under the field) when this
     // run of the panel does not know it. An error (the rate limit, a stale device) is said in the message line.
     function withPin(then, unknown) {
@@ -7502,7 +7502,7 @@
     }
     // Before this device logs out: with another full-access device paired, a plain question; as the last one, the
     // question shows the PIN it will need to pair again (or, when the panel does not know it, offers New PIN first),
-    // and reminds that the box draws it on its display while nothing is paired. Never forbidden: sudo pvj-pin is on
+    // and reminds that the box draws it on its display while nothing is paired. Never forbidden: sudo nxlx-pin is on
     // the box. The PIN in the question is asked from the box like a Show: counted and in the journal.
     function ownQuestion(then) {
       api('GET', '/api/devices').then(function (r) {
@@ -7511,9 +7511,9 @@
         if (others) return then('Log out on this device? The node forgets it. You will need the PIN to get back in.');
         var last = 'This is the last device with everything allowed. Once it logs out nobody can read the PIN from a panel. ';
         withPin(function (pin) {
-          then(last + 'The PIN to pair again is ' + pin + '. The node also draws it on its display while nothing is paired, and sudo pvj-pin prints it.');
+          then(last + 'The PIN to pair again is ' + pin + '. The node also draws it on its display while nothing is paired, and sudo nxlx-pin prints it.');
         }, function () {
-          then(last + 'This panel does not know the PIN: press Stay and New PIN to get one first, or log out anyway. The node draws the PIN on its display while nothing is paired, and sudo pvj-pin prints it.');
+          then(last + 'This panel does not know the PIN: press Stay and New PIN to get one first, or log out anyway. The node draws the PIN on its display while nothing is paired, and sudo nxlx-pin prints it.');
         });
       });
     }
@@ -7733,7 +7733,7 @@
         api('POST', '/api/recovery/usb', { on: v }).then(function (r) {
           if (!card.isConnected) return;
           if (!r.ok) { say(r.data.error || 'Something went wrong', true); sw.setAttribute('aria-checked', v ? 'false' : 'true'); return; }
-          say(v ? 'A recovery stick shows the PIN again.' : 'A recovery stick shows nothing now. The ways in are the codes, sudo pvj-pin at the node, or a factory reset.');
+          say(v ? 'A recovery stick shows the PIN again.' : 'A recovery stick shows nothing now. The ways in are the codes, sudo nxlx-pin at the node, or a factory reset.');
           load();
         });
       }, 'The screen is the room\'s projector: everyone there sees the PIN for 2 minutes. It is a new PIN each time, it works once, and it dies when the stick comes out. Switch this off where strangers can reach the node.'));
@@ -7938,7 +7938,7 @@
           }] : ['Open', nowOpen('health')]);
         });
         (hd.helpers || []).forEach(function (x) {
-          if (!x.running && x.name !== 'pvj-netd') need('helper-' + x.name, x.label, { state: 'bad', text: 'Not running' }, ['Open', nowOpen('health')]);
+          if (!x.running && x.name !== 'nxlx-netd') need('helper-' + x.name, x.label, { state: 'bad', text: 'Not running' }, ['Open', nowOpen('health')]);
         });
         (hd.projectors || []).forEach(function (x) {
           if (!troubled(x)) return;

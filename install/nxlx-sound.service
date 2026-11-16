@@ -4,23 +4,23 @@
 Description=nxlx.mastercontrol sound analysis (levels only; no network, no sound kept)
 # After a rollback to a release from before D96 this unit is still here and its program is not. A condition that is
 # not met is not a failure: the unit is skipped, once, and nothing is started again (as the NDI helper's, D62).
-ConditionPathExists=@PVJ_DIR@/bin/pvj-sound
+ConditionPathExists=@PVJ_DIR@/bin/nxlx-sound
 StartLimitIntervalSec=0
 
 [Service]
 # Its own account, whose only group is "audio" (D96): whoever is in audio can already open the microphone, so the
-# levels it writes add nothing to what that group reads. The panel (pvj-web) and the player are in audio; the panel
-# alone may configure it (the socket checks the caller's uid). It is NOT in group "pvj" (the player's socket, the
+# levels it writes add nothing to what that group reads. The panel (nxlx-web) and the player are in audio; the panel
+# alone may configure it (the socket checks the caller's uid). It is NOT in group "nxlx-svc" (the player's socket, the
 # settings, the PIN).
-User=pvj-sound
+User=nxlx-sound
 Group=audio
 UMask=0027
 # Its own folder: the socket for the panel and the levels file (0640, group audio). Nobody else writes here.
-RuntimeDirectory=pvj-sound
+RuntimeDirectory=nxlx-sound
 RuntimeDirectoryMode=0750
-Environment=PVJ_SOUND_DIR=/run/pvj-sound
+Environment=PVJ_SOUND_DIR=/run/nxlx-sound
 Environment=HOME=/nonexistent
-ExecStart=@PVJ_DIR@/bin/pvj-sound
+ExecStart=@PVJ_DIR@/bin/nxlx-sound
 Restart=always
 RestartSec=2
 
@@ -38,7 +38,7 @@ DevicePolicy=closed
 DeviceAllow=/dev/null rw
 DeviceAllow=/dev/urandom r
 DeviceAllow=char-alsa rw
-InaccessiblePaths=-/var/lib/pvj -/etc/pvj -/run/pvj -/run/pvj-ndi -/run/pvj-sysd -/run/pvj-supportd
+InaccessiblePaths=-/var/lib/nxlx -/etc/nxlx -/run/nxlx -/run/nxlx-ndi -/run/nxlx-sysd -/run/nxlx-supportd
 # Bounds: one block of samples, a small FFT and arecord. The analysis was measured at about 1.2 percent of a laptop
 # core (mctl/SOUND.md); this cap keeps a fault from taking more than a quarter of one Pi core from the player.
 MemoryMax=64M

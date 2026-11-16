@@ -10,7 +10,7 @@ supported models, you must disable HDMI output to enable composite output"), wit
 /boot/firmware/cmdline.txt. The kernel's overlay README says the same of the parameter: "composite: Enable the composite
 output (disables all other outputs)" on a Pi 4. A change takes effect at the next start of the node.
 
-This module is root's: pvj-sysd calls `apply` when the Owner asks (the panel never writes these files), and the panel
+This module is root's: nxlx-sysd calls `apply` when the Owner asks (the panel never writes these files), and the panel
 only reads them (`state`). It changes nothing but these, and only these ways:
 
 * config.txt: `,composite` appended to the parameters of each active `dtoverlay=vc4-kms-v3d` (or `-pi4`, `-pi5`) line, and a

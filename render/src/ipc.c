@@ -77,7 +77,7 @@ int ipc_open(const char *path, char *err, size_t n)
         listen_fd = -1;
         return -1;
     }
-    // the panel (group pvj) must reach it; nobody else
+    // the panel (group nxlx-svc) must reach it; nobody else
     if (chmod(path, 0660)) LOG("could not open the socket to the group: %s", strerror(errno));
     sock_path = path;
     for (int i = 0; i < MAX_CLIENTS; i++) clients[i].fd = -1;

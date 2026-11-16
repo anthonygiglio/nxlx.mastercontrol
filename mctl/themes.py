@@ -410,7 +410,7 @@ class Store:
         """A file in the folder that is not used: said once in the log, and kept for the Look page to say."""
         why = _show(why, 160)
         self.skipped.append({"file": name, "why": why})
-        print("pvj-web: theme file %s was not used: %s" % (name, why), file=sys.stderr, flush=True)
+        print("nxlx-web: theme file %s was not used: %s" % (name, why), file=sys.stderr, flush=True)
 
     def load(self, out):
         """Add the owner's themes to `out` ({id: theme}). A file that is broken, unreadable or refused is skipped and

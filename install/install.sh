@@ -6,29 +6,29 @@
 #   sudo install/install.sh [options]
 #
 # Options
-#   --prefix DIR     install location (default /opt/pvj)
+#   --prefix DIR     install location (default /opt/nxlx)
 #   --user NAME      account that owns the screen and sound card (default: the
-#                    user who ran sudo, else a new system user "pvj-player")
-#   --web-user NAME  optional: add another account (a separate web app) to group "pvj"; NOT needed for
-#                    the built-in panel, which has its own pvj-web account. Members can reach the player's socket.
-#   --media DIR      video folder (default /var/lib/pvj/video)
+#                    user who ran sudo, else a new system user "nxlx-player")
+#   --web-user NAME  optional: add another account (a separate web app) to group "nxlx-svc"; NOT needed for
+#                    the built-in panel, which has its own nxlx-web account. Members can reach the player's socket.
+#   --media DIR      video folder (default /var/lib/nxlx/video)
 #   --offline        never touch the network; fail if a dependency is missing
 #   --no-start       install and enable the service but do not start it
 #   --stage DIR      install into DIR without users, apt or systemctl (for tests and image builds)
 #   --dry-run        print what would happen
-#   --uninstall      remove the service and program files (keeps /etc/pvj and media)
-#   --purge          with --uninstall, also remove /etc/pvj
+#   --uninstall      remove the service and program files (keeps /etc/nxlx and media)
+#   --purge          with --uninstall, also remove /etc/nxlx
 #   --signer URL     the owner's signing service, e.g. http://hp.local:8781 (D139): the node asks it for its
-#                    HTTPS certificate by itself; written into /etc/pvj/pvj.env as PVJ_SIGNER_URL
+#                    HTTPS certificate by itself; written into /etc/nxlx/nxlx.env as PVJ_SIGNER_URL
 #   --root-fingerprint HEX   required with --signer: the SHA-256 of the owner's root (boxcert.py root); a node with
 #                    no root yet takes only that root (PVJ_ROOT_FINGERPRINT)
 set -euo pipefail
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PREFIX=/opt/pvj
+PREFIX=/opt/nxlx
 PVJ_USER=""
 WEB_USER=""
-MEDIA=/var/lib/pvj/video
+MEDIA=/var/lib/nxlx/video
 OFFLINE=0
 START=1
 STAGE=""
@@ -38,8 +38,8 @@ PURGE=0
 SIGNER=""
 ROOT_FP=""
 
-log() { printf 'pvj-install: %s\n' "$*"; }
-die() { printf 'pvj-install: error: %s\n' "$*" >&2; exit 1; }
+log() { printf 'nxlx-install: %s\n' "$*"; }
+die() { printf 'nxlx-install: error: %s\n' "$*" >&2; exit 1; }
 run() {
 	if [ "$DRY" = 1 ]; then printf '  would run: %s\n' "$*"; else "$@"; fi
 }
@@ -85,7 +85,7 @@ for name in "$PVJ_USER" "$WEB_USER"; do
 	[[ "$name" =~ ^([a-z_][a-z0-9_-]*)?$ ]] || die "user names may only use a-z, 0-9, _ and -"
 done
 # Refuse prefixes that would make uninstall dangerous (/, /opt, /usr, ...).
-[[ "$PREFIX" =~ ^/[^/]+/[^/]+ ]] || die "--prefix must be at least two levels deep, e.g. /opt/pvj"
+[[ "$PREFIX" =~ ^/[^/]+/[^/]+ ]] || die "--prefix must be at least two levels deep, e.g. /opt/nxlx"
 case "$PREFIX" in /usr/* | /etc/* | /bin/* | /sbin/* | /lib/* | /boot/* | /var/lib/dpkg*) die "--prefix must not be inside a system directory" ;; esac
 for path in "$PREFIX" "$MEDIA"; do
 	[[ "$path" =~ ^[A-Za-z0-9/_.-]+$ ]] || die "paths may only use letters, digits, / _ . and -"
@@ -101,35 +101,35 @@ else
 fi
 REAL=$([ -z "$STAGE" ] && echo 1 || echo 0)
 
-ETC="$ROOT/etc/pvj"
-UNIT="$ROOT/etc/systemd/system/pvj-player.service"
-USB_UNIT="$ROOT/etc/systemd/system/pvj-usb@.service"
-WEB_UNIT="$ROOT/etc/systemd/system/pvj-web.service"
-NET_UNIT="$ROOT/etc/systemd/system/pvj-netd.service"
-SYS_UNIT="$ROOT/etc/systemd/system/pvj-sysd.service"
-SUP_UNIT="$ROOT/etc/systemd/system/pvj-supportd.service"
-SOUND_UNIT="$ROOT/etc/systemd/system/pvj-sound.service"      # sound analysis (D96): on every box, idle until the Owner chooses a device
-LINK_UNIT="$ROOT/etc/systemd/system/pvj-link.service"        # the Ableton Link follower (D117): on every box that could build it, off until the Owner says
-RASTER_UNIT="$ROOT/etc/systemd/system/pvj-raster@.service"   # the picture helper (D129): decodes uploaded logos, one process per job
-RASTER_SOCKET_UNIT="$ROOT/etc/systemd/system/pvj-raster.socket"
-# The NDI input is opt-in per box (D62): none of these four files exists unless root ran "pvj-ndi-runtime install"
+ETC="$ROOT/etc/nxlx"
+UNIT="$ROOT/etc/systemd/system/nxlx-player.service"
+USB_UNIT="$ROOT/etc/systemd/system/nxlx-usb@.service"
+WEB_UNIT="$ROOT/etc/systemd/system/nxlx-web.service"
+NET_UNIT="$ROOT/etc/systemd/system/nxlx-netd.service"
+SYS_UNIT="$ROOT/etc/systemd/system/nxlx-sysd.service"
+SUP_UNIT="$ROOT/etc/systemd/system/nxlx-supportd.service"
+SOUND_UNIT="$ROOT/etc/systemd/system/nxlx-sound.service"      # sound analysis (D96): on every box, idle until the Owner chooses a device
+LINK_UNIT="$ROOT/etc/systemd/system/nxlx-link.service"        # the Ableton Link follower (D117): on every box that could build it, off until the Owner says
+RASTER_UNIT="$ROOT/etc/systemd/system/nxlx-raster@.service"   # the picture helper (D129): decodes uploaded logos, one process per job
+RASTER_SOCKET_UNIT="$ROOT/etc/systemd/system/nxlx-raster.socket"
+# The NDI input is opt-in per box (D62): none of these four files exists unless root ran "nxlx-ndi-runtime install"
 # at the box (mctl/ndisetup.py). The panel's drop-in is the mark of that; this installer never writes it.
-NDI_UNIT="$ROOT/etc/systemd/system/pvj-ndi.service"
-NDI_MARK="$ROOT/etc/systemd/system/pvj-web.service.d/50-pvj-ndi.conf"
-NDI_PLAYER_DROPIN="$ROOT/etc/systemd/system/pvj-player.service.d/50-pvj-ndi.conf"
-NDI_WANTS="$ROOT/etc/systemd/system/multi-user.target.wants/pvj-ndi.service"      # the link "systemctl enable" makes
-NDI_TMPFILES="$ROOT/etc/tmpfiles.d/pvj-ndi.conf"                                  # root's pipe folder and pipe (M3, 2026-10-11)
-# The NDI discovery server is opt-in per box too (D85): these exist only where root ran "pvj-ndi-runtime server install"
+NDI_UNIT="$ROOT/etc/systemd/system/nxlx-ndi.service"
+NDI_MARK="$ROOT/etc/systemd/system/nxlx-web.service.d/50-nxlx-ndi.conf"
+NDI_PLAYER_DROPIN="$ROOT/etc/systemd/system/nxlx-player.service.d/50-nxlx-ndi.conf"
+NDI_WANTS="$ROOT/etc/systemd/system/multi-user.target.wants/nxlx-ndi.service"      # the link "systemctl enable" makes
+NDI_TMPFILES="$ROOT/etc/tmpfiles.d/nxlx-ndi.conf"                                  # root's pipe folder and pipe (M3, 2026-10-11)
+# The NDI discovery server is opt-in per box too (D85): these exist only where root ran "nxlx-ndi-runtime server install"
 # (mctl/ndiscovery.py). The panel's second drop-in is the mark of that; this installer never writes it.
-NDISC_UNIT="$ROOT/etc/systemd/system/pvj-ndi-discovery.service"
-NDISC_MARK="$ROOT/etc/systemd/system/pvj-web.service.d/50-pvj-ndisc.conf"
-NDISC_WANTS="$ROOT/etc/systemd/system/multi-user.target.wants/pvj-ndi-discovery.service"
-JOURNAL_CONF="$ROOT/etc/systemd/journald.conf.d/50-pvj-persistent-log.conf"
-UPD_USB_UNIT="$ROOT/etc/systemd/system/pvj-update-usb@.service"
-UPD_INBOX_UNIT="$ROOT/etc/systemd/system/pvj-update-inbox@.service"
-WG_LOAD="$ROOT/etc/modules-load.d/pvj-wireguard.conf"
-USB_RULE="$ROOT/etc/udev/rules.d/99-pvj-usb.rules"
-TMPFILES="$ROOT/etc/tmpfiles.d/pvj.conf"
+NDISC_UNIT="$ROOT/etc/systemd/system/nxlx-ndi-discovery.service"
+NDISC_MARK="$ROOT/etc/systemd/system/nxlx-web.service.d/50-nxlx-ndisc.conf"
+NDISC_WANTS="$ROOT/etc/systemd/system/multi-user.target.wants/nxlx-ndi-discovery.service"
+JOURNAL_CONF="$ROOT/etc/systemd/journald.conf.d/50-nxlx-persistent-log.conf"
+UPD_USB_UNIT="$ROOT/etc/systemd/system/nxlx-update-usb@.service"
+UPD_INBOX_UNIT="$ROOT/etc/systemd/system/nxlx-update-inbox@.service"
+WG_LOAD="$ROOT/etc/modules-load.d/nxlx-wireguard.conf"
+USB_RULE="$ROOT/etc/udev/rules.d/99-nxlx-usb.rules"
+TMPFILES="$ROOT/etc/tmpfiles.d/nxlx.conf"
 BIN_LINKS="$ROOT/usr/local/bin"
 VERSION="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$SRC/mctl/__init__.py")"
 [ -n "$VERSION" ] || die "cannot read version from mctl/__init__.py"
@@ -138,34 +138,39 @@ RELEASE="$ROOT$PREFIX/releases/$VERSION"
 uninstall() {
 	log "uninstalling"
 	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then
-		systemctl disable --now pvj-player.service 2>/dev/null || true
+		systemctl disable --now nxlx-player.service 2>/dev/null || true
 	fi
 	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then
-		systemctl disable --now pvj-ndi.service 2>/dev/null || true
-		systemctl disable --now pvj-ndi-discovery.service 2>/dev/null || true
-		systemctl disable --now pvj-sound.service 2>/dev/null || true
-		systemctl disable --now pvj-link.service 2>/dev/null || true
-		systemctl disable --now pvj-raster.socket 2>/dev/null || true
+		systemctl disable --now nxlx-ndi.service 2>/dev/null || true
+		systemctl disable --now nxlx-ndi-discovery.service 2>/dev/null || true
+		systemctl disable --now nxlx-sound.service 2>/dev/null || true
+		systemctl disable --now nxlx-link.service 2>/dev/null || true
+		systemctl disable --now nxlx-raster.socket 2>/dev/null || true
 	fi
 	# The discovery server's set-up, where there is one: its mark first (it lies in the same folder as the NDI mark).
 	run rm -f "$NDISC_MARK" "$NDISC_UNIT" "$NDISC_WANTS" || log "WARNING: could not remove everything of the discovery server's set-up; look at $NDISC_MARK and $NDISC_UNIT and remove them by hand"
 	# A box that was set up for NDI: the mark first, then the rest; the two folders only if nothing else is in them.
-	run rm -f "$NDI_MARK" "$NDI_PLAYER_DROPIN" "$NDI_TMPFILES" "$NDI_UNIT" "$NDI_WANTS" "$BIN_LINKS/pvj-ndi-runtime" || log "WARNING: could not remove everything of the NDI helper; look at $NDI_MARK, $NDI_PLAYER_DROPIN and $NDI_UNIT and remove them by hand"
+	run rm -f "$NDI_MARK" "$NDI_PLAYER_DROPIN" "$NDI_TMPFILES" "$NDI_UNIT" "$NDI_WANTS" "$BIN_LINKS/nxlx-ndi-runtime" || log "WARNING: could not remove everything of the NDI helper; look at $NDI_MARK, $NDI_PLAYER_DROPIN and $NDI_UNIT and remove them by hand"
 	if [ "$DRY" = 0 ]; then rmdir "$(dirname "$NDI_MARK")" "$(dirname "$NDI_PLAYER_DROPIN")" 2>/dev/null || true; fi
 	run rm -f "$SUP_UNIT" "$SOUND_UNIT" "$LINK_UNIT" "$RASTER_UNIT" "$RASTER_SOCKET_UNIT" "$WG_LOAD" "$UPD_USB_UNIT" "$UPD_INBOX_UNIT" "$JOURNAL_CONF" "$TMPFILES"
-	run rm -f "$UNIT" "$WEB_UNIT" "$NET_UNIT" "$SYS_UNIT" "$USB_UNIT" "$USB_RULE" "$BIN_LINKS/pvj-player" "$BIN_LINKS/pvj-selftest" "$BIN_LINKS/pvj-usb" "$BIN_LINKS/pvj-rootfs" "$BIN_LINKS/pvj-pin" "$BIN_LINKS/pvj-update"
+	run rm -f "$UNIT" "$WEB_UNIT" "$NET_UNIT" "$SYS_UNIT" "$USB_UNIT" "$USB_RULE" "$BIN_LINKS/nxlx-player" "$BIN_LINKS/nxlx-selftest" "$BIN_LINKS/nxlx-usb" "$BIN_LINKS/nxlx-rootfs" "$BIN_LINKS/nxlx-pin" "$BIN_LINKS/nxlx-update" "$BIN_LINKS/nxlx-convert"
 	run rm -rf "${ROOT}${PREFIX:?}"
 	[ "$PURGE" = 1 ] && run rm -rf "$ETC"
 	# The owner's copy of NDI's library is theirs: it goes only with --purge.
-	if [ "$PURGE" = 1 ]; then run rm -rf "${ROOT}/opt/pvj-ndi"; fi
+	if [ "$PURGE" = 1 ]; then run rm -rf "${ROOT}/opt/nxlx-ndi"; fi
 	# So is their copy of NDI's discovery server program (D85).
-	if [ "$PURGE" = 1 ]; then run rm -rf "${ROOT}/opt/pvj-ndi-server"; fi
+	if [ "$PURGE" = 1 ]; then run rm -rf "${ROOT}/opt/nxlx-ndi-server"; fi
 	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then systemctl daemon-reload; fi
 	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && command -v udevadm >/dev/null; then udevadm control --reload || true; fi
-	log "done. Kept ${ETC}, media and /opt/pvj-ndi (your copy of the NDI runtime, if this box was set up for NDI) unless --purge; the users (pvj-web, pvj-sound, pvj-link, pvj-raster, the player's, and pvj-ndi on a box that was set up for NDI) and the groups pvj and pvj-ndi are left in place, the groups pvj-link and pvj-raster too (remove them with deluser and delgroup if you want them gone)."
+	log "done. Kept ${ETC}, media and /opt/nxlx-ndi (your copy of the NDI runtime, if this box was set up for NDI) unless --purge; the users (nxlx-web, nxlx-sound, nxlx-link, nxlx-raster, the player's, and nxlx-ndi on a box that was set up for NDI) and the groups nxlx-svc and nxlx-ndi are left in place, the groups nxlx-link and nxlx-raster too (remove them with deluser and delgroup if you want them gone)."
 }
 
-if [ "$UNINSTALL" = 1 ]; then uninstall; exit 0; fi
+if [ "$UNINSTALL" = 1 ]; then
+	if [ -e "$ROOT/opt/pvj" ] || [ -e "$ROOT/etc/pvj" ]; then
+		die "this node still has the old names (/opt/pvj): run the installer once without --uninstall (it converts the node), then --uninstall"
+	fi
+	uninstall; exit 0
+fi
 
 # --- dependencies -------------------------------------------------------
 need=()
@@ -215,9 +220,9 @@ if [ ${#render_need[@]} -gt 0 ] && command -v dpkg-query >/dev/null; then
 	fi
 fi
 
-# Optional: Ableton Link (D117). The helper pvj-link is built here from its source against Debian's ableton-link-dev
+# Optional: Ableton Link (D117). The helper nxlx-link is built here from its source against Debian's ableton-link-dev
 # (header only, it brings libasio-dev), and needs a C++ compiler. Missing ones are installed when the network allows;
-# without them pvj-link is not built, the panel says Link is not available, and nothing else changes.
+# without them nxlx-link is not built, the panel says Link is not available, and nothing else changes.
 link_need=()
 for p in g++ make ableton-link-dev libasio-dev; do
 	dpkg-query -W -f '${Status}' "$p" 2>/dev/null | grep -q 'install ok installed' || link_need+=("$p")
@@ -231,7 +236,7 @@ if [ ${#link_need[@]} -gt 0 ] && command -v dpkg-query >/dev/null; then
 	fi
 fi
 
-# The picture helper (D129): uploaded logos are decoded, and text and logos are drawn, by pvj-raster, built here from its source
+# The picture helper (D129): uploaded logos are decoded, and text and logos are drawn, by nxlx-raster, built here from its source
 # against libpng, libjpeg and FreeType (and the vendored SVG reader). It is on every board, lean or full. Missing build tools are installed when the
 # network allows; without them it is not built, the panel says picture upload is not available, and nothing else changes.
 raster_need=()
@@ -242,7 +247,7 @@ if [ ${#raster_need[@]} -gt 0 ] && command -v dpkg-query >/dev/null; then
 	if [ "$OFFLINE" = 1 ] || [ "$REAL" = 0 ] || ! command -v apt-get >/dev/null; then
 		log "uploading logos will be unavailable until these are installed: ${raster_need[*]}"
 	else
-		log "installing ${raster_need[*]} (to build pvj-raster)"
+		log "installing ${raster_need[*]} (to build nxlx-raster)"
 		run apt-get install -y --no-install-recommends "${raster_need[@]}" || log "could not install ${raster_need[*]}; uploading logos stays unavailable"
 	fi
 fi
@@ -329,159 +334,263 @@ fi
 
 # Nothing is installed for the NDI input here, not avahi either: that is opt-in per box (mctl/ndisetup.py, D62).
 
+# --- the release folder -------------------------------------------------
+# put_release DIR: this release as DIR/<version>, built next to it as DIR/<version>.new and swapped in, so a folder
+# that "current" points at is never deleted first (the same version installed again). DIR is $PREFIX/releases, or the
+# old releases folder of a node that is converted from the old names (below). "current" is not touched here.
+put_release() {
+	local RELEASE="$1/$VERSION"
+	run mkdir -p "$1"
+	run rm -rf "$RELEASE.new"
+	run mkdir -p "$RELEASE.new"
+	if [ "$DRY" = 0 ]; then
+		cp -a "$SRC/mctl" "$SRC/bin" "$RELEASE.new/"
+		[ -d "$SRC/render" ] && cp -a "$SRC/render" "$RELEASE.new/"
+		find "$RELEASE.new" -name __pycache__ -type d -prune -exec rm -rf {} +
+		# The renderer (D95), built from source here and never shipped as a binary. A failed build leaves the box as it
+		# was: classic mpv draws and the panel says mctl-render is not built. Not in stage mode (tests, the image's own
+		# copy is installed for real in the image's chroot).
+		if [ "$REAL" = 1 ] && [ -f "$RELEASE.new/render/Makefile" ]; then
+			# pvj-render is the renderer's name before the rename (rename PR 5): a source folder where it was built by hand
+			# must not carry it into a release, where nothing runs it any more.
+			rm -f "$RELEASE.new/render/mctl-render" "$RELEASE.new/render/pvj-render" "$RELEASE.new"/render/src/*.o
+			if command -v make >/dev/null && command -v pkg-config >/dev/null && pkg-config --exists mpv egl glesv2 gbm libdrm; then
+				log "building mctl-render (a minute or two on a Pi 4)"
+				if timeout 1200 make -C "$RELEASE.new/render" > "$RELEASE.new/render/build.log" 2>&1; then
+					log "mctl-render built"
+				else
+					log "mctl-render was not built (render/build.log in the release); classic mpv stays the only renderer"
+				fi
+				rm -f "$RELEASE.new"/render/src/*.o
+			else
+				log "mctl-render was not built: the build tools or headers are missing"
+			fi
+		fi
+		# The Link follower (D117), built here in the same way. It never stops an install: without it the panel says Link is
+		# not available, and its unit's condition leaves the service alone. Niced, because a box may be playing.
+		if [ "$REAL" = 1 ] && [ -f "$RELEASE.new/render/Makefile" ]; then
+			rm -f "$RELEASE.new/render/nxlx-link" "$RELEASE.new/render/nxlx-link-peer"
+			if command -v g++ >/dev/null && command -v make >/dev/null && [ -f /usr/include/ableton/Link.hpp ] && [ -f /usr/include/asio.hpp ]; then
+				log "building nxlx-link (a minute or two on a Pi 4)"
+				if nice -n 10 timeout 1200 make -C "$RELEASE.new/render" nxlx-link > "$RELEASE.new/render/link-build.log" 2>&1; then
+					log "nxlx-link built"
+				else
+					log "nxlx-link was not built (render/link-build.log in the release); Ableton Link stays unavailable"
+				fi
+			else
+				log "nxlx-link was not built: g++ or the headers of ableton-link-dev are missing; Ableton Link stays unavailable"
+			fi
+		fi
+		# The picture helper (D129), built the same way and never a reason to stop an install: without it the panel says
+		# uploading logos is not available, and the unit's condition leaves the socket alone.
+		if [ "$REAL" = 1 ] && [ -f "$RELEASE.new/render/Makefile" ]; then
+			rm -f "$RELEASE.new/render/nxlx-raster"
+			if command -v make >/dev/null && command -v pkg-config >/dev/null && pkg-config --exists libpng libjpeg freetype2; then
+				log "building nxlx-raster"
+				if nice -n 10 timeout 600 make -C "$RELEASE.new/render" nxlx-raster > "$RELEASE.new/render/raster-build.log" 2>&1; then
+					log "nxlx-raster built"
+				else
+					log "nxlx-raster was not built (render/raster-build.log in the release); uploading logos stays unavailable"
+				fi
+			else
+				log "nxlx-raster was not built: the build tools or the libpng, libjpeg and FreeType headers are missing; uploading logos and drawing text stay unavailable"
+			fi
+		fi
+	fi
+	if [ -e "$RELEASE" ]; then run mv "$RELEASE" "$RELEASE.old.$$"; fi
+	run mv "$RELEASE.new" "$RELEASE"
+	run rm -rf "$RELEASE.old.$$"
+}
+
+# --- a node that still has the old names (rename PR 7, D136) -------------
+# A node installed before the rename has /opt/pvj, /etc/pvj and /var/lib/pvj, the pvj-* accounts and units and the
+# shared group pvj. This release runs under the new names only, so such a node is converted first, by
+# bin/nxlx-convert of this release: the release is put into the old releases folder, and the converter renames the
+# accounts (user and group ids stay, so no file changes its owner), the folders, the units and the other system
+# files (a sudoers file is checked with visudo -cf before it replaces anything), points "current" at this release as
+# one of its own changes and starts the services under their new names. The rest of this script then runs as on
+# any node with the new names. The converter refuses, changing nothing, when it cannot convert safely (a show is
+# playing, an update is running, the root file system is read-only, an account to be renamed is logged in: run this
+# from another admin login); this script then stops too. The converter's undo is armed: unless
+# `sudo nxlx-convert --confirm` is run within 15 minutes, the old names and the release the node ran before come back
+# by themselves (also after a power cut). Updates from the panel cannot do this: the updater of a release from before
+# the rename refuses this release's bundle (it has no bin/pvj-player), so the first install of it is this script.
+OLD_LAYOUT=0
+for old in opt/pvj etc/pvj var/lib/pvj; do
+	if [ -e "$ROOT/$old" ] || [ -L "$ROOT/$old" ]; then OLD_LAYOUT=1; fi
+done
+# The converter's journal says whether a conversion is under way: "pending" when a run stopped before it finished
+# (the old folders may be renamed already, so the test above no longer sees it), "unconfirmed" when it finished and
+# its undo is still armed. In both cases nothing here may move "current" or write "previous": only the converter
+# does, in its journal, so that its undo can put them back.
+CONV_STATE=none
+if [ -e "$ROOT/var/backups/nxlx-convert/journal.jsonl" ]; then
+	conv_root=()
+	if [ -n "$STAGE" ]; then conv_root=(--root "$ROOT"); fi
+	CONV_STATE="$(python3 -B "$SRC/bin/nxlx-convert" "${conv_root[@]+"${conv_root[@]}"}" --state)" || die "cannot read the converter's journal: run sudo nxlx-convert --state, which says which line is unreadable and what to do"
+fi
+CONVERTED=0          # this run converted the node, or carried a conversion on: the converter set current and previous
+KEEP_RELEASE=0       # a conversion waits for its confirm: the release in place is left as it is
+if [ "$OLD_LAYOUT" = 1 ] || [ "$CONV_STATE" = pending ]; then
+	[ "$PREFIX" = /opt/nxlx ] || die "this node still has the old names (/opt/pvj): run the installer once without --prefix, which converts it to /opt/nxlx"
+	# The accounts the converter renames; any other old-style name given with --user is not one of them.
+	case "$PVJ_USER" in
+	"" | pvj-player | pvj-dev | pvj-web | pvj-sound | pvj-link | pvj-raster | pvj-ndi | pvj-ndisc) ;;
+	pvj-*) die "--user $PVJ_USER: the conversion renames only the node's own accounts (pvj-player, pvj-dev and the services'); give the account's name as it will be after the conversion, or leave --user out" ;;
+	esac
+	old_top=/opt/pvj
+	[ -d "$ROOT/opt/pvj" ] || old_top=/opt/nxlx      # a conversion that stopped half-way, carried on below
+	[ -L "$ROOT$old_top/current" ] || die "this node has the old names but $old_top/current is not a link to a release; look at it by hand: sudo python3 $SRC/bin/nxlx-convert --plan"
+	old_target="$(readlink "$ROOT$old_top/current")"
+	if [ "${old_target##*/}" = "$VERSION" ]; then
+		[ "$old_top" = /opt/nxlx ] || die "this node runs version $VERSION under the old names, so its release cannot be replaced in place; install a newer version"
+		log "carrying on with a conversion that stopped half-way (the release in place is kept)"
+	else
+		if [ "$CONV_STATE" = pending ]; then log "carrying on with a conversion that stopped half-way"; fi
+		log "putting version $VERSION into $old_top/releases, then converting the node"
+		put_release "$ROOT$old_top/releases"
+		if [ "$REAL" = 1 ] && [ "$DRY" = 0 ]; then chown -R root:root "$ROOT$old_top/releases/$VERSION"; fi
+		run chmod -R go-w "$ROOT$old_top/releases/$VERSION"
+	fi
+	if [ "$DRY" = 1 ]; then
+		log "would convert the node: python3 $old_top/releases/$VERSION/bin/nxlx-convert --run --release $VERSION; what follows here is for after the conversion"
+		KEEP_RELEASE=1
+	else
+		conv=(python3 -B "$ROOT$old_top/releases/$VERSION/bin/nxlx-convert")
+		if [ -n "$STAGE" ]; then conv+=(--root "$ROOT"); fi
+		rc=0
+		"${conv[@]}" --run --release "$VERSION" || rc=$?
+		case "$rc" in
+		0) CONVERTED=1 ;;
+		2) die "the conversion was refused and nothing on the node was changed by it (the reasons are above); version $VERSION waits in $old_top/releases. Put the cause right and run this installer again" ;;
+		*) die "the conversion stopped half-way (see above). Run this installer again to carry on, or go back with: sudo python3 /var/backups/nxlx-convert/nxlx-convert --undo (it also runs by itself 15 minutes after the start)" ;;
+		esac
+	fi
+elif [ "$CONV_STATE" = unconfirmed ] || [ -e "$ROOT/etc/systemd/system/nxlx-convert-undo.timer" ]; then
+	# Waiting for its confirm: by the journal, or by the undo timer that is still armed (whatever the journal says).
+	cur_target="$(readlink "$ROOT$PREFIX/current" 2>/dev/null || true)"
+	[ "${cur_target##*/}" = "$VERSION" ] || die "a conversion of this node waits for its confirm: sudo nxlx-convert --confirm (or --undo), then run the installer again"
+	log "a conversion of this node waits for its confirm: the release in place is kept, the rest is installed again"
+	KEEP_RELEASE=1
+fi
+
 # --- accounts -----------------------------------------------------------
 if [ -z "$PVJ_USER" ] && [ -f "$ETC/install.json" ]; then
 	PVJ_USER="$(sed -n 's/.*"user": "\([a-z_][a-z0-9_-]*\)".*/\1/p' "$ETC/install.json" | head -n 1)"
 fi
 if [ -z "$PVJ_USER" ]; then
-	if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then PVJ_USER="$SUDO_USER"; else PVJ_USER=pvj-player; fi
+	if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then PVJ_USER="$SUDO_USER"; else PVJ_USER=nxlx-player; fi
 fi
+# From here on the node has the new names (converted by this run, or before), so the accounts the converter renames
+# are known only by their new names: an old one given again (--user pvj-player, on every later install) is the same
+# account, never a second one made beside it. Any other old-style name is refused, as before a conversion.
+case "$PVJ_USER" in
+pvj-player | pvj-dev | pvj-web | pvj-sound | pvj-link | pvj-raster | pvj-ndi | pvj-ndisc)
+	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && id "$PVJ_USER" >/dev/null 2>&1 && ! id "nxlx-${PVJ_USER#pvj-}" >/dev/null 2>&1; then
+		die "--user $PVJ_USER: this node has that account but not nxlx-${PVJ_USER#pvj-}, and no old layout the conversion would rename it with; look at it by hand"
+	fi
+	log "--user $PVJ_USER: since the conversion this account is called nxlx-${PVJ_USER#pvj-}"
+	PVJ_USER="nxlx-${PVJ_USER#pvj-}" ;;
+pvj-*) die "--user $PVJ_USER: an old-style name that is not one of the node's own accounts; give the account's new name, or leave --user out" ;;
+esac
 
 if [ "$REAL" = 1 ]; then
-	getent group pvj >/dev/null || run groupadd --system pvj
+	getent group nxlx-svc >/dev/null || run groupadd --system nxlx-svc
 	if ! id "$PVJ_USER" >/dev/null 2>&1; then
 		log "creating system user $PVJ_USER"
-		run useradd --system --create-home --home-dir /var/lib/pvj-player --shell /usr/sbin/nologin --gid pvj "$PVJ_USER"
+		run useradd --system --create-home --home-dir /var/lib/nxlx-player --shell /usr/sbin/nologin --gid nxlx-svc "$PVJ_USER"
 	fi
-	# Older installs made /var/lib/pvj the player's home, which let the player account replace settings.json.
-	# Give it its own home, changing only the home entry: nothing is moved out of /var/lib/pvj.
-	if [ "$(getent passwd "$PVJ_USER" | cut -d: -f6)" = /var/lib/pvj ]; then
-		log "moving the home of $PVJ_USER from /var/lib/pvj to /var/lib/pvj-player (no files are moved)"
-		run mkdir -p /var/lib/pvj-player
-		run chown "$PVJ_USER":pvj /var/lib/pvj-player
-		run chmod 0750 /var/lib/pvj-player
+	# Older installs made /var/lib/nxlx the player's home, which let the player account replace settings.json.
+	# Give it its own home, changing only the home entry: nothing is moved out of /var/lib/nxlx.
+	if [ "$(getent passwd "$PVJ_USER" | cut -d: -f6)" = /var/lib/nxlx ]; then
+		log "moving the home of $PVJ_USER from /var/lib/nxlx to /var/lib/nxlx-player (no files are moved)"
+		run mkdir -p /var/lib/nxlx-player
+		run chown "$PVJ_USER":nxlx-svc /var/lib/nxlx-player
+		run chmod 0750 /var/lib/nxlx-player
 		# usermod refuses while the account has a running process (the player; found on a real Pi 4), and this
 		# script stops at the first error. The player is started again at the end.
-		if [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then systemctl stop pvj-player.service 2>/dev/null || true; fi
-		run usermod -d /var/lib/pvj-player "$PVJ_USER"
+		if [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then systemctl stop nxlx-player.service 2>/dev/null || true; fi
+		run usermod -d /var/lib/nxlx-player "$PVJ_USER"
 	fi
-	for g in pvj video render audio input; do
+	# A display account that an installer from before the rename made (--user with a new name) has its home at
+	# /var/lib/pvj-player, which the conversion moved to /var/lib/nxlx-player with everything in it. The converter
+	# moves the homes of the pvj-* accounts it renames; this one keeps its name, so only its home entry is changed.
+	if [ "$(getent passwd "$PVJ_USER" | cut -d: -f6)" = /var/lib/pvj-player ] && [ -d /var/lib/nxlx-player ] && [ ! -e /var/lib/pvj-player ]; then
+		log "the home of $PVJ_USER moved with the conversion: /var/lib/pvj-player is now /var/lib/nxlx-player (no files are moved)"
+		if [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then systemctl stop nxlx-player.service 2>/dev/null || true; fi
+		run usermod -d /var/lib/nxlx-player "$PVJ_USER"
+	fi
+	for g in nxlx-svc video render audio input; do
 		getent group "$g" >/dev/null && run usermod -aG "$g" "$PVJ_USER"
 	done
-	if [ -n "$WEB_USER" ]; then run usermod -aG pvj "$WEB_USER"; fi
+	if [ -n "$WEB_USER" ]; then run usermod -aG nxlx-svc "$WEB_USER"; fi
 	# The web panel runs as its own account with no screen or sound access.
-	if ! id pvj-web >/dev/null 2>&1; then
-		log "creating system user pvj-web"
-		run useradd --system --no-create-home --shell /usr/sbin/nologin --gid pvj pvj-web
+	if ! id nxlx-web >/dev/null 2>&1; then
+		log "creating system user nxlx-web"
+		run useradd --system --no-create-home --shell /usr/sbin/nologin --gid nxlx-svc nxlx-web
 	fi
-	# The sound analysis (D96) runs as its own account whose only group is audio: never pvj (the player's socket,
+	# The sound analysis (D96) runs as its own account whose only group is audio: never nxlx-svc (the player's socket,
 	# the settings, the PIN). Whoever is in audio can already open the microphone.
 	getent group audio >/dev/null || run groupadd --system audio
-	if ! id pvj-sound >/dev/null 2>&1; then
-		log "creating system user pvj-sound"
-		run useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --gid audio pvj-sound
+	if ! id nxlx-sound >/dev/null 2>&1; then
+		log "creating system user nxlx-sound"
+		run useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --gid audio nxlx-sound
 	fi
 	# The Link follower (D117) meets the network, so it runs as its own account in its own group, with nothing else of
 	# the box's. The panel joins that group to reach its folder, and nobody else does; the panel's next start takes it.
-	getent group pvj-link >/dev/null || run groupadd --system pvj-link
-	if ! id pvj-link >/dev/null 2>&1; then
-		log "creating system user pvj-link"
-		run useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --gid pvj-link pvj-link
+	getent group nxlx-link >/dev/null || run groupadd --system nxlx-link
+	if ! id nxlx-link >/dev/null 2>&1; then
+		log "creating system user nxlx-link"
+		run useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --gid nxlx-link nxlx-link
 	fi
-	run usermod -aG pvj-link pvj-web
+	run usermod -aG nxlx-link nxlx-web
 	# The picture helper (D129) decodes files from phones and laptops, so it too runs as its own account in its own group,
 	# with nothing else of the box's. The panel joins that group to reach its socket, and nobody else does.
-	getent group pvj-raster >/dev/null || run groupadd --system pvj-raster
-	if ! id pvj-raster >/dev/null 2>&1; then
-		log "creating system user pvj-raster"
-		run useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --gid pvj-raster pvj-raster
+	getent group nxlx-raster >/dev/null || run groupadd --system nxlx-raster
+	if ! id nxlx-raster >/dev/null 2>&1; then
+		log "creating system user nxlx-raster"
+		run useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --gid nxlx-raster nxlx-raster
 	fi
-	run usermod -aG pvj-raster pvj-web
+	run usermod -aG nxlx-raster nxlx-web
 fi
 
 # --- program files: releases/<version>, "current" points at the active one --
 log "installing version $VERSION to $PREFIX"
-run mkdir -p "$ROOT$PREFIX/releases"
-run rm -rf "$RELEASE.new"
-run mkdir -p "$RELEASE.new"
-if [ "$DRY" = 0 ]; then
-	cp -a "$SRC/mctl" "$SRC/bin" "$RELEASE.new/"
-	[ -d "$SRC/render" ] && cp -a "$SRC/render" "$RELEASE.new/"
-	find "$RELEASE.new" -name __pycache__ -type d -prune -exec rm -rf {} +
-	# The renderer (D95), built from source here and never shipped as a binary. A failed build leaves the box as it
-	# was: classic mpv draws and the panel says mctl-render is not built. Not in stage mode (tests, the image's own
-	# copy is installed for real in the image's chroot).
-	if [ "$REAL" = 1 ] && [ -f "$RELEASE.new/render/Makefile" ]; then
-		# pvj-render is the renderer's name before the rename (rename PR 5): a source folder where it was built by hand
-		# must not carry it into a release, where nothing runs it any more.
-		rm -f "$RELEASE.new/render/mctl-render" "$RELEASE.new/render/pvj-render" "$RELEASE.new"/render/src/*.o
-		if command -v make >/dev/null && command -v pkg-config >/dev/null && pkg-config --exists mpv egl glesv2 gbm libdrm; then
-			log "building mctl-render (a minute or two on a Pi 4)"
-			if timeout 1200 make -C "$RELEASE.new/render" > "$RELEASE.new/render/build.log" 2>&1; then
-				log "mctl-render built"
-			else
-				log "mctl-render was not built (render/build.log in the release); classic mpv stays the only renderer"
-			fi
-			rm -f "$RELEASE.new"/render/src/*.o
-		else
-			log "mctl-render was not built: the build tools or headers are missing"
-		fi
+# After a conversion, or while one waits for its confirm, "current" and "previous" are the converter's (journaled,
+# so that its undo puts them back): nothing is switched or written here.
+if [ "$CONVERTED" = 0 ] && [ "$KEEP_RELEASE" = 0 ]; then
+	previous=""
+	[ -L "$ROOT$PREFIX/current" ] && previous="$(readlink "$ROOT$PREFIX/current")"
+	put_release "$ROOT$PREFIX/releases"
+	# Atomic switch: rename a fresh symlink over "current".
+	run ln -sfn "$PREFIX/releases/$VERSION" "$ROOT$PREFIX/current.tmp"
+	run mv -T "$ROOT$PREFIX/current.tmp" "$ROOT$PREFIX/current"
+	if [ -n "$previous" ] && [ "$previous" != "$PREFIX/releases/$VERSION" ]; then
+		if [ "$DRY" = 0 ]; then printf '%s\n' "$previous" > "$ROOT$PREFIX/previous"; fi
 	fi
-	# The Link follower (D117), built here in the same way. It never stops an install: without it the panel says Link is
-	# not available, and its unit's condition leaves the service alone. Niced, because a box may be playing.
-	if [ "$REAL" = 1 ] && [ -f "$RELEASE.new/render/Makefile" ]; then
-		rm -f "$RELEASE.new/render/pvj-link" "$RELEASE.new/render/pvj-link-peer"
-		if command -v g++ >/dev/null && command -v make >/dev/null && [ -f /usr/include/ableton/Link.hpp ] && [ -f /usr/include/asio.hpp ]; then
-			log "building pvj-link (a minute or two on a Pi 4)"
-			if nice -n 10 timeout 1200 make -C "$RELEASE.new/render" pvj-link > "$RELEASE.new/render/link-build.log" 2>&1; then
-				log "pvj-link built"
-			else
-				log "pvj-link was not built (render/link-build.log in the release); Ableton Link stays unavailable"
-			fi
-		else
-			log "pvj-link was not built: g++ or the headers of ableton-link-dev are missing; Ableton Link stays unavailable"
-		fi
-	fi
-	# The picture helper (D129), built the same way and never a reason to stop an install: without it the panel says
-	# uploading logos is not available, and the unit's condition leaves the socket alone.
-	if [ "$REAL" = 1 ] && [ -f "$RELEASE.new/render/Makefile" ]; then
-		rm -f "$RELEASE.new/render/pvj-raster"
-		if command -v make >/dev/null && command -v pkg-config >/dev/null && pkg-config --exists libpng libjpeg freetype2; then
-			log "building pvj-raster"
-			if nice -n 10 timeout 600 make -C "$RELEASE.new/render" pvj-raster > "$RELEASE.new/render/raster-build.log" 2>&1; then
-				log "pvj-raster built"
-			else
-				log "pvj-raster was not built (render/raster-build.log in the release); uploading logos stays unavailable"
-			fi
-		else
-			log "pvj-raster was not built: the build tools or the libpng, libjpeg and FreeType headers are missing; uploading logos and drawing text stay unavailable"
-		fi
-	fi
-fi
-previous=""
-[ -L "$ROOT$PREFIX/current" ] && previous="$(readlink "$ROOT$PREFIX/current")"
-# Same version installed again: move the old folder aside and swap in the new one, so the folder
-# "current" points at is never deleted first.
-if [ -e "$RELEASE" ]; then run mv "$RELEASE" "$RELEASE.old.$$"; fi
-run mv "$RELEASE.new" "$RELEASE"
-run rm -rf "$RELEASE.old.$$"
-# Atomic switch: rename a fresh symlink over "current".
-run ln -sfn "$PREFIX/releases/$VERSION" "$ROOT$PREFIX/current.tmp"
-run mv -T "$ROOT$PREFIX/current.tmp" "$ROOT$PREFIX/current"
-if [ -n "$previous" ] && [ "$previous" != "$PREFIX/releases/$VERSION" ]; then
-	[ "$DRY" = 0 ] && printf '%s\n' "$previous" > "$ROOT$PREFIX/previous"
 fi
 if [ "$REAL" = 1 ] && [ "$DRY" = 0 ]; then chown -R root:root "$ROOT$PREFIX"; fi
 run chmod -R go-w "$ROOT$PREFIX"
 
 run mkdir -p "$BIN_LINKS"
-run ln -sfn "$PREFIX/current/bin/pvj-player" "$BIN_LINKS/pvj-player"
-run ln -sfn "$PREFIX/current/bin/pvj-selftest" "$BIN_LINKS/pvj-selftest"
-run ln -sfn "$PREFIX/current/bin/pvj-usb" "$BIN_LINKS/pvj-usb"
-run ln -sfn "$PREFIX/current/bin/pvj-rootfs" "$BIN_LINKS/pvj-rootfs"
-run ln -sfn "$PREFIX/current/bin/pvj-pin" "$BIN_LINKS/pvj-pin"
-run ln -sfn "$PREFIX/current/bin/pvj-update" "$BIN_LINKS/pvj-update"
-run ln -sfn "$PREFIX/current/bin/pvj-ndi-runtime" "$BIN_LINKS/pvj-ndi-runtime"
+run ln -sfn "$PREFIX/current/bin/nxlx-player" "$BIN_LINKS/nxlx-player"
+run ln -sfn "$PREFIX/current/bin/nxlx-selftest" "$BIN_LINKS/nxlx-selftest"
+run ln -sfn "$PREFIX/current/bin/nxlx-usb" "$BIN_LINKS/nxlx-usb"
+run ln -sfn "$PREFIX/current/bin/nxlx-rootfs" "$BIN_LINKS/nxlx-rootfs"
+run ln -sfn "$PREFIX/current/bin/nxlx-pin" "$BIN_LINKS/nxlx-pin"
+run ln -sfn "$PREFIX/current/bin/nxlx-update" "$BIN_LINKS/nxlx-update"
+run ln -sfn "$PREFIX/current/bin/nxlx-ndi-runtime" "$BIN_LINKS/nxlx-ndi-runtime"
+run ln -sfn "$PREFIX/current/bin/nxlx-convert" "$BIN_LINKS/nxlx-convert"      # sudo nxlx-convert --confirm (or --undo) after a conversion
 
 # --- settings and media (never overwritten if they exist) -----------------
 run mkdir -p "$ETC"
-if [ ! -e "$ETC/pvj.env" ]; then
+if [ ! -e "$ETC/nxlx.env" ]; then
 	if [ "$DRY" = 0 ]; then
-		cat > "$ETC/pvj.env" <<ENV
-# Settings for the pvj-player service. Edit, then: sudo systemctl restart pvj-player
+		cat > "$ETC/nxlx.env" <<ENV
+# Settings for the nxlx-player service. Edit, then: sudo systemctl restart nxlx-player
 PVJ_MEDIA_DIR=$MEDIA
 PVJ_USB_DIR=/media/usb
-# USB drives are mounted read-only under /media/pvj/<label>. Set to 1 to allow writing.
+# USB drives are mounted read-only under /media/nxlx/<label>. Set to 1 to allow writing.
 PVJ_USB_RW=0
 # Web panel: port and address. The panel is for a private network; do not expose it to the internet.
 # PVJ_PORT=80
@@ -491,37 +600,37 @@ PVJ_USB_RW=0
 ENV
 	fi
 else
-	log "keeping existing $ETC/pvj.env"
+	log "keeping existing $ETC/nxlx.env"
 fi
-# The signing service and the expected root (D139): set or replaced in pvj.env only when given; both values were
+# The signing service and the expected root (D139): set or replaced in nxlx.env only when given; both values were
 # checked above, so they hold no character sed or the env file would read specially.
 set_env() {
-	if [ "$DRY" = 1 ]; then printf '  would set %s=%s in %s\n' "$1" "$2" "$ETC/pvj.env"; return; fi
-	if grep -q "^$1=" "$ETC/pvj.env" 2>/dev/null; then
-		sed -i "s|^$1=.*|$1=$2|" "$ETC/pvj.env"
+	if [ "$DRY" = 1 ]; then printf '  would set %s=%s in %s\n' "$1" "$2" "$ETC/nxlx.env"; return; fi
+	if grep -q "^$1=" "$ETC/nxlx.env" 2>/dev/null; then
+		sed -i "s|^$1=.*|$1=$2|" "$ETC/nxlx.env"
 	else
-		printf '%s=%s\n' "$1" "$2" >> "$ETC/pvj.env"
+		printf '%s=%s\n' "$1" "$2" >> "$ETC/nxlx.env"
 	fi
-	log "set $1 in $ETC/pvj.env"
+	log "set $1 in $ETC/nxlx.env"
 }
 if [ -n "$SIGNER" ]; then set_env PVJ_SIGNER_URL "${SIGNER%/}"; fi
 if [ -n "$ROOT_FP" ]; then set_env PVJ_ROOT_FINGERPRINT "$ROOT_FP"; fi
-# Public keys whose signatures pvj-update accepts (one line per key, see install/README.md).
+# Public keys whose signatures nxlx-update accepts (one line per key, see install/README.md).
 if [ ! -e "$ETC/allowed_signers" ] && [ "$DRY" = 0 ]; then
 	cat > "$ETC/allowed_signers" <<KEYS
 # Add your release signing key here. Format:
 #   pvj-release namespaces="pvj-release" ssh-ed25519 AAAA... comment
-# Until a key is listed, pvj-update refuses every bundle.
+# Until a key is listed, nxlx-update refuses every bundle.
 KEYS
 	chmod 644 "$ETC/allowed_signers"
 fi
 run mkdir -p "$ROOT$MEDIA"
 if [ "$REAL" = 1 ] && [ "$DRY" = 0 ]; then
-	chown "$PVJ_USER":pvj "$MEDIA"; chmod 2775 "$MEDIA"
-	# settings.json lives in /var/lib/pvj and only the web panel may write there. The player (group pvj) may pass
-	# through to the media folder and read, but not create, rename or replace files: 2750, owned by pvj-web.
-	mkdir -p /var/lib/pvj; chown pvj-web:pvj /var/lib/pvj; chmod 2750 /var/lib/pvj
-	[ -e /var/lib/pvj/settings.json ] && chown pvj-web:pvj /var/lib/pvj/settings.json* 2>/dev/null
+	chown "$PVJ_USER":nxlx-svc "$MEDIA"; chmod 2775 "$MEDIA"
+	# settings.json lives in /var/lib/nxlx and only the web panel may write there. The player (group nxlx-svc) may pass
+	# through to the media folder and read, but not create, rename or replace files: 2750, owned by nxlx-web.
+	mkdir -p /var/lib/nxlx; chown nxlx-web:nxlx-svc /var/lib/nxlx; chmod 2750 /var/lib/nxlx
+	[ -e /var/lib/nxlx/settings.json ] && chown nxlx-web:nxlx-svc /var/lib/nxlx/settings.json* 2>/dev/null
 	true
 fi
 if [ "$DRY" = 0 ]; then
@@ -532,47 +641,47 @@ fi
 # --- service ------------------------------------------------------------
 run mkdir -p "$(dirname "$UNIT")"
 if [ "$DRY" = 0 ]; then
-	sed -e "s|@PVJ_USER@|$PVJ_USER|g" -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-player.service" > "$UNIT"
-	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-web.service" > "$WEB_UNIT"
-	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-netd.service" > "$NET_UNIT"
-	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-sysd.service" > "$SYS_UNIT"
-	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-supportd.service" > "$SUP_UNIT"
-	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-sound.service" > "$SOUND_UNIT"
-	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-link.service" > "$LINK_UNIT"
-	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-raster@.service" > "$RASTER_UNIT"
-	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-raster.socket" > "$RASTER_SOCKET_UNIT"
-	# Updates from the panel: started on request by pvj-sysd, never enabled.
-	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-update-usb@.service" > "$UPD_USB_UNIT"
-	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-update-inbox@.service" > "$UPD_INBOX_UNIT"
-	run rm -f "$ROOT/etc/systemd/system/pvj-update-usb.service" "$ROOT/etc/systemd/system/pvj-update-inbox.service"  # the names before they took a version
+	sed -e "s|@PVJ_USER@|$PVJ_USER|g" -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-player.service" > "$UNIT"
+	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-web.service" > "$WEB_UNIT"
+	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-netd.service" > "$NET_UNIT"
+	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-sysd.service" > "$SYS_UNIT"
+	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-supportd.service" > "$SUP_UNIT"
+	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-sound.service" > "$SOUND_UNIT"
+	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-link.service" > "$LINK_UNIT"
+	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-raster@.service" > "$RASTER_UNIT"
+	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-raster.socket" > "$RASTER_SOCKET_UNIT"
+	# Updates from the panel: started on request by nxlx-sysd, never enabled.
+	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-update-usb@.service" > "$UPD_USB_UNIT"
+	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-update-inbox@.service" > "$UPD_INBOX_UNIT"
+	run rm -f "$ROOT/etc/systemd/system/nxlx-update-usb.service" "$ROOT/etc/systemd/system/nxlx-update-inbox.service"  # the names before they took a version
 	# The support helper may not load kernel modules itself (its sandbox), so WireGuard's is loaded at boot.
 	mkdir -p "$(dirname "$WG_LOAD")"
 	echo wireguard > "$WG_LOAD"
 	# The system log survives restarts (capped at 64 MB), so an unexpected restart can be explained afterwards.
 	mkdir -p "$(dirname "$JOURNAL_CONF")"
-	cp "$SRC/install/50-pvj-persistent-log.conf" "$JOURNAL_CONF"
+	cp "$SRC/install/50-nxlx-persistent-log.conf" "$JOURNAL_CONF"
 	# The parent of the services' runtime folders belongs to root, at every boot (D45).
 	mkdir -p "$(dirname "$TMPFILES")"
-	cp "$SRC/install/pvj-tmpfiles.conf" "$TMPFILES"
+	cp "$SRC/install/nxlx-tmpfiles.conf" "$TMPFILES"
 fi
 
-# Runtime folders (D45). Older versions shared one RuntimeDirectory, /run/pvj, between the player, the panel and the
+# Runtime folders (D45). Older versions shared one RuntimeDirectory, /run/nxlx, between the player, the panel and the
 # root network helper, and systemd gave it to whichever started last; it stays like that until the next boot unless
 # it is put right here. Rules for this part, each from the independent review:
 #   * root never creates, writes, chowns or chmods a name inside a folder that an unprivileged account owns (a link
-#     planted there would send it anywhere); it only takes /run/pvj itself, in /run, and deletes below it;
+#     planted there would send it anywhere); it only takes /run/nxlx itself, in /run, and deletes below it;
 #   * the folder counts as done only when a marker says so, and the marker is written last (by tmpfiles, as root, in
 #     the folder that is root's by then), so an emptying that was cut short is finished by the next run;
 #   * the three services are stopped BEFORE the reload and the emptying, so none can restart by itself in between
 #     and have systemd chown a planted name.
-# With --stage all of it works on DIR/run/pvj and leaves owners alone (the tests).
-RUN_DIR="$ROOT/run/pvj"
+# With --stage all of it works on DIR/run/nxlx and leaves owners alone (the tests).
+RUN_DIR="$ROOT/run/nxlx"
 RUN_MARK="$RUN_DIR/.d45"
-RUN_UNITS=(pvj-player.service pvj-web.service pvj-netd.service)
+RUN_UNITS=(nxlx-player.service nxlx-web.service nxlx-netd.service)
 RUN_WAS_ACTIVE=()
 RUN_EMPTY=0
 
-# True when /run/pvj is root's, has the marker, and holds nothing but the services' folders, each with its own owner.
+# True when /run/nxlx is root's, has the marker, and holds nothing but the services' folders, each with its own owner.
 run_folder_is_sound() {
 	local entry want
 	if [ ! -d "$RUN_DIR" ] || [ -L "$RUN_DIR" ]; then return 1; fi
@@ -586,9 +695,9 @@ run_folder_is_sound() {
 	while IFS= read -r -d '' entry; do
 		case "${entry##*/}" in
 		.d45) continue ;;
-		player) want="$PVJ_USER:pvj 750" ;;
-		web) want="pvj-web:pvj 750" ;;
-		netd) want="root:pvj 750" ;;
+		player) want="$PVJ_USER:nxlx-svc 750" ;;
+		web) want="nxlx-web:nxlx-svc 750" ;;
+		netd) want="root:nxlx-svc 750" ;;
 		*)
 			if [ -d "$entry" ] && [ ! -L "$entry" ]; then return 1; fi     # a folder nobody should have made
 			continue ;;                                                    # a stray file or link: removed below
@@ -633,8 +742,8 @@ fix_run_folder() {
 		find "$RUN_DIR" -mindepth 1 -maxdepth 1 ! -type d ! -name .d45 -delete || die "could not tidy $RUN_DIR; run the installer again"
 	fi
 	if [ "$REAL" = 1 ]; then
-		# Creates /run/pvj and the marker if they are missing (see pvj-tmpfiles.conf), as at boot.
-		systemd-tmpfiles --create "$TMPFILES" || log "systemd-tmpfiles reported a problem; /run/pvj is checked again at the next install and set up at the next boot"
+		# Creates /run/nxlx and the marker if they are missing (see nxlx-tmpfiles.conf), as at boot.
+		systemd-tmpfiles --create "$TMPFILES" || log "systemd-tmpfiles reported a problem; /run/nxlx is checked again at the next install and set up at the next boot"
 	elif [ -d "$RUN_DIR" ]; then
 		: > "$RUN_MARK"
 	fi
@@ -660,23 +769,23 @@ if ndi_mark; then
 	NDI_OPTED_IN=1
 	log "this box has NDI set up: writing the NDI helper's unit again"
 	# --root is empty on a real box and the staged folder with --stage (where no account is touched).
-	run python3 -B "$RELEASE/bin/pvj-ndi-runtime" refresh --root "$ROOT" --prefix "$PREFIX" || log "could not write the NDI helper's unit again; it stays as it was. To repair: sudo pvj-ndi-runtime install <the NDI SDK folder>"
+	run python3 -B "$RELEASE/bin/nxlx-ndi-runtime" refresh --root "$ROOT" --prefix "$PREFIX" || log "could not write the NDI helper's unit again; it stays as it was. To repair: sudo nxlx-ndi-runtime install <the NDI SDK folder>"
 	# The folders those lines name (root's pipe folder and pipe, the folder of NDI's configuration file) are made
 	# now, as at boot: a release may have added one, and the helper and the panel are started again further down.
 	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -f "$NDI_TMPFILES" ]; then systemd-tmpfiles --create "$NDI_TMPFILES" || log "systemd-tmpfiles could not make the NDI folders; NDI works again after a restart of the box"; fi
 elif [ -e "$NDI_UNIT" ] || [ -L "$NDI_UNIT" ] || [ -e "$NDI_PLAYER_DROPIN" ] || [ -L "$NDI_PLAYER_DROPIN" ] || [ -L "$NDI_WANTS" ] || [ -e "$NDI_TMPFILES" ] || [ -L "$NDI_TMPFILES" ]; then
 	# Something of the helper without the mark: a setup that was cut short, or a box that ran this branch while it
-	# still put the helper on every box. Nobody opted this box in, so it goes (the account pvj-ndi, if any, stays).
-	log "removing an NDI helper that nobody set up on this box (to set NDI up: sudo pvj-ndi-runtime install <the NDI SDK folder>)"
+	# still put the helper on every box. Nobody opted this box in, so it goes (the account nxlx-ndi, if any, stays).
+	log "removing an NDI helper that nobody set up on this box (to set NDI up: sudo nxlx-ndi-runtime install <the NDI SDK folder>)"
 	if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then
-		systemctl disable --now pvj-ndi.service 2>/dev/null || true
+		systemctl disable --now nxlx-ndi.service 2>/dev/null || true
 	fi
 	if ndi_mark; then
 		# Looked at once more, right before anything is removed: a setup that finished in this very moment stays.
 		NDI_OPTED_IN=1
 		log "NDI was set up on this box just now; its helper is left in place"
 		if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then
-			systemctl enable --now pvj-ndi.service || log "could not start the NDI helper again; run: sudo systemctl enable --now pvj-ndi"
+			systemctl enable --now nxlx-ndi.service || log "could not start the NDI helper again; run: sudo systemctl enable --now nxlx-ndi"
 		fi
 	else
 		# Never the end of an install: a folder in the place of one of these makes rm fail, and that is said.
@@ -690,13 +799,13 @@ NDISC_SET_UP=0
 if [ -f "$NDISC_MARK" ] && [ ! -L "$NDISC_MARK" ]; then
 	NDISC_SET_UP=1
 	log "this box has the discovery server set up: writing its unit again"
-	run python3 -B "$RELEASE/bin/pvj-ndi-runtime" server refresh --root "$ROOT" --prefix "$PREFIX" || log "could not write the discovery server's unit again; it stays as it was. To repair: sudo pvj-ndi-runtime server install <the folder with the program>"
+	run python3 -B "$RELEASE/bin/nxlx-ndi-runtime" server refresh --root "$ROOT" --prefix "$PREFIX" || log "could not write the discovery server's unit again; it stays as it was. To repair: sudo nxlx-ndi-runtime server install <the folder with the program>"
 fi
-# USB automount: udev starts pvj-usb@<partition>.service, which mounts by label.
+# USB automount: udev starts nxlx-usb@<partition>.service, which mounts by label.
 run mkdir -p "$(dirname "$USB_RULE")"
 if [ "$DRY" = 0 ]; then
-	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/pvj-usb@.service" > "$USB_UNIT"
-	cp "$SRC/install/99-pvj-usb.rules" "$USB_RULE"
+	sed -e "s|@PVJ_DIR@|$PREFIX/current|g" "$SRC/install/nxlx-usb@.service" > "$USB_UNIT"
+	cp "$SRC/install/99-nxlx-usb.rules" "$USB_RULE"
 fi
 if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && command -v udevadm >/dev/null; then udevadm control --reload || true; fi
 if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then
@@ -704,51 +813,56 @@ if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then
 	systemctl daemon-reload
 	fix_run_folder
 	if systemctl restart systemd-journald.service 2>/dev/null; then journalctl --flush 2>/dev/null || true; fi
-	systemctl enable pvj-player.service pvj-web.service pvj-sysd.service pvj-supportd.service
-	systemctl enable pvj-sound.service || log "could not enable the sound service"
+	systemctl enable nxlx-player.service nxlx-web.service nxlx-sysd.service nxlx-supportd.service
+	systemctl enable nxlx-sound.service || log "could not enable the sound service"
 	modprobe wireguard 2>/dev/null || log "the WireGuard kernel module is not available: remote support stays unavailable"
-	if [ "$START" = 1 ]; then systemctl restart pvj-player.service pvj-web.service pvj-sysd.service pvj-supportd.service; fi
+	if [ "$START" = 1 ]; then systemctl restart nxlx-player.service nxlx-web.service nxlx-sysd.service nxlx-supportd.service; fi
 	# The sound service moves to the new program even with --no-start, and is started where it was not running
 	# (it is idle until the Owner chooses a device): a box updated from before D96 gets it at once.
-	if [ "$START" = 1 ]; then systemctl restart pvj-sound.service || log "the sound service did not start; see: journalctl -u pvj-sound -n 30"
-	else systemctl try-restart pvj-sound.service || true; systemctl start pvj-sound.service 2>/dev/null || true; fi
+	if [ "$START" = 1 ]; then systemctl restart nxlx-sound.service || log "the sound service did not start; see: journalctl -u nxlx-sound -n 30"
+	else systemctl try-restart nxlx-sound.service || true; systemctl start nxlx-sound.service 2>/dev/null || true; fi
 	# The Link follower the same way. Where it could not be built its condition skips it, which is no failure.
-	systemctl enable pvj-link.service || log "could not enable the Ableton Link service"
-	if [ "$START" = 1 ]; then systemctl restart pvj-link.service || log "the Ableton Link service did not start; see: journalctl -u pvj-link -n 30"
-	else systemctl try-restart pvj-link.service || true; systemctl start pvj-link.service 2>/dev/null || true; fi
+	systemctl enable nxlx-link.service || log "could not enable the Ableton Link service"
+	if [ "$START" = 1 ]; then systemctl restart nxlx-link.service || log "the Ableton Link service did not start; see: journalctl -u nxlx-link -n 30"
+	else systemctl try-restart nxlx-link.service || true; systemctl start nxlx-link.service 2>/dev/null || true; fi
 	# The picture helper's socket, on every board (D129). systemd starts one helper process behind it for each job, so there
 	# is nothing to restart: a socket that is listening is moved to the new program by the next job. Where the program
 	# could not be built, the socket's condition skips it, which is no failure.
-	systemctl enable pvj-raster.socket || log "could not enable the picture helper's socket"
-	if [ "$START" = 1 ]; then systemctl restart pvj-raster.socket || log "the picture helper's socket did not start; see: journalctl -u pvj-raster.socket -n 30"
-	else systemctl start pvj-raster.socket 2>/dev/null || true; fi
+	systemctl enable nxlx-raster.socket || log "could not enable the picture helper's socket"
+	if [ "$START" = 1 ]; then systemctl restart nxlx-raster.socket || log "the picture helper's socket did not start; see: journalctl -u nxlx-raster.socket -n 30"
+	else systemctl start nxlx-raster.socket 2>/dev/null || true; fi
 	# The network helper only makes sense with NetworkManager (Raspberry Pi OS, most desktops).
 	if command -v nmcli >/dev/null; then
-		systemctl enable pvj-netd.service
+		systemctl enable nxlx-netd.service
 		# Even with --no-start (an update from the panel, which then restarts the player and the panel itself): a
 		# helper that is running must move to the socket the new panel looks for. try-restart starts nothing.
-		if [ "$START" = 1 ]; then systemctl restart pvj-netd.service; else systemctl try-restart pvj-netd.service || true; fi
+		if [ "$START" = 1 ]; then systemctl restart nxlx-netd.service; else systemctl try-restart nxlx-netd.service || true; fi
 	else
 		log "NetworkManager not found: network settings in the panel stay unavailable"
 	fi
 	# The NDI helper, only where the box opted in: an opted-in box stays opted in. Like the network helper it moves
 	# to the new program even with --no-start; try-restart starts nothing. It is idle until its module is on.
 	if [ "$NDI_OPTED_IN" = 1 ] && [ -f "$NDI_UNIT" ]; then
-		systemctl enable pvj-ndi.service || log "could not enable the NDI helper"
+		systemctl enable nxlx-ndi.service || log "could not enable the NDI helper"
 		if [ "$START" = 1 ]; then
-			systemctl restart pvj-ndi.service || log "the NDI helper did not start; see: journalctl -u pvj-ndi -n 30"
+			systemctl restart nxlx-ndi.service || log "the NDI helper did not start; see: journalctl -u nxlx-ndi -n 30"
 		else
-			systemctl try-restart pvj-ndi.service || true
+			systemctl try-restart nxlx-ndi.service || true
 		fi
 	fi
 	# The discovery server's supervisor, only where it is set up: it moves to the new program; try-restart starts
 	# nothing. It runs nothing of its own until its module is on.
 	if [ "$NDISC_SET_UP" = 1 ] && [ -f "$NDISC_UNIT" ]; then
-		systemctl enable pvj-ndi-discovery.service || log "could not enable the discovery server's supervisor"
-		systemctl try-restart pvj-ndi-discovery.service || true
+		systemctl enable nxlx-ndi-discovery.service || log "could not enable the discovery server's supervisor"
+		systemctl try-restart nxlx-ndi-discovery.service || true
 	fi
 	# With --no-start: what was stopped above for the runtime folder is started again, and nothing else.
 	if [ "$START" = 0 ] && [ ${#RUN_WAS_ACTIVE[@]} -gt 0 ]; then systemctl start "${RUN_WAS_ACTIVE[@]}" || true; fi
 fi
 
-log "installed. Check the device with: pvj-selftest --play"
+log "installed. Check the device with: nxlx-selftest --play"
+if [ "$CONVERTED" = 1 ]; then log "CONVERTED from the old names (pvj to nxlx)."; fi
+if [ -e "$ROOT/etc/systemd/system/nxlx-convert-undo.timer" ]; then
+	log "A conversion waits for its confirm. Check the node, then keep it with: sudo nxlx-convert --confirm"
+	log "Unless that is run within 15 minutes of the conversion's last run (or 5 after a restart), the old names and the release before come back by themselves."
+fi

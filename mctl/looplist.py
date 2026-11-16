@@ -11,7 +11,7 @@ decoder: 34 to 57 ms, with D22's access-references=no left on (measurements/2026
   plain load, so every answer here is a list or None and nothing raises.
 * `Clips` is the one place where a list is seen for what it is. Everything above Player keeps seeing a plain clip.
 
-What a list needs of its folder (the panel's own; the player reads it through group pvj, D45): the concat demuxer opens
+What a list needs of its folder (the panel's own; the player reads it through group nxlx-svc, D45): the concat demuxer opens
 the inner file again at every join, so a list and its link stay while any layer plays them, both sides of a crossfade
 and a crossfade from a clip to itself among them. `_prune` keeps to that.
 """

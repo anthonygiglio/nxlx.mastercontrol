@@ -37,10 +37,10 @@ jobs:
 
       - name: Add our stage and configuration to pi-gen
         run: |
-          cp -a pocketvj/image/stage-pvj pi-gen/stage-pvj
-          mkdir pi-gen/stage-pvj/00-install-pvj/files/pvj-src
-          cp -a pocketvj/mctl pocketvj/bin pocketvj/install pocketvj/render pi-gen/stage-pvj/00-install-pvj/files/pvj-src/
-          find pi-gen/stage-pvj/00-install-pvj/files/pvj-src -name __pycache__ -type d -prune -exec rm -rf {} +
+          cp -a pocketvj/image/stage-nxlx pi-gen/stage-nxlx
+          mkdir pi-gen/stage-nxlx/00-install-nxlx/files/nxlx-src
+          cp -a pocketvj/mctl pocketvj/bin pocketvj/install pocketvj/render pi-gen/stage-nxlx/00-install-nxlx/files/nxlx-src/
+          find pi-gen/stage-nxlx/00-install-nxlx/files/nxlx-src -name __pycache__ -type d -prune -exec rm -rf {} +
           cp pocketvj/image/config pi-gen/config
           # Lite only: our stage exports the image, so stage2 must not.
           touch pi-gen/stage2/SKIP_IMAGES pi-gen/stage2/SKIP_NOOBS

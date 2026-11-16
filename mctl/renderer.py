@@ -12,7 +12,7 @@ Who does what, as for the screen's mode (mctl/screenmode.py, D90):
   schema change; no key is this board's own number and Automatic). The player may not read settings.json, so the
   panel writes the wish alone to
   WANTED in the state folder, at its start and on a change, and restarts the player for a change (`Renderer`).
-* The player's service (`pvj-player serve`, the display's account) reads WANTED just before it would become mpv. With
+* The player's service (`nxlx-player serve`, the display's account) reads WANTED just before it would become mpv. With
   "new" it stays a small supervisor instead (`serve`): it starts mctl-render with the screen's arguments that
   screenmode chose for mpv, waits for its socket to answer, and watches it. It falls back to classic mpv by itself
   (the same exec as before) when mctl-render is missing, does not start, or ends twice in a row, and writes what it
@@ -264,7 +264,7 @@ def write_report(rundir, data, log=None):
         screenmode.write_json(os.path.join(rundir, REPORT), data)
     except OSError as e:
         if log:
-            log("pvj-player: renderer: the report was not written (%s)" % e)
+            log("nxlx-player: renderer: the report was not written (%s)" % e)
 
 
 # ---- the player's side: the supervisor ---------------------------------------------------------------------------
@@ -345,7 +345,7 @@ class Supervisor:
     def _switch(self, wish):
         """End mctl-render for a new wish whatever state it is in: asked on its socket, then SIGTERM, then SIGKILL.
         Returns how it ended, in words for the page."""
-        self.log("pvj-player: renderer: the wish is now %s (%s); ending mctl-render" % (wish["use"], wish["detail"]))
+        self.log("nxlx-player: renderer: the wish is now %s (%s); ending mctl-render" % (wish["use"], wish["detail"]))
         heard = self._ask_quit()
         how = None
         for sig, seconds, words in ((None, QUIT_SECONDS, "it quit when asked"),
@@ -365,7 +365,7 @@ class Supervisor:
             except subprocess.TimeoutExpired:
                 continue
         how = how or "it did not end even after SIGKILL"
-        self.log("pvj-player: renderer: switched from mctl-render: %s" % how)
+        self.log("nxlx-player: renderer: switched from mctl-render: %s" % how)
         write_report(self.rundir, {"chosen": wish["use"], "drawing": "classic" if wish["use"] == "classic" else "new",
                                    "why": "", "detail": wish["detail"], "switched": how}, self.log)
         return how
@@ -425,11 +425,11 @@ class Supervisor:
                                          state.get("output-fps") or 60.0)
             words = self.final_rule.get("why", "")
             if self.final_rule["final"] != before:
-                self.log("pvj-player: renderer: the final pass goes to %s (%s)" % (self.final_rule["final"], words or "the load is lighter"))
+                self.log("nxlx-player: renderer: the final pass goes to %s (%s)" % (self.final_rule["final"], words or "the load is lighter"))
                 try:
                     self.final_ipc.request("mctl-final", self.final_rule["final"], wait=FINAL_ASK_SECONDS)
                 except PlayerError as e:
-                    self.log("pvj-player: renderer: the final pass stays as it is (%s)" % e)
+                    self.log("nxlx-player: renderer: the final pass stays as it is (%s)" % e)
                     self.final_rule, self.final_watch = None, False
                     self._final_say("full", "mctl-render did not take the change")
                     return
@@ -467,7 +467,7 @@ class Supervisor:
                     "mctl-render did not answer within %d seconds" % self.start_seconds
             self._final_begin()
             self._report("new", "")
-            self.log("pvj-player: renderer: mctl-render is drawing (pid %d)" % self.proc.pid)
+            self.log("nxlx-player: renderer: mctl-render is drawing (pid %d)" % self.proc.pid)
             while True:
                 try:
                     code = self.proc.wait(WATCH_SECONDS)
@@ -490,13 +490,13 @@ class Supervisor:
                 raise SystemExit(0)
             if code == 0:
                 # asked to quit (the panel restarts the player): the service starts again and reads the wish again
-                self.log("pvj-player: renderer: mctl-render quit")
+                self.log("nxlx-player: renderer: mctl-render quit")
                 raise SystemExit(0)
             ends = 1 if self.clock() - started >= self.healthy_seconds else ends + 1
             what = ("exit %d" % code) if code > 0 else "signal %d" % -code
             if ends >= 2:
                 return "mctl-render ended twice in a row (%s)" % what
-            self.log("pvj-player: renderer: mctl-render ended (%s); starting it once more" % what)
+            self.log("nxlx-player: renderer: mctl-render ended (%s); starting it once more" % what)
 
 
 def serve(player, screen_args, detail, log, env=None):
@@ -520,7 +520,7 @@ def serve(player, screen_args, detail, log, env=None):
 
 
 def fallback(rundir, detail, why, log):
-    log("pvj-player: renderer: classic mpv draws: %s" % why)
+    log("nxlx-player: renderer: classic mpv draws: %s" % why)
     write_report(rundir, {"chosen": "new", "drawing": "classic", "why": why, "detail": detail}, log)
 
 
@@ -581,14 +581,14 @@ class Renderer:
         screenmode.write_json(self.wanted_file, self.saved())
 
     def _restart(self, why):
-        self.log("pvj-web: renderer: restarting the player (%s)" % why)
+        self.log("nxlx-web: renderer: restarting the player (%s)" % why)
         note = getattr(self.api, "event", None)
         if note:
             note("player", "The player was restarted: %s." % why, urgent=False)
         try:
             self.api.player.quit()
         except Exception as e:
-            self.log("pvj-web: renderer: the player did not take the restart (%s)" % e)
+            self.log("nxlx-web: renderer: the player did not take the restart (%s)" % e)
 
     def start(self):
         """At the panel's start: WANTED says what the settings say (nothing is restarted: the player reads it at its

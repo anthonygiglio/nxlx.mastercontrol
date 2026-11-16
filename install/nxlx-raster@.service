@@ -2,16 +2,16 @@
 # SPDX-License-Identifier: Apache-2.0
 [Unit]
 Description=nxlx.mastercontrol picture helper (one uploaded picture, then it exits; D129)
-ConditionPathExists=@PVJ_DIR@/render/pvj-raster
+ConditionPathExists=@PVJ_DIR@/render/nxlx-raster
 
 [Service]
-# Started by pvj-raster.socket for each connection, with the connection as its standard input and output. It reads one
+# Started by nxlx-raster.socket for each connection, with the connection as its standard input and output. It reads one
 # PNG, JPEG or SVG and writes one clean PNG (design/text-and-logo-sources_2026-11-08.md section 7). This is the one
 # part that decodes a file from a phone or a laptop (and, since slice 2, draws a text with a bundled font: the fonts are read
 # from the release's own folder, which is read-only here, by a name the program checks), and C decoders have a long history of memory bugs, so it is given
 # nothing: its own account, no network, none of the box's files, no way to gain rights, a syscall list, and hard ceilings.
-User=pvj-raster
-Group=pvj-raster
+User=nxlx-raster
+Group=nxlx-raster
 UMask=0077
 StandardInput=socket
 StandardOutput=socket
@@ -20,7 +20,7 @@ Environment=HOME=/nonexistent
 # The fonts are in mctl/fonts, or in pvj/fonts in a release from before the rename. A rollback only repoints
 # "current" and does not write this file again, so the unit looks at which one the current release has (for one
 # release; $$ is a $ for systemd).
-ExecStart=/bin/sh -c 'f=@PVJ_DIR@/mctl/fonts; [ -d "$$f" ] || f=@PVJ_DIR@/pvj/fonts; exec @PVJ_DIR@/render/pvj-raster --fonts "$$f"'
+ExecStart=/bin/sh -c 'f=@PVJ_DIR@/mctl/fonts; [ -d "$$f" ] || f=@PVJ_DIR@/pvj/fonts; exec @PVJ_DIR@/render/nxlx-raster --fonts "$$f"'
 # A job that is not done in 15 seconds is killed from outside as well as by the program's own alarm.
 RuntimeMaxSec=15
 
@@ -36,7 +36,7 @@ ProtectSystem=strict
 ProtectHome=yes
 ProtectProc=invisible
 ProcSubset=pid
-InaccessiblePaths=-/var/lib/pvj -/var/lib/pvj-player -/etc/pvj -/run/pvj -/run/pvj-sound -/run/pvj-ndi -/run/pvj-sysd -/run/pvj-supportd -/run/pvj-link -/media
+InaccessiblePaths=-/var/lib/nxlx -/var/lib/nxlx-player -/etc/nxlx -/run/nxlx -/run/nxlx-sound -/run/nxlx-ndi -/run/nxlx-sysd -/run/nxlx-supportd -/run/nxlx-link -/media
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectKernelLogs=yes

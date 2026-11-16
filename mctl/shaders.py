@@ -1588,7 +1588,7 @@ class Engine:
                     self._cleanup({before["path"]} if before else set())
                     self.error = {"id": sid, "message": kept, "at": time.strftime("%Y-%m-%d %H:%M:%S")}
                     self.refused(sid, digest, kept)
-                    self.log("pvj-web: shader %s refused by the player: %s" % (sid, kept))
+                    self.log("nxlx-web: shader %s refused by the player: %s" % (sid, kept))
                     return {"ok": False, "epoch": player.source_epoch, "id": sid, "error": kept, "kept": True,
                             "showing": before["id"] if before else None}
                 if new is None:                         # something else was played meanwhile: it keeps the screen
@@ -1615,7 +1615,7 @@ class Engine:
                 self._cleanup({keep} if keep else set())
                 self.error = {"id": sid, "message": message, "at": time.strftime("%Y-%m-%d %H:%M:%S")}
                 self.refused(sid, digest, message)
-                self.log("pvj-web: shader %s refused by the player: %s" % (sid, message))
+                self.log("nxlx-web: shader %s refused by the player: %s" % (sid, message))
                 return {"ok": False, "epoch": new, "id": sid, "error": message, "showing": back["id"] if back else None}
             if verdict == "ok":
                 if len(self._checked) > 2048:
@@ -1671,7 +1671,7 @@ class Engine:
                     raise FadeRefused(verdict[1])
                 if "the layer was ended" in str(e):
                     return None                 # a Stop or a newer play ended the build: it keeps the screen, as for a stale epoch
-                self.log("pvj-web: no %s into the shader on the new renderer, a cut instead: %s" % (fade[1], e))
+                self.log("nxlx-web: no %s into the shader on the new renderer, a cut instead: %s" % (fade[1], e))
         return player.play_source(out, carrier, epoch, spawn)
 
     def _made(self, epoch):

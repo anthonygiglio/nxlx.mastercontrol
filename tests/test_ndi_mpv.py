@@ -155,7 +155,7 @@ class NdiOnARealMpv(ServerBase):
         if not MPV or not ndi_standin.CC:
             raise AssertionError("PVJ_NDI_MPV_TEST=1 and %s is not here: this run was asked for and cannot say anything"
                                  % ("mpv" if not MPV else "a C compiler"))
-        cls.build = tempfile.mkdtemp(prefix="pvj-ndi-mpv-")
+        cls.build = tempfile.mkdtemp(prefix="nxlx-ndi-mpv-")
         cls.lib = os.path.join(cls.build, ndi.LIB_NAME)
         ndi_standin.build(cls.lib)
         cls.version = mpv_version()
@@ -170,7 +170,7 @@ class NdiOnARealMpv(ServerBase):
         say("\n=== %s" % self.id().rsplit(".", 1)[-1])
         self.token = self.call("POST", "/api/pair", {"pin": self.pin, "name": "Studio laptop"})[1]["token"]
         self.owner = self.auth.authenticate(self.token)
-        # The real player: its own command line (Player.mpv_command, as `pvj-player serve` builds it) and nothing
+        # The real player: its own command line (Player.mpv_command, as `nxlx-player serve` builds it) and nothing
         # of ours but the outputs and a log.
         self.mpv_log = os.path.join(self.tmp, "mpv.log")
         self.real = Player(extra_args=["--vo=null", "--ao=null", "--log-file=" + self.mpv_log], rundir=self.rundir)
@@ -179,7 +179,7 @@ class NdiOnARealMpv(ServerBase):
         self.real._spawn()
         # The helper's real code with the stand-in. A copy of the library for each test: what the stand-in remembers
         # (a source that changed size stays changed) must not pass from one test to the next.
-        self.ndidir = tempfile.mkdtemp(prefix="pvj-ndi-")
+        self.ndidir = tempfile.mkdtemp(prefix="nxlx-ndi-")
         self.addCleanup(shutil.rmtree, self.ndidir, True)
         lib = os.path.join(self.ndidir, "lib-" + ndi.LIB_NAME)
         shutil.copy(self.lib, lib)

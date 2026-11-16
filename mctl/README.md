@@ -4,24 +4,24 @@ Python 3, standard library only. Replaces omxplayer, D-Bus, `tvservice` and `vcg
 
 | Piece | What it does |
 | --- | --- |
-| `bin/pvj-player` | One command for playback: `play`, `stop`, `pause`, `seek`, `speed`, `volume`, `opacity`, `size`, `position`, `status`, `info` |
+| `bin/nxlx-player` | One command for playback: `play`, `stop`, `pause`, `seek`, `speed`, `volume`, `opacity`, `size`, `position`, `status`, `info` |
 | `mctl/hardware.py` | Board, OS, temperatures and display modes from `/proc` and `/sys` (Pi 3, 4, 5, x86, other ARM) |
 | `mctl/player.py` | One long-lived mpv controlled over its JSON IPC socket. Changing clips is `loadfile`, so no black gap |
-| `bin/pvj-selftest` | Run on each device; prints a JSON report to send back. `--play` also plays a test pattern on the real screen |
+| `bin/nxlx-selftest` | Run on each device; prints a JSON report to send back. `--play` also plays a test pattern on the real screen |
 
 ## Old command to new command
 
 | Legacy (`dbuscontrol.sh`, `omxplayer`) | New |
 | --- | --- |
-| `omxplayer --loop file` | `pvj-player play file` |
-| `omxplayer file` (once) | `pvj-player play --once file` |
-| `dbuscontrol.sh pause` | `pvj-player pause` |
-| `dbuscontrol.sh seek <us>` | `pvj-player seek <seconds>` |
-| `dbuscontrol.sh rate <x>` | `pvj-player speed <x>` |
-| `dbuscontrol.sh setalpha <0-255>` | `pvj-player opacity <0-255>` |
-| `omxsizetocenter <percent>` | `pvj-player size <percent>` |
-| `omxXposition <x>` | `pvj-player position <x>` |
-| `stopall` (player part) | `pvj-player stop` |
+| `omxplayer --loop file` | `nxlx-player play file` |
+| `omxplayer file` (once) | `nxlx-player play --once file` |
+| `dbuscontrol.sh pause` | `nxlx-player pause` |
+| `dbuscontrol.sh seek <us>` | `nxlx-player seek <seconds>` |
+| `dbuscontrol.sh rate <x>` | `nxlx-player speed <x>` |
+| `dbuscontrol.sh setalpha <0-255>` | `nxlx-player opacity <0-255>` |
+| `omxsizetocenter <percent>` | `nxlx-player size <percent>` |
+| `omxXposition <x>` | `nxlx-player position <x>` |
+| `stopall` (player part) | `nxlx-player stop` |
 
 ## Behaviour differences to know about
 
@@ -34,14 +34,14 @@ Python 3, standard library only. Replaces omxplayer, D-Bus, `tvservice` and `vcg
 
 ```
 python3 -m unittest discover -s tests -t .      # needs mpv; the tests run it headless
-bin/pvj-selftest --play --json report.json       # on a real device
+bin/nxlx-selftest --play --json report.json       # on a real device
 ```
 
-Not yet done: the old PHP panel does not call `pvj-player`; its audio, overlay and mapper buttons still run the legacy scripts. The new panel (`mctl/web`) and the OSC receiver have their own versions of all three.
+Not yet done: the old PHP panel does not call `nxlx-player`; its audio, overlay and mapper buttons still run the legacy scripts. The new panel (`mctl/web`) and the OSC receiver have their own versions of all three.
 
 ## Legacy start scripts
 
-`pvj-player start startlessonce05` runs a legacy preset by its old script name. One table in `mctl/presets.py` replaces ~290 scripts (`startless`, `startseamless`, `startlessonce`, `startlesseronce`, `startmaster`, `startmasterone`, `startmasterusb`, each with an optional two-digit index). `tests/test_presets.py` checks that table against every real script in `sync/`; it matches all but two upstream defects:
+`nxlx-player start startlessonce05` runs a legacy preset by its old script name. One table in `mctl/presets.py` replaces ~290 scripts (`startless`, `startseamless`, `startlessonce`, `startlesseronce`, `startmaster`, `startmasterone`, `startmasterusb`, each with an optional two-digit index). `tests/test_presets.py` checks that table against every real script in `sync/`; it matches all but two upstream defects:
 
 - `startless` (no number) is a wrapper that loops every file; the preset does the same.
 - `startmaster95` plays `65*` upstream (copy-paste error); the preset plays `95*`.
@@ -50,15 +50,15 @@ Not ported yet: slave, stream and wifi presets, network sync between boxes (mast
 
 ## Running as a service
 
-`install/pvj-player.service` runs `pvj-player serve` under systemd as the account that owns the screen and sound card (`@PVJ_USER@`, `@PVJ_DIR@` are filled in by the installer, which is not written yet). It restarts the player if it dies, and puts the control socket in its own folder `/run/pvj/player` (the player's account, group `pvj`, mode 0750: the group can reach the socket, only the player can replace it; the preview picture is written there too, and the panel only reads it). The web panel runs as its own user in that group and uses the socket. Every service has such a folder of its own under a `/run/pvj` that belongs to root; all the paths are in `mctl/paths.py` (D45). A world-accessible runtime directory is refused.
+`install/nxlx-player.service` runs `nxlx-player serve` under systemd as the account that owns the screen and sound card (`@PVJ_USER@`, `@PVJ_DIR@` are filled in by the installer, which is not written yet). It restarts the player if it dies, and puts the control socket in its own folder `/run/nxlx/player` (the player's account, group `pvj`, mode 0750: the group can reach the socket, only the player can replace it; the preview picture is written there too, and the panel only reads it). The web panel runs as its own user in that group and uses the socket. Every service has such a folder of its own under a `/run/nxlx` that belongs to root; all the paths are in `mctl/paths.py` (D45). A world-accessible runtime directory is refused.
 
 Not verified on a real device: the unit passes `systemd-analyze verify` here, but restart-on-crash, the group permissions and DRM access need a test on a Pi.
 
 ## USB drives
 
-`pvj-usb` (run by `pvj-usb@<partition>.service`, started from `install/99-pvj-usb.rules`) mounts each USB partition under `/media/pvj/<label>` and points `/media/usb` at the most recent one, which is what the old `startmasterusb` presets expect. Pulling the drive stops the unit, which unmounts it.
+`nxlx-usb` (run by `nxlx-usb@<partition>.service`, started from `install/99-nxlx-usb.rules`) mounts each USB partition under `/media/nxlx/<label>` and points `/media/usb` at the most recent one, which is what the old `startmasterusb` presets expect. Pulling the drive stops the unit, which unmounts it.
 
-- Read-only by default, with `nosuid,nodev,noexec`; set `PVJ_USB_RW=1` in `/etc/pvj/pvj.env` to allow writing. A drive pulled mid-write is the usual way to corrupt one at a gig.
+- Read-only by default, with `nosuid,nodev,noexec`; set `PVJ_USB_RW=1` in `/etc/nxlx/nxlx.env` to allow writing. A drive pulled mid-write is the usual way to corrupt one at a gig.
 - Filesystems: vfat, exfat, ext2/3/4, ntfs (kernel `ntfs3` driver). Anything else is refused.
 - Labels are cleaned to `a-z 0-9 . _ -`; two drives with the same label get `-2`, `-3`.
 - It never touches a disk that also holds the running system, so a mini PC booted from a USB SSD keeps its own disk safe. The old backend mounted `/dev/sda` blindly.
@@ -68,21 +68,21 @@ Tested with a fake `blkid`/`mount` (label cleaning, options, collisions, refusal
 
 ## Read-only root (power-loss protection)
 
-`sudo pvj-rootfs enable` makes the system disk effectively read-only: everything written after boot lives in RAM and is gone at the next reboot, so pulling the plug cannot corrupt the SD card or SSD. `pvj-rootfs disable` turns it off, `pvj-rootfs status` reports the state. It uses the tools the system already has: `raspi-config` on Raspberry Pi OS, the `overlayroot` package elsewhere (`sudo apt install overlayroot`). It never reboots for you.
+`sudo nxlx-rootfs enable` makes the system disk effectively read-only: everything written after boot lives in RAM and is gone at the next reboot, so pulling the plug cannot corrupt the SD card or SSD. `nxlx-rootfs disable` turns it off, `nxlx-rootfs status` reports the state. It uses the tools the system already has: `raspi-config` on Raspberry Pi OS, the `overlayroot` package elsewhere (`sudo apt install overlayroot`). It never reboots for you.
 
 - **Media must not live on the system disk.** Files added while the overlay is active are lost at reboot, so `enable` refuses if `PVJ_MEDIA_DIR` is on the same filesystem as `/` (override with `--force`). Use a second disk or a USB drive.
-- **Settings are read-only too.** Changes to `/etc/pvj` need `pvj-rootfs disable`, a reboot, the edit, then `enable` and another reboot.
+- **Settings are read-only too.** Changes to `/etc/nxlx` need `nxlx-rootfs disable`, a reboot, the edit, then `enable` and another reboot.
 - USB drives already mount read-only by default, so they are unaffected.
 
 Tested with fake tools and fake `/proc/mounts`. Not tested on a real device: the `raspi-config` and `overlayroot` commands (especially `overlayroot-chroot` when disabling from inside an active overlay) and the reboot behaviour. Do that on a spare card first.
 
 ## Web panel and control API (Phase 4, in progress)
 
-`bin/pvj-web` (service `install/pvj-web.service`) replaces the ~1900 line PHP backend with a small Python 3 server (standard library only) and a plain HTML, CSS and JavaScript panel with no framework and no CDN, so it works offline. Screens built so far, from the approved wireframes: Connect (pairing), Live (banks, pads, now playing, fade out, freeze, blackout), Mix (opacity, size, position, speed, transition, rotate, loop, mute, reset), Media, and System (vitals, modules, autostart, weekly schedule, streams, network, OSC, DMX, MIDI, appearance, access). Pictures: [docs/UI.md](../docs/UI.md). User manual: [docs/MANUAL.md](../docs/MANUAL.md).
+`bin/nxlx-web` (service `install/nxlx-web.service`) replaces the ~1900 line PHP backend with a small Python 3 server (standard library only) and a plain HTML, CSS and JavaScript panel with no framework and no CDN, so it works offline. Screens built so far, from the approved wireframes: Connect (pairing), Live (banks, pads, now playing, fade out, freeze, blackout), Mix (opacity, size, position, speed, transition, rotate, loop, mute, reset), Media, and System (vitals, modules, autostart, weekly schedule, streams, network, OSC, DMX, MIDI, appearance, access). Pictures: [docs/UI.md](../docs/UI.md). User manual: [docs/MANUAL.md](../docs/MANUAL.md).
 
-**Pairing.** The box makes a fresh 4-digit PIN at every start and keeps it in `/run/pvj/web/pin` (RAM, gone at reboot; readable by the panel's account and root only); read it with `sudo pvj-pin`. Entering it on a phone gives that phone a token (HttpOnly, SameSite=Strict cookie, or `Authorization: Bearer` for scripts). Paired devices survive restarts. Links give `view` (guest, can watch) or `live` (presenter, can play and mix) access; only paired `full` (owner) devices can change pads, modules, theme and access, with one exception: a presenter may make, show and end the guest join code (D48). Guessing is throttled per client and globally (attempts are counted exactly, even under a flood). The global limit means someone on your network can block *new* pairing for a few minutes by guessing badly; paired devices are never affected, and a paired full-access device clears the lockout with "New PIN" in System.
+**Pairing.** The box makes a fresh 4-digit PIN at every start and keeps it in `/run/nxlx/web/pin` (RAM, gone at reboot; readable by the panel's account and root only); read it with `sudo nxlx-pin`. Entering it on a phone gives that phone a token (HttpOnly, SameSite=Strict cookie, or `Authorization: Bearer` for scripts). Paired devices survive restarts. Links give `view` (guest, can watch) or `live` (presenter, can play and mix) access; only paired `full` (owner) devices can change pads, modules, theme and access, with one exception: a presenter may make, show and end the guest join code (D48). Guessing is throttled per client and globally (attempts are counted exactly, even under a flood). The global limit means someone on your network can block *new* pairing for a few minutes by guessing badly; paired devices are never affected, and a paired full-access device clears the lockout with "New PIN" in System.
 
-**What the server enforces.** State-changing calls are POST only, JSON, with the header `X-MCTL-Request: 1` (for one release the name before the rename, `X-PVJ-Request`, is still taken, D138) and a matching `Origin`, so another website cannot drive the box, and a browser reconnect cannot replay a reboot. Every number is range-checked; media names are plain file names resolved inside the media folder (no paths, no dot files, symlinks that leave the folder are refused); nothing user-supplied reaches a shell. The panel is served with a Content-Security-Policy that forbids inline script, external resources and framing. The service runs as its own `pvj-web` user, sandboxed by systemd, and reaches the player only through its socket.
+**What the server enforces.** State-changing calls are POST only, JSON, with the header `X-MCTL-Request: 1` (for one release the name before the rename, `X-PVJ-Request`, is still taken, D138) and a matching `Origin`, so another website cannot drive the box, and a browser reconnect cannot replay a reboot. Every number is range-checked; media names are plain file names resolved inside the media folder (no paths, no dot files, symlinks that leave the folder are refused); nothing user-supplied reaches a shell. The panel is served with a Content-Security-Policy that forbids inline script, external resources and framing. The service runs as its own `nxlx-web` user, sandboxed by systemd, and reaches the player only through its socket.
 
 | Path | Access | Purpose |
 | --- | --- | --- |
@@ -99,7 +99,7 @@ Tested with fake tools and fake `/proc/mounts`. Not tested on a real device: the
 | `POST /api/system/settings/export`, `/api/system/settings/import?confirm=import` (the body is the exported file), `/api/system/factory-reset`, `GET /api/system/diagnostics` | full | settings file, diagnostics, factory reset ([boxcare.py](boxcare.py)); import, export with passwords and reset are refused through the support tunnel |
 | `POST /api/pads`, `/api/theme`, `/api/modules/<id>`, `/api/devices/invite`, `/api/devices/revoke`, `/api/pin/rotate`, `/api/player/restart`, `/api/osc`, `/api/autostart`, `/api/schedule`, `/api/streams`, `/api/projectors`, `/api/room` (groups and scenes), `/api/mapper`, `/api/shaders` (upload, delete, Vibes settings, rotation sets), `/api/shaders/presets` (save, rename, delete a preset), `/api/effects/presets` (the same for an effect), `/api/effects/library` (add or remove a filter file), `/api/effects/config` (Effect detail: the size effects work at on this box), `/api/dmx`, `/api/media/*`, `/api/network/*`, `GET /api/devices`, `/api/dmx`, `/api/network` | full | configure |
 
-**Settings** are one JSON file (`/var/lib/pvj/settings.json`, mode 0600), written atomically with a backup and automatic recovery if a power cut tears the file. A schema change backs the old file up (`settings.json.bak-v<old>`) and migrates it; a file from a newer version is never rewritten, so rolling the program back cannot destroy settings.
+**Settings** are one JSON file (`/var/lib/nxlx/settings.json`, mode 0600), written atomically with a backup and automatic recovery if a power cut tears the file. A schema change backs the old file up (`settings.json.bak-v<old>`) and migrates it; a file from a newer version is never rewritten, so rolling the program back cannot destroy settings.
 
 **Settings file, diagnostics, factory reset** (`mctl/boxcare.py`, System, full access; the panel does all of it itself, no root helper). Export: `{"passwords": false}` gives `{"name", "file"}`; the file never holds `auth`, `devices`, `support` or `support_log`, and holds projector passwords and the secrets of a stream address only with `"passwords": true` (not through the support tunnel); without it a stream address is cut down by `streams.strip_login` (no login; RTMP without the last path part and the query; SRT with only the query names in `streams.SRT_PLAIN`; RTSP without query names that sound like a secret), and an import keeps the box's own full address when the file holds its shortened form. Import: the file is the request body, at most 1 MiB, parsed strictly (UTF-8, no repeated keys, no NaN, Infinity or numbers too large to hold, bounded nesting), then through the same migrations as a load (newer refused, older migrated) and every section's own check; nothing changes unless all of it passes; the previous settings are kept as `settings.json.before-import-<time>` (the last three); the box's own PIN, devices and remote support stay. The checks know the settings as of schema 13 (`KNOWN_SCHEMA`): the Shaders and Vibes settings (`shaders`, not in the defaults, so only present once changed) and a projector's `details` and `labels` are exported and checked too; a section a later schema adds is neither exported nor imported until its check is added to `SECTIONS`, and fields a later schema adds to a known section come back from that schema's own migration (run on the imported sections only); a test fails when `default_settings()` gains a section that is in neither `SECTIONS` nor `NEVER`. Diagnostics: one JSON file with versions, board, modules, health, the last update and the settings built from a list of what may be shown, every text in it scrubbed of the secrets the box knows; the system log is asked for with a fixed `journalctl` command and is normally not readable by the unprivileged panel, which the file says. Factory reset: `{"confirm": "factory-reset", "media": "keep" | "delete"}`; defaults, no devices, codes or support session, a new PIN, copies of old settings beside the settings file removed, playback stopped and the mix reset so the PIN shows, the media files in the media folder deleted on request (top level, plain files and links only; refused when the media folder is on a USB drive). An import and a reset refuse with 409 while the other one or an update runs (a reset also during an upload or a copy from USB), and no update or USB copy starts while a reset runs; a reset that cannot save the settings changes nothing. It cannot remove the root-only update backups in `<state>/backups`.
 
@@ -111,9 +111,9 @@ Tested with fake tools and fake `/proc/mounts`. Not tested on a real device: the
 
 **Nodes that find each other** (D127): each node announces its name, model and version by mDNS (`_nxlx._tcp`) and lists the others at `GET /api/nodes`; no package is installed, and the Owner can switch it off; see [FLEET.md](FLEET.md). Not yet run on hardware.
 
-**Wired network settings** (System, Network; a beta module, off by default, needs NetworkManager): DHCP, fixed address, direct cable (link-local) or serving addresses, changed through a small root helper (`pvj-netd`) with a confirm-or-revert timer so a wrong setting cannot lock you out; see [NETWORK.md](NETWORK.md). Never tested against a real NetworkManager or a real device.
+**Wired network settings** (System, Network; a beta module, off by default, needs NetworkManager): DHCP, fixed address, direct cable (link-local) or serving addresses, changed through a small root helper (`nxlx-netd`) with a confirm-or-revert timer so a wrong setting cannot lock you out; see [NETWORK.md](NETWORK.md). Never tested against a real NetworkManager or a real device.
 
-**Known limits:** "Restart player now" asks the player to quit and relies on systemd to bring it back; if mpv is completely wedged and ignores that request, restart it from a terminal (`sudo systemctl restart pvj-player`), because the panel runs unprivileged by design. A hardware watchdog for that case is not built. The server caps simultaneous connections at 64 and closes any connection after 30 seconds, so a flood of slow clients cannot exhaust it, but it does not replace a private network.
+**Known limits:** "Restart player now" asks the player to quit and relies on systemd to bring it back; if mpv is completely wedged and ignores that request, restart it from a terminal (`sudo systemctl restart nxlx-player`), because the panel runs unprivileged by design. A hardware watchdog for that case is not built. The server caps simultaneous connections at 64 and closes any connection after 30 seconds, so a flood of slow clients cannot exhaust it, but it does not replace a private network.
 
 **Also built (all beta or off by default):** [autostart](AUTOSTART.md), [weekly schedule](SCHEDULE.md), [streams](STREAMS.md), [sound reactivity](SOUND.md) (levels only, from a capture device; never run on a Pi), [NDI input](NDI.md) (one short first run on a Pi 4 on 2026-10-08, by SSH; nobody has watched it on a screen yet; needs NDI's runtime from the owner), [projectors](PROJECTORS.md) (PJLink, and Epson control for freeze, brightness, Eco and the colour mode), [projection mapping](MAPPER.md), [shaders and Vibes](SHADERS.md), [remote support](../docs/REMOTE-SUPPORT.md), [DMX](DMX.md) and [MIDI](MIDI.md), each with its own safety notes and a list of what was not verified.
 
@@ -123,20 +123,20 @@ Tested with fake tools and fake `/proc/mounts`. Not tested on a real device: the
 
 ## Updates and rollback
 
-Releases are signed bundles, installed by `sudo pvj-update`. Nothing is fetched from the internet by default; an update works from a USB stick at a venue with no network.
+Releases are signed bundles, installed by `sudo nxlx-update`. Nothing is fetched from the internet by default; an update works from a USB stick at a venue with no network.
 
 **One-time setup (your signing key).**
 
 1. On your own computer: `ssh-keygen -t ed25519 -f ~/.ssh/pvj-release -C nxlx-release`. Keep the private key safe and offline.
-2. On each box add one line to `/etc/pvj/allowed_signers` (the installer creates the file empty; until a key is listed every update is refused):
+2. On each box add one line to `/etc/nxlx/allowed_signers` (the installer creates the file empty; until a key is listed every update is refused):
    `pvj-release namespaces="pvj-release" ssh-ed25519 AAAA...your public key...`
 
 **Making a release.** Set the version in `mctl/__init__.py`, commit, then `tools/make-release.sh 4.0.1 --key ~/.ssh/pvj-release`. It writes `dist/pvj-4.0.1.tar.gz`, `.sha256` and `.sig`. The archive is reproducible (same commit, same bytes) and contains only `mctl/`, `bin/` and `install/`, never the legacy code.
 
-**Installing.** Put the three files in a `pvj-update/` folder on a USB stick, plug it in and run `sudo pvj-update usb`; or `sudo pvj-update apply pvj-4.0.1.tar.gz`. `pvj-update check FILE` verifies without installing (it unpacks the bundle in the install, so it takes the update lock and is refused while an update runs); `pvj-update status` shows the current and previous release.
+**Installing.** Put the three files in a `pvj-update/` folder on a USB stick, plug it in and run `sudo nxlx-update usb`; or `sudo nxlx-update apply pvj-4.0.1.tar.gz`. `nxlx-update check FILE` verifies without installing (it unpacks the bundle in the install, so it takes the update lock and is refused while an update runs); `nxlx-update status` shows the current and previous release.
 
-**What it checks before touching anything:** SHA-256, the OpenSSH Ed25519 signature against your key, safe unpacking (no absolute or `..` paths, no links or device files, no setuid bits, size limits), enough disk space, a newer version, and that the settings format is not being downgraded (`--force` overrides the last two). It then backs up `settings.json`, installs into a new folder under `/opt/pvj/releases`, switches `/opt/pvj/current` atomically, restarts the services and waits for the panel to answer. **If it does not answer, the previous release and your settings are put back automatically.**
+**What it checks before touching anything:** SHA-256, the OpenSSH Ed25519 signature against your key, safe unpacking (no absolute or `..` paths, no links or device files, no setuid bits, size limits), enough disk space, a newer version, and that the settings format is not being downgraded (`--force` overrides the last two). It then backs up `settings.json`, installs into a new folder under `/opt/nxlx/releases`, switches `/opt/nxlx/current` atomically, restarts the services and waits for the panel to answer. **If it does not answer, the previous release and your settings are put back automatically.**
 
-**Rolling back by hand:** `sudo pvj-update rollback` (the panel's Updates card then says "rolled back to N.N.N"). Settings migrations only go forward, so rollback restores the backup taken before the update; anything changed since is set aside as `settings.json.rolled-back-<time>`, not deleted. The last five backups are kept.
+**Rolling back by hand:** `sudo nxlx-update rollback` (the panel's Updates card then says "rolled back to N.N.N"). Settings migrations only go forward, so rollback restores the backup taken before the update; anything changed since is set aside as `settings.json.rolled-back-<time>`, not deleted. The last five backups are kept.
 
 **Not built yet:** a button in the panel (the panel runs unprivileged and cannot install), fetching updates over the network, and the Stable/Beta/Nightly channels, which need a hosted release feed. Tested here with the real installer in stage mode and real OpenSSH signatures; not tested with a real `systemctl` restart, on a Pi, or with a real USB stick.

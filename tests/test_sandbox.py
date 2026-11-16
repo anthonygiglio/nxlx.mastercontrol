@@ -146,7 +146,7 @@ class PrivateEnvTest(unittest.TestCase):
         self.addCleanup(restore)
         tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, tmp, True)
-        os.environ["PVJ_LINK_DIR"] = "/run/pvj-link"            # from the developer's shell: taken out, then the box's own
+        os.environ["PVJ_LINK_DIR"] = "/run/nxlx-link"            # from the developer's shell: taken out, then the box's own
         box.private_env(tmp)
         for fn in (paths.link_dir, paths.link_socket, paths.ndi_dir, paths.ndi_socket, paths.ndisc_dir, paths.ndi_config_dir,
                    paths.ndi_pipe_dir, paths.sound_dir, paths.sound_socket, paths.sysd_dir, paths.supportd_dir):

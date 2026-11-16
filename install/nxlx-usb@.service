@@ -9,6 +9,6 @@ After=dev-%i.device
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-EnvironmentFile=-/etc/pvj/pvj.env
-ExecStart=@PVJ_DIR@/bin/pvj-usb mount /dev/%I
-ExecStop=@PVJ_DIR@/bin/pvj-usb unmount /dev/%I
+EnvironmentFile=-/etc/nxlx/nxlx.env
+ExecStart=@PVJ_DIR@/bin/nxlx-usb mount /dev/%I
+ExecStop=@PVJ_DIR@/bin/nxlx-usb unmount /dev/%I
