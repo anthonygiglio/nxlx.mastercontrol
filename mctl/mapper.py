@@ -1295,7 +1295,7 @@ class Engine:
                 self._commit(gen, self._write(warp_shader(*table, available=available)), "on")
             except Exception as e:
                 self._set_status("error", "Could not build the mapping: %s" % e, gen)
-                self.log("pvj-web: mapper: %s" % e)
+                self.log("nxlx-web: mapper: %s" % e)
 
     # -- requests from the panel --
     def handle(self, body, later=False):

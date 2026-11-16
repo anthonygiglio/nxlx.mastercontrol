@@ -159,7 +159,7 @@ class Chains:
                     sid, message, "The effect before it in that slot stays on." if (source, slot) in self.on else "Nothing is on in that slot."))
             self.on[(source, slot)] = {"id": sid, "values": start, "controls": controls, "preset": name, "path": out}
             self._cleanup()
-        self.api.log("pvj-web: effect %s on source %d, slot %d" % (sid, source, slot))
+        self.api.log("nxlx-web: effect %s on source %d, slot %d" % (sid, source, slot))
         return {"ok": True, "source": source, "slot": slot, "id": sid}
 
     # -- a generator as a source (D106 step d) --
@@ -218,10 +218,10 @@ class Chains:
             try:
                 self.api.player.stop_source_clip(source)        # the clip under it goes: the shader is the picture
             except PlayerError as e:
-                self.api.log("pvj-web: source %d: its clip did not stop under the shader: %s" % (source, e))
+                self.api.log("nxlx-web: source %d: its clip did not stop under the shader: %s" % (source, e))
             self.on[(source, 0)] = {"id": sid, "values": start, "controls": ctl, "preset": name, "path": out, "generator": True}
             self._cleanup()
-        self.api.log("pvj-web: shader %s on source %d" % (sid, source))
+        self.api.log("nxlx-web: shader %s on source %d" % (sid, source))
         return {"ok": True, "source": source, "slot": 0, "id": sid, "playing": sid}
 
     def generator_values(self, source, values=None, controls=None):
@@ -266,7 +266,7 @@ class Chains:
             try:
                 put = self.put_generator(s, r["id"], values=r["values"], controls=r["controls"], expect=r["path"])
             except ApiError as e:
-                self.api.log("pvj-web: source %d: %s could not be built again: %s" % (s, r["id"], e.message))
+                self.api.log("nxlx-web: source %d: %s could not be built again: %s" % (s, r["id"], e.message))
                 out["not_rebuilt"].append({"source": s, "id": r["id"], "why": e.message})
                 continue
             if put is None:

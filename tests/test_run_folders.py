@@ -27,7 +27,7 @@ JPEG = b"\xff\xd8\xff\xe0" + b"0" * 64
 
 
 def box(base):
-    """The environment pvj-web has on a box, under a temporary folder. Only the panel's folder exists."""
+    """The environment nxlx-web has on a box, under a temporary folder. Only the panel's folder exists."""
     env = {"PVJ_RUNTIME_DIR": os.path.join(base, "web"), "PVJ_PLAYER_DIR": os.path.join(base, "player"),
            "PVJ_NETD_DIR": os.path.join(base, "netd")}
     os.mkdir(env["PVJ_RUNTIME_DIR"], 0o750)
@@ -95,12 +95,12 @@ class PanelSideTest(unittest.TestCase):
 
     def test_pvj_pin_reads_the_same_file(self):
         server.write_pin_file(self.env["PVJ_RUNTIME_DIR"], "4321")
-        r = subprocess.run(["sh", os.path.join(REPO, "bin", "pvj-pin")], capture_output=True, text=True, timeout=20,
+        r = subprocess.run(["sh", os.path.join(REPO, "bin", "nxlx-pin")], capture_output=True, text=True, timeout=20,
                            env={"PATH": os.environ["PATH"], "PVJ_RUNTIME_DIR": self.env["PVJ_RUNTIME_DIR"]})
         self.assertEqual((r.returncode, r.stdout), (0, "4321\n"))
 
     def run_pin(self):
-        return subprocess.run(["sh", os.path.join(REPO, "bin", "pvj-pin")], capture_output=True, text=True, timeout=20,
+        return subprocess.run(["sh", os.path.join(REPO, "bin", "nxlx-pin")], capture_output=True, text=True, timeout=20,
                               env={"PATH": os.environ["PATH"], "PVJ_RUNTIME_DIR": self.env["PVJ_RUNTIME_DIR"]})
 
     def test_pvj_pin_shows_no_other_file_through_a_link_and_does_not_hang_on_a_pipe(self):
@@ -240,19 +240,19 @@ class UpdateRestartTest(unittest.TestCase):
             up._systemd_restart()
         # the NDI helper is there only on a box that opted in (D62); try-restart starts nothing where it is not
         # in a call of its own, so that the network helper's restart cannot depend on a unit most boxes do not have
-        self.assertEqual(calls, [["systemctl", "try-restart", "pvj-netd.service"],
-                                 ["systemctl", "try-restart", "pvj-ndi.service"],
-                                 ["systemctl", "try-restart", "pvj-link.service"],
-                                 ["systemctl", "restart", "pvj-player.service", "pvj-web.service"]])
+        self.assertEqual(calls, [["systemctl", "try-restart", "nxlx-netd.service"],
+                                 ["systemctl", "try-restart", "nxlx-ndi.service"],
+                                 ["systemctl", "try-restart", "nxlx-link.service"],
+                                 ["systemctl", "restart", "nxlx-player.service", "nxlx-web.service"]])
         flat = " ".join(sum(calls, []))
-        self.assertNotIn("pvj-sysd", flat)           # it started this update
-        self.assertNotIn("pvj-supportd", flat)       # a support session may be the one updating
+        self.assertNotIn("nxlx-sysd", flat)           # it started this update
+        self.assertNotIn("nxlx-supportd", flat)       # a support session may be the one updating
 
 
 class OlderCodeUnderTheNewUnitsTest(unittest.TestCase):
     """After a rollback an older release runs under these units. It knows one name, PVJ_RUNTIME_DIR, and uses that
     one folder for everything. Each unit gives it the service's own folder, and the panel's folder holds links to
-    both sockets (install/pvj-tmpfiles.conf), so the older panel still reaches the player and the helper."""
+    both sockets (install/nxlx-tmpfiles.conf), so the older panel still reaches the player and the helper."""
 
     def test_through_the_links_an_older_panel_reaches_a_socket_in_the_peers_folder(self):
         base = tempfile.mkdtemp(dir="/tmp")          # a short path: a unix socket name is limited to about 100 bytes

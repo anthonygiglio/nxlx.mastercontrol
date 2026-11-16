@@ -2,42 +2,42 @@
 # SPDX-License-Identifier: Apache-2.0
 [Unit]
 Description=nxlx.mastercontrol web panel and control API
-After=network.target pvj-player.service
-Wants=pvj-player.service
+After=network.target nxlx-player.service
+Wants=nxlx-player.service
 StartLimitIntervalSec=0
 
 [Service]
-# Talks to the player only through its socket in /run/pvj/player (group "pvj"); it has
+# Talks to the player only through its socket in /run/nxlx/player (group "nxlx-svc"); it has
 # no access to the screen. The devices it uses are USB MIDI controllers (/dev/snd/midi*,
 # group "audio"), for the optional MIDI module: read for the controls, write for the lights.
 # The device policy below cannot tell a MIDI node from the other ALSA nodes (see D53).
-User=pvj-web
-Group=pvj
+User=nxlx-web
+Group=nxlx-svc
 # audio: USB MIDI controllers; video: live input from a USB capture device (read by a helper this service starts)
 SupplementaryGroups=audio video
 UMask=0007
 # Its own folder: the PIN, the live-input pipe, and the overlay, shader and mapping files it hands to the player
-# (which reads them through group "pvj" and cannot change them). No other unit may name this folder (D45).
+# (which reads them through group "nxlx-svc" and cannot change them). No other unit may name this folder (D45).
 # Kept across stops: the undervoltage note lasts until the next boot (an upgrade from before D45 loses it), and
-# pvj-tmpfiles.conf keeps two links in it.
-RuntimeDirectory=pvj/web
+# nxlx-tmpfiles.conf keeps two links in it.
+RuntimeDirectory=nxlx/web
 RuntimeDirectoryMode=0750
 RuntimeDirectoryPreserve=yes
 # PVJ_RUNTIME_DIR is always the folder this service itself writes; the others say where its peers are.
-Environment=PVJ_RUNTIME_DIR=/run/pvj/web
-Environment=PVJ_PLAYER_DIR=/run/pvj/player
-Environment=PVJ_NETD_DIR=/run/pvj/netd
-Environment=PVJ_STATE_DIR=/var/lib/pvj
+Environment=PVJ_RUNTIME_DIR=/run/nxlx/web
+Environment=PVJ_PLAYER_DIR=/run/nxlx/player
+Environment=PVJ_NETD_DIR=/run/nxlx/netd
+Environment=PVJ_STATE_DIR=/var/lib/nxlx
 Environment=PVJ_BIND=0.0.0.0
 Environment=PVJ_PORT=80
 # The same panel over TLS, once the owner has uploaded a certificate (D79, docs/HTTPS.md); the key lives in
-# /var/lib/pvj/tls, made 0700 by this service's account. Port 443 is covered by CAP_NET_BIND_SERVICE like port 80.
+# /var/lib/nxlx/tls, made 0700 by this service's account. Port 443 is covered by CAP_NET_BIND_SERVICE like port 80.
 Environment=PVJ_HTTPS_PORT=443
 # The port the nodes call each other on (D132): TLS that asks every caller for a certificate from the pinned root. Not a panel,
 # the same number on every node. Unlike 443 it needs no privilege.
 Environment=PVJ_PEER_PORT=8443
-EnvironmentFile=-/etc/pvj/pvj.env
-ExecStart=@PVJ_DIR@/bin/pvj-web
+EnvironmentFile=-/etc/nxlx/nxlx.env
+ExecStart=@PVJ_DIR@/bin/nxlx-web
 Restart=always
 RestartSec=1
 # A live-input helper started by this service goes with it (it stays in the service's control group).
@@ -64,7 +64,7 @@ DeviceAllow=/dev/random r
 DeviceAllow=/dev/urandom r
 DeviceAllow=char-alsa rw
 DeviceAllow=char-video4linux rw
-ReadWritePaths=/var/lib/pvj /run/pvj/web
+ReadWritePaths=/var/lib/nxlx /run/nxlx/web
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes

@@ -369,7 +369,7 @@ class FakeChild:
 
 class ServiceBase(unittest.TestCase):
     def setUp(self):
-        self.dir = tempfile.mkdtemp(prefix="pvj-sound-")
+        self.dir = tempfile.mkdtemp(prefix="nxlx-sound-")
         self.addCleanup(shutil.rmtree, self.dir, True)
         self.levels = os.path.join(self.dir, "levels")
         self.proc = proc_dir(self)
@@ -842,7 +842,7 @@ class SettingTest(unittest.TestCase):
 class RoutesTest(RolesBase):
     def setUp(self):
         super().setUp()
-        self.sdir = tempfile.mkdtemp(prefix="pvj-sound-api-")
+        self.sdir = tempfile.mkdtemp(prefix="nxlx-sound-api-")
         self.addCleanup(shutil.rmtree, self.sdir, True)
         self.proc = proc_dir(self)
         self.api.sound = soundout.Sound(self.api, socket_path=os.path.join(self.sdir, "none.sock"),
@@ -963,38 +963,38 @@ print(json.dumps({"schema": s.data["schema"]}))
 # --- the unit -----------------------------------------------------------------------------------------------------------------
 class UnitTest(unittest.TestCase):
     def setUp(self):
-        self.u = load_units()["pvj-sound.service"]
+        self.u = load_units()["nxlx-sound.service"]
 
     def test_the_sandbox_is_exactly_this(self):
         u = self.u
-        self.assertEqual((u["User"], u["Group"]), (["pvj-sound"], ["audio"]))
-        self.assertNotIn("SupplementaryGroups", u, "never group pvj")
+        self.assertEqual((u["User"], u["Group"]), (["nxlx-sound"], ["audio"]))
+        self.assertNotIn("SupplementaryGroups", u, "never group nxlx-svc")
         self.assertEqual(u["CapabilityBoundingSet"], [""])
         self.assertEqual(words(u, "RestrictAddressFamilies"), ["AF_UNIX"])
         for key, value in (("PrivateNetwork", "yes"), ("IPAddressDeny", "any"), ("NoNewPrivileges", "yes"), ("ProtectSystem", "strict"),
-                           ("ProtectHome", "yes"), ("PrivateTmp", "yes"), ("DevicePolicy", "closed"), ("RuntimeDirectory", "pvj-sound"),
+                           ("ProtectHome", "yes"), ("PrivateTmp", "yes"), ("DevicePolicy", "closed"), ("RuntimeDirectory", "nxlx-sound"),
                            ("RuntimeDirectoryMode", "0750"), ("MemoryMax", "64M"), ("CPUQuota", "25%"), ("TasksMax", "16"),
                            ("MemoryDenyWriteExecute", "yes"), ("SystemCallFilter", "@system-service"), ("UMask", "0027")):
             self.assertEqual(u[key], [value], key)
         self.assertEqual(u["DeviceAllow"], ["/dev/null rw", "/dev/urandom r", "char-alsa rw"])
         self.assertNotIn("ReadWritePaths", u)
         self.assertNotIn("PrivateUsers", u)            # it would hide the caller's uid from the peer check
-        self.assertEqual(u["ConditionPathExists"], ["@PVJ_DIR@/bin/pvj-sound"], "an older release without the program skips it")
+        self.assertEqual(u["ConditionPathExists"], ["@PVJ_DIR@/bin/nxlx-sound"], "an older release without the program skips it")
         self.assertEqual(dict(w.split("=", 1) for w in words(u, "Environment"))["PVJ_SOUND_DIR"], paths.SOUND_DIR)
 
     def test_the_installer_makes_the_account_before_the_unit_and_enables_it_and_the_image_too(self):
         with open(os.path.join(REPO, "install", "install.sh")) as f:
             sh = f.read()
-        self.assertIn("--gid audio pvj-sound", sh)
-        self.assertLess(sh.index("--gid audio pvj-sound"), sh.index('install/pvj-sound.service" > "$SOUND_UNIT"'))
-        self.assertIn("systemctl enable pvj-sound.service", sh)
+        self.assertIn("--gid audio nxlx-sound", sh)
+        self.assertLess(sh.index("--gid audio nxlx-sound"), sh.index('install/nxlx-sound.service" > "$SOUND_UNIT"'))
+        self.assertIn("systemctl enable nxlx-sound.service", sh)
         self.assertIn("alsa-utils", sh)
         self.assertIn('"$SOUND_UNIT"', sh[sh.index("uninstall() {"):sh.index("\n}\n", sh.index("uninstall() {"))])
-        with open(os.path.join(REPO, "image", "stage-pvj", "00-install-pvj", "01-run.sh")) as f:
-            self.assertIn("pvj-sound.service", f.read())
-        with open(os.path.join(REPO, "image", "stage-pvj", "00-install-pvj", "00-packages-nr")) as f:
+        with open(os.path.join(REPO, "image", "stage-nxlx", "00-install-nxlx", "01-run.sh")) as f:
+            self.assertIn("nxlx-sound.service", f.read())
+        with open(os.path.join(REPO, "image", "stage-nxlx", "00-install-nxlx", "00-packages-nr")) as f:
             self.assertIn("alsa-utils", f.read().split())
-        self.assertTrue(os.access(os.path.join(REPO, "bin", "pvj-sound"), os.X_OK))
+        self.assertTrue(os.access(os.path.join(REPO, "bin", "nxlx-sound"), os.X_OK))
 
 
 # --- the review of #145 at 7ffce1c ------------------------------------------------------------------------------------------------
@@ -1073,7 +1073,7 @@ class ReviewTest(unittest.TestCase):
         self.assertIn(dumpable, (0, None))
         if sys.platform.startswith("linux"):
             self.assertEqual(dumpable, 0)
-        self.assertEqual(load_units()["pvj-sound.service"]["LimitCORE"], ["0"])
+        self.assertEqual(load_units()["nxlx-sound.service"]["LimitCORE"], ["0"])
         with open(os.path.join(REPO, "mctl", "sound.py")) as f:
             main = f.read().split("def main(")[1]
         self.assertLess(main.index("no_core_dumps()"), main.index("Service("), "before anything is captured")
@@ -1112,7 +1112,7 @@ class BacklogTest(ServiceBase):
 class TunnelTest(RolesBase):
     def setUp(self):
         super().setUp()
-        self.sdir = tempfile.mkdtemp(prefix="pvj-sound-tun-")
+        self.sdir = tempfile.mkdtemp(prefix="nxlx-sound-tun-")
         self.addCleanup(shutil.rmtree, self.sdir, True)
         self.api.sound = soundout.Sound(self.api, socket_path=os.path.join(self.sdir, "none.sock"),
                                         levels_path=os.path.join(self.sdir, "levels"), proc=proc_dir(self), log=lambda *_: None)

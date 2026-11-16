@@ -3,7 +3,7 @@
 """Sound reactivity, the panel's side (D96, mctl/SOUND.md).
 
 * The setting `sound` (the box's own: never exported or imported) and its form.
-* Telling the service `pvj-sound` what the Owner chose, over its socket, again after a restart of either.
+* Telling the service `nxlx-sound` what the Owner chose, over its socket, again after a restart of either.
 * Reading the levels file for the page's meter.
 * OSC out under /nxlx/sound/..., to the D82 state targets and the D94 render nodes, each held at every send to the
   rule of an OSC state target (and a state target to the address locks too), under caps. The service itself has no
@@ -33,7 +33,7 @@ DEPTH_MIN, DEPTH_MAX = -1.0, 1.0
 SMOOTH_MIN, SMOOTH_MAX = 0.05, 10.0
 NAME_MAX = 64
 DEFAULT_MAP = {"on": False, "input": "", "source": "level", "rest": 0.0, "depth": 0.5, "smooth": 1.5}
-# The sources (D97): what pvj-sound hears. The device is the one capture device; the others are fed in by the panel.
+# The sources (D97): what nxlx-sound hears. The device is the one capture device; the others are fed in by the panel.
 INPUTS = ("device", "box", "ndi", "osc")
 INPUT_NAMES = {"device": "The capture device", "box": "The node's own sound", "ndi": "The NDI sound", "osc": "Levels sent in over OSC"}
 MAX_IN_HOSTS = 8
@@ -376,9 +376,9 @@ class Sound:
         try:
             self.link.tick()                    # the Link helper told again after a restart of either (D117)
             self.clock.tick(self._clock())      # the box clock hands over from a source gone quiet (D116)
-            self.levels()                       # and hears pvj-sound even while nobody looks at the meter
+            self.levels()                       # and hears nxlx-sound even while nobody looks at the meter
         except Exception as e:
-            self.log("pvj-web: box clock tick: %s" % e)
+            self.log("nxlx-web: box clock tick: %s" % e)
 
     def levels(self):
         """The last record of the levels file, with "fresh" (younger than STALE_SECONDS), or None."""
@@ -495,7 +495,7 @@ class Sound:
                     sock = None
                 stop.wait(LOOK_EVERY if live and osc else IDLE_LOOK)
         except Exception as e:                   # the thread must not take the panel down; it is started again by tick
-            self.log("pvj-web: sound out stopped: %s" % e)
+            self.log("nxlx-web: sound out stopped: %s" % e)
         finally:
             if sock is not None:
                 sock.close()
@@ -516,7 +516,7 @@ class Sound:
                     self.map_step(m, v if self.live(v) else None, now)
                 stop.wait(0.05 if m["on"] else IDLE_LOOK)
         except Exception as e:                   # as _loop: tick starts it again
-            self.log("pvj-web: sound map stopped: %s" % e)
+            self.log("nxlx-web: sound map stopped: %s" % e)
 
     def targets(self, cfg):
         """[(kind, name, address, port)] where sound may go now; the reason for each that is left out is noted in
@@ -820,7 +820,7 @@ class Sound:
                     self.feed_once(cfg)
                 stop.wait(METER_EVERY if cfg["source"] != "osc" else IN_EVERY)
         except Exception as e:
-            self.log("pvj-web: sound feed stopped: %s" % e)
+            self.log("nxlx-web: sound feed stopped: %s" % e)
         finally:
             if metered is not None:
                 self.meter(False)

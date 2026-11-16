@@ -280,6 +280,7 @@ opt/pvj	opt/nxlx	system	folder /opt/pvj
 etc/pvj	etc/nxlx	system	folder /etc/pvj
 var/lib/pvj	var/lib/nxlx	system	folder /var/lib/pvj
 run/pvj	run/nxlx	system	folder /run/pvj
+run/pvj-update	run/nxlx-update	system	the update units' runtime folder (before the release row takes pvj-update/, the USB folder)
 media/pvj	media/nxlx	system	USB mount folder
 pvj.env	nxlx.env	system	environment file /etc/pvj/pvj.env
 /pvj.env	/nxlx.env	system	the same file joined to a folder in code (before the OSC row takes /pvj)
@@ -339,9 +340,9 @@ PVJ_*	NXLX_*	env	every PVJ_ variable (PVJ_RUNTIME_DIR, PVJ_RENDER_TEST...) and t
 pvj.yml	nxlx.yml	ci	workflow file
 pvj platform layer	nxlx platform layer	ci	workflow name
 pvj-device	nxlx-device	ci	self-hosted runner label
-stage-pvj	stage-nxlx	ci	pi-gen stage folder
-install-pvj	install-nxlx	ci	pi-gen step folder
-pvj-src	nxlx-src	ci	image build folder
+stage-pvj	stage-nxlx	system	pi-gen stage folder (moved with the system layer, PR 7)
+install-pvj	install-nxlx	system	pi-gen step folder (moved with the system layer, PR 7)
+pvj-src	nxlx-src	system	image build folder (moved with the system layer, PR 7)
 pocketvj/	mastercontrol/	ci	image.yml checkout folder
 path: pocketvj	path: mastercontrol	ci	image.yml checkout folder
   pvj-render:	  mctl-render:	ci	CI job id (required check, rename with the ruleset)

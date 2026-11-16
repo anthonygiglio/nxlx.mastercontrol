@@ -112,13 +112,13 @@ class PlanTest(unittest.TestCase):
         cfg = ok(mode="static", address="192.168.50.20", prefix=24, gateway="192.168.50.1", dns=["1.1.1.1"])
         cmds = netcfg.plan(cfg)
         self.assertEqual(cmds[0][:9], ["nmcli", "connection", "add", "type", "ethernet", "ifname", "eth0",
-                                       "con-name", "pvj-eth0-try"])
+                                       "con-name", "nxlx-eth0-try"])
         p = self.props(cmds[0])
         self.assertEqual((p["ipv4.method"], p["ipv4.addresses"], p["ipv4.gateway"], p["ipv4.dns"]),
                          ("manual", "192.168.50.20/24", "192.168.50.1", "1.1.1.1"))
         self.assertEqual(p["connection.autoconnect"], "no")  # a reboot now falls back to the old network
-        self.assertEqual(cmds[1], ["nmcli", "connection", "up", "id", "pvj-eth0-try"])
-        self.assertFalse(any("pvj-eth0" in a and not a.endswith("-try") for c in cmds for a in c if a.startswith("pvj-")))
+        self.assertEqual(cmds[1], ["nmcli", "connection", "up", "id", "nxlx-eth0-try"])
+        self.assertFalse(any("nxlx-eth0" in a and not a.endswith("-try") for c in cmds for a in c if a.startswith("nxlx-")))
 
     def test_each_mode(self):
         expect = {"dhcp": "auto", "linklocal": "link-local", "share": "shared"}
@@ -133,16 +133,16 @@ class PlanTest(unittest.TestCase):
 
     def test_confirm_swaps_in_the_candidate_without_ever_leaving_no_autoconnect_profile(self):
         first = netcfg.confirm_plan("eth0", old_exists=True)
-        self.assertEqual(first[0][3:6], ["id", "pvj-eth0-try", "connection.autoconnect"])
-        self.assertEqual(first[1][3:], ["id", "pvj-eth0", "connection.id", "pvj-eth0-old"])   # renamed, not deleted, until
-        self.assertEqual(first[2][3:], ["id", "pvj-eth0-try", "connection.id", "pvj-eth0"])   # the candidate has its name
-        self.assertEqual(first[3], ["nmcli", "connection", "delete", "id", "pvj-eth0-old"])   # and only then deleted
+        self.assertEqual(first[0][3:6], ["id", "nxlx-eth0-try", "connection.autoconnect"])
+        self.assertEqual(first[1][3:], ["id", "nxlx-eth0", "connection.id", "nxlx-eth0-old"])   # renamed, not deleted, until
+        self.assertEqual(first[2][3:], ["id", "nxlx-eth0-try", "connection.id", "nxlx-eth0"])   # the candidate has its name
+        self.assertEqual(first[3], ["nmcli", "connection", "delete", "id", "nxlx-eth0-old"])   # and only then deleted
         self.assertEqual(len(netcfg.confirm_plan("eth0", old_exists=False)), 2)
 
     def test_revert_drops_the_candidate_and_reactivates_the_previous_connection_by_uuid(self):
         self.assertEqual(netcfg.revert_plan("eth0", True, self.UUID),
-                         [["nmcli", "connection", "down", "id", "pvj-eth0-try"],
-                          ["nmcli", "connection", "delete", "id", "pvj-eth0-try"],
+                         [["nmcli", "connection", "down", "id", "nxlx-eth0-try"],
+                          ["nmcli", "connection", "delete", "id", "nxlx-eth0-try"],
                           ["nmcli", "connection", "up", "uuid", self.UUID]])
         self.assertEqual(netcfg.revert_plan("eth0", False, None), [])
         for bad in ("--ask", "id", "Wired connection 1", "0b3c2f57", self.UUID + "x"):
@@ -289,7 +289,7 @@ class WifiPlanTest(unittest.TestCase):
 
     def test_keyfile_for_joining(self):
         kf = self.parse(netcfg.keyfile(wifi(hidden=True, password="a b\\c d e"), self.UUID))
-        self.assertEqual(kf["connection.id"], "pvj-wlan0-try")
+        self.assertEqual(kf["connection.id"], "nxlx-wlan0-try")
         self.assertEqual(kf["connection.autoconnect"], "false")
         self.assertEqual(kf["wifi.mode"], "infrastructure")
         self.assertEqual(bytes(int(b) for b in kf["wifi.ssid"].rstrip(";").split(";")), b"Leyline Staff")
@@ -316,8 +316,8 @@ class WifiPlanTest(unittest.TestCase):
         cfg = wifi(password="hunter2hunter2")
         cmds = netcfg.plan(cfg, "abcdef01", "/etc/NetworkManager/system-connections")
         self.assertEqual(cmds[0], ["nmcli", "connection", "load",
-                                   "/etc/NetworkManager/system-connections/pvj-wlan0-try-abcdef01.nmconnection"])
-        self.assertEqual(cmds[-1], ["nmcli", "connection", "up", "id", "pvj-wlan0-try"])
+                                   "/etc/NetworkManager/system-connections/nxlx-wlan0-try-abcdef01.nmconnection"])
+        self.assertEqual(cmds[-1], ["nmcli", "connection", "up", "id", "nxlx-wlan0-try"])
         self.assertIn("connection.autoconnect", cmds[1])
         self.assertEqual(cmds[1][cmds[1].index("connection.autoconnect") + 1], "no")
         text = "\n".join(netcfg.preview(cmds)) + repr(cmds)

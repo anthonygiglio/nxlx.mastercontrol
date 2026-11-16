@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Text and logos on the screen (D129, slices 2 and 3 of design/text-and-logo-sources_2026-11-08.md).
 
-A graphic is a text or a logo that the node draws over the picture. pvj-raster (render/raster/, its own process with its
+A graphic is a text or a logo that the node draws over the picture. nxlx-raster (render/raster/, its own process with its
 own limits) makes each graphic into one small premultiplied picture; what draws it depends on the player:
 
 * the New renderer (mctl-render 0.11.0 on, `Player.graphics_stage()`; Pi 4, Pi 5, desktop): its GPU stage, one slot a
@@ -486,7 +486,7 @@ def _hex(c):
 
 
 def params_for(item, sw, sh, png=False, canvas=None, ticker=0, refuse=True):
-    """The request for pvj-raster for `item` on a screen sw x sh: (parameter text, ok). The size of everything follows
+    """The request for nxlx-raster for `item` on a screen sw x sh: (parameter text, ok). The size of everything follows
     the screen's height (text) or width (logo), so the preview at a third of the size is the same picture. `ticker`: the
     widest picture the GPU can hold, for a text that crawls: one line, as wide as it needs to be, and a text that would
     have to be made smaller to fit is refused (in words) instead."""
@@ -891,7 +891,7 @@ class Graphics:
             try:
                 self.api.settings.save()
             except OSError as e:
-                self.log("pvj-web: graphics: could not save: %s" % e)
+                self.log("nxlx-web: graphics: could not save: %s" % e)
                 return True
             self._saved_at, self._save_owed = self.clock(), False
         return True
@@ -1018,7 +1018,7 @@ class Graphics:
             try:
                 delay = self.process()
             except Exception as e:              # never leave the worker dead: say so and look again in a second
-                self.log("pvj-web: graphics: %s" % e)
+                self.log("nxlx-web: graphics: %s" % e)
                 delay = 1.0
             if delay is None and self.busy():
                 delay = 0.0                 # something was asked for while that pass ran
@@ -1146,7 +1146,7 @@ class Graphics:
             return
         except Exception as e:                      # never leave the worker dead
             self._status[gid] = {"state": "error", "message": "Could not draw this: %s" % e, "missing": 0}
-            self.log("pvj-web: graphics: %s" % e)
+            self.log("nxlx-web: graphics: %s" % e)
             self._failed[gid] = key
             return
         with self._lock:
@@ -1497,7 +1497,7 @@ class Graphics:
                 raise
             return True
         except Exception as e:
-            self.log("pvj-web: graphics: a step of %s did not go: %s" % (kind, e))
+            self.log("nxlx-web: graphics: a step of %s did not go: %s" % (kind, e))
             return False
 
     def _timer(self, due, kind, *args):
@@ -1520,7 +1520,7 @@ class Graphics:
             try:
                 wait = self.step()
             except Exception as e:          # never leave the stepper dead
-                self.log("pvj-web: graphics: %s" % e)
+                self.log("nxlx-web: graphics: %s" % e)
                 wait = 1.0
             wait = 5.0 if wait is None else max(0.005, wait - (time.monotonic() - began))
             self._tick_wake.wait(wait)

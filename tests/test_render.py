@@ -23,7 +23,7 @@ from tests.test_ndi_pads import HOST, NAME, PadBase, REPO, RID, ROW
 from tests.test_roles import CONTROLLER_DEVICES, LAN, SCENE, TUNNEL
 
 ETH = [{"ifname": "eth0", "addr_info": [{"family": "inet", "local": "192.168.0.5", "prefixlen": 24}]},
-       {"ifname": "wg-pvj", "addr_info": [{"family": "inet", "local": "10.77.0.2", "prefixlen": 24}]}]
+       {"ifname": "wg-nxlx", "addr_info": [{"family": "inet", "local": "10.77.0.2", "prefixlen": 24}]}]
 NETS = [ipaddress.IPv4Interface("192.168.0.5/24")]
 NODE_HOST, NODE_PORT = "192.168.0.30", 7400
 

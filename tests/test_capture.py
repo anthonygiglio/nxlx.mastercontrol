@@ -198,9 +198,9 @@ class OldMpvTest(unittest.TestCase):
                     return "/m/a.mp4"
                 return None
         p.ipc = Ipc()
-        p.play_pipe("/run/pvj/capture.fifo", 1280, 720, 30)
+        p.play_pipe("/run/nxlx/capture.fifo", 1280, 720, 30)
         self.assertIn(("set_property", "demuxer", "rawvideo"), sent)
-        self.assertIn(("loadfile", "/run/pvj/capture.fifo", "replace"), sent)
+        self.assertIn(("loadfile", "/run/nxlx/capture.fifo", "replace"), sent)
         sent.clear()
         p.play(["/m/a.mp4"], spawn=False)
         self.assertIn(("set_property", "demuxer", ""), sent)                   # a normal file is not read as raw video

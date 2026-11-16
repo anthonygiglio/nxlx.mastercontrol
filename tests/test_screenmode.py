@@ -378,7 +378,7 @@ class PrepareTest(unittest.TestCase):
         rep = self.report()
         self.assertEqual((rep["used"], rep["pid"], rep["boot"]), ("1920x1080@60.00", os.getpid(), BOOT))
         self.assertEqual(oct(os.stat(os.path.join(self.run_dir, S.REPORT)).st_mode & 0o777), "0o640")
-        self.assertEqual(lines, ["pvj-player: screen output: 1920 x 1080 at 60 Hz on HDMI-A-1 (--drm-device=/dev/dri/card1 --drm-connector=HDMI-A-1 --drm-mode=1920x1080@60.00)"])
+        self.assertEqual(lines, ["nxlx-player: screen output: 1920 x 1080 at 60 Hz on HDMI-A-1 (--drm-device=/dev/dri/card1 --drm-connector=HDMI-A-1 --drm-mode=1920x1080@60.00)"])
 
     def test_the_wanted_file_is_read(self):
         S.write_json(os.path.join(self.state, S.WANTED), {"mode": "1280x720@50.00"})
@@ -503,7 +503,7 @@ class ScreenTest(unittest.TestCase):
         return t
 
     def player_started(self):
-        """What `pvj-player serve` does at each start: decide, and write the report with the new player's pid."""
+        """What `nxlx-player serve` does at each start: decide, and write the report with the new player's pid."""
         rep = S.decide(S.clean_wanted(S.read_json(os.path.join(self.state, S.WANTED))), S.parse_help(self.text), "",
                        self.layout, self.boot)
         rep.update(pid=self.api.player.pid, boot=self.boot, at=0)

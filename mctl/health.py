@@ -121,7 +121,7 @@ class Health:
                     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o640)
                     os.write(fd, str(int(time.time())).encode())
                     os.close(fd)
-                    self.log("pvj-web: undervoltage: the power supply is too weak for the box")
+                    self.log("nxlx-web: undervoltage: the power supply is too weak for the box")
                 except OSError:
                     pass
         return alarm
@@ -194,9 +194,9 @@ class Health:
 
     def helpers(self):
         out = []
-        for name, label, client in (("pvj-sysd", "System helper (restart, power off, clock)", getattr(self.api, "sysd", None)),
-                                    ("pvj-netd", "Network helper (network settings)", getattr(self.api, "net", None)),
-                                    ("pvj-supportd", "Remote support helper", getattr(getattr(self.api, "support", None), "client", None))):
+        for name, label, client in (("nxlx-sysd", "System helper (restart, power off, clock)", getattr(self.api, "sysd", None)),
+                                    ("nxlx-netd", "Network helper (network settings)", getattr(self.api, "net", None)),
+                                    ("nxlx-supportd", "Remote support helper", getattr(getattr(self.api, "support", None), "client", None))):
             if client is None:
                 continue
             try:
@@ -215,7 +215,7 @@ class Health:
             out.append("http://%s.local%s/" % (host, suffix))
         try:
             for entry in self.api._ip_json():
-                if entry.get("ifname") in ("lo", "wg-pvj"):
+                if entry.get("ifname") in ("lo", "wg-nxlx"):
                     continue
                 for a in entry.get("addr_info", []):
                     if a.get("family") == "inet" and a.get("local"):
@@ -297,7 +297,7 @@ class Health:
                  "cpu_percent": load, "memory_percent": mem, "memory_mb": total,
                  "helpers": self.helpers(), "addresses": self.addresses(), "projectors": self.projectors(), "storage": self.storage()}
         states = [parts[k]["state"] for k in ("power", "temperature", "player")]
-        states += ["bad" for h in parts["helpers"] if not h["running"] and h["name"] != "pvj-netd"]
+        states += ["bad" for h in parts["helpers"] if not h["running"] and h["name"] != "nxlx-netd"]
         states += [p["state"] for p in parts["projectors"]]      # a projector's own warning or error; "unknown" (no answer) is not one
         states += [r["state"] for r in parts["storage"]]         # free space running low or out
         parts["overall"] = "bad" if "bad" in states else ("warn" if "warn" in states else "ok")

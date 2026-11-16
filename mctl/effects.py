@@ -1569,7 +1569,7 @@ class Effects(S.Engine):
                     if len(self._refusals) > 4 * S.MAX_UPLOADS:
                         self._refusals.clear()
                     self._refusals[digest] = message
-                self.log("pvj-web: effect %s refused by the player%s: %s" % (sid, " over a shader" if over else "", message))
+                self.log("nxlx-web: effect %s refused by the player%s: %s" % (sid, " over a shader" if over else "", message))
                 raise ApiError(422, "the player refused %s%s: %s. %s%s" % (
                     sid, " over the shader" if over else "", message, "The effect before it is back on." if self.on else "No effect is on.",
                     " " + STAYS if over else ""))
@@ -1791,14 +1791,14 @@ class Effects(S.Engine):
                     # the effect over it. There is no text to go back to that is known to work over a shader, so the
                     # effect comes off and the shader stays.
                     self._pair_refused(p)
-                    self.log("pvj-web: effect %s refused over the shader that came on: %s" % (p["id"], message))
+                    self.log("nxlx-web: effect %s refused over the shader that came on: %s" % (p["id"], message))
                     return False
                 try:
                     player.swap_effect(p["path"], p["epoch"])
                 except Exception:
                     pass
                 self._cleanup({p["path"]})
-                self.log("pvj-web: effect %s refused with new values: %s" % (p["id"], message))
+                self.log("nxlx-web: effect %s refused with new values: %s" % (p["id"], message))
                 return False
             if verdict == "ok":
                 self._checked.add(key)
@@ -1845,7 +1845,7 @@ class Effects(S.Engine):
         self.last, self._shed = PAIR_HEAVY_WORDS % PAIR_SECONDS, self._live().guard._clock()
         self.pair_guard.sample(None)
         self._cleanup(set())
-        self.log("pvj-web: effect %s taken off: over a shader the box dropped %s frames a second for %d seconds" % (rec["id"], seen["drops_per_second"], PAIR_SECONDS))
+        self.log("nxlx-web: effect %s taken off: over a shader the box dropped %s frames a second for %d seconds" % (rec["id"], seen["drops_per_second"], PAIR_SECONDS))
         return True
 
     def _guarded(self, rec):

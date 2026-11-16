@@ -86,14 +86,14 @@ class OneSetOfNames(unittest.TestCase):
             self.assertIn('{"%s", "10.255.255.1:' % name, c)
             if name not in ONLY_HERE:
                 self.assertIn('="%s"\n' % name, sh)
-        for want in ('pvj-ndi-runtime install "$NDI_STANDIN"', 'box play "$NDI_MOVING" raw', "systemctl restart pvj-ndi.service\n",
+        for want in ('nxlx-ndi-runtime install "$NDI_STANDIN"', 'box play "$NDI_MOVING" raw', "systemctl restart nxlx-ndi.service\n",
                      'box back "$NDI_MOVING" 20', 'box play "$NDI_SOUND" matroska', 'case still "$NDI_STILL"', 'case twice "$NDI_STILL"',
                      'case stuck "$NDI_BIG_STILL"', 'case follow "$NDI_BIG_A" "$NDI_BIG_B"', 'case follow "$NDI_BIG_A_SOUND" "$NDI_BIG_B_SOUND"',
                      'case sound "$NDI_SOUND"', 'case sound "$NDI_BIG_SOUND"', 'case soundon "$NDI_BIG_SOUND"', 'case size "$NDI_BIG_CHANGES"',
                      'case size "$NDI_BIG_CHANGES_SOUND"', 'case size "$NDI_CHANGES"', 'case restart "$NDI_MOVING"', "case chain\n",
                      'case soundfrom "$NDI_MOVING" "$NDI_SOUND_ONLY" 12', 'case soundfromsize "$NDI_BIG_CHANGES" "$NDI_SOUND_ONLY"',
                      'case soundonlyplay "$NDI_SOUND_ONLY"', 'sound_connections_of "$HELPER_PID"', "box soundown ",
-                     "pvj-ndi-runtime remove"):
+                     "nxlx-ndi-runtime remove"):
             self.assertIn(want, sh[sh.index('step "an NDI picture all the way'):], want)
 
     def test_the_stand_in_has_no_line_of_ndis_headers_and_says_so(self):
@@ -200,7 +200,7 @@ class StandIn(Built):
     @unittest.skipUnless(sys.platform.startswith("linux"), "the check of the file is for a Linux library")
     def test_the_helpers_check_of_the_file_passes_it_and_nothing_tells_it_from_ndis(self):
         # runtime_problem asks: a plain file, its owner, nobody else may write it, its size, this processor. Any
-        # library built here passes; the sha256 that pvj-ndi-runtime prints is the owner's only check of whose it is.
+        # library built here passes; the sha256 that nxlx-ndi-runtime prints is the owner's only check of whose it is.
         os.chmod(self.path, 0o644)
         self.assertIsNone(ndi.runtime_problem(self.path, owner_uids=(os.getuid(),)))
 

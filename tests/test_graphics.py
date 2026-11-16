@@ -875,7 +875,7 @@ class FontsTest(unittest.TestCase):
         stays, and that release has pvj/fonts. The unit's command must find the fonts in both."""
         import subprocess
         import tempfile
-        unit = self.read("install", "pvj-raster@.service")
+        unit = self.read("install", "nxlx-raster@.service")
         line = [l for l in unit.splitlines() if l.startswith("ExecStart=")][0]
         self.assertTrue(line.startswith("ExecStart=/bin/sh -c '") and line.endswith("'"), line)
         script = line[len("ExecStart=/bin/sh -c '"):-1].replace("$$", "$")
@@ -884,7 +884,7 @@ class FontsTest(unittest.TestCase):
             self.addCleanup(shutil.rmtree, root, True)
             os.makedirs(os.path.join(root, layout, "fonts"))
             os.makedirs(os.path.join(root, "render"))
-            prog = os.path.join(root, "render", "pvj-raster")
+            prog = os.path.join(root, "render", "nxlx-raster")
             with open(prog, "w") as f:
                 f.write('#!/bin/sh\necho "$@"\n')
             os.chmod(prog, 0o755)
@@ -894,14 +894,14 @@ class FontsTest(unittest.TestCase):
     def test_the_helper_is_built_with_freetype_and_told_where_the_fonts_are(self):
         self.assertIn("freetype2", self.read("render", "Makefile"))
         self.assertIn("gfx.inc.c", self.read("render", "Makefile"))
-        unit = self.read("install", "pvj-raster@.service")
-        self.assertIn("exec @PVJ_DIR@/render/pvj-raster --fonts \"$$f\"'\n", unit)
+        unit = self.read("install", "nxlx-raster@.service")
+        self.assertIn("exec @PVJ_DIR@/render/nxlx-raster --fonts \"$$f\"'\n", unit)
         sh = self.read("install", "install.sh")
         self.assertIn("libfreetype-dev", sh)
         self.assertIn("pkg-config --exists libpng libjpeg freetype2", sh)
-        self.assertIn("libfreetype-dev", self.read("image", "stage-pvj", "00-install-pvj", "00-packages-nr").split())
+        self.assertIn("libfreetype-dev", self.read("image", "stage-nxlx", "00-install-nxlx", "00-packages-nr").split())
         self.assertIn("libfreetype-dev", self.read(".github", "workflows", "pvj.yml"))
-        self.assertIn("InaccessiblePaths=-/var/lib/pvj", unit)
+        self.assertIn("InaccessiblePaths=-/var/lib/nxlx", unit)
         self.assertNotIn("ReadWritePaths", unit)
 
     def test_the_paths_of_the_font_folder(self):

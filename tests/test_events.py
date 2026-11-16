@@ -204,14 +204,14 @@ class JournalCommandTest(unittest.TestCase):
         return sysd.SysService(runner=run, log=lambda *_: None)
 
     def test_the_command_is_fixed_and_bounded(self):
-        s = self.make("2026-11-07T10:00:00+0000 node pvj-web[1]: hello\n")
+        s = self.make("2026-11-07T10:00:00+0000 node nxlx-web[1]: hello\n")
         r = s.handle({"cmd": "journal"})
         self.assertTrue(r["ok"])
-        self.assertEqual(r["lines"], ["2026-11-07T10:00:00+0000 node pvj-web[1]: hello"])
+        self.assertEqual(r["lines"], ["2026-11-07T10:00:00+0000 node nxlx-web[1]: hello"])
         argv = self.calls[0]
         self.assertEqual(argv[0], "journalctl")
         self.assertEqual([argv[i + 1] for i, a in enumerate(argv) if a == "-u"], list(sysd.JOURNAL_UNITS))
-        self.assertTrue(all(u.startswith("pvj-") for u in sysd.JOURNAL_UNITS))
+        self.assertTrue(all(u.startswith("nxlx-") for u in sysd.JOURNAL_UNITS))
         self.assertIn("--boot=0", argv)
         self.assertEqual(argv[argv.index("-n") + 1], "300")
         self.assertEqual(argv[argv.index("--since") + 1], "-24h")
@@ -235,7 +235,7 @@ class JournalCommandTest(unittest.TestCase):
         r = self.make("", code=1).handle({"cmd": "journal"})
         self.assertFalse(r["ok"])
         self.assertIn("could not be read", r["error"])
-        out = "\n".join("2026-11-07T10:00:%02d+0000 node pvj-web[1]: %s" % (i % 60, "y" * 380) for i in range(500)) + "\n"
+        out = "\n".join("2026-11-07T10:00:%02d+0000 node nxlx-web[1]: %s" % (i % 60, "y" * 380) for i in range(500)) + "\n"
         r = self.make(out).handle({"cmd": "journal", "lines": 500})
         self.assertTrue(r["ok"])
         self.assertLessEqual(len(json.dumps(r)), 60000)
@@ -280,7 +280,7 @@ class FakeSysd:
     def request(self, message):
         self.asked.append(message)
         if self.fail:
-            raise OSError("the system helper (pvj-sysd) is not running")
+            raise OSError("the system helper (nxlx-sysd) is not running")
         if message.get("cmd") != "journal":
             return {"ok": True, "clock_from_network": True, "now": 1}
         return self.now if message.get("boot", 0) == 0 else (self.before or {"ok": False})
@@ -386,7 +386,7 @@ class ApiTest(CareBase):
         self.assertIn("finished", self.api.events.events()[0]["text"])
 
     def test_the_log_comes_through_the_helper_scrubbed_and_says_it_is_in_memory_when_it_is(self):
-        line = "2026-11-07T10:00:03+0000 node pvj-web[1]: listening; pairing PIN %s; rtsp://u:pw12345@192.168.1.60/x" % PIN
+        line = "2026-11-07T10:00:03+0000 node nxlx-web[1]: listening; pairing PIN %s; rtsp://u:pw12345@192.168.1.60/x" % PIN
         helper = FakeSysd({"ok": True, "lines": [line, "second"], "persistent": False, "read_only_root": True})
         self.api.sysd = helper
         out = self.h("GET", "/api/system/diagnostics", {}, self.full_dev)[1]["file"]["log"]
@@ -407,7 +407,7 @@ class ApiTest(CareBase):
 
     def test_the_reason_the_helper_could_not_give_the_log_is_in_the_note(self):
         for fake, want in ((FakeSysd({"ok": False, "error": "the system log could not be read: Failed to open journal %s" % PIN}), "Failed to open journal"),
-                           (FakeSysd(None, fail=True), "pvj-sysd) is not running")):
+                           (FakeSysd(None, fail=True), "nxlx-sysd) is not running")):
             self.api.sysd = fake
             out = self.h("GET", "/api/system/diagnostics", {}, self.full_dev)[1]["file"]["log"]
             self.assertIn("The system helper could not give the log", out["note"])

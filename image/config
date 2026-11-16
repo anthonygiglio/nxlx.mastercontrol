@@ -9,5 +9,5 @@ TIMEZONE_DEFAULT='UTC'
 DISABLE_FIRST_BOOT_USER_RENAME=0
 # SSH is off by default; turn it on with raspi-config after setting a password.
 ENABLE_SSH=0
-STAGE_LIST='stage0 stage1 stage2 stage-pvj'
+STAGE_LIST='stage0 stage1 stage2 stage-nxlx'
 DEPLOY_COMPRESSION='xz'

@@ -9,6 +9,9 @@
     sudo nxlx-convert --undo         walk the journal backwards and start the old names again
     nxlx-convert --root DIR ...      stage mode: work on a copy of a node in DIR (tests); no accounts tools,
                                      no systemctl, no timer, nothing outside DIR
+    nxlx-convert --run --release V   also point "current" at the release V (a folder in /opt/pvj/releases that
+                                     install.sh has just put there), as one change of the run: the undo then
+                                     points it back at the release the node ran before (install.sh, rename PR 7)
 
 The rename plan is rename-pvj-assessment.md, PR 2 and section 4; the names are those of tools/rename-map.txt
 (D135; the rows a node needs are copied into TABLE below and a test keeps the two equal); decision D136.
@@ -111,6 +114,7 @@ opt/pvj	opt/nxlx	system
 etc/pvj	etc/nxlx	system
 var/lib/pvj	var/lib/nxlx	system
 run/pvj	run/nxlx	system
+run/pvj-update	run/nxlx-update	system
 media/pvj	media/nxlx	system
 pvj.env	nxlx.env	system
 /pvj.env	/nxlx.env	system
@@ -137,6 +141,9 @@ pvj-* 	nxlx-* 	system
 'pvj-*'	'nxlx-*'	system
 (pvj-*)	(nxlx-*)	system
 `pvj-*`	`nxlx-*`	system
+stage-pvj	stage-nxlx	system
+install-pvj	install-nxlx	system
+pvj-src	nxlx-src	system
 pvj-release	nxlx-release	release
 pvj-recover	nxlx-recover	release
 pvj-update/	nxlx-update/	release
@@ -166,6 +173,10 @@ PVJ_*	NXLX_*	env
 # Release names (signing namespace, bundle and USB names) change with rename PR 8. Until that pull request sets
 # this to True the converter holds them as they are, so a node converted early still accepts its signed bundles.
 RELEASE_NAMES_LIVE = False
+# Environment variables (PVJ_* to NXLX_*) change with rename PR 8 too. The programs of the system rename (PR 7) still
+# read PVJ_*, so until then the converter keeps the variable names in the units, drop-ins and nxlx.env it rewrites
+# (only their values, the paths, take the new names).
+ENV_NAMES_LIVE = False
 
 IDENT = "A-Za-z0-9_"
 OLD = re.compile(r"pvj|pocket[ _-]?vj", re.I)
@@ -244,7 +255,8 @@ class Matcher:
     def __init__(self, table):
         self.rows = sorted(table, key=lambda r: (-len(r.lit), r.old))
         self.rx = re.compile("|".join("(%s)" % r.pattern() for r in self.rows))
-        self.kinds = {"system", "env", "package", "render"} | ({"release"} if RELEASE_NAMES_LIVE else set())
+        self.kinds = ({"system", "package", "render"} | ({"release"} if RELEASE_NAMES_LIVE else set())
+                      | ({"env"} if ENV_NAMES_LIVE else set()))
         self.live = [r for r in self.rows if r.kind in self.kinds]
         self.live_rx = re.compile("|".join("(%s)" % r.pattern() for r in self.live))
 
@@ -354,12 +366,19 @@ def sh(cmd, check=True):
 
 
 def is_text(path, limit=1 << 20):
+    """The text of a plain file, or None. Never through a link and never a pipe or a device: install.sh runs this as
+    root over folders a service account owns (/var/lib/pvj is the panel's), where a planted fifo would hang it."""
     try:
-        if os.path.getsize(path) > limit:
-            return None
-        with open(path, "rb") as f:
-            data = f.read()
-        if b"\0" in data:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    except OSError:
+        return None
+    try:
+        with os.fdopen(fd, "rb") as f:
+            st = os.fstat(f.fileno())
+            if not stat.S_ISREG(st.st_mode) or st.st_size > limit:
+                return None
+            data = f.read(limit + 1)
+        if len(data) > limit or b"\0" in data:
             return None
         return data.decode("utf-8")
     except (OSError, UnicodeDecodeError):
@@ -431,7 +450,10 @@ def renamed(m, name):
     return new
 
 
-def make_plan(node, force=False, mode="plan"):
+RELEASE_NAME = re.compile(r"[0-9][0-9A-Za-z._-]{0,63}")
+
+
+def make_plan(node, force=False, mode="plan", release=None):
     m = Matcher(rows())
     plan = Plan(node, m)
     users, groups = node.users(), node.groups()
@@ -522,11 +544,21 @@ def make_plan(node, force=False, mode="plan"):
     if env and not node.exists("etc/nxlx/nxlx.env"):
         plan.add(5, "rename", "rename /etc/nxlx/pvj.env to nxlx.env", src="etc/nxlx/pvj.env", dst="etc/nxlx/nxlx.env")
     cur = where(node, "opt/nxlx/current")
+    # With --release, "current" is pointed at that release (install.sh's new one) in the same change, so the undo
+    # points it back at the release the node ran before, whose programs have the old names.
+    chosen = None
+    if release is not None:
+        ok = bool(RELEASE_NAME.fullmatch(release)) and ".." not in release
+        chosen = where(node, "opt/nxlx/releases/" + release) if ok else None
+        plan.check(chosen is not None and os.path.isdir(node.p(chosen)) and not os.path.islink(node.p(chosen)),
+                   "the release %s is in /opt/pvj/releases" % release if chosen else
+                   "the release %s is not a folder in /opt/pvj/releases (or /opt/nxlx/releases)" % release)
     if cur and os.path.islink(node.p(cur)):
         target = os.readlink(node.p(cur))
-        if renamed(m, target) != target:
-            plan.add(5, "link", "point /opt/nxlx/current at %s" % renamed(m, target),
-                     path="opt/nxlx/current", old=target, new=renamed(m, target))
+        new_target = "/opt/nxlx/releases/" + release if chosen else renamed(m, target)
+        if new_target != target:
+            plan.add(5, "link", "point /opt/nxlx/current at %s" % new_target,
+                     path="opt/nxlx/current", old=target, new=new_target)
     rel = where(node, "opt/nxlx/releases")
     if rel:
         for name in sorted(os.listdir(node.p(rel))):
@@ -556,7 +588,10 @@ def make_plan(node, force=False, mode="plan"):
     if plan.needs:
         cur = where(node, "opt/nxlx/current")
         target = os.readlink(node.p(cur)) if cur and os.path.islink(node.p(cur)) else ""
-        release = where(node, renamed(m, target).lstrip("/")) if target.startswith("/") else None
+        running = where(node, renamed(m, target).lstrip("/")) if target.startswith("/") else None
+        release = chosen if chosen else running
+        if chosen:
+            target = "/opt/nxlx/releases/" + release_name(chosen)
         if release is None:
             plan.check(False, "cannot find the current release (/opt/pvj/current is not a link to a release)")
         else:
@@ -569,7 +604,7 @@ def make_plan(node, force=False, mode="plan"):
                 text = (is_text(node.p(prev)) or "").strip()
                 if text.startswith("/"):
                     before.append(where(node, renamed(m, text).lstrip("/")))
-            before = [b for b in before + [release] if b]
+            before = [b for b in before + [running, release] if b]
 
             def had(new_path):
                 rel = new_path[len(base):]
@@ -627,6 +662,8 @@ def make_plan(node, force=False, mode="plan"):
         plan.notes.append("/run/pvj and its siblings: left alone, /run is rebuilt at boot")
     if not RELEASE_NAMES_LIVE:
         plan.notes.append("release names (pvj-release, pvj-recover, bundle names) are held until rename PR 8")
+    if not ENV_NAMES_LIVE:
+        plan.notes.append("environment variable names (PVJ_*) are held until rename PR 8; only their values change")
 
     # The backup: the account files, what is carried over, and every file a step touches (not the videos).
     seen = set()
@@ -642,6 +679,10 @@ def make_plan(node, force=False, mode="plan"):
             seen.add(now)
             plan.backup.append(now)
     return plan
+
+
+def release_name(rel):
+    return rel.rstrip("/").rsplit("/", 1)[-1]
 
 
 def subid_text(m, text):
@@ -1145,8 +1186,8 @@ def report(plan, out=None, force=False):
             w("  %s\n" % n)
 
 
-def cmd_plan(node, force):
-    plan = make_plan(node, force)
+def cmd_plan(node, force, release=None):
+    plan = make_plan(node, force, release=release)
     report(plan, None, force)
     blocked = plan.blockers(force)
     say("\nNothing was changed. %s\n" % (
@@ -1155,7 +1196,7 @@ def cmd_plan(node, force):
     return EXIT_REFUSED if blocked else EXIT_OK
 
 
-def run_detached(what, force):
+def run_detached(what, force, release=None):
     """--run or --undo by hand on a real node: the work runs in its own transient unit, with no terminal of its
     own (its output goes to the journal and to a log file), so a dropped ssh connection cannot stop it half-way.
     This process only waits and then shows the log."""
@@ -1163,7 +1204,8 @@ def run_detached(what, force):
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     log = "/%s/%s-%s.log" % (BACKUP, what, stamp)
     since = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    args = [sys.executable, os.path.abspath(__file__), "--" + what] + (["--force"] if force else [])
+    args = ([sys.executable, os.path.abspath(__file__), "--" + what] + (["--force"] if force else [])
+            + (["--release", release] if release else []))
     say("Running in the unit %s (journalctl -u %s). If this connection drops, it goes on; its report is in %s.\n"
         % (unit, unit, log))
     r = subprocess.run(["systemd-run", "--unit=" + unit, "--wait", "--collect", "--quiet",
@@ -1183,10 +1225,10 @@ def detach(node):
     return not node.stage and os.environ.get("NXLX_CONVERT_DETACHED") != "1" and os.path.isdir("/run/systemd/system")
 
 
-def cmd_run(node, force):
+def cmd_run(node, force, release=None):
     if detach(node):
-        return run_detached("run", force)
-    plan = make_plan(node, force, mode="run")
+        return run_detached("run", force, release)
+    plan = make_plan(node, force, mode="run", release=release)
     report(plan, None, force)
     blocked = plan.blockers(force)
     if blocked:
@@ -1421,6 +1463,8 @@ def main(argv=None):
     g.add_argument("--undo", action="store_true", help="go back to the old names")
     ap.add_argument("--root", help="stage mode: the copy of a node to work on (tests)")
     ap.add_argument("--force", action="store_true", help="run even while a show is playing (only that check)")
+    ap.add_argument("--release", help="with --plan or --run: point current at this release folder of "
+                    "/opt/pvj/releases as part of the run (install.sh)")
     ap.add_argument("--auto", action="store_true", help=argparse.SUPPRESS)       # the undo timer: skip if confirmed
     a = ap.parse_args(argv)
     if a.root is not None and (not os.path.isabs(a.root) or not os.path.isdir(a.root) or a.root.rstrip("/") == ""):
@@ -1433,15 +1477,17 @@ def main(argv=None):
     if not node.stage and (a.run or a.undo or a.confirm) and os.geteuid() != 0:
         say("nxlx-convert: run as root (sudo), or use --plan or --root\n")
         return EXIT_REFUSED
+    if a.release is not None and (a.undo or a.confirm):
+        ap.error("--release goes with --plan or --run")
     if a.run:
-        return cmd_run(node, a.force)
+        return cmd_run(node, a.force, a.release)
     if a.confirm:
         return cmd_confirm(node)
     if a.undo:
         if not a.auto and detach(node):
             return run_detached("undo", a.force)
         return cmd_undo(node, a.force, a.auto)
-    return cmd_plan(node, a.force)
+    return cmd_plan(node, a.force, a.release)
 
 
 if __name__ == "__main__":

@@ -27,7 +27,7 @@ node's public key in DER form (SubjectPublicKeyInfo): the same value `openssl x5
 highest role the node gives to a device that arrives from another node on the list: `full` (Owner), `live`
 (Operator) or `none` (takes nobody in). Dates are for people to read and are never judged here.
 
-Standard library only, no import from the rest of pvj (tools/boxcert.py loads this file by its path).
+Standard library only, no import from the rest of mctl (tools/boxcert.py loads this file by its path).
 """
 import base64
 import binascii

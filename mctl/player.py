@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""pvj-player core: one mpv process controlled over its JSON IPC socket.
+"""nxlx-player core: one mpv process controlled over its JSON IPC socket.
 
 This replaces omxplayer plus D-Bus. A single long-lived mpv is started idle and
 clips are switched with `loadfile`, so changing clips does not tear down the
@@ -499,7 +499,7 @@ class Player:
                     if latescreen.no_screen_fallback(why, hardware.drm_connectors()):
                         latescreen.start(paths.player_state_dir(), log)
                 except Exception as e:
-                    log("pvj-player: renderer: a screen that comes later is not watched for (%s)" % e)
+                    log("nxlx-player: renderer: a screen that comes later is not watched for (%s)" % e)
         # mpv creates its socket owner-only (0600) whatever the umask, so the web panel (another user, same
         # group) could not reach it. A short-lived helper waits for the NEW socket and opens it to the group.
         detach_socket_opener(self.socket_path)
@@ -594,7 +594,7 @@ class Player:
                 return None
             if not self.is_running():
                 if not spawn:
-                    raise PlayerError("player service is not running (systemctl start pvj-player)")
+                    raise PlayerError("player service is not running (systemctl start nxlx-player)")
                 self._spawn(None, False)
             self._check_source()
             if not self.fades_native():
@@ -1064,7 +1064,7 @@ class Player:
             raise PlayerError("no playable files found")
         if not self.is_running():
             if not spawn:
-                raise PlayerError("player service is not running (systemctl start pvj-player)")
+                raise PlayerError("player service is not running (systemctl start nxlx-player)")
             self._spawn(audio_device, windowed)
         elif audio_device:
             self.ipc.request("set_property", "audio-device", audio_device)
@@ -1199,7 +1199,7 @@ class Player:
 
     def _play_pipe(self, path, width, height, fps, fmt="yuyv422", audio_delay=0.0):
         if not self.is_running():
-            raise PlayerError("player service is not running (systemctl start pvj-player)")
+            raise PlayerError("player service is not running (systemctl start nxlx-player)")
         self._undo_pipe_globals()
         opts = {"demuxer": "rawvideo", "demuxer-rawvideo-w": int(width), "demuxer-rawvideo-h": int(height),
                 "demuxer-rawvideo-mp-format": fmt, "demuxer-rawvideo-fps": int(fps) if fps == int(fps) else round(float(fps), 3), "cache": "no",
@@ -1963,7 +1963,7 @@ class Player:
             self._pipe, self._pipe_gone = False, None
             if not self.is_running():
                 if not spawn:
-                    raise PlayerError("player service is not running (systemctl start pvj-player)")
+                    raise PlayerError("player service is not running (systemctl start nxlx-player)")
                 self._spawn(None, False)
             self._undo_pipe_globals()
             previous = self._source

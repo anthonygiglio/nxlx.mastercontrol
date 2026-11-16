@@ -95,7 +95,7 @@ class ReportTest(unittest.TestCase):
         h = health.Health(api, run, sysfs=sysfs, proc=proc)
         with mock.patch("mctl.hardware.temperatures", lambda *a, **k: []):
             r = h.report()
-        self.assertEqual(r["helpers"][0], {"name": "pvj-sysd", "label": "System helper (restart, power off, clock)", "running": False})
+        self.assertEqual(r["helpers"][0], {"name": "nxlx-sysd", "label": "System helper (restart, power off, clock)", "running": False})
         self.assertEqual(r["overall"], "bad")
 
 

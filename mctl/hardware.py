@@ -148,7 +148,7 @@ def av_capable(kind):
 
 def playback_profile(board, has_desktop):
     """Suggested mpv settings for this board. Values are starting points that
-    pvj-selftest verifies on the real device."""
+    nxlx-selftest verifies on the real device."""
     kind = board["kind"]
     args = ["--hwdec=auto-safe"]
     notes = []
@@ -162,7 +162,7 @@ def playback_profile(board, has_desktop):
     if kind == "pi5":
         notes.append("Pi 5 has no hardware H.264 decode; use HEVC files or expect software decode.")
     if kind == "pi3":
-        notes.append("Pi 3 class is the weakest supported board; check heavy files with pvj-selftest first.")
+        notes.append("Pi 3 class is the weakest supported board; check heavy files with nxlx-selftest first.")
     return {"mpv_args": args, "notes": notes}
 
 
@@ -368,7 +368,7 @@ def va_drivers(root="/"):
 
 
 def va_decoding(root="/", machine=None):
-    """Whether a PC node can decode video in hardware through VA-API, as information (pvj-selftest reports it and never
+    """Whether a PC node can decode video in hardware through VA-API, as information (nxlx-selftest reports it and never
     fails on it). `available` is True, False, or None where VA-API is not how this board decodes (a Pi, not x86_64)."""
     machine = machine or platform.machine()
     render = sorted(os.path.basename(p) for p in glob.glob(os.path.join(root, "dev/dri/renderD*")))

@@ -24,7 +24,7 @@ BOX = "192.168.1.5"
 IP_JSON = [{"ifname": "lo", "addr_info": [{"family": "inet", "local": "127.0.0.1", "prefixlen": 8}]},
            {"ifname": "eth0", "addr_info": [{"family": "inet", "local": BOX, "prefixlen": 24},
                                             {"family": "inet6", "local": "fe80::1", "prefixlen": 64}]},
-           {"ifname": "wg-pvj", "addr_info": [{"family": "inet", "local": "10.99.0.2", "prefixlen": 24}]}]
+           {"ifname": "wg-nxlx", "addr_info": [{"family": "inet", "local": "10.99.0.2", "prefixlen": 24}]}]
 NETS = fb.local_nets(IP_JSON)
 T1 = {"name": "Desk tablet", "address": TABLET, "port": 9000}
 T2 = {"name": "Second tablet", "address": OTHER, "port": 9001}
@@ -166,7 +166,7 @@ class TargetTest(Base):
         makes does not."""
         def nets(name):
             return fb.local_nets([{"ifname": name, "addr_info": [{"family": "inet", "local": "172.17.0.1", "prefixlen": 16}]}])
-        for name in ("docker0", "veth1a2b", "br-4f5e", "tun0", "tap0", "wg0", "wg-pvj", "lo", "virbr0", "tailscale0", "", None, 5):
+        for name in ("docker0", "veth1a2b", "br-4f5e", "tun0", "tap0", "wg0", "wg-nxlx", "lo", "virbr0", "tailscale0", "", None, 5):
             self.assertEqual(nets(name), [], name)
         for name in ("eth0", "end0", "enx00e04c680001", "enp1s0", "wlan0", "wlan1", "usb0"):
             self.assertEqual(len(nets(name)), 1, name)

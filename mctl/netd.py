@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""pvj-netd: the small root helper that changes the wired and Wi-Fi network on behalf of the unprivileged panel.
+"""nxlx-netd: the small root helper that changes the wired and Wi-Fi network on behalf of the unprivileged panel.
 
-The panel (user pvj-web) cannot and must not run nmcli. It sends one JSON line over a Unix socket in
-its own folder /run/pvj/netd (root:pvj, 0750); this daemon re-validates everything with mctl.netcfg, runs only the fixed nmcli
+The panel (user nxlx-web) cannot and must not run nmcli. It sends one JSON line over a Unix socket in
+its own folder /run/nxlx/netd (root:nxlx-svc, 0750); this daemon re-validates everything with mctl.netcfg, runs only the fixed nmcli
 commands that come out of it (argument lists, never a shell), and keeps a safety net:
 
 * a change is built as a separate candidate profile; the confirmed profile is never edited in place
@@ -265,9 +265,19 @@ class NetService:
             if final:
                 try:
                     if self._run(final).returncode != 0:
-                        self.log("pvj-netd: kept the new network, but could not delete the old profile; it goes at the next change")
+                        self.log("nxlx-netd: kept the new network, but could not delete the old profile; it goes at the next change")
                 except NetError:
-                    self.log("pvj-netd: kept the new network, but could not delete the old profile; it goes at the next change")
+                    self.log("nxlx-netd: kept the new network, but could not delete the old profile; it goes at the next change")
+            # Before the rename of the system names (rename PR 7) the confirmed profile was called pvj-<iface>. A
+            # converted node keeps it (NetworkManager is not the converter's) until a change is confirmed here: then
+            # it is the old setup, and goes like any old profile, last and best effort.
+            legacy = netcfg.legacy_name(iface)
+            try:
+                if not wifi_off and self._exists(legacy) and \
+                        self._run(["nmcli", "connection", "delete", "id", legacy]).returncode != 0:
+                    self.log("nxlx-netd: kept the new network, but could not delete the profile %s; delete it by hand" % legacy)
+            except NetError:
+                self.log("nxlx-netd: kept the new network, but could not delete the profile %s; delete it by hand" % legacy)
             self.pending = None
             self._save_state(None)
             return self.status()
@@ -301,7 +311,7 @@ class NetService:
         try:
             cmds = netcfg.revert_plan(job["iface"], candidate_exists, job["uuid"], job.get("radio_was_off", False))
         except NetError as e:   # only a bad connection id in the saved state can get here
-            self.log("pvj-netd: cannot plan the undo: %s" % e)
+            self.log("nxlx-netd: cannot plan the undo: %s" % e)
             self._revert_job = None
             self._save_state(None)
             return False
@@ -324,7 +334,7 @@ class NetService:
         if job["tries"] == MAX_REVERT_TRIES:
             # Never dropped while running: a new change must not overwrite what is still owed. From now on
             # it is tried once a minute; the saved state also lets a restart take it over.
-            self.log("pvj-netd: STILL FAILING to undo a network change after %d tries; trying once a minute" % job["tries"])
+            self.log("nxlx-netd: STILL FAILING to undo a network change after %d tries; trying once a minute" % job["tries"])
         return False
 
     def tick(self):
@@ -385,7 +395,7 @@ class NetService:
             if token is not None and not (isinstance(token, str) and netcfg.TOKEN.fullmatch(token)):
                 raise ValueError("bad keyfile name")
         except (OSError, ValueError, KeyError, TypeError):
-            self.log("pvj-netd: ignoring an unreadable or invalid saved state")
+            self.log("nxlx-netd: ignoring an unreadable or invalid saved state")
             try:
                 os.unlink(self.state_file)
             except OSError:
@@ -523,12 +533,12 @@ class NetdClient:
         try:
             return json.loads(exchange(self.path, message, self.timeout))
         except (OSError, ValueError):
-            raise NetError("the network helper (pvj-netd) is not running")
+            raise NetError("the network helper (nxlx-netd) is not running")
 
 
 def safe_state_dir():
     """A directory only root can touch, or None (then no restart safety net, said loudly)."""
-    path = os.environ.get("STATE_DIRECTORY") or "/var/lib/pvj-netd"
+    path = os.environ.get("STATE_DIRECTORY") or "/var/lib/nxlx-netd"
     try:
         os.makedirs(path, mode=0o700, exist_ok=True)
         st = os.stat(path)
@@ -536,7 +546,7 @@ def safe_state_dir():
             return path
     except OSError:
         pass
-    print("pvj-netd: WARNING: %s is not private; pending changes will not survive a restart" % path, flush=True)
+    print("nxlx-netd: WARNING: %s is not private; pending changes will not survive a restart" % path, flush=True)
     return None
 
 
@@ -544,19 +554,19 @@ def main(argv=None):
     import grp
     import pwd
     import sys
-    rundir = os.environ.get("PVJ_RUNTIME_DIR") or paths.NETD_DIR     # its own folder, root:pvj 0750 (the unit)
+    rundir = os.environ.get("PVJ_RUNTIME_DIR") or paths.NETD_DIR     # its own folder, root:nxlx-svc 0750 (the unit)
     os.makedirs(rundir, mode=0o750, exist_ok=True)
     allowed = {0}
     try:
-        allowed.add(pwd.getpwnam("pvj-web").pw_uid)
+        allowed.add(pwd.getpwnam("nxlx-web").pw_uid)
     except KeyError:
         pass
     service = NetService(state_dir=safe_state_dir(), log=lambda m: print(m, flush=True))
     if service.recover():
-        print("pvj-netd: found an unconfirmed network change from before the restart and undid it", flush=True)
+        print("nxlx-netd: found an unconfirmed network change from before the restart and undid it", flush=True)
     server = NetServer(os.path.join(rundir, paths.NETD_SOCKET), service, lambda uid: uid in allowed)
     try:
-        os.chown(server.server_address, 0, grp.getgrnam("pvj").gr_gid, follow_symlinks=False)
+        os.chown(server.server_address, 0, grp.getgrnam("nxlx-svc").gr_gid, follow_symlinks=False)
     except (KeyError, OSError):
         pass
 
@@ -565,11 +575,11 @@ def main(argv=None):
             time.sleep(1)
             try:
                 if service.tick():
-                    print("pvj-netd: no confirmation arrived; the previous network setup was restored", flush=True)
+                    print("nxlx-netd: no confirmation arrived; the previous network setup was restored", flush=True)
             except Exception as e:  # never let the safety timer die
-                print("pvj-netd: timer error: %r" % (e,), file=sys.stderr, flush=True)
+                print("nxlx-netd: timer error: %r" % (e,), file=sys.stderr, flush=True)
     threading.Thread(target=ticker, daemon=True).start()
-    print("pvj-netd: ready", flush=True)
+    print("nxlx-netd: ready", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

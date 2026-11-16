@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""Ableton Link (D117), everything but the real helper (tests/test_pvj_link.py has that): the clock's new word and its
+"""Ableton Link (D117), everything but the real helper (tests/test_nxlx_link.py has that): the clock's new word and its
 hand-over, the record, the panel's side against a fake helper and a fake clock, stale records, no peers, the helper
 missing, the Owner's setting and who may touch it, and the rules the helper's source and its unit must keep. Nothing
 sleeps. Nothing here has met Ableton Live, a phone or a Pi."""
@@ -181,7 +181,7 @@ class RecordTest(unittest.TestCase):
         self.assertIsNone(link.read_state(self.dir), "a folder")
 
     def test_the_helpers_layout_says_the_same(self):
-        with open(os.path.join(REPO, "render", "link", "pvj-link.cpp")) as f:
+        with open(os.path.join(REPO, "render", "link", "nxlx-link.cpp")) as f:
             src = f.read()
         self.assertIn('"NXLK"', src)
         self.assertIn("RECORD_SIZE = %d" % link.SIZE, src)
@@ -191,7 +191,7 @@ class RecordTest(unittest.TestCase):
 
 
 class FakeHelper:
-    """Stands for the socket: answers as pvj-link does, and can be down."""
+    """Stands for the socket: answers as nxlx-link does, and can be down."""
 
     def __init__(self):
         self.on, self.up, self.asked = False, True, []
@@ -364,7 +364,7 @@ class SettingTest(unittest.TestCase):
         self.assertNotIn("link", soundout.DEFAULT)
 
     def test_the_runtime_paths(self):
-        self.assertEqual(paths.link_state(), "/run/pvj-link/state")
+        self.assertEqual(paths.link_state(), "/run/nxlx-link/state")
         self.assertEqual(paths.link_socket({"PVJ_LINK_DIR": "/x"}), "/x/link.sock")
 
 
@@ -423,13 +423,13 @@ class RouteTest(RolesBase):
 class UnitAndInstallTest(unittest.TestCase):
     def setUp(self):
         from tests.test_units import load_units
-        self.u = load_units()["pvj-link.service"]
+        self.u = load_units()["nxlx-link.service"]
         with open(os.path.join(REPO, "install", "install.sh")) as f:
             self.sh = f.read()
 
     def test_its_sandbox_is_exactly_this(self):
         u = self.u
-        self.assertEqual(u["User"], ["pvj-link"])
+        self.assertEqual(u["User"], ["nxlx-link"])
         self.assertEqual(u["CapabilityBoundingSet"], [""])
         self.assertNotIn("AmbientCapabilities", u)
         self.assertEqual(sorted(u["RestrictAddressFamilies"][0].split()), ["AF_INET", "AF_INET6", "AF_NETLINK", "AF_UNIX"])
@@ -441,20 +441,20 @@ class UnitAndInstallTest(unittest.TestCase):
         self.assertNotIn("SupplementaryGroups", u)
         self.assertNotIn("PrivateUsers", u)            # it would hide the caller's uid from the peer check
         self.assertNotIn("PrivateNetwork", u)
-        self.assertEqual(u["ExecStart"], ["@PVJ_DIR@/render/pvj-link"])
-        self.assertEqual(u["ConditionPathExists"], ["@PVJ_DIR@/render/pvj-link"], "where it could not be built the unit is skipped, no failure")
+        self.assertEqual(u["ExecStart"], ["@PVJ_DIR@/render/nxlx-link"])
+        self.assertEqual(u["ConditionPathExists"], ["@PVJ_DIR@/render/nxlx-link"], "where it could not be built the unit is skipped, no failure")
 
     def test_it_is_kept_from_what_the_rest_of_the_box_has(self):
         hidden = " ".join(self.u["InaccessiblePaths"])
-        for path in ("/var/lib/pvj", "/etc/pvj", "/run/pvj", "/run/pvj-sound", "/run/pvj-sysd", "/run/pvj-supportd"):
+        for path in ("/var/lib/nxlx", "/etc/nxlx", "/run/nxlx", "/run/nxlx-sound", "/run/nxlx-sysd", "/run/nxlx-supportd"):
             self.assertRegex(hidden, r"(^| )-?%s( |$)" % re.escape(path))
 
     def test_the_installer_makes_the_account_before_the_unit_and_only_the_panel_joins_its_group(self):
         sh = self.sh
-        self.assertIn("--gid pvj-link pvj-link", sh)
-        self.assertLess(sh.index("--gid pvj-link pvj-link"), sh.index('install/pvj-link.service" > "$LINK_UNIT"'))
-        self.assertEqual(re.findall(r"usermod -aG pvj-link (\S+)", sh), ["pvj-web"])
-        self.assertIn("systemctl enable pvj-link.service", sh)
+        self.assertIn("--gid nxlx-link nxlx-link", sh)
+        self.assertLess(sh.index("--gid nxlx-link nxlx-link"), sh.index('install/nxlx-link.service" > "$LINK_UNIT"'))
+        self.assertEqual(re.findall(r"usermod -aG nxlx-link (\S+)", sh), ["nxlx-web"])
+        self.assertIn("systemctl enable nxlx-link.service", sh)
         self.assertIn('"$LINK_UNIT"', sh[sh.index("uninstall() {"):sh.index("\n}\n", sh.index("uninstall() {"))])
 
     def test_a_missing_package_never_fails_an_install(self):
@@ -465,21 +465,21 @@ class UnitAndInstallTest(unittest.TestCase):
         self.assertIn('[ "$OFFLINE" = 1 ]', block, "--offline only says so")
         self.assertIn("|| log", block, "a failed apt-get is logged and the install goes on")
         self.assertNotIn(" die ", block)
-        build = sh[sh.index('rm -f "$RELEASE.new/render/pvj-link"'):sh.index('previous=""')]
+        build = sh[sh.index('rm -f "$RELEASE.new/render/nxlx-link"'):sh.index('run mv "$RELEASE.new" "$RELEASE"')]   # to the end of put_release
         self.assertNotIn(" die ", build)
         self.assertIn("nice -n 10 timeout 1200 make", build)
 
     def test_the_image_has_the_packages_and_enables_the_unit(self):
-        with open(os.path.join(REPO, "image", "stage-pvj", "00-install-pvj", "00-packages-nr")) as f:
+        with open(os.path.join(REPO, "image", "stage-nxlx", "00-install-nxlx", "00-packages-nr")) as f:
             pkgs = f.read().split()
         self.assertEqual({"g++", "ableton-link-dev", "libasio-dev"} - set(pkgs), set())
-        with open(os.path.join(REPO, "image", "stage-pvj", "00-install-pvj", "01-run.sh")) as f:
-            self.assertIn("pvj-link.service", f.read())
+        with open(os.path.join(REPO, "image", "stage-nxlx", "00-install-nxlx", "01-run.sh")) as f:
+            self.assertIn("nxlx-link.service", f.read())
 
 
 class SourceRulesTest(unittest.TestCase):
     def setUp(self):
-        with open(os.path.join(REPO, "render", "link", "pvj-link.cpp")) as f:
+        with open(os.path.join(REPO, "render", "link", "nxlx-link.cpp")) as f:
             self.src = f.read()
         self.code = re.sub(r"//.*", "", self.src)
 
@@ -506,7 +506,7 @@ class SourceRulesTest(unittest.TestCase):
             mk = f.read()
         first = re.search(r"(?m)^([a-z][a-z-]*):", mk).group(1)
         self.assertEqual(first, "mctl-render", "plain make, and with it CI's jobs without the package, builds the renderer only")
-        self.assertNotIn("pvj-link", mk.split("# pvj-link (D117)")[0])
+        self.assertNotIn("nxlx-link", mk.split("# nxlx-link (D117)")[0])
 
 
 if __name__ == "__main__":

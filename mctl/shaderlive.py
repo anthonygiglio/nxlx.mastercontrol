@@ -851,7 +851,7 @@ class Changer:
                     self._last = self._clock()
                     self._release = self._last + EVENT_HOLD if held else None
         except Exception as e:                      # a refusal is already recorded by the engine; nothing may end the worker
-            self.engine.log("pvj-web: a shader change failed: %s" % (getattr(e, "message", None) or e))
+            self.engine.log("nxlx-web: a shader change failed: %s" % (getattr(e, "message", None) or e))
         return True
 
     def _loop(self):
@@ -1341,7 +1341,7 @@ class LiveEngine(S.Engine):
             cfg.setdefault("heavy", {})[sid] = mark
             self._save(cfg)
         if verdict:
-            self.log("pvj-web: shader %s drops %s frames a second at %d lines: too heavy on this box, left out of rotations"
+            self.log("nxlx-web: shader %s drops %s frames a second at %d lines: too heavy on this box, left out of rotations"
                      % (sid, drops, lines))
 
     def unmark(self, ids):
@@ -1497,7 +1497,7 @@ class LiveEngine(S.Engine):
                 if len(self._bad) >= 256:
                     self._bad.clear()
                 self._bad[key] = message
-                self.log("pvj-web: shader %s refused with new values: %s" % (p["id"], message))
+                self.log("nxlx-web: shader %s refused with new values: %s" % (p["id"], message))
                 return False
             if verdict == "ok":
                 self._checked.add(key)
@@ -1547,7 +1547,7 @@ class LiveEngine(S.Engine):
                 epoch = again
                 job["made"] = [epoch]
             if shown is None:                       # never silent: a wish that was dropped says so in the journal
-                self.log("pvj-web: shader %s, asked for from a controller, was not shown: something else was played or "
+                self.log("nxlx-web: shader %s, asked for from a controller, was not shown: something else was played or "
                          "stopped after it was asked for" % job["id"])
         except ApiError as e:
             self.error = {"id": job["id"], "message": e.message, "at": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -1611,7 +1611,7 @@ class LiveEngine(S.Engine):
             return False
         ids = self.vibes_ids()
         if not ids:                                 # emptied since the press, which had one: said in the log, as it
-            self.log("pvj-web: a step to the next shader found none in the active set that can be shown")
+            self.log("nxlx-web: a step to the next shader found none in the active set that can be shown")
             return False                            # is nobody's shader that failed (`error` names a shader)
         on = self.on_screen()                       # the worker does one job at a time: the job before this one is
         at = on["id"] if on else None               # over, and what it showed (or what came back when the GPU
@@ -1658,9 +1658,9 @@ class LiveEngine(S.Engine):
         if waiting is None:
             return
         if "steps" in waiting:
-            self.log("pvj-web: %d step(s) to the next shader, asked for from a controller, were not carried out: %s" % (waiting.get("presses", 0), why))
+            self.log("nxlx-web: %d step(s) to the next shader, asked for from a controller, were not carried out: %s" % (waiting.get("presses", 0), why))
         else:
-            self.log("pvj-web: shader %s, asked for from a controller, was not shown: %s" % (waiting.get("id"), why))
+            self.log("nxlx-web: shader %s, asked for from a controller, was not shown: %s" % (waiting.get("id"), why))
 
     def queue_show(self, sid, preset=None, moment=None):
         """Put a whole shader on from the worker, for a caller that must not wait for the GPU (a controller's pad, a

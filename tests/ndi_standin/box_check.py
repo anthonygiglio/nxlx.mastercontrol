@@ -36,8 +36,8 @@ import mpvword  # noqa: E402
 from mpvword import CASES, FRAMES_A_SECOND, HEIGHT, WIDTH, Failed, wait  # noqa: E402
 
 BASE = os.environ.get("PVJ_PANEL", "http://127.0.0.1")
-PLAYER = os.environ.get("PVJ_PLAYER_SOCKET", "/run/pvj/player/player.sock")
-PIPE = os.environ.get("PVJ_NDI_PIPE", "/run/pvj-ndi-pipe/ndi.fifo")
+PLAYER = os.environ.get("PVJ_PLAYER_SOCKET", "/run/nxlx/player/player.sock")
+PIPE = os.environ.get("PVJ_NDI_PIPE", "/run/nxlx-ndi-pipe/ndi.fifo")
 ASKED = ("path", "idle-active", "core-idle", "pause", "eof-reached", "playback-time", "time-pos", "audio-pts", "track-list/count",
          "track-list", "video-params", "audio-params", "vo-configured", "current-vo", "current-ao", "video-codec", "audio-codec-name",
          "estimated-frame-number", "frame-drop-count", "demuxer-cache-state/underrun", "paused-for-cache", "seeking", "mpv-version")

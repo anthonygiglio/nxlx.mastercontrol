@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Ableton Link, the panel's side (D117, mctl/SOUND.md).
 
-The helper `pvj-link` (render/link/, GPL, its own unit and account) joins a Link session and only follows: it reads the
-tempo and the place in a four-beat bar and writes them into one small file, `/run/pvj-link/state`. This module holds the
+The helper `nxlx-link` (render/link/, GPL, its own unit and account) joins a Link session and only follows: it reads the
+tempo and the place in a four-beat bar and writes them into one small file, `/run/nxlx-link/state`. This module holds the
 Owner's switch (the setting `link`, the box's own), tells the helper on or off over its socket, again after a restart of
 either, and hands what the file says to the box clock (mctl/clock.py). Off is the default.
 
@@ -26,7 +26,7 @@ import zlib
 
 from . import paths
 
-# --- the record (render/link/pvj-link.cpp has the table) ---------------------------------------------------------------
+# --- the record (render/link/nxlx-link.cpp has the table) ---------------------------------------------------------------
 MAGIC = b"NXLK"
 VERSION = 1
 SIZE = 56

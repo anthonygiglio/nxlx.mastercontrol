@@ -407,7 +407,7 @@ class Room:
             except Exception as e:                    # never lose the thread, never leave a step without an answer
                 self._finish(slot, live[:1], "failed", "error: %s" % e, rest=live)
                 try:
-                    self.log("pvj-web: room: %s" % e)
+                    self.log("nxlx-web: room: %s" % e)
                 except Exception:
                     pass
 

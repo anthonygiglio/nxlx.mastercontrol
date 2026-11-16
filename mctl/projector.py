@@ -1040,7 +1040,7 @@ class Monitor:
                 w.due = 0.0
                 self._notice[w.pid] = notice
         if not notice["ok"]:
-            self.log("pvj-web: projector %s: %s" % (entry["name"], notice["text"]))
+            self.log("nxlx-web: projector %s: %s" % (entry["name"], notice["text"]))
 
     # -- the status --
     def _poll(self, w, entry):
@@ -1096,7 +1096,7 @@ class Monitor:
                 self._loop(w)
             except Exception as e:                  # never lose the thread's place in the count
                 try:
-                    self.log("pvj-web: projector check: %s" % e)
+                    self.log("nxlx-web: projector check: %s" % e)
                 except Exception:
                     pass
             w = self._after(w)

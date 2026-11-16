@@ -553,7 +553,7 @@ class Diagnostics(base.BoxBase):
             code = self.digits()
             secrets = self.api.boxcare._secrets(self.settings.data)
             self.assertIn(code, secrets)
-            line = "Oct 07 21:04:11 box pvj-web[411]: GET /#code=%s and again %s." % (code, code)
+            line = "Oct 07 21:04:11 box nxlx-web[411]: GET /#code=%s and again %s." % (code, code)
             self.assertNotIn(code, json.dumps(boxcare.scrub({"log": [line], "note": "seen %s" % code}, secrets)))
             self.tap(note)
         self.assertNotIn(None, self.api.boxcare._secrets(self.settings.data))

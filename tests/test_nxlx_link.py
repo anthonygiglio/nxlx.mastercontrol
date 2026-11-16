@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""The real helper pvj-link (render/link/, D117) beside a real stand-in peer, on this machine's own network.
+"""The real helper nxlx-link (render/link/, D117) beside a real stand-in peer, on this machine's own network.
 
 Skipped unless PVJ_LINK_TEST=1 and both programs are built: most machines have no ableton-link-dev, and those must stay
-green. CI's job pvj-link builds them on Debian 13 and treats a skip as a failure. Bounded: every wait here has an end.
+green. CI's job nxlx-link builds them on Debian 13 and treats a skip as a failure. Bounded: every wait here has an end.
 Nothing here has met Ableton Live, a phone or a Pi."""
 import json
 import os
@@ -18,8 +18,8 @@ import tests  # noqa: F401  (test_lockrank: the package's temp folder and lock c
 from mctl import link
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-HELPER = os.path.join(HERE, "render", "pvj-link")
-PEER = os.path.join(HERE, "render", "pvj-link-peer")
+HELPER = os.path.join(HERE, "render", "nxlx-link")
+PEER = os.path.join(HERE, "render", "nxlx-link-peer")
 
 
 def has_multicast_network():
@@ -40,10 +40,10 @@ def wait_for(look, seconds):
 class RealHelperTest(unittest.TestCase):
     def setUp(self):
         if not (os.access(HELPER, os.X_OK) and os.access(PEER, os.X_OK)):
-            self.skipTest("make -C render pvj-link pvj-link-peer first")
+            self.skipTest("make -C render nxlx-link nxlx-link-peer first")
         if not has_multicast_network():
             self.skipTest("no network but the loopback")
-        self.dir = tempfile.mkdtemp(prefix="pvj-link-")
+        self.dir = tempfile.mkdtemp(prefix="nxlx-link-")
         self.addCleanup(shutil.rmtree, self.dir, True)
         self.helper = subprocess.Popen([HELPER], env=dict(os.environ, PVJ_LINK_DIR=self.dir), stdout=subprocess.DEVNULL)
         self.addCleanup(self.stop, self.helper)

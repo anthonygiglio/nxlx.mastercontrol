@@ -90,7 +90,7 @@ class Watcher:
             screenmode.write_json(self.path, {"boot": self.boot, "switches": self._switches()})
         except OSError as e:
             self.floor = True
-            self.log("pvj-player: renderer: the count of switches cannot be kept (%s); no switch comes sooner than %d s "
+            self.log("nxlx-player: renderer: the count of switches cannot be kept (%s); no switch comes sooner than %d s "
                      "after the player starts, whatever the count says" % (e.strerror or e, self.gap))
 
     def _switches(self):
@@ -136,7 +136,7 @@ class Watcher:
             screenmode.write_json(self.path, {"boot": self.boot, "switches": switches})
         except OSError:
             pass                    # said at the start if the file cannot be written; the next watcher then has the floor
-        self.log("pvj-player: renderer: a screen is connected now (%s) and mctl-render did not start only because there "
+        self.log("nxlx-player: renderer: a screen is connected now (%s) and mctl-render did not start only because there "
                  "was none; restarting the player once so that mctl-render draws (the next switch waits at least %d s)"
                  % (", ".join(names), wait_next))
         self.end_player()
@@ -176,7 +176,7 @@ def start(rundir, log, env=None, boot=None):
         began = start_time(pid)
         if began is None:
             return False
-        log("pvj-player: renderer: no screen with a mode is connected; watching for one, to start mctl-render when it comes")
+        log("nxlx-player: renderer: no screen with a mode is connected; watching for one, to start mctl-render when it comes")
         child = os.fork()
     except Exception:
         return False

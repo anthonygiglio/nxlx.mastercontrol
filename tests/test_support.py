@@ -20,7 +20,7 @@ class FakeRun:
     """Records every command; `fail` makes the command starting with those words fail."""
 
     def __init__(self):
-        self.link = False                    # whether wg-pvj exists, as the real `ip` would say
+        self.link = False                    # whether wg-nxlx exists, as the real `ip` would say
         self.stuck = False                   # `ip link delete` fails and the link stays
         self.calls, self.fail, self.dump = [], None, "priv\tpub\t51820\toff\n%s\t(none)\t1.2.3.4:51820\t10.77.0.0/24\t1790000000\t1200\t3400\t25\n" % KEY
 
@@ -109,10 +109,10 @@ class ValidationTest(unittest.TestCase):
 
     def test_the_firewall_lets_in_only_the_panel_and_ping(self):
         r = sd.ruleset("10.77.0.0/24", "10.77.0.5", 8080)
-        self.assertIn('iifname "wg-pvj" ip saddr 10.77.0.0/24 tcp dport 8080 ct state new accept', r)
-        self.assertIn('iifname "wg-pvj" ip daddr != 10.77.0.5 drop', r)          # only this box's tunnel address
-        self.assertIn('iifname "wg-pvj" drop', r)
-        self.assertIn('oifname "wg-pvj" drop', r)                 # the box starts nothing into the tunnel
+        self.assertIn('iifname "wg-nxlx" ip saddr 10.77.0.0/24 tcp dport 8080 ct state new accept', r)
+        self.assertIn('iifname "wg-nxlx" ip daddr != 10.77.0.5 drop', r)          # only this box's tunnel address
+        self.assertIn('iifname "wg-nxlx" drop', r)
+        self.assertIn('oifname "wg-nxlx" drop', r)                 # the box starts nothing into the tunnel
         self.assertNotIn("22", r.replace("10.77.0.0/24", ""))       # no SSH, nothing else
         self.assertLess(r.index("daddr !="), r.index("established"))
 
@@ -123,12 +123,12 @@ class HelperTest(unittest.TestCase):
         reply = svc.handle(dict(CFG, cmd="start", minutes=60))
         self.assertTrue(reply["active"], reply)
         names = [" ".join(c[:4]) for c in run.calls]
-        up = names.index("ip link set wg-pvj")
+        up = names.index("ip link set wg-nxlx")
         self.assertLess(names.index("nft -f -"), up)                # the firewall is there before the link is up
         wg = [c for c in run.calls if c[:2] == ["wg", "set"]][0]
         self.assertEqual(wg[wg.index("allowed-ips") + 1], "10.77.0.0/24")
         self.assertEqual(wg[wg.index("persistent-keepalive") + 1], "25")
-        self.assertIn(["ip", "address", "add", "10.77.0.5/24", "dev", "wg-pvj"], run.calls)
+        self.assertIn(["ip", "address", "add", "10.77.0.5/24", "dev", "wg-nxlx"], run.calls)
         st = svc.handle({"cmd": "status"})
         self.assertEqual((st["last_handshake"], st["received"], st["sent"], st["available"]), (1790000000, 1200, 3400, True))
 
@@ -431,7 +431,7 @@ class OverlapTest(SupportBase):
         self.api.support.networks_in_use = self.api._support_clash_networks
         self.api._ip_json = lambda: [{"ifname": "lo", "addr_info": [{"family": "inet", "local": "127.0.0.1", "prefixlen": 8}]},
                                      {"ifname": "eth0", "addr_info": [{"family": "inet", "local": "10.77.0.20", "prefixlen": 24}]},
-                                     {"ifname": "wg-pvj", "addr_info": [{"family": "inet", "local": "10.99.0.5", "prefixlen": 24}]}]
+                                     {"ifname": "wg-nxlx", "addr_info": [{"family": "inet", "local": "10.99.0.5", "prefixlen": 24}]}]
         st, body = self.h("POST", "/api/support/config", dict(CFG, allowed=True), self.full_dev)
         self.assertEqual(st, 400, body)
         self.assertIn("overlaps a network this node is on (10.77.0.0/24)", body["error"])

@@ -302,7 +302,7 @@ class SyncManager:
         now = self._clock()
         if now >= self._quiet_until:
             self._quiet_until = now + 10
-            self.log("pvj-web: sync: " + text)
+            self.log("nxlx-web: sync: " + text)
 
     # -- player access --
     def _get(self, prop):
@@ -376,7 +376,7 @@ class SyncManager:
         out = []
         try:
             for entry in self.api._ip_json():
-                if entry.get("ifname") in ("lo", "wg-pvj"):
+                if entry.get("ifname") in ("lo", "wg-nxlx"):
                     continue
                 for a in entry.get("addr_info", []):
                     if a.get("family") == "inet" and a.get("broadcast") and private(a.get("local", "")):
@@ -518,7 +518,7 @@ class SyncManager:
                     continue                     # someone else's server on the same network: follow one only
                 if self.server is None or self.server[0] != addr:
                     last = None
-                    self.log("pvj-web: sync: following the server at %s" % addr)
+                    self.log("nxlx-web: sync: following the server at %s" % addr)
                 if last is not None and msg["run"] == last[0] and msg["seq"] <= last[1]:
                     continue                     # old or repeated (a restarted server has a new run)
                 last = (msg["run"], msg["seq"])
@@ -536,7 +536,7 @@ class SyncManager:
             target(cfg, stop)
         except Exception as e:                   # a busy port, for example: say so on the card
             self.error = str(e)
-            self.log("pvj-web: sync stopped: %s" % e)
+            self.log("nxlx-web: sync stopped: %s" % e)
 
     # -- start, stop, status --
     def apply(self):

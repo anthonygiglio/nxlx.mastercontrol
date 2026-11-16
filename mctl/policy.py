@@ -33,7 +33,7 @@ OUTSIDE = {
     ("GET", "/api/preview.jpg"): "view",
     ("GET", "/api/qr.svg"): "live",
     ("POST", "/api/media/upload"): "live",
-    ("POST", "/api/graphics/upload"): "live",       # D129: logos; decoded by pvj-raster only
+    ("POST", "/api/graphics/upload"): "live",       # D129: logos; decoded by nxlx-raster only
     ("GET", "/api/graphics/thumb"): "live",
     ("GET", "/api/graphics/preview.png"): "live",     # D129: the node-made picture of one graphic
     ("POST", "/api/graphics/preview.png"): "live",    # D129: the same for a line as typed, which travels in the body and not in the address
@@ -415,7 +415,7 @@ class GuestControls:
 
         def finish(done):
             if done:
-                self.api.log("pvj-web: guest %s (device %s, from %s): %s %s"
+                self.api.log("nxlx-web: guest %s (device %s, from %s): %s %s"
                              % (json.dumps(str(device.get("name", ""))[:40]), who, client, path, json.dumps(body, sort_keys=True)[:160]))
                 return
             with self._lock:                    # it did not happen: the switch-off and the cooldown are given back

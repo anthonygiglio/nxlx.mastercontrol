@@ -793,14 +793,14 @@ class GuestLimitTest(RolesBase):
                 self.assertEqual(sorted(calling), SAVE_CALLERS[name], name)
 
     def test_every_guest_action_is_logged_with_the_devices_name(self):
-        named = self.auth.invite('Eve"\n pvj-web: owner PIN shown', "view")[1]
+        named = self.auth.invite('Eve"\n nxlx-web: owner PIN shown', "view")[1]
         self.assertEqual(self.h("POST", "/api/play", {"file": "a.mp4"}, named)[0], 200)
         mine = [line for line in self.lines if "guest " in line and "/api/play" in line]
         self.assertEqual(len(mine), 1, self.lines)
         self.assertIn(named["id"], mine[0])
         self.assertIn("a.mp4", mine[0])
         self.assertNotIn("\n", mine[0])                       # a name cannot start a line of its own in the journal
-        self.assertTrue(mine[0].startswith("pvj-web: guest \"Eve"))
+        self.assertTrue(mine[0].startswith("nxlx-web: guest \"Eve"))
         before = len(self.lines)
         self.h("POST", "/api/play", {"stream": "x"}, named)   # refused: nothing was done, nothing is claimed
         self.assertEqual(len(self.lines), before)

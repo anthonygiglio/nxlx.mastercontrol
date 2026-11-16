@@ -94,7 +94,7 @@ class Vibes:
 
     def _note(self, message):
         self.last = {"at": time.strftime("%Y-%m-%d %H:%M:%S"), "message": message}
-        self.log("pvj-web: vibes: %s" % message)
+        self.log("nxlx-web: vibes: %s" % message)
 
     def _end(self, message):
         """End the rotation (call with the state lock held, or from the one working thread)."""

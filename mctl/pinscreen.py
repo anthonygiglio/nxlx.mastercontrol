@@ -170,7 +170,7 @@ class PinScreen:
         try:
             gfx.watch()
         except Exception as e:
-            self.log("pvj-web: graphics: %s" % e)
+            self.log("nxlx-web: graphics: %s" % e)
 
     def _current(self):
         """The request being shown, or None (an expired one counts as None). Reads only; tick() does the clearing."""
@@ -253,7 +253,7 @@ class PinScreen:
         try:
             r.poll()
         except Exception as e:                      # a drive that vanished mid-scan must not stop the display
-            self.log("pvj-web: recovery stick check: %s" % e)
+            self.log("nxlx-web: recovery stick check: %s" % e)
         return r.active()
 
     def recovery_notice(self, name):
@@ -426,7 +426,7 @@ class PinScreen:
                 try:
                     self.tick()
                 except Exception as e:
-                    self.log("pvj-web: pin screen error: %s" % e)
+                    self.log("nxlx-web: pin screen error: %s" % e)
         self._thread = threading.Thread(target=loop, name="pinscreen", daemon=True)
         self._thread.start()
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-# Build a release bundle for pvj-update: dist/pvj-<version>.tar.gz, its .sha256
+# Build a release bundle for nxlx-update: dist/pvj-<version>.tar.gz, its .sha256
 # and (with --key) an OpenSSH signature dist/pvj-<version>.tar.gz.sig.
 #
 #   tools/make-release.sh 4.0.1 [--key ~/.ssh/pvj-release] [--allow-dirty]
@@ -24,10 +24,9 @@ while [ $# -gt 0 ]; do
 done
 
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "usage: $0 N.N.N [--key FILE]" >&2; exit 2; }
-# The package folder is mctl; for one release a checkout of the release before the rename (folder pvj) is
-# accepted too, so a rollback bundle can still be built from it.
+# The package folder is mctl. A bundle of a release from before the rename is built with that checkout's own copy of
+# this script (it works on the checkout it lives in).
 pkg=mctl
-[ -f mctl/__init__.py ] || pkg=pvj
 declared="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$pkg/__init__.py")"
 [ "$declared" = "$version" ] || { echo "$pkg/__init__.py says $declared, not $version; update it first" >&2; exit 1; }
 
@@ -42,26 +41,13 @@ mkdir -p dist
 out="dist/pvj-$version.tar.gz"
 files="$(git ls-files "$pkg" bin install render | sort)"      # render/ is source only (D95): it is built on the box
 [ -n "$files" ] || { echo "no tracked files found (run inside the git checkout)" >&2; exit 1; }
-# The updater already installed on a node (the release before the rename) looks for pvj/__init__.py and
-# pvj/settings.py in a bundle, to read its version and settings schema (update.py, inspect_bundle), and refuses a
-# bundle without them. For one release the bundle therefore also holds those two files as stubs: just the
-# __version__ and SCHEMA lines. They are never imported and never installed: install.sh copies only the package
-# folder (mctl), bin and render into the release, and the updater reads them and goes on. Drop this with the
-# one-release window.
-stub="$(mktemp -d)"
-trap 'rm -rf "$stub"' EXIT
-stubargs=()
-if [ "$pkg" = mctl ]; then
-	schema="$(sed -n 's/^SCHEMA = \([0-9][0-9]*\)$/\1/p' mctl/settings.py)"
-	[ -n "$schema" ] || { echo "cannot read SCHEMA from mctl/settings.py" >&2; exit 1; }
-	mkdir "$stub/pvj"
-	printf '# A stub for the updater of the release before the rename. Not code: never imported, never installed.\n__version__ = "%s"\n' "$version" > "$stub/pvj/__init__.py"
-	printf '# A stub for the updater of the release before the rename. Not code: never imported, never installed.\nSCHEMA = %s\n' "$schema" > "$stub/pvj/settings.py"
-	stubargs=(-C "$stub" pvj/__init__.py pvj/settings.py)
-fi
+# No stubs for the updater of the releases before the rename (PR 6 had them, for one release): from the rename of the
+# system names (PR 7) on, that updater must refuse this bundle, and does, because it has no bin/pvj-player. Its
+# installer would have to rename the node under a running update; the first install of this release on such a node is
+# install.sh over ssh, which converts the node (bin/nxlx-convert).
 # shellcheck disable=SC2086
 tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner --transform "s,^,pvj-$version/," \
-	-cf - $files ${stubargs[@]+"${stubargs[@]}"} | gzip -n -9 > "$out"
+	-cf - $files | gzip -n -9 > "$out"
 sum="$(sha256sum "$out" | cut -d' ' -f1)"
 printf '%s  %s\n' "$sum" "$(basename "$out")" > "$out.sha256"
 echo "built $out"
@@ -72,5 +58,5 @@ if [ -n "$key" ]; then
 	ssh-keygen -Y sign -f "$key" -n pvj-release "$out" >/dev/null
 	echo "signed $out.sig"
 else
-	echo "not signed (pass --key to sign); pvj-update refuses unsigned bundles" >&2
+	echo "not signed (pass --key to sign); nxlx-update refuses unsigned bundles" >&2
 fi

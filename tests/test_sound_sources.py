@@ -319,7 +319,7 @@ class OscInTest(unittest.TestCase):
 class SourceRoutesTest(RolesBase):
     def setUp(self):
         super().setUp()
-        self.sdir = tempfile.mkdtemp(prefix="pvj-sound-src-")
+        self.sdir = tempfile.mkdtemp(prefix="nxlx-sound-src-")
         self.addCleanup(shutil.rmtree, self.sdir, True)
         self.api.sound = soundout.Sound(self.api, socket_path=os.path.join(self.sdir, "none.sock"),
                                         levels_path=os.path.join(self.sdir, "levels"), proc=with_stream(self), log=lambda *_: None)

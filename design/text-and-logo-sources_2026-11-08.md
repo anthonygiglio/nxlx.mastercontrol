@@ -297,7 +297,7 @@ end of this section).
    (`\x89PNG`), JPEG (`\xFF\xD8\xFF`) or SVG (text starting, after optional BOM and whitespace, with `<?xml` or
    `<svg`); the extension must agree with the magic; PNG and JPEG **dimensions read from the header** and refused above
    the limits below (as `overlay.py` does for masks) before any decoder sees the file.
-3. **Decode in `pvj-raster`**, a new small program run as its own systemd service, one process per job
+3. **Decode in `nxlx-raster`**, a new small program run as its own systemd service, one process per job
    (`Accept=yes` socket activation), under its own account, with: no network (`PrivateNetwork=yes`), no access to the
    media or settings folders, read-only system (`ProtectSystem=strict`), `NoNewPrivileges`, a syscall filter
    (`SystemCallFilter=@system-service` minus `@privileged`), `RLIMIT_AS` 512 MB, `RLIMIT_CPU` 10 s, `MemoryMax=256M`, and
@@ -346,13 +346,13 @@ network. If it is hijacked, it can only read the one file it was given and write
 other files, no raising its rights, no more than 512 MB, no more than 15 s. This is the same reason the NDI runtime
 is in its own unprivileged service (D62). The libraries are libpng, libjpeg-turbo, FreeType (text and, later, fonts)
 and the vendored SVG parser; the first three are already on the node as dependencies of mpv, which is what D100 uses
-to decode masks today. The difference is that mpv runs with the whole of ffmpeg's demuxers, while `pvj-raster` links
-only the three it needs. (The mask converter of D100 stays as it is; masks can move to `pvj-raster` later.)
+to decode masks today. The difference is that mpv runs with the whole of ffmpeg's demuxers, while `nxlx-raster` links
+only the three it needs. (The mask converter of D100 stays as it is; masks can move to `nxlx-raster` later.)
 
 ### 7.5 What the independent review must cover (a separate task, after slice 1)
 
 - The header checks, the magic-byte check and the order (nothing decoded before them).
-- `pvj-raster`'s unit file and its seccomp list; try to read `/var/lib/pvj/settings.json` and open a socket from inside.
+- `nxlx-raster`'s unit file and its seccomp list; try to read `/var/lib/nxlx/settings.json` and open a socket from inside.
 - Fuzz the PNG, JPEG and SVG paths for an hour (libFuzzer or AFL) and run the existing sample sets of malformed images.
 - SVG: entity expansion, huge coordinates, deep nesting, a 1 MB file of nothing but `<g>`.
 - Decompression bombs (a 40 MP PNG of one colour, a small file that expands); the memory and time kills.
@@ -485,7 +485,7 @@ real boards (Pi 4 and Pi 3 on the test rig, the desktop; the X27 only for the fi
 
 | # | Slice | Gives | Device rows |
 | --- | --- | --- | --- |
-| 1 | **The rasteriser and safe logo upload.** `pvj-raster` (PNG, JPEG, SVG to normalised PNG), its socket-activated unit, the graphics store, Library > Graphics tab with upload, thumbnails, rename, delete, the limits of 7.2. Nothing is drawn yet. Then the **independent review** (7.5) before slice 2 builds on it. | Logos can be uploaded safely and seen as thumbnails. | Pi 4 and Pi 3: upload a 3 MB PNG, a JPG, a clean SVG; a text-in-SVG and a 12 MB PNG are refused in plain words; a truncated PNG is refused; node memory and CPU do not move during a refused bomb; `systemctl status` shows the unit with no network. |
+| 1 | **The rasteriser and safe logo upload.** `nxlx-raster` (PNG, JPEG, SVG to normalised PNG), its socket-activated unit, the graphics store, Library > Graphics tab with upload, thumbnails, rename, delete, the limits of 7.2. Nothing is drawn yet. Then the **independent review** (7.5) before slice 2 builds on it. | Logos can be uploaded safely and seen as thumbnails. | Pi 4 and Pi 3: upload a 3 MB PNG, a JPG, a clean SVG; a text-in-SVG and a 12 MB PNG are refused in plain words; a truncated PNG is refused; node memory and CPU do not move during a refused bomb; `systemctl status` shows the unit with no network. |
 | 2 | **Static text and logos on every tier, through mpv.** Rasteriser gets text (FreeType, bundled fonts, licences added); the settings key, the routes, Play > Graphics (type, font, size, colour, outline, shadow, position, show and hide, Lines); drawn with `overlay-add` ids 20 to 27 from a worker; OSC `text`, `send`, `hide`. The lean-tier ASS spike. | The first thing Anthony can use on any node, including a Pi 3. | Pi 3, Pi 4 (classic and New), desktop: type a line and see it within 250 ms; change fonts; a phone and a laptop; the OSC push from TouchOSC; the clip keeps its rate; node restart brings back what was on; the X27 once. |
 | 3 | **The GPU graphics stage and motion.** In `mctl-render`: texture upload, the graphic quad, opacity, fade, typewriter, scroll, crawl, drawn over the screen after the final pass; classic and lean keep slice 2's path. Frame cost numbers recorded. | Smooth motion on Pi 4, Pi 5 and desktop. | Pi 4 at 1080p output with a 1080p clip: scroll and crawl for 10 minutes at 60 flips and 0 dropped; Pi 5 and desktop with four graphics; fade tested at 0.5 and 5 s; a very long crawl refused with words; a node that falls back to classic mid-show still shows the static graphic. |
 | 4 | **Keying and effects.** Alpha, luma and chroma keys with the picker; up to three effects with alpha-aware effects added; baked versions for classic and lean. The alpha spike. | Logos from JPGs and green backdrops; glow and shadow. | A black-backed JPG with luma key; a green-screen logo with chroma; edges at 2 m; Pi 4 cost with a key moving and an effect on; the Pi 3 baked key matches the Pi 4's live key to the eye. |
@@ -502,7 +502,7 @@ also need the frame cost numbers in their descriptions.
 - **Alpha through the effect passes** may need more than the plan says; slice 4's first step is the spike.
 - **Two lists (masks and graphics)** may confuse. Section 9 explains the line and the panel will say it.
 - **Typed text as a safety issue.** An Operator can put any words on the wall; that is by design. A Guest cannot.
-- **A new C program** (`pvj-raster`) is more to maintain and to build in the image (FreeType, libpng, libjpeg-turbo
+- **A new C program** (`nxlx-raster`) is more to maintain and to build in the image (FreeType, libpng, libjpeg-turbo
   headers needed to build; the runtime libraries are already on the node as mpv's). Slice 1 includes the image's
   package list and a CI build with warnings as errors, as `render/` has.
 - **mpv 0.37 on the lean tier** may not animate ASS in an OSD overlay; the table has a fallback.

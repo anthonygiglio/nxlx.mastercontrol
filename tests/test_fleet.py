@@ -353,7 +353,7 @@ class FleetTest(unittest.TestCase):
         self.assertEqual(f.state, "announcing")
 
     def test_without_the_helper_it_keeps_working_and_says_so(self):
-        for sysd in (None, FakeSysd(fail=OSError("the system helper (pvj-sysd) is not running"))):
+        for sysd in (None, FakeSysd(fail=OSError("the system helper (nxlx-sysd) is not running"))):
             f = fleet.Fleet(lambda: dict(self.facts), lambda: self.on, sysd, lambda: [], log=self.lines.append, event=lambda *a: None, now=self.clock)
             f.tick()
             self.assertEqual(f.state, "no-helper")
@@ -369,7 +369,7 @@ class FleetTest(unittest.TestCase):
         self.assertNotIn("/", f.view()["discovery"]["detail"])
 
     def test_a_failure_that_repeats_is_logged_once_not_every_minute(self):
-        f = self.make(sysd=FakeSysd(fail=OSError("the system helper (pvj-sysd) is not running")))
+        f = self.make(sysd=FakeSysd(fail=OSError("the system helper (nxlx-sysd) is not running")))
         for _ in range(4):
             f.tick()
             self.clock.t += 61

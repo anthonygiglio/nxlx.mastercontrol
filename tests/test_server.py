@@ -525,7 +525,7 @@ class ServerTest(ServerBase):
         self.assertEqual(st, 200)
         with open(os.path.join(self.rundir, "pin")) as f:
             self.assertEqual(f.read().strip(), body["pin"])
-        self.assertEqual(oct(os.stat(os.path.join(self.rundir, "pin")).st_mode & 0o777), "0o600")   # not for group pvj (D45)
+        self.assertEqual(oct(os.stat(os.path.join(self.rundir, "pin")).st_mode & 0o777), "0o600")   # not for group nxlx-svc (D45)
         if body["pin"] != old:
             self.assertEqual(self.call("POST", "/api/pair", {"pin": old})[0], 403)
         self.assertEqual(self.call("GET", "/api/status", token=token)[0], 200)  # paired device stays paired
@@ -929,7 +929,7 @@ class NetworkApiTest(ServerBase):
         st, plan, _ = self.call("POST", "/api/network/plan", self.STATIC, token=self.token)
         self.assertEqual(st, 200)
         self.assertTrue(any("192.168.50.20/24" in c for c in plan["commands"]))
-        self.assertNotIn("pvj-eth0-try", self.nm.profiles)  # a plan changes nothing
+        self.assertNotIn("nxlx-eth0-try", self.nm.profiles)  # a plan changes nothing
         st, body, _ = self.call("POST", "/api/network/apply", self.STATIC, token=self.token)
         self.assertEqual((st, body["pending"]["iface"]), (200, "eth0"))
         self.assertEqual(self.call("POST", "/api/network/apply", {"iface": "eth0", "mode": "dhcp"}, token=self.token)[0], 409)
@@ -938,7 +938,7 @@ class NetworkApiTest(ServerBase):
         self.call("POST", "/api/network/apply", self.STATIC, token=self.token)
         st, body, _ = self.call("POST", "/api/network/confirm", {}, token=self.token)
         self.assertEqual((st, body["pending"]), (200, None))
-        self.assertEqual(self.nm.profiles["pvj-eth0"]["connection.autoconnect"], "yes")
+        self.assertEqual(self.nm.profiles["nxlx-eth0"]["connection.autoconnect"], "yes")
         self.assertEqual(self.call("POST", "/api/network/confirm", {}, token=self.token)[0], 409)  # nothing pending
 
     WIFI = {"iface": "wlan0", "mode": "dhcp", "ssid": "Leyline Staff", "password": "s3cret pass"}
@@ -954,7 +954,7 @@ class NetworkApiTest(ServerBase):
         self.assertEqual((st, body["pending"]["ssid"], body["config"]["password_set"]), (200, "Leyline Staff", True))
         _, status, _ = self.call("GET", "/api/network", token=self.token)
         self.assertNotIn("s3cret", json.dumps([plan, body, status]))
-        self.assertEqual(self.nm.profiles["pvj-wlan0-try"]["_kf"]["wifi-security.psk"], "s3cret\\spass")
+        self.assertEqual(self.nm.profiles["nxlx-wlan0-try"]["_kf"]["wifi-security.psk"], "s3cret\\spass")
         self.assertEqual(self.call("POST", "/api/network/confirm", {}, token=self.token)[0], 200)
         _, status, _ = self.call("GET", "/api/network", token=self.token)
         self.assertEqual(status["wifi"]["ports"]["wlan0"], {"ssid": "Leyline Staff", "hotspot": False})
@@ -982,10 +982,10 @@ class NetworkApiTest(ServerBase):
 
         class Down:
             def request(_, message):
-                raise NetError("the network helper (pvj-netd) is not running")
+                raise NetError("the network helper (nxlx-netd) is not running")
         self.api.net = Down()
         st, body, _ = self.call("POST", "/api/network/apply", self.STATIC, token=self.token)
-        self.assertEqual((st, body["error"]), (503, "the network helper (pvj-netd) is not running"))
+        self.assertEqual((st, body["error"]), (503, "the network helper (nxlx-netd) is not running"))
         st, body, _ = self.call("GET", "/api/network", token=self.token)
         self.assertEqual((st, body["helper"]), (200, False))
         self.assertEqual(self.call("POST", "/api/network/plan", self.STATIC, token=self.token)[0], 200)  # local preview
@@ -1009,7 +1009,7 @@ class NetworkApiTest(ServerBase):
 
     def test_failed_apply_reports_the_restored_state(self):
         self.enable()
-        self.nm.fail_on = "connection up id pvj-eth0-try"
+        self.nm.fail_on = "connection up id nxlx-eth0-try"
         st, body, _ = self.call("POST", "/api/network/apply", self.STATIC, token=self.token)
         self.assertEqual(st, 409)
         self.assertIn("previous setup was restored", body["error"])

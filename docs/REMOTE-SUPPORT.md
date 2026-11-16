@@ -50,7 +50,7 @@ A small Linux server with a fixed public address (any cheap VPS; Debian or Ubunt
 3. For each box: in its panel (Setup > Remote support), copy **This box's key**. On the server: `./add-peer.sh box studio-a <key>`; it tells you the box's address. In the box's panel, fill in the support server, the server key, the support network and that address, and save. Nothing connects until the studio starts a session.
 4. A lost or stolen box: `./add-peer.sh remove studio-a`.
 
-For a fleet, the server, its key and the network can be put in `/etc/pvj/support.json` on each box (`{"endpoint": "...", "server_key": "...", "network": "10.77.0.0/24"}`); the box's own address is still set per box. The file can never allow remote support by itself.
+For a fleet, the server, its key and the network can be put in `/etc/nxlx/support.json` on each box (`{"endpoint": "...", "server_key": "...", "network": "10.77.0.0/24"}`); the box's own address is still set per box. The file can never allow remote support by itself.
 
 ## What is trusted, and the limits
 
@@ -59,13 +59,13 @@ For a fleet, the server, its key and the network can be put in `/etc/pvj/support
 - **MIDI and controller lights are not held back from a support session.** Someone signed in through the tunnel with full access can change the MIDI page like anyone with full access in the room, including a controller's Lights switch, its brightness and Test lights (`POST /api/midi`, `POST /api/midi/lights`). That is the same rule as for the rest of the MIDI page and was left as it is on purpose: those calls can only say on, off, a brightness word or "test", and what reaches a controller is fixed by its profile file.
 
 - The support server sees panel traffic during a session (the panel is plain HTTP inside the encrypted tunnel) and can reach any box that has a session open. Keep it small, updated, and used only for this.
-- A box's private key never leaves it (`/var/lib/pvj-support`, root only). Removing the box on the server revokes it.
+- A box's private key never leaves it (`/var/lib/nxlx-support`, root only). Removing the box on the server revokes it.
 - A Pi has no clock battery. If it has not got the time from the network yet, the support server may refuse its first contact; the card then says "Waiting for the support server". Wait for the clock, or start the session again.
 - Networks that block outgoing UDP, or allow only a web proxy, cannot use this. A fallback over TCP is not built.
 
 ## How it is built
 
-`mctl/support.py` (the panel's side: settings, the session, the code, the rules above) and `mctl/supportd.py` (`pvj-supportd`, a small root helper with only the network-admin capability: it creates the WireGuard interface `wg-pvj` and its firewall table, keeps the deadline itself, and removes both when it starts, stops or the time is up). See D29 in `project-log/DECISIONS.md`.
+`mctl/support.py` (the panel's side: settings, the session, the code, the rules above) and `mctl/supportd.py` (`nxlx-supportd`, a small root helper with only the network-admin capability: it creates the WireGuard interface `wg-nxlx` and its firewall table, keeps the deadline itself, and removes both when it starts, stops or the time is up). See D29 in `project-log/DECISIONS.md`.
 
 ## Tested
 

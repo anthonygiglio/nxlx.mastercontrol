@@ -2,20 +2,20 @@
 # SPDX-License-Identifier: Apache-2.0
 """The box clock (D116): one tempo and one beat position for the whole box.
 
-pvj-sound hears single onsets and a rough tempo; nothing ran between beats. This clock is a flywheel: once it has a
+nxlx-sound hears single onsets and a rough tempo; nothing ran between beats. This clock is a flywheel: once it has a
 tempo it keeps the beat position by itself, so a gap in what feeds it (a tap that stopped, a program that went quiet, a
 band that stopped playing) does not stop the beat.
 
 Pure and standard-library only. Time comes in through the `now` function given to Clock (time.monotonic on the box), as
 in mctl/transitions.py, so a test needs no sleeping. It has no thread: the panel's once-a-second tick and whoever asks
-for a value move it on. All methods take an optional `now`; the ones OSC and pvj-sound feed never raise on odd input.
+for a value move it on. All methods take an optional `now`; the ones OSC and nxlx-sound feed never raise on odd input.
 
 Sources, most trusted first (SOURCES):
 
     link    Ableton Link through mctl/link.py: `link(bpm, phase, at)`, the tempo and the place in the bar (D117)
     tap     a person's hand: taps, or a tempo typed in
     osc     /nxlx/sound/in/beat and /bpm (mctl/soundout.py)
-    sound   pvj-sound's tempo and beats, only at a confidence of SOUND_MIN_CONFIDENCE or more
+    sound   nxlx-sound's tempo and beats, only at a confidence of SOUND_MIN_CONFIDENCE or more
 
 Each source's last word stays in charge for its own time (HOLD). A machine (osc, link, sound) that has gone quiet hands
 over to the next fresh one. The hand wins: a tap or a tempo set by number holds until `clear`, and sound never takes over
@@ -35,11 +35,11 @@ BAR_BEATS = 4                       # beats in a bar
 BPM_MIN, BPM_MAX = 30.0, 300.0      # a tempo outside this is refused
 TAP_MIN, TAP_MAX = 2, 8             # taps averaged: at least two, the last eight
 TAP_PAUSE = 2.0                     # a pause longer than this starts a new count
-SOUND_MIN_CONFIDENCE = 0.5          # pvj-sound is believed at this confidence or more
+SOUND_MIN_CONFIDENCE = 0.5          # nxlx-sound is believed at this confidence or more
 SOUND_CAPTURE = 0.3                 # a sound beat further than this from the grid (in beats) is a stray hit: ignored
 SOUND_GAIN = 0.15                   # a nearer one moves the phase by this share of its distance (0.045 beats at most)
 NUDGE_MAX = 0.5                     # the largest phase nudge by hand, in beats
-PULSE_SECONDS = 0.15                # the pulse is 1 at a beat and falls to 0 in this long (as pvj-sound's)
+PULSE_SECONDS = 0.15                # the pulse is 1 at a beat and falls to 0 in this long (as nxlx-sound's)
 SOURCES = ("link", "tap", "osc", "sound")
 FOLLOWED = ("link", "tap", "osc")    # the sources whose clock the beat pulse follows; sound is followed as it always was
 HOLD = {"link": 5.0, "tap": math.inf, "osc": 5.0, "sound": 3.0}     # seconds a word stays in charge; the hand holds until clear
@@ -247,7 +247,7 @@ class Clock:
             return True
 
     def sound(self, bpm, confidence, beats, at=None, now=None):
-        """What pvj-sound says: its tempo, confidence and beat count, and when the block was heard (`at`). Believed only
+        """What nxlx-sound says: its tempo, confidence and beat count, and when the block was heard (`at`). Believed only
         at SOUND_MIN_CONFIDENCE or more, and then for the tempo and a gentle push of the phase when a new beat came: a
         hit further than SOUND_CAPTURE beats from the grid is a stray and changes nothing. A tap or an OSC word is never
         overruled. Returns True if the word was taken."""

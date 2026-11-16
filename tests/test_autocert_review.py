@@ -361,7 +361,7 @@ class InstallOptionsTest(unittest.TestCase):
         self.addCleanup(__import__("shutil").rmtree, stage, True)
         r = subprocess.run(["bash", os.path.join(REPO, "install", "install.sh"), "--stage", stage] + list(args),
                            capture_output=True, text=True, timeout=300)
-        env = os.path.join(stage, "etc", "pvj", "pvj.env")
+        env = os.path.join(stage, "etc", "nxlx", "nxlx.env")
         return r, (read(env) if os.path.exists(env) else "")
 
     def test_l4_and_h2_the_signer_options(self):

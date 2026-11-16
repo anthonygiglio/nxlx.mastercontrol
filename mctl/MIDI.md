@@ -238,7 +238,7 @@ Each connected controller has a card: its name and state line, the switch "Stand
 
 ### Writing a profile for another controller
 
-Add one file, `mctl/controllers.d/<id>.json`; nothing else changes. All keys are required unless marked; unknown keys are refused, and a file that fails the check is left out with a line in the log (`journalctl -u pvj-web`). The test `tests/test_controllers.py` checks every file in the folder.
+Add one file, `mctl/controllers.d/<id>.json`; nothing else changes. All keys are required unless marked; unknown keys are refused, and a file that fails the check is left out with a line in the log (`journalctl -u nxlx-web`). The test `tests/test_controllers.py` checks every file in the folder.
 
 ```json
 {
@@ -415,7 +415,7 @@ Source: Korg's nanoKONTROL2 Parameter Guide (E1), page 9 (https://cdn.korg.com/u
 
 ### The service file
 
-Writing to a controller needs `DeviceAllow=char-alsa rw` in `pvj-web.service`; it was `r` before (D53 says what that allows and why). The installer writes the service file, and an update from the panel or a USB stick runs the installer, so both bring it. A box whose program files were copied over without the installer keeps the old service file: there the open for writing is refused, the card says **"Lights need the box's installer to run once."**, the controls work as before, and the box does not try again until the controller is plugged in again or a MIDI setting is changed. Run `install/install.sh --offline` as root once.
+Writing to a controller needs `DeviceAllow=char-alsa rw` in `nxlx-web.service`; it was `r` before (D53 says what that allows and why). The installer writes the service file, and an update from the panel or a USB stick runs the installer, so both bring it. A box whose program files were copied over without the installer keeps the old service file: there the open for writing is refused, the card says **"Lights need the box's installer to run once."**, the controls work as before, and the box does not try again until the controller is plugged in again or a MIDI setting is changed. Run `install/install.sh --offline` as root once.
 
 ## Learn: assign a control to an action
 
@@ -536,7 +536,7 @@ Anyone who can reach a controller plugged into the box can do this once it is on
 
 **Giving a control the action.** On a controller's card (Setup > MIDI controller) tap a pad or a button and choose the action, or use Learn. A fader, a knob and a program change cannot have it (a fader given it through Learn does nothing, see "A button, not a fader"). **On a Launchpad Mini the third round button along the top (Top 3, CC 106) shows a guest code**; while the switch is off it does nothing. No layout has the full access code: put it on a control yourself if you want it. The nanoKONTROL2 has no spare button (its one spare control is fader 8). The MIDI Mix's one spare button is Solo, which is held down while playing to reach the Solo+Mute row, so a hold on it would show a code by accident; it stays spare. On those two, give the action to a button you can do without.
 
-If nothing happens: is MIDI on, is the switch on (People and codes), did you hold for at least 3 seconds and then let go, and is the player running (the code is drawn by the player; if it cannot draw, no code is made). `journalctl -u pvj-web | grep "controller code"` says why a request was refused.
+If nothing happens: is MIDI on, is the switch on (People and codes), did you hold for at least 3 seconds and then let go, and is the player running (the code is drawn by the player; if it cannot draw, no code is made). `journalctl -u nxlx-web | grep "controller code"` says why a request was refused.
 
 **None of this has run on the Pi or met a real controller.** It ran in unit tests with a fake clock, a fake player and messages handed to the hub.
 

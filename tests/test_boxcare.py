@@ -993,14 +993,14 @@ class DiagnosticsTest(Base):
         self.assertEqual(len(joins), 2)
         raw_code = code.replace("-", "")
         log = "\n".join([
-            "2026-10-03T10:00:00+0000 box pvj-web[1]: pvj-web: listening on 0.0.0.0:80; pairing PIN %s (also in /run/pvj/pin)" % PIN,
-            "2026-10-02T09:00:00+0000 box pvj-web[1]: pvj-web: listening on 0.0.0.0:80; pairing PIN 7305 (also in /run/pvj/pin)",
-            "2026-10-03T10:00:01+0000 box pvj-player[2]: [ffmpeg] Opening rtsp://%s:%s@192.168.1.60:554/live" % (STREAM_USER, STREAM_PASSWORD),
-            "2026-10-03T10:00:02+0000 box pvj-player[2]: srt://192.168.1.61:9000?mode=caller&passphrase=%s failed" % STREAM_PHRASE,
-            "2026-10-03T10:00:03+0000 box pvj-player[2]: rtsp://someone:OtherPw-99@192.168.1.70/x and ?passphrase=Other-Phrase-88",
-            "2026-10-03T10:00:04+0000 box pvj-web[1]: projector said ERRA for %s" % PROJECTOR_PASSWORD,
-            "2026-10-03T10:00:05+0000 box pvj-web[1]: join code %s, support code %s or %s, key %s" % (joins[0], code, raw_code, CFG["server_key"]),
-            "2026-10-03T10:00:06+0000 box pvj-web[1]: 192.168.1.20 \"GET /api/status HTTP/1.1\" 200 -",
+            "2026-10-03T10:00:00+0000 box nxlx-web[1]: nxlx-web: listening on 0.0.0.0:80; pairing PIN %s (also in /run/nxlx/pin)" % PIN,
+            "2026-10-02T09:00:00+0000 box nxlx-web[1]: nxlx-web: listening on 0.0.0.0:80; pairing PIN 7305 (also in /run/nxlx/pin)",
+            "2026-10-03T10:00:01+0000 box nxlx-player[2]: [ffmpeg] Opening rtsp://%s:%s@192.168.1.60:554/live" % (STREAM_USER, STREAM_PASSWORD),
+            "2026-10-03T10:00:02+0000 box nxlx-player[2]: srt://192.168.1.61:9000?mode=caller&passphrase=%s failed" % STREAM_PHRASE,
+            "2026-10-03T10:00:03+0000 box nxlx-player[2]: rtsp://someone:OtherPw-99@192.168.1.70/x and ?passphrase=Other-Phrase-88",
+            "2026-10-03T10:00:04+0000 box nxlx-web[1]: projector said ERRA for %s" % PROJECTOR_PASSWORD,
+            "2026-10-03T10:00:05+0000 box nxlx-web[1]: join code %s, support code %s or %s, key %s" % (joins[0], code, raw_code, CFG["server_key"]),
+            "2026-10-03T10:00:06+0000 box nxlx-web[1]: 192.168.1.20 \"GET /api/status HTTP/1.1\" 200 -",
         ])
         journal = FakeJournal(stdout=log)
         self.care._run = journal
@@ -1144,7 +1144,7 @@ class DiagnosticsTest(Base):
     def test_the_web_service_is_not_given_the_system_log(self):
         """The bundle says the log is not readable because the unit keeps it that way; if that changes, the scrubbing
         above becomes the only thing between the PIN in the log and the file."""
-        with open(os.path.join(os.path.dirname(__file__), "..", "install", "pvj-web.service")) as f:
+        with open(os.path.join(os.path.dirname(__file__), "..", "install", "nxlx-web.service")) as f:
             unit = f.read()
         self.assertNotIn("systemd-journal", unit)
         self.assertNotRegex(unit, r"SupplementaryGroups=.*\badm\b")

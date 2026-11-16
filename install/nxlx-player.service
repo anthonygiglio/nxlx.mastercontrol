@@ -3,7 +3,7 @@
 [Unit]
 Description=nxlx.mastercontrol player (mpv)
 # Not After=multi-user.target: this unit is WantedBy=multi-user.target (a target waits for what it wants) and
-# pvj-web is ordered after this unit, so that made a cycle and systemd silently deleted the start job. Found on a
+# nxlx-web is ordered after this unit, so that made a cycle and systemd silently deleted the start job. Found on a
 # real Pi 4 (2026-09-30). Not udev-settle either (deprecated, and slow); Restart=always covers a display that is
 # not ready yet.
 After=local-fs.target systemd-udevd.service
@@ -13,27 +13,27 @@ StartLimitIntervalSec=0
 # The installer replaces @PVJ_USER@ with the account that owns the screen and
 # sound card, and @PVJ_DIR@ with the install directory.
 User=@PVJ_USER@
-Group=pvj
+Group=nxlx-svc
 SupplementaryGroups=video render audio input
 # Its own folder for the control socket and the preview picture: only this account can create, replace or remove
-# anything in it; group "pvj" (the panel) can reach the socket. No other unit may name this folder: systemd gives
+# anything in it; group "nxlx-svc" (the panel) can reach the socket. No other unit may name this folder: systemd gives
 # a RuntimeDirectory to the unit that starts, so a shared one ends up owned by whoever started last (D45).
-# The parent /run/pvj stays root's (systemd creates it root:root 0755; see pvj-tmpfiles.conf).
-RuntimeDirectory=pvj/player
+# The parent /run/nxlx stays root's (systemd creates it root:root 0755; see nxlx-tmpfiles.conf).
+RuntimeDirectory=nxlx/player
 RuntimeDirectoryMode=0750
-# A persistent folder of its own, /var/lib/pvj-player/late-screen, for what the player must remember across a restart of
+# A persistent folder of its own, /var/lib/nxlx-player/late-screen, for what the player must remember across a restart of
 # its service: the times of the switches made for a late screen (mctl/latescreen.py). systemd makes it and gives it to
-# User=. A subfolder on purpose: /var/lib/pvj-player is the account's home on an install by install.sh, and systemd
+# User=. A subfolder on purpose: /var/lib/nxlx-player is the account's home on an install by install.sh, and systemd
 # changes the owner of the StateDirectory= it is given (and what is in it), never of its parent.
-StateDirectory=pvj-player/late-screen
+StateDirectory=nxlx-player/late-screen
 StateDirectoryMode=0750
 UMask=0007
-EnvironmentFile=-/etc/pvj/pvj.env
-Environment=PVJ_RUNTIME_DIR=/run/pvj/player
+EnvironmentFile=-/etc/nxlx/nxlx.env
+Environment=PVJ_RUNTIME_DIR=/run/nxlx/player
 # Two malloc arenas, not one per decoder thread (D114). Measured on a Pi 4 with four sources: 396 MB at 2 hours and flat,
-# against 793 MB and climbing, for the same CPU and flips. pvj.env can set another value: an EnvironmentFile wins.
+# against 793 MB and climbing, for the same CPU and flips. nxlx.env can set another value: an EnvironmentFile wins.
 Environment=MALLOC_ARENA_MAX=2
-ExecStart=@PVJ_DIR@/bin/pvj-player serve
+ExecStart=@PVJ_DIR@/bin/nxlx-player serve
 # The most real-time priority a process of this unit may ask for: 1, the lowest. It grants nothing by itself and needs
 # no capability; only mctl-render's render thread asks (SCHED_RR 1, render/src/main.c), and mpv never does. The kernel
 # holds a real-time thread that never yields to 95% of its core (sched_rt_runtime_us), so the panel keeps its share.

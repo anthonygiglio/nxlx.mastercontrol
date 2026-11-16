@@ -2,33 +2,33 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # The NDI discovery server on this box (D85). Opt-in: this unit exists only on a box where root ran
-# "pvj-ndi-runtime server install <NDI's folder>" (mctl/ndiscovery.py writes it from this template).
+# "nxlx-ndi-runtime server install <NDI's folder>" (mctl/ndiscovery.py writes it from this template).
 #
-# What runs here is this project's small supervisor (bin/pvj-ndi-discovery). It does nothing until the panel says the
-# module is on; then it starts NDI's own closed program, ndi-discovery-server, from root's folder /opt/pvj-ndi-server,
+# What runs here is this project's small supervisor (bin/nxlx-ndi-discovery). It does nothing until the panel says the
+# module is on; then it starts NDI's own closed program, ndi-discovery-server, from root's folder /opt/nxlx-ndi-server,
 # with the address and the port the Owner chose, and starts it again with a growing pause if it ends.
 [Unit]
 Description=nxlx.mastercontrol NDI discovery server (unprivileged, runs the owner's copy of NDI's program)
 After=network.target
-ConditionPathExists=@PVJ_DIR@/bin/pvj-ndi-discovery
+ConditionPathExists=@PVJ_DIR@/bin/nxlx-ndi-discovery
 StartLimitIntervalSec=0
 
 [Service]
-# An account and a group of its own: not the panel's, not the player's, not the NDI helper's. Not in group "pvj".
-# The panel is given the extra group "pvj-ndisc" by a drop-in, which lets it into this folder to ask and to tell;
+# An account and a group of its own: not the panel's, not the player's, not the NDI helper's. Not in group "nxlx-svc".
+# The panel is given the extra group "nxlx-ndisc" by a drop-in, which lets it into this folder to ask and to tell;
 # the supervisor answers only the panel's account.
-User=pvj-ndisc
-Group=pvj-ndisc
+User=nxlx-ndisc
+Group=nxlx-ndisc
 UMask=0027
-RuntimeDirectory=pvj-ndisc
+RuntimeDirectory=nxlx-ndisc
 RuntimeDirectoryMode=0750
-Environment=PVJ_NDISC_DIR=/run/pvj-ndisc
+Environment=PVJ_NDISC_DIR=/run/nxlx-ndisc
 Environment=HOME=/tmp
-ExecStart=@PVJ_DIR@/bin/pvj-ndi-discovery
+ExecStart=@PVJ_DIR@/bin/nxlx-ndi-discovery
 Restart=always
 RestartSec=2
 
-# Sandbox: at least what the NDI helper has (pvj-ndi.service), and tighter where this program needs less. Not run
+# Sandbox: at least what the NDI helper has (nxlx-ndi.service), and tighter where this program needs less. Not run
 # on a device yet (tools/DEVICE-TESTING.md): a line that is wrong would keep the server from being reached.
 CapabilityBoundingSet=
 AmbientCapabilities=
@@ -37,10 +37,10 @@ ProtectSystem=strict
 ProtectHome=yes
 TemporaryFileSystem=/tmp:rw,nosuid,nodev,size=8M,mode=1777 /var/tmp:rw,nosuid,nodev,size=8M,mode=1777
 PrivateDevices=yes
-ReadWritePaths=/run/pvj-ndisc
+ReadWritePaths=/run/nxlx-ndisc
 # The box's settings, keys, PIN, control sockets and media; the NDI helper's folders; and the two places NDI's
 # program would read a configuration of its own from, so that only the arguments given here count.
-InaccessiblePaths=-/var/lib/pvj -/etc/pvj -/run/pvj -/run/pvj-ndi -/run/pvj-ndi-pipe -/run/pvj-ndi-config -/run/pvj-sysd -/run/pvj-supportd -/opt/pvj-ndi -/etc/ndi -/usr/local/etc/ndi -/media -/mnt
+InaccessiblePaths=-/var/lib/nxlx -/etc/nxlx -/run/nxlx -/run/nxlx-ndi -/run/nxlx-ndi-pipe -/run/nxlx-ndi-config -/run/nxlx-sysd -/run/nxlx-supportd -/opt/nxlx-ndi -/etc/ndi -/usr/local/etc/ndi -/media -/mnt
 MemoryMax=128M
 TasksMax=64
 CPUQuota=100%

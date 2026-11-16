@@ -23,6 +23,7 @@ import tests        # the run's own temp folder and the locks' checker, however 
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 CONVERT = os.path.join(REPO, "bin", "nxlx-convert")
+BEFORE_SYSTEM_RENAME = "0ff0ddbeb662efb405186a0e774839cb1f61b2de"   # master with release 0.1.1, before rename PR 7
 OLDNAME = re.compile(r"pvj", re.I)
 
 
@@ -193,9 +194,16 @@ class FakePlayer:
 class Base(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        # The old node is installed by the installer of the release before the system rename (rename PR 7): this
+        # tree's installer makes the new names, and converts a node that has the old ones.
         cls.src = tempfile.mkdtemp()
-        for d in ("mctl", "bin", "install"):
-            shutil.copytree(os.path.join(REPO, d), os.path.join(cls.src, d), ignore=shutil.ignore_patterns("__pycache__"))
+        try:
+            tar = subprocess.run(["git", "-C", REPO, "archive", BEFORE_SYSTEM_RENAME, "mctl", "bin", "install"],
+                                 check=True, capture_output=True).stdout
+        except (OSError, subprocess.CalledProcessError):
+            shutil.rmtree(cls.src, True)
+            raise unittest.SkipTest("no %s here to install the old node from" % BEFORE_SYSTEM_RENAME)
+        subprocess.run(["tar", "-x", "-C", cls.src], input=tar, check=True)
         with open(os.path.join(cls.src, "mctl", "__init__.py"), "w") as f:
             f.write('__version__ = "9.9.1"\n')
         cls.template = stage_old_node(cls.src)
@@ -287,11 +295,11 @@ class Run(Base):
         self.assertIn("User=nxlx-web", web)
         self.assertIn("Group=nxlx-svc", web)
         self.assertIn("ExecStart=/opt/nxlx/current/bin/nxlx-web", web)
-        self.assertIn("Environment=NXLX_RUNTIME_DIR=/run/nxlx/web", web)
+        self.assertIn("Environment=PVJ_RUNTIME_DIR=/run/nxlx/web", web)      # the variable names change with rename PR 8
         self.assertIn("RuntimeDirectory=nxlx/web", web)
         self.assertIn("User=nxlx-dev", self.read("etc/systemd/system/nxlx-player.service"))
         self.assertIn("SupplementaryGroups=nxlx-ndi", self.read("etc/systemd/system/nxlx-web.service.d/50-nxlx-ndi.conf"))
-        self.assertIn("NXLX_MEDIA_DIR=/var/lib/nxlx/video", self.read("etc/nxlx/nxlx.env"))
+        self.assertIn("PVJ_MEDIA_DIR=/var/lib/nxlx/video", self.read("etc/nxlx/nxlx.env"))
         inst = json.loads(self.read("etc/nxlx/install.json"))
         self.assertEqual((inst["prefix"], inst["user"]), ("/opt/nxlx", "nxlx-dev"))
         self.assertIn("pvj-release", self.read("etc/nxlx/allowed_signers"), "held until rename PR 8")
@@ -470,6 +478,56 @@ class ReviewFixes(Base):
         os.symlink("/opt/pvj/releases/9.9.2", self.p("opt/pvj/current"))
         self.assertIn("the current release (/opt/pvj/releases/9.9.2) has the programs the converted units run",
                       convert(self.root, "--plan").stdout)
+
+    def test_release_points_current_at_the_new_release_and_the_undo_points_it_back(self):
+        """install.sh (rename PR 7) puts the new release beside the old one and leaves "current" on the old one; the
+        converter points it at the new one as one of its changes, so an undo brings back the release that ran before,
+        whose programs have the old names."""
+        os.unlink(self.p("opt/pvj/current"))
+        os.symlink("/opt/pvj/releases/9.9.1", self.p("opt/pvj/current"))
+        before = snapshot(self.root)
+        plan = convert(self.root, "--plan", "--release", "9.9.2")
+        self.assertEqual(plan.returncode, 0, plan.stdout)
+        self.assertIn("point /opt/nxlx/current at /opt/nxlx/releases/9.9.2", plan.stdout)
+        self.assertIn("the current release (/opt/nxlx/releases/9.9.2) has the programs the converted units run", plan.stdout)
+        r = convert(self.root, "--run", "--release", "9.9.2")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(os.readlink(self.p("opt/nxlx/current")), "/opt/nxlx/releases/9.9.2")
+        self.assertTrue(os.path.isdir(self.p("opt/nxlx/releases/9.9.1/pvj")), "the old release stays, for the undo")
+        u = convert(self.root, "--undo")
+        self.assertEqual(u.returncode, 0, u.stdout + u.stderr)
+        self.assertEqual(os.readlink(self.p("opt/pvj/current")), "/opt/pvj/releases/9.9.1")
+        self.assertEqual(snapshot(self.root), before)
+
+    def test_a_release_that_is_not_there_or_not_a_plain_name_is_refused(self):
+        before = snapshot(self.root, skip=())
+        for name in ("9.9.7", "../../etc", "9.9.2/../9.9.1", "", "/opt/pvj/releases/9.9.2"):
+            r = convert(self.root, "--run", "--release", name)
+            self.assertEqual(r.returncode, 2, name + r.stdout + r.stderr)
+            self.assertIn("is not a folder in /opt/pvj/releases", r.stdout, name)
+        self.assertEqual(snapshot(self.root, skip=()), before)
+        self.assertNotEqual(convert(self.root, "--undo", "--release", "9.9.2").returncode, 0)
+
+    def test_a_pipe_or_a_link_planted_in_the_panels_folder_is_not_read(self):
+        """install.sh runs the converter as root; /var/lib/pvj belongs to the panel's account, which could plant a
+        fifo (a plan that reads it would hang the install) or a link to a file only root may read."""
+        os.mkfifo(self.p("var/lib/pvj/planted.json"))
+        write(self.root, "secret", "pvj pvj pvj\n", 0o600)
+        os.symlink(self.p("secret"), self.p("var/lib/pvj/linked.json"))
+        r = convert(self.root, "--plan")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("planted.json", r.stdout)
+        self.assertNotIn("linked.json", r.stdout)
+
+    def test_variable_names_are_held_until_rename_pr_8_and_only_their_values_change(self):
+        conv = load_converter()
+        self.assertFalse(conv.ENV_NAMES_LIVE, "the programs of rename PR 7 still read PVJ_*")
+        r = convert(self.root, "--run")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("environment variable names (PVJ_*) are held until rename PR 8", r.stdout)
+        self.assertIn("Environment=PVJ_NDI_LIB=/opt/nxlx-ndi/lib", self.read("etc/systemd/system/nxlx-ndi.service"))
+        self.assertNotIn("NXLX_", self.read("etc/systemd/system/nxlx-web.service"))
+        self.assertNotIn("NXLX_", self.read("etc/nxlx/nxlx.env"))
 
     def test_the_undo_timer_is_a_unit_that_survives_a_restart_and_is_armed_again(self):
         total = len(re.findall(r"(?m)^    +\d+  ", convert(self.root, "--plan").stdout))

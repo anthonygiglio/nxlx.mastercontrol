@@ -2,13 +2,13 @@
      SPDX-License-Identifier: GPL-3.0-or-later -->
 # mctl-render
 
-`link/` beside this holds another program, pvj-link, the Ableton Link follower (D117, mctl/SOUND.md). It is C++, shares
-nothing with mctl-render, and is built only by `make pvj-link`.
+`link/` beside this holds another program, nxlx-link, the Ableton Link follower (D117, mctl/SOUND.md). It is C++, shares
+nothing with mctl-render, and is built only by `make nxlx-link`.
 
-`raster/` holds pvj-raster (D129), the one program that decodes a picture somebody uploaded (PNG, JPEG, SVG) and writes
+`raster/` holds nxlx-raster (D129), the one program that decodes a picture somebody uploaded (PNG, JPEG, SVG) and writes
 a clean PNG. It shares nothing with mctl-render, needs only libpng and libjpeg headers, and is built only by
-`make pvj-raster` (the installer does that on every board). It reads one request on standard input and answers on
-standard output; systemd runs it for each job with no network and hard limits (`install/pvj-raster@.service`). Its SVG
+`make nxlx-raster` (the installer does that on every board). It reads one request on standard input and answers on
+standard output; systemd runs it for each job with no network and hard limits (`install/nxlx-raster@.service`). Its SVG
 reader, nanosvg, is vendored unchanged in `raster/vendor/`. Since slice 2 of D129 it also draws the text and the logos that
 go on the screen (`raster/gfx.inc.c`, part of the same program, one more request: `RASTER1 GFX`): a line of text in one of the
 eleven bundled fonts (`mctl/fonts`, FreeType; the program reads a font by a checked name from the folder `--fonts` names, and no
@@ -103,7 +103,7 @@ builds it. The rest of nxlx.mastercontrol is Apache-2.0 and only starts this pro
 
 **Run** (the player's service does this; by hand only with the player stopped, as the display's account):
 
-    render/mctl-render --socket=/run/pvj/player/mpv.sock --drm-device=/dev/dri/card1 --drm-connector=HDMI-A-1 \
+    render/mctl-render --socket=/run/nxlx/player/mpv.sock --drm-device=/dev/dri/card1 --drm-connector=HDMI-A-1 \
         --drm-mode=1920x1080@60.00 --detail=540 --fast
 
 `--headless=WxH` draws without a screen (EGL surfaceless), for the tests: `tests/test_mctl_render.py`.
@@ -125,7 +125,7 @@ Left to glibc, the threshold rose with the first big frame freed, and every cros
 node-03 the process grew from 62 to 782 MB in 50 crossfades. Blocks under the threshold still come from the arenas, and
 what a clip leaves there is not given back by itself; so when a video layer's file ends (a crossfade's outgoing clip, a
 clip a load replaced), a thread of its own calls malloc_trim, at most once a second, never the render thread.
-`MALLOC_MMAP_THRESHOLD_` in the environment, or `glibc.malloc.mmap_threshold` in `GLIBC_TUNABLES` (pvj.env), wins: the
+`MALLOC_MMAP_THRESHOLD_` in the environment, or `glibc.malloc.mmap_threshold` in `GLIBC_TUNABLES` (nxlx.env), wins: the
 program then sets no threshold of its own (the trim still runs). On a C library other than glibc none of this is done.
 `get_property mctl-heap` says the heap's bytes `used`, `free` (held by malloc and not given back), `mapped` (blocks mapped
 on their own) and `arena`, the `threshold` the program set (0: none), and `trims`, `trim-ms` and `trim-ms-max`. It walks

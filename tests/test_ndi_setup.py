@@ -54,22 +54,22 @@ class Base(unittest.TestCase):
 class FilesTest(Base):
     def test_a_box_starts_out_not_opted_in_and_three_files_are_all_that_opting_in_writes(self):
         self.assertFalse(ndisetup.opted_in(self.root))
-        ndisetup.write_units(self.root, "/opt/pvj")
+        ndisetup.write_units(self.root, "/opt/nxlx")
         self.assertTrue(ndisetup.opted_in(self.root))
-        self.assertEqual(self.tree(), ["/etc/systemd/system/pvj-ndi.service",
-                                       "/etc/systemd/system/pvj-player.service.d/50-pvj-ndi.conf",
-                                       "/etc/systemd/system/pvj-web.service.d/50-pvj-ndi.conf",
-                                       "/etc/tmpfiles.d/pvj-ndi.conf"])
+        self.assertEqual(self.tree(), ["/etc/systemd/system/nxlx-ndi.service",
+                                       "/etc/systemd/system/nxlx-player.service.d/50-nxlx-ndi.conf",
+                                       "/etc/systemd/system/nxlx-web.service.d/50-nxlx-ndi.conf",
+                                       "/etc/tmpfiles.d/nxlx-ndi.conf"])
         # the pipe is made once, by root, in a folder of root's: the helper writes it and cannot unlink, rename or
-        # replace it (review of 2026-10-11, M3). 0660 root:pvj-ndi: the helper writes by its group, the player reads by it.
+        # replace it (review of 2026-10-11, M3). 0660 root:nxlx-ndi: the helper writes by its group, the player reads by it.
         lines = [l for l in self.read(ndisetup.TMPFILES_PATH).splitlines() if l and not l.startswith("#")]
-        self.assertEqual(lines, ["d /run/pvj-ndi-pipe 0750 root pvj-ndi -", "p /run/pvj-ndi-pipe/ndi.fifo 0660 root pvj-ndi -",
-                                 "d /run/pvj-ndi-config 0750 pvj-web pvj-ndi -"])      # the library's configuration file: the panel's to write
+        self.assertEqual(lines, ["d /run/nxlx-ndi-pipe 0750 root nxlx-ndi -", "p /run/nxlx-ndi-pipe/ndi.fifo 0660 root nxlx-ndi -",
+                                 "d /run/nxlx-ndi-config 0750 nxlx-web nxlx-ndi -"])      # the library's configuration file: the panel's to write
         unit = self.read(ndisetup.UNIT_PATH)
-        self.assertIn("ExecStart=/opt/pvj/current/bin/pvj-ndi\n", unit)
+        self.assertIn("ExecStart=/opt/nxlx/current/bin/nxlx-ndi\n", unit)
         self.assertNotIn("@PVJ", unit)
         with open(ndisetup.TEMPLATE) as f:                 # nothing but the folder differs from the template the tests pin
-            self.assertEqual(unit, f.read().replace("@PVJ_DIR@", "/opt/pvj/current"))
+            self.assertEqual(unit, f.read().replace("@PVJ_DIR@", "/opt/nxlx/current"))
         self.assertEqual(self.read(ndisetup.WEB_DROPIN), ndisetup.WEB_TEXT)
         self.assertEqual(self.read(ndisetup.PLAYER_DROPIN), ndisetup.PLAYER_TEXT)
         for path in self.tree():
@@ -80,7 +80,7 @@ class FilesTest(Base):
         order = []
         real = ndisetup._write
         with mock.patch.object(ndisetup, "_write", lambda path, text: (order.append(path[len(self.root):]), real(path, text))):
-            ndisetup.write_units(self.root, "/opt/pvj")
+            ndisetup.write_units(self.root, "/opt/nxlx")
         self.assertEqual(order, [ndisetup.UNIT_PATH, ndisetup.TMPFILES_PATH, ndisetup.PLAYER_DROPIN, ndisetup.WEB_DROPIN])
         gone = []
         real_unlink = os.unlink
@@ -93,16 +93,16 @@ class FilesTest(Base):
 
     def test_a_template_that_cannot_be_read_or_a_bad_folder_writes_nothing(self):
         with self.assertRaises(OSError):
-            ndisetup.write_units(self.root, "/opt/pvj", template=self.p("/missing"))
-        for bad in ("opt/pvj", "/opt", "/opt/pvj; rm -rf /", "/opt/../etc", "/opt/pvj\n", "", None, "/opt/p vj"):
+            ndisetup.write_units(self.root, "/opt/nxlx", template=self.p("/missing"))
+        for bad in ("opt/nxlx", "/opt", "/opt/nxlx; rm -rf /", "/opt/../etc", "/opt/nxlx\n", "", None, "/opt/p vj"):
             with self.assertRaises(ndisetup.SetupError, msg=repr(bad)):
                 ndisetup.write_units(self.root, bad)
         self.assertEqual(self.tree(), [])
         self.assertFalse(ndisetup.opted_in(self.root))
 
     def test_removing_leaves_somebody_elses_drop_in_and_its_folder(self):
-        ndisetup.write_units(self.root, "/opt/pvj")
-        other = "/etc/systemd/system/pvj-web.service.d/90-owner.conf"
+        ndisetup.write_units(self.root, "/opt/nxlx")
+        other = "/etc/systemd/system/nxlx-web.service.d/90-owner.conf"
         with open(self.p(other), "w") as f:
             f.write("[Service]\nEnvironment=X=1\n")
         ndisetup.remove_units(self.root)
@@ -111,13 +111,13 @@ class FilesTest(Base):
 
     def test_a_link_is_not_a_mark_and_is_never_written_through(self):
         target = self.p("/elsewhere")
-        os.makedirs(self.p("/etc/systemd/system/pvj-web.service.d"))
+        os.makedirs(self.p("/etc/systemd/system/nxlx-web.service.d"))
         os.symlink(target, self.p(ndisetup.WEB_DROPIN))
         with open(target, "w") as f:
             f.write("x")
         self.assertFalse(ndisetup.opted_in(self.root))
         with self.assertRaises(ndisetup.SetupError):
-            ndisetup.write_units(self.root, "/opt/pvj")
+            ndisetup.write_units(self.root, "/opt/nxlx")
         self.assertEqual(self.read("/elsewhere"), "x")
         self.assertFalse(ndisetup.opted_in(self.root))
         # a folder that is a link is refused as well
@@ -125,22 +125,22 @@ class FilesTest(Base):
         self.addCleanup(shutil.rmtree, root2, True)
         os.makedirs(root2 + "/etc/systemd/system")
         os.makedirs(root2 + "/planted")
-        os.symlink(root2 + "/planted", root2 + "/etc/systemd/system/pvj-player.service.d")
+        os.symlink(root2 + "/planted", root2 + "/etc/systemd/system/nxlx-player.service.d")
         with self.assertRaises(ndisetup.SetupError):
-            ndisetup.write_units(root2, "/opt/pvj")
+            ndisetup.write_units(root2, "/opt/nxlx")
         self.assertEqual(os.listdir(root2 + "/planted"), [])
         self.assertFalse(ndisetup.opted_in(root2))         # the mark comes last, so a setup that stopped is not a box that opted in
 
     def test_the_install_folder_is_read_from_what_the_installer_wrote(self):
-        self.assertEqual(ndisetup.read_prefix(self.root), "/opt/pvj")
-        os.makedirs(self.p("/etc/pvj"))
-        for text, want in (('{"version": "1", "prefix": "/srv/box/pvj", "user": "x"}', "/srv/box/pvj"), ("not json", "/opt/pvj"),
-                           ('["a"]', "/opt/pvj"), ('{"user": "x"}', "/opt/pvj")):
+        self.assertEqual(ndisetup.read_prefix(self.root), "/opt/nxlx")
+        os.makedirs(self.p("/etc/nxlx"))
+        for text, want in (('{"version": "1", "prefix": "/srv/box/nxlx", "user": "x"}', "/srv/box/nxlx"), ("not json", "/opt/nxlx"),
+                           ('["a"]', "/opt/nxlx"), ('{"user": "x"}', "/opt/nxlx")):
             with open(self.p(ndisetup.INSTALL_JSON), "w") as f:
                 f.write(text)
             self.assertEqual(ndisetup.read_prefix(self.root), want, text)
         with open(self.p(ndisetup.INSTALL_JSON), "w") as f:
-            f.write('{"prefix": "/opt/pvj\\nExecStartPre=/bin/evil"}')
+            f.write('{"prefix": "/opt/nxlx\\nExecStartPre=/bin/evil"}')
         with self.assertRaises(ndisetup.SetupError):
             ndisetup.read_prefix(self.root)
 
@@ -151,34 +151,34 @@ class RefreshTest(Base):
     def test_a_box_that_did_not_opt_in_is_left_exactly_as_it_is(self):
         run = Commands()
         account = mock.Mock()
-        self.assertFalse(ndisetup.refresh(self.root, "/opt/pvj", run=run, say=self.said.append, account=account))
+        self.assertFalse(ndisetup.refresh(self.root, "/opt/nxlx", run=run, say=self.said.append, account=account))
         self.assertEqual((self.tree(), run.ran, account.call_count, self.said), ([], [], 0, []))
         out = io.StringIO()
-        self.assertEqual(ndisetup.refresh_main(["--root", self.root, "--prefix", "/opt/pvj"], out), 0)
+        self.assertEqual(ndisetup.refresh_main(["--root", self.root, "--prefix", "/opt/nxlx"], out), 0)
         self.assertEqual((self.tree(), out.getvalue()), ([], ""))
 
     def test_a_box_that_opted_in_keeps_its_helper_and_gets_the_unit_of_the_new_program(self):
-        ndisetup.write_units(self.root, "/opt/pvj")
+        ndisetup.write_units(self.root, "/opt/nxlx")
         for path in (ndisetup.UNIT_PATH, ndisetup.PLAYER_DROPIN):          # what an older version wrote, or a file that went missing
             with open(self.p(path), "w") as f:
                 f.write("old\n")
         os.unlink(self.p(ndisetup.PLAYER_DROPIN))
         account = mock.Mock()
         out = io.StringIO()
-        self.assertEqual(ndisetup.refresh_main(["--root", self.root + "/", "--prefix", "/srv/box/pvj"], out), 0)
-        self.assertIn("ExecStart=/srv/box/pvj/current/bin/pvj-ndi\n", self.read(ndisetup.UNIT_PATH))
+        self.assertEqual(ndisetup.refresh_main(["--root", self.root + "/", "--prefix", "/srv/box/nxlx"], out), 0)
+        self.assertIn("ExecStart=/srv/box/nxlx/current/bin/nxlx-ndi\n", self.read(ndisetup.UNIT_PATH))
         self.assertEqual(self.read(ndisetup.PLAYER_DROPIN), ndisetup.PLAYER_TEXT)
         self.assertTrue(ndisetup.opted_in(self.root))
         self.assertIn("written again", out.getvalue())
         # in a staged tree no account is touched; on the box itself the account comes before the files
-        self.assertTrue(ndisetup.refresh(self.root, "/opt/pvj", run=Commands(), say=self.said.append, account=account))
+        self.assertTrue(ndisetup.refresh(self.root, "/opt/nxlx", run=Commands(), say=self.said.append, account=account))
         self.assertEqual(account.call_count, 0)
         order = []
         with mock.patch.object(ndisetup, "opted_in", lambda root="": True), \
                 mock.patch.object(ndisetup, "write_units", lambda root, prefix: order.append(("write", root, prefix))):
-            self.assertTrue(ndisetup.refresh("", "/opt/pvj", run=Commands(), say=self.said.append,
+            self.assertTrue(ndisetup.refresh("", "/opt/nxlx", run=Commands(), say=self.said.append,
                                              account=lambda run, say: order.append("account")))
-        self.assertEqual(order, ["account", ("write", "", "/opt/pvj")])
+        self.assertEqual(order, ["account", ("write", "", "/opt/nxlx")])
 
     def test_the_help_says_whose_folder_root_is(self):
         out = io.StringIO()
@@ -190,7 +190,7 @@ class RefreshTest(Base):
         body = inspect.getsource(ndisetup.refresh)
         for never in ("apt", "systemctl", "missing_packages", "enable("):
             self.assertNotIn(never, body, never)
-        ndisetup.write_units(self.root, "/opt/pvj")
+        ndisetup.write_units(self.root, "/opt/nxlx")
         before = self.read(ndisetup.UNIT_PATH)
         out = io.StringIO()
         self.assertEqual(ndisetup.refresh_main(["--root", self.root, "--prefix", "/opt"], out), 1)       # a prefix the installer would refuse
@@ -245,39 +245,39 @@ class Accounts:
 
 class AccountTest(unittest.TestCase):
     def test_the_group_then_the_account_with_no_home_no_shell_and_no_other_group(self):
-        a = Accounts(users={"pvj-web": (800, 800, Accounts.NOLOGIN)}, groups={"pvj": (800, [])})
+        a = Accounts(users={"nxlx-web": (800, 800, Accounts.NOLOGIN)}, groups={"nxlx-svc": (800, [])})
         a.check()                                          # an account that is not there yet is nothing to refuse
         a.ensure()
-        self.assertEqual(a.ran, ["groupadd --system pvj-ndi",
-                                 "useradd --system --no-create-home --shell /usr/sbin/nologin --gid pvj-ndi pvj-ndi"])
-        self.assertEqual(a.users["pvj-ndi"][1], a.groups["pvj-ndi"][0])
-        self.assertEqual(a.groups["pvj"], (800, []))       # nobody was put into group pvj
+        self.assertEqual(a.ran, ["groupadd --system nxlx-ndi",
+                                 "useradd --system --no-create-home --shell /usr/sbin/nologin --gid nxlx-ndi nxlx-ndi"])
+        self.assertEqual(a.users["nxlx-ndi"][1], a.groups["nxlx-ndi"][0])
+        self.assertEqual(a.groups["nxlx-svc"], (800, []))       # nobody was put into group nxlx-svc
         a.ran.clear()
         a.ensure()                                         # again: nothing to do
         self.assertEqual(a.ran, [])
 
     def test_an_account_that_is_in_another_group_is_refused_not_repaired(self):
         ok = (901, 900, Accounts.NOLOGIN)
-        for groups in ({"pvj-ndi": (900, []), "pvj": (800, ["pvj-ndi"])}, {"pvj-ndi": (900, []), "video": (44, ["x", "pvj-ndi"])}):
-            a = Accounts(users={"pvj-ndi": ok}, groups=groups)
+        for groups in ({"nxlx-ndi": (900, []), "nxlx-svc": (800, ["nxlx-ndi"])}, {"nxlx-ndi": (900, []), "video": (44, ["x", "nxlx-ndi"])}):
+            a = Accounts(users={"nxlx-ndi": ok}, groups=groups)
             with self.assertRaises(ndisetup.SetupError) as e:
                 a.ensure()
             self.assertIn("no other group", str(e.exception))
             self.assertEqual(a.ran, [])
-        a = Accounts(users={"pvj-ndi": (901, 800, Accounts.NOLOGIN)}, groups={"pvj-ndi": (900, []), "pvj": (800, [])})      # its own group is pvj
+        a = Accounts(users={"nxlx-ndi": (901, 800, Accounts.NOLOGIN)}, groups={"nxlx-ndi": (900, []), "nxlx-svc": (800, [])})      # its own group is nxlx-svc
         with self.assertRaises(ndisetup.SetupError):
             a.ensure()
         self.assertEqual(a.ran, [])
 
     def test_an_account_that_is_root_shares_a_number_or_can_log_in_is_refused(self):
-        """Review L5: the group checks alone took an account pvj-ndi with uid 0, with another account's uid, or with
+        """Review L5: the group checks alone took an account nxlx-ndi with uid 0, with another account's uid, or with
         a shell. Each is refused before anything is made, also when the group is still missing."""
-        groups = {"pvj-ndi": (900, []), "pvj": (800, [])}
-        for users, words in (({"pvj-ndi": (0, 900, Accounts.NOLOGIN)}, "root under another name"),
-                             ({"pvj-ndi": (800, 900, Accounts.NOLOGIN), "pvj-web": (800, 800, Accounts.NOLOGIN)}, "shares its number with pvj-web"),
-                             ({"pvj-ndi": (901, 900, "/bin/bash")}, "has a login shell (/bin/bash)"),
-                             ({"pvj-ndi": (901, 900, "")}, "has a login shell")):
-            for g in (groups, {"pvj": (800, [])}):
+        groups = {"nxlx-ndi": (900, []), "nxlx-svc": (800, [])}
+        for users, words in (({"nxlx-ndi": (0, 900, Accounts.NOLOGIN)}, "root under another name"),
+                             ({"nxlx-ndi": (800, 900, Accounts.NOLOGIN), "nxlx-web": (800, 800, Accounts.NOLOGIN)}, "shares its number with nxlx-web"),
+                             ({"nxlx-ndi": (901, 900, "/bin/bash")}, "has a login shell (/bin/bash)"),
+                             ({"nxlx-ndi": (901, 900, "")}, "has a login shell")):
+            for g in (groups, {"nxlx-svc": (800, [])}):
                 a = Accounts(users=users, groups=g)
                 with self.assertRaises(ndisetup.SetupError, msg=words) as e:
                     a.ensure()
@@ -286,21 +286,21 @@ class AccountTest(unittest.TestCase):
                 with self.assertRaises(ndisetup.SetupError):
                     a.check()
         for shell in ndisetup.NO_LOGIN:                    # every way of saying "no login" is taken
-            Accounts(users={"pvj-ndi": (901, 900, shell)}, groups=groups).ensure()
+            Accounts(users={"nxlx-ndi": (901, 900, shell)}, groups=groups).ensure()
 
     def test_a_group_that_is_roots_shares_its_number_or_has_members_is_refused(self):
-        """Second review, M2: only the account's number was looked at. A group pvj-ndi with gid 0 was taken, and so
-        was one that shares its number with group pvj while no account exists yet: useradd --gid pvj-ndi then puts
-        the helper into pvj's number, which is what D62 forbids."""
+        """Second review, M2: only the account's number was looked at. A group nxlx-ndi with gid 0 was taken, and so
+        was one that shares its number with group nxlx-svc while no account exists yet: useradd --gid nxlx-ndi then puts
+        the helper into nxlx-svc's number, which is what D62 forbids."""
         ok = (901, 900, Accounts.NOLOGIN)
         for users, groups, words in (
-                ({"pvj-ndi": (901, 0, Accounts.NOLOGIN)}, {"pvj-ndi": (0, [])}, "root's group under another name"),
-                ({}, {"pvj-ndi": (0, [])}, "root's group under another name"),
-                ({}, {"pvj-ndi": (800, []), "pvj": (800, [])}, "shares its number with pvj"),
-                ({"pvj-ndi": (901, 800, Accounts.NOLOGIN)}, {"pvj-ndi": (800, []), "pvj": (800, [])}, "shares its number with pvj"),
-                ({"pvj-ndi": ok}, {"pvj-ndi": (900, ["mallory"])}, "has members (mallory)"),
-                ({}, {"pvj-ndi": (900, ["pvj-web", "gigbox"])}, "has members (gigbox, pvj-web)"),
-                ({"pvj-ndi": ok, "guest": (1001, 900, "/bin/bash")}, {"pvj-ndi": (900, [])}, "is the own group of guest")):
+                ({"nxlx-ndi": (901, 0, Accounts.NOLOGIN)}, {"nxlx-ndi": (0, [])}, "root's group under another name"),
+                ({}, {"nxlx-ndi": (0, [])}, "root's group under another name"),
+                ({}, {"nxlx-ndi": (800, []), "nxlx-svc": (800, [])}, "shares its number with nxlx-svc"),
+                ({"nxlx-ndi": (901, 800, Accounts.NOLOGIN)}, {"nxlx-ndi": (800, []), "nxlx-svc": (800, [])}, "shares its number with nxlx-svc"),
+                ({"nxlx-ndi": ok}, {"nxlx-ndi": (900, ["mallory"])}, "has members (mallory)"),
+                ({}, {"nxlx-ndi": (900, ["nxlx-web", "gigbox"])}, "has members (gigbox, nxlx-web)"),
+                ({"nxlx-ndi": ok, "guest": (1001, 900, "/bin/bash")}, {"nxlx-ndi": (900, [])}, "is the own group of guest")):
             a = Accounts(users=users, groups=groups)
             with self.assertRaises(ndisetup.SetupError, msg=words) as e:
                 a.ensure()
@@ -310,7 +310,7 @@ class AccountTest(unittest.TestCase):
             with self.assertRaises(ndisetup.SetupError):
                 a.check()
         # the account named as a member of its own group is what some tools write, and is fine
-        Accounts(users={"pvj-ndi": ok}, groups={"pvj-ndi": (900, ["pvj-ndi"]), "pvj": (800, [])}).ensure()
+        Accounts(users={"nxlx-ndi": ok}, groups={"nxlx-ndi": (900, ["nxlx-ndi"]), "nxlx-svc": (800, [])}).ensure()
 
     def test_an_account_that_comes_out_of_useradd_wrong_is_refused_and_the_words_are_true(self):
         """Second review, L2: the look after groupadd and useradd had no test, and its refusal said "nothing was set
@@ -323,23 +323,23 @@ class AccountTest(unittest.TestCase):
             def run(self, command):
                 code = super().run(command)
                 if command[0] == "useradd" and self.how == "group":
-                    self.groups["users"] = (100, ["pvj-ndi"])
+                    self.groups["users"] = (100, ["nxlx-ndi"])
                 if command[0] == "useradd" and self.how == "shell":
-                    uid, gid, _shell = self.users["pvj-ndi"]
-                    self.users["pvj-ndi"] = (uid, gid, "/bin/sh")
+                    uid, gid, _shell = self.users["nxlx-ndi"]
+                    self.users["nxlx-ndi"] = (uid, gid, "/bin/sh")
                 return code
         for how, words in (("group", "is also in users"), ("shell", "has a login shell (/bin/sh)")):
-            a = Meddling(how, groups={"pvj": (800, [])})
+            a = Meddling(how, groups={"nxlx-svc": (800, [])})
             with self.assertRaises(ndisetup.SetupError) as e:
                 a.ensure()
             said = str(e.exception)
             self.assertIn(words, said)
             self.assertNotIn("nothing was set up", said)   # something was: the group and the account
             self.assertIn("it was made a moment ago by this command", said)
-            self.assertIn("sudo deluser pvj-ndi; sudo delgroup pvj-ndi", said)
+            self.assertIn("sudo deluser nxlx-ndi; sudo delgroup nxlx-ndi", said)
             self.assertEqual([c.split()[0] for c in a.ran], ["groupadd", "useradd"])
         # an account that was there before and is wrong is still said as "nothing was set up"
-        a = Accounts(users={"pvj-ndi": (901, 900, "/bin/sh")}, groups={"pvj-ndi": (900, [])})
+        a = Accounts(users={"nxlx-ndi": (901, 900, "/bin/sh")}, groups={"nxlx-ndi": (900, [])})
         with self.assertRaises(ndisetup.SetupError) as e:
             a.ensure()
         self.assertIn("nothing was set up", str(e.exception))
@@ -353,7 +353,7 @@ class AccountTest(unittest.TestCase):
 
 
 class EnableTest(Base):
-    """`sudo pvj-ndi-runtime install ...`, the part after the library: the opt-in. Every command it runs, in order.
+    """`sudo nxlx-ndi-runtime install ...`, the part after the library: the opt-in. Every command it runs, in order.
     The files are the real ones, written into a fake root; only the commands and the accounts are stand-ins."""
 
     def setUp(self):
@@ -373,18 +373,18 @@ class EnableTest(Base):
                                    check=more.get("check", lambda root: ndisetup.check(root, account=lambda: None)),
                                    sleep=self.slept.append, overlay=lambda: overlay)
 
-    UP = ["systemctl is-active --quiet pvj-ndi.service"] * 3
+    UP = ["systemctl is-active --quiet nxlx-ndi.service"] * 3
 
     def test_everything_it_does_and_the_order(self):
         run = Commands()
         self.assertIs(self.enable(run, missing=["avahi-daemon", "libavahi-client3"]), True)
         self.assertEqual(run.ran, ["apt-get install -y --no-install-recommends avahi-daemon libavahi-client3",
-                                   "ACCOUNT", "FILES /opt/pvj",
-                                   "systemd-tmpfiles --create /etc/tmpfiles.d/pvj-ndi.conf",       # the pipe's folder and the pipe, as at boot
-                                   "systemctl daemon-reload", "systemctl enable pvj-ndi.service", "systemctl restart pvj-ndi.service"]
-                         + self.UP + ["systemctl try-restart pvj-web.service pvj-player.service"])
+                                   "ACCOUNT", "FILES /opt/nxlx",
+                                   "systemd-tmpfiles --create /etc/tmpfiles.d/nxlx-ndi.conf",       # the pipe's folder and the pipe, as at boot
+                                   "systemctl daemon-reload", "systemctl enable nxlx-ndi.service", "systemctl restart nxlx-ndi.service"]
+                         + self.UP + ["systemctl try-restart nxlx-web.service nxlx-player.service"])
         self.assertTrue(ndisetup.opted_in(self.root))
-        self.assertIn("ExecStart=/opt/pvj/current/bin/pvj-ndi\n", self.read(ndisetup.UNIT_PATH))
+        self.assertIn("ExecStart=/opt/nxlx/current/bin/nxlx-ndi\n", self.read(ndisetup.UNIT_PATH))
         self.assertIn("the screen goes dark for a moment", " ".join(self.said))
         self.assertIn("NDI is set up on this node", self.said[-1])
         self.assertIn("was running 3 seconds after its start", self.said[-1])
@@ -394,12 +394,12 @@ class EnableTest(Base):
         run = Commands()
         self.enable(run)
         self.assertEqual([c for c in run.ran if "apt" in c], [])
-        self.assertEqual(run.ran[:2], ["ACCOUNT", "FILES /opt/pvj"])
+        self.assertEqual(run.ran[:2], ["ACCOUNT", "FILES /opt/nxlx"])
 
     def test_no_network_for_apt_is_said_and_is_not_the_end(self):
         run = Commands(fail=("apt-get",))
         self.enable(run, missing=["avahi-daemon"])
-        self.assertIn("systemctl restart pvj-ndi.service", run.ran)
+        self.assertIn("systemctl restart nxlx-ndi.service", run.ran)
         self.assertIn("sudo apt-get install avahi-daemon", " ".join(self.said))
         run = Commands()
         self.enable(run, missing=["avahi-daemon"], apt=False)                 # not a Debian: said, nothing run for it
@@ -409,14 +409,14 @@ class EnableTest(Base):
     def test_a_prefix_or_a_template_that_is_refused_stops_it_before_anything_is_changed(self):
         """Review L1: the install folder and the unit's template were looked at only after apt and the account, so a
         box whose install.json holds a folder written another way got a package and an account and then an error."""
-        os.makedirs(self.p("/etc/pvj"))
-        for written in ("/opt/pvj/", "/opt//mctl", "/opt/pvj\nExecStartPre=/bin/evil", "relative/pvj"):
+        os.makedirs(self.p("/etc/nxlx"))
+        for written in ("/opt/nxlx/", "/opt//mctl", "/opt/nxlx\nExecStartPre=/bin/evil", "relative/pvj"):
             with open(self.p(ndisetup.INSTALL_JSON), "w") as f:
                 json.dump({"prefix": written}, f)
             run = Commands()
             with self.assertRaises(ndisetup.SetupError, msg=written):
                 self.enable(run, missing=["avahi-daemon"])
-            self.assertEqual((run.ran, self.tree()), ([], ["/etc/pvj/install.json"]), written)
+            self.assertEqual((run.ran, self.tree()), ([], ["/etc/nxlx/install.json"]), written)
             with self.assertRaises(ndisetup.SetupError):   # and the command asks before it copies the library
                 ndisetup.check(self.root, account=lambda: None)
         os.unlink(self.p(ndisetup.INSTALL_JSON))
@@ -428,7 +428,7 @@ class EnableTest(Base):
 
     def test_an_account_that_is_refused_stops_it_before_a_package_is_installed(self):
         """Review L1, second half: the refusal of an account came after avahi."""
-        bad = Accounts(users={"pvj-ndi": (901, 900, Accounts.NOLOGIN)}, groups={"pvj-ndi": (900, []), "pvj": (800, ["pvj-ndi"])})
+        bad = Accounts(users={"nxlx-ndi": (901, 900, Accounts.NOLOGIN)}, groups={"nxlx-ndi": (900, []), "nxlx-svc": (800, ["nxlx-ndi"])})
         run = Commands()
         with self.assertRaises(ndisetup.SetupError) as e:
             self.enable(run, missing=["avahi-daemon"], check=lambda root: ndisetup.check(root, account=bad.check))
@@ -437,16 +437,16 @@ class EnableTest(Base):
 
     def test_a_step_that_fails_after_the_files_were_written_undoes_them_on_a_box_that_was_not_set_up(self):
         """Review L2: a failing daemon-reload, enable or restart left the mark, so the box counted as opted in."""
-        for fail, last in (("systemctl daemon-reload", "systemctl daemon-reload"), ("systemctl enable", "systemctl enable pvj-ndi.service"),
-                           ("systemctl restart", "systemctl restart pvj-ndi.service")):
+        for fail, last in (("systemctl daemon-reload", "systemctl daemon-reload"), ("systemctl enable", "systemctl enable nxlx-ndi.service"),
+                           ("systemctl restart", "systemctl restart nxlx-ndi.service")):
             run = Commands(fail=(fail,))
             self.said.clear()
             with self.assertRaises(ndisetup.SetupError, msg=fail):
                 self.enable(run)
             done = run.ran[:run.ran.index(last) + 1]
             self.assertEqual(done[-1], last)
-            self.assertNotIn("systemctl try-restart pvj-web.service pvj-player.service", run.ran)      # nothing later ran
-            self.assertEqual(run.ran[len(done):], ["systemctl disable --now pvj-ndi.service", "systemctl daemon-reload"], fail)
+            self.assertNotIn("systemctl try-restart nxlx-web.service nxlx-player.service", run.ran)      # nothing later ran
+            self.assertEqual(run.ran[len(done):], ["systemctl disable --now nxlx-ndi.service", "systemctl daemon-reload"], fail)
             self.assertFalse(ndisetup.opted_in(self.root), fail)
             self.assertEqual(self.tree(), [], fail)
             self.assertIn("the setup failed and was undone: this node is not set up for NDI", " ".join(self.said))
@@ -491,8 +491,8 @@ class EnableTest(Base):
         self.assertTrue(os.path.isdir(self.p(ndisetup.WEB_DROPIN)))            # not this command's to remove; it says so
         said = " ".join(self.said)
         self.assertIn("the setup failed and was undone: this node is not set up for NDI", said)
-        self.assertIn("50-pvj-ndi.conf could not be removed", said)
-        self.assertEqual(run.ran, ["ACCOUNT", "FILES /opt/pvj", "systemctl disable --now pvj-ndi.service", "systemctl daemon-reload"])
+        self.assertIn("50-nxlx-ndi.conf could not be removed", said)
+        self.assertEqual(run.ran, ["ACCOUNT", "FILES /opt/nxlx", "systemctl disable --now nxlx-ndi.service", "systemctl daemon-reload"])
 
     def test_a_disk_that_is_full_or_read_only_undoes_the_setup_too(self):
         real = ndisetup._write
@@ -509,14 +509,14 @@ class EnableTest(Base):
             self.assertEqual(self.tree(), [], failing)
             self.assertFalse(ndisetup.opted_in(self.root))
             self.assertIn("the setup failed and was undone", " ".join(self.said))
-            self.assertNotIn("systemctl enable pvj-ndi.service", run.ran)
+            self.assertNotIn("systemctl enable nxlx-ndi.service", run.ran)
         # and the command says it in words and ends with an error
         out = io.StringIO()
 
         class Setup(FakeSetup):
             def enable(self, say):
                 raise OSError(30, "Read-only file system")
-        with mock.patch.object(ndi.os, "geteuid", lambda: 0), mock.patch.object(ndi, "install_runtime", lambda source: "/opt/pvj-ndi/libndi.so.6"):
+        with mock.patch.object(ndi.os, "geteuid", lambda: 0), mock.patch.object(ndi, "install_runtime", lambda source: "/opt/nxlx-ndi/libndi.so.6"):
             self.assertEqual(ndi.runtime_main(["install", "/sdk"], out, setup=Setup()), 1)
         self.assertIn("Read-only file system", out.getvalue())
 
@@ -529,7 +529,7 @@ class EnableTest(Base):
             self.enable(run)                               # run again, to repair or for a newer library
         self.assertTrue(ndisetup.opted_in(self.root))
         self.assertEqual(self.tree(), before)
-        self.assertNotIn("systemctl disable --now pvj-ndi.service", run.ran)
+        self.assertNotIn("systemctl disable --now nxlx-ndi.service", run.ran)
         self.assertNotIn("undone", " ".join(self.said))
 
     def test_a_helper_that_does_not_stay_up_is_said_and_is_not_called_running(self):
@@ -537,17 +537,17 @@ class EnableTest(Base):
         run = Commands(fail=("systemctl is-active",))
         self.assertIs(self.enable(run), False)
         self.assertIn("NOT running", self.said[-1])
-        self.assertIn("journalctl -u pvj-ndi", self.said[-1])
+        self.assertIn("journalctl -u nxlx-ndi", self.said[-1])
         self.assertNotIn("installed and running", " ".join(self.said))
         self.assertNotIn("was running", " ".join(self.said))
         self.assertTrue(ndisetup.opted_in(self.root))      # left in place, to be looked at on the box
-        self.assertIn("systemctl try-restart pvj-web.service pvj-player.service", run.ran)
-        self.assertEqual(run.ran.count("systemctl is-active --quiet pvj-ndi.service"), 1)       # the first "no" is the answer
+        self.assertIn("systemctl try-restart nxlx-web.service nxlx-player.service", run.ran)
+        self.assertEqual(run.ran.count("systemctl is-active --quiet nxlx-ndi.service"), 1)       # the first "no" is the answer
 
         class Later(Commands):                             # up at first, gone at the third look
             def __call__(self, command):
                 super().__call__(command)
-                return 1 if self.ran.count("systemctl is-active --quiet pvj-ndi.service") == 3 and "is-active" in command else 0
+                return 1 if self.ran.count("systemctl is-active --quiet nxlx-ndi.service") == 3 and "is-active" in command else 0
         self.assertIs(self.enable(Later()), False)
 
     def test_the_panel_or_the_player_not_restarting_is_said(self):
@@ -557,7 +557,7 @@ class EnableTest(Base):
 
     def test_the_account_is_there_before_a_file_names_its_group(self):
         def refuse(run, say):
-            raise ndisetup.SetupError("could not create the group pvj-ndi")
+            raise ndisetup.SetupError("could not create the group nxlx-ndi")
         run = Commands()
         with self.assertRaises(ndisetup.SetupError):
             self.enable(run, account=refuse)
@@ -566,14 +566,14 @@ class EnableTest(Base):
     def test_without_a_running_systemd_it_only_enables(self):
         run = Commands()
         self.assertIs(self.enable(run, systemd=False), True)
-        self.assertEqual(run.ran, ["ACCOUNT", "FILES /opt/pvj", "systemctl enable pvj-ndi.service"])
+        self.assertEqual(run.ran, ["ACCOUNT", "FILES /opt/nxlx", "systemctl enable nxlx-ndi.service"])
         self.assertEqual(self.slept, [])
 
     def test_on_the_read_only_root_it_says_that_the_setup_will_not_last(self):
         run = Commands()
         self.enable(run, overlay=True)
         said = " ".join(self.said)
-        for words in ("the read-only root is active", "gone at the next restart", "sudo pvj-rootfs disable", "sudo pvj-rootfs enable"):
+        for words in ("the read-only root is active", "gone at the next restart", "sudo nxlx-rootfs disable", "sudo nxlx-rootfs enable"):
             self.assertIn(words, said)
         self.assertEqual(self.said.count(ndisetup.OVERLAY_WARNING), 2)        # before it starts and near the end
         self.said.clear()
@@ -595,15 +595,15 @@ class DisableTest(Base):
         return ndisetup.disable(run=run, say=self.said.append, systemd=lambda: systemd, root=self.root)
 
     def test_opting_out_stops_and_removes_the_helper_and_leaves_the_account_and_avahi_and_says_so(self):
-        ndisetup.write_units(self.root, "/opt/pvj")
+        ndisetup.write_units(self.root, "/opt/nxlx")
         run = Commands()
         self.disable(run)
-        self.assertEqual(run.ran, ["systemctl disable --now pvj-ndi.service", "systemctl daemon-reload",
-                                   "systemctl try-restart pvj-web.service pvj-player.service"])
+        self.assertEqual(run.ran, ["systemctl disable --now nxlx-ndi.service", "systemctl daemon-reload",
+                                   "systemctl try-restart nxlx-web.service nxlx-player.service"])
         self.assertEqual(self.tree(), [])
         self.assertFalse(ndisetup.opted_in(self.root))
         said = " ".join(self.said)
-        for words in ("Left in place: the account and group pvj-ndi", "sudo deluser pvj-ndi", "avahi-daemon and libavahi-client3",
+        for words in ("Left in place: the account and group nxlx-ndi", "sudo deluser nxlx-ndi", "avahi-daemon and libavahi-client3",
                       "sudo apt-get remove avahi-daemon"):
             self.assertIn(words, said)
         body = inspect.getsource(ndisetup.disable)
@@ -618,18 +618,18 @@ class DisableTest(Base):
     def test_something_that_cannot_be_removed_does_not_stop_the_rest(self):
         """Review L6: a folder where the mark should be made unlink raise, and `remove` stopped after disabling the
         helper: the other files and the library stayed."""
-        ndisetup.write_units(self.root, "/opt/pvj")
+        ndisetup.write_units(self.root, "/opt/nxlx")
         os.unlink(self.p(ndisetup.WEB_DROPIN))
         os.makedirs(self.p(ndisetup.WEB_DROPIN + "/inside"))
         run = Commands()
         with self.assertRaises(ndisetup.SetupError) as e:
             self.disable(run)
-        self.assertIn("50-pvj-ndi.conf could not be removed", str(e.exception))
+        self.assertIn("50-nxlx-ndi.conf could not be removed", str(e.exception))
         self.assertIn("remove it by hand", str(e.exception))
         for path in (ndisetup.UNIT_PATH, ndisetup.PLAYER_DROPIN):             # the rest went all the same
             self.assertFalse(os.path.lexists(self.p(path)), path)
-        self.assertEqual(run.ran, ["systemctl disable --now pvj-ndi.service", "systemctl daemon-reload",
-                                   "systemctl try-restart pvj-web.service pvj-player.service"])
+        self.assertEqual(run.ran, ["systemctl disable --now nxlx-ndi.service", "systemctl daemon-reload",
+                                   "systemctl try-restart nxlx-web.service nxlx-player.service"])
         self.assertIn("Left in place", " ".join(self.said))
         self.assertEqual(len(ndisetup.remove_units(self.root)), 1)            # and it says so again, every time
 
@@ -666,7 +666,7 @@ class FakeSetup:
 
 
 class CommandTest(Base):
-    """`pvj-ndi-runtime`: one command opts a box in (the library and the helper together), one opts it out."""
+    """`nxlx-ndi-runtime`: one command opts a box in (the library and the helper together), one opts it out."""
 
     def main(self, argv, setup, library=None):
         out = io.StringIO()
@@ -675,13 +675,13 @@ class CommandTest(Base):
             setup.calls.append("library")
             if isinstance(library, Exception):
                 raise library
-            placed = self.p("/opt/pvj-ndi/libndi.so.6")        # a placed file, so the command can hash what it put there
+            placed = self.p("/opt/nxlx-ndi/libndi.so.6")        # a placed file, so the command can hash what it put there
             os.makedirs(os.path.dirname(placed), exist_ok=True)
             with open(placed, "wb") as f:
                 f.write(b"not really a library\n")
             return placed
         with mock.patch.object(ndi.os, "geteuid", lambda: 0), mock.patch.object(ndi, "install_runtime", install), \
-                mock.patch.object(ndi, "LIB_DIR", self.p("/opt/pvj-ndi")):
+                mock.patch.object(ndi, "LIB_DIR", self.p("/opt/nxlx-ndi")):
             code = ndi.runtime_main(argv, out, setup=setup)
         return code, out.getvalue()
 
@@ -689,13 +689,13 @@ class CommandTest(Base):
         s = FakeSetup()
         code, said = self.main(["install", "/sdk"], s)
         self.assertEqual((code, s.calls), (0, ["check", "library", "enable"]))
-        self.assertIn("installed " + self.p("/opt/pvj-ndi/libndi.so.6"), said)
+        self.assertIn("installed " + self.p("/opt/nxlx-ndi/libndi.so.6"), said)
         # the owner can compare what was placed with the SDK's own copy (review of b46410c, low 5)
         import hashlib
         self.assertIn("sha256 " + hashlib.sha256(b"not really a library\n").hexdigest(), said)
 
     def test_a_setup_that_would_be_refused_does_not_even_copy_the_library(self):
-        s = FakeSetup(refuse="the account pvj-ndi is also in pvj and must be in no other group; nothing was set up")
+        s = FakeSetup(refuse="the account nxlx-ndi is also in nxlx-svc and must be in no other group; nothing was set up")
         code, said = self.main(["install", "/sdk"], s)
         self.assertEqual((code, s.calls), (1, ["check"]))
         self.assertIn("must be in no other group", said)
@@ -707,47 +707,47 @@ class CommandTest(Base):
         self.assertIn("this file is for x86_64", said)
 
     def test_a_refused_library_through_the_real_command_leaves_no_folder(self):
-        """Review M1, through the command itself: nothing else is changed, not even /opt/pvj-ndi."""
+        """Review M1, through the command itself: nothing else is changed, not even /opt/nxlx-ndi."""
         wrong = self.p("/not-a-library")
         with open(wrong, "w") as f:
             f.write("#!/bin/sh\n" + " " * 80)
         s, out = FakeSetup(), io.StringIO()
-        with mock.patch.object(ndi.os, "geteuid", lambda: 0), mock.patch.object(ndi, "LIB_DIR", self.p("/opt/pvj-ndi")), \
-                mock.patch.object(ndi.install_runtime, "__defaults__", (self.p("/opt/pvj-ndi"), None, False)):
+        with mock.patch.object(ndi.os, "geteuid", lambda: 0), mock.patch.object(ndi, "LIB_DIR", self.p("/opt/nxlx-ndi")), \
+                mock.patch.object(ndi.install_runtime, "__defaults__", (self.p("/opt/nxlx-ndi"), None, False)):
             self.assertEqual(ndi.runtime_main(["install", wrong], out, setup=s), 1)
         self.assertEqual(s.calls, ["check"])
-        self.assertFalse(os.path.lexists(self.p("/opt/pvj-ndi")))
+        self.assertFalse(os.path.lexists(self.p("/opt/nxlx-ndi")))
 
     def test_a_setup_that_fails_is_said_and_is_an_error(self):
-        s = FakeSetup(fail="could not create the group pvj-ndi")
+        s = FakeSetup(fail="could not create the group nxlx-ndi")
         code, said = self.main(["install", "/sdk"], s)
         self.assertEqual(code, 1)
-        self.assertIn("could not create the group pvj-ndi", said)
+        self.assertIn("could not create the group nxlx-ndi", said)
 
     def test_a_helper_that_did_not_stay_up_is_an_error_for_the_command(self):
         self.assertEqual(self.main(["install", "/sdk"], FakeSetup(running=False))[0], 1)
         self.assertEqual(self.main(["install", "/sdk"], FakeSetup(running=True))[0], 0)
 
     def test_remove_takes_the_helper_off_and_then_the_library(self):
-        os.makedirs(self.p("/opt/pvj-ndi"))
-        with open(self.p("/opt/pvj-ndi/libndi.so.6"), "w") as f:
+        os.makedirs(self.p("/opt/nxlx-ndi"))
+        with open(self.p("/opt/nxlx-ndi/libndi.so.6"), "w") as f:
             f.write("x")
         s = FakeSetup(opted=True)
         code, said = self.main(["remove"], s)
         self.assertEqual((code, s.calls), (0, ["disable"]))
-        self.assertFalse(os.path.exists(self.p("/opt/pvj-ndi")))
+        self.assertFalse(os.path.exists(self.p("/opt/nxlx-ndi")))
         self.assertEqual(self.main(["remove"], FakeSetup())[0], 0)             # nothing there: still fine
 
     def test_remove_takes_the_library_also_when_something_of_the_helper_could_not_be_removed(self):
         """Review L6: the library stayed when the helper's files could not all be removed."""
-        os.makedirs(self.p("/opt/pvj-ndi"))
-        with open(self.p("/opt/pvj-ndi/libndi.so.6"), "w") as f:
+        os.makedirs(self.p("/opt/nxlx-ndi"))
+        with open(self.p("/opt/nxlx-ndi/libndi.so.6"), "w") as f:
             f.write("x")
         code, said = self.main(["remove"], FakeSetup(opted=True, left="not everything of the NDI helper could be removed: x"))
         self.assertEqual(code, 1)
         self.assertIn("not everything of the NDI helper could be removed", said)
         self.assertIn("removed NDI's library", said)
-        self.assertFalse(os.path.exists(self.p("/opt/pvj-ndi")))
+        self.assertFalse(os.path.exists(self.p("/opt/nxlx-ndi")))
 
     def test_status_says_whether_the_box_is_set_up_and_names_the_command(self):
         code, said = self.main(["status"], FakeSetup())
@@ -759,8 +759,8 @@ class CommandTest(Base):
 
     def test_the_installers_call_goes_to_the_refresh_and_never_to_the_setup(self):
         s = FakeSetup()
-        self.assertEqual(self.main(["refresh", "--root", "/x", "--prefix", "/opt/pvj"], s)[0], 0)
-        self.assertEqual(s.calls, [("refresh", ["--root", "/x", "--prefix", "/opt/pvj"])])
+        self.assertEqual(self.main(["refresh", "--root", "/x", "--prefix", "/opt/nxlx"], s)[0], 0)
+        self.assertEqual(s.calls, [("refresh", ["--root", "/x", "--prefix", "/opt/nxlx"])])
 
     def test_the_usage_says_what_install_changes_on_the_box(self):
         code, said = self.main([], FakeSetup())
@@ -792,20 +792,20 @@ class RollbackTest(unittest.TestCase):
         with mock.patch("os.path.isdir", lambda path: True if path == "/run/systemd/system" else real(path)):
             u._systemd_restart()
         # In this order on purpose of what it costs: the helper before the panel is why an update can restart it twice (D110).
-        self.assertEqual(ran, [["systemctl", "try-restart", "pvj-netd.service"], ["systemctl", "try-restart", "pvj-ndi.service"],
-                               ["systemctl", "try-restart", "pvj-link.service"],     # or a rollback leaves Link on the network
-                               ["systemctl", "restart", "pvj-player.service", "pvj-web.service"]])
-        self.assertEqual([c for c in ran if "pvj-ndi.service" in c], [["systemctl", "try-restart", "pvj-ndi.service"]])      # alone in its call
+        self.assertEqual(ran, [["systemctl", "try-restart", "nxlx-netd.service"], ["systemctl", "try-restart", "nxlx-ndi.service"],
+                               ["systemctl", "try-restart", "nxlx-link.service"],     # or a rollback leaves Link on the network
+                               ["systemctl", "restart", "nxlx-player.service", "nxlx-web.service"]])
+        self.assertEqual([c for c in ran if "nxlx-ndi.service" in c], [["systemctl", "try-restart", "nxlx-ndi.service"]])      # alone in its call
         # try-restart, never restart or start: on a box that did not opt in there is no such unit, and nothing is started
-        self.assertFalse([c for c in ran if "pvj-ndi.service" in c and c[1] != "try-restart"])
+        self.assertFalse([c for c in ran if "nxlx-ndi.service" in c and c[1] != "try-restart"])
 
     def test_the_unit_is_skipped_not_failed_where_its_program_is_not(self):
         with open(ndisetup.TEMPLATE) as f:
             text = f.read()
         unit, service = text.split("[Service]")
-        self.assertIn("\nConditionPathExists=@PVJ_DIR@/bin/pvj-ndi\n", unit)      # in [Unit], and the very file ExecStart names
-        self.assertIn("\nExecStart=@PVJ_DIR@/bin/pvj-ndi\n", service)
-        self.assertIn("ConditionPathExists=/opt/pvj/current/bin/pvj-ndi\n", ndisetup.unit_text("/opt/pvj"))
+        self.assertIn("\nConditionPathExists=@PVJ_DIR@/bin/nxlx-ndi\n", unit)      # in [Unit], and the very file ExecStart names
+        self.assertIn("\nExecStart=@PVJ_DIR@/bin/nxlx-ndi\n", service)
+        self.assertIn("ConditionPathExists=/opt/nxlx/current/bin/nxlx-ndi\n", ndisetup.unit_text("/opt/nxlx"))
         self.assertNotIn("AssertPathExists", text)         # an assertion that is not met is a failure; a condition is not
 
 
@@ -840,7 +840,7 @@ class SnapshotOfAStillSourceTest(ServerBase):
 
     def test_any_other_source_whose_snapshot_fails_is_still_a_fault_and_an_idle_player_still_says_nothing(self):
         self.api.ndi.current = None
-        self.playing = "/var/lib/pvj/video/a.mp4"
+        self.playing = "/var/lib/nxlx/video/a.mp4"
         st, body, _ = self.call("GET", "/api/preview.jpg", token=self.full)
         self.assertEqual((st, body["error"]), (503, "mpv: error running command"))
         self.api._preview = None
@@ -1057,11 +1057,11 @@ class Untouchable:
 
 class PanelNotSetUpTest(unittest.TestCase):
     def test_the_panels_handle_never_tries_the_socket_and_says_how_to_set_ndi_up(self):
-        i = ndi.Input(Untouchable(), "/run/pvj-ndi/ndi.fifo", lambda: (True, ["192.168.1.20"]), log=lambda *_: None, setup=False)
+        i = ndi.Input(Untouchable(), "/run/nxlx-ndi/ndi.fifo", lambda: (True, ["192.168.1.20"]), log=lambda *_: None, setup=False)
         self.assertEqual(i.sync(), {"ok": False})
         st = i.status()
         self.assertEqual((st["setup"], st["helper"], st["sources"], st["playing"], st["addresses"]), (False, False, [], None, ["192.168.1.20"]))
-        self.assertEqual(st["install"]["command"], 'sudo pvj-ndi-runtime install "/path/to/NDI SDK for Linux"')
+        self.assertEqual(st["install"]["command"], 'sudo nxlx-ndi-runtime install "/path/to/NDI SDK for Linux"')
         self.assertEqual(st["runtime"], {"present": False, "loaded": False, "version": "", "problem": ""})
         with self.assertRaises(ndi.NdiError) as e:
             i.open("0123456789ab")
@@ -1072,7 +1072,7 @@ class PanelNotSetUpTest(unittest.TestCase):
     def test_a_box_that_opted_in_says_so_and_the_default_is_as_before(self):
         class Down:
             def request(self, message, timeout=None):
-                raise ndi.NdiError("the NDI helper (pvj-ndi) is not running")
+                raise ndi.NdiError("the NDI helper (nxlx-ndi) is not running")
 
             def status(self):
                 return {"ok": False}
@@ -1081,18 +1081,18 @@ class PanelNotSetUpTest(unittest.TestCase):
 
     def test_the_panel_takes_the_mark_from_its_environment_which_only_root_sets(self):
         # The panel believes PVJ_NDI_DIR in its environment and nothing else. Two things can put it there, both
-        # root's: the drop-in the opt-in writes, and /etc/pvj/pvj.env (the unit's EnvironmentFile, root's file).
+        # root's: the drop-in the opt-in writes, and /etc/nxlx/nxlx.env (the unit's EnvironmentFile, root's file).
         # Set there by hand on a box without the helper, the page says "the helper is not running": wrong words,
         # no harm, and not something the panel's own account can do.
         src = inspect.getsource(server.build)
         self.assertIn('setup=bool(env.get("PVJ_NDI_DIR"))', src)
         self.assertEqual(src.count("PVJ_NDI_DIR"), 2)      # the line and the comment that explains it
-        with open(os.path.join(os.path.dirname(ndisetup.__file__), "..", "install", "pvj-web.service")) as f:
-            self.assertIn("EnvironmentFile=-/etc/pvj/pvj.env\n", f.read())
+        with open(os.path.join(os.path.dirname(ndisetup.__file__), "..", "install", "nxlx-web.service")) as f:
+            self.assertIn("EnvironmentFile=-/etc/nxlx/nxlx.env\n", f.read())
         with open(os.path.join(os.path.dirname(ndisetup.__file__), "..", "install", "install.sh")) as f:
-            self.assertNotIn("PVJ_NDI", f.read())          # the installer never writes it into pvj.env
+            self.assertNotIn("PVJ_NDI", f.read())          # the installer never writes it into nxlx.env
         self.assertIn("Environment=PVJ_NDI_DIR=" + paths.NDI_DIR + "\n", ndisetup.WEB_TEXT)
-        with open(os.path.join(os.path.dirname(ndisetup.__file__), "..", "install", "pvj-web.service")) as f:
+        with open(os.path.join(os.path.dirname(ndisetup.__file__), "..", "install", "nxlx-web.service")) as f:
             self.assertNotIn("PVJ_NDI_DIR", f.read())
 
     def test_a_missing_socket_on_a_box_that_did_opt_in_answers_at_once(self):
@@ -1126,7 +1126,7 @@ class ApiNotSetUpTest(ServerBase):
         st, body, _ = self.call("POST", "/api/play", {"ndi": "0123456789ab"}, token=self.full)
         self.assertEqual(st, 409)
         self.assertIn("NDI is not set up on this node", body["error"])
-        self.assertIn("sudo pvj-ndi-runtime install", body["error"])
+        self.assertIn("sudo nxlx-ndi-runtime install", body["error"])
         # the addresses are plain settings: they can be filled in before the box is set up, and are kept
         st, body, _ = self.call("POST", "/api/ndi", {"action": "add_address", "address": "192.168.1.20"}, token=self.full)
         self.assertEqual((st, body["addresses"], body["setup"]), (200, ["192.168.1.20"], False))

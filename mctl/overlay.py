@@ -395,7 +395,7 @@ class Masks:
                 self._build(gen)
             except Exception as e:          # never leave the worker dead with _building set
                 self._set_status("error", "Could not combine the masks: %s" % e, 0, gen)
-                self.log("pvj-web: masks: %s" % e)
+                self.log("nxlx-web: masks: %s" % e)
 
     def _build(self, gen):
         cfg = self._cfg()

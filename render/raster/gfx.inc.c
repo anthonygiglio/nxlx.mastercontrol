@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// The graphics jobs of pvj-raster (D129, slice 2): text and logos made into one small premultiplied picture each.
-// This file is part of pvj-raster.c (it is included there, so it is one program and one set of limits) and uses its
+// The graphics jobs of nxlx-raster (D129, slice 2): text and logos made into one small premultiplied picture each.
+// This file is part of nxlx-raster.c (it is included there, so it is one program and one set of limits) and uses its
 // helpers: refuse, must, decode_png, Img, Out and the PNG writer.
 //
 //   request   "RASTER1 GFX <paramlen> <paylen>\n"   then <paramlen> bytes of parameters, then <paylen> bytes (a stored

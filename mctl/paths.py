@@ -4,31 +4,31 @@
 
 On a box each service has a folder of its own that only it can write, under a parent that belongs to root:
 
-    /run/pvj                root:root       0755   made by systemd and install/pvj-tmpfiles.conf, never a service's own
-    /run/pvj/player         <display>:pvj   0750   pvj-player: player.sock, preview.jpg, screen.json
-    /run/pvj/web            pvj-web:pvj     0750   pvj-web: pin, capture.fifo, overlays, shader and mapping files, loops/
-    /run/pvj/netd           root:pvj        0750   pvj-netd: netd.sock
-    /run/pvj-sysd           root:pvj        0750   pvj-sysd: sysd.sock
-    /run/pvj-supportd       root:pvj        0750   pvj-supportd: supportd.sock
-    /run/pvj-ndi            pvj-ndi:pvj-ndi 0750   pvj-ndi: ndi.sock (D62: its own group, never group pvj). Only on a box
+    /run/nxlx                root:root       0755   made by systemd and install/nxlx-tmpfiles.conf, never a service's own
+    /run/nxlx/player         <display>:nxlx-svc   0750   nxlx-player: player.sock, preview.jpg, screen.json
+    /run/nxlx/web            nxlx-web:nxlx-svc     0750   nxlx-web: pin, capture.fifo, overlays, shader and mapping files, loops/
+    /run/nxlx/netd           root:nxlx-svc        0750   nxlx-netd: netd.sock
+    /run/nxlx-sysd           root:nxlx-svc        0750   nxlx-sysd: sysd.sock
+    /run/nxlx-supportd       root:nxlx-svc        0750   nxlx-supportd: supportd.sock
+    /run/nxlx-ndi            nxlx-ndi:nxlx-ndi 0750   nxlx-ndi: ndi.sock (D62: its own group, never group nxlx-svc). Only on a box
                                                    that was set up for NDI (mctl/ndisetup.py): there the panel and the
-                                                   player are each given the extra group pvj-ndi by a drop-in
-    /run/pvj-ndi-pipe       root:pvj-ndi    0750   ndi.fifo (0660 root:pvj-ndi), made ONCE by root (the tmpfiles lines
-                                                   pvj-ndi-runtime writes): the helper writes it by its group and can
+                                                   player are each given the extra group nxlx-ndi by a drop-in
+    /run/nxlx-ndi-pipe       root:nxlx-ndi    0750   ndi.fifo (0660 root:nxlx-ndi), made ONCE by root (the tmpfiles lines
+                                                   nxlx-ndi-runtime writes): the helper writes it by its group and can
                                                    neither unlink nor replace it, so the name the player opens is
                                                    always that pipe (the review of 2026-10-11, M3)
-    /run/pvj-update         root:root       0755   the update units: result.json, update.lock
-    /run/pvj-raster.sock    root:pvj-raster 0660   pvj-raster.socket (D129): the picture helper, started per job; only the
-                                                   panel is in group pvj-raster
+    /run/nxlx-update         root:root       0755   the update units: result.json, update.lock
+    /run/nxlx-raster.sock    root:nxlx-raster 0660   nxlx-raster.socket (D129): the picture helper, started per job; only the
+                                                   panel is in group nxlx-raster
 
 A folder is a `RuntimeDirectory=` of exactly one unit, so systemd never hands it to another account. Before this
-the player, the panel and the network helper shared `RuntimeDirectory=pvj`, and systemd gave the whole folder,
+the player, the panel and the network helper shared `RuntimeDirectory=nxlx`, and systemd gave the whole folder,
 with the helper's socket and the PIN in it, to whichever of them started last.
 
 Environment:
 
 * `PVJ_RUNTIME_DIR` is the folder THIS process owns and writes (each unit sets it to its own folder). Without it,
-  on a desk, it is `$XDG_RUNTIME_DIR/pvj` or `/tmp/pvj-<uid>`.
+  on a desk, it is `$XDG_RUNTIME_DIR/nxlx` or `/tmp/nxlx-<uid>`.
 * `PVJ_PLAYER_DIR` and `PVJ_NETD_DIR` say where the panel finds the folders of its peers. Without them a peer's
   files are looked for in the process's own folder: one private folder for everything, which is what the tests
   and a player started by hand use.
@@ -45,16 +45,16 @@ import re
 import stat
 import time
 
-RUN = "/run/pvj"                              # the parent: root's, nobody else may add, rename or remove a name in it
+RUN = "/run/nxlx"                              # the parent: root's, nobody else may add, rename or remove a name in it
 PLAYER_DIR = RUN + "/player"
-PLAYER_STATE_DIR = "/var/lib/pvj-player/late-screen"    # persistent, the player account's own (StateDirectory=pvj-player/late-screen)
+PLAYER_STATE_DIR = "/var/lib/nxlx-player/late-screen"    # persistent, the player account's own (StateDirectory=nxlx-player/late-screen)
 WEB_DIR = RUN + "/web"
 NETD_DIR = RUN + "/netd"
-SYSD_DIR = "/run/pvj-sysd"
-SUPPORTD_DIR = "/run/pvj-supportd"
-NDI_DIR = "/run/pvj-ndi"
-NDI_PIPE_DIR = "/run/pvj-ndi-pipe"
-UPDATE_DIR = "/run/pvj-update"
+SYSD_DIR = "/run/nxlx-sysd"
+SUPPORTD_DIR = "/run/nxlx-supportd"
+NDI_DIR = "/run/nxlx-ndi"
+NDI_PIPE_DIR = "/run/nxlx-ndi-pipe"
+UPDATE_DIR = "/run/nxlx-update"
 UPDATE_RESULT = UPDATE_DIR + "/result.json"
 
 PLAYER_SOCKET = "player.sock"
@@ -62,7 +62,7 @@ PLAYER_PID = "player.pid"
 PREVIEW = "preview.jpg"                       # written by mpv, so it lives in the player's folder
 SCREEN_REPORT = "screen.json"                 # the screen's modes and the one the player chose (mctl/screenmode.py, D90)
 RENDERER_REPORT = "renderer.json"             # which program draws and why (mctl/renderer.py, D95)
-STATE_DIR = "/var/lib/pvj"                    # the panel's settings; the player may pass through and read what is its group's
+STATE_DIR = "/var/lib/nxlx"                    # the panel's settings; the player may pass through and read what is its group's
 NETD_SOCKET = "netd.sock"
 SYSD_SOCKET = "sysd.sock"
 SUPPORTD_SOCKET = "supportd.sock"
@@ -70,11 +70,11 @@ NDI_SOCKET = "ndi.sock"
 NDI_FIFO = "ndi.fifo"
 PIN = "pin"
 CAPTURE_FIFO = "capture.fifo"
-LOOPS = "loops"                               # the generated loop lists (mctl/looplist.py, D118): in the panel's folder, read through group pvj
+LOOPS = "loops"                               # the generated loop lists (mctl/looplist.py, D118): in the panel's folder, read through group nxlx-svc
 OVERLAY = "overlay.bgra"
 UNDERVOLTAGE = "undervoltage-seen"
 
-# What the shared /run/pvj of older versions held, directly in it. The installer removes every non-folder there;
+# What the shared /run/nxlx of older versions held, directly in it. The installer removes every non-folder there;
 # this list is for the tests and for people.
 LEGACY_NAMES = (PLAYER_SOCKET, PLAYER_PID, PREVIEW, NETD_SOCKET, PIN, CAPTURE_FIFO, OVERLAY, UNDERVOLTAGE)
 LEGACY_PATTERNS = ("overlay-*.bgra", "mapper-*.glsl", "shader-*.glsl")
@@ -94,7 +94,7 @@ def own_path(env=None):
     base = env.get("PVJ_RUNTIME_DIR")
     if not base:
         xdg = env.get("XDG_RUNTIME_DIR")
-        base = os.path.join(xdg, "pvj") if xdg else "/tmp/pvj-%d" % os.getuid()
+        base = os.path.join(xdg, "nxlx") if xdg else "/tmp/nxlx-%d" % os.getuid()
     return base
 
 
@@ -137,7 +137,7 @@ def state_dir(env=None):
 
 
 def player_state_dir(env=None):
-    """The player's own state folder (a StateDirectory= of pvj-player.service, owned by the account that runs it): what the
+    """The player's own state folder (a StateDirectory= of nxlx-player.service, owned by the account that runs it): what the
     player must remember across a restart of its service, keyed by the boot (mctl/latescreen.py)."""
     return _env(env).get("PVJ_PLAYER_STATE_DIR") or PLAYER_STATE_DIR
 
@@ -176,7 +176,7 @@ def ndi_pipe_dir(env=None):
     return _env(env).get("PVJ_NDI_PIPE_DIR") or NDI_PIPE_DIR
 
 
-NDISC_DIR = "/run/pvj-ndisc"              # the NDI discovery server's supervisor: its socket for the panel (mctl/ndiscovery.py, D85)
+NDISC_DIR = "/run/nxlx-ndisc"              # the NDI discovery server's supervisor: its socket for the panel (mctl/ndiscovery.py, D85)
 
 
 def ndisc_dir(env=None):
@@ -184,7 +184,7 @@ def ndisc_dir(env=None):
     return _env(env).get("PVJ_NDISC_DIR") or None
 
 
-NDI_CONFIG_DIR = "/run/pvj-ndi-config"    # the NDI library's configuration file: the panel writes it, the helper reads it (mctl/ndisetup.py)
+NDI_CONFIG_DIR = "/run/nxlx-ndi-config"    # the NDI library's configuration file: the panel writes it, the helper reads it (mctl/ndisetup.py)
 
 
 def ndi_config_dir(env=None):
@@ -193,7 +193,7 @@ def ndi_config_dir(env=None):
     return _env(env).get("PVJ_NDI_CONFIG_DIR") or None
 
 
-SOUND_DIR = "/run/pvj-sound"              # the sound-analysis service (mctl/sound.py, D96): its socket and the levels file
+SOUND_DIR = "/run/nxlx-sound"              # the sound-analysis service (mctl/sound.py, D96): its socket and the levels file
 SOUND_SOCKET = "sound.sock"
 SOUND_LEVELS = "levels"
 
@@ -211,13 +211,13 @@ def sound_levels(env=None):
     return os.path.join(sound_dir(env), SOUND_LEVELS)
 
 
-LINK_DIR = "/run/pvj-link"                # the Ableton Link follower (render/link/, D117): its socket and its state file
+LINK_DIR = "/run/nxlx-link"                # the Ableton Link follower (render/link/, D117): its socket and its state file
 LINK_SOCKET = "link.sock"
 LINK_STATE = "state"
 
 
 def link_dir(env=None):
-    """The Link helper's folder: its socket for the panel and its state file (group pvj-link). Only the service creates it."""
+    """The Link helper's folder: its socket for the panel and its state file (group nxlx-link). Only the service creates it."""
     return _env(env).get("PVJ_LINK_DIR") or LINK_DIR
 
 
@@ -229,7 +229,7 @@ def link_state(env=None):
     return os.path.join(link_dir(env), LINK_STATE)
 
 
-RASTER_SOCKET = "/run/pvj-raster.sock"   # pvj-raster (render/raster/, D129): systemd listens here and starts a helper per job
+RASTER_SOCKET = "/run/nxlx-raster.sock"   # nxlx-raster (render/raster/, D129): systemd listens here and starts a helper per job
 
 
 def fonts_dir(env=None):
@@ -239,7 +239,7 @@ def fonts_dir(env=None):
 
 
 def raster_socket(env=None):
-    """The picture helper's socket (install/pvj-raster.socket). Group pvj-raster may connect: the panel alone is in it."""
+    """The picture helper's socket (install/nxlx-raster.socket). Group nxlx-raster may connect: the panel alone is in it."""
     return _env(env).get("PVJ_RASTER_SOCKET") or RASTER_SOCKET
 
 

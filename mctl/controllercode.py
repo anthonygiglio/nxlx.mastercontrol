@@ -80,7 +80,7 @@ class ControllerCodes:
         now = self._clock()
         if now >= self._said:
             self._said = now + 10
-            self.log("pvj-web: controller code: " + text)
+            self.log("nxlx-web: controller code: " + text)
 
     # --- from the controller (the MIDI hub only) -----------------------------------------------------
     def press(self, since):
@@ -90,7 +90,7 @@ class ControllerCodes:
             return False
         self._cancelled_press = since
         self._refresh()
-        self.log("pvj-web: controller code: taken off the display by a press on the controller")
+        self.log("nxlx-web: controller code: taken off the display by a press on the controller")
         return True
 
     def request(self, kind, since, source="?"):
@@ -130,7 +130,7 @@ class ControllerCodes:
             auth.cancel_controller_code("not shown")
             self._quiet("asked for from %s, but the display could not show it" % source)
             return False
-        self.log("pvj-web: controller code: a one-time %s code was put on the display from %s, for %d seconds"
+        self.log("nxlx-web: controller code: a one-time %s code was put on the display from %s, for %d seconds"
                  % (WORDS[kind], source, auth_mod.CONTROLLER_SECONDS))
         return True
 

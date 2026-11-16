@@ -111,7 +111,7 @@ class ConfigFile(unittest.TestCase):
     def test_without_the_folder_the_page_is_told_and_nothing_is_written(self):
         i = ndi.Input(None, "/x", self.wanted({"addresses": [], "discovery": ["10.0.0.2"]}), log=lambda *_: None)
         self.assertEqual(i.write_config(), ["10.0.0.2"])
-        self.assertIn("pvj-ndi-runtime refresh", i.config_problem)
+        self.assertIn("nxlx-ndi-runtime refresh", i.config_problem)
         i = ndi.Input(None, "/x", self.wanted({"addresses": [], "discovery": ["10.0.0.2"]}), log=lambda *_: None, config_dir=os.path.join(self.dir, "gone"))
         i.write_config()
         self.assertIn("could not be written", i.config_problem)
@@ -141,8 +141,8 @@ class ConfigFile(unittest.TestCase):
             unit = f.read()
         self.assertIn("Environment=NDI_CONFIG_DIR=%s\n" % paths.NDI_CONFIG_DIR, unit)
         rw = [l for l in unit.splitlines() if l.startswith("ReadWritePaths=")]
-        self.assertEqual(rw, ["ReadWritePaths=/run/pvj-ndi -/run/pvj-ndi-pipe"], "the helper must not be able to write its own configuration")
-        self.assertIn("d %s 0750 pvj-web pvj-ndi -\n" % paths.NDI_CONFIG_DIR, ndisetup.TMPFILES_TEXT)
+        self.assertEqual(rw, ["ReadWritePaths=/run/nxlx-ndi -/run/nxlx-ndi-pipe"], "the helper must not be able to write its own configuration")
+        self.assertIn("d %s 0750 nxlx-web nxlx-ndi -\n" % paths.NDI_CONFIG_DIR, ndisetup.TMPFILES_TEXT)
         self.assertIn("Environment=PVJ_NDI_CONFIG_DIR=%s\n" % paths.NDI_CONFIG_DIR, ndisetup.WEB_TEXT)
         self.assertIn("ReadWritePaths=-%s\n" % paths.NDI_CONFIG_DIR, ndisetup.WEB_TEXT)
         self.assertEqual(paths.ndi_config_dir({"PVJ_NDI_CONFIG_DIR": "/a"}), "/a")
@@ -276,10 +276,10 @@ class Scope(PadBase):
 
     def test_a_box_whose_set_up_is_older_says_so_and_nothing_restarts(self):
         self.api.ndi.config_dir = None
-        self.service.config_dir = "/opt/pvj-ndi"                 # what the older unit told the library
+        self.service.config_dir = "/opt/nxlx-ndi"                 # what the older unit told the library
         st, out = self.set({"action": "add_discovery", "server": "10.0.0.2"})
         self.assertEqual((st, out["discovery"], out["discovery_now"], self.restarts), (200, ["10.0.0.2"], [], []))
-        self.assertIn("pvj-ndi-runtime refresh", out["notice"])
+        self.assertIn("nxlx-ndi-runtime refresh", out["notice"])
 
     def test_every_other_ndi_setting_survives_each_of_them(self):
         self.give()

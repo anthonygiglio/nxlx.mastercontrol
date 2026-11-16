@@ -1,10 +1,10 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""Remote support sessions, the panel's side (the tunnel itself is pvj-supportd's job).
+"""Remote support sessions, the panel's side (the tunnel itself is nxlx-supportd's job).
 
 How it works for the people involved:
 
-* The owner's support server details are set once (System > Remote support, or /etc/pvj/support.json for a fleet),
+* The owner's support server details are set once (System > Remote support, or /etc/nxlx/support.json for a fleet),
   and remote support stays off until a full-access device *at the studio* allows it.
 * When help is needed, someone at the studio with full access presses Start, chooses how long (1 hour unless they
   choose otherwise, at most 4) and how much support may do. The box dials out to the support server; nothing is
@@ -46,11 +46,11 @@ ROLES = ("view", "live", "full")
 LOG_KEEP = 20
 FAILS, FAIL_WINDOW, LOCKOUT = 5, 600, 300
 HANDSHAKE_FRESH = 180            # seconds: the support server answered recently = connected
-DEFAULTS_FILE = "/etc/pvj/support.json"
+DEFAULTS_FILE = "/etc/nxlx/support.json"
 
 # D84. The principle: a helper in a remote session with the Owner's role may do anything that ends when the session
 # ends, and nothing that outlives it or locks the owner out. (A remote Owner session can already upload a software
-# update signed by a key this box trusts: pvj-update checks the signature against /etc/pvj/allowed_signers, and no
+# update signed by a key this box trusts: nxlx-update checks the signature against /etc/nxlx/allowed_signers, and no
 # route changes the signers. So what is refused below is not about limiting a trusted helper in the
 # moment; it is about a way in that would still be there after Stop, and about the owner's own way in.)
 #
@@ -218,7 +218,7 @@ class SupportManager:
 
     # -- settings ---------------------------------------------------------------------------------------------
     def defaults(self):
-        """The fleet's support server details from /etc/pvj/support.json, if the owner put one there."""
+        """The fleet's support server details from /etc/nxlx/support.json, if the owner put one there."""
         try:
             with open(self.defaults_file) as f:
                 d = json.load(f)
@@ -313,7 +313,7 @@ class SupportManager:
         try:
             reply = self.client.request({"cmd": "stop"})
             if reply.get("ok"):
-                self.log("pvj-web: remote support: closed any session left from an earlier run")
+                self.log("nxlx-web: remote support: closed any session left from an earlier run")
         except OSError:
             pass
 
@@ -386,7 +386,7 @@ class SupportManager:
                     except OSError:
                         pass
         if not again:
-            self.log("pvj-web: remote support %s: %s%s" % (device.get("id"), text, "" if detail is None else " (%s)" % clean(detail)[:80]))
+            self.log("nxlx-web: remote support %s: %s%s" % (device.get("id"), text, "" if detail is None else " (%s)" % clean(detail)[:80]))
 
     def refused(self, device, what, detail=None):
         """A support login (or a request through the tunnel with no login at all) was refused something no session may
@@ -443,13 +443,13 @@ class SupportManager:
             try:
                 self._helper({"cmd": "stop"})
             except SupportApiError as e:
-                self.log("pvj-web: remote support: could not tell the helper to stop: %s" % e.message)
+                self.log("nxlx-web: remote support: could not tell the helper to stop: %s" % e.message)
         with self.settings.lock:
             for entry in self.settings.data.get("support_log", []):
                 if entry.get("id") == s["id"]:
                     entry.update(ended=int(self._now()), reason=reason, logins=s["logins"])
             self.settings.save()
-        self.log("pvj-web: remote support session ended: %s (%d support logins)" % (reason, s["logins"]))
+        self.log("nxlx-web: remote support session ended: %s (%d support logins)" % (reason, s["logins"]))
 
     def start(self, body, device, client):
         self.need_local(client)
@@ -482,7 +482,7 @@ class SupportManager:
             self._fails.clear()
             self._locked_until.clear()
             self._log({"id": sid, "started": int(self._now()), "by": device["name"], "minutes": minutes, "role": role})
-            self.log("pvj-web: remote support session started by %s for %d minutes, support role %s" % (device["name"], minutes, role))
+            self.log("nxlx-web: remote support session started by %s for %d minutes, support role %s" % (device["name"], minutes, role))
         return self.status(device, client)
 
     def extend(self, body, device, client):
@@ -498,7 +498,7 @@ class SupportManager:
             reply = self._helper({"cmd": "extend", "minutes": minutes})
             self.session["until"] = self._clock() + minutes * 60
             self.session["until_epoch"] = reply.get("until", int(self._now() + minutes * 60))
-            self.log("pvj-web: remote support session set to end in %d minutes by %s" % (minutes, device["name"]))
+            self.log("nxlx-web: remote support session set to end in %d minutes by %s" % (minutes, device["name"]))
         return self.status(device, client)
 
     def stop(self, body, device, client):
@@ -549,7 +549,7 @@ class SupportManager:
             token = secrets.token_urlsafe(24)
             dev = {"id": "support-%d" % s["logins"], "name": "Remote support", "role": s["role"], "created": int(self._now()), "remote": True}
             s["tokens"][_hash(token)] = dev
-            self.log("pvj-web: remote support logged in from %s (login %d of %d)" % (client, s["logins"], MAX_LOGINS))
+            self.log("nxlx-web: remote support logged in from %s (login %d of %d)" % (client, s["logins"], MAX_LOGINS))
             return {"token": token, "device": dict(dev), "seconds_left": self._seconds_left()}
 
     def authenticate(self, token):
@@ -578,7 +578,7 @@ class SupportManager:
             for k in gone:
                 del s["tokens"][k]
             if gone:
-                self.log("pvj-web: remote support %s logged out (the session goes on)" % device.get("id"))
+                self.log("nxlx-web: remote support %s logged out (the session goes on)" % device.get("id"))
             return bool(gone)
 
     # -- what the panel shows -----------------------------------------------------------------------------------
@@ -640,5 +640,5 @@ class SupportManager:
                     raise SupportApiError(400, "the support network %s overlaps a network this node is on (%s)" % (cfg["network"], clash))
                 self.settings.data["support"] = cfg
                 self.settings.save()
-            self.log("pvj-web: remote support settings changed by %s (allowed: %s)" % (device["name"], cfg["allowed"]))
+            self.log("nxlx-web: remote support settings changed by %s (allowed: %s)" % (device["name"], cfg["allowed"]))
         return self.status(device, client)

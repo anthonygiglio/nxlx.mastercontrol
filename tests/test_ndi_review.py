@@ -28,13 +28,13 @@ class UpdateOverAnOlderSetUp(unittest.TestCase):
         self.sh = read("install", "install.sh")
 
     def test_the_installer_makes_the_folders_right_after_it_wrote_their_lines_and_before_any_restart(self):
-        refresh = self.sh.index('"$RELEASE/bin/pvj-ndi-runtime" refresh --root "$ROOT" --prefix "$PREFIX"')
+        refresh = self.sh.index('"$RELEASE/bin/nxlx-ndi-runtime" refresh --root "$ROOT" --prefix "$PREFIX"')
         make = 'systemd-tmpfiles --create "$NDI_TMPFILES"'
         self.assertEqual(self.sh.count(make), 1)
         at = self.sh.index(make)
         self.assertGreater(at, refresh, "the folders are made after their lines were written")
-        self.assertLess(at, self.sh.index("systemctl restart pvj-ndi.service"), "and before the helper is started")
-        self.assertLess(at, self.sh.index("systemctl restart pvj-player.service pvj-web.service"), "and before the panel is, whose drop-in names one of them")
+        self.assertLess(at, self.sh.index("systemctl restart nxlx-ndi.service"), "and before the helper is started")
+        self.assertLess(at, self.sh.index("systemctl restart nxlx-player.service nxlx-web.service"), "and before the panel is, whose drop-in names one of them")
         line = [l for l in self.sh.splitlines() if make in l][0]
         block = self.sh[self.sh.rindex("\nif ndi_mark; then", 0, at):at]
         self.assertNotIn("\nfi\n", block, "only behind the mark")
@@ -43,15 +43,15 @@ class UpdateOverAnOlderSetUp(unittest.TestCase):
 
     def test_a_folder_that_tmpfiles_makes_is_never_a_reason_for_a_unit_not_to_start(self):
         made = [l.split()[1] for l in ndisetup.TMPFILES_TEXT.splitlines() if l.startswith("d ")]
-        self.assertEqual(made, ["/run/pvj-ndi-pipe", "/run/pvj-ndi-config"])
-        for name, text in (("pvj-ndi.service", read("mctl", "systemd", "pvj-ndi.service")), ("the panel's drop-in", ndisetup.WEB_TEXT),
-                           ("the player's drop-in", ndisetup.PLAYER_TEXT), ("pvj-ndi-discovery.service", read("mctl", "systemd", "pvj-ndi-discovery.service"))):
+        self.assertEqual(made, ["/run/nxlx-ndi-pipe", "/run/nxlx-ndi-config"])
+        for name, text in (("nxlx-ndi.service", read("mctl", "systemd", "nxlx-ndi.service")), ("the panel's drop-in", ndisetup.WEB_TEXT),
+                           ("the player's drop-in", ndisetup.PLAYER_TEXT), ("nxlx-ndi-discovery.service", read("mctl", "systemd", "nxlx-ndi-discovery.service"))):
             for line in text.splitlines():
                 if line.startswith(("ReadWritePaths=", "ReadOnlyPaths=", "BindPaths=", "BindReadOnlyPaths=")):
                     for word in line.split("=", 1)[1].split():
                         if word.lstrip("-+") in made:
                             self.assertTrue(word.startswith("-"), "%s: %s names a folder that may not be there yet, without the dash" % (name, word))
-        self.assertIn("ReadWritePaths=/run/pvj-ndi -/run/pvj-ndi-pipe\n", read("mctl", "systemd", "pvj-ndi.service"))
+        self.assertIn("ReadWritePaths=/run/nxlx-ndi -/run/nxlx-ndi-pipe\n", read("mctl", "systemd", "nxlx-ndi.service"))
 
     def test_the_set_up_commands_make_the_folders_themselves(self):
         ran = []
@@ -61,15 +61,15 @@ class UpdateOverAnOlderSetUp(unittest.TestCase):
                         root=root, check=lambda r: None, sleep=lambda s: None, overlay=lambda: False)
         self.assertIn(["systemd-tmpfiles", "--create", ndisetup.TMPFILES_PATH], ran)
         self.assertLess(ran.index(["systemd-tmpfiles", "--create", ndisetup.TMPFILES_PATH]), ran.index(["systemctl", "restart", ndisetup.UNIT]))
-        self.assertNotIn("tmpfiles", D.WEB_TEXT + read("mctl", "systemd", "pvj-ndi-discovery.service").split("[Unit]")[1])      # the discovery server needs none: its only folder is its RuntimeDirectory
+        self.assertNotIn("tmpfiles", D.WEB_TEXT + read("mctl", "systemd", "nxlx-ndi-discovery.service").split("[Unit]")[1])      # the discovery server needs none: its only folder is its RuntimeDirectory
 
     def test_the_real_install_job_updates_over_a_box_whose_folders_were_never_made(self):
         sh = read("tests", "real_install_test.sh")
         step = sh[sh.index('step "an update over a box that an earlier release set up'):]
         step = step[:step.index("\nstep ", 10)]
-        for want in ("rm -rf /run/pvj-ndi-pipe /run/pvj-ndi-config", "rm -f /etc/tmpfiles.d/pvj-ndi.conf", "\ninstaller\n",
-                     'is /run/pvj-ndi-pipe "root:pvj-ndi 750 directory"', 'is /run/pvj-ndi-pipe/ndi.fifo "root:pvj-ndi 660 fifo"',
-                     'is /run/pvj-ndi-config "pvj-web:pvj-ndi 750 directory"', "systemctl is-active --quiet pvj-ndi.service"):
+        for want in ("rm -rf /run/nxlx-ndi-pipe /run/nxlx-ndi-config", "rm -f /etc/tmpfiles.d/nxlx-ndi.conf", "\ninstaller\n",
+                     'is /run/nxlx-ndi-pipe "root:nxlx-ndi 750 directory"', 'is /run/nxlx-ndi-pipe/ndi.fifo "root:nxlx-ndi 660 fifo"',
+                     'is /run/nxlx-ndi-config "nxlx-web:nxlx-ndi 750 directory"', "systemctl is-active --quiet nxlx-ndi.service"):
             self.assertIn(want, step, want)
 
 

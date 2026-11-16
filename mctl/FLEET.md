@@ -10,13 +10,13 @@ By mDNS (the same multicast DNS that makes `node-01.local` work), a service call
 
 | Record | Meaning |
 |---|---|
-| `id` | A random identifier, 32 hex digits, made the first time the node starts and kept in `/var/lib/pvj/node-id`. It stays through restarts, renames and updates. It is public and identifies the node; it is not a password. |
+| `id` | A random identifier, 32 hex digits, made the first time the node starts and kept in `/var/lib/nxlx/node-id`. It stays through restarts, renames and updates. It is public and identifies the node; it is not a password. |
 | `name` | The node's host name, as the pin screen and Health show it. |
 | `tier` | `lean` (Pi 3 class), `standard` (Pi 4), `full` (Pi 5, PC) or `unknown`. |
 | `version` | The installed release. |
 | `https` | `1` when the port is the secure connection. |
 
-Nothing else goes out: no address list, no settings, no device names, no media names. The announcement is one file, `/etc/avahi/services/nxlx-mastercontrol.service`, written by the system helper (`pvj-sysd`) and served by `avahi-daemon`, which Raspberry Pi OS already runs. It is rewritten when the name, version, port, secure connection or the switch changes, and otherwise only once a minute, to notice that avahi stopped or that the file was deleted.
+Nothing else goes out: no address list, no settings, no device names, no media names. The announcement is one file, `/etc/avahi/services/nxlx-mastercontrol.service`, written by the system helper (`nxlx-sysd`) and served by `avahi-daemon`, which Raspberry Pi OS already runs. It is rewritten when the name, version, port, secure connection or the switch changes, and otherwise only once a minute, to notice that avahi stopped or that the file was deleted.
 
 Without `avahi-daemon` the node works as before, announces nothing, and says why: `GET /api/nodes` reports `discovery.state` as `no-avahi` (not installed) or `avahi-stopped` (installed, not running), the node's log has a line, and the event log has one. The node still lists other nodes. It looks again every minute, so installing avahi later is enough. This feature never installs a package.
 
@@ -33,7 +33,7 @@ Without `avahi-daemon` the node works as before, announces nothing, and says why
 
 The node does this by sending one multicast DNS question for `_nxlx._tcp.local` from an ordinary UDP port, on each of its networks, and reading the answers for about a second. It does not need `avahi-browse` or any package, and it does not take port 5353 from avahi. The answer is kept for 10 seconds; a request never waits for a scan except the very first one (at most 2.5 seconds). A node that one scan missed stays in the list for 35 seconds. The node's own entry is left out. When nobody asks, nothing is sent.
 
-What comes back is what strangers on the network say. Names, versions and tiers are checked and cut, an answer from a public address is ignored, and the list is never a credential. Two rows with the same `id` at different addresses mean a card was cloned after its first start; delete `/var/lib/pvj/node-id` on one and restart it.
+What comes back is what strangers on the network say. Names, versions and tiers are checked and cut, an answer from a public address is ignored, and the list is never a credential. Two rows with the same `id` at different addresses mean a card was cloned after its first start; delete `/var/lib/nxlx/node-id` on one and restart it.
 
 ## Switching it off
 
@@ -45,8 +45,8 @@ For a venue's network team: the node sends and receives multicast DNS on UDP por
 
 ## What changes on the node, and what is the owner's to apply
 
-- `pvj-web` needs no change: IPv4 UDP is already allowed and its unit has no address filter.
-- `pvj-sysd.service` gains `-/etc/avahi/services` in `ReadWritePaths`, so the helper can write the one file. That is a change to what a root helper may write; the installer applies it at the next install or update, and no code path applies it by itself. Until it is applied the announcement fails with `error` and the node otherwise works.
+- `nxlx-web` needs no change: IPv4 UDP is already allowed and its unit has no address filter.
+- `nxlx-sysd.service` gains `-/etc/avahi/services` in `ReadWritePaths`, so the helper can write the one file. That is a change to what a root helper may write; the installer applies it at the next install or update, and no code path applies it by itself. Until it is applied the announcement fails with `error` and the node otherwise works.
 - No firewall rule is added or needed on the node.
 
 ## Tested, and not

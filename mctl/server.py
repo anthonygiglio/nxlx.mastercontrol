@@ -353,7 +353,7 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
 
         def _graphics_thumb(self):
             """GET /api/graphics/thumb?name=logo.png: the thumbnail PNG of a stored graphic (Operator and up). The only
-            picture the panel serves from the graphics store is a PNG that pvj-raster wrote."""
+            picture the panel serves from the graphics store is a PNG that nxlx-raster wrote."""
             try:
                 self._who("GET", "/api/graphics/thumb")
                 name = (parse_qs(urlsplit(self.path).query).get("name") or [""])[0]
@@ -367,7 +367,7 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
         def _graphics_preview(self, body=None):
             """GET /api/graphics/preview.png?id=g1234: the node-made picture of one graphic as it is saved. POST the same
             path with {"id", "text"} for a line as typed and not yet sent: the line travels in the body, so it is not in
-            the address or the access log. Operator and up, at most 5 a second. Only a PNG that pvj-raster wrote is ever sent."""
+            the address or the access log. Operator and up, at most 5 a second. Only a PNG that nxlx-raster wrote is ever sent."""
             try:
                 if body is not None:
                     self._who("POST", "/api/graphics/preview.png")
@@ -486,7 +486,7 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
 
         def _graphics_upload(self):
             """Raw-body upload: POST /api/graphics/upload?name=logo.png[&replace=1]. A PNG, JPEG or SVG; the answer is the
-            stored PNG's name, or the plain reason. Nothing is decoded here (mctl/raster.py, pvj-raster)."""
+            stored PNG's name, or the plain reason. Nothing is decoded here (mctl/raster.py, nxlx-raster)."""
             query = parse_qs(urlsplit(self.path).query)
             try:
                 device = self._who("POST", "/api/graphics/upload")
@@ -624,7 +624,7 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                     return self._json(200, box.make_request(names, body.get("new_key") is True))
                 if path == "/api/https/certificate":
                     leaf = box.install(body.get("certificate"), host)
-                    api.log("pvj-web: certificate uploaded by device %s (%s)" % (device["id"], device["name"]))
+                    api.log("nxlx-web: certificate uploaded by device %s (%s)" % (device["id"], device["name"]))
                     return self._json(200, {"installed": True, "status": box.status(self._secure(), host, device)})
                 if path == "/api/https/undo":
                     box.undo()
@@ -634,7 +634,7 @@ def make_handler(api, auth, web_dir=WEB_DIR, max_lifetime=60.0, host_names=None)
                     return self._json(200, {"removed": had, "status": box.status(self._secure(), host, device)})
                 if path == "/api/https/root":
                     out = box.replace_root(body.get("root"), body.get("confirm"), self._secure(), box.device_secure(device))
-                    api.log("pvj-web: root replaced by device %s (%s)" % (device["id"], device["name"]))
+                    api.log("nxlx-web: root replaced by device %s (%s)" % (device["id"], device["name"]))
                     return self._json(200, dict(out, status=box.status(self._secure(), host, device)))
                 if path == "/api/https/auto":               # D139: where the signer is, and "try now"; the try runs in its own thread
                     from .autocert import URL as SIGNER_URL, clean_fingerprint
@@ -1020,8 +1020,8 @@ class PeerServer(TlsServer):
 def write_pin_file(rundir, pin):
     """Show-the-PIN channel: a tmpfs file the display or an admin can read. Cleared on reboot."""
     path = paths.pin_file(rundir)
-    # Owner only: the panel writes it and root reads it (`sudo pvj-pin`). The player's account, which opens
-    # untrusted media and shares group pvj, has no business reading the full-access PIN.
+    # Owner only: the panel writes it and root reads it (`sudo nxlx-pin`). The player's account, which opens
+    # untrusted media and shares group nxlx-svc, has no business reading the full-access PIN.
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
     with os.fdopen(fd, "w") as f:
         os.fchmod(f.fileno(), 0o600)
@@ -1038,7 +1038,7 @@ def build_fleet(api, settings, state, board):
     from . import __version__, fleet as fleet_mod
     own_id, kept = fleet_mod.node_id(state)
     if not kept:
-        print("pvj-web: the node id could not be kept in %s; it will be new at the next start" % state, file=sys.stderr)
+        print("nxlx-web: the node id could not be kept in %s; it will be new at the next start" % state, file=sys.stderr)
     api.node_id = own_id                     # the one id this node has: the fleet card says the same as the announcement
     tier = hardware.tier(board["kind"])
 
@@ -1052,7 +1052,7 @@ def build_fleet(api, settings, state, board):
 
     def addresses():
         if time.monotonic() - known[0] >= fleet_mod.CACHE_SECONDS or not known[1]:       # `ip` is run at most once per listing
-            known[:] = [time.monotonic(), [a["local"] for e in api._ip_json() if e.get("ifname") not in ("lo", "wg-pvj")
+            known[:] = [time.monotonic(), [a["local"] for e in api._ip_json() if e.get("ifname") not in ("lo", "wg-nxlx")
                                            for a in e.get("addr_info", []) if a.get("family") == "inet" and a.get("local")]]
         return list(known[1])
 
@@ -1097,7 +1097,7 @@ def build_handover(api, settings, state, env):
 
 def build(env=None, player=None):
     env = os.environ if env is None else env
-    state = env.get("PVJ_STATE_DIR", "/var/lib/pvj")
+    state = env.get("PVJ_STATE_DIR", "/var/lib/nxlx")
     media = env.get("PVJ_MEDIA_DIR", os.path.join(state, "video"))
     settings = Settings(os.path.join(state, "settings.json"))
     settings.load()
@@ -1133,7 +1133,7 @@ def build(env=None, player=None):
     # and a strobe that was lit when the panel went down is taken off the same way (the player keeps drawing it with nobody holding it)
     threading.Thread(target=api.strobe.reset_player, name="strobe-reset", daemon=True).start()
     # The NDI helper's client. NDI is opt-in per box (D62): PVJ_NDI_DIR is set only by the drop-in that root's
-    # `pvj-ndi-runtime install` writes for the panel's unit (mctl/ndisetup.py). Without it this box has no helper, the
+    # `nxlx-ndi-runtime install` writes for the panel's unit (mctl/ndisetup.py). Without it this box has no helper, the
     # socket is never tried, and the page says how to set NDI up. With it, the helper is idle until the module is on.
     from . import ndi as ndi_mod
     ndi_log = lambda m: print(m, file=sys.stderr)      # noqa: E731
@@ -1151,10 +1151,10 @@ def build(env=None, player=None):
     try:                                     # whatever the helper answers, the panel starts
         api.ndi.sync()
     except Exception as e:
-        print("pvj-web: NDI helper not told the settings: %s" % e, file=sys.stderr)
+        print("nxlx-web: NDI helper not told the settings: %s" % e, file=sys.stderr)
     from . import httpsbox as httpsbox_mod
     api.https = httpsbox_mod.HttpsBox(os.path.join(state, "tls"), settings, openssl=env.get("PVJ_OPENSSL", "openssl"),
-                                      addresses=lambda: [a["local"] for e in api._ip_json() if e.get("ifname") not in ("lo", "wg-pvj")
+                                      addresses=lambda: [a["local"] for e in api._ip_json() if e.get("ifname") not in ("lo", "wg-nxlx")
                                                          for a in e.get("addr_info", []) if a.get("family") == "inet" and a.get("local")],
                                       clock_trusted=lambda: api.clock_status().get("clock_from_network"), log=api.log)
     api.https.load()                         # a certificate that will not load leaves HTTP as it is, with the reason on the page
@@ -1170,27 +1170,27 @@ def build(env=None, player=None):
     try:
         api.shaders.tidy()                   # shader texts an earlier panel process left in the runtime folder
     except Exception as e:
-        print("pvj-web: old shader texts not removed: %s" % e, file=sys.stderr)
+        print("nxlx-web: old shader texts not removed: %s" % e, file=sys.stderr)
     try:
         api.effects.tidy()                   # an effect an earlier panel process left on comes off: nobody knows its values
     except Exception as e:
-        print("pvj-web: an old effect was not taken off: %s" % e, file=sys.stderr)
+        print("nxlx-web: an old effect was not taken off: %s" % e, file=sys.stderr)
     try:
         api.transitions.tidy()               # the still of a crossfade an earlier panel process left on the screen comes off
     except Exception as e:
-        print("pvj-web: an old transition was not tidied: %s" % e, file=sys.stderr)
+        print("nxlx-web: an old transition was not tidied: %s" % e, file=sys.stderr)
     try:
         api.screen.start()                   # the screen's mode the player reads (D90); a try left from before goes back
     except Exception as e:
-        print("pvj-web: screen output not written: %s" % e, file=sys.stderr)
+        print("nxlx-web: screen output not written: %s" % e, file=sys.stderr)
     try:
         api.renderer.start()                 # which program the player runs (D95)
     except Exception as e:
-        print("pvj-web: the renderer's wish not written: %s" % e, file=sys.stderr)
+        print("nxlx-web: the renderer's wish not written: %s" % e, file=sys.stderr)
     try:
         api.sync.apply()                     # lead or follow, as the settings say
     except Exception as e:                   # a busy port must not stop the panel
-        print("pvj-web: sync not started: %s" % e, file=sys.stderr)
+        print("nxlx-web: sync not started: %s" % e, file=sys.stderr)
     api.projectors.apply()                   # background status of the projectors, if that module is on
     api.sweep_stale_uploads()  # temp files left by a power cut can be gigabytes
     api.osc = osc_mod.OscManager(api, settings)
@@ -1206,12 +1206,12 @@ def build(env=None, player=None):
     try:
         api.osc.apply()
     except osc_mod.OscError as e:
-        print("pvj-web: OSC not started: %s" % e, file=sys.stderr)
+        print("nxlx-web: OSC not started: %s" % e, file=sys.stderr)
     for name, manager in (("DMX", api.dmx), ("MIDI", api.midi)):
         try:
             manager.apply()
         except Exception as e:  # a missing controller or a busy port must not stop the panel
-            print("pvj-web: %s not started: %s" % (name, e), file=sys.stderr)
+            print("nxlx-web: %s not started: %s" % (name, e), file=sys.stderr)
     return api, auth, rundir
 
 
@@ -1220,7 +1220,7 @@ def main(argv=None):
     try:
         api, auth, rundir = build(env)
     except SettingsError as e:
-        print("pvj-web: %s" % e, file=sys.stderr)
+        print("nxlx-web: %s" % e, file=sys.stderr)
         return 1
     host, port = env.get("PVJ_BIND", "0.0.0.0"), int(env.get("PVJ_PORT", "8080"))
     httpd = MctlServer((host, port), make_handler(api, auth))
@@ -1231,7 +1231,7 @@ def main(argv=None):
             tlsd = TlsServer((host, tls_port), make_handler(api, auth), api.https)
             threading.Thread(target=tlsd.serve_forever, name="mctl-https", daemon=True).start()
         except OSError as e:                 # the port in use or not allowed: the plain panel still comes up
-            print("pvj-web: https not listening on %s:%d: %s" % (host, tls_port, e), file=sys.stderr)
+            print("nxlx-web: https not listening on %s:%d: %s" % (host, tls_port, e), file=sys.stderr)
     if getattr(api, "autocert", None) is not None:
         api.autocert.start()                 # D139: asks the signer in its own thread; a silent signer never holds the panel up
     peerd = None
@@ -1240,7 +1240,7 @@ def main(argv=None):
             peerd = PeerServer((host, peer_port(env)), make_peer_handler(api), api.https)
             threading.Thread(target=peerd.serve_forever, name="mctl-peer", daemon=True).start()
         except OSError as e:                 # the port in use: the panel still comes up, and this node can call the others
-            print("pvj-web: the peer port is not listening on %s:%d: %s" % (host, peer_port(env), e), file=sys.stderr)
+            print("nxlx-web: the peer port is not listening on %s:%d: %s" % (host, peer_port(env), e), file=sys.stderr)
     api.scheduler.start()
     api.autostart.start()
     api.pinscreen.start()
@@ -1259,23 +1259,23 @@ def main(argv=None):
                     api.ndisc_tick()
                 api.ndi_tick()
             except Exception as e:
-                print("pvj-web: NDI watch: %s" % e, file=sys.stderr)
+                print("nxlx-web: NDI watch: %s" % e, file=sys.stderr)
             try:
                 api.events_tick()            # the update result, the renderer's fall back, a projector without an answer (D125)
             except Exception as e:
-                print("pvj-web: event watch: %s" % e, file=sys.stderr)
+                print("nxlx-web: event watch: %s" % e, file=sys.stderr)
             if n % 15 == 0 and api.fleet is not None:
                 api.fleet.tick()             # a new name, version or port, or a retry: nothing is sent when nothing changed (D127)
             try:
                 api.render_tick()            # a render node's picture that went: back to what played before (D94)
             except Exception as e:
-                print("pvj-web: render watch: %s" % e, file=sys.stderr)
+                print("nxlx-web: render watch: %s" % e, file=sys.stderr)
             try:
                 api.sound_tick()             # the sound service told again after a restart; the sending thread (D96)
             except Exception as e:
-                print("pvj-web: sound watch: %s" % e, file=sys.stderr)
+                print("nxlx-web: sound watch: %s" % e, file=sys.stderr)
     threading.Thread(target=ndi_watch, name="ndi-watch", daemon=True).start()
-    print("pvj-web: listening on %s:%d%s; pairing PIN %s (also in %s/pin)"
+    print("nxlx-web: listening on %s:%d%s; pairing PIN %s (also in %s/pin)"
           % (host, port, " and https on %d (%s)" % (tls_port, "certificate loaded" if api.https.context else "no certificate yet") if tlsd else "",
              auth.current_pin, rundir), flush=True)
     signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt))

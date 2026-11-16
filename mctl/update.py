@@ -5,7 +5,7 @@
 A release is a signed tar.gz bundle. `apply` checks it (SHA-256, an OpenSSH
 Ed25519 signature made with `ssh-keygen -Y sign`, safe extraction, version,
 schema, disk space), backs up settings, installs it with install/install.sh
-(new folder under /opt/pvj/releases, atomic switch of /opt/pvj/current),
+(new folder under /opt/nxlx/releases, atomic switch of /opt/nxlx/current),
 restarts the services and checks that the panel answers. If it does not,
 the previous release and the settings backup are put back automatically.
 
@@ -35,7 +35,7 @@ NAMESPACE = "pvj-release"
 MAX_BUNDLE_BYTES = 300 * 1024 * 1024
 MAX_FILES = 5000
 KEEP_BACKUPS = 5
-DEFAULT_RESULT = paths.UPDATE_RESULT     # what the panel's Updates card reads (pvj-update-*@.service)
+DEFAULT_RESULT = paths.UPDATE_RESULT     # what the panel's Updates card reads (nxlx-update-*@.service)
 _VERSION = re.compile(r"^([0-9]+)\.([0-9]+)\.([0-9]+)$")
 
 
@@ -178,16 +178,19 @@ def inspect_bundle(directory):
                 return f.read()
         except OSError:
             raise UpdateError("bundle is missing %s" % rel)
-    # The package is mctl/ from the rename's PR 6 on. For one release a bundle with only the old folder name (pvj/),
-    # one built from a checkout of the release before the rename, is accepted too. (The updater installed on a node
-    # before the rename reads pvj/ only; tools/make-release.sh puts stubs there for it. rollback() does not look at a
-    # bundle: it only switches back to a release folder that is already installed.)
-    pkg = "mctl" if os.path.isfile(os.path.join(directory, "mctl", "__init__.py")) else "pvj"
-    version = re.search(r'^__version__ = "([^"]+)"', read(pkg + "/__init__.py"), re.M)
-    schema = re.search(r"^SCHEMA = (\d+)", read(pkg + "/settings.py"), re.M)
+    # A release from before the rename of the system names (rename PR 7) runs as pvj-* accounts from /opt/pvj: its
+    # installer would put a second, old layout beside the converted one. Going back to it is the converter's undo,
+    # which brings the old names back too; an update never installs it.
+    if not os.path.isfile(os.path.join(directory, "bin", "nxlx-player")) and (
+            os.path.isfile(os.path.join(directory, "bin", "pvj-player"))
+            or os.path.isfile(os.path.join(directory, "pvj", "__init__.py"))):
+        raise UpdateError("this bundle is a release from before the rename of the system names (pvj to nxlx) and "
+                          "cannot be installed on this node; to go back to that release: sudo nxlx-convert --undo")
+    version = re.search(r'^__version__ = "([^"]+)"', read("mctl/__init__.py"), re.M)
+    schema = re.search(r"^SCHEMA = (\d+)", read("mctl/settings.py"), re.M)
     if not version or not schema:
         raise UpdateError("cannot read version or schema from the bundle")
-    for rel in ("bin/pvj-player", "bin/pvj-web", "install/install.sh"):
+    for rel in ("bin/nxlx-player", "bin/nxlx-web", "install/install.sh"):
         if not os.path.isfile(os.path.join(directory, rel)):
             raise UpdateError("bundle is missing %s" % rel)
     parse_version(version.group(1))
@@ -195,7 +198,7 @@ def inspect_bundle(directory):
 
 
 class Updater:
-    def __init__(self, root="/", prefix="/opt/pvj", state_dir="/var/lib/pvj", etc_dir="/etc/pvj",
+    def __init__(self, root="/", prefix="/opt/nxlx", state_dir="/var/lib/nxlx", etc_dir="/etc/nxlx",
                  run=subprocess.run, restart=None, health=None, install=None, now=time.time):
         self.root = root.rstrip("/")
         self.prefix = prefix
@@ -274,7 +277,7 @@ class Updater:
             shutil.move(current, "%s.rolled-back-%d" % (current, int(self.now())))
         else:
             try:
-                web = pwd.getpwnam("pvj-web")
+                web = pwd.getpwnam("nxlx-web")
                 owner = (web.pw_uid, web.pw_gid)
             except KeyError:
                 pass
@@ -454,6 +457,12 @@ class Updater:
         target = st["previous"]
         if not target or not os.path.isdir(self.real("%s/releases/%s" % (self.prefix, target))):
             raise UpdateError("there is no previous release to go back to")
+        # The release before the rename of the system names runs only under the old names (pvj-* units, accounts and
+        # folders): switching "current" to it would leave every unit without its program. The converter's undo goes
+        # back to it, and puts the old names back with it.
+        if not os.path.isfile(self.real("%s/releases/%s/bin/nxlx-web" % (self.prefix, target))):
+            raise UpdateError("the previous release %s is from before the rename of the system names (pvj to nxlx) "
+                              "and does not run under them; to go back to it: sudo nxlx-convert --undo" % target)
         log("rolling back %s -> %s" % (st["current"], target))
         self._switch_to(target, self.latest_backup(target), current=st["current"])
         if not self._health():
@@ -479,7 +488,7 @@ class Updater:
     BUNDLE_NAME = re.compile(r"pvj-(\d+\.\d+\.\d+)\.tar\.gz")
 
     def open_inbox(self):
-        """The upload folder, opened without following a link: pvj-web owns /var/lib/pvj and could replace the
+        """The upload folder, opened without following a link: nxlx-web owns /var/lib/nxlx and could replace the
         folder with a link to somewhere root must not touch. Returns a directory fd (the caller closes it), or
         None when there is no inbox."""
         flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
@@ -513,7 +522,7 @@ class Updater:
                 except OSError:
                     pass
 
-    def usb_bundles(self, base="/media/pvj"):
+    def usb_bundles(self, base="/media/nxlx"):
         found = []
         for path in glob.glob(os.path.join(base, "*", "pvj-update", "*.tar.gz")):
             m = self.BUNDLE_NAME.fullmatch(os.path.basename(path))
@@ -531,23 +540,23 @@ class Updater:
     def _systemd_restart(self):
         if os.path.isdir("/run/systemd/system") and self.root == "":
             # The network helper too, only if it is running (try-restart starts nothing): its socket's place is
-            # part of a release (mctl/paths.py), and the panel must find the helper that matches it. Not pvj-sysd
-            # (it started this update) and not pvj-supportd (a support session may be the one updating).
+            # part of a release (mctl/paths.py), and the panel must find the helper that matches it. Not nxlx-sysd
+            # (it started this update) and not nxlx-supportd (a support session may be the one updating).
             # The NDI helper likewise, which exists only on a box that opted in (mctl/ndisetup.py): after a switch to
             # another release it must run that release's code, like the panel that asks it.
             # Two calls, so that the network helper's restart does not depend on what systemctl makes of a unit
             # that most boxes do not have.
-            self.run(["systemctl", "try-restart", "pvj-netd.service"], capture_output=True)
-            self.run(["systemctl", "try-restart", "pvj-ndi.service"], capture_output=True)
+            self.run(["systemctl", "try-restart", "nxlx-netd.service"], capture_output=True)
+            self.run(["systemctl", "try-restart", "nxlx-ndi.service"], capture_output=True)
             # The Link helper too: nothing else stops it after a rollback to a release without Link, where the old
             # panel cannot tell it off and it would stay on the network; the unit's condition keeps it down there.
-            self.run(["systemctl", "try-restart", "pvj-link.service"], capture_output=True)
-            self.run(["systemctl", "restart", "pvj-player.service", "pvj-web.service"], capture_output=True)
+            self.run(["systemctl", "try-restart", "nxlx-link.service"], capture_output=True)
+            self.run(["systemctl", "restart", "nxlx-player.service", "nxlx-web.service"], capture_output=True)
 
     def configured_port(self):
-        """The panel's port as the service sees it: /etc/pvj/pvj.env, else our environment, else 80."""
+        """The panel's port as the service sees it: /etc/nxlx/nxlx.env, else our environment, else 80."""
         try:
-            with open(self.real(self.etc_dir + "/pvj.env")) as f:
+            with open(self.real(self.etc_dir + "/nxlx.env")) as f:
                 for line in f:
                     line = line.strip()
                     if line.startswith("PVJ_PORT="):
@@ -574,7 +583,7 @@ class Updater:
 def main(argv=None):
     import argparse
     import sys
-    ap = argparse.ArgumentParser(prog="pvj-update", description="Update or roll back nxlx.mastercontrol")
+    ap = argparse.ArgumentParser(prog="nxlx-update", description="Update or roll back nxlx.mastercontrol")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status")
     for name in ("check", "apply"):
@@ -593,7 +602,7 @@ def main(argv=None):
     sub.add_parser("rollback")
     args = ap.parse_args(argv)
     if args.cmd != "status" and os.geteuid() != 0:
-        print("pvj-update: run as root (sudo)", file=sys.stderr)
+        print("nxlx-update: run as root (sudo)", file=sys.stderr)
         return 1
     u = Updater()
     result = getattr(args, "result", None)
@@ -632,11 +641,11 @@ def main(argv=None):
         try:
             lock = take_lock()
         except UpdateError as e:          # without the lock nobody knows whether an update is running: do nothing,
-            print("pvj-update: %s" % e, file=sys.stderr)      # and say so where the panel reads it (it has already
+            print("nxlx-update: %s" % e, file=sys.stderr)      # and say so where the panel reads it (it has already
             report("failed", str(e))                          # answered "started")
             return 1
         if lock is None:
-            print("pvj-update: another update or check is running", file=sys.stderr)
+            print("nxlx-update: another update or check is running", file=sys.stderr)
             try:                          # a result that says "running" belongs to the update that is running;
                 with open(result) as f:   # anything else is old, or the lock is held by something that writes
                     running = json.load(f).get("state") == "running"     # none (a check from a terminal)
@@ -647,9 +656,9 @@ def main(argv=None):
             return 1
         try:                              # we hold the lock: whatever work folder is there, no update is using it
             for name in u.sweep_scratch():
-                print("pvj-update: removed %s, left by an update that was cut off" % name, flush=True)
+                print("nxlx-update: removed %s, left by an update that was cut off" % name, flush=True)
         except Exception as e:            # tidying must never be the reason an update does not happen
-            print("pvj-update: could not look for old work folders: %r" % e, file=sys.stderr)
+            print("nxlx-update: could not look for old work folders: %r" % e, file=sys.stderr)
     try:
         if args.cmd == "status":
             print(json.dumps(u.status(), indent=2))
@@ -686,11 +695,11 @@ def main(argv=None):
             version = u.rollback()
             report("done", "rolled back to %s" % version, version)
     except UpdateError as e:
-        print("pvj-update: %s" % e, file=sys.stderr)
+        print("nxlx-update: %s" % e, file=sys.stderr)
         report("failed", str(e))
         return 1
     except Exception as e:                # anything unexpected still ends the panel's "Updating..."
-        print("pvj-update: unexpected error: %r" % e, file=sys.stderr)
+        print("nxlx-update: unexpected error: %r" % e, file=sys.stderr)
         report("failed", "unexpected error: %s" % (getattr(e, "strerror", None) or e))
         return 1
     finally:
@@ -700,7 +709,7 @@ def main(argv=None):
 
 
 DEFAULT_LOCK = paths.UPDATE_DIR + "/update.lock"     # the update units' folder: root's, and only root can write it
-OLD_LOCK = "/run/lock/pvj-update.lock"               # where it was before; any account can make a name there
+OLD_LOCK = "/run/lock/pvj-update.lock"                # where it was before (and its name then); any account can make a name there
 
 
 class _Held:

@@ -1,13 +1,13 @@
 # SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 # SPDX-License-Identifier: Apache-2.0
-"""Safe image upload (D129, slice 1 of design/text-and-logo-sources_2026-11-08.md): mctl/raster.py and pvj-raster.
+"""Safe image upload (D129, slice 1 of design/text-and-logo-sources_2026-11-08.md): mctl/raster.py and nxlx-raster.
 
 Three layers:
 
 * the checks that need no decoder, and the store, against a stand-in for the helper (runs everywhere);
 * the routes and who may use them, over HTTP (runs everywhere);
-* the real program render/pvj-raster, fed good files, damaged files and hostile ones (runs only with PVJ_RASTER_TEST=1
-  and the program built: make -C render pvj-raster; CI's job pvj-raster does that and treats a skip as a failure).
+* the real program render/nxlx-raster, fed good files, damaged files and hostile ones (runs only with PVJ_RASTER_TEST=1
+  and the program built: make -C render nxlx-raster; CI's job nxlx-raster does that and treats a skip as a failure).
 
 Nothing here has run on a Pi, and none of it has run the program under its systemd unit (only a static look at the unit).
 Every wait is bounded.
@@ -29,7 +29,7 @@ from mctl import api as api_mod, policy, raster
 from tests.test_roles import RolesBase
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-HELPER = os.path.join(HERE, "render", "pvj-raster")
+HELPER = os.path.join(HERE, "render", "nxlx-raster")
 REAL = os.environ.get("PVJ_RASTER_TEST") == "1"
 
 # --- files made here -------------------------------------------------------------------------------------------------
@@ -69,7 +69,7 @@ def big_png(width, height):
 
 
 def read_png(data):
-    """(width, height, channels, rows of bytes, [chunk names]) for the PNG that pvj-raster writes (8 bit, no interlace)."""
+    """(width, height, channels, rows of bytes, [chunk names]) for the PNG that nxlx-raster writes (8 bit, no interlace)."""
     assert data[:8] == b"\x89PNG\r\n\x1a\n"
     i, names, idat, head = 8, [], b"", None
     while i < len(data):
@@ -606,14 +606,14 @@ def unit_keys(path):
 
 class UnitTest(unittest.TestCase):
     def setUp(self):
-        self.service = unit_keys(os.path.join(HERE, "install", "pvj-raster@.service"))
-        self.socket = unit_keys(os.path.join(HERE, "install", "pvj-raster.socket"))
+        self.service = unit_keys(os.path.join(HERE, "install", "nxlx-raster@.service"))
+        self.socket = unit_keys(os.path.join(HERE, "install", "nxlx-raster.socket"))
         with open(os.path.join(HERE, "install", "install.sh")) as f:
             self.install = f.read()
 
     def test_the_helper_has_nothing_to_reach_and_nothing_to_raise(self):
         s = self.service
-        self.assertEqual((s["User"], s["Group"]), (["pvj-raster"], ["pvj-raster"]))
+        self.assertEqual((s["User"], s["Group"]), (["nxlx-raster"], ["nxlx-raster"]))
         for key in ("NoNewPrivileges", "PrivateNetwork", "PrivateTmp", "PrivateDevices", "ProtectHome", "ProtectKernelTunables",
                     "ProtectKernelModules", "ProtectControlGroups", "RestrictNamespaces", "RestrictRealtime", "RestrictSUIDSGID",
                     "LockPersonality", "MemoryDenyWriteExecute"):
@@ -626,7 +626,7 @@ class UnitTest(unittest.TestCase):
         self.assertNotIn("AmbientCapabilities", s)
         self.assertEqual(s["StandardInput"], ["socket"])
         inaccessible = " ".join(s["InaccessiblePaths"])
-        for folder in ("/var/lib/pvj", "/etc/pvj", "/run/pvj", "/run/pvj-sysd", "/run/pvj-supportd", "/run/pvj-link", "/run/pvj-sound"):
+        for folder in ("/var/lib/nxlx", "/etc/nxlx", "/run/nxlx", "/run/nxlx-sysd", "/run/nxlx-supportd", "/run/nxlx-link", "/run/nxlx-sound"):
             self.assertIn(folder, [w.lstrip("-") for w in inaccessible.split()])
         filt = " ".join(s["SystemCallFilter"])
         self.assertIn("@system-service", filt)
@@ -642,22 +642,22 @@ class UnitTest(unittest.TestCase):
 
     def test_one_helper_per_connection_and_only_the_panels_group_may_connect(self):
         k = self.socket
-        self.assertEqual((k["Accept"], k["ListenStream"], k["SocketMode"], k["SocketGroup"]), (["yes"], ["/run/pvj-raster.sock"], ["0660"], ["pvj-raster"]))
+        self.assertEqual((k["Accept"], k["ListenStream"], k["SocketMode"], k["SocketGroup"]), (["yes"], ["/run/nxlx-raster.sock"], ["0660"], ["nxlx-raster"]))
         self.assertEqual(k["WantedBy"], ["sockets.target"])
 
     def test_the_installer_builds_it_makes_the_account_and_starts_the_socket_on_every_board(self):
         sh = self.install
-        for want in ("pvj-raster@.service", "pvj-raster.socket", "useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --gid pvj-raster pvj-raster",
-                     "usermod -aG pvj-raster pvj-web", "make -C \"$RELEASE.new/render\" pvj-raster", "systemctl enable pvj-raster.socket",
+        for want in ("nxlx-raster@.service", "nxlx-raster.socket", "useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --gid nxlx-raster nxlx-raster",
+                     "usermod -aG nxlx-raster nxlx-web", "make -C \"$RELEASE.new/render\" nxlx-raster", "systemctl enable nxlx-raster.socket",
                      "libpng-dev", "libjpeg-dev"):
             self.assertIn(want, sh)
-        self.assertNotIn("usermod -aG pvj-raster \"$PVJ_USER\"", sh)         # the player is not in its group
-        self.assertNotIn("usermod -aG pvj-raster pvj-sound", sh)
+        self.assertNotIn("usermod -aG nxlx-raster \"$PVJ_USER\"", sh)         # the player is not in its group
+        self.assertNotIn("usermod -aG nxlx-raster nxlx-sound", sh)
         # no condition on the board: nothing between the build and the enable asks which board this is
         build = sh[sh.index("# The picture helper (D129), built the same way"):sh.index("previous=\"\"")]
         self.assertNotIn("tier", build)
         self.assertNotIn("board", build)
-        with open(os.path.join(HERE, "image", "stage-pvj", "00-install-pvj", "00-packages-nr")) as f:
+        with open(os.path.join(HERE, "image", "stage-nxlx", "00-install-nxlx", "00-packages-nr")) as f:
             packages = f.read().split()
         self.assertIn("libpng-dev", packages)
         self.assertIn("libjpeg-dev", packages)
@@ -665,18 +665,18 @@ class UnitTest(unittest.TestCase):
     def test_the_makefile_builds_it_with_warnings_as_errors_available(self):
         with open(os.path.join(HERE, "render", "Makefile")) as f:
             text = f.read()
-        self.assertIn("pvj-raster: raster/pvj-raster.c", text)
-        self.assertIn("$(WARN)", text[text.index("pvj-raster: raster"):])
+        self.assertIn("nxlx-raster: raster/nxlx-raster.c", text)
+        self.assertIn("$(WARN)", text[text.index("nxlx-raster: raster"):])
         self.assertIn("-isystem raster/vendor", text)
 
 
 # --- 4. the real program ---------------------------------------------------------------------------------------------
-@unittest.skipUnless(REAL, "PVJ_RASTER_TEST=1 runs the real pvj-raster")
+@unittest.skipUnless(REAL, "PVJ_RASTER_TEST=1 runs the real nxlx-raster")
 class RealRasterTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         if not os.access(HELPER, os.X_OK):
-            raise unittest.SkipTest("make -C render pvj-raster first")
+            raise unittest.SkipTest("make -C render nxlx-raster first")
 
     def setUp(self):
         self.client = raster.Client(exec_bin=HELPER, env={})
@@ -911,7 +911,7 @@ class RealRasterTest(unittest.TestCase):
 
     def test_the_programs_own_code_opens_no_file_and_makes_no_connection(self):
         # a look at the source (the vendored SVG reader has a file loader nobody calls; it is not our code and is not read here)
-        with open(os.path.join(HERE, "render", "raster", "pvj-raster.c")) as f:
+        with open(os.path.join(HERE, "render", "raster", "nxlx-raster.c")) as f:
             code = re.sub(r"/\*.*?\*/", "", re.sub(r"//[^\n]*", "", f.read()), flags=re.S)
         code = code.replace("png_create", "").replace("jpeg_create", "").replace("must(", "")
         for banned in (r"\bfopen\(", r"\bopen\(", r"\bsocket\(", r"\bconnect\(", r"\bsystem\(", r"\bpopen\(", r"\bexec[a-z]*\(",
@@ -946,12 +946,12 @@ def bgra_pixels(done):
     return [tuple(d[i:i + 4]) for i in range(0, len(d), 4)]
 
 
-@unittest.skipUnless(REAL, "PVJ_RASTER_TEST=1 runs the real pvj-raster")
+@unittest.skipUnless(REAL, "PVJ_RASTER_TEST=1 runs the real nxlx-raster")
 class RealGraphicsTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         if not os.access(HELPER, os.X_OK):
-            raise unittest.SkipTest("make -C render pvj-raster first")
+            raise unittest.SkipTest("make -C render nxlx-raster first")
 
     def setUp(self):
         self.client = raster.Client(exec_bin=HELPER, env={})

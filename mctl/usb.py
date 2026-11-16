@@ -6,7 +6,7 @@ Replaces mountusb.sh (which mounted sda1 and sda2 on the same folder) and the
 hardcoded /dev/sda mount in the old backend, which on an x86 box is the system
 disk. Rules of this module:
 
-* every USB partition gets its own folder under /media/pvj/<label>
+* every USB partition gets its own folder under /media/nxlx/<label>
 * /media/usb points at the most recently mounted one (what old presets expect)
 * mounted read-only unless PVJ_USB_RW=1, with nosuid,nodev,noexec, because a
   drive yanked mid-write at a gig is the usual way to corrupt it
@@ -22,7 +22,7 @@ import sys
 DEVNODE = re.compile(r"^/dev/sd[a-z]{1,2}[0-9]{0,2}$")
 ALLOWED_FS = {"vfat", "exfat", "ext2", "ext3", "ext4", "ntfs"}
 SYSTEM_MOUNTS = ("/", "/boot", "/boot/firmware", "/home", "/var", "/usr", "/etc")
-DEFAULT_BASE = "/media/pvj"
+DEFAULT_BASE = "/media/nxlx"
 DEFAULT_LINK = "/media/usb"
 
 
@@ -92,7 +92,7 @@ def probe(devnode, runner=subprocess.run):
 
 def _gid():
     try:
-        return grp.getgrnam("pvj").gr_gid
+        return grp.getgrnam("nxlx-svc").gr_gid
     except KeyError:
         return None
 
@@ -196,9 +196,9 @@ def main(argv=None):
                 if os.path.dirname(point.rstrip("/")) == base.rstrip("/"):
                     print(dev, point)
         else:
-            print("usage: pvj-usb mount DEV | unmount DEV | list", file=sys.stderr)
+            print("usage: nxlx-usb mount DEV | unmount DEV | list", file=sys.stderr)
             return 2
     except UsbError as e:
-        print("pvj-usb: %s" % e, file=sys.stderr)
+        print("nxlx-usb: %s" % e, file=sys.stderr)
         return 1
     return 0

@@ -63,7 +63,7 @@ class PinScreenTest(unittest.TestCase):
         self.assertEqual(self.api.player.shown, [])
 
     def test_never_over_a_playing_clip(self):
-        self.api.player.st = {"running": True, "path": "/var/lib/pvj/video/a.mp4"}
+        self.api.player.st = {"running": True, "path": "/var/lib/nxlx/video/a.mp4"}
         self.assertFalse(self.p.tick())
         self.assertEqual(self.api.player.shown, [])
 

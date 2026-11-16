@@ -46,18 +46,18 @@ class InstallTest(unittest.TestCase):
     def test_fresh_install_layout(self):
         r = install(self.src, self.stage)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertEqual(os.readlink(self.p("opt/pvj/current")), "/opt/pvj/releases/9.9.1")
-        self.assertTrue(os.path.isfile(self.p("opt/pvj/releases/9.9.1/mctl/player.py")))
-        self.assertFalse(os.path.exists(self.p("opt/pvj/releases/9.9.1.new")))
-        self.assertEqual(os.readlink(self.p("usr/local/bin/pvj-player")), "/opt/pvj/current/bin/pvj-player")
-        unit = self.read(self.p("etc/systemd/system/pvj-player.service"))
+        self.assertEqual(os.readlink(self.p("opt/nxlx/current")), "/opt/nxlx/releases/9.9.1")
+        self.assertTrue(os.path.isfile(self.p("opt/nxlx/releases/9.9.1/mctl/player.py")))
+        self.assertFalse(os.path.exists(self.p("opt/nxlx/releases/9.9.1.new")))
+        self.assertEqual(os.readlink(self.p("usr/local/bin/nxlx-player")), "/opt/nxlx/current/bin/nxlx-player")
+        unit = self.read(self.p("etc/systemd/system/nxlx-player.service"))
         self.assertIn("User=gigbox", unit)
-        self.assertIn("ExecStart=/opt/pvj/current/bin/pvj-player serve", unit)
+        self.assertIn("ExecStart=/opt/nxlx/current/bin/nxlx-player serve", unit)
         self.assertRegex(unit, r"(?m)^LimitRTPRIO=1$")       # the render thread's SCHED_RR 1, without a capability
         self.assertNotIn("@PVJ", unit)
-        web = self.read(self.p("etc/systemd/system/pvj-web.service"))
-        self.assertIn("ExecStart=/opt/pvj/current/bin/pvj-web", web)
-        self.assertIn("User=pvj-web", web)
+        web = self.read(self.p("etc/systemd/system/nxlx-web.service"))
+        self.assertIn("ExecStart=/opt/nxlx/current/bin/nxlx-web", web)
+        self.assertIn("User=nxlx-web", web)
         # the MIDI module reads /dev/snd/midi* and writes a known controller's lights (D53): audio group, a device
         # policy instead of PrivateDevices. The installer puts the unit with "rw" in place
         self.assertIn("SupplementaryGroups=audio", web)
@@ -67,43 +67,43 @@ class InstallTest(unittest.TestCase):
         self.assertNotRegex(web, r"(?m)^PrivateDevices=yes")
         self.assertIn("NoNewPrivileges=yes", web)
         self.assertNotIn("@PVJ", web)
-        net = self.read(self.p("etc/systemd/system/pvj-netd.service"))
-        self.assertIn("ExecStart=/opt/pvj/current/bin/pvj-netd", net)
+        net = self.read(self.p("etc/systemd/system/nxlx-netd.service"))
+        self.assertIn("ExecStart=/opt/nxlx/current/bin/nxlx-netd", net)
         self.assertIn("ConditionPathExists=/usr/bin/nmcli", net)
         self.assertNotIn("@PVJ", net)
-        self.assertEqual(os.readlink(self.p("usr/local/bin/pvj-pin")), "/opt/pvj/current/bin/pvj-pin")
-        self.assertEqual(os.readlink(self.p("usr/local/bin/pvj-update")), "/opt/pvj/current/bin/pvj-update")
-        self.assertIn("pvj-release", self.read(self.p("etc/pvj/allowed_signers")))
-        self.assertIn("PVJ_MEDIA_DIR=/var/lib/pvj/video", self.read(self.p("etc/pvj/pvj.env")))
-        self.assertIn("PVJ_USB_RW=0", self.read(self.p("etc/pvj/pvj.env")))
-        usb_unit = self.read(self.p("etc/systemd/system/pvj-usb@.service"))
-        self.assertIn("ExecStart=/opt/pvj/current/bin/pvj-usb mount /dev/%I", usb_unit)
+        self.assertEqual(os.readlink(self.p("usr/local/bin/nxlx-pin")), "/opt/nxlx/current/bin/nxlx-pin")
+        self.assertEqual(os.readlink(self.p("usr/local/bin/nxlx-update")), "/opt/nxlx/current/bin/nxlx-update")
+        self.assertIn("pvj-release", self.read(self.p("etc/nxlx/allowed_signers")))
+        self.assertIn("PVJ_MEDIA_DIR=/var/lib/nxlx/video", self.read(self.p("etc/nxlx/nxlx.env")))
+        self.assertIn("PVJ_USB_RW=0", self.read(self.p("etc/nxlx/nxlx.env")))
+        usb_unit = self.read(self.p("etc/systemd/system/nxlx-usb@.service"))
+        self.assertIn("ExecStart=/opt/nxlx/current/bin/nxlx-usb mount /dev/%I", usb_unit)
         self.assertNotIn("@PVJ", usb_unit)
-        self.assertIn("pvj-usb@%k.service", self.read(self.p("etc/udev/rules.d/99-pvj-usb.rules")))
-        self.assertEqual(os.readlink(self.p("usr/local/bin/pvj-usb")), "/opt/pvj/current/bin/pvj-usb")
-        self.assertEqual(os.readlink(self.p("usr/local/bin/pvj-rootfs")), "/opt/pvj/current/bin/pvj-rootfs")
-        self.assertEqual(json.loads(self.read(self.p("etc/pvj/install.json")))["version"], "9.9.1")
-        self.assertTrue(os.path.isdir(self.p("var/lib/pvj/video")))
+        self.assertIn("nxlx-usb@%k.service", self.read(self.p("etc/udev/rules.d/99-nxlx-usb.rules")))
+        self.assertEqual(os.readlink(self.p("usr/local/bin/nxlx-usb")), "/opt/nxlx/current/bin/nxlx-usb")
+        self.assertEqual(os.readlink(self.p("usr/local/bin/nxlx-rootfs")), "/opt/nxlx/current/bin/nxlx-rootfs")
+        self.assertEqual(json.loads(self.read(self.p("etc/nxlx/install.json")))["version"], "9.9.1")
+        self.assertTrue(os.path.isdir(self.p("var/lib/nxlx/video")))
         # the system log survives restarts (Raspberry Pi OS keeps it in memory); our drop-in sorts after theirs
-        log = self.read(self.p("etc/systemd/journald.conf.d/50-pvj-persistent-log.conf"))
+        log = self.read(self.p("etc/systemd/journald.conf.d/50-nxlx-persistent-log.conf"))
         self.assertIn("Storage=persistent", log)
         self.assertIn("SystemMaxUse=64M", log)
-        self.assertGreater("50-pvj-persistent-log.conf", "40-rpi-volatile-storage.conf")
+        self.assertGreater("50-nxlx-persistent-log.conf", "40-rpi-volatile-storage.conf")
 
     def test_each_service_gets_its_own_runtime_folder_and_tmpfiles_keeps_the_parent_with_root(self):
         self.assertEqual(install(self.src, self.stage).returncode, 0)
-        conf = self.read(self.p("etc/tmpfiles.d/pvj.conf"))
-        self.assertIn("d /run/pvj 0755 root root -", conf)
-        for unit, folder in (("pvj-player", "pvj/player"), ("pvj-web", "pvj/web"), ("pvj-netd", "pvj/netd")):
+        conf = self.read(self.p("etc/tmpfiles.d/nxlx.conf"))
+        self.assertIn("d /run/nxlx 0755 root root -", conf)
+        for unit, folder in (("nxlx-player", "nxlx/player"), ("nxlx-web", "nxlx/web"), ("nxlx-netd", "nxlx/netd")):
             text = self.read(self.p("etc/systemd/system/%s.service" % unit))
             self.assertIn("RuntimeDirectory=%s\n" % folder, text)
             self.assertIn("Environment=PVJ_RUNTIME_DIR=/run/%s\n" % folder, text)
-            self.assertNotIn("RuntimeDirectory=pvj\n", text)
+            self.assertNotIn("RuntimeDirectory=nxlx\n", text)
         self.assertFalse(os.path.exists(self.p("run")))          # a fresh install makes nothing under /run itself
 
     def old_run_folder(self, mode=0o770):
-        """What a running version from before D45 leaves in /run/pvj: one shared folder (here DIR/run/pvj)."""
-        run = self.p("run/pvj")
+        """What a running version from before D45 leaves in /run/nxlx: one shared folder (here DIR/run/nxlx)."""
+        run = self.p("run/nxlx")
         os.makedirs(run)
         for name in ("pin", "player.pid", "preview.jpg", "overlay.bgra", "overlay-3.bgra", "mapper-7-1.glsl", "shader-7-2.glsl"):
             with open(os.path.join(run, name), "w") as f:
@@ -140,7 +140,7 @@ class InstallTest(unittest.TestCase):
 
     def test_nothing_is_carried_over_so_a_planted_link_in_the_panels_folder_leads_nowhere(self):
         # The first version copied the undervoltage note into the panel's folder as root. That folder belongs to
-        # pvj-web: a dangling link planted there made root create its target anywhere (found by the review).
+        # nxlx-web: a dangling link planted there made root create its target anywhere (found by the review).
         run = self.old_run_folder()
         outside = os.path.join(tempfile.mkdtemp(), "made-by-root")
         os.chmod(run, 0o770)
@@ -174,7 +174,7 @@ class InstallTest(unittest.TestCase):
             stage = tempfile.mkdtemp()
             self.addCleanup(shutil.rmtree, stage, True)
             self.stage = stage
-            run = self.p("run/pvj")
+            run = self.p("run/nxlx")
             os.makedirs(os.path.join(run, "netd"))
             if plant == "link":
                 os.symlink("/etc/hostname", os.path.join(run, ".d45"))
@@ -191,7 +191,7 @@ class InstallTest(unittest.TestCase):
 
     def test_reinstall_over_the_new_layout_leaves_the_services_folders_alone(self):
         self.assertEqual(install(self.src, self.stage).returncode, 0)
-        run = self.p("run/pvj")
+        run = self.p("run/nxlx")
         for d in ("player", "web", "netd"):
             os.makedirs(os.path.join(run, d))
             with open(os.path.join(run, d, "live"), "w") as f:
@@ -210,49 +210,49 @@ class InstallTest(unittest.TestCase):
 
     def test_installed_copy_runs(self):
         install(self.src, self.stage)
-        r = subprocess.run([self.p("opt/pvj/releases/9.9.1/bin/pvj-player"), "info"], capture_output=True, text=True)
+        r = subprocess.run([self.p("opt/nxlx/releases/9.9.1/bin/nxlx-player"), "info"], capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("board", json.loads(r.stdout))
 
     def test_rerun_is_idempotent_and_keeps_edited_settings(self):
         install(self.src, self.stage)
-        with open(self.p("etc/pvj/pvj.env"), "a") as f:
+        with open(self.p("etc/nxlx/nxlx.env"), "a") as f:
             f.write("PVJ_MEDIA_DIR=/mnt/mine\n")
         r = install(self.src, self.stage)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("keeping existing", r.stdout)
-        self.assertIn("/mnt/mine", self.read(self.p("etc/pvj/pvj.env")))
-        self.assertEqual(os.listdir(self.p("opt/pvj/releases")), ["9.9.1"])
-        self.assertFalse(os.path.exists(self.p("opt/pvj/previous")))
+        self.assertIn("/mnt/mine", self.read(self.p("etc/nxlx/nxlx.env")))
+        self.assertEqual(os.listdir(self.p("opt/nxlx/releases")), ["9.9.1"])
+        self.assertFalse(os.path.exists(self.p("opt/nxlx/previous")))
 
     def test_upgrade_records_previous_release_for_rollback(self):
         install(self.src, self.stage)
         newer = copy_source("9.9.2")
         self.addCleanup(shutil.rmtree, newer, True)
         self.assertEqual(install(newer, self.stage).returncode, 0)
-        self.assertEqual(os.readlink(self.p("opt/pvj/current")), "/opt/pvj/releases/9.9.2")
-        self.assertEqual(self.read(self.p("opt/pvj/previous")).strip(), "/opt/pvj/releases/9.9.1")
-        self.assertTrue(os.path.isdir(self.p("opt/pvj/releases/9.9.1")))
+        self.assertEqual(os.readlink(self.p("opt/nxlx/current")), "/opt/nxlx/releases/9.9.2")
+        self.assertEqual(self.read(self.p("opt/nxlx/previous")).strip(), "/opt/nxlx/releases/9.9.1")
+        self.assertTrue(os.path.isdir(self.p("opt/nxlx/releases/9.9.1")))
 
     def test_same_version_reinstall_replaces_files_without_leftovers(self):
         install(self.src, self.stage)
         with open(os.path.join(self.src, "mctl", "marker.py"), "w") as f:
             f.write("X = 1\n")
         self.assertEqual(install(self.src, self.stage).returncode, 0)
-        rel = self.p("opt/pvj/releases")
+        rel = self.p("opt/nxlx/releases")
         self.assertEqual(os.listdir(rel), ["9.9.1"])  # no .old or .new left behind
         self.assertTrue(os.path.isfile(os.path.join(rel, "9.9.1", "mctl", "marker.py")))
-        self.assertEqual(os.readlink(self.p("opt/pvj/current")), "/opt/pvj/releases/9.9.1")
+        self.assertEqual(os.readlink(self.p("opt/nxlx/current")), "/opt/nxlx/releases/9.9.1")
 
     def test_account_chosen_at_first_install_is_kept_when_user_is_omitted(self):
         install(self.src, self.stage)  # helper passes --user gigbox
         r = subprocess.run([os.path.join(self.src, "install", "install.sh"), "--stage", self.stage],
                            capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("User=gigbox", self.read(self.p("etc/systemd/system/pvj-player.service")))
+        self.assertIn("User=gigbox", self.read(self.p("etc/systemd/system/nxlx-player.service")))
 
     def test_dotdot_in_paths_is_refused(self):
-        for bad in (["--prefix", "/opt/x/../../etc"], ["--prefix", "/opt/pvj/.."], ["--media", "/var/lib/../../etc"]):
+        for bad in (["--prefix", "/opt/x/../../etc"], ["--prefix", "/opt/nxlx/.."], ["--media", "/var/lib/../../etc"]):
             self.assertNotEqual(install(self.src, self.stage, *bad).returncode, 0, bad)
         self.assertEqual(os.listdir(self.stage), [])
 
@@ -268,24 +268,24 @@ class InstallTest(unittest.TestCase):
     def test_uninstall_keeps_settings_unless_purged(self):
         install(self.src, self.stage)
         self.assertEqual(install(self.src, self.stage, "--uninstall").returncode, 0)
-        self.assertFalse(os.path.exists(self.p("opt/pvj")))
-        self.assertFalse(os.path.lexists(self.p("usr/local/bin/pvj-player")))
-        self.assertFalse(os.path.lexists(self.p("usr/local/bin/pvj-rootfs")))
-        self.assertFalse(os.path.lexists(self.p("usr/local/bin/pvj-update")))
-        self.assertFalse(os.path.exists(self.p("etc/systemd/system/pvj-player.service")))
-        self.assertFalse(os.path.exists(self.p("etc/systemd/system/pvj-web.service")))
-        self.assertFalse(os.path.exists(self.p("etc/systemd/system/pvj-netd.service")))
-        self.assertFalse(os.path.exists(self.p("etc/systemd/system/pvj-usb@.service")))
-        self.assertFalse(os.path.exists(self.p("etc/udev/rules.d/99-pvj-usb.rules")))
-        self.assertFalse(os.path.exists(self.p("etc/systemd/journald.conf.d/50-pvj-persistent-log.conf")))
-        self.assertFalse(os.path.exists(self.p("etc/tmpfiles.d/pvj.conf")))
-        self.assertTrue(os.path.exists(self.p("etc/pvj/pvj.env")))
+        self.assertFalse(os.path.exists(self.p("opt/nxlx")))
+        self.assertFalse(os.path.lexists(self.p("usr/local/bin/nxlx-player")))
+        self.assertFalse(os.path.lexists(self.p("usr/local/bin/nxlx-rootfs")))
+        self.assertFalse(os.path.lexists(self.p("usr/local/bin/nxlx-update")))
+        self.assertFalse(os.path.exists(self.p("etc/systemd/system/nxlx-player.service")))
+        self.assertFalse(os.path.exists(self.p("etc/systemd/system/nxlx-web.service")))
+        self.assertFalse(os.path.exists(self.p("etc/systemd/system/nxlx-netd.service")))
+        self.assertFalse(os.path.exists(self.p("etc/systemd/system/nxlx-usb@.service")))
+        self.assertFalse(os.path.exists(self.p("etc/udev/rules.d/99-nxlx-usb.rules")))
+        self.assertFalse(os.path.exists(self.p("etc/systemd/journald.conf.d/50-nxlx-persistent-log.conf")))
+        self.assertFalse(os.path.exists(self.p("etc/tmpfiles.d/nxlx.conf")))
+        self.assertTrue(os.path.exists(self.p("etc/nxlx/nxlx.env")))
         install(self.src, self.stage, "--uninstall", "--purge")
-        self.assertFalse(os.path.exists(self.p("etc/pvj")))
+        self.assertFalse(os.path.exists(self.p("etc/nxlx")))
 
     # ---- the NDI input is opt-in per box (D62, the owner's answer of 2026-10-08) ----
-    NDI_FILES = ("etc/systemd/system/pvj-ndi.service", "etc/systemd/system/pvj-web.service.d/50-pvj-ndi.conf",
-                 "etc/systemd/system/pvj-player.service.d/50-pvj-ndi.conf", "etc/tmpfiles.d/pvj-ndi.conf")
+    NDI_FILES = ("etc/systemd/system/nxlx-ndi.service", "etc/systemd/system/nxlx-web.service.d/50-nxlx-ndi.conf",
+                 "etc/systemd/system/nxlx-player.service.d/50-nxlx-ndi.conf", "etc/tmpfiles.d/nxlx-ndi.conf")
 
     def ndi_names(self):
         """Every name under the staged root that has to do with NDI, apart from the program's own files."""
@@ -293,16 +293,16 @@ class InstallTest(unittest.TestCase):
         for d, dirs, names in os.walk(self.stage):
             for n in dirs + names:
                 path = os.path.relpath(os.path.join(d, n), self.stage)
-                if "ndi" in n.lower() and not path.startswith("opt/pvj/releases/"):
+                if "ndi" in n.lower() and not path.startswith("opt/nxlx/releases/"):
                     found.append(path)
         return sorted(found)
 
     def opt_in(self):
-        """What root's `pvj-ndi-runtime install` leaves in /etc, written by the same code (mctl/ndisetup.py)."""
+        """What root's `nxlx-ndi-runtime install` leaves in /etc, written by the same code (mctl/ndisetup.py)."""
         import sys
         sys.path.insert(0, REPO)
         from mctl import ndisetup
-        ndisetup.write_units(self.stage, "/opt/pvj")
+        ndisetup.write_units(self.stage, "/opt/nxlx")
 
     def test_a_plain_install_leaves_nothing_of_ndi_but_the_program_and_its_command(self):
         for extra in ((), ("--offline",), ("--no-start",)):
@@ -312,30 +312,30 @@ class InstallTest(unittest.TestCase):
                 continue                                                  # a machine without mpv: --offline stops before anything is written
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             # the one command a person runs to opt in is there; nothing else is
-            self.assertEqual(self.ndi_names(), ["usr/local/bin/pvj-ndi-runtime"], extra)
-            self.assertEqual(os.readlink(self.p("usr/local/bin/pvj-ndi-runtime")), "/opt/pvj/current/bin/pvj-ndi-runtime")
+            self.assertEqual(self.ndi_names(), ["usr/local/bin/nxlx-ndi-runtime"], extra)
+            self.assertEqual(os.readlink(self.p("usr/local/bin/nxlx-ndi-runtime")), "/opt/nxlx/current/bin/nxlx-ndi-runtime")
             for path in self.NDI_FILES:
                 self.assertFalse(os.path.lexists(self.p(path)), path)
-            for name in ("pvj-web.service", "pvj-player.service"):
+            for name in ("nxlx-web.service", "nxlx-player.service"):
                 unit = self.read(self.p("etc/systemd/system/" + name))
-                self.assertNotIn("pvj-ndi", unit, name)                   # a group that does not exist would keep the unit from starting
+                self.assertNotIn("nxlx-ndi", unit, name)                   # a group that does not exist would keep the unit from starting
                 self.assertNotIn("PVJ_NDI", unit, name)
-            self.assertFalse(os.path.exists(self.p("opt/pvj-ndi")))
+            self.assertFalse(os.path.exists(self.p("opt/nxlx-ndi")))
             self.assertNotRegex(r.stdout + r.stderr, r"(?i)avahi|\bndi\b", extra)      # it asks for no package and says nothing of NDI
         # a second run over it: still nothing
         self.assertEqual(install(self.src, self.stage).returncode, 0)
-        self.assertEqual(self.ndi_names(), ["usr/local/bin/pvj-ndi-runtime"])
+        self.assertEqual(self.ndi_names(), ["usr/local/bin/nxlx-ndi-runtime"])
 
     def test_the_units_of_the_panel_and_the_player_are_what_they_are_without_ndi(self):
         self.assertEqual(install(self.src, self.stage).returncode, 0)
-        self.assertRegex(self.read(self.p("etc/systemd/system/pvj-web.service")), r"(?m)^SupplementaryGroups=audio video$")
-        self.assertRegex(self.read(self.p("etc/systemd/system/pvj-player.service")), r"(?m)^SupplementaryGroups=video render audio input$")
+        self.assertRegex(self.read(self.p("etc/systemd/system/nxlx-web.service")), r"(?m)^SupplementaryGroups=audio video$")
+        self.assertRegex(self.read(self.p("etc/systemd/system/nxlx-player.service")), r"(?m)^SupplementaryGroups=video render audio input$")
 
     def test_a_box_that_opted_in_stays_opted_in_and_gets_the_unit_of_the_new_version(self):
         self.assertEqual(install(self.src, self.stage).returncode, 0)
         self.opt_in()
         with open(self.p(self.NDI_FILES[0]), "w") as f:
-            f.write("[Service]\nExecStart=/opt/pvj/current/bin/pvj-ndi --from-an-older-version\n")
+            f.write("[Service]\nExecStart=/opt/nxlx/current/bin/nxlx-ndi --from-an-older-version\n")
         os.unlink(self.p(self.NDI_FILES[2]))                              # and one of its files went missing
         r = install(copy_source("9.9.2"), self.stage, "--no-start")       # an update, as the panel's update runs it
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
@@ -343,40 +343,40 @@ class InstallTest(unittest.TestCase):
         self.assertNotIn("could not write the NDI helper's unit", r.stdout)
         unit = self.read(self.p(self.NDI_FILES[0]))
         self.assertNotIn("--from-an-older-version", unit)
-        self.assertIn("ExecStart=/opt/pvj/current/bin/pvj-ndi\n", unit)
+        self.assertIn("ExecStart=/opt/nxlx/current/bin/nxlx-ndi\n", unit)
         self.assertNotIn("@PVJ", unit)
-        self.assertIn("User=pvj-ndi\n", unit)
+        self.assertIn("User=nxlx-ndi\n", unit)
         self.assertIn("IPAddressDeny=any\n", unit)
-        with open(os.path.join(REPO, "mctl", "systemd", "pvj-ndi.service")) as f:
-            self.assertEqual(unit, f.read().replace("@PVJ_DIR@", "/opt/pvj/current"))
-        self.assertIn("SupplementaryGroups=pvj-ndi\n", self.read(self.p(self.NDI_FILES[1])))
-        self.assertIn("Environment=PVJ_NDI_DIR=/run/pvj-ndi\n", self.read(self.p(self.NDI_FILES[1])))
-        self.assertIn("SupplementaryGroups=pvj-ndi\n", self.read(self.p(self.NDI_FILES[2])))
-        self.assertEqual(os.readlink(self.p("opt/pvj/current")), "/opt/pvj/releases/9.9.2")
-        self.assertFalse([n for n in os.listdir(self.p("opt/pvj/releases/9.9.2/mctl")) if n == "__pycache__"])     # root's run left no compiled files
+        with open(os.path.join(REPO, "mctl", "systemd", "nxlx-ndi.service")) as f:
+            self.assertEqual(unit, f.read().replace("@PVJ_DIR@", "/opt/nxlx/current"))
+        self.assertIn("SupplementaryGroups=nxlx-ndi\n", self.read(self.p(self.NDI_FILES[1])))
+        self.assertIn("Environment=PVJ_NDI_DIR=/run/nxlx-ndi\n", self.read(self.p(self.NDI_FILES[1])))
+        self.assertIn("SupplementaryGroups=nxlx-ndi\n", self.read(self.p(self.NDI_FILES[2])))
+        self.assertEqual(os.readlink(self.p("opt/nxlx/current")), "/opt/nxlx/releases/9.9.2")
+        self.assertFalse([n for n in os.listdir(self.p("opt/nxlx/releases/9.9.2/mctl")) if n == "__pycache__"])     # root's run left no compiled files
         # the installer's own units still do not name the group: only the drop-ins do
-        self.assertNotIn("pvj-ndi", self.read(self.p("etc/systemd/system/pvj-web.service")))
+        self.assertNotIn("nxlx-ndi", self.read(self.p("etc/systemd/system/nxlx-web.service")))
 
     def test_another_install_folder_reaches_the_helpers_unit_too(self):
-        self.assertEqual(install(self.src, self.stage, "--prefix", "/srv/box/pvj").returncode, 0)
+        self.assertEqual(install(self.src, self.stage, "--prefix", "/srv/box/nxlx").returncode, 0)
         self.opt_in()
-        self.assertEqual(install(self.src, self.stage, "--prefix", "/srv/box/pvj").returncode, 0)
-        self.assertIn("ExecStart=/srv/box/pvj/current/bin/pvj-ndi\n", self.read(self.p(self.NDI_FILES[0])))
+        self.assertEqual(install(self.src, self.stage, "--prefix", "/srv/box/nxlx").returncode, 0)
+        self.assertIn("ExecStart=/srv/box/nxlx/current/bin/nxlx-ndi\n", self.read(self.p(self.NDI_FILES[0])))
 
     def test_a_slash_at_the_end_of_the_install_folder_is_dropped_and_a_doubled_one_refused(self):
         # Review L1: the folder went into install.json as it was typed, and the NDI setup takes it only one way.
         import sys
         sys.path.insert(0, REPO)
         from mctl import ndisetup
-        r = install(self.src, self.stage, "--prefix", "/srv/box/pvj///")
+        r = install(self.src, self.stage, "--prefix", "/srv/box/nxlx///")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertEqual(json.loads(self.read(self.p("etc/pvj/install.json")))["prefix"], "/srv/box/pvj")
-        self.assertEqual(ndisetup.read_prefix(self.stage), "/srv/box/pvj")
-        self.assertEqual(os.readlink(self.p("srv/box/pvj/current")), "/srv/box/pvj/releases/9.9.1")
-        self.assertIn("ExecStart=/srv/box/pvj/current/bin/pvj-web", self.read(self.p("etc/systemd/system/pvj-web.service")))
+        self.assertEqual(json.loads(self.read(self.p("etc/nxlx/install.json")))["prefix"], "/srv/box/nxlx")
+        self.assertEqual(ndisetup.read_prefix(self.stage), "/srv/box/nxlx")
+        self.assertEqual(os.readlink(self.p("srv/box/nxlx/current")), "/srv/box/nxlx/releases/9.9.1")
+        self.assertIn("ExecStart=/srv/box/nxlx/current/bin/nxlx-web", self.read(self.p("etc/systemd/system/nxlx-web.service")))
         ndisetup.check(self.stage, account=lambda: None)   # the setup would take this box
         stage2 = tempfile.mkdtemp()
-        for bad in ("/opt//mctl", "//opt/pvj", "/opt/pvj//x", "/opt/pvj/./", "/opt/./pvj", "/opt/pvj/."):      # the last three: second review, N4
+        for bad in ("/opt//mctl", "//opt/nxlx", "/opt/nxlx//x", "/opt/nxlx/./", "/opt/./pvj", "/opt/nxlx/."):      # the last three: second review, N4
             self.assertNotEqual(install(self.src, stage2, "--prefix", bad).returncode, 0, bad)
         self.assertEqual(os.listdir(stage2), [])
 
@@ -390,13 +390,13 @@ class InstallTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("removing an NDI helper that nobody set up on this box", r.stdout)
         self.assertNotIn("this box has NDI set up", r.stdout)
-        self.assertEqual(self.ndi_names(), ["usr/local/bin/pvj-ndi-runtime"])
+        self.assertEqual(self.ndi_names(), ["usr/local/bin/nxlx-ndi-runtime"])
         r = install(self.src, self.stage)                                 # and the run after that says nothing of NDI
         self.assertNotRegex(r.stdout + r.stderr, r"(?i)avahi|\bndi\b")
 
     def test_a_mark_that_is_a_link_is_not_an_opt_in(self):
         self.assertEqual(install(self.src, self.stage).returncode, 0)
-        os.makedirs(self.p("etc/systemd/system/pvj-web.service.d"))
+        os.makedirs(self.p("etc/systemd/system/nxlx-web.service.d"))
         os.symlink("/etc/passwd", self.p(self.NDI_FILES[1]))
         r = install(self.src, self.stage)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
@@ -415,18 +415,18 @@ class InstallTest(unittest.TestCase):
         self.opt_in()
         target = os.path.join(tempfile.mkdtemp(), "kept.conf")
         with open(target, "w") as f:
-            f.write("[Service]\nSupplementaryGroups=pvj-ndi\nEnvironment=PVJ_NDI_DIR=/run/pvj-ndi\n")
+            f.write("[Service]\nSupplementaryGroups=nxlx-ndi\nEnvironment=PVJ_NDI_DIR=/run/nxlx-ndi\n")
         os.unlink(self.p(self.NDI_FILES[1]))
         os.symlink(target, self.p(self.NDI_FILES[1]))                     # the mark is now a link to a file with the same words
         wants = self.p("etc/systemd/system/multi-user.target.wants")
         os.makedirs(wants)
-        os.symlink("/etc/systemd/system/pvj-ndi.service", os.path.join(wants, "pvj-ndi.service"))     # what "systemctl enable" left
+        os.symlink("/etc/systemd/system/nxlx-ndi.service", os.path.join(wants, "nxlx-ndi.service"))     # what "systemctl enable" left
         r = install(self.src, self.stage)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("is a link, which the NDI setup never makes", r.stdout)
         self.assertIn("removing an NDI helper that nobody set up on this box", r.stdout)
-        self.assertEqual(self.ndi_names(), ["usr/local/bin/pvj-ndi-runtime"])      # no unit, no drop-in, no link, and (N3) no link to start it
-        self.assertFalse(os.path.lexists(os.path.join(wants, "pvj-ndi.service")))
+        self.assertEqual(self.ndi_names(), ["usr/local/bin/nxlx-ndi-runtime"])      # no unit, no drop-in, no link, and (N3) no link to start it
+        self.assertFalse(os.path.lexists(os.path.join(wants, "nxlx-ndi.service")))
         with open(target) as f:
             self.assertIn("PVJ_NDI_DIR", f.read())                        # what the link pointed to was not touched
 
@@ -438,37 +438,37 @@ class InstallTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("WARNING: could not remove everything of that NDI helper", r.stdout)
         self.assertIn("remove it by hand", r.stdout)
-        self.assertEqual(os.readlink(self.p("opt/pvj/current")), "/opt/pvj/releases/9.9.2")      # the install went on to its end
+        self.assertEqual(os.readlink(self.p("opt/nxlx/current")), "/opt/nxlx/releases/9.9.2")      # the install went on to its end
         self.assertIn("installed. Check the device", r.stdout)
         # the same with a folder where a drop-in goes, in the uninstall
         os.makedirs(self.p(self.NDI_FILES[2] + "/inside"))
         r = install(self.src, self.stage, "--uninstall")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("WARNING: could not remove everything of the NDI helper", r.stdout)
-        self.assertFalse(os.path.exists(self.p("opt/pvj")))
+        self.assertFalse(os.path.exists(self.p("opt/nxlx")))
 
     def test_uninstall_takes_the_helper_and_leaves_the_owners_library_unless_purged(self):
         self.assertEqual(install(self.src, self.stage).returncode, 0)
         self.opt_in()
-        os.makedirs(self.p("opt/pvj-ndi"))
-        with open(self.p("opt/pvj-ndi/libndi.so.6"), "w") as f:
+        os.makedirs(self.p("opt/nxlx-ndi"))
+        with open(self.p("opt/nxlx-ndi/libndi.so.6"), "w") as f:
             f.write("the owner's copy")
-        other = self.p("etc/systemd/system/pvj-web.service.d/90-owner.conf")
+        other = self.p("etc/systemd/system/nxlx-web.service.d/90-owner.conf")
         with open(other, "w") as f:
             f.write("[Service]\n")
         r = install(self.src, self.stage, "--uninstall")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        for path in self.NDI_FILES + ("usr/local/bin/pvj-ndi-runtime", "etc/systemd/system/pvj-player.service.d"):
+        for path in self.NDI_FILES + ("usr/local/bin/nxlx-ndi-runtime", "etc/systemd/system/nxlx-player.service.d"):
             self.assertFalse(os.path.lexists(self.p(path)), path)
         self.assertTrue(os.path.exists(other))                            # somebody else's drop-in and its folder stay
-        self.assertTrue(os.path.exists(self.p("opt/pvj-ndi/libndi.so.6")))
+        self.assertTrue(os.path.exists(self.p("opt/nxlx-ndi/libndi.so.6")))
         # installed again afterwards, the box has not opted in
         os.unlink(other)
         os.rmdir(os.path.dirname(other))
         self.assertEqual(install(self.src, self.stage).returncode, 0)
-        self.assertEqual(self.ndi_names(), ["opt/pvj-ndi", "opt/pvj-ndi/libndi.so.6", "usr/local/bin/pvj-ndi-runtime"])
+        self.assertEqual(self.ndi_names(), ["opt/nxlx-ndi", "opt/nxlx-ndi/libndi.so.6", "usr/local/bin/nxlx-ndi-runtime"])
         self.assertEqual(install(self.src, self.stage, "--uninstall", "--purge").returncode, 0)
-        self.assertFalse(os.path.exists(self.p("opt/pvj-ndi")))
+        self.assertFalse(os.path.exists(self.p("opt/nxlx-ndi")))
 
     # Hardware video decoding on a PC node (J-152): the VA-API driver for the graphics found in sysfs, best effort.
     def _pci(self, *devices):

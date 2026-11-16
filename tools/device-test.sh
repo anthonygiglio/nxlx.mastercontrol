@@ -31,7 +31,7 @@ status=0
 echo "== self-test"
 args=(--json "$OUT/selftest.json")
 [ "${PVJ_DEVICE_PLAY:-0}" = "1" ] && args+=(--play)
-python3 bin/pvj-selftest "${args[@]}" >"$OUT/selftest.txt" 2>&1 || status=1
+python3 bin/nxlx-selftest "${args[@]}" >"$OUT/selftest.txt" 2>&1 || status=1
 tail -n 25 "$OUT/selftest.txt"
 
 echo "== unit tests (real mpv, real hardware paths)"

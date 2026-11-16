@@ -15,9 +15,9 @@ path = [
   "install/README.md",
   "image/README.md",
   "image/config",
-  "image/stage-pvj/EXPORT_IMAGE",
-  "image/stage-pvj/00-install-pvj/00-packages-nr",
-  "image/stage-pvj/00-install-pvj/files/.gitkeep",
+  "image/stage-nxlx/EXPORT_IMAGE",
+  "image/stage-nxlx/00-install-nxlx/00-packages-nr",
+  "image/stage-nxlx/00-install-nxlx/files/.gitkeep",
   "tools/panel-playground/*.json",
   "tools/theme-samples/*.json",
   "tools/sandbox/scenarios/*.json",
@@ -88,7 +88,7 @@ SPDX-License-Identifier = "OFL-1.1"
 
 # Fonts the node draws text with (mctl/fonts, D129 slice 2 of design/text-and-logo-sources_2026-11-08.md). Eleven families, each
 # the unchanged TrueType file of the release in https://github.com/google/fonts (commit and checksums in THIRD_PARTY_LICENSES.md), each with
-# its own OFL.txt beside it, read from the same release. None is this project's work; all are SIL OFL 1.1. They are read by pvj-raster,
+# its own OFL.txt beside it, read from the same release. None is this project's work; all are SIL OFL 1.1. They are read by nxlx-raster,
 # never sent to a browser.
 [[annotations]]
 path = [
@@ -201,7 +201,7 @@ precedence = "aggregate"
 SPDX-FileCopyrightText = "2007 Free Software Foundation, Inc. <https://fsf.org/>"
 SPDX-License-Identifier = "GPL-3.0-or-later"
 
-# nanosvg (https://github.com/memononen/nanosvg, zlib licence), vendored unchanged in render/raster/vendor for pvj-raster
+# nanosvg (https://github.com/memononen/nanosvg, zlib licence), vendored unchanged in render/raster/vendor for nxlx-raster
 # (D129): the SVG reader that has no scripts, entities, external fetches, images or text. The upstream commit is in
 # THIRD_PARTY_LICENSES.md. The rest of render/raster is this project's, GPL-3.0-or-later, with its own header.
 [[annotations]]

@@ -42,7 +42,7 @@ Measured in headless Chromium (CI) and headless Edge (the dev Mac). Nobody has s
 
 ## Pairing
 
-Enter the four digit PIN shown on the box (`sudo pvj-pin`, or the projector test screen). A device is remembered until it is removed.
+Enter the four digit PIN shown on the box (`sudo nxlx-pin`, or the projector test screen). A device is remembered until it is removed.
 
 ![Connect screen with a four digit PIN](images/ui/connect.png)
 

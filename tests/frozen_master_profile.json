@@ -1275,7 +1275,7 @@ null
 ],
 "notes":[
 "Cheap scaling is on (--profile=fast); the default scalers drop frames on a Pi at 1440p.",
-"Pi 3 class is the weakest supported board; check heavy files with pvj-selftest first."
+"Pi 3 class is the weakest supported board; check heavy files with nxlx-selftest first."
 ]
 },
 "sources":{

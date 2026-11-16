@@ -30,7 +30,7 @@ class FakeRunner:
 class UsbTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
-        self.base = os.path.join(self.tmp, "pvj")
+        self.base = os.path.join(self.tmp, "nxlx")
         self.link = os.path.join(self.tmp, "usb")
         self.env = {"PVJ_USB_BASE": self.base, "PVJ_USB_LINK": self.link}
         self.mounts = os.path.join(self.tmp, "mounts")

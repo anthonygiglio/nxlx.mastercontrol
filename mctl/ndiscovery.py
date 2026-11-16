@@ -6,14 +6,14 @@ the discovery server and bake into the box."
 NDI's Discovery Server is NDI's own closed program, `ndi-discovery-server`. Senders register with it and receivers
 ask it, in place of (senders) or beside (receivers) mDNS. Its licence forbids handing it on, so it is never in this
 repository or an image and the box never downloads it: root places it from the owner's copy
-(`sudo pvj-ndi-runtime server install <folder or file>`), as the NDI runtime is placed.
+(`sudo nxlx-ndi-runtime server install <folder or file>`), as the NDI runtime is placed.
 
 Four parts, as with the NDI input (mctl/ndi.py, mctl/ndisetup.py):
 
-* install_server: root copies the program into /opt/pvj-ndi-server after checking the copy (never through a link, a
+* install_server: root copies the program into /opt/nxlx-ndi-server after checking the copy (never through a link, a
   size cap, an ELF program for this processor, root's and writable by nobody else). Nothing is executed.
-* enable / disable / refresh: root's set-up. An account and a group of its own (pvj-ndisc), the unit
-  (mctl/systemd/pvj-ndi-discovery.service) and a drop-in that lets the panel into the supervisor's folder; that
+* enable / disable / refresh: root's set-up. An account and a group of its own (nxlx-ndisc), the unit
+  (mctl/systemd/nxlx-ndi-discovery.service) and a drop-in that lets the panel into the supervisor's folder; that
   drop-in is the mark that this box has the server set up.
 * Service: the supervisor that runs under that unit. It starts NDI's program only while the panel says the module is
   on, with `-bind <address> -port <port>` and nothing else, and starts it again with a growing pause when it ends.
@@ -41,20 +41,20 @@ from . import ndisetup, paths
 from .ndi import ELF_MACHINES, SDK_FOLDERS, NdiError, PRIVATE_NETS, _text, box_machine, elf_machine, same_folder_target
 
 SERVER_NAME = "ndi-discovery-server"
-SERVER_DIR = "/opt/pvj-ndi-server"            # root's; nothing else is in it
+SERVER_DIR = "/opt/nxlx-ndi-server"            # root's; nothing else is in it
 SERVER_PATH = SERVER_DIR + "/" + SERVER_NAME
 SERVER_MAX_BYTES = 32 * 1024 * 1024           # NDI's program is about 1 MB (6.3.2); a file far larger is not it
 CONFIG_BESIDE = "ndi-discovery-service.v1.json"      # NDI's program also reads this name lying beside it; the box never writes one
 ET_EXEC, ET_DYN = 2, 3                        # an ELF program (a position-independent one is ET_DYN)
-ACCOUNT = GROUP = "pvj-ndisc"
-UNIT = "pvj-ndi-discovery.service"
+ACCOUNT = GROUP = "nxlx-ndisc"
+UNIT = "nxlx-ndi-discovery.service"
 UNIT_PATH = ndisetup.SYSTEMD + "/" + UNIT
-WEB_DROPIN = ndisetup.SYSTEMD + "/pvj-web.service.d/50-pvj-ndisc.conf"       # also the mark that the server is set up here
+WEB_DROPIN = ndisetup.SYSTEMD + "/nxlx-web.service.d/50-nxlx-ndisc.conf"       # also the mark that the server is set up here
 TEMPLATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "systemd", UNIT)
-WEB_TEXT = ("# Written by pvj-ndi-runtime (mctl/ndiscovery.py) when the NDI discovery server was set up on this box; removed by\n"
-            "# 'pvj-ndi-runtime server remove'. The panel may reach the server's supervisor (D85). This file is also the mark.\n"
-            "[Service]\nSupplementaryGroups=pvj-ndisc\nEnvironment=PVJ_NDISC_DIR=/run/pvj-ndisc\n")
-COMMAND = 'sudo pvj-ndi-runtime server install "/path/to/NDI SDK for Linux"'
+WEB_TEXT = ("# Written by nxlx-ndi-runtime (mctl/ndiscovery.py) when the NDI discovery server was set up on this box; removed by\n"
+            "# 'nxlx-ndi-runtime server remove'. The panel may reach the server's supervisor (D85). This file is also the mark.\n"
+            "[Service]\nSupplementaryGroups=nxlx-ndisc\nEnvironment=PVJ_NDISC_DIR=/run/nxlx-ndisc\n")
+COMMAND = 'sudo nxlx-ndi-runtime server install "/path/to/NDI SDK for Linux"'
 NOT_SET_UP = "the NDI discovery server is not set up on this node; someone with a keyboard or SSH on the node runs: " + COMMAND
 SOCKET = "ndisc.sock"
 DEFAULT_PORT = 5959                           # NDI's own default
@@ -101,7 +101,7 @@ def server_problem(path=SERVER_PATH, owner_uids=(0,), machine=None):
         return "NDI's discovery server program is not on this node yet"
     if (not stat.S_ISREG(st.st_mode) or st.st_uid not in owner_uids or st.st_mode & 0o022 or st.st_size > SERVER_MAX_BYTES
             or not stat.S_ISDIR(folder.st_mode) or folder.st_uid not in owner_uids or folder.st_mode & 0o022):
-        return "NDI's discovery server program is not a plain file that only root can change; install it again with pvj-ndi-runtime"
+        return "NDI's discovery server program is not a plain file that only root can change; install it again with nxlx-ndi-runtime"
     extra = beside(path)
     if extra:
         # NDI's program reads a configuration file lying beside it (ndi-discovery-service.v1.json), which would
@@ -175,7 +175,7 @@ def install_server(source, dest_dir=SERVER_DIR, machine=None, chown=True):
         os.chmod(dest_dir, 0o755)
         problem = server_problem(tmp, owner_uids=(0,) if chown else (os.getuid(),), machine=machine)
         if problem:
-            raise NdiError(problem.replace("; install it again with pvj-ndi-runtime", "") + "; nothing was installed")
+            raise NdiError(problem.replace("; install it again with nxlx-ndi-runtime", "") + "; nothing was installed")
         os.chmod(tmp, 0o755)                                             # a program only now
         dest = os.path.join(dest_dir, SERVER_NAME)
         os.replace(tmp, dest)
@@ -273,7 +273,7 @@ def enable(run=ndisetup._run, say=print, systemd=ndisetup._systemd_runs, account
         if run(["systemctl", "enable", UNIT]) != 0:
             raise SetupError("could not enable %s" % UNIT)
         if run(["systemctl", "restart", UNIT]) != 0:
-            raise SetupError("could not start %s; see: journalctl -u pvj-ndi-discovery -n 30" % UNIT)
+            raise SetupError("could not start %s; see: journalctl -u nxlx-ndi-discovery -n 30" % UNIT)
     except (ndisetup.SetupError, OSError):
         if not was:
             run(["systemctl", "disable", "--now", UNIT] if systemd() else ["systemctl", "disable", UNIT])
@@ -282,7 +282,7 @@ def enable(run=ndisetup._run, say=print, systemd=ndisetup._systemd_runs, account
             if systemd():
                 run(["systemctl", "daemon-reload"])
             say("the set-up failed and was undone: this node has no NDI discovery server set up. NDI's program and the "
-                "account and group %s stay (sudo pvj-ndi-runtime server remove takes the program off)." % ACCOUNT)
+                "account and group %s stay (sudo nxlx-ndi-runtime server remove takes the program off)." % ACCOUNT)
         raise
     running = True
     for _ in range(ndisetup.STAYS_UP_SECONDS):
@@ -291,14 +291,14 @@ def enable(run=ndisetup._run, say=print, systemd=ndisetup._systemd_runs, account
             running = False
             break
     say("restarting the panel so it may reach the discovery server's supervisor")
-    if run(["systemctl", "try-restart", "pvj-web.service"]) != 0:
+    if run(["systemctl", "try-restart", "nxlx-web.service"]) != 0:
         say("the panel did not restart; restart the node before using the discovery server")
     if running:
         say("the NDI discovery server is set up on this node. Nothing of it listens yet: an owner switches it on in the "
             "panel under Setup, NDI discovery server.")
     else:
         say("the NDI discovery server is set up on this node, but its supervisor is NOT running: it was started and did not "
-            "stay up. See: journalctl -u pvj-ndi-discovery -n 30")
+            "stay up. See: journalctl -u nxlx-ndi-discovery -n 30")
     return running
 
 
@@ -314,7 +314,7 @@ def disable(run=ndisetup._run, say=print, systemd=ndisetup._systemd_runs, root="
         run(["systemctl", "daemon-reload"])
         if was:
             say("restarting the panel without the discovery server's group")
-            if run(["systemctl", "try-restart", "pvj-web.service"]) != 0:
+            if run(["systemctl", "try-restart", "nxlx-web.service"]) != 0:
                 say("the panel did not restart; restart the node")
     if was:
         say("the NDI discovery server's set-up is removed from this node. Left in place: the account and group %s "
@@ -349,11 +349,11 @@ def remove_program(dest_dir=SERVER_DIR):
 
 
 def server_main(argv, out=sys.stdout):
-    """`pvj-ndi-runtime server install <folder or file> | remove | status | refresh ...`."""
-    say = lambda m: print("pvj-ndi-runtime: %s" % m, file=out)      # noqa: E731
-    usage = ("usage: pvj-ndi-runtime server install <the unpacked NDI SDK or Discovery Server folder, or ndi-discovery-server> | status | remove\n"
+    """`nxlx-ndi-runtime server install <folder or file> | remove | status | refresh ...`."""
+    say = lambda m: print("nxlx-ndi-runtime: %s" % m, file=out)      # noqa: E731
+    usage = ("usage: nxlx-ndi-runtime server install <the unpacked NDI SDK or Discovery Server folder, or ndi-discovery-server> | status | remove\n"
              "install: puts NDI's discovery server program on this node from YOUR copy and sets up the service that can run it\n"
-             "  (an account of its own, pvj-ndisc). Nothing of it listens until an owner switches it on in the panel.\n"
+             "  (an account of its own, nxlx-ndisc). Nothing of it listens until an owner switches it on in the panel.\n"
              "NDI's Discovery Server is proprietary: get it from https://ndi.video/ and read its licence first. It is never\n"
              "part of nxlx.mastercontrol and is never downloaded by the node. NDI(R) is a registered trademark of Vizrt NDI AB.")
     if argv and argv[0] == "refresh":
@@ -364,7 +364,7 @@ def server_main(argv, out=sys.stdout):
             elif len(rest) >= 2 and rest[0] == "--prefix":
                 prefix = rest[1]
             else:
-                print("usage: pvj-ndi-runtime server refresh [--root DIR] [--prefix DIR]", file=out)
+                print("usage: nxlx-ndi-runtime server refresh [--root DIR] [--prefix DIR]", file=out)
                 return 2
             rest = rest[2:]
         if not root and os.geteuid() != 0:
@@ -379,7 +379,7 @@ def server_main(argv, out=sys.stdout):
             return 1
     if argv == ["status"]:
         print(server_problem() or "NDI's discovery server program is in place: %s" % SERVER_PATH, file=out)
-        print("the NDI discovery server is set up on this node (the service pvj-ndi-discovery is installed)" if opted_in()
+        print("the NDI discovery server is set up on this node (the service nxlx-ndi-discovery is installed)" if opted_in()
               else "the NDI discovery server is not set up on this node; to set it up: %s" % COMMAND, file=out)
         return 0
     if argv and argv[0] in ("install", "remove") and os.geteuid() != 0:
@@ -480,7 +480,7 @@ def address_for(network, addresses):
     return None
 
 
-# ---- the supervisor (runs under the unit, as pvj-ndisc) ---------------------------------------------------------------
+# ---- the supervisor (runs under the unit, as nxlx-ndisc) ---------------------------------------------------------------
 def clean_line(raw):
     """One line the program printed, for the page: printable ASCII only, bounded."""
     text = raw.decode("ascii", "replace") if isinstance(raw, bytes) else str(raw)
@@ -556,7 +556,7 @@ class Service:
             self._again(gen, pause)
             return
         self.child, self.state, self.message, self.started = child, "running", "", self._clock()
-        self.log("pvj-ndi-discovery: started NDI's discovery server on %s port %d" % (self.bind, self.port))
+        self.log("nxlx-ndi-discovery: started NDI's discovery server on %s port %d" % (self.bind, self.port))
         threading.Thread(target=self._watch, args=(child, gen, pause), name="ndisc-watch", daemon=True).start()
 
     def _watch(self, child, gen, pause):
@@ -569,7 +569,7 @@ class Service:
                             self.last = line
                             if self._elsewhere(line):
                                 # It listens where nobody chose: it is ended and NOT started again. The Owner sees why.
-                                self.log("pvj-ndi-discovery: NDI's program says %r, not the address it was given (%s); stopping it" % (line, self.bind))
+                                self.log("nxlx-ndi-discovery: NDI's program says %r, not the address it was given (%s); stopping it" % (line, self.bind))
                                 self.gen += 1
                                 self.child, self.state = None, "failed"
                                 self.message = "NDI's program listened somewhere other than the address chosen (%s) and was stopped; it is not started again until the setting is changed or switched off and on" % self.bind
@@ -590,7 +590,7 @@ class Service:
             ran = self._clock() - (self.started or self._clock())
             self.state, self.child = "failed", None
             self.message = "the program ended (exit %s) after %d seconds" % (code, int(ran))
-            self.log("pvj-ndi-discovery: NDI's discovery server ended (exit %s); starting it again" % code)
+            self.log("nxlx-ndi-discovery: NDI's discovery server ended (exit %s); starting it again" % code)
             self._again(gen, self._first if ran >= self._settled else pause)
 
     def _again(self, gen, pause):
@@ -612,7 +612,7 @@ class Service:
         child, self.child = self.child, None
         if child is not None:
             self._end(child)
-            self.log("pvj-ndi-discovery: NDI's discovery server was stopped")
+            self.log("nxlx-ndi-discovery: NDI's discovery server was stopped")
 
     @staticmethod
     def _end(child):
@@ -669,12 +669,12 @@ def main(argv=None):
     os.makedirs(rundir, mode=0o750, exist_ok=True)
     allowed = set()
     try:
-        allowed.add(pwd.getpwnam("pvj-web").pw_uid)
+        allowed.add(pwd.getpwnam("nxlx-web").pw_uid)
     except KeyError:
         allowed.add(os.getuid())                   # on a desk: whoever runs it
     service = Service(os.environ.get("PVJ_NDISC_PROGRAM") or SERVER_PATH, log=lambda m: print(m, flush=True))
     server = NetServer(os.path.join(rundir, SOCKET), service, lambda uid: uid in allowed)
-    print("pvj-ndi-discovery: ready (%s)" % (server_problem(service.program) or "NDI's program is in place; idle until the panel says on"), flush=True)
+    print("nxlx-ndi-discovery: ready (%s)" % (server_problem(service.program) or "NDI's program is in place; idle until the panel says on"), flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -716,7 +716,7 @@ class Manager:
             reply = self.client.request(message, timeout=10)
         except Exception as e:
             if not isinstance(e, NdiError):
-                self.log("pvj-web: the discovery server's supervisor was not told the settings: %s" % type(e).__name__)
+                self.log("nxlx-web: the discovery server's supervisor was not told the settings: %s" % type(e).__name__)
             return {"ok": False}
         self._sent = (message["on"], bind, port)
         return reply

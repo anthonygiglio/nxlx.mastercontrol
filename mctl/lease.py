@@ -439,7 +439,7 @@ class Leases:
         try:
             self.sweep()
         except Exception as e:
-            self.log("pvj-web: the sweep of carried devices failed: %s" % e)
+            self.log("nxlx-web: the sweep of carried devices failed: %s" % e)
         t = self.now()
         sources = {r["node"] for r in self.auth.node_records() if r["lease"] and r["lease"].get("h") and isinstance(r["node"], str)}
         with self.lock:
@@ -449,20 +449,20 @@ class Leases:
             try:
                 self.check_node(node_id)
             except Exception as e:
-                self.log("pvj-web: a lease check failed: %s" % e)
+                self.log("nxlx-web: a lease check failed: %s" % e)
         retry = getattr(self.peers, "retry_owed", None)       # removals that could not be delivered are tried again (slice 4d)
         if retry is not None:
             try:
                 retry()
             except Exception as e:
-                self.log("pvj-web: pushing removals again failed: %s" % e)
+                self.log("nxlx-web: pushing removals again failed: %s" % e)
         with self.lock:
             waiting = bool(self._out_dirty)
         if waiting:
             try:
                 self._flush_pokes()
             except Exception as e:
-                self.log("pvj-web: pokes failed: %s" % e)
+                self.log("nxlx-web: pokes failed: %s" % e)
 
     def start(self):
         if self._thread is not None:

@@ -355,7 +355,7 @@ class Transitions:
         last look (`look`). Nothing is asked of the player: every status request comes through here. A box that
         gave up RETRY seconds ago tries again from now on."""
         if self.given_up and self._gave_up_at is not None and self._clock() - self._gave_up_at >= RETRY:
-            self.log("pvj-web: transitions: trying again, %d minutes after giving up" % int(RETRY // 60))
+            self.log("nxlx-web: transitions: trying again, %d minutes after giving up" % int(RETRY // 60))
             self.given_up, self._gave_up_at, self._slow, self._odd = "", None, [], 0
         return self.given_up or self._large
 
@@ -525,7 +525,7 @@ class Transitions:
                 gone = isinstance(e, PlayerError) and ("not running" in str(e) or "ipc error" in str(e))
                 self._let_go(token, froze, remove=laid)
                 if not ended:
-                    self.log("pvj-web: no %s, a cut instead: %s" % (name, e))
+                    self.log("nxlx-web: no %s, a cut instead: %s" % (name, e))
                     moved = epoch is not None and getattr(player, "source_epoch", None) != epoch
                     if kind == "video" and not gone and "no reply" not in str(e):
                         # a still of the clip that failed or is not what was expected (the player refused that kind
@@ -558,7 +558,7 @@ class Transitions:
             # part of the rule: at the box's own default of one second it made every slow still the last one.
             if shot > SLOW:
                 self._slow.append(shot)
-                self.log("pvj-web: transitions: the still took %.2f seconds (of %.2f from the tap)" % (shot, took))
+                self.log("nxlx-web: transitions: the still took %.2f seconds (of %.2f from the tap)" % (shot, took))
                 if shot > HOPELESS:
                     self._give_up("the still took %.1f seconds" % shot)
                 elif len(self._slow) >= SLOW_IN_A_ROW:
@@ -591,7 +591,7 @@ class Transitions:
         with self._mark:
             self._scaling = (pid, took)
         if not took:
-            self.log("pvj-web: transitions: this player (process %s) cannot draw an overlay at another size (mpv before 0.38): "
+            self.log("nxlx-web: transitions: this player (process %s) cannot draw an overlay at another size (mpv before 0.38): "
                      "stills are taken of the window and sent at full size" % pid)
         return took
 
@@ -633,7 +633,7 @@ class Transitions:
             if stop:
                 self._no_clip, self._misses = pid, 0
         if stop:
-            self.log("pvj-web: transitions: %d stills of the clip in a row were not what the player said; stills of the window "
+            self.log("nxlx-web: transitions: %d stills of the clip in a row were not what the player said; stills of the window "
                      "from now on for this player (process %s)" % (MISSES, pid))
 
     def _source(self):
@@ -844,7 +844,7 @@ class Transitions:
     def _give_up(self, why):
         self.given_up = why + "; dipping to black instead. The node tries again in %d minutes, or at once when the transition is chosen again" % int(RETRY // 60)
         self._gave_up_at, self._slow, self._odd = self._clock(), [], 0
-        self.log("pvj-web: transitions given up: %s" % why)
+        self.log("nxlx-web: transitions given up: %s" % why)
 
     def _first_frame(self):
         """True when the new clip's first frame is drawn, or nothing plays any more. Raises PlayerError."""
@@ -996,7 +996,7 @@ class Transitions:
             if record.get("path") is not None and ipc.request("get_property", "path") != record["path"]:
                 return
             player.pause(False)
-            self.log("pvj-web: transitions: the clip an earlier panel froze for a transition plays again")
+            self.log("nxlx-web: transitions: the clip an earlier panel froze for a transition plays again")
         except Exception:
             pass
 

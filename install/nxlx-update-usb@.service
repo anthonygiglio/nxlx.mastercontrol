@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
+# SPDX-License-Identifier: Apache-2.0
+[Unit]
+Description=nxlx.mastercontrol update from a USB drive (started from the panel through nxlx-sysd)
+
+[Service]
+# Started on request only (no [Install]), as nxlx-update-usb@VERSION.service: the instance is the version the
+# person confirmed in the panel (nxlx-sysd checks it is N.N.N). nxlx-update checks the bundle's signature against /etc/nxlx/allowed_signers
+# on a private copy before installing, refuses older versions, and rolls back by itself if the panel does not come
+# back. Its progress goes to a small JSON file the panel reads.
+Type=oneshot
+User=root
+RuntimeDirectory=nxlx-update
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+ExecStart=@PVJ_DIR@/bin/nxlx-update usb --version %i --result /run/nxlx-update/result.json
+# Stopped before the end (the time limit below): say so, so the panel does not show "Updating" for ever.
+ExecStopPost=-@PVJ_DIR@/bin/nxlx-update finish --result /run/nxlx-update/result.json
+TimeoutStartSec=30min

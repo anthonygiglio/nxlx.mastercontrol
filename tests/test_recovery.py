@@ -288,7 +288,7 @@ class RecoverySupportTest(SupportBase):
 
 
 class StickTest(ServerBase):
-    """The stick, with a fake mount folder in the place of /media/pvj."""
+    """The stick, with a fake mount folder in the place of /media/nxlx."""
 
     def setUp(self):
         super().setUp()
@@ -426,7 +426,7 @@ class StickTest(ServerBase):
         self.assertEqual(self.rec.status()["last"]["how"], "removed")
 
     def test_a_restart_within_the_hour_with_the_stick_in_shows_nothing_more(self):
-        """Review of #122, Low 5: the count per hour lived in memory, so pvj-web restarting with a stick left in
+        """Review of #122, Low 5: the count per hour lived in memory, so nxlx-web restarting with a stick left in
         showed a fresh PIN at every start. The log's last stick event under an hour old holds the at-boot fire."""
         self.insert()
         self.screen.tick()

@@ -7,7 +7,7 @@ Nothing here runs a command. `plan()` turns a validated request into argument li
 can lock you out, so every change is *pending* until confirmed and reverts by itself when the timer runs out.
 
 A change never edits the confirmed profile in place. It is built as a separate *candidate* profile
-(`pvj-<iface>-try`, not autoconnect) and brought up; the old profile is untouched, so a power cut, a
+(`nxlx-<iface>-try`, not autoconnect) and brought up; the old profile is untouched, so a power cut, a
 crash or a timeout always leaves the old network intact. Only Confirm swaps the candidate in.
 
 Modes (wired first, as on the approved Network wireframe):
@@ -54,15 +54,21 @@ class NetError(Exception):
 
 
 def profile_name(iface):
-    return "pvj-" + iface
+    return "nxlx-" + iface
 
 
 def candidate_name(iface):
-    return "pvj-%s-try" % iface
+    return "nxlx-%s-try" % iface
 
 
 def old_name(iface):
-    return "pvj-%s-old" % iface
+    return "nxlx-%s-old" % iface
+
+
+def legacy_name(iface):
+    """The confirmed profile's name before the rename of the system names (rename PR 7): nxlx-netd removes it when
+    the first change after the conversion is confirmed."""
+    return "pvj-%s" % iface
 
 
 def list_interfaces(sysfs="/sys/class/net"):
@@ -254,7 +260,7 @@ def _kf_escape(text):
 
 
 def keyfile(cfg, uuid):
-    """The candidate Wi-Fi profile as a NetworkManager keyfile (written root-only by pvj-netd). The addressing
+    """The candidate Wi-Fi profile as a NetworkManager keyfile (written root-only by nxlx-netd). The addressing
     is set afterwards with nmcli, the same way as for a wired port. The SSID is written as a list of bytes,
     which NetworkManager reads exactly and which needs no escaping."""
     if not UUID.fullmatch(uuid):
@@ -324,7 +330,7 @@ def confirm_plan(iface, old_exists, wifi_off=False):
     cmds = [["nmcli", "connection", "modify", "id", cand, "connection.autoconnect", "yes",
              "connection.autoconnect-priority", "101"]]
     # The old profile is only renamed until the candidate has its name, and deleted last: if anything fails
-    # before that, the old one still exists and the change can still be undone (pvj-netd renames it back).
+    # before that, the old one still exists and the change can still be undone (nxlx-netd renames it back).
     if old_exists:
         cmds.append(["nmcli", "connection", "modify", "id", final, "connection.id", old])
     cmds.append(["nmcli", "connection", "modify", "id", cand, "connection.id", final])

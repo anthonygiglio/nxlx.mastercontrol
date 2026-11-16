@@ -228,7 +228,7 @@ class Api:
         if addons_dir:
             self.theme_store.load(self.themes)              # so the store knows the file of each; what is there already stays
         self.media_dir = media_dir
-        self.usb_root = usb_root or os.environ.get("PVJ_USB_BASE", "/media/pvj")     # one folder per mounted drive
+        self.usb_root = usb_root or os.environ.get("PVJ_USB_BASE", "/media/nxlx")     # one folder per mounted drive
         self.usb_link = usb_link or os.environ.get("PVJ_USB_DIR", "/media/usb")      # the newest drive, for the old presets
         self.board = board
         self.addons_dir = addons_dir
@@ -645,7 +645,7 @@ class Api:
                 self.settings.save()
             return None
         except Exception as e:
-            self.log("pvj-web: the time zone choice was not saved: %s" % e)
+            self.log("nxlx-web: the time zone choice was not saved: %s" % e)
             return "The zone is set, but the node could not save that it was confirmed, so a later pairing may offer to change it."
 
     def _zone_apply(self, zone, how):
@@ -655,7 +655,7 @@ class Api:
         if hasattr(time, "tzset"):
             time.tzset()
         warning = self._zone_confirm(how)
-        self.log("pvj-web: time zone set to %s (%s)" % (zone, how))
+        self.log("nxlx-web: time zone set to %s (%s)" % (zone, how))
         return warning
 
     def _first_pairing_zone(self, dev, body, client):
@@ -678,15 +678,15 @@ class Api:
             if not tz_mod.is_utc(was) or tz_mod.is_utc(zone):
                 return None
         except Exception as e:
-            self.log("pvj-web: the time zone was not looked at pairing: %s" % e)
+            self.log("nxlx-web: the time zone was not looked at pairing: %s" % e)
             return None
         try:
             warning = self._zone_apply(zone, "first pairing")
         except ApiError as e:
-            self.log("pvj-web: the time zone was not set at pairing: %s" % e)
+            self.log("nxlx-web: the time zone was not set at pairing: %s" % e)
             return {"error": "The node's time zone could not be set to %s: %s" % (zone, getattr(e, "message", e))}
         except Exception as e:             # a failure here never stops the pairing
-            self.log("pvj-web: the time zone was not set at pairing: %s" % e)
+            self.log("nxlx-web: the time zone was not set at pairing: %s" % e)
             return {"error": "The node's time zone could not be set to %s." % zone}
         out = {"zone": zone, "was": was}
         if warning:
@@ -718,7 +718,7 @@ class Api:
         stick had its one use and leaves the display."""
         left = getattr(self.auth, "recovery_uses", {}).pop(dev["id"], None)
         if left is not None:
-            self.log("pvj-web: a recovery code was used by device %s (%s) from %s; %d left" % (dev["id"], dev["name"], client, left))
+            self.log("nxlx-web: a recovery code was used by device %s (%s) from %s; %d left" % (dev["id"], dev["name"], client, left))
         if self.recovery is not None:
             self.recovery.used(dev)
 
@@ -1075,10 +1075,10 @@ class Api:
                     pass
             self._upload_lock.release()
 
-    # --- logos and other pictures (D129): received here, decoded only by pvj-raster ---------------------------------
+    # --- logos and other pictures (D129): received here, decoded only by nxlx-raster ---------------------------------
     def graphics_upload(self, name, length, read, replace=False, check=None, clock=time.monotonic):
         """Receive a PNG, JPEG or SVG from a stream and store it as a clean PNG. Nothing is decoded in this process:
-        mctl/raster.py checks the type, the size and the header's dimensions, then asks pvj-raster. `read(n)` returns up
+        mctl/raster.py checks the type, the size and the header's dimensions, then asks nxlx-raster. `read(n)` returns up
         to n bytes (b'' at the end); `check()` may raise ApiError to abandon the upload (device revoked)."""
         raster = self.raster
         try:
@@ -1238,7 +1238,7 @@ class Api:
             except ApiError as e:
                 job.update(active=False, error=e.message)
             except Exception as e:           # something unexpected: logged, said plainly
-                print("pvj-web: USB copy failed: %s" % e)
+                print("nxlx-web: USB copy failed: %s" % e)
                 job.update(active=False, error="the copy failed")
             finally:
                 f.close()
@@ -1458,7 +1458,7 @@ class Api:
                 if len(rows) >= ndi_mod.MAX_ALLOWED:
                     raise bad("at most %d NDI sources can be kept for pads; the owner removes one under NDI input" % ndi_mod.MAX_ALLOWED)
                 self._ndi_write(sources=rows + [allow])
-                self.log("pvj-web: NDI source '%s' from %s is allowed for pads, by device %s (from %s)"
+                self.log("nxlx-web: NDI source '%s' from %s is allowed for pads, by device %s (from %s)"
                          % (allow["name"], allow["from"], (device or {}).get("id"), client))
             self.settings.data["pads"]["banks"][bank]["pads"][index] = pad
             self.settings.save()
@@ -1510,7 +1510,7 @@ class Api:
                 said["note"] = "this pad's preset, %s, is gone: the shader starts as it does by itself. Choose a preset for the pad again" % preset
                 log = getattr(self, "log", None)
                 if log is not None:
-                    log("pvj-web: a pad's preset of %s is gone (%s); shown with the shader's own start" % (sid, preset))
+                    log("nxlx-web: a pad's preset of %s is gone (%s); shown with the shader's own start" % (sid, preset))
                 preset = None
         try:
             engine._parsed(path)                    # before Vibes is ended: a file that no longer reads shows nothing
@@ -1688,7 +1688,7 @@ class Api:
                 raise ApiError(409, self.SOURCE_ONLY_CLIPS % "a shader")
             self._need_source(k)
             out = chains.put_generator(k, body["shader"], body.get("shader_preset"))
-            self.log("pvj-web: source %d plays the shader %s, by device %s (%s, from %s)"
+            self.log("nxlx-web: source %d plays the shader %s, by device %s (%s, from %s)"
                      % (k, json.dumps(body["shader"]), (device or {}).get("id"), (device or {}).get("role"), client))
             return out
         if "pad" in body:
@@ -1721,7 +1721,7 @@ class Api:
                 out = chains.put_generator(k, sid, preset)
                 if note:
                     out = dict(out, note=note)
-                self.log("pvj-web: source %d plays the shader of pad %s, by device %s (%s, from %s)"
+                self.log("nxlx-web: source %d plays the shader of pad %s, by device %s (%s, from %s)"
                          % (k, pad, (device or {}).get("id"), (device or {}).get("role"), client))
                 return out
             for test, words in ((self.pad_shader, "this pad's shader"), (self.pad_ndi, "this pad's NDI source"),
@@ -1753,7 +1753,7 @@ class Api:
                     self._player_call(self.player.chain_clear, k, 0)
         else:
             self._player_call(self.player.play_to, k, [path], ending)
-        self.log("pvj-web: source %d plays %s, by device %s (%s, from %s)"
+        self.log("nxlx-web: source %d plays %s, by device %s (%s, from %s)"
                  % (k, json.dumps(name), (device or {}).get("id"), (device or {}).get("role"), client))
         out = {"playing": name, "source": k}
         warning = self._source_warning(k)
@@ -1799,7 +1799,7 @@ class Api:
             raise bad("Source 1 stops with Stop")
         self._need_source(k)
         self._player_call(self.player.stop_source, k)
-        self.log("pvj-web: source %d stopped, by device %s (%s, from %s)" % (k, (device or {}).get("id"), (device or {}).get("role"), client))
+        self.log("nxlx-web: source %d stopped, by device %s (%s, from %s)" % (k, (device or {}).get("id"), (device or {}).get("role"), client))
         return self.get_sources({}, device, client)
 
     def play(self, body, device, client):
@@ -1935,7 +1935,7 @@ class Api:
                         self._player_call(self.player.play, [path], loop, None, False, self.spawn, ending, None, transition["duration"], kind)
                         refused = getattr(self.player, "fade_refused", "")
                         if refused and isinstance(refused, str):
-                            self.log("pvj-web: no %s on the new renderer, a cut instead: %s" % (kind, refused))
+                            self.log("nxlx-web: no %s on the new renderer, a cut instead: %s" % (kind, refused))
                     else:
                         self._player_call(self.player.play, [path], loop, None, False, self.spawn, ending)
                 # This clip plays now, so a live input that was on the screen is not shown any more and its helper
@@ -1983,7 +1983,7 @@ class Api:
                 try:
                     blended()
                 except Exception as e:
-                    self.log("pvj-web: a clip played from a controller did not start: %s" % e)
+                    self.log("nxlx-web: a clip played from a controller did not start: %s" % e)
             threading.Thread(target=later, name="transition-play", daemon=True).start()
             return {"playing": name, "pending": True}       # asked for, not loaded yet: see the manual
         elif blend:
@@ -2007,7 +2007,7 @@ class Api:
                     done = start(mark=way_down[0])
                 except Exception as e:
                     done = False
-                    self.log("pvj-web: a clip did not start after its dip to black: %s" % e)
+                    self.log("nxlx-web: a clip did not start after its dip to black: %s" % e)
                 if not done:
                     self._level_back(way_down[0])
             current = getattr(self.fader, "current", None)
@@ -2340,7 +2340,7 @@ class Api:
             try:
                 log.add(kind, text, who, urgent)
             except Exception as e:
-                self.log("pvj-web: the event log: %s" % e)
+                self.log("nxlx-web: the event log: %s" % e)
 
     def events_tick(self):
         """About once a second (server.py, beside render_tick): what only shows in a file or a state is looked at here, the
@@ -2370,7 +2370,7 @@ class Api:
                         self.event("projector", "A projector did not answer.", who=name)
                 self._ev_down = set(down)
         except Exception as e:
-            self.log("pvj-web: event watch: %s" % e)
+            self.log("nxlx-web: event watch: %s" % e)
 
     _ev_renderer, _ev_slow, _ev_down = None, 0.0, frozenset()
 
@@ -2393,7 +2393,7 @@ class Api:
 
     # --- updates from the panel (D33) ---------------------------------------------------------
     UPDATE_NAME = re.compile(r"pvj-([0-9]+\.[0-9]+\.[0-9]+)\.tar\.gz(\.sig|\.sha256)?")
-    UPDATE_MAX = 300 * 1024 * 1024           # the same limit as pvj-update
+    UPDATE_MAX = 300 * 1024 * 1024           # the same limit as nxlx-update
     UPDATE_SIDE_MAX = 64 * 1024              # a signature or a checksum file
 
     def _update_inbox(self):
@@ -2439,7 +2439,7 @@ class Api:
         return {"version": __version__, "usb": usb, "inbox": inbox, "last": last}
 
     def start_update(self, body, device, client):
-        """{"source": "usb" | "inbox", "version": "N.N.N", "confirm": "update"}: pvj-sysd starts a fixed update unit
+        """{"source": "usb" | "inbox", "version": "N.N.N", "confirm": "update"}: nxlx-sysd starts a fixed update unit
         as root, for exactly the version the person confirmed."""
         if body.get("confirm") != "update":
             raise bad('send {"confirm": "update"}')
@@ -2458,7 +2458,7 @@ class Api:
 
     def update_upload(self, name, length, read, check=None):
         """Store an update bundle, its signature or its checksum in the inbox (the panel cannot install anything:
-        pvj-update verifies the signature as root, on its own copy, when the update is started)."""
+        nxlx-update verifies the signature as root, on its own copy, when the update is started)."""
         m = self.UPDATE_NAME.fullmatch(name or "")
         if not m:
             raise bad("an update is named pvj-N.N.N.tar.gz (with .sig and .sha256 beside it)")
@@ -2687,7 +2687,7 @@ class Api:
         except OSError as e:
             raise ApiError(500, "the setting could not be saved: %s" % (e.strerror or e))
         said = ", ".join("%s %s" % (k, json.dumps(new[k])) for k in sorted(body))
-        self.log("pvj-web: sound reactivity changed by device %s (%s) from %s: %s" % ((device or {}).get("id"), (device or {}).get("role"), client, said[:200]))
+        self.log("nxlx-web: sound reactivity changed by device %s (%s) from %s: %s" % ((device or {}).get("id"), (device or {}).get("role"), client, said[:200]))
         return self.get_sound({}, device, client)
 
     def set_sound_source(self, body, device, client):
@@ -2709,7 +2709,7 @@ class Api:
                 self.sound.save(dict(cfg, source=src))
             except OSError as e:
                 raise ApiError(500, "the setting could not be saved: %s" % (e.strerror or e))
-            self.log("pvj-web: sound source set to %s by device %s (%s) from %s" % (src, (device or {}).get("id"), (device or {}).get("role"), client))
+            self.log("nxlx-web: sound source set to %s by device %s (%s) from %s" % (src, (device or {}).get("id"), (device or {}).get("role"), client))
         return self.get_sound({}, device, client)
 
     def set_sound_map(self, body, device, client):
@@ -2760,7 +2760,7 @@ class Api:
             self.sound.link.save(new)
         except OSError as e:
             raise ApiError(500, "the setting could not be saved: %s" % (e.strerror or e))
-        self.log("pvj-web: Ableton Link switched %s by device %s (%s) from %s" % ("on" if new["on"] else "off", (device or {}).get("id"), (device or {}).get("role"), client))
+        self.log("nxlx-web: Ableton Link switched %s by device %s (%s) from %s" % ("on" if new["on"] else "off", (device or {}).get("id"), (device or {}).get("role"), client))
         return self.get_tempo({}, device, client)
 
     def clock_tap(self, body, device, client):
@@ -2793,7 +2793,7 @@ class Api:
         except clock_mod.ClockError as e:
             raise bad(str(e))
         what = "cleared" if key == "clear" else "%s %s" % (key, value)
-        self.log("pvj-web: box clock %s by device %s (%s) from %s" % (what, (device or {}).get("id"), (device or {}).get("role"), client))
+        self.log("nxlx-web: box clock %s by device %s (%s) from %s" % (what, (device or {}).get("id"), (device or {}).get("role"), client))
         return {"clock": c.status()}
 
     def sound_tick(self):
@@ -2988,7 +2988,7 @@ class Api:
                 self._hold_speed(False)
             self.ndi.sync()
         if module_id == "ndi-discovery":       # the server listens only while this is on (D85)
-            self.log("pvj-web: the NDI discovery server was switched %s by device %s (from %s)"
+            self.log("nxlx-web: the NDI discovery server was switched %s by device %s (from %s)"
                      % ("on" if self.registry.enabled("ndi-discovery") else "off", (device or {}).get("id"), client))
             if self.ndisc is not None:
                 self.ndisc.sync()
@@ -3001,7 +3001,7 @@ class Api:
                 try:
                     manager.apply()
                 except Exception as e:
-                    print("pvj-web: %s: %s" % (mid, e))
+                    print("nxlx-web: %s: %s" % (mid, e))
         return {"modules": self.registry.list()}
 
     def _looks(self):
@@ -3064,7 +3064,7 @@ class Api:
                 replaced = self.theme_store.add(theme, self.themes)
             except ThemeError as e:
                 raise ApiError(getattr(e, "status", 500), str(e))
-        print("pvj-web: theme %s %s by %s" % (theme["id"], "replaced" if replaced else "added", device["name"]), flush=True)
+        print("nxlx-web: theme %s %s by %s" % (theme["id"], "replaced" if replaced else "added", device["name"]), flush=True)
         self.support.note(device, "replaced a theme" if replaced else "added a theme", detail=theme["id"])
         return {"added": theme["id"], "name": theme["name"], "replaced": replaced, "warnings": themes_mod.warnings(theme),
                 "available": self._looks(), "skipped": [dict(k) for k in self.theme_store.skipped]}
@@ -3095,8 +3095,8 @@ class Api:
                 try:
                     self.settings.save()
                 except OSError as e:
-                    print("pvj-web: theme %s removed; the settings could not be saved: %s" % (tid, e.strerror or e), flush=True)
-        print("pvj-web: theme %s removed by %s" % (tid, device["name"]), flush=True)
+                    print("nxlx-web: theme %s removed; the settings could not be saved: %s" % (tid, e.strerror or e), flush=True)
+        print("nxlx-web: theme %s removed by %s" % (tid, device["name"]), flush=True)
         self.support.note(device, "removed a theme", detail=tid)
         return {"removed": tid, "theme": self.settings.data["theme"], "available": self._looks(),
                 "skipped": [dict(k) for k in self.theme_store.skipped]}
@@ -3231,7 +3231,7 @@ class Api:
             if did == device.get("id"):
                 raise ApiError(403, "an operator cannot remove himself here; use Log out, or ask the owner")
             if not remote:
-                self.log("pvj-web: %s device %s removed by operator device %s (from %s)"
+                self.log("nxlx-web: %s device %s removed by operator device %s (from %s)"
                          % (policy.NAMES[target["role"]].lower(), did, device.get("id"), client))
         if not self._still_paired(device):          # a reset or a removal ran while this was on its way: it removes nobody
             raise ApiError(401, "this device is no longer paired")
@@ -3266,7 +3266,7 @@ class Api:
             pin = self.auth.show_pin(device["id"])
         except AuthError as e:
             raise ApiError(429, str(e), e.retry_after)
-        self.log("pvj-web: owner PIN %s device %s (%s) from %s"
+        self.log("nxlx-web: owner PIN %s device %s (%s) from %s"
                  % ("shown to" if pin else "asked for by", device["id"], device["name"], client)
                  + ("" if pin else "; not known to this run of the panel"))
         return {"known": pin is not None, "pin": pin}
@@ -3290,14 +3290,14 @@ class Api:
         """A new set of codes, in the place of any old one; the codes in clear in this answer and nowhere else."""
         self._owner_here(device)
         codes = self.auth.make_recovery_codes(by=device["name"])
-        self.log("pvj-web: %d recovery codes made by device %s (%s) from %s" % (len(codes), device["id"], device["name"], client))
+        self.log("nxlx-web: %d recovery codes made by device %s (%s) from %s" % (len(codes), device["id"], device["name"], client))
         return {"codes": codes, "made": self.auth.recovery_status()["codes"]}
 
     def cancel_recovery(self, body, device, client):
         self._owner_here(device)
         had = self.auth.cancel_recovery_codes()
         if had:
-            self.log("pvj-web: recovery codes cancelled by device %s (%s) from %s" % (device["id"], device["name"], client))
+            self.log("nxlx-web: recovery codes cancelled by device %s (%s) from %s" % (device["id"], device["name"], client))
         return {"ok": True, "had": had}
 
     def set_recovery_usb(self, body, device, client):
@@ -3307,7 +3307,7 @@ class Api:
         if not isinstance(on, bool):
             raise bad("on must be true or false")
         self.auth.set_usb(on)
-        self.log("pvj-web: the recovery stick way was switched %s by device %s (%s) from %s" % ("on" if on else "off", device["id"], device["name"], client))
+        self.log("nxlx-web: the recovery stick way was switched %s by device %s (%s) from %s" % ("on" if on else "off", device["id"], device["name"], client))
         if not on and self.recovery is not None:
             self.recovery.poll()
         return {"usb": on}
@@ -3317,14 +3317,14 @@ class Api:
         does that for every 200 from here). Any role; a token that is already dead (removed by the owner, a second
         press) gets the same answer, so the client ends up logged out either way. A support login forgets its own
         token only (support.logout). The last full-access device may log out: the PIN screen then returns on the
-        box's display when nothing plays (pinscreen.auto_wanted), and sudo pvj-pin prints the PIN."""
+        box's display when nothing plays (pinscreen.auto_wanted), and sudo nxlx-pin prints the PIN."""
         if device is None:
             return {"ok": True, "ended": False}
         if device.get("remote"):
             self.support.logout(device)
         else:
             self.auth.revoke(device["id"])
-            self.log("pvj-web: device %s (%s, %s) logged out from %s" % (device["id"], device["name"], device["role"], client))
+            self.log("nxlx-web: device %s (%s, %s) logged out from %s" % (device["id"], device["name"], device["role"], client))
         return {"ok": True, "ended": True}
 
     def get_osc(self, body, device, client):
@@ -3381,7 +3381,7 @@ class Api:
                     self.osc.apply()
                 except osc_mod.OscError as e:
                     raise ApiError(409, str(e))
-        self.log("pvj-web: OSC key %s device %s (%s) from %s" % ("made new by" if made else "shown to", device["id"], device["name"], client))
+        self.log("nxlx-web: OSC key %s device %s (%s) from %s" % ("made new by" if made else "shown to", device["id"], device["name"], client))
         if remote:
             self.support.note(device, "made a new OSC key and knows it" if made else "was shown the OSC key", key=True)
         elif made:
@@ -3507,7 +3507,7 @@ class Api:
                 raise ApiError(409, str(e))
             self.settings.save()
             out = self.osc.feedback_status(fresh=True)
-        self.log("pvj-web: OSC state feedback %s by device %s (%s) from %s; %d target(s), %s"
+        self.log("nxlx-web: OSC state feedback %s by device %s (%s) from %s; %d target(s), %s"
                  % (", ".join(said), device["id"], device["name"], client, len(targets), "on" if on else "off"))
         if remote:
             self.support.note(device, "changed where the node sends its state over OSC", detail="%s; %d target(s), %s" % (", ".join(said), len(targets), "on" if on else "off"))
@@ -3673,7 +3673,7 @@ class Api:
         out = []
         try:
             for entry in self._ip_json():
-                if entry.get("ifname") in ("lo", "wg-pvj"):
+                if entry.get("ifname") in ("lo", "wg-nxlx"):
                     continue
                 for a in entry.get("addr_info", []):
                     if a.get("family") == "inet" and a.get("local"):
@@ -3751,7 +3751,7 @@ class Api:
             approved = {node_id for node_id, _name, _key in self.handover.approved_nodes() if self.handover.their_carry(node_id) != "none"}
             rows = self.fleet.known()
         except Exception as e:                     # the page still loads, with no other node in its policy
-            self.log("pvj-web: the nodes for the page's policy could not be read: %s" % (e,))
+            self.log("nxlx-web: the nodes for the page's policy could not be read: %s" % (e,))
             return []
         # The address this node last checked by certificate for each trusted node comes first, then at most 4 others per node,
         # a node at a time, so whoever announces a trusted node's id at many addresses cannot push the real one past the 32
@@ -4142,7 +4142,7 @@ class Api:
             found = projector_mod.probe(host, port, password)
         except projector_mod.ProjectorError as e:
             raise bad(str(e))
-        self.log("pvj-web: projector test at %s by device %s (%s) from %s: PJLink %s, Epson control %s"
+        self.log("nxlx-web: projector test at %s by device %s (%s) from %s: PJLink %s, Epson control %s"
                  % (host, (device or {}).get("id"), (device or {}).get("role"), client,
                     "answers" if found["pjlink"]["ok"] else "no", "answers" if found["epson"]["ok"] else "no"))
         return {"test": found}
@@ -4152,7 +4152,7 @@ class Api:
         Api.handle (Support.used), as for every route."""
         names = ", ".join(p["name"] for p in targets)[:120]
         said = action + ("" if value is None else " %s" % value)
-        self.log("pvj-web: projector %s: %s by device %s (%s) from %s" % (json.dumps(names), said, (device or {}).get("id"), (device or {}).get("role"), client))
+        self.log("nxlx-web: projector %s: %s by device %s (%s) from %s" % (json.dumps(names), said, (device or {}).get("id"), (device or {}).get("role"), client))
 
     REMOTE_OFF = "switching projectors off is done by someone in the room, not through remote support"
 
@@ -4226,7 +4226,7 @@ class Api:
             def run():
                 failed = [r["error"] for r in self._projector_run(targets, action).values() if not r["ok"]]
                 if failed:
-                    self.log("pvj-web: projector %s (from %s): %s" % (body["action"], client, "; ".join(failed)))
+                    self.log("nxlx-web: projector %s (from %s): %s" % (body["action"], client, "; ".join(failed)))
             threading.Thread(target=run, name="projector", daemon=True).start()
             return {"started": True}
         results = self._projector_run(targets, action)
@@ -4548,9 +4548,9 @@ class Api:
                     try:
                         go()
                     except ApiError as e:
-                        self.log("pvj-web: a pad's NDI source '%s' was not shown: %s" % (row["name"], e.message))
+                        self.log("nxlx-web: a pad's NDI source '%s' was not shown: %s" % (row["name"], e.message))
                     except Exception as e:
-                        self.log("pvj-web: a pad's NDI source: %s" % type(e).__name__)
+                        self.log("nxlx-web: a pad's NDI source: %s" % type(e).__name__)
                 self._ndi_job = threading.Thread(target=run, name="ndi-pad", daemon=True)
                 self._ndi_job.start()
             return {"playing": "ndi", "name": row["name"], "pending": True}
@@ -4756,7 +4756,7 @@ class Api:
                     rows = rows + [{"id": sid, "name": seen[0]["name"], "from": seen[0]["from"]}]
                 self._ndi_write(sources=rows, sound=True, sound_from=sid)
                 self.settings.save()
-            self.log("pvj-web: NDI sound comes from %s, by device %s (from %s)"
+            self.log("nxlx-web: NDI sound comes from %s, by device %s (from %s)"
                      % ("'%s' at %s" % (seen[0]["name"], seen[0]["from"]) if sid else "each picture's own source", (device or {}).get("id"), client))
             self.ndi._wanted()
             self.ndi.sync()
@@ -4815,7 +4815,7 @@ class Api:
                     servers.remove(server)
                 self._ndi_write(discovery=servers)
                 self.settings.save()
-            self.log("pvj-web: NDI discovery servers are now %s, by device %s (from %s)"
+            self.log("nxlx-web: NDI discovery servers are now %s, by device %s (from %s)"
                      % (", ".join(servers) or "none", (device or {}).get("id"), client))
             self.ndi._wanted()
             self.ndi.sync()
@@ -4841,7 +4841,7 @@ class Api:
                     groups.remove(group)
                 self._ndi_write(groups=groups)
                 self.settings.save()
-            self.log("pvj-web: NDI groups to look in are now %s, by device %s (from %s)"
+            self.log("nxlx-web: NDI groups to look in are now %s, by device %s (from %s)"
                      % (", ".join(groups) or "NDI's default (public)", (device or {}).get("id"), client))
             self.ndi._wanted()
             self.ndi.sync()
@@ -5075,7 +5075,7 @@ class Api:
             self.ndi.sync()
         self.render.forget({n["id"] for n in new_nodes})
         said = {"add": "added", "update": "changed", "remove": "removed"}[verb]
-        self.log("pvj-web: render node '%s' %s by device %s (%s) from %s; %d node(s)"
+        self.log("nxlx-web: render node '%s' %s by device %s (%s) from %s; %d node(s)"
                  % (name, said, device["id"], device["name"], client, len(new_nodes)))
         if remote:
             self.support.note(device, "changed the render nodes", detail="%s a node; %d node(s)" % (said, len(new_nodes)))
@@ -5191,7 +5191,7 @@ class Api:
                 self.play_stream({"stream": before["id"]})
                 return "back to the stream that played before"
         except Exception as e:
-            self.log("pvj-web: render bridge: what played before could not be put back (%s)" % (getattr(e, "message", None) or type(e).__name__))
+            self.log("nxlx-web: render bridge: what played before could not be put back (%s)" % (getattr(e, "message", None) or type(e).__name__))
             kind = "failed"
         try:
             self.control({"action": "stop"}, None, "render")
@@ -5269,7 +5269,7 @@ class Api:
         to = self._render_back(show["before"])
         with self.render.lock:
             self.render.back = {"at": time.time(), "node": show["name"], "why": why, "to": to}
-        self.log("pvj-web: render node '%s': %s; %s" % (show["name"], why, to))
+        self.log("nxlx-web: render node '%s': %s; %s" % (show["name"], why, to))
         return True
 
     # ---- the NDI discovery server on this box (mctl/ndiscovery.py, D85): the Owner's, and never through remote support ----
@@ -5305,7 +5305,7 @@ class Api:
                 raise bad(str(e))
             self.settings.data["ndi_discovery"] = new
             self.settings.save()
-        self.log("pvj-web: the NDI discovery server is set to %s, port %d, by device %s (from %s)"
+        self.log("nxlx-web: the NDI discovery server is set to %s, port %d, by device %s (from %s)"
                  % (new["network"], new["port"], (device or {}).get("id"), client))
         self.ndisc.sync()
         if self.ndi is not None:
@@ -5489,7 +5489,7 @@ class Api:
         if body.get("cancel") is True and len(body) == 1:
             if not self.controller_codes.cancel():
                 raise ApiError(409, "no code from a controller is on the display")   # not 404: a page that asks a moment late is not looking for a missing thing
-            self.log("pvj-web: controller code: ended by device %s (from %s)" % (device.get("id"), client))
+            self.log("nxlx-web: controller code: ended by device %s (from %s)" % (device.get("id"), client))
             return self._access_state(device)
         if not body or any(k not in ("enabled", "owner", "join") for k in body):
             raise bad("send enabled and/or owner (true or false), join (view or live), or cancel: true")
@@ -5509,7 +5509,7 @@ class Api:
                 self.settings.data["controller_code"] = current      # memory and disk must not disagree
                 raise ApiError(500, "could not save: %s" % (e.strerror or e))
         self.controller_codes.switched()         # outside the settings lock: a code the new setting does not allow goes
-        self.log("pvj-web: controller code: set to %s%s, the join code pairs %s, by device %s (from %s)"
+        self.log("nxlx-web: controller code: set to %s%s, the join code pairs %s, by device %s (from %s)"
                  % ("on" if new["enabled"] else "off", ", full access codes allowed" if new["owner"] else "",
                     "an operator" if new.get("join") == "live" else "a guest", device.get("id"), client))
         return self._access_state(device)
@@ -5546,7 +5546,7 @@ class Api:
             self.auth.cancel_join(code)
             raise ApiError(401, "this device is no longer paired")
         if not full:
-            self.log("pvj-web: guest code made by operator device %s (from %s), %d minutes, %d uses%s"
+            self.log("nxlx-web: guest code made by operator device %s (from %s), %d minutes, %d uses%s"
                      % (device.get("id"), client, minutes, uses,
                         ", in the place of the one the %s made" % old["by"] if old else ""))
         return self._access_state(device)
@@ -5561,7 +5561,7 @@ class Api:
                 raise ApiError(404, "no such code")
             if self.pinscreen is not None:
                 self.pinscreen.hide(only=self.PRESENTER_ITEMS)      # a code that is gone is not left on the room screen
-            self.log("pvj-web: guest code ended by operator device %s (from %s)" % (device.get("id"), client))
+            self.log("nxlx-web: guest code ended by operator device %s (from %s)" % (device.get("id"), client))
             return self._access_state(device)
         if body.get("all") is True:
             self.auth.cancel_join(None)
@@ -5611,7 +5611,7 @@ class Api:
         if not show:
             self.pinscreen.hide(only=only)
             if not full:
-                self.log("pvj-web: guest code taken off the room screen by operator device %s (from %s)" % (device.get("id"), client))
+                self.log("nxlx-web: guest code taken off the room screen by operator device %s (from %s)" % (device.get("id"), client))
             return self._access_state(device)
         made = []           # the codes this very call made, to take back if the device turns out to be gone
         try:
@@ -5633,7 +5633,7 @@ class Api:
             self.pinscreen.hide(only=only)
             raise ApiError(401, "this device is no longer paired")
         if not full:
-            self.log("pvj-web: guest code put on the room screen for %d s by operator device %s (from %s)%s"
+            self.log("nxlx-web: guest code put on the room screen for %d s by operator device %s (from %s)%s"
                      % (body.get("seconds", 60), device.get("id"), client, "; a guest code was made for it" if made else ""))
         return self._access_state(device)
 
@@ -6211,7 +6211,7 @@ class Api:
             out = self.guests.set_locked(locked)
         except OSError as e:
             raise ApiError(500, "could not save: %s" % (e.strerror or e))
-        self.log("pvj-web: guest controls %s by device %s (%s, from %s)"
+        self.log("nxlx-web: guest controls %s by device %s (%s, from %s)"
                  % ("locked" if locked else "opened", device.get("id"), device.get("role"), client))
         self.support.note(device, "locked guest controls" if locked else "opened guest controls")
         return {"guest_controls": out}

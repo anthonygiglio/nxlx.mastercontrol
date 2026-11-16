@@ -387,7 +387,7 @@ class Files(Base):
                            ("taken.json", "its id, signal, belongs to a look that comes with the node"), ("named.json", "is that of a look that comes with the node"),
                            ("big.json", "not a plain file of at most 16 KB"), ("link.json", "not a plain file")):
             self.assertIn(want, skipped[file], file)
-            self.assertIn("pvj-web: theme file %s was not used: " % file, log)
+            self.assertIn("nxlx-web: theme file %s was not used: " % file, log)
             self.assertNotRegex(skipped[file], r"[<>{}\n\x1b]")
         self.assertEqual(log.count("\n"), 7)                                    # one line each
         self.assertNotIn("<img", log)

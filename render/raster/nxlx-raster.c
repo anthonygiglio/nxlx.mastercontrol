@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 NXLX.Systems and contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// pvj-raster (D129, design/text-and-logo-sources_2026-11-08.md section 7): the one program that decodes a picture a
+// nxlx-raster (D129, design/text-and-logo-sources_2026-11-08.md section 7): the one program that decodes a picture a
 // person uploaded. It reads ONE request on standard input, writes ONE answer on standard output and exits. It is run
-// by systemd for each connection (install/pvj-raster.socket, install/pvj-raster@.service) as its own account with no
+// by systemd for each connection (install/nxlx-raster.socket, install/nxlx-raster@.service) as its own account with no
 // network, no files of the box's, a syscall filter and hard limits; the panel never decodes an upload itself.
 //
 //   request   "RASTER1 IMG <length>\n"        then <length> bytes: a PNG, a JPEG or an SVG

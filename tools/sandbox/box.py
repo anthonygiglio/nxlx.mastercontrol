@@ -187,7 +187,7 @@ def private_env(tmp):
     folders = {"PVJ_RUNTIME_DIR": "runtime", "PVJ_USB_BASE": "usb", "PVJ_SYSD_DIR": "sysd", "PVJ_SUPPORTD_DIR": "supportd",
                "PVJ_SOUND_DIR": "sound", "PVJ_NETD_DIR": "netd", "PVJ_NDI_CONFIG_DIR": "ndi-config", "PVJ_NDI_PIPE_DIR": "ndi-pipe",
                # the NDI helper, the discovery server and the Ableton Link follower (D117): without these the panel
-               # falls back to /run/pvj-ndi and /run/pvj-link, a real helper's socket on this computer (the second
+               # falls back to /run/nxlx-ndi and /run/nxlx-link, a real helper's socket on this computer (the second
                # review of #155). An NDI folder set means "set up for NDI": the sandbox shows the helper not running.
                "PVJ_NDI_DIR": "ndi", "PVJ_NDISC_DIR": "ndisc", "PVJ_LINK_DIR": "link"}
     for k, rel in folders.items():                       # folders the panel looks in: there, and empty

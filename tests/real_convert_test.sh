@@ -5,11 +5,11 @@
 # show. usermod and groupmod, visudo, systemctl stopping and starting the units, the undo timer as a unit file,
 # the run in its own transient unit, and the timed undo.
 #
-# The old node is today's release installed by install/install.sh, with a login account pvj-dev that has sudo
-# and runs the player (node-02's shape). The release the cutover would install is a stand-in: this checkout with
-# every kind of tools/rename-map.txt applied by tools/rename-apply.py, copied into the releases folder and made
-# "current", as install.sh will do from rename PR 7 on. Its programs are the renamed code of this commit, which
-# nothing else runs yet, so a service that does not start under its new name is shown here first.
+# The old node is the release before the rename of the system names (master at 0ff0ddb, rename PR 7) installed by
+# its own install/install.sh, with a login account pvj-dev that has sudo and runs the player (node-02's shape). The
+# release the cutover installs is this checkout, copied into the releases folder and made "current" by hand here, so
+# the converter's own steps are seen one by one (install.sh does the same with --release; the real-install job runs
+# that whole road). The converter holds the release and variable names until rename PR 8, as this code does.
 #
 # It creates and renames accounts, installs to /opt/pvj and writes sudoers. Run it ONLY on a machine that is thrown
 # away afterwards (the CI runner). It refuses without the variable below. It is not a test of a Raspberry Pi.
@@ -56,11 +56,14 @@ names() {      # what a plan must not change: accounts, groups, folders, unit fi
 	} | sort
 }
 
-step "the old node: today's release, the login account pvj-dev (sudo, runs the player)"
+step "the old node: the release before the system rename, the login account pvj-dev (sudo, runs the player)"
+BEFORE=0ff0ddbeb662efb405186a0e774839cb1f61b2de     # master with release 0.1.1, before rename PR 7 (fetched by the job)
+OLDSRC="$(mktemp -d)"
+git -C "$SRC" archive "$BEFORE" mctl bin install render | tar -x -C "$OLDSRC" || fail "no $BEFORE here (the job fetches it)"
 useradd --create-home --shell /bin/bash pvj-dev
 echo 'pvj-dev ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/010_pvj-dev
 chmod 440 /etc/sudoers.d/010_pvj-dev
-bash "$SRC/install/install.sh" --user pvj-dev
+bash "$OLDSRC/install/install.sh" --user pvj-dev
 OLD_CURRENT="$(readlink /opt/pvj/current)"
 ACTIVE=()
 for u in "${MAIN[@]}"; do
@@ -71,22 +74,19 @@ UID_WEB="$(uid_of pvj-web)"
 UID_DEV="$(uid_of pvj-dev)"
 GID_SVC="$(getent group pvj | cut -d: -f3)"
 
-step "the release with the new names (a stand-in made by the rename table)"
+step "the release with the new names: this checkout"
 NEW="$(mktemp -d)"
 git -C "$SRC" archive HEAD | tar -x -C "$NEW"
-python3 "$SRC/tools/rename-apply.py" --root "$NEW" --write >/dev/null
 VERSION="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$NEW/mctl/__init__.py")"
-[ -n "$VERSION" ] || fail "the stand-in has no mctl/__init__.py"
+[ -n "$VERSION" ] || fail "this checkout has no mctl/__init__.py"
 REL="/opt/pvj/releases/$VERSION-nxlx"
 mkdir -p "$REL"
 cp -a "$NEW/mctl" "$NEW/bin" "$NEW/render" "$REL/"
 # The programs install.sh built on this runner for the old release, under their new names, as install.sh will
 # build them for the new one (the converter asks for each one the node had).
-for prog in render link link-peer raster; do
-	if [ -x "$OLD_CURRENT/render/pvj-$prog" ]; then
-		new="mctl-render"
-		[ "$prog" = render ] || new="nxlx-$prog"
-		cp -a "$OLD_CURRENT/render/pvj-$prog" "$REL/render/$new"
+for prog in mctl-render pvj-link pvj-link-peer pvj-raster; do      # the renderer has had its new name since rename PR 5
+	if [ -x "$OLD_CURRENT/render/$prog" ]; then
+		cp -a "$OLD_CURRENT/render/$prog" "$REL/render/${prog/#pvj-/nxlx-}"
 	fi
 done
 chown -R root:root "$REL"

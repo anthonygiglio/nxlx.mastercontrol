@@ -357,7 +357,7 @@ class Strobe:
         with self._lock:
             self.error = {"message": str(getattr(e, "message", e)), "status": getattr(e, "status", 503)}
             self._retry_at = self._clock() + RETRY_SECONDS
-        self.log("pvj-web: strobe: %s" % self.error["message"])
+        self.log("nxlx-web: strobe: %s" % self.error["message"])
 
     # -- the New renderer: the loaded copy in a chain slot --
     def _native(self):
@@ -428,7 +428,7 @@ class Strobe:
                     if self._chain_rows().get((SOURCE, slot)) == EFFECT:
                         self.api.chains.off({"source": SOURCE, "slot": slot})
                 except ApiError as e:
-                    self.log("pvj-web: strobe: could not take the loaded copy off: %s" % e.message)
+                    self.log("nxlx-web: strobe: could not take the loaded copy off: %s" % e.message)
 
     def _send(self, plan, amount):
         if self.route == "chain":
@@ -501,9 +501,9 @@ class Strobe:
                 self._stop_effect()
                 done = True
         except ApiError as e:
-            self._say("stop", "pvj-web: strobe: stopping gently failed (%s); taking it off" % e.message)
+            self._say("stop", "nxlx-web: strobe: stopping gently failed (%s); taking it off" % e.message)
         except Exception as e:
-            self._say("stop", "pvj-web: strobe: stopping failed (%s); taking it off" % e)
+            self._say("stop", "nxlx-web: strobe: stopping failed (%s); taking it off" % e)
         if not done:
             try:
                 if self.route == "chain":
@@ -514,7 +514,7 @@ class Strobe:
                     self.api.effects.off()
                 done = True
             except Exception as e:
-                self._say("stop2", "pvj-web: strobe: could not stop it (%s); will try again" % e)
+                self._say("stop2", "nxlx-web: strobe: could not stop it (%s); will try again" % e)
         with self._lock:
             if done:
                 self.lit, self._off_at, self._idle_since = False, now, self._clock()
@@ -533,7 +533,7 @@ class Strobe:
             try:
                 fx.put(prior["id"], prior["values"], prior["controls"])
             except ApiError as e:
-                self.log("pvj-web: strobe: the effect that was on before could not be put back: %s" % e.message)
+                self.log("nxlx-web: strobe: the effect that was on before could not be put back: %s" % e.message)
         if fx.recent == EFFECT:
             fx.recent = recent                  # the one button must not put the strobe back on as an ordinary effect
 
@@ -560,7 +560,7 @@ class Strobe:
             try:
                 self.tick()
             except Exception as e:                  # nothing may end the watcher while a hold could be running
-                self.log("pvj-web: strobe watcher: %r" % (e,))
+                self.log("nxlx-web: strobe watcher: %r" % (e,))
             with self._lock:
                 busy = bool(self.holders) or self.lit
                 parked = self.slot is not None and self._idle_since is not None
@@ -583,7 +583,7 @@ class Strobe:
         if worker is not None and worker is not threading.current_thread():
             worker.join(timeout)
 
-    # ---- a restart of pvj-web while the strobe is lit --------------------------------------------------------------
+    # ---- a restart of nxlx-web while the strobe is lit --------------------------------------------------------------
     NATIVE_MARK = ("//!INPUT float rate", "//!INPUT color tint", "//!INPUT float flash", "//!INPUT long way")
     CLASSIC_MARK = ("const float rate", "const vec4 tint", "const float flash", "const int way")
 
@@ -618,17 +618,17 @@ class Strobe:
                 if (isinstance(r, dict) and r.get("source") == SOURCE and slot in (1,) + SLOTS and r.get("state") not in (None, "off")
                         and isinstance(r.get("path"), str) and self._is_strobe_file(r["path"], self.NATIVE_MARK)):
                     ipc.request("mctl-shader", "clear", SOURCE, r["slot"])
-                    self.log("pvj-web: strobe: a strobe left running in slot %s by an earlier run was taken off" % r["slot"])
+                    self.log("nxlx-web: strobe: a strobe left running in slot %s by an earlier run was taken off" % r["slot"])
             return
         listed = ipc.request("get_property", "glsl-shaders")
         if isinstance(listed, list) and mine[1] != "effect":
             keep = [p for p in listed if not (isinstance(p, str) and self._is_strobe_file(p, self.CLASSIC_MARK))]
             if len(keep) != len(listed):
                 ipc.request("set_property", "glsl-shaders", keep)
-                self.log("pvj-web: strobe: a strobe left running by an earlier run was taken off")
+                self.log("nxlx-web: strobe: a strobe left running by an earlier run was taken off")
 
     def reset_player(self, tries=None, delay=1.0, sleep=time.sleep, cap=30.0):
-        """At every start of pvj-web (server.build, on a thread): take off a strobe the player is still drawing, as
+        """At every start of nxlx-web (server.build, on a thread): take off a strobe the player is still drawing, as
         statsoverlay.reset_player does for its overlay: again with a back-off until the player answers; `tries` bounds it
         for a test. It runs once whatever has been done since (a hold in the first second must not hide a leftover in another
         slot), and leaves alone only what this run itself holds. True when done."""
