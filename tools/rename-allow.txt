@@ -60,9 +60,8 @@
 3	docs/html/searchindex.js
 1	index.html
 5	install/README.md
-23	install/install.sh
+32	install/install.sh
 2	install/nxlx-raster@.service
-2	install/nxlx-tmpfiles.conf
 3	mctl/OSC.md
 1	mctl/README.md
 1	mctl/api.py
@@ -182,7 +181,7 @@
 4	project-log/journal/2026-11-15-release-0-1-1.md
 28	project-log/journal/2026-11-15-rename-5.md
 19	project-log/journal/2026-11-15-rename-6.md
-9	project-log/journal/2026-11-15-rename-7.md
+13	project-log/journal/2026-11-15-rename-7.md
 2	project-log/journal/2026-11-15-slider-ends.md
 4	project-log/journal/2026-11-15-xfade-leak.md
 3	project-log/lessons/2026-11-11-stats-overlay-owned-by-connection.md
@@ -205,11 +204,11 @@
 1	sync/servicecheck
 1	sync/shutdownall
 58	tests/real_convert_test.sh
-57	tests/real_install_test.sh
+58	tests/real_install_test.sh
 1	tests/security_test.sh
 1	tests/test_graphics.py
 5	tests/test_https.py
-20	tests/test_install_convert.py
+26	tests/test_install_convert.py
 2	tests/test_leftovers.py
 2	tests/test_masks.py
 1	tests/test_mctl_render.py
@@ -219,7 +218,7 @@
 3	tests/test_ndi_pads.py
 2	tests/test_ndi_sound.py
 5	tests/test_netd.py
-152	tests/test_nxlx_convert.py
+159	tests/test_nxlx_convert.py
 44	tests/test_old_clients.py
 3	tests/test_osc_defaults.py
 2	tests/test_osc_feedback.py

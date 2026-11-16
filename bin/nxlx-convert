@@ -52,6 +52,7 @@ import stat
 import subprocess
 import sys
 import tarfile
+import time
 
 # The rows of tools/rename-map.txt a node's files can hold (kinds system, env and release, and the package folder
 # in a path). old, new, kind; the matching rules are the table's (see its header).
@@ -385,10 +386,43 @@ def is_text(path, limit=1 << 20):
         return None
 
 
-def sha(path):
+CARRIED_MAX = 256 << 20         # settings.json and node-id are small; anything bigger is not what it seems
+
+
+def open_plain(path):
+    """A read-only file object for a plain file, or None: never through a link, never a pipe or a device (opened
+    without blocking, then looked at). The callers read in folders a service account owns, and run as root."""
     try:
-        with open(path, "rb") as f:
-            return hashlib.sha256(f.read()).hexdigest()
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            os.close(fd)
+            return None
+        return os.fdopen(fd, "rb")
+    except OSError:
+        os.close(fd)
+        return None
+
+
+def sha(path, limit=CARRIED_MAX):
+    f = open_plain(path)
+    if f is None:
+        return None
+    try:
+        with f:
+            if os.fstat(f.fileno()).st_size > limit:
+                return "too-big:%d" % os.fstat(f.fileno()).st_size
+            h = hashlib.sha256()
+            left = limit + 1
+            while left > 0:
+                chunk = f.read(min(1 << 20, left))
+                if not chunk:
+                    break
+                h.update(chunk)
+                left -= len(chunk)
+            return h.hexdigest() if left > 0 else "too-big"
     except OSError:
         return None
 
@@ -472,9 +506,18 @@ def make_plan(node, force=False, mode="plan", release=None):
     plan.locks, held = [], []
     for rel in UPDATE_LOCKS:
         if node.exists(rel) and not os.path.islink(node.p(rel)):
+            # /run/lock is writable by every account: a fifo there must not hang root, and what is not a plain
+            # file is no lock of an updater (theirs are plain files), so it is passed over.
             try:
-                fd = os.open(node.p(rel), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+                fd = os.open(node.p(rel), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
             except OSError:
+                continue
+            try:
+                if not stat.S_ISREG(os.fstat(fd).st_mode):
+                    os.close(fd)
+                    continue
+            except OSError:
+                os.close(fd)
                 continue
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -556,6 +599,12 @@ def make_plan(node, force=False, mode="plan", release=None):
     if cur and os.path.islink(node.p(cur)):
         target = os.readlink(node.p(cur))
         new_target = "/opt/nxlx/releases/" + release if chosen else renamed(m, target)
+        # "previous" is the release the node ran before, under its new path: what a rollback looks at. With
+        # --release it is written by the run (before current moves, so a run that stops between the two and
+        # carries on still knows it), and put back by the undo.
+        if chosen and new_target != target and target.startswith("/") and release_name(target) != release:
+            text = "/opt/nxlx/releases/%s\n" % release_name(target)
+            plan.add(5, "put", "write /opt/nxlx/previous (%s)" % text.strip(), path="opt/nxlx/previous", data=text)
         if new_target != target:
             plan.add(5, "link", "point /opt/nxlx/current at %s" % new_target,
                      path="opt/nxlx/current", old=target, new=new_target)
@@ -568,6 +617,8 @@ def make_plan(node, force=False, mode="plan", release=None):
 
     # 6. the text files the converter owns
     for new in OWNED_TEXT:
+        if chosen and new == "opt/nxlx/previous":
+            continue                    # written whole in step 5 (above)
         now = where(node, new) or where(node, new.replace("nxlx.env", "pvj.env"))
         if not now or os.path.islink(node.p(now)):
             continue
@@ -767,11 +818,16 @@ def show_playing(node):
         return None
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.settimeout(2)
+    deadline = time.monotonic() + 5          # all of it, however the player dribbles its lines
     try:
         s.connect(path)
         s.sendall(b'{"command": ["get_property", "idle-active"], "request_id": 7041}\n')
         buf = b""
         while True:
+            left = deadline - time.monotonic()
+            if left <= 0 or len(buf) > (1 << 20):
+                return "the player did not answer in time"
+            s.settimeout(min(2, left))
             chunk = s.recv(4096)
             if not chunk:
                 break
@@ -819,14 +875,14 @@ class Journal:
         os.chmod(self.path, 0o600)
 
 
-def atomic_write(path, data, like=None):
+def atomic_write(path, data, like=None, mode=None):
     st = os.lstat(like or path)
     tmp = path + ".nxlx-convert.tmp"
     with open(tmp, "wb") as f:
         f.write(data)
         f.flush()
         os.fsync(f.fileno())
-    os.chmod(tmp, stat.S_IMODE(st.st_mode))
+    os.chmod(tmp, stat.S_IMODE(st.st_mode) if mode is None else mode)
     try:
         os.chown(tmp, st.st_uid, st.st_gid)
     except PermissionError:
@@ -877,6 +933,28 @@ def rename_account(node, kind, old, new, home_old=None, home_new=None):
     edit_db(node, "gshadow", lambda f: f[:2] + [members(f[2], old, new), members(f[3], old, new)] if len(f) >= 4 else f)
 
 
+def injected_failure(node, n):
+    """Tests only (stage mode): NXLX_CONVERT_FAIL_AT=n fails before change n; one past the last change fails where a
+    real node starts and checks its services (step 9)."""
+    fail = os.environ.get("NXLX_CONVERT_FAIL_AT") if node.stage else None
+    if fail and int(fail) == n:
+        raise RuntimeError("an injected failure before change %d (tests)" % n)
+
+
+def conversion_state(records):
+    """What the journal says of the latest conversion: "none" (never converted), "pending" (a run started and did
+    not finish, and was not undone), "unconfirmed" (finished, the undo still armed), "confirmed" or "undone"."""
+    last = max([i for i, r in enumerate(records) if r.get("state") == "start"], default=-1)
+    if last < 0:
+        return "none"
+    after = [r.get("state") for r in records[last + 1:]]
+    if "undo-finished" in after:
+        return "undone"
+    if "finished" not in after:
+        return "pending"
+    return "confirmed" if "confirmed" in after else "unconfirmed"
+
+
 class Runner:
     def __init__(self, node, plan, journal, run_id, run_dir):
         self.node, self.plan, self.journal, self.run_id, self.run_dir = node, plan, journal, run_id, run_dir
@@ -898,6 +976,16 @@ class Runner:
             shutil.copyfile(path, keep)
             os.chmod(keep, 0o600)
             rec.update(path=a["path"], orig=os.path.relpath(keep, node.root or "/"))
+        elif op == "put":
+            path = node.p(a["path"])
+            rec.update(path=a["path"], orig=None)
+            if os.path.lexists(path):
+                if os.path.islink(path) or not os.path.isfile(path):
+                    raise RuntimeError("/%s is not a plain file" % a["path"])
+                keep = os.path.join(self.run_dir, "orig-%03d" % self.n)
+                shutil.copyfile(path, keep)
+                os.chmod(keep, 0o600)
+                rec.update(orig=os.path.relpath(keep, node.root or "/"))
         elif op == "stop":
             # Every loaded unit of the old family, not only the main ones: the picture helper's per-job instances
             # (pvj-raster@N, Accept=yes, as pvj-raster) and an update unit would keep an account busy.
@@ -906,9 +994,7 @@ class Runner:
             rec.update(active=[u for u, state in loaded if state == "active"],
                        units=[u for u in STOP_ORDER if u in names] + sorted(u for u in names if u not in STOP_ORDER))
         self.journal.write(dict(rec, state="begin"))
-        fail = os.environ.get("NXLX_CONVERT_FAIL_AT") if node.stage else None
-        if fail and int(fail) == self.n + 1:
-            raise RuntimeError("an injected failure before change %d (tests)" % (self.n + 1))
+        injected_failure(node, self.n + 1)
         if op == "rename":
             if node.exists(a["dst"]):
                 raise RuntimeError("/%s exists already" % a["dst"])
@@ -934,6 +1020,12 @@ class Runner:
                 finally:
                     os.unlink(tmp)
             atomic_write(path, out.encode())
+        elif op == "put":
+            path = node.p(a["path"])
+            if os.path.lexists(path):
+                atomic_write(path, a["data"].encode())
+            else:
+                atomic_write(path, a["data"].encode(), like=os.path.dirname(path), mode=0o644)
         elif op in ("group", "user"):
             rename_account(node, op, a["old"], a["new"], a.get("home_old"), a.get("home_new"))
         elif op == "stop":
@@ -1235,6 +1327,8 @@ def cmd_run(node, force, release=None):
         say("\nRefused, nothing was changed: %s\n" % "; ".join(blocked))
         return EXIT_REFUSED
     if not plan.actions:
+        if conversion_state(Journal(node).records()) == "pending":
+            return finish_pending(node, plan)
         say("\nNothing to convert: this node already uses the new names.\n")
         return EXIT_OK
     need = backup_size(node, plan) * 2 + (20 << 20)
@@ -1274,7 +1368,14 @@ def cmd_run(node, force, release=None):
             % (runner.n + 1, e, runner.n, len(plan.actions),
                "" if node.stage else " The undo timer runs by itself in %s." % UNDO_AFTER))
         return EXIT_FAILED
-    bad = [n for n, h in plan.carried.items() if sha(node.p("var/lib/nxlx/" + n)) != h]
+    try:
+        injected_failure(node, runner.n + 1)
+    except RuntimeError as e:
+        journal.write({"run": run_id, "state": "failed", "n": runner.n, "error": str(e)})
+        say("\nFAILED after the last change: %s. Run --run again (it starts and checks), or --undo.\n" % e)
+        return EXIT_FAILED
+    first = first_carried(journal.records())
+    bad = [n for n, h in (first or plan.carried).items() if sha(node.p("var/lib/nxlx/" + n)) != h]
     if bad:
         journal.write({"run": run_id, "state": "failed", "error": "changed: " + ", ".join(bad)})
         say("\nFAILED: %s changed during the conversion; run --undo\n" % ", ".join(bad))
@@ -1282,6 +1383,59 @@ def cmd_run(node, force, release=None):
     journal.write({"run": run_id, "state": "finished"})
     say("\nConverted: %d changes. Check the node, then: sudo nxlx-convert --confirm%s\n" % (
         runner.n, "" if node.stage else " (within %s, or it is undone)" % UNDO_AFTER))
+    return EXIT_OK
+
+
+def first_carried(records):
+    """The hashes of what is carried over, from the start of the latest conversion: the run that carries on after a
+    failure must compare with the node before the first run, not with itself."""
+    starts = [i for i, r in enumerate(records) if r.get("state") == "start"]
+    if not starts:
+        return None
+    # back to the first start of this conversion: the starts after the last undo or confirm
+    first = starts[-1]
+    for i in reversed(starts):
+        if any(r.get("state") in ("undo-finished", "confirmed") for r in records[i + 1:first + 1]):
+            break
+        first = i
+    return records[first].get("carried")
+
+
+def finish_pending(node, plan):
+    """Every change of a conversion is made but its run did not finish (on a real node: a service did not start, or
+    the check after it failed). Re-arm the undo, start and check again, and finish the run, so it can be confirmed."""
+    lock = take_lock(node)
+    if lock is None:
+        say("\nRefused, nothing was changed: %s.\n" % BUSY)
+        return EXIT_REFUSED
+    journal = Journal(node)
+    run_id = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-%d" % os.getpid()
+    os.makedirs(node.p(BACKUP + "/" + run_id), mode=0o700)
+    say("\nEvery change is made, but the last run did not finish: starting and checking again\n")
+    try:
+        armed = arm_undo(node)
+    except Exception as e:      # noqa: BLE001
+        say("\nRefused, nothing on the node was changed: the undo timer could not be armed (%s)\n" % e)
+        return EXIT_REFUSED
+    journal.write({"run": run_id, "state": "start", "carry_on": True, "carried": first_carried(journal.records()),
+                   "undo": armed})
+    try:
+        injected_failure(node, 1)
+        if not node.stage:
+            start_real(node, journal)
+    except Exception as e:      # noqa: BLE001
+        journal.write({"run": run_id, "state": "failed", "n": 0, "error": str(e)})
+        say("\nFAILED: %s. Put the cause right and run --run again, or run --undo.\n" % e)
+        return EXIT_FAILED
+    carried = first_carried(journal.records()) or {}
+    bad = [n for n, h in carried.items() if sha(node.p("var/lib/nxlx/" + n)) != h]
+    if bad:
+        journal.write({"run": run_id, "state": "failed", "error": "changed: " + ", ".join(bad)})
+        say("\nFAILED: %s changed during the conversion; run --undo\n" % ", ".join(bad))
+        return EXIT_FAILED
+    journal.write({"run": run_id, "state": "finished"})
+    say("\nConverted: the run is finished. Check the node, then: sudo nxlx-convert --confirm%s\n" % (
+        "" if node.stage else " (within %s, or it is undone)" % UNDO_AFTER))
     return EXIT_OK
 
 
@@ -1447,6 +1601,17 @@ def undo_one(node, r):
         with open(node.p(r["orig"]), "rb") as f:
             data = f.read()
         atomic_write(path, data)
+    elif op == "put":
+        path = node.p(r["path"])
+        if not os.path.lexists(path):
+            for old, new in FOLDERS:
+                if r["path"].startswith(new + "/") and os.path.isdir(node.p(old)):
+                    path = node.p(old + r["path"][len(new):])
+        if r.get("orig"):
+            with open(node.p(r["orig"]), "rb") as f:
+                atomic_write(path, f.read())
+        elif os.path.lexists(path):
+            os.unlink(path)
     elif op in ("group", "user"):
         users, groups = node.users(), node.groups()
         have = groups if op == "group" else users
@@ -1466,6 +1631,8 @@ def main(argv=None):
     ap.add_argument("--release", help="with --plan or --run: point current at this release folder of "
                     "/opt/pvj/releases as part of the run (install.sh)")
     ap.add_argument("--auto", action="store_true", help=argparse.SUPPRESS)       # the undo timer: skip if confirmed
+    g.add_argument("--state", action="store_true", help="print the state of the latest conversion and stop: none, "
+                   "pending, unconfirmed, confirmed or undone (install.sh)")
     a = ap.parse_args(argv)
     if a.root is not None and (not os.path.isabs(a.root) or not os.path.isdir(a.root) or a.root.rstrip("/") == ""):
         ap.error("--root must be an existing folder, given as an absolute path, and not /")
@@ -1479,6 +1646,9 @@ def main(argv=None):
         return EXIT_REFUSED
     if a.release is not None and (a.undo or a.confirm):
         ap.error("--release goes with --plan or --run")
+    if a.state:
+        print(conversion_state(Journal(node).records()))
+        return EXIT_OK
     if a.run:
         return cmd_run(node, a.force, a.release)
     if a.confirm:

@@ -419,26 +419,42 @@ OLD_LAYOUT=0
 for old in opt/pvj etc/pvj var/lib/pvj; do
 	if [ -e "$ROOT/$old" ] || [ -L "$ROOT/$old" ]; then OLD_LAYOUT=1; fi
 done
-CONVERTED=0
-OLD_PREVIOUS=""
-if [ "$OLD_LAYOUT" = 1 ]; then
+# The converter's journal says whether a conversion is under way: "pending" when a run stopped before it finished
+# (the old folders may be renamed already, so the test above no longer sees it), "unconfirmed" when it finished and
+# its undo is still armed. In both cases nothing here may move "current" or write "previous": only the converter
+# does, in its journal, so that its undo can put them back.
+CONV_STATE=none
+if [ -e "$ROOT/var/backups/nxlx-convert/journal.jsonl" ]; then
+	conv_root=()
+	if [ -n "$STAGE" ]; then conv_root=(--root "$ROOT"); fi
+	CONV_STATE="$(python3 -B "$SRC/bin/nxlx-convert" "${conv_root[@]+"${conv_root[@]}"}" --state)" || die "cannot read the converter's journal: sudo python3 $SRC/bin/nxlx-convert --plan"
+fi
+CONVERTED=0          # this run converted the node, or carried a conversion on: the converter set current and previous
+KEEP_RELEASE=0       # a conversion waits for its confirm: the release in place is left as it is
+if [ "$OLD_LAYOUT" = 1 ] || [ "$CONV_STATE" = pending ]; then
 	[ "$PREFIX" = /opt/nxlx ] || die "this node still has the old names (/opt/pvj): run the installer once without --prefix, which converts it to /opt/nxlx"
+	# The accounts the converter renames; any other old-style name given with --user is not one of them.
+	case "$PVJ_USER" in
+	"" | pvj-player | pvj-dev | pvj-web | pvj-sound | pvj-link | pvj-raster | pvj-ndi | pvj-ndisc) ;;
+	pvj-*) die "--user $PVJ_USER: the conversion renames only the node's own accounts (pvj-player, pvj-dev and the services'); give the account's name as it will be after the conversion, or leave --user out" ;;
+	esac
 	old_top=/opt/pvj
 	[ -d "$ROOT/opt/pvj" ] || old_top=/opt/nxlx      # a conversion that stopped half-way, carried on below
 	[ -L "$ROOT$old_top/current" ] || die "this node has the old names but $old_top/current is not a link to a release; look at it by hand: sudo python3 $SRC/bin/nxlx-convert --plan"
 	old_target="$(readlink "$ROOT$old_top/current")"
 	if [ "${old_target##*/}" = "$VERSION" ]; then
 		[ "$old_top" = /opt/nxlx ] || die "this node runs version $VERSION under the old names, so its release cannot be replaced in place; install a newer version"
-		log "carrying on with a conversion that stopped half-way"
+		log "carrying on with a conversion that stopped half-way (the release in place is kept)"
 	else
-		OLD_PREVIOUS="/opt/nxlx/releases/${old_target##*/}"
-		log "this node still has the old names: putting version $VERSION into $old_top/releases, then converting the node"
+		if [ "$CONV_STATE" = pending ]; then log "carrying on with a conversion that stopped half-way"; fi
+		log "putting version $VERSION into $old_top/releases, then converting the node"
 		put_release "$ROOT$old_top/releases"
 		if [ "$REAL" = 1 ] && [ "$DRY" = 0 ]; then chown -R root:root "$ROOT$old_top/releases/$VERSION"; fi
 		run chmod -R go-w "$ROOT$old_top/releases/$VERSION"
 	fi
 	if [ "$DRY" = 1 ]; then
 		log "would convert the node: python3 $old_top/releases/$VERSION/bin/nxlx-convert --run --release $VERSION; what follows here is for after the conversion"
+		KEEP_RELEASE=1
 	else
 		conv=(python3 -B "$ROOT$old_top/releases/$VERSION/bin/nxlx-convert")
 		if [ -n "$STAGE" ]; then conv+=(--root "$ROOT"); fi
@@ -446,12 +462,18 @@ if [ "$OLD_LAYOUT" = 1 ]; then
 		"${conv[@]}" --run --release "$VERSION" || rc=$?
 		case "$rc" in
 		0) CONVERTED=1 ;;
-		2) die "the conversion was refused and nothing on the node was changed (the reasons are above); it runs as before, and version $VERSION waits in $old_top/releases. Put the cause right and run this installer again" ;;
+		2) die "the conversion was refused and nothing on the node was changed by it (the reasons are above); version $VERSION waits in $old_top/releases. Put the cause right and run this installer again" ;;
 		*) die "the conversion stopped half-way (see above). Run this installer again to carry on, or go back with: sudo python3 /var/backups/nxlx-convert/nxlx-convert --undo (it also runs by itself 15 minutes after the start)" ;;
 		esac
-		# The accounts have their new names now (the converter renamed every pvj-* account it found).
+		# The accounts have their new names now.
 		case "$PVJ_USER" in pvj-*) PVJ_USER="nxlx-${PVJ_USER#pvj-}" ;; esac
 	fi
+elif [ "$CONV_STATE" = unconfirmed ] || [ -e "$ROOT/etc/systemd/system/nxlx-convert-undo.timer" ]; then
+	# Waiting for its confirm: by the journal, or by the undo timer that is still armed (whatever the journal says).
+	cur_target="$(readlink "$ROOT$PREFIX/current" 2>/dev/null || true)"
+	[ "${cur_target##*/}" = "$VERSION" ] || die "a conversion of this node waits for its confirm: sudo nxlx-convert --confirm (or --undo), then run the installer again"
+	log "a conversion of this node waits for its confirm: the release in place is kept, the rest is installed again"
+	KEEP_RELEASE=1
 fi
 
 # --- accounts -----------------------------------------------------------
@@ -524,19 +546,18 @@ fi
 
 # --- program files: releases/<version>, "current" points at the active one --
 log "installing version $VERSION to $PREFIX"
-previous=""
-[ -L "$ROOT$PREFIX/current" ] && previous="$(readlink "$ROOT$PREFIX/current")"
-if [ "$CONVERTED" = 1 ]; then
-	# Put in place and made current by the conversion above; "previous" is the release the node ran before it.
-	[ -n "$OLD_PREVIOUS" ] && [ -d "$ROOT$OLD_PREVIOUS" ] && previous="$OLD_PREVIOUS"
-else
+# After a conversion, or while one waits for its confirm, "current" and "previous" are the converter's (journaled,
+# so that its undo puts them back): nothing is switched or written here.
+if [ "$CONVERTED" = 0 ] && [ "$KEEP_RELEASE" = 0 ]; then
+	previous=""
+	[ -L "$ROOT$PREFIX/current" ] && previous="$(readlink "$ROOT$PREFIX/current")"
 	put_release "$ROOT$PREFIX/releases"
 	# Atomic switch: rename a fresh symlink over "current".
 	run ln -sfn "$PREFIX/releases/$VERSION" "$ROOT$PREFIX/current.tmp"
 	run mv -T "$ROOT$PREFIX/current.tmp" "$ROOT$PREFIX/current"
-fi
-if [ -n "$previous" ] && [ "$previous" != "$PREFIX/releases/$VERSION" ]; then
-	[ "$DRY" = 0 ] && printf '%s\n' "$previous" > "$ROOT$PREFIX/previous"
+	if [ -n "$previous" ] && [ "$previous" != "$PREFIX/releases/$VERSION" ]; then
+		if [ "$DRY" = 0 ]; then printf '%s\n' "$previous" > "$ROOT$PREFIX/previous"; fi
+	fi
 fi
 if [ "$REAL" = 1 ] && [ "$DRY" = 0 ]; then chown -R root:root "$ROOT$PREFIX"; fi
 run chmod -R go-w "$ROOT$PREFIX"
@@ -830,7 +851,8 @@ if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then
 fi
 
 log "installed. Check the device with: nxlx-selftest --play"
-if [ "$CONVERTED" = 1 ]; then
-	log "CONVERTED from the old names (pvj to nxlx). Check the node, then keep it with: sudo nxlx-convert --confirm"
-	log "Unless that is run within 15 minutes of the start, the old names and the release before come back by themselves."
+if [ "$CONVERTED" = 1 ]; then log "CONVERTED from the old names (pvj to nxlx)."; fi
+if [ -e "$ROOT/etc/systemd/system/nxlx-convert-undo.timer" ]; then
+	log "A conversion waits for its confirm. Check the node, then keep it with: sudo nxlx-convert --confirm"
+	log "Unless that is run within 15 minutes of the conversion's last run (or 5 after a restart), the old names and the release before come back by themselves."
 fi

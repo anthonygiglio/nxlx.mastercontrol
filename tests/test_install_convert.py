@@ -152,6 +152,98 @@ class InstallConvertsAnOldNode(unittest.TestCase):
             self.assertIn(said, r.stderr)
         self.assertEqual(snapshot(self.root), before)
 
+    def test_a_user_the_conversion_does_not_rename_is_refused_before_anything_changes(self):
+        before = snapshot(self.root)
+        r = self.install("--user", "pvj-somebody")
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+        self.assertIn("the conversion renames only the node's own accounts", r.stderr)
+        self.assertEqual(snapshot(self.root), before)
+
+    def convert(self, *args):
+        return subprocess.run(["python3", os.path.join(REPO, "bin", "nxlx-convert"), "--root", self.root, *args],
+                              capture_output=True, text=True, timeout=120)
+
+    def changes(self):
+        """How many changes a conversion of this node makes (the release staged as install.sh stages it)."""
+        probe = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, probe, True)
+        shutil.rmtree(probe)
+        shutil.copytree(self.root, probe, symlinks=True)
+        r = subprocess.run([os.path.join(REPO, "install", "install.sh"), "--stage", probe],
+                           capture_output=True, text=True, timeout=120)
+        import re
+        m = re.search(r"Converted: (\d+) changes", r.stdout)
+        self.assertIsNotNone(m, r.stdout + r.stderr)
+        return int(m.group(1))
+
+    def test_an_install_cut_off_in_the_conversion_is_carried_on_by_the_next_one_then_confirmed_or_undone(self):
+        """The reviewer's case: the first changes rename the old folders, so a re-run must see the conversion in the
+        converter's journal, not in the folders, carry it on, and never move "current" itself (rename PR 7)."""
+        total = self.changes()
+        self.assertGreater(total, 30)
+        old_release = "/opt/pvj/releases/" + self.old_version
+        template = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, template, True)
+        shutil.rmtree(template)
+        shutil.copytree(self.root, template, symlinks=True)
+        for at in (5, 30, total + 1):        # past the folder step; deep in the system files; after the last change
+            for end in ("confirm", "undo"):
+                with self.subTest(at=at, end=end):
+                    shutil.rmtree(self.root)
+                    shutil.copytree(template, self.root, symlinks=True)
+                    before = snapshot(self.root)
+                    cut = subprocess.run([os.path.join(REPO, "install", "install.sh"), "--stage", self.root],
+                                         capture_output=True, text=True, timeout=120,
+                                         env=dict(os.environ, NXLX_CONVERT_FAIL_AT=str(at)))
+                    self.assertNotEqual(cut.returncode, 0, cut.stdout)
+                    self.assertIn("the conversion stopped half-way", cut.stderr)
+                    self.assertEqual(self.convert("--state").stdout.strip(), "pending")
+                    again = self.install()
+                    self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
+                    self.assertIn("carrying on with a conversion that stopped half-way", again.stdout)
+                    self.assertIn("A conversion waits for its confirm", again.stdout)
+                    self.assertEqual(self.convert("--state").stdout.strip(), "unconfirmed")
+                    self.assertEqual(os.readlink(self.p("opt/nxlx/current")), "/opt/nxlx/releases/" + version())
+                    self.assertEqual(self.read("opt/nxlx/previous"), "/opt/nxlx/releases/%s\n" % self.old_version)
+                    for name in os.listdir(self.p("etc/systemd/system")):
+                        self.assertNotIn("pvj", name, "an old unit left beside the new ones")
+                    if end == "confirm":
+                        c = self.convert("--confirm")
+                        self.assertEqual(c.returncode, 0, c.stdout + c.stderr)
+                        self.assertFalse(os.path.exists(self.p("etc/systemd/system/nxlx-convert-undo.timer")))
+                        self.assertEqual(self.convert("--state").stdout.strip(), "confirmed")
+                    else:
+                        u = self.convert("--undo")
+                        self.assertEqual(u.returncode, 0, u.stdout + u.stderr)
+                        self.assertEqual(os.readlink(self.p("opt/pvj/current")), old_release)
+                        self.assertTrue(os.path.isdir(self.p(old_release.lstrip("/"), "bin")), "current leads somewhere")
+                        self.assertIn("ExecStart=/opt/pvj/current/bin/pvj-web", self.read("etc/systemd/system/pvj-web.service"))
+                        self.assertFalse(os.path.exists(self.p("opt/nxlx")))
+                        # What install.sh adds that is no change of the run: the waiting release, the command link,
+                        # and the runtime folder (/run is rebuilt at boot and never the converter's).
+                        waiting = "opt/pvj/releases/" + version()
+                        after = snapshot(self.root, skip=("var/backups", waiting, "run/nxlx"))
+                        for extra in (waiting, "usr/local/bin/nxlx-convert", "run/nxlx", "var/backups"):
+                            after.pop(extra, None)
+                        want = {k: v for k, v in before.items() if k != "var/backups"}
+                        self.assertEqual(after, want)
+
+    def test_while_a_conversion_waits_for_its_confirm_another_version_is_refused(self):
+        r = self.install()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        src = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, src, True)
+        for d in ("mctl", "bin", "install"):
+            shutil.copytree(os.path.join(REPO, d), os.path.join(src, d), ignore=shutil.ignore_patterns("__pycache__"))
+        with open(os.path.join(src, "mctl", "__init__.py"), "w") as f:
+            f.write('__version__ = "9.9.9"\n')
+        before = snapshot(self.root)
+        newer = subprocess.run([os.path.join(src, "install", "install.sh"), "--stage", self.root],
+                               capture_output=True, text=True, timeout=120)
+        self.assertNotEqual(newer.returncode, 0, newer.stdout)
+        self.assertIn("waits for its confirm: sudo nxlx-convert --confirm", newer.stderr)
+        self.assertEqual(snapshot(self.root), before)
+
 
 if __name__ == "__main__":
     unittest.main()

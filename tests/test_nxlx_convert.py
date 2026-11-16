@@ -649,6 +649,68 @@ class Refusals(Base):
         self.addCleanup(player.close)
         self.assertRefused(convert(self.root, "--run"), "a show is playing (the player closed the connection without an answer)")
 
+    def test_a_player_that_dribbles_lines_without_an_answer_is_given_up_on_in_time(self):
+        path = self.p("run/pvj/player/player.sock")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        srv.bind(path)
+        srv.listen(2)
+        stop = threading.Event()
+
+        def serve():
+            try:
+                c, _ = srv.accept()
+            except OSError:
+                return
+            with c:
+                while not stop.is_set():
+                    try:
+                        c.sendall(b'{"event": "property-change"}\n')
+                    except OSError:
+                        return
+                    stop.wait(0.5)
+        t = threading.Thread(target=serve, daemon=True)
+        t.start()
+        self.addCleanup(srv.close)
+        self.addCleanup(stop.set)
+        import time
+        began = time.monotonic()
+        self.assertRefused(convert(self.root, "--run"), "a show is playing (the player did not answer")      # in time, or a read timed out at the limit
+        self.assertLess(time.monotonic() - began, 30)
+
+    def test_a_pipe_in_place_of_the_settings_or_of_the_old_update_lock_hangs_nothing(self):
+        """settings.json is in the panel's folder and /run/lock is writable by every account: as root the converter
+        opens neither through a pipe (it would wait for ever) or a link."""
+        os.unlink(self.p("var/lib/pvj/settings.json"))
+        os.mkfifo(self.p("var/lib/pvj/settings.json"))
+        os.makedirs(self.p("run/lock"), exist_ok=True)
+        os.mkfifo(self.p("run/lock/pvj-update.lock"))
+        r = convert(self.root, "--plan")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("no update is running", r.stdout)
+        conv = load_converter()
+        self.assertIsNone(conv.sha(self.p("var/lib/pvj/settings.json")))
+        os.symlink("/dev/zero", self.p("var/lib/pvj/zero"))
+        self.assertIsNone(conv.sha(self.p("var/lib/pvj/zero")))
+        write(self.root, "big", "x" * 100)
+        self.assertEqual(conv.sha(self.p("big"), limit=10), "too-big:100")
+
+    def test_a_run_that_stops_after_its_last_change_is_finished_by_the_next_and_can_be_confirmed(self):
+        """On a real node the last part of a run starts the services (step 9); when it fails, every change is made and
+        the next --run must finish the run, or --confirm could never succeed. One past the last change stands in."""
+        total = len(re.findall(r"(?m)^    +\d+  ", convert(self.root, "--plan").stdout))
+        r = convert(self.root, "--run", env={"NXLX_CONVERT_FAIL_AT": str(total + 1)})
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertEqual(convert(self.root, "--state").stdout.strip(), "pending")
+        self.assertNotEqual(convert(self.root, "--confirm").returncode, 0, "a run that did not finish is not confirmed")
+        again = convert(self.root, "--run")
+        self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
+        self.assertIn("the last run did not finish: starting and checking again", again.stdout)
+        self.assertEqual(convert(self.root, "--state").stdout.strip(), "unconfirmed")
+        self.assertEqual(convert(self.root, "--confirm").returncode, 0)
+        self.assertEqual(convert(self.root, "--state").stdout.strip(), "confirmed")
+        self.assertIn("Nothing to convert", convert(self.root, "--run").stdout)
+
     def test_a_read_only_root_an_update_or_a_mounted_stick_stop_it(self):
         write(self.root, "proc/mounts", "overlayroot / overlay ro 0 0\n")
         self.assertRefused(convert(self.root, "--run"), "the root file system is read-only")

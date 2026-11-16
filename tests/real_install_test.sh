@@ -158,7 +158,7 @@ done
 [ "$(getent group nxlx-svc | cut -d: -f3)" = "$GID_SVC" ] || fail "nxlx-svc has another gid than pvj had"
 if getent group nxlx >/dev/null; then fail "a group called nxlx was made (the shared group is nxlx-svc)"; fi
 id -nG nxlx-web | tr ' ' '\n' | grep -qx nxlx-svc || fail "nxlx-web is not in nxlx-svc"
-[ "$(getent passwd nxlx-dev | cut -d: -f6)" = /home/nxlx-dev ] && [ -d /home/nxlx-dev ] || fail "the login account's home"
+if [ "$(getent passwd nxlx-dev | cut -d: -f6)" != /home/nxlx-dev ] || [ ! -d /home/nxlx-dev ]; then fail "the login account's home"; fi
 for d in /opt/pvj /etc/pvj /var/lib/pvj; do if [ -e "$d" ]; then fail "$d is still there"; fi; done
 [ "$(readlink /opt/nxlx/current)" = "/opt/nxlx/releases/$NEW_VERSION" ] || fail "current is $(readlink /opt/nxlx/current)"
 [ -d "/opt/nxlx/releases/${OLD_CURRENT##*/}/bin" ] || fail "the old release is not kept for the undo"
@@ -169,9 +169,13 @@ for f in nxlx-web.service nxlx-player.service nxlx-netd.service nxlx-sysd.servic
 	nxlx-raster.socket nxlx-usb@.service nxlx-update-usb@.service nxlx-update-inbox@.service; do
 	[ -f "/etc/systemd/system/$f" ] || fail "the unit $f is missing"
 done
-if grep -lE '(/opt|/etc|/var/lib|/run|/media)/pvj|pvj-[a-z]|=pvj$' /etc/systemd/system/nxlx-* /etc/tmpfiles.d/nxlx*.conf /etc/udev/rules.d/99-nxlx-usb.rules; then
-	fail "a unit, the tmpfiles or the udev rule still names an old account, folder or unit"
-fi
+# What systemd, tmpfiles and udev read, not the comments (a comment may name the old layout to explain it).
+for f in /etc/systemd/system/nxlx-* /etc/tmpfiles.d/nxlx*.conf /etc/udev/rules.d/99-nxlx-usb.rules; do
+	[ -f "$f" ] || continue
+	if grep -v '^[[:space:]]*#' "$f" | grep -qE '(/opt|/etc|/var/lib|/run|/media)/pvj|pvj-[a-z]|=pvj$'; then
+		fail "$f still names an old account, folder or unit outside its comments"
+	fi
+done
 grep -q '^User=nxlx-dev$' /etc/systemd/system/nxlx-player.service || fail "the player does not run as nxlx-dev"
 is /etc/sudoers.d/010_nxlx-dev "root:root 440 regular file"
 visudo -c -q -f /etc/sudoers.d/010_nxlx-dev || fail "the converted sudoers file does not pass visudo"
@@ -196,7 +200,8 @@ for u in pvj-web pvj-dev; do getent passwd "$u" >/dev/null || fail "the account 
 [ "$(getent group pvj | cut -d: -f3)" = "$GID_SVC" ] || fail "the group pvj came back with another gid"
 [ "$(readlink /opt/pvj/current)" = "$OLD_CURRENT" ] || fail "current is not the old release again: $(readlink /opt/pvj/current)"
 [ ! -e /opt/nxlx ] || fail "/opt/nxlx is still there after the undo"
-visudo -c -q -f /etc/sudoers.d/010_pvj-dev && sudo -l -U pvj-dev | grep -q NOPASSWD || fail "pvj-dev lost sudo in the undo"
+visudo -c -q -f /etc/sudoers.d/010_pvj-dev || fail "the sudoers file of pvj-dev does not pass visudo after the undo"
+sudo -l -U pvj-dev | grep -q NOPASSWD || fail "pvj-dev lost sudo in the undo"
 wait_for 40 systemctl is-active --quiet pvj-web.service || fail "the old panel does not run again after the undo"
 [ "$(status_code "$OLD_TOKEN")" = 200 ] || fail "the old panel does not take the token again after the undo"
 # Only the converter's own command link (new with this release, no change of the run) is left of the new names.
