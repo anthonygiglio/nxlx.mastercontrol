@@ -178,8 +178,10 @@ def inspect_bundle(directory):
                 return f.read()
         except OSError:
             raise UpdateError("bundle is missing %s" % rel)
-    # The package is mctl/ from the rename's PR 6 on. For one release a bundle with the old folder name (pvj/) is
-    # accepted too, so a rollback to the release before the rename passes this check.
+    # The package is mctl/ from the rename's PR 6 on. For one release a bundle with only the old folder name (pvj/),
+    # one built from a checkout of the release before the rename, is accepted too. (The updater installed on a node
+    # before the rename reads pvj/ only; tools/make-release.sh puts stubs there for it. rollback() does not look at a
+    # bundle: it only switches back to a release folder that is already installed.)
     pkg = "mctl" if os.path.isfile(os.path.join(directory, "mctl", "__init__.py")) else "pvj"
     version = re.search(r'^__version__ = "([^"]+)"', read(pkg + "/__init__.py"), re.M)
     schema = re.search(r"^SCHEMA = (\d+)", read(pkg + "/settings.py"), re.M)

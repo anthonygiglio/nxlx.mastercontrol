@@ -870,13 +870,35 @@ class FontsTest(unittest.TestCase):
         api = self.read("mctl", "api.py") + self.read("mctl", "server.py")
         self.assertNotIn("fonts_dir", api, "nothing serves the folder")
 
+    def test_the_picture_helper_finds_the_fonts_in_either_layout_of_a_release(self):
+        """A rollback to the release before the rename only repoints "current": the unit written by the newer install
+        stays, and that release has pvj/fonts. The unit's command must find the fonts in both."""
+        import subprocess
+        import tempfile
+        unit = self.read("install", "pvj-raster@.service")
+        line = [l for l in unit.splitlines() if l.startswith("ExecStart=")][0]
+        self.assertTrue(line.startswith("ExecStart=/bin/sh -c '") and line.endswith("'"), line)
+        script = line[len("ExecStart=/bin/sh -c '"):-1].replace("$$", "$")
+        for layout in ("mctl", "pvj"):
+            root = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, root, True)
+            os.makedirs(os.path.join(root, layout, "fonts"))
+            os.makedirs(os.path.join(root, "render"))
+            prog = os.path.join(root, "render", "pvj-raster")
+            with open(prog, "w") as f:
+                f.write('#!/bin/sh\necho "$@"\n')
+            os.chmod(prog, 0o755)
+            done = subprocess.run(["/bin/sh", "-c", script.replace("@PVJ_DIR@", root)], capture_output=True, text=True, timeout=20)
+            self.assertEqual((done.returncode, done.stdout.strip()), (0, "--fonts " + os.path.join(root, layout, "fonts")), layout)
+
     def test_the_helper_is_built_with_freetype_and_told_where_the_fonts_are(self):
         self.assertIn("freetype2", self.read("render", "Makefile"))
         self.assertIn("gfx.inc.c", self.read("render", "Makefile"))
         unit = self.read("install", "pvj-raster@.service")
-        self.assertRegex(unit, r"ExecStart=@PVJ_DIR@/render/pvj-raster --fonts @PVJ_DIR@/mctl/fonts\n")
+        self.assertIn("exec @PVJ_DIR@/render/pvj-raster --fonts \"$$f\"'\n", unit)
         sh = self.read("install", "install.sh")
         self.assertIn("libfreetype-dev", sh)
+        self.assertNotIn("mctl/fonts", unit, "the unit names no package folder: a rollback does not write it again")
         self.assertIn("pkg-config --exists libpng libjpeg freetype2", sh)
         self.assertIn("libfreetype-dev", self.read("image", "stage-pvj", "00-install-pvj", "00-packages-nr").split())
         self.assertIn("libfreetype-dev", self.read(".github", "workflows", "pvj.yml"))
