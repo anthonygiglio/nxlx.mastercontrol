@@ -429,9 +429,25 @@ if [ -e "$ROOT/var/backups/nxlx-convert/journal.jsonl" ]; then
 	if [ -n "$STAGE" ]; then conv_root=(--root "$ROOT"); fi
 	CONV_STATE="$(python3 -B "$SRC/bin/nxlx-convert" "${conv_root[@]+"${conv_root[@]}"}" --state)" || die "cannot read the converter's journal: run sudo nxlx-convert --state, which says which line is unreadable and what to do"
 fi
+# A node that took the system rename (rename PR 7) and not the variable and signing names (rename PR 8) has the new
+# folders, accounts and units, with PVJ_* in nxlx.env, in its units and drop-ins, and pvj-release in allowed_signers.
+# This release reads none of those, so such a node gets a second pass of the converter, run here exactly like the
+# first conversion: it rewrites those names (and nothing else), stops and starts the services, points "current" at this
+# release as one of its own changes and arms the same 15 minute undo. Comment lines do not count.
+SECOND_PASS=0
+if [ "$OLD_LAYOUT" = 0 ] && [ "$CONV_STATE" != pending ] && [ "$CONV_STATE" != unconfirmed ] \
+	&& [ ! -e "$ROOT/etc/systemd/system/nxlx-convert-undo.timer" ]; then
+	for held in "$ETC/nxlx.env" "$ETC/allowed_signers" "$ROOT"/etc/systemd/system/nxlx-*.service "$ROOT"/etc/systemd/system/nxlx-*.socket \
+		"$ROOT"/etc/systemd/system/nxlx-*.service.d/*.conf; do
+		if [ -f "$held" ] && [ ! -L "$held" ] && grep -v '^[[:space:]]*#' "$held" | grep -qE 'PVJ_[A-Z0-9_]+|pvj-release'; then
+			SECOND_PASS=1
+			log "${held#"$ROOT"} still has the old variable or signing names (PVJ_*, pvj-release)"
+		fi
+	done
+fi
 CONVERTED=0          # this run converted the node, or carried a conversion on: the converter set current and previous
 KEEP_RELEASE=0       # a conversion waits for its confirm: the release in place is left as it is
-if [ "$OLD_LAYOUT" = 1 ] || [ "$CONV_STATE" = pending ]; then
+if [ "$OLD_LAYOUT" = 1 ] || [ "$CONV_STATE" = pending ] || [ "$SECOND_PASS" = 1 ]; then
 	[ "$PREFIX" = /opt/nxlx ] || die "this node still has the old names (/opt/pvj): run the installer once without --prefix, which converts it to /opt/nxlx"
 	# The accounts the converter renames; any other old-style name given with --user is not one of them.
 	case "$NXLX_USER" in
@@ -442,12 +458,15 @@ if [ "$OLD_LAYOUT" = 1 ] || [ "$CONV_STATE" = pending ]; then
 	[ -d "$ROOT/opt/pvj" ] || old_top=/opt/nxlx      # a conversion that stopped half-way, carried on below
 	[ -L "$ROOT$old_top/current" ] || die "this node has the old names but $old_top/current is not a link to a release; look at it by hand: sudo python3 $SRC/bin/nxlx-convert --plan"
 	old_target="$(readlink "$ROOT$old_top/current")"
-	if [ "${old_target##*/}" = "$VERSION" ]; then
+	# A second pass at the same version (a build of the system rename in place, this one over it) puts this release in,
+	# as every install of the same version does: the converter that runs must be this release's.
+	if [ "${old_target##*/}" = "$VERSION" ] && [ "$SECOND_PASS" = 0 ]; then
 		[ "$old_top" = /opt/nxlx ] || die "this node runs version $VERSION under the old names, so its release cannot be replaced in place; install a newer version"
 		log "carrying on with a conversion that stopped half-way (the release in place is kept)"
 	else
 		if [ "$CONV_STATE" = pending ]; then log "carrying on with a conversion that stopped half-way"; fi
-		log "putting version $VERSION into $old_top/releases, then converting the node"
+		if [ "$SECOND_PASS" = 1 ]; then log "putting version $VERSION into $old_top/releases, then rewriting the old variable and signing names with the converter"
+		else log "putting version $VERSION into $old_top/releases, then converting the node"; fi
 		put_release "$ROOT$old_top/releases"
 		if [ "$REAL" = 1 ] && [ "$DRY" = 0 ]; then chown -R root:root "$ROOT$old_top/releases/$VERSION"; fi
 		run chmod -R go-w "$ROOT$old_top/releases/$VERSION"
@@ -472,17 +491,6 @@ elif [ "$CONV_STATE" = unconfirmed ] || [ -e "$ROOT/etc/systemd/system/nxlx-conv
 	[ "${cur_target##*/}" = "$VERSION" ] || die "a conversion of this node waits for its confirm: sudo nxlx-convert --confirm (or --undo), then run the installer again"
 	log "a conversion of this node waits for its confirm: the release in place is kept, the rest is installed again"
 	KEEP_RELEASE=1
-fi
-
-# A node that took the system rename (rename PR 7) before the variable and signing names changed (rename PR 8) has the
-# new folders and accounts, with PVJ_* names in nxlx.env and pvj-release in allowed_signers. This release reads only
-# the new names, so say so: the converter's second pass rewrites those two files (and nothing else).
-if [ "$OLD_LAYOUT" = 0 ] && [ "$CONV_STATE" != pending ]; then
-	for held in "$ETC/nxlx.env" "$ETC/allowed_signers"; do
-		if [ -f "$held" ] && grep -v '^[[:space:]]*#' "$held" | grep -qE 'PVJ_[A-Z0-9_]+|pvj-release'; then
-			log "WARNING: ${held#"$ROOT"} still has the old variable or signing names (PVJ_*, pvj-release), which this release does not read: run sudo nxlx-convert --run to rewrite them (--undo puts them back)"
-		fi
-	done
 fi
 
 # --- accounts -----------------------------------------------------------
@@ -827,7 +835,17 @@ if [ "$REAL" = 1 ] && [ "$DRY" = 0 ] && [ -d /run/systemd/system ]; then
 	systemctl enable nxlx-player.service nxlx-web.service nxlx-sysd.service nxlx-supportd.service
 	systemctl enable nxlx-sound.service || log "could not enable the sound service"
 	modprobe wireguard 2>/dev/null || log "the WireGuard kernel module is not available: remote support stays unavailable"
-	if [ "$START" = 1 ]; then systemctl restart nxlx-player.service nxlx-web.service nxlx-sysd.service nxlx-supportd.service; fi
+	# Right after a conversion the services were just started by it, and a restart that meets a start still being
+	# settled (or a service that restarted itself) is cancelled by systemd ("Job for nxlx-web.service canceled", seen once
+	# in CI). Say what the services were doing, wait a moment and try once more.
+	if [ "$START" = 1 ]; then
+		if ! systemctl restart nxlx-player.service nxlx-web.service nxlx-sysd.service nxlx-supportd.service; then
+			log "restarting the services failed or was cancelled; what they were doing:"
+			journalctl --no-pager -n 25 -u nxlx-player -u nxlx-web -u nxlx-sysd -u nxlx-supportd 2>&1 | sed 's/^/nxlx-install:   /' || true
+			sleep 3
+			systemctl restart nxlx-player.service nxlx-web.service nxlx-sysd.service nxlx-supportd.service
+		fi
+	fi
 	# The sound service moves to the new program even with --no-start, and is started where it was not running
 	# (it is idle until the Owner chooses a device): a box updated from before D96 gets it at once.
 	if [ "$START" = 1 ]; then systemctl restart nxlx-sound.service || log "the sound service did not start; see: journalctl -u nxlx-sound -n 30"

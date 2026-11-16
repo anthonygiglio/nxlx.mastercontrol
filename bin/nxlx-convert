@@ -561,8 +561,8 @@ def make_plan(node, force=False, mode="plan", release=None):
 
     # 3. stop the services (a real node only), then make sure no process of an account to be renamed is left
     if not node.stage:
-        plan.add(3, "stop", "stop the services in order (%s), then every other loaded pvj-* unit (the picture "
-                 "helper's jobs, updates)" % ", ".join(STOP_ORDER), units=STOP_ORDER)
+        plan.add(3, "stop", "stop the services in order (%s), then every other loaded pvj-* or nxlx-* unit (the "
+                 "picture helper's jobs, updates)" % ", ".join(STOP_ORDER), units=STOP_ORDER)
     if uids:
         plan.add(3, "idle", "check that no process of an account to be renamed is left",
                  uids=sorted([k, v] for k, v in uids.items()))
@@ -1069,7 +1069,7 @@ class Runner:
             loaded = loaded_units()
             names = [u for u, _ in loaded]
             rec.update(active=[u for u, state in loaded if state == "active"],
-                       units=[u for u in STOP_ORDER if u in names] + sorted(u for u in names if u not in STOP_ORDER))
+                       units=[u for u in stop_order() if u in names] + sorted(u for u in names if u not in stop_order()))
         self.journal.write(dict(rec, state="begin"))
         injected_failure(node, self.n + 1)
         if op == "rename":
@@ -1123,26 +1123,36 @@ class Runner:
 
 
 def loaded_units():
-    """[(unit, active state)] of every loaded unit whose name starts with pvj- (a real node)."""
-    r = sh(["systemctl", "list-units", "--all", "--plain", "--no-legend", "--full", "pvj-*"], check=False)
+    """[(unit, active state)] of every loaded unit whose name starts with pvj- or nxlx- (a real node), not the
+    converter's own. The nxlx-* ones are there on a node that has the new names already: its second pass changes
+    their files and environment, so they are stopped and started again like the first conversion's."""
+    r = sh(["systemctl", "list-units", "--all", "--plain", "--no-legend", "--full", "pvj-*", "nxlx-*"], check=False)
     out = []
     for line in r.stdout.splitlines():
         parts = line.split()
-        if len(parts) >= 3 and parts[0].startswith("pvj-"):
+        if len(parts) >= 3 and parts[0].startswith(("pvj-", "nxlx-")) and not parts[0].startswith("nxlx-convert"):
             out.append((parts[0], parts[2]))
     return out
 
 
+def stop_order():
+    """The main units in the order they are stopped, under their old names and under the new ones (a second pass
+    on a node that has the new names stops the nxlx-* units)."""
+    m = Matcher(rows())
+    return STOP_ORDER + [renamed(m, u) for u in STOP_ORDER]
+
+
 def units_to_start(records):
-    """The main units that were running before any run that is not undone stopped them, in STOP_ORDER. Every run
-    counts, so a run that carries on after a failure starts what the first one stopped."""
+    """The main units that were running before any run since the last confirm, not undone, stopped them, in stop
+    order. Every such run counts, so a run that carries on after a failure starts what the first one stopped."""
+    records = since_confirm(records)
     undone = {(r.get("run"), r.get("n")) for r in records if r.get("state") == "undone"}
     active = set()
     for r in records:
         # a stop whose "done" was never written (a power cut) may have stopped them all the same
         if r.get("op") == "stop" and r.get("state") in ("begin", "done") and (r.get("run"), r.get("n")) not in undone:
             active.update(r.get("active", []))
-    return [u for u in STOP_ORDER if u in active]
+    return [u for u in stop_order() if u in active]
 
 
 def start_real(node, journal):
@@ -1619,10 +1629,20 @@ def disarm_left_timer(node, inside=False):
     return " The undo timer that was left is taken away."
 
 
+def since_confirm(recs):
+    """The journal of the latest conversion: from the first start after the last confirm or undo. What an earlier
+    conversion made and the owner confirmed is the node's state now, never put back by an undo of a later run (a
+    second pass on a node converted before). The journal itself is kept whole for the audit. A manual undo right
+    after a confirm still covers that conversion, as it is the latest."""
+    first = first_start(recs)
+    return recs if first is None else recs[first:]
+
+
 def pending_changes(recs):
     """The records of the changes to put back, in the journal's order: every "done" that is not undone, and every
     "begin" without its "done" (a power cut between the change and its record: the change may be made). Undoing
     one of those is safe either way, as every undo looks at what is there first, or puts back the original."""
+    recs = since_confirm(recs)
     undone = {(r.get("run"), r.get("n")) for r in recs if r.get("state") == "undone"}
     done = {(r.get("run"), r.get("n")) for r in recs if r.get("state") == "done"}
     out = []

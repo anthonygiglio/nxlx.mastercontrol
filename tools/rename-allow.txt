@@ -69,7 +69,7 @@
 4	mctl/osc.py
 4	mctl/oscfeedback.py
 3	mctl/server.py
-5	mctl/update.py
+6	mctl/update.py
 1	mctl/web/app.js
 478	project-log/DECISIONS.md
 441	project-log/JOURNAL.md
@@ -111,6 +111,7 @@
 7	project-log/decisions/D136-converter.md
 15	project-log/decisions/D138-old-names-bridge.md
 6	project-log/decisions/D139-automatic-node-certificates.md
+3	project-log/decisions/D142-release-and-variable-names.md
 2	project-log/decisions/D93-addendum-2026-10-30-remove-old-drift.md
 2	project-log/journal/2026-10-20-panel-design.md
 2	project-log/journal/2026-10-20-panel-sandbox.md
@@ -186,6 +187,7 @@
 22	project-log/journal/2026-11-15-rename-7.md
 2	project-log/journal/2026-11-15-slider-ends.md
 4	project-log/journal/2026-11-15-xfade-leak.md
+15	project-log/journal/2026-11-16-rename-8.md
 3	project-log/lessons/2026-11-11-stats-overlay-owned-by-connection.md
 2	project-log/lessons/2026-11-15-crossfade-heap.md
 9	security.php
@@ -206,11 +208,11 @@
 1	sync/servicecheck
 1	sync/shutdownall
 59	tests/real_convert_test.sh
-63	tests/real_install_test.sh
+60	tests/real_install_test.sh
 1	tests/security_test.sh
 1	tests/test_graphics.py
 5	tests/test_https.py
-34	tests/test_install_convert.py
+43	tests/test_install_convert.py
 2	tests/test_leftovers.py
 2	tests/test_masks.py
 1	tests/test_mctl_render.py
@@ -220,7 +222,7 @@
 3	tests/test_ndi_pads.py
 2	tests/test_ndi_sound.py
 5	tests/test_netd.py
-192	tests/test_nxlx_convert.py
+201	tests/test_nxlx_convert.py
 44	tests/test_old_clients.py
 3	tests/test_osc_defaults.py
 2	tests/test_osc_feedback.py

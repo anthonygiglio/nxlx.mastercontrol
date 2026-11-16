@@ -561,25 +561,38 @@ class ReviewFixes(Base):
         self.assertIn("Nothing to convert", r.stdout)
         self.assertEqual(snapshot(self.root), once)
 
-    def test_a_node_converted_before_rename_pr_8_gets_only_the_variable_and_signing_names(self):
-        """A node that took the system rename (PR 7) has the new folders, accounts and units, with the old variable
-        names in its units and nxlx.env and the old signing names in allowed_signers: a second pass rewrites those
-        and nothing else, and its undo puts them back."""
+    def pr7(self):
+        """The converter of rename PR 7 (variable and signing names held), kept in a temp file, or None."""
+        r = subprocess.run(["git", "-C", REPO, "show", "168eb53:bin/nxlx-convert"], capture_output=True)
+        if r.returncode != 0:
+            self.skipTest("no 168eb53 here to convert the node as rename PR 7 did")
+        path = os.path.join(tempfile.mkdtemp(), "nxlx-convert-pr7")
+        with open(path, "wb") as f:
+            f.write(r.stdout)
+        os.chmod(path, 0o755)
+        self.addCleanup(shutil.rmtree, os.path.dirname(path), True)
+        return path
+
+    def converted_by_pr7(self):
+        """A node that took rename PR 7's conversion AND confirmed it (its journal is kept): new folders, accounts
+        and units, the old variable names in nxlx.env and the units, pvj-release in allowed_signers."""
+        pr7 = self.pr7()
         write(self.root, "etc/pvj/allowed_signers", 'pvj-release namespaces="pvj-release" ssh-ed25519 AAAAC3Nza owner\n')
-        self.assertEqual(convert(self.root, "--run").returncode, 0)
-        held = []
-        for rel in ("etc/nxlx/nxlx.env", "etc/nxlx/allowed_signers", "etc/systemd/system/nxlx-web.service",
-                    "etc/systemd/system/nxlx-ndi.service", "etc/systemd/system/nxlx-web.service.d/50-nxlx-ndi.conf"):
-            text = self.read(rel).replace("NXLX_", "PVJ_").replace("nxlx-release", "pvj-release")
-            write(self.root, rel, text)
-            held.append(rel)
-        shutil.rmtree(self.p("var/backups"))                 # the first conversion was confirmed long ago
-        os.unlink(self.p("etc/systemd/system/timers.target.wants/nxlx-convert-undo.timer"))
-        os.unlink(self.p("etc/systemd/system/nxlx-convert-undo.timer"))
-        os.unlink(self.p("etc/systemd/system/nxlx-convert-undo.service"))
-        pr7 = snapshot(self.root, skip=())
+        for args in (("--run",), ("--confirm",)):
+            r = subprocess.run([pr7, "--root", self.root, *args], capture_output=True, text=True, timeout=120)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("PVJ_MEDIA_DIR", self.read("etc/nxlx/nxlx.env"))
+        self.assertIn("pvj-release", self.read("etc/nxlx/allowed_signers"))
+        return snapshot(self.root)
+
+    def test_a_node_converted_and_confirmed_before_rename_pr_8_gets_a_second_pass_and_its_undo_covers_only_that(self):
+        """The first conversion is confirmed and its journal kept. A second pass followed by --undo (by hand or the
+        timer) puts back only the second pass: every change before the confirm is the node's state now."""
+        pr7 = self.converted_by_pr7()
+        journal_before = self.read("var/backups/nxlx-convert/journal.jsonl")
         plan = convert(self.root, "--plan").stdout
-        for rel in held:
+        for rel in ("etc/nxlx/nxlx.env", "etc/nxlx/allowed_signers", "etc/systemd/system/nxlx-web.service",
+                    "etc/systemd/system/nxlx-ndi.service"):
             self.assertIn("rewrite /" + rel, plan)
         self.assertNotIn("rename account", plan)
         self.assertNotIn("move /", plan)
@@ -588,12 +601,55 @@ class ReviewFixes(Base):
         self.assertNotIn("PVJ_", self.read("etc/nxlx/nxlx.env"))
         self.assertIn('nxlx-release namespaces="nxlx-release" ssh-ed25519 AAAAC3Nza owner', self.read("etc/nxlx/allowed_signers"))
         self.assertIn("NXLX_RUNTIME_DIR", self.read("etc/systemd/system/nxlx-web.service"))
-        self.assertEqual(convert(self.root, "--undo").returncode, 0)
-        after = snapshot(self.root, skip=("var/backups", "etc/systemd/system/nxlx-convert-undo.timer",
-                                          "etc/systemd/system/nxlx-convert-undo.service",
-                                          "etc/systemd/system/timers.target.wants"))
-        want = {k: v for k, v in pr7.items() if not k.startswith(("var/backups", "etc/systemd/system/timers.target.wants"))}
-        self.assertEqual(after, want, "the undo of the second pass goes back to the node of rename PR 7")
+        self.assertTrue(self.read("var/backups/nxlx-convert/journal.jsonl").startswith(journal_before), "the journal is kept whole")
+        u = convert(self.root, "--undo")
+        self.assertEqual(u.returncode, 0, u.stdout + u.stderr)
+        undone = [l for l in u.stdout.splitlines() if l.startswith("  undone  ")]
+        self.assertEqual(len(undone), 12, u.stdout)
+        self.assertTrue(all(l.startswith("  undone  rewrite /etc/") for l in undone), "only the rewrites of the second pass: " + u.stdout)
+        self.assertTrue(os.path.isdir(self.p("opt/nxlx")))
+        self.assertFalse(os.path.lexists(self.p("opt/pvj")))
+        self.assertIn("nxlx-dev:", self.read("etc/passwd"))
+        self.assertNotIn("pvj-dev:", self.read("etc/passwd"))
+        self.assertEqual(snapshot(self.root), pr7, "back to the node as rename PR 7 left it")
+
+    def test_the_timed_undo_of_a_second_pass_covers_only_the_second_pass_and_a_confirm_keeps_it(self):
+        pr7 = self.converted_by_pr7()
+        self.assertEqual(convert(self.root, "--run").returncode, 0)
+        u = convert(self.root, "--undo", "--auto")
+        self.assertEqual(u.returncode, 0, u.stdout + u.stderr)
+        self.assertEqual(snapshot(self.root), pr7)
+        self.assertEqual(convert(self.root, "--run").returncode, 0)          # again after the undo
+        self.assertEqual(convert(self.root, "--confirm").returncode, 0)
+        after = snapshot(self.root)
+        self.assertIn("Not undone", convert(self.root, "--undo", "--auto").stdout)
+        self.assertEqual(snapshot(self.root), after)
+        self.assertIn("Nothing to convert", convert(self.root, "--run").stdout)
+
+    def test_the_services_a_run_stops_and_starts_are_the_ones_since_the_last_confirm_under_either_name(self):
+        conv = load_converter()
+        recs = [{"run": "r1", "state": "start"},
+                {"run": "r1", "n": 0, "op": "stop", "state": "done", "active": ["pvj-web.service", "pvj-player.service"]},
+                {"run": "r1", "state": "finished"}, {"state": "confirmed"},
+                {"run": "r2", "state": "start"},
+                {"run": "r2", "n": 0, "op": "stop", "state": "done", "active": ["nxlx-player.service", "nxlx-web.service"]}]
+        self.assertEqual(conv.units_to_start(recs), ["nxlx-web.service", "nxlx-player.service"],
+                         "the first run's units are not started again by the second run's undo or start")
+        self.assertEqual(conv.units_to_start(recs[:3]), ["pvj-web.service", "pvj-player.service"])
+        fake = type("R", (), {"stdout": "pvj-web.service loaded active running x\n"
+                                        "nxlx-web.service loaded active running x\n"
+                                        "nxlx-convert-undo.timer loaded active waiting x\n"
+                                        "nxlx-raster@7.service loaded inactive dead x\n"
+                                        "other.service loaded active running x\n"})()
+        old = conv.sh
+        conv.sh = lambda *a, **k: fake
+        try:
+            self.assertEqual(conv.loaded_units(), [("pvj-web.service", "active"), ("nxlx-web.service", "active"),
+                                                   ("nxlx-raster@7.service", "inactive")])
+        finally:
+            conv.sh = old
+        # the plan of a node with the new names stops its nxlx-* units too (a real node only)
+        self.assertEqual([u for u in conv.stop_order() if u.startswith("nxlx-")][0], "nxlx-web.service")
 
     def test_the_undo_timer_is_a_unit_that_survives_a_restart_and_is_armed_again(self):
         total = len(re.findall(r"(?m)^    +\d+  ", convert(self.root, "--plan").stdout))

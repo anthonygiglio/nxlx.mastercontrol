@@ -516,7 +516,7 @@ class Updater:
     def clear_inbox(self, dir_fd):
         """Remove what was uploaded, whatever the outcome: a bundle is tried once. Only inside the opened folder."""
         for name in os.listdir(dir_fd):
-            if name.startswith("nxlx-"):
+            if name.startswith(("nxlx-", "pvj-")):      # also what an old name left behind: cleaned, never taken
                 try:
                     os.unlink(name, dir_fd=dir_fd)
                 except OSError:

@@ -121,22 +121,56 @@ class InstallConvertsAnOldNode(unittest.TestCase):
         self.assertIn("ExecStart=/opt/pvj/current/bin/pvj-web", self.read("etc/systemd/system/pvj-web.service"))
         self.assertFalse(os.path.exists(self.p("opt/nxlx")))
 
-    def test_a_node_with_the_new_folders_and_the_old_variable_names_is_told_to_run_the_converter(self):
+    def test_a_node_with_the_new_folders_and_the_old_variable_names_gets_the_second_pass_from_the_installer(self):
+        """A node that took the system rename and not the variable and signing names: the installer runs the
+        converter's second pass the way it runs the first conversion (undo armed, confirm asked for), and the
+        settings it then writes go into the one NXLX_ line, not beside a PVJ_ one."""
         self.assertEqual(self.install().returncode, 0)
-        subprocess.run(["python3", os.path.join(REPO, "bin", "nxlx-convert"), "--root", self.root, "--confirm"],
-                       capture_output=True, text=True, timeout=120)
+        conv = os.path.join(REPO, "bin", "nxlx-convert")
+        subprocess.run(["python3", conv, "--root", self.root, "--confirm"], capture_output=True, text=True, timeout=120)
         clean = self.install()
         self.assertEqual(clean.returncode, 0, clean.stdout + clean.stderr)
-        self.assertNotIn("WARNING", clean.stdout)
+        self.assertNotIn("old variable or signing names", clean.stdout)
+        self.assertNotIn("CONVERTED", clean.stdout)
+        # the state between rename steps 7 and 8: the old names in the env file, a drop-in and allowed_signers
         with open(self.p("etc/nxlx/nxlx.env"), "a") as f:
-            f.write("PVJ_PORT=81\n")
+            f.write("PVJ_SIGNER_URL=http://old.example:8781\nPVJ_PORT=81\n")
+        os.makedirs(self.p("etc/systemd/system/nxlx-web.service.d"), exist_ok=True)
+        with open(self.p("etc/systemd/system/nxlx-web.service.d/50-nxlx-ndi.conf"), "w") as f:
+            f.write("[Service]\nSupplementaryGroups=nxlx-ndi\nEnvironment=PVJ_NDI_DIR=/run/nxlx-ndi\n")
         with open(self.p("etc/nxlx/allowed_signers"), "w") as f:
             f.write('# pvj-release is only a comment here\npvj-release namespaces="pvj-release" ssh-ed25519 AAAA owner\n')
-        again = self.install()
+        before = snapshot(self.root)
+        journal_before = self.read("var/backups/nxlx-convert/journal.jsonl")
+        again = self.install("--signer", "http://hp.example:8781", "--root-fingerprint", "ab" * 32)
         self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
         self.assertIn("/etc/nxlx/nxlx.env still has the old variable or signing names", again.stdout)
-        self.assertIn("/etc/nxlx/allowed_signers still has the old variable or signing names", again.stdout)
-        self.assertIn("sudo nxlx-convert --run", again.stdout)
+        self.assertIn("/etc/systemd/system/nxlx-web.service.d/50-nxlx-ndi.conf still has", again.stdout)
+        self.assertIn("rewriting the old variable and signing names with the converter", again.stdout)
+        self.assertIn("Converted:", again.stdout)
+        self.assertIn("sudo nxlx-convert --confirm", again.stdout)
+        env = self.read("etc/nxlx/nxlx.env")
+        self.assertNotIn("PVJ_", env)
+        self.assertIn("NXLX_PORT=81", env)
+        self.assertEqual(env.count("NXLX_SIGNER_URL="), 1, "one line, not a second one beside the old")
+        self.assertIn("NXLX_SIGNER_URL=http://hp.example:8781", env)
+        self.assertIn("Environment=NXLX_NDI_DIR=/run/nxlx-ndi", self.read("etc/systemd/system/nxlx-web.service.d/50-nxlx-ndi.conf"))
+        self.assertIn('nxlx-release namespaces="nxlx-release"', self.read("etc/nxlx/allowed_signers"))
+        self.assertTrue(os.path.isfile(self.p("etc/systemd/system/nxlx-convert-undo.timer")), "the undo is armed again")
+        journal_after = self.read("var/backups/nxlx-convert/journal.jsonl")
+        self.assertTrue(journal_after.startswith(journal_before), "the first conversion's journal is kept")
+        # a third install finds nothing to do
+        third = self.install("--signer", "http://hp.example:8781", "--root-fingerprint", "ab" * 32)
+        self.assertNotIn("old variable or signing names", third.stdout)
+        # the undo of the second pass puts back the files of the node as it was, and only those
+        u = subprocess.run(["python3", conv, "--root", self.root, "--undo"], capture_output=True, text=True, timeout=120)
+        self.assertEqual(u.returncode, 0, u.stdout + u.stderr)
+        self.assertTrue(os.path.isdir(self.p("opt/nxlx")), "the first conversion stays")
+        self.assertFalse(os.path.exists(self.p("opt/pvj")))
+        self.assertIn("PVJ_PORT=81", self.read("etc/nxlx/nxlx.env"))
+        self.assertIn('pvj-release namespaces="pvj-release"', self.read("etc/nxlx/allowed_signers"))
+        self.assertIn("Environment=PVJ_NDI_DIR", self.read("etc/systemd/system/nxlx-web.service.d/50-nxlx-ndi.conf"))
+        self.assertEqual(snapshot(self.root).get("etc/nxlx/allowed_signers"), before.get("etc/nxlx/allowed_signers"))
 
     def test_a_refused_conversion_stops_the_installer_and_changes_nothing_but_the_waiting_release(self):
         os.makedirs(self.p("proc"))
