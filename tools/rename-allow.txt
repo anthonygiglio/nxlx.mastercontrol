@@ -15,7 +15,7 @@
 7	RELEASE_NOTES.md
 2	assets/img/PVJ_2019.svg
 2	backend.php
-197	bin/nxlx-convert
+200	bin/nxlx-convert
 5	docs/Install_OSC_on35_or_older.md
 5	docs/OSC_Commands.md
 2	docs/PVJ_2019.svg
@@ -210,7 +210,7 @@
 60	tests/real_install_test.sh
 1	tests/security_test.sh
 5	tests/test_https.py
-36	tests/test_install_convert.py
+42	tests/test_install_convert.py
 2	tests/test_leftovers.py
 2	tests/test_masks.py
 1	tests/test_mctl_render.py
@@ -220,7 +220,7 @@
 3	tests/test_ndi_pads.py
 2	tests/test_ndi_sound.py
 5	tests/test_netd.py
-204	tests/test_nxlx_convert.py
+211	tests/test_nxlx_convert.py
 44	tests/test_old_clients.py
 3	tests/test_osc_defaults.py
 2	tests/test_osc_feedback.py

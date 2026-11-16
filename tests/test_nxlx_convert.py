@@ -638,6 +638,72 @@ class ReviewFixes(Base):
         u = convert(self.root, "--undo")
         self.assertIn("Undone: the node uses the old names again.", u.stdout)
 
+    def partly_failed_undo_then_run(self, fail_at=None):
+        """Run, a timed undo that cannot put back the login account, the old panel then rewrites settings.json (a new
+        PIN at its start), then --run again: the carried-file check is this run's own."""
+        env = {"NXLX_CONVERT_FAIL_AT": str(fail_at)} if fail_at else None
+        r = convert(self.root, "--run", env=env)
+        self.assertEqual(r.returncode, 1 if fail_at else 0, r.stdout + r.stderr)
+        write(self.root, "proc/4242/status", "Name:\tbash\nUid:\t1001\t1001\t1001\t1001\n")
+        write(self.root, "proc/4242/cgroup", "0::/user.slice/user-1001.slice/session-3.scope\n")
+        u = convert(self.root, "--undo", "--auto")
+        self.assertEqual(u.returncode, 1, u.stdout)
+        shutil.rmtree(self.p("proc/4242"))
+        with open(self.p("var/lib/pvj/settings.json"), "a") as f:
+            f.write("\n")
+        r = convert(self.root, "--run")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("changed during the conversion", r.stdout)
+        recs = [json.loads(l) for l in open(self.p("var/backups/nxlx-convert/journal.jsonl"))]
+        starts = [i for i, x in enumerate(recs) if x.get("state") == "start"]
+        self.assertTrue(any(x.get("state") == "carried-same" for x in recs[starts[-1]:]), "this run wrote its own record")
+        self.assertEqual(convert(self.root, "--confirm").returncode, 0)
+
+    def test_the_carried_check_after_a_partly_failed_undo_belongs_to_the_next_run_when_the_first_finished(self):
+        self.partly_failed_undo_then_run()
+
+    def test_the_carried_check_after_a_partly_failed_undo_belongs_to_the_next_run_when_the_first_failed(self):
+        total = int(convert(self.root, "--plan").stdout.split("Changes (")[1].split(")")[0])
+        self.partly_failed_undo_then_run(total)
+
+    def test_only_variable_and_signing_names_in_the_settings_files_are_stale_names(self):
+        conv = load_converter()
+        node = conv.Node(self.root)
+        self.assertEqual(conv.stale_names(node), [], "the old node has no new folders: nothing of the new layout is stale")
+        self.converted_by_pr7()
+        found = conv.stale_names(node)
+        files = [f for f, _ in found]
+        self.assertIn("/etc/nxlx/nxlx.env", files)
+        self.assertIn("/etc/nxlx/allowed_signers", files)
+        self.assertIn("/etc/systemd/system/nxlx-web.service", files)
+        self.assertIn("/etc/systemd/system/nxlx-web.service.d/50-nxlx-ndi.conf", files)
+        # a comment, a file that is not the node's own, and a name the table does not take are not stale
+        for rel in ("etc/nxlx/nxlx.env", "etc/nxlx/allowed_signers"):
+            write(self.root, rel, "# PVJ_PORT and pvj-release in a comment\nMYPVJ_FOO=1\nX=pvj-release-2026\n")
+        for rel in list(files):
+            if "nxlx-" in rel and rel.startswith("/etc/systemd"):
+                os.unlink(self.p(rel.lstrip("/")))
+        write(self.root, "usr/local/bin/mine", "# pvj-web PVJ_PORT\n")
+        self.assertEqual(conv.stale_names(node), [])
+        r = subprocess.run([CONVERT, "--root", self.root, "--stale-names"], capture_output=True, text=True)
+        self.assertEqual((r.returncode, r.stdout), (0, ""))
+        write(self.root, "etc/nxlx/nxlx.env", "PVJ_PORT=81\n")
+        r = subprocess.run([CONVERT, "--root", self.root, "--stale-names"], capture_output=True, text=True)
+        self.assertEqual((r.returncode, r.stdout), (4, "/etc/nxlx/nxlx.env: PVJ_PORT\n"))
+
+    def test_the_undo_does_not_stop_the_usb_drives_mount_instances_either(self):
+        conv = load_converter()
+        fake = type("R", (), {"returncode": 0, "stderr": "", "stdout": "nxlx-web.service loaded active running x\n"
+                              "nxlx-usb@sda1.service loaded active exited x\npvj-usb@sdb1.service loaded active exited x\n"
+                              "nxlx-convert-undo.timer loaded active waiting x\n"})()
+        old = conv.sh
+        conv.sh = lambda *a, **k: fake
+        try:
+            self.assertEqual([u for u, _ in conv.loaded_units_new()], ["nxlx-web.service"])
+            self.assertEqual([u for u, _ in conv.loaded_units()], ["nxlx-web.service"])
+        finally:
+            conv.sh = old
+
     def test_a_partly_failed_undo_is_no_boundary_for_the_next_run_and_its_undo(self):
         """Run, then a timed undo that cannot put back the login account (it is in use), then --run again and
         --undo: the whole node is back as it was, as before the journal looked only at the latest conversion."""

@@ -432,21 +432,24 @@ fi
 # A node that took the system rename (rename PR 7) and not the variable and signing names (rename PR 8) has the new
 # folders, accounts and units, with PVJ_* names in nxlx.env, its units and drop-ins and pvj-release in allowed_signers.
 # This release reads none of those, and no node is meant to be in that state (the nodes go from the old names to this
-# release in one conversion), so it is refused here, before anything on the node changes. Whether the node has such
-# leftovers is asked of the converter (its plan lists a change for every file it would rewrite), so the installer and
-# the converter cannot disagree about what counts.
+# release in one conversion), so it is refused here, before anything on the node changes. Only these leftovers count
+# (not an old name in a comment, a file of the owner's, or anything else the converter would rewrite): the converter
+# is asked (`--stale-names`: exit 0 none, 4 some, one "file: name" line each), so the two cannot disagree. The reason and
+# the first file come first, as the panel shows only the end of what an installer says.
 if [ "$OLD_LAYOUT" = 0 ] && [ "$CONV_STATE" != pending ] && [ "$CONV_STATE" != unconfirmed ] \
 	&& [ ! -e "$ROOT/etc/systemd/system/nxlx-convert-undo.timer" ] && [ -f "$SRC/bin/nxlx-convert" ]; then
 	conv_root=()
 	if [ -n "$STAGE" ]; then conv_root=(--root "$ROOT"); fi
-	conv_plan="$(python3 -B "$SRC/bin/nxlx-convert" "${conv_root[@]+"${conv_root[@]}"}" --plan 2>&1)" || true
-	case "$conv_plan" in
-	*"Changes (0)"*) ;;
-	*"Changes ("*)
-		die "this node has the new names for its folders and accounts but still holds old variable or signing names (PVJ_*, pvj-release), so it is a release from between the two steps of the rename, and this release cannot be installed over it. Nothing on the node was changed. What the converter would still change:
-$(printf '%s\n' "$conv_plan" | sed -n '/^Changes (/,/^Backup/p' | sed '$d')
-An expert can run this release's own converter by hand (sudo python3 $SRC/bin/nxlx-convert --plan, then --run): an undo of that puts the old names back, which this release does not read, so the earlier release must then be installed again." ;;
-	*) die "cannot ask the converter what this node still holds (python3 $SRC/bin/nxlx-convert --plan): $(printf '%s' "$conv_plan" | tail -n 3)" ;;
+	stale_rc=0
+	stale="$(python3 -B "$SRC/bin/nxlx-convert" "${conv_root[@]+"${conv_root[@]}"}" --stale-names 2>&1)" || stale_rc=$?
+	case "$stale_rc" in
+	0) ;;
+	4)
+		stale_first="$(printf '%s\n' "$stale" | head -n 1)"
+		stale_more="$(printf '%s\n' "$stale" | sed -n '2,$p' | wc -l | tr -d ' ')"
+		if [ "$stale_more" = 0 ]; then stale_more=""; else stale_more=" (and $stale_more more)"; fi
+		die "old names in ${stale_first%%: *}$stale_more: this node has the new folders but still the old variable or signing names (PVJ_*, pvj-release), a release between rename steps 7 and 8. This release cannot be installed over it and nothing was changed. There is no supported way on from here; see mctl/README.md, Updates." ;;
+	*) die "cannot ask the converter what this node still holds (python3 $SRC/bin/nxlx-convert --stale-names, exit $stale_rc): $(printf '%s' "$stale" | tail -n 2)" ;;
 	esac
 fi
 CONVERTED=0          # this run converted the node, or carried a conversion on: the converter set current and previous

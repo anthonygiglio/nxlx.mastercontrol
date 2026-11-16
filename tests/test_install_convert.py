@@ -141,13 +141,45 @@ class InstallConvertsAnOldNode(unittest.TestCase):
         r = self.install("--signer", "http://hp.example:8781", "--root-fingerprint", "ab" * 32)
         self.assertNotEqual(r.returncode, 0, r.stdout)
         said = r.stdout + r.stderr
-        self.assertIn("this release cannot be installed over it", said)
-        self.assertIn("Nothing on the node was changed", said)
-        self.assertIn("rewrite /etc/nxlx/nxlx.env", said, "what the converter would change is listed")
-        self.assertIn("rewrite /etc/nxlx/allowed_signers", said)
-        self.assertIn("50-nxlx-ndi.conf", said)
-        self.assertIn("sudo python3", said)
+        message = r.stderr.strip().splitlines()[-1]
+        self.assertTrue(message.startswith("nxlx-install: error: old names in /etc/"), "the reason and the first file come first: " + message)
+        self.assertLessEqual(len(message), 480, "the panel shows only the end of what an installer says")
+        self.assertIn("(and 2 more)", message)
+        self.assertIn("This release cannot be installed over it and nothing was changed", message)
+        self.assertIn("mctl/README.md", message)
         self.assertEqual(snapshot(self.root), before, "not a file, not the release of the same version, was touched")
+
+    def test_a_file_name_that_holds_the_words_the_installer_once_looked_for_is_no_leftover(self):
+        """The installer reads the converter's exit code, not its text: a drop-in called "Changes (0).conf" fooled it."""
+        self.confirmed_node()
+        os.makedirs(self.p("etc/systemd/system/nxlx-web.service.d"), exist_ok=True)
+        stale = self.p("etc/systemd/system/nxlx-web.service.d/Changes (0).conf")
+        with open(stale, "w") as f:
+            f.write("[Service]\nEnvironment=PVJ_NDI_DIR=/run/nxlx-ndi\n")
+        r = self.install()
+        self.assertNotEqual(r.returncode, 0, "it holds an old variable name")
+        self.assertIn("Changes (0).conf", r.stderr)
+        with open(stale, "w") as f:
+            f.write("[Service]\nEnvironment=NXLX_NDI_DIR=/run/nxlx-ndi\n")
+        r = self.install()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_files_of_the_owner_and_comments_with_an_old_name_never_stop_an_install(self):
+        """Only variable and signing names in nxlx.env, allowed_signers and the nxlx-* units count. The converter would
+        still rewrite these others (a comment, a script, a rule), but that is no reason to refuse every later install."""
+        self.confirmed_node()
+        for rel, text in (("usr/local/bin/node-backup", "#!/bin/sh\n# copies what pvj-web wrote before the rename\n"),
+                          ("etc/systemd/system/capture.service", "[Service]\nExecStart=/usr/bin/true\n# was After=pvj-player.service\n"),
+                          ("etc/udev/rules.d/90-card.rules", '# old: RUN+="/usr/local/bin/pvj-usb"\n'),
+                          ("etc/sudoers.d/020_owner", "# pvj-dev had this before\nowner ALL=(ALL) NOPASSWD: ALL\n")):
+            os.makedirs(os.path.dirname(self.p(rel)), exist_ok=True)
+            with open(self.p(rel), "w") as f:
+                f.write(text)
+        os.makedirs(self.p("etc/systemd/system/nxlx-web.service.d"), exist_ok=True)
+        with open(self.p("etc/systemd/system/nxlx-web.service.d/60-owner.conf"), "w") as f:
+            f.write("[Service]\n# Environment=PVJ_PORT=81 stays a comment\n")
+        r = self.install()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
     def test_what_the_converter_leaves_alone_is_no_reason_to_refuse(self):
         """The installer asks the converter, so a name the converter's rows do not take (pvj-release-2026 in a key's

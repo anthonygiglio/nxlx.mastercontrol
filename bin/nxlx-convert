@@ -212,7 +212,7 @@ BACKED_UP = ["etc/passwd", "etc/group", "etc/shadow", "etc/gshadow", "etc/subuid
              "var/lib/pvj/settings.json", "var/lib/pvj/node-id", "var/lib/pvj/tls", "var/lib/pvj/events.json",
              "var/lib/pvj/renderer.json", "var/lib/pvj/screen-mode.json", "opt/pvj/previous", "opt/pvj/current",
              "etc/pvj"]
-EXIT_OK, EXIT_FAILED, EXIT_REFUSED = 0, 1, 2
+EXIT_OK, EXIT_FAILED, EXIT_REFUSED, EXIT_STALE = 0, 1, 2, 4
 
 
 class Refused(Exception):
@@ -1509,17 +1509,19 @@ def cmd_run(node, force, release=None):
     return EXIT_OK
 
 
-def first_start(records):
+def first_start(records, strict=False):
     """The index of the first start of the latest conversion (the starts after the last complete undo or confirm),
-    or None."""
+    or None. An undo that left changes in place (failed > 0) is no boundary for what is to be put back: they are
+    still to be. With strict, every undo is a boundary: the services were started again by it, so what is carried
+    over (settings.json: the panel writes a new PIN at every start) is no longer what an earlier run saw."""
     starts = [i for i, r in enumerate(records) if r.get("state") == "start"]
     if not starts:
         return None
     first = starts[-1]
     for i in reversed(starts):
-        if any(r.get("state") == "confirmed" or (r.get("state") == "undo-finished" and not r.get("failed"))
+        if any(r.get("state") == "confirmed" or (r.get("state") == "undo-finished" and (strict or not r.get("failed")))
                for r in records[i + 1:first + 1]):
-            break       # an undo that left changes in place (failed > 0) is no boundary: they are still to put back
+            break
         first = i
     return first
 
@@ -1527,13 +1529,13 @@ def first_start(records):
 def first_carried(records):
     """The hashes of what is carried over, from the start of the latest conversion: the run that carries on after a
     failure must compare with the node before the first run, not with itself."""
-    first = first_start(records)
+    first = first_start(records, strict=True)
     return None if first is None else records[first].get("carried")
 
 
 def carried_checked(records):
     """Whether a run of the latest conversion has checked what is carried over and found it the same."""
-    first = first_start(records)
+    first = first_start(records, strict=True)
     return first is not None and any(r.get("state") == "carried-same" for r in records[first:])
 
 
@@ -1779,7 +1781,7 @@ def loaded_units_new():
     """[(unit, active state)] of every loaded unit whose name starts with nxlx- but is not the converter's own."""
     r = sh(["systemctl", "list-units", "--all", "--plain", "--no-legend", "--full", "nxlx-*"], check=False)
     return [(p[0], p[2]) for p in (line.split() for line in r.stdout.splitlines())
-            if len(p) >= 3 and p[0].startswith("nxlx-") and not p[0].startswith("nxlx-convert")]
+            if len(p) >= 3 and p[0].startswith("nxlx-") and not p[0].startswith(("nxlx-convert", "nxlx-usb@", "pvj-usb@"))]
 
 
 def undo_one(node, r):
@@ -1837,6 +1839,8 @@ def main(argv=None):
     ap.add_argument("--release", help="with --plan or --run: point current at this release folder of "
                     "/opt/pvj/releases as part of the run (install.sh)")
     ap.add_argument("--auto", action="store_true", help=argparse.SUPPRESS)       # the undo timer: skip if confirmed
+    g.add_argument("--stale-names", action="store_true", help="list the files of the new layout that still hold old "
+                   "variable or signing names (PVJ_*, pvj-release); exit 4 if there are any (install.sh)")
     g.add_argument("--state", action="store_true", help="print the state of the latest conversion and stop: none, "
                    "pending, unconfirmed, confirmed or undone (install.sh)")
     a = ap.parse_args(argv)
@@ -1865,7 +1869,51 @@ def main(argv=None):
         return EXIT_REFUSED
 
 
+STALE_FILES = ["etc/nxlx/nxlx.env", "etc/nxlx/allowed_signers"]
+
+
+def stale_names(node):
+    """[(file, the old name)] of the variable and signing names (the env and release kinds of the table, nothing
+    else) that a node with the new folders still holds in the files its settings come from: nxlx.env,
+    allowed_signers and the nxlx-* units and their drop-ins. A comment line does not count. This is what install.sh
+    asks, so it and the converter agree on what a leftover is."""
+    m = Matcher(rows())
+    files = [rel for rel in STALE_FILES if node.exists(rel)]
+    base = node.p("etc/systemd/system")
+    if os.path.isdir(base):
+        for name in sorted(os.listdir(base)):
+            full = os.path.join(base, name)
+            if name.startswith("nxlx-") and name.endswith((".service", ".socket")) and not os.path.islink(full):
+                files.append("etc/systemd/system/" + name)
+            elif name.startswith("nxlx-") and name.endswith((".service.d", ".socket.d")) and os.path.isdir(full):
+                files += ["etc/systemd/system/%s/%s" % (name, n) for n in sorted(os.listdir(full)) if n.endswith(".conf")]
+    found = []
+    for rel in files:
+        path = node.p(rel)
+        if os.path.islink(path):
+            continue
+        text = is_text(path)
+        if text is None:
+            continue
+        for line in text.split("\n"):
+            if line.lstrip().startswith("#"):
+                continue
+            for mt in m.rx.finditer(line):
+                if m.rows[mt.lastindex - 1].kind in ("env", "release"):
+                    found.append(("/" + rel, mt.group(0)))
+                    break
+            else:
+                continue
+            break
+    return found
+
+
 def command(node, a):
+    if a.stale_names:
+        found = stale_names(node)
+        for path, name in found:
+            print("%s: %s" % (path, name))
+        return EXIT_STALE if found else EXIT_OK
     if a.state:
         print(conversion_state(Journal(node).records()))
         return EXIT_OK
