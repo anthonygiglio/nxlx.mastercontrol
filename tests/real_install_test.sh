@@ -37,7 +37,8 @@ fail() {
 	echo "--- listing" >&2
 	listing >&2 || true
 	echo "--- journal" >&2
-	journalctl -b --no-pager -u nxlx-player -u nxlx-web -u nxlx-netd -u nxlx-sysd -u nxlx-ndi -n 80 >&2 || true
+	journalctl -b --no-pager -u nxlx-player -u nxlx-web -u nxlx-netd -u nxlx-sysd -u nxlx-ndi \
+		-u pvj-player -u pvj-web -u pvj-netd -u pvj-sysd -u pvj-ndi -n 80 >&2 || true
 	exit 1
 }
 step() { printf '\n=== %s\n' "$*"; }
@@ -212,7 +213,8 @@ for u in pvj-web pvj-dev; do getent passwd "$u" >/dev/null || fail "the account 
 visudo -c -q -f /etc/sudoers.d/010_pvj-dev || fail "the sudoers file of pvj-dev does not pass visudo after the undo"
 sudo -l -U pvj-dev | grep -q NOPASSWD || fail "pvj-dev lost sudo in the undo"
 wait_for 40 systemctl is-active --quiet pvj-web.service || fail "the old panel does not run again after the undo"
-[ "$(status_code "$OLD_TOKEN")" = 200 ] || fail "the old panel does not take the token again after the undo"
+panel_takes_old_token() { [ "$(status_code "$OLD_TOKEN")" = 200 ]; }
+wait_for 40 panel_takes_old_token || fail "the old panel does not take the token again after the undo"      # it needs about a second to listen
 # Only the converter's own command link (new with this release, no change of the run) is left of the new names.
 left="$(find /etc/systemd/system /usr/local/bin -name '*nxlx-*' ! -name 'nxlx-convert' ! -path '*/nxlx-convert-*' 2>/dev/null)"
 [ -z "$left" ] || fail "the undo left names of this release: $left"

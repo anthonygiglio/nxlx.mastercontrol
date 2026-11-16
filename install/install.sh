@@ -427,7 +427,7 @@ CONV_STATE=none
 if [ -e "$ROOT/var/backups/nxlx-convert/journal.jsonl" ]; then
 	conv_root=()
 	if [ -n "$STAGE" ]; then conv_root=(--root "$ROOT"); fi
-	CONV_STATE="$(python3 -B "$SRC/bin/nxlx-convert" "${conv_root[@]+"${conv_root[@]}"}" --state)" || die "cannot read the converter's journal: sudo python3 $SRC/bin/nxlx-convert --plan"
+	CONV_STATE="$(python3 -B "$SRC/bin/nxlx-convert" "${conv_root[@]+"${conv_root[@]}"}" --state)" || die "cannot read the converter's journal: run sudo nxlx-convert --state, which says which line is unreadable and what to do"
 fi
 CONVERTED=0          # this run converted the node, or carried a conversion on: the converter set current and previous
 KEEP_RELEASE=0       # a conversion waits for its confirm: the release in place is left as it is

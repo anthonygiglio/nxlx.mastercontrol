@@ -690,6 +690,9 @@ class ThirdReview(Base):
             r = convert(self.root, *args)
             self.assertEqual(r.returncode, 2, "%s: %s %s" % (args, r.stdout, r.stderr))
             self.assertIn("cannot be read at line", r.stdout + r.stderr)
+            self.assertIn(self.journal(), r.stdout + r.stderr)             # says where the journal is
+            self.assertIn("remove line", r.stdout + r.stderr)               # and what to do
+            self.assertIn("sudo nxlx-convert --undo", r.stdout + r.stderr)
             self.assertNotIn("Traceback", r.stderr)
         self.assertEqual(snapshot(self.root, skip=()), half)
 

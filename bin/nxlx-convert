@@ -901,9 +901,12 @@ class Journal:
             return out, None
         lineno, start = bad[-1]
         if len(bad) > 1 or data[start:].strip(b" \t\r\n\0").count(b"\n"):
-            raise JournalBroken("the converter's journal /%s cannot be read at line %d: it is not as this converter "
-                                "wrote it, so nothing is done by it. Look at it by hand"
-                                % (os.path.relpath(self.path, self.node.root or "/"), bad[0][0]))
+            raise JournalBroken("the converter's journal %s cannot be read at line %d: it is not as this converter "
+                                "wrote it, so nothing is done by it (the timed undo too). To put it right: copy the "
+                                "journal aside (cp %s %s.aside), remove line %d from the journal (and any other line "
+                                "that is not a record), then run sudo nxlx-convert --undo, or sudo nxlx-convert --state "
+                                "to see where the conversion stands"
+                                % (self.path, bad[0][0], self.path, self.path, bad[0][0]))
         if self.path not in Journal.warned:
             Journal.warned.add(self.path)
             try:
