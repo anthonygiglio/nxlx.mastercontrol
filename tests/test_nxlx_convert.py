@@ -161,8 +161,8 @@ def convert(root, *args, env=None):
 class FakePlayer:
     """An mpv IPC socket at the player's place that answers idle-active (or never answers)."""
 
-    def __init__(self, root, idle):
-        self.path = os.path.join(root, "run/pvj/player/player.sock")
+    def __init__(self, root, idle, rel="run/pvj/player/player.sock"):
+        self.path = os.path.join(root, rel)
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.bind(self.path)
@@ -591,6 +591,8 @@ class ReviewFixes(Base):
         pr7 = self.converted_by_pr7()
         journal_before = self.read("var/backups/nxlx-convert/journal.jsonl")
         plan = convert(self.root, "--plan").stdout
+        self.assertIn("This is a second pass", plan)
+        self.assertIn("install the earlier release again", plan)
         for rel in ("etc/nxlx/nxlx.env", "etc/nxlx/allowed_signers", "etc/systemd/system/nxlx-web.service",
                     "etc/systemd/system/nxlx-ndi.service"):
             self.assertIn("rewrite /" + rel, plan)
@@ -598,6 +600,7 @@ class ReviewFixes(Base):
         self.assertNotIn("move /", plan)
         r = convert(self.root, "--run")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("a second pass", r.stdout.split("Converted:")[-1])
         self.assertNotIn("PVJ_", self.read("etc/nxlx/nxlx.env"))
         self.assertIn('nxlx-release namespaces="nxlx-release" ssh-ed25519 AAAAC3Nza owner', self.read("etc/nxlx/allowed_signers"))
         self.assertIn("NXLX_RUNTIME_DIR", self.read("etc/systemd/system/nxlx-web.service"))
@@ -612,6 +615,8 @@ class ReviewFixes(Base):
         self.assertIn("nxlx-dev:", self.read("etc/passwd"))
         self.assertNotIn("pvj-dev:", self.read("etc/passwd"))
         self.assertEqual(snapshot(self.root), pr7, "back to the node as rename PR 7 left it")
+        self.assertIn("install the earlier release again", u.stdout, "an undo of a second pass says what it leaves")
+        self.assertNotIn("the node uses the old names again", u.stdout)
 
     def test_the_timed_undo_of_a_second_pass_covers_only_the_second_pass_and_a_confirm_keeps_it(self):
         pr7 = self.converted_by_pr7()
@@ -625,6 +630,59 @@ class ReviewFixes(Base):
         self.assertIn("Not undone", convert(self.root, "--undo", "--auto").stdout)
         self.assertEqual(snapshot(self.root), after)
         self.assertIn("Nothing to convert", convert(self.root, "--run").stdout)
+
+    def test_the_first_conversion_is_not_called_a_second_pass(self):
+        r = convert(self.root, "--run")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("second pass", r.stdout)
+        u = convert(self.root, "--undo")
+        self.assertIn("Undone: the node uses the old names again.", u.stdout)
+
+    def test_a_partly_failed_undo_is_no_boundary_for_the_next_run_and_its_undo(self):
+        """Run, then a timed undo that cannot put back the login account (it is in use), then --run again and
+        --undo: the whole node is back as it was, as before the journal looked only at the latest conversion."""
+        old = snapshot(self.root)
+        self.assertEqual(convert(self.root, "--run").returncode, 0)
+        write(self.root, "proc/4242/status", "Name:\tbash\nUid:\t1001\t1001\t1001\t1001\n")
+        write(self.root, "proc/4242/cgroup", "0::/user.slice/user-1001.slice/session-3.scope\n")
+        u = convert(self.root, "--undo", "--auto")
+        self.assertEqual(u.returncode, 1, u.stdout)
+        self.assertIn("NOT UNDONE", u.stdout)
+        shutil.rmtree(self.p("proc/4242"))
+        r = convert(self.root, "--run")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        u = convert(self.root, "--undo")
+        self.assertEqual(u.returncode, 0, u.stdout + u.stderr)
+        self.assertEqual(snapshot(self.root), old)
+        self.assertIn("pvj-dev:", self.read("etc/passwd"))
+        self.assertTrue(os.path.isdir(self.p("home/pvj-dev")))
+        self.assertIn("010_pvj-dev", os.listdir(self.p("etc/sudoers.d")))
+
+    def test_a_node_with_the_new_names_is_checked_under_the_new_paths_too(self):
+        """A second pass stops the services, so the player on /run/nxlx, an update lock and a stick under /media/nxlx
+        refuse it the way the old paths refuse the first conversion."""
+        self.converted_by_pr7()
+        player = FakePlayer(self.root, False, "run/nxlx/player/player.sock")
+        self.addCleanup(player.close)
+        before = snapshot(self.root, skip=())
+        plan = convert(self.root, "--plan")
+        self.assertIn("a show is playing", plan.stdout)
+        r = convert(self.root, "--run")
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertEqual(snapshot(self.root, skip=()), before, "nothing was changed")
+        player.close()
+        os.unlink(self.p("run/nxlx/player/player.sock"))
+        write(self.root, "proc/mounts", "/dev/mmcblk0p2 / ext4 rw,noatime 0 0\n/dev/sda1 /media/nxlx/STICK vfat rw 0 0\n")
+        r = convert(self.root, "--run")
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("/media/nxlx/STICK", r.stdout)
+        write(self.root, "proc/mounts", "/dev/mmcblk0p2 / ext4 rw,noatime 0 0\n")
+        write(self.root, "run/nxlx-update/update.lock", "")
+        with open(self.p("run/nxlx-update/update.lock")) as held:
+            fcntl.flock(held, fcntl.LOCK_EX)
+            r = convert(self.root, "--run")
+            self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+            self.assertIn("an update is running", r.stdout)
 
     def test_the_services_a_run_stops_and_starts_are_the_ones_since_the_last_confirm_under_either_name(self):
         conv = load_converter()
@@ -640,6 +698,8 @@ class ReviewFixes(Base):
                                         "nxlx-web.service loaded active running x\n"
                                         "nxlx-convert-undo.timer loaded active waiting x\n"
                                         "nxlx-raster@7.service loaded inactive dead x\n"
+                                        "nxlx-usb@sda1.service loaded active exited x\n"
+                                        "pvj-usb@sdb1.service loaded active exited x\n"
                                         "other.service loaded active running x\n"})()
         old = conv.sh
         conv.sh = lambda *a, **k: fake

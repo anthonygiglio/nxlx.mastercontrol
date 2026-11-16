@@ -15,7 +15,7 @@
 7	RELEASE_NOTES.md
 2	assets/img/PVJ_2019.svg
 2	backend.php
-189	bin/nxlx-convert
+197	bin/nxlx-convert
 5	docs/Install_OSC_on35_or_older.md
 5	docs/OSC_Commands.md
 2	docs/PVJ_2019.svg
@@ -61,8 +61,7 @@
 3	docs/html/searchindex.js
 2	index.html
 7	install/README.md
-47	install/install.sh
-2	install/nxlx-raster@.service
+45	install/install.sh
 3	mctl/OSC.md
 6	mctl/README.md
 1	mctl/netd.py
@@ -187,7 +186,7 @@
 22	project-log/journal/2026-11-15-rename-7.md
 2	project-log/journal/2026-11-15-slider-ends.md
 4	project-log/journal/2026-11-15-xfade-leak.md
-15	project-log/journal/2026-11-16-rename-8.md
+21	project-log/journal/2026-11-16-rename-8.md
 3	project-log/lessons/2026-11-11-stats-overlay-owned-by-connection.md
 2	project-log/lessons/2026-11-15-crossfade-heap.md
 9	security.php
@@ -210,9 +209,8 @@
 59	tests/real_convert_test.sh
 60	tests/real_install_test.sh
 1	tests/security_test.sh
-1	tests/test_graphics.py
 5	tests/test_https.py
-43	tests/test_install_convert.py
+36	tests/test_install_convert.py
 2	tests/test_leftovers.py
 2	tests/test_masks.py
 1	tests/test_mctl_render.py
@@ -222,7 +220,7 @@
 3	tests/test_ndi_pads.py
 2	tests/test_ndi_sound.py
 5	tests/test_netd.py
-201	tests/test_nxlx_convert.py
+204	tests/test_nxlx_convert.py
 44	tests/test_old_clients.py
 3	tests/test_osc_defaults.py
 2	tests/test_osc_feedback.py

@@ -17,10 +17,9 @@ StandardInput=socket
 StandardOutput=socket
 StandardError=journal
 Environment=HOME=/nonexistent
-# The fonts are in mctl/fonts, or in pvj/fonts in a release from before the rename. A rollback only repoints
-# "current" and does not write this file again, so the unit looks at which one the current release has (for one
-# release; $$ is a $ for systemd).
-ExecStart=/bin/sh -c 'f=@NXLX_DIR@/mctl/fonts; [ -d "$$f" ] || f=@NXLX_DIR@/pvj/fonts; exec @NXLX_DIR@/render/nxlx-raster --fonts "$$f"'
+# The fonts are in mctl/fonts of every release this unit runs with: a release with the old package folder has the old
+# names for everything else too, and the updater refuses to go back to it (only the converter's undo does).
+ExecStart=@NXLX_DIR@/render/nxlx-raster --fonts @NXLX_DIR@/mctl/fonts
 # A job that is not done in 15 seconds is killed from outside as well as by the program's own alarm.
 RuntimeMaxSec=15
 

@@ -430,25 +430,29 @@ if [ -e "$ROOT/var/backups/nxlx-convert/journal.jsonl" ]; then
 	CONV_STATE="$(python3 -B "$SRC/bin/nxlx-convert" "${conv_root[@]+"${conv_root[@]}"}" --state)" || die "cannot read the converter's journal: run sudo nxlx-convert --state, which says which line is unreadable and what to do"
 fi
 # A node that took the system rename (rename PR 7) and not the variable and signing names (rename PR 8) has the new
-# folders, accounts and units, with PVJ_* in nxlx.env, in its units and drop-ins, and pvj-release in allowed_signers.
-# This release reads none of those, so such a node gets a second pass of the converter, run here exactly like the
-# first conversion: it rewrites those names (and nothing else), stops and starts the services, points "current" at this
-# release as one of its own changes and arms the same 15 minute undo. Comment lines do not count.
-SECOND_PASS=0
+# folders, accounts and units, with PVJ_* names in nxlx.env, its units and drop-ins and pvj-release in allowed_signers.
+# This release reads none of those, and no node is meant to be in that state (the nodes go from the old names to this
+# release in one conversion), so it is refused here, before anything on the node changes. Whether the node has such
+# leftovers is asked of the converter (its plan lists a change for every file it would rewrite), so the installer and
+# the converter cannot disagree about what counts.
 if [ "$OLD_LAYOUT" = 0 ] && [ "$CONV_STATE" != pending ] && [ "$CONV_STATE" != unconfirmed ] \
-	&& [ ! -e "$ROOT/etc/systemd/system/nxlx-convert-undo.timer" ]; then
-	for held in "$ETC/nxlx.env" "$ETC/allowed_signers" "$ROOT"/etc/systemd/system/nxlx-*.service "$ROOT"/etc/systemd/system/nxlx-*.socket \
-		"$ROOT"/etc/systemd/system/nxlx-*.service.d/*.conf; do
-		if [ -f "$held" ] && [ ! -L "$held" ] && grep -v '^[[:space:]]*#' "$held" | grep -qE 'PVJ_[A-Z0-9_]+|pvj-release'; then
-			SECOND_PASS=1
-			log "${held#"$ROOT"} still has the old variable or signing names (PVJ_*, pvj-release)"
-		fi
-	done
+	&& [ ! -e "$ROOT/etc/systemd/system/nxlx-convert-undo.timer" ] && [ -f "$SRC/bin/nxlx-convert" ]; then
+	conv_root=()
+	if [ -n "$STAGE" ]; then conv_root=(--root "$ROOT"); fi
+	conv_plan="$(python3 -B "$SRC/bin/nxlx-convert" "${conv_root[@]+"${conv_root[@]}"}" --plan 2>&1)" || true
+	case "$conv_plan" in
+	*"Changes (0)"*) ;;
+	*"Changes ("*)
+		die "this node has the new names for its folders and accounts but still holds old variable or signing names (PVJ_*, pvj-release), so it is a release from between the two steps of the rename, and this release cannot be installed over it. Nothing on the node was changed. What the converter would still change:
+$(printf '%s\n' "$conv_plan" | sed -n '/^Changes (/,/^Backup/p' | sed '$d')
+An expert can run this release's own converter by hand (sudo python3 $SRC/bin/nxlx-convert --plan, then --run): an undo of that puts the old names back, which this release does not read, so the earlier release must then be installed again." ;;
+	*) die "cannot ask the converter what this node still holds (python3 $SRC/bin/nxlx-convert --plan): $(printf '%s' "$conv_plan" | tail -n 3)" ;;
+	esac
 fi
 CONVERTED=0          # this run converted the node, or carried a conversion on: the converter set current and previous
 KEEP_RELEASE=0       # a conversion waits for its confirm: the release in place is left as it is
-if [ "$OLD_LAYOUT" = 1 ] || [ "$CONV_STATE" = pending ] || [ "$SECOND_PASS" = 1 ]; then
-	[ "$PREFIX" = /opt/nxlx ] || die "this node still has the old names (/opt/pvj): run the installer once without --prefix, which converts it to /opt/nxlx"
+if [ "$OLD_LAYOUT" = 1 ] || [ "$CONV_STATE" = pending ]; then
+	[ "$PREFIX" = /opt/nxlx ] || die "this node has the old names (/opt/pvj) or a conversion to /opt/nxlx that was not finished: run the installer without --prefix, which converts the node or carries the conversion on"
 	# The accounts the converter renames; any other old-style name given with --user is not one of them.
 	case "$NXLX_USER" in
 	"" | pvj-player | pvj-dev | pvj-web | pvj-sound | pvj-link | pvj-raster | pvj-ndi | pvj-ndisc) ;;
@@ -458,15 +462,12 @@ if [ "$OLD_LAYOUT" = 1 ] || [ "$CONV_STATE" = pending ] || [ "$SECOND_PASS" = 1 
 	[ -d "$ROOT/opt/pvj" ] || old_top=/opt/nxlx      # a conversion that stopped half-way, carried on below
 	[ -L "$ROOT$old_top/current" ] || die "this node has the old names but $old_top/current is not a link to a release; look at it by hand: sudo python3 $SRC/bin/nxlx-convert --plan"
 	old_target="$(readlink "$ROOT$old_top/current")"
-	# A second pass at the same version (a build of the system rename in place, this one over it) puts this release in,
-	# as every install of the same version does: the converter that runs must be this release's.
-	if [ "${old_target##*/}" = "$VERSION" ] && [ "$SECOND_PASS" = 0 ]; then
+	if [ "${old_target##*/}" = "$VERSION" ]; then
 		[ "$old_top" = /opt/nxlx ] || die "this node runs version $VERSION under the old names, so its release cannot be replaced in place; install a newer version"
 		log "carrying on with a conversion that stopped half-way (the release in place is kept)"
 	else
 		if [ "$CONV_STATE" = pending ]; then log "carrying on with a conversion that stopped half-way"; fi
-		if [ "$SECOND_PASS" = 1 ]; then log "putting version $VERSION into $old_top/releases, then rewriting the old variable and signing names with the converter"
-		else log "putting version $VERSION into $old_top/releases, then converting the node"; fi
+		log "putting version $VERSION into $old_top/releases, then converting the node"
 		put_release "$ROOT$old_top/releases"
 		if [ "$REAL" = 1 ] && [ "$DRY" = 0 ]; then chown -R root:root "$ROOT$old_top/releases/$VERSION"; fi
 		run chmod -R go-w "$ROOT$old_top/releases/$VERSION"

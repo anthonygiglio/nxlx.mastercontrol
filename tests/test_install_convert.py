@@ -121,18 +121,15 @@ class InstallConvertsAnOldNode(unittest.TestCase):
         self.assertIn("ExecStart=/opt/pvj/current/bin/pvj-web", self.read("etc/systemd/system/pvj-web.service"))
         self.assertFalse(os.path.exists(self.p("opt/nxlx")))
 
-    def test_a_node_with_the_new_folders_and_the_old_variable_names_gets_the_second_pass_from_the_installer(self):
-        """A node that took the system rename and not the variable and signing names: the installer runs the
-        converter's second pass the way it runs the first conversion (undo armed, confirm asked for), and the
-        settings it then writes go into the one NXLX_ line, not beside a PVJ_ one."""
+    def confirmed_node(self):
         self.assertEqual(self.install().returncode, 0)
-        conv = os.path.join(REPO, "bin", "nxlx-convert")
-        subprocess.run(["python3", conv, "--root", self.root, "--confirm"], capture_output=True, text=True, timeout=120)
-        clean = self.install()
-        self.assertEqual(clean.returncode, 0, clean.stdout + clean.stderr)
-        self.assertNotIn("old variable or signing names", clean.stdout)
-        self.assertNotIn("CONVERTED", clean.stdout)
-        # the state between rename steps 7 and 8: the old names in the env file, a drop-in and allowed_signers
+        subprocess.run(["python3", os.path.join(REPO, "bin", "nxlx-convert"), "--root", self.root, "--confirm"],
+                       capture_output=True, text=True, timeout=120)
+
+    def test_a_node_with_the_new_folders_and_the_old_variable_names_is_refused_and_nothing_changes(self):
+        """The state between rename steps 7 and 8 is no state a node is meant to be in: the installer says so before
+        it changes anything (also before it replaces a release of the same version in place)."""
+        self.confirmed_node()
         with open(self.p("etc/nxlx/nxlx.env"), "a") as f:
             f.write("PVJ_SIGNER_URL=http://old.example:8781\nPVJ_PORT=81\n")
         os.makedirs(self.p("etc/systemd/system/nxlx-web.service.d"), exist_ok=True)
@@ -141,36 +138,49 @@ class InstallConvertsAnOldNode(unittest.TestCase):
         with open(self.p("etc/nxlx/allowed_signers"), "w") as f:
             f.write('# pvj-release is only a comment here\npvj-release namespaces="pvj-release" ssh-ed25519 AAAA owner\n')
         before = snapshot(self.root)
-        journal_before = self.read("var/backups/nxlx-convert/journal.jsonl")
-        again = self.install("--signer", "http://hp.example:8781", "--root-fingerprint", "ab" * 32)
+        r = self.install("--signer", "http://hp.example:8781", "--root-fingerprint", "ab" * 32)
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+        said = r.stdout + r.stderr
+        self.assertIn("this release cannot be installed over it", said)
+        self.assertIn("Nothing on the node was changed", said)
+        self.assertIn("rewrite /etc/nxlx/nxlx.env", said, "what the converter would change is listed")
+        self.assertIn("rewrite /etc/nxlx/allowed_signers", said)
+        self.assertIn("50-nxlx-ndi.conf", said)
+        self.assertIn("sudo python3", said)
+        self.assertEqual(snapshot(self.root), before, "not a file, not the release of the same version, was touched")
+
+    def test_what_the_converter_leaves_alone_is_no_reason_to_refuse(self):
+        """The installer asks the converter, so a name the converter's rows do not take (pvj-release-2026 in a key's
+        comment, MYPVJ_FOO) is left as it is and the install goes on."""
+        self.confirmed_node()
+        with open(self.p("etc/nxlx/allowed_signers"), "a") as f:
+            f.write('nxlx-release namespaces="nxlx-release" ssh-ed25519 AAAAC3Nza pvj-release-2026\n')
+        with open(self.p("etc/nxlx/nxlx.env"), "a") as f:
+            f.write("MYPVJ_FOO=1\n")
+        r = self.install()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("cannot be installed over it", r.stdout + r.stderr)
+
+    def test_a_fresh_install_of_this_release_has_nothing_left_for_the_converter(self):
+        """Any old name this release's own install writes (a unit, a drop-in, a template) shows up here."""
+        fresh = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, fresh, True)
+        r = subprocess.run([os.path.join(REPO, "install", "install.sh"), "--stage", fresh, "--signer", "http://hp.example:8781",
+                            "--root-fingerprint", "ab" * 32], capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        plan = subprocess.run(["python3", os.path.join(REPO, "bin", "nxlx-convert"), "--root", fresh, "--plan"],
+                              capture_output=True, text=True, timeout=120)
+        self.assertEqual(plan.returncode, 0, plan.stdout + plan.stderr)
+        self.assertIn("Changes (0)", plan.stdout)
+        self.assertIn("Nothing to convert.", plan.stdout)
+        # and again over itself: one line for the signer, not two
+        again = subprocess.run([os.path.join(REPO, "install", "install.sh"), "--stage", fresh, "--signer", "http://hp.example:9999",
+                                "--root-fingerprint", "ab" * 32], capture_output=True, text=True, timeout=120)
         self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
-        self.assertIn("/etc/nxlx/nxlx.env still has the old variable or signing names", again.stdout)
-        self.assertIn("/etc/systemd/system/nxlx-web.service.d/50-nxlx-ndi.conf still has", again.stdout)
-        self.assertIn("rewriting the old variable and signing names with the converter", again.stdout)
-        self.assertIn("Converted:", again.stdout)
-        self.assertIn("sudo nxlx-convert --confirm", again.stdout)
-        env = self.read("etc/nxlx/nxlx.env")
-        self.assertNotIn("PVJ_", env)
-        self.assertIn("NXLX_PORT=81", env)
-        self.assertEqual(env.count("NXLX_SIGNER_URL="), 1, "one line, not a second one beside the old")
-        self.assertIn("NXLX_SIGNER_URL=http://hp.example:8781", env)
-        self.assertIn("Environment=NXLX_NDI_DIR=/run/nxlx-ndi", self.read("etc/systemd/system/nxlx-web.service.d/50-nxlx-ndi.conf"))
-        self.assertIn('nxlx-release namespaces="nxlx-release"', self.read("etc/nxlx/allowed_signers"))
-        self.assertTrue(os.path.isfile(self.p("etc/systemd/system/nxlx-convert-undo.timer")), "the undo is armed again")
-        journal_after = self.read("var/backups/nxlx-convert/journal.jsonl")
-        self.assertTrue(journal_after.startswith(journal_before), "the first conversion's journal is kept")
-        # a third install finds nothing to do
-        third = self.install("--signer", "http://hp.example:8781", "--root-fingerprint", "ab" * 32)
-        self.assertNotIn("old variable or signing names", third.stdout)
-        # the undo of the second pass puts back the files of the node as it was, and only those
-        u = subprocess.run(["python3", conv, "--root", self.root, "--undo"], capture_output=True, text=True, timeout=120)
-        self.assertEqual(u.returncode, 0, u.stdout + u.stderr)
-        self.assertTrue(os.path.isdir(self.p("opt/nxlx")), "the first conversion stays")
-        self.assertFalse(os.path.exists(self.p("opt/pvj")))
-        self.assertIn("PVJ_PORT=81", self.read("etc/nxlx/nxlx.env"))
-        self.assertIn('pvj-release namespaces="pvj-release"', self.read("etc/nxlx/allowed_signers"))
-        self.assertIn("Environment=PVJ_NDI_DIR", self.read("etc/systemd/system/nxlx-web.service.d/50-nxlx-ndi.conf"))
-        self.assertEqual(snapshot(self.root).get("etc/nxlx/allowed_signers"), before.get("etc/nxlx/allowed_signers"))
+        with open(os.path.join(fresh, "etc/nxlx/nxlx.env")) as f:
+            env = f.read()
+        self.assertEqual(env.count("NXLX_SIGNER_URL="), 1)
+        self.assertIn("NXLX_SIGNER_URL=http://hp.example:9999", env)
 
     def test_a_refused_conversion_stops_the_installer_and_changes_nothing_but_the_waiting_release(self):
         os.makedirs(self.p("proc"))
@@ -197,7 +207,7 @@ class InstallConvertsAnOldNode(unittest.TestCase):
 
     def test_another_prefix_or_an_uninstall_on_an_old_node_is_refused(self):
         before = snapshot(self.root)
-        for args, said in ((("--prefix", "/srv/box/nxlx"), "run the installer once without --prefix"),
+        for args, said in ((("--prefix", "/srv/box/nxlx"), "run the installer without --prefix"),
                            (("--uninstall",), "run the installer once without --uninstall")):
             r = self.install(*args)
             self.assertNotEqual(r.returncode, 0, r.stdout)
